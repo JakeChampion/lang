@@ -8,6 +8,12 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
+func evalProgramValue(t *testing.T, src string) Value {
+	t.Helper()
+	v, _ := evalProgram(t, src)
+	return v
+}
+
 func evalProgram(t *testing.T, src string) (Value, *Interp) {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -129,5 +135,40 @@ func TestREPLDeclaresThenCallsFunction(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "42") {
 		t.Errorf("expected 42 in REPL output, got:\n%s", out.String())
+	}
+}
+
+func TestInterpLenOfString(t *testing.T) {
+	if got := evalProgramValue(t, `function main(): number { return len("hello"); }`); got != Number(5) {
+		t.Errorf("got %v, want 5", got)
+	}
+}
+
+func TestInterpLenOfArray(t *testing.T) {
+	if got := evalProgramValue(t, `function main(): number {
+		var a: number[] = [1, 2, 3, 4];
+		return len(a);
+	}`); got != Number(4) {
+		t.Errorf("got %v, want 4", got)
+	}
+}
+
+func TestInterpStringIndex(t *testing.T) {
+	if got := evalProgramValue(t, `function main(): number {
+		var s: string = "ABC";
+		return s[1];
+	}`); got != Number(int64('B')) {
+		t.Errorf("got %v, want %d", got, 'B')
+	}
+}
+
+func TestInterpStringEquality(t *testing.T) {
+	src := `function main(): boolean {
+		var a: string = "hello";
+		var b: string = "hello";
+		return a == b;
+	}`
+	if got := evalProgramValue(t, src); got != Bool(true) {
+		t.Errorf("got %v, want true", got)
 	}
 }

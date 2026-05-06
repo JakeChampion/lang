@@ -600,6 +600,53 @@ func (g *generator) emitTailCall(c *ast.Call) error {
 	return nil
 }
 
+// argType is a small best-effort type query used by the few codegen
+// sites (e.g. the `len` builtin) that need to know the static type of
+// an expression. It only handles the cases that are reachable from
+// the callers — most kinds simply return nil.
+func (g *generator) argType(e ast.Expr) ast.Type {
+	switch x := e.(type) {
+	case *ast.StringLit:
+		return ast.StringType{}
+	case *ast.NumberLit:
+		return ast.NumberType{}
+	case *ast.BoolLit:
+		return ast.BoolType{}
+	case *ast.FloatLit:
+		return ast.FloatType{}
+	case *ast.ArrayLit:
+		// Arrays of T resolve to ArrayType{T}; pull T from the first
+		// element's static type since the checker has already verified
+		// they're all the same.
+		if len(x.Elems) > 0 {
+			return ast.ArrayType{Elem: g.argType(x.Elems[0])}
+		}
+		return nil
+	case *ast.Ident:
+		// A var the checker recorded.
+		for _, vars := range g.info.Locals {
+			for _, v := range vars {
+				if v.Name == x.Name {
+					return v.Type
+				}
+			}
+		}
+		// A parameter on the current function.
+		if g.currentFunc != nil {
+			for _, p := range g.currentFunc.Params {
+				if p.Name == x.Name {
+					return p.Type
+				}
+			}
+		}
+		// A top-level function.
+		if sig, ok := g.info.FuncSigs[x.Name]; ok {
+			return sig
+		}
+	}
+	return nil
+}
+
 // containsCall reports whether n holds any *ast.Call subtree.
 // Used to identify "leaf" functions for the simple register
 // allocator: leaves never bl into user code, so callee-saved
@@ -1017,10 +1064,32 @@ func (g *generator) binary(n *ast.Binary) error {
 		// Arithmetic shift right preserves the sign bit; numbers are signed.
 		g.emit("asr r0, r1, r0")
 	case "==":
+		if n.IsStringCmp {
+			// strcmp(a, b) returns 0 iff equal. Args wanted in r0/r1
+			// but we currently have r1=left, r0=right; swap via r2.
+			g.emit("mov r2, r0")
+			g.emit("mov r0, r1")
+			g.emit("mov r1, r2")
+			g.emit("bl strcmp")
+			g.emit("cmp r0, #0")
+			g.emit("moveq r0, #1")
+			g.emit("movne r0, #0")
+			break
+		}
 		g.emit("cmp r1, r0")
 		g.emit("moveq r0, #1")
 		g.emit("movne r0, #0")
 	case "!=":
+		if n.IsStringCmp {
+			g.emit("mov r2, r0")
+			g.emit("mov r0, r1")
+			g.emit("mov r1, r2")
+			g.emit("bl strcmp")
+			g.emit("cmp r0, #0")
+			g.emit("movne r0, #1")
+			g.emit("moveq r0, #0")
+			break
+		}
 		g.emit("cmp r1, r0")
 		g.emit("movne r0, #1")
 		g.emit("moveq r0, #0")
@@ -1050,6 +1119,22 @@ func (g *generator) call(n *ast.Call) error {
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
 		return fmt.Errorf("codegen: indirect call from non-identifier expression")
+	}
+	// `len(x)` is a builtin: strings call libc strlen; arrays aren't
+	// supported on arm32 yet because there's no length prefix in the
+	// frame layout.
+	if id.Name == "len" && len(n.Args) == 1 {
+		argT := g.argType(n.Args[0])
+		if _, ok := argT.(ast.StringType); ok {
+			if err := g.expr(n.Args[0]); err != nil {
+				return err
+			}
+			g.emit("bl strlen")
+			return nil
+		}
+		if _, ok := argT.(ast.ArrayType); ok {
+			return fmt.Errorf("codegen: len(array) is not yet supported on the arm32 backend")
+		}
 	}
 	target := id.Name
 	// `print(s)` lowers to libc puts, which already adds a newline.
@@ -1165,7 +1250,12 @@ func (g *generator) index(n *ast.Index) error {
 	if err := g.expr(n.Idx); err != nil {
 		return err
 	}
-	g.emit("pop {r1}")               // r1 = base
+	g.emit("pop {r1}") // r1 = base
+	if n.IsString {
+		// `s[i]` reads one byte at base+i and zero-extends to 32 bits.
+		g.emit("ldrb r0, [r1, r0]")
+		return nil
+	}
 	g.emit("ldr r0, [r1, r0, lsl #2]") // r0 = base[idx]
 	return nil
 }

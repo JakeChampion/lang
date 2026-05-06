@@ -357,3 +357,18 @@ func TestArm32CompoundAssignLowersToBinary(t *testing.T) {
 	// 7 should appear as an immediate from the binary lowering.
 	mustContain(t, asm, "=7")
 }
+
+func TestArm32StringIndexLoadsByte(t *testing.T) {
+	asm := compile(t, `function f(): number { var s: string = "abc"; return s[1]; }`)
+	mustContain(t, asm, "ldrb")
+}
+
+func TestArm32StringEqualityCallsStrcmp(t *testing.T) {
+	asm := compile(t, `function f(): boolean { return "a" == "a"; }`)
+	mustContain(t, asm, "bl strcmp")
+}
+
+func TestArm32LenStringCallsStrlen(t *testing.T) {
+	asm := compile(t, `function f(): number { return len("abc"); }`)
+	mustContain(t, asm, "bl strlen")
+}

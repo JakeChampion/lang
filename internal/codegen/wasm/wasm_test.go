@@ -255,3 +255,25 @@ func TestCompoundAssignLowersToBinary(t *testing.T) {
 	mustContain(t, wat, "i32.add")
 	mustContain(t, wat, "local.tee $x")
 }
+
+func TestStringIndexEmitsLoad8(t *testing.T) {
+	wat := compileToWAT(t, `function f(): number { var s: string = "abc"; return s[1]; }`)
+	mustContain(t, wat, "i32.load8_u")
+}
+
+func TestStringEqualityEmitsHelper(t *testing.T) {
+	wat := compileToWAT(t, `function f(): boolean { return "a" == "a"; }`)
+	mustContain(t, wat, "$__str_eq")
+	mustContain(t, wat, "call $__str_eq")
+}
+
+func TestLenOfStringInlinesPrefixLoad(t *testing.T) {
+	wat := compileToWAT(t, `function f(): number { return len("hello"); }`)
+	// len is an inline `i32.load (s - 4)`, not a call.
+	mustContain(t, wat, "i32.const 4")
+	mustContain(t, wat, "i32.sub")
+	mustContain(t, wat, "i32.load")
+	if strings.Contains(wat, "call $len") {
+		t.Errorf("expected len to be inlined, got call $len in:\n%s", wat)
+	}
+}

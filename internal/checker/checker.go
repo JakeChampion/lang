@@ -133,6 +133,20 @@ func (c *checker) collectNames(s *scope) []string {
 	return out
 }
 
+// isUserFuncOrLocal reports whether name shadows the implicit `len`
+// builtin via a user-declared function or in-scope variable. Callers
+// use it to decide whether to apply the builtin's special typing
+// rules — a user that explicitly defines `len` wins.
+func (c *checker) isUserFuncOrLocal(name string, s *scope) bool {
+	if _, ok := s.lookup(name); ok {
+		return true
+	}
+	if _, ok := c.info.FuncSigs[name]; ok {
+		return true
+	}
+	return false
+}
+
 // scope is an environment of named bindings plus a pointer to its parent.
 type scope struct {
 	parent *scope
@@ -316,16 +330,41 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		at := c.checkExpr(n.Array, s)
 		it := c.checkExpr(n.Idx, s)
 		if it != nil && !ast.Equal(it, ast.NumberType{}) {
-			c.errf(n.Idx.Pos(), "array index must be number, got %s", it)
+			c.errf(n.Idx.Pos(), "index must be number, got %s", it)
 		}
 		if arr, ok := at.(ast.ArrayType); ok {
 			return arr.Elem
+		}
+		// `s[i]` on a string returns the byte at i as a number.
+		if _, ok := at.(ast.StringType); ok {
+			n.IsString = true
+			return ast.NumberType{}
 		}
 		if at != nil {
 			c.errf(n.P, "indexing non-array value of type %s", at)
 		}
 		return nil
 	case *ast.Call:
+		// `len(x)` is a generic builtin: it accepts any string or
+		// array and returns a number. We type-check it here rather
+		// than in FuncSigs because no monomorphic FuncType expresses
+		// the union.
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "len" && !c.isUserFuncOrLocal(id.Name, s) {
+			if len(n.Args) != 1 {
+				c.errf(n.P, "len expects 1 argument, got %d", len(n.Args))
+				return ast.NumberType{}
+			}
+			at := c.checkExpr(n.Args[0], s)
+			switch at.(type) {
+			case ast.StringType, ast.ArrayType:
+				// fine
+			default:
+				if at != nil {
+					c.errf(n.Args[0].Pos(), "len: expected string or array, got %s", at)
+				}
+			}
+			return ast.NumberType{}
+		}
 		callee := c.checkExpr(n.Callee, s)
 		ft, ok := callee.(*ast.FuncType)
 		if !ok {
@@ -385,6 +424,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		case "==", "!=":
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
 				c.errf(n.P, "cannot compare %s and %s", lt, rt)
+			}
+			// String-vs-string equality compares contents; flag so
+			// codegen lowers to a runtime call rather than i32.eq.
+			if _, ok := lt.(ast.StringType); ok {
+				if _, ok := rt.(ast.StringType); ok {
+					n.IsStringCmp = true
+				}
 			}
 			return ast.BoolType{}
 		case "&&", "||":

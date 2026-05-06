@@ -85,7 +85,21 @@ func New() *Interp {
 	}
 	i.Builtins["print"] = &Builtin{Fn: builtinPrint}
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
+	i.Builtins["len"] = &Builtin{Fn: builtinLen}
 	return i
+}
+
+func builtinLen(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("len: expected 1 arg, got %d", len(args))
+	}
+	switch v := args[0].(type) {
+	case String:
+		return Number(int64(len(string(v)))), nil
+	case Array:
+		return Number(int64(len(v))), nil
+	}
+	return nil, fmt.Errorf("len: expected string or array, got %T", args[0])
 }
 
 func builtinPrint(i *Interp, args []Value) (Value, error) {
@@ -404,13 +418,21 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
+		idx, ok := idxV.(Number)
+		if !ok {
+			return nil, fmt.Errorf("index must be number, got %T", idxV)
+		}
+		// String indexing returns the byte at offset i as a Number,
+		// matching the codegen lowering of `s[i]`.
+		if s, ok := arrV.(String); ok {
+			if idx < 0 || int(idx) >= len(string(s)) {
+				return nil, fmt.Errorf("string index %d out of range [0, %d)", idx, len(string(s)))
+			}
+			return Number(int64(string(s)[idx])), nil
+		}
 		arr, ok := arrV.(Array)
 		if !ok {
 			return nil, fmt.Errorf("indexing non-array %T", arrV)
-		}
-		idx, ok := idxV.(Number)
-		if !ok {
-			return nil, fmt.Errorf("array index must be number, got %T", idxV)
 		}
 		if idx < 0 || int(idx) >= len(arr) {
 			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr))
@@ -521,6 +543,19 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		ls, _ := l.(String)
 		rs, _ := r.(String)
 		return ls + rs, nil
+	}
+	// String comparison works at runtime regardless of whether the
+	// checker has been run (so REPL evaluations of `"a" == "b"` give
+	// a sensible answer too).
+	if ls, lok := l.(String); lok {
+		if rs, rok := r.(String); rok {
+			switch b.Op {
+			case "==":
+				return Bool(ls == rs), nil
+			case "!=":
+				return Bool(ls != rs), nil
+			}
+		}
 	}
 	ln, lOk := l.(Number)
 	rn, rOk := r.(Number)

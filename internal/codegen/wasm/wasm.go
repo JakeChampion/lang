@@ -54,6 +54,7 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	g.scanForRuntimeUses(prog)
 	g.scanForArrayUses(prog)
 	g.scanForIndirectCalls(prog)
+	g.scanForStringEq(prog)
 
 	g.line("(module")
 	g.indent++
@@ -112,6 +113,7 @@ type generator struct {
 	// Runtime / strings / arrays.
 	needsRuntime  bool
 	needsArrays   bool
+	needsStrEq    bool           // any String == String / != comparison
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -862,6 +864,79 @@ func watFuncType(ft *ast.FuncType) string {
 	return b.String()
 }
 
+// scanForStringEq pre-walks the program and sets needsStrEq if any
+// `==` or `!=` between strings appears, so emitRuntimePreamble knows
+// to include the $__str_eq helper. The helper reads from linear
+// memory, so it implies needsRuntime as well.
+func (g *generator) scanForStringEq(prog *ast.Program) {
+	var walk func(any)
+	walk = func(n any) {
+		if g.needsStrEq {
+			return
+		}
+		switch x := n.(type) {
+		case *ast.Binary:
+			if x.IsStringCmp {
+				g.needsStrEq = true
+				g.needsRuntime = true
+				return
+			}
+			walk(x.Left)
+			walk(x.Right)
+		case *ast.Unary:
+			walk(x.Operand)
+		case *ast.Call:
+			walk(x.Callee)
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case *ast.Index:
+			walk(x.Array)
+			walk(x.Idx)
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.Assign:
+			walk(x.Target)
+			walk(x.Value)
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		}
+	}
+	for _, fn := range prog.Funcs {
+		walk(fn.Body)
+	}
+}
+
 // scanForRuntimeUses pre-walks the program and sets needsRuntime if
 // any string literal, `print` call or `putchar` call appears.
 func (g *generator) scanForRuntimeUses(prog *ast.Program) {
@@ -1003,6 +1078,87 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.add`)
 		g.line(`i32.store`)
 		g.line(`local.get $ptr`)
+		g.indent--
+		g.line(`)`)
+	}
+
+	if g.needsStrEq {
+		// $__str_eq compares two length-prefixed strings byte-by-byte.
+		// Returns 1 if equal, 0 otherwise. Identical pointers short-circuit
+		// to true; lengths are read from `ptr - 4` (4-byte little-endian
+		// prefix) before the byte loop.
+		g.line(`(func $__str_eq (param $a i32) (param $b i32) (result i32)`)
+		g.indent++
+		g.line(`(local $la i32) (local $lb i32) (local $i i32)`)
+		g.line(`local.get $a`)
+		g.line(`local.get $b`)
+		g.line(`i32.eq`)
+		g.line(`if (result i32)`)
+		g.indent++
+		g.line(`i32.const 1`)
+		g.indent--
+		g.line(`else`)
+		g.indent++
+		// la = mem[a-4]; lb = mem[b-4]
+		g.line(`local.get $a`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`local.set $la`)
+		g.line(`local.get $b`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`local.set $lb`)
+		g.line(`local.get $la`)
+		g.line(`local.get $lb`)
+		g.line(`i32.ne`)
+		g.line(`if (result i32)`)
+		g.indent++
+		g.line(`i32.const 0`)
+		g.indent--
+		g.line(`else`)
+		g.indent++
+		// for (i=0; i<la; i++) if (a[i] != b[i]) return 0
+		g.line(`i32.const 0`)
+		g.line(`local.set $i`)
+		g.line(`block $end`)
+		g.indent++
+		g.line(`loop $loop`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`local.get $la`)
+		g.line(`i32.eq`)
+		g.line(`br_if $end`)
+		g.line(`local.get $a`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+		g.line(`local.get $b`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+		g.line(`i32.ne`)
+		g.line(`if`)
+		g.indent++
+		g.line(`i32.const 0`)
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 1`)
+		g.line(`i32.add`)
+		g.line(`local.set $i`)
+		g.line(`br $loop`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
+		g.line(`i32.const 1`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
 		g.indent--
 		g.line(`)`)
 	}
@@ -1173,6 +1329,18 @@ func (g *generator) expr(e ast.Expr) error {
 	case *ast.ArrayLit:
 		return g.arrayLit(n)
 	case *ast.Index:
+		if n.IsString {
+			// `s[i]` lowers to load8_u (s + i): one byte zero-extended.
+			if err := g.expr(n.Array); err != nil {
+				return err
+			}
+			if err := g.expr(n.Idx); err != nil {
+				return err
+			}
+			g.line("i32.add")
+			g.line("i32.load8_u")
+			break
+		}
 		// `a[i]` lowers to load(a + i*4).
 		if err := g.expr(n.Array); err != nil {
 			return err
@@ -1258,6 +1426,15 @@ func (g *generator) binary(n *ast.Binary) error {
 	if err := g.expr(n.Right); err != nil {
 		return err
 	}
+	if n.IsStringCmp {
+		// Both sides are string pointers; ask the runtime to compare
+		// contents. `!=` is the negation of `==`.
+		g.line("call $__str_eq")
+		if n.Op == "!=" {
+			g.line("i32.eqz")
+		}
+		return nil
+	}
 	if n.IsFloat {
 		op, err := wasmFloatBinaryOp(n.Op)
 		if err != nil {
@@ -1342,6 +1519,21 @@ func (g *generator) call(n *ast.Call) error {
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
 		return fmt.Errorf("wasm: indirect call from non-identifier expression")
+	}
+	// Inline `len(s)` / `len(arr)`: both string and array carry a
+	// 4-byte little-endian length prefix at `ptr - 4`.
+	if id.Name == "len" && len(n.Args) == 1 && g.localFuncType(g.current, id.Name) == nil {
+		if _, isUser := g.funcIndex[id.Name]; !isUser {
+			if _, isDeclared := g.info.FuncSigs[id.Name]; !isDeclared {
+				if err := g.expr(n.Args[0]); err != nil {
+					return err
+				}
+				g.line("i32.const 4")
+				g.line("i32.sub")
+				g.line("i32.load")
+				return nil
+			}
+		}
 	}
 	// Direct call: callee is either a top-level user function or a
 	// builtin (`print`/`putchar`) wired to a runtime helper, AND the
