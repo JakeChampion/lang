@@ -32,9 +32,11 @@ import (
 //
 // Programs that use strings, `print` or `putchar` cause the emitter to
 // add a memory section, a WASI `fd_write` import and a small pair of
-// runtime helpers ($putchar / $print). Modules that don't touch any of
-// those features stay free of imports so they can be invoked under
-// minimal hosts.
+// runtime helpers ($putchar / $print). Programs that take functions as
+// values cause it to emit a `funcref` table plus type declarations for
+// each indirect-call signature. Modules that touch none of those stay
+// free of the extra structure so they can be loaded under minimal
+// hosts.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	g := &generator{
 		info:       info,
@@ -43,9 +45,15 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 		// (putchar buffer + iovecs + nwritten + newline byte). User
 		// strings start at offset 64.
 		stringOffset: 64,
+		funcIndex:    map[string]int{},
+		sigIndex:     map[string]int{},
+	}
+	for i, fn := range prog.Funcs {
+		g.funcIndex[fn.Name] = i
 	}
 	g.scanForRuntimeUses(prog)
 	g.scanForArrayUses(prog)
+	g.scanForIndirectCalls(prog)
 
 	g.line("(module")
 	g.indent++
@@ -54,10 +62,26 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 		g.emitRuntimePreamble()
 	}
 
+	// Type declarations referenced by call_indirect.
+	for i, sig := range g.indirectSigs {
+		g.linef("(type $t%d %s)", i, watFuncType(sig))
+	}
+
 	for _, fn := range prog.Funcs {
 		if err := g.emitFunc(fn); err != nil {
 			return "", err
 		}
+	}
+
+	if g.needsFuncTable {
+		// One table slot per top-level function, populated in
+		// declaration order so funcIndex[name] = element index.
+		g.linef("(table $fns %d funcref)", len(prog.Funcs))
+		var elems []string
+		for _, fn := range prog.Funcs {
+			elems = append(elems, "$"+fn.Name)
+		}
+		g.linef("(elem (i32.const 0) %s)", strings.Join(elems, " "))
 	}
 
 	if g.needsRuntime {
@@ -86,15 +110,28 @@ type generator struct {
 	current *ast.FuncDecl
 
 	// Runtime / strings / arrays.
-	needsRuntime bool
-	needsArrays  bool
-	stringPool   map[string]int // value → pointer in linear memory
-	stringEntries []stringEntry // emission order (data segments)
-	stringOffset int            // next free byte for a string entry
+	needsRuntime  bool
+	needsArrays   bool
+	stringPool    map[string]int // value → pointer in linear memory
+	stringEntries []stringEntry  // emission order (data segments)
+	stringOffset  int            // next free byte for a string entry
 	// Per-function: a stable assignment of WAT local names to each
 	// ArrayLit AST node, so codegen can save its base into the right
 	// scratch slot even when ArrayLits are nested.
 	arrLocal map[*ast.ArrayLit]string
+
+	// Function table / indirect calls. needsFuncTable is set if any
+	// top-level function name appears in non-callee position (taken
+	// as a value) OR if any call goes through a local — both need a
+	// `funcref` table populated in declaration order. indirectSigs
+	// lists each unique signature used by call_indirect, in the
+	// order we first saw it; sigIndex maps a signature key to its
+	// position in indirectSigs. funcIndex maps each top-level
+	// function name to its table-element index.
+	needsFuncTable bool
+	funcIndex      map[string]int
+	indirectSigs   []*ast.FuncType
+	sigIndex       map[string]int
 }
 
 type stringEntry struct {
@@ -454,6 +491,189 @@ func collectArrayLits(n any, visit func(*ast.ArrayLit)) {
 	}
 }
 
+// scanForIndirectCalls walks every function body and records the
+// signatures that will need `(type $tN ...)` declarations for use
+// with call_indirect, plus whether the program touches the function
+// table at all.
+//
+// The two triggers:
+//
+//   - an Ident referring to a top-level function appears in
+//     non-callee position (taken as a value, e.g. `var f = add`); it
+//     needs to materialise as the table index, which means the table
+//     must exist;
+//   - a Call whose callee resolves to a local of *FuncType (rather
+//     than to a top-level function name) lowers to call_indirect and
+//     needs the corresponding `(type $tN ...)` declaration.
+func (g *generator) scanForIndirectCalls(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		g.current = fn
+		g.scanIndirectStmt(fn.Body)
+	}
+	g.current = nil
+}
+
+func (g *generator) scanIndirectStmt(s ast.Stmt) {
+	switch x := s.(type) {
+	case *ast.Block:
+		for _, ss := range x.Stmts {
+			g.scanIndirectStmt(ss)
+		}
+	case *ast.If:
+		g.scanIndirectExpr(x.Cond, false)
+		g.scanIndirectStmt(x.Then)
+		if x.Else != nil {
+			g.scanIndirectStmt(x.Else)
+		}
+	case *ast.While:
+		g.scanIndirectExpr(x.Cond, false)
+		g.scanIndirectStmt(x.Body)
+	case *ast.For:
+		if x.Init != nil {
+			g.scanIndirectStmt(x.Init)
+		}
+		g.scanIndirectExpr(x.Cond, false)
+		if x.Step != nil {
+			g.scanIndirectStmt(x.Step)
+		}
+		g.scanIndirectStmt(x.Body)
+	case *ast.Return:
+		if x.Value != nil {
+			g.scanIndirectExpr(x.Value, false)
+		}
+	case *ast.Var:
+		g.scanIndirectExpr(x.Init, false)
+	case *ast.ExprStmt:
+		g.scanIndirectExpr(x.Expr, false)
+	}
+}
+
+// scanIndirectExpr walks an expression tree. inCalleePos is true when
+// the expression sits directly in `Call.Callee` — that single position
+// is where a top-level function name doesn't trigger the table.
+func (g *generator) scanIndirectExpr(e ast.Expr, inCalleePos bool) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if !inCalleePos {
+			if _, ok := g.funcIndex[x.Name]; ok {
+				g.needsFuncTable = true
+			}
+		}
+	case *ast.Binary:
+		g.scanIndirectExpr(x.Left, false)
+		g.scanIndirectExpr(x.Right, false)
+	case *ast.Unary:
+		g.scanIndirectExpr(x.Operand, false)
+	case *ast.Index:
+		g.scanIndirectExpr(x.Array, false)
+		g.scanIndirectExpr(x.Idx, false)
+	case *ast.ArrayLit:
+		for _, el := range x.Elems {
+			g.scanIndirectExpr(el, false)
+		}
+	case *ast.Assign:
+		g.scanIndirectExpr(x.Target, false)
+		g.scanIndirectExpr(x.Value, false)
+	case *ast.Call:
+		// Walk args first.
+		for _, a := range x.Args {
+			g.scanIndirectExpr(a, false)
+		}
+		// Then decide whether this is direct or indirect.
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			if _, isTopLevel := g.funcIndex[id.Name]; isTopLevel {
+				// direct call — callee Ident is in callee position
+				g.scanIndirectExpr(x.Callee, true)
+				return
+			}
+			// Local of function type → indirect call.
+			ft := g.localFuncType(g.current, id.Name)
+			if ft != nil {
+				g.needsFuncTable = true
+				g.recordSig(ft)
+			}
+			g.scanIndirectExpr(x.Callee, true)
+		} else {
+			g.scanIndirectExpr(x.Callee, false)
+		}
+	}
+}
+
+// localFuncType returns the function type of a local identifier
+// (parameter or `var`) in fn, or nil if the name doesn't resolve to a
+// function-typed local in that scope.
+func (g *generator) localFuncType(fn *ast.FuncDecl, name string) *ast.FuncType {
+	if fn != nil {
+		for _, p := range fn.Params {
+			if p.Name == name {
+				if ft, ok := p.Type.(*ast.FuncType); ok {
+					return ft
+				}
+				return nil
+			}
+		}
+	}
+	if vars, ok := g.info.Locals[fn]; ok {
+		for _, v := range vars {
+			if v.Name == name {
+				if ft, ok := v.Type.(*ast.FuncType); ok {
+					return ft
+				}
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+// recordSig assigns ft a stable index in indirectSigs, deduplicating
+// by structural signature key.
+func (g *generator) recordSig(ft *ast.FuncType) int {
+	key := sigKey(ft)
+	if idx, ok := g.sigIndex[key]; ok {
+		return idx
+	}
+	idx := len(g.indirectSigs)
+	g.sigIndex[key] = idx
+	g.indirectSigs = append(g.indirectSigs, ft)
+	return idx
+}
+
+func sigKey(ft *ast.FuncType) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	for i, p := range ft.Params {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(p.String())
+	}
+	b.WriteString(")->")
+	b.WriteString(ft.Result.String())
+	return b.String()
+}
+
+// watFuncType renders a *FuncType as the WAT `(func ...)` body used
+// in `(type $tN (func ...))` declarations.
+func watFuncType(ft *ast.FuncType) string {
+	var b strings.Builder
+	b.WriteString("(func")
+	for _, p := range ft.Params {
+		t, _ := watType(p)
+		b.WriteString(" (param ")
+		b.WriteString(t)
+		b.WriteByte(')')
+	}
+	if !ast.Equal(ft.Result, ast.VoidType{}) {
+		t, _ := watType(ft.Result)
+		b.WriteString(" (result ")
+		b.WriteString(t)
+		b.WriteByte(')')
+	}
+	b.WriteByte(')')
+	return b.String()
+}
+
 // scanForRuntimeUses pre-walks the program and sets needsRuntime if
 // any string literal, `print` call or `putchar` call appears.
 func (g *generator) scanForRuntimeUses(prog *ast.Program) {
@@ -707,6 +927,12 @@ func (g *generator) expr(e ast.Expr) error {
 		// the 4-byte length prefix).
 		g.linef("i32.const %d", g.internString(n.Value))
 	case *ast.Ident:
+		// Top-level function names taken as a value materialise as the
+		// function table index; they're called via call_indirect.
+		if idx, ok := g.funcIndex[n.Name]; ok && g.localFuncType(g.current, n.Name) == nil {
+			g.linef("i32.const %d", idx)
+			return nil
+		}
 		g.linef("local.get $%s", n.Name)
 	case *ast.Unary:
 		switch n.Op {
@@ -867,14 +1093,36 @@ func wasmBinaryOp(op string) (string, error) {
 func (g *generator) call(n *ast.Call) error {
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
-		return fmt.Errorf("wasm: indirect calls not supported in v1")
+		return fmt.Errorf("wasm: indirect call from non-identifier expression")
 	}
+	// Direct call: callee is either a top-level user function or a
+	// builtin (`print`/`putchar`) wired to a runtime helper, AND the
+	// name isn't shadowed by a function-typed local.
+	_, isTopLevel := g.funcIndex[id.Name]
+	_, isBuiltin := g.info.FuncSigs[id.Name]
+	if (isTopLevel || isBuiltin) && g.localFuncType(g.current, id.Name) == nil {
+		for _, a := range n.Args {
+			if err := g.expr(a); err != nil {
+				return err
+			}
+		}
+		g.linef("call $%s", id.Name)
+		return nil
+	}
+	// Indirect call through a function-typed local. The signature is
+	// known from the local's declared type.
+	ft := g.localFuncType(g.current, id.Name)
+	if ft == nil {
+		return fmt.Errorf("wasm: cannot resolve indirect callee %q", id.Name)
+	}
+	tIdx := g.recordSig(ft)
 	for _, a := range n.Args {
 		if err := g.expr(a); err != nil {
 			return err
 		}
 	}
-	g.linef("call $%s", id.Name)
+	g.linef("local.get $%s", id.Name) // pushes the table index
+	g.linef("call_indirect (type $t%d)", tIdx)
 	return nil
 }
 
@@ -917,6 +1165,9 @@ func watType(t ast.Type) (string, error) {
 		return "i32", nil
 	case ast.ArrayType:
 		// Arrays are pointers into linear memory.
+		return "i32", nil
+	case *ast.FuncType:
+		// Function values are table indices.
 		return "i32", nil
 	}
 	return "", fmt.Errorf("wasm: type %s isn't supported by this backend yet", t)

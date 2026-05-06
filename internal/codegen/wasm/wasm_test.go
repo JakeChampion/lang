@@ -131,6 +131,9 @@ func TestNoRuntimeWhenUnused(t *testing.T) {
 	if strings.Contains(wat, "$__lang_alloc") {
 		t.Errorf("bump allocator emitted unnecessarily:\n%s", wat)
 	}
+	if strings.Contains(wat, "(table") {
+		t.Errorf("function table emitted unnecessarily:\n%s", wat)
+	}
 }
 
 // Array literals lower to bump-allocator + per-element store, with a
@@ -142,7 +145,7 @@ func TestArrayLitEmitsAllocAndStores(t *testing.T) {
 	}`)
 	mustContain(t, wat, "(func $__lang_alloc")
 	mustContain(t, wat, "(local $__arr_0 i32)")
-	mustContain(t, wat, "i32.const 12")  // 3 * 4 bytes
+	mustContain(t, wat, "i32.const 12") // 3 * 4 bytes
 	mustContain(t, wat, "call $__lang_alloc")
 	mustContain(t, wat, "local.set $__arr_0")
 	// Indexing `a[1]` becomes load(a + 4)
@@ -160,4 +163,35 @@ func TestIndexAssignEmitsStore(t *testing.T) {
 		return a[0];
 	}`)
 	mustContain(t, wat, "i32.store")
+}
+
+// Function-typed parameters trigger a function table, type
+// declarations for the indirect callee's signature, and a
+// call_indirect at the call site.
+func TestIndirectCallEmitsTable(t *testing.T) {
+	wat := compileToWAT(t, `
+		function add(a: number, b: number): number { return a + b; }
+		function apply(f: (number, number) => number, a: number, b: number): number {
+			return f(a, b);
+		}
+		function main(): number { return apply(add, 40, 2); }`)
+	mustContain(t, wat, "(type $t0 (func (param i32) (param i32) (result i32)))")
+	mustContain(t, wat, "(table $fns 3 funcref)")
+	mustContain(t, wat, "(elem (i32.const 0) $add $apply $main)")
+	mustContain(t, wat, "call_indirect (type $t0)")
+	// `apply(add, ...)` pushes the i32 table index for `add` (= 0).
+	mustContain(t, wat, "i32.const 0")
+}
+
+// `var f = name` in source becomes an i32.const for the table index;
+// calling f goes through call_indirect.
+func TestFunctionValueLocal(t *testing.T) {
+	wat := compileToWAT(t, `
+		function add(a: number, b: number): number { return a + b; }
+		function main(): number {
+			var f = add;
+			return f(40, 2);
+		}`)
+	mustContain(t, wat, "(table $fns 2 funcref)")
+	mustContain(t, wat, "call_indirect (type $t0)")
 }
