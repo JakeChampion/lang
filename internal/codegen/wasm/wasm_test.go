@@ -277,3 +277,16 @@ func TestLenOfStringInlinesPrefixLoad(t *testing.T) {
 		t.Errorf("expected len to be inlined, got call $len in:\n%s", wat)
 	}
 }
+
+func TestStructLitAllocatesAndStores(t *testing.T) {
+	wat := compileToWAT(t, `struct P { x: number, y: number }
+		function main(): number {
+			var p: P = P { x: 1, y: 2 };
+			return p.x + p.y;
+		}`)
+	mustContain(t, wat, "(func $__lang_alloc")
+	mustContain(t, wat, "(local $__sl_0 i32)")
+	mustContain(t, wat, "i32.const 8") // 2 fields × 4 bytes
+	mustContain(t, wat, "i32.store")
+	mustContain(t, wat, "i32.load")
+}

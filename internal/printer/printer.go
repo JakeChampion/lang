@@ -14,10 +14,28 @@ import (
 // Print serialises prog as lang source.
 func Print(prog *ast.Program) string {
 	var b strings.Builder
+	for _, sd := range prog.Structs {
+		printStructDecl(&b, sd)
+	}
 	for _, fn := range prog.Funcs {
 		printFunc(&b, fn)
 	}
 	return b.String()
+}
+
+func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
+	b.WriteString("struct ")
+	b.WriteString(sd.Name)
+	b.WriteString(" { ")
+	for i, f := range sd.Fields {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(f.Name)
+		b.WriteString(": ")
+		b.WriteString(printType(f.Type))
+	}
+	b.WriteString(" }\n")
 }
 
 func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
@@ -254,6 +272,22 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteString(" : ")
 		printExpr(b, x.Else)
 		b.WriteByte(')')
+	case *ast.StructLit:
+		b.WriteString(x.TypeName)
+		b.WriteString(" { ")
+		for i, f := range x.Fields {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(f.Name)
+			b.WriteString(": ")
+			printExpr(b, f.Value)
+		}
+		b.WriteString(" }")
+	case *ast.FieldAccess:
+		printExpr(b, x.Target)
+		b.WriteByte('.')
+		b.WriteString(x.Field)
 	}
 }
 
@@ -287,6 +321,8 @@ func printType(t ast.Type) string {
 		return "string"
 	case ast.FloatType:
 		return "float"
+	case ast.StructType:
+		return x.Name
 	case ast.ArrayType:
 		return printType(x.Elem) + "[]"
 	case *ast.FuncType:

@@ -32,6 +32,15 @@ type Void struct{}
 type Array []Value
 type Func struct{ Decl *ast.FuncDecl }
 
+// Struct is a heap-allocated record. The map preserves nothing about
+// declaration order — formatting walks the StructDecl when available
+// (the interpreter doesn't currently have access, so String() is a
+// best-effort summary).
+type Struct struct {
+	TypeName string
+	Fields   map[string]Value
+}
+
 // Builtin is a host-provided function callable from interpreted code.
 // It receives evaluated arguments and may emit output via the
 // interpreter's stdout.
@@ -62,6 +71,23 @@ func (a Array) String() string {
 }
 func (f Func) String() string    { return "function " + f.Decl.Name }
 func (Builtin) String() string   { return "<builtin>" }
+func (s *Struct) String() string {
+	var b strings.Builder
+	b.WriteString(s.TypeName)
+	b.WriteString(" { ")
+	first := true
+	for k, v := range s.Fields {
+		if !first {
+			b.WriteString(", ")
+		}
+		first = false
+		b.WriteString(k)
+		b.WriteString(": ")
+		b.WriteString(v.String())
+	}
+	b.WriteString(" }")
+	return b.String()
+}
 
 // Interp owns global state: top-level user functions, host built-ins,
 // the persistent REPL environment, and the writer used for `print` /
@@ -471,6 +497,30 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			return i.evalExpr(x.Then, env)
 		}
 		return i.evalExpr(x.Else, env)
+	case *ast.StructLit:
+		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}}
+		for _, f := range x.Fields {
+			v, err := i.evalExpr(f.Value, env)
+			if err != nil {
+				return nil, err
+			}
+			s.Fields[f.Name] = v
+		}
+		return s, nil
+	case *ast.FieldAccess:
+		tv, err := i.evalExpr(x.Target, env)
+		if err != nil {
+			return nil, err
+		}
+		s, ok := tv.(*Struct)
+		if !ok {
+			return nil, fmt.Errorf("field access on non-struct %T", tv)
+		}
+		v, ok := s.Fields[x.Field]
+		if !ok {
+			return nil, fmt.Errorf("struct %s has no field %q", s.TypeName, x.Field)
+		}
+		return v, nil
 	}
 	return nil, fmt.Errorf("interp: unsupported expression %T", e)
 }
@@ -644,6 +694,17 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr))
 		}
 		arr[idx] = v
+		return v, nil
+	case *ast.FieldAccess:
+		tv, err := i.evalExpr(t.Target, env)
+		if err != nil {
+			return nil, err
+		}
+		s, ok := tv.(*Struct)
+		if !ok {
+			return nil, fmt.Errorf("field assignment on non-struct %T", tv)
+		}
+		s.Fields[t.Field] = v
 		return v, nil
 	}
 	return nil, fmt.Errorf("interp: invalid assignment target %T", a.Target)

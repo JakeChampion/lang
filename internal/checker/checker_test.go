@@ -238,6 +238,18 @@ func TestSwitchTypechecks(t *testing.T) {
 	}
 }
 
+func TestStructTypechecks(t *testing.T) {
+	src := `struct Point { x: number, y: number }
+		function main(): number {
+			var p: Point = Point { x: 1, y: 2 };
+			p.x = 10;
+			return p.x + p.y;
+		}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestSwitchRejectsTypeMismatchedCase(t *testing.T) {
 	src := `function f(n: number): number {
 		switch (n) { case true: return 1; default: return 0; }
@@ -307,5 +319,31 @@ func TestCompoundAssignTypechecks(t *testing.T) {
 	}`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("unexpected error %v", err)
+	}
+}
+
+func TestStructLitMissingField(t *testing.T) {
+	src := `struct P { x: number, y: number }
+		function f(): P { return P { x: 1 }; }`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error for missing field y")
+	}
+}
+
+func TestStructLitWrongFieldType(t *testing.T) {
+	src := `struct P { x: number }
+		function f(): P { return P { x: true }; }`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error for boolean as number field")
+	}
+}
+
+func TestUnknownStructType(t *testing.T) {
+	src := `function f(): number {
+		var p: NoSuchStruct = NoSuchStruct { x: 1 };
+		return p.x;
+	}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error for unknown struct type")
 	}
 }

@@ -115,6 +115,9 @@ func TestRoundtripStringEscapes(t *testing.T) {
 // two ASTs compare equal regardless of whitespace differences in the
 // pretty-printed output.
 func zeroPositions(prog *ast.Program) {
+	for _, sd := range prog.Structs {
+		sd.P = ast.Position{}
+	}
 	for _, fn := range prog.Funcs {
 		fn.P = ast.Position{}
 		zeroBlock(fn.Body)
@@ -230,6 +233,14 @@ func zeroExpr(e ast.Expr) {
 		zeroExpr(x.Cond)
 		zeroExpr(x.Then)
 		zeroExpr(x.Else)
+	case *ast.StructLit:
+		x.P = ast.Position{}
+		for _, f := range x.Fields {
+			zeroExpr(f.Value)
+		}
+	case *ast.FieldAccess:
+		x.P = ast.Position{}
+		zeroExpr(x.Target)
 	}
 }
 
@@ -252,4 +263,13 @@ func TestRoundtripCompoundAssign(t *testing.T) {
 	// The printer always emits the desugared `x = x + 1` form, which
 	// re-parses to the same AST.
 	roundTrip(t, `function f(): number { var x: number = 0; x += 1; return x; }`)
+}
+
+func TestRoundtripStruct(t *testing.T) {
+	roundTrip(t, `struct Point { x: number, y: number }
+		function main(): number {
+			var p: Point = Point { x: 1, y: 2 };
+			p.x = 10;
+			return p.x + p.y;
+		}`)
 }

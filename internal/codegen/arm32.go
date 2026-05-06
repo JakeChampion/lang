@@ -694,6 +694,15 @@ func containsCall(n any) bool {
 		return containsCall(x.Expr)
 	case *ast.NumberLit, *ast.BoolLit, *ast.StringLit, *ast.FloatLit, *ast.Ident:
 		return false
+	case *ast.StructLit:
+		for _, f := range x.Fields {
+			if containsCall(f.Value) {
+				return true
+			}
+		}
+		return false
+	case *ast.FieldAccess:
+		return containsCall(x.Target)
 	case *ast.ArrayLit:
 		for _, e := range x.Elems {
 			if containsCall(e) {
@@ -926,6 +935,10 @@ func (g *generator) expr(e ast.Expr) error {
 		g.emit("ldr r0, =%s", g.internString(n.Value))
 	case *ast.FloatLit:
 		return fmt.Errorf("codegen: float literals are not yet supported by the arm32 backend (use the wasm backend)")
+	case *ast.StructLit:
+		return fmt.Errorf("codegen: struct literals are not yet supported by the arm32 backend (use the wasm backend)")
+	case *ast.FieldAccess:
+		return fmt.Errorf("codegen: struct field access is not yet supported by the arm32 backend (use the wasm backend)")
 	case *ast.Ident:
 		// Local var (incl. shadowing) takes precedence over a pinned
 		// param so leaf-function bodies can still declare a `var x`

@@ -172,3 +172,16 @@ func TestInterpStringEquality(t *testing.T) {
 		t.Errorf("got %v, want true", got)
 	}
 }
+
+func TestInterpStructBasic(t *testing.T) {
+	src := `struct Point { x: number, y: number }
+		function main(): number {
+			var p: Point = Point { x: 3, y: 4 };
+			p.x = p.x + 1;
+			return p.x + p.y;
+		}`
+	v, _ := evalProgram(t, src)
+	if n, ok := v.(Number); !ok || n != 8 {
+		t.Errorf("got %v, want 8 (4+4)", v)
+	}
+}

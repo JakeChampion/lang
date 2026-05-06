@@ -32,6 +32,9 @@ type Info struct {
 	VarTypes map[*ast.Var]ast.Type
 	Locals   map[*ast.FuncDecl][]*ast.Var
 	FuncSigs map[string]*ast.FuncType
+	// Structs maps a struct name to its declaration (which carries the
+	// ordered field list — codegen looks up field offsets here).
+	Structs map[string]*ast.StructDecl
 }
 
 // Check type-checks the program. It returns an aggregated error if any
@@ -42,7 +45,26 @@ func Check(prog *ast.Program) (*Info, error) {
 			VarTypes: map[*ast.Var]ast.Type{},
 			Locals:   map[*ast.FuncDecl][]*ast.Var{},
 			FuncSigs: map[string]*ast.FuncType{},
+			Structs:  map[string]*ast.StructDecl{},
 		},
+	}
+
+	// Register every struct declaration up front so that types
+	// referenced by name (`function f(p: Point)`) resolve when we
+	// check function signatures below.
+	for _, sd := range prog.Structs {
+		if _, dup := c.info.Structs[sd.Name]; dup {
+			c.errf(sd.P, "struct %q redeclared", sd.Name)
+			continue
+		}
+		seen := map[string]bool{}
+		for _, f := range sd.Fields {
+			if seen[f.Name] {
+				c.errf(sd.P, "duplicate field %q in struct %s", f.Name, sd.Name)
+			}
+			seen[f.Name] = true
+		}
+		c.info.Structs[sd.Name] = sd
 	}
 
 	// Pre-declare built-ins so user code can call them.
@@ -461,6 +483,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) {
 			c.errf(n.P, "cannot assign %s to %s", rt, lt)
 		}
+		// Restrict assignment targets the same way `=` does for
+		// arrays: only Ident, Index and FieldAccess are addressable.
+		if _, ok := n.Target.(*ast.FieldAccess); !ok {
+			if _, ok := n.Target.(*ast.Ident); !ok {
+				if _, ok := n.Target.(*ast.Index); !ok {
+					// Already errored elsewhere when the parser built
+					// the Assign — nothing to add here.
+				}
+			}
+		}
 		return lt
 	case *ast.Ternary:
 		ct := c.checkExpr(n.Cond, s)
@@ -480,6 +512,60 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.IsFloat = true
 		}
 		return result
+	case *ast.StructLit:
+		sd, ok := c.info.Structs[n.TypeName]
+		if !ok {
+			c.errf(n.P, "unknown struct type %q", n.TypeName)
+			return nil
+		}
+		// Each declared field must be initialised exactly once and
+		// have the right type. Surplus / unknown fields are an error.
+		seen := map[string]bool{}
+		fieldT := map[string]ast.Type{}
+		for _, f := range sd.Fields {
+			fieldT[f.Name] = f.Type
+		}
+		for _, f := range n.Fields {
+			if _, ok := fieldT[f.Name]; !ok {
+				c.errf(n.P, "struct %s has no field %q", sd.Name, f.Name)
+				continue
+			}
+			if seen[f.Name] {
+				c.errf(n.P, "duplicate field %q in struct literal", f.Name)
+			}
+			seen[f.Name] = true
+			vt := c.checkExpr(f.Value, s)
+			if vt != nil && !ast.Equal(vt, fieldT[f.Name]) {
+				c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, fieldT[f.Name], vt)
+			}
+		}
+		for _, f := range sd.Fields {
+			if !seen[f.Name] {
+				c.errf(n.P, "struct literal missing field %q", f.Name)
+			}
+		}
+		return ast.StructType{Name: sd.Name}
+	case *ast.FieldAccess:
+		tt := c.checkExpr(n.Target, s)
+		st, ok := tt.(ast.StructType)
+		if !ok {
+			if tt != nil {
+				c.errf(n.P, "field access on non-struct value of type %s", tt)
+			}
+			return nil
+		}
+		sd := c.info.Structs[st.Name]
+		if sd == nil {
+			c.errf(n.P, "unknown struct type %q", st.Name)
+			return nil
+		}
+		for _, f := range sd.Fields {
+			if f.Name == n.Field {
+				return f.Type
+			}
+		}
+		c.errf(n.P, "struct %s has no field %q", st.Name, n.Field)
+		return nil
 	}
 	return nil
 }
