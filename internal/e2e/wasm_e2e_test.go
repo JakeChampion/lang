@@ -4,6 +4,7 @@
 package e2e
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +28,11 @@ func wasmtimePath(t *testing.T) string {
 	return ""
 }
 
-func runWasm(t *testing.T, src string) int {
+// invokeWasmtime runs `wasmtime run --invoke main` against src and
+// returns stdout / stderr separately. Splitting them is important
+// because wasmtime emits an `--invoke` warning on stderr that would
+// otherwise be interleaved with the program's own output.
+func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
 	t.Helper()
 	wt := wasmtimePath(t)
 
@@ -50,14 +55,23 @@ func runWasm(t *testing.T, src string) int {
 		t.Fatalf("write wat: %v", err)
 	}
 
+	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
+	var soBuf, seBuf bytes.Buffer
+	cmd.Stdout = &soBuf
+	cmd.Stderr = &seBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstdout:\n%s\nstderr:\n%s\n--- wat ---\n%s",
+			err, soBuf.String(), seBuf.String(), wat)
+	}
+	return soBuf.String(), seBuf.String()
+}
+
+func runWasm(t *testing.T, src string) int {
+	t.Helper()
+	stdout, _ := invokeWasmtime(t, src)
 	// `wasmtime run --invoke main` returns the function's i32 result on
 	// stdout, sometimes followed by a unit-line; parse the first int.
-	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("wasmtime: %v\n%s", err, out)
-	}
-	for _, ln := range strings.Split(string(out), "\n") {
+	for _, ln := range strings.Split(stdout, "\n") {
 		ln = strings.TrimSpace(ln)
 		if ln == "" {
 			continue
@@ -70,7 +84,7 @@ func runWasm(t *testing.T, src string) int {
 			return n
 		}
 	}
-	t.Fatalf("could not parse wasmtime output:\n%s", out)
+	t.Fatalf("could not parse wasmtime output:\n%s", stdout)
 	return 0
 }
 
@@ -107,45 +121,19 @@ func TestWASMForLoopWithBreakContinue(t *testing.T) {
 	}
 }
 
-// runWasmCapturingStdout invokes _start (or main) under wasmtime with
-// WASI enabled and returns whatever the program wrote to stdout.
+// runWasmCapturingStdout returns whatever the program wrote to stdout
+// via WASI fd_write, with the trailing wasmtime-emitted i32 result
+// line stripped so callers see only the program's own output.
 func runWasmCapturingStdout(t *testing.T, src string) string {
 	t.Helper()
-	wt := wasmtimePath(t)
-
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	wat, err := wasm.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-
-	dir := t.TempDir()
-	watPath := filepath.Join(dir, "prog.wat")
-	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("wasmtime: %v\n%s\n--- wat ---\n%s", err, out, wat)
-	}
-	// wasmtime prints the i32 result on its own line at the end; strip
-	// it so callers only see what the program actually wrote.
-	lines := strings.Split(string(out), "\n")
+	stdout, _ := invokeWasmtime(t, src)
+	lines := strings.Split(stdout, "\n")
 	for len(lines) > 0 {
 		last := strings.TrimSpace(lines[len(lines)-1])
 		if last == "" {
 			lines = lines[:len(lines)-1]
 			continue
 		}
-		// drop a trailing bare integer (the i32 result)
 		if _, err := strconv.Atoi(last); err == nil {
 			lines = lines[:len(lines)-1]
 			continue
