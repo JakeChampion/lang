@@ -429,25 +429,32 @@ func (g *generator) emitRuntimePreamble() {
 	g.line(`)`)
 
 	// print(s) — writes the string and a newline (matching the arm32
-	// puts-based lowering). Uses a 2-iovec call so the output is
-	// flushed in one go.
+	// puts-based lowering). We split this into TWO single-iovec
+	// fd_write calls because some wasmtime versions silently drop all
+	// but the first iovec when iovs_len > 1.
 	g.line(`(func $print (param $s i32)`)
 	g.indent++
-	// iovec[0].ptr = s
+	// First call: write the string. iovec[0] at offset 16 = (s, len).
 	g.line(`i32.const 16`)
 	g.line(`local.get $s`)
 	g.line(`i32.store`)
-	// iovec[0].len = memory[s - 4]   (length prefix)
 	g.line(`i32.const 20`)
 	g.line(`local.get $s`)
 	g.line(`i32.const 4`)
 	g.line(`i32.sub`)
 	g.line(`i32.load`)
 	g.line(`i32.store`)
-	// fd_write(1, 16, 2, 36)
+	g.line(`i32.const 1`)  // fd = stdout
+	g.line(`i32.const 16`) // iovs ptr
+	g.line(`i32.const 1`)  // iovs_len = 1
+	g.line(`i32.const 36`) // nwritten
+	g.line(`call $__wasi_fd_write`)
+	g.line(`drop`)
+	// Second call: write the newline. iovec at offset 24 is pre-init
+	// to (ptr=32, len=1) by a data segment; memory[32] is '\n'.
 	g.line(`i32.const 1`)
-	g.line(`i32.const 16`)
-	g.line(`i32.const 2`)
+	g.line(`i32.const 24`)
+	g.line(`i32.const 1`)
 	g.line(`i32.const 36`)
 	g.line(`call $__wasi_fd_write`)
 	g.line(`drop`)
