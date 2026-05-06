@@ -17,9 +17,19 @@ package optimizer
 
 import "github.com/jakechampion/lang/internal/ast"
 
-// Optimize folds constants and trims unreachable statements in every
-// function of prog. It mutates the AST in place.
+// Optimize folds constants, inlines small pure functions, and trims
+// unreachable statements in every function of prog. It mutates the
+// AST in place.
+//
+// The fold → inline → fold sequence is intentional: the first fold
+// turns argument expressions like `dbl(1 + 1)` into `dbl(2)` so they
+// pass the inliner's "args must be simple" check, and the second
+// fold simplifies the now-substituted body (e.g. `2 * 2` → `4`).
 func Optimize(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		fn.Body = foldBlock(fn.Body)
+	}
+	Inline(prog)
 	for _, fn := range prog.Funcs {
 		fn.Body = foldBlock(fn.Body)
 	}
