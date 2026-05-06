@@ -303,6 +303,12 @@ type Op struct {
 	// function-typed local being dispatched through. Codegen uses it
 	// to resolve the right `(type $tN)` clause in the WAT output.
 	Sig *ast.FuncType
+	// Pos points back at the source position the lowering pass was
+	// processing when this op was emitted. Backends use it to drive
+	// DWARF .loc / WASM debug-line info; the field is zero for ops
+	// the lowering pass synthesised without an obvious source span
+	// (e.g. trailing implicit returns).
+	Pos ast.Position
 }
 
 // Func is a single lowered function: parameter / local list, ops, and
@@ -412,6 +418,10 @@ type builder struct {
 	// depth M, `br (M - stored)` lands at the right scope.
 	breakStack []int32
 	contStack  []int32
+	// curPos is the source position of the AST node currently being
+	// lowered. emit() stamps it onto every op so backends can drive
+	// per-statement DWARF / .loc directives.
+	curPos ast.Position
 }
 
 func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
@@ -460,7 +470,12 @@ func needsImplicitReturn(ops []Op) bool {
 	return last != OpReturn && last != OpReturnVoid
 }
 
-func (b *builder) emit(op Op) { b.out.Ops = append(b.out.Ops, op) }
+func (b *builder) emit(op Op) {
+	if op.Pos == (ast.Position{}) {
+		op.Pos = b.curPos
+	}
+	b.out.Ops = append(b.out.Ops, op)
+}
 
 // openBlock / openLoop / openIf push a scope on the validation control
 // stack. closeScope balances them. elseBranch toggles the if-scope to
@@ -495,6 +510,7 @@ func (b *builder) brTo(target int32, cond bool) {
 }
 
 func (b *builder) stmt(s ast.Stmt) error {
+	b.curPos = s.Pos()
 	switch n := s.(type) {
 	case *ast.Block:
 		for _, ss := range n.Stmts {
@@ -663,6 +679,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 }
 
 func (b *builder) expr(e ast.Expr) error {
+	b.curPos = e.Pos()
 	switch n := e.(type) {
 	case *ast.NumberLit:
 		b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
