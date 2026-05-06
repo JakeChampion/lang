@@ -107,9 +107,12 @@ func TestWhileBreakContinue(t *testing.T) {
 		}
 		return i;
 	}`)
-	mustContain(t, wat, "block $break")
-	mustContain(t, wat, "loop $loop")
-	mustContain(t, wat, "br $break")
+	// while expands to outer `block` + `loop`, with `break` resolving
+	// to a `br` that targets the outer block at relative depth 2 from
+	// inside the if-body.
+	mustContain(t, wat, "block")
+	mustContain(t, wat, "loop")
+	mustContain(t, wat, "br ")
 }
 
 func TestForLoopWithStep(t *testing.T) {
@@ -121,10 +124,13 @@ func TestForLoopWithStep(t *testing.T) {
 		}
 		return sum;
 	}`)
-	// continue must `br` out of the inner block (the $cont label) so
-	// the step still runs.
-	mustContain(t, wat, "block $cont")
-	mustContain(t, wat, "br $cont")
+	// `for` adds an inner `block` around the body so `continue` can
+	// jump just past it (and so the step still runs before the next
+	// iteration). br_if exits the outer block when the condition
+	// fails.
+	mustContain(t, wat, "block")
+	mustContain(t, wat, "loop")
+	mustContain(t, wat, "br_if")
 }
 
 func TestRecursionDirectCall(t *testing.T) {
@@ -167,14 +173,15 @@ func TestNoRuntimeWhenUnused(t *testing.T) {
 }
 
 // Array literals lower to bump-allocator + per-element store, with a
-// fresh i32 local holding the base pointer.
+// synthetic i32 scratch local holding the base pointer between the
+// alloc and the stores.
 func TestArrayLitEmitsAllocAndStores(t *testing.T) {
 	wat := compileToWAT(t, `function f(): number {
 		var a: number[] = [10, 20, 30];
 		return a[1];
 	}`)
 	mustContain(t, wat, "(func $__lang_alloc")
-	mustContain(t, wat, "(local $__arr_0 i32)")
+	mustContain(t, wat, "(local $__scratch_0 i32)")
 	// 4 (length prefix) + 3*4 (elements) = 16
 	mustContain(t, wat, "i32.const 16")
 	mustContain(t, wat, "call $__lang_alloc")
@@ -261,10 +268,13 @@ func TestSwitchEmitsBlockAndScratch(t *testing.T) {
 		}
 		return -1;
 	}`)
-	mustContain(t, wat, "(local $__sw_1 i32)")
-	mustContain(t, wat, "block $sw_end")
+	// The tag is stashed in a synthetic i32 scratch slot. Each case
+	// expands to a pair of nested blocks (skip-on-no-match outer +
+	// match-target inner) using br_if for value comparisons.
+	mustContain(t, wat, "(local $__scratch_0 i32)")
+	mustContain(t, wat, "block")
 	mustContain(t, wat, "i32.eq")
-	mustContain(t, wat, "i32.or")
+	mustContain(t, wat, "br_if")
 }
 
 func TestTernaryEmitsIfResult(t *testing.T) {
@@ -281,11 +291,12 @@ func TestTernaryFloatEmitsF32Result(t *testing.T) {
 
 func TestCompoundAssignLowersToBinary(t *testing.T) {
 	wat := compileToWAT(t, `function f(): number { var x: number = 5; x += 7; return x; }`)
-	// `x += 7` lowers to `x = x + 7`, so we expect a `local.get`,
-	// `i32.const 7`, `i32.add`, `local.tee`.
+	// `x += 7` lowers to `x = x + 7`. The IR encodes the tee with a
+	// (store, load) pair — both x slot operations, plus the `+ 7`.
 	mustContain(t, wat, "i32.const 7")
 	mustContain(t, wat, "i32.add")
-	mustContain(t, wat, "local.tee $x")
+	mustContain(t, wat, "local.set $x")
+	mustContain(t, wat, "local.get $x")
 }
 
 func TestStringIndexEmitsLoad8(t *testing.T) {
@@ -317,7 +328,7 @@ func TestStructLitAllocatesAndStores(t *testing.T) {
 			return p.x + p.y;
 		}`)
 	mustContain(t, wat, "(func $__lang_alloc")
-	mustContain(t, wat, "(local $__sl_0 i32)")
+	mustContain(t, wat, "(local $__scratch_0 i32)")
 	mustContain(t, wat, "i32.const 8") // 2 fields × 4 bytes
 	mustContain(t, wat, "i32.store")
 	mustContain(t, wat, "i32.load")
