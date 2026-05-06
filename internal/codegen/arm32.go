@@ -260,6 +260,11 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 	g.line(fmt.Sprintf(".global %s", fn.Name))
 	g.line(fmt.Sprintf(".type %s, %%function", fn.Name))
 	g.label(fn.Name)
+	// CFI directives let gdb / addr2line / libunwind reconstruct the
+	// caller's frame from this function's stack. .cfi_startproc opens
+	// a Frame Description Entry; matching .cfi_endproc closes it just
+	// before .size, below.
+	g.emit(".cfi_startproc")
 
 	// Decide whether this function is a "leaf" — no user-level Call
 	// expressions in its body. AAPCS guarantees that callee-saved
@@ -315,10 +320,21 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 		}
 		regs = append(regs, "fp", "lr")
 		g.emit("push {%s}", strings.Join(regs, ", "))
+		// CFA moved by (P+2)*4. Each saved register sits at a fixed
+		// negative offset from CFA (r4 furthest down, lr nearest the
+		// top), matching the order push wrote them.
+		pushBytes := (len(fn.Params) + 2) * 4
+		g.emit(".cfi_def_cfa_offset %d", pushBytes)
+		for i := 0; i < len(fn.Params); i++ {
+			g.emit(".cfi_offset r%d, %d", 4+i, -pushBytes+i*4)
+		}
+		g.emit(".cfi_offset fp, -8")
+		g.emit(".cfi_offset lr, -4")
 		// fp should still point at the saved fp word, exactly as in
 		// the non-leaf prologue. After pushing P param-regs first,
 		// the saved fp lands at sp + 4*P.
 		g.emit("add fp, sp, #%d", 4*len(fn.Params))
+		g.emit(".cfi_def_cfa_register fp")
 		if g.frame.frameBytes > 0 {
 			g.emit("sub sp, sp, #%d", g.frame.frameBytes)
 		}
@@ -328,7 +344,11 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 		}
 	} else {
 		g.emit("push {fp, lr}")
+		g.emit(".cfi_def_cfa_offset 8")
+		g.emit(".cfi_offset fp, -8")
+		g.emit(".cfi_offset lr, -4")
 		g.emit("mov fp, sp")
+		g.emit(".cfi_def_cfa_register fp")
 		if g.frame.frameBytes > 0 {
 			g.emit("sub sp, sp, #%d", g.frame.frameBytes)
 		}
@@ -397,6 +417,7 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 		g.emit("pop {fp, lr}")
 	}
 	g.emit("bx lr")
+	g.emit(".cfi_endproc")
 	g.line(fmt.Sprintf(".size %s, .-%s", fn.Name, fn.Name))
 	return nil
 }
