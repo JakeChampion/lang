@@ -223,3 +223,38 @@ func TestContinueInSwitchOutsideLoopRejected(t *testing.T) {
 		t.Error("expected `continue outside of a loop`")
 	}
 }
+
+func TestTernaryTypechecks(t *testing.T) {
+	for _, src := range []string{
+		`function f(b: boolean): number { return b ? 1 : 2; }`,
+		`function f(b: boolean): float { return b ? 1.5 : 2.5; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
+func TestTernaryRejectsNonBoolCond(t *testing.T) {
+	if err := checkSource(t, `function f(): number { return 1 ? 2 : 3; }`); err == nil {
+		t.Error("expected error for non-bool cond")
+	}
+}
+
+func TestTernaryRejectsBranchTypeMismatch(t *testing.T) {
+	if err := checkSource(t, `function f(b: boolean): number { return b ? 1 : true; }`); err == nil {
+		t.Error("expected error for mismatched branches")
+	}
+}
+
+func TestCompoundAssignTypechecks(t *testing.T) {
+	src := `function f(): number {
+		var x: number = 0;
+		x += 1; x -= 1; x *= 2; x /= 2; x %= 3;
+		x &= 7; x |= 8; x ^= 1; x <<= 1; x >>= 1;
+		return x;
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error %v", err)
+	}
+}

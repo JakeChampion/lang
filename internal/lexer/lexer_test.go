@@ -138,3 +138,26 @@ func TestFloatKeyword(t *testing.T) {
 		t.Errorf("got %v, want Keyword %q", toks[0], "float")
 	}
 }
+
+func TestCompoundAssignTokens(t *testing.T) {
+	toks, err := Tokenize("+= -= *= /= %= &= |= ^= <<= >>=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="}
+	for i, w := range want {
+		if toks[i].Kind != Punct || toks[i].Text != w {
+			t.Errorf("tok[%d] = %v, want Punct %q", i, toks[i], w)
+		}
+	}
+}
+
+func TestQuestionMarkPunct(t *testing.T) {
+	toks, err := Tokenize("?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toks[0].Kind != Punct || toks[0].Text != "?" {
+		t.Errorf("got %v, want Punct %q", toks[0], "?")
+	}
+}

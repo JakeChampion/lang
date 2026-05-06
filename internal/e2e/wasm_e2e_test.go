@@ -293,3 +293,25 @@ func TestWASMSwitchBreakInLoop(t *testing.T) {
 		t.Errorf("got %d, want 8", got)
 	}
 }
+
+func TestWASMTernary(t *testing.T) {
+	src := `function abs(n: number): number { return n < 0 ? 0 - n : n; }
+		function main(): number { return abs(-7); }`
+	if got := runWasm(t, src); got != 7 {
+		t.Errorf("got %d, want 7", got)
+	}
+}
+
+func TestWASMCompoundAssign(t *testing.T) {
+	src := `function main(): number {
+		var x: number = 1;
+		x += 2;
+		x *= 5;
+		x -= 1;
+		return x;
+	}`
+	// (1 + 2) * 5 - 1 = 14
+	if got := runWasm(t, src); got != 14 {
+		t.Errorf("got %d, want 14", got)
+	}
+}

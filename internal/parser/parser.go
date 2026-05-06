@@ -576,8 +576,16 @@ func (p *parser) parseVar() (ast.Stmt, error) {
 
 func (p *parser) parseExpr() (ast.Expr, error) { return p.parseAssign() }
 
+// compoundOps maps a compound-assignment punctuator to its underlying
+// binary operator. `x += y` desugars into `x = x + y` at parse time so
+// the rest of the pipeline never has to know about compound forms.
+var compoundOps = map[string]string{
+	"+=": "+", "-=": "-", "*=": "*", "/=": "/", "%=": "%",
+	"&=": "&", "|=": "|", "^=": "^", "<<=": "<<", ">>=": ">>",
+}
+
 func (p *parser) parseAssign() (ast.Expr, error) {
-	left, err := p.parseLogicOr()
+	left, err := p.parseTernary()
 	if err != nil {
 		return nil, err
 	}
@@ -594,7 +602,50 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 		}
 		return &ast.Assign{P: eq.Pos, Target: left, Value: rhs}, nil
 	}
+	if t := p.peek(); t.Kind == lexer.Punct {
+		if op, ok := compoundOps[t.Text]; ok {
+			tok := p.advance()
+			rhs, err := p.parseAssign()
+			if err != nil {
+				return nil, err
+			}
+			switch left.(type) {
+			case *ast.Ident, *ast.Index:
+				// fine
+			default:
+				return nil, p.errorf(tok.Pos, "left-hand side of assignment is not assignable")
+			}
+			binary := &ast.Binary{P: tok.Pos, Op: op, Left: left, Right: rhs}
+			return &ast.Assign{P: tok.Pos, Target: left, Value: binary}, nil
+		}
+	}
 	return left, nil
+}
+
+// parseTernary handles `cond ? then : else`. It's right-associative
+// (so `a ? b : c ? d : e` parses as `a ? b : (c ? d : e)`), and sits
+// just above the logical operators in precedence.
+func (p *parser) parseTernary() (ast.Expr, error) {
+	cond, err := p.parseLogicOr()
+	if err != nil {
+		return nil, err
+	}
+	q, ok := p.accept(lexer.Punct, "?")
+	if !ok {
+		return cond, nil
+	}
+	then, err := p.parseAssign()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ":"); err != nil {
+		return nil, err
+	}
+	els, err := p.parseAssign()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Ternary{P: q.Pos, Cond: cond, Then: then, Else: els}, nil
 }
 
 func (p *parser) parseBinaryLeft(next func() (ast.Expr, error), ops ...string) (ast.Expr, error) {
