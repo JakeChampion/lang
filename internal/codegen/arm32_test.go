@@ -91,3 +91,8 @@ func TestFrameSizeAlignedTo8(t *testing.T) {
 	asm := compile(t, `function f(): number { var a = 1; var b = 2; var c = 3; return a + b + c; }`)
 	mustContain(t, asm, "sub sp, sp, #16")
 }
+
+func TestNonExecutableStackNote(t *testing.T) {
+	asm := compile(t, `function f(): number { return 0; }`)
+	mustContain(t, asm, `.section .note.GNU-stack,"",%progbits`)
+}
