@@ -55,6 +55,7 @@ var keywords = map[string]bool{
 	"if":       true,
 	"else":     true,
 	"while":    true,
+	"for":      true,
 	"return":   true,
 	"true":     true,
 	"false":    true,

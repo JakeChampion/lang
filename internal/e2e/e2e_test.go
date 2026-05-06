@@ -153,6 +153,21 @@ func TestPutcharOutput(t *testing.T) {
 	}
 }
 
+func TestForLoop(t *testing.T) {
+	src := `
+		function main(): number {
+			var sum: number = 0;
+			for (var i: number = 1; i <= 10; i = i + 1) {
+				sum = sum + i;
+			}
+			return sum;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 55 {
+		t.Errorf("exit = %d, want 55", code)
+	}
+}
+
 func TestArraySumAndMutation(t *testing.T) {
 	src := `
 		function main(): number {
