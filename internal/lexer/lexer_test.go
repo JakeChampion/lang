@@ -71,3 +71,36 @@ func TestUnknownChar(t *testing.T) {
 		t.Fatal("expected error on '@'")
 	}
 }
+
+func TestStringLiteralBasic(t *testing.T) {
+	toks, err := Tokenize(`"hello"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toks[0].Kind != String || toks[0].Text != "hello" {
+		t.Errorf("got %v, want String %q", toks[0], "hello")
+	}
+}
+
+func TestStringLiteralEscapes(t *testing.T) {
+	toks, err := Tokenize(`"a\t\nb\"c\\d"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "a\t\nb\"c\\d"
+	if toks[0].Text != want {
+		t.Errorf("got %q, want %q", toks[0].Text, want)
+	}
+}
+
+func TestStringLiteralUnterminated(t *testing.T) {
+	if _, err := Tokenize(`"oops`); err == nil {
+		t.Error("expected error on unterminated string")
+	}
+}
+
+func TestStringLiteralUnknownEscape(t *testing.T) {
+	if _, err := Tokenize(`"a\zb"`); err == nil {
+		t.Error("expected error on unknown escape")
+	}
+}

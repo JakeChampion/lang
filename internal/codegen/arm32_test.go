@@ -117,3 +117,29 @@ func TestNonExecutableStackNote(t *testing.T) {
 	asm := compile(t, `function f(): number { return 0; }`)
 	mustContain(t, asm, `.section .note.GNU-stack,"",%progbits`)
 }
+
+// String literals are interned in .rodata under unique labels and
+// loaded by address into r0.
+func TestStringLiteralEmitsRodata(t *testing.T) {
+	asm := compile(t, `function main(): void { print("hi"); }`)
+	mustContain(t, asm, ".section .rodata")
+	mustContain(t, asm, ".LStr_0:")
+	mustContain(t, asm, `.asciz "hi"`)
+	mustContain(t, asm, "ldr r0, =.LStr_0")
+}
+
+// `print(s)` lowers to a direct call to libc puts.
+func TestPrintLowersToPuts(t *testing.T) {
+	asm := compile(t, `function main(): void { print("hi"); }`)
+	mustContain(t, asm, "bl puts")
+}
+
+// Identical literals share a label; distinct ones don't.
+func TestStringInterningDeduplicates(t *testing.T) {
+	asm := compile(t, `function main(): void { print("a"); print("a"); print("b"); }`)
+	mustContain(t, asm, ".LStr_0:")
+	mustContain(t, asm, ".LStr_1:")
+	if strings.Contains(asm, ".LStr_2:") {
+		t.Errorf("third label should not exist (dedup), got:\n%s", asm)
+	}
+}

@@ -181,6 +181,32 @@ func TestSixArgFunction(t *testing.T) {
 	}
 }
 
+func TestStringPrint(t *testing.T) {
+	src := `function main(): number {
+		print("Hello, world!");
+		return 0;
+	}`
+	out, code := compileAndRun(t, src)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	// `print` lowers to puts, which appends a newline.
+	if out != "Hello, world!\n" {
+		t.Errorf("output = %q, want %q", out, "Hello, world!\n")
+	}
+}
+
+func TestStringEscapes(t *testing.T) {
+	src := `function main(): number {
+		print("tab:\there\nnext line");
+		return 0;
+	}`
+	out, _ := compileAndRun(t, src)
+	if out != "tab:\there\nnext line\n" {
+		t.Errorf("output = %q", out)
+	}
+}
+
 func TestArraySumAndMutation(t *testing.T) {
 	src := `
 		function main(): number {
