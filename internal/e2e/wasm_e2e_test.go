@@ -121,6 +121,27 @@ func TestWASMForLoopWithBreakContinue(t *testing.T) {
 	}
 }
 
+// In legacy mode (no closures), function values are bare table
+// indices. If the AST emitter ever pushed funcIndex (position in
+// prog.Funcs) instead of tableIndex (position in the funcref
+// table), call_indirect would either trap or dispatch to the wrong
+// function. This program declares two non-table functions before
+// `target` so funcIndex["target"] = 2 but tableIndex["target"] = 0;
+// dispatching through `apply(target, 4)` must hit `target` (which
+// returns 40), not trap or hit a different entry.
+func TestWASMFunctionValueOrderIndependent(t *testing.T) {
+	src := `function unrelated_a(x: number): number { return x + 1; }
+	function unrelated_b(x: number): number { return x + 2; }
+	function target(x: number): number { return x * 10; }
+	function apply(f: (number) => number, x: number): number {
+		return f(x);
+	}
+	function main(): number { return apply(target, 4); }`
+	if got := runWasm(t, src); got != 40 {
+		t.Errorf("got %d, want 40", got)
+	}
+}
+
 // runWasmCapturingStdout returns whatever the program wrote to stdout
 // via WASI fd_write, with the trailing wasmtime-emitted i32 result
 // line stripped so callers see only the program's own output.

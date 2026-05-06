@@ -2057,9 +2057,12 @@ func (g *generator) expr(e ast.Expr) error {
 				g.linef("i32.const %d", g.closuresBase+8*ti)
 			} else {
 				// Legacy path (no closures): function values are
-				// bare table indices. Without the inTable
-				// distinction the index lines up with funcIndex.
-				g.linef("i32.const %d", g.funcIndex[n.Name])
+				// bare table indices. The funcref table only holds
+				// the inTable subset of prog.Funcs, so tableIndex
+				// is what call_indirect dispatches on. The two only
+				// happen to agree when every declared function ends
+				// up in the table.
+				g.linef("i32.const %d", g.tableIndex[n.Name])
 			}
 			return nil
 		}

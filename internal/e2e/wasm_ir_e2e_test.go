@@ -194,6 +194,23 @@ func TestIRWASME2EHigherOrderApply(t *testing.T) {
 	}
 }
 
+// Mirrors TestWASMFunctionValueOrderIndependent: in legacy mode the
+// IR emitter must use tableIndex (not funcIndex) for OpConstFunc, so
+// call_indirect dispatches to the right table entry regardless of
+// where the value-referenced function is declared in source order.
+func TestIRWASME2EFunctionValueOrderIndependent(t *testing.T) {
+	src := `function unrelated_a(x: number): number { return x + 1; }
+	function unrelated_b(x: number): number { return x + 2; }
+	function target(x: number): number { return x * 10; }
+	function apply(f: (number) => number, x: number): number {
+		return f(x);
+	}
+	function main(): number { return apply(target, 4); }`
+	if got := runIRWasm(t, src); got != 40 {
+		t.Errorf("got %d, want 40", got)
+	}
+}
+
 func TestIRWASME2EStringConcat(t *testing.T) {
 	src := `function main(): number {
 		var s: string = "hello, " + "world";
