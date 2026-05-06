@@ -48,7 +48,7 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	// will become a hard error in future binutils.
 	g.line("")
 	g.line(`.section .note.GNU-stack,"",%progbits`)
-	return g.out.String(), nil
+	return peephole(g.out.String()), nil
 }
 
 type generator struct {
