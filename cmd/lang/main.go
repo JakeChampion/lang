@@ -91,7 +91,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs 
 		return 1, fmt.Errorf("unknown target %q (want arm32 or wasm)", target)
 	}
 
-	asm, err := codegen.Emit(prog, info)
+	asm, err := codegen.EmitWithOptions(prog, info, codegen.Options{SourceFile: srcPath})
 	if err != nil {
 		return 1, err
 	}
@@ -153,7 +153,9 @@ func link(asm, outPath, cc string) error {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		return err
 	}
-	cmd := exec.Command(cc, "-static", asmPath, "-o", outPath)
+	// `-g` keeps the .file/.loc directives we emit in the form of
+	// DWARF line-number tables, so gdb / addr2line work on the binary.
+	cmd := exec.Command(cc, "-static", "-g", asmPath, "-o", outPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		keep = true
 		return fmt.Errorf("%s failed: %w\n%s\n(temporary assembly retained at %s)", cc, err, out, asmPath)

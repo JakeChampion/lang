@@ -220,6 +220,40 @@ function f(n: number): number { return g(n); }`)
 	}
 }
 
+// EmitWithOptions(SourceFile: …) should declare the source file and
+// emit `.loc 1 <line> <col>` before each statement so `gcc -g` can
+// build a DWARF line-number table.
+func TestDwarfLocDirectives(t *testing.T) {
+	src := `function f(): number {
+	var x = 1;
+	return x;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asm, err := EmitWithOptions(prog, info, Options{SourceFile: "f.lang"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, asm, `.file 1 "f.lang"`)
+	mustContain(t, asm, ".loc 1 2") // var x = 1;
+	mustContain(t, asm, ".loc 1 3") // return x;
+}
+
+// Plain Emit (no Options) should not emit any debug directives — the
+// CI smoke output and existing tests must stay byte-identical.
+func TestNoDebugDirectivesByDefault(t *testing.T) {
+	asm := compile(t, `function f(): number { return 0; }`)
+	if strings.Contains(asm, ".file") || strings.Contains(asm, ".loc") {
+		t.Errorf("default Emit should not emit debug directives:\n%s", asm)
+	}
+}
+
 func TestStringInterningDeduplicates(t *testing.T) {
 	asm := compile(t, `function main(): void { print("a"); print("a"); print("b"); }`)
 	mustContain(t, asm, ".LStr_0:")
