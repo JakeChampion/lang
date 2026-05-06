@@ -68,8 +68,7 @@ const (
 	OpXor
 	OpShl
 	OpShrS
-	OpNeg // unary -
-	OpNot // logical !
+	OpNot // logical ! (i32.eqz)
 
 	OpEq
 	OpNe
@@ -201,8 +200,6 @@ func (k OpKind) String() string {
 		return "shl"
 	case OpShrS:
 		return "shr_s"
-	case OpNeg:
-		return "neg"
 	case OpNot:
 		return "not"
 	case OpEq:
@@ -694,17 +691,25 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	case *ast.Unary:
-		if err := b.expr(n.Operand); err != nil {
-			return err
-		}
 		switch n.Op {
 		case "-":
 			if n.IsFloat {
+				if err := b.expr(n.Operand); err != nil {
+					return err
+				}
 				b.emit(Op{Kind: OpFNeg})
-			} else {
-				b.emit(Op{Kind: OpNeg})
+				return nil
 			}
+			// WASM has no i32.neg; emit `0 - operand`.
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			if err := b.expr(n.Operand); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpSub})
 		case "!":
+			if err := b.expr(n.Operand); err != nil {
+				return err
+			}
 			b.emit(Op{Kind: OpNot})
 		default:
 			return fmt.Errorf("ir: unsupported unary %q", n.Op)
@@ -1063,6 +1068,23 @@ func (b *builder) call(n *ast.Call) error {
 	if !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
+	// `len(x)` on a string or array is inlined: both layouts carry a
+	// 4-byte little-endian length prefix at `ptr - 4`. The checker
+	// doesn't declare `len` as a function signature, so the call falls
+	// here ahead of the FuncSigs / locals path.
+	if id.Name == "len" && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			if _, isDeclared := b.info.FuncSigs[id.Name]; !isDeclared {
+				if err := b.expr(n.Args[0]); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpConstI32, I32: 4})
+				b.emit(Op{Kind: OpSub})
+				b.emit(Op{Kind: OpLoad})
+				return nil
+			}
+		}
+	}
 	for _, a := range n.Args {
 		if err := b.expr(a); err != nil {
 			return err
@@ -1133,11 +1155,68 @@ func (b *builder) assign(n *ast.Assign) error {
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 		return nil
+	case *ast.Index:
+		// `a[i] = v` lowers to a bounds-checked address compute via
+		// __arr_idx, then a regular i32.store. Doesn't leave a value
+		// on the stack — exprLeavesValue special-cases this shape so
+		// no drop is emitted by the surrounding ExprStmt.
+		if err := b.expr(t.Array); err != nil {
+			return err
+		}
+		if err := b.expr(t.Idx); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpCallDirect, Str: "__arr_idx", I32: 2})
+		if err := b.expr(n.Value); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStore})
+		return nil
+	case *ast.FieldAccess:
+		// `p.field = v` lowers to base + offset; value; store. Same
+		// no-result discipline as index assignment.
+		st := b.fieldOwner(t.Target)
+		sd, ok := b.info.Structs[st]
+		if !ok {
+			return fmt.Errorf("ir: field assignment on unresolved struct %q", st)
+		}
+		off := -1
+		for i, f := range sd.Fields {
+			if f.Name == t.Field {
+				off = i * 4
+				break
+			}
+		}
+		if off < 0 {
+			return fmt.Errorf("ir: struct %s has no field %q", st, t.Field)
+		}
+		if err := b.expr(t.Target); err != nil {
+			return err
+		}
+		if off > 0 {
+			b.emit(Op{Kind: OpConstI32, I32: int32(off)})
+			b.emit(Op{Kind: OpAdd})
+		}
+		if err := b.expr(n.Value); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStore})
+		return nil
 	}
 	return fmt.Errorf("ir: assignment target %T not yet lowered", n.Target)
 }
 
 func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
+	if a, ok := e.(*ast.Assign); ok {
+		// Ident assignment leaves the assigned value on the stack
+		// (tee semantics). Index and FieldAccess assignments don't —
+		// they store and finish, so no drop is needed afterwards.
+		switch a.Target.(type) {
+		case *ast.Ident:
+			return true
+		}
+		return false
+	}
 	if c, ok := e.(*ast.Call); ok {
 		if id, ok := c.Callee.(*ast.Ident); ok {
 			if sig, ok := info.FuncSigs[id.Name]; ok {
