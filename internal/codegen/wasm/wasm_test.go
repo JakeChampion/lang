@@ -105,17 +105,27 @@ func TestRecursionDirectCall(t *testing.T) {
 	mustContain(t, wat, "call $fact")
 }
 
-func TestStringsRejectedWithClearError(t *testing.T) {
-	prog, err := parser.Parse(`function main(): void { print("hi"); }`)
-	if err != nil {
-		t.Fatal(err)
+func TestStringsLowerToLinearMemory(t *testing.T) {
+	wat := compileToWAT(t, `function main(): void { print("hi"); }`)
+	mustContain(t, wat, `(import "wasi_snapshot_preview1" "fd_write"`)
+	mustContain(t, wat, "(memory $mem 1)")
+	mustContain(t, wat, `(func $print`)
+	mustContain(t, wat, `(func $putchar`)
+	mustContain(t, wat, "call $print")
+	// Length-prefixed string entry: 2 bytes "hi" so prefix is \02\00\00\00.
+	mustContain(t, wat, `\02\00\00\00hi`)
+	// Pointer to the chars (after the 4-byte prefix) starts at 64+4=68.
+	mustContain(t, wat, "i32.const 68")
+}
+
+// Programs that don't touch strings, print or putchar should stay free
+// of the WASI import and runtime helpers.
+func TestNoRuntimeWhenUnused(t *testing.T) {
+	wat := compileToWAT(t, `function main(): number { return 42; }`)
+	if strings.Contains(wat, "wasi_snapshot_preview1") {
+		t.Errorf("WASI import emitted unnecessarily:\n%s", wat)
 	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = Emit(prog, info)
-	if err == nil {
-		t.Fatal("expected error for unsupported feature")
+	if strings.Contains(wat, "(memory $mem") {
+		t.Errorf("memory emitted unnecessarily:\n%s", wat)
 	}
 }

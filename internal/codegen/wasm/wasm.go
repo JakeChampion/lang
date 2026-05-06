@@ -29,19 +29,47 @@ import (
 )
 
 // Emit returns the WAT module text for prog.
+//
+// Programs that use strings, `print` or `putchar` cause the emitter to
+// add a memory section, a WASI `fd_write` import and a small pair of
+// runtime helpers ($putchar / $print). Modules that don't touch any of
+// those features stay free of imports so they can be invoked under
+// minimal hosts.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
-	g := &generator{info: info}
+	g := &generator{
+		info:       info,
+		stringPool: map[string]int{},
+		// Static layout reserves bytes 0..63 for runtime constants
+		// (putchar buffer + iovecs + nwritten + newline byte). User
+		// strings start at offset 64.
+		stringOffset: 64,
+	}
+	g.scanForRuntimeUses(prog)
+
 	g.line("(module")
 	g.indent++
+
+	if g.needsRuntime {
+		g.emitRuntimePreamble()
+	}
+
 	for _, fn := range prog.Funcs {
 		if err := g.emitFunc(fn); err != nil {
 			return "", err
 		}
 	}
+
+	if g.needsRuntime {
+		g.emitDataSegments()
+	}
+
 	// Export every top-level function so the host can invoke any of
 	// them. `main` is the conventional entry point.
 	for _, fn := range prog.Funcs {
 		g.linef(`(export %q (func $%s))`, fn.Name, fn.Name)
+	}
+	if g.needsRuntime {
+		g.line(`(export "memory" (memory $mem))`)
 	}
 	g.indent--
 	g.line(")")
@@ -55,6 +83,17 @@ type generator struct {
 	loopLbl []loopLabels
 	labelN  int
 	current *ast.FuncDecl
+
+	// Runtime / strings.
+	needsRuntime bool
+	stringPool   map[string]int    // value → pointer in linear memory
+	stringEntries []stringEntry    // emission order (data segments)
+	stringOffset int               // next free byte for a string entry
+}
+
+type stringEntry struct {
+	offset int    // address of the 4-byte length prefix
+	text   string
 }
 
 type loopLabels struct {
@@ -242,7 +281,7 @@ func (g *generator) stmt(s ast.Stmt) error {
 		// Any value left on the stack by the expression has to be
 		// dropped — WAT validation requires a balanced stack at
 		// statement boundaries.
-		if leavesValue(n.Expr) {
+		if g.leavesValue(n.Expr) {
 			g.line("drop")
 		}
 	default:
@@ -251,21 +290,213 @@ func (g *generator) stmt(s ast.Stmt) error {
 	return nil
 }
 
-// leavesValue is a coarse heuristic: every expression we emit leaves
-// exactly one value on the stack except a void-returning Call.
-func leavesValue(e ast.Expr) bool {
+// leavesValue reports whether e leaves a value on the WASM stack so
+// the caller knows whether to emit `drop` after it. We use the
+// checker's per-function signatures to spot void-returning calls.
+func (g *generator) leavesValue(e ast.Expr) bool {
 	if c, ok := e.(*ast.Call); ok {
-		// We don't know the callee's signature here without a checker
-		// re-run; assume it leaves a value, then `drop` handles the
-		// rest. Void-returning calls on the WASM side simply don't
-		// push a value, so emitting `drop` would underflow — this is
-		// the one tricky case. For now, never drop after a call: the
-		// validator will reject if we got it wrong, and the user can
-		// drop manually with an unused expression statement.
-		_ = c
-		return false
+		if id, ok := c.Callee.(*ast.Ident); ok {
+			if sig, ok := g.info.FuncSigs[id.Name]; ok {
+				return !ast.Equal(sig.Result, ast.VoidType{})
+			}
+		}
+		return true
 	}
 	return true
+}
+
+// scanForRuntimeUses pre-walks the program and sets needsRuntime if
+// any string literal, `print` call or `putchar` call appears.
+func (g *generator) scanForRuntimeUses(prog *ast.Program) {
+	var walk func(any)
+	walk = func(n any) {
+		if g.needsRuntime {
+			return
+		}
+		switch x := n.(type) {
+		case *ast.StringLit:
+			g.needsRuntime = true
+		case *ast.Call:
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				if id.Name == "print" || id.Name == "putchar" {
+					g.needsRuntime = true
+					return
+				}
+			}
+			walk(x.Callee)
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		case *ast.Binary:
+			walk(x.Left)
+			walk(x.Right)
+		case *ast.Unary:
+			walk(x.Operand)
+		case *ast.Assign:
+			walk(x.Target)
+			walk(x.Value)
+		case *ast.Index:
+			walk(x.Array)
+			walk(x.Idx)
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		}
+	}
+	for _, fn := range prog.Funcs {
+		walk(fn.Body)
+	}
+}
+
+// internString assigns an address to s the first time we see it and
+// reuses it on repeats. The returned pointer skips the 4-byte length
+// prefix, so callers can do `i32.load (sub ptr 4)` to recover length.
+func (g *generator) internString(s string) int {
+	if ptr, ok := g.stringPool[s]; ok {
+		return ptr
+	}
+	g.needsRuntime = true
+	off := g.stringOffset
+	g.stringEntries = append(g.stringEntries, stringEntry{offset: off, text: s})
+	ptr := off + 4
+	g.stringPool[s] = ptr
+	g.stringOffset = off + 4 + len(s)
+	return ptr
+}
+
+// emitRuntimePreamble emits the WASI import, the linear memory, and
+// two helper functions ($putchar, $print). They share a small block
+// of static memory — see the data segments at the end of the module.
+//
+// Memory layout for the runtime constants (offsets in bytes):
+//
+//	 0..3   putchar i32 buffer (only the low byte is used)
+//	 4..11  putchar iovec  { ptr=0, len=1 }   pre-initialised
+//	12..15  putchar nwritten
+//	16..23  print iovec[0] { ptr=string, len=L }  set per call
+//	24..31  print iovec[1] { ptr=32, len=1 }      pre-initialised
+//	32      newline byte 0x0A                    pre-initialised
+//	36..39  print nwritten
+//	64+     string data, each entry: 4-byte length prefix then bytes
+func (g *generator) emitRuntimePreamble() {
+	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
+	g.line(`(memory $mem 1)`)
+
+	// putchar(n)
+	g.line(`(func $putchar (param $n i32)`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`local.get $n`)
+	g.line(`i32.store8`)
+	g.line(`i32.const 1`)  // fd = stdout
+	g.line(`i32.const 4`)  // iovs = &iovec at offset 4
+	g.line(`i32.const 1`)  // iovs_len = 1
+	g.line(`i32.const 12`) // nwritten = &offset 12
+	g.line(`call $__wasi_fd_write`)
+	g.line(`drop`)
+	g.indent--
+	g.line(`)`)
+
+	// print(s) — writes the string and a newline (matching the arm32
+	// puts-based lowering). Uses a 2-iovec call so the output is
+	// flushed in one go.
+	g.line(`(func $print (param $s i32)`)
+	g.indent++
+	// iovec[0].ptr = s
+	g.line(`i32.const 16`)
+	g.line(`local.get $s`)
+	g.line(`i32.store`)
+	// iovec[0].len = memory[s - 4]   (length prefix)
+	g.line(`i32.const 20`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	// fd_write(1, 16, 2, 36)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 16`)
+	g.line(`i32.const 2`)
+	g.line(`i32.const 36`)
+	g.line(`call $__wasi_fd_write`)
+	g.line(`drop`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitDataSegments writes the static-memory initialisers: the runtime
+// iovecs / newline byte plus every interned string with its 4-byte
+// little-endian length prefix.
+func (g *generator) emitDataSegments() {
+	// putchar iovec at 4: ptr=0, len=1
+	g.line(`(data (i32.const 4) "\00\00\00\00\01\00\00\00")`)
+	// print iovec[1] at 24: ptr=32 (=newline byte), len=1
+	g.line(`(data (i32.const 24) "\20\00\00\00\01\00\00\00")`)
+	// newline byte at 32
+	g.line(`(data (i32.const 32) "\0a")`)
+	// strings
+	for _, s := range g.stringEntries {
+		g.linef(`(data (i32.const %d) "%s%s")`, s.offset, encodeI32(len(s.text)), wasmEscape(s.text))
+	}
+}
+
+// encodeI32 returns a four-byte little-endian byte string in WAT data
+// escape form (e.g. 13 → `\0d\00\00\00`).
+func encodeI32(n int) string {
+	return fmt.Sprintf(`\%02x\%02x\%02x\%02x`,
+		byte(n), byte(n>>8), byte(n>>16), byte(n>>24))
+}
+
+// wasmEscape encodes the contents of a string literal for inclusion in
+// a WAT data segment: printable ASCII apart from `"` and `\` is kept
+// verbatim, everything else becomes `\xx`.
+func wasmEscape(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"':
+			b.WriteString(`\"`)
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c >= 0x20 && c <= 0x7e:
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, `\%02x`, c)
+		}
+	}
+	return b.String()
 }
 
 // ---------- expressions ----------
@@ -280,6 +511,11 @@ func (g *generator) expr(e ast.Expr) error {
 		} else {
 			g.line("i32.const 0")
 		}
+	case *ast.StringLit:
+		// String literals are interned in linear memory; the value
+		// pushed on the stack is the address of the first byte (after
+		// the 4-byte length prefix).
+		g.linef("i32.const %d", g.internString(n.Value))
 	case *ast.Ident:
 		g.linef("local.get $%s", n.Name)
 	case *ast.Unary:
@@ -429,7 +665,8 @@ func (g *generator) assign(n *ast.Assign) error {
 
 func watType(t ast.Type) (string, error) {
 	switch t.(type) {
-	case ast.NumberType, ast.BoolType:
+	case ast.NumberType, ast.BoolType, ast.StringType:
+		// Strings are pointers into linear memory, so they're i32 too.
 		return "i32", nil
 	}
 	return "", fmt.Errorf("wasm: type %s isn't supported by this backend yet", t)
