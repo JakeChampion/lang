@@ -191,3 +191,69 @@ func findFunc(p *Program, name string) *Func {
 	}
 	return nil
 }
+
+func TestLowerSwitch(t *testing.T) {
+	prog := lowerSource(t, `function f(n: number): number {
+		switch (n) {
+			case 1, 2: return 10;
+			case 3: return 30;
+			default: return 0;
+		}
+		return -1;
+	}`)
+	mustContainOp(t, prog, "f", OpStoreLocal) // tag stash
+	mustContainOp(t, prog, "f", OpEq)
+	mustContainOp(t, prog, "f", OpJumpIfFalse)
+}
+
+func TestLowerTernary(t *testing.T) {
+	prog := lowerSource(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
+	mustContainOp(t, prog, "f", OpJumpIfFalse)
+	// Ternary lowers to two const-loads followed by a join.
+	mustContainOp(t, prog, "f", OpConstI32)
+	mustContainOp(t, prog, "f", OpJump)
+	mustContainOp(t, prog, "f", OpLabel)
+}
+
+func TestLowerArrayLitAndIndex(t *testing.T) {
+	prog := lowerSource(t, `function f(): number {
+		var a: number[] = [10, 20, 30];
+		return a[1];
+	}`)
+	mustContainOp(t, prog, "f", OpAlloc)
+	mustContainOp(t, prog, "f", OpStore) // length prefix + element stores
+	// Indexing dispatches via __arr_idx then OpLoad.
+	mustContainOp(t, prog, "f", OpCallDirect)
+	mustContainOp(t, prog, "f", OpLoad)
+}
+
+func TestLowerStringIndex(t *testing.T) {
+	prog := lowerSource(t, `function f(): number {
+		var s: string = "abc";
+		return s[1];
+	}`)
+	mustContainOp(t, prog, "f", OpCallDirect) // __str_idx
+	mustContainOp(t, prog, "f", OpLoadByte)
+}
+
+func TestLowerStructLitAndFieldAccess(t *testing.T) {
+	prog := lowerSource(t, `struct P { x: number, y: number }
+		function main(): number {
+			var p: P = P { x: 10, y: 32 };
+			return p.x + p.y;
+		}`)
+	mustContainOp(t, prog, "main", OpAlloc)
+	mustContainOp(t, prog, "main", OpStore)
+	mustContainOp(t, prog, "main", OpLoad)
+}
+
+func TestLowerStringConcat(t *testing.T) {
+	prog := lowerSource(t, `function f(): string { return "a" + "b"; }`)
+	mustContainOp(t, prog, "f", OpStrConcat)
+}
+
+func TestLowerStringEquality(t *testing.T) {
+	prog := lowerSource(t, `function f(): boolean { return "a" == "b"; }`)
+	mustContainOp(t, prog, "f", OpStrEq)
+}
+
