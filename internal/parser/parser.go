@@ -204,6 +204,19 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	return &ast.FuncDecl{P: kw.Pos, Name: name.Text, Params: params, ReturnType: ret, Body: body}, nil
 }
 
+// parseLocalFunction parses a `function name(...) { ... }` appearing
+// inside another function's body. It produces the same FuncDecl as a
+// top-level function declaration, but marked IsLocal so the checker
+// runs capture analysis and the codegen pass closure-converts it.
+func (p *parser) parseLocalFunction() (ast.Stmt, error) {
+	fn, err := p.parseFunction()
+	if err != nil {
+		return nil, err
+	}
+	fn.IsLocal = true
+	return fn, nil
+}
+
 // parseStructDecl parses
 //
 //	struct Foo { x: number, y: number }
@@ -371,6 +384,8 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseVar()
 		case "switch":
 			return p.parseSwitch()
+		case "function":
+			return p.parseLocalFunction()
 		}
 	}
 	// expression statement

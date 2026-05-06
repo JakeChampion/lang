@@ -152,6 +152,28 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 			}
 		}
 		b.WriteByte('}')
+	case *ast.FuncDecl:
+		// Nested function declaration. Re-emits in the same shape
+		// the parser accepts: `function name(...): T { ... }` as a
+		// statement.
+		b.WriteString("function ")
+		b.WriteString(x.Name)
+		b.WriteByte('(')
+		for i, p := range x.Params {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(p.Name)
+			b.WriteString(": ")
+			b.WriteString(printType(p.Type))
+		}
+		b.WriteByte(')')
+		if x.ReturnType != nil {
+			b.WriteString(": ")
+			b.WriteString(printType(x.ReturnType))
+		}
+		b.WriteByte(' ')
+		printBlock(b, x.Body)
 	}
 }
 

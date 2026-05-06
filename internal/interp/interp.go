@@ -383,6 +383,8 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 			}
 		}
 		return result{flow: flowNormal}, nil
+	case *ast.FuncDecl:
+		return result{}, fmt.Errorf("interp: nested functions / closures are not yet supported in the tree-walking interpreter (compile and run via the wasm backend)")
 	}
 	return result{}, fmt.Errorf("interp: unsupported statement %T", s)
 }

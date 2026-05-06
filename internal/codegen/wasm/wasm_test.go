@@ -166,7 +166,9 @@ func TestIndexAssignEmitsStore(t *testing.T) {
 
 // Function-typed parameters trigger a function table, type
 // declarations for the indirect callee's signature, and a
-// call_indirect at the call site.
+// call_indirect at the call site. Only functions that are actually
+// referenced as values (`add`) end up in the table; non-value
+// callers (`apply`, `main`) stay out.
 func TestIndirectCallEmitsTable(t *testing.T) {
 	wat := compileToWAT(t, `
 		function add(a: number, b: number): number { return a + b; }
@@ -175,10 +177,10 @@ func TestIndirectCallEmitsTable(t *testing.T) {
 		}
 		function main(): number { return apply(add, 40, 2); }`)
 	mustContain(t, wat, "(type $t0 (func (param i32) (param i32) (result i32)))")
-	mustContain(t, wat, "(table $fns 3 funcref)")
-	mustContain(t, wat, "(elem (i32.const 0) $add $apply $main)")
+	mustContain(t, wat, "(table $fns 1 funcref)")
+	mustContain(t, wat, "(elem (i32.const 0) $add)")
 	mustContain(t, wat, "call_indirect (type $t0)")
-	// `apply(add, ...)` pushes the i32 table index for `add` (= 0).
+	// `apply(add, ...)` pushes add's table index (= 0).
 	mustContain(t, wat, "i32.const 0")
 }
 
@@ -191,7 +193,8 @@ func TestFunctionValueLocal(t *testing.T) {
 			var f = add;
 			return f(40, 2);
 		}`)
-	mustContain(t, wat, "(table $fns 2 funcref)")
+	// Only `add` is in the table — main isn't referenced as a value.
+	mustContain(t, wat, "(table $fns 1 funcref)")
 	mustContain(t, wat, "call_indirect (type $t0)")
 }
 
@@ -310,4 +313,25 @@ func TestStringIndexBoundsChecked(t *testing.T) {
 	wat := compileToWAT(t, `function f(): number { var s: string = "abc"; return s[0]; }`)
 	mustContain(t, wat, "$__str_idx")
 	mustContain(t, wat, "call $__str_idx")
+}
+
+func TestClosureHoistsAndCaptures(t *testing.T) {
+	wat := compileToWAT(t, `function makeAdder(n: number): (number) => number {
+		function add(x: number): number { return x + n; }
+		return add;
+	}
+	function main(): number {
+		var f = makeAdder(7);
+		return f(35);
+	}`)
+	// The inner function gets hoisted with a synthetic name and an
+	// __env parameter; closure cells live at offset 64.
+	mustContain(t, wat, "$__closure_add_")
+	mustContain(t, wat, "(param $__env i32)")
+	// MakeClosure allocates 8 bytes for the closure pair and stores
+	// the env pointer at +4.
+	mustContain(t, wat, "$__cl_scratch")
+	mustContain(t, wat, "$__env_scratch")
+	// Indirect call through the closure dispatches via call_indirect.
+	mustContain(t, wat, "call_indirect")
 }

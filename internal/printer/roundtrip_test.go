@@ -187,6 +187,9 @@ func zeroStmt(s ast.Stmt) {
 		if x.Default != nil {
 			zeroBlock(x.Default)
 		}
+	case *ast.FuncDecl:
+		x.P = ast.Position{}
+		zeroBlock(x.Body)
 	}
 }
 
@@ -272,4 +275,11 @@ func TestRoundtripStruct(t *testing.T) {
 			p.x = 10;
 			return p.x + p.y;
 		}`)
+}
+
+func TestRoundtripNestedFunction(t *testing.T) {
+	roundTrip(t, `function makeAdder(n: number): (number) => number {
+		function add(x: number): number { return x + n; }
+		return add;
+	}`)
 }
