@@ -9,9 +9,10 @@
 // itself: each Op pushes or pops 32-bit slots (the language's number,
 // boolean, string-pointer, array-pointer, struct-pointer and function-
 // table-index types are all i32 at the IR level; floats are still f32
-// where they appear). Control flow uses numeric labels rather than
-// nested blocks so that lowering of `for`/`while`/`break`/`continue`
-// produces a flat ops list that's easier to translate.
+// where they appear). Control flow is structured — `block`, `loop`,
+// `if/else/end` scopes nest, and `br`/`br_if` take a relative depth
+// rather than a label id — so emitting WAT or any structured target is
+// a direct walk of the op list.
 //
 // Coverage today:
 //   - The op set, IR Func and Program data types.
@@ -107,11 +108,25 @@ const (
 	OpStrEq     // (a-ptr, b-ptr)   → i32
 	OpStrConcat // (a-ptr, b-ptr)   → i32 (new ptr)
 
-	// Control flow. Labels are a sparse address space — the ops list
-	// also contains OpLabel entries that "place" a label at a position.
-	OpJump        // → unconditional jump to Label
-	OpJumpIfFalse // (i32) → branch to Label when zero
-	OpLabel       // declares a target
+	// Structured control flow. Block / loop / if open a new lexical
+	// scope on the validation-time control stack; OpEnd closes the
+	// innermost. Branches address scopes by relative depth (0 =
+	// innermost) so the op list is independent of any label-id
+	// numbering. WASM exit semantics:
+	//   - `block` is a forward-only target (br N exits scope N)
+	//   - `loop` is a backward-only target (br N restarts scope N)
+	//   - `if` runs its then-arm when the popped i32 is non-zero;
+	//     OpElse switches to the else-arm; OpEnd closes the if.
+	// Each of OpBlock / OpLoop / OpIf carries a BlockType immediate
+	// (BlockTypeVoid / BlockTypeI32 / BlockTypeF32) describing the
+	// value the scope leaves on the stack on normal fall-through.
+	OpBlock // (BlockType) → opens a forward block
+	OpLoop  // (BlockType) → opens a backward loop
+	OpIf    // (i32) (BlockType) → opens a conditional block
+	OpElse  // → switches the current if-scope to the else arm
+	OpEnd   // → closes the innermost scope
+	OpBr    // → unconditional branch to scope at relative depth I32
+	OpBrIf  // (i32) → branch to relative depth I32 when value is non-zero
 
 	// Calls.
 	OpCallDirect   // (args...)        → result | ()
@@ -130,6 +145,26 @@ const (
 	// pointer.
 	OpMakeClosure // (cap_0 ... cap_{n-1}) → i32 (closure ptr)
 )
+
+// BlockType describes the type a block / loop / if leaves on the stack
+// when control falls off its end normally. OpBlock, OpLoop, and OpIf
+// stash the block type in their Op.I32 field.
+const (
+	BlockTypeVoid int32 = 0
+	BlockTypeI32  int32 = 1
+	BlockTypeF32  int32 = 2
+)
+
+// blockTypeName returns a short mnemonic for use in formatted output.
+func blockTypeName(bt int32) string {
+	switch bt {
+	case BlockTypeI32:
+		return "i32"
+	case BlockTypeF32:
+		return "f32"
+	}
+	return "void"
+}
 
 // String returns a short mnemonic for the op kind.
 func (k OpKind) String() string {
@@ -222,12 +257,20 @@ func (k OpKind) String() string {
 		return "str.eq"
 	case OpStrConcat:
 		return "str.concat"
-	case OpJump:
-		return "jump"
-	case OpJumpIfFalse:
-		return "jump_if_false"
-	case OpLabel:
-		return "label"
+	case OpBlock:
+		return "block"
+	case OpLoop:
+		return "loop"
+	case OpIf:
+		return "if"
+	case OpElse:
+		return "else"
+	case OpEnd:
+		return "end"
+	case OpBr:
+		return "br"
+	case OpBrIf:
+		return "br_if"
 	case OpCallDirect:
 		return "call"
 	case OpCallIndirect:
@@ -249,9 +292,10 @@ func (k OpKind) String() string {
 type Op struct {
 	Kind OpKind
 	// I32 is the immediate for OpConstI32, the local index for
-	// OpLoadLocal/OpStoreLocal, the label id for OpJump/OpJumpIfFalse/
-	// OpLabel, the arg count for OpCallDirect/OpCallIndirect, and the
-	// table index for OpConstFunc.
+	// OpLoadLocal/OpStoreLocal, the BlockType for OpBlock/OpLoop/OpIf,
+	// the relative depth for OpBr/OpBrIf, the arg count for
+	// OpCallDirect/OpCallIndirect/OpMakeClosure, and the table index
+	// for OpConstFunc.
 	I32 int32
 	// F32 is the immediate for OpConstF32.
 	F32 float32
@@ -307,8 +351,10 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %q", op.Kind, op.Str)
 	case OpConstFunc:
 		return fmt.Sprintf("%s %s", op.Kind, op.Str)
-	case OpJump, OpJumpIfFalse, OpLabel:
-		return fmt.Sprintf("%s L%d", op.Kind, op.I32)
+	case OpBlock, OpLoop, OpIf:
+		return fmt.Sprintf("%s %s", op.Kind, blockTypeName(op.I32))
+	case OpBr, OpBrIf:
+		return fmt.Sprintf("%s %d", op.Kind, op.I32)
 	case OpCallDirect:
 		return fmt.Sprintf("%s %s argc=%d", op.Kind, op.Str, op.I32)
 	case OpCallIndirect:
@@ -346,15 +392,19 @@ func Lower(prog *ast.Program, info *checker.Info) (*Program, error) {
 
 // builder is the per-function lowering state.
 type builder struct {
-	info   *checker.Info
-	fn     *ast.FuncDecl
-	out    *Func
-	labels int32 // next label id
+	info *checker.Info
+	fn   *ast.FuncDecl
+	out  *Func
 	// locals maps parameter and var names to their 0-based slot index.
 	// Parameters are slots 0..len(params)-1; vars start at len(params).
 	locals map[string]int32
-	// breakStack and contStack track jump labels for nested loops /
-	// switches so `break` and `continue` resolve to the innermost.
+	// depth is the current control-stack depth (number of open
+	// block/loop/if scopes). Used to compute relative branch
+	// distances for break/continue.
+	depth int32
+	// breakStack and contStack track the depth-after-open of the
+	// scopes that `break` / `continue` should target. From a current
+	// depth M, `br (M - stored)` lands at the right scope.
 	breakStack []int32
 	contStack  []int32
 }
@@ -402,9 +452,36 @@ func needsImplicitReturn(ops []Op) bool {
 
 func (b *builder) emit(op Op) { b.out.Ops = append(b.out.Ops, op) }
 
-func (b *builder) freshLabel() int32 {
-	b.labels++
-	return b.labels
+// openBlock / openLoop / openIf push a scope on the validation control
+// stack. closeScope balances them. elseBranch toggles the if-scope to
+// its else arm without changing depth.
+func (b *builder) openBlock(bt int32) {
+	b.emit(Op{Kind: OpBlock, I32: bt})
+	b.depth++
+}
+func (b *builder) openLoop(bt int32) {
+	b.emit(Op{Kind: OpLoop, I32: bt})
+	b.depth++
+}
+func (b *builder) openIf(bt int32) {
+	b.emit(Op{Kind: OpIf, I32: bt})
+	b.depth++
+}
+func (b *builder) elseBranch()  { b.emit(Op{Kind: OpElse}) }
+func (b *builder) closeScope() {
+	b.emit(Op{Kind: OpEnd})
+	b.depth--
+}
+
+// brTo emits an `OpBr` (or `OpBrIf` if cond is true) whose relative
+// depth lands at the scope opened when depth-after-open was target.
+func (b *builder) brTo(target int32, cond bool) {
+	rel := b.depth - target
+	if cond {
+		b.emit(Op{Kind: OpBrIf, I32: rel})
+	} else {
+		b.emit(Op{Kind: OpBr, I32: rel})
+	}
 }
 
 func (b *builder) stmt(s ast.Stmt) error {
@@ -416,79 +493,90 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 	case *ast.If:
-		elseL := b.freshLabel()
-		endL := b.freshLabel()
 		if err := b.expr(n.Cond); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpJumpIfFalse, I32: elseL})
+		b.openIf(BlockTypeVoid)
 		if err := b.stmt(n.Then); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpJump, I32: endL})
-		b.emit(Op{Kind: OpLabel, I32: elseL})
 		if n.Else != nil {
+			b.elseBranch()
 			if err := b.stmt(n.Else); err != nil {
 				return err
 			}
 		}
-		b.emit(Op{Kind: OpLabel, I32: endL})
+		b.closeScope()
 	case *ast.While:
-		topL := b.freshLabel()
-		endL := b.freshLabel()
-		b.emit(Op{Kind: OpLabel, I32: topL})
+		// `block` carries break, `loop` carries continue. The body sits
+		// inside both: br 1 exits the outer block (break); br 0 jumps
+		// back to the loop top (continue / iteration).
+		b.openBlock(BlockTypeVoid)
+		breakD := b.depth
+		b.openLoop(BlockTypeVoid)
+		loopD := b.depth
 		if err := b.expr(n.Cond); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpJumpIfFalse, I32: endL})
-		b.breakStack = append(b.breakStack, endL)
-		b.contStack = append(b.contStack, topL)
+		b.emit(Op{Kind: OpNot}) // br_if exits when cond was false
+		b.brTo(breakD, true)
+		b.breakStack = append(b.breakStack, breakD)
+		b.contStack = append(b.contStack, loopD)
 		if err := b.stmt(n.Body); err != nil {
 			return err
 		}
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.contStack = b.contStack[:len(b.contStack)-1]
-		b.emit(Op{Kind: OpJump, I32: topL})
-		b.emit(Op{Kind: OpLabel, I32: endL})
+		b.brTo(loopD, false) // unconditional back-edge
+		b.closeScope()       // close loop
+		b.closeScope()       // close break-block
 	case *ast.For:
-		topL := b.freshLabel()
-		stepL := b.freshLabel()
-		endL := b.freshLabel()
+		// Three-part for: init runs once, then `block`/`loop` carry
+		// break/back-edge as in `while`, and an inner `block` (the
+		// continue target) wraps the body so `continue` lands *before*
+		// the step. Step + back-edge run after the inner block ends.
 		if n.Init != nil {
 			if err := b.stmt(n.Init); err != nil {
 				return err
 			}
 		}
-		b.emit(Op{Kind: OpLabel, I32: topL})
+		b.openBlock(BlockTypeVoid)
+		breakD := b.depth
+		b.openLoop(BlockTypeVoid)
+		loopD := b.depth
 		if err := b.expr(n.Cond); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpJumpIfFalse, I32: endL})
-		b.breakStack = append(b.breakStack, endL)
-		b.contStack = append(b.contStack, stepL)
+		b.emit(Op{Kind: OpNot})
+		b.brTo(breakD, true)
+		b.openBlock(BlockTypeVoid)
+		contD := b.depth
+		b.breakStack = append(b.breakStack, breakD)
+		b.contStack = append(b.contStack, contD)
 		if err := b.stmt(n.Body); err != nil {
 			return err
 		}
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.contStack = b.contStack[:len(b.contStack)-1]
-		b.emit(Op{Kind: OpLabel, I32: stepL})
+		b.closeScope() // close continue-block
 		if n.Step != nil {
 			if err := b.stmt(n.Step); err != nil {
 				return err
 			}
 		}
-		b.emit(Op{Kind: OpJump, I32: topL})
-		b.emit(Op{Kind: OpLabel, I32: endL})
+		b.brTo(loopD, false)
+		b.closeScope() // close loop
+		b.closeScope() // close break-block
 	case *ast.Break:
 		if len(b.breakStack) == 0 {
 			return fmt.Errorf("ir: break outside of a loop (compiler bug — should be checker-rejected)")
 		}
-		b.emit(Op{Kind: OpJump, I32: b.breakStack[len(b.breakStack)-1]})
+		b.brTo(b.breakStack[len(b.breakStack)-1], false)
 	case *ast.Continue:
 		if len(b.contStack) == 0 {
 			return fmt.Errorf("ir: continue outside of a loop (compiler bug — should be checker-rejected)")
 		}
-		b.emit(Op{Kind: OpJump, I32: b.contStack[len(b.contStack)-1]})
+		b.brTo(b.contStack[len(b.contStack)-1], false)
 	case *ast.Return:
 		if n.Value == nil {
 			b.emit(Op{Kind: OpReturnVoid})
@@ -517,44 +605,39 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpDrop})
 		}
 	case *ast.Switch:
-		// Lower switch as a chain of compare-and-jump pairs over the
-		// tag value. The tag is evaluated once and stashed in a fresh
-		// local slot we conjure via the locals map under a unique
-		// name. Each case stores its body inline; falling off a body
-		// jumps to the end label (no fallthrough).
-		endL := b.freshLabel()
+		// Lower switch with one outer block (break target / fallthrough
+		// to default) and two nested blocks per case: the inner one is
+		// the on-match jump target, the outer skips the body when no
+		// value matched. Falling off any case body branches to the end
+		// of the switch — no implicit fall-through.
 		tagSlot := int32(len(b.locals))
-		b.locals[fmt.Sprintf("__sw_%d", endL)] = tagSlot
+		b.locals[fmt.Sprintf("__sw_%d", tagSlot)] = tagSlot
 		if err := b.expr(n.Tag); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
-		// Use endL as the synthetic break target; switches don't
-		// affect `continue` so we don't push to contStack here.
-		b.breakStack = append(b.breakStack, endL)
+		b.openBlock(BlockTypeVoid)
+		switchEndD := b.depth
+		b.breakStack = append(b.breakStack, switchEndD)
 		for _, k := range n.Cases {
-			bodyL := b.freshLabel()
-			nextL := b.freshLabel()
+			b.openBlock(BlockTypeVoid)
+			outerCaseD := b.depth
+			b.openBlock(BlockTypeVoid)
 			for _, v := range k.Values {
 				b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
 				if err := b.expr(v); err != nil {
 					return err
 				}
 				b.emit(Op{Kind: OpEq})
-				// JumpIfFalse skips to the next compare; truthy
-				// falls through to the body.
-				skipL := b.freshLabel()
-				b.emit(Op{Kind: OpJumpIfFalse, I32: skipL})
-				b.emit(Op{Kind: OpJump, I32: bodyL})
-				b.emit(Op{Kind: OpLabel, I32: skipL})
+				b.brTo(b.depth, true) // br 0: exit inner = match path
 			}
-			b.emit(Op{Kind: OpJump, I32: nextL})
-			b.emit(Op{Kind: OpLabel, I32: bodyL})
+			b.brTo(outerCaseD, false) // exit outer block: skip body
+			b.closeScope()            // end of inner block (matched path lands here)
 			if err := b.stmt(k.Body); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpJump, I32: endL})
-			b.emit(Op{Kind: OpLabel, I32: nextL})
+			b.brTo(switchEndD, false) // jump past the rest of the cases
+			b.closeScope()            // end of outer per-case block
 		}
 		if n.Default != nil {
 			if err := b.stmt(n.Default); err != nil {
@@ -562,7 +645,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
-		b.emit(Op{Kind: OpLabel, I32: endL})
+		b.closeScope() // end of switch
 	default:
 		return fmt.Errorf("ir: unsupported statement %T", s)
 	}
@@ -620,23 +703,25 @@ func (b *builder) expr(e ast.Expr) error {
 	case *ast.Assign:
 		return b.assign(n)
 	case *ast.Ternary:
-		// Lower as `if cond { then } else { else }` with the result
-		// left on the stack at the end label.
-		falseL := b.freshLabel()
-		endL := b.freshLabel()
+		// `cond ? a : b` lowers to a typed `if/else` whose arms each
+		// push the result. The block-type tells consumers whether the
+		// produced value is i32 or f32.
+		bt := BlockTypeI32
+		if n.IsFloat {
+			bt = BlockTypeF32
+		}
 		if err := b.expr(n.Cond); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpJumpIfFalse, I32: falseL})
+		b.openIf(bt)
 		if err := b.expr(n.Then); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpJump, I32: endL})
-		b.emit(Op{Kind: OpLabel, I32: falseL})
+		b.elseBranch()
 		if err := b.expr(n.Else); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpLabel, I32: endL})
+		b.closeScope()
 	case *ast.Index:
 		// `s[i]` and `a[i]` lower the same way at the IR level: push
 		// base, push index, call into the bounds-checking helper
@@ -831,39 +916,32 @@ func (b *builder) binary(n *ast.Binary) error {
 	// lower them as small if/else chains over the IR.
 	switch n.Op {
 	case "&&":
-		falseL := b.freshLabel()
-		endL := b.freshLabel()
+		// `a && b` → `if a then b else 0`. The branch pushes b only
+		// when a is truthy, else a normalised 0.
 		if err := b.expr(n.Left); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpJumpIfFalse, I32: falseL})
+		b.openIf(BlockTypeI32)
 		if err := b.expr(n.Right); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpJump, I32: endL})
-		b.emit(Op{Kind: OpLabel, I32: falseL})
+		b.elseBranch()
 		b.emit(Op{Kind: OpConstI32, I32: 0})
-		b.emit(Op{Kind: OpLabel, I32: endL})
+		b.closeScope()
 		return nil
 	case "||":
-		trueL := b.freshLabel()
-		falseL := b.freshLabel()
-		endL := b.freshLabel()
+		// `a || b` → `if a then 1 else b`. The truthy branch
+		// normalises a to 1 the way the AST emitter does.
 		if err := b.expr(n.Left); err != nil {
 			return err
 		}
-		// JumpIfFalse falsey-path; otherwise the value is already truthy
-		// but we want a normalised 1.
-		b.emit(Op{Kind: OpJumpIfFalse, I32: falseL})
-		b.emit(Op{Kind: OpJump, I32: trueL})
-		b.emit(Op{Kind: OpLabel, I32: falseL})
+		b.openIf(BlockTypeI32)
+		b.emit(Op{Kind: OpConstI32, I32: 1})
+		b.elseBranch()
 		if err := b.expr(n.Right); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpJump, I32: endL})
-		b.emit(Op{Kind: OpLabel, I32: trueL})
-		b.emit(Op{Kind: OpConstI32, I32: 1})
-		b.emit(Op{Kind: OpLabel, I32: endL})
+		b.closeScope()
 		return nil
 	}
 	if err := b.expr(n.Left); err != nil {

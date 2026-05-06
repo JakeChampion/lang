@@ -80,8 +80,9 @@ func TestLowerIfElse(t *testing.T) {
 	p := lowerSource(t, `function f(n: number): number {
 		if (n == 0) { return 1; } else { return 2; }
 	}`)
-	mustContainOp(t, p, "f", OpJumpIfFalse)
-	mustContainOp(t, p, "f", OpLabel)
+	mustContainOp(t, p, "f", OpIf)
+	mustContainOp(t, p, "f", OpElse)
+	mustContainOp(t, p, "f", OpEnd)
 	mustContainOp(t, p, "f", OpEq)
 }
 
@@ -94,9 +95,13 @@ func TestLowerWhileBreakContinue(t *testing.T) {
 		}
 		return i;
 	}`)
-	// `break` becomes an OpJump to the while's end label.
-	mustContainOp(t, p, "f", OpJump)
-	mustContainOp(t, p, "f", OpJumpIfFalse)
+	// while expands to: outer block + loop, with br_if exiting the
+	// block on the inverted condition; `break` becomes an OpBr that
+	// targets the outer block at relative depth 1.
+	mustContainOp(t, p, "f", OpBlock)
+	mustContainOp(t, p, "f", OpLoop)
+	mustContainOp(t, p, "f", OpBrIf)
+	mustContainOp(t, p, "f", OpBr)
 }
 
 func TestLowerForLoopWithStep(t *testing.T) {
@@ -107,8 +112,13 @@ func TestLowerForLoopWithStep(t *testing.T) {
 		}
 		return sum;
 	}`)
-	mustContainOp(t, p, "f", OpJump)
-	mustContainOp(t, p, "f", OpLabel)
+	// for expands to: outer block (break) + loop + inner block
+	// (continue) wrapping the body, then step + back-edge.
+	mustContainOp(t, p, "f", OpBlock)
+	mustContainOp(t, p, "f", OpLoop)
+	mustContainOp(t, p, "f", OpBrIf) // condition exit
+	mustContainOp(t, p, "f", OpBr)   // back-edge
+	mustContainOp(t, p, "f", OpEnd)
 }
 
 func TestLowerDirectCall(t *testing.T) {
@@ -151,11 +161,13 @@ func TestLowerIndirectCall(t *testing.T) {
 
 func TestLowerShortCircuitAnd(t *testing.T) {
 	p := lowerSource(t, `function f(a: boolean, b: boolean): boolean { return a && b; }`)
-	// `a && b` lowers to a JumpIfFalse + a fall-through evaluating b.
-	got := strings.Count(p.String(), "jump_if_false")
-	if got < 1 {
-		t.Errorf("expected at least one jump_if_false in:\n%s", p)
+	// `a && b` lowers to a typed if/else: when a is truthy the body
+	// pushes b, otherwise it pushes a normalised 0. Both arms thread
+	// an i32 result.
+	if !strings.Contains(p.String(), "if i32") {
+		t.Errorf("expected `if i32` in lowered output:\n%s", p)
 	}
+	mustContainOp(t, p, "f", OpElse)
 }
 
 func TestLowerFloatArithmetic(t *testing.T) {
@@ -203,16 +215,19 @@ func TestLowerSwitch(t *testing.T) {
 	}`)
 	mustContainOp(t, prog, "f", OpStoreLocal) // tag stash
 	mustContainOp(t, prog, "f", OpEq)
-	mustContainOp(t, prog, "f", OpJumpIfFalse)
+	// Each value compares with br_if 0 to the inner block; no-match
+	// falls through to a br to the outer per-case block.
+	mustContainOp(t, prog, "f", OpBrIf)
+	mustContainOp(t, prog, "f", OpBr)
 }
 
 func TestLowerTernary(t *testing.T) {
 	prog := lowerSource(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
-	mustContainOp(t, prog, "f", OpJumpIfFalse)
-	// Ternary lowers to two const-loads followed by a join.
+	// Ternary lowers to a typed `if i32 ... else ... end`.
+	mustContainOp(t, prog, "f", OpIf)
+	mustContainOp(t, prog, "f", OpElse)
+	mustContainOp(t, prog, "f", OpEnd)
 	mustContainOp(t, prog, "f", OpConstI32)
-	mustContainOp(t, prog, "f", OpJump)
-	mustContainOp(t, prog, "f", OpLabel)
 }
 
 func TestLowerArrayLitAndIndex(t *testing.T) {
@@ -322,6 +337,51 @@ func TestLowerCaptureRefIsEnvRelativeLoad(t *testing.T) {
 	}
 	if !hasEnvLoad {
 		t.Errorf("hoisted body never loads the __env slot %d:\n%s", envSlot, prog)
+	}
+}
+
+// Every function's op list must be a balanced sequence of structured
+// scopes: each Block/Loop/If is matched by an End, and the depth is
+// 0 at function entry and exit. This is the precondition any
+// structured-control-flow target (WAT, etc.) relies on.
+func TestStructuredControlFlowIsBalanced(t *testing.T) {
+	prog := lowerSource(t, `function f(n: number): number {
+		var sum: number = 0;
+		for (var i: number = 0; i < n; i = i + 1) {
+			if (i == 5) { break; }
+			if (i == 7) { continue; }
+			switch (i) {
+				case 1, 2: sum = sum + 10;
+				case 3: sum = sum + 30;
+				default: sum = sum + 1;
+			}
+		}
+		while (sum > 100) {
+			sum = sum - 1;
+		}
+		return sum > 0 ? sum : 0;
+	}`)
+	for _, fn := range prog.Funcs {
+		depth := 0
+		for i, op := range fn.Ops {
+			switch op.Kind {
+			case OpBlock, OpLoop, OpIf:
+				depth++
+			case OpEnd:
+				depth--
+				if depth < 0 {
+					t.Fatalf("%s: op %d (%s): depth went negative", fn.Name, i, op.Kind)
+				}
+			case OpBr, OpBrIf:
+				if op.I32 < 0 || op.I32 > int32(depth-1) {
+					t.Errorf("%s: op %d (%s %d): branch depth out of range (depth=%d)",
+						fn.Name, i, op.Kind, op.I32, depth)
+				}
+			}
+		}
+		if depth != 0 {
+			t.Errorf("%s: ended at depth %d, want 0", fn.Name, depth)
+		}
 	}
 }
 
