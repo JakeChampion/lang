@@ -460,3 +460,47 @@ func TestWASMInBoundsStillWorks(t *testing.T) {
 		t.Errorf("got %d, want 20", got)
 	}
 }
+
+func TestWASMClosureFactory(t *testing.T) {
+	src := `function makeAdder(n: number): (number) => number {
+		function add(x: number): number { return x + n; }
+		return add;
+	}
+	function main(): number {
+		var f = makeAdder(7);
+		return f(35);
+	}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMClosureMultipleInstances(t *testing.T) {
+	// Two closures over different captured values shouldn't share state.
+	src := `function makeAdder(n: number): (number) => number {
+		function add(x: number): number { return x + n; }
+		return add;
+	}
+	function main(): number {
+		var add5 = makeAdder(5);
+		var add10 = makeAdder(10);
+		return add5(1) + add10(1);
+	}`
+	// (5+1) + (10+1) = 17
+	if got := runWasm(t, src); got != 17 {
+		t.Errorf("got %d, want 17", got)
+	}
+}
+
+func TestWASMClosureCapturesParamAndVar(t *testing.T) {
+	src := `function outer(seed: number): number {
+		var bonus: number = 100;
+		function inner(x: number): number { return x + seed + bonus; }
+		return inner(2);
+	}
+	function main(): number { return outer(40); }`
+	// 2 + 40 + 100 = 142
+	if got := runWasm(t, src); got != 142 {
+		t.Errorf("got %d, want 142", got)
+	}
+}

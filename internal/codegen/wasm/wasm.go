@@ -26,6 +26,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/closureconv"
 )
 
 // Emit returns the WAT module text for prog.
@@ -38,19 +39,40 @@ import (
 // free of the extra structure so they can be loaded under minimal
 // hosts.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
+	// Closure-convert in place so the rest of this function sees a
+	// flat program of top-level functions only. Local FuncDecl
+	// statements have been replaced with `var name = MakeClosure{...}`
+	// and capture references with CaptureRef nodes.
+	origTopLevelCount := len(prog.Funcs)
+	if err := closureconv.Convert(prog, info); err != nil {
+		return "", err
+	}
 	g := &generator{
-		info:       info,
+		info:              info,
+		origTopLevelCount: origTopLevelCount,
 		stringPool: map[string]int{},
-		// Static layout reserves bytes 0..63 for runtime constants
-		// (putchar buffer + iovecs + nwritten + newline byte). User
-		// strings start at offset 64.
-		stringOffset: 64,
-		funcIndex:    map[string]int{},
-		sigIndex:     map[string]int{},
+		funcIndex:  map[string]int{},
+		sigIndex:   map[string]int{},
+		inTable:    map[string]bool{},
 	}
 	for i, fn := range prog.Funcs {
 		g.funcIndex[fn.Name] = i
+		// Hoisted closure functions always live in the table —
+		// we only ever call them indirectly. Original top-level
+		// functions are added later if a value-position reference
+		// to one is found by scanForIndirectCalls.
+		if i >= origTopLevelCount {
+			g.inTable[fn.Name] = true
+		}
 	}
+	// Static layout reserves bytes 0..63 for runtime constants
+	// (putchar buffer + iovecs + nwritten + newline byte). User
+	// strings normally start at offset 64; when closures are in use
+	// the next 8*N bytes hold one pre-initialised closure cell per
+	// top-level function (so `var f = name` resolves to a stable
+	// closure pointer) and strings start past that.
+	g.closuresBase = 64
+	g.stringOffset = 64
 	g.scanForRuntimeUses(prog)
 	g.scanForArrayUses(prog)
 	g.scanForStructUses(prog)
@@ -58,6 +80,34 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	g.scanForStringEq(prog)
 	g.scanForStringConcat(prog)
 	g.scanForBoundsCheck(prog)
+	// Closure conversion may have appended hoisted functions; their
+	// presence is what flips on the closure ABI for the whole module.
+	// Programs without nested functions keep the legacy bare-index
+	// representation for function values, since rewriting all of
+	// them onto closure cells just to support a feature they don't
+	// use is a needless cost.
+	if len(prog.Funcs) > g.origTopLevelCount {
+		g.needsClosures = true
+		g.needsFuncTable = true
+		g.needsRuntime = true
+		g.needsArrays = true
+	}
+	// Build the table-resident set in source-declaration order: any
+	// top-level function the value-reference scan flagged, then all
+	// hoisted closure entries. Their indices in the funcref table
+	// drive both call_indirect and the closure cells.
+	g.tableIndex = map[string]int{}
+	for _, fn := range prog.Funcs {
+		if g.inTable[fn.Name] {
+			g.tableIndex[fn.Name] = len(g.tableEntries)
+			g.tableEntries = append(g.tableEntries, fn.Name)
+		}
+	}
+	if g.needsClosures {
+		// Reserve closure cells immediately after the runtime block
+		// so the static layout has a stable, deterministic shape.
+		g.stringOffset = g.closuresBase + 8*len(g.tableEntries)
+	}
 
 	g.line("(module")
 	g.indent++
@@ -68,7 +118,7 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 
 	// Type declarations referenced by call_indirect.
 	for i, sig := range g.indirectSigs {
-		g.linef("(type $t%d %s)", i, watFuncType(sig))
+		g.linef("(type $t%d %s)", i, g.watFuncType(sig))
 	}
 
 	for _, fn := range prog.Funcs {
@@ -78,12 +128,15 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	}
 
 	if g.needsFuncTable {
-		// One table slot per top-level function, populated in
-		// declaration order so funcIndex[name] = element index.
-		g.linef("(table $fns %d funcref)", len(prog.Funcs))
+		// The table only contains functions that are reachable
+		// as values (referenced as `var f = name`) or that are
+		// closure-converted hoisted entries. Non-value top-level
+		// functions stay out of the table and keep the simpler
+		// no-env signature so `--invoke main` works.
+		g.linef("(table $fns %d funcref)", len(g.tableEntries))
 		var elems []string
-		for _, fn := range prog.Funcs {
-			elems = append(elems, "$"+fn.Name)
+		for _, name := range g.tableEntries {
+			elems = append(elems, "$"+name)
 		}
 		g.linef("(elem (i32.const 0) %s)", strings.Join(elems, " "))
 	}
@@ -112,6 +165,12 @@ type generator struct {
 	loopLbl []loopLabels
 	labelN  int
 	current *ast.FuncDecl
+	// origTopLevelCount records how many functions the source had
+	// before closure conversion appended hoisted ones. The first
+	// origTopLevelCount entries get static closure cells (env=0)
+	// because they're the only ones a `var f = name` reference can
+	// reach by name.
+	origTopLevelCount int
 
 	// Runtime / strings / arrays.
 	needsRuntime  bool
@@ -120,9 +179,11 @@ type generator struct {
 	needsStrConcat   bool // any String + String concatenation
 	needsStructs     bool
 	needsBoundsCheck bool // any array or string Index expression appears
+	needsClosures    bool // any FuncDecl was hoisted by closure conversion
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
+	closuresBase  int            // start of the per-function closure-cell region
 	// Per-function: a stable assignment of WAT local names to each
 	// ArrayLit AST node, so codegen can save its base into the right
 	// scratch slot even when ArrayLits are nested.
@@ -148,6 +209,18 @@ type generator struct {
 	funcIndex      map[string]int
 	indirectSigs   []*ast.FuncType
 	sigIndex       map[string]int
+	// inTable[name] is true if function `name` needs to live in the
+	// funcref table. Hoisted closure functions are always in the
+	// table; top-level user functions only when referenced as a
+	// value somewhere. Functions outside the table skip the
+	// trailing __env parameter, so wasmtime's `--invoke main` keeps
+	// working.
+	inTable map[string]bool
+	// tableIndex[name] gives the position of `name` in the funcref
+	// table, populated lazily once the scan phase has run. Closure
+	// cells use the same indices (cell i = (tableIndex i, env=0)).
+	tableIndex   map[string]int
+	tableEntries []string
 }
 
 type stringEntry struct {
@@ -172,6 +245,109 @@ func (g *generator) freshLabel(stem string) string {
 	return fmt.Sprintf("$%s%d", stem, g.labelN)
 }
 
+// hasMakeClosure reports whether n contains any *ast.MakeClosure
+// node — i.e. whether closure conversion replaced an inner FuncDecl
+// somewhere inside it. The codegen pass uses this to decide whether
+// to declare the two scratch locals MakeClosure relies on.
+func hasMakeClosure(n any) bool {
+	found := false
+	var walk func(any)
+	walk = func(n any) {
+		if found || n == nil {
+			return
+		}
+		switch x := n.(type) {
+		case *ast.MakeClosure:
+			found = true
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Switch:
+			walk(x.Tag)
+			for _, k := range x.Cases {
+				for _, v := range k.Values {
+					walk(v)
+				}
+				walk(k.Body)
+			}
+			if x.Default != nil {
+				walk(x.Default)
+			}
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		case *ast.Binary:
+			walk(x.Left)
+			walk(x.Right)
+		case *ast.Unary:
+			walk(x.Operand)
+		case *ast.Call:
+			walk(x.Callee)
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case *ast.Index:
+			walk(x.Array)
+			walk(x.Idx)
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.Assign:
+			walk(x.Target)
+			walk(x.Value)
+		case *ast.Ternary:
+			walk(x.Cond)
+			walk(x.Then)
+			walk(x.Else)
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				walk(f.Value)
+			}
+		case *ast.FieldAccess:
+			walk(x.Target)
+		}
+	}
+	walk(n)
+	return found
+}
+
+// envParamPresent reports whether fn already carries the synthetic
+// `__env` parameter that closure conversion appends to hoisted local
+// functions. Top-level functions don't carry it natively; we add the
+// param at emit time when needsFuncTable is on.
+func envParamPresent(fn *ast.FuncDecl) bool {
+	if len(fn.Params) == 0 {
+		return false
+	}
+	last := fn.Params[len(fn.Params)-1]
+	return last.Name == "__env"
+}
+
 // ---------- function emit ----------
 
 func (g *generator) emitFunc(fn *ast.FuncDecl) error {
@@ -179,12 +355,24 @@ func (g *generator) emitFunc(fn *ast.FuncDecl) error {
 	defer func() { g.current = nil }()
 
 	header := fmt.Sprintf("(func $%s", fn.Name)
+	hasEnv := false
+	if g.needsClosures && g.inTable[fn.Name] && !envParamPresent(fn) {
+		// Closure ABI: every function in the table accepts a trailing
+		// `__env i32` parameter so the indirect-call signature is
+		// uniform. Direct calls pass i32.const 0; closure-converted
+		// hoisted functions read captures through it. Non-table
+		// functions stay env-less so the host can `--invoke` them.
+		hasEnv = true
+	}
 	for _, p := range fn.Params {
 		typ, err := watType(p.Type)
 		if err != nil {
 			return fmt.Errorf("function %q: param %s: %w", fn.Name, p.Name, err)
 		}
 		header += fmt.Sprintf(" (param $%s %s)", p.Name, typ)
+	}
+	if hasEnv {
+		header += " (param $__env i32)"
 	}
 	if !ast.Equal(fn.ReturnType, ast.VoidType{}) {
 		typ, err := watType(fn.ReturnType)
@@ -229,6 +417,14 @@ func (g *generator) emitFunc(fn *ast.FuncDecl) error {
 		g.structLocal[sl] = name
 		g.linef("(local %s i32)", name)
 	})
+	// Two scratch i32 locals reserved for any MakeClosure expression
+	// in the body. We declare them only when the function actually
+	// constructs at least one closure; the cost otherwise is two
+	// unused locals.
+	if g.needsClosures && hasMakeClosure(fn.Body) {
+		g.line("(local $__cl_scratch i32)")
+		g.line("(local $__env_scratch i32)")
+	}
 
 	for _, s := range fn.Body.Stmts {
 		if err := g.stmt(s); err != nil {
@@ -923,6 +1119,7 @@ func (g *generator) scanIndirectExpr(e ast.Expr, inCalleePos bool) {
 		if !inCalleePos {
 			if _, ok := g.funcIndex[x.Name]; ok {
 				g.needsFuncTable = true
+				g.inTable[x.Name] = true
 			}
 		}
 	case *ast.Binary:
@@ -1024,8 +1221,12 @@ func sigKey(ft *ast.FuncType) string {
 }
 
 // watFuncType renders a *FuncType as the WAT `(func ...)` body used
-// in `(type $tN (func ...))` declarations.
-func watFuncType(ft *ast.FuncType) string {
+// in `(type $tN (func ...))` declarations. Under the closure ABI
+// every table entry carries a trailing `__env i32` parameter, so the
+// signature has one more param than the user-visible type. Legacy
+// programs (no nested functions) skip the env param and pass bare
+// table indices.
+func (g *generator) watFuncType(ft *ast.FuncType) string {
 	var b strings.Builder
 	b.WriteString("(func")
 	for _, p := range ft.Params {
@@ -1033,6 +1234,9 @@ func watFuncType(ft *ast.FuncType) string {
 		b.WriteString(" (param ")
 		b.WriteString(t)
 		b.WriteByte(')')
+	}
+	if g.needsClosures {
+		b.WriteString(" (param i32)") // env pointer
 	}
 	if !ast.Equal(ft.Result, ast.VoidType{}) {
 		t, _ := watType(ft.Result)
@@ -1752,6 +1956,23 @@ func (g *generator) emitDataSegments() {
 	g.line(`(data (i32.const 24) "\20\00\00\00\01\00\00\00")`)
 	// newline byte at 32
 	g.line(`(data (i32.const 32) "\0a")`)
+	// Per-function closure cells: 8 bytes each at closuresBase+8*i,
+	// pre-initialised with (table_idx=i, env_ptr=0). Only the
+	// originally top-level functions get cells; hoisted (closure-
+	// converted) entries are reached through fresh closures the
+	// MakeClosure code allocates per construction.
+	if g.needsClosures {
+		// Each in-table top-level (i.e. value-referenced) function
+		// gets a static cell; hoisted closures get fresh cells per
+		// MakeClosure invocation. Cell i contains (table-idx i,
+		// env_ptr=0).
+		for i, name := range g.tableEntries {
+			if g.funcIndex[name] >= g.origTopLevelCount {
+				continue // hoisted entry; no static cell
+			}
+			g.linef(`(data (i32.const %d) "%s%s")`, g.closuresBase+8*i, encodeI32(i), encodeI32(0))
+		}
+	}
 	// strings
 	for _, s := range g.stringEntries {
 		g.linef(`(data (i32.const %d) "%s%s")`, s.offset, encodeI32(len(s.text)), wasmEscape(s.text))
@@ -1818,10 +2039,21 @@ func (g *generator) expr(e ast.Expr) error {
 		// the 4-byte length prefix).
 		g.linef("i32.const %d", g.internString(n.Value))
 	case *ast.Ident:
-		// Top-level function names taken as a value materialise as the
-		// function table index; they're called via call_indirect.
-		if idx, ok := g.funcIndex[n.Name]; ok && g.localFuncType(g.current, n.Name) == nil {
-			g.linef("i32.const %d", idx)
+		// Top-level function names taken as a value materialise as
+		// either a pointer into the static closure-cell region (when
+		// closures are in use; the cell is 8 bytes of (idx, env=0))
+		// or as a bare table index (legacy path, function values are
+		// raw i32s).
+		if _, ok := g.funcIndex[n.Name]; ok && g.localFuncType(g.current, n.Name) == nil {
+			if g.needsClosures {
+				ti := g.tableIndex[n.Name]
+				g.linef("i32.const %d", g.closuresBase+8*ti)
+			} else {
+				// Legacy path (no closures): function values are
+				// bare table indices. Without the inTable
+				// distinction the index lines up with funcIndex.
+				g.linef("i32.const %d", g.funcIndex[n.Name])
+			}
 			return nil
 		}
 		g.linef("local.get $%s", n.Name)
@@ -1879,10 +2111,96 @@ func (g *generator) expr(e ast.Expr) error {
 		}
 		g.line("call $__arr_idx")
 		g.line("i32.load")
+	case *ast.CaptureRef:
+		// Inside a hoisted local function: load the captured value
+		// from `__env + offset`. Floats use f32.load; everything
+		// else is an i32 (number, boolean — captures are restricted
+		// to scalars in this PR).
+		g.line("local.get $__env")
+		g.linef("i32.const %d", n.Offset)
+		g.line("i32.add")
+		if _, ok := n.Type.(ast.FloatType); ok {
+			g.line("f32.load")
+		} else {
+			g.line("i32.load")
+		}
+	case *ast.MakeClosure:
+		return g.makeClosure(n)
 	default:
 		return fmt.Errorf("wasm: unsupported expression %T", e)
 	}
 	return nil
+}
+
+// makeClosure allocates the env block, populates it with each
+// capture's current value, allocates an 8-byte closure pair
+// `{fn_idx, env_ptr}`, and leaves the closure pointer on the stack.
+// The fn_idx written into the pair is the function's *table* index
+// (which call_indirect uses), not the position in prog.Funcs.
+func (g *generator) makeClosure(n *ast.MakeClosure) error {
+	envBytes := len(n.Captures) * 4
+	tIdx, ok := g.tableIndex[n.FuncName]
+	if !ok {
+		return fmt.Errorf("wasm: closure target %q not in funcref table (compiler bug)", n.FuncName)
+	}
+	g.line("i32.const 8")
+	g.line("call $__lang_alloc")
+	g.line("local.tee $__cl_scratch")
+	g.linef("i32.const %d", tIdx)
+	g.line("i32.store") // fn_idx at +0
+	if envBytes > 0 {
+		// Allocate env block.
+		g.linef("i32.const %d", envBytes)
+		g.line("call $__lang_alloc")
+		g.line("local.set $__env_scratch")
+		// Store each capture in turn.
+		for i, capExpr := range n.Captures {
+			g.line("local.get $__env_scratch")
+			g.linef("i32.const %d", i*4)
+			g.line("i32.add")
+			if err := g.expr(capExpr); err != nil {
+				return err
+			}
+			// Use f32.store when the capture is a float; checker
+			// has already constrained captures to scalar types.
+			if isFloatExpr(capExpr) {
+				g.line("f32.store")
+			} else {
+				g.line("i32.store")
+			}
+		}
+		// Store env_ptr at closure+4.
+		g.line("local.get $__cl_scratch")
+		g.line("i32.const 4")
+		g.line("i32.add")
+		g.line("local.get $__env_scratch")
+		g.line("i32.store")
+	} else {
+		// No captures: env_ptr = 0.
+		g.line("local.get $__cl_scratch")
+		g.line("i32.const 4")
+		g.line("i32.add")
+		g.line("i32.const 0")
+		g.line("i32.store")
+	}
+	// Push the closure pointer back as the expression's value.
+	g.line("local.get $__cl_scratch")
+	return nil
+}
+
+// isFloatExpr is a best-effort check used by closure conversion to
+// pick between i32.store and f32.store when packing captures into
+// the env block. CaptureRef carries its declared type; everything
+// else is treated as i32.
+func isFloatExpr(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.CaptureRef:
+		_, ok := x.Type.(ast.FloatType)
+		return ok
+	case *ast.FloatLit:
+		return true
+	}
+	return false
 }
 
 // arrayLit allocates 4 + N*4 bytes via $__lang_alloc (4 bytes for the
@@ -2203,11 +2521,19 @@ func (g *generator) call(n *ast.Call) error {
 				return err
 			}
 		}
+		// Under the closure ABI, only table-resident functions take
+		// a trailing __env i32 (so wasmtime can still invoke
+		// non-table entry points by their original signature).
+		if g.needsClosures && isTopLevel && g.inTable[id.Name] {
+			g.line("i32.const 0")
+		}
 		g.linef("call $%s", id.Name)
 		return nil
 	}
 	// Indirect call through a function-typed local. The signature is
-	// known from the local's declared type.
+	// known from the local's declared type. Under the closure ABI
+	// the local holds a heap pointer to {fn_idx, env_ptr}; legacy
+	// programs (no nested functions) keep using bare table indices.
 	ft := g.localFuncType(g.current, id.Name)
 	if ft == nil {
 		return fmt.Errorf("wasm: cannot resolve indirect callee %q", id.Name)
@@ -2218,7 +2544,18 @@ func (g *generator) call(n *ast.Call) error {
 			return err
 		}
 	}
-	g.linef("local.get $%s", id.Name) // pushes the table index
+	if g.needsClosures {
+		// Push env_ptr (closure + 4) then fn_idx (closure + 0). The
+		// fn_idx must be the very last operand before call_indirect.
+		g.linef("local.get $%s", id.Name)
+		g.line("i32.const 4")
+		g.line("i32.add")
+		g.line("i32.load")
+		g.linef("local.get $%s", id.Name)
+		g.line("i32.load")
+	} else {
+		g.linef("local.get $%s", id.Name)
+	}
 	g.linef("call_indirect (type $t%d)", tIdx)
 	return nil
 }

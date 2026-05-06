@@ -216,6 +216,32 @@ type FieldAccess struct {
 	Field  string
 }
 
+// CaptureRef is a synthetic expression introduced by closure
+// conversion. Inside a hoisted local function's body, references to
+// captured outer-scope variables are rewritten from `*Ident` to
+// `*CaptureRef`, which codegen lowers as a load from the function's
+// hidden env parameter at the recorded offset.
+type CaptureRef struct {
+	P      Position
+	Name   string
+	Offset int  // byte offset into the env block
+	Type   Type // captured variable's static type
+}
+
+// MakeClosure is a synthetic expression introduced by closure
+// conversion. It marks the def site of a nested function: codegen
+// allocates an env block, evaluates each `Captures` expression and
+// stores it at the matching offset, allocates an 8-byte closure
+// pair `{fn_idx, env_ptr}`, and returns the closure pointer. The
+// FuncName resolves to the hoisted top-level function the
+// FuncIndex selects in the funcref table.
+type MakeClosure struct {
+	P         Position
+	FuncName  string
+	FuncIndex int
+	Captures  []Expr
+}
+
 func (e *NumberLit) Pos() Position { return e.P }
 func (e *BoolLit) Pos() Position   { return e.P }
 func (e *StringLit) Pos() Position { return e.P }
@@ -230,6 +256,8 @@ func (e *Assign) Pos() Position      { return e.P }
 func (e *Ternary) Pos() Position     { return e.P }
 func (e *StructLit) Pos() Position   { return e.P }
 func (e *FieldAccess) Pos() Position { return e.P }
+func (e *CaptureRef) Pos() Position  { return e.P }
+func (e *MakeClosure) Pos() Position { return e.P }
 
 func (*NumberLit) isExpr() {}
 func (*BoolLit) isExpr()   {}
@@ -245,6 +273,8 @@ func (*Assign) isExpr()      {}
 func (*Ternary) isExpr()     {}
 func (*StructLit) isExpr()   {}
 func (*FieldAccess) isExpr() {}
+func (*CaptureRef) isExpr()  {}
+func (*MakeClosure) isExpr() {}
 
 // ---------- Statements ----------
 
@@ -328,6 +358,7 @@ func (s *Return) Pos() Position   { return s.P }
 func (s *Var) Pos() Position      { return s.P }
 func (s *ExprStmt) Pos() Position { return s.P }
 func (s *Switch) Pos() Position   { return s.P }
+func (s *FuncDecl) Pos() Position { return s.P }
 
 func (*Block) isStmt()    {}
 func (*If) isStmt()       {}
@@ -339,6 +370,7 @@ func (*Return) isStmt()   {}
 func (*Var) isStmt()      {}
 func (*ExprStmt) isStmt() {}
 func (*Switch) isStmt()   {}
+func (*FuncDecl) isStmt() {} // legal as a stmt only when IsLocal is true
 
 // ---------- Top level ----------
 
@@ -353,6 +385,17 @@ type FuncDecl struct {
 	Params     []Param
 	ReturnType Type
 	Body       *Block
+	// IsLocal is true for functions declared as a statement inside
+	// another function's body. Closure conversion at codegen time
+	// hoists these to top-level entries and rewrites captured-var
+	// references to read from a synthetic env argument.
+	IsLocal bool
+	// Captures is filled by the checker for IsLocal functions: each
+	// entry names an outer-scope variable that the body reads, with
+	// the variable's static type. The closure-conversion pass uses
+	// this list to size the env block and to know how to materialise
+	// each capture at the def site.
+	Captures []Param
 }
 
 // StructDecl is a top-level `struct` declaration. Fields are stored in

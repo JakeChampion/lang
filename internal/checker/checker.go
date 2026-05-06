@@ -109,6 +109,14 @@ type checker struct {
 	current     *ast.FuncDecl
 	loopDepth   int
 	switchDepth int
+
+	// Closure-capture plumbing. While checking a local function body,
+	// captureSink records each outer-scope name read by the body as
+	// a capture; captureOuter is the scope of the immediately
+	// enclosing function so we can look those names up. Both are nil
+	// outside a local function.
+	captureSink  func(name string, t ast.Type)
+	captureOuter *scope
 }
 
 func (c *checker) errf(pos ast.Position, format string, args ...any) {
@@ -313,7 +321,85 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.checkBlock(n.Default, s)
 		}
 		c.switchDepth--
+	case *ast.FuncDecl:
+		c.checkLocalFunc(n, s)
 	}
+}
+
+// checkLocalFunc type-checks a nested function and records its
+// captured outer-scope variables. The local name is bound in the
+// surrounding scope so subsequent calls (and recursion through the
+// inner name) work; the body checks under a fresh root scope with
+// its own params, plus a capture-sink that registers any outer-scope
+// name the body reads.
+func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
+	// Bind the function's name in the outer scope so subsequent code
+	// can call it.
+	sig := &ast.FuncType{Result: fn.ReturnType}
+	for _, p := range fn.Params {
+		sig.Params = append(sig.Params, p.Type)
+	}
+	outer.names[fn.Name] = sig
+
+	// Body scope: fresh root with the function's own params.
+	root := newScope(nil)
+	for _, p := range fn.Params {
+		if _, dup := root.names[p.Name]; dup {
+			c.errf(fn.P, "duplicate parameter %q", p.Name)
+		}
+		root.names[p.Name] = p.Type
+	}
+
+	captured := map[string]ast.Type{}
+	var captureOrder []string
+
+	prev := c.current
+	prevSink := c.captureSink
+	prevOuter := c.captureOuter
+	prevLoop := c.loopDepth
+	prevSwitch := c.switchDepth
+	c.current = fn
+	c.loopDepth = 0
+	c.switchDepth = 0
+	c.captureSink = func(name string, t ast.Type) {
+		if _, ok := captured[name]; ok {
+			return
+		}
+		// Recursive self-reference shouldn't capture: the inner
+		// function's name is bound in the outer scope above so the
+		// lookup falls through here, but we don't want to treat it
+		// as a capture.
+		if name == fn.Name {
+			return
+		}
+		// Only allow capturing scalar types in this PR. References
+		// (string/array/struct/function) would need indirection
+		// through the env that we haven't designed yet.
+		switch t.(type) {
+		case ast.NumberType, ast.BoolType, ast.FloatType:
+			captured[name] = t
+			captureOrder = append(captureOrder, name)
+		default:
+			c.errf(fn.P, "captured variable %q has unsupported type %s (only number, boolean, float can be captured)", name, t)
+		}
+	}
+	c.captureOuter = outer
+	defer func() {
+		c.current = prev
+		c.captureSink = prevSink
+		c.captureOuter = prevOuter
+		c.loopDepth = prevLoop
+		c.switchDepth = prevSwitch
+	}()
+
+	c.checkBlock(fn.Body, root)
+
+	for _, name := range captureOrder {
+		fn.Captures = append(fn.Captures, ast.Param{Name: name, Type: captured[name]})
+	}
+	// Track the local function's signature so call sites can look it
+	// up by name. Codegen's hoisting pass will rename it later.
+	c.info.FuncSigs[fn.Name] = sig
 }
 
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
@@ -332,6 +418,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		if sig, ok := c.info.FuncSigs[n.Name]; ok {
 			return sig
+		}
+		// Inside a local function: a name not found in the local
+		// scope might resolve in the enclosing function's scope.
+		// Record it as a capture and return its outer type.
+		if c.captureOuter != nil {
+			if t, ok := c.captureOuter.lookup(n.Name); ok {
+				if c.captureSink != nil {
+					c.captureSink(n.Name, t)
+				}
+				return t
+			}
 		}
 		c.errIdent(n, s, "undefined identifier %q", n.Name)
 		return nil

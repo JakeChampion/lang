@@ -862,6 +862,8 @@ func (g *generator) stmt(s ast.Stmt) error {
 		}
 	case *ast.Switch:
 		return g.switchStmt(n)
+	case *ast.FuncDecl:
+		return fmt.Errorf("codegen: nested functions / closures are not yet supported on the arm32 backend (use the wasm backend)")
 	}
 	return nil
 }

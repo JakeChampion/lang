@@ -347,3 +347,53 @@ func TestUnknownStructType(t *testing.T) {
 		t.Error("expected error for unknown struct type")
 	}
 }
+
+func TestNestedFunctionTypechecks(t *testing.T) {
+	src := `function makeAdder(n: number): (number) => number {
+		function add(x: number): number { return x + n; }
+		return add;
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestNestedFunctionRecordsCaptures(t *testing.T) {
+	prog, err := parser.Parse(`function outer(seed: number): number {
+		var bonus: number = 100;
+		function inner(x: number): number { return x + seed + bonus; }
+		return inner(1);
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatal(err)
+	}
+	// The inner function statement is the third statement in outer.
+	body := prog.Funcs[0].Body.Stmts
+	var inner *ast.FuncDecl
+	for _, s := range body {
+		if fn, ok := s.(*ast.FuncDecl); ok {
+			inner = fn
+			break
+		}
+	}
+	if inner == nil {
+		t.Fatal("expected nested FuncDecl in outer's body")
+	}
+	if len(inner.Captures) != 2 {
+		t.Errorf("captures = %v, want [seed, bonus]", inner.Captures)
+	}
+}
+
+func TestCaptureOfNonScalarRejected(t *testing.T) {
+	// String capture isn't supported in this PR.
+	src := `function outer(s: string): number {
+		function inner(): number { return len(s); }
+		return inner();
+	}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error for capturing a string")
+	}
+}
