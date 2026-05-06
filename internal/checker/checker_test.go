@@ -397,3 +397,65 @@ func TestCaptureOfNonScalarRejected(t *testing.T) {
 		t.Error("expected error for capturing a string")
 	}
 }
+
+func TestMethodTypechecksAndRewritesCall(t *testing.T) {
+	prog, err := parser.Parse(`struct Point { x: number, y: number }
+		function (p: Point) sum(): number { return p.x + p.y; }
+		function main(): number {
+			var p: Point = Point { x: 10, y: 32 };
+			return p.sum();
+		}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	// The method should be hoisted to a mangled name and registered
+	// in info.Methods.
+	mangled, ok := info.Methods["Point.sum"]
+	if !ok {
+		t.Fatal("Methods map missing Point.sum")
+	}
+	if mangled != "__method_Point_sum" {
+		t.Errorf("mangled = %q, want \"__method_Point_sum\"", mangled)
+	}
+	// The call site `p.sum()` should be rewritten to a regular call.
+	main := prog.Funcs[1] // sum was renamed but stays index 0; main is index 1
+	for _, fn := range prog.Funcs {
+		if fn.Name == "main" {
+			main = fn
+		}
+	}
+	ret := main.Body.Stmts[1].(*ast.Return)
+	call, ok := ret.Value.(*ast.Call)
+	if !ok {
+		t.Fatalf("return value should be a Call, got %T", ret.Value)
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || id.Name != "__method_Point_sum" {
+		t.Errorf("callee = %v, want Ident{__method_Point_sum}", call.Callee)
+	}
+	if len(call.Args) != 1 {
+		t.Errorf("args = %d, want 1 (the receiver)", len(call.Args))
+	}
+}
+
+func TestMethodRejectsNonStructReceiver(t *testing.T) {
+	src := `function (n: number) double(): number { return n + n; }`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error for non-struct receiver")
+	}
+}
+
+func TestMethodCallOnUnknownMethodErrors(t *testing.T) {
+	src := `struct P { x: number }
+		function main(): number {
+			var p: P = P { x: 1 };
+			return p.unknown();
+		}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error for missing method")
+	}
+}

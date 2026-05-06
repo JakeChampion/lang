@@ -504,3 +504,28 @@ func TestWASMClosureCapturesParamAndVar(t *testing.T) {
 		t.Errorf("got %d, want 142", got)
 	}
 }
+
+func TestWASMMethodOnStruct(t *testing.T) {
+	src := `struct Point { x: number, y: number }
+		function (p: Point) sum(): number { return p.x + p.y; }
+		function main(): number {
+			var p: Point = Point { x: 10, y: 32 };
+			return p.sum();
+		}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMMethodWithExtraArg(t *testing.T) {
+	// `b.shifted(7)` rewrites to `__method_Box_shifted(b, 7)`.
+	src := `struct Box { v: number }
+		function (b: Box) shifted(n: number): number { return b.v + n; }
+		function main(): number {
+			var b: Box = Box { v: 5 };
+			return b.shifted(37);
+		}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}

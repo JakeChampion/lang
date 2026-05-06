@@ -40,6 +40,13 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 
 func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 	b.WriteString("function ")
+	if fn.Receiver != nil {
+		b.WriteByte('(')
+		b.WriteString(fn.Receiver.Name)
+		b.WriteString(": ")
+		b.WriteString(printType(fn.Receiver.Type))
+		b.WriteString(") ")
+	}
 	b.WriteString(fn.Name)
 	b.WriteByte('(')
 	for i, p := range fn.Params {
