@@ -209,6 +209,32 @@ function main(): number {
 	mustContain(t, asm, "blx r12")
 }
 
+// `return self(args)` should rewrite to argument-update + branch back
+// to the body label, with neither a `bl <self>` nor a jump to the
+// epilogue between them.
+func TestTailRecursionBranchesToBody(t *testing.T) {
+	asm := compile(t, `function sum(n: number, acc: number): number {
+		if (n == 0) { return acc; }
+		return sum(n - 1, acc + n);
+	}`)
+	mustContain(t, asm, ".Lbody_sum_")
+	mustContain(t, asm, "b .Lbody_sum_")
+	// Crucially, no `bl sum` for the recursive call.
+	if strings.Contains(asm, "bl sum") {
+		t.Errorf("tail call should not emit `bl sum`:\n%s", asm)
+	}
+}
+
+// Non-tail recursion (the recursive call isn't the return value) must
+// still emit a regular `bl` so register state is preserved across it.
+func TestNonTailRecursionKeepsBl(t *testing.T) {
+	asm := compile(t, `function fact(n: number): number {
+		if (n == 0) { return 1; }
+		return n * fact(n - 1);
+	}`)
+	mustContain(t, asm, "bl fact")
+}
+
 // Functions that contain a Call expression are NOT leaves — the
 // existing stack-spill prologue still applies.
 func TestNonLeafKeepsStackSpill(t *testing.T) {

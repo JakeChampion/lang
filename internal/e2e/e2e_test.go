@@ -106,6 +106,24 @@ func TestFunctionTypeAsParameter(t *testing.T) {
 	}
 }
 
+// Deeply self-recursive function: the test would blow the call stack
+// without tail-call optimization. The tail call rewrites to a branch
+// so we can iterate millions of times in O(1) frames.
+func TestDeepTailRecursionDoesNotOverflowStack(t *testing.T) {
+	src := `
+		function countdown(n: number, acc: number): number {
+			if (n == 0) { return acc; }
+			return countdown(n - 1, acc + 1);
+		}
+		function main(): number { return countdown(100000, 0); }`
+	// 100000 mod 256 = 160 (the i32 result wraps when used as an
+	// 8-bit exit code).
+	_, code := compileAndRun(t, src)
+	if code != 160 {
+		t.Errorf("exit = %d, want 160 (= 100000 mod 256)", code)
+	}
+}
+
 // Storing a function name in a var and calling through that var
 // goes through the indirect-call path (blx r12).
 func TestFunctionValueIndirectCall(t *testing.T) {
