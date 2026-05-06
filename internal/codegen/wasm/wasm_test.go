@@ -290,3 +290,9 @@ func TestStructLitAllocatesAndStores(t *testing.T) {
 	mustContain(t, wat, "i32.store")
 	mustContain(t, wat, "i32.load")
 }
+
+func TestStringConcatEmitsHelper(t *testing.T) {
+	wat := compileToWAT(t, `function main(): void { print("a" + "b"); }`)
+	mustContain(t, wat, "$__str_concat")
+	mustContain(t, wat, "call $__str_concat")
+}
