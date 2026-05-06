@@ -23,6 +23,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/optimizer"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -33,11 +34,21 @@ func main() {
 	cc := flag.String("cc", "arm-linux-gnueabihf-gcc", "ARM cross-compiler used to link when -o or --run is set (arm32 only)")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it under qemu-arm (arm32 only)")
 	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
+	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: lang [-target arm32|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
+		fmt.Fprintln(os.Stderr, "       lang -repl")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *repl {
+		if err := interp.REPL(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if flag.NArg() < 1 {
 		flag.Usage()
