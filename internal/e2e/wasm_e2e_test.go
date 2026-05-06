@@ -366,3 +366,25 @@ func TestWASMStructPassByReference(t *testing.T) {
 		t.Errorf("got %d, want 105", got)
 	}
 }
+
+func TestWASMStringConcat(t *testing.T) {
+	src := `function main(): number {
+		var a: string = "hello, ";
+		var b: string = "world";
+		var c: string = a + b;
+		return len(c);
+	}`
+	if got := runWasm(t, src); got != 12 {
+		t.Errorf("got %d, want 12 (len of \"hello, world\")", got)
+	}
+}
+
+func TestWASMStringConcatPreservesContent(t *testing.T) {
+	src := `function main(): void {
+		print("hello, " + "world");
+	}`
+	out := runWasmCapturingStdout(t, src)
+	if out != "hello, world" {
+		t.Errorf("output = %q, want \"hello, world\"", out)
+	}
+}

@@ -56,6 +56,7 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	g.scanForStructUses(prog)
 	g.scanForIndirectCalls(prog)
 	g.scanForStringEq(prog)
+	g.scanForStringConcat(prog)
 
 	g.line("(module")
 	g.indent++
@@ -114,8 +115,9 @@ type generator struct {
 	// Runtime / strings / arrays.
 	needsRuntime  bool
 	needsArrays   bool
-	needsStrEq    bool // any String == String / != comparison
-	needsStructs  bool
+	needsStrEq     bool // any String == String / != comparison
+	needsStrConcat bool // any String + String concatenation
+	needsStructs   bool
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -1113,6 +1115,100 @@ func (g *generator) scanForStringEq(prog *ast.Program) {
 	}
 }
 
+// scanForStringConcat pre-walks the program and sets needsStrConcat
+// if any `+` between strings appears. The helper allocates a fresh
+// buffer via `__lang_alloc`, so it pulls in needsArrays as well.
+func (g *generator) scanForStringConcat(prog *ast.Program) {
+	var walk func(any)
+	walk = func(n any) {
+		if g.needsStrConcat {
+			return
+		}
+		switch x := n.(type) {
+		case *ast.Binary:
+			if x.IsStringConcat {
+				g.needsStrConcat = true
+				g.needsRuntime = true
+				g.needsArrays = true
+				return
+			}
+			walk(x.Left)
+			walk(x.Right)
+		case *ast.Unary:
+			walk(x.Operand)
+		case *ast.Call:
+			walk(x.Callee)
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case *ast.Index:
+			walk(x.Array)
+			walk(x.Idx)
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.Assign:
+			walk(x.Target)
+			walk(x.Value)
+		case *ast.Ternary:
+			walk(x.Cond)
+			walk(x.Then)
+			walk(x.Else)
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				walk(f.Value)
+			}
+		case *ast.FieldAccess:
+			walk(x.Target)
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Switch:
+			walk(x.Tag)
+			for _, k := range x.Cases {
+				for _, v := range k.Values {
+					walk(v)
+				}
+				walk(k.Body)
+			}
+			if x.Default != nil {
+				walk(x.Default)
+			}
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		}
+	}
+	for _, fn := range prog.Funcs {
+		walk(fn.Body)
+	}
+}
+
 // scanForRuntimeUses pre-walks the program and sets needsRuntime if
 // any string literal, `print` call or `putchar` call appears.
 func (g *generator) scanForRuntimeUses(prog *ast.Program) {
@@ -1335,6 +1431,108 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`end`)
 		g.indent--
 		g.line(`end`)
+		g.indent--
+		g.line(`)`)
+	}
+
+	if g.needsStrConcat {
+		// $__str_concat allocates a fresh length-prefixed buffer holding
+		// the bytes of `a` followed by the bytes of `b`. Both inputs
+		// point at the first byte of their content; their lengths live
+		// at `ptr - 4`. The bump allocator is shared with arrays.
+		g.line(`(func $__str_concat (param $a i32) (param $b i32) (result i32)`)
+		g.indent++
+		g.line(`(local $la i32) (local $lb i32) (local $base i32) (local $dst i32) (local $i i32)`)
+		// la / lb
+		g.line(`local.get $a`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`local.set $la`)
+		g.line(`local.get $b`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`local.set $lb`)
+		// base = __lang_alloc(la + lb + 4)
+		g.line(`local.get $la`)
+		g.line(`local.get $lb`)
+		g.line(`i32.add`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.set $base`)
+		// store length prefix at base
+		g.line(`local.get $base`)
+		g.line(`local.get $la`)
+		g.line(`local.get $lb`)
+		g.line(`i32.add`)
+		g.line(`i32.store`)
+		// dst = base + 4
+		g.line(`local.get $base`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`local.set $dst`)
+		// Copy a's bytes: for (i=0; i<la; i++) dst[i] = a[i]
+		g.line(`i32.const 0`)
+		g.line(`local.set $i`)
+		g.line(`block $aend`)
+		g.indent++
+		g.line(`loop $aloop`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`local.get $la`)
+		g.line(`i32.eq`)
+		g.line(`br_if $aend`)
+		g.line(`local.get $dst`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`local.get $a`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+		g.line(`i32.store8`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 1`)
+		g.line(`i32.add`)
+		g.line(`local.set $i`)
+		g.line(`br $aloop`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
+		// Copy b's bytes: for (i=0; i<lb; i++) dst[la+i] = b[i]
+		g.line(`i32.const 0`)
+		g.line(`local.set $i`)
+		g.line(`block $bend`)
+		g.indent++
+		g.line(`loop $bloop`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`local.get $lb`)
+		g.line(`i32.eq`)
+		g.line(`br_if $bend`)
+		g.line(`local.get $dst`)
+		g.line(`local.get $la`)
+		g.line(`i32.add`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`local.get $b`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+		g.line(`i32.store8`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 1`)
+		g.line(`i32.add`)
+		g.line(`local.set $i`)
+		g.line(`br $bloop`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
+		// Return the content pointer (base + 4).
+		g.line(`local.get $dst`)
 		g.indent--
 		g.line(`)`)
 	}
@@ -1726,6 +1924,12 @@ func (g *generator) binary(n *ast.Binary) error {
 		if n.Op == "!=" {
 			g.line("i32.eqz")
 		}
+		return nil
+	}
+	if n.IsStringConcat {
+		// Both sides are string pointers; ask the runtime to allocate a
+		// new length-prefixed string holding their concatenation.
+		g.line("call $__str_concat")
 		return nil
 	}
 	if n.IsFloat {
