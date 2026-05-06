@@ -91,6 +91,21 @@ func TestLeafFunctionAllRegArgs(t *testing.T) {
 	}
 }
 
+// Storing a function name in a var and calling through that var
+// goes through the indirect-call path (blx r12).
+func TestFunctionValueIndirectCall(t *testing.T) {
+	src := `
+		function add(a: number, b: number): number { return a + b; }
+		function main(): number {
+			var f = add;
+			return f(40, 2);
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42", code)
+	}
+}
+
 func TestArithmeticAndCalls(t *testing.T) {
 	src := `
 		function add(a: number, b: number): number { return a + b; }
