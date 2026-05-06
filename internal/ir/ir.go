@@ -19,16 +19,14 @@
 //   - Lowering handles arithmetic, locals, control flow (if/while/for/
 //     switch/break/continue), function calls (direct + indirect),
 //     ternary, array literals + indexing, struct literals + field
-//     access, string concatenation / equality / byte indexing.
+//     access, string concatenation / equality / byte indexing,
+//     and closure-converted nested functions: CaptureRef expressions
+//     lower to env-relative loads and MakeClosure lowers to OpMakeClosure.
 //
 // What's NOT yet done:
 //   - The WASM and ARM32 backends still walk the AST. Migrating them
 //     is a follow-up; for now the IR is verified by tests rather than
 //     by being on the production code path.
-//   - Closure-converted programs (nested functions captured by value)
-//     aren't yet representable in the IR — that's a follow-up too,
-//     since the synthetic env parameter and capture-load shapes need
-//     dedicated ops.
 package ir
 
 import (
@@ -37,6 +35,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/closureconv"
 )
 
 // OpKind enumerates every IR instruction. The arity (consumed / produced
@@ -121,6 +120,15 @@ const (
 	OpDrop       // (T)               → ()
 	OpReturn     // (T)               → unwinds the function
 	OpReturnVoid // ()                → unwinds the function
+
+	// Closure conversion. Hoisted local functions read captured outer
+	// variables through a synthetic `__env` parameter (an i32 pointer
+	// to a heap block where each capture sits at a fixed byte offset).
+	// At the original def site the AST carries a *MakeClosure node that
+	// allocates the env, packs current capture values into it, allocates
+	// an 8-byte closure pair `{fn_idx, env_ptr}`, and yields the closure
+	// pointer.
+	OpMakeClosure // (cap_0 ... cap_{n-1}) → i32 (closure ptr)
 )
 
 // String returns a short mnemonic for the op kind.
@@ -230,6 +238,8 @@ func (k OpKind) String() string {
 		return "return"
 	case OpReturnVoid:
 		return "return_void"
+	case OpMakeClosure:
+		return "make_closure"
 	}
 	return "<invalid>"
 }
@@ -303,6 +313,8 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %s argc=%d", op.Kind, op.Str, op.I32)
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)
+	case OpMakeClosure:
+		return fmt.Sprintf("%s %s caps=%d", op.Kind, op.Str, op.I32)
 	}
 	return op.Kind.String()
 }
@@ -310,7 +322,17 @@ func formatOp(op Op) string {
 // Lower converts a checked AST program into IR. The Info argument
 // supplies the local-by-function table, struct-decl map, and function
 // signatures the lowering pass needs to resolve names.
+//
+// As a precondition, Lower runs closure conversion: any nested local
+// FuncDecls are hoisted to the top-level Funcs list with a synthetic
+// `__env` parameter, captured-variable references are rewritten as
+// CaptureRef nodes, and original def sites are replaced with a
+// MakeClosure-bearing Var. This means the per-function lowering only
+// has to deal with a flat program of top-level functions.
 func Lower(prog *ast.Program, info *checker.Info) (*Program, error) {
+	if err := closureconv.Convert(prog, info); err != nil {
+		return nil, err
+	}
 	out := &Program{}
 	for _, fn := range prog.Funcs {
 		f, err := lowerFunc(fn, info)
@@ -699,6 +721,37 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpStore})
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	case *ast.CaptureRef:
+		// A capture in a hoisted local function: load the captured
+		// value at `__env + offset`. The synthetic __env parameter
+		// closure conversion appended is just a regular local from
+		// the IR's point of view, so we look it up by name.
+		envIdx, ok := b.locals["__env"]
+		if !ok {
+			return fmt.Errorf("ir: capture %q in function without __env param (compiler bug)", n.Name)
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: envIdx})
+		b.emit(Op{Kind: OpConstI32, I32: int32(n.Offset)})
+		b.emit(Op{Kind: OpAdd})
+		if _, isF := n.Type.(ast.FloatType); isF {
+			b.emit(Op{Kind: OpFLoad})
+		} else {
+			b.emit(Op{Kind: OpLoad})
+		}
+	case *ast.MakeClosure:
+		// Evaluate captures in declaration order so each one ends up
+		// on the stack in slot-order. OpMakeClosure consumes them and
+		// pushes the freshly-built closure pointer. The function name
+		// is stored in Str so codegen can resolve the table index;
+		// per-capture types live on the hoisted target's Captures
+		// list, which a backend can fetch from the AST when packing
+		// the env block.
+		for _, capExpr := range n.Captures {
+			if err := b.expr(capExpr); err != nil {
+				return err
+			}
+		}
+		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures))})
 	case *ast.FieldAccess:
 		// Compute base + offset_of(field), then load the word.
 		// Resolving the offset needs the static type of the target;
