@@ -257,3 +257,102 @@ func TestLowerStringEquality(t *testing.T) {
 	mustContainOp(t, prog, "f", OpStrEq)
 }
 
+// Closure conversion runs as a precondition of Lower, so a nested
+// function that captures an outer var should appear in the IR's
+// Funcs list with a generated `__closure_*` name and the original
+// def site should emit OpMakeClosure.
+func TestLowerNestedFunctionHoists(t *testing.T) {
+	prog := lowerSource(t, `function outer(): number {
+		var n: number = 7;
+		function inner(): number { return n + 1; }
+		return inner();
+	}`)
+	// Two functions in the IR: the outer and the hoisted inner.
+	if len(prog.Funcs) != 2 {
+		t.Fatalf("expected 2 funcs (outer + hoisted inner), got %d:\n%s", len(prog.Funcs), prog)
+	}
+	var hoisted *Func
+	for _, fn := range prog.Funcs {
+		if strings.HasPrefix(fn.Name, "__closure_") {
+			hoisted = fn
+		}
+	}
+	if hoisted == nil {
+		t.Fatalf("expected a hoisted __closure_* function, got:\n%s", prog)
+	}
+	// The hoisted function carries the synthetic env parameter as its
+	// last param so call_indirect through the funcref table is uniform.
+	if last := hoisted.Params[len(hoisted.Params)-1].Name; last != "__env" {
+		t.Errorf("hoisted function's last param = %q, want __env", last)
+	}
+	// The outer's def site is now `var inner = MakeClosure{...}`, so
+	// outer's ops contain OpMakeClosure.
+	mustContainOp(t, prog, "outer", OpMakeClosure)
+}
+
+// Captures lower to env-relative loads inside the hoisted body: the
+// IR walks `local.get $__env; const offset; add; load`.
+func TestLowerCaptureRefIsEnvRelativeLoad(t *testing.T) {
+	prog := lowerSource(t, `function outer(): number {
+		var n: number = 5;
+		function inner(): number { return n; }
+		return inner();
+	}`)
+	var hoisted *Func
+	for _, fn := range prog.Funcs {
+		if strings.HasPrefix(fn.Name, "__closure_") {
+			hoisted = fn
+		}
+	}
+	if hoisted == nil {
+		t.Fatalf("hoisted function missing:\n%s", prog)
+	}
+	// We expect the body to load the env, push the offset, add, then
+	// load the captured word — so OpAdd + OpLoad must both appear.
+	mustContainOp(t, prog, hoisted.Name, OpAdd)
+	mustContainOp(t, prog, hoisted.Name, OpLoad)
+	// And the env parameter must be referenced via OpLoadLocal at its
+	// param-slot index (the last param's slot).
+	envSlot := int32(len(hoisted.Params) - 1)
+	hasEnvLoad := false
+	for _, op := range hoisted.Ops {
+		if op.Kind == OpLoadLocal && op.I32 == envSlot {
+			hasEnvLoad = true
+		}
+	}
+	if !hasEnvLoad {
+		t.Errorf("hoisted body never loads the __env slot %d:\n%s", envSlot, prog)
+	}
+}
+
+// MakeClosure carries the hoisted function name and a capture count
+// so codegen can resolve both the funcref-table index and the env
+// block size.
+func TestLowerMakeClosureCarriesNameAndCount(t *testing.T) {
+	prog := lowerSource(t, `function outer(): number {
+		var a: number = 1;
+		var b: number = 2;
+		function inner(): number { return a + b; }
+		return inner();
+	}`)
+	outer := findFunc(prog, "outer")
+	if outer == nil {
+		t.Fatal("outer not found")
+	}
+	var mc *Op
+	for i := range outer.Ops {
+		if outer.Ops[i].Kind == OpMakeClosure {
+			mc = &outer.Ops[i]
+		}
+	}
+	if mc == nil {
+		t.Fatalf("OpMakeClosure missing in outer:\n%s", prog)
+	}
+	if !strings.HasPrefix(mc.Str, "__closure_inner_") {
+		t.Errorf("MakeClosure name = %q, want __closure_inner_*", mc.Str)
+	}
+	if mc.I32 != 2 {
+		t.Errorf("MakeClosure capture count = %d, want 2", mc.I32)
+	}
+}
+
