@@ -164,3 +164,27 @@ func TestWASMPutcharWritesBytes(t *testing.T) {
 		t.Errorf("output = %q, want \"HI\"", out)
 	}
 }
+
+func TestWASMArraySumAndMutation(t *testing.T) {
+	src := `function main(): number {
+		var a: number[] = [10, 20, 30, 40];
+		a[2] = 100;
+		return a[0] + a[1] + a[2] + a[3];
+	}`
+	if got := runWasm(t, src); got != 170 {
+		t.Errorf("got %d, want 170 (10+20+100+40)", got)
+	}
+}
+
+// Nested ArrayLits get distinct scratch locals so the inner literal
+// can finish allocating before the outer one assigns its base.
+func TestWASMNestedArrayLits(t *testing.T) {
+	src := `function main(): number {
+		var inner: number[] = [3, 4];
+		var outer: number[] = [1, 2, inner[0]];
+		return outer[2] + inner[1];
+	}`
+	if got := runWasm(t, src); got != 7 {
+		t.Errorf("got %d, want 7 (3 + 4)", got)
+	}
+}

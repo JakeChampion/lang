@@ -45,6 +45,7 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 		stringOffset: 64,
 	}
 	g.scanForRuntimeUses(prog)
+	g.scanForArrayUses(prog)
 
 	g.line("(module")
 	g.indent++
@@ -84,11 +85,16 @@ type generator struct {
 	labelN  int
 	current *ast.FuncDecl
 
-	// Runtime / strings.
+	// Runtime / strings / arrays.
 	needsRuntime bool
-	stringPool   map[string]int    // value → pointer in linear memory
-	stringEntries []stringEntry    // emission order (data segments)
-	stringOffset int               // next free byte for a string entry
+	needsArrays  bool
+	stringPool   map[string]int // value → pointer in linear memory
+	stringEntries []stringEntry // emission order (data segments)
+	stringOffset int            // next free byte for a string entry
+	// Per-function: a stable assignment of WAT local names to each
+	// ArrayLit AST node, so codegen can save its base into the right
+	// scratch slot even when ArrayLits are nested.
+	arrLocal map[*ast.ArrayLit]string
 }
 
 type stringEntry struct {
@@ -145,6 +151,16 @@ func (g *generator) emitFunc(fn *ast.FuncDecl) error {
 		}
 		g.linef("(local $%s %s)", v.Name, typ)
 	}
+	// Each ArrayLit gets its own scratch i32 local that holds the
+	// allocator's returned base address while the element stores run.
+	// One per node lets nested literals like `[ [1,2], [3,4] ]` work
+	// without trampling each other's base pointers.
+	g.arrLocal = map[*ast.ArrayLit]string{}
+	collectArrayLits(fn.Body, func(a *ast.ArrayLit) {
+		name := fmt.Sprintf("$__arr_%d", len(g.arrLocal))
+		g.arrLocal[a] = name
+		g.linef("(local %s i32)", name)
+	})
 
 	for _, s := range fn.Body.Stmts {
 		if err := g.stmt(s); err != nil {
@@ -302,7 +318,140 @@ func (g *generator) leavesValue(e ast.Expr) bool {
 		}
 		return true
 	}
+	// `arr[i] = v` lowers to an i32.store with no result on the stack,
+	// so we mustn't emit a `drop` afterward in stmt-position.
+	if a, ok := e.(*ast.Assign); ok {
+		if _, isIdx := a.Target.(*ast.Index); isIdx {
+			return false
+		}
+	}
 	return true
+}
+
+// scanForArrayUses pre-walks the program and sets needsArrays if any
+// ArrayLit, Index, or Index-target Assign appears. Arrays imply the
+// runtime preamble (memory + bump allocator).
+func (g *generator) scanForArrayUses(prog *ast.Program) {
+	var walk func(any)
+	walk = func(n any) {
+		if g.needsArrays {
+			return
+		}
+		switch x := n.(type) {
+		case *ast.ArrayLit, *ast.Index:
+			g.needsArrays = true
+			g.needsRuntime = true
+		case *ast.Assign:
+			if _, isIdx := x.Target.(*ast.Index); isIdx {
+				g.needsArrays = true
+				g.needsRuntime = true
+			}
+			walk(x.Target)
+			walk(x.Value)
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		case *ast.Binary:
+			walk(x.Left)
+			walk(x.Right)
+		case *ast.Unary:
+			walk(x.Operand)
+		case *ast.Call:
+			walk(x.Callee)
+			for _, a := range x.Args {
+				walk(a)
+			}
+		}
+	}
+	for _, fn := range prog.Funcs {
+		walk(fn.Body)
+	}
+}
+
+// collectArrayLits visits every ArrayLit in n in source order. Source
+// order is what gives nested ArrayLits a deterministic local-name
+// mapping at emitFunc time.
+func collectArrayLits(n any, visit func(*ast.ArrayLit)) {
+	switch x := n.(type) {
+	case *ast.ArrayLit:
+		visit(x)
+		for _, e := range x.Elems {
+			collectArrayLits(e, visit)
+		}
+	case *ast.Block:
+		for _, s := range x.Stmts {
+			collectArrayLits(s, visit)
+		}
+	case *ast.If:
+		collectArrayLits(x.Cond, visit)
+		collectArrayLits(x.Then, visit)
+		if x.Else != nil {
+			collectArrayLits(x.Else, visit)
+		}
+	case *ast.While:
+		collectArrayLits(x.Cond, visit)
+		collectArrayLits(x.Body, visit)
+	case *ast.For:
+		if x.Init != nil {
+			collectArrayLits(x.Init, visit)
+		}
+		collectArrayLits(x.Cond, visit)
+		if x.Step != nil {
+			collectArrayLits(x.Step, visit)
+		}
+		collectArrayLits(x.Body, visit)
+	case *ast.Return:
+		if x.Value != nil {
+			collectArrayLits(x.Value, visit)
+		}
+	case *ast.Var:
+		collectArrayLits(x.Init, visit)
+	case *ast.ExprStmt:
+		collectArrayLits(x.Expr, visit)
+	case *ast.Binary:
+		collectArrayLits(x.Left, visit)
+		collectArrayLits(x.Right, visit)
+	case *ast.Unary:
+		collectArrayLits(x.Operand, visit)
+	case *ast.Call:
+		collectArrayLits(x.Callee, visit)
+		for _, a := range x.Args {
+			collectArrayLits(a, visit)
+		}
+	case *ast.Index:
+		collectArrayLits(x.Array, visit)
+		collectArrayLits(x.Idx, visit)
+	case *ast.Assign:
+		collectArrayLits(x.Target, visit)
+		collectArrayLits(x.Value, visit)
+	}
 }
 
 // scanForRuntimeUses pre-walks the program and sets needsRuntime if
@@ -413,6 +562,28 @@ func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
 	g.line(`(memory $mem 1)`)
 
+	if g.needsArrays {
+		// $__lang_alloc bumps the allocator pointer at memory[40] and
+		// returns the address that was there before the bump. There's
+		// no free — arrays in lang are immutable but not GC'd.
+		g.line(`(func $__lang_alloc (param $size i32) (result i32)`)
+		g.indent++
+		g.line(`(local $ptr i32)`)
+		// ptr = mem[40]
+		g.line(`i32.const 40`)
+		g.line(`i32.load`)
+		g.line(`local.set $ptr`)
+		// mem[40] = ptr + size
+		g.line(`i32.const 40`)
+		g.line(`local.get $ptr`)
+		g.line(`local.get $size`)
+		g.line(`i32.add`)
+		g.line(`i32.store`)
+		g.line(`local.get $ptr`)
+		g.indent--
+		g.line(`)`)
+	}
+
 	// putchar(n)
 	g.line(`(func $putchar (param $n i32)`)
 	g.indent++
@@ -475,6 +646,18 @@ func (g *generator) emitDataSegments() {
 	// strings
 	for _, s := range g.stringEntries {
 		g.linef(`(data (i32.const %d) "%s%s")`, s.offset, encodeI32(len(s.text)), wasmEscape(s.text))
+	}
+	// Bump-allocator initial pointer at offset 40. We seed it past the
+	// end of the strings, rounded up to 4 bytes for i32 access.
+	if g.needsArrays {
+		start := g.stringOffset
+		if start < 64 {
+			start = 64
+		}
+		if start%4 != 0 {
+			start += 4 - (start % 4)
+		}
+		g.linef(`(data (i32.const 40) "%s")`, encodeI32(start))
 	}
 }
 
@@ -547,9 +730,48 @@ func (g *generator) expr(e ast.Expr) error {
 		return g.call(n)
 	case *ast.Assign:
 		return g.assign(n)
+	case *ast.ArrayLit:
+		return g.arrayLit(n)
+	case *ast.Index:
+		// `a[i]` lowers to load(a + i*4).
+		if err := g.expr(n.Array); err != nil {
+			return err
+		}
+		if err := g.expr(n.Idx); err != nil {
+			return err
+		}
+		g.line("i32.const 4")
+		g.line("i32.mul")
+		g.line("i32.add")
+		g.line("i32.load")
 	default:
 		return fmt.Errorf("wasm: unsupported expression %T", e)
 	}
+	return nil
+}
+
+// arrayLit allocates N*4 bytes via $__lang_alloc, stores each element
+// at base + i*4, and pushes the base address onto the stack. The
+// per-ArrayLit local prevents nested literals from clobbering each
+// other's bases.
+func (g *generator) arrayLit(n *ast.ArrayLit) error {
+	local, ok := g.arrLocal[n]
+	if !ok {
+		return fmt.Errorf("wasm: array literal missing scratch local (compiler bug)")
+	}
+	g.linef("i32.const %d", len(n.Elems)*4)
+	g.line("call $__lang_alloc")
+	g.linef("local.set %s", local)
+	for i, el := range n.Elems {
+		g.linef("local.get %s", local)
+		g.linef("i32.const %d", i*4)
+		g.line("i32.add")
+		if err := g.expr(el); err != nil {
+			return err
+		}
+		g.line("i32.store")
+	}
+	g.linef("local.get %s", local)
 	return nil
 }
 
@@ -657,15 +879,33 @@ func (g *generator) call(n *ast.Call) error {
 }
 
 func (g *generator) assign(n *ast.Assign) error {
-	id, ok := n.Target.(*ast.Ident)
-	if !ok {
-		return fmt.Errorf("wasm: only identifier assignment is supported in v1")
+	switch t := n.Target.(type) {
+	case *ast.Ident:
+		if err := g.expr(n.Value); err != nil {
+			return err
+		}
+		g.linef("local.tee $%s", t.Name)
+		return nil
+	case *ast.Index:
+		// arr[i] = v → store at base + i*4. We don't try to leave the
+		// assigned value on the stack; the leavesValue check in stmt
+		// special-cases an Index-target Assign so no `drop` is emitted.
+		if err := g.expr(t.Array); err != nil {
+			return err
+		}
+		if err := g.expr(t.Idx); err != nil {
+			return err
+		}
+		g.line("i32.const 4")
+		g.line("i32.mul")
+		g.line("i32.add")
+		if err := g.expr(n.Value); err != nil {
+			return err
+		}
+		g.line("i32.store")
+		return nil
 	}
-	if err := g.expr(n.Value); err != nil {
-		return err
-	}
-	g.linef("local.tee $%s", id.Name)
-	return nil
+	return fmt.Errorf("wasm: unsupported assignment target %T", n.Target)
 }
 
 // ---------- type mapping ----------
@@ -674,6 +914,9 @@ func watType(t ast.Type) (string, error) {
 	switch t.(type) {
 	case ast.NumberType, ast.BoolType, ast.StringType:
 		// Strings are pointers into linear memory, so they're i32 too.
+		return "i32", nil
+	case ast.ArrayType:
+		// Arrays are pointers into linear memory.
 		return "i32", nil
 	}
 	return "", fmt.Errorf("wasm: type %s isn't supported by this backend yet", t)

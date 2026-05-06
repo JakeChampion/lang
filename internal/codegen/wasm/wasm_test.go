@@ -128,4 +128,36 @@ func TestNoRuntimeWhenUnused(t *testing.T) {
 	if strings.Contains(wat, "(memory $mem") {
 		t.Errorf("memory emitted unnecessarily:\n%s", wat)
 	}
+	if strings.Contains(wat, "$__lang_alloc") {
+		t.Errorf("bump allocator emitted unnecessarily:\n%s", wat)
+	}
+}
+
+// Array literals lower to bump-allocator + per-element store, with a
+// fresh i32 local holding the base pointer.
+func TestArrayLitEmitsAllocAndStores(t *testing.T) {
+	wat := compileToWAT(t, `function f(): number {
+		var a: number[] = [10, 20, 30];
+		return a[1];
+	}`)
+	mustContain(t, wat, "(func $__lang_alloc")
+	mustContain(t, wat, "(local $__arr_0 i32)")
+	mustContain(t, wat, "i32.const 12")  // 3 * 4 bytes
+	mustContain(t, wat, "call $__lang_alloc")
+	mustContain(t, wat, "local.set $__arr_0")
+	// Indexing `a[1]` becomes load(a + 4)
+	mustContain(t, wat, "i32.const 4")
+	mustContain(t, wat, "i32.mul")
+	mustContain(t, wat, "i32.load")
+}
+
+// Index assignment lowers to i32.store and leaves nothing on the
+// stack; no `drop` should be emitted by the surrounding ExprStmt.
+func TestIndexAssignEmitsStore(t *testing.T) {
+	wat := compileToWAT(t, `function f(): number {
+		var a: number[] = [0, 0];
+		a[0] = 7;
+		return a[0];
+	}`)
+	mustContain(t, wat, "i32.store")
 }
