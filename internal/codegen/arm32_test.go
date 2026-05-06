@@ -313,3 +313,19 @@ func TestStringInterningDeduplicates(t *testing.T) {
 		t.Errorf("third label should not exist (dedup), got:\n%s", asm)
 	}
 }
+
+func TestArm32RejectsFloatWithClearError(t *testing.T) {
+	prog, err := parser.Parse(`function f(): float { return 1.5; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(prog, info); err == nil {
+		t.Fatal("expected error from arm32 backend on float program")
+	} else if !strings.Contains(err.Error(), "float") {
+		t.Errorf("error should mention float, got %v", err)
+	}
+}

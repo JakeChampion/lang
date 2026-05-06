@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -81,5 +82,45 @@ func TestBuiltinPutchar(t *testing.T) {
 	}
 	if err := checkSource(t, `function f() { putchar(true); }`); err == nil {
 		t.Errorf("putchar(true) should fail")
+	}
+}
+
+func TestFloatArithmeticIsFlagged(t *testing.T) {
+	prog, err := parser.Parse(`function f(x: float, y: float): float { return x + y; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.Binary)
+	if !bin.IsFloat {
+		t.Errorf("expected IsFloat = true on float + float")
+	}
+}
+
+func TestFloatArithmeticTypechecks(t *testing.T) {
+	for _, src := range []string{
+		`function f(x: float): float { return x + 1.5; }`,
+		`function f(x: float): float { return x * 2.0 - 0.5; }`,
+		`function f(x: float, y: float): boolean { return x < y; }`,
+		`function f(x: float): float { return -x; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
+func TestFloatRejectsMixedArithmetic(t *testing.T) {
+	cases := []string{
+		`function f(x: float): float { return x + 1; }`,
+		`function f(x: number): float { return x + 1.5; }`,
+		`function f(x: float): float { return x % 1.0; }`, // % is integer-only
+	}
+	for _, src := range cases {
+		if err := checkSource(t, src); err == nil {
+			t.Errorf("%q: expected error", src)
+		}
 	}
 }

@@ -182,6 +182,8 @@ func zeroExpr(e ast.Expr) {
 		x.P = ast.Position{}
 	case *ast.StringLit:
 		x.P = ast.Position{}
+	case *ast.FloatLit:
+		x.P = ast.Position{}
 	case *ast.Ident:
 		x.P = ast.Position{}
 	case *ast.ArrayLit:

@@ -207,7 +207,11 @@ func (g *generator) emitFunc(fn *ast.FuncDecl) error {
 	// If the body falls off the end and the function expects a result,
 	// produce 0 so the WASM validator stays happy.
 	if !ast.Equal(fn.ReturnType, ast.VoidType{}) {
-		g.line("i32.const 0")
+		if ast.Equal(fn.ReturnType, ast.FloatType{}) {
+			g.line("f32.const 0")
+		} else {
+			g.line("i32.const 0")
+		}
 	}
 
 	g.indent--
@@ -921,6 +925,8 @@ func (g *generator) expr(e ast.Expr) error {
 		} else {
 			g.line("i32.const 0")
 		}
+	case *ast.FloatLit:
+		g.linef("f32.const %g", n.Value)
 	case *ast.StringLit:
 		// String literals are interned in linear memory; the value
 		// pushed on the stack is the address of the first byte (after
@@ -937,6 +943,13 @@ func (g *generator) expr(e ast.Expr) error {
 	case *ast.Unary:
 		switch n.Op {
 		case "-":
+			if n.IsFloat {
+				if err := g.expr(n.Operand); err != nil {
+					return err
+				}
+				g.line("f32.neg")
+				break
+			}
 			g.line("i32.const 0")
 			if err := g.expr(n.Operand); err != nil {
 				return err
@@ -1044,12 +1057,46 @@ func (g *generator) binary(n *ast.Binary) error {
 	if err := g.expr(n.Right); err != nil {
 		return err
 	}
+	if n.IsFloat {
+		op, err := wasmFloatBinaryOp(n.Op)
+		if err != nil {
+			return err
+		}
+		g.line(op)
+		return nil
+	}
 	op, err := wasmBinaryOp(n.Op)
 	if err != nil {
 		return err
 	}
 	g.line(op)
 	return nil
+}
+
+func wasmFloatBinaryOp(op string) (string, error) {
+	switch op {
+	case "+":
+		return "f32.add", nil
+	case "-":
+		return "f32.sub", nil
+	case "*":
+		return "f32.mul", nil
+	case "/":
+		return "f32.div", nil
+	case "==":
+		return "f32.eq", nil
+	case "!=":
+		return "f32.ne", nil
+	case "<":
+		return "f32.lt", nil
+	case "<=":
+		return "f32.le", nil
+	case ">":
+		return "f32.gt", nil
+	case ">=":
+		return "f32.ge", nil
+	}
+	return "", fmt.Errorf("wasm: unsupported float binary op %q", op)
 }
 
 func wasmBinaryOp(op string) (string, error) {
@@ -1169,6 +1216,8 @@ func watType(t ast.Type) (string, error) {
 	case *ast.FuncType:
 		// Function values are table indices.
 		return "i32", nil
+	case ast.FloatType:
+		return "f32", nil
 	}
 	return "", fmt.Errorf("wasm: type %s isn't supported by this backend yet", t)
 }

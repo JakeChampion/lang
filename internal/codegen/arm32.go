@@ -577,7 +577,7 @@ func containsCall(n any) bool {
 		return containsCall(x.Init)
 	case *ast.ExprStmt:
 		return containsCall(x.Expr)
-	case *ast.NumberLit, *ast.BoolLit, *ast.StringLit, *ast.Ident:
+	case *ast.NumberLit, *ast.BoolLit, *ast.StringLit, *ast.FloatLit, *ast.Ident:
 		return false
 	case *ast.ArrayLit:
 		for _, e := range x.Elems {
@@ -735,6 +735,8 @@ func (g *generator) expr(e ast.Expr) error {
 		}
 	case *ast.StringLit:
 		g.emit("ldr r0, =%s", g.internString(n.Value))
+	case *ast.FloatLit:
+		return fmt.Errorf("codegen: float literals are not yet supported by the arm32 backend (use the wasm backend)")
 	case *ast.Ident:
 		// Local var (incl. shadowing) takes precedence over a pinned
 		// param so leaf-function bodies can still declare a `var x`

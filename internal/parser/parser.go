@@ -8,6 +8,7 @@ package parser
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
@@ -204,6 +205,9 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "string":
 		p.advance()
 		base = ast.StringType{}
+	case t.Kind == lexer.Keyword && t.Text == "float":
+		p.advance()
+		base = ast.FloatType{}
 	case t.Kind == lexer.Punct && t.Text == "(":
 		// Function type: `(T1, T2, ...) => RT`. Empty parens are
 		// allowed for nullary callbacks.
@@ -611,6 +615,16 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			n = n*10 + int64(c-'0')
 		}
 		return &ast.NumberLit{P: t.Pos, Value: n}, nil
+	case lexer.Float:
+		p.advance()
+		// strconv.ParseFloat handles `1.5`, `0.0`, etc. We accepted
+		// only `<digits>.<digits>` from the lexer so this won't fail
+		// in practice, but plumb the error through anyway.
+		f, err := strconv.ParseFloat(t.Text, 64)
+		if err != nil {
+			return nil, p.errorf(t.Pos, "invalid float literal %q: %v", t.Text, err)
+		}
+		return &ast.FloatLit{P: t.Pos, Value: f}, nil
 	case lexer.String:
 		p.advance()
 		return &ast.StringLit{P: t.Pos, Value: t.Text}, nil

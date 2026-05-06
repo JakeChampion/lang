@@ -215,6 +215,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return ast.BoolType{}
 	case *ast.StringLit:
 		return ast.StringType{}
+	case *ast.FloatLit:
+		return ast.FloatType{}
 	case *ast.Ident:
 		if t, ok := s.lookup(n.Name); ok {
 			return t
@@ -281,14 +283,29 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					return ast.StringType{}
 				}
 			}
+			fallthrough
+		case "-", "*", "/":
+			// Same-type number+number or float+float arithmetic.
+			if isFloat(lt) || isFloat(rt) {
+				c.requireFloat(n.P, lt, n.Op)
+				c.requireFloat(n.P, rt, n.Op)
+				n.IsFloat = true
+				return ast.FloatType{}
+			}
 			c.requireNumber(n.P, lt, n.Op)
 			c.requireNumber(n.P, rt, n.Op)
 			return ast.NumberType{}
-		case "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
+		case "%", "&", "|", "^", "<<", ">>":
 			c.requireNumber(n.P, lt, n.Op)
 			c.requireNumber(n.P, rt, n.Op)
 			return ast.NumberType{}
 		case "<", ">", "<=", ">=":
+			if isFloat(lt) || isFloat(rt) {
+				c.requireFloat(n.P, lt, n.Op)
+				c.requireFloat(n.P, rt, n.Op)
+				n.IsFloat = true
+				return ast.BoolType{}
+			}
 			c.requireNumber(n.P, lt, n.Op)
 			c.requireNumber(n.P, rt, n.Op)
 			return ast.BoolType{}
@@ -308,6 +325,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		t := c.checkExpr(n.Operand, s)
 		switch n.Op {
 		case "-":
+			if isFloat(t) {
+				n.IsFloat = true
+				return ast.FloatType{}
+			}
 			c.requireNumber(n.P, t, n.Op)
 			return ast.NumberType{}
 		case "!":
@@ -330,6 +351,15 @@ func (c *checker) requireNumber(p ast.Position, t ast.Type, op string) {
 	if t != nil && !ast.Equal(t, ast.NumberType{}) {
 		c.errf(p, "operator %q requires number, got %s", op, t)
 	}
+}
+func (c *checker) requireFloat(p ast.Position, t ast.Type, op string) {
+	if t != nil && !ast.Equal(t, ast.FloatType{}) {
+		c.errf(p, "operator %q requires float, got %s", op, t)
+	}
+}
+func isFloat(t ast.Type) bool {
+	_, ok := t.(ast.FloatType)
+	return ok
 }
 func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 	if t != nil && !ast.Equal(t, ast.BoolType{}) {

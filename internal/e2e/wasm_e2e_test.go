@@ -154,6 +154,50 @@ func TestWASMPrintHelloWorld(t *testing.T) {
 	}
 }
 
+// runWasmFloat parses a 32-bit float result out of wasmtime's stdout.
+// wasmtime prints floats either as a bare decimal or as `f32: N`, so
+// strip a leading type tag if present and parse the rest.
+func runWasmFloat(t *testing.T, src string) float64 {
+	t.Helper()
+	stdout, _ := invokeWasmtime(t, src)
+	for _, ln := range strings.Split(stdout, "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if i := strings.LastIndex(ln, " "); i >= 0 {
+			ln = ln[i+1:]
+		}
+		if f, err := strconv.ParseFloat(ln, 64); err == nil {
+			return f
+		}
+	}
+	t.Fatalf("could not parse wasmtime float output:\n%s", stdout)
+	return 0
+}
+
+func TestWASMFloatArithmetic(t *testing.T) {
+	src := `function main(): float { return 1.5 + 2.5; }`
+	if got := runWasmFloat(t, src); got != 4.0 {
+		t.Errorf("got %v, want 4.0", got)
+	}
+}
+
+func TestWASMFloatMultiplyAndDivide(t *testing.T) {
+	src := `function main(): float { return 6.0 * 0.5 / 0.25; }`
+	if got := runWasmFloat(t, src); got != 12.0 {
+		t.Errorf("got %v, want 12.0", got)
+	}
+}
+
+func TestWASMFloatNegate(t *testing.T) {
+	src := `function f(x: float): float { return -x; }
+		function main(): float { return f(3.5); }`
+	if got := runWasmFloat(t, src); got != -3.5 {
+		t.Errorf("got %v, want -3.5", got)
+	}
+}
+
 func TestWASMPutcharWritesBytes(t *testing.T) {
 	src := `function main(): number {
 		putchar(72); putchar(73); putchar(10);
