@@ -70,7 +70,7 @@ var keywords = map[string]bool{
 
 // Multi-character punctuators, longest first.
 var multiPunct = []string{
-	"==", "!=", "<=", ">=", "&&", "||",
+	"==", "!=", "<=", ">=", "&&", "||", "<<", ">>",
 }
 
 type Error struct {
@@ -232,7 +232,7 @@ func (l *lexer) next() (Token, error) {
 
 	// Single-char punctuator.
 	switch r {
-	case '+', '-', '*', '/', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!':
+	case '+', '-', '*', '/', '%', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!', '&', '|', '^':
 		l.advance()
 		return Token{Kind: Punct, Text: string(r), Pos: start}, nil
 	}

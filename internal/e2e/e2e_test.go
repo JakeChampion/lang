@@ -181,6 +181,32 @@ func TestSixArgFunction(t *testing.T) {
 	}
 }
 
+func TestModulo(t *testing.T) {
+	src := `function main(): number { return 17 % 5; }`
+	_, code := compileAndRun(t, src)
+	if code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+}
+
+func TestBitwiseAndOr(t *testing.T) {
+	// (12 & 10) | 1 = 8 | 1 = 9
+	src := `function main(): number { return (12 & 10) | 1; }`
+	_, code := compileAndRun(t, src)
+	if code != 9 {
+		t.Errorf("exit = %d, want 9", code)
+	}
+}
+
+func TestShifts(t *testing.T) {
+	// (1 << 5) >> 2 = 32 >> 2 = 8
+	src := `function main(): number { return (1 << 5) >> 2; }`
+	_, code := compileAndRun(t, src)
+	if code != 8 {
+		t.Errorf("exit = %d, want 8", code)
+	}
+}
+
 func TestStringPrint(t *testing.T) {
 	src := `function main(): number {
 		print("Hello, world!");
