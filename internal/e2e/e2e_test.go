@@ -168,6 +168,19 @@ func TestForLoop(t *testing.T) {
 	}
 }
 
+func TestSixArgFunction(t *testing.T) {
+	src := `
+		function sum6(a: number, b: number, c: number,
+		              d: number, e: number, f: number): number {
+			return a + b + c + d + e + f;
+		}
+		function main(): number { return sum6(1, 2, 4, 8, 16, 32); }`
+	_, code := compileAndRun(t, src)
+	if code != 63 {
+		t.Errorf("exit = %d, want 63", code)
+	}
+}
+
 func TestArraySumAndMutation(t *testing.T) {
 	src := `
 		function main(): number {

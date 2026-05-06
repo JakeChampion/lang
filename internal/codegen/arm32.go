@@ -25,10 +25,9 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 )
 
-// Maximum number of parameters supported. Args 5+ would normally come in
-// on the caller's stack; adding that is a small extension and out of scope
-// for this teaching compiler.
-const maxParams = 4
+// regArgs is the number of arguments that AAPCS passes in registers
+// (r0..r3). Anything beyond that goes through the caller's stack frame.
+const regArgs = 4
 
 // Emit returns the assembly text for prog.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
@@ -36,9 +35,6 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	g.line(`.arch armv7-a`)
 	g.line(`.text`)
 	for _, fn := range prog.Funcs {
-		if len(fn.Params) > maxParams {
-			return "", fmt.Errorf("function %q has %d params; max %d supported", fn.Name, len(fn.Params), maxParams)
-		}
 		if err := g.emitFunction(fn); err != nil {
 			return "", err
 		}
@@ -148,9 +144,18 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 	if g.frame.frameBytes > 0 {
 		g.emit("sub sp, sp, #%d", g.frame.frameBytes)
 	}
-	// Spill incoming register parameters into their stack slots.
+	// Move incoming parameters into their local slots:
+	//   * args 0..3 come in r0..r3 — spill straight in
+	//   * args 4..N come from the caller's stack frame, which after our
+	//     prologue starts at fp+8 (fp[0]=saved fp, fp[4]=saved lr)
 	for i, p := range fn.Params {
-		g.emit("str r%d, [fp, #%d]", i, paramOffs[p.Name])
+		if i < regArgs {
+			g.emit("str r%d, [fp, #%d]", i, paramOffs[p.Name])
+		} else {
+			callerOff := 8 + (i-regArgs)*4
+			g.emit("ldr r12, [fp, #%d]", callerOff)
+			g.emit("str r12, [fp, #%d]", paramOffs[p.Name])
+		}
 	}
 
 	g.epilogue = g.freshLabel("epi_" + fn.Name)
@@ -428,19 +433,65 @@ func (g *generator) call(n *ast.Call) error {
 	if !ok {
 		return fmt.Errorf("codegen: indirect calls not supported")
 	}
-	if len(n.Args) > maxParams {
-		return fmt.Errorf("codegen: call to %q has %d args; max %d", id.Name, len(n.Args), maxParams)
+	N := len(n.Args)
+
+	// Common case: ≤ 4 args. Push each in source order, pop into
+	// r{N-1}..r0. Single-arg calls collapse to nothing once the
+	// peephole pass folds the push/pop pair.
+	if N <= regArgs {
+		for _, a := range n.Args {
+			if err := g.expr(a); err != nil {
+				return err
+			}
+			g.emit("push {r0}")
+		}
+		for i := N - 1; i >= 0; i-- {
+			g.emit("pop {r%d}", i)
+		}
+		g.emit("bl %s", id.Name)
+		return nil
 	}
-	for _, a := range n.Args {
+
+	// >4 args. Pre-allocate one stack region big enough for both the
+	// AAPCS stack-arg slots (args 4..N-1) and a temp area for the
+	// register-bound args (0..3) so we can evaluate left-to-right
+	// without juggling registers across calls inside arg expressions.
+	//
+	// Layout (low → high addresses, i.e. sp[0] is at the bottom):
+	//
+	//   sp[0]              arg 4         ─┐
+	//   sp[4]              arg 5          ├ AAPCS stack-arg area
+	//   ...                 ...           │  (callee reads from here)
+	//   sp[(N-5)*4]        arg N-1       ─┘
+	//   sp[(N-4)*4]        temp arg 0    ─┐
+	//   sp[(N-3)*4]        temp arg 1     ├ register-load staging
+	//   sp[(N-2)*4]        temp arg 2     │
+	//   sp[(N-1)*4]        temp arg 3    ─┘
+	//
+	// The whole thing is rounded up to 8 bytes for AAPCS alignment.
+	totalBytes := N * 4
+	if totalBytes%8 != 0 {
+		totalBytes += 4
+	}
+	g.emit("sub sp, sp, #%d", totalBytes)
+
+	tempBase := (N - regArgs) * 4 // start of the register-load staging area
+
+	for i, a := range n.Args {
 		if err := g.expr(a); err != nil {
 			return err
 		}
-		g.emit("push {r0}")
+		if i < regArgs {
+			g.emit("str r0, [sp, #%d]", tempBase+i*4)
+		} else {
+			g.emit("str r0, [sp, #%d]", (i-regArgs)*4)
+		}
 	}
-	for i := len(n.Args) - 1; i >= 0; i-- {
-		g.emit("pop {r%d}", i)
+	for i := 0; i < regArgs; i++ {
+		g.emit("ldr r%d, [sp, #%d]", i, tempBase+i*4)
 	}
 	g.emit("bl %s", id.Name)
+	g.emit("add sp, sp, #%d", totalBytes)
 	return nil
 }
 

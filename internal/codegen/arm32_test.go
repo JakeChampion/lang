@@ -92,6 +92,27 @@ func TestFrameSizeAlignedTo8(t *testing.T) {
 	mustContain(t, asm, "sub sp, sp, #16")
 }
 
+// A function with >4 params should fetch the extras from the caller's
+// stack frame (fp+8, fp+12, …) into local slots.
+func TestManyParamsReadsFromCallerStack(t *testing.T) {
+	asm := compile(t, `function f(a: number, b: number, c: number, d: number, e: number, f2: number): number {
+		return a + b + c + d + e + f2;
+	}`)
+	mustContain(t, asm, "ldr r12, [fp, #8]")  // param 4 (e)
+	mustContain(t, asm, "ldr r12, [fp, #12]") // param 5 (f2)
+}
+
+// >4-arg calls must pre-allocate the AAPCS stack-arg area and load
+// r0..r3 from the temp staging slots.
+func TestManyArgCallPreallocates(t *testing.T) {
+	asm := compile(t, `
+		function g(a: number, b: number, c: number, d: number, e: number, f: number): number { return a; }
+		function f(): number { return g(1, 2, 3, 4, 5, 6); }`)
+	// 6 args * 4 bytes = 24, already 8-aligned.
+	mustContain(t, asm, "sub sp, sp, #24")
+	mustContain(t, asm, "add sp, sp, #24")
+}
+
 func TestNonExecutableStackNote(t *testing.T) {
 	asm := compile(t, `function f(): number { return 0; }`)
 	mustContain(t, asm, `.section .note.GNU-stack,"",%progbits`)
