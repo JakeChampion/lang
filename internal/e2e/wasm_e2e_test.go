@@ -388,3 +388,75 @@ func TestWASMStringConcatPreservesContent(t *testing.T) {
 		t.Errorf("output = %q, want \"hello, world\"", out)
 	}
 }
+
+func TestWASMArrayOutOfBoundsTraps(t *testing.T) {
+	src := `function main(): number {
+		var a: number[] = [1, 2, 3];
+		return a[10];
+	}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wat, err := wasm.Emit(prog, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Run wasmtime expecting non-zero exit (trap).
+	wt := wasmtimePath(t)
+	dir := t.TempDir()
+	watPath := filepath.Join(dir, "prog.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
+	var so, se bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &so, &se
+	if err := cmd.Run(); err == nil {
+		t.Errorf("expected wasmtime to trap on a[10], but it succeeded\nstdout:\n%s\nstderr:\n%s", so.String(), se.String())
+	}
+}
+
+func TestWASMNegativeIndexTraps(t *testing.T) {
+	src := `function main(): number {
+		var a: number[] = [1, 2, 3];
+		return a[0 - 1];
+	}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wat, err := wasm.Emit(prog, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := wasmtimePath(t)
+	dir := t.TempDir()
+	watPath := filepath.Join(dir, "prog.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
+	if err := cmd.Run(); err == nil {
+		t.Errorf("expected wasmtime to trap on a[-1], but it succeeded")
+	}
+}
+
+func TestWASMInBoundsStillWorks(t *testing.T) {
+	// Make sure the bounds check doesn't break the happy path.
+	src := `function main(): number {
+		var a: number[] = [10, 20, 30];
+		return a[1];
+	}`
+	if got := runWasm(t, src); got != 20 {
+		t.Errorf("got %d, want 20", got)
+	}
+}
