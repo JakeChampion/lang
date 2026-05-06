@@ -43,6 +43,11 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 			return "", err
 		}
 	}
+	// Mark the stack as non-executable. Without this the GNU linker
+	// assumes an executable stack and emits a deprecation warning that
+	// will become a hard error in future binutils.
+	g.line("")
+	g.line(`.section .note.GNU-stack,"",%progbits`)
 	return g.out.String(), nil
 }
 
