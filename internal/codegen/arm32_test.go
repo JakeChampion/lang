@@ -135,7 +135,6 @@ func TestPrintLowersToPuts(t *testing.T) {
 }
 
 // Identical literals share a label; distinct ones don't.
-// Identical literals share a label; distinct ones don't.
 func TestModuloUsesIdivmod(t *testing.T) {
 	asm := compile(t, `function f(): number { return 17 % 5; }`)
 	mustContain(t, asm, "bl __aeabi_idivmod")
@@ -179,6 +178,33 @@ func TestNoStrcatHelperWhenUnused(t *testing.T) {
 	asm := compile(t, `function main(): void { print("hello"); }`)
 	if strings.Contains(asm, "__lang_strcat") {
 		t.Errorf("strcat helper emitted even though it's unused:\n%s", asm)
+	}
+}
+
+// Leaf functions (no calls in the body) should pin their parameters
+// to callee-saved registers instead of stack slots. The prologue
+// pushes r4..r{4+P-1} alongside fp/lr and reads through `mov r0, r4`
+// rather than `ldr r0, [fp, ...]`.
+func TestLeafFunctionPinsParamsToRegisters(t *testing.T) {
+	asm := compile(t, `function add(a: number, b: number): number { return a + b; }`)
+	mustContain(t, asm, "push {r4, r5, fp, lr}")
+	mustContain(t, asm, "mov r4, r0")
+	mustContain(t, asm, "mov r5, r1")
+	// Reads of `a` go through r4, not a stack load.
+	mustContain(t, asm, "mov r0, r4")
+	if strings.Contains(asm, "str r0, [fp, #-4]") {
+		t.Errorf("leaf function should not spill params to stack:\n%s", asm)
+	}
+}
+
+// Functions that contain a Call expression are NOT leaves — the
+// existing stack-spill prologue still applies.
+func TestNonLeafKeepsStackSpill(t *testing.T) {
+	asm := compile(t, `function g(n: number): number { return n; }
+function f(n: number): number { return g(n); }`)
+	// `f` calls `g`, so it isn't a leaf — expect the original prologue.
+	if !strings.Contains(asm, "f:\n\tpush {fp, lr}") {
+		t.Errorf("non-leaf f should use the stack-spill prologue:\n%s", asm)
 	}
 }
 

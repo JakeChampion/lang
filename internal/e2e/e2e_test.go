@@ -76,6 +76,21 @@ func TestExitCode(t *testing.T) {
 	}
 }
 
+// A leaf function with several params exercises the register-pinned
+// prologue: the body still produces the right answer despite never
+// touching the stack to read a/b/c/d.
+func TestLeafFunctionAllRegArgs(t *testing.T) {
+	src := `
+		function leaf(a: number, b: number, c: number, d: number): number {
+			return (a + b) * (c + d);
+		}
+		function main(): number { return leaf(2, 3, 4, 5); }`
+	_, code := compileAndRun(t, src)
+	if code != 45 {
+		t.Errorf("exit = %d, want 45 ((2+3)*(4+5))", code)
+	}
+}
+
 func TestArithmeticAndCalls(t *testing.T) {
 	src := `
 		function add(a: number, b: number): number { return a + b; }
