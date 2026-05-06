@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install ARM cross-toolchain and qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf qemu-user
+
+      - name: Show toolchain versions
+        run: |
+          go version
+          arm-linux-gnueabihf-gcc --version | head -1
+          qemu-arm --version | head -1
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test (includes ARM end-to-end tests under qemu)
+        run: go test -v ./...
+
+      - name: Compile every example
+        run: |
+          go build -o bin/lang ./cmd/lang
+          mkdir -p build
+          for f in examples/*.lang; do
+            name=$(basename "$f" .lang)
+            ./bin/lang "$f" > "build/$name.s"
+            arm-linux-gnueabihf-gcc -static "build/$name.s" -o "build/$name"
+            echo "::group::run $name"
+            qemu-arm "build/$name" || echo "(exited $?)"
+            echo "::endgroup::"
+          done
