@@ -106,3 +106,73 @@ func TestWASMForLoopWithBreakContinue(t *testing.T) {
 		t.Errorf("got %d, want 18", got)
 	}
 }
+
+// runWasmCapturingStdout invokes _start (or main) under wasmtime with
+// WASI enabled and returns whatever the program wrote to stdout.
+func runWasmCapturingStdout(t *testing.T, src string) string {
+	t.Helper()
+	wt := wasmtimePath(t)
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	wat, err := wasm.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	dir := t.TempDir()
+	watPath := filepath.Join(dir, "prog.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime: %v\n%s\n--- wat ---\n%s", err, out, wat)
+	}
+	// wasmtime prints the i32 result on its own line at the end; strip
+	// it so callers only see what the program actually wrote.
+	lines := strings.Split(string(out), "\n")
+	for len(lines) > 0 {
+		last := strings.TrimSpace(lines[len(lines)-1])
+		if last == "" {
+			lines = lines[:len(lines)-1]
+			continue
+		}
+		// drop a trailing bare integer (the i32 result)
+		if _, err := strconv.Atoi(last); err == nil {
+			lines = lines[:len(lines)-1]
+			continue
+		}
+		break
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestWASMPrintHelloWorld(t *testing.T) {
+	src := `function main(): number {
+		print("Hello, world!");
+		return 0;
+	}`
+	out := runWasmCapturingStdout(t, src)
+	if out != "Hello, world!" {
+		t.Errorf("output = %q, want \"Hello, world!\"", out)
+	}
+}
+
+func TestWASMPutcharWritesBytes(t *testing.T) {
+	src := `function main(): number {
+		putchar(72); putchar(73); putchar(10);
+		return 0;
+	}`
+	out := runWasmCapturingStdout(t, src)
+	if out != "HI" {
+		t.Errorf("output = %q, want \"HI\"", out)
+	}
+}
