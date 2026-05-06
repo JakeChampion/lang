@@ -35,6 +35,11 @@ type Info struct {
 	// Structs maps a struct name to its declaration (which carries the
 	// ordered field list — codegen looks up field offsets here).
 	Structs map[string]*ast.StructDecl
+	// Methods maps `<StructName>.<MethodName>` to the mangled
+	// top-level function name the receiver-rewriting pass introduces
+	// (`__method_<StructName>_<MethodName>`). Call-site rewriting
+	// uses this map to turn `p.area()` into `__method_Point_area(p)`.
+	Methods map[string]string
 }
 
 // Check type-checks the program. It returns an aggregated error if any
@@ -46,6 +51,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			Locals:   map[*ast.FuncDecl][]*ast.Var{},
 			FuncSigs: map[string]*ast.FuncType{},
 			Structs:  map[string]*ast.StructDecl{},
+			Methods:  map[string]string{},
 		},
 	}
 
@@ -79,8 +85,35 @@ func Check(prog *ast.Program) (*Info, error) {
 	}
 
 	// First pass: gather all top-level signatures so functions can call
-	// each other in any order.
+	// each other in any order. Methods are hoisted to mangled
+	// top-level names (`__method_<Type>_<Name>`) with the receiver
+	// prepended to the parameter list, so codegen never has to know
+	// about methods.
 	for _, fn := range prog.Funcs {
+		if fn.Receiver != nil {
+			st, ok := fn.Receiver.Type.(ast.StructType)
+			if !ok {
+				c.errf(fn.P, "method receiver type must be a struct, got %s", fn.Receiver.Type)
+				continue
+			}
+			if _, ok := c.info.Structs[st.Name]; !ok {
+				c.errf(fn.P, "method receiver references unknown struct %q", st.Name)
+				continue
+			}
+			methodKey := st.Name + "." + fn.Name
+			if _, dup := c.info.Methods[methodKey]; dup {
+				c.errf(fn.P, "method %q on struct %s redeclared", fn.Name, st.Name)
+				continue
+			}
+			mangled := "__method_" + st.Name + "_" + fn.Name
+			// Rewrite the FuncDecl so codegen sees a regular
+			// top-level function with the receiver as its first
+			// parameter.
+			fn.Name = mangled
+			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
+			fn.Receiver = nil
+			c.info.Methods[methodKey] = mangled
+		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup {
 			c.errf(fn.P, "function %q redeclared", fn.Name)
 			continue
@@ -483,6 +516,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			return ast.NumberType{}
+		}
+		// Method call dispatch: `target.method(args)` where target is a
+		// struct value and the struct has a method of that name. We
+		// rewrite the Call node in place to `mangledName(target, args)`
+		// so the rest of the pipeline (codegen, IR) only ever sees a
+		// regular function call.
+		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
+			tt := c.checkExpr(fa.Target, s)
+			if st, ok := tt.(ast.StructType); ok {
+				key := st.Name + "." + fa.Field
+				if mangled, ok := c.info.Methods[key]; ok {
+					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
+					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
+				}
+			}
 		}
 		callee := c.checkExpr(n.Callee, s)
 		ft, ok := callee.(*ast.FuncType)

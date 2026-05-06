@@ -385,6 +385,13 @@ type FuncDecl struct {
 	Params     []Param
 	ReturnType Type
 	Body       *Block
+	// Receiver, when non-nil, marks this declaration as a method on
+	// the struct type Receiver.Type.(StructType).Name. The checker
+	// hoists methods into top-level functions under the mangled name
+	// `__method_<Type>_<Name>` and rewrites `expr.Method(args)` call
+	// sites to `__method_<Type>_<Method>(expr, args)` so codegen
+	// never has to know about methods.
+	Receiver *Param
 	// IsLocal is true for functions declared as a statement inside
 	// another function's body. Closure conversion at codegen time
 	// hoists these to top-level entries and rewrites captured-var

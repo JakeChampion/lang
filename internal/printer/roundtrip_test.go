@@ -283,3 +283,8 @@ func TestRoundtripNestedFunction(t *testing.T) {
 		return add;
 	}`)
 }
+
+func TestRoundtripMethod(t *testing.T) {
+	roundTrip(t, `struct Point { x: number, y: number }
+		function (p: Point) sum(): number { return p.x + p.y; }`)
+}

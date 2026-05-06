@@ -157,6 +157,29 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Optional method receiver: `function (p: Point) name(...)`.
+	// We distinguish receiver from regular params by the lookahead
+	// pattern `( ident : type ) ident (` — a single typed binding in
+	// parens followed by a method name then another `(`.
+	var receiver *ast.Param
+	if p.match(lexer.Punct, "(") && p.looksLikeReceiverClause() {
+		p.advance() // (
+		rname, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(lexer.Punct, ":"); err != nil {
+			return nil, err
+		}
+		rtype, err := p.parseType()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(lexer.Punct, ")"); err != nil {
+			return nil, err
+		}
+		receiver = &ast.Param{Name: rname.Text, Type: rtype}
+	}
 	name, err := p.expect(lexer.Ident, "")
 	if err != nil {
 		return nil, err
@@ -201,7 +224,61 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ast.FuncDecl{P: kw.Pos, Name: name.Text, Params: params, ReturnType: ret, Body: body}, nil
+	return &ast.FuncDecl{
+		P:          kw.Pos,
+		Name:       name.Text,
+		Params:     params,
+		ReturnType: ret,
+		Body:       body,
+		Receiver:   receiver,
+	}, nil
+}
+
+// looksLikeReceiverClause peeks past the current `(` to see whether
+// it's the start of a method's receiver `(name: T) methodName(`. We
+// use a tightly-bounded scan rather than committing tokens because
+// any false positive on a regular function with no name would be a
+// regression the parser couldn't recover from.
+func (p *parser) looksLikeReceiverClause() bool {
+	// Save and restore the position; the caller advances past `(`
+	// once we confirm.
+	start := p.i
+	if !p.match(lexer.Punct, "(") {
+		return false
+	}
+	p.i++ // skip (
+	if p.peek().Kind != lexer.Ident {
+		p.i = start
+		return false
+	}
+	p.i++ // ident
+	if !(p.peek().Kind == lexer.Punct && p.peek().Text == ":") {
+		p.i = start
+		return false
+	}
+	// Skip the type — accept any sequence of tokens until matching `)`.
+	depth := 0
+	for p.i < len(p.tokens) {
+		t := p.tokens[p.i]
+		if t.Kind == lexer.Punct && t.Text == "(" {
+			depth++
+		} else if t.Kind == lexer.Punct && t.Text == ")" {
+			if depth == 0 {
+				p.i++ // consume the closing )
+				break
+			}
+			depth--
+		}
+		p.i++
+	}
+	// After the receiver `)`, we expect `name(`.
+	ok := p.peek().Kind == lexer.Ident
+	if ok {
+		p.i++
+		ok = p.match(lexer.Punct, "(")
+	}
+	p.i = start
+	return ok
 }
 
 // parseLocalFunction parses a `function name(...) { ... }` appearing

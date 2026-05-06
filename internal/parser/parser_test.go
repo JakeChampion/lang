@@ -313,3 +313,40 @@ func TestStructLitAndFieldAccess(t *testing.T) {
 		t.Errorf("return should be FieldAccess, got %T", ret.Value)
 	}
 }
+
+func TestMethodReceiverParsing(t *testing.T) {
+	prog, err := Parse(`struct Point { x: number, y: number }
+		function (p: Point) sum(): number { return p.x + p.y; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(prog.Funcs))
+	}
+	fn := prog.Funcs[0]
+	if fn.Receiver == nil {
+		t.Fatal("expected receiver, got nil")
+	}
+	if fn.Receiver.Name != "p" {
+		t.Errorf("receiver name = %q, want \"p\"", fn.Receiver.Name)
+	}
+	if st, ok := fn.Receiver.Type.(ast.StructType); !ok || st.Name != "Point" {
+		t.Errorf("receiver type = %v, want Point", fn.Receiver.Type)
+	}
+	if fn.Name != "sum" {
+		t.Errorf("name = %q, want \"sum\"", fn.Name)
+	}
+}
+
+func TestRegularFunctionStillParses(t *testing.T) {
+	// Make sure the receiver lookahead doesn't trigger on a normal
+	// function whose first param is a struct.
+	prog, err := Parse(`struct P { x: number }
+		function describe(p: P): number { return p.x; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prog.Funcs[0].Receiver != nil {
+		t.Error("regular function got mistakenly parsed as a method")
+	}
+}
