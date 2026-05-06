@@ -21,6 +21,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen"
+	"github.com/jakechampion/lang/internal/codegen/wasm"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/optimizer"
 	"github.com/jakechampion/lang/internal/parser"
@@ -28,11 +29,12 @@ import (
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	cc := flag.String("cc", "arm-linux-gnueabihf-gcc", "ARM cross-compiler used to link when -o or --run is set")
-	runIt := flag.Bool("run", false, "link to a temporary binary and execute it under qemu-arm")
+	target := flag.String("target", "arm32", "code-generation backend: arm32 (default) or wasm")
+	cc := flag.String("cc", "arm-linux-gnueabihf-gcc", "ARM cross-compiler used to link when -o or --run is set (arm32 only)")
+	runIt := flag.Bool("run", false, "link to a temporary binary and execute it under qemu-arm (arm32 only)")
 	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lang [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
+		fmt.Fprintln(os.Stderr, "usage: lang [-target arm32|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -44,7 +46,7 @@ func main() {
 	srcPath := flag.Arg(0)
 	progArgs := flag.Args()[1:] // anything after the source path is forwarded to the program
 
-	code, err := run(srcPath, *out, *cc, *runIt, *qemu, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -55,7 +57,7 @@ func main() {
 // run drives the full pipeline. The returned int is the exit code that
 // the lang process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, cc string, runIt bool, qemu string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs []string) (int, error) {
 	srcBytes, err := os.ReadFile(srcPath)
 	if err != nil {
 		return 1, err
@@ -71,6 +73,24 @@ func run(srcPath, outPath, cc string, runIt bool, qemu string, progArgs []string
 		return 1, fmt.Errorf("%s", diag.Format(src, err))
 	}
 	optimizer.Optimize(prog)
+
+	// WASM target: emit WAT to stdout (or -o file) and stop. The arm32
+	// link / --run paths don't apply.
+	if target == "wasm" {
+		text, err := wasm.Emit(prog, info)
+		if err != nil {
+			return 1, err
+		}
+		if outPath == "" {
+			_, err = os.Stdout.WriteString(text)
+			return ifErr(err), err
+		}
+		return ifErr(os.WriteFile(outPath, []byte(text), 0o644)), nil
+	}
+	if target != "arm32" {
+		return 1, fmt.Errorf("unknown target %q (want arm32 or wasm)", target)
+	}
+
 	asm, err := codegen.Emit(prog, info)
 	if err != nil {
 		return 1, err
@@ -139,6 +159,14 @@ func link(asm, outPath, cc string) error {
 		return fmt.Errorf("%s failed: %w\n%s\n(temporary assembly retained at %s)", cc, err, out, asmPath)
 	}
 	return nil
+}
+
+// ifErr collapses a Go error into the exit code lang should return.
+func ifErr(err error) int {
+	if err != nil {
+		return 1
+	}
+	return 0
 }
 
 // execUnderQemu runs binPath through the supplied user-mode emulator
