@@ -32,6 +32,19 @@ qemu-arm factorial
 ```
 
 `go test ./...` runs the unit tests (lexer, parser, checker, codegen).
+Tests in `internal/e2e` exercise the full pipeline by linking the emitted
+assembly with `arm-linux-gnueabihf-gcc` and running it under `qemu-arm`;
+they skip automatically when those tools aren't on `PATH`. CI installs
+both, so the full pipeline is exercised on every push.
+
+The `Makefile` wraps the common flows:
+
+```
+make build        # go build → bin/lang
+make test         # go test ./...
+make examples     # compile + cross-link every examples/*.lang
+make run-factorial   # compile, link, run under qemu-arm
+```
 
 ## Language at a glance
 
