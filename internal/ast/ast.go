@@ -185,6 +185,24 @@ type While struct {
 	Cond Expr
 	Body Stmt
 }
+
+// For preserves the C/JS-style three-part for loop so that `continue`
+// can jump to the step *before* re-checking the condition.
+type For struct {
+	P    Position
+	Init Stmt // may be nil
+	Cond Expr // required
+	Step Stmt // may be nil
+	Body Stmt
+}
+
+type Break struct {
+	P Position
+}
+type Continue struct {
+	P Position
+}
+
 type Return struct {
 	P     Position
 	Value Expr // may be nil
@@ -203,6 +221,9 @@ type ExprStmt struct {
 func (s *Block) Pos() Position    { return s.P }
 func (s *If) Pos() Position       { return s.P }
 func (s *While) Pos() Position    { return s.P }
+func (s *For) Pos() Position      { return s.P }
+func (s *Break) Pos() Position    { return s.P }
+func (s *Continue) Pos() Position { return s.P }
 func (s *Return) Pos() Position   { return s.P }
 func (s *Var) Pos() Position      { return s.P }
 func (s *ExprStmt) Pos() Position { return s.P }
@@ -210,6 +231,9 @@ func (s *ExprStmt) Pos() Position { return s.P }
 func (*Block) isStmt()    {}
 func (*If) isStmt()       {}
 func (*While) isStmt()    {}
+func (*For) isStmt()      {}
+func (*Break) isStmt()    {}
+func (*Continue) isStmt() {}
 func (*Return) isStmt()   {}
 func (*Var) isStmt()      {}
 func (*ExprStmt) isStmt() {}

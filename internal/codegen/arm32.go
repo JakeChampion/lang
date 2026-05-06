@@ -67,6 +67,14 @@ type generator struct {
 	epilogue    string
 	stringLabel map[string]string // value -> label
 	stringOrder []string          // insertion order so output is deterministic
+	loops       []loopLabels      // stack of (continue, break) per enclosing loop
+}
+
+// loopLabels gives each enclosing loop the labels that `continue` and
+// `break` should jump to. The stack is grown on loop entry and popped
+// on exit so nested loops resolve to the innermost target.
+type loopLabels struct {
+	continueL, breakL string
 }
 
 // internString returns a unique .rodata label for s, allocating a new one
@@ -257,6 +265,17 @@ func walkArrays(n any, visit func(*ast.ArrayLit)) {
 	case *ast.While:
 		walkArrays(x.Cond, visit)
 		walkArrays(x.Body, visit)
+	case *ast.For:
+		if x.Init != nil {
+			walkArrays(x.Init, visit)
+		}
+		walkArrays(x.Cond, visit)
+		if x.Step != nil {
+			walkArrays(x.Step, visit)
+		}
+		walkArrays(x.Body, visit)
+	case *ast.Break, *ast.Continue:
+		// no nested expressions
 	case *ast.Return:
 		if x.Value != nil {
 			walkArrays(x.Value, visit)
@@ -334,11 +353,53 @@ func (g *generator) stmt(s ast.Stmt) error {
 		}
 		g.emit("cmp r0, #0")
 		g.emit("beq %s", endL)
+		// While has no separate step, so `continue` jumps to the top.
+		g.loops = append(g.loops, loopLabels{continueL: topL, breakL: endL})
 		if err := g.stmt(n.Body); err != nil {
 			return err
 		}
+		g.loops = g.loops[:len(g.loops)-1]
 		g.emit("b %s", topL)
 		g.label(endL)
+	case *ast.For:
+		topL := g.freshLabel("forhead")
+		stepL := g.freshLabel("forstep")
+		endL := g.freshLabel("forend")
+		if n.Init != nil {
+			if err := g.stmt(n.Init); err != nil {
+				return err
+			}
+		}
+		g.label(topL)
+		if err := g.expr(n.Cond); err != nil {
+			return err
+		}
+		g.emit("cmp r0, #0")
+		g.emit("beq %s", endL)
+		// `continue` jumps to the step so the increment still runs.
+		g.loops = append(g.loops, loopLabels{continueL: stepL, breakL: endL})
+		if err := g.stmt(n.Body); err != nil {
+			return err
+		}
+		g.loops = g.loops[:len(g.loops)-1]
+		g.label(stepL)
+		if n.Step != nil {
+			if err := g.stmt(n.Step); err != nil {
+				return err
+			}
+		}
+		g.emit("b %s", topL)
+		g.label(endL)
+	case *ast.Break:
+		if len(g.loops) == 0 {
+			return fmt.Errorf("codegen: break outside of a loop")
+		}
+		g.emit("b %s", g.loops[len(g.loops)-1].breakL)
+	case *ast.Continue:
+		if len(g.loops) == 0 {
+			return fmt.Errorf("codegen: continue outside of a loop")
+		}
+		g.emit("b %s", g.loops[len(g.loops)-1].continueL)
 	case *ast.Return:
 		if n.Value != nil {
 			if err := g.expr(n.Value); err != nil {
