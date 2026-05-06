@@ -1,0 +1,22 @@
+function divisible(n: number, by: number): boolean {
+  return n - (n / by) * by == 0;
+}
+
+function main(): number {
+  var i: number = 1;
+  while (i <= 15) {
+    if (divisible(i, 15)) {
+      putchar(70);  // F
+      putchar(66);  // B
+    } else if (divisible(i, 3)) {
+      putchar(70);  // F
+    } else if (divisible(i, 5)) {
+      putchar(66);  // B
+    } else {
+      putchar(46);  // .
+    }
+    putchar(10);    // newline
+    i = i + 1;
+  }
+  return 0;
+}
