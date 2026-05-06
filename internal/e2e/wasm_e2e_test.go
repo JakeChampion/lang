@@ -188,3 +188,27 @@ func TestWASMNestedArrayLits(t *testing.T) {
 		t.Errorf("got %d, want 7 (3 + 4)", got)
 	}
 }
+
+func TestWASMIndirectCallApply(t *testing.T) {
+	src := `
+		function add(a: number, b: number): number { return a + b; }
+		function apply(f: (number, number) => number, a: number, b: number): number {
+			return f(a, b);
+		}
+		function main(): number { return apply(add, 40, 2); }`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMFunctionValueInVar(t *testing.T) {
+	src := `
+		function dbl(x: number): number { return x * 2; }
+		function main(): number {
+			var f = dbl;
+			return f(7);
+		}`
+	if got := runWasm(t, src); got != 14 {
+		t.Errorf("got %d, want 14", got)
+	}
+}
