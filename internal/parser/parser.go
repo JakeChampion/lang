@@ -199,6 +199,8 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseIf()
 		case "while":
 			return p.parseWhile()
+		case "for":
+			return p.parseFor()
 		case "return":
 			return p.parseReturn()
 		case "var":
@@ -259,6 +261,78 @@ func (p *parser) parseWhile() (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.While{P: kw.Pos, Cond: cond, Body: body}, nil
+}
+
+// parseFor desugars a `for (init; cond; step) body` directly into an
+// equivalent `{ init; while (cond) { body; step; } }`, so neither the
+// type checker nor codegen need to know about `for` as a separate
+// construct.
+func (p *parser) parseFor() (ast.Stmt, error) {
+	kw := p.advance()
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return nil, err
+	}
+
+	var init ast.Stmt
+	if p.match(lexer.Keyword, "var") {
+		v, err := p.parseVar() // consumes its own trailing ';'
+		if err != nil {
+			return nil, err
+		}
+		init = v
+	} else if p.match(lexer.Punct, ";") {
+		// Empty init slot — emit a no-op so the surrounding block has
+		// something to hold the slot.
+		p.advance()
+	} else {
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(lexer.Punct, ";"); err != nil {
+			return nil, err
+		}
+		init = &ast.ExprStmt{P: e.Pos(), Expr: e}
+	}
+
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+
+	var step ast.Stmt
+	if !p.match(lexer.Punct, ")") {
+		stepExpr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		step = &ast.ExprStmt{P: stepExpr.Pos(), Expr: stepExpr}
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+
+	body, err := p.parseStmt()
+	if err != nil {
+		return nil, err
+	}
+
+	innerStmts := []ast.Stmt{body}
+	if step != nil {
+		innerStmts = append(innerStmts, step)
+	}
+	loopBody := &ast.Block{P: body.Pos(), Stmts: innerStmts}
+	loop := &ast.While{P: kw.Pos, Cond: cond, Body: loopBody}
+
+	outer := []ast.Stmt{}
+	if init != nil {
+		outer = append(outer, init)
+	}
+	outer = append(outer, loop)
+	return &ast.Block{P: kw.Pos, Stmts: outer}, nil
 }
 
 func (p *parser) parseReturn() (ast.Stmt, error) {
