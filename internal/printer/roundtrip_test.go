@@ -95,6 +95,14 @@ func TestRoundtripForBreakContinue(t *testing.T) {
 	}`)
 }
 
+func TestRoundtripFunctionType(t *testing.T) {
+	roundTrip(t, `function apply(f: (number, number) => number, a: number, b: number): number {
+		return f(a, b);
+	}
+	function add(x: number, y: number): number { return x + y; }
+	function main(): number { return apply(add, 1, 2); }`)
+}
+
 func TestRoundtripStringEscapes(t *testing.T) {
 	roundTrip(t, `function f(): void {
 		print("tab:\tnewline:\nquote:\"backslash:\\");

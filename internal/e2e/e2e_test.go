@@ -91,6 +91,21 @@ func TestLeafFunctionAllRegArgs(t *testing.T) {
 	}
 }
 
+// Function-type syntax in parameter declarations lets a function
+// accept another function as a value and call it indirectly.
+func TestFunctionTypeAsParameter(t *testing.T) {
+	src := `
+		function add(a: number, b: number): number { return a + b; }
+		function apply(f: (number, number) => number, a: number, b: number): number {
+			return f(a, b);
+		}
+		function main(): number { return apply(add, 40, 2); }`
+	_, code := compileAndRun(t, src)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42", code)
+	}
+}
+
 // Storing a function name in a var and calling through that var
 // goes through the indirect-call path (blx r12).
 func TestFunctionValueIndirectCall(t *testing.T) {
