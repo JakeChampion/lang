@@ -195,3 +195,27 @@ func TestFunctionValueLocal(t *testing.T) {
 	mustContain(t, wat, "(table $fns 2 funcref)")
 	mustContain(t, wat, "call_indirect (type $t0)")
 }
+
+func TestFloatLiteralAndArithmetic(t *testing.T) {
+	wat := compileToWAT(t, `function main(): float { return 1.5 + 2.5; }`)
+	mustContain(t, wat, "(result f32)")
+	mustContain(t, wat, "f32.const 1.5")
+	mustContain(t, wat, "f32.const 2.5")
+	mustContain(t, wat, "f32.add")
+}
+
+func TestFloatNegate(t *testing.T) {
+	wat := compileToWAT(t, `function f(x: float): float { return -x; }`)
+	mustContain(t, wat, "f32.neg")
+}
+
+func TestFloatComparison(t *testing.T) {
+	wat := compileToWAT(t, `function f(x: float, y: float): boolean { return x < y; }`)
+	mustContain(t, wat, "f32.lt")
+}
+
+func TestFloatLocalAndParam(t *testing.T) {
+	wat := compileToWAT(t, `function f(x: float): float { var y: float = x; return y; }`)
+	mustContain(t, wat, "(param $x f32)")
+	mustContain(t, wat, "(local $y f32)")
+}

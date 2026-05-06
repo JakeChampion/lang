@@ -177,3 +177,25 @@ func TestRecoversAtTopLevel(t *testing.T) {
 		t.Errorf("expected `good` to still be parsed, got %v", prog)
 	}
 }
+
+func TestFloatLiteralAndType(t *testing.T) {
+	prog, err := Parse(`function f(x: float): float { return x + 1.5; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := prog.Funcs[0]
+	if _, ok := fn.ReturnType.(ast.FloatType); !ok {
+		t.Errorf("return type = %T, want FloatType", fn.ReturnType)
+	}
+	if _, ok := fn.Params[0].Type.(ast.FloatType); !ok {
+		t.Errorf("param type = %T, want FloatType", fn.Params[0].Type)
+	}
+	bin := fn.Body.Stmts[0].(*ast.Return).Value.(*ast.Binary)
+	lit, ok := bin.Right.(*ast.FloatLit)
+	if !ok {
+		t.Fatalf("rhs = %T, want *FloatLit", bin.Right)
+	}
+	if lit.Value != 1.5 {
+		t.Errorf("value = %v, want 1.5", lit.Value)
+	}
+}

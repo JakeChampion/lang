@@ -132,6 +132,28 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		} else {
 			b.WriteString("false")
 		}
+	case *ast.FloatLit:
+		// Float literals never appear with a leading `-` in source — the
+		// parser models negation as `unary -` over a positive literal.
+		// Emit at least one fractional digit so the lexer treats this
+		// as a Float on the way back in.
+		v := x.Value
+		neg := false
+		if v < 0 {
+			neg = true
+			v = -v
+		}
+		s := fmt.Sprintf("%g", v)
+		if !strings.ContainsAny(s, ".eE") {
+			s += ".0"
+		}
+		if neg {
+			b.WriteString("(- ")
+			b.WriteString(s)
+			b.WriteByte(')')
+		} else {
+			b.WriteString(s)
+		}
 	case *ast.StringLit:
 		b.WriteByte('"')
 		for i := 0; i < len(x.Value); i++ {
@@ -229,6 +251,8 @@ func printType(t ast.Type) string {
 		return "void"
 	case ast.StringType:
 		return "string"
+	case ast.FloatType:
+		return "float"
 	case ast.ArrayType:
 		return printType(x.Elem) + "[]"
 	case *ast.FuncType:

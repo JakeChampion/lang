@@ -104,3 +104,37 @@ func TestStringLiteralUnknownEscape(t *testing.T) {
 		t.Error("expected error on unknown escape")
 	}
 }
+
+func TestFloatLiteral(t *testing.T) {
+	toks, err := Tokenize("1.5 0.25 12.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		k Kind
+		s string
+	}{
+		{Float, "1.5"},
+		{Float, "0.25"},
+		{Float, "12.0"},
+		{EOF, ""},
+	}
+	if len(toks) != len(want) {
+		t.Fatalf("got %d tokens, want %d", len(toks), len(want))
+	}
+	for i, w := range want {
+		if toks[i].Kind != w.k || toks[i].Text != w.s {
+			t.Errorf("tok[%d] = %v, want %v %q", i, toks[i], w.k, w.s)
+		}
+	}
+}
+
+func TestFloatKeyword(t *testing.T) {
+	toks, err := Tokenize("float")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toks[0].Kind != Keyword || toks[0].Text != "float" {
+		t.Errorf("got %v, want Keyword %q", toks[0], "float")
+	}
+}

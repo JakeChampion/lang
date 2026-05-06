@@ -18,6 +18,7 @@ type Kind int
 const (
 	EOF Kind = iota
 	Number
+	Float
 	Ident
 	Punct
 	Keyword
@@ -30,6 +31,8 @@ func (k Kind) String() string {
 		return "EOF"
 	case Number:
 		return "Number"
+	case Float:
+		return "Float"
 	case Ident:
 		return "Ident"
 	case Punct:
@@ -68,6 +71,7 @@ var keywords = map[string]bool{
 	"boolean":  true,
 	"void":     true,
 	"string":   true,
+	"float":    true,
 }
 
 // Multi-character punctuators, longest first.
@@ -169,11 +173,21 @@ func (l *lexer) next() (Token, error) {
 		return Token{Kind: kind, Text: text, Pos: start}, nil
 	}
 
-	// Number literal.
+	// Number / float literal. A trailing `.<digit>+` upgrades the
+	// integer match to a float; `1.` (no fractional digits) and `.5`
+	// (no leading integer digits) aren't accepted, keeping the
+	// lexer unambiguous about Index-style `a[0].x` style suffixes.
 	if unicode.IsDigit(r) {
 		begin := l.i
 		for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
 			l.advance()
+		}
+		if l.i+1 < len(l.src) && l.src[l.i] == '.' && unicode.IsDigit(rune(l.src[l.i+1])) {
+			l.advance() // '.'
+			for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
+				l.advance()
+			}
+			return Token{Kind: Float, Text: l.src[begin:l.i], Pos: start}, nil
 		}
 		return Token{Kind: Number, Text: l.src[begin:l.i], Pos: start}, nil
 	}
