@@ -221,6 +221,13 @@ type generator struct {
 	// cells use the same indices (cell i = (tableIndex i, env=0)).
 	tableIndex   map[string]int
 	tableEntries []string
+
+	// funcDecls maps each (post-closure-conversion) function's name to
+	// its AST FuncDecl. The IR-driven emitter uses it to look up the
+	// hoisted closure target's Captures list at OpMakeClosure time —
+	// per-capture types decide between i32.store and f32.store when
+	// packing the env block.
+	funcDecls map[string]*ast.FuncDecl
 }
 
 type stringEntry struct {
