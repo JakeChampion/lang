@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/lexer"
 )
 
@@ -21,19 +22,27 @@ type Error struct {
 func (e *Error) Error() string         { return fmt.Sprintf("parse error at %s: %s", e.Pos, e.Msg) }
 func (e *Error) Position() ast.Position { return e.Pos }
 
-// Parse turns source into a Program, lexing along the way.
+// Parse turns source into a Program, lexing along the way. The parser
+// recovers from per-statement and per-function errors and continues so
+// it can report many problems in one pass; the returned error (if any)
+// is a diag.Errors of every problem found.
 func Parse(src string) (*ast.Program, error) {
 	tokens, err := lexer.Tokenize(src)
 	if err != nil {
 		return nil, err
 	}
 	p := &parser{tokens: tokens}
-	return p.parseProgram()
+	prog := p.parseProgram()
+	if len(p.errors) > 0 {
+		return prog, diag.Errors(p.errors)
+	}
+	return prog, nil
 }
 
 type parser struct {
 	tokens []lexer.Token
 	i      int
+	errors []error
 }
 
 func (p *parser) peek() lexer.Token { return p.tokens[p.i] }
@@ -76,16 +85,55 @@ func (p *parser) expect(kind lexer.Kind, text string) (lexer.Token, error) {
 
 // ---------- Program / declarations ----------
 
-func (p *parser) parseProgram() (*ast.Program, error) {
+func (p *parser) parseProgram() *ast.Program {
 	prog := &ast.Program{}
 	for !p.match(lexer.EOF, "") {
+		// Snapshot the input position so we can guarantee progress
+		// after a failed function: if recovery would leave us at the
+		// same token, advance once to break the loop.
+		before := p.i
 		fn, err := p.parseFunction()
 		if err != nil {
-			return nil, err
+			p.errors = append(p.errors, err)
+			p.syncToFunction()
+			if p.i == before {
+				p.advance()
+			}
+			continue
 		}
-		prog.Funcs = append(prog.Funcs, fn)
+		if fn != nil {
+			prog.Funcs = append(prog.Funcs, fn)
+		}
 	}
-	return prog, nil
+	return prog
+}
+
+// syncToFunction advances tokens until the next `function` keyword (or
+// EOF), so a malformed top-level declaration doesn't poison the rest
+// of the file.
+func (p *parser) syncToFunction() {
+	for !p.match(lexer.EOF, "") {
+		if p.match(lexer.Keyword, "function") {
+			return
+		}
+		p.advance()
+	}
+}
+
+// syncToStmt advances past a `;` or stops at `}` / EOF — the natural
+// boundaries between statements. Used by parseBlock after a per-stmt
+// error so the next statement still gets parsed.
+func (p *parser) syncToStmt() {
+	for !p.match(lexer.EOF, "") {
+		if p.match(lexer.Punct, ";") {
+			p.advance()
+			return
+		}
+		if p.match(lexer.Punct, "}") {
+			return
+		}
+		p.advance()
+	}
 }
 
 func (p *parser) parseFunction() (*ast.FuncDecl, error) {
@@ -177,14 +225,22 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 	}
 	block := &ast.Block{P: open.Pos}
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		before := p.i
 		s, err := p.parseStmt()
 		if err != nil {
-			return nil, err
+			p.errors = append(p.errors, err)
+			p.syncToStmt()
+			if p.i == before {
+				p.advance()
+			}
+			continue
 		}
-		block.Stmts = append(block.Stmts, s)
+		if s != nil {
+			block.Stmts = append(block.Stmts, s)
+		}
 	}
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
-		return nil, err
+		return block, err
 	}
 	return block, nil
 }

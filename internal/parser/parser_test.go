@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -122,4 +123,38 @@ func TestForEmptyInitAndStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = prog
+}
+
+// The parser should keep going after a per-statement error so a single
+// run reports every problem, not just the first.
+func TestRecoversAndReportsMultiplePerStatement(t *testing.T) {
+	src := `function f(): number {
+		var x = ;
+		var y = 1 +;
+		return 0;
+	}`
+	prog, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected errors")
+	}
+	if strings.Count(err.Error(), "parse error") < 2 {
+		t.Errorf("expected at least 2 parse errors, got:\n%s", err.Error())
+	}
+	if prog == nil || len(prog.Funcs) != 1 {
+		t.Errorf("expected 1 partial function, got %v", prog)
+	}
+}
+
+// A junk top-level declaration shouldn't stop later, valid functions
+// from being parsed.
+func TestRecoversAtTopLevel(t *testing.T) {
+	src := `garbage tokens here;
+		function good(): number { return 42; }`
+	prog, err := Parse(src)
+	if err == nil {
+		t.Fatal("expected errors")
+	}
+	if prog == nil || len(prog.Funcs) != 1 || prog.Funcs[0].Name != "good" {
+		t.Errorf("expected `good` to still be parsed, got %v", prog)
+	}
 }
