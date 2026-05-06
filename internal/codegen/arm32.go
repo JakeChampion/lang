@@ -211,6 +211,7 @@ type frameLayout struct {
 	stack      []map[string]int      // shadowing chain
 	varSlot    map[*ast.Var]int      // var node -> offset
 	arraySlot  map[*ast.ArrayLit]int // array literal -> offset of base
+	switchSlot map[*ast.Switch]int   // switch node -> offset of tag spill
 	frameBytes int                   // total size, rounded to 8
 	// paramReg pins parameters of leaf functions to a callee-saved
 	// register (r4..r7) instead of a stack slot. A name found here
@@ -278,7 +279,8 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 	g.frame = &frameLayout{
 		slots:     map[string]int{},
 		varSlot:   map[*ast.Var]int{},
-		arraySlot: map[*ast.ArrayLit]int{},
+		arraySlot:  map[*ast.ArrayLit]int{},
+		switchSlot: map[*ast.Switch]int{},
 		paramReg:  map[string]int{},
 	}
 	paramOffs := map[string]int{}
@@ -303,6 +305,12 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 	walkArrays(fn.Body, func(a *ast.ArrayLit) {
 		off += 4 * len(a.Elems)
 		g.frame.arraySlot[a] = -off
+	})
+	// Reserve one i32 spill slot per Switch in the body, used to stash
+	// the tag value across case-value evaluations.
+	walkSwitches(fn.Body, func(sw *ast.Switch) {
+		off += 4
+		g.frame.switchSlot[sw] = -off
 	})
 	// Round up to 8 bytes for AAPCS.
 	if off%8 != 0 {
@@ -478,6 +486,66 @@ func walkArrays(n any, visit func(*ast.ArrayLit)) {
 	case *ast.Assign:
 		walkArrays(x.Target, visit)
 		walkArrays(x.Value, visit)
+	case *ast.Switch:
+		walkArrays(x.Tag, visit)
+		for _, k := range x.Cases {
+			for _, v := range k.Values {
+				walkArrays(v, visit)
+			}
+			walkArrays(k.Body, visit)
+		}
+		if x.Default != nil {
+			walkArrays(x.Default, visit)
+		}
+	}
+}
+
+// walkSwitches visits every *ast.Switch nested in n. Used by the frame
+// allocator to reserve one i32 spill slot per switch tag.
+func walkSwitches(n any, visit func(*ast.Switch)) {
+	switch x := n.(type) {
+	case *ast.Switch:
+		visit(x)
+		walkSwitches(x.Tag, visit)
+		for _, k := range x.Cases {
+			for _, v := range k.Values {
+				walkSwitches(v, visit)
+			}
+			walkSwitches(k.Body, visit)
+		}
+		if x.Default != nil {
+			walkSwitches(x.Default, visit)
+		}
+	case *ast.Block:
+		for _, s := range x.Stmts {
+			walkSwitches(s, visit)
+		}
+	case *ast.If:
+		walkSwitches(x.Cond, visit)
+		walkSwitches(x.Then, visit)
+		if x.Else != nil {
+			walkSwitches(x.Else, visit)
+		}
+	case *ast.While:
+		walkSwitches(x.Cond, visit)
+		walkSwitches(x.Body, visit)
+	case *ast.For:
+		if x.Init != nil {
+			walkSwitches(x.Init, visit)
+		}
+		walkSwitches(x.Cond, visit)
+		if x.Step != nil {
+			walkSwitches(x.Step, visit)
+		}
+		walkSwitches(x.Body, visit)
+	case *ast.Return:
+		if x.Value != nil {
+			walkSwitches(x.Value, visit)
+		}
+	case *ast.Var:
+		walkSwitches(x.Init, visit)
+	case *ast.ExprStmt:
+		walkSwitches(x.Expr, visit)
 	}
 }
 
@@ -593,6 +661,23 @@ func containsCall(n any) bool {
 		return containsCall(x.Operand)
 	case *ast.Assign:
 		return containsCall(x.Target) || containsCall(x.Value)
+	case *ast.Switch:
+		if containsCall(x.Tag) {
+			return true
+		}
+		for _, k := range x.Cases {
+			for _, v := range k.Values {
+				if containsCall(v) {
+					return true
+				}
+			}
+			if containsCall(k.Body) {
+				return true
+			}
+		}
+		if x.Default != nil {
+			return containsCall(x.Default)
+		}
 	}
 	return false
 }
@@ -717,7 +802,62 @@ func (g *generator) stmt(s ast.Stmt) error {
 		if err := g.expr(n.Expr); err != nil {
 			return err
 		}
+	case *ast.Switch:
+		return g.switchStmt(n)
 	}
+	return nil
+}
+
+// switchStmt lowers a switch into the equivalent if/else chain. The
+// tag is evaluated once and stashed in a dedicated frame slot so it
+// survives any function calls in case-value or body expressions.
+// `break` inside a case body finds the end label via the loops stack;
+// we publish a synthetic entry whose continueL is the parent loop's
+// continueL so `continue` still reaches the enclosing real loop.
+func (g *generator) switchStmt(n *ast.Switch) error {
+	endL := g.freshLabel("sw_end")
+	if err := g.expr(n.Tag); err != nil {
+		return err
+	}
+	tagOff := g.frame.switchSlot[n]
+	g.emit("str r0, [fp, #%d]", tagOff)
+
+	var parentCont string
+	if len(g.loops) > 0 {
+		parentCont = g.loops[len(g.loops)-1].continueL
+	}
+	g.loops = append(g.loops, loopLabels{breakL: endL, continueL: parentCont})
+
+	for _, k := range n.Cases {
+		nextL := g.freshLabel("sw_next")
+		bodyL := g.freshLabel("sw_body")
+		for _, v := range k.Values {
+			if err := g.expr(v); err != nil {
+				return err
+			}
+			g.emit("ldr r1, [fp, #%d]", tagOff)
+			g.emit("cmp r1, r0")
+			g.emit("beq %s", bodyL)
+		}
+		g.emit("b %s", nextL)
+		g.label(bodyL)
+		for _, st := range k.Body.Stmts {
+			if err := g.stmt(st); err != nil {
+				return err
+			}
+		}
+		g.emit("b %s", endL)
+		g.label(nextL)
+	}
+	if n.Default != nil {
+		for _, st := range n.Default.Stmts {
+			if err := g.stmt(st); err != nil {
+				return err
+			}
+		}
+	}
+	g.loops = g.loops[:len(g.loops)-1]
+	g.label(endL)
 	return nil
 }
 

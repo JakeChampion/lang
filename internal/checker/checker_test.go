@@ -172,3 +172,54 @@ func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
 		t.Errorf("expected no hint, got %q", ce.Note)
 	}
 }
+
+func TestSwitchTypechecks(t *testing.T) {
+	src := `function f(n: number): number {
+		switch (n) {
+			case 1, 2: return 10;
+			case 3: return 30;
+			default: return 0;
+		}
+		return -1;
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSwitchRejectsTypeMismatchedCase(t *testing.T) {
+	src := `function f(n: number): number {
+		switch (n) { case true: return 1; default: return 0; }
+	}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected type-mismatch error on case value")
+	}
+}
+
+func TestSwitchRejectsFloatTag(t *testing.T) {
+	src := `function f(x: float): number {
+		switch (x) { case 1.0: return 1; default: return 0; }
+	}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error switching on float")
+	}
+}
+
+func TestBreakInSwitchAllowed(t *testing.T) {
+	src := `function f(n: number): number {
+		switch (n) { case 1: break; default: break; }
+		return 0;
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestContinueInSwitchOutsideLoopRejected(t *testing.T) {
+	src := `function f(n: number): number {
+		switch (n) { case 1: continue; default: return 0; }
+	}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected `continue outside of a loop`")
+	}
+}

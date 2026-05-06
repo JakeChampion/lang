@@ -72,6 +72,9 @@ var keywords = map[string]bool{
 	"void":     true,
 	"string":   true,
 	"float":    true,
+	"switch":   true,
+	"case":     true,
+	"default":  true,
 }
 
 // Multi-character punctuators, longest first.

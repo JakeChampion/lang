@@ -304,8 +304,65 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 			return result{}, err
 		}
 		return result{flow: flowNormal}, nil
+	case *ast.Switch:
+		tag, err := i.evalExpr(x.Tag, e)
+		if err != nil {
+			return result{}, err
+		}
+		matched := false
+		for _, k := range x.Cases {
+			for _, vexpr := range k.Values {
+				v, err := i.evalExpr(vexpr, e)
+				if err != nil {
+					return result{}, err
+				}
+				if valuesEqual(tag, v) {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				r, err := i.execBlock(k.Body, e)
+				if err != nil {
+					return result{}, err
+				}
+				if r.flow == flowReturn || r.flow == flowContinue {
+					return r, nil
+				}
+				// flowBreak / flowNormal: leave the switch.
+				return result{flow: flowNormal}, nil
+			}
+		}
+		if x.Default != nil {
+			r, err := i.execBlock(x.Default, e)
+			if err != nil {
+				return result{}, err
+			}
+			if r.flow == flowReturn || r.flow == flowContinue {
+				return r, nil
+			}
+		}
+		return result{flow: flowNormal}, nil
 	}
 	return result{}, fmt.Errorf("interp: unsupported statement %T", s)
+}
+
+// valuesEqual is a switch-tag equality check. Numbers, Bools and
+// Strings compare by content; other types compare via Go's `==` which
+// is a sensible fallback (Func references, Void, etc.).
+func valuesEqual(a, b Value) bool {
+	switch ax := a.(type) {
+	case Number:
+		bx, ok := b.(Number)
+		return ok && ax == bx
+	case Bool:
+		bx, ok := b.(Bool)
+		return ok && ax == bx
+	case String:
+		bx, ok := b.(String)
+		return ok && ax == bx
+	}
+	return a == b
 }
 
 func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {

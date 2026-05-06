@@ -82,10 +82,11 @@ func Check(prog *ast.Program) (*Info, error) {
 }
 
 type checker struct {
-	info      *Info
-	errors    []error
-	current   *ast.FuncDecl
-	loopDepth int
+	info        *Info
+	errors      []error
+	current     *ast.FuncDecl
+	loopDepth   int
+	switchDepth int
 }
 
 func (c *checker) errf(pos ast.Position, format string, args ...any) {
@@ -211,8 +212,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		c.loopDepth--
 	case *ast.Break:
-		if c.loopDepth == 0 {
-			c.errf(n.P, "break outside of a loop")
+		// `break` is legal inside a `for`/`while` (exits the loop)
+		// or inside a `switch` case (exits the switch).
+		if c.loopDepth == 0 && c.switchDepth == 0 {
+			c.errf(n.P, "break outside of a loop or switch")
 		}
 	case *ast.Continue:
 		if c.loopDepth == 0 {
@@ -248,6 +251,32 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
 	case *ast.ExprStmt:
 		c.checkExpr(n.Expr, s)
+	case *ast.Switch:
+		tagT := c.checkExpr(n.Tag, s)
+		// Floats compare with NaN edge cases that switch's "exact
+		// match" semantics aren't well-defined for. Reject them up
+		// front rather than letting WASM's f32.eq surprise us.
+		if tagT != nil && ast.Equal(tagT, ast.FloatType{}) {
+			c.errf(n.Tag.Pos(), "switch on float values is not supported")
+		}
+		// `break` inside case bodies should leave the switch but not
+		// abort an enclosing loop. `continue` falls straight through
+		// to the enclosing real loop and is invalid otherwise — that's
+		// why we bump switchDepth (a break-only counter), not loopDepth.
+		c.switchDepth++
+		for _, k := range n.Cases {
+			for _, v := range k.Values {
+				vt := c.checkExpr(v, s)
+				if tagT != nil && vt != nil && !ast.Equal(vt, tagT) {
+					c.errf(v.Pos(), "case value type %s, expected %s", vt, tagT)
+				}
+			}
+			c.checkBlock(k.Body, s)
+		}
+		if n.Default != nil {
+			c.checkBlock(n.Default, s)
+		}
+		c.switchDepth--
 	}
 }
 

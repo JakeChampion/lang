@@ -199,3 +199,35 @@ func TestFloatLiteralAndType(t *testing.T) {
 		t.Errorf("value = %v, want 1.5", lit.Value)
 	}
 }
+
+func TestSwitchParsesBasic(t *testing.T) {
+	prog, err := Parse(`function f(n: number): number {
+		switch (n) {
+			case 1, 2: return 10;
+			case 3: return 30;
+			default: return 0;
+		}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw := prog.Funcs[0].Body.Stmts[0].(*ast.Switch)
+	if len(sw.Cases) != 2 {
+		t.Fatalf("got %d cases, want 2", len(sw.Cases))
+	}
+	if len(sw.Cases[0].Values) != 2 {
+		t.Errorf("first case has %d values, want 2", len(sw.Cases[0].Values))
+	}
+	if sw.Default == nil {
+		t.Errorf("default block missing")
+	}
+}
+
+func TestSwitchRejectsDuplicateDefault(t *testing.T) {
+	_, err := Parse(`function f(n: number): number {
+		switch (n) { default: return 0; default: return 1; }
+	}`)
+	if err == nil {
+		t.Error("expected error on duplicate default")
+	}
+}

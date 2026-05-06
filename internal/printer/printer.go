@@ -108,6 +108,32 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 	case *ast.ExprStmt:
 		printExpr(b, x.Expr)
 		b.WriteByte(';')
+	case *ast.Switch:
+		b.WriteString("switch (")
+		printExpr(b, x.Tag)
+		b.WriteString(") { ")
+		for _, k := range x.Cases {
+			b.WriteString("case ")
+			for i, v := range k.Values {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				printExpr(b, v)
+			}
+			b.WriteString(": ")
+			for _, s := range k.Body.Stmts {
+				printStmt(b, s)
+				b.WriteByte(' ')
+			}
+		}
+		if x.Default != nil {
+			b.WriteString("default: ")
+			for _, s := range x.Default.Stmts {
+				printStmt(b, s)
+				b.WriteByte(' ')
+			}
+		}
+		b.WriteByte('}')
 	}
 }
 

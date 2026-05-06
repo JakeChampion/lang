@@ -329,3 +329,18 @@ func TestArm32RejectsFloatWithClearError(t *testing.T) {
 		t.Errorf("error should mention float, got %v", err)
 	}
 }
+
+func TestArm32SwitchEmitsBranchChain(t *testing.T) {
+	asm := compile(t, `function f(n: number): number {
+		switch (n) {
+			case 1, 2: return 10;
+			case 3: return 30;
+			default: return 0;
+		}
+		return -1;
+	}`)
+	mustContain(t, asm, "sw_body")
+	mustContain(t, asm, "sw_next")
+	mustContain(t, asm, "sw_end")
+	mustContain(t, asm, "beq")
+}

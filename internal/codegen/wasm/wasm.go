@@ -120,6 +120,10 @@ type generator struct {
 	// scratch slot even when ArrayLits are nested.
 	arrLocal map[*ast.ArrayLit]string
 
+	// Per-function: incrementing counter giving each Switch its own
+	// `$__sw_N` scratch local for the tag value.
+	switchN int
+
 	// Function table / indirect calls. needsFuncTable is set if any
 	// top-level function name appears in non-callee position (taken
 	// as a value) OR if any call goes through a local — both need a
@@ -198,6 +202,13 @@ func (g *generator) emitFunc(fn *ast.FuncDecl) error {
 		g.arrLocal[a] = name
 		g.linef("(local %s i32)", name)
 	})
+	// One i32 scratch per Switch in source order, so we can store the
+	// tag value once and compare it against each case value.
+	g.switchN = 0
+	swCount := countSwitches(fn.Body)
+	for i := 1; i <= swCount; i++ {
+		g.linef("(local $__sw_%d i32)", i)
+	}
 
 	for _, s := range fn.Body.Stmts {
 		if err := g.stmt(s); err != nil {
@@ -341,9 +352,81 @@ func (g *generator) stmt(s ast.Stmt) error {
 		if g.leavesValue(n.Expr) {
 			g.line("drop")
 		}
+	case *ast.Switch:
+		return g.switchStmt(n)
 	default:
 		return fmt.Errorf("wasm: unsupported statement %T", s)
 	}
+	return nil
+}
+
+// switchStmt lowers a switch into:
+//
+//	(local $__sw_N i32 / f32)        ;; tag scratch
+//	block $end
+//	  ;; tag → local
+//	  ;; if (tag == v1 || tag == v2) { body1; br $end }
+//	  ;; if (tag == v3)              { body2; br $end }
+//	  ;; default body  (or nothing)
+//	end
+//
+// `break` inside a case body finds $end via the loopLbl stack. `continue`
+// passes through to the enclosing loop's continue label.
+func (g *generator) switchStmt(n *ast.Switch) error {
+	g.switchN++
+	scratch := fmt.Sprintf("$__sw_%d", g.switchN)
+	end := g.freshLabel("sw_end")
+
+	// Evaluate the tag once, store in scratch local.
+	if err := g.expr(n.Tag); err != nil {
+		return err
+	}
+	g.linef("local.set %s", scratch)
+
+	// Determine the break/continue labels to publish for the body.
+	// Continue (if used) propagates to the enclosing loop.
+	var parentCont string
+	if len(g.loopLbl) > 0 {
+		parentCont = g.loopLbl[len(g.loopLbl)-1].continueL
+	}
+	g.linef("block %s", end)
+	g.indent++
+	g.loopLbl = append(g.loopLbl, loopLabels{breakL: end, continueL: parentCont})
+
+	for _, k := range n.Cases {
+		// Build a chained `local.get tag; i32.eq vN; or; or; ... if ... end`.
+		for i, v := range k.Values {
+			g.linef("local.get %s", scratch)
+			if err := g.expr(v); err != nil {
+				return err
+			}
+			g.line("i32.eq")
+			if i > 0 {
+				g.line("i32.or")
+			}
+		}
+		g.line("if")
+		g.indent++
+		for _, s := range k.Body.Stmts {
+			if err := g.stmt(s); err != nil {
+				return err
+			}
+		}
+		g.linef("br %s", end)
+		g.indent--
+		g.line("end")
+	}
+	if n.Default != nil {
+		for _, s := range n.Default.Stmts {
+			if err := g.stmt(s); err != nil {
+				return err
+			}
+		}
+	}
+
+	g.loopLbl = g.loopLbl[:len(g.loopLbl)-1]
+	g.indent--
+	g.line("end")
 	return nil
 }
 
@@ -429,11 +512,78 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			for _, a := range x.Args {
 				walk(a)
 			}
+		case *ast.Switch:
+			walk(x.Tag)
+			for _, k := range x.Cases {
+				for _, v := range k.Values {
+					walk(v)
+				}
+				walk(k.Body)
+			}
+			if x.Default != nil {
+				walk(x.Default)
+			}
 		}
 	}
 	for _, fn := range prog.Funcs {
 		walk(fn.Body)
 	}
+}
+
+// countSwitches reports the number of *ast.Switch nodes nested inside
+// n. The WAT backend uses the count to declare one i32 scratch local
+// per switch up front (locals must precede instructions).
+func countSwitches(n any) int {
+	count := 0
+	var walk func(any)
+	walk = func(n any) {
+		switch x := n.(type) {
+		case *ast.Switch:
+			count++
+			walk(x.Tag)
+			for _, k := range x.Cases {
+				for _, v := range k.Values {
+					walk(v)
+				}
+				walk(k.Body)
+			}
+			if x.Default != nil {
+				walk(x.Default)
+			}
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		}
+	}
+	walk(n)
+	return count
 }
 
 // collectArrayLits visits every ArrayLit in n in source order. Source
@@ -492,6 +642,17 @@ func collectArrayLits(n any, visit func(*ast.ArrayLit)) {
 	case *ast.Assign:
 		collectArrayLits(x.Target, visit)
 		collectArrayLits(x.Value, visit)
+	case *ast.Switch:
+		collectArrayLits(x.Tag, visit)
+		for _, k := range x.Cases {
+			for _, v := range k.Values {
+				collectArrayLits(v, visit)
+			}
+			collectArrayLits(k.Body, visit)
+		}
+		if x.Default != nil {
+			collectArrayLits(x.Default, visit)
+		}
 	}
 }
 
@@ -549,6 +710,17 @@ func (g *generator) scanIndirectStmt(s ast.Stmt) {
 		g.scanIndirectExpr(x.Init, false)
 	case *ast.ExprStmt:
 		g.scanIndirectExpr(x.Expr, false)
+	case *ast.Switch:
+		g.scanIndirectExpr(x.Tag, false)
+		for _, k := range x.Cases {
+			for _, v := range k.Values {
+				g.scanIndirectExpr(v, false)
+			}
+			g.scanIndirectStmt(k.Body)
+		}
+		if x.Default != nil {
+			g.scanIndirectStmt(x.Default)
+		}
 	}
 }
 
@@ -744,6 +916,17 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 		case *ast.ArrayLit:
 			for _, e := range x.Elems {
 				walk(e)
+			}
+		case *ast.Switch:
+			walk(x.Tag)
+			for _, k := range x.Cases {
+				for _, v := range k.Values {
+					walk(v)
+				}
+				walk(k.Body)
+			}
+			if x.Default != nil {
+				walk(x.Default)
 			}
 		}
 	}

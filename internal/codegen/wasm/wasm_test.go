@@ -219,3 +219,18 @@ func TestFloatLocalAndParam(t *testing.T) {
 	mustContain(t, wat, "(param $x f32)")
 	mustContain(t, wat, "(local $y f32)")
 }
+
+func TestSwitchEmitsBlockAndScratch(t *testing.T) {
+	wat := compileToWAT(t, `function f(n: number): number {
+		switch (n) {
+			case 1: return 10;
+			case 2, 3: return 20;
+			default: return 99;
+		}
+		return -1;
+	}`)
+	mustContain(t, wat, "(local $__sw_1 i32)")
+	mustContain(t, wat, "block $sw_end")
+	mustContain(t, wat, "i32.eq")
+	mustContain(t, wat, "i32.or")
+}

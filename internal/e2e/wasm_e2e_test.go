@@ -256,3 +256,40 @@ func TestWASMFunctionValueInVar(t *testing.T) {
 		t.Errorf("got %d, want 14", got)
 	}
 }
+
+func TestWASMSwitchBasic(t *testing.T) {
+	src := `function classify(n: number): number {
+		switch (n) {
+			case 0: return 100;
+			case 1, 2, 3: return 200;
+			case 7: return 700;
+			default: return 0;
+		}
+		return -1;
+	}
+	function main(): number {
+		return classify(0) + classify(2) + classify(7) + classify(99);
+	}`
+	// 100 + 200 + 700 + 0 = 1000
+	if got := runWasm(t, src); got != 1000 {
+		t.Errorf("got %d, want 1000", got)
+	}
+}
+
+func TestWASMSwitchBreakInLoop(t *testing.T) {
+	// `break` inside a case exits the switch, not the enclosing loop.
+	src := `function main(): number {
+		var sum: number = 0;
+		for (var i: number = 0; i < 5; i = i + 1) {
+			switch (i) {
+				case 2: break;
+				default: sum = sum + i;
+			}
+		}
+		return sum;
+	}`
+	// 0 + 1 + 3 + 4 = 8 (i=2 breaks the switch but the loop continues)
+	if got := runWasm(t, src); got != 8 {
+		t.Errorf("got %d, want 8", got)
+	}
+}
