@@ -523,6 +523,10 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			if x.Default != nil {
 				walk(x.Default)
 			}
+		case *ast.Ternary:
+			walk(x.Cond)
+			walk(x.Then)
+			walk(x.Else)
 		}
 	}
 	for _, fn := range prog.Funcs {
@@ -653,6 +657,10 @@ func collectArrayLits(n any, visit func(*ast.ArrayLit)) {
 		if x.Default != nil {
 			collectArrayLits(x.Default, visit)
 		}
+	case *ast.Ternary:
+		collectArrayLits(x.Cond, visit)
+		collectArrayLits(x.Then, visit)
+		collectArrayLits(x.Else, visit)
 	}
 }
 
@@ -750,6 +758,10 @@ func (g *generator) scanIndirectExpr(e ast.Expr, inCalleePos bool) {
 	case *ast.Assign:
 		g.scanIndirectExpr(x.Target, false)
 		g.scanIndirectExpr(x.Value, false)
+	case *ast.Ternary:
+		g.scanIndirectExpr(x.Cond, false)
+		g.scanIndirectExpr(x.Then, false)
+		g.scanIndirectExpr(x.Else, false)
 	case *ast.Call:
 		// Walk args first.
 		for _, a := range x.Args {
@@ -928,6 +940,10 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 			if x.Default != nil {
 				walk(x.Default)
 			}
+		case *ast.Ternary:
+			walk(x.Cond)
+			walk(x.Then)
+			walk(x.Else)
 		}
 	}
 	for _, fn := range prog.Funcs {
@@ -1152,6 +1168,8 @@ func (g *generator) expr(e ast.Expr) error {
 		return g.call(n)
 	case *ast.Assign:
 		return g.assign(n)
+	case *ast.Ternary:
+		return g.ternary(n)
 	case *ast.ArrayLit:
 		return g.arrayLit(n)
 	case *ast.Index:
@@ -1384,6 +1402,34 @@ func (g *generator) assign(n *ast.Assign) error {
 		return nil
 	}
 	return fmt.Errorf("wasm: unsupported assignment target %T", n.Target)
+}
+
+// ternary lowers `cond ? then : else` into WAT's `if (result T) ... else ... end`.
+// The result type comes from the checker — IsFloat means f32, otherwise i32
+// (which covers number, boolean, string-as-pointer, array-as-pointer, and
+// function-as-table-index).
+func (g *generator) ternary(n *ast.Ternary) error {
+	if err := g.expr(n.Cond); err != nil {
+		return err
+	}
+	resTyp := "i32"
+	if n.IsFloat {
+		resTyp = "f32"
+	}
+	g.linef("if (result %s)", resTyp)
+	g.indent++
+	if err := g.expr(n.Then); err != nil {
+		return err
+	}
+	g.indent--
+	g.line("else")
+	g.indent++
+	if err := g.expr(n.Else); err != nil {
+		return err
+	}
+	g.indent--
+	g.line("end")
+	return nil
 }
 
 // ---------- type mapping ----------

@@ -161,6 +161,19 @@ type Assign struct {
 	Value  Expr
 }
 
+// Ternary models `cond ? then : else`. It's an expression (not a
+// statement) so it composes inside arithmetic and assignment.
+type Ternary struct {
+	P    Position
+	Cond Expr
+	Then Expr
+	Else Expr
+	// IsFloat is set by the checker when the result type is `float`,
+	// so the WASM backend knows to use `if (result f32)` instead of
+	// `if (result i32)`.
+	IsFloat bool
+}
+
 func (e *NumberLit) Pos() Position { return e.P }
 func (e *BoolLit) Pos() Position   { return e.P }
 func (e *StringLit) Pos() Position { return e.P }
@@ -172,6 +185,7 @@ func (e *Call) Pos() Position      { return e.P }
 func (e *Binary) Pos() Position    { return e.P }
 func (e *Unary) Pos() Position     { return e.P }
 func (e *Assign) Pos() Position    { return e.P }
+func (e *Ternary) Pos() Position   { return e.P }
 
 func (*NumberLit) isExpr() {}
 func (*BoolLit) isExpr()   {}
@@ -184,6 +198,7 @@ func (*Call) isExpr()      {}
 func (*Binary) isExpr()    {}
 func (*Unary) isExpr()     {}
 func (*Assign) isExpr()    {}
+func (*Ternary) isExpr()   {}
 
 // ---------- Statements ----------
 

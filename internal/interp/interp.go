@@ -436,6 +436,19 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		return nil, fmt.Errorf("interp: unsupported unary %q", x.Op)
 	case *ast.Assign:
 		return i.evalAssign(x, env)
+	case *ast.Ternary:
+		c, err := i.evalExpr(x.Cond, env)
+		if err != nil {
+			return nil, err
+		}
+		b, ok := c.(Bool)
+		if !ok {
+			return nil, fmt.Errorf("interp: ternary condition is not a bool: %T", c)
+		}
+		if bool(b) {
+			return i.evalExpr(x.Then, env)
+		}
+		return i.evalExpr(x.Else, env)
 	}
 	return nil, fmt.Errorf("interp: unsupported expression %T", e)
 }

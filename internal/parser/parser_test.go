@@ -231,3 +231,51 @@ func TestSwitchRejectsDuplicateDefault(t *testing.T) {
 		t.Error("expected error on duplicate default")
 	}
 }
+
+func TestCompoundAssignDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): number { var x: number = 1; x += 2; return x; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt := prog.Funcs[0].Body.Stmts[1].(*ast.ExprStmt)
+	a, ok := stmt.Expr.(*ast.Assign)
+	if !ok {
+		t.Fatalf("compound `+=` should desugar to *Assign, got %T", stmt.Expr)
+	}
+	bin, ok := a.Value.(*ast.Binary)
+	if !ok || bin.Op != "+" {
+		t.Fatalf("RHS should be `+` Binary, got %v", a.Value)
+	}
+	if id, ok := bin.Left.(*ast.Ident); !ok || id.Name != "x" {
+		t.Errorf("desugared LHS should reuse the target `x`, got %v", bin.Left)
+	}
+}
+
+func TestTernary(t *testing.T) {
+	prog, err := Parse(`function f(b: boolean): number { return b ? 1 : 2; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+	tern, ok := ret.Value.(*ast.Ternary)
+	if !ok {
+		t.Fatalf("expected *Ternary, got %T", ret.Value)
+	}
+	if _, ok := tern.Cond.(*ast.Ident); !ok {
+		t.Errorf("cond should be Ident, got %T", tern.Cond)
+	}
+}
+
+func TestTernaryRightAssociative(t *testing.T) {
+	// `a ? b : c ? d : e` parses as `a ? b : (c ? d : e)`.
+	prog, err := Parse(`function f(a: boolean, c: boolean): number {
+		return a ? 1 : c ? 2 : 3;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tern := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.Ternary)
+	if _, ok := tern.Else.(*ast.Ternary); !ok {
+		t.Fatalf("else should be a nested Ternary, got %T", tern.Else)
+	}
+}

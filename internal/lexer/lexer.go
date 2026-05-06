@@ -77,9 +77,13 @@ var keywords = map[string]bool{
 	"default":  true,
 }
 
-// Multi-character punctuators, longest first.
+// Multi-character punctuators, longest first. The 3-char compound
+// shifts (`<<=`, `>>=`) sit before the 2-char shifts so the
+// longest-prefix rule picks the right one.
 var multiPunct = []string{
+	"<<=", ">>=",
 	"==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "=>",
+	"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
 }
 
 type Error struct {
@@ -251,7 +255,7 @@ func (l *lexer) next() (Token, error) {
 
 	// Single-char punctuator.
 	switch r {
-	case '+', '-', '*', '/', '%', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!', '&', '|', '^':
+	case '+', '-', '*', '/', '%', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!', '&', '|', '^', '?':
 		l.advance()
 		return Token{Kind: Punct, Text: string(r), Pos: start}, nil
 	}

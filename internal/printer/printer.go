@@ -246,6 +246,14 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteString(" = ")
 		printExpr(b, x.Value)
 		b.WriteByte(')')
+	case *ast.Ternary:
+		b.WriteByte('(')
+		printExpr(b, x.Cond)
+		b.WriteString(" ? ")
+		printExpr(b, x.Then)
+		b.WriteString(" : ")
+		printExpr(b, x.Else)
+		b.WriteByte(')')
 	}
 }
 

@@ -234,3 +234,24 @@ func TestSwitchEmitsBlockAndScratch(t *testing.T) {
 	mustContain(t, wat, "i32.eq")
 	mustContain(t, wat, "i32.or")
 }
+
+func TestTernaryEmitsIfResult(t *testing.T) {
+	wat := compileToWAT(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
+	mustContain(t, wat, "if (result i32)")
+	mustContain(t, wat, "i32.const 1")
+	mustContain(t, wat, "i32.const 2")
+}
+
+func TestTernaryFloatEmitsF32Result(t *testing.T) {
+	wat := compileToWAT(t, `function f(b: boolean): float { return b ? 1.5 : 2.5; }`)
+	mustContain(t, wat, "if (result f32)")
+}
+
+func TestCompoundAssignLowersToBinary(t *testing.T) {
+	wat := compileToWAT(t, `function f(): number { var x: number = 5; x += 7; return x; }`)
+	// `x += 7` lowers to `x = x + 7`, so we expect a `local.get`,
+	// `i32.const 7`, `i32.add`, `local.tee`.
+	mustContain(t, wat, "i32.const 7")
+	mustContain(t, wat, "i32.add")
+	mustContain(t, wat, "local.tee $x")
+}

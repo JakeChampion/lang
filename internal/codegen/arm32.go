@@ -678,6 +678,8 @@ func containsCall(n any) bool {
 		if x.Default != nil {
 			return containsCall(x.Default)
 		}
+	case *ast.Ternary:
+		return containsCall(x.Cond) || containsCall(x.Then) || containsCall(x.Else)
 	}
 	return false
 }
@@ -913,9 +915,34 @@ func (g *generator) expr(e ast.Expr) error {
 		return g.arrayLit(n)
 	case *ast.Assign:
 		return g.assign(n)
+	case *ast.Ternary:
+		return g.ternary(n)
 	default:
 		return fmt.Errorf("codegen: unhandled expression %T", e)
 	}
+	return nil
+}
+
+// ternary emits `cond ? then : else` as a branch over two expression
+// blocks, with the result landing in r0 (matching the rest of the
+// expression convention on this backend).
+func (g *generator) ternary(n *ast.Ternary) error {
+	elseL := g.freshLabel("tern_else")
+	endL := g.freshLabel("tern_end")
+	if err := g.expr(n.Cond); err != nil {
+		return err
+	}
+	g.emit("cmp r0, #0")
+	g.emit("beq %s", elseL)
+	if err := g.expr(n.Then); err != nil {
+		return err
+	}
+	g.emit("b %s", endL)
+	g.label(elseL)
+	if err := g.expr(n.Else); err != nil {
+		return err
+	}
+	g.label(endL)
 	return nil
 }
 

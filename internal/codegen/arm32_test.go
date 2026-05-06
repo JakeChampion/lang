@@ -344,3 +344,16 @@ func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 	mustContain(t, asm, "sw_end")
 	mustContain(t, asm, "beq")
 }
+
+func TestArm32TernaryBranches(t *testing.T) {
+	asm := compile(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
+	mustContain(t, asm, "tern_else")
+	mustContain(t, asm, "tern_end")
+	mustContain(t, asm, "beq")
+}
+
+func TestArm32CompoundAssignLowersToBinary(t *testing.T) {
+	asm := compile(t, `function f(): number { var x: number = 5; x += 7; return x; }`)
+	// 7 should appear as an immediate from the binary lowering.
+	mustContain(t, asm, "=7")
+}

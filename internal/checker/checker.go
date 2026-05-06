@@ -416,6 +416,24 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errf(n.P, "cannot assign %s to %s", rt, lt)
 		}
 		return lt
+	case *ast.Ternary:
+		ct := c.checkExpr(n.Cond, s)
+		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
+			c.errf(n.Cond.Pos(), "ternary condition must be boolean, got %s", ct)
+		}
+		tt := c.checkExpr(n.Then, s)
+		et := c.checkExpr(n.Else, s)
+		if tt != nil && et != nil && !ast.Equal(tt, et) {
+			c.errf(n.P, "ternary branches differ: %s vs %s", tt, et)
+		}
+		result := tt
+		if result == nil {
+			result = et
+		}
+		if isFloat(result) {
+			n.IsFloat = true
+		}
+		return result
 	}
 	return nil
 }
