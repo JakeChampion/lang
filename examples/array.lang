@@ -1,0 +1,14 @@
+function sumTo(a: number[], n: number): number {
+  var total: number = 0;
+  var i: number = 0;
+  while (i < n) {
+    total = total + a[i];
+    i = i + 1;
+  }
+  return total;
+}
+
+function main(): number {
+  var xs: number[] = [10, 20, 30, 40];
+  return sumTo(xs, 4);
+}
