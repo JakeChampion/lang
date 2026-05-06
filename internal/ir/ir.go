@@ -302,14 +302,22 @@ type Op struct {
 	// Str carries OpConstStr's string value and OpCallDirect's callee
 	// name. Empty otherwise.
 	Str string
+	// Sig is set on OpCallIndirect to the static signature of the
+	// function-typed local being dispatched through. Codegen uses it
+	// to resolve the right `(type $tN)` clause in the WAT output.
+	Sig *ast.FuncType
 }
 
 // Func is a single lowered function: parameter / local list, ops, and
-// the return type.
+// the return type. NumScratch counts the synthetic i32 slots the
+// lowering pass conjured for ArrayLit / StructLit / Switch / closure
+// helpers — they live at indices [len(Params)+len(Locals), …) and are
+// addressed by OpLoadLocal / OpStoreLocal just like user vars.
 type Func struct {
 	Name       string
 	Params     []ast.Param
 	Locals     []*ast.Var
+	NumScratch int32
 	ReturnType ast.Type
 	Ops        []Op
 }
@@ -426,6 +434,11 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
 	if err := b.stmt(fn.Body); err != nil {
 		return nil, err
 	}
+	// Record how many synthetic slots the lowering pass conjured beyond
+	// the user-visible params + locals — ArrayLit / StructLit / Switch /
+	// closure helpers each grew the locals map. Codegen needs the count
+	// to declare matching WAT locals.
+	out.NumScratch = int32(len(b.locals)) - int32(len(fn.Params)+len(info.Locals[fn]))
 	// If the body falls off the end, emit an implicit return so the
 	// downstream consumer doesn't have to check.
 	if needsImplicitReturn(out.Ops) {
@@ -1064,14 +1077,44 @@ func (b *builder) call(n *ast.Call) error {
 		}
 	}
 	// Otherwise it's a call through a function-typed local: push the
-	// table index and dispatch indirectly.
+	// table index and dispatch indirectly. The local's static type is
+	// the FuncType codegen needs to resolve a `(type $tN)` clause.
 	idx, ok := b.locals[id.Name]
 	if !ok {
 		return fmt.Errorf("ir: cannot resolve callee %q", id.Name)
 	}
+	sig, err := b.localFuncType(id.Name)
+	if err != nil {
+		return err
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args))})
+	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: sig})
 	return nil
+}
+
+// localFuncType returns the static FuncType of the named local. Calls
+// through a non-function-typed local are a checker bug, but we surface
+// them as IR errors rather than panicking.
+func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			ft, ok := p.Type.(*ast.FuncType)
+			if !ok {
+				return nil, fmt.Errorf("ir: indirect call through non-function-typed param %q", name)
+			}
+			return ft, nil
+		}
+	}
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			ft, ok := v.Type.(*ast.FuncType)
+			if !ok {
+				return nil, fmt.Errorf("ir: indirect call through non-function-typed var %q", name)
+			}
+			return ft, nil
+		}
+	}
+	return nil, fmt.Errorf("ir: indirect call through unknown local %q", name)
 }
 
 func (b *builder) assign(n *ast.Assign) error {

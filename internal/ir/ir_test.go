@@ -385,6 +385,58 @@ func TestStructuredControlFlowIsBalanced(t *testing.T) {
 	}
 }
 
+// NumScratch reports how many synthetic i32 slots the lowering pass
+// conjured beyond the user-visible params + locals — codegen needs
+// the count to declare matching WAT locals.
+func TestLowerNumScratchTracked(t *testing.T) {
+	// A program with no synthetic helpers: NumScratch should be zero.
+	pPlain := lowerSource(t, `function f(a: number, b: number): number {
+		var x: number = a + b;
+		return x;
+	}`)
+	if got := pPlain.Funcs[0].NumScratch; got != 0 {
+		t.Errorf("plain function: NumScratch = %d, want 0", got)
+	}
+	// A program using array, struct, and switch helpers should report
+	// at least one scratch slot per helper kind.
+	pHelpers := lowerSource(t, `struct P { x: number }
+		function f(n: number): number {
+			var a: number[] = [1, 2, 3];
+			var p: P = P { x: 5 };
+			switch (n) { case 0: return 0; default: return 1; }
+		}`)
+	if got := pHelpers.Funcs[0].NumScratch; got < 3 {
+		t.Errorf("helper-heavy function: NumScratch = %d, want >= 3", got)
+	}
+}
+
+// OpCallIndirect carries the static signature of the function-typed
+// local so codegen can resolve a `(type $tN)` clause without tracing
+// back through the preceding OpLoadLocal.
+func TestLowerCallIndirectCarriesSig(t *testing.T) {
+	prog := lowerSource(t, `function add(a: number, b: number): number { return a + b; }
+		function apply(f: (number, number) => number, a: number, b: number): number {
+			return f(a, b);
+		}`)
+	apply := findFunc(prog, "apply")
+	if apply == nil {
+		t.Fatal("apply not found")
+	}
+	for _, op := range apply.Ops {
+		if op.Kind != OpCallIndirect {
+			continue
+		}
+		if op.Sig == nil {
+			t.Fatalf("OpCallIndirect.Sig is nil:\n%s", prog)
+		}
+		if len(op.Sig.Params) != 2 {
+			t.Errorf("Sig.Params = %d, want 2", len(op.Sig.Params))
+		}
+		return
+	}
+	t.Fatalf("OpCallIndirect not found:\n%s", prog)
+}
+
 // MakeClosure carries the hoisted function name and a capture count
 // so codegen can resolve both the funcref-table index and the env
 // block size.
