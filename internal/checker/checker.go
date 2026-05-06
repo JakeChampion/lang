@@ -46,6 +46,11 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// print(s: string): void — appends a newline (lowers to libc puts).
+	c.info.FuncSigs["print"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.VoidType{},
+	}
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order.
@@ -180,6 +185,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return ast.NumberType{}
 	case *ast.BoolLit:
 		return ast.BoolType{}
+	case *ast.StringLit:
+		return ast.StringType{}
 	case *ast.Ident:
 		if t, ok := s.lookup(n.Name); ok {
 			return t

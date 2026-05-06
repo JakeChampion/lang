@@ -113,6 +113,26 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		} else {
 			b.WriteString("false")
 		}
+	case *ast.StringLit:
+		b.WriteByte('"')
+		for i := 0; i < len(x.Value); i++ {
+			c := x.Value[i]
+			switch c {
+			case '"':
+				b.WriteString(`\"`)
+			case '\\':
+				b.WriteString(`\\`)
+			case '\n':
+				b.WriteString(`\n`)
+			case '\t':
+				b.WriteString(`\t`)
+			case '\r':
+				b.WriteString(`\r`)
+			default:
+				b.WriteByte(c)
+			}
+		}
+		b.WriteByte('"')
 	case *ast.Ident:
 		b.WriteString(x.Name)
 	case *ast.Unary:
@@ -170,6 +190,8 @@ func printType(t ast.Type) string {
 		return "boolean"
 	case ast.VoidType:
 		return "void"
+	case ast.StringType:
+		return "string"
 	case ast.ArrayType:
 		return printType(x.Elem) + "[]"
 	}

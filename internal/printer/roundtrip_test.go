@@ -76,6 +76,19 @@ func TestRoundtripUnary(t *testing.T) {
 	roundTrip(t, `function f(): number { return -1 + -(2 + 3); }`)
 }
 
+func TestRoundtripStrings(t *testing.T) {
+	roundTrip(t, `function f(): void {
+		var s: string = "hello, world";
+		print(s);
+	}`)
+}
+
+func TestRoundtripStringEscapes(t *testing.T) {
+	roundTrip(t, `function f(): void {
+		print("tab:\tnewline:\nquote:\"backslash:\\");
+	}`)
+}
+
 // ---------- helpers ----------
 
 // zeroPositions walks every AST node and zeroes its source position so
@@ -132,6 +145,8 @@ func zeroExpr(e ast.Expr) {
 	case *ast.NumberLit:
 		x.P = ast.Position{}
 	case *ast.BoolLit:
+		x.P = ast.Position{}
+	case *ast.StringLit:
 		x.P = ast.Position{}
 	case *ast.Ident:
 		x.P = ast.Position{}

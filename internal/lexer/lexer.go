@@ -21,6 +21,7 @@ const (
 	Ident
 	Punct
 	Keyword
+	String
 )
 
 func (k Kind) String() string {
@@ -35,6 +36,8 @@ func (k Kind) String() string {
 		return "Punct"
 	case Keyword:
 		return "Keyword"
+	case String:
+		return "String"
 	}
 	return "?"
 }
@@ -62,6 +65,7 @@ var keywords = map[string]bool{
 	"number":   true,
 	"boolean":  true,
 	"void":     true,
+	"string":   true,
 }
 
 // Multi-character punctuators, longest first.
@@ -170,6 +174,50 @@ func (l *lexer) next() (Token, error) {
 			l.advance()
 		}
 		return Token{Kind: Number, Text: l.src[begin:l.i], Pos: start}, nil
+	}
+
+	// String literal: "..." with C-style escapes \\, \", \n, \t, \r, \0.
+	if r == '"' {
+		l.advance() // opening "
+		var b strings.Builder
+		for l.i < len(l.src) && rune(l.src[l.i]) != '"' {
+			c := rune(l.src[l.i])
+			if c == '\n' {
+				return Token{}, &Error{Pos: start, Msg: "newline inside string literal"}
+			}
+			if c == '\\' {
+				l.advance()
+				if l.i >= len(l.src) {
+					return Token{}, &Error{Pos: start, Msg: "unterminated string literal"}
+				}
+				esc := rune(l.src[l.i])
+				l.advance()
+				switch esc {
+				case 'n':
+					b.WriteByte('\n')
+				case 't':
+					b.WriteByte('\t')
+				case 'r':
+					b.WriteByte('\r')
+				case '0':
+					b.WriteByte(0)
+				case '"':
+					b.WriteByte('"')
+				case '\\':
+					b.WriteByte('\\')
+				default:
+					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unknown escape \\%c", esc)}
+				}
+				continue
+			}
+			b.WriteRune(c)
+			l.advance()
+		}
+		if l.i >= len(l.src) {
+			return Token{}, &Error{Pos: start, Msg: "unterminated string literal"}
+		}
+		l.advance() // closing "
+		return Token{Kind: String, Text: b.String(), Pos: start}, nil
 	}
 
 	// Multi-char punctuator.

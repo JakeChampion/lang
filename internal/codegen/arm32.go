@@ -31,12 +31,24 @@ const regArgs = 4
 
 // Emit returns the assembly text for prog.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
-	g := &generator{info: info}
+	g := &generator{
+		info:        info,
+		stringLabel: map[string]string{},
+	}
 	g.line(`.arch armv7-a`)
 	g.line(`.text`)
 	for _, fn := range prog.Funcs {
 		if err := g.emitFunction(fn); err != nil {
 			return "", err
+		}
+	}
+	// String literals collected during emit go into .rodata.
+	if len(g.stringOrder) > 0 {
+		g.line("")
+		g.line(`.section .rodata`)
+		for _, s := range g.stringOrder {
+			g.label(g.stringLabel[s])
+			g.line("\t.asciz " + escapeForGAS(s))
 		}
 	}
 	// Mark the stack as non-executable. Without this the GNU linker
@@ -48,11 +60,55 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 }
 
 type generator struct {
-	out      strings.Builder
-	info     *checker.Info
-	labelN   int
-	frame    *frameLayout
-	epilogue string
+	out         strings.Builder
+	info        *checker.Info
+	labelN      int
+	frame       *frameLayout
+	epilogue    string
+	stringLabel map[string]string // value -> label
+	stringOrder []string          // insertion order so output is deterministic
+}
+
+// internString returns a unique .rodata label for s, allocating a new one
+// the first time we see this exact string and reusing it on repeats.
+func (g *generator) internString(s string) string {
+	if lbl, ok := g.stringLabel[s]; ok {
+		return lbl
+	}
+	lbl := fmt.Sprintf(".LStr_%d", len(g.stringOrder))
+	g.stringLabel[s] = lbl
+	g.stringOrder = append(g.stringOrder, s)
+	return lbl
+}
+
+// escapeForGAS wraps s in double quotes and emits each byte either as
+// itself (printable ASCII apart from " and \), as a recognised C-style
+// escape, or as a three-digit octal escape. The result is suitable as
+// the operand of `.asciz`.
+func escapeForGAS(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"':
+			b.WriteString(`\"`)
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c >= 0x20 && c <= 0x7e:
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, `\%03o`, c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // frameLayout records the negative-from-fp byte offset of each named slot
@@ -319,6 +375,8 @@ func (g *generator) expr(e ast.Expr) error {
 		} else {
 			g.emit("mov r0, #0")
 		}
+	case *ast.StringLit:
+		g.emit("ldr r0, =%s", g.internString(n.Value))
 	case *ast.Ident:
 		if off, ok := g.frame.slots[n.Name]; ok && off != 0 {
 			g.emit("ldr r0, [fp, #%d]", off)
@@ -433,6 +491,11 @@ func (g *generator) call(n *ast.Call) error {
 	if !ok {
 		return fmt.Errorf("codegen: indirect calls not supported")
 	}
+	target := id.Name
+	// `print(s)` lowers to libc puts, which already adds a newline.
+	if target == "print" {
+		target = "puts"
+	}
 	N := len(n.Args)
 
 	// Common case: ≤ 4 args. Push each in source order, pop into
@@ -448,7 +511,7 @@ func (g *generator) call(n *ast.Call) error {
 		for i := N - 1; i >= 0; i-- {
 			g.emit("pop {r%d}", i)
 		}
-		g.emit("bl %s", id.Name)
+		g.emit("bl %s", target)
 		return nil
 	}
 
@@ -490,7 +553,7 @@ func (g *generator) call(n *ast.Call) error {
 	for i := 0; i < regArgs; i++ {
 		g.emit("ldr r%d, [sp, #%d]", i, tempBase+i*4)
 	}
-	g.emit("bl %s", id.Name)
+	g.emit("bl %s", target)
 	g.emit("add sp, sp, #%d", totalBytes)
 	return nil
 }

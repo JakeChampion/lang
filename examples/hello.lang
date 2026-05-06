@@ -1,0 +1,4 @@
+function main(): number {
+  print("Hello, world!");
+  return 0;
+}

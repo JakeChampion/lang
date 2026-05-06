@@ -201,6 +201,9 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "void":
 		p.advance()
 		base = ast.VoidType{}
+	case t.Kind == lexer.Keyword && t.Text == "string":
+		p.advance()
+		base = ast.StringType{}
 	default:
 		return nil, p.errorf(t.Pos, "expected type, got %q", t.Text)
 	}
@@ -569,6 +572,9 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			n = n*10 + int64(c-'0')
 		}
 		return &ast.NumberLit{P: t.Pos, Value: n}, nil
+	case lexer.String:
+		p.advance()
+		return &ast.StringLit{P: t.Pos, Value: t.Text}, nil
 	case lexer.Keyword:
 		switch t.Text {
 		case "true":

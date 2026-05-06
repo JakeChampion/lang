@@ -25,6 +25,7 @@ type Type interface {
 type NumberType struct{}
 type BoolType struct{}
 type VoidType struct{}
+type StringType struct{}
 type ArrayType struct{ Elem Type }
 type FuncType struct {
 	Params []Type
@@ -34,11 +35,13 @@ type FuncType struct {
 func (NumberType) isType()  {}
 func (BoolType) isType()    {}
 func (VoidType) isType()    {}
+func (StringType) isType()  {}
 func (ArrayType) isType()   {}
 func (*FuncType) isType()   {}
 func (NumberType) String() string  { return "number" }
 func (BoolType) String() string    { return "boolean" }
 func (VoidType) String() string    { return "void" }
+func (StringType) String() string  { return "string" }
 func (a ArrayType) String() string { return a.Elem.String() + "[]" }
 func (f *FuncType) String() string {
 	out := "("
@@ -63,6 +66,9 @@ func Equal(a, b Type) bool {
 		return ok
 	case VoidType:
 		_, ok := b.(VoidType)
+		return ok
+	case StringType:
+		_, ok := b.(StringType)
 		return ok
 	case ArrayType:
 		y, ok := b.(ArrayType)
@@ -96,6 +102,10 @@ type NumberLit struct {
 type BoolLit struct {
 	P     Position
 	Value bool
+}
+type StringLit struct {
+	P     Position
+	Value string
 }
 type Ident struct {
 	P    Position
@@ -133,6 +143,7 @@ type Assign struct {
 
 func (e *NumberLit) Pos() Position { return e.P }
 func (e *BoolLit) Pos() Position   { return e.P }
+func (e *StringLit) Pos() Position { return e.P }
 func (e *Ident) Pos() Position     { return e.P }
 func (e *ArrayLit) Pos() Position  { return e.P }
 func (e *Index) Pos() Position     { return e.P }
@@ -143,6 +154,7 @@ func (e *Assign) Pos() Position    { return e.P }
 
 func (*NumberLit) isExpr() {}
 func (*BoolLit) isExpr()   {}
+func (*StringLit) isExpr() {}
 func (*Ident) isExpr()     {}
 func (*ArrayLit) isExpr()  {}
 func (*Index) isExpr()     {}
