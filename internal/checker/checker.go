@@ -245,7 +245,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		lt := c.checkExpr(n.Left, s)
 		rt := c.checkExpr(n.Right, s)
 		switch n.Op {
-		case "+", "-", "*", "/":
+		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
 			c.requireNumber(n.P, lt, n.Op)
 			c.requireNumber(n.P, rt, n.Op)
 			return ast.NumberType{}

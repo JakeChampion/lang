@@ -135,6 +135,33 @@ func TestPrintLowersToPuts(t *testing.T) {
 }
 
 // Identical literals share a label; distinct ones don't.
+func TestModuloUsesIdivmod(t *testing.T) {
+	asm := compile(t, `function f(): number { return 17 % 5; }`)
+	mustContain(t, asm, "bl __aeabi_idivmod")
+	mustContain(t, asm, "mov r0, r1")
+}
+
+func TestBitwiseAnd(t *testing.T) {
+	asm := compile(t, `function f(): number { return 12 & 10; }`)
+	mustContain(t, asm, "and r0, r1, r0")
+}
+
+func TestBitwiseOrXor(t *testing.T) {
+	asm := compile(t, `function f(): number { return 1 | 2 ^ 4; }`)
+	mustContain(t, asm, "orr r0, r1, r0")
+	mustContain(t, asm, "eor r0, r1, r0")
+}
+
+func TestShiftLeft(t *testing.T) {
+	asm := compile(t, `function f(): number { return 1 << 3; }`)
+	mustContain(t, asm, "lsl r0, r1, r0")
+}
+
+func TestShiftRight(t *testing.T) {
+	asm := compile(t, `function f(): number { return 16 >> 2; }`)
+	mustContain(t, asm, "asr r0, r1, r0")
+}
+
 func TestStringInterningDeduplicates(t *testing.T) {
 	asm := compile(t, `function main(): void { print("a"); print("a"); print("b"); }`)
 	mustContain(t, asm, ".LStr_0:")

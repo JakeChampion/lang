@@ -454,6 +454,24 @@ func (g *generator) binary(n *ast.Binary) error {
 		g.emit("mov r0, r1")
 		g.emit("mov r1, r2")
 		g.emit("bl __aeabi_idiv")
+	case "%":
+		// __aeabi_idivmod returns quotient in r0, remainder in r1.
+		g.emit("mov r2, r0")
+		g.emit("mov r0, r1")
+		g.emit("mov r1, r2")
+		g.emit("bl __aeabi_idivmod")
+		g.emit("mov r0, r1")
+	case "&":
+		g.emit("and r0, r1, r0")
+	case "|":
+		g.emit("orr r0, r1, r0")
+	case "^":
+		g.emit("eor r0, r1, r0")
+	case "<<":
+		g.emit("lsl r0, r1, r0")
+	case ">>":
+		// Arithmetic shift right preserves the sign bit; numbers are signed.
+		g.emit("asr r0, r1, r0")
 	case "==":
 		g.emit("cmp r1, r0")
 		g.emit("moveq r0, #1")
