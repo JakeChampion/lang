@@ -22,6 +22,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/optimizer"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -69,6 +70,7 @@ func run(srcPath, outPath, cc string, runIt bool, qemu string, progArgs []string
 	if err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(src, err))
 	}
+	optimizer.Optimize(prog)
 	asm, err := codegen.Emit(prog, info)
 	if err != nil {
 		return 1, err
