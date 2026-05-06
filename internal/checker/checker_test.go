@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -122,5 +123,52 @@ func TestFloatRejectsMixedArithmetic(t *testing.T) {
 		if err := checkSource(t, src); err == nil {
 			t.Errorf("%q: expected error", src)
 		}
+	}
+}
+
+func TestUndefinedIdentifierSuggestsClosest(t *testing.T) {
+	prog, err := parser.Parse(`function f(): number {
+		var counter: number = 0;
+		return countr;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Check(prog)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	es, ok := err.(diag.Errors)
+	if !ok || len(es) == 0 {
+		t.Fatalf("expected diag.Errors, got %T", err)
+	}
+	ce, ok := es[0].(*Error)
+	if !ok {
+		t.Fatalf("expected *Error, got %T", es[0])
+	}
+	if ce.Note != `did you mean "counter"?` {
+		t.Errorf("hint = %q, want suggestion of \"counter\"", ce.Note)
+	}
+	if ce.Span != len("countr") {
+		t.Errorf("span = %d, want %d", ce.Span, len("countr"))
+	}
+}
+
+func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
+	prog, err := parser.Parse(`function f(): number {
+		var counter: number = 0;
+		return totallyUnrelated;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Check(prog)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	es := err.(diag.Errors)
+	ce := es[0].(*Error)
+	if ce.Note != "" {
+		t.Errorf("expected no hint, got %q", ce.Note)
 	}
 }

@@ -14,12 +14,16 @@ import (
 )
 
 type Error struct {
-	Pos ast.Position
-	Msg string
+	Pos  ast.Position
+	Span int    // optional: token length for `^~~~~` underline; 0 = caret only
+	Note string // optional: "did you mean foo?" hint
+	Msg  string
 }
 
-func (e *Error) Error() string         { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
+func (e *Error) Error() string          { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
 func (e *Error) Position() ast.Position { return e.Pos }
+func (e *Error) Length() int            { return e.Span }
+func (e *Error) Hint() string           { return e.Note }
 
 // Info captures everything codegen needs that the checker discovered:
 // the inferred type of every var without an annotation, and a per-function
@@ -86,6 +90,46 @@ type checker struct {
 
 func (c *checker) errf(pos ast.Position, format string, args ...any) {
 	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...)})
+}
+
+// errIdent reports an unresolved-name error and tries to attach a
+// "did you mean foo?" hint by scanning every name visible in scope
+// (locals, params, top-level functions). The error span covers the
+// whole identifier so the squiggle underlines the misspelt name.
+func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
+	cands := c.collectNames(s)
+	suggestion := diag.Suggest(n.Name, cands)
+	e := &Error{
+		Pos:  n.P,
+		Span: len(n.Name),
+		Msg:  fmt.Sprintf(format, args...),
+	}
+	if suggestion != "" {
+		e.Note = fmt.Sprintf("did you mean %q?", suggestion)
+	}
+	c.errors = append(c.errors, e)
+}
+
+// collectNames flattens every name reachable from s, plus all top-level
+// function names, into a single slice for diag.Suggest to scan.
+func (c *checker) collectNames(s *scope) []string {
+	seen := map[string]bool{}
+	var out []string
+	for cur := s; cur != nil; cur = cur.parent {
+		for name := range cur.names {
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	for name := range c.info.FuncSigs {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // scope is an environment of named bindings plus a pointer to its parent.
@@ -224,7 +268,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if sig, ok := c.info.FuncSigs[n.Name]; ok {
 			return sig
 		}
-		c.errf(n.P, "undefined identifier %q", n.Name)
+		c.errIdent(n, s, "undefined identifier %q", n.Name)
 		return nil
 	case *ast.ArrayLit:
 		if len(n.Elems) == 0 {
