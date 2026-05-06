@@ -21,11 +21,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-arm-linux-gnueabihf qemu-user
 
+      - name: Install wasmtime (for the WASM e2e tests)
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+
       - name: Show toolchain versions
         run: |
           go version
           arm-linux-gnueabihf-gcc --version | head -1
           qemu-arm --version | head -1
+          wasmtime --version
 
       - name: go vet
         run: go vet ./...
