@@ -261,6 +261,10 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseWhile()
 		case "for":
 			return p.parseFor()
+		case "break":
+			return p.parseBreakContinue(true)
+		case "continue":
+			return p.parseBreakContinue(false)
 		case "return":
 			return p.parseReturn()
 		case "var":
@@ -323,10 +327,8 @@ func (p *parser) parseWhile() (ast.Stmt, error) {
 	return &ast.While{P: kw.Pos, Cond: cond, Body: body}, nil
 }
 
-// parseFor desugars a `for (init; cond; step) body` directly into an
-// equivalent `{ init; while (cond) { body; step; } }`, so neither the
-// type checker nor codegen need to know about `for` as a separate
-// construct.
+// parseFor produces a real For node so that `continue` can jump to the
+// step expression, not back to the top of the loop body.
 func (p *parser) parseFor() (ast.Stmt, error) {
 	kw := p.advance()
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
@@ -341,8 +343,6 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 		}
 		init = v
 	} else if p.match(lexer.Punct, ";") {
-		// Empty init slot — emit a no-op so the surrounding block has
-		// something to hold the slot.
 		p.advance()
 	} else {
 		e, err := p.parseExpr()
@@ -380,19 +380,18 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 		return nil, err
 	}
 
-	innerStmts := []ast.Stmt{body}
-	if step != nil {
-		innerStmts = append(innerStmts, step)
-	}
-	loopBody := &ast.Block{P: body.Pos(), Stmts: innerStmts}
-	loop := &ast.While{P: kw.Pos, Cond: cond, Body: loopBody}
+	return &ast.For{P: kw.Pos, Init: init, Cond: cond, Step: step, Body: body}, nil
+}
 
-	outer := []ast.Stmt{}
-	if init != nil {
-		outer = append(outer, init)
+func (p *parser) parseBreakContinue(isBreak bool) (ast.Stmt, error) {
+	kw := p.advance()
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
 	}
-	outer = append(outer, loop)
-	return &ast.Block{P: kw.Pos, Stmts: outer}, nil
+	if isBreak {
+		return &ast.Break{P: kw.Pos}, nil
+	}
+	return &ast.Continue{P: kw.Pos}, nil
 }
 
 func (p *parser) parseReturn() (ast.Stmt, error) {

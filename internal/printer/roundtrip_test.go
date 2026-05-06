@@ -83,6 +83,18 @@ func TestRoundtripStrings(t *testing.T) {
 	}`)
 }
 
+func TestRoundtripForBreakContinue(t *testing.T) {
+	roundTrip(t, `function f(): number {
+		var sum: number = 0;
+		for (var i: number = 0; i < 10; i = i + 1) {
+			if (i == 3) { continue; }
+			if (i == 7) { break; }
+			sum = sum + i;
+		}
+		return sum;
+	}`)
+}
+
 func TestRoundtripStringEscapes(t *testing.T) {
 	roundTrip(t, `function f(): void {
 		print("tab:\tnewline:\nquote:\"backslash:\\");
@@ -126,6 +138,20 @@ func zeroStmt(s ast.Stmt) {
 		x.P = ast.Position{}
 		zeroExpr(x.Cond)
 		zeroStmt(x.Body)
+	case *ast.For:
+		x.P = ast.Position{}
+		if x.Init != nil {
+			zeroStmt(x.Init)
+		}
+		zeroExpr(x.Cond)
+		if x.Step != nil {
+			zeroStmt(x.Step)
+		}
+		zeroStmt(x.Body)
+	case *ast.Break:
+		x.P = ast.Position{}
+	case *ast.Continue:
+		x.P = ast.Position{}
 	case *ast.Return:
 		x.P = ast.Position{}
 		if x.Value != nil {

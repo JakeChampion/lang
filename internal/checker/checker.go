@@ -78,9 +78,10 @@ func Check(prog *ast.Program) (*Info, error) {
 }
 
 type checker struct {
-	info    *Info
-	errors  []error
-	current *ast.FuncDecl
+	info      *Info
+	errors    []error
+	current   *ast.FuncDecl
+	loopDepth int
 }
 
 func (c *checker) errf(pos ast.Position, format string, args ...any) {
@@ -145,7 +146,34 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if t != nil && !ast.Equal(t, ast.BoolType{}) {
 			c.errf(n.Cond.Pos(), "while condition must be boolean, got %s", t)
 		}
+		c.loopDepth++
 		c.checkStmt(n.Body, s)
+		c.loopDepth--
+	case *ast.For:
+		// Init runs in a new scope so a `for (var i = 0; ...)` doesn't
+		// leak `i` to the surrounding block.
+		inner := newScope(s)
+		if n.Init != nil {
+			c.checkStmt(n.Init, inner)
+		}
+		ct := c.checkExpr(n.Cond, inner)
+		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
+			c.errf(n.Cond.Pos(), "for condition must be boolean, got %s", ct)
+		}
+		c.loopDepth++
+		c.checkStmt(n.Body, inner)
+		if n.Step != nil {
+			c.checkStmt(n.Step, inner)
+		}
+		c.loopDepth--
+	case *ast.Break:
+		if c.loopDepth == 0 {
+			c.errf(n.P, "break outside of a loop")
+		}
+	case *ast.Continue:
+		if c.loopDepth == 0 {
+			c.errf(n.P, "continue outside of a loop")
+		}
 	case *ast.Return:
 		want := c.current.ReturnType
 		if n.Value == nil {

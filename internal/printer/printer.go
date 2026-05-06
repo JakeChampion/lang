@@ -69,6 +69,25 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 		printExpr(b, x.Cond)
 		b.WriteString(") ")
 		printStmt(b, x.Body)
+	case *ast.For:
+		b.WriteString("for (")
+		if x.Init != nil {
+			printForInit(b, x.Init)
+		} else {
+			b.WriteByte(';')
+		}
+		b.WriteByte(' ')
+		printExpr(b, x.Cond)
+		b.WriteString("; ")
+		if x.Step != nil {
+			printForStep(b, x.Step)
+		}
+		b.WriteString(") ")
+		printStmt(b, x.Body)
+	case *ast.Break:
+		b.WriteString("break;")
+	case *ast.Continue:
+		b.WriteString("continue;")
 	case *ast.Return:
 		b.WriteString("return")
 		if x.Value != nil {
@@ -180,6 +199,24 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		printExpr(b, x.Value)
 		b.WriteByte(')')
 	}
+}
+
+// printForInit emits the init slot of a `for`. A Var keeps its trailing
+// `;`; an ExprStmt's `;` is printed as well so the for-header parses
+// the same way on the way back in.
+func printForInit(b *strings.Builder, s ast.Stmt) {
+	printStmt(b, s)
+}
+
+// printForStep emits the step slot of a `for`. Steps are syntactically
+// expressions (no trailing `;`), but our AST stores them as ExprStmts;
+// strip the semicolon when emitting.
+func printForStep(b *strings.Builder, s ast.Stmt) {
+	if es, ok := s.(*ast.ExprStmt); ok {
+		printExpr(b, es.Expr)
+		return
+	}
+	printStmt(b, s)
 }
 
 func printType(t ast.Type) string {

@@ -153,6 +153,40 @@ func TestPutcharOutput(t *testing.T) {
 	}
 }
 
+func TestBreakInWhile(t *testing.T) {
+	src := `
+		function main(): number {
+			var i: number = 0;
+			while (true) {
+				if (i == 7) { break; }
+				i = i + 1;
+			}
+			return i;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 7 {
+		t.Errorf("exit = %d, want 7", code)
+	}
+}
+
+func TestContinueInForRunsStep(t *testing.T) {
+	// Sum 5..9 (skip i < 5) = 5+6+7+8+9 = 35.
+	// `continue` must still run the step, otherwise we'd loop forever.
+	src := `
+		function main(): number {
+			var sum: number = 0;
+			for (var i: number = 0; i < 10; i = i + 1) {
+				if (i < 5) { continue; }
+				sum = sum + i;
+			}
+			return sum;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 35 {
+		t.Errorf("exit = %d, want 35", code)
+	}
+}
+
 func TestForLoop(t *testing.T) {
 	src := `
 		function main(): number {

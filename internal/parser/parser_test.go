@@ -70,8 +70,8 @@ func TestIfElse(t *testing.T) {
 	}
 }
 
-// `for` parses to `{ init; while (cond) { body; step; } }`.
-func TestForLowersToWhile(t *testing.T) {
+// `for` produces a real For node (so `continue` can target the step).
+func TestForProducesForNode(t *testing.T) {
 	prog, err := Parse(`function f(): number {
 		for (var i = 0; i < 3; i = i + 1) { i; }
 		return 0;
@@ -79,24 +79,15 @@ func TestForLowersToWhile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outer, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Block)
+	loop, ok := prog.Funcs[0].Body.Stmts[0].(*ast.For)
 	if !ok {
-		t.Fatalf("expected outer Block, got %T", prog.Funcs[0].Body.Stmts[0])
+		t.Fatalf("expected For, got %T", prog.Funcs[0].Body.Stmts[0])
 	}
-	if _, ok := outer.Stmts[0].(*ast.Var); !ok {
-		t.Errorf("first stmt should be Var (init), got %T", outer.Stmts[0])
+	if _, ok := loop.Init.(*ast.Var); !ok {
+		t.Errorf("Init should be Var, got %T", loop.Init)
 	}
-	loop, ok := outer.Stmts[1].(*ast.While)
-	if !ok {
-		t.Fatalf("second stmt should be While, got %T", outer.Stmts[1])
-	}
-	body, ok := loop.Body.(*ast.Block)
-	if !ok {
-		t.Fatalf("loop body should be Block, got %T", loop.Body)
-	}
-	// body, then step
-	if len(body.Stmts) != 2 {
-		t.Errorf("loop body has %d stmts, want 2 (body + step)", len(body.Stmts))
+	if loop.Step == nil {
+		t.Errorf("Step should be set")
 	}
 }
 
