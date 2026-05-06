@@ -29,14 +29,34 @@ import (
 // (r0..r3). Anything beyond that goes through the caller's stack frame.
 const regArgs = 4
 
-// Emit returns the assembly text for prog.
+// Options tunes Emit. The zero value is fine for production codegen;
+// pass SourceFile to opt into DWARF line-info via .file/.loc directives
+// (use it together with `gcc -g` at the link step).
+type Options struct {
+	SourceFile string
+}
+
+// Emit returns the assembly text for prog. It's a thin wrapper over
+// EmitWithOptions for callers that don't need debug info.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
+	return EmitWithOptions(prog, info, Options{})
+}
+
+// EmitWithOptions returns the assembly text for prog. When
+// opts.SourceFile is set, the output starts with `.file 1 "<name>"`
+// and every statement is preceded by a `.loc 1 <line> <col>` directive
+// so `gcc -g` produces a usable DWARF line-number table.
+func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (string, error) {
 	g := &generator{
 		info:        info,
 		stringLabel: map[string]string{},
+		srcFile:     opts.SourceFile,
 	}
 	g.line(`.arch armv7-a`)
 	g.line(`.text`)
+	if g.srcFile != "" {
+		g.line(fmt.Sprintf(`.file 1 %q`, g.srcFile))
+	}
 	for _, fn := range prog.Funcs {
 		if err := g.emitFunction(fn); err != nil {
 			return "", err
@@ -75,6 +95,17 @@ type generator struct {
 	stringOrder []string          // insertion order so output is deterministic
 	loops       []loopLabels      // stack of (continue, break) per enclosing loop
 	usesStrcat  bool              // true if the program needs the strcat helper
+	srcFile     string            // non-empty enables DWARF .file/.loc directives
+}
+
+// emitLoc emits a `.loc 1 <line> <col>` directive when DWARF debug info
+// is requested. GAS turns these into a DW_LNS_advance_line / setting
+// table that gdb can use for source-level stepping.
+func (g *generator) emitLoc(p ast.Position) {
+	if g.srcFile == "" || p.Line <= 0 {
+		return
+	}
+	g.emit(".loc 1 %d %d", p.Line, p.Col)
 }
 
 // loopLabels gives each enclosing loop the labels that `continue` and
@@ -474,6 +505,7 @@ func containsCall(n any) bool {
 // ---------- statements ----------
 
 func (g *generator) stmt(s ast.Stmt) error {
+	g.emitLoc(s.Pos())
 	switch n := s.(type) {
 	case *ast.Block:
 		g.frame.push()
