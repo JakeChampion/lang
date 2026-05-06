@@ -168,11 +168,15 @@ func escapeForGAS(s string) string {
 // frameLayout records the negative-from-fp byte offset of each named slot
 // (parameters and `var`s) plus each array literal's storage region.
 type frameLayout struct {
-	slots      map[string]int          // most recent binding for each name
-	stack      []map[string]int        // shadowing chain
-	varSlot    map[*ast.Var]int        // var node -> offset
-	arraySlot  map[*ast.ArrayLit]int   // array literal -> offset of base
-	frameBytes int                     // total size, rounded to 8
+	slots      map[string]int        // most recent binding for each name (fp-relative)
+	stack      []map[string]int      // shadowing chain
+	varSlot    map[*ast.Var]int      // var node -> offset
+	arraySlot  map[*ast.ArrayLit]int // array literal -> offset of base
+	frameBytes int                   // total size, rounded to 8
+	// paramReg pins parameters of leaf functions to a callee-saved
+	// register (r4..r7) instead of a stack slot. A name found here
+	// short-circuits the slots/stack lookup.
+	paramReg map[string]int
 }
 
 func (f *frameLayout) push() { f.stack = append(f.stack, map[string]int{}) }
@@ -218,18 +222,32 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 	g.line(fmt.Sprintf(".type %s, %%function", fn.Name))
 	g.label(fn.Name)
 
-	// Lay out the frame: each param, then each `var`, then each array
-	// literal in source order.
+	// Decide whether this function is a "leaf" — no user-level Call
+	// expressions in its body. AAPCS guarantees that callee-saved
+	// registers (r4..r11) are preserved across calls to libc / aeabi
+	// helpers, so leaf functions can pin their parameters to r4..r7
+	// instead of paying for a stack spill on every read.
+	leaf := len(fn.Params) >= 1 && len(fn.Params) <= regArgs && !containsCall(fn.Body)
+
+	// Lay out the frame: each param (only when *not* register-pinned),
+	// then each `var`, then each array literal in source order.
 	g.frame = &frameLayout{
 		slots:     map[string]int{},
 		varSlot:   map[*ast.Var]int{},
 		arraySlot: map[*ast.ArrayLit]int{},
+		paramReg:  map[string]int{},
 	}
 	paramOffs := map[string]int{}
 	off := 0
-	for _, p := range fn.Params {
-		off += 4
-		paramOffs[p.Name] = -off
+	if leaf {
+		for i, p := range fn.Params {
+			g.frame.paramReg[p.Name] = 4 + i
+		}
+	} else {
+		for _, p := range fn.Params {
+			off += 4
+			paramOffs[p.Name] = -off
+		}
 	}
 	for _, v := range g.info.Locals[fn] {
 		off += 4
@@ -249,22 +267,44 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 	g.frame.frameBytes = off
 
 	// Prologue.
-	g.emit("push {fp, lr}")
-	g.emit("mov fp, sp")
-	if g.frame.frameBytes > 0 {
-		g.emit("sub sp, sp, #%d", g.frame.frameBytes)
-	}
-	// Move incoming parameters into their local slots:
-	//   * args 0..3 come in r0..r3 — spill straight in
-	//   * args 4..N come from the caller's stack frame, which after our
-	//     prologue starts at fp+8 (fp[0]=saved fp, fp[4]=saved lr)
-	for i, p := range fn.Params {
-		if i < regArgs {
-			g.emit("str r%d, [fp, #%d]", i, paramOffs[p.Name])
-		} else {
-			callerOff := 8 + (i-regArgs)*4
-			g.emit("ldr r12, [fp, #%d]", callerOff)
-			g.emit("str r12, [fp, #%d]", paramOffs[p.Name])
+	if leaf {
+		// Save the param registers we're about to use, plus fp/lr.
+		// The list is r4..r{4+P-1}, fp, lr.
+		regs := []string{}
+		for i := 0; i < len(fn.Params); i++ {
+			regs = append(regs, fmt.Sprintf("r%d", 4+i))
+		}
+		regs = append(regs, "fp", "lr")
+		g.emit("push {%s}", strings.Join(regs, ", "))
+		// fp should still point at the saved fp word, exactly as in
+		// the non-leaf prologue. After pushing P param-regs first,
+		// the saved fp lands at sp + 4*P.
+		g.emit("add fp, sp, #%d", 4*len(fn.Params))
+		if g.frame.frameBytes > 0 {
+			g.emit("sub sp, sp, #%d", g.frame.frameBytes)
+		}
+		// Transfer incoming arg registers to their pinned spots.
+		for i := range fn.Params {
+			g.emit("mov r%d, r%d", 4+i, i)
+		}
+	} else {
+		g.emit("push {fp, lr}")
+		g.emit("mov fp, sp")
+		if g.frame.frameBytes > 0 {
+			g.emit("sub sp, sp, #%d", g.frame.frameBytes)
+		}
+		// Move incoming parameters into their local slots:
+		//   * args 0..3 come in r0..r3 — spill straight in
+		//   * args 4..N come from the caller's stack frame, which after our
+		//     prologue starts at fp+8 (fp[0]=saved fp, fp[4]=saved lr)
+		for i, p := range fn.Params {
+			if i < regArgs {
+				g.emit("str r%d, [fp, #%d]", i, paramOffs[p.Name])
+			} else {
+				callerOff := 8 + (i-regArgs)*4
+				g.emit("ldr r12, [fp, #%d]", callerOff)
+				g.emit("str r12, [fp, #%d]", paramOffs[p.Name])
+			}
 		}
 	}
 
@@ -288,8 +328,20 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 	// return of 0 — harmless for void functions, defined for number ones.
 	g.emit("mov r0, #0")
 	g.label(g.epilogue)
-	g.emit("mov sp, fp")
-	g.emit("pop {fp, lr}")
+	if leaf {
+		// Step sp back to where the param-regs were pushed, then pop
+		// the same register list we saved in the prologue.
+		g.emit("sub sp, fp, #%d", 4*len(fn.Params))
+		regs := []string{}
+		for i := 0; i < len(fn.Params); i++ {
+			regs = append(regs, fmt.Sprintf("r%d", 4+i))
+		}
+		regs = append(regs, "fp", "lr")
+		g.emit("pop {%s}", strings.Join(regs, ", "))
+	} else {
+		g.emit("mov sp, fp")
+		g.emit("pop {fp, lr}")
+	}
 	g.emit("bx lr")
 	g.line(fmt.Sprintf(".size %s, .-%s", fn.Name, fn.Name))
 	return nil
@@ -352,6 +404,71 @@ func walkArrays(n any, visit func(*ast.ArrayLit)) {
 		walkArrays(x.Target, visit)
 		walkArrays(x.Value, visit)
 	}
+}
+
+// containsCall reports whether n holds any *ast.Call subtree.
+// Used to identify "leaf" functions for the simple register
+// allocator: leaves never bl into user code, so callee-saved
+// registers stay live across whatever bl's we do emit (aeabi
+// helpers, libc) — those preserve r4..r11 by AAPCS.
+func containsCall(n any) bool {
+	switch x := n.(type) {
+	case nil:
+		return false
+	case *ast.Call:
+		return true
+	case *ast.Block:
+		for _, s := range x.Stmts {
+			if containsCall(s) {
+				return true
+			}
+		}
+	case *ast.If:
+		if containsCall(x.Cond) || containsCall(x.Then) {
+			return true
+		}
+		if x.Else != nil {
+			return containsCall(x.Else)
+		}
+	case *ast.While:
+		return containsCall(x.Cond) || containsCall(x.Body)
+	case *ast.For:
+		if x.Init != nil && containsCall(x.Init) {
+			return true
+		}
+		if containsCall(x.Cond) {
+			return true
+		}
+		if x.Step != nil && containsCall(x.Step) {
+			return true
+		}
+		return containsCall(x.Body)
+	case *ast.Break, *ast.Continue:
+		return false
+	case *ast.Return:
+		return x.Value != nil && containsCall(x.Value)
+	case *ast.Var:
+		return containsCall(x.Init)
+	case *ast.ExprStmt:
+		return containsCall(x.Expr)
+	case *ast.NumberLit, *ast.BoolLit, *ast.StringLit, *ast.Ident:
+		return false
+	case *ast.ArrayLit:
+		for _, e := range x.Elems {
+			if containsCall(e) {
+				return true
+			}
+		}
+	case *ast.Index:
+		return containsCall(x.Array) || containsCall(x.Idx)
+	case *ast.Binary:
+		return containsCall(x.Left) || containsCall(x.Right)
+	case *ast.Unary:
+		return containsCall(x.Operand)
+	case *ast.Assign:
+		return containsCall(x.Target) || containsCall(x.Value)
+	}
+	return false
 }
 
 // ---------- statements ----------
@@ -485,8 +602,15 @@ func (g *generator) expr(e ast.Expr) error {
 	case *ast.StringLit:
 		g.emit("ldr r0, =%s", g.internString(n.Value))
 	case *ast.Ident:
+		// Local var (incl. shadowing) takes precedence over a pinned
+		// param so leaf-function bodies can still declare a `var x`
+		// that hides param `x`.
 		if off, ok := g.frame.slots[n.Name]; ok && off != 0 {
 			g.emit("ldr r0, [fp, #%d]", off)
+			return nil
+		}
+		if reg, ok := g.frame.paramReg[n.Name]; ok {
+			g.emit("mov r0, r%d", reg)
 			return nil
 		}
 		// Fall back to a function reference (used for direct calls below).
@@ -724,11 +848,15 @@ func (g *generator) assign(n *ast.Assign) error {
 		if err := g.expr(n.Value); err != nil {
 			return err
 		}
-		off, ok := g.frame.slots[t.Name]
-		if !ok || off == 0 {
-			return fmt.Errorf("codegen: cannot assign to %q (no slot)", t.Name)
+		if off, ok := g.frame.slots[t.Name]; ok && off != 0 {
+			g.emit("str r0, [fp, #%d]", off)
+			return nil
 		}
-		g.emit("str r0, [fp, #%d]", off)
+		if reg, ok := g.frame.paramReg[t.Name]; ok {
+			g.emit("mov r%d, r0", reg)
+			return nil
+		}
+		return fmt.Errorf("codegen: cannot assign to %q (no slot)", t.Name)
 	case *ast.Index:
 		if err := g.expr(t.Array); err != nil {
 			return err
