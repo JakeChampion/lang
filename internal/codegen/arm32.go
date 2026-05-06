@@ -744,18 +744,43 @@ func (g *generator) binary(n *ast.Binary) error {
 }
 
 func (g *generator) call(n *ast.Call) error {
-	// Direct call to a named function — emit `bl name`. Indirect calls
-	// (function values stored in variables) are out of scope.
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
-		return fmt.Errorf("codegen: indirect calls not supported")
+		return fmt.Errorf("codegen: indirect call from non-identifier expression")
 	}
 	target := id.Name
 	// `print(s)` lowers to libc puts, which already adds a newline.
 	if target == "print" {
 		target = "puts"
 	}
+
+	// If the name resolves to a local var or a pinned param, this is an
+	// indirect call through a function value: load the pointer into r12
+	// after argument setup and emit `blx r12` instead of `bl name`.
+	indirect := false
+	indirectFromSlot := 0
+	indirectFromReg := -1
+	if off, ok := g.frame.slots[id.Name]; ok && off != 0 {
+		indirect = true
+		indirectFromSlot = off
+	} else if reg, ok := g.frame.paramReg[id.Name]; ok {
+		indirect = true
+		indirectFromReg = reg
+	}
 	N := len(n.Args)
+
+	emitBranch := func() {
+		if !indirect {
+			g.emit("bl %s", target)
+			return
+		}
+		if indirectFromReg >= 0 {
+			g.emit("mov r12, r%d", indirectFromReg)
+		} else {
+			g.emit("ldr r12, [fp, #%d]", indirectFromSlot)
+		}
+		g.emit("blx r12")
+	}
 
 	// Common case: ≤ 4 args. Push each in source order, pop into
 	// r{N-1}..r0. Single-arg calls collapse to nothing once the
@@ -770,7 +795,7 @@ func (g *generator) call(n *ast.Call) error {
 		for i := N - 1; i >= 0; i-- {
 			g.emit("pop {r%d}", i)
 		}
-		g.emit("bl %s", target)
+		emitBranch()
 		return nil
 	}
 
@@ -812,7 +837,7 @@ func (g *generator) call(n *ast.Call) error {
 	for i := 0; i < regArgs; i++ {
 		g.emit("ldr r%d, [sp, #%d]", i, tempBase+i*4)
 	}
-	g.emit("bl %s", target)
+	emitBranch()
 	g.emit("add sp, sp, #%d", totalBytes)
 	return nil
 }

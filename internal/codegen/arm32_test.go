@@ -197,6 +197,18 @@ func TestLeafFunctionPinsParamsToRegisters(t *testing.T) {
 	}
 }
 
+// Calling a function value held in a `var` should emit `blx r12`
+// after loading the function pointer from the var's stack slot.
+func TestIndirectCallThroughVar(t *testing.T) {
+	asm := compile(t, `function add(a: number, b: number): number { return a + b; }
+function main(): number {
+	var f = add;
+	return f(40, 2);
+}`)
+	mustContain(t, asm, "ldr r12, [fp, #-4]")
+	mustContain(t, asm, "blx r12")
+}
+
 // Functions that contain a Call expression are NOT leaves — the
 // existing stack-spill prologue still applies.
 func TestNonLeafKeepsStackSpill(t *testing.T) {
