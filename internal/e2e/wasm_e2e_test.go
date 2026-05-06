@@ -315,3 +315,28 @@ func TestWASMCompoundAssign(t *testing.T) {
 		t.Errorf("got %d, want 14", got)
 	}
 }
+
+func TestWASMLenOfString(t *testing.T) {
+	src := `function main(): number { return len("hello"); }`
+	if got := runWasm(t, src); got != 5 {
+		t.Errorf("got %d, want 5", got)
+	}
+}
+
+func TestWASMStringIndexAndCompare(t *testing.T) {
+	src := `function main(): number {
+		var s: string = "abc";
+		var byte: number = s[1];
+		var equal: boolean = "yes" == "yes";
+		var different: boolean = "yes" == "no";
+		// 'b' = 98; equal=1, different=0 → 98 + 1 - 0 = 99
+		var ok: number = 0;
+		if (equal) { ok = ok + 1; }
+		if (different) { ok = ok - 1; }
+		return byte + ok;
+	}`
+	// 'b' (98) + 1 = 99
+	if got := runWasm(t, src); got != 99 {
+		t.Errorf("got %d, want 99", got)
+	}
+}

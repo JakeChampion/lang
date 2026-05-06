@@ -126,6 +126,57 @@ func TestFloatRejectsMixedArithmetic(t *testing.T) {
 	}
 }
 
+func TestStringEqualityTypechecks(t *testing.T) {
+	src := `function f(): boolean {
+		var a: string = "hi";
+		var b: string = "hi";
+		return a == b;
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestStringIndexReturnsNumber(t *testing.T) {
+	src := `function f(): number {
+		var s: string = "abc";
+		return s[1];
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestLenOnString(t *testing.T) {
+	src := `function f(): number { return len("hello"); }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestLenRejectsNumber(t *testing.T) {
+	if err := checkSource(t, `function f(): number { return len(42); }`); err == nil {
+		t.Error("expected error len(number)")
+	}
+}
+
+func TestStringCmpFlagSet(t *testing.T) {
+	prog, err := parser.Parse(`function f(): boolean {
+		var a: string = "x";
+		return a == "x";
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatal(err)
+	}
+	bin := prog.Funcs[0].Body.Stmts[1].(*ast.Return).Value.(*ast.Binary)
+	if !bin.IsStringCmp {
+		t.Errorf("expected IsStringCmp = true on string == string")
+	}
+}
+
 func TestUndefinedIdentifierSuggestsClosest(t *testing.T) {
 	prog, err := parser.Parse(`function f(): number {
 		var counter: number = 0;

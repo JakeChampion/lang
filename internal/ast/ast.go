@@ -129,6 +129,11 @@ type Index struct {
 	P     Position
 	Array Expr
 	Idx   Expr
+	// IsString is set by the checker when the indexed value is a
+	// string rather than an array. The two paths look identical at
+	// the AST level but lower differently: arrays read 4 bytes per
+	// slot, strings read 1 byte and zero-extend to a number.
+	IsString bool
 }
 type Call struct {
 	P      Position
@@ -143,6 +148,10 @@ type Binary struct {
 	// are strings, so codegen can lower this binary to a runtime call
 	// instead of an integer add.
 	IsStringConcat bool
+	// IsStringCmp is set by the checker when both operands of `==` or
+	// `!=` are strings, so codegen can lower it to a content-comparing
+	// runtime call instead of a pointer-equality `i32.eq`.
+	IsStringCmp bool
 	// IsFloat is set by the checker when both operands are floats,
 	// so codegen knows to emit f32 instructions instead of i32.
 	IsFloat bool
