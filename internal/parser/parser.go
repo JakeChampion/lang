@@ -301,6 +301,8 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseReturn()
 		case "var":
 			return p.parseVar()
+		case "switch":
+			return p.parseSwitch()
 		}
 	}
 	// expression statement
@@ -413,6 +415,107 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 	}
 
 	return &ast.For{P: kw.Pos, Init: init, Cond: cond, Step: step, Body: body}, nil
+}
+
+// parseSwitch parses
+//
+//	switch (tag) {
+//	  case v1, v2: { ... }
+//	  case v3: { ... }
+//	  default: { ... }
+//	}
+//
+// Cases don't fall through. Each body runs until the next `case`,
+// `default`, or the closing brace; we don't require a `break` to leave
+// a case (and a leading `break` inside a case body is a no-op).
+func (p *parser) parseSwitch() (ast.Stmt, error) {
+	kw := p.advance() // `switch`
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return nil, err
+	}
+	tag, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	sw := &ast.Switch{P: kw.Pos, Tag: tag}
+	for {
+		t := p.peek()
+		if t.Kind == lexer.Punct && t.Text == "}" {
+			p.advance()
+			return sw, nil
+		}
+		if t.Kind != lexer.Keyword || (t.Text != "case" && t.Text != "default") {
+			return nil, p.errorf(t.Pos, "expected `case`, `default` or `}` in switch body")
+		}
+		caseKw := p.advance()
+		if caseKw.Text == "default" {
+			if sw.Default != nil {
+				return nil, p.errorf(caseKw.Pos, "duplicate `default` clause")
+			}
+			if _, err := p.expect(lexer.Punct, ":"); err != nil {
+				return nil, err
+			}
+			body, err := p.parseCaseBody()
+			if err != nil {
+				return nil, err
+			}
+			sw.Default = body
+			continue
+		}
+		// `case v1, v2, v3:`
+		var values []ast.Expr
+		for {
+			v, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, v)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				continue
+			}
+			break
+		}
+		if _, err := p.expect(lexer.Punct, ":"); err != nil {
+			return nil, err
+		}
+		body, err := p.parseCaseBody()
+		if err != nil {
+			return nil, err
+		}
+		sw.Cases = append(sw.Cases, &ast.SwitchCase{P: caseKw.Pos, Values: values, Body: body})
+	}
+}
+
+// parseCaseBody collects statements up to the next `case`, `default`,
+// or closing `}`. The block's position is the position of the first
+// statement (or 0:0 for an empty case).
+func (p *parser) parseCaseBody() (*ast.Block, error) {
+	blk := &ast.Block{}
+	first := true
+	for {
+		t := p.peek()
+		if t.Kind == lexer.Punct && t.Text == "}" {
+			return blk, nil
+		}
+		if t.Kind == lexer.Keyword && (t.Text == "case" || t.Text == "default") {
+			return blk, nil
+		}
+		if first {
+			blk.P = t.Pos
+			first = false
+		}
+		s, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		blk.Stmts = append(blk.Stmts, s)
+	}
 }
 
 func (p *parser) parseBreakContinue(isBreak bool) (ast.Stmt, error) {

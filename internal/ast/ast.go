@@ -240,6 +240,23 @@ type ExprStmt struct {
 	Expr Expr
 }
 
+// Switch dispatches on a single tag expression. Each case lists one or
+// more constant match values (no fallthrough — control flows out at the
+// end of the case body). A trailing `default` block runs when no case
+// matched; it may be nil.
+type Switch struct {
+	P       Position
+	Tag     Expr
+	Cases   []*SwitchCase
+	Default *Block // may be nil
+}
+
+type SwitchCase struct {
+	P      Position
+	Values []Expr
+	Body   *Block
+}
+
 func (s *Block) Pos() Position    { return s.P }
 func (s *If) Pos() Position       { return s.P }
 func (s *While) Pos() Position    { return s.P }
@@ -249,6 +266,7 @@ func (s *Continue) Pos() Position { return s.P }
 func (s *Return) Pos() Position   { return s.P }
 func (s *Var) Pos() Position      { return s.P }
 func (s *ExprStmt) Pos() Position { return s.P }
+func (s *Switch) Pos() Position   { return s.P }
 
 func (*Block) isStmt()    {}
 func (*If) isStmt()       {}
@@ -259,6 +277,7 @@ func (*Continue) isStmt() {}
 func (*Return) isStmt()   {}
 func (*Var) isStmt()      {}
 func (*ExprStmt) isStmt() {}
+func (*Switch) isStmt()   {}
 
 // ---------- Top level ----------
 
