@@ -279,3 +279,37 @@ func TestTernaryRightAssociative(t *testing.T) {
 		t.Fatalf("else should be a nested Ternary, got %T", tern.Else)
 	}
 }
+
+func TestStructDecl(t *testing.T) {
+	prog, err := Parse(`struct Point { x: number, y: number }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Structs) != 1 {
+		t.Fatalf("got %d structs, want 1", len(prog.Structs))
+	}
+	sd := prog.Structs[0]
+	if sd.Name != "Point" || len(sd.Fields) != 2 {
+		t.Errorf("unexpected struct: %+v", sd)
+	}
+}
+
+func TestStructLitAndFieldAccess(t *testing.T) {
+	prog, err := Parse(`struct P { x: number }
+		function main(): number {
+			var p: P = P { x: 5 };
+			return p.x;
+		}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := prog.Funcs[0]
+	v := main.Body.Stmts[0].(*ast.Var)
+	if _, ok := v.Init.(*ast.StructLit); !ok {
+		t.Errorf("init should be StructLit, got %T", v.Init)
+	}
+	ret := main.Body.Stmts[1].(*ast.Return)
+	if _, ok := ret.Value.(*ast.FieldAccess); !ok {
+		t.Errorf("return should be FieldAccess, got %T", ret.Value)
+	}
+}

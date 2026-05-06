@@ -33,6 +33,11 @@ type FuncType struct {
 	Result Type
 }
 
+// StructType is a nominal reference to a top-level `struct` declaration.
+// Two StructTypes are equal iff their Name fields match. The actual
+// field list lives on the program's StructDecl, looked up via Name.
+type StructType struct{ Name string }
+
 func (NumberType) isType()  {}
 func (BoolType) isType()    {}
 func (VoidType) isType()    {}
@@ -40,12 +45,14 @@ func (StringType) isType()  {}
 func (FloatType) isType()   {}
 func (ArrayType) isType()   {}
 func (*FuncType) isType()   {}
+func (StructType) isType()  {}
 func (NumberType) String() string  { return "number" }
 func (BoolType) String() string    { return "boolean" }
 func (VoidType) String() string    { return "void" }
 func (StringType) String() string  { return "string" }
 func (FloatType) String() string   { return "float" }
 func (a ArrayType) String() string { return a.Elem.String() + "[]" }
+func (s StructType) String() string { return s.Name }
 func (f *FuncType) String() string {
 	out := "("
 	for i, p := range f.Params {
@@ -90,6 +97,9 @@ func Equal(a, b Type) bool {
 			}
 		}
 		return true
+	case StructType:
+		y, ok := b.(StructType)
+		return ok && x.Name == y.Name
 	}
 	return false
 }
@@ -183,6 +193,29 @@ type Ternary struct {
 	IsFloat bool
 }
 
+// StructLit constructs a struct value: `Foo { x: 1, y: 2 }`.
+// Fields may appear in any order; the checker reorders them to match
+// the declaration so codegen can use fixed offsets.
+type StructLit struct {
+	P        Position
+	TypeName string
+	Fields   []FieldInit
+}
+
+type FieldInit struct {
+	Name  string
+	Value Expr
+}
+
+// FieldAccess reads a field off a struct value: `p.x`. Codegen lowers
+// this to `i32.load (p + offset)` once the checker has resolved the
+// field's offset on the StructDecl.
+type FieldAccess struct {
+	P      Position
+	Target Expr
+	Field  string
+}
+
 func (e *NumberLit) Pos() Position { return e.P }
 func (e *BoolLit) Pos() Position   { return e.P }
 func (e *StringLit) Pos() Position { return e.P }
@@ -193,8 +226,10 @@ func (e *Index) Pos() Position     { return e.P }
 func (e *Call) Pos() Position      { return e.P }
 func (e *Binary) Pos() Position    { return e.P }
 func (e *Unary) Pos() Position     { return e.P }
-func (e *Assign) Pos() Position    { return e.P }
-func (e *Ternary) Pos() Position   { return e.P }
+func (e *Assign) Pos() Position      { return e.P }
+func (e *Ternary) Pos() Position     { return e.P }
+func (e *StructLit) Pos() Position   { return e.P }
+func (e *FieldAccess) Pos() Position { return e.P }
 
 func (*NumberLit) isExpr() {}
 func (*BoolLit) isExpr()   {}
@@ -206,8 +241,10 @@ func (*Index) isExpr()     {}
 func (*Call) isExpr()      {}
 func (*Binary) isExpr()    {}
 func (*Unary) isExpr()     {}
-func (*Assign) isExpr()    {}
-func (*Ternary) isExpr()   {}
+func (*Assign) isExpr()      {}
+func (*Ternary) isExpr()     {}
+func (*StructLit) isExpr()   {}
+func (*FieldAccess) isExpr() {}
 
 // ---------- Statements ----------
 
@@ -318,6 +355,17 @@ type FuncDecl struct {
 	Body       *Block
 }
 
+// StructDecl is a top-level `struct` declaration. Fields are stored in
+// declaration order, which is also the layout order in memory: each
+// field occupies 4 bytes and lives at offset 4*index from the struct's
+// base pointer.
+type StructDecl struct {
+	P      Position
+	Name   string
+	Fields []Param
+}
+
 type Program struct {
-	Funcs []*FuncDecl
+	Funcs   []*FuncDecl
+	Structs []*StructDecl
 }

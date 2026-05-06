@@ -53,6 +53,7 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	}
 	g.scanForRuntimeUses(prog)
 	g.scanForArrayUses(prog)
+	g.scanForStructUses(prog)
 	g.scanForIndirectCalls(prog)
 	g.scanForStringEq(prog)
 
@@ -113,7 +114,8 @@ type generator struct {
 	// Runtime / strings / arrays.
 	needsRuntime  bool
 	needsArrays   bool
-	needsStrEq    bool           // any String == String / != comparison
+	needsStrEq    bool // any String == String / != comparison
+	needsStructs  bool
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -121,6 +123,10 @@ type generator struct {
 	// ArrayLit AST node, so codegen can save its base into the right
 	// scratch slot even when ArrayLits are nested.
 	arrLocal map[*ast.ArrayLit]string
+	// Per-function: a stable assignment of WAT local names to each
+	// StructLit AST node — same role as arrLocal but for struct
+	// constructors.
+	structLocal map[*ast.StructLit]string
 
 	// Per-function: incrementing counter giving each Switch its own
 	// `$__sw_N` scratch local for the tag value.
@@ -211,6 +217,14 @@ func (g *generator) emitFunc(fn *ast.FuncDecl) error {
 	for i := 1; i <= swCount; i++ {
 		g.linef("(local $__sw_%d i32)", i)
 	}
+	// One i32 scratch local per StructLit, holding the alloc-returned
+	// base while field stores run.
+	g.structLocal = map[*ast.StructLit]string{}
+	collectStructLits(fn.Body, func(sl *ast.StructLit) {
+		name := fmt.Sprintf("$__sl_%d", len(g.structLocal))
+		g.structLocal[sl] = name
+		g.linef("(local %s i32)", name)
+	})
 
 	for _, s := range fn.Body.Stmts {
 		if err := g.stmt(s); err != nil {
@@ -444,10 +458,14 @@ func (g *generator) leavesValue(e ast.Expr) bool {
 		}
 		return true
 	}
-	// `arr[i] = v` lowers to an i32.store with no result on the stack,
-	// so we mustn't emit a `drop` afterward in stmt-position.
+	// `arr[i] = v` and `p.field = v` lower to i32.store with no
+	// result on the stack, so we mustn't emit a `drop` afterward in
+	// stmt-position.
 	if a, ok := e.(*ast.Assign); ok {
 		if _, isIdx := a.Target.(*ast.Index); isIdx {
+			return false
+		}
+		if _, isField := a.Target.(*ast.FieldAccess); isField {
 			return false
 		}
 	}
@@ -590,6 +608,164 @@ func countSwitches(n any) int {
 	}
 	walk(n)
 	return count
+}
+
+// scanForStructUses pre-walks the program and sets needsStructs if any
+// StructLit appears. Structs share the bump allocator with arrays, so
+// the runtime preamble lights up either way.
+func (g *generator) scanForStructUses(prog *ast.Program) {
+	var walk func(any)
+	walk = func(n any) {
+		if g.needsStructs {
+			return
+		}
+		switch x := n.(type) {
+		case *ast.StructLit:
+			g.needsStructs = true
+			g.needsRuntime = true
+		case *ast.FieldAccess:
+			walk(x.Target)
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		case *ast.Switch:
+			walk(x.Tag)
+			for _, k := range x.Cases {
+				for _, v := range k.Values {
+					walk(v)
+				}
+				walk(k.Body)
+			}
+			if x.Default != nil {
+				walk(x.Default)
+			}
+		case *ast.Binary:
+			walk(x.Left)
+			walk(x.Right)
+		case *ast.Unary:
+			walk(x.Operand)
+		case *ast.Assign:
+			walk(x.Target)
+			walk(x.Value)
+		case *ast.Call:
+			walk(x.Callee)
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case *ast.Index:
+			walk(x.Array)
+			walk(x.Idx)
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		}
+	}
+	for _, fn := range prog.Funcs {
+		walk(fn.Body)
+	}
+}
+
+// collectStructLits visits every StructLit in n in source order. The
+// per-function map of scratch locals is built from this walk.
+func collectStructLits(n any, visit func(*ast.StructLit)) {
+	switch x := n.(type) {
+	case *ast.StructLit:
+		visit(x)
+		for _, f := range x.Fields {
+			collectStructLits(f.Value, visit)
+		}
+	case *ast.Block:
+		for _, s := range x.Stmts {
+			collectStructLits(s, visit)
+		}
+	case *ast.If:
+		collectStructLits(x.Cond, visit)
+		collectStructLits(x.Then, visit)
+		if x.Else != nil {
+			collectStructLits(x.Else, visit)
+		}
+	case *ast.While:
+		collectStructLits(x.Cond, visit)
+		collectStructLits(x.Body, visit)
+	case *ast.For:
+		if x.Init != nil {
+			collectStructLits(x.Init, visit)
+		}
+		collectStructLits(x.Cond, visit)
+		if x.Step != nil {
+			collectStructLits(x.Step, visit)
+		}
+		collectStructLits(x.Body, visit)
+	case *ast.Return:
+		if x.Value != nil {
+			collectStructLits(x.Value, visit)
+		}
+	case *ast.Var:
+		collectStructLits(x.Init, visit)
+	case *ast.ExprStmt:
+		collectStructLits(x.Expr, visit)
+	case *ast.Switch:
+		collectStructLits(x.Tag, visit)
+		for _, k := range x.Cases {
+			for _, v := range k.Values {
+				collectStructLits(v, visit)
+			}
+			collectStructLits(k.Body, visit)
+		}
+		if x.Default != nil {
+			collectStructLits(x.Default, visit)
+		}
+	case *ast.Binary:
+		collectStructLits(x.Left, visit)
+		collectStructLits(x.Right, visit)
+	case *ast.Unary:
+		collectStructLits(x.Operand, visit)
+	case *ast.Call:
+		collectStructLits(x.Callee, visit)
+		for _, a := range x.Args {
+			collectStructLits(a, visit)
+		}
+	case *ast.Index:
+		collectStructLits(x.Array, visit)
+		collectStructLits(x.Idx, visit)
+	case *ast.ArrayLit:
+		for _, e := range x.Elems {
+			collectStructLits(e, visit)
+		}
+	case *ast.Assign:
+		collectStructLits(x.Target, visit)
+		collectStructLits(x.Value, visit)
+	case *ast.FieldAccess:
+		collectStructLits(x.Target, visit)
+	}
 }
 
 // collectArrayLits visits every ArrayLit in n in source order. Source
@@ -1060,7 +1236,7 @@ func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
 	g.line(`(memory $mem 1)`)
 
-	if g.needsArrays {
+	if g.needsArrays || g.needsStructs {
 		// $__lang_alloc bumps the allocator pointer at memory[40] and
 		// returns the address that was there before the bump. There's
 		// no free — arrays in lang are immutable but not GC'd.
@@ -1326,6 +1502,10 @@ func (g *generator) expr(e ast.Expr) error {
 		return g.assign(n)
 	case *ast.Ternary:
 		return g.ternary(n)
+	case *ast.StructLit:
+		return g.structLit(n)
+	case *ast.FieldAccess:
+		return g.fieldAccess(n)
 	case *ast.ArrayLit:
 		return g.arrayLit(n)
 	case *ast.Index:
@@ -1380,6 +1560,119 @@ func (g *generator) arrayLit(n *ast.ArrayLit) error {
 		g.line("i32.store")
 	}
 	g.linef("local.get %s", local)
+	return nil
+}
+
+// structLit allocates 4 bytes per field via the bump allocator and
+// stores each initialiser at a fixed offset based on its declaration
+// order in the StructDecl. The expression's value is the base pointer.
+func (g *generator) structLit(n *ast.StructLit) error {
+	local, ok := g.structLocal[n]
+	if !ok {
+		return fmt.Errorf("wasm: struct literal missing scratch local (compiler bug)")
+	}
+	sd := g.info.Structs[n.TypeName]
+	if sd == nil {
+		return fmt.Errorf("wasm: unknown struct %q", n.TypeName)
+	}
+	g.linef("i32.const %d", len(sd.Fields)*4)
+	g.line("call $__lang_alloc")
+	g.linef("local.set %s", local)
+	for _, f := range n.Fields {
+		offset := -1
+		for i, df := range sd.Fields {
+			if df.Name == f.Name {
+				offset = i * 4
+				break
+			}
+		}
+		if offset < 0 {
+			return fmt.Errorf("wasm: unknown field %q on struct %s (compiler bug)", f.Name, sd.Name)
+		}
+		g.linef("local.get %s", local)
+		g.linef("i32.const %d", offset)
+		g.line("i32.add")
+		if err := g.expr(f.Value); err != nil {
+			return err
+		}
+		g.line("i32.store")
+	}
+	g.linef("local.get %s", local)
+	return nil
+}
+
+// fieldAccess lowers `e.field` to load(e + offset_of_field).
+func (g *generator) fieldAccess(n *ast.FieldAccess) error {
+	tt := g.exprType(n.Target)
+	st, ok := tt.(ast.StructType)
+	if !ok {
+		return fmt.Errorf("wasm: field access on non-struct (compiler bug)")
+	}
+	sd := g.info.Structs[st.Name]
+	if sd == nil {
+		return fmt.Errorf("wasm: unknown struct %q (compiler bug)", st.Name)
+	}
+	offset := -1
+	for i, df := range sd.Fields {
+		if df.Name == n.Field {
+			offset = i * 4
+			break
+		}
+	}
+	if offset < 0 {
+		return fmt.Errorf("wasm: unknown field %q on struct %s (compiler bug)", n.Field, sd.Name)
+	}
+	if err := g.expr(n.Target); err != nil {
+		return err
+	}
+	if offset > 0 {
+		g.linef("i32.const %d", offset)
+		g.line("i32.add")
+	}
+	g.line("i32.load")
+	return nil
+}
+
+// exprType is a small re-deriver for a couple of codegen sites that
+// need the static type of an expression (FieldAccess and field-target
+// Assign). It mirrors the relevant cases of the checker's checkExpr
+// using the type info that's already on idents/locals.
+func (g *generator) exprType(e ast.Expr) ast.Type {
+	switch x := e.(type) {
+	case *ast.Ident:
+		for _, vars := range g.info.Locals {
+			for _, v := range vars {
+				if v.Name == x.Name {
+					return v.Type
+				}
+			}
+		}
+		if g.current != nil {
+			for _, p := range g.current.Params {
+				if p.Name == x.Name {
+					return p.Type
+				}
+			}
+		}
+	case *ast.FieldAccess:
+		t := g.exprType(x.Target)
+		if st, ok := t.(ast.StructType); ok {
+			if sd := g.info.Structs[st.Name]; sd != nil {
+				for _, f := range sd.Fields {
+					if f.Name == x.Field {
+						return f.Type
+					}
+				}
+			}
+		}
+	case *ast.StructLit:
+		return ast.StructType{Name: x.TypeName}
+	case *ast.Index:
+		at := g.exprType(x.Array)
+		if arr, ok := at.(ast.ArrayType); ok {
+			return arr.Elem
+		}
+	}
 	return nil
 }
 
@@ -1592,6 +1885,38 @@ func (g *generator) assign(n *ast.Assign) error {
 		}
 		g.line("i32.store")
 		return nil
+	case *ast.FieldAccess:
+		// p.field = v → store at base + offset_of_field. Like Index
+		// assignment, leaves nothing on the stack; leavesValue's
+		// special case suppresses the `drop`.
+		tt := g.exprType(t.Target)
+		st, ok := tt.(ast.StructType)
+		if !ok {
+			return fmt.Errorf("wasm: field assignment on non-struct (compiler bug)")
+		}
+		sd := g.info.Structs[st.Name]
+		offset := -1
+		for i, df := range sd.Fields {
+			if df.Name == t.Field {
+				offset = i * 4
+				break
+			}
+		}
+		if offset < 0 {
+			return fmt.Errorf("wasm: unknown field %q on struct %s (compiler bug)", t.Field, st.Name)
+		}
+		if err := g.expr(t.Target); err != nil {
+			return err
+		}
+		if offset > 0 {
+			g.linef("i32.const %d", offset)
+			g.line("i32.add")
+		}
+		if err := g.expr(n.Value); err != nil {
+			return err
+		}
+		g.line("i32.store")
+		return nil
 	}
 	return fmt.Errorf("wasm: unsupported assignment target %T", n.Target)
 }
@@ -1636,6 +1961,9 @@ func watType(t ast.Type) (string, error) {
 		return "i32", nil
 	case *ast.FuncType:
 		// Function values are table indices.
+		return "i32", nil
+	case ast.StructType:
+		// Struct values are pointers into linear memory.
 		return "i32", nil
 	case ast.FloatType:
 		return "f32", nil

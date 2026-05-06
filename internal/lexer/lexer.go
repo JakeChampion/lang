@@ -75,6 +75,7 @@ var keywords = map[string]bool{
 	"switch":   true,
 	"case":     true,
 	"default":  true,
+	"struct":   true,
 }
 
 // Multi-character punctuators, longest first. The 3-char compound
@@ -255,7 +256,7 @@ func (l *lexer) next() (Token, error) {
 
 	// Single-char punctuator.
 	switch r {
-	case '+', '-', '*', '/', '%', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!', '&', '|', '^', '?':
+	case '+', '-', '*', '/', '%', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!', '&', '|', '^', '?', '.':
 		l.advance()
 		return Token{Kind: Punct, Text: string(r), Pos: start}, nil
 	}

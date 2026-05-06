@@ -340,3 +340,29 @@ func TestWASMStringIndexAndCompare(t *testing.T) {
 		t.Errorf("got %d, want 99", got)
 	}
 }
+
+func TestWASMStructBasic(t *testing.T) {
+	src := `struct Point { x: number, y: number }
+		function main(): number {
+			var p: Point = Point { x: 10, y: 32 };
+			p.x = p.x + 5;
+			return p.x + p.y;
+		}`
+	// (10+5) + 32 = 47
+	if got := runWasm(t, src); got != 47 {
+		t.Errorf("got %d, want 47", got)
+	}
+}
+
+func TestWASMStructPassByReference(t *testing.T) {
+	src := `struct Box { v: number }
+		function bump(b: Box): void { b.v = b.v + 100; }
+		function main(): number {
+			var b: Box = Box { v: 5 };
+			bump(b);
+			return b.v;
+		}`
+	if got := runWasm(t, src); got != 105 {
+		t.Errorf("got %d, want 105", got)
+	}
+}

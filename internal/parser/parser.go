@@ -90,13 +90,28 @@ func (p *parser) parseProgram() *ast.Program {
 	prog := &ast.Program{}
 	for !p.match(lexer.EOF, "") {
 		// Snapshot the input position so we can guarantee progress
-		// after a failed function: if recovery would leave us at the
-		// same token, advance once to break the loop.
+		// after a failed declaration: if recovery would leave us at
+		// the same token, advance once to break the loop.
 		before := p.i
+		if p.match(lexer.Keyword, "struct") {
+			sd, err := p.parseStructDecl()
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			if sd != nil {
+				prog.Structs = append(prog.Structs, sd)
+			}
+			continue
+		}
 		fn, err := p.parseFunction()
 		if err != nil {
 			p.errors = append(p.errors, err)
-			p.syncToFunction()
+			p.syncToTopLevel()
 			if p.i == before {
 				p.advance()
 			}
@@ -109,12 +124,12 @@ func (p *parser) parseProgram() *ast.Program {
 	return prog
 }
 
-// syncToFunction advances tokens until the next `function` keyword (or
-// EOF), so a malformed top-level declaration doesn't poison the rest
-// of the file.
-func (p *parser) syncToFunction() {
+// syncToTopLevel advances tokens until the next `function` or `struct`
+// keyword (or EOF), so a malformed top-level declaration doesn't poison
+// the rest of the file.
+func (p *parser) syncToTopLevel() {
 	for !p.match(lexer.EOF, "") {
-		if p.match(lexer.Keyword, "function") {
+		if p.match(lexer.Keyword, "function") || p.match(lexer.Keyword, "struct") {
 			return
 		}
 		p.advance()
@@ -189,6 +204,54 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	return &ast.FuncDecl{P: kw.Pos, Name: name.Text, Params: params, ReturnType: ret, Body: body}, nil
 }
 
+// parseStructDecl parses
+//
+//	struct Foo { x: number, y: number }
+//
+// Trailing commas are allowed; field names must be unique within the
+// declaration (the checker enforces that).
+func (p *parser) parseStructDecl() (*ast.StructDecl, error) {
+	kw, err := p.expect(lexer.Keyword, "struct")
+	if err != nil {
+		return nil, err
+	}
+	name, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	var fields []ast.Param
+	if !p.match(lexer.Punct, "}") {
+		for {
+			fname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ":"); err != nil {
+				return nil, err
+			}
+			ft, err := p.parseType()
+			if err != nil {
+				return nil, err
+			}
+			fields = append(fields, ast.Param{Name: fname.Text, Type: ft})
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				if p.match(lexer.Punct, "}") {
+					break
+				}
+				continue
+			}
+			break
+		}
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	return &ast.StructDecl{P: kw.Pos, Name: name.Text, Fields: fields}, nil
+}
+
 func (p *parser) parseType() (ast.Type, error) {
 	t := p.peek()
 	var base ast.Type
@@ -236,6 +299,11 @@ func (p *parser) parseType() (ast.Type, error) {
 			return nil, err
 		}
 		base = &ast.FuncType{Params: params, Result: ret}
+	case t.Kind == lexer.Ident:
+		// Bare identifier is a struct type reference. The checker
+		// validates that the name actually resolves to a struct.
+		p.advance()
+		base = ast.StructType{Name: t.Text}
 	default:
 		return nil, p.errorf(t.Pos, "expected type, got %q", t.Text)
 	}
@@ -595,7 +663,7 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 			return nil, err
 		}
 		switch left.(type) {
-		case *ast.Ident, *ast.Index:
+		case *ast.Ident, *ast.Index, *ast.FieldAccess:
 			// fine
 		default:
 			return nil, p.errorf(eq.Pos, "left-hand side of assignment is not assignable")
@@ -753,10 +821,55 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				return nil, err
 			}
 			expr = &ast.Index{P: open.Pos, Array: expr, Idx: idx}
+		case p.match(lexer.Punct, "."):
+			dot := p.advance()
+			fname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text}
 		default:
 			return expr, nil
 		}
 	}
+}
+
+// parseStructLit parses the `{ field: value, ... }` part of a struct
+// literal, having already consumed the type-name identifier. Trailing
+// commas are accepted; the checker enforces field-set completeness
+// against the struct declaration.
+func (p *parser) parseStructLit(pos ast.Position, typeName string) (ast.Expr, error) {
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	var fields []ast.FieldInit
+	if !p.match(lexer.Punct, "}") {
+		for {
+			fname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ":"); err != nil {
+				return nil, err
+			}
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			fields = append(fields, ast.FieldInit{Name: fname.Text, Value: val})
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				if p.match(lexer.Punct, "}") {
+					break
+				}
+				continue
+			}
+			break
+		}
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	return &ast.StructLit{P: pos, TypeName: typeName, Fields: fields}, nil
 }
 
 func (p *parser) parsePrimary() (ast.Expr, error) {
@@ -793,6 +906,12 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		}
 	case lexer.Ident:
 		p.advance()
+		// `Foo { x: 1, y: 2 }`. The `{` immediately after an identifier
+		// can only mean a struct literal in expression position — there
+		// are no other constructs of that shape.
+		if p.match(lexer.Punct, "{") {
+			return p.parseStructLit(t.Pos, t.Text)
+		}
 		return &ast.Ident{P: t.Pos, Name: t.Text}, nil
 	case lexer.Punct:
 		switch t.Text {
