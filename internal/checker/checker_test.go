@@ -55,6 +55,26 @@ func TestTypeErrors(t *testing.T) {
 	}
 }
 
+// The checker should accumulate multiple errors and report them all in
+// a single diag.Errors aggregate.
+func TestMultipleErrorsAreReported(t *testing.T) {
+	src := `function f(): number {
+		return true;
+		var x = unknownThing;
+	}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("expected errors")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "return type mismatch") {
+		t.Errorf("missing return mismatch: %s", msg)
+	}
+	if !strings.Contains(msg, "undefined identifier") {
+		t.Errorf("missing undefined identifier: %s", msg)
+	}
+}
+
 func TestBuiltinPutchar(t *testing.T) {
 	if err := checkSource(t, `function f() { putchar(65); }`); err != nil {
 		t.Errorf("putchar(65) should type-check: %v", err)

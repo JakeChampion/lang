@@ -74,7 +74,8 @@ type Error struct {
 	Msg string
 }
 
-func (e *Error) Error() string { return fmt.Sprintf("lex error at %s: %s", e.Pos, e.Msg) }
+func (e *Error) Error() string         { return fmt.Sprintf("lex error at %s: %s", e.Pos, e.Msg) }
+func (e *Error) Position() ast.Position { return e.Pos }
 
 // Tokenize turns src into a slice of tokens terminated by an EOF token.
 func Tokenize(src string) ([]Token, error) {

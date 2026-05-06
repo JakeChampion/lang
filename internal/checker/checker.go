@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/diag"
 )
 
 type Error struct {
@@ -17,7 +18,8 @@ type Error struct {
 	Msg string
 }
 
-func (e *Error) Error() string { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
+func (e *Error) Error() string         { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
+func (e *Error) Position() ast.Position { return e.Pos }
 
 // Info captures everything codegen needs that the checker discovered:
 // the inferred type of every var without an annotation, and a per-function
@@ -65,7 +67,7 @@ func Check(prog *ast.Program) (*Info, error) {
 	}
 
 	if len(c.errors) > 0 {
-		return c.info, c.errors[0]
+		return c.info, diag.Errors(c.errors)
 	}
 	return c.info, nil
 }

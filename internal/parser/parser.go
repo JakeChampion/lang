@@ -18,7 +18,8 @@ type Error struct {
 	Msg string
 }
 
-func (e *Error) Error() string { return fmt.Sprintf("parse error at %s: %s", e.Pos, e.Msg) }
+func (e *Error) Error() string         { return fmt.Sprintf("parse error at %s: %s", e.Pos, e.Msg) }
+func (e *Error) Position() ast.Position { return e.Pos }
 
 // Parse turns source into a Program, lexing along the way.
 func Parse(src string) (*ast.Program, error) {
