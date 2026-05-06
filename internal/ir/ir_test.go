@@ -437,6 +437,40 @@ func TestLowerCallIndirectCarriesSig(t *testing.T) {
 	t.Fatalf("OpCallIndirect not found:\n%s", prog)
 }
 
+// Lowering stamps each op with the source position of the AST node
+// it came from, so consumers can emit per-statement DWARF .loc /
+// debug-line entries. The recorded line tracks the surface syntax
+// (e.g. operands inside an expression statement carry the line of
+// that expression).
+func TestLowerStampsSourcePositions(t *testing.T) {
+	src := `function f(a: number, b: number): number {
+		var x: number = a + b;
+		return x;
+	}`
+	prog := lowerSource(t, src)
+	if len(prog.Funcs) != 1 {
+		t.Fatalf("got %d funcs", len(prog.Funcs))
+	}
+	fn := prog.Funcs[0]
+	// First op evaluates `a` (line 2 in the source). Last meaningful
+	// op is the OpReturn from `return x;` on line 3.
+	if got := fn.Ops[0].Pos.Line; got != 2 {
+		t.Errorf("first op (load `a`) at line %d, want 2", got)
+	}
+	var lastReturn int = -1
+	for i, op := range fn.Ops {
+		if op.Kind == OpReturn {
+			lastReturn = i
+		}
+	}
+	if lastReturn < 0 {
+		t.Fatalf("no OpReturn found:\n%s", prog)
+	}
+	if got := fn.Ops[lastReturn].Pos.Line; got != 3 {
+		t.Errorf("OpReturn at line %d, want 3", got)
+	}
+}
+
 // MakeClosure carries the hoisted function name and a capture count
 // so codegen can resolve both the funcref-table index and the env
 // block size.
