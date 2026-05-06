@@ -101,7 +101,34 @@ function f(): number { return g(5); }`)
 
 func TestArrayIndex(t *testing.T) {
 	asm := compile(t, `function f(): number { var a: number[] = [1,2,3]; return a[1]; }`)
+	// Element load through the data pointer (base+4): index lsl #2
+	// stays the same, but the base now comes from __lang_alloc.
 	mustContain(t, asm, "ldr r0, [r1, r0, lsl #2]")
+	mustContain(t, asm, "bl __lang_alloc")
+	mustContain(t, asm, ".global __lang_alloc")
+}
+
+// Arrays now carry a 4-byte little-endian length prefix at base-4,
+// so `len(arr)` is a single load through that offset (no libc call).
+func TestLenOfArrayLoadsPrefix(t *testing.T) {
+	asm := compile(t, `function f(): number {
+		var a: number[] = [10, 20, 30];
+		return len(a);
+	}`)
+	mustContain(t, asm, "ldr r0, [r0, #-4]")
+	if strings.Contains(asm, "bl strlen") {
+		t.Errorf("len(array) must not call strlen:\n%s", asm)
+	}
+}
+
+// The malloc wrapper appears once and only when something in the
+// program asks for heap storage. A pure-arithmetic function
+// shouldn't pull in the runtime.
+func TestAllocRuntimeOnlyEmittedWhenNeeded(t *testing.T) {
+	asm := compile(t, `function f(): number { return 1 + 2; }`)
+	if strings.Contains(asm, "__lang_alloc") {
+		t.Errorf("alloc helper should not appear in pure-arith program:\n%s", asm)
+	}
 }
 
 func TestAssignment(t *testing.T) {

@@ -68,6 +68,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
 	}
+	// __lang_alloc wraps libc malloc; arrays / structs / closures that
+	// need heap storage all bottom out here. Strcat already calls
+	// malloc directly, so the runtime emission is independent.
+	if g.usesAlloc {
+		g.emitAllocRuntime()
+	}
 	// String literals collected during emit go into .rodata.
 	if len(g.stringOrder) > 0 {
 		g.line("")
@@ -95,6 +101,7 @@ type generator struct {
 	stringOrder []string          // insertion order so output is deterministic
 	loops       []loopLabels      // stack of (continue, break) per enclosing loop
 	usesStrcat  bool              // true if the program needs the strcat helper
+	usesAlloc   bool              // true if the program needs the alloc helper (any heap-backed array / struct / closure)
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
 	// Tail-call optimization plumbing for the *current* function:
 	// bodyLabel is the address right after the prologue, currentFunc
@@ -121,6 +128,30 @@ func (g *generator) emitLoc(p ast.Position) {
 // on exit so nested loops resolve to the innermost target.
 type loopLabels struct {
 	continueL, breakL string
+}
+
+// emitAllocRuntime emits a tiny `__lang_alloc(size)` helper that
+// forwards to libc `malloc`. The wrapper exists so arrays / structs
+// / closures all share one named entry point — both the AST-walking
+// emitter and the upcoming IR-driven backend bottom out here, which
+// matches the WASM backend's `$__lang_alloc` shape and gives the
+// language a single chokepoint if it ever grows a real GC.
+//
+// The helper preserves the standard prologue/epilogue for stack
+// alignment but doesn't otherwise touch r0, so the result stays in
+// place across the libc call.
+func (g *generator) emitAllocRuntime() {
+	g.line("")
+	g.line(".global __lang_alloc")
+	g.line(".type __lang_alloc, %function")
+	g.label("__lang_alloc")
+	g.emit("push {lr}")
+	g.emit("sub sp, sp, #4") // 8-byte alignment
+	g.emit("bl malloc")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_alloc, .-__lang_alloc")
 }
 
 // emitStrcatRuntime emits a leaf-style helper that allocates a fresh
@@ -299,11 +330,13 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 		off += 4
 		g.frame.varSlot[v] = -off
 	}
-	// Reserve space for every array literal in the body. We pre-walk to
-	// count them so the frame size is finalised before we emit any
-	// instructions.
+	// Reserve a single 4-byte slot per array literal — it holds the
+	// heap pointer the malloc helper returns, so each element-store
+	// can reload the base after the next sub-expression evaluation
+	// might have clobbered r0. Storage for the array itself lives in
+	// the bump-allocated heap, not in this frame.
 	walkArrays(fn.Body, func(a *ast.ArrayLit) {
-		off += 4 * len(a.Elems)
+		off += 4
 		g.frame.arraySlot[a] = -off
 	})
 	// Reserve one i32 spill slot per Switch in the body, used to stash
@@ -1135,9 +1168,10 @@ func (g *generator) call(n *ast.Call) error {
 	if !ok {
 		return fmt.Errorf("codegen: indirect call from non-identifier expression")
 	}
-	// `len(x)` is a builtin: strings call libc strlen; arrays aren't
-	// supported on arm32 yet because there's no length prefix in the
-	// frame layout.
+	// `len(x)` is a builtin. Strings are still NUL-terminated on
+	// arm32 so they go through libc strlen; arrays now carry a
+	// 4-byte little-endian length prefix at `base - 4` (set by the
+	// __lang_alloc-backed array literal), which is just one load.
 	if id.Name == "len" && len(n.Args) == 1 {
 		argT := g.argType(n.Args[0])
 		if _, ok := argT.(ast.StringType); ok {
@@ -1148,7 +1182,11 @@ func (g *generator) call(n *ast.Call) error {
 			return nil
 		}
 		if _, ok := argT.(ast.ArrayType); ok {
-			return fmt.Errorf("codegen: len(array) is not yet supported on the arm32 backend")
+			if err := g.expr(n.Args[0]); err != nil {
+				return err
+			}
+			g.emit("ldr r0, [r0, #-4]")
+			return nil
 		}
 	}
 	target := id.Name
@@ -1246,14 +1284,26 @@ func (g *generator) call(n *ast.Call) error {
 }
 
 func (g *generator) arrayLit(n *ast.ArrayLit) error {
-	base := g.frame.arraySlot[n]
+	// Length-prefixed heap layout: 4 bytes for the count, then N*4
+	// for the elements. We hand the *data* pointer back so indexing
+	// stays a plain `[base, idx, lsl #2]` and `len(arr)` reads the
+	// 4-byte word at `base - 4`.
+	g.usesAlloc = true
+	g.emit("mov r0, #%d", 4+4*len(n.Elems))
+	g.emit("bl __lang_alloc")
+	slot := g.frame.arraySlot[n]
+	g.emit("str r0, [fp, #%d]", slot) // stash base
+	g.emit("mov r1, #%d", len(n.Elems))
+	g.emit("str r1, [r0]") // length prefix at base+0
 	for i, el := range n.Elems {
 		if err := g.expr(el); err != nil {
 			return err
 		}
-		g.emit("str r0, [fp, #%d]", base+4*i)
+		g.emit("ldr r1, [fp, #%d]", slot)
+		g.emit("str r0, [r1, #%d]", 4+4*i) // element at base+4+i*4
 	}
-	g.emit("add r0, fp, #%d", base)
+	g.emit("ldr r0, [fp, #%d]", slot)
+	g.emit("add r0, r0, #4") // return data pointer (base+4)
 	return nil
 }
 
