@@ -312,19 +312,19 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.linef("i32.const %d", g.internString(op.Str))
 	case ir.OpConstFunc:
 		// In closure mode, function values are static cell pointers;
-		// in legacy mode they're bare table indices.
+		// in legacy mode they're bare table indices. Both reach into
+		// tableIndex — funcIndex (position in prog.Funcs) is wrong
+		// for legacy mode whenever the table doesn't include every
+		// declared function, since call_indirect dispatches on the
+		// table position, not the source position.
+		ti, ok := g.tableIndex[op.Str]
+		if !ok {
+			return fmt.Errorf("wasm/ir: function %q not in table", op.Str)
+		}
 		if g.needsClosures {
-			ti, ok := g.tableIndex[op.Str]
-			if !ok {
-				return fmt.Errorf("wasm/ir: function %q not in table", op.Str)
-			}
 			g.linef("i32.const %d", g.closuresBase+8*ti)
 		} else {
-			fi, ok := g.funcIndex[op.Str]
-			if !ok {
-				return fmt.Errorf("wasm/ir: unknown function %q", op.Str)
-			}
-			g.linef("i32.const %d", fi)
+			g.linef("i32.const %d", ti)
 		}
 	case ir.OpLoadLocal:
 		g.linef("local.get $%s", slotName(g.current, irFn, op.I32))
