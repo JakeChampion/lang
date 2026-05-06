@@ -145,12 +145,11 @@ func TestArrayLitEmitsAllocAndStores(t *testing.T) {
 	}`)
 	mustContain(t, wat, "(func $__lang_alloc")
 	mustContain(t, wat, "(local $__arr_0 i32)")
-	mustContain(t, wat, "i32.const 12") // 3 * 4 bytes
+	// 4 (length prefix) + 3*4 (elements) = 16
+	mustContain(t, wat, "i32.const 16")
 	mustContain(t, wat, "call $__lang_alloc")
-	mustContain(t, wat, "local.set $__arr_0")
-	// Indexing `a[1]` becomes load(a + 4)
-	mustContain(t, wat, "i32.const 4")
-	mustContain(t, wat, "i32.mul")
+	// Indexing `a[1]` goes through the bounds-check helper.
+	mustContain(t, wat, "call $__arr_idx")
 	mustContain(t, wat, "i32.load")
 }
 
@@ -295,4 +294,20 @@ func TestStringConcatEmitsHelper(t *testing.T) {
 	wat := compileToWAT(t, `function main(): void { print("a" + "b"); }`)
 	mustContain(t, wat, "$__str_concat")
 	mustContain(t, wat, "call $__str_concat")
+}
+
+func TestArrayIndexBoundsChecked(t *testing.T) {
+	wat := compileToWAT(t, `function f(): number {
+		var a: number[] = [1, 2, 3];
+		return a[0];
+	}`)
+	mustContain(t, wat, "$__arr_idx")
+	mustContain(t, wat, "call $__arr_idx")
+	mustContain(t, wat, "unreachable")
+}
+
+func TestStringIndexBoundsChecked(t *testing.T) {
+	wat := compileToWAT(t, `function f(): number { var s: string = "abc"; return s[0]; }`)
+	mustContain(t, wat, "$__str_idx")
+	mustContain(t, wat, "call $__str_idx")
 }

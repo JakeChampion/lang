@@ -57,6 +57,7 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	g.scanForIndirectCalls(prog)
 	g.scanForStringEq(prog)
 	g.scanForStringConcat(prog)
+	g.scanForBoundsCheck(prog)
 
 	g.line("(module")
 	g.indent++
@@ -115,9 +116,10 @@ type generator struct {
 	// Runtime / strings / arrays.
 	needsRuntime  bool
 	needsArrays   bool
-	needsStrEq     bool // any String == String / != comparison
-	needsStrConcat bool // any String + String concatenation
-	needsStructs   bool
+	needsStrEq       bool // any String == String / != comparison
+	needsStrConcat   bool // any String + String concatenation
+	needsStructs     bool
+	needsBoundsCheck bool // any array or string Index expression appears
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -1209,6 +1211,96 @@ func (g *generator) scanForStringConcat(prog *ast.Program) {
 	}
 }
 
+// scanForBoundsCheck pre-walks the program and sets needsBoundsCheck
+// if any Index expression appears. The helpers it triggers
+// ($__arr_idx / $__str_idx) read the length prefix from linear
+// memory, so it implies needsRuntime.
+func (g *generator) scanForBoundsCheck(prog *ast.Program) {
+	var walk func(any)
+	walk = func(n any) {
+		if g.needsBoundsCheck {
+			return
+		}
+		switch x := n.(type) {
+		case *ast.Index:
+			g.needsBoundsCheck = true
+			g.needsRuntime = true
+			return
+		case *ast.Binary:
+			walk(x.Left)
+			walk(x.Right)
+		case *ast.Unary:
+			walk(x.Operand)
+		case *ast.Call:
+			walk(x.Callee)
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.Assign:
+			walk(x.Target)
+			walk(x.Value)
+		case *ast.Ternary:
+			walk(x.Cond)
+			walk(x.Then)
+			walk(x.Else)
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				walk(f.Value)
+			}
+		case *ast.FieldAccess:
+			walk(x.Target)
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Switch:
+			walk(x.Tag)
+			for _, k := range x.Cases {
+				for _, v := range k.Values {
+					walk(v)
+				}
+				walk(k.Body)
+			}
+			if x.Default != nil {
+				walk(x.Default)
+			}
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		}
+	}
+	for _, fn := range prog.Funcs {
+		walk(fn.Body)
+	}
+}
+
 // scanForRuntimeUses pre-walks the program and sets needsRuntime if
 // any string literal, `print` call or `putchar` call appears.
 func (g *generator) scanForRuntimeUses(prog *ast.Program) {
@@ -1537,6 +1629,70 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`)`)
 	}
 
+	if g.needsBoundsCheck {
+		// $__arr_idx and $__str_idx return the byte address of element i
+		// in a length-prefixed array / string, trapping if i is out of
+		// range. The length lives at `base - 4` (4-byte little-endian
+		// prefix). Stride differs (4 for arrays, 1 for strings) so we
+		// emit two specialised helpers rather than threading a stride
+		// argument.
+		g.line(`(func $__arr_idx (param $base i32) (param $i i32) (result i32)`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`i32.const 0`)
+		g.line(`i32.lt_s`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $i`)
+		g.line(`local.get $base`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`i32.ge_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $base`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 4`)
+		g.line(`i32.mul`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
+
+		g.line(`(func $__str_idx (param $base i32) (param $i i32) (result i32)`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`i32.const 0`)
+		g.line(`i32.lt_s`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $i`)
+		g.line(`local.get $base`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`i32.ge_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $base`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
+	}
+
 	// putchar(n)
 	g.line(`(func $putchar (param $n i32)`)
 	g.indent++
@@ -1707,28 +1863,21 @@ func (g *generator) expr(e ast.Expr) error {
 	case *ast.ArrayLit:
 		return g.arrayLit(n)
 	case *ast.Index:
-		if n.IsString {
-			// `s[i]` lowers to load8_u (s + i): one byte zero-extended.
-			if err := g.expr(n.Array); err != nil {
-				return err
-			}
-			if err := g.expr(n.Idx); err != nil {
-				return err
-			}
-			g.line("i32.add")
-			g.line("i32.load8_u")
-			break
-		}
-		// `a[i]` lowers to load(a + i*4).
+		// `s[i]` and `a[i]` go through bounds-checking helpers that trap
+		// on out-of-range access; the helper returns the byte address
+		// of the element so we can finish with the right load.
 		if err := g.expr(n.Array); err != nil {
 			return err
 		}
 		if err := g.expr(n.Idx); err != nil {
 			return err
 		}
-		g.line("i32.const 4")
-		g.line("i32.mul")
-		g.line("i32.add")
+		if n.IsString {
+			g.line("call $__str_idx")
+			g.line("i32.load8_u")
+			break
+		}
+		g.line("call $__arr_idx")
 		g.line("i32.load")
 	default:
 		return fmt.Errorf("wasm: unsupported expression %T", e)
@@ -1736,17 +1885,28 @@ func (g *generator) expr(e ast.Expr) error {
 	return nil
 }
 
-// arrayLit allocates N*4 bytes via $__lang_alloc, stores each element
-// at base + i*4, and pushes the base address onto the stack. The
-// per-ArrayLit local prevents nested literals from clobbering each
-// other's bases.
+// arrayLit allocates 4 + N*4 bytes via $__lang_alloc (4 bytes for the
+// length prefix, then N*4 for elements), stores N at the prefix and
+// each element at content+i*4, and pushes the *content* address (base
+// + 4) onto the stack. The layout matches strings: callers can read
+// the length from `addr - 4` to bounds-check or implement `len(a)`.
+// The per-ArrayLit local prevents nested literals from clobbering
+// each other's bases.
 func (g *generator) arrayLit(n *ast.ArrayLit) error {
 	local, ok := g.arrLocal[n]
 	if !ok {
 		return fmt.Errorf("wasm: array literal missing scratch local (compiler bug)")
 	}
-	g.linef("i32.const %d", len(n.Elems)*4)
+	g.linef("i32.const %d", 4+len(n.Elems)*4)
 	g.line("call $__lang_alloc")
+	g.linef("local.tee %s", local)
+	// Write the length prefix at base, then advance the local to point
+	// at the first element so subsequent stores use simple offsets.
+	g.linef("i32.const %d", len(n.Elems))
+	g.line("i32.store")
+	g.linef("local.get %s", local)
+	g.line("i32.const 4")
+	g.line("i32.add")
 	g.linef("local.set %s", local)
 	for i, el := range n.Elems {
 		g.linef("local.get %s", local)
@@ -2072,18 +2232,17 @@ func (g *generator) assign(n *ast.Assign) error {
 		g.linef("local.tee $%s", t.Name)
 		return nil
 	case *ast.Index:
-		// arr[i] = v → store at base + i*4. We don't try to leave the
-		// assigned value on the stack; the leavesValue check in stmt
-		// special-cases an Index-target Assign so no `drop` is emitted.
+		// arr[i] = v → store at the address $__arr_idx returned (which
+		// already trapped on OOB). We don't try to leave the assigned
+		// value on the stack; the leavesValue check in stmt special-
+		// cases an Index-target Assign so no `drop` is emitted.
 		if err := g.expr(t.Array); err != nil {
 			return err
 		}
 		if err := g.expr(t.Idx); err != nil {
 			return err
 		}
-		g.line("i32.const 4")
-		g.line("i32.mul")
-		g.line("i32.add")
+		g.line("call $__arr_idx")
 		if err := g.expr(n.Value); err != nil {
 			return err
 		}
