@@ -2,9 +2,10 @@
 // turns a position+message pair (which lexer, parser and checker errors
 // already carry) into output like:
 //
-//	error at 3:9: undefined identifier "x"
+//	path/foo.lang:3:9: error: undefined identifier "x"
 //	    return x + 1;
 //	           ^
+//	    note: did you mean "y"?
 //
 // Errors aggregates multiple per-error diagnostics so the type checker
 // can report several problems at once.
@@ -23,6 +24,23 @@ import (
 type Positioned interface {
 	error
 	Position() ast.Position
+}
+
+// Spanned is optionally satisfied by errors that know the length of
+// the offending token. When present the underline becomes `^~~~~`
+// covering the whole span instead of a single caret.
+type Spanned interface {
+	Positioned
+	Length() int
+}
+
+// Hinted is optionally satisfied by errors that want to attach a
+// follow-up note to the diagnostic — typically a "did you mean foo?"
+// suggestion. The hint is rendered on its own line with a `note:`
+// prefix.
+type Hinted interface {
+	error
+	Hint() string
 }
 
 // Errors is a flat collection of errors. Useful when a pass (e.g. the
@@ -58,8 +76,10 @@ func (es Errors) As(target any) bool {
 
 // Format renders err with the relevant source line and a caret. If err
 // is an Errors, every entry is rendered. Errors that don't satisfy
-// Positioned fall back to plain Error() output.
-func Format(src string, err error) string {
+// Positioned fall back to plain Error() output. The filename is
+// included in the header (Unix-tool style) when non-empty; it's
+// otherwise omitted so unit tests can render without a path prefix.
+func Format(filename, src string, err error) string {
 	if err == nil {
 		return ""
 	}
@@ -69,7 +89,7 @@ func Format(src string, err error) string {
 			if i > 0 {
 				b.WriteByte('\n')
 			}
-			b.WriteString(Format(src, e))
+			b.WriteString(Format(filename, src, e))
 		}
 		return b.String()
 	}
@@ -83,11 +103,34 @@ func Format(src string, err error) string {
 	if line == "" && pos.Line == 0 {
 		return err.Error()
 	}
-	return fmt.Sprintf("error at %d:%d: %s\n    %s\n    %s^",
-		pos.Line, pos.Col, stripPrefix(pe.Error()),
-		line,
-		strings.Repeat(" ", clamp(pos.Col-1, 0, len(line))),
-	)
+
+	header := fmt.Sprintf("%d:%d: error: %s", pos.Line, pos.Col, stripPrefix(pe.Error()))
+	if filename != "" {
+		header = filename + ":" + header
+	}
+
+	pad := strings.Repeat(" ", clamp(pos.Col-1, 0, len(line)))
+	mark := "^"
+	if sp, ok := err.(Spanned); ok && sp.Length() > 1 {
+		// Cap the squiggle to what fits on the line so it never wraps.
+		room := len(line) - (pos.Col - 1) - 1
+		if room < 0 {
+			room = 0
+		}
+		span := sp.Length()
+		if span-1 > room {
+			span = room + 1
+		}
+		mark = "^" + strings.Repeat("~", span-1)
+	}
+
+	out := fmt.Sprintf("%s\n    %s\n    %s%s", header, line, pad, mark)
+	if h, ok := err.(Hinted); ok {
+		if hint := h.Hint(); hint != "" {
+			out += "\n    note: " + hint
+		}
+	}
+	return out
 }
 
 // stripPrefix removes any "<kind> error at L:C: " prefix that the
@@ -141,4 +184,74 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// Suggest returns the entry in candidates closest to name within an
+// edit-distance budget that scales with name length. An empty result
+// means no good suggestion was found and callers should not emit a
+// hint at all.
+func Suggest(name string, candidates []string) string {
+	if name == "" || len(candidates) == 0 {
+		return ""
+	}
+	budget := 2
+	if len(name) <= 3 {
+		budget = 1
+	}
+	best := ""
+	bestDist := budget + 1
+	for _, c := range candidates {
+		if c == name {
+			continue
+		}
+		d := levenshtein(name, c)
+		if d < bestDist {
+			best = c
+			bestDist = d
+		}
+	}
+	if bestDist > budget {
+		return ""
+	}
+	return best
+}
+
+func levenshtein(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(cur[j-1]+1, prev[j]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
+func min3(a, b, c int) int {
+	m := a
+	if b < m {
+		m = b
+	}
+	if c < m {
+		m = c
+	}
+	return m
 }

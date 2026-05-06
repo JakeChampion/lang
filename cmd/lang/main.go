@@ -77,11 +77,11 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs 
 
 	prog, err := parser.Parse(src)
 	if err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(src, err))
+		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(src, err))
+		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
 	optimizer.Optimize(prog)
 
