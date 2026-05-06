@@ -231,6 +231,15 @@ func printType(t ast.Type) string {
 		return "string"
 	case ast.ArrayType:
 		return printType(x.Elem) + "[]"
+	case *ast.FuncType:
+		out := "("
+		for i, p := range x.Params {
+			if i > 0 {
+				out += ", "
+			}
+			out += printType(p)
+		}
+		return out + ") => " + printType(x.Result)
 	}
 	return ""
 }

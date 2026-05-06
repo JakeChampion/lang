@@ -72,7 +72,7 @@ var keywords = map[string]bool{
 
 // Multi-character punctuators, longest first.
 var multiPunct = []string{
-	"==", "!=", "<=", ">=", "&&", "||", "<<", ">>",
+	"==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "=>",
 }
 
 type Error struct {

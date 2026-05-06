@@ -204,6 +204,34 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "string":
 		p.advance()
 		base = ast.StringType{}
+	case t.Kind == lexer.Punct && t.Text == "(":
+		// Function type: `(T1, T2, ...) => RT`. Empty parens are
+		// allowed for nullary callbacks.
+		p.advance()
+		var params []ast.Type
+		if !p.match(lexer.Punct, ")") {
+			for {
+				pt, err := p.parseType()
+				if err != nil {
+					return nil, err
+				}
+				params = append(params, pt)
+				if _, ok := p.accept(lexer.Punct, ","); !ok {
+					break
+				}
+			}
+		}
+		if _, err := p.expect(lexer.Punct, ")"); err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(lexer.Punct, "=>"); err != nil {
+			return nil, err
+		}
+		ret, err := p.parseType()
+		if err != nil {
+			return nil, err
+		}
+		base = &ast.FuncType{Params: params, Result: ret}
 	default:
 		return nil, p.errorf(t.Pos, "expected type, got %q", t.Text)
 	}

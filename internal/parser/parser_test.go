@@ -116,6 +116,34 @@ func TestForEmptyInitAndStep(t *testing.T) {
 	_ = prog
 }
 
+func TestFunctionTypeAnnotation(t *testing.T) {
+	prog, err := Parse(`function apply(f: (number, number) => number, a: number, b: number): number {
+		return f(a, b);
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	param := prog.Funcs[0].Params[0]
+	ft, ok := param.Type.(*ast.FuncType)
+	if !ok {
+		t.Fatalf("expected *FuncType, got %T", param.Type)
+	}
+	if len(ft.Params) != 2 || !ast.Equal(ft.Result, ast.NumberType{}) {
+		t.Errorf("unexpected signature: %s", ft)
+	}
+}
+
+func TestNullaryFunctionType(t *testing.T) {
+	prog, err := Parse(`function call(f: () => number): number { return f(); }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft := prog.Funcs[0].Params[0].Type.(*ast.FuncType)
+	if len(ft.Params) != 0 {
+		t.Errorf("expected 0 params, got %d", len(ft.Params))
+	}
+}
+
 // The parser should keep going after a per-statement error so a single
 // run reports every problem, not just the first.
 func TestRecoversAndReportsMultiplePerStatement(t *testing.T) {
