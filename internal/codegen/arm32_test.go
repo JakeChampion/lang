@@ -41,6 +41,30 @@ func TestPrologueEpilogue(t *testing.T) {
 	mustContain(t, asm, ".global f")
 }
 
+// CFI directives must wrap the prologue so libunwind / gdb can
+// reconstruct the caller's frame.
+func TestCFIDirectivesPresent(t *testing.T) {
+	asm := compile(t, `function f(): number { return 0; }`)
+	mustContain(t, asm, ".cfi_startproc")
+	mustContain(t, asm, ".cfi_def_cfa_offset 8")
+	mustContain(t, asm, ".cfi_offset fp, -8")
+	mustContain(t, asm, ".cfi_offset lr, -4")
+	mustContain(t, asm, ".cfi_def_cfa_register fp")
+	mustContain(t, asm, ".cfi_endproc")
+}
+
+// Leaf functions push extra callee-saved registers, so each gets its
+// own .cfi_offset entry.
+func TestCFIDirectivesCoverLeafSavedRegisters(t *testing.T) {
+	asm := compile(t, `function add(a: number, b: number): number { return a + b; }`)
+	// (P+2)*4 = (2+2)*4 = 16
+	mustContain(t, asm, ".cfi_def_cfa_offset 16")
+	mustContain(t, asm, ".cfi_offset r4, -16")
+	mustContain(t, asm, ".cfi_offset r5, -12")
+	mustContain(t, asm, ".cfi_offset fp, -8")
+	mustContain(t, asm, ".cfi_offset lr, -4")
+}
+
 func TestArithmetic(t *testing.T) {
 	asm := compile(t, `function f(): number { return 1 + 2; }`)
 	mustContain(t, asm, "add r0, r1, r0")
@@ -240,8 +264,9 @@ func TestNonTailRecursionKeepsBl(t *testing.T) {
 func TestNonLeafKeepsStackSpill(t *testing.T) {
 	asm := compile(t, `function g(n: number): number { return n; }
 function f(n: number): number { return g(n); }`)
-	// `f` calls `g`, so it isn't a leaf — expect the original prologue.
-	if !strings.Contains(asm, "f:\n\tpush {fp, lr}") {
+	// `f` calls `g`, so it isn't a leaf — expect the original prologue
+	// (CFI directives may be interleaved between the label and the push).
+	if !strings.Contains(asm, "f:\n\t.cfi_startproc\n\tpush {fp, lr}") {
 		t.Errorf("non-leaf f should use the stack-spill prologue:\n%s", asm)
 	}
 }
