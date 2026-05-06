@@ -96,6 +96,14 @@ type generator struct {
 	loops       []loopLabels      // stack of (continue, break) per enclosing loop
 	usesStrcat  bool              // true if the program needs the strcat helper
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
+	// Tail-call optimization plumbing for the *current* function:
+	// bodyLabel is the address right after the prologue, currentFunc
+	// remembers the declaration so we can match `return f(...)` against
+	// f, and paramSlot is the original (un-shadowed) fp offset of each
+	// parameter for non-leaf functions.
+	currentFunc *ast.FuncDecl
+	bodyLabel   string
+	paramSlot   map[string]int
 }
 
 // emitLoc emits a `.loc 1 <line> <col>` directive when DWARF debug info
@@ -341,6 +349,21 @@ func (g *generator) emitFunction(fn *ast.FuncDecl) error {
 
 	g.epilogue = g.freshLabel("epi_" + fn.Name)
 
+	// Tail-call setup: a label right here (after the prologue) is what
+	// we'll branch to when we recognise `return self(...)`. The
+	// paramSlot map captures the original (un-shadowed) fp offset for
+	// each non-leaf param so we can write to the right place even if a
+	// later `var` reuses the param's name.
+	g.currentFunc = fn
+	g.bodyLabel = g.freshLabel("body_" + fn.Name)
+	g.paramSlot = paramOffs
+	g.label(g.bodyLabel)
+	defer func() {
+		g.currentFunc = nil
+		g.bodyLabel = ""
+		g.paramSlot = nil
+	}()
+
 	// Open root scope and bind every parameter.
 	g.frame.push()
 	for _, p := range fn.Params {
@@ -435,6 +458,57 @@ func walkArrays(n any, visit func(*ast.ArrayLit)) {
 		walkArrays(x.Target, visit)
 		walkArrays(x.Value, visit)
 	}
+}
+
+// isTailRecursive reports whether c is a direct call to the enclosing
+// function and is eligible for in-place argument-update + branch-to-
+// body-label rewriting. We require an exact arity match; functions
+// with more than 4 parameters are skipped because their extra args
+// live on the caller's stack frame, which we don't own.
+func (g *generator) isTailRecursive(c *ast.Call) bool {
+	if g.currentFunc == nil {
+		return false
+	}
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || id.Name != g.currentFunc.Name {
+		return false
+	}
+	if len(g.currentFunc.Params) > regArgs {
+		return false
+	}
+	return len(c.Args) == len(g.currentFunc.Params)
+}
+
+// emitTailCall evaluates each argument and pushes it, then pops them
+// back into the right home (callee-saved register for leaf functions,
+// fp-relative slot otherwise) and branches to the post-prologue body
+// label. The push/pop pair is what lets us evaluate args that read
+// the *current* parameter values without losing them.
+func (g *generator) emitTailCall(c *ast.Call) error {
+	for _, a := range c.Args {
+		if err := g.expr(a); err != nil {
+			return err
+		}
+		g.emit("push {r0}")
+	}
+	leaf := len(g.frame.paramReg) > 0
+	for i := len(c.Args) - 1; i >= 0; i-- {
+		name := g.currentFunc.Params[i].Name
+		if leaf {
+			if reg, ok := g.frame.paramReg[name]; ok {
+				g.emit("pop {r%d}", reg)
+				continue
+			}
+		}
+		off, ok := g.paramSlot[name]
+		if !ok {
+			return fmt.Errorf("codegen: tail call: missing slot for param %q", name)
+		}
+		g.emit("pop {r0}")
+		g.emit("str r0, [fp, #%d]", off)
+	}
+	g.emit("b %s", g.bodyLabel)
+	return nil
 }
 
 // containsCall reports whether n holds any *ast.Call subtree.
@@ -596,7 +670,14 @@ func (g *generator) stmt(s ast.Stmt) error {
 		}
 		g.emit("b %s", g.loops[len(g.loops)-1].continueL)
 	case *ast.Return:
+		// Self-recursive tail call: replace `return f(args)` (where f
+		// is the enclosing function) with parameter updates plus a
+		// branch back to the post-prologue body label, avoiding a new
+		// stack frame.
 		if n.Value != nil {
+			if call, ok := n.Value.(*ast.Call); ok && g.isTailRecursive(call) {
+				return g.emitTailCall(call)
+			}
 			if err := g.expr(n.Value); err != nil {
 				return err
 			}
