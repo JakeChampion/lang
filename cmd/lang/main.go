@@ -10,6 +10,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen"
+	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -23,14 +24,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	prog, err := parser.Parse(string(src))
+	srcStr := string(src)
+
+	prog, err := parser.Parse(srcStr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, diag.Format(srcStr, err))
 		os.Exit(1)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, diag.Format(srcStr, err))
 		os.Exit(1)
 	}
 	asm, err := codegen.Emit(prog, info)
