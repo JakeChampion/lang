@@ -129,6 +129,10 @@ type Binary struct {
 	P           Position
 	Op          string
 	Left, Right Expr
+	// IsStringConcat is set by the checker when both operands of `+`
+	// are strings, so codegen can lower this binary to a runtime call
+	// instead of an integer add.
+	IsStringConcat bool
 }
 type Unary struct {
 	P       Position

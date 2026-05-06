@@ -42,6 +42,12 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 			return "", err
 		}
 	}
+	// Emit the runtime string-concat helper only if the program uses
+	// string `+`. It calls libc strlen / malloc / memcpy, so the linker
+	// pulls those in transitively.
+	if g.usesStrcat {
+		g.emitStrcatRuntime()
+	}
 	// String literals collected during emit go into .rodata.
 	if len(g.stringOrder) > 0 {
 		g.line("")
@@ -68,6 +74,7 @@ type generator struct {
 	stringLabel map[string]string // value -> label
 	stringOrder []string          // insertion order so output is deterministic
 	loops       []loopLabels      // stack of (continue, break) per enclosing loop
+	usesStrcat  bool              // true if the program needs the strcat helper
 }
 
 // loopLabels gives each enclosing loop the labels that `continue` and
@@ -75,6 +82,45 @@ type generator struct {
 // on exit so nested loops resolve to the innermost target.
 type loopLabels struct {
 	continueL, breakL string
+}
+
+// emitStrcatRuntime emits a leaf-style helper that allocates a fresh
+// buffer holding the concatenation of two NUL-terminated strings:
+//
+//	r0 = a, r1 = b   →   r0 = malloc'd a ++ b (NUL-terminated)
+//
+// It uses libc strlen, malloc and memcpy. The buffer is never freed —
+// strings in this language are immutable but not GC'd.
+func (g *generator) emitStrcatRuntime() {
+	g.line("")
+	g.line(".global __lang_strcat")
+	g.line(".type __lang_strcat, %function")
+	g.label("__lang_strcat")
+	g.emit("push {r4, r5, r6, r7, lr}")
+	g.emit("sub sp, sp, #4") // 8-byte alignment
+	g.emit("mov r4, r0")     // r4 = a
+	g.emit("mov r5, r1")     // r5 = b
+	g.emit("bl strlen")      // strlen(a) → r0
+	g.emit("mov r6, r0")     // r6 = la
+	g.emit("mov r0, r5")
+	g.emit("bl strlen")      // strlen(b) → r0
+	g.emit("mov r7, r0")     // r7 = lb
+	g.emit("add r0, r6, r7")
+	g.emit("add r0, r0, #1") // total + 1 for NUL
+	g.emit("bl malloc")      // r0 = result
+	g.emit("mov r1, r4")     // src = a
+	g.emit("mov r2, r6")     // n = la
+	g.emit("mov r4, r0")     // r4 = result (overwrites a, no longer needed)
+	g.emit("bl memcpy")
+	g.emit("add r0, r4, r6") // dst = result + la
+	g.emit("mov r1, r5")     // src = b
+	g.emit("add r2, r7, #1") // n = lb + 1 (include NUL)
+	g.emit("bl memcpy")
+	g.emit("mov r0, r4")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, r6, r7, lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_strcat, .-__lang_strcat")
 }
 
 // internString returns a unique .rodata label for s, allocating a new one
@@ -504,6 +550,16 @@ func (g *generator) binary(n *ast.Binary) error {
 
 	switch n.Op {
 	case "+":
+		if n.IsStringConcat {
+			// __lang_strcat takes (a, b) in (r0, r1); the binary helper
+			// just left us with r1 = a, r0 = b. Swap via r2.
+			g.usesStrcat = true
+			g.emit("mov r2, r0")
+			g.emit("mov r0, r1")
+			g.emit("mov r1, r2")
+			g.emit("bl __lang_strcat")
+			break
+		}
 		g.emit("add r0, r1, r0")
 	case "-":
 		g.emit("sub r0, r1, r0")

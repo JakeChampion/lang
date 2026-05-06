@@ -241,6 +241,34 @@ func TestShifts(t *testing.T) {
 	}
 }
 
+func TestStringConcat(t *testing.T) {
+	src := `function main(): number {
+		var s: string = "Hello, " + "world!";
+		print(s);
+		return 0;
+	}`
+	out, code := compileAndRun(t, src)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if out != "Hello, world!\n" {
+		t.Errorf("output = %q, want %q", out, "Hello, world!\n")
+	}
+}
+
+func TestStringConcatChained(t *testing.T) {
+	// Three-part concat exercises a nested concat inside the helper —
+	// `(a + b) + c` allocates twice.
+	src := `function main(): number {
+		print("foo" + "-" + "bar");
+		return 0;
+	}`
+	out, _ := compileAndRun(t, src)
+	if out != "foo-bar\n" {
+		t.Errorf("output = %q", out)
+	}
+}
+
 func TestStringPrint(t *testing.T) {
 	src := `function main(): number {
 		print("Hello, world!");

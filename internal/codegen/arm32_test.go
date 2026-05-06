@@ -135,6 +135,7 @@ func TestPrintLowersToPuts(t *testing.T) {
 }
 
 // Identical literals share a label; distinct ones don't.
+// Identical literals share a label; distinct ones don't.
 func TestModuloUsesIdivmod(t *testing.T) {
 	asm := compile(t, `function f(): number { return 17 % 5; }`)
 	mustContain(t, asm, "bl __aeabi_idivmod")
@@ -160,6 +161,25 @@ func TestShiftLeft(t *testing.T) {
 func TestShiftRight(t *testing.T) {
 	asm := compile(t, `function f(): number { return 16 >> 2; }`)
 	mustContain(t, asm, "asr r0, r1, r0")
+}
+
+// `string + string` should lower to a runtime call, and the helper
+// must be emitted exactly once at the end of the .text section.
+func TestStringConcatLowersToRuntime(t *testing.T) {
+	asm := compile(t, `function main(): void { print("a" + "b"); }`)
+	mustContain(t, asm, "bl __lang_strcat")
+	mustContain(t, asm, ".global __lang_strcat")
+	if strings.Count(asm, ".global __lang_strcat") != 1 {
+		t.Errorf("__lang_strcat helper emitted more than once")
+	}
+}
+
+// Programs without string `+` should NOT pull in the helper.
+func TestNoStrcatHelperWhenUnused(t *testing.T) {
+	asm := compile(t, `function main(): void { print("hello"); }`)
+	if strings.Contains(asm, "__lang_strcat") {
+		t.Errorf("strcat helper emitted even though it's unused:\n%s", asm)
+	}
 }
 
 func TestStringInterningDeduplicates(t *testing.T) {

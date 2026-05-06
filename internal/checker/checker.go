@@ -273,7 +273,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		lt := c.checkExpr(n.Left, s)
 		rt := c.checkExpr(n.Right, s)
 		switch n.Op {
-		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
+		case "+":
+			// Special case: string + string is concatenation.
+			if _, lOk := lt.(ast.StringType); lOk {
+				if _, rOk := rt.(ast.StringType); rOk {
+					n.IsStringConcat = true
+					return ast.StringType{}
+				}
+			}
+			c.requireNumber(n.P, lt, n.Op)
+			c.requireNumber(n.P, rt, n.Op)
+			return ast.NumberType{}
+		case "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
 			c.requireNumber(n.P, lt, n.Op)
 			c.requireNumber(n.P, rt, n.Op)
 			return ast.NumberType{}
