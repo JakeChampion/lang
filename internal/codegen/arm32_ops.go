@@ -53,32 +53,52 @@ func (g *generator) emitOpsFromIR(
 	lastPos := pos0
 	for i := 0; i < len(irFn.Ops); i++ {
 		op := irFn.Ops[i]
-		// Compile-time fold of `print(literal)`: collapse the
-		// pair `OpConstStr X ; OpCallDirect "print" 1` (with
-		// the optional trailing `OpDrop` that statement-level
-		// callers emit) into a single inline `write(2)` against
-		// a `data + "\n"` buffer interned in .rodata. Skips
-		// the `bl __lang_puts` indirection plus its runtime
-		// length load and 2-iovec stack build — five
-		// instructions per call site, exactly one syscall.
+		// Compile-time fold of `print(literal)` /
+		// `write(literal)` / `eprint(literal)`: collapse the
+		// pair `OpConstStr X ; OpCallDirect "<one-of>" 1`
+		// (with the optional trailing `OpDrop` statement-level
+		// callers emit) into a single inline `write(2)` syscall.
 		//
-		// `print` returns void, so neither the call's "push
-		// result" nor the optional OpDrop need to happen; the
-		// surrounding stack stays balanced as long as we elide
-		// both ops (and the OpDrop when present).
+		// All three lang builtins return void, so neither the
+		// call's "push result" nor the optional OpDrop need to
+		// happen; the surrounding stack stays balanced as long
+		// as we elide both ops (and the OpDrop when present).
+		//
+		//                | fd | buffer            | length
+		//   --------------+----+-------------------+----------
+		//   print(s)     |  1 | s + "\n" (.LLine) |  N+1
+		//   eprint(s)    |  2 | s + "\n" (.LLine) |  N+1
+		//   write(s)     |  1 | s         (.LStr) |  N
+		//
+		// print + eprint share the same `.LLineBuf_*` pool —
+		// both want the same `data + "\n"` bytes — while
+		// `write(s)` reuses the existing `.LStr_*` interned
+		// data pointer (no newline) so common literals don't
+		// duplicate.
 		if op.Kind == ir.OpConstStr &&
 			i+1 < len(irFn.Ops) &&
 			irFn.Ops[i+1].Kind == ir.OpCallDirect &&
-			irFn.Ops[i+1].Str == "print" &&
 			irFn.Ops[i+1].I32 == 1 {
-			lbl := g.internPrintBuffer(op.Str)
+			callee := irFn.Ops[i+1].Str
+			var fd, length int
+			var lbl string
+			switch callee {
+			case "print":
+				fd, length, lbl = 1, len(op.Str)+1, g.internLineBuffer(op.Str)
+			case "eprint":
+				fd, length, lbl = 2, len(op.Str)+1, g.internLineBuffer(op.Str)
+			case "write":
+				fd, length, lbl = 1, len(op.Str), g.internString(op.Str)
+			default:
+				goto noFold
+			}
 			if g.srcFile != "" && op.Pos.Line != 0 && op.Pos != lastPos {
 				g.emit(".loc 1 %d %d", op.Pos.Line, op.Pos.Col)
 				lastPos = op.Pos
 			}
-			g.emit("mov r0, #1") // fd 1
+			g.emit("mov r0, #%d", fd)
 			g.emit("ldr r1, =%s", lbl)
-			g.emit("ldr r2, =%d", len(op.Str)+1) // data + newline
+			g.emit("ldr r2, =%d", length)
 			g.emitSyscall(sysWrite)
 			skip := 1 // OpCallDirect; OpConstStr is `i` itself
 			if i+2 < len(irFn.Ops) && irFn.Ops[i+2].Kind == ir.OpDrop {
@@ -87,6 +107,7 @@ func (g *generator) emitOpsFromIR(
 			i += skip
 			continue
 		}
+	noFold:
 		// Emit a `.loc` directive whenever we cross a source-line
 		// boundary so `gcc -g` produces a per-statement DWARF table.
 		if g.srcFile != "" && op.Pos.Line != 0 && op.Pos != lastPos {
