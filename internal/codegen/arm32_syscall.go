@@ -25,8 +25,22 @@ const (
 	sysLseek     = 19
 	sysBrk       = 45
 	sysWritev    = 146
+	sysFstat64   = 197
 	sysExitGroup = 248
 )
+
+// fstat64 puts st_size's lo32 at offset 48 in the buffer it
+// fills (kernel struct stat64 layout from
+// arch/arm/include/uapi/asm/stat.h, verified empirically). We
+// only support files <4 GiB, so the hi32 at offset 52 is
+// ignored.
+const stat64SizeOffset = 48
+
+// stat64BufferBytes is the stack space `__lang_read_file`
+// reserves for the kernel-filled stat buffer. The kernel
+// struct is ~96 bytes; we round up to leave room for any
+// future kernel additions and keep sp 8-byte aligned.
+const stat64BufferBytes = 112
 
 // emitSyscall lowers a save-restore-bracketed `svc 0`. The
 // kernel returns the result (or `-errno` on failure) in r0;
@@ -174,27 +188,63 @@ func (g *generator) emitStrlenRuntime() {
 	g.line(".size __lang_strlen, .-__lang_strlen")
 }
 
-// emitStrcmpRuntime is the libc-shape string comparator we use
-// from the IR's OpStrEq. Returns 0 when the strings match, non-zero
-// otherwise; OpStrEq immediately collapses the result with
-// `cmp r0, #0; moveq #1; movne #0`. Both args are NUL-terminated
-// (lang strings carry a trailing NUL alongside their length
-// prefix specifically for this kind of byte-walk).
+// emitStrcmpRuntime emits the equality-only string comparator
+// the IR's OpStrEq calls. Three layered short-circuits:
+//
+//  1. Pointer equality: if the two args are the same address
+//     (cheap interning catches every repeated literal —
+//     `internString` deduplicates `.LStr_*` labels), they're
+//     trivially equal. One cmp + branch.
+//  2. Length equality: lang strings carry a 4-byte little-
+//     endian length prefix at `ptr - 4`. Different lengths →
+//     definitely unequal, no byte comparison needed.
+//  3. Word-grain bulk + byte-grain tail: with the length known
+//     in advance we don't need a NUL check inside the loop,
+//     just bound the iteration by the length. Four bytes per
+//     iter on the bulk path.
+//
+// Returns 0 when the strings match, 1 otherwise — OpStrEq
+// collapses the result via `cmp r0, #0 ; moveq r0, #1 ;
+// movne r0, #0`. (Sign of the non-zero return is intentionally
+// not preserved; libc strcmp's lexicographic ordering isn't
+// used by the language.)
 func (g *generator) emitStrcmpRuntime() {
 	g.line("")
 	g.line(".type __lang_strcmp, %function")
 	g.label("__lang_strcmp")
-	g.label(".Lscmp_loop")
-	g.emit("ldrb r2, [r0], #1")
-	g.emit("ldrb r3, [r1], #1")
+	// 1. Same pointer? Equal.
+	g.emit("cmp r0, r1")
+	g.emit("beq .Lscmp_eq")
+	// 2. Same length?
+	g.emit("ldr r2, [r0, #-4]")
+	g.emit("ldr r3, [r1, #-4]")
 	g.emit("cmp r2, r3")
 	g.emit("bne .Lscmp_neq")
+	// 3a. Word-grain bulk — r2 holds remaining bytes.
+	g.label(".Lscmp_word")
+	g.emit("cmp r2, #4")
+	g.emit("blt .Lscmp_tail")
+	g.emit("ldr r12, [r0], #4")
+	g.emit("ldr r3, [r1], #4")
+	g.emit("cmp r12, r3")
+	g.emit("bne .Lscmp_neq")
+	g.emit("sub r2, r2, #4")
+	g.emit("b .Lscmp_word")
+	// 3b. Byte-grain tail.
+	g.label(".Lscmp_tail")
 	g.emit("cmp r2, #0")
-	g.emit("bne .Lscmp_loop")
+	g.emit("beq .Lscmp_eq")
+	g.emit("ldrb r12, [r0], #1")
+	g.emit("ldrb r3, [r1], #1")
+	g.emit("cmp r12, r3")
+	g.emit("bne .Lscmp_neq")
+	g.emit("sub r2, r2, #1")
+	g.emit("b .Lscmp_tail")
+	g.label(".Lscmp_eq")
 	g.emit("mov r0, #0")
 	g.emit("bx lr")
 	g.label(".Lscmp_neq")
-	g.emit("sub r0, r2, r3")
+	g.emit("mov r0, #1")
 	g.emit("bx lr")
 	g.line(".size __lang_strcmp, .-__lang_strcmp")
 }
