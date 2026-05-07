@@ -25,8 +25,10 @@ func TestInlineSubstitutesBody(t *testing.T) {
 			t.Fatalf("OpCallDirect dbl should have been inlined:\n%s", p)
 		}
 	}
-	// Mul + the const 2 should now appear directly in main.
-	mustContainOp(t, p, "main", OpMul)
+	// `x * 2` strength-reduces to `x << 1` in the IR builder, so
+	// OpShl (not OpMul) is what we expect to see in main after
+	// inlining.
+	mustContainOp(t, p, "main", OpShl)
 }
 
 // Recursive functions skip inlining — the `if` in the body is a

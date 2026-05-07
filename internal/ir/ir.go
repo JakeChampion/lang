@@ -1237,6 +1237,16 @@ func (b *builder) binary(n *ast.Binary) error {
 		b.closeScope()
 		return nil
 	}
+	// Integer arithmetic identities + strength reduction. Only
+	// applied when neither side is a string-concat / float —
+	// floats sidestep because they need NaN / signed-zero
+	// handling we don't want to bake in here, and string +
+	// has its own handling below.
+	if !n.IsStringConcat && !n.IsStringCmp && !n.IsFloat {
+		if folded, ok := b.maybeFoldArithIdentity(n); ok {
+			return folded
+		}
+	}
 	if n.IsStringConcat {
 		// Compile-time fold: `"foo" + "bar"` collapses to the
 		// concatenated literal `"foobar"` as a single OpConstStr.
@@ -1314,6 +1324,118 @@ func (b *builder) binary(n *ast.Binary) error {
 // Returns (nil, true) on success — the IR has been emitted in
 // place. Returns (_, false) when the shape doesn't apply, in
 // which case the caller falls back to the standard OpStrEq.
+// maybeFoldArithIdentity recognises right- and left-identity
+// arithmetic / bitwise patterns plus power-of-two strength
+// reduction, applied only when the *other* side is a non-
+// literal — the all-const case is left for fold.go's binary
+// fold to collapse into a single OpConstI32.
+//
+//	x + 0   → x          0 + x  → x
+//	x - 0   → x
+//	x * 1   → x          1 * x  → x
+//	x * 2^k → x << k     2^k * x → x << k        (k > 0)
+//	x | 0   → x          0 | x  → x
+//	x ^ 0   → x          0 ^ x  → x
+//	x & -1  → x         -1 & x  → x        (all bits set)
+//	x << 0  → x          x >> 0 → x
+//
+// Comparisons and division / modulo are intentionally not
+// folded: comparisons against 0/1 still need to produce a
+// 0/1 result, and `/` / `%` would change observable behaviour
+// when the divisor is zero.
+func (b *builder) maybeFoldArithIdentity(n *ast.Binary) (error, bool) {
+	numL, lok := constNumber(n.Left)
+	numR, rok := constNumber(n.Right)
+	// Only one side may be a literal — leave the all-const case
+	// to fold.go.
+	if lok && rok {
+		return nil, false
+	}
+	switch n.Op {
+	case "+", "|", "^":
+		if lok && numL == 0 {
+			return b.expr(n.Right), true
+		}
+		if rok && numR == 0 {
+			return b.expr(n.Left), true
+		}
+	case "-", "<<", ">>":
+		if rok && numR == 0 {
+			return b.expr(n.Left), true
+		}
+	case "&":
+		if lok && numL == -1 {
+			return b.expr(n.Right), true
+		}
+		if rok && numR == -1 {
+			return b.expr(n.Left), true
+		}
+	case "*":
+		if lok && numL == 1 {
+			return b.expr(n.Right), true
+		}
+		if rok && numR == 1 {
+			return b.expr(n.Left), true
+		}
+		if lok {
+			if k, ok := powerOfTwo(numL); ok && k > 0 {
+				if err := b.expr(n.Right); err != nil {
+					return err, true
+				}
+				b.emit(Op{Kind: OpConstI32, I32: k})
+				b.emit(Op{Kind: OpShl})
+				return nil, true
+			}
+		}
+		if rok {
+			if k, ok := powerOfTwo(numR); ok && k > 0 {
+				if err := b.expr(n.Left); err != nil {
+					return err, true
+				}
+				b.emit(Op{Kind: OpConstI32, I32: k})
+				b.emit(Op{Kind: OpShl})
+				return nil, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// constNumber peels back the small set of AST shapes that
+// resolve to a compile-time integer constant. Currently:
+//   - NumberLit       (e.g. `5`)
+//   - Unary("-", num) (e.g. `-1`, which the parser builds as
+//                      a unary minus on a positive literal)
+// Returns the int32 value and true on a hit.
+func constNumber(e ast.Expr) (int32, bool) {
+	if n, ok := e.(*ast.NumberLit); ok {
+		return int32(n.Value), true
+	}
+	if u, ok := e.(*ast.Unary); ok && u.Op == "-" {
+		if inner, ok := u.Operand.(*ast.NumberLit); ok {
+			return -int32(inner.Value), true
+		}
+	}
+	return 0, false
+}
+
+// powerOfTwo returns (k, true) when n == 1 << k for some
+// 0 <= k < 31. Used by the multiplication strength reduction.
+func powerOfTwo(n int32) (int32, bool) {
+	if n <= 0 {
+		return 0, false
+	}
+	if n&(n-1) != 0 {
+		return 0, false
+	}
+	for k := int32(0); k < 31; k++ {
+		if n == 1<<k {
+			return k, true
+		}
+	}
+	return 0, false
+}
+
 func (b *builder) maybeFoldStringEq(n *ast.Binary) (error, bool) {
 	litL, lOK := n.Left.(*ast.StringLit)
 	litR, rOK := n.Right.(*ast.StringLit)

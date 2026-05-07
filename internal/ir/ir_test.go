@@ -535,3 +535,58 @@ func TestLowerMakeClosureCarriesNameAndCount(t *testing.T) {
 	}
 }
 
+// Arithmetic / bitwise identities at the IR builder elide the
+// trivial side. Tests use a parameter for the non-literal side
+// so the all-const fold path doesn't preempt.
+func TestLowerArithIdentities(t *testing.T) {
+	cases := []struct {
+		src      string
+		bannedOp OpKind // op that the fold should remove
+		desc     string
+	}{
+		{`function f(x: number): number { return x + 0; }`, OpAdd, "x + 0"},
+		{`function f(x: number): number { return 0 + x; }`, OpAdd, "0 + x"},
+		{`function f(x: number): number { return x - 0; }`, OpSub, "x - 0"},
+		{`function f(x: number): number { return x * 1; }`, OpMul, "x * 1"},
+		{`function f(x: number): number { return 1 * x; }`, OpMul, "1 * x"},
+		{`function f(x: number): number { return x | 0; }`, OpOr, "x | 0"},
+		{`function f(x: number): number { return x ^ 0; }`, OpXor, "x ^ 0"},
+		{`function f(x: number): number { return x & -1; }`, OpAnd, "x & -1"},
+		{`function f(x: number): number { return x << 0; }`, OpShl, "x << 0"},
+		{`function f(x: number): number { return x >> 0; }`, OpShrS, "x >> 0"},
+	}
+	for _, tc := range cases {
+		prog := lowerSource(t, tc.src)
+		if hasOp(prog, "f", tc.bannedOp) {
+			t.Errorf("%s should fold; %s must not appear:\n%s", tc.desc, tc.bannedOp, prog)
+		}
+	}
+}
+
+// `x * 2^k` strength-reduces to `x << k` (k > 0). For
+// non-power-of-two multipliers the OpMul stays.
+func TestLowerArithStrengthReducesMulPow2(t *testing.T) {
+	cases := []struct {
+		src      string
+		wantOp   OpKind
+		bannedOp OpKind
+		desc     string
+	}{
+		{`function f(x: number): number { return x * 2; }`, OpShl, OpMul, "x * 2"},
+		{`function f(x: number): number { return x * 4; }`, OpShl, OpMul, "x * 4"},
+		{`function f(x: number): number { return x * 16; }`, OpShl, OpMul, "x * 16"},
+		{`function f(x: number): number { return 8 * x; }`, OpShl, OpMul, "8 * x"},
+		{`function f(x: number): number { return x * 3; }`, OpMul, OpShl, "x * 3"},
+		{`function f(x: number): number { return x * 7; }`, OpMul, OpShl, "x * 7"},
+	}
+	for _, tc := range cases {
+		prog := lowerSource(t, tc.src)
+		if hasOp(prog, "f", tc.bannedOp) {
+			t.Errorf("%s: %s should not appear:\n%s", tc.desc, tc.bannedOp, prog)
+		}
+		if !hasOp(prog, "f", tc.wantOp) {
+			t.Errorf("%s: expected %s in lowered IR:\n%s", tc.desc, tc.wantOp, prog)
+		}
+	}
+}
+
