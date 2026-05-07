@@ -195,8 +195,13 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	}
 
 	g.label(epilogue)
-	g.emit("mov sp, fp")
 	if leaf {
+		// Step sp back to where r4 was pushed (fp - 4*P), so the
+		// pop list matches the prologue's push order. `mov sp, fp`
+		// alone would leave sp pointing at the saved fp word, and
+		// the pop would read r4 = saved_fp. Verified by qemu-arm
+		// e2e tests which were exit=-1'ing before this fix.
+		g.emit("sub sp, fp, #%d", 4*numParams)
 		regs := []string{}
 		for i := 0; i < numParams; i++ {
 			regs = append(regs, fmt.Sprintf("r%d", 4+i))
@@ -204,6 +209,7 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		regs = append(regs, "fp", "lr")
 		g.emit("pop {%s}", strings.Join(regs, ", "))
 	} else {
+		g.emit("mov sp, fp")
 		g.emit("pop {fp, lr}")
 	}
 	g.emit("bx lr")

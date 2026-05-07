@@ -267,6 +267,32 @@ func TestLeafFunctionPinsParamsToRegisters(t *testing.T) {
 	}
 }
 
+// The leaf epilogue must step sp back to where r4 was pushed (fp -
+// 4*P) so the `pop {r4..r{4+P-1}, fp, lr}` reads the saved
+// registers in the right order. A naïve `mov sp, fp` lands sp at
+// the saved-fp word and the pop reads `r4 = saved_fp`, scrambling
+// the callee-saved set and lr — verified by qemu-arm e2e tests
+// which exit -1 / return wrong values without this offset.
+func TestLeafEpilogueStepsSPPastSavedRegs(t *testing.T) {
+	asm := compile(t, `function add(a: number, b: number): number { return a + b; }`)
+	// 2 params → fp - 8 lands sp at saved r4.
+	mustContain(t, asm, "sub sp, fp, #8")
+	mustContain(t, asm, "pop {r4, r5, fp, lr}")
+	if strings.Contains(asm, "mov sp, fp\n\tpop {r4") {
+		t.Errorf("leaf epilogue must NOT use `mov sp, fp` before popping savees:\n%s", asm)
+	}
+}
+
+// Same check at 4 params: epilogue offset scales with the param
+// count (4 saved regs × 4 = 16).
+func TestLeafEpilogueOffsetScalesWithParams(t *testing.T) {
+	asm := compile(t, `function leaf(a: number, b: number, c: number, d: number): number {
+		return (a + b) * (c + d);
+	}`)
+	mustContain(t, asm, "sub sp, fp, #16")
+	mustContain(t, asm, "pop {r4, r5, r6, r7, fp, lr}")
+}
+
 // Calling a function value held in a `var` should emit `blx r12`
 // after loading the function pointer from the var's stack slot.
 func TestIndirectCallThroughVar(t *testing.T) {
