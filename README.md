@@ -259,8 +259,11 @@ with `gcc -static -nostdlib`, emit our own `_start` (captures
 argc / argv / envp from the kernel's initial stack into .bss
 globals, aligns sp, initialises the bump heap, then calls
 `main`), and bottom out every I/O operation in a direct `svc 0`
-syscall (`read` / `write` / `open` / `close` / `lseek` /
-`brk` / `exit_group`). Errno arrives as `-r0` from the kernel —
+syscall (`read` / `write` / `writev` / `open` / `close` /
+`fstat64` / `brk` / `exit_group`). Release builds (the default)
+skip `.cfi_*` unwind tables and link with `-s`, dropping a
+"hello world" to ~1.2 KB; `lang -g` re-enables DWARF line info
++ frame unwinds for `gdb` / `addr2line`. Errno arrives as `-r0` from the kernel —
 no `__errno_location`. The IR's operand stack maps to
 `push / pop {r0}` on the runtime stack; binary operators pop
 right into r0 and left into r1. Args 0..3 in r0..r3; extras from

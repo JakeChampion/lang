@@ -1115,6 +1115,20 @@ func escapeForGAS(s string) string {
 // ---------- driver helpers ----------
 
 func (g *generator) line(s string) { g.out.WriteString(s); g.out.WriteByte('\n') }
+
+// cfi emits a .cfi_* directive only when debug info is on
+// (signalled by a non-empty SourceFile in Options). The
+// directives generate `.eh_frame` for stack unwinding — useful
+// for `gdb` and `addr2line` but dead weight in release builds,
+// where they'd add ~50 bytes per function with no benefit
+// (the nostdlib runtime has no unwinder).
+func (g *generator) cfi(format string, args ...any) {
+	if g.srcFile == "" {
+		return
+	}
+	g.emit(format, args...)
+}
+
 func (g *generator) emit(format string, args ...any) {
 	fmt.Fprintf(&g.out, "\t"+format+"\n", args...)
 }

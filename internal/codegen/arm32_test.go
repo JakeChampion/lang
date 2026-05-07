@@ -25,6 +25,26 @@ func compile(t *testing.T, src string) string {
 	return asm
 }
 
+// compileDebug is the debug-mode counterpart of `compile`:
+// passes a non-empty SourceFile so codegen emits .file / .loc /
+// .cfi_* directives. Used by tests that pin debug-only output.
+func compileDebug(t *testing.T, src string) string {
+	t.Helper()
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := EmitWithOptions(prog, info, Options{SourceFile: "f.lang"})
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	return asm
+}
+
 func mustContain(t *testing.T, asm, needle string) {
 	t.Helper()
 	if !strings.Contains(asm, needle) {
@@ -42,9 +62,11 @@ func TestPrologueEpilogue(t *testing.T) {
 }
 
 // CFI directives must wrap the prologue so libunwind / gdb can
-// reconstruct the caller's frame.
-func TestCFIDirectivesPresent(t *testing.T) {
-	asm := compile(t, `function f(): number { return 0; }`)
+// reconstruct the caller's frame — but only in debug builds
+// (SourceFile != ""). Release binaries skip them to save the
+// .eh_frame section weight.
+func TestCFIDirectivesPresentInDebugMode(t *testing.T) {
+	asm := compileDebug(t, `function f(): number { return 0; }`)
 	mustContain(t, asm, ".cfi_startproc")
 	mustContain(t, asm, ".cfi_def_cfa_offset 8")
 	mustContain(t, asm, ".cfi_offset fp, -8")
@@ -53,10 +75,20 @@ func TestCFIDirectivesPresent(t *testing.T) {
 	mustContain(t, asm, ".cfi_endproc")
 }
 
+// Release builds (no SourceFile) drop all .cfi_* directives, so
+// the linker's `.eh_frame` for our code stays at zero bytes.
+// Saves ~50 bytes per function.
+func TestCFIDirectivesAbsentInReleaseMode(t *testing.T) {
+	asm := compile(t, `function f(): number { return 0; }`)
+	if strings.Contains(asm, ".cfi_") {
+		t.Errorf("release build must not emit .cfi_* directives:\n%s", asm)
+	}
+}
+
 // Leaf functions push extra callee-saved registers, so each gets its
-// own .cfi_offset entry.
+// own .cfi_offset entry — but only in debug mode.
 func TestCFIDirectivesCoverLeafSavedRegisters(t *testing.T) {
-	asm := compile(t, `function add(a: number, b: number): number { return a + b; }`)
+	asm := compileDebug(t, `function add(a: number, b: number): number { return a + b; }`)
 	// (P+2)*4 = (2+2)*4 = 16
 	mustContain(t, asm, ".cfi_def_cfa_offset 16")
 	mustContain(t, asm, ".cfi_offset r4, -16")
@@ -365,9 +397,10 @@ func TestNonLeafKeepsStackSpill(t *testing.T) {
 		return n;
 	}
 function f(n: number): number { return g(n); }`)
-	// `f` calls `g`, so it isn't a leaf — expect the original prologue
-	// (CFI directives may be interleaved between the label and the push).
-	if !strings.Contains(asm, "f:\n\t.cfi_startproc\n\tpush {fp, lr}") {
+	// `f` calls `g`, so it isn't a leaf — expect the original prologue.
+	// In release builds (default) `.cfi_*` is suppressed, so the push
+	// follows the label directly.
+	if !strings.Contains(asm, "f:\n\tpush {fp, lr}") {
 		t.Errorf("non-leaf f should use the stack-spill prologue:\n%s", asm)
 	}
 }
