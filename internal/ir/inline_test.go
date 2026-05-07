@@ -75,16 +75,16 @@ func TestInlineAcceptsArbitraryArgExpressions(t *testing.T) {
 }
 
 // Each call site allocates its own slot range so two inlines of the
-// same callee don't share state. We check via NumScratch, which
-// grows by the callee's slot count for every site.
+// same callee don't share state. We check via len(ScratchTypes),
+// which grows by the callee's slot count for every site.
 func TestInlineAppendsFreshSlotsPerCallSite(t *testing.T) {
 	p := loweredAndInlined(t, `function dbl(x: number): number { return x * 2; }
 		function main(): number { return dbl(3) + dbl(4); }`)
 	main := findFunc(p, "main")
 	// dbl has 1 slot (its single param `x`). Two inlines → 2 fresh
 	// slots beyond main's own (0 params, 0 locals, 0 prior scratches).
-	if main.NumScratch != 2 {
-		t.Errorf("expected NumScratch=2 after two inlines, got %d", main.NumScratch)
+	if got := len(main.ScratchTypes); got != 2 {
+		t.Errorf("expected len(ScratchTypes)=2 after two inlines, got %d", got)
 	}
 }
 
@@ -131,6 +131,26 @@ func TestInlineThenFoldSimplifiesSubstitutedBody(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected post-fold const.i32 3 from inlined body:\n%s", p)
+	}
+}
+
+// Inlining a float-param callee adds an f32 slot to the caller's
+// ScratchTypes — codegen relies on that to declare the WAT local
+// with the right type, otherwise the validator rejects an `f32`
+// value being stored into an `i32` slot.
+func TestInlineRecordsFloatScratchTypes(t *testing.T) {
+	p := loweredAndInlined(t, `function neg(x: float): float { return -x; }
+		function main(): float { return neg(3.5); }`)
+	main := findFunc(p, "main")
+	if len(main.ScratchTypes) == 0 {
+		t.Fatalf("expected at least one scratch slot, got 0:\n%s", p)
+	}
+	// First scratch is the inlined `x` param, which is a float.
+	if _, ok := main.ScratchTypes[0].(interface{ String() string }); !ok {
+		t.Fatal("ScratchTypes[0] missing")
+	}
+	if got := main.ScratchTypes[0].String(); got != "float" {
+		t.Errorf("ScratchTypes[0] = %s, want float", got)
 	}
 }
 

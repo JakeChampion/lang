@@ -122,7 +122,7 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// or 0 for leaf-pinned params (which use paramReg instead).
 	numParams := len(irFn.Params)
 	numLocals := len(irFn.Locals)
-	numScratch := int(irFn.NumScratch)
+	numScratch := len(irFn.ScratchTypes)
 	slotOffset := make([]int, numParams+numLocals+numScratch)
 	paramReg := map[int]int{} // slot index → r4..r7
 	off := 0

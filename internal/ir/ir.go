@@ -312,17 +312,20 @@ type Op struct {
 }
 
 // Func is a single lowered function: parameter / local list, ops, and
-// the return type. NumScratch counts the synthetic i32 slots the
-// lowering pass conjured for ArrayLit / StructLit / Switch / closure
-// helpers — they live at indices [len(Params)+len(Locals), …) and are
-// addressed by OpLoadLocal / OpStoreLocal just like user vars.
+// the return type. ScratchTypes carries the type of each synthetic
+// slot the lowering pass / inliner conjured (for ArrayLit / StructLit
+// / Switch / closure helpers and for inlined callees' params,
+// locals, scratches). Slots live at indices [len(Params)+len(Locals),
+// …) and are addressed by OpLoadLocal / OpStoreLocal just like user
+// vars; codegen reads ScratchTypes[i] to declare each slot with the
+// right type (i32 / f32).
 type Func struct {
-	Name       string
-	Params     []ast.Param
-	Locals     []*ast.Var
-	NumScratch int32
-	ReturnType ast.Type
-	Ops        []Op
+	Name         string
+	Params       []ast.Param
+	Locals       []*ast.Var
+	ScratchTypes []ast.Type
+	ReturnType   ast.Type
+	Ops          []Op
 }
 
 // Program is the lowered form of an entire ast.Program.
@@ -441,11 +444,18 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
 	if err := b.stmt(fn.Body); err != nil {
 		return nil, err
 	}
-	// Record how many synthetic slots the lowering pass conjured beyond
-	// the user-visible params + locals — ArrayLit / StructLit / Switch /
-	// closure helpers each grew the locals map. Codegen needs the count
-	// to declare matching WAT locals.
-	out.NumScratch = int32(len(b.locals)) - int32(len(fn.Params)+len(info.Locals[fn]))
+	// Record the type of every synthetic slot the lowering pass
+	// conjured beyond the user-visible params + locals — ArrayLit
+	// / StructLit / Switch / closure helpers each added entries to
+	// the locals map. The types here are all i32 because every
+	// helper slot stashes a heap pointer or an integer tag; the
+	// inliner appends mixed types from the callee. Codegen reads
+	// ScratchTypes per-slot to declare each with the right type.
+	scratchCount := len(b.locals) - (len(fn.Params) + len(info.Locals[fn]))
+	out.ScratchTypes = make([]ast.Type, scratchCount)
+	for i := range out.ScratchTypes {
+		out.ScratchTypes[i] = ast.NumberType{}
+	}
 	// If the body falls off the end, emit an implicit return so the
 	// downstream consumer doesn't have to check.
 	if needsImplicitReturn(out.Ops) {

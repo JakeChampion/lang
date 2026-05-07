@@ -39,12 +39,16 @@
 //    rewritten to add the offset of the fresh slot range>
 //   <trailing OpReturn / OpReturnVoid dropped>
 //
-// The caller's NumScratch grows by the callee's full slot count
-// (params + locals + scratches), so codegen reserves the matching
-// frame space. Each inline site gets its own slot range; the simple
-// version doesn't try to coalesce ranges across consecutive inlines.
+// The caller's ScratchTypes grows by the callee's full slot list
+// (params + locals + scratches) — each entry's type carries
+// through so codegen declares the right shape (i32 vs f32) for
+// each WAT local. Each inline site gets its own slot range; the
+// simple version doesn't try to coalesce ranges across
+// consecutive inlines.
 
 package ir
+
+import "github.com/jakechampion/lang/internal/ast"
 
 // inlineSizeLimit caps how many ops a callee can have to remain
 // eligible. Tuned to allow simple arithmetic / accessor wrappers
@@ -76,12 +80,13 @@ func Inline(prog *Program) {
 // observing rewrites done to the callee itself when it appears later
 // in the prog.Funcs list.
 type inlineCandidate struct {
-	fn    *Func
-	body  []Op // body up to and including the trailing OpReturn / OpReturnVoid
-	// slotCount is the total number of slots the callee uses
-	// (params + locals + scratches). A call site allocates this
-	// many fresh slots in the caller.
-	slotCount int32
+	fn   *Func
+	body []Op // body up to and including the trailing OpReturn / OpReturnVoid
+	// slotTypes lists the type of every slot the callee uses, in
+	// slot order: params first, then user locals, then scratches.
+	// Inlining appends these to the caller's ScratchTypes so codegen
+	// declares each new local with the right WAT type.
+	slotTypes []ast.Type
 }
 
 // findInlineCandidates scans every function in prog and returns the
@@ -93,10 +98,18 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 		if !isInlineable(fn) {
 			continue
 		}
+		slots := make([]ast.Type, 0, len(fn.Params)+len(fn.Locals)+len(fn.ScratchTypes))
+		for _, p := range fn.Params {
+			slots = append(slots, p.Type)
+		}
+		for _, v := range fn.Locals {
+			slots = append(slots, v.Type)
+		}
+		slots = append(slots, fn.ScratchTypes...)
 		out[fn.Name] = inlineCandidate{
 			fn:        fn,
 			body:      fn.Ops,
-			slotCount: int32(len(fn.Params)) + int32(len(fn.Locals)) + fn.NumScratch,
+			slotTypes: slots,
 		}
 	}
 	return out
@@ -131,7 +144,7 @@ func isInlineable(fn *Func) bool {
 // inlineOps walks ops linearly and substitutes every OpCallDirect to
 // a known candidate. Calls to non-candidate functions are left
 // untouched. The fn argument is the caller, mutated in place: each
-// substitution grows fn.NumScratch by the callee's slot count.
+// substitution appends the callee's slot types to fn.ScratchTypes.
 func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 	out := make([]Op, 0, len(ops))
 	for _, op := range ops {
@@ -157,14 +170,14 @@ func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 // indices, and drops the trailing terminator so control falls into
 // the caller's continuation.
 func expandInline(caller *Func, cand inlineCandidate) []Op {
-	base := int32(len(caller.Params)) + int32(len(caller.Locals)) + caller.NumScratch
-	caller.NumScratch += cand.slotCount
+	base := int32(len(caller.Params)) + int32(len(caller.Locals)) + int32(len(caller.ScratchTypes))
+	caller.ScratchTypes = append(caller.ScratchTypes, cand.slotTypes...)
 
 	// Bind arguments. Caller pushed args left-to-right, so the
 	// rightmost argument is on top of the operand stack — popping
 	// into reverse-order param slots lands each value in the right
 	// place.
-	out := make([]Op, 0, len(cand.body)+int(cand.slotCount))
+	out := make([]Op, 0, len(cand.body)+len(cand.slotTypes))
 	for p := int32(len(cand.fn.Params)) - 1; p >= 0; p-- {
 		out = append(out, Op{Kind: OpStoreLocal, I32: base + p})
 	}

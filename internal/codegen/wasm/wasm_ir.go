@@ -186,12 +186,17 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		}
 		g.linef("(local $%s %s)", v.Name, typ)
 	}
-	// Synthetic i32 scratches the IR conjured for ArrayLit / StructLit
-	// / Switch / closure helpers. They're addressed by index just like
-	// user vars; we name them deterministically so WAT validation has
-	// something to point at.
-	for i := int32(0); i < irFn.NumScratch; i++ {
-		g.linef("(local $__scratch_%d i32)", i)
+	// Synthetic scratches the IR conjured for ArrayLit / StructLit /
+	// Switch / closure helpers (always i32) and for inlined callees
+	// (mixed: each takes its callee-slot type). Addressed by index
+	// just like user vars; we name them deterministically so WAT
+	// validation has something to point at.
+	for i, t := range irFn.ScratchTypes {
+		typ, err := watType(t)
+		if err != nil {
+			return fmt.Errorf("function %q: scratch %d: %w", fn.Name, i, err)
+		}
+		g.linef("(local $__scratch_%d %s)", i, typ)
 	}
 	// Closure-construction helpers, if any OpMakeClosure appears in
 	// the body. The capture-temp count is the max captures across all
