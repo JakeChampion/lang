@@ -928,3 +928,50 @@ func TestWASMMethodWithExtraArg(t *testing.T) {
 		t.Errorf("got %d, want 42", got)
 	}
 }
+
+// Sum types end-to-end on WASM: a `pub enum` with a payload-
+// carrying variant gets constructed, then matched, with the
+// bound payload flowing into the returned value.
+func TestWASMEnumMatchPayload(t *testing.T) {
+	src := `enum Pair { Two(number, number) }
+		function main(): number {
+			var p: Pair = Two(7, 5);
+			match (p) {
+				Two(a, b) => { return a + b; }
+			}
+			return -1;
+		}`
+	if got := runWasm(t, src); got != 12 {
+		t.Errorf("got %d, want 12", got)
+	}
+}
+
+// Multi-variant dispatch picks the right arm. The test exercises
+// both branches of a 2-arm enum so a regression in tag dispatch
+// (off-by-one, branch fall-through, etc.) shows up.
+func TestWASMEnumMatchDispatch(t *testing.T) {
+	srcOk := `enum Status { Ok, Err(string) }
+		function status(): Status { return Ok; }
+		function main(): number {
+			match (status()) {
+				Ok => { return 0; },
+				Err(msg) => { return 1; }
+			}
+			return -1;
+		}`
+	if got := runWasm(t, srcOk); got != 0 {
+		t.Errorf("Ok arm: got %d, want 0", got)
+	}
+	srcErr := `enum Status { Ok, Err(string) }
+		function status(): Status { return Err("boom"); }
+		function main(): number {
+			match (status()) {
+				Ok => { return 0; },
+				Err(msg) => { return len(msg); }
+			}
+			return -1;
+		}`
+	if got := runWasm(t, srcErr); got != 4 {
+		t.Errorf("Err arm: got %d, want 4 (len of \"boom\")", got)
+	}
+}

@@ -459,3 +459,89 @@ func TestMethodCallOnUnknownMethodErrors(t *testing.T) {
 		t.Error("expected error for missing method")
 	}
 }
+
+// Variant constructors type-check argument count + payload types.
+func TestEnumVariantConstructorTypeChecks(t *testing.T) {
+	good := `enum E { Pair(number, number) }
+		function main(): number {
+			var e: E = Pair(1, 2);
+			return 0;
+		}`
+	if err := checkSource(t, good); err != nil {
+		t.Errorf("good source should type-check: %v", err)
+	}
+
+	wrongCount := `enum E { Pair(number, number) }
+		function main(): number {
+			var e: E = Pair(1);
+			return 0;
+		}`
+	if err := checkSource(t, wrongCount); err == nil {
+		t.Error("expected error for wrong arg count")
+	}
+
+	wrongType := `enum E { Pair(number, number) }
+		function main(): number {
+			var e: E = Pair(1, "two");
+			return 0;
+		}`
+	if err := checkSource(t, wrongType); err == nil {
+		t.Error("expected error for wrong arg type")
+	}
+}
+
+// Non-exhaustive matches (missing a variant, no wildcard) are
+// rejected with a diagnostic naming the missing variant.
+func TestMatchExhaustivenessChecked(t *testing.T) {
+	src := `enum Light { Red, Green, Yellow }
+		function main(): number {
+			var l: Light = Green;
+			match (l) {
+				Red => { return 1; },
+				Green => { return 2; }
+			}
+			return 0;
+		}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("expected exhaustiveness error")
+	}
+	if !strings.Contains(err.Error(), "Yellow") {
+		t.Errorf("error should name the missing variant; got %v", err)
+	}
+}
+
+// A wildcard arm satisfies exhaustiveness even when not every
+// variant is listed explicitly.
+func TestMatchWildcardCoversMissingVariants(t *testing.T) {
+	src := `enum Light { Red, Green, Yellow }
+		function main(): number {
+			var l: Light = Green;
+			match (l) {
+				Red => { return 1; },
+				_ => { return 0; }
+			}
+			return 0;
+		}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("wildcard should satisfy exhaustiveness: %v", err)
+	}
+}
+
+// Match arm bindings count must match the variant's payload
+// arity, mirroring how variant construction validates argument
+// counts at the constructor site.
+func TestMatchPayloadArityChecked(t *testing.T) {
+	src := `enum E { A, B(number, number) }
+		function main(): number {
+			var e: E = A;
+			match (e) {
+				A => { return 0; },
+				B(x) => { return x; }
+			}
+			return -1;
+		}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: B has 2 payloads but only 1 binding")
+	}
+}

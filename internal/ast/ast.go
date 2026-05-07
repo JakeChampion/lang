@@ -49,6 +49,11 @@ type FuncType struct {
 // field list lives on the program's StructDecl, looked up via Name.
 type StructType struct{ Name string }
 
+// EnumType is a nominal reference to a top-level `enum` declaration.
+// Two EnumTypes are equal iff their Name fields match. The variant
+// list lives on the program's EnumDecl, looked up via Name.
+type EnumType struct{ Name string }
+
 func (NumberType) isType()  {}
 func (BoolType) isType()    {}
 func (VoidType) isType()    {}
@@ -57,6 +62,7 @@ func (FloatType) isType()   {}
 func (ArrayType) isType()   {}
 func (*FuncType) isType()   {}
 func (StructType) isType()  {}
+func (EnumType) isType()    {}
 func (NumberType) String() string  { return "number" }
 func (BoolType) String() string    { return "boolean" }
 func (VoidType) String() string    { return "void" }
@@ -64,6 +70,7 @@ func (StringType) String() string  { return "string" }
 func (FloatType) String() string   { return "float" }
 func (a ArrayType) String() string { return a.Elem.String() + "[]" }
 func (s StructType) String() string { return s.Name }
+func (e EnumType) String() string  { return e.Name }
 func (f *FuncType) String() string {
 	out := "("
 	for i, p := range f.Params {
@@ -110,6 +117,9 @@ func Equal(a, b Type) bool {
 		return true
 	case StructType:
 		y, ok := b.(StructType)
+		return ok && x.Name == y.Name
+	case EnumType:
+		y, ok := b.(EnumType)
 		return ok && x.Name == y.Name
 	}
 	return false
@@ -218,6 +228,19 @@ type FieldInit struct {
 	Value Expr
 }
 
+// EnumLit constructs a tagged-union value: `Circle(3.0)` or bare
+// `Red`. EnumName is filled in by the checker once the variant
+// resolves; the parser leaves it empty because enum-vs-function
+// disambiguation is type-driven. VariantIndex is the runtime
+// tag (the variant's position in the EnumDecl's variant list).
+type EnumLit struct {
+	P            Position
+	EnumName     string
+	VariantName  string
+	VariantIndex int
+	Args         []Expr
+}
+
 // FieldAccess reads a field off a struct value: `p.x`. Codegen lowers
 // this to `i32.load (p + offset)` once the checker has resolved the
 // field's offset on the StructDecl.
@@ -267,6 +290,7 @@ func (e *Assign) Pos() Position      { return e.P }
 func (e *Ternary) Pos() Position     { return e.P }
 func (e *StructLit) Pos() Position   { return e.P }
 func (e *FieldAccess) Pos() Position { return e.P }
+func (e *EnumLit) Pos() Position     { return e.P }
 func (e *CaptureRef) Pos() Position  { return e.P }
 func (e *MakeClosure) Pos() Position { return e.P }
 
@@ -284,6 +308,7 @@ func (*Assign) isExpr()      {}
 func (*Ternary) isExpr()     {}
 func (*StructLit) isExpr()   {}
 func (*FieldAccess) isExpr() {}
+func (*EnumLit) isExpr()     {}
 func (*CaptureRef) isExpr()  {}
 func (*MakeClosure) isExpr() {}
 
@@ -359,6 +384,32 @@ type SwitchCase struct {
 	Body   *Block
 }
 
+// Match dispatches on a tagged-union value. Unlike Switch (whose
+// cases are constant value tests), Match arms are patterns that
+// also bind payload fields into local names visible inside the
+// arm body. Exhaustiveness is checked at type-check time: every
+// variant of the scrutinee's enum type must appear, OR the arm
+// list ends with a wildcard pattern (`_`).
+type Match struct {
+	P    Position
+	Tag  Expr
+	Arms []*MatchArm
+}
+
+// MatchArm is one pattern → body pair. The Bindings are the
+// names introduced by the pattern (in declaration order, matching
+// the variant's payload positions); each binding's type is the
+// matching payload type from the EnumDecl. WildcardPattern arms
+// have an empty VariantName and Bindings.
+type MatchArm struct {
+	P            Position
+	VariantName  string   // empty when IsWildcard is true
+	Bindings     []string // payload binding names, in payload order
+	BindingTypes []Type   // resolved by the checker; same length as Bindings
+	IsWildcard   bool     // `_ => …`
+	Body         *Block
+}
+
 func (s *Block) Pos() Position    { return s.P }
 func (s *If) Pos() Position       { return s.P }
 func (s *While) Pos() Position    { return s.P }
@@ -369,6 +420,7 @@ func (s *Return) Pos() Position   { return s.P }
 func (s *Var) Pos() Position      { return s.P }
 func (s *ExprStmt) Pos() Position { return s.P }
 func (s *Switch) Pos() Position   { return s.P }
+func (s *Match) Pos() Position    { return s.P }
 func (s *FuncDecl) Pos() Position { return s.P }
 
 func (*Block) isStmt()    {}
@@ -381,6 +433,7 @@ func (*Return) isStmt()   {}
 func (*Var) isStmt()      {}
 func (*ExprStmt) isStmt() {}
 func (*Switch) isStmt()   {}
+func (*Match) isStmt()    {}
 func (*FuncDecl) isStmt() {} // legal as a stmt only when IsLocal is true
 
 // ---------- Top level ----------
@@ -436,9 +489,41 @@ type StructDecl struct {
 	Public bool
 }
 
+// EnumDecl is a top-level `enum Foo { Bar, Baz(Int), … }`. Each
+// variant either has zero positional payload types (a payload-
+// less constructor like `Red`) or one or more (`Square(float,
+// float)`). Variants are stored in declaration order; the index
+// is the runtime tag.
+type EnumDecl struct {
+	P        Position
+	Name     string
+	Variants []EnumVariant
+	// Public marks the enum as exported across modules. Same
+	// semantics as FuncDecl.Public — `pub enum Foo { … }` lets
+	// other modules name `Foo`, including its variants in match
+	// patterns and constructors.
+	Public bool
+}
+
+// EnumVariant is one constructor in an EnumDecl. Payloads are
+// positional; we don't yet have named-field variants. An empty
+// Payloads slice means the variant is constructed by bare name
+// (`Red`); a non-empty one means it's called like a function
+// (`Square(2.0, 3.0)`).
+type EnumVariant struct {
+	P        Position
+	Name     string
+	Payloads []Type
+}
+
 type Program struct {
 	Funcs   []*FuncDecl
 	Structs []*StructDecl
+	// Enums lists top-level `enum` declarations in source order.
+	// Variant constructors look like calls in the parse tree
+	// (`Some(x)`); the checker rewrites them to *EnumLit once
+	// the variant is resolved.
+	Enums []*EnumDecl
 	// Consts lists top-level `const` declarations in source order.
 	// The constfold pass evaluates each initialiser, substitutes
 	// references throughout the program with the resolved literal,

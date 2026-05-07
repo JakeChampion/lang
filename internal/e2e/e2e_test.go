@@ -813,3 +813,40 @@ func TestArraySumAndMutation(t *testing.T) {
 		t.Errorf("exit = %d, want 170 (10+20+100+40)", code)
 	}
 }
+
+// Sum types end-to-end on arm32: a payload-carrying variant
+// is constructed, matched, and the bound payloads flow into
+// the result.
+func TestEnumMatchPayloadArm(t *testing.T) {
+	src := `enum Pair { Two(number, number) }
+		function main(): number {
+			var p: Pair = Two(7, 5);
+			match (p) {
+				Two(a, b) => { return a + b; }
+			}
+			return -1;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 12 {
+		t.Errorf("exit = %d, want 12 (7 + 5)", code)
+	}
+}
+
+// Multi-variant dispatch on arm32 — each arm is reachable, the
+// payload-less Ok constructor and the string-carrying Err
+// constructor both work.
+func TestEnumMatchDispatchArm(t *testing.T) {
+	src := `enum Status { Ok, Err(string) }
+		function status(): Status { return Err("boom"); }
+		function main(): number {
+			match (status()) {
+				Ok => { return 0; },
+				Err(msg) => { return len(msg); }
+			}
+			return -1;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 4 {
+		t.Errorf("exit = %d, want 4 (len of \"boom\")", code)
+	}
+}

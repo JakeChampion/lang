@@ -41,6 +41,18 @@ type Struct struct {
 	Fields   map[string]Value
 }
 
+// Enum is an interpreted tagged-union value: a variant index plus
+// its payload values. EnumName is the owning enum's declaration
+// name (for diagnostics / equality); VariantName + Index identify
+// the constructor; Payloads holds the evaluated arguments in
+// declaration order.
+type Enum struct {
+	EnumName    string
+	VariantName string
+	Index       int
+	Payloads    []Value
+}
+
 // Builtin is a host-provided function callable from interpreted code.
 // It receives evaluated arguments and may emit output via the
 // interpreter's stdout.
@@ -89,11 +101,29 @@ func (s *Struct) String() string {
 	return b.String()
 }
 
+func (e *Enum) String() string {
+	if len(e.Payloads) == 0 {
+		return e.VariantName
+	}
+	var b strings.Builder
+	b.WriteString(e.VariantName)
+	b.WriteByte('(')
+	for i, p := range e.Payloads {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(p.String())
+	}
+	b.WriteByte(')')
+	return b.String()
+}
+
 // Interp owns global state: top-level user functions, host built-ins,
 // the persistent REPL environment, and the writer used for `print` /
 // `putchar` output.
 type Interp struct {
 	Funcs    map[string]*ast.FuncDecl
+	Enums    map[string]*ast.EnumDecl
 	Builtins map[string]*Builtin
 	Stdout   io.Writer
 	// Stderr is where `eprint` writes. Defaults to os.Stderr;
@@ -126,6 +156,7 @@ type Interp struct {
 func New() *Interp {
 	i := &Interp{
 		Funcs:    map[string]*ast.FuncDecl{},
+		Enums:    map[string]*ast.EnumDecl{},
 		Builtins: map[string]*Builtin{},
 		Stdout:   os.Stdout,
 		Stderr:   os.Stderr,
@@ -292,6 +323,27 @@ func builtinPutchar(i *Interp, args []Value) (Value, error) {
 // declarations of the same name overwrite the previous one (handy for
 // REPL redefinitions).
 func (i *Interp) Register(fn *ast.FuncDecl) { i.Funcs[fn.Name] = fn }
+
+// RegisterEnum makes an enum decl visible to subsequent eval calls.
+// Variant constructors and `match` patterns find their variants by
+// walking the registered enums; tests / the REPL must call this
+// once per top-level enum after parsing.
+func (i *Interp) RegisterEnum(ed *ast.EnumDecl) { i.Enums[ed.Name] = ed }
+
+// findVariant returns the owning enum and variant index for an
+// unqualified variant name. Tracking lookups on demand keeps
+// Interp.RegisterEnum cheap; the cost only shows up at evaluation
+// of variant constructors and match arms.
+func (i *Interp) findVariant(name string) (*ast.EnumDecl, int, bool) {
+	for _, ed := range i.Enums {
+		for j, v := range ed.Variants {
+			if v.Name == name {
+				return ed, j, true
+			}
+		}
+	}
+	return nil, 0, false
+}
 
 // CallByName looks up a user function and invokes it with the given
 // arguments.
@@ -521,6 +573,36 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		return result{flow: flowNormal}, nil
 	case *ast.FuncDecl:
 		return result{}, fmt.Errorf("interp: nested functions / closures are not yet supported in the tree-walking interpreter (compile and run via the wasm backend)")
+	case *ast.Match:
+		tag, err := i.evalExpr(x.Tag, e)
+		if err != nil {
+			return result{}, err
+		}
+		ev, ok := tag.(*Enum)
+		if !ok {
+			return result{}, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
+		}
+		for _, arm := range x.Arms {
+			if arm.IsWildcard || arm.VariantName == ev.VariantName {
+				armEnv := newEnv(e)
+				if !arm.IsWildcard {
+					for j, name := range arm.Bindings {
+						if j < len(ev.Payloads) {
+							armEnv.declare(name, ev.Payloads[j])
+						}
+					}
+				}
+				r, err := i.execBlock(arm.Body, armEnv)
+				if err != nil {
+					return result{}, err
+				}
+				if r.flow == flowReturn || r.flow == flowContinue || r.flow == flowBreak {
+					return r, nil
+				}
+				return result{flow: flowNormal}, nil
+			}
+		}
+		return result{}, fmt.Errorf("interp: match did not cover variant %s (this should have been a checker error)", ev.VariantName)
 	}
 	return result{}, fmt.Errorf("interp: unsupported statement %T", s)
 }
@@ -557,6 +639,15 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		}
 		if fn, ok := i.Funcs[x.Name]; ok {
 			return Func{Decl: fn}, nil
+		}
+		// Payload-less variant (`Red`, `EOF`) used as a value.
+		// Variants with payloads must be called explicitly.
+		if ed, idx, ok := i.findVariant(x.Name); ok {
+			if len(ed.Variants[idx].Payloads) != 0 {
+				return nil, fmt.Errorf("interp: variant %s expects %d payload(s); call it instead",
+					x.Name, len(ed.Variants[idx].Payloads))
+			}
+			return &Enum{EnumName: ed.Name, VariantName: x.Name, Index: idx}, nil
 		}
 		if _, ok := i.Builtins[x.Name]; ok {
 			// Builtins aren't first-class for now; only callable.
@@ -673,6 +764,20 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		args[k] = v
 	}
 	if id, ok := c.Callee.(*ast.Ident); ok {
+		// Variant constructor: resolve the name across all
+		// registered enums and build an Enum value with the
+		// evaluated payloads.
+		if ed, idx, ok := i.findVariant(id.Name); ok {
+			if _, shadowed := env.get(id.Name); !shadowed {
+				if _, isFn := i.Funcs[id.Name]; !isFn {
+					if got, want := len(args), len(ed.Variants[idx].Payloads); got != want {
+						return nil, fmt.Errorf("interp: variant %s expects %d argument(s), got %d",
+							id.Name, want, got)
+					}
+					return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
+				}
+			}
+		}
 		if b, ok := i.Builtins[id.Name]; ok {
 			return b.Fn(i, args)
 		}

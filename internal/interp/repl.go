@@ -57,6 +57,9 @@ func EvalLine(i *Interp, line string) (Value, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
+		for _, ed := range prog.Enums {
+			i.RegisterEnum(ed)
+		}
 		for _, fn := range prog.Funcs {
 			i.Register(fn)
 		}
