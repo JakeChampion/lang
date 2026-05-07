@@ -1338,6 +1338,20 @@ func (b *builder) call(n *ast.Call) error {
 	if id.Name == "len" && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			if _, isDeclared := b.info.FuncSigs[id.Name]; !isDeclared {
+				// Compile-time fold: when the arg is a literal whose
+				// length is statically known, collapse the whole
+				// `<ptr>; const 4; sub; load` sequence to a single
+				// const. Saves the runtime alloc + prefix-load that
+				// the unfolded shape would force, and lets the
+				// const propagate into surrounding arithmetic.
+				switch lit := n.Args[0].(type) {
+				case *ast.StringLit:
+					b.emit(Op{Kind: OpConstI32, I32: int32(len(lit.Value))})
+					return nil
+				case *ast.ArrayLit:
+					b.emit(Op{Kind: OpConstI32, I32: int32(len(lit.Elems))})
+					return nil
+				}
 				if err := b.expr(n.Args[0]); err != nil {
 					return err
 				}

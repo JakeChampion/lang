@@ -745,13 +745,31 @@ func TestArm32StringEqualityCallsStrcmp(t *testing.T) {
 // `len(string)` no longer calls strlen — strings carry the same
 // 4-byte length prefix as arrays, so the lowering threads through
 // the same `<ptr>; const 4; sub; load` IR sequence.
-func TestArm32LenStringLoadsPrefix(t *testing.T) {
+// `len(literal)` folds at compile time to a const — no runtime
+// pointer arithmetic, no prefix load. The literal isn't even
+// emitted into .rodata for this case (nothing else references
+// the data, just its length).
+func TestArm32LenStringLiteralFolds(t *testing.T) {
 	asm := compile(t, `function f(): number { return len("abc"); }`)
-	mustContain(t, asm, "sub r0, r1, r0")
-	mustContain(t, asm, "ldr r0, [r0]")
+	mustContain(t, asm, "ldr r0, =3")
+	if strings.Contains(asm, "ldr r0, =.LStr_") {
+		t.Errorf("len(literal) must not load the string data:\n%s", asm)
+	}
+	if strings.Contains(asm, "sub r0, r1, r0") {
+		t.Errorf("len(literal) must not compute prefix address:\n%s", asm)
+	}
 	if strings.Contains(asm, "bl strlen") {
 		t.Errorf("len(string) must not call strlen:\n%s", asm)
 	}
+}
+
+// Non-literal lens still go through the runtime prefix load.
+// Both shapes (strings + arrays) bottom out in the same
+// `<ptr>; const 4; sub; load` IR, so testing one suffices.
+func TestArm32LenNonLiteralUsesPrefixLoad(t *testing.T) {
+	asm := compile(t, `function f(s: string): number { return len(s); }`)
+	mustContain(t, asm, "sub r0, r1, r0")
+	mustContain(t, asm, "ldr r0, [r0]")
 }
 
 // String literals in .rodata are emitted with a 4-byte length prefix
