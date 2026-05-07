@@ -331,6 +331,16 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		target = "puts"
 	case "putchar":
 		// putchar takes its arg in r0 like normal — no rewrite needed.
+	case "args":
+		// `args()` lowers to a runtime helper that materialises a
+		// length-prefixed string[] from the argc/argv saved at main
+		// entry. usesArgs pulls in the helper + the .bss globals
+		// + the prologue insertion for `main`. usesAlloc piggy-
+		// backs because the helper allocates the array and copies
+		// each entry through __lang_alloc.
+		target = "__lang_args"
+		g.usesArgs = true
+		g.usesAlloc = true
 	case "__str_idx", "__arr_idx":
 		// IR-side bounds-check stubs. We don't currently have ARM32
 		// equivalents, so the IR walker adds the bound-check itself

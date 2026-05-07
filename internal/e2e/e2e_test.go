@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -459,6 +460,103 @@ function main(): number { return limits.MAX; }`,
 	})
 	if code != 42 {
 		t.Errorf("exit = %d, want 42", code)
+	}
+}
+
+// compileAndRunWithArgs is compileAndRun plus extra positional argv
+// for the qemu-launched binary. argv[0] is the binary path injected
+// by qemu (argv[0] is whatever execve sets). Used by the args()
+// e2e tests to feed scripted argv into the running program.
+func compileAndRunWithArgs(t *testing.T, src string, extraArgs ...string) int {
+	t.Helper()
+	gcc, qemu := tooling(t)
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+	cmdArgs := append([]string{binPath}, extraArgs...)
+	cmd := exec.Command(qemu, cmdArgs...)
+	out, _ := cmd.CombinedOutput()
+	if testing.Verbose() {
+		t.Logf("output: %s", string(out))
+	}
+	return cmd.ProcessState.ExitCode()
+}
+
+// args() under qemu-arm: argv[0] is the binary path that qemu
+// passes through, plus whatever extra args we supplied — so
+// `len(args())` should match the count we set up.
+func TestArgsBuiltinArm(t *testing.T) {
+	src := `function main(): number {
+		var a: string[] = args();
+		return len(a);
+	}`
+	code := compileAndRunWithArgs(t, src, "alpha", "beta")
+	if code != 3 {
+		t.Errorf("got %d, want 3 (binary path + alpha + beta)", code)
+	}
+}
+
+// Reading individual args produces the expected string contents —
+// the runtime helper must scan each NUL-terminated argv entry,
+// allocate a length-prefixed copy, and the language's `print`
+// must then handle it like any other string.
+func TestArgsBuiltinReadsValueArm(t *testing.T) {
+	src := `function main(): number {
+		var a: string[] = args();
+		print(a[1]);
+		return 0;
+	}`
+	gcc, qemu := tooling(t)
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+	cmd := exec.Command(qemu, binPath, "hello")
+	out, _ := cmd.CombinedOutput()
+	if !strings.Contains(string(out), "hello") {
+		t.Errorf("expected output to contain `hello`, got %q", string(out))
 	}
 }
 

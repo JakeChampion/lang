@@ -73,6 +73,7 @@ type generator struct {
 	stringOrder []string          // insertion order so output is deterministic
 	usesStrcat  bool              // true if the program needs the strcat helper
 	usesAlloc   bool              // true if the program needs the alloc helper (any heap-backed array / struct / closure)
+	usesArgs    bool              // true if the program calls args() — pulls in the runtime helper + main argc/argv save
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
 }
 
@@ -143,6 +144,92 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("pop {r4, r5, r6, r7, lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_strcat, .-__lang_strcat")
+}
+
+// emitArgsRuntime emits the `__lang_args` helper. It takes no
+// arguments (the underlying argc / argv come from .bss globals
+// `__lang_argc` / `__lang_argv` populated by `main`'s prologue),
+// returns a length-prefixed `string[]` data pointer, and caches
+// the result in `__lang_args_cache` so repeat calls are O(1).
+//
+// On the slow path the helper allocates the result string[],
+// then for each argv entry runs strlen / __lang_alloc / memcpy
+// to build a fresh length-prefixed copy. We include the trailing
+// NUL in each copy so libc-shaped consumers (puts / strlen) keep
+// working on the same data pointer the rest of the language
+// hands around.
+func (g *generator) emitArgsRuntime() {
+	g.line("")
+	g.line(".global __lang_args")
+	g.line(".type __lang_args, %function")
+	g.label("__lang_args")
+	// 8 registers × 4 bytes = 32 bytes — already 8-byte aligned,
+	// so we don't need an extra `sub sp, sp, #4` for AAPCS calls.
+	g.emit("push {r4, r5, r6, r7, r8, r9, r10, lr}")
+
+	// Fast path: cached pointer is non-zero → return it.
+	g.emit("ldr r0, =__lang_args_cache")
+	g.emit("ldr r0, [r0]")
+	g.emit("cmp r0, #0")
+	g.emit("beq .Largs_build")
+	g.emit("pop {r4, r5, r6, r7, r8, r9, r10, lr}")
+	g.emit("bx lr")
+
+	g.label(".Largs_build")
+	// r4 = argc, r5 = argv (pointer to char**)
+	g.emit("ldr r4, =__lang_argc")
+	g.emit("ldr r4, [r4]")
+	g.emit("ldr r5, =__lang_argv")
+	g.emit("ldr r5, [r5]")
+
+	// Allocate the result string[] container: 4 bytes for length
+	// prefix + argc * 4 bytes for entry pointers.
+	g.emit("lsl r0, r4, #2")
+	g.emit("add r0, r0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("add r6, r0, #4")    // r6 = result data pointer (post-prefix)
+	g.emit("str r4, [r6, #-4]") // length prefix = argc
+
+	// for (i = 0; i < argc; i++)
+	g.emit("mov r7, #0") // r7 = i
+	g.label(".Largs_loop")
+	g.emit("cmp r7, r4")
+	g.emit("bge .Largs_done")
+
+	// r8 = argv[i] (the C string)
+	g.emit("ldr r8, [r5, r7, lsl #2]")
+
+	// r9 = strlen(r8)
+	g.emit("mov r0, r8")
+	g.emit("bl strlen")
+	g.emit("mov r9, r0")
+
+	// Allocate strlen + 5 bytes (4 prefix + N data + 1 trailing NUL).
+	g.emit("add r0, r9, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add r10, r0, #4")    // r10 = string data pointer
+	g.emit("str r9, [r10, #-4]") // length prefix
+
+	// memcpy(r10, r8, r9 + 1) — include NUL.
+	g.emit("mov r0, r10")
+	g.emit("mov r1, r8")
+	g.emit("add r2, r9, #1")
+	g.emit("bl memcpy")
+
+	// result[i] = r10
+	g.emit("str r10, [r6, r7, lsl #2]")
+
+	g.emit("add r7, r7, #1")
+	g.emit("b .Largs_loop")
+
+	g.label(".Largs_done")
+	// Cache and return.
+	g.emit("ldr r0, =__lang_args_cache")
+	g.emit("str r6, [r0]")
+	g.emit("mov r0, r6")
+	g.emit("pop {r4, r5, r6, r7, r8, r9, r10, lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_args, .-__lang_args")
 }
 
 // internString returns a unique .rodata label for s, allocating a new one

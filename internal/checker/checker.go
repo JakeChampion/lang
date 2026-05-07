@@ -83,6 +83,16 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.VoidType{},
 	}
+	// args(): string[] — returns the program's command-line argv as a
+	// length-prefixed string array. The first element is conventionally
+	// the program / module path (matching argv[0] in C and os.Args[0]
+	// in Go). Building the array is one-shot and cached: the first
+	// `args()` call materialises it from libc / WASI; subsequent calls
+	// hand back the same pointer.
+	c.info.FuncSigs["args"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.ArrayType{Elem: ast.StringType{}},
+	}
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled

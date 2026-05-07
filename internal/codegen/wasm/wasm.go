@@ -73,6 +73,7 @@ type generator struct {
 	needsStructs     bool
 	needsBoundsCheck bool // any array or string Index expression appears
 	needsClosures    bool // any FuncDecl was hoisted by closure conversion
+	needsArgs        bool // any `args()` call appears — pulls in WASI args_*
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -193,6 +194,16 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 		case *ast.Unary:
 			walk(x.Operand)
 		case *ast.Call:
+			// `args()` builds a string[] at runtime, so it pulls in
+			// the array preamble (bump allocator + length prefixes)
+			// the same way an `ArrayLit` does. The same call also
+			// records needsArgs so the runtime emits the WASI
+			// args_sizes_get / args_get imports and the cache helper.
+			if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "args" {
+				g.needsArrays = true
+				g.needsRuntime = true
+				g.needsArgs = true
+			}
 			walk(x.Callee)
 			for _, a := range x.Args {
 				walk(a)
@@ -777,7 +788,7 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 			g.needsRuntime = true
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
-				if id.Name == "print" || id.Name == "putchar" {
+				if id.Name == "print" || id.Name == "putchar" || id.Name == "args" {
 					g.needsRuntime = true
 					return
 				}
@@ -882,9 +893,17 @@ func (g *generator) internString(s string) int {
 //	24..31  print iovec[1] { ptr=32, len=1 }      pre-initialised
 //	32      newline byte 0x0A                    pre-initialised
 //	36..39  print nwritten
+//	40..43  bump-allocator pointer (when needsArrays)
+//	44..47  args() cache pointer (0 = not yet built; non-zero = ptr)
+//	48..51  args_sizes_get out: argc
+//	52..55  args_sizes_get out: argv buffer size
 //	64+     string data, each entry: 4-byte length prefix then bytes
 func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
+	if g.needsArgs {
+		g.line(`(import "wasi_snapshot_preview1" "args_sizes_get" (func $__wasi_args_sizes_get (param i32 i32) (result i32)))`)
+		g.line(`(import "wasi_snapshot_preview1" "args_get" (func $__wasi_args_get (param i32 i32) (result i32)))`)
+	}
 	g.line(`(memory $mem 1)`)
 
 	if g.needsArrays || g.needsStructs {
@@ -1201,6 +1220,218 @@ func (g *generator) emitRuntimePreamble() {
 	g.line(`i32.const 36`)
 	g.line(`call $__wasi_fd_write`)
 	g.line(`drop`)
+	g.indent--
+	g.line(`)`)
+
+	if g.needsArgs {
+		g.emitArgsHelper()
+	}
+}
+
+// emitArgsHelper writes the lazy-initialising `$args` runtime
+// function. The first call materialises a length-prefixed
+// string[] from the WASI argv buffer and caches its pointer at
+// memory offset 44; subsequent calls return the cached pointer
+// without going back to the host.
+//
+// The materialised array layout is the standard one used elsewhere
+// for `string[]`:
+//
+//	[ length prefix : i32 ][ s0_ptr : i32 ][ s1_ptr : i32 ] ...
+//
+// where each `sK_ptr` points to the bytes of a length-prefixed
+// string allocated separately on the bump heap.
+func (g *generator) emitArgsHelper() {
+	g.line(`(func $args (result i32)`)
+	g.indent++
+	g.line(`(local $cached i32)`)
+	g.line(`(local $argc i32)`)
+	g.line(`(local $bufsize i32)`)
+	g.line(`(local $argv_ptrs i32)`)
+	g.line(`(local $argv_buf i32)`)
+	g.line(`(local $result i32)`)
+	g.line(`(local $i i32)`)
+	g.line(`(local $cstr i32)`)
+	g.line(`(local $end i32)`)
+	g.line(`(local $strlen i32)`)
+	g.line(`(local $sbase i32)`)
+	g.line(`(local $j i32)`)
+
+	// Fast path: cached.
+	g.line(`i32.const 44`)
+	g.line(`i32.load`)
+	g.line(`local.tee $cached`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`local.get $cached`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+
+	// Slow path: ask the host how many args + how big a buffer.
+	g.line(`i32.const 48`)
+	g.line(`i32.const 52`)
+	g.line(`call $__wasi_args_sizes_get`)
+	g.line(`drop`)
+	g.line(`i32.const 48`)
+	g.line(`i32.load`)
+	g.line(`local.set $argc`)
+	g.line(`i32.const 52`)
+	g.line(`i32.load`)
+	g.line(`local.set $bufsize`)
+
+	// Allocate scratch buffers for the host call. argv_ptrs gets
+	// argc * 4 bytes; argv_buf gets bufsize bytes (which already
+	// covers every NUL-terminated argv string back-to-back).
+	g.line(`local.get $argc`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $argv_ptrs`)
+	g.line(`local.get $bufsize`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $argv_buf`)
+	g.line(`local.get $argv_ptrs`)
+	g.line(`local.get $argv_buf`)
+	g.line(`call $__wasi_args_get`)
+	g.line(`drop`)
+
+	// Allocate the result string[]: length prefix (4 bytes) +
+	// argc * 4 entry pointers. $result lands on the entries (the
+	// language's `string[]` convention is that the value is the
+	// data pointer, with the length at value-4).
+	g.line(`local.get $argc`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`local.get $argc`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $result`)
+
+	// For each argv entry: walk the C string to find its length,
+	// allocate a fresh length-prefixed buffer, copy the bytes, and
+	// stash the resulting string pointer at result[i].
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $end_outer`)
+	g.indent++
+	g.line(`loop $outer`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $argc`)
+	g.line(`i32.eq`)
+	g.line(`br_if $end_outer`)
+
+	// cstr = argv_ptrs[i] (each entry is an i32)
+	g.line(`local.get $argv_ptrs`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $cstr`)
+
+	// strlen: scan from cstr until a NUL byte.
+	g.line(`local.get $cstr`)
+	g.line(`local.set $end`)
+	g.line(`block $end_strlen`)
+	g.indent++
+	g.line(`loop $strlen`)
+	g.indent++
+	g.line(`local.get $end`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $end_strlen`)
+	g.line(`local.get $end`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $end`)
+	g.line(`br $strlen`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $end`)
+	g.line(`local.get $cstr`)
+	g.line(`i32.sub`)
+	g.line(`local.set $strlen`)
+
+	// Allocate strlen+4 bytes; write length prefix.
+	g.line(`local.get $strlen`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`local.get $strlen`)
+	g.line(`i32.store`)
+
+	// Byte-copy cstr[0..strlen) into sbase+4.
+	g.line(`i32.const 0`)
+	g.line(`local.set $j`)
+	g.line(`block $end_copy`)
+	g.indent++
+	g.line(`loop $copy`)
+	g.indent++
+	g.line(`local.get $j`)
+	g.line(`local.get $strlen`)
+	g.line(`i32.eq`)
+	g.line(`br_if $end_copy`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`local.get $cstr`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.store8`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $j`)
+	g.line(`br $copy`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// result[i] = sbase + 4 (the data pointer; length lives at -4)
+	g.line(`local.get $result`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.store`)
+
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $outer`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// Cache and return.
+	g.line(`i32.const 44`)
+	g.line(`local.get $result`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`end`)
 	g.indent--
 	g.line(`)`)
 }

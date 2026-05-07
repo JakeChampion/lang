@@ -163,6 +163,89 @@ function main(): number {
 	}
 }
 
+// invokeWasmtimeWithArgs is invokeWasmtime plus extra positional
+// argv that wasmtime forwards to the wasm module via WASI.
+// Splitting stdout / stderr matters here too: wasmtime puts its
+// `--invoke` warning on stderr and the program's own output on
+// stdout, so the args() return path can be tested without
+// noise interfering.
+func invokeWasmtimeWithArgs(t *testing.T, src string, extraArgs ...string) (stdout, stderr string) {
+	t.Helper()
+	wt := wasmtimePath(t)
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	wat, err := wasm.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	watPath := filepath.Join(dir, "prog.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmdArgs := append([]string{"run", "--invoke", "main", watPath}, extraArgs...)
+	cmd := exec.Command(wt, cmdArgs...)
+	var soBuf, seBuf bytes.Buffer
+	cmd.Stdout = &soBuf
+	cmd.Stderr = &seBuf
+	_ = cmd.Run()
+	return soBuf.String(), seBuf.String()
+}
+
+// args() under wasmtime: argv[0] is the wasm module path that
+// wasmtime injects, plus whatever extra positional args we pass.
+// `wasmtime run --invoke main mod.wat alpha beta` therefore yields
+// argv = [mod.wat, alpha, beta] and `len(args()) == 3`.
+func TestWASMArgsBuiltin(t *testing.T) {
+	src := `function main(): number {
+		var a: string[] = args();
+		return len(a);
+	}`
+	stdout, _ := invokeWasmtimeWithArgs(t, src, "alpha", "beta")
+	got := 0
+	for _, ln := range strings.Split(stdout, "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if i := strings.LastIndex(ln, " "); i >= 0 {
+			ln = ln[i+1:]
+		}
+		if n, err := strconv.Atoi(ln); err == nil {
+			got = n
+		}
+	}
+	if got != 3 {
+		t.Errorf("got %d, want 3 (module path + alpha + beta)", got)
+	}
+}
+
+// Reading argv values: print(a[1]) should produce the first user
+// argument on stdout. The runtime helper's strlen + alloc + copy
+// path lands the bytes in a length-prefixed string that the
+// language's `print` lowers via fd_write like any other string.
+func TestWASMArgsBuiltinReadsValue(t *testing.T) {
+	src := `function main(): number {
+		var a: string[] = args();
+		print(a[1]);
+		return 0;
+	}`
+	stdout, _ := invokeWasmtimeWithArgs(t, src, "hello")
+	if !strings.Contains(stdout, "hello") {
+		t.Errorf("expected stdout to contain `hello`, got %q", stdout)
+	}
+}
+
 func runWasm(t *testing.T, src string) int {
 	t.Helper()
 	stdout, _ := invokeWasmtime(t, src)
