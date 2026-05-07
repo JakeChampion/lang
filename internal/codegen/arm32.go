@@ -306,25 +306,30 @@ func (g *generator) emitWriteRuntime() {
 	g.line(".size __lang_write, .-__lang_write")
 }
 
-// emitEprintRuntime emits `__lang_eprint`, the stderr counterpart
-// to `__lang_puts`. Two direct `write(2, …)` syscalls: one for the
-// user's string, one for a single-byte newline buffer interned at
-// `.LLangNewline`.
+// emitEprintRuntime emits `__lang_eprint`, the stderr
+// counterpart to `__lang_puts`. Single `writev(2)` over a
+// 2-iovec gather (string + newline) — same pattern as puts,
+// just routed to fd 2.
 func (g *generator) emitEprintRuntime() {
 	g.line("")
 	g.line(".global __lang_eprint")
 	g.line(".type __lang_eprint, %function")
 	g.label("__lang_eprint")
-	// First syscall: write(2, s, len(s))
-	g.emit("ldr r2, [r0, #-4]")
-	g.emit("mov r1, r0")
-	g.emit("mov r0, #2")
-	g.emitSyscall(sysWrite)
-	// Second syscall: write(2, .LLangNewline, 1)
-	g.emit("ldr r1, =.LLangNewline")
-	g.emit("mov r2, #1")
-	g.emit("mov r0, #2")
-	g.emitSyscall(sysWrite)
+	g.emit("push {lr}")
+	g.emit("sub sp, sp, #20") // 16 bytes iovec + 4 bytes alignment pad
+	g.emit("ldr r2, [r0, #-4]") // r2 = length
+	g.emit("str r0, [sp]")      // iov[0].base = data ptr
+	g.emit("str r2, [sp, #4]")  // iov[0].len  = length
+	g.emit("ldr r3, =.LLangNewline")
+	g.emit("str r3, [sp, #8]") // iov[1].base = newline
+	g.emit("mov r3, #1")
+	g.emit("str r3, [sp, #12]") // iov[1].len  = 1
+	g.emit("mov r0, #2")        // fd 2 (stderr)
+	g.emit("mov r1, sp")        // iovec*
+	g.emit("mov r2, #2")        // iovcnt
+	g.emitSyscall(sysWritev)
+	g.emit("add sp, sp, #20")
+	g.emit("pop {lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_eprint, .-__lang_eprint")
 }

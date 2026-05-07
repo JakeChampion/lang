@@ -24,6 +24,7 @@ const (
 	sysClose     = 6
 	sysLseek     = 19
 	sysBrk       = 45
+	sysWritev    = 146
 	sysExitGroup = 248
 )
 
@@ -114,24 +115,39 @@ func (g *generator) emitHeapInitRuntime() {
 	g.line(".size __lang_heap_init, .-__lang_heap_init")
 }
 
-// emitMemcpyRuntime is a tiny byte-grain memcpy. The clobbered set
-// is r0..r3 and lr; r4..r11 stay untouched so callers can keep
-// state across the call. Programs that copy multi-megabyte buffers
-// will eventually want a word-grain version, but every caller in
-// the language's runtime moves under a few KiB at a time so the
-// trip cost dominates the per-byte loop.
+// emitMemcpyRuntime emits a word-grain memcpy: copy four bytes
+// at a time on the bulk path, then a byte-grain tail for the
+// last <4 bytes. ARMv7-A allows unaligned word access by
+// default (Linux user-space sets SCTLR.A=0), so we don't need
+// to align the pointers first.
+//
+// The bulk loop is three instructions per iteration (load,
+// store, dec, branch) covering four bytes — 4× faster than the
+// byte-grain version it replaces. Every alloc-and-copy path in
+// the runtime (strcat, args, env, read_file, the streaming
+// Reader) sees the speedup directly.
+//
+// Clobbers r0..r3 and r12; r4..r11 stay untouched so callers
+// can keep state across the call.
 func (g *generator) emitMemcpyRuntime() {
 	g.line("")
 	g.line(".type __lang_memcpy, %function")
 	g.label("__lang_memcpy")
 	g.emit("mov r3, r0") // r3 = dst (saved for return)
-	g.label(".Lmcp_loop")
+	g.label(".Lmcp_word")
+	g.emit("cmp r2, #4")
+	g.emit("blt .Lmcp_tail")
+	g.emit("ldr r12, [r1], #4")
+	g.emit("str r12, [r0], #4")
+	g.emit("sub r2, r2, #4")
+	g.emit("b .Lmcp_word")
+	g.label(".Lmcp_tail")
 	g.emit("cmp r2, #0")
 	g.emit("beq .Lmcp_done")
 	g.emit("ldrb r12, [r1], #1")
 	g.emit("strb r12, [r0], #1")
 	g.emit("sub r2, r2, #1")
-	g.emit("b .Lmcp_loop")
+	g.emit("b .Lmcp_tail")
 	g.label(".Lmcp_done")
 	g.emit("mov r0, r3")
 	g.emit("bx lr")
@@ -183,26 +199,37 @@ func (g *generator) emitStrcmpRuntime() {
 	g.line(".size __lang_strcmp, .-__lang_strcmp")
 }
 
-// emitPutsRuntime emits the print() builtin: writes a length-
-// prefixed lang string to stdout, then a single newline. Replaces
-// libc puts(). Two write(2) syscalls; the cost over a single-call
-// version is one extra syscall per print, which is fine for the
-// shapes of program we ship (CLI tools that print configurably).
+// emitPutsRuntime emits the print() builtin as a single
+// `writev(2)` syscall over a 2-iovec gather: the user's
+// length-prefixed string, then a single-byte newline. One
+// kernel transition instead of two write(2) calls — exactly
+// the kind of `\n`-suffix collapse that bun-style runtimes
+// reach for.
+//
+// The iovec table sits on the stack (16 bytes — two 8-byte
+// `{base, len}` records); we tear it down on exit. r4 holds
+// the data ptr through the syscall so we can return it for
+// libc-puts consistency.
 func (g *generator) emitPutsRuntime() {
 	g.line("")
 	g.line(".type __lang_puts, %function")
 	g.label("__lang_puts")
 	g.emit("push {r4, lr}")
-	g.emit("mov r4, r0")        // r4 = data ptr
+	g.emit("mov r4, r0") // r4 = data ptr (saved for return)
+	g.emit("sub sp, sp, #16")
 	g.emit("ldr r2, [r0, #-4]") // r2 = length
-	g.emit("mov r1, r0")
-	g.emit("mov r0, #1") // fd 1
-	g.emitSyscall(sysWrite)
-	g.emit("ldr r1, =.LLangNewline")
-	g.emit("mov r2, #1")
-	g.emit("mov r0, #1")
-	g.emitSyscall(sysWrite)
-	g.emit("mov r0, r4") // libc puts returns the string; we return data ptr for consistency
+	g.emit("str r0, [sp]")      // iov[0].base = data ptr
+	g.emit("str r2, [sp, #4]")  // iov[0].len  = length
+	g.emit("ldr r3, =.LLangNewline")
+	g.emit("str r3, [sp, #8]") // iov[1].base = newline
+	g.emit("mov r3, #1")
+	g.emit("str r3, [sp, #12]") // iov[1].len  = 1
+	g.emit("mov r0, #1")        // fd 1 (stdout)
+	g.emit("mov r1, sp")        // iovec*
+	g.emit("mov r2, #2")        // iovcnt
+	g.emitSyscall(sysWritev)
+	g.emit("add sp, sp, #16")
+	g.emit("mov r0, r4")
 	g.emit("pop {r4, lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_puts, .-__lang_puts")
