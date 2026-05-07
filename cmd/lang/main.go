@@ -10,7 +10,10 @@
 //	                                     # forwarding stdio
 //	lang -fmt FILE.lang                  # write idiomatic, indented source
 //	                                     # to stdout (use -w to overwrite
-//	                                     # the input file in place)
+//	                                     # the input file in place; use -d
+//	                                     # to print a unified diff against
+//	                                     # the on-disk version and exit
+//	                                     # non-zero when they differ)
 //
 // The -cc and -qemu flags override the cross-compiler and emulator.
 // Note: the formatter strips `//` line comments and blank lines
@@ -40,11 +43,12 @@ func main() {
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it under qemu-arm (arm32 only)")
 	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
-	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place)")
+	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
+	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: lang [-target arm32|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
-		fmt.Fprintln(os.Stderr, "       lang -fmt [-w] FILE.lang")
+		fmt.Fprintln(os.Stderr, "       lang -fmt [-w | -d] FILE.lang")
 		fmt.Fprintln(os.Stderr, "       lang -repl")
 		flag.PrintDefaults()
 	}
@@ -66,11 +70,12 @@ func main() {
 	progArgs := flag.Args()[1:] // anything after the source path is forwarded to the program
 
 	if *doFmt {
-		if err := formatFile(srcPath, *writeBack); err != nil {
+		code, err := formatFile(srcPath, *writeBack, *diffMode)
+		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		return
+		os.Exit(code)
 	}
 
 	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, progArgs)
@@ -81,34 +86,44 @@ func main() {
 	os.Exit(code)
 }
 
-// formatFile parses the file at srcPath, formats it, and writes the
-// result either to stdout (writeBack=false) or back to the file
-// itself (writeBack=true). Parse errors are surfaced through the
-// usual diag-formatted message. Comments and blank lines are not
-// preserved — the lexer drops both before they reach the AST.
-func formatFile(srcPath string, writeBack bool) error {
+// formatFile parses the file at srcPath, formats it, and either
+// writes the result to stdout / back to the file / prints a unified
+// diff against the on-disk version. Returns the exit code the CLI
+// should use: 0 for "no work needed" or successful write, 1 when
+// `-d` saw a difference, with errors returned separately.
+func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 	srcBytes, err := os.ReadFile(srcPath)
 	if err != nil {
-		return err
+		return 1, err
 	}
 	src := string(srcBytes)
 	prog, err := parser.Parse(src)
 	if err != nil {
-		return fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
 	formatted := printer.Format(prog)
+	if diffMode {
+		// `-d` is the conventional CI-friendly mode: print the diff
+		// and exit non-zero when the file isn't already formatted.
+		// `gofmt -d` follows the same contract.
+		diff := printer.UnifiedDiff(src, formatted, srcPath, srcPath)
+		if diff == "" {
+			return 0, nil
+		}
+		_, err := os.Stdout.WriteString(diff)
+		return 1, err
+	}
 	if writeBack {
 		// Preserve the file's existing mode so chmod state survives
-		// the rewrite. ReadFile gave us bytes; we still need a stat
-		// for the mode.
+		// the rewrite.
 		info, err := os.Stat(srcPath)
 		if err != nil {
-			return err
+			return 1, err
 		}
-		return os.WriteFile(srcPath, []byte(formatted), info.Mode())
+		return 0, os.WriteFile(srcPath, []byte(formatted), info.Mode())
 	}
 	_, err = os.Stdout.WriteString(formatted)
-	return err
+	return 0, err
 }
 
 // run drives the full pipeline. The returned int is the exit code that
