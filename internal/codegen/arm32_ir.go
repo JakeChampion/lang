@@ -45,6 +45,7 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	// useful.
 	ir.Inline(ip)
 	ir.FuseTee(ip)
+	ir.PropagateCopies(ip)
 	ir.Fold(ip)
 	ir.EliminateDeadCode(ip)
 	ir.TailCallOptimize(ip)
