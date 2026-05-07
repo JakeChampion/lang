@@ -445,6 +445,38 @@ func TestArm32NoLibcSymbols(t *testing.T) {
 	}
 }
 
+// memcpy is word-grain on the bulk path (4 bytes per iter)
+// with a byte-grain tail for the last < 4 bytes. The shape pins
+// both halves so any future tweak that drops the bulk loop
+// trips the test.
+func TestArm32MemcpyWordGrainBulk(t *testing.T) {
+	asm := compile(t, `function f(): string { return "a" + "b"; }`)
+	mustContain(t, asm, ".Lmcp_word:")
+	mustContain(t, asm, "ldr r12, [r1], #4")
+	mustContain(t, asm, "str r12, [r0], #4")
+	mustContain(t, asm, ".Lmcp_tail:")
+}
+
+// `print(s)` collapses to a single `writev(2)` over a 2-iovec
+// gather (string + newline) instead of two write(2) syscalls.
+// One kernel transition per print, twice as fast at the boundary.
+func TestArm32PutsUsesWritev(t *testing.T) {
+	asm := compile(t, `function main(): void { print("hi"); }`)
+	// writev syscall = 146 on ARM EABI.
+	mustContain(t, asm, "mov r7, #146")
+	// 2-iovec gather + iovcnt = 2.
+	mustContain(t, asm, "mov r2, #2")
+	// We construct the iovec on the stack: 2 × {base,len} = 16 bytes.
+	mustContain(t, asm, "sub sp, sp, #16")
+}
+
+// `eprint(s)` mirrors print: single writev(2) routed to fd 2.
+func TestArm32EprintUsesWritev(t *testing.T) {
+	asm := compile(t, `function main(): void { eprint("hi"); }`)
+	mustContain(t, asm, "mov r7, #146")
+	mustContain(t, asm, "mov r0, #2") // fd 2
+}
+
 // _start is the binary's entry point under -nostdlib. It must
 // capture argc / argv / envp from the kernel-provided stack into
 // .bss globals, align sp, init the heap, and exit_group on
