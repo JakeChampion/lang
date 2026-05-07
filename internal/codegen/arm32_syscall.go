@@ -25,8 +25,25 @@ const (
 	sysLseek     = 19
 	sysBrk       = 45
 	sysWritev    = 146
+	sysMmap2     = 192
 	sysFstat64   = 197
 	sysExitGroup = 248
+)
+
+// heapReserveBytes is the size of the anonymous mmap region we
+// reserve for the bump arena at startup. Linux only commits
+// physical pages on first touch, so this is virtual-address-
+// space cost only — fine on 32-bit ARM (3 GB user VAS) and
+// it sidesteps every brk-grow syscall that the bump path would
+// otherwise hit. 64 MiB covers anything the CLI / edge-function
+// targets are likely to allocate.
+const heapReserveBytes = 64 * 1024 * 1024
+
+// mmap flags / prot bits we need from <sys/mman.h>. Keeping
+// them as named constants to make the heap_init body readable.
+const (
+	mmapProtReadWrite = 0x3  // PROT_READ | PROT_WRITE
+	mmapPrivateAnon   = 0x22 // MAP_PRIVATE | MAP_ANONYMOUS
 )
 
 // fstat64 puts st_size's lo32 at offset 48 in the buffer it
@@ -106,26 +123,52 @@ func (g *generator) emitStartRuntime() {
 	g.line(".size _start, .-_start")
 }
 
-// emitHeapInitRuntime captures the kernel-provided initial program
-// break (via `brk(0)`) into both __lang_heap_ptr (bump cursor) and
-// __lang_heap_end (current limit). Subsequent allocations bump the
-// pointer; when it would cross the end, the alloc helper extends
-// the break in 64 KiB increments to amortise the syscall.
+// emitHeapInitRuntime reserves the bump arena via a single
+// `mmap2(NULL, 64 MiB, RW, MAP_PRIVATE|ANONYMOUS, -1, 0)`
+// syscall. Linux populates physical pages lazily on first
+// touch, so this costs virtual-address-space only — none of
+// the 64 MiB is actually pinned until something allocates.
+//
+// Compared to the older `brk(0)` + per-grow `brk(new_end)`
+// shape, this gives `__lang_alloc`'s fast path a single
+// pointer bump with no slow-path syscall: the heap is simply
+// big enough up front. brk is also somewhat deprecated in
+// modern kernels (musl, bionic, jemalloc, mimalloc all use
+// mmap), so the move is forward-looking.
+//
+// On failure (extremely unlikely — a 64 MiB anonymous mmap
+// always succeeds on 32-bit ARM Linux) we exit_group(137) to
+// match the OOM-killer convention.
 func (g *generator) emitHeapInitRuntime() {
 	g.line("")
 	g.line(".type __lang_heap_init, %function")
 	g.label("__lang_heap_init")
-	g.emit("push {lr}")
-	g.emit("sub sp, sp, #4") // 8-byte alignment for the syscall
-	g.emit("mov r0, #0")
-	g.emitSyscall(sysBrk)
+	g.emit("push {r4, r5, lr}")
+	g.emit("sub sp, sp, #4") // 16-byte alignment after r4+r5+lr+pad
+	g.emit("mov r0, #0")     // addr = NULL → kernel chooses
+	g.emit("ldr r1, =%d", heapReserveBytes)
+	g.emit("mov r2, #%d", mmapProtReadWrite)
+	g.emit("mov r3, #%d", mmapPrivateAnon)
+	g.emit("mov r4, #-1") // fd = -1 (anonymous)
+	g.emit("mov r5, #0")  // pgoffset
+	g.emitSyscall(sysMmap2)
+	// Linux returns the address (positive) on success, or
+	// -errno (negative) on failure. Addresses on 32-bit user
+	// space are always positive.
+	g.emit("cmp r0, #0")
+	g.emit("blt .Lhinit_oom")
 	g.emit("ldr r1, =__lang_heap_ptr")
 	g.emit("str r0, [r1]")
 	g.emit("ldr r1, =__lang_heap_end")
-	g.emit("str r0, [r1]")
+	g.emit("ldr r2, =%d", heapReserveBytes)
+	g.emit("add r2, r0, r2")
+	g.emit("str r2, [r1]")
 	g.emit("add sp, sp, #4")
-	g.emit("pop {lr}")
+	g.emit("pop {r4, r5, lr}")
 	g.emit("bx lr")
+	g.label(".Lhinit_oom")
+	g.emit("mov r0, #137")
+	g.emitSyscall(sysExitGroup)
 	g.line(".size __lang_heap_init, .-__lang_heap_init")
 }
 
