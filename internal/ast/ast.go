@@ -396,6 +396,11 @@ type FuncDecl struct {
 	Params     []Param
 	ReturnType Type
 	Body       *Block
+	// Public marks this declaration as exported from its module.
+	// Set by the parser when the source carries `pub function …`.
+	// Default false (private) — modload rejects cross-module
+	// references to non-public decls before the checker runs.
+	Public bool
 	// Receiver, when non-nil, marks this declaration as a method on
 	// the struct type Receiver.Type.(StructType).Name. The checker
 	// hoists methods into top-level functions under the mangled name
@@ -424,6 +429,11 @@ type StructDecl struct {
 	P      Position
 	Name   string
 	Fields []Param
+	// Public marks this declaration as exported from its module.
+	// Set by the parser when the source carries `pub struct …`.
+	// Same semantics as FuncDecl.Public — private structs can't be
+	// referenced from other modules.
+	Public bool
 }
 
 type Program struct {

@@ -109,7 +109,7 @@ func callsDirect(fn *ast.FuncDecl, target string) bool {
 // reference.
 func TestLoadCombinesEntryAndImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function greet(): number { return 42; }`,
+		"util.lang": `pub function greet(): number { return 42; }`,
 		"main.lang": `import "./util";
 function main(): number { return util.greet(); }`,
 	})
@@ -172,9 +172,9 @@ function main(): number { return 0; }`,
 // import in a sibling subdirectory resolves through filepath.Join.
 func TestLoadResolvesRelativeToImporter(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"helpers/inner.lang": `function answer(): number { return 7; }`,
+		"helpers/inner.lang": `pub function answer(): number { return 7; }`,
 		"helpers/util.lang": `import "./inner";
-function call_inner(): number { return inner.answer(); }`,
+pub function call_inner(): number { return inner.answer(); }`,
 		"main.lang": `import "./helpers/util";
 function main(): number { return util.call_inner(); }`,
 	})
@@ -195,9 +195,9 @@ function main(): number { return util.call_inner(); }`,
 func TestLoadDetectsCycle(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"a.lang": `import "./b";
-function fa(): number { return b.fb(); }`,
+pub function fa(): number { return b.fb(); }`,
 		"b.lang": `import "./a";
-function fb(): number { return a.fa(); }`,
+pub function fb(): number { return a.fa(); }`,
 	})
 	_, _, err := Load(filepath.Join(dir, "a.lang"))
 	if err == nil {
@@ -212,8 +212,8 @@ function fb(): number { return a.fa(); }`,
 // load-time error — qualified calls would be ambiguous.
 func TestLoadRejectsDuplicateLocalName(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"a/util.lang": `function fa(): number { return 1; }`,
-		"b/util.lang": `function fb(): number { return 2; }`,
+		"a/util.lang": `pub function fa(): number { return 1; }`,
+		"b/util.lang": `pub function fb(): number { return 2; }`,
 		"main.lang": `import "./a/util";
 import "./b/util";
 function main(): number { return util.fa(); }`,
@@ -246,8 +246,8 @@ func TestLoadSingleFileNoImports(t *testing.T) {
 // reference to it gets flattened.
 func TestLoadRewritesCrossModuleStructType(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `struct Point { x: number, y: number }
-function make(x: number, y: number): Point {
+		"point.lang": `pub struct Point { x: number, y: number }
+pub function make(x: number, y: number): Point {
 	return Point { x: x, y: y };
 }`,
 		"main.lang": `import "./point";
@@ -294,7 +294,7 @@ function main(): number {
 // flatten it to the mangled form before the checker sees it.
 func TestLoadRewritesCrossModuleStructLit(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `struct Point { x: number, y: number }`,
+		"point.lang": `pub struct Point { x: number, y: number }`,
 		"main.lang": `import "./point";
 function main(): number {
 	var p: point.Point = point.Point { x: 5, y: 7 };
@@ -321,8 +321,8 @@ function main(): number {
 // position the parser might emit.
 func TestLoadRewritesCrossModuleReturnType(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `struct Point { x: number, y: number }
-function origin(): Point { return Point { x: 0, y: 0 }; }`,
+		"point.lang": `pub struct Point { x: number, y: number }
+pub function origin(): Point { return Point { x: 0, y: 0 }; }`,
 		"main.lang": `import "./point";
 function pickOrigin(): point.Point { return point.origin(); }
 function main(): number { return pickOrigin().x; }`,
@@ -344,11 +344,88 @@ function main(): number { return pickOrigin().x; }`,
 	}
 }
 
+// Cross-module references to a non-`pub` function are a load-time
+// error. The diagnostic mentions the offending qualified name and
+// hints at the fix.
+func TestLoadRejectsPrivateFunctionAccess(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.lang": `function secret(): number { return 9; }`,
+		"main.lang": `import "./util";
+function main(): number { return util.secret(); }`,
+	})
+	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err == nil {
+		t.Fatal("expected visibility error from Load")
+	}
+	if !strings.Contains(err.Error(), "util.secret") || !strings.Contains(err.Error(), "not exported") {
+		t.Errorf("error should mention `util.secret` and `not exported`; got %v", err)
+	}
+}
+
+// Cross-module function-value references (taking a private function
+// as a value, not calling it) are equally rejected.
+func TestLoadRejectsPrivateFunctionValueReference(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.lang": `function secret(): number { return 9; }`,
+		"main.lang": `import "./util";
+function main(): number {
+	var f: () => number = util.secret;
+	return f();
+}`,
+	})
+	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err == nil {
+		t.Fatal("expected visibility error from Load")
+	}
+	if !strings.Contains(err.Error(), "util.secret") {
+		t.Errorf("error should mention `util.secret`; got %v", err)
+	}
+}
+
+// Cross-module struct-type references to a non-`pub` struct are
+// rejected. The fix-hint mentions `pub struct`.
+func TestLoadRejectsPrivateStructType(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"point.lang": `struct Point { x: number, y: number }`,
+		"main.lang": `import "./point";
+function main(): number {
+	var p: point.Point = point.Point { x: 1, y: 2 };
+	return p.x;
+}`,
+	})
+	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err == nil {
+		t.Fatal("expected visibility error from Load")
+	}
+	if !strings.Contains(err.Error(), "point.Point") || !strings.Contains(err.Error(), "pub struct") {
+		t.Errorf("error should mention `point.Point` and the `pub struct` hint; got %v", err)
+	}
+}
+
+// Private decls remain freely callable INSIDE their own module —
+// visibility only gates cross-module access. A non-`pub` helper
+// referenced from a `pub` function in the same file loads cleanly.
+func TestLoadAllowsPrivateAccessWithinSameModule(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.lang": `function helper(): number { return 1; }
+pub function exposed(): number { return helper() + 1; }`,
+		"main.lang": `import "./util";
+function main(): number { return util.exposed(); }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatalf("private same-module access should be allowed: %v", err)
+	}
+	if findFunc(prog, "util__helper") == nil {
+		t.Errorf("private helper should still appear in the combined program; got %v", funcNames(prog))
+	}
+}
+
 // Source map is populated with one entry per loaded module so
 // diagnostics can find the right file for any error position.
 func TestLoadReturnsPerFileSources(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function f(): number { return 1; }`,
+		"util.lang": `pub function f(): number { return 1; }`,
 		"main.lang": `import "./util";
 function main(): number { return util.f(); }`,
 	})

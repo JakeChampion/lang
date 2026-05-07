@@ -24,6 +24,9 @@ func Print(prog *ast.Program) string {
 }
 
 func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
+	if sd.Public {
+		b.WriteString("pub ")
+	}
 	b.WriteString("struct ")
 	b.WriteString(sd.Name)
 	b.WriteString(" { ")
@@ -39,6 +42,9 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 }
 
 func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
+	if fn.Public {
+		b.WriteString("pub ")
+	}
 	b.WriteString("function ")
 	if fn.Receiver != nil {
 		b.WriteByte('(')

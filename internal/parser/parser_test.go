@@ -465,3 +465,49 @@ func TestRegularFunctionStillParses(t *testing.T) {
 		t.Error("regular function got mistakenly parsed as a method")
 	}
 }
+
+// `pub` flips the FuncDecl.Public / StructDecl.Public flags. The
+// modload step inspects those when deciding whether a cross-module
+// reference is allowed.
+func TestPubKeywordSetsPublicFlag(t *testing.T) {
+	prog, err := Parse(`pub function exposed(): number { return 1; }
+function hidden(): number { return 2; }
+pub struct PubPoint { x: number }
+struct PrivPoint { x: number }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		got[fn.Name] = fn.Public
+	}
+	if !got["exposed"] {
+		t.Error("`pub function exposed` should set FuncDecl.Public")
+	}
+	if got["hidden"] {
+		t.Error("`function hidden` should leave FuncDecl.Public false")
+	}
+	gotS := map[string]bool{}
+	for _, sd := range prog.Structs {
+		gotS[sd.Name] = sd.Public
+	}
+	if !gotS["PubPoint"] {
+		t.Error("`pub struct PubPoint` should set StructDecl.Public")
+	}
+	if gotS["PrivPoint"] {
+		t.Error("`struct PrivPoint` should leave StructDecl.Public false")
+	}
+}
+
+// `pub` is only valid in front of `function` or `struct`. `pub var`
+// (or any other kind of decl) should be rejected with a clear
+// message rather than silently swallowed.
+func TestPubBeforeUnsupportedKindIsError(t *testing.T) {
+	_, err := Parse(`pub var x: number = 1;`)
+	if err == nil {
+		t.Fatal("expected parse error for `pub var`")
+	}
+	if !strings.Contains(err.Error(), "pub") {
+		t.Errorf("error should mention `pub`; got %v", err)
+	}
+}

@@ -141,8 +141,8 @@ func runWasmMultiFile(t *testing.T, entry string, files map[string]string) int {
 // arm32 e2e check, run through wasmtime.
 func TestWASMCrossModuleStructType(t *testing.T) {
 	got := runWasmMultiFile(t, "main.lang", map[string]string{
-		"point.lang": `struct Point { x: number, y: number }
-function make(x: number, y: number): Point {
+		"point.lang": `pub struct Point { x: number, y: number }
+pub function make(x: number, y: number): Point {
 	return Point { x: x, y: y };
 }`,
 		"main.lang": `import "./point";

@@ -286,3 +286,21 @@ function b(): number { return 2; }`)
 		t.Errorf("expected blank line between top-level functions:\n%s", got)
 	}
 }
+
+// `pub` round-trips: the formatter emits it back in front of
+// `function` / `struct` so private vs exported decls stay
+// distinguishable in formatted source.
+func TestFormatPubKeywordRoundTrips(t *testing.T) {
+	got := formatSrc(t, `pub struct Point { x: number, y: number }
+pub function exposed(): number { return 1; }
+function hidden(): number { return 2; }`)
+	if !strings.Contains(got, "pub struct Point") {
+		t.Errorf("expected `pub struct Point` in output:\n%s", got)
+	}
+	if !strings.Contains(got, "pub function exposed") {
+		t.Errorf("expected `pub function exposed` in output:\n%s", got)
+	}
+	if strings.Contains(got, "pub function hidden") {
+		t.Errorf("private `function hidden` should not gain a `pub`:\n%s", got)
+	}
+}

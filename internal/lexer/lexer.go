@@ -77,6 +77,7 @@ var keywords = map[string]bool{
 	"default":  true,
 	"struct":   true,
 	"import":   true,
+	"pub":      true,
 }
 
 // Multi-character punctuators, longest first. The 3-char compound
