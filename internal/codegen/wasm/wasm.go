@@ -41,8 +41,12 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	}
 	ir.Inline(ip)
 	ir.FuseTee(ip)
-	ir.PropagateCopies(ip)
-	ir.Fold(ip)
+	// PropagateCopies + ConstPropagate + Fold expose new
+	// opportunities for each other (a const propagated into an
+	// arithmetic expression folds; the fold makes a tee dead;
+	// dropping the tee makes constants adjacent for further
+	// folding). Run them to a fixed point so the cascade settles.
+	ir.OptimizeCleanup(ip)
 	ir.EliminateDeadCode(ip)
 	return EmitFromIR(prog, info, ip)
 }

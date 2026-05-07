@@ -45,8 +45,10 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	// useful.
 	ir.Inline(ip)
 	ir.FuseTee(ip)
-	ir.PropagateCopies(ip)
-	ir.Fold(ip)
+	// PropagateCopies + ConstPropagate + Fold expose new
+	// opportunities for each other; run them to a fixed point so
+	// the cascade settles.
+	ir.OptimizeCleanup(ip)
 	ir.EliminateDeadCode(ip)
 	ir.TailCallOptimize(ip)
 

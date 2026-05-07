@@ -75,6 +75,14 @@ func foldOnce(ops []Op) []Op {
 				continue
 			}
 		}
+		// const ; drop pair → remove both. ConstPropagate plus the
+		// dead-store rewrite in PropagateCopies leave behind
+		// `const X ; OpDrop` chains; collapse them so the operand
+		// stack stays balanced without the noise.
+		if i+1 < len(ops) && isFoldableConst(ops[i].Kind) && ops[i+1].Kind == OpDrop {
+			i++ // also consume the OpDrop
+			continue
+		}
 		// Unary fold: OpConstI32 a; OpNot.
 		if i+1 < len(ops) && ops[i].Kind == OpConstI32 && ops[i+1].Kind == OpNot {
 			a := ops[i].I32
@@ -161,6 +169,17 @@ func scanIfBlock(ops []Op, ifIdx int) (elseIdx, endIdx int) {
 func endOfIfBlock(ops []Op, ifIdx int) int {
 	_, end := scanIfBlock(ops, ifIdx)
 	return end // outer `i++` from the for loop steps past the OpEnd
+}
+
+// isFoldableConst reports whether a const op carries a value that's
+// safe to drop wholesale — no side effects, no allocator
+// interaction. All four IR const ops qualify.
+func isFoldableConst(k OpKind) bool {
+	switch k {
+	case OpConstI32, OpConstF32, OpConstStr, OpConstFunc:
+		return true
+	}
+	return false
 }
 
 // isFoldableBinary reports whether a binary op produces a deterministic
