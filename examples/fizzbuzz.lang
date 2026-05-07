@@ -1,5 +1,5 @@
 function divisible(n: number, by: number): boolean {
-  return n - (n / by) * by == 0;
+  return n - n / by * by == 0;
 }
 
 function main(): number {
@@ -15,7 +15,7 @@ function main(): number {
     } else {
       putchar(46);  // .
     }
-    putchar(10);    // newline
+    putchar(10);  // newline
     i = i + 1;
   }
   return 0;
