@@ -95,26 +95,34 @@ type Error struct {
 func (e *Error) Error() string         { return fmt.Sprintf("lex error at %s: %s", e.Pos, e.Msg) }
 func (e *Error) Position() ast.Position { return e.Pos }
 
-// Tokenize turns src into a slice of tokens terminated by an EOF token.
-func Tokenize(src string) ([]Token, error) {
+// Tokenize turns src into a slice of tokens terminated by an EOF
+// token, plus the `//` line comments encountered along the way (in
+// source order). Comments are returned separately rather than as a
+// token kind so the parser can stay grammar-only — formatter / LSP
+// / hover-doc consumers walk the comment list explicitly.
+func Tokenize(src string) ([]Token, []ast.Comment, error) {
 	l := &lexer{src: src, line: 1, col: 1}
 	var out []Token
 	for {
 		tok, err := l.next()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, tok)
 		if tok.Kind == EOF {
-			return out, nil
+			return out, l.comments, nil
 		}
 	}
 }
 
 type lexer struct {
-	src        string
-	i          int
-	line, col  int
+	src       string
+	i         int
+	line, col int
+	// comments accumulates every `//` line comment in source
+	// order. Populated by skipTrivia; exposed via the second
+	// Tokenize return value.
+	comments []ast.Comment
 }
 
 func (l *lexer) peek() (rune, bool) {
@@ -145,9 +153,21 @@ func (l *lexer) skipTrivia() {
 		case unicode.IsSpace(r):
 			l.advance()
 		case r == '/' && l.i+1 < len(l.src) && l.src[l.i+1] == '/':
+			// Capture the comment with its starting position. Skip
+			// the leading `//` so the recorded text is just the
+			// human-readable body. Newline at end-of-comment is
+			// left for the next skipTrivia iteration to consume.
+			start := l.pos()
+			l.advance() // first /
+			l.advance() // second /
+			textStart := l.i
 			for l.i < len(l.src) && l.src[l.i] != '\n' {
 				l.advance()
 			}
+			l.comments = append(l.comments, ast.Comment{
+				Pos:  start,
+				Text: l.src[textStart:l.i],
+			})
 		default:
 			return
 		}

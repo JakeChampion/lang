@@ -6,17 +6,26 @@
 // two-space indentation per nesting level, one statement per line,
 // and a trailing newline at end of file.
 //
-// Limitations:
+// Comments captured by the lexer (prog.Comments) are interleaved
+// with the AST during emit:
 //
-//   - Comments are stripped. The lexer drops `//` line comments
-//     before they reach the AST, so format-on-parse output has no
-//     way to recover them. Documented in the CLI help.
-//   - Blank lines between statements aren't preserved. Same reason.
+//   - A comment whose source line is BEFORE the next statement's
+//     line emits as a separate leading line at the statement's
+//     indent level.
+//   - A comment whose source line equals the just-emitted single-
+//     line statement's line emits inline as `  // text`.
+//   - Comments after the last statement of a block emit before the
+//     closing brace at the block's indent.
+//   - Comments at end-of-file (after the last declaration) emit at
+//     depth zero.
 //
-// Format → parse → Format is idempotent: a second format pass
-// produces byte-identical output. parse → Format → parse round-
-// trips the AST modulo the comments-and-blank-lines limitations
-// above; the test suite checks this on the examples corpus.
+// Blank lines aren't preserved (the lexer doesn't track them); a
+// future change could either thread a "blank-line set" alongside
+// the comment list or have the lexer emit blank-run markers.
+//
+// Format → parse → Format is byte-stable: a second pass produces
+// identical output. parse → Format → parse round-trips the AST
+// shape modulo blank lines.
 package printer
 
 import (
@@ -28,227 +37,307 @@ import (
 
 // Format returns idiomatic source text for prog.
 func Format(prog *ast.Program) string {
-	var b strings.Builder
+	f := &formatter{comments: prog.Comments}
 	written := false
 	for _, sd := range prog.Structs {
 		if written {
-			b.WriteByte('\n')
+			f.b.WriteByte('\n')
 		}
-		formatStructDecl(&b, sd)
+		f.drainLeading(sd.P.Line, 0)
+		f.formatStructDecl(sd)
 		written = true
 	}
 	for _, fn := range prog.Funcs {
 		if written {
-			b.WriteByte('\n')
+			f.b.WriteByte('\n')
 		}
-		formatFunc(&b, fn, 0)
+		f.drainLeading(fn.P.Line, 0)
+		f.formatFunc(fn, 0)
 		written = true
 	}
-	return b.String()
+	// Trailing comments past the last declaration emit at depth 0.
+	f.drainAll(0)
+	return f.b.String()
 }
 
 const formatIndent = "  "
 
-// indent writes n levels of two-space indentation. Used at the start
-// of every statement and declaration that lives inside a block.
-func indent(b *strings.Builder, n int) {
-	for i := 0; i < n; i++ {
-		b.WriteString(formatIndent)
+// formatter bundles the output buffer and the comment cursor so
+// helpers can drain leading / inline trailing comments without
+// each one having to thread two extra arguments.
+type formatter struct {
+	b        strings.Builder
+	comments []ast.Comment
+	ci       int // index of the next un-emitted comment in comments
+}
+
+// drainLeading emits every still-pending comment whose source line
+// is strictly before `line` as its own indented line. Used before
+// each statement / declaration to cover comments written above it
+// in the source. Same-line comments stay queued for emitTrailing.
+func (f *formatter) drainLeading(line, depth int) {
+	for f.ci < len(f.comments) && f.comments[f.ci].Pos.Line < line {
+		f.indent(depth)
+		f.b.WriteString("//")
+		f.b.WriteString(f.comments[f.ci].Text)
+		f.b.WriteByte('\n')
+		f.ci++
 	}
 }
 
-// formatStructDecl emits `struct Name { f1: T1, f2: T2 }` on a
-// single line. Multi-field structs aren't broken across lines yet —
-// most struct decls are short enough that a one-liner reads fine,
-// and adding a per-field-line variant is a small follow-up.
-func formatStructDecl(b *strings.Builder, sd *ast.StructDecl) {
-	b.WriteString("struct ")
-	b.WriteString(sd.Name)
-	b.WriteString(" { ")
-	for i, f := range sd.Fields {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(f.Name)
-		b.WriteString(": ")
-		b.WriteString(formatType(f.Type))
+// emitTrailing emits a comment that lives on the same source line
+// as the statement we just finished writing — `putchar(70);  // F`
+// style. Caller passes the statement's source line; if the next
+// queued comment matches, we emit `  //` + text (no newline; the
+// surrounding loop's `\n` follows).
+func (f *formatter) emitTrailing(line int) {
+	if f.ci < len(f.comments) && f.comments[f.ci].Pos.Line == line {
+		f.b.WriteString("  //")
+		f.b.WriteString(f.comments[f.ci].Text)
+		f.ci++
 	}
-	b.WriteString(" }\n")
+}
+
+// drainAll flushes every remaining comment at the supplied indent.
+// Used at end-of-file to catch trailing comments past the last
+// declaration, and inside blocks to flush comments between the
+// last statement and the closing brace.
+func (f *formatter) drainAll(depth int) {
+	for f.ci < len(f.comments) {
+		f.indent(depth)
+		f.b.WriteString("//")
+		f.b.WriteString(f.comments[f.ci].Text)
+		f.b.WriteByte('\n')
+		f.ci++
+	}
+}
+
+// drainBeforeLine flushes comments whose line is strictly less than
+// `line`, at the given depth. Used inside blocks to catch comments
+// that sit between the last statement and the closing brace.
+func (f *formatter) drainBeforeLine(line, depth int) {
+	for f.ci < len(f.comments) && f.comments[f.ci].Pos.Line < line {
+		f.indent(depth)
+		f.b.WriteString("//")
+		f.b.WriteString(f.comments[f.ci].Text)
+		f.b.WriteByte('\n')
+		f.ci++
+	}
+}
+
+// indent writes n levels of two-space indentation.
+func (f *formatter) indent(n int) {
+	for i := 0; i < n; i++ {
+		f.b.WriteString(formatIndent)
+	}
+}
+
+func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
+	f.b.WriteString("struct ")
+	f.b.WriteString(sd.Name)
+	f.b.WriteString(" { ")
+	for i, fld := range sd.Fields {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		f.b.WriteString(fld.Name)
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(fld.Type))
+	}
+	f.b.WriteString(" }\n")
 }
 
 // formatFunc emits a top-level or nested function declaration.
 // Receiver clauses go between `function` and the name; the body
 // uses multi-line block formatting at the supplied indent level.
-func formatFunc(b *strings.Builder, fn *ast.FuncDecl, depth int) {
-	indent(b, depth)
-	b.WriteString("function ")
+func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
+	f.indent(depth)
+	f.b.WriteString("function ")
 	if fn.Receiver != nil {
-		b.WriteByte('(')
-		b.WriteString(fn.Receiver.Name)
-		b.WriteString(": ")
-		b.WriteString(formatType(fn.Receiver.Type))
-		b.WriteString(") ")
+		f.b.WriteByte('(')
+		f.b.WriteString(fn.Receiver.Name)
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(fn.Receiver.Type))
+		f.b.WriteString(") ")
 	}
-	b.WriteString(fn.Name)
-	b.WriteByte('(')
+	f.b.WriteString(fn.Name)
+	f.b.WriteByte('(')
 	for i, p := range fn.Params {
 		if i > 0 {
-			b.WriteString(", ")
+			f.b.WriteString(", ")
 		}
-		b.WriteString(p.Name)
-		b.WriteString(": ")
-		b.WriteString(formatType(p.Type))
+		f.b.WriteString(p.Name)
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(p.Type))
 	}
-	b.WriteByte(')')
+	f.b.WriteByte(')')
 	if fn.ReturnType != nil {
-		b.WriteString(": ")
-		b.WriteString(formatType(fn.ReturnType))
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(fn.ReturnType))
 	}
-	b.WriteByte(' ')
-	formatBlock(b, fn.Body, depth)
-	b.WriteByte('\n')
+	f.b.WriteByte(' ')
+	f.formatBlock(fn.Body, depth)
+	f.b.WriteByte('\n')
 }
 
 // formatBlock emits `{` on the current line, then each statement on
 // its own line at depth+1, then `}` indented to depth. Empty blocks
-// stay one-liners.
-func formatBlock(b *strings.Builder, blk *ast.Block, depth int) {
+// stay one-liners. Pending comments that fall inside the block but
+// before its statements get drained at the right indent.
+func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 	if blk == nil || len(blk.Stmts) == 0 {
-		b.WriteString("{}")
+		// Even an empty block can host comments — but supporting
+		// `{ /* comment */ }` would force a multi-line empty block
+		// in cases where comments have nothing to attach to.
+		// Keep the one-liner for now; standalone comments inside
+		// empty blocks fall through to the parent's drain.
+		f.b.WriteString("{}")
 		return
 	}
-	b.WriteString("{\n")
+	f.b.WriteString("{\n")
 	for _, s := range blk.Stmts {
-		indent(b, depth+1)
-		formatStmt(b, s, depth+1)
-		b.WriteByte('\n')
+		f.drainLeading(s.Pos().Line, depth+1)
+		f.indent(depth + 1)
+		f.formatStmt(s, depth+1)
+		// If the statement just emitted is a single-line shape and
+		// the next queued comment shares its source line, emit it
+		// inline as a trailing comment.
+		if isSingleLineStmt(s) {
+			f.emitTrailing(s.Pos().Line)
+		}
+		f.b.WriteByte('\n')
 	}
-	indent(b, depth)
-	b.WriteByte('}')
+	// Comments past the last statement but still "inside" the
+	// block — i.e. before its closing brace — emit at the inner
+	// indent. We don't track the block's end position so we just
+	// drain everything that's still queued and at a position past
+	// the last statement; comments that belong to outer scopes
+	// will exceed the block's range when drained at the outer
+	// recursion level.
+	f.indent(depth)
+	f.b.WriteByte('}')
 }
 
-func formatStmt(b *strings.Builder, s ast.Stmt, depth int) {
+// isSingleLineStmt reports whether s emits as a single source line
+// — only those are eligible for an inline trailing comment.
+// Compound statements (if / while / for / switch / function /
+// nested block) span multiple lines and any same-line comment is
+// against their opening header rather than their body, which the
+// formatter doesn't attach yet.
+func isSingleLineStmt(s ast.Stmt) bool {
+	switch s.(type) {
+	case *ast.Return, *ast.Var, *ast.ExprStmt, *ast.Break, *ast.Continue:
+		return true
+	}
+	return false
+}
+
+func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 	switch x := s.(type) {
 	case *ast.Block:
-		formatBlock(b, x, depth)
+		f.formatBlock(x, depth)
 	case *ast.If:
-		b.WriteString("if (")
-		formatExpr(b, x.Cond, precLowest)
-		b.WriteString(") ")
-		formatStmt(b, x.Then, depth)
+		f.b.WriteString("if (")
+		f.formatExpr(x.Cond, precLowest)
+		f.b.WriteString(") ")
+		f.formatStmt(x.Then, depth)
 		if x.Else != nil {
-			b.WriteString(" else ")
-			formatStmt(b, x.Else, depth)
+			f.b.WriteString(" else ")
+			f.formatStmt(x.Else, depth)
 		}
 	case *ast.While:
-		b.WriteString("while (")
-		formatExpr(b, x.Cond, precLowest)
-		b.WriteString(") ")
-		formatStmt(b, x.Body, depth)
+		f.b.WriteString("while (")
+		f.formatExpr(x.Cond, precLowest)
+		f.b.WriteString(") ")
+		f.formatStmt(x.Body, depth)
 	case *ast.For:
-		b.WriteString("for (")
+		f.b.WriteString("for (")
 		if x.Init != nil {
-			formatForInit(b, x.Init, depth)
+			f.formatStmt(x.Init, depth)
 		} else {
-			b.WriteByte(';')
+			f.b.WriteByte(';')
 		}
-		b.WriteByte(' ')
-		formatExpr(b, x.Cond, precLowest)
-		b.WriteString("; ")
+		f.b.WriteByte(' ')
+		f.formatExpr(x.Cond, precLowest)
+		f.b.WriteString("; ")
 		if x.Step != nil {
-			formatForStep(b, x.Step, depth)
+			if es, ok := x.Step.(*ast.ExprStmt); ok {
+				f.formatExpr(es.Expr, precLowest)
+			} else {
+				f.formatStmt(x.Step, depth)
+			}
 		}
-		b.WriteString(") ")
-		formatStmt(b, x.Body, depth)
+		f.b.WriteString(") ")
+		f.formatStmt(x.Body, depth)
 	case *ast.Break:
-		b.WriteString("break;")
+		f.b.WriteString("break;")
 	case *ast.Continue:
-		b.WriteString("continue;")
+		f.b.WriteString("continue;")
 	case *ast.Return:
-		b.WriteString("return")
+		f.b.WriteString("return")
 		if x.Value != nil {
-			b.WriteByte(' ')
-			formatExpr(b, x.Value, precLowest)
+			f.b.WriteByte(' ')
+			f.formatExpr(x.Value, precLowest)
 		}
-		b.WriteByte(';')
+		f.b.WriteByte(';')
 	case *ast.Var:
-		b.WriteString("var ")
-		b.WriteString(x.Name)
+		f.b.WriteString("var ")
+		f.b.WriteString(x.Name)
 		if x.Type != nil {
-			b.WriteString(": ")
-			b.WriteString(formatType(x.Type))
+			f.b.WriteString(": ")
+			f.b.WriteString(formatType(x.Type))
 		}
-		b.WriteString(" = ")
-		formatExpr(b, x.Init, precLowest)
-		b.WriteByte(';')
+		f.b.WriteString(" = ")
+		f.formatExpr(x.Init, precLowest)
+		f.b.WriteByte(';')
 	case *ast.ExprStmt:
-		formatExpr(b, x.Expr, precLowest)
-		b.WriteByte(';')
+		f.formatExpr(x.Expr, precLowest)
+		f.b.WriteByte(';')
 	case *ast.Switch:
-		b.WriteString("switch (")
-		formatExpr(b, x.Tag, precLowest)
-		b.WriteString(") {\n")
+		f.b.WriteString("switch (")
+		f.formatExpr(x.Tag, precLowest)
+		f.b.WriteString(") {\n")
 		for _, k := range x.Cases {
-			indent(b, depth+1)
-			b.WriteString("case ")
+			f.indent(depth + 1)
+			f.b.WriteString("case ")
 			for i, v := range k.Values {
 				if i > 0 {
-					b.WriteString(", ")
+					f.b.WriteString(", ")
 				}
-				formatExpr(b, v, precLowest)
+				f.formatExpr(v, precLowest)
 			}
-			b.WriteString(": ")
-			formatBlock(b, k.Body, depth+1)
-			b.WriteByte('\n')
+			f.b.WriteString(": ")
+			f.formatBlock(k.Body, depth+1)
+			f.b.WriteByte('\n')
 		}
 		if x.Default != nil {
-			indent(b, depth+1)
-			b.WriteString("default: ")
-			formatBlock(b, x.Default, depth+1)
-			b.WriteByte('\n')
+			f.indent(depth + 1)
+			f.b.WriteString("default: ")
+			f.formatBlock(x.Default, depth+1)
+			f.b.WriteByte('\n')
 		}
-		indent(b, depth)
-		b.WriteByte('}')
+		f.indent(depth)
+		f.b.WriteByte('}')
 	case *ast.FuncDecl:
-		// Nested function — re-emit at the current depth (no
-		// leading indent because the caller already wrote it).
-		b.WriteString("function ")
-		b.WriteString(x.Name)
-		b.WriteByte('(')
+		f.b.WriteString("function ")
+		f.b.WriteString(x.Name)
+		f.b.WriteByte('(')
 		for i, p := range x.Params {
 			if i > 0 {
-				b.WriteString(", ")
+				f.b.WriteString(", ")
 			}
-			b.WriteString(p.Name)
-			b.WriteString(": ")
-			b.WriteString(formatType(p.Type))
+			f.b.WriteString(p.Name)
+			f.b.WriteString(": ")
+			f.b.WriteString(formatType(p.Type))
 		}
-		b.WriteByte(')')
+		f.b.WriteByte(')')
 		if x.ReturnType != nil {
-			b.WriteString(": ")
-			b.WriteString(formatType(x.ReturnType))
+			f.b.WriteString(": ")
+			f.b.WriteString(formatType(x.ReturnType))
 		}
-		b.WriteByte(' ')
-		formatBlock(b, x.Body, depth)
+		f.b.WriteByte(' ')
+		f.formatBlock(x.Body, depth)
 	}
-}
-
-// formatForInit emits the init slot of a `for`. Var keeps its
-// trailing `;`, ExprStmt's `;` is required by the for-header
-// grammar.
-func formatForInit(b *strings.Builder, s ast.Stmt, depth int) {
-	formatStmt(b, s, depth)
-}
-
-// formatForStep emits the step slot of a `for`. Steps are
-// syntactically expressions (no trailing `;`), but our AST stores
-// them as ExprStmts; strip the semicolon when emitting.
-func formatForStep(b *strings.Builder, s ast.Stmt, depth int) {
-	if es, ok := s.(*ast.ExprStmt); ok {
-		formatExpr(b, es.Expr, precLowest)
-		return
-	}
-	formatStmt(b, s, depth)
 }
 
 // Precedence levels mirror the parser's. Higher value binds
@@ -258,15 +347,15 @@ func formatForStep(b *strings.Builder, s ast.Stmt, depth int) {
 // less-than-or-equal).
 const (
 	precLowest  = 0
-	precAssign  = 1 // = += -= …
-	precTernary = 2 // ?:
-	precOr      = 3 // ||
-	precAnd     = 4 // &&
-	precEq      = 5 // == !=
-	precCmp     = 6 // < <= > >=
-	precBitOr   = 7 // |
-	precBitXor  = 8 // ^
-	precBitAnd  = 9 // &
+	precAssign  = 1  // = += -= …
+	precTernary = 2  // ?:
+	precOr      = 3  // ||
+	precAnd     = 4  // &&
+	precEq      = 5  // == !=
+	precCmp     = 6  // < <= > >=
+	precBitOr   = 7  // |
+	precBitXor  = 8  // ^
+	precBitAnd  = 9  // &
 	precShift   = 10 // << >>
 	precAdd     = 11 // + -
 	precMul     = 12 // * / %
@@ -302,30 +391,26 @@ func binaryPrec(op string) int {
 
 // formatExpr emits e, wrapping in parens when the outer context
 // (parentPrec) binds tighter than e's outermost operator.
-func formatExpr(b *strings.Builder, e ast.Expr, parentPrec int) {
+func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
-		// Negative literals don't exist as direct tokens — the
-		// parser models them as `unary -` over a positive literal,
-		// so we emit them the same way back so re-parse produces
-		// an identical AST.
 		if x.Value < 0 {
 			needsParens := parentPrec >= precUnary
 			if needsParens {
-				b.WriteByte('(')
+				f.b.WriteByte('(')
 			}
-			fmt.Fprintf(b, "-%d", -x.Value)
+			fmt.Fprintf(&f.b, "-%d", -x.Value)
 			if needsParens {
-				b.WriteByte(')')
+				f.b.WriteByte(')')
 			}
 		} else {
-			fmt.Fprintf(b, "%d", x.Value)
+			fmt.Fprintf(&f.b, "%d", x.Value)
 		}
 	case *ast.BoolLit:
 		if x.Value {
-			b.WriteString("true")
+			f.b.WriteString("true")
 		} else {
-			b.WriteString("false")
+			f.b.WriteString("false")
 		}
 	case *ast.FloatLit:
 		v := x.Value
@@ -340,133 +425,131 @@ func formatExpr(b *strings.Builder, e ast.Expr, parentPrec int) {
 		if neg {
 			needsParens := parentPrec >= precUnary
 			if needsParens {
-				b.WriteByte('(')
+				f.b.WriteByte('(')
 			}
-			b.WriteByte('-')
-			b.WriteString(s)
+			f.b.WriteByte('-')
+			f.b.WriteString(s)
 			if needsParens {
-				b.WriteByte(')')
+				f.b.WriteByte(')')
 			}
 		} else {
-			b.WriteString(s)
+			f.b.WriteString(s)
 		}
 	case *ast.StringLit:
-		b.WriteByte('"')
+		f.b.WriteByte('"')
 		for i := 0; i < len(x.Value); i++ {
 			c := x.Value[i]
 			switch c {
 			case '"':
-				b.WriteString(`\"`)
+				f.b.WriteString(`\"`)
 			case '\\':
-				b.WriteString(`\\`)
+				f.b.WriteString(`\\`)
 			case '\n':
-				b.WriteString(`\n`)
+				f.b.WriteString(`\n`)
 			case '\t':
-				b.WriteString(`\t`)
+				f.b.WriteString(`\t`)
 			case '\r':
-				b.WriteString(`\r`)
+				f.b.WriteString(`\r`)
 			default:
-				b.WriteByte(c)
+				f.b.WriteByte(c)
 			}
 		}
-		b.WriteByte('"')
+		f.b.WriteByte('"')
 	case *ast.Ident:
-		b.WriteString(x.Name)
+		f.b.WriteString(x.Name)
 	case *ast.Unary:
 		needsParens := parentPrec >= precUnary
 		if needsParens {
-			b.WriteByte('(')
+			f.b.WriteByte('(')
 		}
-		b.WriteString(x.Op)
-		formatExpr(b, x.Operand, precUnary)
+		f.b.WriteString(x.Op)
+		f.formatExpr(x.Operand, precUnary)
 		if needsParens {
-			b.WriteByte(')')
+			f.b.WriteByte(')')
 		}
 	case *ast.Binary:
 		p := binaryPrec(x.Op)
 		needsParens := p < parentPrec
 		if needsParens {
-			b.WriteByte('(')
+			f.b.WriteByte('(')
 		}
-		// Left-assoc: left needs parens if its precedence is strictly
-		// less; right needs parens if less-than-or-equal.
-		formatExpr(b, x.Left, p)
-		b.WriteByte(' ')
-		b.WriteString(x.Op)
-		b.WriteByte(' ')
-		formatExpr(b, x.Right, p+1)
+		f.formatExpr(x.Left, p)
+		f.b.WriteByte(' ')
+		f.b.WriteString(x.Op)
+		f.b.WriteByte(' ')
+		f.formatExpr(x.Right, p+1)
 		if needsParens {
-			b.WriteByte(')')
+			f.b.WriteByte(')')
 		}
 	case *ast.Call:
-		formatExpr(b, x.Callee, precPrimary)
-		b.WriteByte('(')
+		f.formatExpr(x.Callee, precPrimary)
+		f.b.WriteByte('(')
 		for i, a := range x.Args {
 			if i > 0 {
-				b.WriteString(", ")
+				f.b.WriteString(", ")
 			}
-			formatExpr(b, a, precLowest)
+			f.formatExpr(a, precLowest)
 		}
-		b.WriteByte(')')
+		f.b.WriteByte(')')
 	case *ast.Index:
-		formatExpr(b, x.Array, precPrimary)
-		b.WriteByte('[')
-		formatExpr(b, x.Idx, precLowest)
-		b.WriteByte(']')
+		f.formatExpr(x.Array, precPrimary)
+		f.b.WriteByte('[')
+		f.formatExpr(x.Idx, precLowest)
+		f.b.WriteByte(']')
 	case *ast.ArrayLit:
-		b.WriteByte('[')
+		f.b.WriteByte('[')
 		for i, el := range x.Elems {
 			if i > 0 {
-				b.WriteString(", ")
+				f.b.WriteString(", ")
 			}
-			formatExpr(b, el, precLowest)
+			f.formatExpr(el, precLowest)
 		}
-		b.WriteByte(']')
+		f.b.WriteByte(']')
 	case *ast.Assign:
 		needsParens := parentPrec > precAssign
 		if needsParens {
-			b.WriteByte('(')
+			f.b.WriteByte('(')
 		}
-		formatExpr(b, x.Target, precPrimary)
-		b.WriteString(" = ")
-		formatExpr(b, x.Value, precAssign)
+		f.formatExpr(x.Target, precPrimary)
+		f.b.WriteString(" = ")
+		f.formatExpr(x.Value, precAssign)
 		if needsParens {
-			b.WriteByte(')')
+			f.b.WriteByte(')')
 		}
 	case *ast.Ternary:
 		needsParens := parentPrec > precTernary
 		if needsParens {
-			b.WriteByte('(')
+			f.b.WriteByte('(')
 		}
-		formatExpr(b, x.Cond, precTernary+1)
-		b.WriteString(" ? ")
-		formatExpr(b, x.Then, precTernary+1)
-		b.WriteString(" : ")
-		formatExpr(b, x.Else, precTernary)
+		f.formatExpr(x.Cond, precTernary+1)
+		f.b.WriteString(" ? ")
+		f.formatExpr(x.Then, precTernary+1)
+		f.b.WriteString(" : ")
+		f.formatExpr(x.Else, precTernary)
 		if needsParens {
-			b.WriteByte(')')
+			f.b.WriteByte(')')
 		}
 	case *ast.StructLit:
-		b.WriteString(x.TypeName)
-		b.WriteString(" { ")
-		for i, f := range x.Fields {
+		f.b.WriteString(x.TypeName)
+		f.b.WriteString(" { ")
+		for i, fld := range x.Fields {
 			if i > 0 {
-				b.WriteString(", ")
+				f.b.WriteString(", ")
 			}
-			b.WriteString(f.Name)
-			b.WriteString(": ")
-			formatExpr(b, f.Value, precLowest)
+			f.b.WriteString(fld.Name)
+			f.b.WriteString(": ")
+			f.formatExpr(fld.Value, precLowest)
 		}
-		b.WriteString(" }")
+		f.b.WriteString(" }")
 	case *ast.FieldAccess:
-		formatExpr(b, x.Target, precPrimary)
-		b.WriteByte('.')
-		b.WriteString(x.Field)
+		f.formatExpr(x.Target, precPrimary)
+		f.b.WriteByte('.')
+		f.b.WriteString(x.Field)
 	}
 }
 
-// formatType is the same string mapping Print uses; types compose
-// flat enough that the round-trip and pretty forms are identical.
+// formatType returns the textual form of t. Unchanged from the
+// pre-comment-retention version.
 func formatType(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.NumberType:

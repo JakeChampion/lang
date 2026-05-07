@@ -27,13 +27,18 @@ func (e *Error) Position() ast.Position { return e.Pos }
 // recovers from per-statement and per-function errors and continues so
 // it can report many problems in one pass; the returned error (if any)
 // is a diag.Errors of every problem found.
+//
+// Comments captured by the lexer ride along on prog.Comments — the
+// parser doesn't otherwise consume them, leaving the formatter (or
+// any other tooling pass) free to walk them in source order.
 func Parse(src string) (*ast.Program, error) {
-	tokens, err := lexer.Tokenize(src)
+	tokens, comments, err := lexer.Tokenize(src)
 	if err != nil {
 		return nil, err
 	}
 	p := &parser{tokens: tokens}
 	prog := p.parseProgram()
+	prog.Comments = comments
 	if len(p.errors) > 0 {
 		return prog, diag.Errors(p.errors)
 	}
