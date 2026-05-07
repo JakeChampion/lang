@@ -340,7 +340,10 @@ func TestStructLitAllocatesAndStores(t *testing.T) {
 }
 
 func TestStringConcatEmitsHelper(t *testing.T) {
-	wat := compileToWAT(t, `function main(): void { print("a" + "b"); }`)
+	// Use a parameter to defeat the IR-level `literal+literal`
+	// fold (which would otherwise collapse `"a" + "b"` to a
+	// single OpConstStr "ab" in the IR builder).
+	wat := compileToWAT(t, `function f(s: string): string { return s + "b"; }`)
 	mustContain(t, wat, "$__str_concat")
 	mustContain(t, wat, "call $__str_concat")
 }
