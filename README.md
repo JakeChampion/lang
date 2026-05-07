@@ -254,21 +254,31 @@ collapses to a single `const.i32 27 ; return` after the pipeline.
 
 ## Calling conventions
 
-**ARM32**: standard AAPCS. The IR's operand stack maps to
-`push / pop {r0}` on the runtime stack; binary operators pop right
-into r0 and left into r1. Args 0..3 in r0..r3; extras from the
-caller's stack at `fp+8`, `fp+12`, … Leaf functions (no calls in the
-body) pin their parameters to callee-saved r4..r7 instead of
-spilling. Heap-backed values (arrays, strings, structs) come from
-`__lang_alloc`, a tiny libc-malloc wrapper the emitter generates on
-demand. Strings carry a 4-byte little-endian length prefix at
-`ptr - 4` (with a trailing NUL preserved so libc still works for
-`strcmp` etc.). Float operations use VFPv2 — the emitter declares
+**ARM32**: standard AAPCS, but the binary is libc-free. We link
+with `gcc -static -nostdlib`, emit our own `_start` (captures
+argc / argv / envp from the kernel's initial stack into .bss
+globals, aligns sp, initialises the bump heap, then calls
+`main`), and bottom out every I/O operation in a direct `svc 0`
+syscall (`read` / `write` / `open` / `close` / `lseek` /
+`brk` / `exit_group`). Errno arrives as `-r0` from the kernel —
+no `__errno_location`. The IR's operand stack maps to
+`push / pop {r0}` on the runtime stack; binary operators pop
+right into r0 and left into r1. Args 0..3 in r0..r3; extras from
+the caller's stack at `fp+8`, `fp+12`, … Leaf functions (no calls
+in the body) pin their parameters to callee-saved r4..r7 instead
+of spilling. Heap-backed values (arrays, strings, structs) come
+from `__lang_alloc`, a brk-extended bump arena: aligned bump on
+the fast path, `brk(2)` syscall in 64 KiB increments on the slow
+path, no per-allocation header and no individual `free`. Strings
+carry a 4-byte little-endian length prefix at `ptr - 4` (with a
+trailing NUL preserved so our own `__lang_strcmp` /
+`__lang_memcpy` / `__lang_strlen` keep working on the same data
+pointer). Integer division / modulo lower to inline `sdiv` /
+`mls` from the ARMv7-A idiv extension (no `__aeabi_idiv` from
+libgcc). Float operations use VFPv2 — the emitter declares
 `.fpu vfpv2`, keeps f32 bit patterns flowing through the integer
-operand stack, and `vmov`s them into single-precision s-registers
-just for `vadd.f32` / `vcmp.f32` / etc., so the calling convention
-stays soft-float-style and avoids any `-mfloat-abi=hard` coupling
-with the host gcc.
+operand stack, and `vmov`s them into single-precision
+s-registers just for `vadd.f32` / `vcmp.f32` / etc.
 
 **WASM**: standard WASM calling convention. A `funcref` table holds
 every function referenced as a value (or hoisted by closure

@@ -242,9 +242,13 @@ func link(asm, outPath, cc string) error {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		return err
 	}
-	// `-g` keeps the .file/.loc directives we emit in the form of
-	// DWARF line-number tables, so gdb / addr2line work on the binary.
-	cmd := exec.Command(cc, "-static", "-g", asmPath, "-o", outPath)
+	// `-nostdlib` drops libc + libgcc + the crt startfiles; we
+	// provide our own `_start`, syscall wrappers, allocator, and
+	// memcpy / strcmp / strlen, so the resulting binary contains
+	// only language code + direct svc 0 syscalls. `-g` keeps the
+	// .file/.loc directives we emit in the form of DWARF
+	// line-number tables, so gdb / addr2line work on the binary.
+	cmd := exec.Command(cc, "-static", "-nostdlib", "-g", asmPath, "-o", outPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		keep = true
 		return fmt.Errorf("%s failed: %w\n%s\n(temporary assembly retained at %s)", cc, err, out, asmPath)

@@ -80,6 +80,10 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			case "args":
 				g.usesArgs = true
 				g.usesAlloc = true
+			case "print":
+				g.usesPuts = true
+			case "putchar":
+				g.usesPutchar = true
 			case "write":
 				g.usesWrite = true
 			case "eprint":
@@ -90,6 +94,8 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			case "env":
 				g.usesEnv = true
 				g.usesAlloc = true
+			case "exit":
+				g.usesExit = true
 			case "read_file":
 				g.usesReadFile = true
 				g.usesAlloc = true
@@ -111,28 +117,44 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		}
 	}
 	g.line(`.arch armv7-a`)
-	// Enable VFPv2 so we can emit `vmov` / `vadd.f32` /
-	// `vcmp.f32` etc. for the float ops the IR may carry.
-	// The toolchain's float ABI doesn't matter at our level —
-	// we keep float values flowing through general-purpose
-	// registers as raw 32-bit bit patterns, only pulling them
-	// into VFP s-registers for the actual arithmetic. That
-	// keeps our calling convention identical to the int path
-	// and means no -mfloat-abi mismatch with the host gcc /
-	// linker.
+	// VFPv2 for float ops, idiv extension for `sdiv` / `mls`
+	// (which we use directly in OpDivS / OpRemS instead of
+	// calling __aeabi_idiv from libgcc). Both extensions are
+	// available on every ARMv7-A core in qemu-arm and on real
+	// Cortex-A15+ silicon, so this is portable in practice.
 	g.line(`.fpu vfpv2`)
+	g.line(`.arch_extension idiv`)
 	g.line(`.text`)
 	if g.srcFile != "" {
 		g.line(fmt.Sprintf(`.file 1 %q`, g.srcFile))
 	}
+	// `_start` is always emitted: it's the binary's entry point
+	// under `-nostdlib` (no libc, no glibc startfiles). _start
+	// captures argc / argv / envp from the kernel stack into
+	// .bss globals, initialises the bump heap, and calls main.
+	g.emitStartRuntime()
+	g.emitHeapInitRuntime()
 	for i, fn := range prog.Funcs {
 		if err := g.emitFunctionFromIR(fn, ip.Funcs[i]); err != nil {
 			return "", err
 		}
 	}
+	// Always-on helpers: alloc + memcpy + strcmp anchor every
+	// program's heap-/string-using path, so emit unconditionally.
+	g.emitAllocRuntime()
+	g.emitMemcpyRuntime()
+	g.emitStrcmpRuntime()
 	if g.usesStrcat {
-		g.usesAlloc = true
 		g.emitStrcatRuntime()
+	}
+	if g.usesArgs || g.usesEnv {
+		g.emitStrlenRuntime()
+	}
+	if g.usesPuts {
+		g.emitPutsRuntime()
+	}
+	if g.usesPutchar {
+		g.emitPutcharRuntime()
 	}
 	if g.usesArgs {
 		g.emitArgsRuntime()
@@ -148,6 +170,10 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	}
 	if g.usesEnv {
 		g.emitEnvRuntime()
+		g.emitMemcmpNRuntime()
+	}
+	if g.usesExit {
+		g.emitExitRuntime()
 	}
 	if g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
 		g.emitFileIORuntime()
@@ -158,63 +184,70 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	if g.usesStdStreams {
 		g.emitStdStreamRuntime()
 	}
-	if g.usesAlloc {
-		g.emitAllocRuntime()
+	needsNewline := g.usesEprint || g.usesPuts
+	g.line("")
+	g.line(`.section .rodata`)
+	for _, s := range g.stringOrder {
+		g.line(`.align 2`)
+		g.line(fmt.Sprintf("\t.4byte %d", len(s)))
+		g.label(g.stringLabel[s])
+		g.line("\t.asciz " + escapeForGAS(s))
 	}
-	if len(g.stringOrder) > 0 || g.usesEprint || g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
-		g.line("")
-		g.line(`.section .rodata`)
-		for _, s := range g.stringOrder {
-			g.line(`.align 2`)
-			g.line(fmt.Sprintf("\t.4byte %d", len(s)))
-			g.label(g.stringLabel[s])
-			g.line("\t.asciz " + escapeForGAS(s))
-		}
-		if g.usesEprint {
-			// Single-byte newline buffer for `__lang_eprint`'s
-			// second `write` call. Plain `.byte` (no length
-			// prefix) — eprint passes the address directly to
-			// the libc write syscall with count=1.
-			g.label(".LLangNewline")
-			g.line(`	.byte 10`)
-		}
-		if g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
-			// Length-prefixed lang string used by the
-			// IoError.Other variant's "msg" payload. Layout
-			// matches user strings: 4-byte little-endian
-			// length followed by .asciz data, with the label
-			// pointing at the data start.
-			g.line(`.align 2`)
-			g.line(`	.4byte 8`)
-			g.label(".Lioe_msg")
-			g.line(`	.asciz "io error"`)
-		}
+	if needsNewline {
+		// Single-byte newline buffer used by the second
+		// `write(2)` syscall in `__lang_puts` / `__lang_eprint`.
+		// Plain `.byte` (no length prefix) — both helpers pass
+		// the address directly to the kernel with count=1.
+		g.label(".LLangNewline")
+		g.line(`	.byte 10`)
 	}
-	if g.usesArgs || g.usesReadLine || g.usesStreamIO {
-		g.line("")
-		g.line(`.section .bss`)
-		if g.usesArgs {
-			g.line(`.align 2`)
-			g.label("__lang_argc")
-			g.line(`	.word 0`)
-			g.line(`.align 2`)
-			g.label("__lang_argv")
-			g.line(`	.word 0`)
-			g.line(`.align 2`)
-			g.label("__lang_args_cache")
-			g.line(`	.word 0`)
-		}
-		if g.usesReadLine || g.usesStreamIO {
-			// 4 KiB scratch buffer shared by the legacy
-			// stdin reader (`__lang_read_line`) and the
-			// streaming Reader.read_line method. Lines
-			// longer than 4 KiB truncate at the boundary;
-			// follow-ups can switch to a growing alloc when
-			// users hit it.
-			g.line(`.align 2`)
-			g.label("__lang_read_line_buf")
-			g.line(`	.space 4096`)
-		}
+	if g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
+		// Length-prefixed lang string used by the IoError.Other
+		// variant's "msg" payload. Layout matches user strings:
+		// 4-byte little-endian length followed by .asciz data,
+		// with the label pointing at the data start.
+		g.line(`.align 2`)
+		g.line(`	.4byte 8`)
+		g.label(".Lioe_msg")
+		g.line(`	.asciz "io error"`)
+	}
+	g.line("")
+	g.line(`.section .bss`)
+	// argc / argv / envp are always saved by _start; emitting
+	// the globals unconditionally keeps the runtime layout
+	// uniform across all programs.
+	g.line(`.align 2`)
+	g.label("__lang_argc")
+	g.line(`	.word 0`)
+	g.line(`.align 2`)
+	g.label("__lang_argv")
+	g.line(`	.word 0`)
+	g.line(`.align 2`)
+	g.label("__lang_envp")
+	g.line(`	.word 0`)
+	// Bump heap cursor + limit, populated by __lang_heap_init
+	// at process entry. Always emitted because every program
+	// that allocates lives or dies by these two words.
+	g.line(`.align 2`)
+	g.label("__lang_heap_ptr")
+	g.line(`	.word 0`)
+	g.line(`.align 2`)
+	g.label("__lang_heap_end")
+	g.line(`	.word 0`)
+	if g.usesArgs {
+		g.line(`.align 2`)
+		g.label("__lang_args_cache")
+		g.line(`	.word 0`)
+	}
+	if g.usesReadLine || g.usesStreamIO {
+		// 4 KiB scratch buffer shared by the legacy stdin
+		// reader (`__lang_read_line`) and the streaming
+		// Reader.read_line method. Lines longer than 4 KiB
+		// truncate at the boundary; follow-ups can switch to
+		// a growing alloc when users hit it.
+		g.line(`.align 2`)
+		g.label("__lang_read_line_buf")
+		g.line(`	.space 4096`)
 	}
 	g.line("")
 	g.line(`.section .note.GNU-stack,"",%progbits`)
@@ -334,16 +367,8 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	bodyLabel := g.freshLabel("body_" + fn.Name)
 	g.label(bodyLabel)
 
-	// If the program calls `args()` anywhere, save the C runtime's
-	// argc / argv (delivered in r0 / r1 to `main`) into globals so
-	// the runtime helper can find them. main always has zero
-	// declared params, so r0 / r1 are still live here.
-	if g.usesArgs && fn.Name == "main" {
-		g.emit("ldr r12, =__lang_argc")
-		g.emit("str r0, [r12]")
-		g.emit("ldr r12, =__lang_argv")
-		g.emit("str r1, [r12]")
-	}
+	// (No per-main argc/argv save: `_start` does it once for
+	// every program, into __lang_argc / __lang_argv globals.)
 
 	// Walk the IR ops.
 	if err := g.emitOpsFromIR(irFn, slotOffset, paramReg, epilogue); err != nil {

@@ -74,10 +74,13 @@ type generator struct {
 	usesStrcat  bool              // true if the program needs the strcat helper
 	usesAlloc   bool              // true if the program needs the alloc helper (any heap-backed array / struct / closure)
 	usesArgs      bool            // true if the program calls args() — pulls in the runtime helper + main argc/argv save
+	usesPuts      bool            // true if the program calls print() — pulls in __lang_puts (write+newline)
+	usesPutchar   bool            // true if the program calls putchar() — pulls in __lang_putchar (1-byte write)
 	usesWrite     bool            // true if the program calls write() — pulls in __lang_write
 	usesEprint    bool            // true if the program calls eprint() — pulls in __lang_eprint and the newline byte
 	usesReadLine  bool            // true if the program calls read_line() — pulls in __lang_read_line and the .bss buffer
-	usesEnv       bool            // true if the program calls env() — pulls in __lang_env shim
+	usesEnv       bool            // true if the program calls env() — pulls in __lang_env + envp walker
+	usesExit      bool            // true if the program calls exit() — pulls in __lang_exit (direct exit_group)
 	usesReadFile  bool            // true if the program calls read_file() — pulls in __lang_read_file + __build_io_error
 	usesWriteFile bool            // true if the program calls write_file() — pulls in __lang_write_file + __build_io_error
 	usesStreamIO  bool            // true if the program calls open_reader / open_writer / a Reader|Writer method
@@ -85,27 +88,73 @@ type generator struct {
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
 }
 
-// emitAllocRuntime emits a tiny `__lang_alloc(size)` helper that
-// forwards to libc `malloc`. The wrapper exists so arrays / structs
-// / closures all share one named entry point — both the AST-walking
-// emitter and the upcoming IR-driven backend bottom out here, which
-// matches the WASM backend's `$__lang_alloc` shape and gives the
-// language a single chokepoint if it ever grows a real GC.
+// emitAllocRuntime emits the bump-style `__lang_alloc(size)`
+// helper — the only allocator in the runtime. The arena is the
+// region between __lang_heap_ptr (next free byte) and
+// __lang_heap_end (kernel-provided program break); allocations
+// bump the pointer by `size` (rounded up to 4 bytes for natural
+// alignment), and when the bump would cross the end we extend the
+// break in 64 KiB increments via a `brk` syscall to amortise the
+// kernel transition over many small allocs.
 //
-// The helper preserves the standard prologue/epilogue for stack
-// alignment but doesn't otherwise touch r0, so the result stays in
-// place across the libc call.
+// There's no individual `free` — that's a deliberate fit for the
+// "small CLI / short-lived edge function" shape: programs allocate,
+// do work, and exit, so per-allocation housekeeping is wasted
+// cycles. A long-running HTTP server that wants to reset between
+// requests will get an arena-reset hook in a follow-up.
+//
+// The fast path is six instructions plus the cmp-bls fallthrough,
+// so an alloc that fits in the current arena costs roughly the
+// same as a malloc-free pair on glibc but with no header overhead.
 func (g *generator) emitAllocRuntime() {
 	g.line("")
 	g.line(".global __lang_alloc")
 	g.line(".type __lang_alloc, %function")
 	g.label("__lang_alloc")
-	g.emit("push {lr}")
-	g.emit("sub sp, sp, #4") // 8-byte alignment
-	g.emit("bl malloc")
-	g.emit("add sp, sp, #4")
-	g.emit("pop {lr}")
+	// Round size up to a multiple of 4 so subsequent allocs land
+	// on natural alignment. ARM has no `align` instruction; the
+	// (n + 3) & ~3 idiom takes two opcodes.
+	g.emit("add r0, r0, #3")
+	g.emit("bic r0, r0, #3")
+	g.emit("ldr r1, =__lang_heap_ptr")
+	g.emit("ldr r2, [r1]")     // r2 = current ptr
+	g.emit("add r3, r2, r0")   // r3 = wanted top
+	g.emit("ldr r12, =__lang_heap_end")
+	g.emit("ldr r12, [r12]")
+	g.emit("cmp r3, r12")
+	g.emit("bhi .Lalloc_grow") // unsigned: addresses always positive
+	// Fast path: bump the pointer and return the old value.
+	g.emit("str r3, [r1]")
+	g.emit("mov r0, r2")
 	g.emit("bx lr")
+	// Slow path: grow the heap to at least r3, rounded up to a
+	// 64 KiB boundary so the next alloc almost certainly hits the
+	// fast path.
+	g.label(".Lalloc_grow")
+	g.emit("push {r0, lr}") // save aligned size; brk will clobber r0
+	g.emit("sub r0, r3, #1")
+	g.emit("orr r0, r0, #0xff")
+	g.emit("orr r0, r0, #0xff00")
+	g.emit("add r0, r0, #1") // r0 = ceil(r3 / 65536) * 65536
+	g.emitSyscall(sysBrk)
+	g.emit("ldr r1, =__lang_heap_end")
+	g.emit("str r0, [r1]")
+	g.emit("pop {r0, lr}")
+	// Re-do the bump now that there's room. Bail to exit_group
+	// if brk failed (new end < requested).
+	g.emit("ldr r1, =__lang_heap_ptr")
+	g.emit("ldr r2, [r1]")
+	g.emit("add r3, r2, r0")
+	g.emit("ldr r12, =__lang_heap_end")
+	g.emit("ldr r12, [r12]")
+	g.emit("cmp r3, r12")
+	g.emit("bhi .Lalloc_oom")
+	g.emit("str r3, [r1]")
+	g.emit("mov r0, r2")
+	g.emit("bx lr")
+	g.label(".Lalloc_oom")
+	g.emit("mov r0, #137") // exit code 137 = OOM, mirrors OOM-killer SIGKILL
+	g.emitSyscall(sysExitGroup)
 	g.line(".size __lang_alloc, .-__lang_alloc")
 }
 
@@ -142,11 +191,11 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("mov r1, r4")        // src = a
 	g.emit("mov r2, r6")        // n = la
 	g.emit("mov r4, r0")        // r4 = result data ptr
-	g.emit("bl memcpy")
+	g.emit("bl __lang_memcpy")
 	g.emit("add r0, r4, r6") // dst = result + la
 	g.emit("mov r1, r5")     // src = b
 	g.emit("add r2, r7, #1") // n = lb + 1 (include NUL)
-	g.emit("bl memcpy")
+	g.emit("bl __lang_memcpy")
 	g.emit("mov r0, r4")
 	g.emit("add sp, sp, #4")
 	g.emit("pop {r4, r5, r6, r7, lr}")
@@ -209,7 +258,7 @@ func (g *generator) emitArgsRuntime() {
 
 	// r9 = strlen(r8)
 	g.emit("mov r0, r8")
-	g.emit("bl strlen")
+	g.emit("bl __lang_strlen")
 	g.emit("mov r9, r0")
 
 	// Allocate strlen + 5 bytes (4 prefix + N data + 1 trailing NUL).
@@ -222,7 +271,7 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("mov r0, r10")
 	g.emit("mov r1, r8")
 	g.emit("add r2, r9, #1")
-	g.emit("bl memcpy")
+	g.emit("bl __lang_memcpy")
 
 	// result[i] = r10
 	g.emit("str r10, [r6, r7, lsl #2]")
@@ -241,52 +290,41 @@ func (g *generator) emitArgsRuntime() {
 }
 
 // emitWriteRuntime emits `__lang_write`, the 1-arg shim that turns
-// the language-level `write(s)` into a libc `write(1, s, len)`
-// syscall. The string's length lives at `s - 4` so we read it
-// without scanning. The helper preserves stack alignment for the
-// call but doesn't touch any callee-saved register the caller
-// expects to keep — it pushes only `lr`.
+// `write(s)` into a `write(1, s, len)` direct syscall. The string's
+// length lives at `s - 4` so we read it without scanning. Leaf —
+// no `lr` save needed since we don't `bl` anything.
 func (g *generator) emitWriteRuntime() {
 	g.line("")
 	g.line(".global __lang_write")
 	g.line(".type __lang_write, %function")
 	g.label("__lang_write")
-	g.emit("push {lr}")
-	g.emit("sub sp, sp, #4")    // 8-byte alignment
 	g.emit("ldr r2, [r0, #-4]") // r2 = length
 	g.emit("mov r1, r0")        // r1 = buf
 	g.emit("mov r0, #1")        // r0 = fd (stdout)
-	g.emit("bl write")
-	g.emit("add sp, sp, #4")
-	g.emit("pop {lr}")
+	g.emitSyscall(sysWrite)
 	g.emit("bx lr")
 	g.line(".size __lang_write, .-__lang_write")
 }
 
 // emitEprintRuntime emits `__lang_eprint`, the stderr counterpart
-// to libc `puts`. It performs two libc `write` syscalls: one for
-// the user's string, one for a single-byte newline buffer interned
-// at `.LLangNewline`. We can't just call `puts` here because puts
-// always writes to stdout; we want fd=2 throughout.
+// to `__lang_puts`. Two direct `write(2, …)` syscalls: one for the
+// user's string, one for a single-byte newline buffer interned at
+// `.LLangNewline`.
 func (g *generator) emitEprintRuntime() {
 	g.line("")
 	g.line(".global __lang_eprint")
 	g.line(".type __lang_eprint, %function")
 	g.label("__lang_eprint")
-	g.emit("push {lr}")
-	g.emit("sub sp, sp, #4") // 8-byte alignment
-	// First call: write(2, s, len(s))
+	// First syscall: write(2, s, len(s))
 	g.emit("ldr r2, [r0, #-4]")
 	g.emit("mov r1, r0")
 	g.emit("mov r0, #2")
-	g.emit("bl write")
-	// Second call: write(2, .LLangNewline, 1)
+	g.emitSyscall(sysWrite)
+	// Second syscall: write(2, .LLangNewline, 1)
 	g.emit("ldr r1, =.LLangNewline")
 	g.emit("mov r2, #1")
 	g.emit("mov r0, #2")
-	g.emit("bl write")
-	g.emit("add sp, sp, #4")
-	g.emit("pop {lr}")
+	g.emitSyscall(sysWrite)
 	g.emit("bx lr")
 	g.line(".size __lang_eprint, .-__lang_eprint")
 }
@@ -318,7 +356,7 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("mov r0, #0")
 	g.emit("add r1, r4, r5")
 	g.emit("mov r2, #1")
-	g.emit("bl read")
+	g.emitSyscall(sysRead)
 	// EOF (or error) → finish.
 	g.emit("cmp r0, #1")
 	g.emit("blt .Lrl_done")
@@ -350,7 +388,7 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("mov r0, r6")
 	g.emit("mov r1, r4")
 	g.emit("mov r2, r5")
-	g.emit("bl memcpy")
+	g.emit("bl __lang_memcpy")
 	// Trailing NUL at r6 + r5
 	g.emit("add r0, r6, r5")
 	g.emit("mov r1, #0")
@@ -367,63 +405,108 @@ func (g *generator) emitReadLineRuntime() {
 	g.line(".size __lang_read_line, .-__lang_read_line")
 }
 
-// emitEnvRuntime emits `__lang_env`, the getenv shim. Returns an
-// `Option[string]` heap object: `Some(value)` for a present key
-// (the C-string is copied into a fresh length-prefixed lang
-// string before being wrapped), `None` for a missing key. The
-// lang string passed as `name` already has a trailing NUL byte
-// past its data (the strcat runtime preserves that), so we can
-// hand its data pointer to libc getenv directly without copying.
+// emitEnvRuntime emits `__lang_env(name)`, the no-libc replacement
+// for getenv. Walks the kernel-provided envp vector (saved by
+// _start) looking for an entry of the form `NAME=VALUE` whose
+// `NAME` matches the lang string `name` byte-for-byte. Returns
+// `Option[string]`: `Some(VALUE)` on a match (the value is copied
+// into a fresh length-prefixed lang string), `None` otherwise.
 //
-// Tag layout matches `__lang_read_line` and the WASM helper:
-// 0 = Some, 1 = None. Some is 8 bytes [tag, str_ptr];
-// None is 4 bytes [tag].
+// envp is a NULL-terminated array of `char*`; each pointer is to a
+// NUL-terminated `KEY=VALUE` C string. The lang `name` arrives as a
+// length-prefixed lang string with a trailing NUL kept past the
+// data, so we can compare it byte-for-byte with strcmp-like logic
+// up to the `=`.
+//
+// Tag layout matches `__lang_read_line`: 0 = Some, 1 = None.
+// Some is 8 bytes [tag, str_ptr]; None is 4 bytes [tag].
 func (g *generator) emitEnvRuntime() {
 	g.line("")
 	g.line(".global __lang_env")
 	g.line(".type __lang_env, %function")
 	g.label("__lang_env")
-	g.emit("push {r4, r5, lr}")
-	g.emit("sub sp, sp, #4") // 8-byte alignment
-	g.emit("bl getenv")
-	g.emit("cmp r0, #0")
+	g.emit("push {r4, r5, r6, r7, r8, lr}")
+	g.emit("mov r4, r0") // r4 = name (lang string data ptr)
+	g.emit("ldr r5, [r0, #-4]") // r5 = name length
+	g.emit("ldr r6, =__lang_envp")
+	g.emit("ldr r6, [r6]") // r6 = envp
+	g.label(".Lenv_loop")
+	g.emit("ldr r7, [r6]") // r7 = envp[i]
+	g.emit("cmp r7, #0")
 	g.emit("beq .Lenv_missing")
-	// r4 = char*, r5 = strlen(r4)
-	g.emit("mov r4, r0")
-	g.emit("bl strlen")
-	g.emit("mov r5, r0")
-	// Allocate strlen + 5 (4 prefix + N data + trailing NUL).
+	// Compare r5 bytes of name to envp[i].
+	g.emit("mov r0, r4")
+	g.emit("mov r1, r7")
+	g.emit("mov r2, r5")
+	g.emit("bl __lang_memcmp_n")
+	g.emit("cmp r0, #0")
+	g.emit("bne .Lenv_next")
+	// Bytes match — next byte must be '=' for it to be the right key.
+	g.emit("ldrb r0, [r7, r5]")
+	g.emit("cmp r0, #61") // '='
+	g.emit("bne .Lenv_next")
+	// Found it. r8 = pointer to value (envp[i] + name_len + 1).
+	g.emit("add r8, r7, r5")
+	g.emit("add r8, r8, #1")
+	// Length of value = strlen(r8).
+	g.emit("mov r0, r8")
+	g.emit("bl __lang_strlen")
+	g.emit("mov r5, r0") // r5 = value length (overwrite name len, no longer needed)
+	// Allocate length + 5 (4 prefix + N data + trailing NUL).
 	g.emit("add r0, r5, #5")
 	g.emit("bl __lang_alloc")
-	g.emit("add r0, r0, #4")    // r0 = string data ptr
-	g.emit("str r5, [r0, #-4]") // length prefix
-	// memcpy(str_data, char_star, strlen + 1) — include NUL.
-	g.emit("push {r0}")
-	g.emit("sub sp, sp, #4") // realign after push
-	g.emit("mov r1, r4")
-	g.emit("add r2, r5, #1")
-	g.emit("bl memcpy")
-	g.emit("add sp, sp, #4")
-	g.emit("pop {r4}") // r4 = string data ptr (recover for wrap)
+	g.emit("add r4, r0, #4")    // r4 = string data ptr
+	g.emit("str r5, [r4, #-4]") // length prefix
+	g.emit("mov r0, r4")
+	g.emit("mov r1, r8")
+	g.emit("add r2, r5, #1") // include trailing NUL
+	g.emit("bl __lang_memcpy")
 	// Wrap as Some(string) — alloc 8 bytes, store [tag=0, str_ptr].
 	g.emit("mov r0, #8")
 	g.emit("bl __lang_alloc")
 	g.emit("mov r1, #0")
-	g.emit("str r1, [r0]")     // tag = 0 (Some)
-	g.emit("str r4, [r0, #4]") // payload = string data ptr
-	g.emit("add sp, sp, #4")
-	g.emit("pop {r4, r5, lr}")
+	g.emit("str r1, [r0]")
+	g.emit("str r4, [r0, #4]")
+	g.emit("pop {r4, r5, r6, r7, r8, lr}")
 	g.emit("bx lr")
+	g.label(".Lenv_next")
+	g.emit("add r6, r6, #4") // envp++
+	g.emit("b .Lenv_loop")
 	g.label(".Lenv_missing")
-	// Allocate None — 4 bytes for the tag alone.
 	g.emit("mov r0, #4")
 	g.emit("bl __lang_alloc")
 	g.emit("mov r1, #1")
-	g.emit("str r1, [r0]") // tag = 1 (None)
-	g.emit("add sp, sp, #4")
-	g.emit("pop {r4, r5, lr}")
+	g.emit("str r1, [r0]")
+	g.emit("pop {r4, r5, r6, r7, r8, lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_env, .-__lang_env")
+}
+
+// emitMemcmpNRuntime emits `__lang_memcmp_n(a, b, n)`, a fixed-
+// length byte comparator used only by `__lang_env` to test the
+// "name" prefix of a `KEY=VALUE` envp entry. Returns 0 on match,
+// non-zero on mismatch (libc-shape, but we don't propagate sign
+// since callers only care about equality).
+func (g *generator) emitMemcmpNRuntime() {
+	g.line("")
+	g.line(".type __lang_memcmp_n, %function")
+	g.label("__lang_memcmp_n")
+	g.label(".Lmcn_loop")
+	g.emit("cmp r2, #0")
+	g.emit("beq .Lmcn_eq")
+	g.emit("ldrb r3, [r0], #1")
+	g.emit("ldrb r12, [r1], #1")
+	g.emit("cmp r3, r12")
+	g.emit("bne .Lmcn_neq")
+	g.emit("sub r2, r2, #1")
+	g.emit("b .Lmcn_loop")
+	g.label(".Lmcn_eq")
+	g.emit("mov r0, #0")
+	g.emit("bx lr")
+	g.label(".Lmcn_neq")
+	g.emit("mov r0, #1")
+	g.emit("bx lr")
+	g.line(".size __lang_memcmp_n, .-__lang_memcmp_n")
 }
 
 // emitFileIORuntime emits the libc-shaped runtime for
@@ -521,10 +604,11 @@ func (g *generator) emitIoErrCaseArm(errno, tagIdx int, withPathPayload bool) {
 // arm32 strategy uses lseek to discover file size up front,
 // allocates a single length-prefixed buffer of the exact
 // size, and reads in a loop that handles partial returns by
-// re-issuing read(2). This keeps the result contiguous
-// without a chunk-stitching pass — libc malloc allocates
-// each block separately, so the wasm-side "bump-anchor +
-// un-bump tail" trick can't apply here.
+// re-issuing read(2). The bump allocator gives each open() a
+// contiguous slab, so a single allocation suffices.
+//
+// Direct syscalls — no libc, no `__errno_location`. The kernel
+// returns `-errno` directly; we negate it on the error path.
 func (g *generator) emitReadFileRuntime() {
 	g.line("")
 	g.line(".global __lang_read_file")
@@ -535,11 +619,10 @@ func (g *generator) emitReadFileRuntime() {
 
 	// open(path, O_RDONLY=0)
 	g.emit("mov r1, #0")
-	g.emit("bl open")
+	g.emitSyscall(sysOpen)
 	g.emit("cmp r0, #0")
 	g.emit("bge .Lrf_opened")
-	g.emit("bl __errno_location")
-	g.emit("ldr r0, [r0]")
+	g.emit("rsb r0, r0, #0") // r0 = errno (positive)
 	g.emit("mov r1, r4")
 	g.emit("bl __build_io_error")
 	g.emit("mov r5, r0")
@@ -558,12 +641,12 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov r0, r5")
 	g.emit("mov r1, #0")
 	g.emit("mov r2, #2")
-	g.emit("bl lseek")
+	g.emitSyscall(sysLseek)
 	g.emit("mov r6, r0") // r6 = file size
 	g.emit("mov r0, r5")
 	g.emit("mov r1, #0")
 	g.emit("mov r2, #0")
-	g.emit("bl lseek")
+	g.emitSyscall(sysLseek)
 
 	// Allocate result string: 4 (length) + size + 1 (trailing NUL).
 	g.emit("add r0, r6, #5")
@@ -582,7 +665,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov r0, r5")
 	g.emit("add r1, r7, r8")
 	g.emit("sub r2, r6, r8")
-	g.emit("bl read")
+	g.emitSyscall(sysRead)
 	g.emit("cmp r0, #0")
 	g.emit("ble .Lrf_done")
 	g.emit("add r8, r8, r0")
@@ -596,7 +679,7 @@ func (g *generator) emitReadFileRuntime() {
 
 	// close(fd)
 	g.emit("mov r0, r5")
-	g.emit("bl close")
+	g.emitSyscall(sysClose)
 
 	// Build Ok(r7).
 	g.emit("mov r0, #8")
@@ -611,6 +694,7 @@ func (g *generator) emitReadFileRuntime() {
 
 // emitWriteFileRuntime — see emitFileIORuntime comment.
 // One open(2) + write(2) + close(2). Returns Option[IoError].
+// All three are direct syscalls.
 func (g *generator) emitWriteFileRuntime() {
 	g.line("")
 	g.line(".global __lang_write_file")
@@ -623,11 +707,10 @@ func (g *generator) emitWriteFileRuntime() {
 	// open(path, O_WRONLY|O_CREAT|O_TRUNC=0x241, 0644)
 	g.emit("mov r1, #0x241")
 	g.emit("mov r2, #0644")
-	g.emit("bl open")
+	g.emitSyscall(sysOpen)
 	g.emit("cmp r0, #0")
 	g.emit("bge .Lwf_opened")
-	g.emit("bl __errno_location")
-	g.emit("ldr r0, [r0]")
+	g.emit("rsb r0, r0, #0")
 	g.emit("mov r1, r4")
 	g.emit("bl __build_io_error")
 	g.emit("mov r6, r0")
@@ -647,13 +730,13 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov r0, r6")
 	g.emit("mov r1, r5")
 	g.emit("ldr r2, [r5, #-4]")
-	g.emit("bl write")
+	g.emitSyscall(sysWrite)
 	g.emit("cmp r0, #0")
 	g.emit("blt .Lwf_write_err")
 
 	// close(fd) and return None.
 	g.emit("mov r0, r6")
-	g.emit("bl close")
+	g.emitSyscall(sysClose)
 	g.emit("mov r0, #4")
 	g.emit("bl __lang_alloc")
 	g.emit("mov r1, #1")
@@ -662,11 +745,10 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("bx lr")
 
 	g.label(".Lwf_write_err")
-	// Capture errno BEFORE close (which would overwrite it).
-	g.emit("bl __errno_location")
-	g.emit("ldr r5, [r0]") // r5 = errno
+	// Save -errno (the syscall return) before close clobbers r0.
+	g.emit("rsb r5, r0, #0") // r5 = errno (positive)
 	g.emit("mov r0, r6")
-	g.emit("bl close")
+	g.emitSyscall(sysClose)
 	g.emit("mov r0, r5")
 	g.emit("mov r1, r4")
 	g.emit("bl __build_io_error")
@@ -734,11 +816,10 @@ func (g *generator) emitOpenArm(name string, flags, mode int) {
 	// open(path, flags, mode)
 	g.emit("mov r1, #%d", flags)
 	g.emit("mov r2, #%d", mode)
-	g.emit("bl open")
+	g.emitSyscall(sysOpen)
 	g.emit("cmp r0, #0")
 	g.emit("bge .L%s_ok", name)
-	g.emit("bl __errno_location")
-	g.emit("ldr r0, [r0]")
+	g.emit("rsb r0, r0, #0")
 	g.emit("mov r1, r4")
 	g.emit("bl __build_io_error")
 	g.emit("mov r5, r0")
@@ -791,7 +872,7 @@ func (g *generator) emitReaderReadLineArm() {
 	g.emit("mov r0, r4")
 	g.emit("add r1, r5, r6")
 	g.emit("mov r2, #1")
-	g.emit("bl read")
+	g.emitSyscall(sysRead)
 	g.emit("cmp r0, #1")
 	g.emit("blt .Lrlm_done")
 	g.emit("add r7, r5, r6")
@@ -820,7 +901,7 @@ func (g *generator) emitReaderReadLineArm() {
 	g.emit("mov r0, r7")
 	g.emit("mov r1, r5")
 	g.emit("mov r2, r6")
-	g.emit("bl memcpy")
+	g.emit("bl __lang_memcpy")
 	g.emit("add r0, r7, r6")
 	g.emit("mov r1, #0")
 	g.emit("strb r1, [r0]")
@@ -855,7 +936,7 @@ func (g *generator) emitReaderReadChunkArm() {
 	g.emit("mov r0, r4")
 	g.emit("mov r1, r6")
 	g.emit("mov r2, r5")
-	g.emit("bl read")
+	g.emitSyscall(sysRead)
 	g.emit("cmp r0, #0")
 	g.emit("bgt .Lrcm_some")
 	// EOF → None.
@@ -887,7 +968,7 @@ func (g *generator) emitCloseMethodArm(name string) {
 	g.label(name)
 	g.emit("push {r4, lr}")
 	g.emit("ldr r0, [r0]") // r0 = fd
-	g.emit("bl close")
+	g.emitSyscall(sysClose)
 	g.emit("cmp r0, #0")
 	g.emit("blt .L%s_err", name)
 	// None.
@@ -898,8 +979,7 @@ func (g *generator) emitCloseMethodArm(name string) {
 	g.emit("pop {r4, lr}")
 	g.emit("bx lr")
 	g.label(fmt.Sprintf(".L%s_err", name))
-	g.emit("bl __errno_location")
-	g.emit("ldr r0, [r0]")
+	g.emit("rsb r0, r0, #0")
 	g.emit("ldr r1, =.Lioe_msg")
 	g.emit("bl __build_io_error")
 	g.emit("mov r4, r0")
@@ -926,7 +1006,7 @@ func (g *generator) emitWriterWriteArm() {
 	g.emit("ldr r0, [r0]") // r0 = fd
 	// r1 = string data ptr (already in r1 from arg)
 	// r2 = length (loaded above)
-	g.emit("bl write")
+	g.emitSyscall(sysWrite)
 	g.emit("cmp r0, #0")
 	g.emit("blt .Lwwm_err")
 	// None.
@@ -938,8 +1018,7 @@ func (g *generator) emitWriterWriteArm() {
 	g.emit("pop {r4, lr}")
 	g.emit("bx lr")
 	g.label(".Lwwm_err")
-	g.emit("bl __errno_location")
-	g.emit("ldr r0, [r0]")
+	g.emit("rsb r0, r0, #0")
 	g.emit("ldr r1, =.Lioe_msg")
 	g.emit("bl __build_io_error")
 	g.emit("mov r4, r0")

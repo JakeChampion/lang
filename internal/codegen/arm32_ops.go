@@ -124,21 +124,22 @@ func (g *generator) emitOpsFromIR(
 			g.emit("mul r0, r1, r0")
 			g.emit("push {r0}")
 		case ir.OpDivS:
-			// __aeabi_idiv(num, denom): r0 = num, r1 = denom.
-			// Stack top is denom (rhs); next is numerator.
+			// Inline `sdiv` from the ARMv7-A integer division
+			// extension. binPop puts rhs in r0 and lhs in r1, so
+			// the natural form is `sdiv r0, r1, r0` (Rd = Rn / Rm
+			// = lhs / rhs). Faster than a libgcc __aeabi_idiv call
+			// and lets us drop the libgcc dependency.
 			g.binPop()
-			g.emit("mov r2, r0") // r2 = denom
-			g.emit("mov r0, r1") // r0 = num
-			g.emit("mov r1, r2")
-			g.emit("bl __aeabi_idiv")
+			g.emit("sdiv r0, r1, r0")
 			g.emit("push {r0}")
 		case ir.OpRemS:
+			// rem = lhs - (lhs / rhs) * rhs, computed as `mls`
+			// (multiply-subtract): mls Rd, Rn, Rm, Ra → Rd = Ra -
+			// Rn*Rm. With q = lhs / rhs in r2, that's
+			// r0 = r1 - q*r0.
 			g.binPop()
-			g.emit("mov r2, r0")
-			g.emit("mov r0, r1")
-			g.emit("mov r1, r2")
-			g.emit("bl __aeabi_idivmod")
-			g.emit("mov r0, r1")
+			g.emit("sdiv r2, r1, r0")
+			g.emit("mls r0, r2, r0, r1")
 			g.emit("push {r0}")
 		case ir.OpAnd:
 			g.binPop()
@@ -289,7 +290,7 @@ func (g *generator) emitOpsFromIR(
 			// 0, which we normalise to 1.
 			g.emit("pop {r1}")
 			g.emit("pop {r0}")
-			g.emit("bl strcmp")
+			g.emit("bl __lang_strcmp")
 			g.emit("cmp r0, #0")
 			g.emit("moveq r0, #1")
 			g.emit("movne r0, #0")
@@ -421,21 +422,27 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 	target := op.Str
 	switch target {
 	case "print":
-		// `print(s)` is `puts(s)`; puts already adds a newline.
-		target = "puts"
+		// `print(s)` is `puts(s) + newline`, two write(2)
+		// syscalls. We emit our own helper instead of calling
+		// libc puts because the binary is `-nostdlib`.
+		target = "__lang_puts"
+		g.usesPuts = true
 	case "write":
-		// `write(s)` writes the string to stdout without a
-		// newline. The runtime shim turns the 1-arg lang call
-		// into a libc `write(1, s, len)` syscall.
+		// `write(s)` is a single write(1, s, len) direct
+		// syscall — no newline.
 		target = "__lang_write"
 		g.usesWrite = true
 	case "eprint":
 		// `eprint(s)` is the stderr counterpart to `print` —
-		// string + newline, both via the libc `write` syscall.
+		// two write(2) syscalls (string + newline).
 		target = "__lang_eprint"
 		g.usesEprint = true
 	case "putchar":
-		// putchar takes its arg in r0 like normal — no rewrite needed.
+		// putchar takes one byte in r0 and writes it to fd 1.
+		// Routed to our own helper so the binary stays
+		// libc-free.
+		target = "__lang_putchar"
+		g.usesPutchar = true
 	case "args":
 		// `args()` lowers to a runtime helper that materialises a
 		// length-prefixed string[] from the argc/argv saved at main
@@ -462,11 +469,12 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		g.usesEnv = true
 		g.usesAlloc = true
 	case "exit":
-		// libc `exit(int)` — never returns. The IR-driven
-		// caller still emits the post-call `push {r0}` for
-		// stack hygiene; that's harmless because exit doesn't
-		// come back.
-		target = "exit"
+		// `exit(int)` — direct exit_group(2) syscall, never
+		// returns. The IR-driven caller still emits the post-
+		// call `push {r0}` for stack hygiene; that's harmless
+		// because exit doesn't come back.
+		target = "__lang_exit"
+		g.usesExit = true
 	case "read_file":
 		// `read_file(path)` lowers to a runtime helper that
 		// open(2)s the file, read(2)s it in chunks, and
