@@ -72,7 +72,7 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	// too late. The other flags ride along for symmetry; emitting
 	// the helpers ahead of OpCallDirect side-effects has no cost.
 	for _, irFn := range ip.Funcs {
-		for _, op := range irFn.Ops {
+		for j, op := range irFn.Ops {
 			if op.Kind != ir.OpCallDirect {
 				continue
 			}
@@ -81,7 +81,17 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 				g.usesArgs = true
 				g.usesAlloc = true
 			case "print":
-				g.usesPuts = true
+				// Only pull in the runtime helper when there's
+				// at least one *non-literal* print. Literal
+				// prints fold to inline `write(2)` syscalls in
+				// emitOpsFromIR's peephole, so a program where
+				// every print is a literal drops `__lang_puts`
+				// from the binary entirely.
+				if j > 0 && irFn.Ops[j-1].Kind == ir.OpConstStr && op.I32 == 1 {
+					// matches the peephole — no helper needed
+				} else {
+					g.usesPuts = true
+				}
 			case "putchar":
 				g.usesPutchar = true
 			case "write":
@@ -198,6 +208,14 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		g.line(fmt.Sprintf("\t.4byte %d", len(s)))
 		g.label(g.stringLabel[s])
 		g.line("\t.asciz " + escapeForGAS(s))
+	}
+	// Compile-time `print(literal)` buffers: `data + "\n"`
+	// with no prefix and no NUL. Each one is the sole target
+	// of a single inline `write(1, ptr, len(data)+1)` syscall
+	// the print-fold peephole generated.
+	for _, s := range g.printBufferOrder {
+		g.label(g.printBufferLabel[s])
+		g.line("\t.ascii " + escapeForGAS(s+"\n"))
 	}
 	if needsNewline {
 		// Single-byte newline buffer used by the second

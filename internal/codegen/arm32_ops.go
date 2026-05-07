@@ -53,6 +53,40 @@ func (g *generator) emitOpsFromIR(
 	lastPos := pos0
 	for i := 0; i < len(irFn.Ops); i++ {
 		op := irFn.Ops[i]
+		// Compile-time fold of `print(literal)`: collapse the
+		// pair `OpConstStr X ; OpCallDirect "print" 1` (with
+		// the optional trailing `OpDrop` that statement-level
+		// callers emit) into a single inline `write(2)` against
+		// a `data + "\n"` buffer interned in .rodata. Skips
+		// the `bl __lang_puts` indirection plus its runtime
+		// length load and 2-iovec stack build — five
+		// instructions per call site, exactly one syscall.
+		//
+		// `print` returns void, so neither the call's "push
+		// result" nor the optional OpDrop need to happen; the
+		// surrounding stack stays balanced as long as we elide
+		// both ops (and the OpDrop when present).
+		if op.Kind == ir.OpConstStr &&
+			i+1 < len(irFn.Ops) &&
+			irFn.Ops[i+1].Kind == ir.OpCallDirect &&
+			irFn.Ops[i+1].Str == "print" &&
+			irFn.Ops[i+1].I32 == 1 {
+			lbl := g.internPrintBuffer(op.Str)
+			if g.srcFile != "" && op.Pos.Line != 0 && op.Pos != lastPos {
+				g.emit(".loc 1 %d %d", op.Pos.Line, op.Pos.Col)
+				lastPos = op.Pos
+			}
+			g.emit("mov r0, #1") // fd 1
+			g.emit("ldr r1, =%s", lbl)
+			g.emit("ldr r2, =%d", len(op.Str)+1) // data + newline
+			g.emitSyscall(sysWrite)
+			skip := 1 // OpCallDirect; OpConstStr is `i` itself
+			if i+2 < len(irFn.Ops) && irFn.Ops[i+2].Kind == ir.OpDrop {
+				skip++
+			}
+			i += skip
+			continue
+		}
 		// Emit a `.loc` directive whenever we cross a source-line
 		// boundary so `gcc -g` produces a per-statement DWARF table.
 		if g.srcFile != "" && op.Pos.Line != 0 && op.Pos != lastPos {

@@ -239,17 +239,45 @@ func TestNonExecutableStackNote(t *testing.T) {
 // String literals are interned in .rodata under unique labels and
 // loaded by address into r0.
 func TestStringLiteralEmitsRodata(t *testing.T) {
-	asm := compile(t, `function main(): void { print("hi"); }`)
+	asm := compile(t, `function f(): string { var s: string = "hi"; return s; }`)
 	mustContain(t, asm, ".section .rodata")
 	mustContain(t, asm, ".LStr_0:")
 	mustContain(t, asm, `.asciz "hi"`)
 	mustContain(t, asm, "ldr r0, =.LStr_0")
 }
 
-// `print(s)` lowers to our nostdlib puts helper (string + newline,
-// two write(2) syscalls).
-func TestPrintLowersToLangPuts(t *testing.T) {
+// `print(literal)` folds at compile time: the call collapses to
+// a single inline `write(2)` against a `data + "\n"` buffer in
+// .rodata, bypassing the `__lang_puts` helper entirely. Programs
+// where every print is a literal don't even pull the helper into
+// the binary.
+func TestPrintLiteralFoldsToInlineWrite(t *testing.T) {
 	asm := compile(t, `function main(): void { print("hi"); }`)
+	// .rodata gets a print-only buffer with the trailing newline.
+	mustContain(t, asm, ".LPrintBuf_0:")
+	mustContain(t, asm, `.ascii "hi\n"`)
+	// Call site is inline: write(1, .LPrintBuf_0, 3).
+	mustContain(t, asm, "ldr r1, =.LPrintBuf_0")
+	mustContain(t, asm, "ldr r2, =3")
+	// write(2) syscall = 4 on ARM EABI.
+	mustContain(t, asm, "mov r7, #4")
+	// And no `bl __lang_puts` — the helper isn't even emitted.
+	if strings.Contains(asm, "bl __lang_puts") {
+		t.Errorf("literal print should fold inline, not call __lang_puts:\n%s", asm)
+	}
+	if strings.Contains(asm, "__lang_puts:") {
+		t.Errorf("__lang_puts helper should be elided when every print is literal:\n%s", asm)
+	}
+}
+
+// Non-literal prints still go through `__lang_puts` (the writev
+// helper). Folding only applies when the arg is a string literal
+// known at compile time.
+func TestPrintNonLiteralKeepsHelper(t *testing.T) {
+	asm := compile(t, `function main(): void {
+		var s: string = "hi" + "!";
+		print(s);
+	}`)
 	mustContain(t, asm, "bl __lang_puts")
 }
 
@@ -440,7 +468,13 @@ func TestNoDebugDirectivesByDefault(t *testing.T) {
 }
 
 func TestStringInterningDeduplicates(t *testing.T) {
-	asm := compile(t, `function main(): void { print("a"); print("a"); print("b"); }`)
+	// Use string returns (not print) so the literals land in
+	// the regular string pool rather than the print-fold buffers.
+	asm := compile(t, `
+		function f(): string { return "a"; }
+		function g(): string { return "a"; }
+		function h(): string { return "b"; }
+	`)
 	mustContain(t, asm, ".LStr_0:")
 	mustContain(t, asm, ".LStr_1:")
 	if strings.Contains(asm, ".LStr_2:") {
@@ -526,11 +560,15 @@ func TestArm32MemcpyWordGrainBulk(t *testing.T) {
 	mustContain(t, asm, ".Lmcp_tail:")
 }
 
-// `print(s)` collapses to a single `writev(2)` over a 2-iovec
-// gather (string + newline) instead of two write(2) syscalls.
-// One kernel transition per print, twice as fast at the boundary.
+// `print(non_literal)` falls back to `__lang_puts`, which uses
+// a single `writev(2)` over a 2-iovec gather (string + newline).
+// We exercise the helper via a non-literal arg so the print-fold
+// peephole doesn't preempt it.
 func TestArm32PutsUsesWritev(t *testing.T) {
-	asm := compile(t, `function main(): void { print("hi"); }`)
+	asm := compile(t, `function main(): void {
+		var s: string = "hi" + "!";
+		print(s);
+	}`)
 	// writev syscall = 146 on ARM EABI.
 	mustContain(t, asm, "mov r7, #146")
 	// 2-iovec gather + iovcnt = 2.

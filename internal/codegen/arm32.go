@@ -71,6 +71,20 @@ type generator struct {
 	labelN      int
 	stringLabel map[string]string // value -> label
 	stringOrder []string          // insertion order so output is deterministic
+	// printBufferLabel/printBufferOrder dedupe the
+	// `data + "\n"` buffers used by the `print(literal)` fold.
+	// Same shape as stringLabel/stringOrder but with the
+	// trailing newline baked in and no length-prefix / NUL —
+	// the inline `write(2)` syscall takes a raw (ptr, len)
+	// pair, not a lang string.
+	printBufferLabel map[string]string
+	printBufferOrder []string
+	// nonLiteralPrintCount is the number of `print(…)` call
+	// sites whose arg isn't a string literal — used to decide
+	// whether the legacy `__lang_puts` helper still needs to be
+	// emitted. When zero (every print is a literal), we drop
+	// the helper entirely and the binary is purely inline writes.
+	nonLiteralPrintCount int
 	usesStrcat  bool              // true if the program needs the strcat helper
 	usesAlloc   bool              // true if the program needs the alloc helper (any heap-backed array / struct / closure)
 	usesArgs      bool            // true if the program calls args() — pulls in the runtime helper + main argc/argv save
@@ -1054,6 +1068,24 @@ func (g *generator) internString(s string) string {
 	lbl := fmt.Sprintf(".LStr_%d", len(g.stringOrder))
 	g.stringLabel[s] = lbl
 	g.stringOrder = append(g.stringOrder, s)
+	return lbl
+}
+
+// internPrintBuffer returns a label for `s + "\n"` in .rodata,
+// the buffer the `print(literal)` peephole writes in a single
+// inline `write(2)` syscall. Plain bytes — no length prefix, no
+// trailing NUL — so the precomputed length sent to the kernel
+// is exactly `len(s) + 1`.
+func (g *generator) internPrintBuffer(s string) string {
+	if lbl, ok := g.printBufferLabel[s]; ok {
+		return lbl
+	}
+	if g.printBufferLabel == nil {
+		g.printBufferLabel = map[string]string{}
+	}
+	lbl := fmt.Sprintf(".LPrintBuf_%d", len(g.printBufferOrder))
+	g.printBufferLabel[s] = lbl
+	g.printBufferOrder = append(g.printBufferOrder, s)
 	return lbl
 }
 
