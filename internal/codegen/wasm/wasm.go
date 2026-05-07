@@ -1,8 +1,9 @@
 // Package wasm emits WebAssembly text format (WAT) for a checked
-// Program. It's the IR-driven backend alongside the AST-walking ARM32
-// emitter — every function body comes from a lowered ir.Program, so
-// new language features only need to grow the IR + Lower pass and
-// this emitter picks them up automatically.
+// Program. Both this backend and the ARM32 emitter consume the same
+// lowered ir.Program and share the optimisation pipeline (Inline,
+// FuseTee, FlattenBranches, plus the PropagateCopies / ConstPropagate
+// / Fold / ReduceStrength fixed-point cleanup) — new language
+// features land once at the IR layer and both backends pick them up.
 //
 // Run the output with `wasmtime run --invoke main prog.wat` or
 // convert to binary first with `wat2wasm prog.wat`.
