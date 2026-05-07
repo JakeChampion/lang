@@ -14,6 +14,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -64,6 +65,86 @@ func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
 			err, soBuf.String(), seBuf.String(), wat)
 	}
 	return soBuf.String(), seBuf.String()
+}
+
+// invokeWasmtimeMultiFile is the multi-file analogue of
+// invokeWasmtime: writes each path → src into a temp dir, loads
+// the entry through modload, runs the rest of the pipeline, and
+// invokes `main` under wasmtime.
+func invokeWasmtimeMultiFile(t *testing.T, entry string, files map[string]string) (stdout, stderr string) {
+	t.Helper()
+	wt := wasmtimePath(t)
+
+	dir := t.TempDir()
+	for path, contents := range files {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prog, _, err := modload.Load(filepath.Join(dir, entry))
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	wat, err := wasm.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	watPath := filepath.Join(dir, "prog.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
+	var soBuf, seBuf bytes.Buffer
+	cmd.Stdout = &soBuf
+	cmd.Stderr = &seBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstdout:\n%s\nstderr:\n%s\n--- wat ---\n%s",
+			err, soBuf.String(), seBuf.String(), wat)
+	}
+	return soBuf.String(), seBuf.String()
+}
+
+// runWasmMultiFile invokes `main` and parses the trailing exit-
+// status integer that wasmtime prints to stderr — the multi-file
+// counterpart to runWasm.
+func runWasmMultiFile(t *testing.T, entry string, files map[string]string) int {
+	t.Helper()
+	_, stderr := invokeWasmtimeMultiFile(t, entry, files)
+	for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
+		if n, err := strconv.Atoi(strings.TrimSpace(line)); err == nil {
+			return n
+		}
+	}
+	t.Fatalf("could not parse exit status from wasmtime stderr:\n%s", stderr)
+	return 0
+}
+
+// Cross-module struct types end-to-end on WASM: same shape as the
+// arm32 e2e check, run through wasmtime.
+func TestWASMCrossModuleStructType(t *testing.T) {
+	got := runWasmMultiFile(t, "main.lang", map[string]string{
+		"point.lang": `struct Point { x: number, y: number }
+function make(x: number, y: number): Point {
+	return Point { x: x, y: y };
+}`,
+		"main.lang": `import "./point";
+function main(): number {
+	var p: point.Point = point.make(3, 4);
+	return p.x + p.y;
+}`,
+	})
+	if got != 7 {
+		t.Errorf("got %d, want 7 (3 + 4)", got)
+	}
 }
 
 func runWasm(t *testing.T, src string) int {

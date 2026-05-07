@@ -15,6 +15,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -56,6 +57,50 @@ func compileAndRun(t *testing.T, src string) (stdout string, exitCode int) {
 	}
 
 	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+	cmd := exec.Command(qemu, binPath)
+	out, _ := cmd.CombinedOutput()
+	return string(out), cmd.ProcessState.ExitCode()
+}
+
+// compileMultiFileAndRun writes each entry in `files` (path → src)
+// into a temp dir, loads the named entry through modload, runs the
+// rest of the pipeline, and exec's the resulting ARM binary under
+// qemu. Used by the cross-module e2e tests.
+func compileMultiFileAndRun(t *testing.T, entry string, files map[string]string) (stdout string, exitCode int) {
+	t.Helper()
+	gcc, qemu := tooling(t)
+
+	dir := t.TempDir()
+	for path, contents := range files {
+		full := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prog, _, err := modload.Load(filepath.Join(dir, entry))
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
 	asmPath := filepath.Join(dir, "prog.s")
 	binPath := filepath.Join(dir, "prog")
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
@@ -360,6 +405,27 @@ func TestStringEscapes(t *testing.T) {
 
 // `for x in arr { ... }` desugars to an index loop; e2e check that
 // the desugared form actually iterates correctly under qemu-arm.
+// Cross-module struct types end-to-end: an entry file declares
+// `var p: point.Point = point.make(3, 4);`, the loader rewrites
+// the qualified type to the mangled `point__Point`, the checker
+// validates the field access, and the linked binary returns 7.
+func TestCrossModuleStructTypeArm(t *testing.T) {
+	_, code := compileMultiFileAndRun(t, "main.lang", map[string]string{
+		"point.lang": `struct Point { x: number, y: number }
+function make(x: number, y: number): Point {
+	return Point { x: x, y: y };
+}`,
+		"main.lang": `import "./point";
+function main(): number {
+	var p: point.Point = point.make(3, 4);
+	return p.x + p.y;
+}`,
+	})
+	if code != 7 {
+		t.Errorf("exit = %d, want 7 (3 + 4)", code)
+	}
+}
+
 func TestForEachOverArray(t *testing.T) {
 	src := `
 		function main(): number {

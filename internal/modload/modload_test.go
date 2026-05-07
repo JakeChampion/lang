@@ -240,6 +240,110 @@ func TestLoadSingleFileNoImports(t *testing.T) {
 	}
 }
 
+// Cross-module struct types: an entry that says `var p: mod.Foo`
+// must rewrite the type annotation to the mangled name. The struct
+// declaration in the imported module gets prefixed; the entry's
+// reference to it gets flattened.
+func TestLoadRewritesCrossModuleStructType(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"point.lang": `struct Point { x: number, y: number }
+function make(x: number, y: number): Point {
+	return Point { x: x, y: y };
+}`,
+		"main.lang": `import "./point";
+function main(): number {
+	var p: point.Point = point.make(3, 4);
+	return p.x + p.y;
+}`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Imported struct must show up under its mangled name.
+	hasPointStruct := false
+	for _, sd := range prog.Structs {
+		if sd.Name == "point__Point" {
+			hasPointStruct = true
+		}
+	}
+	if !hasPointStruct {
+		t.Errorf("expected struct point__Point in combined program; got %v", prog.Structs)
+	}
+	// Entry's `var p: point.Point` must have been rewritten to
+	// reference the mangled type.
+	main := findFunc(prog, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	v, ok := main.Body.Stmts[0].(*ast.Var)
+	if !ok {
+		t.Fatalf("expected first stmt to be Var, got %T", main.Body.Stmts[0])
+	}
+	st, ok := v.Type.(ast.StructType)
+	if !ok {
+		t.Fatalf("expected Var.Type to be StructType, got %T", v.Type)
+	}
+	if st.Name != "point__Point" {
+		t.Errorf("Var.Type should reference point__Point, got %q", st.Name)
+	}
+}
+
+// Cross-module struct LITERALS: `mod.Foo { x: 1, y: 2 }` parses
+// as a StructLit with TypeName "mod.Foo" and modload should
+// flatten it to the mangled form before the checker sees it.
+func TestLoadRewritesCrossModuleStructLit(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"point.lang": `struct Point { x: number, y: number }`,
+		"main.lang": `import "./point";
+function main(): number {
+	var p: point.Point = point.Point { x: 5, y: 7 };
+	return p.x;
+}`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := findFunc(prog, "main")
+	v := main.Body.Stmts[0].(*ast.Var)
+	lit, ok := v.Init.(*ast.StructLit)
+	if !ok {
+		t.Fatalf("expected Var.Init to be StructLit, got %T", v.Init)
+	}
+	if lit.TypeName != "point__Point" {
+		t.Errorf("StructLit.TypeName should be point__Point, got %q", lit.TypeName)
+	}
+}
+
+// Cross-module struct in a function-return type: `function f(): mod.Foo`
+// works the same way — modload's rewriteType walks every type
+// position the parser might emit.
+func TestLoadRewritesCrossModuleReturnType(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"point.lang": `struct Point { x: number, y: number }
+function origin(): Point { return Point { x: 0, y: 0 }; }`,
+		"main.lang": `import "./point";
+function pickOrigin(): point.Point { return point.origin(); }
+function main(): number { return pickOrigin().x; }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pick := findFunc(prog, "pickOrigin")
+	if pick == nil {
+		t.Fatal("pickOrigin not found")
+	}
+	st, ok := pick.ReturnType.(ast.StructType)
+	if !ok {
+		t.Fatalf("expected return type StructType, got %T", pick.ReturnType)
+	}
+	if st.Name != "point__Point" {
+		t.Errorf("return type should be point__Point, got %q", st.Name)
+	}
+}
+
 // Source map is populated with one entry per loaded module so
 // diagnostics can find the right file for any error position.
 func TestLoadReturnsPerFileSources(t *testing.T) {
