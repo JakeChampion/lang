@@ -274,10 +274,10 @@ func TestPrintLiteralFoldsToInlineWrite(t *testing.T) {
 // helper). Folding only applies when the arg is a string literal
 // known at compile time.
 func TestPrintNonLiteralKeepsHelper(t *testing.T) {
-	asm := compile(t, `function main(): void {
-		var s: string = "hi" + "!";
-		print(s);
-	}`)
+	// Use a parameter to force a non-literal arg — `"hi" + "!"`
+	// would otherwise fold to a single `OpConstStr "hi!"` and
+	// trip the literal peephole instead.
+	asm := compile(t, `function emit(s: string): void { print(s); }`)
 	mustContain(t, asm, "bl __lang_puts")
 }
 
@@ -313,8 +313,10 @@ func TestShiftRight(t *testing.T) {
 
 // `string + string` should lower to a runtime call, and the helper
 // must be emitted exactly once at the end of the .text section.
+// Use a parameter to defeat the `literal + literal` IR fold so
+// the runtime path stays exercised.
 func TestStringConcatLowersToRuntime(t *testing.T) {
-	asm := compile(t, `function main(): void { print("a" + "b"); }`)
+	asm := compile(t, `function f(s: string): string { return s + "x"; }`)
 	mustContain(t, asm, "bl __lang_strcat")
 	mustContain(t, asm, ".global __lang_strcat")
 	if strings.Count(asm, ".global __lang_strcat") != 1 {
@@ -565,10 +567,7 @@ func TestArm32MemcpyWordGrainBulk(t *testing.T) {
 // We exercise the helper via a non-literal arg so the print-fold
 // peephole doesn't preempt it.
 func TestArm32PutsUsesWritev(t *testing.T) {
-	asm := compile(t, `function main(): void {
-		var s: string = "hi" + "!";
-		print(s);
-	}`)
+	asm := compile(t, `function emit(s: string): void { print(s); }`)
 	// writev syscall = 146 on ARM EABI.
 	mustContain(t, asm, "mov r7, #146")
 	// 2-iovec gather + iovcnt = 2.
@@ -582,10 +581,7 @@ func TestArm32PutsUsesWritev(t *testing.T) {
 // fd 2. We exercise the helper via a non-literal arg so the
 // eprint-fold peephole doesn't preempt it.
 func TestArm32EprintUsesWritev(t *testing.T) {
-	asm := compile(t, `function main(): void {
-		var s: string = "hi" + "!";
-		eprint(s);
-	}`)
+	asm := compile(t, `function emit(s: string): void { eprint(s); }`)
 	mustContain(t, asm, "mov r7, #146")
 	mustContain(t, asm, "mov r0, #2") // fd 2
 }
@@ -737,6 +733,33 @@ func TestArm32StringIndexLoadsByte(t *testing.T) {
 	mustContain(t, asm, "ldrb")
 }
 
+// `"literal"[const_idx]` folds at compile time to the byte
+// at that index. The literal data isn't even emitted in
+// .rodata for this case — the byte is materialised inline.
+func TestArm32StringIndexLiteralFolds(t *testing.T) {
+	// 'b' is byte 0x62 = 98.
+	asm := compile(t, `function f(): number { return "abc"[1]; }`)
+	mustContain(t, asm, "ldr r0, =98")
+	if strings.Contains(asm, `.asciz "abc"`) {
+		t.Errorf("\"literal\"[const] must not emit the literal data:\n%s", asm)
+	}
+}
+
+// `"a" + "b"` folds at compile time to a single literal "ab" —
+// no `__lang_strcat` allocation, no memcpy. Programs without
+// any non-literal concat shouldn't pull `__lang_strcat` into
+// the binary at all.
+func TestArm32ConcatLiteralFolds(t *testing.T) {
+	asm := compile(t, `function f(): string { return "foo" + "bar"; }`)
+	mustContain(t, asm, `.asciz "foobar"`)
+	if strings.Contains(asm, "bl __lang_strcat") {
+		t.Errorf("literal+literal concat must fold; __lang_strcat must not appear:\n%s", asm)
+	}
+	if strings.Contains(asm, "__lang_strcat:") {
+		t.Errorf("__lang_strcat helper should be elided when no runtime concat exists:\n%s", asm)
+	}
+}
+
 func TestArm32StringEqualityCallsStrcmp(t *testing.T) {
 	asm := compile(t, `function f(): boolean { return "a" == "a"; }`)
 	mustContain(t, asm, "bl __lang_strcmp")
@@ -786,9 +809,11 @@ func TestArm32StringLiteralHasLengthPrefix(t *testing.T) {
 
 // String concat uses the prefixed buffer directly: read the lengths
 // from the operands' prefixes (no strlen), allocate via __lang_alloc,
-// write the new prefix, and copy the bytes through.
+// write the new prefix, and copy the bytes through. Use a
+// parameter to defeat the literal-fold so the runtime path
+// stays exercised.
 func TestArm32StrcatReadsPrefixesAndAllocates(t *testing.T) {
-	asm := compile(t, `function f(): string { return "a" + "b"; }`)
+	asm := compile(t, `function f(s: string): string { return s + "x"; }`)
 	mustContain(t, asm, "bl __lang_strcat")
 	mustContain(t, asm, "bl __lang_alloc")
 	// Body of __lang_strcat: prefix-loads of both operands, the

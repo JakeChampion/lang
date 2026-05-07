@@ -29,17 +29,24 @@ func lowerSource(t *testing.T, src string) *Program {
 
 func mustContainOp(t *testing.T, p *Program, fnName string, want OpKind) {
 	t.Helper()
+	if hasOp(p, fnName, want) {
+		return
+	}
+	t.Errorf("expected %s in %s; ops:\n%s", want, fnName, p)
+}
+
+func hasOp(p *Program, fnName string, want OpKind) bool {
 	for _, fn := range p.Funcs {
 		if fn.Name != fnName {
 			continue
 		}
 		for _, op := range fn.Ops {
 			if op.Kind == want {
-				return
+				return true
 			}
 		}
 	}
-	t.Errorf("expected %s in %s; ops:\n%s", want, fnName, p)
+	return false
 }
 
 func TestLowerSimpleArithmetic(t *testing.T) {
@@ -262,8 +269,19 @@ func TestLowerStructLitAndFieldAccess(t *testing.T) {
 	mustContainOp(t, prog, "main", OpLoad)
 }
 
-func TestLowerStringConcat(t *testing.T) {
+// `literal + literal` folds at compile time to a single
+// OpConstStr; the runtime OpStrConcat (and the `__lang_strcat`
+// it bottoms out in) only fires on at least one non-literal arg.
+func TestLowerStringConcatFoldsLiterals(t *testing.T) {
 	prog := lowerSource(t, `function f(): string { return "a" + "b"; }`)
+	if hasOp(prog, "f", OpStrConcat) {
+		t.Errorf("literal + literal must fold; OpStrConcat must not appear:\n%s", prog)
+	}
+	mustContainOp(t, prog, "f", OpConstStr)
+}
+
+func TestLowerStringConcatNonLiteralKeepsRuntime(t *testing.T) {
+	prog := lowerSource(t, `function f(s: string): string { return s + "x"; }`)
 	mustContainOp(t, prog, "f", OpStrConcat)
 }
 

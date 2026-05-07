@@ -979,6 +979,26 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.closeScope()
 	case *ast.Index:
+		// Compile-time fold: `"literal"[const_idx]` collapses to
+		// the byte at that index, as a single `OpConstI32`. Skips
+		// the runtime address compute + byte load that the
+		// general path emits, and lets the const propagate into
+		// surrounding arithmetic. Out-of-range indices fall
+		// through to the runtime path (the unchecked address
+		// compute reads past the literal's NUL — undefined, but
+		// the type checker forbids static OOB so we don't reach
+		// here in practice).
+		if n.IsString {
+			if litStr, ok := n.Array.(*ast.StringLit); ok {
+				if litIdx, ok := n.Idx.(*ast.NumberLit); ok {
+					idx := int(litIdx.Value)
+					if idx >= 0 && idx < len(litStr.Value) {
+						b.emit(Op{Kind: OpConstI32, I32: int32(litStr.Value[idx])})
+						return nil
+					}
+				}
+			}
+		}
 		// `s[i]` and `a[i]` lower the same way at the IR level: push
 		// base, push index, call into the bounds-checking helper
 		// (modelled here as a runtime function call), and load the
@@ -1216,6 +1236,23 @@ func (b *builder) binary(n *ast.Binary) error {
 		}
 		b.closeScope()
 		return nil
+	}
+	if n.IsStringConcat {
+		// Compile-time fold: `"foo" + "bar"` collapses to the
+		// concatenated literal `"foobar"` as a single OpConstStr.
+		// Skips the runtime `__lang_strcat` allocation + 2x
+		// memcpy entirely; the literal lands in .rodata once
+		// (deduped via internString on either backend). Chains
+		// fold left-associatively because the AST is built
+		// that way: `"a" + "b" + "c"` becomes
+		// `("a" + "b") + "c"`, the inner pair folds first,
+		// then the outer pair folds against the result.
+		if litL, lOK := n.Left.(*ast.StringLit); lOK {
+			if litR, rOK := n.Right.(*ast.StringLit); rOK {
+				b.emit(Op{Kind: OpConstStr, Str: litL.Value + litR.Value})
+				return nil
+			}
+		}
 	}
 	if err := b.expr(n.Left); err != nil {
 		return err
