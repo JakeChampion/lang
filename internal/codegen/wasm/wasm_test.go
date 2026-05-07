@@ -297,11 +297,11 @@ func TestTernaryFloatEmitsF32Result(t *testing.T) {
 func TestCompoundAssignLowersToBinary(t *testing.T) {
 	wat := compileToWAT(t, `function f(): number { var x: number = 5; x += 7; return x; }`)
 	// `x += 7` lowers to `x = x + 7`. The IR encodes the tee with a
-	// (store, load) pair — both x slot operations, plus the `+ 7`.
+	// (store, load) pair the FuseTee pass collapses into a single
+	// OpTeeLocal — codegen emits `local.tee $x`.
 	mustContain(t, wat, "i32.const 7")
 	mustContain(t, wat, "i32.add")
-	mustContain(t, wat, "local.set $x")
-	mustContain(t, wat, "local.get $x")
+	mustContain(t, wat, "local.tee $x")
 }
 
 func TestStringIndexEmitsLoad8(t *testing.T) {

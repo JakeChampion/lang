@@ -90,6 +90,19 @@ func (g *generator) emitOpsFromIR(
 			} else {
 				g.emit("str r0, [fp, #%d]", slotOffset[op.I32])
 			}
+		case ir.OpTeeLocal:
+			// Pop the value, store it to the slot, push it back so
+			// the operand stack still carries it. ARM has no fused
+			// tee, so we issue the pop / str / push sequence — the
+			// peephole pass folds adjacent push/pop pairs that
+			// neighbour ops produce.
+			g.emit("pop {r0}")
+			if reg, ok := paramReg[int(op.I32)]; ok {
+				g.emit("mov r%d, r0", reg)
+			} else {
+				g.emit("str r0, [fp, #%d]", slotOffset[op.I32])
+			}
+			g.emit("push {r0}")
 
 		// -------- arithmetic / comparison (i32) --------
 

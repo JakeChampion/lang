@@ -335,6 +335,8 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.linef("local.get $%s", slotName(g.current, irFn, op.I32))
 	case ir.OpStoreLocal:
 		g.linef("local.set $%s", slotName(g.current, irFn, op.I32))
+	case ir.OpTeeLocal:
+		g.linef("local.tee $%s", slotName(g.current, irFn, op.I32))
 	case ir.OpAdd:
 		g.line("i32.add")
 	case ir.OpSub:

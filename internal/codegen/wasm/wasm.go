@@ -40,6 +40,7 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 		return "", err
 	}
 	ir.Inline(ip)
+	ir.FuseTee(ip)
 	ir.Fold(ip)
 	ir.EliminateDeadCode(ip)
 	return EmitFromIR(prog, info, ip)
