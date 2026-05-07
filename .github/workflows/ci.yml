@@ -55,7 +55,10 @@ jobs:
           for f in examples/*.lang; do
             name=$(basename "$f" .lang)
             ./bin/lang "$f" > "build/$name.s"
-            arm-linux-gnueabihf-gcc -static "build/$name.s" -o "build/$name"
+            # `-nostdlib`: the emitted assembly provides its own
+            # `_start`, syscall wrappers, and bump allocator, so we
+            # must NOT link glibc + crt1.o (would clash on _start).
+            arm-linux-gnueabihf-gcc -static -nostdlib "build/$name.s" -o "build/$name"
             echo "::group::run $name"
             qemu-arm "build/$name" || echo "(exited $?)"
             echo "::endgroup::"
