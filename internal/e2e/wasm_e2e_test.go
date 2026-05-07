@@ -14,6 +14,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -40,6 +41,9 @@ func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
@@ -88,6 +92,9 @@ func invokeWasmtimeMultiFile(t *testing.T, entry string, files map[string]string
 	prog, _, err := modload.Load(filepath.Join(dir, entry))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {

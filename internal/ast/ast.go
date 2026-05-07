@@ -439,6 +439,12 @@ type StructDecl struct {
 type Program struct {
 	Funcs   []*FuncDecl
 	Structs []*StructDecl
+	// Consts lists top-level `const` declarations in source order.
+	// The constfold pass evaluates each initialiser, substitutes
+	// references throughout the program with the resolved literal,
+	// and clears this slice — so the checker / IR lowering / codegen
+	// pipeline never sees a ConstDecl.
+	Consts []*ConstDecl
 	// Imports lists every top-level `import "<path>";` declaration
 	// in source order. The driver loads the referenced files,
 	// mangles their decls under each module's local name, and
@@ -450,6 +456,22 @@ type Program struct {
 	// codegen) ignore this field; the formatter walks it alongside
 	// the AST to re-emit comments at their original positions.
 	Comments []Comment
+}
+
+// ConstDecl is a top-level `const NAME[: T] = expr;` declaration.
+// Type is optional — if nil, the constfold pass infers it from the
+// resolved value. Value is the parsed initialiser expression: it
+// must be a constant expression (literals, references to earlier
+// consts, or arithmetic / comparison / logical operations on those).
+//
+// Public marks the const as exported from its module — same
+// semantics as FuncDecl.Public / StructDecl.Public.
+type ConstDecl struct {
+	P      Position
+	Name   string
+	Type   Type
+	Value  Expr
+	Public bool
 }
 
 // Import is a top-level `import "<path>";` declaration. Path is the

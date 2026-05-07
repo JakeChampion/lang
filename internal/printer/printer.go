@@ -17,10 +17,28 @@ func Print(prog *ast.Program) string {
 	for _, sd := range prog.Structs {
 		printStructDecl(&b, sd)
 	}
+	for _, cd := range prog.Consts {
+		printConstDecl(&b, cd)
+	}
 	for _, fn := range prog.Funcs {
 		printFunc(&b, fn)
 	}
 	return b.String()
+}
+
+func printConstDecl(b *strings.Builder, cd *ast.ConstDecl) {
+	if cd.Public {
+		b.WriteString("pub ")
+	}
+	b.WriteString("const ")
+	b.WriteString(cd.Name)
+	if cd.Type != nil {
+		b.WriteString(": ")
+		b.WriteString(printType(cd.Type))
+	}
+	b.WriteString(" = ")
+	printExpr(b, cd.Value)
+	b.WriteString(";\n")
 }
 
 func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {

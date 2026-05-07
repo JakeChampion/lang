@@ -15,6 +15,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -46,6 +47,9 @@ func compileAndRun(t *testing.T, src string) (stdout string, exitCode int) {
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
@@ -91,6 +95,9 @@ func compileMultiFileAndRun(t *testing.T, entry string, files map[string]string)
 	prog, _, err := modload.Load(filepath.Join(dir, entry))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
@@ -423,6 +430,35 @@ function main(): number {
 	})
 	if code != 7 {
 		t.Errorf("exit = %d, want 7 (3 + 4)", code)
+	}
+}
+
+// Top-level consts end-to-end: integer + arithmetic over an
+// earlier const folds at compile time, the IR pipeline sees only
+// literals, and the resulting binary returns the resolved value.
+func TestConstFoldedIntoArm(t *testing.T) {
+	src := `
+		const BASE: number = 10;
+		const TWICE: number = BASE * 2;
+		function main(): number { return TWICE + BASE; }`
+	_, code := compileAndRun(t, src)
+	if code != 30 {
+		t.Errorf("exit = %d, want 30 (10*2 + 10)", code)
+	}
+}
+
+// Cross-module `pub const` reaches the binary intact: the entry
+// imports a module that exports a number-typed const, and the
+// folded literal travels through the rewriter and the rest of the
+// pipeline without surprises.
+func TestPubConstAcrossModulesArm(t *testing.T) {
+	_, code := compileMultiFileAndRun(t, "main.lang", map[string]string{
+		"limits.lang": `pub const MAX: number = 42;`,
+		"main.lang": `import "./limits";
+function main(): number { return limits.MAX; }`,
+	})
+	if code != 42 {
+		t.Errorf("exit = %d, want 42", code)
 	}
 }
 

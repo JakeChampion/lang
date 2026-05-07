@@ -304,3 +304,28 @@ function hidden(): number { return 2; }`)
 		t.Errorf("private `function hidden` should not gain a `pub`:\n%s", got)
 	}
 }
+
+// Top-level `const` formats on its own line with the optional type
+// annotation preserved. `pub const` round-trips like other `pub`
+// decls; the resulting source reparses identically.
+func TestFormatConstDeclRoundTrips(t *testing.T) {
+	got := formatSrc(t, `const N: number = 42;
+pub const PI: float = 3.14;
+const M = 7;
+function main(): number { return N; }`)
+	for _, want := range []string{
+		"const N: number = 42;",
+		"pub const PI: float = 3.14;",
+		"const M = 7;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output:\n%s", want, got)
+		}
+	}
+	// The format should be idempotent — second pass produces the
+	// same text.
+	again := formatSrc(t, got)
+	if got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}

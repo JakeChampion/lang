@@ -421,6 +421,68 @@ function main(): number { return util.exposed(); }`,
 	}
 }
 
+// Cross-module references to a `pub const` flow through the
+// rewriter the same way a `pub function` does — the local-name
+// `mod.K` is flattened to `mod__K` and a same-module reference
+// to a private const stays bound at its mangled name. The const
+// decl shows up in the combined program with the mangled name; the
+// constfold pass (run by the driver, not by Load) is responsible
+// for resolving references afterwards.
+func TestLoadCombinesPubConstAcrossModules(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"limits.lang": `pub const MAX: number = 100;`,
+		"main.lang": `import "./limits";
+function main(): number { return limits.MAX; }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasMangled := false
+	for _, cd := range prog.Consts {
+		if cd.Name == "limits__MAX" {
+			hasMangled = true
+		}
+	}
+	if !hasMangled {
+		t.Errorf("expected mangled const limits__MAX in combined program; got %v", prog.Consts)
+	}
+	main := findFunc(prog, "main")
+	ret, ok := main.Body.Stmts[0].(*ast.Return)
+	if !ok {
+		t.Fatalf("expected first stmt to be Return, got %T", main.Body.Stmts[0])
+	}
+	id, ok := ret.Value.(*ast.Ident)
+	if !ok {
+		t.Fatalf("expected return value to be Ident, got %T", ret.Value)
+	}
+	if id.Name != "limits__MAX" {
+		t.Errorf("expected reference to limits__MAX, got %q", id.Name)
+	}
+}
+
+// Cross-module references to a non-`pub` const are rejected with a
+// fix-hint that names the right keyword (`pub const`, not
+// `pub function`) — the modload error path inspects the imported
+// module's decls so the diagnostic matches the actual decl kind.
+func TestLoadRejectsPrivateConstAccess(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"limits.lang": `const MAX: number = 100;`,
+		"main.lang": `import "./limits";
+function main(): number { return limits.MAX; }`,
+	})
+	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err == nil {
+		t.Fatal("expected visibility error from Load")
+	}
+	if !strings.Contains(err.Error(), "limits.MAX") {
+		t.Errorf("error should mention `limits.MAX`; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "pub const") {
+		t.Errorf("error should suggest `pub const`; got %v", err)
+	}
+}
+
 // Source map is populated with one entry per loaded module so
 // diagnostics can find the right file for any error position.
 func TestLoadReturnsPerFileSources(t *testing.T) {

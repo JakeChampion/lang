@@ -47,6 +47,14 @@ func Format(prog *ast.Program) string {
 		f.formatStructDecl(sd)
 		written = true
 	}
+	for _, cd := range prog.Consts {
+		if written {
+			f.b.WriteByte('\n')
+		}
+		f.drainLeading(cd.P.Line, 0)
+		f.formatConstDecl(cd)
+		written = true
+	}
 	for _, fn := range prog.Funcs {
 		if written {
 			f.b.WriteByte('\n')
@@ -130,6 +138,25 @@ func (f *formatter) indent(n int) {
 	for i := 0; i < n; i++ {
 		f.b.WriteString(formatIndent)
 	}
+}
+
+// formatConstDecl emits a top-level `const NAME[: T] = expr;` on a
+// single line. The type annotation is preserved when the source had
+// one and elided when it didn't, matching the parser's optional
+// shape so format → parse → format stays stable.
+func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
+	if cd.Public {
+		f.b.WriteString("pub ")
+	}
+	f.b.WriteString("const ")
+	f.b.WriteString(cd.Name)
+	if cd.Type != nil {
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(cd.Type))
+	}
+	f.b.WriteString(" = ")
+	f.formatExpr(cd.Value, precLowest)
+	f.b.WriteString(";\n")
 }
 
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
