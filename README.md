@@ -57,6 +57,8 @@ wasmtime run --invoke main factorial.wat
 # Formatter
 ./lang -fmt examples/factorial.lang        # writes idiomatic source to stdout
 ./lang -fmt -w examples/factorial.lang     # overwrite the file in place
+./lang -fmt -d examples/factorial.lang     # print a unified diff against
+                                           # the file; exits 1 when they differ
 ```
 
 The formatter strips `//` line comments and blank lines because the
