@@ -1119,3 +1119,127 @@ func TestWASMResultFloatOk(t *testing.T) {
 		t.Errorf("got %d, want 1 (Ok(2.5) > 2.0)", got)
 	}
 }
+
+// runWasmInDir compiles src, places any seed files into a fresh
+// temp dir, then runs the wasm under wasmtime with that dir
+// preopened (path_open's preopen_fd=3 in our runtime). Returns
+// stdout, stderr, exit code, AND the dir so callers can read
+// back files the program created.
+func runWasmInDir(t *testing.T, src string, seed map[string]string) (stdout, stderr string, exitCode int, dir string) {
+	t.Helper()
+	wt := wasmtimePath(t)
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	wat, err := wasm.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir = t.TempDir()
+	watPath := filepath.Join(dir, "prog.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	for name, content := range seed {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	cmd := exec.Command(wt, "run", "--dir="+dir, "--invoke", "main", watPath)
+	var soBuf, seBuf bytes.Buffer
+	cmd.Stdout = &soBuf
+	cmd.Stderr = &seBuf
+	_ = cmd.Run()
+	return soBuf.String(), seBuf.String(), cmd.ProcessState.ExitCode(), dir
+}
+
+// `read_file` returns Ok(content) for a present file. The
+// program writes the content back to stdout so we can verify
+// both the read path and the type-erased Result unwrap.
+func TestWASMReadFileOk(t *testing.T) {
+	src := `function main(): number {
+		match (read_file("greeting.txt")) {
+			Ok(s) => { write(s); return 0; },
+			Err(_) => { return 1; }
+		}
+		return -1;
+	}`
+	stdout, _, _, _ := runWasmInDir(t, src, map[string]string{
+		"greeting.txt": "hello, file\n",
+	})
+	if !strings.Contains(stdout, "hello, file\n") {
+		t.Errorf("stdout missing greeting; got %q", stdout)
+	}
+}
+
+// Missing files surface as `IoError.NotFound(path)`. The path
+// we passed must be visible in the variant payload — that's
+// the cribbed-from-Roc affordance the design relies on.
+func TestWASMReadFileNotFound(t *testing.T) {
+	src := `function main(): number {
+		match (read_file("does_not_exist.txt")) {
+			Ok(_) => { return 0; },
+			Err(err) => {
+				match (err) {
+					NotFound(p) => { write(p); return 44; },
+					_ => { return 99; }
+				}
+			}
+		}
+		return -1;
+	}`
+	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	if !strings.Contains(stdout, "does_not_exist.txt") {
+		t.Errorf("stdout should echo the missing path; got %q", stdout)
+	}
+}
+
+// `write_file` truncates the target and writes `content`. We
+// verify by reading the file back from the host side after
+// the program returns.
+func TestWASMWriteFileOk(t *testing.T) {
+	src := `function main(): number {
+		match (write_file("out.txt", "wrote it\n")) {
+			Some(_) => { return 1; },
+			None => { return 0; }
+		}
+		return -1;
+	}`
+	_, _, _, dir := runWasmInDir(t, src, nil)
+	got, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "wrote it\n" {
+		t.Errorf("got %q, want %q", got, "wrote it\n")
+	}
+}
+
+// Round-trip: write a file, then read it back, then compare
+// lengths via the language's `len`. Exercises both helpers
+// in the same program.
+func TestWASMReadWriteFileRoundtrip(t *testing.T) {
+	src := `function main(): number {
+		match (write_file("rt.txt", "round trip")) {
+			Some(_) => { return 1; },
+			None => {}
+		}
+		match (read_file("rt.txt")) {
+			Ok(s) => { return len(s); },
+			Err(_) => { return 2; }
+		}
+		return -1;
+	}`
+	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	if !strings.Contains(stdout, "10") {
+		t.Errorf("stdout should report `10` (len of \"round trip\"); got %q", stdout)
+	}
+}

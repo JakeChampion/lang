@@ -908,3 +908,117 @@ func TestGenericResultArm(t *testing.T) {
 // are exercised on the WASM side via `TestWASMOptionFloatPayload`
 // + `TestWASMResultFloatOk`. When arm32 grows VFP support the
 // matching test goes here.
+
+// runArmInDir is the arm32 analogue of runWasmInDir. It
+// compiles the program, drops it in a temp dir alongside any
+// seed files, runs it under qemu-arm with the temp dir as the
+// process's cwd (so libc open() resolves relative paths
+// against it), and returns stdout, exit code, and the dir for
+// post-run inspection.
+func runArmInDir(t *testing.T, src string, seed map[string]string) (stdout string, code int, dir string) {
+	t.Helper()
+	gcc, qemu := tooling(t)
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir = t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+	for name, content := range seed {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	cmd := exec.Command(qemu, binPath)
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
+	return string(out), cmd.ProcessState.ExitCode(), dir
+}
+
+// `read_file` round-trips a string through libc open/read/close
+// on the arm32 runtime helper.
+func TestReadFileOkArm(t *testing.T) {
+	src := `function main(): number {
+		match (read_file("greeting.txt")) {
+			Ok(s) => { write(s); return len(s); },
+			Err(_) => { return -1; }
+		}
+		return -2;
+	}`
+	stdout, code, _ := runArmInDir(t, src, map[string]string{
+		"greeting.txt": "hello, file",
+	})
+	if stdout != "hello, file" {
+		t.Errorf("stdout = %q, want %q", stdout, "hello, file")
+	}
+	if code != 11 {
+		t.Errorf("exit = %d, want 11 (len of \"hello, file\")", code)
+	}
+}
+
+// Missing files surface as `IoError.NotFound(path)`. The path
+// is carried in the variant payload so callers don't need
+// secondary context plumbing.
+func TestReadFileNotFoundArm(t *testing.T) {
+	src := `function main(): number {
+		match (read_file("does_not_exist.txt")) {
+			Ok(_) => { return 0; },
+			Err(err) => {
+				match (err) {
+					NotFound(p) => { write(p); return 1; },
+					_ => { return 99; }
+				}
+			}
+		}
+		return -1;
+	}`
+	stdout, code, _ := runArmInDir(t, src, nil)
+	if !strings.Contains(stdout, "does_not_exist.txt") {
+		t.Errorf("stdout should echo the path; got %q", stdout)
+	}
+	if code != 1 {
+		t.Errorf("exit = %d, want 1 (NotFound arm)", code)
+	}
+}
+
+// `write_file` truncates the target and writes the content via
+// libc open(O_CREAT|O_TRUNC|O_WRONLY) + write + close.
+func TestWriteFileOkArm(t *testing.T) {
+	src := `function main(): number {
+		match (write_file("out.txt", "from arm")) {
+			Some(_) => { return 1; },
+			None => { return 0; }
+		}
+		return -1;
+	}`
+	_, code, dir := runArmInDir(t, src, nil)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (None / success)", code)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "from arm" {
+		t.Errorf("got %q, want %q", got, "from arm")
+	}
+}

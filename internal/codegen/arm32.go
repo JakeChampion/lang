@@ -73,11 +73,13 @@ type generator struct {
 	stringOrder []string          // insertion order so output is deterministic
 	usesStrcat  bool              // true if the program needs the strcat helper
 	usesAlloc   bool              // true if the program needs the alloc helper (any heap-backed array / struct / closure)
-	usesArgs     bool             // true if the program calls args() — pulls in the runtime helper + main argc/argv save
-	usesWrite    bool             // true if the program calls write() — pulls in __lang_write
-	usesEprint   bool             // true if the program calls eprint() — pulls in __lang_eprint and the newline byte
-	usesReadLine bool             // true if the program calls read_line() — pulls in __lang_read_line and the .bss buffer
-	usesEnv      bool             // true if the program calls env() — pulls in __lang_env shim
+	usesArgs      bool            // true if the program calls args() — pulls in the runtime helper + main argc/argv save
+	usesWrite     bool            // true if the program calls write() — pulls in __lang_write
+	usesEprint    bool            // true if the program calls eprint() — pulls in __lang_eprint and the newline byte
+	usesReadLine  bool            // true if the program calls read_line() — pulls in __lang_read_line and the .bss buffer
+	usesEnv       bool            // true if the program calls env() — pulls in __lang_env shim
+	usesReadFile  bool            // true if the program calls read_file() — pulls in __lang_read_file + __build_io_error
+	usesWriteFile bool            // true if the program calls write_file() — pulls in __lang_write_file + __build_io_error
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
 }
 
@@ -420,6 +422,261 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("pop {r4, r5, lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_env, .-__lang_env")
+}
+
+// emitFileIORuntime emits the libc-shaped runtime for
+// `read_file` / `write_file` plus the shared `__build_io_error`
+// helper that maps a libc errno to the right `IoError` variant.
+//
+// Variant indices match the auto-injected enum exactly
+// (NotFound=0, PermissionDenied=1, AlreadyExists=2,
+// InvalidUtf8=3, Interrupted=4, Unsupported=5, Other=6;
+// Result.Ok=0/Err=1; Option.Some=0/None=1).
+//
+// `read_file` opens with O_RDONLY (=0) and reads in 4 KiB
+// chunks onto the heap, packed contiguously by un-bumping
+// any unused tail. After EOF the contiguous region is
+// memcpy'd into a length-prefixed string and wrapped in
+// Ok. `write_file` opens with
+// O_WRONLY|O_CREAT|O_TRUNC (=0x241 on Linux/glibc) and a
+// single write(2) of the entire content.
+//
+// Paths are passed straight to libc; the lang string already
+// has a trailing NUL kept past the data (the strcat runtime
+// preserves that), so `r0` is a valid C string for open().
+func (g *generator) emitFileIORuntime() {
+	g.emitBuildIoErrorArm()
+	g.emitReadFileRuntime()
+	g.emitWriteFileRuntime()
+}
+
+// emitBuildIoErrorArm emits __build_io_error(errno, path).
+// Returns a heap pointer to an IoError variant. errno-to-
+// variant mapping uses the typical Linux glibc values:
+// ENOENT=2, EACCES=13, EEXIST=17, EINTR=4, ENOTSUP=95.
+// Anything else flows into Other(path, "io error").
+func (g *generator) emitBuildIoErrorArm() {
+	g.line("")
+	g.line(".global __build_io_error")
+	g.line(".type __build_io_error, %function")
+	g.label("__build_io_error")
+	g.emit("push {r4, r5, lr}")
+	g.emit("sub sp, sp, #4") // 8-byte alignment
+	g.emit("mov r4, r0")     // r4 = errno
+	g.emit("mov r5, r1")     // r5 = path
+
+	// Each branch emits an alloc + tag + (optional) payload
+	// stores, then returns. Variants without a path payload
+	// allocate 4 bytes; with-path allocate 8.
+	g.emitIoErrCaseArm(2, 0, true)   // ENOENT  → NotFound(path)
+	g.emitIoErrCaseArm(13, 1, true)  // EACCES  → PermissionDenied(path)
+	g.emitIoErrCaseArm(17, 2, true)  // EEXIST  → AlreadyExists(path)
+	g.emitIoErrCaseArm(4, 4, false)  // EINTR   → Interrupted
+	g.emitIoErrCaseArm(95, 5, false) // ENOTSUP → Unsupported
+
+	// Fallthrough: Other(path, "io error"). 12 bytes.
+	g.label(".Lioe_other")
+	g.emit("mov r0, #12")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #6")
+	g.emit("str r1, [r0]")
+	g.emit("str r5, [r0, #4]")
+	g.emit("ldr r1, =.Lioe_msg")
+	g.emit("str r1, [r0, #8]")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.line(".size __build_io_error, .-__build_io_error")
+}
+
+// emitIoErrCaseArm writes one errno → variant branch in
+// __build_io_error. See emitIoErrorCase (wasm) for the
+// equivalent on the WASM side.
+func (g *generator) emitIoErrCaseArm(errno, tagIdx int, withPathPayload bool) {
+	tag := fmt.Sprintf(".Lioe_case_%d", errno)
+	skip := fmt.Sprintf(".Lioe_skip_%d", errno)
+	g.emit("cmp r4, #%d", errno)
+	g.emit("bne %s", skip)
+	g.label(tag)
+	if withPathPayload {
+		g.emit("mov r0, #8")
+	} else {
+		g.emit("mov r0, #4")
+	}
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #%d", tagIdx)
+	g.emit("str r1, [r0]")
+	if withPathPayload {
+		g.emit("str r5, [r0, #4]")
+	}
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.label(skip)
+}
+
+// emitReadFileRuntime — see emitFileIORuntime comment. The
+// arm32 strategy uses lseek to discover file size up front,
+// allocates a single length-prefixed buffer of the exact
+// size, and reads in a loop that handles partial returns by
+// re-issuing read(2). This keeps the result contiguous
+// without a chunk-stitching pass — libc malloc allocates
+// each block separately, so the wasm-side "bump-anchor +
+// un-bump tail" trick can't apply here.
+func (g *generator) emitReadFileRuntime() {
+	g.line("")
+	g.line(".global __lang_read_file")
+	g.line(".type __lang_read_file, %function")
+	g.label("__lang_read_file")
+	g.emit("push {r4, r5, r6, r7, r8, lr}")
+	g.emit("mov r4, r0") // r4 = path
+
+	// open(path, O_RDONLY=0)
+	g.emit("mov r1, #0")
+	g.emit("bl open")
+	g.emit("cmp r0, #0")
+	g.emit("bge .Lrf_opened")
+	g.emit("bl __errno_location")
+	g.emit("ldr r0, [r0]")
+	g.emit("mov r1, r4")
+	g.emit("bl __build_io_error")
+	g.emit("mov r5, r0")
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #1")
+	g.emit("str r1, [r0]")
+	g.emit("str r5, [r0, #4]")
+	g.emit("pop {r4, r5, r6, r7, r8, lr}")
+	g.emit("bx lr")
+
+	g.label(".Lrf_opened")
+	g.emit("mov r5, r0") // r5 = fd
+
+	// size = lseek(fd, 0, SEEK_END=2); rewind via lseek to 0.
+	g.emit("mov r0, r5")
+	g.emit("mov r1, #0")
+	g.emit("mov r2, #2")
+	g.emit("bl lseek")
+	g.emit("mov r6, r0") // r6 = file size
+	g.emit("mov r0, r5")
+	g.emit("mov r1, #0")
+	g.emit("mov r2, #0")
+	g.emit("bl lseek")
+
+	// Allocate result string: 4 (length) + size + 1 (trailing NUL).
+	g.emit("add r0, r6, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add r7, r0, #4") // r7 = data ptr (post length prefix)
+	// Length prefix is set after the read in case partial
+	// reads truncate the actual byte count.
+
+	// Read loop: read(fd, data + read_total, size - read_total)
+	// repeatedly until we've consumed `size` bytes or read
+	// returns 0 / -1.
+	g.emit("mov r8, #0") // r8 = read_total
+	g.label(".Lrf_loop")
+	g.emit("cmp r8, r6")
+	g.emit("bge .Lrf_done")
+	g.emit("mov r0, r5")
+	g.emit("add r1, r7, r8")
+	g.emit("sub r2, r6, r8")
+	g.emit("bl read")
+	g.emit("cmp r0, #0")
+	g.emit("ble .Lrf_done")
+	g.emit("add r8, r8, r0")
+	g.emit("b .Lrf_loop")
+
+	g.label(".Lrf_done")
+	g.emit("str r8, [r7, #-4]") // length prefix = actual bytes read
+	g.emit("add r0, r7, r8")
+	g.emit("mov r1, #0")
+	g.emit("strb r1, [r0]") // trailing NUL
+
+	// close(fd)
+	g.emit("mov r0, r5")
+	g.emit("bl close")
+
+	// Build Ok(r7).
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")
+	g.emit("str r7, [r0, #4]")
+	g.emit("pop {r4, r5, r6, r7, r8, lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_read_file, .-__lang_read_file")
+}
+
+// emitWriteFileRuntime — see emitFileIORuntime comment.
+// One open(2) + write(2) + close(2). Returns Option[IoError].
+func (g *generator) emitWriteFileRuntime() {
+	g.line("")
+	g.line(".global __lang_write_file")
+	g.line(".type __lang_write_file, %function")
+	g.label("__lang_write_file")
+	g.emit("push {r4, r5, r6, lr}")
+	g.emit("mov r4, r0") // r4 = path
+	g.emit("mov r5, r1") // r5 = content (data ptr)
+
+	// open(path, O_WRONLY|O_CREAT|O_TRUNC=0x241, 0644)
+	g.emit("mov r1, #0x241")
+	g.emit("mov r2, #0644")
+	g.emit("bl open")
+	g.emit("cmp r0, #0")
+	g.emit("bge .Lwf_opened")
+	g.emit("bl __errno_location")
+	g.emit("ldr r0, [r0]")
+	g.emit("mov r1, r4")
+	g.emit("bl __build_io_error")
+	g.emit("mov r6, r0")
+	// Build Some(ioerr): 8 bytes [tag=0, ioerr]
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")
+	g.emit("str r6, [r0, #4]")
+	g.emit("pop {r4, r5, r6, lr}")
+	g.emit("bx lr")
+
+	g.label(".Lwf_opened")
+	g.emit("mov r6, r0") // r6 = fd
+
+	// write(fd, content_data, len(content))
+	g.emit("mov r0, r6")
+	g.emit("mov r1, r5")
+	g.emit("ldr r2, [r5, #-4]")
+	g.emit("bl write")
+	g.emit("cmp r0, #0")
+	g.emit("blt .Lwf_write_err")
+
+	// close(fd) and return None.
+	g.emit("mov r0, r6")
+	g.emit("bl close")
+	g.emit("mov r0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #1")
+	g.emit("str r1, [r0]")
+	g.emit("pop {r4, r5, r6, lr}")
+	g.emit("bx lr")
+
+	g.label(".Lwf_write_err")
+	// Capture errno BEFORE close (which would overwrite it).
+	g.emit("bl __errno_location")
+	g.emit("ldr r5, [r0]") // r5 = errno
+	g.emit("mov r0, r6")
+	g.emit("bl close")
+	g.emit("mov r0, r5")
+	g.emit("mov r1, r4")
+	g.emit("bl __build_io_error")
+	g.emit("mov r6, r0")
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")
+	g.emit("str r6, [r0, #4]")
+	g.emit("pop {r4, r5, r6, lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_write_file, .-__lang_write_file")
 }
 
 // internString returns a unique .rodata label for s, allocating a new one

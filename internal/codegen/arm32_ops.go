@@ -373,6 +373,20 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		// stack hygiene; that's harmless because exit doesn't
 		// come back.
 		target = "exit"
+	case "read_file":
+		// `read_file(path)` lowers to a runtime helper that
+		// open(2)s the file, read(2)s it in chunks, and
+		// returns a `Result[string, IoError]` heap object.
+		target = "__lang_read_file"
+		g.usesReadFile = true
+		g.usesAlloc = true
+	case "write_file":
+		// `write_file(path, content)` truncates and writes via
+		// libc open(2)+write(2)+close(2); returns
+		// `Option[IoError]` (None on success).
+		target = "__lang_write_file"
+		g.usesWriteFile = true
+		g.usesAlloc = true
 	case "__str_idx", "__arr_idx":
 		// IR-side bounds-check stubs. We don't currently have ARM32
 		// equivalents, so the IR walker adds the bound-check itself

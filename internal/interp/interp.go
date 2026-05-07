@@ -172,6 +172,8 @@ func New() *Interp {
 	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
 	i.Builtins["read_line"] = &Builtin{Fn: builtinReadLine}
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
+	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
+	i.Builtins["write_file"] = &Builtin{Fn: builtinWriteFile}
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
 	return i
 }
@@ -247,6 +249,78 @@ func optionSome(v Value) *Enum {
 
 func optionNone() *Enum {
 	return &Enum{EnumName: "Option", VariantName: "None", Index: 1}
+}
+
+// builtinReadFile is the interpreter analogue of the
+// $read_file / __lang_read_file runtime helpers. Reads the
+// file in one shot, builds a Result[string, IoError] enum
+// value, and returns it. Errors come from os.ReadFile and get
+// classified via classifyIoError.
+func builtinReadFile(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("read_file: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("read_file: expected string arg, got %T", args[0])
+	}
+	data, err := os.ReadFile(string(path))
+	if err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	return resultOk(String(string(data))), nil
+}
+
+// builtinWriteFile mirrors $write_file / __lang_write_file:
+// truncate-write the content, return Option[IoError]
+// (None = success).
+func builtinWriteFile(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("write_file: expected 2 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("write_file: expected string path, got %T", args[0])
+	}
+	content, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("write_file: expected string content, got %T", args[1])
+	}
+	if err := os.WriteFile(string(path), []byte(content), 0o644); err != nil {
+		return optionSome(classifyIoError(string(path), err)), nil
+	}
+	return optionNone(), nil
+}
+
+// classifyIoError turns a Go error into the matching IoError
+// variant. The mapping mirrors the codegen-side errno tables
+// (NotFound, PermissionDenied, AlreadyExists, …) so that the
+// interpreter and the backends agree on how to surface the
+// same kind of failure.
+func classifyIoError(path string, err error) *Enum {
+	switch {
+	case os.IsNotExist(err):
+		return &Enum{EnumName: "IoError", VariantName: "NotFound", Index: 0,
+			Payloads: []Value{String(path)}}
+	case os.IsPermission(err):
+		return &Enum{EnumName: "IoError", VariantName: "PermissionDenied", Index: 1,
+			Payloads: []Value{String(path)}}
+	case os.IsExist(err):
+		return &Enum{EnumName: "IoError", VariantName: "AlreadyExists", Index: 2,
+			Payloads: []Value{String(path)}}
+	}
+	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
+		Payloads: []Value{String(path), String(err.Error())}}
+}
+
+// resultOk / resultErr wrap a value into the canonical
+// Result enum's variant.
+func resultOk(v Value) *Enum {
+	return &Enum{EnumName: "Result", VariantName: "Ok", Index: 0, Payloads: []Value{v}}
+}
+
+func resultErr(v Value) *Enum {
+	return &Enum{EnumName: "Result", VariantName: "Err", Index: 1, Payloads: []Value{v}}
 }
 
 // builtinExit calls i.Exiter, which defaults to os.Exit. Tests

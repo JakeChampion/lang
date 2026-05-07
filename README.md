@@ -198,12 +198,28 @@ Built-ins:
 - `exit(code: number): void` — terminates the process with the
   given status. Useful for `eprint(msg); exit(2)` failure paths;
   the success path can just `return` from main.
+- `read_file(path): Result[string, IoError]` — slurps the entire
+  file into a string. `Ok(content)` on success; `Err(IoError)`
+  with the path attached on failure.
+- `write_file(path, content): Option[IoError]` — truncates and
+  writes. `None` for success, `Some(err)` for failure. Streaming
+  variants come in a follow-up; for now this is appropriate for
+  small files (configs, single-pass tools).
 
-`Option[T]` and `Result[T, E]` are built into the language —
-they're auto-injected as enums on every program with the
-canonical Rust-shaped variants (`Some(T) / None`,
-`Ok(T) / Err(E)`). Use them anywhere user-defined enums work,
-including in your own function signatures.
+WASM builds need a preopened directory — pass `wasmtime --dir=...`
+when running, and paths are interpreted relative to that preopen
+(absolute paths fail with `Other`).
+
+`Option[T]`, `Result[T, E]`, and `IoError` are built into the
+language — they're auto-injected as enums on every program with
+the canonical Rust-shaped variants (`Some(T) / None`,
+`Ok(T) / Err(E)`). `IoError` carries the offending path on
+variants where it makes sense (`NotFound(path)`,
+`PermissionDenied(path)`, `AlreadyExists(path)`,
+`InvalidUtf8(path)`, plus payload-less `Interrupted` /
+`Unsupported`, and the catch-all `Other(path, message)`).
+Use them anywhere user-defined enums work, including in your
+own function signatures.
 
 ## Optimisation
 
