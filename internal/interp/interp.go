@@ -180,7 +180,6 @@ func New() *Interp {
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
-	i.Builtins["read_line"] = &Builtin{Fn: builtinReadLine}
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
 	i.Builtins["write_file"] = &Builtin{Fn: builtinWriteFile}
@@ -192,42 +191,11 @@ func New() *Interp {
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
+	i.Builtins["stdin"] = &Builtin{Fn: builtinStdin}
+	i.Builtins["stdout"] = &Builtin{Fn: builtinStdout}
+	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
 	return i
-}
-
-// builtinReadLine reads bytes from i.Stdin one at a time until it
-// hits a newline or EOF. The trailing `\n` is included in the
-// returned string when present, so callers can disambiguate
-// "blank line" (returns "\n") from EOF (returns "").
-func builtinReadLine(i *Interp, args []Value) (Value, error) {
-	if len(args) != 0 {
-		return nil, fmt.Errorf("read_line: expected 0 args, got %d", len(args))
-	}
-	if i.Stdin == nil {
-		return &Enum{EnumName: "Option", VariantName: "None", Index: 1}, nil
-	}
-	var buf []byte
-	one := make([]byte, 1)
-	for {
-		n, err := i.Stdin.Read(one)
-		if n > 0 {
-			buf = append(buf, one[0])
-			if one[0] == '\n' {
-				return optionSome(String(string(buf))), nil
-			}
-		}
-		if err != nil {
-			// EOF: empty buffer means we never read a byte, so
-			// signal `None`. A non-empty buffer at EOF mid-line
-			// returns `Some(line)` so the caller still sees the
-			// partial input.
-			if len(buf) == 0 {
-				return optionNone(), nil
-			}
-			return optionSome(String(string(buf))), nil
-		}
-	}
 }
 
 // builtinEnv looks up an environment variable. An explicit i.Env
@@ -384,37 +352,69 @@ func openHelper(i *Interp, args []Value, structName string, flag int, perm os.Fi
 	return resultOk(s), nil
 }
 
-// readerFile / writerFile pull the *os.File back out of an
-// interpreter Struct via the openFiles ticket map. Methods
-// validate the receiver before calling read / write.
-func readerFile(i *Interp, v Value) (*os.File, error) {
+// readerStream / writerStream return the io.Reader / io.Writer
+// the methods should operate on. fd 0 routes to i.Stdin, 1 to
+// i.Stdout, 2 to i.Stderr (so tests can override them); other
+// fds resolve through the openFiles ticket map populated by
+// open_reader / open_writer / open_appender.
+func readerStream(i *Interp, v Value) (io.Reader, error) {
+	fd, err := streamFd(v)
+	if err != nil {
+		return nil, err
+	}
+	switch fd {
+	case 0:
+		return i.Stdin, nil
+	}
+	f, ok := i.openFiles[fd]
+	if !ok {
+		return nil, fmt.Errorf("Reader with fd=%d not registered (closed already?)", fd)
+	}
+	return f, nil
+}
+
+func writerStream(i *Interp, v Value) (io.Writer, error) {
+	fd, err := streamFd(v)
+	if err != nil {
+		return nil, err
+	}
+	switch fd {
+	case 1:
+		return i.Stdout, nil
+	case 2:
+		return i.Stderr, nil
+	}
+	f, ok := i.openFiles[fd]
+	if !ok {
+		return nil, fmt.Errorf("Writer with fd=%d not registered (closed already?)", fd)
+	}
+	return f, nil
+}
+
+func streamFd(v Value) (int64, error) {
 	s, ok := v.(*Struct)
 	if !ok {
-		return nil, fmt.Errorf("expected Reader/Writer struct, got %T", v)
+		return 0, fmt.Errorf("expected Reader/Writer struct, got %T", v)
 	}
 	fd, ok := s.Fields["fd"].(Number)
 	if !ok {
-		return nil, fmt.Errorf("Reader/Writer.fd not a number")
+		return 0, fmt.Errorf("Reader/Writer.fd not a number")
 	}
-	f, ok := i.openFiles[int64(fd)]
-	if !ok {
-		return nil, fmt.Errorf("Reader/Writer with fd=%d not registered (closed already?)", fd)
-	}
-	return f, nil
+	return int64(fd), nil
 }
 
 func builtinReaderReadLine(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("Reader.read_line: expected 1 arg")
 	}
-	f, err := readerFile(i, args[0])
+	r, err := readerStream(i, args[0])
 	if err != nil {
 		return nil, err
 	}
 	var buf []byte
 	one := make([]byte, 1)
 	for {
-		n, err := f.Read(one)
+		n, err := r.Read(one)
 		if n > 0 {
 			buf = append(buf, one[0])
 			if one[0] == '\n' {
@@ -434,7 +434,7 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("Reader.read_chunk: expected 2 args")
 	}
-	f, err := readerFile(i, args[0])
+	r, err := readerStream(i, args[0])
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +443,7 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.read_chunk: size must be a number")
 	}
 	buf := make([]byte, int(size))
-	n, _ := f.Read(buf)
+	n, _ := r.Read(buf)
 	if n == 0 {
 		return optionNone(), nil
 	}
@@ -462,18 +462,23 @@ func closeFile(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("close: expected 1 arg")
 	}
-	f, err := readerFile(i, args[0])
+	fd, err := streamFd(args[0])
 	if err != nil {
 		return nil, err
+	}
+	// Closing stdin / stdout / stderr is a no-op in the
+	// interpreter — those streams are owned by the host.
+	if fd == 0 || fd == 1 || fd == 2 {
+		return optionNone(), nil
+	}
+	f, ok := i.openFiles[fd]
+	if !ok {
+		return nil, fmt.Errorf("close: fd %d not registered", fd)
 	}
 	if err := f.Close(); err != nil {
 		return optionSome(classifyIoError("", err)), nil
 	}
-	if s, ok := args[0].(*Struct); ok {
-		if fd, ok := s.Fields["fd"].(Number); ok {
-			delete(i.openFiles, int64(fd))
-		}
-	}
+	delete(i.openFiles, fd)
 	return optionNone(), nil
 }
 
@@ -481,7 +486,7 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("Writer.write: expected 2 args")
 	}
-	f, err := readerFile(i, args[0])
+	w, err := writerStream(i, args[0])
 	if err != nil {
 		return nil, err
 	}
@@ -489,10 +494,34 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("Writer.write: content must be a string")
 	}
-	if _, err := f.Write([]byte(s)); err != nil {
+	if _, err := w.Write([]byte(s)); err != nil {
 		return optionSome(classifyIoError("", err)), nil
 	}
 	return optionNone(), nil
+}
+
+// stdin / stdout / stderr return Reader / Writer struct values
+// with the conventional fds. The methods route fd 0/1/2 to the
+// Interp.Stdin/Stdout/Stderr fields so tests can override them.
+func builtinStdin(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("stdin: expected 0 args, got %d", len(args))
+	}
+	return &Struct{TypeName: "Reader", Fields: map[string]Value{"fd": Number(0)}}, nil
+}
+
+func builtinStdout(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("stdout: expected 0 args, got %d", len(args))
+	}
+	return &Struct{TypeName: "Writer", Fields: map[string]Value{"fd": Number(1)}}, nil
+}
+
+func builtinStderr(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("stderr: expected 0 args, got %d", len(args))
+	}
+	return &Struct{TypeName: "Writer", Fields: map[string]Value{"fd": Number(2)}}, nil
 }
 
 func builtinExit(i *Interp, args []Value) (Value, error) {

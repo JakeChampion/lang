@@ -250,17 +250,6 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.ArrayType{Elem: ast.StringType{}},
 	}
-	// read_line(): Option[string] — reads one line from stdin.
-	// `Some(line)` carries a non-empty line including the trailing
-	// `\n`; `None` signals end-of-file. The runtime helper
-	// allocates the Option object on the bump heap directly, so
-	// users get the typed shape without writing the wrap
-	// themselves. The returned line preserves its trailing
-	// newline so `Some("")` ≠ `Some("\n")` ≠ `None`.
-	c.info.FuncSigs["read_line"] = &ast.FuncType{
-		Params: []ast.Type{},
-		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
-	}
 	// env(name: string): Option[string] — looks up an environment
 	// variable. `Some(value)` for a present key, `None` for
 	// missing. (POSIX distinguishes "set to empty" from "not
@@ -321,6 +310,15 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
 	}
+	// stdin / stdout / stderr return Reader / Writer values
+	// wrapping the standard fds (0 / 1 / 2). They never fail
+	// — fd 0/1/2 are always present in a POSIX / WASI program
+	// — so the return is bare Reader / Writer rather than
+	// Result. Calling them is conceptually free: the runtime
+	// just allocates a 4-byte struct with the right fd.
+	c.info.FuncSigs["stdin"] = &ast.FuncType{Params: []ast.Type{}, Result: readerType}
+	c.info.FuncSigs["stdout"] = &ast.FuncType{Params: []ast.Type{}, Result: writerType}
+	c.info.FuncSigs["stderr"] = &ast.FuncType{Params: []ast.Type{}, Result: writerType}
 	// Auto-injected methods on Reader / Writer. The names are
 	// the mangled forms the existing method-call rewrite uses
 	// (`r.read_line()` → `__method_Reader_read_line(r)`); we

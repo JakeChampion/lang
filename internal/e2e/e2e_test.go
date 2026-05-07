@@ -654,7 +654,7 @@ func runWithStdinEnv(t *testing.T, src, stdin string, extraEnv []string) (stdout
 // empty-string sentinel from earlier PRs.
 func TestReadLineBuiltinArm(t *testing.T) {
 	src := `function main(): number {
-		match (read_line()) {
+		match (stdin().read_line()) {
 			Some(line) => { write(line); return len(line); },
 			None => { return -1; }
 		}
@@ -675,7 +675,7 @@ func TestReadLineBuiltinArm(t *testing.T) {
 // `len(line) == 0`.
 func TestReadLineBuiltinEOFArm(t *testing.T) {
 	src := `function main(): number {
-		match (read_line()) {
+		match (stdin().read_line()) {
 			Some(line) => { return 1; },
 			None => { return 0; }
 		}

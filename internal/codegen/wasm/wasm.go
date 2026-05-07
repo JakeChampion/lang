@@ -79,6 +79,7 @@ type generator struct {
 	needsExit        bool // any `exit(code)` call appears — pulls in WASI proc_exit
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
+	needsStdStreams  bool // any stdin() / stdout() / stderr() call — emits trivial constructors that wrap fd 0 / 1 / 2 in Reader / Writer
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -268,8 +269,6 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 				switch id.Name {
 				case "args":
 					g.needsArgs = true
-				case "read_line":
-					g.needsReadLine = true
 				case "env":
 					g.needsEnv = true
 				case "exit":
@@ -279,6 +278,18 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 				case "open_reader", "open_writer", "open_appender":
 					g.needsFileIO = true
 					g.needsStreamingIO = true
+				case "stdin", "stdout", "stderr":
+					// stdin/stdout/stderr by themselves
+					// don't need the file I/O machinery,
+					// but the only point of having them is
+					// to call .read_line() / .write() etc.
+					// — those methods light up
+					// needsStreamingIO via the
+					// __method_Reader_* / __method_Writer_*
+					// scan a few lines down. Set the
+					// dedicated flag for the constructor
+					// helper itself.
+					g.needsStdStreams = true
 				}
 				// Method calls on Reader/Writer arrive here as
 				// post-checker mangled `__method_Reader_*` /
@@ -435,8 +446,9 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			// soon as needsArrays is set.
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				switch id.Name {
-				case "args", "read_line", "env", "read_file", "write_file",
-					"open_reader", "open_writer", "open_appender":
+				case "args", "env", "read_file", "write_file",
+					"open_reader", "open_writer", "open_appender",
+					"stdin", "stdout", "stderr":
 					g.needsArrays = true
 					g.needsRuntime = true
 				}
@@ -1051,8 +1063,9 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				switch id.Name {
-				case "print", "write", "eprint", "putchar", "args", "read_line", "env", "exit",
-					"read_file", "write_file", "open_reader", "open_writer", "open_appender":
+				case "print", "write", "eprint", "putchar", "args", "env", "exit",
+					"read_file", "write_file", "open_reader", "open_writer", "open_appender",
+					"stdin", "stdout", "stderr":
 					g.needsRuntime = true
 					return
 				}
@@ -1534,6 +1547,36 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsFileIO {
 		g.emitFileIOHelpers()
 	}
+	if g.needsStdStreams {
+		g.emitStdStreamHelpers()
+	}
+}
+
+// emitStdStreamHelpers writes `$stdin`, `$stdout`, `$stderr` —
+// trivial constructors that allocate a 4-byte Reader / Writer
+// struct around fd 0 / 1 / 2. Called repeatedly each yields a
+// fresh struct; that's a small allocation cost for a usually-
+// once-per-program lookup, in exchange for not needing static
+// memory slots or a cached-once flag.
+func (g *generator) emitStdStreamHelpers() {
+	g.emitStdStream("$stdin", 0)
+	g.emitStdStream("$stdout", 1)
+	g.emitStdStream("$stderr", 2)
+}
+
+func (g *generator) emitStdStream(name string, fd int) {
+	g.linef(`(func %s (result i32)`, name)
+	g.indent++
+	g.line(`(local $r i32)`)
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $r`)
+	g.line(`local.get $r`)
+	g.linef(`i32.const %d`, fd)
+	g.line(`i32.store`)
+	g.line(`local.get $r`)
+	g.indent--
+	g.line(`)`)
 }
 
 // emitFdWriteString emits one fd_write call that writes a single
