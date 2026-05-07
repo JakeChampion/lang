@@ -21,16 +21,19 @@ package ir
 // can run. In practice converges in 2–3; the cap is defensive.
 const optimizeCleanupMaxIterations = 8
 
-// OptimizeCleanup runs PropagateCopies + ConstPropagate + Fold to a
-// fixed point on every function in prog. Each pass is idempotent
-// on its own; the loop exists because they interact — the output of
-// one can expose new work for the others.
+// OptimizeCleanup runs PropagateCopies + ConstPropagate + Fold +
+// ReduceStrength to a fixed point on every function in prog. Each
+// pass is idempotent on its own; the loop exists because they
+// interact — the output of one can expose new work for the others
+// (a strength-reduced `<expr> ; drop ; const 0` becomes a candidate
+// for Fold's const + drop peephole when <expr> is itself a const).
 func OptimizeCleanup(prog *Program) {
 	for i := 0; i < optimizeCleanupMaxIterations; i++ {
 		before := snapshotPrograms(prog)
 		PropagateCopies(prog)
 		ConstPropagate(prog)
 		Fold(prog)
+		ReduceStrength(prog)
 		if equalPrograms(prog, before) {
 			return
 		}
