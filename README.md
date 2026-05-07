@@ -106,6 +106,14 @@ function main(): number {
 
 Supported:
 
+- **Modules / imports** — split a program across files via
+  `import "./path";` at the top of the entry file. Imports resolve
+  relative to the importing file's directory; `.lang` is appended
+  automatically. Functions from `import "./util";` are addressed
+  as `util.fn(args)`. The loader detects cycles, mangles non-entry
+  module names internally so the rest of the pipeline sees one
+  flat program. Cross-module struct types aren't supported in this
+  first cut.
 - Top-level `function` declarations with parameter and return types.
 - **Methods** on structs via the receiver clause
   `function (p: Point) name(): T { ... }`; the checker rewrites call
