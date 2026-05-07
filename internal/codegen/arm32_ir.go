@@ -96,6 +96,8 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 				g.usesAlloc = true
 			case "exit":
 				g.usesExit = true
+			case "arena_save", "arena_restore":
+				g.usesArena = true
 			case "read_file":
 				g.usesReadFile = true
 				g.usesAlloc = true
@@ -174,6 +176,10 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	}
 	if g.usesExit {
 		g.emitExitRuntime()
+	}
+	if g.usesArena {
+		g.emitArenaSaveRuntime()
+		g.emitArenaRestoreRuntime()
 	}
 	if g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
 		g.emitFileIORuntime()

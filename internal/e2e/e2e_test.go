@@ -130,6 +130,40 @@ func TestExitCode(t *testing.T) {
 	}
 }
 
+// arena_save / arena_restore expose the bump-allocator cursor.
+// After save → alloc → restore, the cursor must come back to
+// the saved value, so a follow-up alloc returns the same
+// address as the first one. We compare data-pointers via a
+// helper that turns the pointer into an integer (the runtime
+// uses raw integers anyway, but the language has no
+// reinterpret cast — we approximate by comparing two array
+// allocations' return values via len, then via mutating /
+// re-reading the heap). For this test, we check the cursor
+// directly: arena_save before and after a no-op restore must
+// return the same value.
+func TestArenaResetReclaimsAllocations(t *testing.T) {
+	src := `function main(): number {
+		var saved: number = arena_save();
+		// Allocate something — this advances the heap cursor.
+		var a: number[] = [1, 2, 3, 4, 5];
+		var afterAlloc: number = arena_save();
+		// Restore to the saved cursor.
+		arena_restore(saved);
+		var afterRestore: number = arena_save();
+		// The cursor must have advanced after the alloc...
+		if (afterAlloc <= saved) { return 1; }
+		// ...and come back to the saved value after restore.
+		if (afterRestore != saved) { return 2; }
+		// Sanity-check the array we allocated still has the right length.
+		if (len(a) != 5) { return 3; }
+		return 0;
+	}`
+	_, code := compileAndRun(t, src)
+	if code != 0 {
+		t.Errorf("arena_save/restore: exit = %d, want 0", code)
+	}
+}
+
 // A leaf function with several params exercises the register-pinned
 // prologue: the body still produces the right answer despite never
 // touching the stack to read a/b/c/d.

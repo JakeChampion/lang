@@ -361,3 +361,33 @@ func (g *generator) emitExitRuntime() {
 	g.emit("bx lr")
 	g.line(".size __lang_exit, .-__lang_exit")
 }
+
+// emitArenaSaveRuntime returns the current bump-allocator
+// cursor as an integer. Pair with __lang_arena_restore to free
+// everything allocated in between in one pointer-store. Two
+// instructions (load + return) — the operation is essentially
+// free.
+func (g *generator) emitArenaSaveRuntime() {
+	g.line("")
+	g.line(".type __lang_arena_save, %function")
+	g.label("__lang_arena_save")
+	g.emit("ldr r0, =__lang_heap_ptr")
+	g.emit("ldr r0, [r0]")
+	g.emit("bx lr")
+	g.line(".size __lang_arena_save, .-__lang_arena_save")
+}
+
+// emitArenaRestoreRuntime rewinds the bump-allocator cursor
+// to the value returned by an earlier arena_save. Anything
+// allocated since that save is reclaimed in one store. The
+// runtime trusts the caller not to hold pointers into the
+// reclaimed region — no compile-time check.
+func (g *generator) emitArenaRestoreRuntime() {
+	g.line("")
+	g.line(".type __lang_arena_restore, %function")
+	g.label("__lang_arena_restore")
+	g.emit("ldr r1, =__lang_heap_ptr")
+	g.emit("str r0, [r1]")
+	g.emit("bx lr")
+	g.line(".size __lang_arena_restore, .-__lang_arena_restore")
+}
