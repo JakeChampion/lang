@@ -77,6 +77,7 @@ type generator struct {
 	needsReadLine    bool // any `read_line()` call appears — pulls in WASI fd_read + helper + scratch slots
 	needsEnv         bool // any `env(name)` call appears — pulls in WASI environ_* + helper + cache slots
 	needsExit        bool // any `exit(code)` call appears — pulls in WASI proc_exit
+	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -272,6 +273,8 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsEnv = true
 				case "exit":
 					g.needsExit = true
+				case "read_file", "write_file":
+					g.needsFileIO = true
 				}
 			}
 			walk(x.Callee)
@@ -419,7 +422,7 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			// soon as needsArrays is set.
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				switch id.Name {
-				case "args", "read_line", "env":
+				case "args", "read_line", "env", "read_file", "write_file":
 					g.needsArrays = true
 					g.needsRuntime = true
 				}
@@ -1029,7 +1032,7 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				switch id.Name {
-				case "print", "write", "eprint", "putchar", "args", "read_line", "env", "exit":
+				case "print", "write", "eprint", "putchar", "args", "read_line", "env", "exit", "read_file", "write_file":
 					g.needsRuntime = true
 					return
 				}
@@ -1167,6 +1170,17 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsExit {
 		g.line(`(import "wasi_snapshot_preview1" "proc_exit" (func $__wasi_proc_exit (param i32)))`)
+	}
+	if g.needsFileIO {
+		// path_open / fd_read / fd_close — fd_write is already
+		// imported above for `print`. fd_read shares with the
+		// stdin reader's import; if both flags are on we still
+		// only emit it once.
+		g.line(`(import "wasi_snapshot_preview1" "path_open" (func $__wasi_path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))`)
+		if !g.needsReadLine {
+			g.line(`(import "wasi_snapshot_preview1" "fd_read" (func $__wasi_fd_read (param i32 i32 i32 i32) (result i32)))`)
+		}
+		g.line(`(import "wasi_snapshot_preview1" "fd_close" (func $__wasi_fd_close (param i32) (result i32)))`)
 	}
 	g.line(`(memory $mem 1)`)
 
@@ -1496,6 +1510,9 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsExit {
 		g.emitExitHelper()
+	}
+	if g.needsFileIO {
+		g.emitFileIOHelpers()
 	}
 }
 
@@ -2179,6 +2196,451 @@ func (g *generator) emitExitHelper() {
 	g.indent++
 	g.line(`local.get $code`)
 	g.line(`call $__wasi_proc_exit`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitFileIOHelpers writes `$read_file`, `$write_file`, and the
+// shared `$__build_io_error` helper that maps a WASI errno to the
+// matching `IoError` variant. Variant indices are hardcoded to
+// match the auto-injected enum (NotFound=0, PermissionDenied=1,
+// AlreadyExists=2, InvalidUtf8=3, Interrupted=4, Unsupported=5,
+// Other=6).
+//
+// `read_file` allocates 4 KiB chunks in a loop, packing them
+// contiguously on the bump heap by un-bumping any unused tail.
+// On EOF / partial read, the contiguous region from $start to
+// the bump pointer is the file content; we then allocate a
+// length-prefixed result string and memcpy into it. Files
+// larger than the available linear memory will simply OOM the
+// allocator — streaming via Reader/Writer (Phase 4b) is the
+// fix when that matters.
+//
+// `write_file` opens with O_CREAT | O_TRUNC and a single
+// fd_write. Multi-iovec splitting isn't necessary because the
+// WASI API accepts an arbitrary buffer length.
+//
+// Path interpretation is governed by the WASI preopen at fd 3
+// — wasmtime users pass `--dir=...` to make a directory
+// accessible. Paths are relative to that preopen; absolute
+// paths fail with EBADF.
+func (g *generator) emitFileIOHelpers() {
+	// Pre-intern the static "io error" message so $__build_io_error
+	// can reach it via a constant pointer rather than rebuilding
+	// the string on every error path.
+	ioErrMsgPtr := g.internString("io error")
+	g.line(`(func $__build_io_error (param $errno i32) (param $path i32) (result i32)`)
+	g.indent++
+	g.line(`(local $result i32)`)
+	// Errno-to-variant table. Common cases get a typed variant;
+	// anything else falls through to Other(path, "io error").
+	// WASI Preview 1 errno values: noent=44, acces=2, exist=20,
+	// intr=27, notsup=58.
+	g.emitIoErrorCase(2, 1, true)   // EACCES → PermissionDenied(path)
+	g.emitIoErrorCase(20, 2, true)  // EEXIST → AlreadyExists(path)
+	g.emitIoErrorCase(27, 4, false) // EINTR  → Interrupted
+	g.emitIoErrorCase(44, 0, true)  // ENOENT → NotFound(path)
+	g.emitIoErrorCase(58, 5, false) // ENOTSUP → Unsupported
+	// Default: Other(path, "io error"). Allocate 12 bytes:
+	// [tag=6, path_ptr, msg_ptr].
+	g.line(`i32.const 12`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 6`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $path`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.linef(`i32.const %d`, ioErrMsgPtr)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
+
+	g.emitReadFileHelper()
+	g.emitWriteFileHelper()
+}
+
+// emitIoErrorCase writes one branch of the errno → variant
+// dispatch in `$__build_io_error`. `errno` is the WASI errno
+// to match; `tagIdx` is the IoError variant index;
+// `withPathPayload` is true for variants that carry the path
+// (NotFound, PermissionDenied, AlreadyExists) and false for
+// the payload-less ones (Interrupted, Unsupported).
+func (g *generator) emitIoErrorCase(errno, tagIdx int, withPathPayload bool) {
+	g.line(`local.get $errno`)
+	g.linef(`i32.const %d`, errno)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	if withPathPayload {
+		g.line(`i32.const 8`)
+	} else {
+		g.line(`i32.const 4`)
+	}
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.linef(`i32.const %d`, tagIdx)
+	g.line(`i32.store`)
+	if withPathPayload {
+		g.line(`local.get $result`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`local.get $path`)
+		g.line(`i32.store`)
+	}
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+}
+
+// emitReadFileHelper writes `$read_file(path) -> Result[string, IoError]`.
+// The chunk-loop strategy is described above the parent
+// emitFileIOHelpers comment.
+func (g *generator) emitReadFileHelper() {
+	g.line(`(func $read_file (param $path i32) (result i32)`)
+	g.indent++
+	g.line(`(local $fd_buf i32)`)
+	g.line(`(local $fd i32)`)
+	g.line(`(local $errno i32)`)
+	g.line(`(local $iovec i32)`)
+	g.line(`(local $nread i32)`)
+	g.line(`(local $chunk i32)`)
+	g.line(`(local $n i32)`)
+	g.line(`(local $start i32)`)
+	g.line(`(local $total i32)`)
+	g.line(`(local $result i32)`)
+	g.line(`(local $sptr i32)`)
+	g.line(`(local $sbase i32)`)
+	g.line(`(local $i i32)`)
+
+	// Allocate scratch (fd_buf + iovec + nread) BEFORE the
+	// chunk-loop anchor so the chunks remain heap-contiguous.
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $fd_buf`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $iovec`)
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $nread`)
+
+	// path_open(preopen=3, lookup_flags=1 (symlink_follow),
+	//           path_data, path_len, oflags=0,
+	//           rights_base=read|seek|tell|filestat_get,
+	//           rights_inheriting=0, fdflags=0, fd_buf).
+	// wasmtime validates the Rights bits as an enum; passing
+	// `-1` (all bits) trips its TryFromIntError. The minimum
+	// rights set that lets us read + behave normally is
+	// fd_read (2) | fd_seek (4) | fd_tell (32) |
+	// fd_filestat_get (0x200000) = 0x200026.
+	g.line(`i32.const 3`)
+	g.line(`i32.const 1`)
+	g.line(`local.get $path`)
+	g.line(`local.get $path`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`i32.const 0`)
+	g.line(`i64.const 0x200026`)
+	g.line(`i64.const 0`)
+	g.line(`i32.const 0`)
+	g.line(`local.get $fd_buf`)
+	g.line(`call $__wasi_path_open`)
+	g.line(`local.set $errno`)
+	g.line(`local.get $errno`)
+	g.line(`if`)
+	g.indent++
+	// Build Err(__build_io_error(errno, path)).
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $errno`)
+	g.line(`local.get $path`)
+	g.line(`call $__build_io_error`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	g.line(`local.get $fd_buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $fd`)
+
+	// Anchor the chunk-loop's heap region.
+	g.line(`i32.const 0`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $start`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $total`)
+
+	g.line(`block $loop_end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	// Allocate a 4 KiB chunk and read into it.
+	g.line(`i32.const 4096`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $chunk`)
+	g.line(`local.get $iovec`)
+	g.line(`local.get $chunk`)
+	g.line(`i32.store`)
+	g.line(`local.get $iovec`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.const 4096`)
+	g.line(`i32.store`)
+	g.line(`local.get $fd`)
+	g.line(`local.get $iovec`)
+	g.line(`i32.const 1`)
+	g.line(`local.get $nread`)
+	g.line(`call $__wasi_fd_read`)
+	g.line(`drop`)
+	g.line(`local.get $nread`)
+	g.line(`i32.load`)
+	g.line(`local.set $n`)
+	// EOF: un-bump the empty chunk we just allocated and exit.
+	g.line(`local.get $n`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 40`)
+	g.line(`i32.const 40`)
+	g.line(`i32.load`)
+	g.line(`i32.const 4096`)
+	g.line(`i32.sub`)
+	g.line(`i32.store`)
+	g.line(`br $loop_end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $total`)
+	g.line(`local.get $n`)
+	g.line(`i32.add`)
+	g.line(`local.set $total`)
+	// Partial read: un-bump the unused tail and exit.
+	g.line(`local.get $n`)
+	g.line(`i32.const 4096`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 40`)
+	g.line(`i32.const 40`)
+	g.line(`i32.load`)
+	g.line(`i32.const 4096`)
+	g.line(`local.get $n`)
+	g.line(`i32.sub`)
+	g.line(`i32.sub`)
+	g.line(`i32.store`)
+	g.line(`br $loop_end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	g.line(`local.get $fd`)
+	g.line(`call $__wasi_fd_close`)
+	g.line(`drop`)
+
+	// Allocate the result string with a length prefix and copy.
+	g.line(`local.get $total`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`local.get $total`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sptr`)
+
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $copy_end`)
+	g.indent++
+	g.line(`loop $copy`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $total`)
+	g.line(`i32.eq`)
+	g.line(`br_if $copy_end`)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`local.get $start`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.store8`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $copy`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// Build Ok(sptr): 8 bytes [tag=0, sptr].
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $sptr`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitWriteFileHelper writes
+// `$write_file(path, content) -> Option[IoError]`.
+// One path_open + one fd_write + fd_close. Returns `None`
+// (4-byte heap object, tag=1) on success and `Some(err)`
+// (8-byte, tag=0 + ioerr_ptr) on failure.
+func (g *generator) emitWriteFileHelper() {
+	g.line(`(func $write_file (param $path i32) (param $content i32) (result i32)`)
+	g.indent++
+	g.line(`(local $fd_buf i32)`)
+	g.line(`(local $fd i32)`)
+	g.line(`(local $errno i32)`)
+	g.line(`(local $iovec i32)`)
+	g.line(`(local $nwritten i32)`)
+	g.line(`(local $result i32)`)
+
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $fd_buf`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $iovec`)
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $nwritten`)
+
+	// path_open(preopen=3, lookup_flags=1, path_data, path_len,
+	//           oflags=O_CREAT|O_TRUNC=9,
+	//           rights_base=fd_write|fd_seek|fd_filestat_get,
+	//           rights_inheriting=0, fdflags=0, fd_buf).
+	// fd_write=0x40 | fd_seek=0x4 | fd_filestat_get=0x200000
+	//   = 0x200044.
+	g.line(`i32.const 3`)
+	g.line(`i32.const 1`)
+	g.line(`local.get $path`)
+	g.line(`local.get $path`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`i32.const 9`)
+	g.line(`i64.const 0x200044`)
+	g.line(`i64.const 0`)
+	g.line(`i32.const 0`)
+	g.line(`local.get $fd_buf`)
+	g.line(`call $__wasi_path_open`)
+	g.line(`local.set $errno`)
+	g.line(`local.get $errno`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`) // Some
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $errno`)
+	g.line(`local.get $path`)
+	g.line(`call $__build_io_error`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	g.line(`local.get $fd_buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $fd`)
+
+	// fd_write(fd, iovec(content_data, content_len), 1, nwritten)
+	g.line(`local.get $iovec`)
+	g.line(`local.get $content`)
+	g.line(`i32.store`)
+	g.line(`local.get $iovec`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $content`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	g.line(`local.get $fd`)
+	g.line(`local.get $iovec`)
+	g.line(`i32.const 1`)
+	g.line(`local.get $nwritten`)
+	g.line(`call $__wasi_fd_write`)
+	g.line(`local.set $errno`)
+
+	g.line(`local.get $fd`)
+	g.line(`call $__wasi_fd_close`)
+	g.line(`drop`)
+
+	// On write failure, return Some(io_error_from_errno).
+	g.line(`local.get $errno`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $errno`)
+	g.line(`local.get $path`)
+	g.line(`call $__build_io_error`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// Success: return None — 4-byte heap object with tag=1.
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
 	g.indent--
 	g.line(`)`)
 }

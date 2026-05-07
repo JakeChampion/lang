@@ -90,6 +90,12 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			case "env":
 				g.usesEnv = true
 				g.usesAlloc = true
+			case "read_file":
+				g.usesReadFile = true
+				g.usesAlloc = true
+			case "write_file":
+				g.usesWriteFile = true
+				g.usesAlloc = true
 			}
 		}
 	}
@@ -122,10 +128,13 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	if g.usesEnv {
 		g.emitEnvRuntime()
 	}
+	if g.usesReadFile || g.usesWriteFile {
+		g.emitFileIORuntime()
+	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 	}
-	if len(g.stringOrder) > 0 || g.usesEprint {
+	if len(g.stringOrder) > 0 || g.usesEprint || g.usesReadFile || g.usesWriteFile {
 		g.line("")
 		g.line(`.section .rodata`)
 		for _, s := range g.stringOrder {
@@ -141,6 +150,17 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			// the libc write syscall with count=1.
 			g.label(".LLangNewline")
 			g.line(`	.byte 10`)
+		}
+		if g.usesReadFile || g.usesWriteFile {
+			// Length-prefixed lang string used by the
+			// IoError.Other variant's "msg" payload. Layout
+			// matches user strings: 4-byte little-endian
+			// length followed by .asciz data, with the label
+			// pointing at the data start.
+			g.line(`.align 2`)
+			g.line(`	.4byte 8`)
+			g.label(".Lioe_msg")
+			g.line(`	.asciz "io error"`)
 		}
 	}
 	if g.usesArgs || g.usesReadLine {

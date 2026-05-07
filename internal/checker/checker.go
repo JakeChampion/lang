@@ -84,6 +84,25 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "Err", Payloads: []ast.Type{ast.ParamType{Name: "E"}}},
 			},
 		},
+		{
+			// Roc-shaped error variants: a small set of named
+			// kinds plus a generic Other(path, message) catch-
+			// all carrying the offending path and the OS errno
+			// text. Variants that always have a path attached
+			// keep the API uniform — callers pattern-match on
+			// the kind and never have to wrap calls just to add
+			// "(while reading X)" context.
+			Name: "IoError",
+			Variants: []ast.EnumVariant{
+				{Name: "NotFound", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "PermissionDenied", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "AlreadyExists", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "InvalidUtf8", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "Interrupted"},
+				{Name: "Unsupported"},
+				{Name: "Other", Payloads: []ast.Type{ast.StringType{}, ast.StringType{}}},
+			},
+		},
 	}
 }
 
@@ -231,6 +250,30 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["exit"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.VoidType{},
+	}
+	// read_file(path): Result[string, IoError] — reads the entire
+	// file into a single string. WASM builds need a preopen
+	// directory (e.g. `wasmtime --dir=.`); the path is
+	// interpreted relative to the first preopen.
+	c.info.FuncSigs["read_file"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// write_file(path, content): Option[IoError] — writes the
+	// content to the named file, truncating it first. Returns
+	// `None` on success and `Some(err)` on failure. We use
+	// Option[IoError] rather than Result[void, IoError] because
+	// the language doesn't have a usable unit type yet — None /
+	// Some(err) pattern reads naturally and matches the Go-style
+	// "error or nil" shape.
+	c.info.FuncSigs["write_file"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{
+			ast.EnumType{Name: "IoError"},
+		}},
 	}
 
 	// First pass: gather all top-level signatures so functions can call
