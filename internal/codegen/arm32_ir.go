@@ -37,6 +37,13 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	if err != nil {
 		return "", err
 	}
+	// Fold first so TCO sees its constant-folded body — a
+	// hand-written `return f(N + 1)` for some literal N becomes
+	// `return f(constant)` after Fold, which still tail-call-rewrites
+	// cleanly. Order matters: TCO wraps the body in a loop and any
+	// post-TCO Fold would have to know about that wrapper to stay
+	// useful.
+	ir.Fold(ip)
 	ir.TailCallOptimize(ip)
 
 	g := &generator{
