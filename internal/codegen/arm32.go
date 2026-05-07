@@ -71,14 +71,14 @@ type generator struct {
 	labelN      int
 	stringLabel map[string]string // value -> label
 	stringOrder []string          // insertion order so output is deterministic
-	// printBufferLabel/printBufferOrder dedupe the
+	// lineBufferLabel/lineBufferOrder dedupe the
 	// `data + "\n"` buffers used by the `print(literal)` fold.
 	// Same shape as stringLabel/stringOrder but with the
 	// trailing newline baked in and no length-prefix / NUL —
 	// the inline `write(2)` syscall takes a raw (ptr, len)
 	// pair, not a lang string.
-	printBufferLabel map[string]string
-	printBufferOrder []string
+	lineBufferLabel map[string]string
+	lineBufferOrder []string
 	// nonLiteralPrintCount is the number of `print(…)` call
 	// sites whose arg isn't a string literal — used to decide
 	// whether the legacy `__lang_puts` helper still needs to be
@@ -1071,21 +1071,23 @@ func (g *generator) internString(s string) string {
 	return lbl
 }
 
-// internPrintBuffer returns a label for `s + "\n"` in .rodata,
-// the buffer the `print(literal)` peephole writes in a single
-// inline `write(2)` syscall. Plain bytes — no length prefix, no
-// trailing NUL — so the precomputed length sent to the kernel
-// is exactly `len(s) + 1`.
-func (g *generator) internPrintBuffer(s string) string {
-	if lbl, ok := g.printBufferLabel[s]; ok {
+// internLineBuffer returns a label for `s + "\n"` in .rodata,
+// the buffer the `print(literal)` and `eprint(literal)` folds
+// write in a single inline `write(2)` syscall. Plain bytes —
+// no length prefix, no trailing NUL — so the precomputed
+// length sent to the kernel is exactly `len(s) + 1`. print
+// and eprint share the pool because both want identical
+// `data + "\n"` bytes.
+func (g *generator) internLineBuffer(s string) string {
+	if lbl, ok := g.lineBufferLabel[s]; ok {
 		return lbl
 	}
-	if g.printBufferLabel == nil {
-		g.printBufferLabel = map[string]string{}
+	if g.lineBufferLabel == nil {
+		g.lineBufferLabel = map[string]string{}
 	}
-	lbl := fmt.Sprintf(".LPrintBuf_%d", len(g.printBufferOrder))
-	g.printBufferLabel[s] = lbl
-	g.printBufferOrder = append(g.printBufferOrder, s)
+	lbl := fmt.Sprintf(".LLineBuf_%d", len(g.lineBufferOrder))
+	g.lineBufferLabel[s] = lbl
+	g.lineBufferOrder = append(g.lineBufferOrder, s)
 	return lbl
 }
 

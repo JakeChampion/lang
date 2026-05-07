@@ -254,10 +254,10 @@ func TestStringLiteralEmitsRodata(t *testing.T) {
 func TestPrintLiteralFoldsToInlineWrite(t *testing.T) {
 	asm := compile(t, `function main(): void { print("hi"); }`)
 	// .rodata gets a print-only buffer with the trailing newline.
-	mustContain(t, asm, ".LPrintBuf_0:")
+	mustContain(t, asm, ".LLineBuf_0:")
 	mustContain(t, asm, `.ascii "hi\n"`)
-	// Call site is inline: write(1, .LPrintBuf_0, 3).
-	mustContain(t, asm, "ldr r1, =.LPrintBuf_0")
+	// Call site is inline: write(1, .LLineBuf_0, 3).
+	mustContain(t, asm, "ldr r1, =.LLineBuf_0")
 	mustContain(t, asm, "ldr r2, =3")
 	// write(2) syscall = 4 on ARM EABI.
 	mustContain(t, asm, "mov r7, #4")
@@ -577,11 +577,57 @@ func TestArm32PutsUsesWritev(t *testing.T) {
 	mustContain(t, asm, "sub sp, sp, #16")
 }
 
-// `eprint(s)` mirrors print: single writev(2) routed to fd 2.
+// `eprint(non_literal)` falls back to `__lang_eprint`, which
+// uses a single `writev(2)` over a 2-iovec gather routed to
+// fd 2. We exercise the helper via a non-literal arg so the
+// eprint-fold peephole doesn't preempt it.
 func TestArm32EprintUsesWritev(t *testing.T) {
-	asm := compile(t, `function main(): void { eprint("hi"); }`)
+	asm := compile(t, `function main(): void {
+		var s: string = "hi" + "!";
+		eprint(s);
+	}`)
 	mustContain(t, asm, "mov r7, #146")
 	mustContain(t, asm, "mov r0, #2") // fd 2
+}
+
+// `eprint(literal)` folds the same way `print(literal)` does,
+// just routed to fd 2 instead of fd 1. Reuses the shared
+// .LLineBuf_* pool so `print("x")` and `eprint("x")` in the
+// same program compile to a single `data + "\n"` buffer.
+func TestEprintLiteralFoldsToInlineWrite(t *testing.T) {
+	asm := compile(t, `function main(): void { eprint("hi"); }`)
+	mustContain(t, asm, ".LLineBuf_0:")
+	mustContain(t, asm, `.ascii "hi\n"`)
+	mustContain(t, asm, "mov r0, #2") // fd 2
+	mustContain(t, asm, "ldr r1, =.LLineBuf_0")
+	mustContain(t, asm, "ldr r2, =3")
+	mustContain(t, asm, "mov r7, #4") // sys_write
+	if strings.Contains(asm, "bl __lang_eprint") {
+		t.Errorf("literal eprint should fold inline:\n%s", asm)
+	}
+	if strings.Contains(asm, "__lang_eprint:") {
+		t.Errorf("__lang_eprint helper should be elided when every eprint is literal:\n%s", asm)
+	}
+}
+
+// `write(literal)` folds against the existing string pool —
+// `write` doesn't add a newline, so we reuse the `.LStr_*`
+// data pointer that any other lang code already produces for
+// the literal.
+func TestWriteLiteralFoldsToInlineWrite(t *testing.T) {
+	asm := compile(t, `function main(): void { write("hi"); }`)
+	mustContain(t, asm, ".LStr_0:")
+	mustContain(t, asm, `.asciz "hi"`)
+	mustContain(t, asm, "mov r0, #1") // fd 1
+	mustContain(t, asm, "ldr r1, =.LStr_0")
+	mustContain(t, asm, "ldr r2, =2") // length, no newline
+	mustContain(t, asm, "mov r7, #4")
+	if strings.Contains(asm, "bl __lang_write") {
+		t.Errorf("literal write should fold inline:\n%s", asm)
+	}
+	if strings.Contains(asm, "__lang_write:") {
+		t.Errorf("__lang_write helper should be elided when every write is literal:\n%s", asm)
+	}
 }
 
 // _start is the binary's entry point under -nostdlib. It must

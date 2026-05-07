@@ -82,22 +82,24 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 				g.usesAlloc = true
 			case "print":
 				// Only pull in the runtime helper when there's
-				// at least one *non-literal* print. Literal
-				// prints fold to inline `write(2)` syscalls in
+				// at least one *non-literal* call. Literal calls
+				// fold to inline `write(2)` syscalls in
 				// emitOpsFromIR's peephole, so a program where
-				// every print is a literal drops `__lang_puts`
+				// every `print` is a literal drops `__lang_puts`
 				// from the binary entirely.
-				if j > 0 && irFn.Ops[j-1].Kind == ir.OpConstStr && op.I32 == 1 {
-					// matches the peephole — no helper needed
-				} else {
+				if !literalCallable(irFn.Ops, j) {
 					g.usesPuts = true
 				}
 			case "putchar":
 				g.usesPutchar = true
 			case "write":
-				g.usesWrite = true
+				if !literalCallable(irFn.Ops, j) {
+					g.usesWrite = true
+				}
 			case "eprint":
-				g.usesEprint = true
+				if !literalCallable(irFn.Ops, j) {
+					g.usesEprint = true
+				}
 			case "read_line":
 				g.usesReadLine = true
 				g.usesAlloc = true
@@ -209,12 +211,13 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		g.label(g.stringLabel[s])
 		g.line("\t.asciz " + escapeForGAS(s))
 	}
-	// Compile-time `print(literal)` buffers: `data + "\n"`
-	// with no prefix and no NUL. Each one is the sole target
-	// of a single inline `write(1, ptr, len(data)+1)` syscall
-	// the print-fold peephole generated.
-	for _, s := range g.printBufferOrder {
-		g.label(g.printBufferLabel[s])
+	// Compile-time `print` / `eprint` line buffers:
+	// `data + "\n"` with no prefix and no NUL. Each one is
+	// the sole target of a single inline `write(fd, ptr,
+	// len(data)+1)` syscall the literal-fold peephole
+	// generated.
+	for _, s := range g.lineBufferOrder {
+		g.label(g.lineBufferLabel[s])
 		g.line("\t.ascii " + escapeForGAS(s+"\n"))
 	}
 	if needsNewline {
@@ -421,6 +424,20 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.cfi(".cfi_endproc")
 	g.line(fmt.Sprintf(".size %s, .-%s", fn.Name, fn.Name))
 	return nil
+}
+
+// literalCallable reports whether the OpCallDirect at ops[j] is
+// a `<builtin>(literal_string)` call that the print / write /
+// eprint peephole in emitOpsFromIR will fold to an inline
+// `write(2)` syscall — i.e. the immediately preceding op is an
+// OpConstStr and the call has exactly one arg. Used by the
+// up-front scan to decide whether to emit the runtime helper:
+// if every call site at ops[j] is foldable, the helper is dead
+// and we drop it from the binary.
+func literalCallable(ops []ir.Op, j int) bool {
+	return j > 0 &&
+		ops[j-1].Kind == ir.OpConstStr &&
+		ops[j].I32 == 1
 }
 
 // irHasCall reports whether ops contains any instruction that emits a
