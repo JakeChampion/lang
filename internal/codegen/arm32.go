@@ -90,22 +90,22 @@ type generator struct {
 
 // emitAllocRuntime emits the bump-style `__lang_alloc(size)`
 // helper — the only allocator in the runtime. The arena is the
-// region between __lang_heap_ptr (next free byte) and
-// __lang_heap_end (kernel-provided program break); allocations
-// bump the pointer by `size` (rounded up to 4 bytes for natural
-// alignment), and when the bump would cross the end we extend the
-// break in 64 KiB increments via a `brk` syscall to amortise the
-// kernel transition over many small allocs.
+// region between `__lang_heap_ptr` (next free byte) and
+// `__lang_heap_end` (the end of the 64 MiB anonymous mmap'd
+// region heap_init reserved at startup). Allocations bump the
+// pointer by `size` (rounded up to 4 bytes for natural
+// alignment); if the bump would cross `__lang_heap_end` we
+// exit_group(137), matching the OOM-killer convention.
 //
-// There's no individual `free` — that's a deliberate fit for the
-// "small CLI / short-lived edge function" shape: programs allocate,
-// do work, and exit, so per-allocation housekeeping is wasted
-// cycles. A long-running HTTP server that wants to reset between
-// requests will get an arena-reset hook in a follow-up.
+// There's no `free` and no slow-path syscall — that's the
+// whole point. Linux populates physical pages lazily on first
+// touch of the mmap'd region, so the bump path is purely
+// in-process, six instructions and a branch. Programs that
+// genuinely need >64 MiB are out of scope for the CLI / edge-
+// function targets the language is aimed at.
 //
-// The fast path is six instructions plus the cmp-bls fallthrough,
-// so an alloc that fits in the current arena costs roughly the
-// same as a malloc-free pair on glibc but with no header overhead.
+// A future arena-reset primitive snapshots / restores
+// `__lang_heap_ptr` for the long-lived HTTP server case.
 func (g *generator) emitAllocRuntime() {
 	g.line("")
 	g.line(".global __lang_alloc")
@@ -117,34 +117,8 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("add r0, r0, #3")
 	g.emit("bic r0, r0, #3")
 	g.emit("ldr r1, =__lang_heap_ptr")
-	g.emit("ldr r2, [r1]")     // r2 = current ptr
-	g.emit("add r3, r2, r0")   // r3 = wanted top
-	g.emit("ldr r12, =__lang_heap_end")
-	g.emit("ldr r12, [r12]")
-	g.emit("cmp r3, r12")
-	g.emit("bhi .Lalloc_grow") // unsigned: addresses always positive
-	// Fast path: bump the pointer and return the old value.
-	g.emit("str r3, [r1]")
-	g.emit("mov r0, r2")
-	g.emit("bx lr")
-	// Slow path: grow the heap to at least r3, rounded up to a
-	// 64 KiB boundary so the next alloc almost certainly hits the
-	// fast path.
-	g.label(".Lalloc_grow")
-	g.emit("push {r0, lr}") // save aligned size; brk will clobber r0
-	g.emit("sub r0, r3, #1")
-	g.emit("orr r0, r0, #0xff")
-	g.emit("orr r0, r0, #0xff00")
-	g.emit("add r0, r0, #1") // r0 = ceil(r3 / 65536) * 65536
-	g.emitSyscall(sysBrk)
-	g.emit("ldr r1, =__lang_heap_end")
-	g.emit("str r0, [r1]")
-	g.emit("pop {r0, lr}")
-	// Re-do the bump now that there's room. Bail to exit_group
-	// if brk failed (new end < requested).
-	g.emit("ldr r1, =__lang_heap_ptr")
-	g.emit("ldr r2, [r1]")
-	g.emit("add r3, r2, r0")
+	g.emit("ldr r2, [r1]")   // r2 = current ptr
+	g.emit("add r3, r2, r0") // r3 = wanted top
 	g.emit("ldr r12, =__lang_heap_end")
 	g.emit("ldr r12, [r12]")
 	g.emit("cmp r3, r12")
@@ -153,7 +127,7 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov r0, r2")
 	g.emit("bx lr")
 	g.label(".Lalloc_oom")
-	g.emit("mov r0, #137") // exit code 137 = OOM, mirrors OOM-killer SIGKILL
+	g.emit("mov r0, #137") // exit code 137 mirrors the OOM-killer SIGKILL
 	g.emitSyscall(sysExitGroup)
 	g.line(".size __lang_alloc, .-__lang_alloc")
 }

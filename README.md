@@ -260,7 +260,7 @@ argc / argv / envp from the kernel's initial stack into .bss
 globals, aligns sp, initialises the bump heap, then calls
 `main`), and bottom out every I/O operation in a direct `svc 0`
 syscall (`read` / `write` / `writev` / `open` / `close` /
-`fstat64` / `brk` / `exit_group`). Release builds (the default)
+`fstat64` / `mmap2` / `exit_group`). Release builds (the default)
 skip `.cfi_*` unwind tables and link with `-s`, dropping a
 "hello world" to ~1.2 KB; `lang -g` re-enables DWARF line info
 + frame unwinds for `gdb` / `addr2line`. Errno arrives as `-r0` from the kernel —
@@ -270,9 +270,12 @@ right into r0 and left into r1. Args 0..3 in r0..r3; extras from
 the caller's stack at `fp+8`, `fp+12`, … Leaf functions (no calls
 in the body) pin their parameters to callee-saved r4..r7 instead
 of spilling. Heap-backed values (arrays, strings, structs) come
-from `__lang_alloc`, a brk-extended bump arena: aligned bump on
-the fast path, `brk(2)` syscall in 64 KiB increments on the slow
-path, no per-allocation header and no individual `free`. Strings
+from `__lang_alloc`, a bump arena over a 64 MiB anonymous mmap
+region reserved at startup. Linux populates physical pages
+lazily on first touch, so the arena's fast path is six
+instructions plus a branch — pure in-process pointer bump,
+no syscall, no per-allocation header, no individual `free`.
+Strings
 carry a 4-byte little-endian length prefix at `ptr - 4` (with a
 trailing NUL preserved so our own `__lang_strcmp` /
 `__lang_memcpy` / `__lang_strlen` keep working on the same data

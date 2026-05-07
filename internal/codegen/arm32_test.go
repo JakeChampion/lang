@@ -567,13 +567,39 @@ func TestArm32StartCaptureAndExit(t *testing.T) {
 // fall-through: align size, load heap_ptr, add, compare against
 // heap_end, bump (or branch to grow). Verifying all five line
 // shapes in order pins the structure.
+// `__lang_alloc`'s fast path is a pure in-process bump (no
+// syscall): align up, load heap_ptr, add, bound-check against
+// heap_end, branch to OOM-exit on overflow, store, return.
+// The 64 MiB pre-reserved mmap region means we never call brk
+// during alloc — Linux populates pages lazily on first touch.
 func TestArm32AllocFastPath(t *testing.T) {
 	asm := compile(t, `function f(): number[] { return [1, 2, 3]; }`)
 	mustContain(t, asm, "add r0, r0, #3")
 	mustContain(t, asm, "bic r0, r0, #3")
 	mustContain(t, asm, "ldr r1, =__lang_heap_ptr")
 	mustContain(t, asm, "ldr r12, =__lang_heap_end")
-	mustContain(t, asm, "bhi .Lalloc_grow")
+	mustContain(t, asm, "bhi .Lalloc_oom")
+	// No grow-path label: the heap is pre-reserved; alloc has
+	// no slow-path syscall.
+	if strings.Contains(asm, ".Lalloc_grow") {
+		t.Errorf("alloc should no longer have a grow path:\n%s", asm)
+	}
+	// And no `brk` syscall in the alloc helper either.
+	if strings.Contains(asm, "mov r7, #45\n") {
+		t.Errorf("alloc must not call brk:\n%s", asm)
+	}
+}
+
+// `_start` reserves the bump arena via a single mmap2 syscall
+// at heap_init time — modern allocator interface, no brk.
+func TestArm32HeapInitUsesMmap(t *testing.T) {
+	asm := compile(t, `function main(): number { return 0; }`)
+	// mmap2 syscall = 192 on ARM EABI.
+	mustContain(t, asm, "mov r7, #192")
+	// We pass MAP_PRIVATE|MAP_ANONYMOUS = 0x22 in r3.
+	mustContain(t, asm, "mov r3, #34")
+	// And the kernel-chosen address goes into __lang_heap_ptr.
+	mustContain(t, asm, "ldr r1, =__lang_heap_ptr")
 }
 
 // Floats now lower through VFPv2 — the assembly should declare
