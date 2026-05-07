@@ -113,18 +113,27 @@ func invokeWasmtimeMultiFile(t *testing.T, entry string, files map[string]string
 	return soBuf.String(), seBuf.String()
 }
 
-// runWasmMultiFile invokes `main` and parses the trailing exit-
-// status integer that wasmtime prints to stderr — the multi-file
-// counterpart to runWasm.
+// runWasmMultiFile invokes `main` and parses the i32 result line
+// `wasmtime run --invoke main` prints to stdout — the multi-file
+// counterpart to runWasm. wasmtime emits warnings to stderr that
+// we deliberately ignore here (the warning about --invoke
+// returning values is harmless for our use).
 func runWasmMultiFile(t *testing.T, entry string, files map[string]string) int {
 	t.Helper()
-	_, stderr := invokeWasmtimeMultiFile(t, entry, files)
-	for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
-		if n, err := strconv.Atoi(strings.TrimSpace(line)); err == nil {
+	stdout, _ := invokeWasmtimeMultiFile(t, entry, files)
+	for _, ln := range strings.Split(stdout, "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if i := strings.LastIndex(ln, " "); i >= 0 {
+			ln = ln[i+1:]
+		}
+		if n, err := strconv.Atoi(ln); err == nil {
 			return n
 		}
 	}
-	t.Fatalf("could not parse exit status from wasmtime stderr:\n%s", stderr)
+	t.Fatalf("could not parse wasmtime output:\n%s", stdout)
 	return 0
 }
 
