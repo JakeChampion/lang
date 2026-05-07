@@ -56,6 +56,7 @@ func main() {
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it under qemu-arm (arm32 only)")
 	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
+	debug := flag.Bool("g", false, "emit DWARF line info + .cfi_* unwind tables (arm32 only); off by default for smaller, faster-startup release binaries")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -91,7 +92,7 @@ func main() {
 		os.Exit(code)
 	}
 
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *debug, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -142,7 +143,7 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 // run drives the full pipeline. The returned int is the exit code that
 // the lang process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug bool, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
 		return 1, err
@@ -180,7 +181,11 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs 
 		return 1, fmt.Errorf("unknown target %q (want arm32 or wasm)", target)
 	}
 
-	asm, err := codegen.EmitWithOptions(prog, info, codegen.Options{SourceFile: srcPath})
+	emitOpts := codegen.Options{}
+	if debug {
+		emitOpts.SourceFile = srcPath
+	}
+	asm, err := codegen.EmitWithOptions(prog, info, emitOpts)
 	if err != nil {
 		return 1, err
 	}
@@ -211,7 +216,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs 
 		}
 	}()
 
-	if err := link(asm, binPath, cc); err != nil {
+	if err := link(asm, binPath, cc, debug); err != nil {
 		return 1, err
 	}
 	if !runIt {
@@ -223,7 +228,17 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs 
 // link writes asm to a temp .s file and invokes the cross-compiler to
 // produce a static binary at outPath. The temp file is removed on
 // success; on failure we leave it in place so the user can inspect it.
-func link(asm, outPath, cc string) error {
+//
+// `-nostdlib` drops libc + libgcc + the crt startfiles; we
+// provide our own `_start`, syscall wrappers, allocator, and
+// memcpy / strcmp / strlen, so the resulting binary contains
+// only language code + direct svc 0 syscalls. When `debug` is
+// set, `-g` is added so gcc keeps the .file/.loc + .cfi_*
+// directives in the form of DWARF line-number tables and
+// `.eh_frame`, so gdb / addr2line work on the binary. The
+// release default skips both, shrinking hello-world by ~600
+// bytes.
+func link(asm, outPath, cc string, debug bool) error {
 	if _, err := exec.LookPath(cc); err != nil {
 		return fmt.Errorf("cross-compiler %q not found on PATH (override with -cc): %w", cc, err)
 	}
@@ -242,13 +257,18 @@ func link(asm, outPath, cc string) error {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		return err
 	}
-	// `-nostdlib` drops libc + libgcc + the crt startfiles; we
-	// provide our own `_start`, syscall wrappers, allocator, and
-	// memcpy / strcmp / strlen, so the resulting binary contains
-	// only language code + direct svc 0 syscalls. `-g` keeps the
-	// .file/.loc directives we emit in the form of DWARF
-	// line-number tables, so gdb / addr2line work on the binary.
-	cmd := exec.Command(cc, "-static", "-nostdlib", "-g", asmPath, "-o", outPath)
+	args := []string{"-static", "-nostdlib"}
+	if debug {
+		args = append(args, "-g")
+	} else {
+		// `-s` strips the symbol table + .strtab from the
+		// final binary. The runtime doesn't read them; they
+		// only help interactive debugging, and we already
+		// signalled "no debug" by leaving `-g` off.
+		args = append(args, "-s")
+	}
+	args = append(args, asmPath, "-o", outPath)
+	cmd := exec.Command(cc, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		keep = true
 		return fmt.Errorf("%s failed: %w\n%s\n(temporary assembly retained at %s)", cc, err, out, asmPath)

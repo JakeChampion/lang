@@ -279,7 +279,7 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.line(fmt.Sprintf(".global %s", fn.Name))
 	g.line(fmt.Sprintf(".type %s, %%function", fn.Name))
 	g.label(fn.Name)
-	g.emit(".cfi_startproc")
+	g.cfi(".cfi_startproc")
 
 	// Leaf-function check: pin params to callee-saved r4..r7 instead
 	// of paying for a stack spill. Anything that emits `bl` (direct
@@ -326,14 +326,14 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		regs = append(regs, "fp", "lr")
 		g.emit("push {%s}", strings.Join(regs, ", "))
 		pushBytes := (numParams + 2) * 4
-		g.emit(".cfi_def_cfa_offset %d", pushBytes)
+		g.cfi(".cfi_def_cfa_offset %d", pushBytes)
 		for i := 0; i < numParams; i++ {
-			g.emit(".cfi_offset r%d, %d", 4+i, -pushBytes+i*4)
+			g.cfi(".cfi_offset r%d, %d", 4+i, -pushBytes+i*4)
 		}
-		g.emit(".cfi_offset fp, -8")
-		g.emit(".cfi_offset lr, -4")
+		g.cfi(".cfi_offset fp, -8")
+		g.cfi(".cfi_offset lr, -4")
 		g.emit("add fp, sp, #%d", 4*numParams)
-		g.emit(".cfi_def_cfa_register fp")
+		g.cfi(".cfi_def_cfa_register fp")
 		if off > 0 {
 			g.emit("sub sp, sp, #%d", off)
 		}
@@ -342,11 +342,11 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		}
 	} else {
 		g.emit("push {fp, lr}")
-		g.emit(".cfi_def_cfa_offset 8")
-		g.emit(".cfi_offset fp, -8")
-		g.emit(".cfi_offset lr, -4")
+		g.cfi(".cfi_def_cfa_offset 8")
+		g.cfi(".cfi_offset fp, -8")
+		g.cfi(".cfi_offset lr, -4")
 		g.emit("mov fp, sp")
-		g.emit(".cfi_def_cfa_register fp")
+		g.cfi(".cfi_def_cfa_register fp")
 		if off > 0 {
 			g.emit("sub sp, sp, #%d", off)
 		}
@@ -394,7 +394,7 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		g.emit("pop {fp, lr}")
 	}
 	g.emit("bx lr")
-	g.emit(".cfi_endproc")
+	g.cfi(".cfi_endproc")
 	g.line(fmt.Sprintf(".size %s, .-%s", fn.Name, fn.Name))
 	return nil
 }
