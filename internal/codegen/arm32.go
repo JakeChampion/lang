@@ -288,12 +288,17 @@ func (g *generator) emitEprintRuntime() {
 }
 
 // emitReadLineRuntime emits `__lang_read_line`, a stdin one-byte
-// reader. It accumulates into a fixed 4 KiB .bss buffer and then
-// allocates a fresh length-prefixed string on the heap with the
-// captured bytes (including the trailing `\n` when present).
-// EOF mid-line returns whatever has been read so far; an empty
-// string distinguishes "EOF on the first byte" from a blank line
-// (which would return "\n").
+// reader that returns an `Option[string]` heap object. The
+// result is `Some(line)` when at least one byte was read (the
+// line preserves its trailing `\n`); `None` when the first read
+// returned 0. Tag 0 is `Some`, tag 1 is `None` — same convention
+// as the WASM helper, hardcoded to match the auto-injected
+// Option enum.
+//
+// Layout:
+//
+//	Some: [tag=0 : 4][string_ptr : 4]   (8 bytes)
+//	None: [tag=1 : 4]                    (4 bytes)
 func (g *generator) emitReadLineRuntime() {
 	g.line("")
 	g.line(".global __lang_read_line")
@@ -322,6 +327,16 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("beq .Lrl_done")
 	g.emit("b .Lrl_loop")
 	g.label(".Lrl_done")
+	// EOF on first byte → return None.
+	g.emit("cmp r5, #0")
+	g.emit("bne .Lrl_some")
+	g.emit("mov r0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #1")
+	g.emit("str r1, [r0]") // tag = 1 (None)
+	g.emit("pop {r4, r5, r6, lr}")
+	g.emit("bx lr")
+	g.label(".Lrl_some")
 	// Allocate length + 5 (4 prefix + N data + 1 trailing NUL for libc shape).
 	g.emit("add r0, r5, #5")
 	g.emit("bl __lang_alloc")
@@ -336,19 +351,29 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("add r0, r6, r5")
 	g.emit("mov r1, #0")
 	g.emit("strb r1, [r0]")
-	g.emit("mov r0, r6")
+	// Wrap as Some(r6) — alloc 8 bytes, store [tag=0, str_ptr].
+	g.emit("mov r4, r6") // save string data ptr in r4
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")     // tag = 0 (Some)
+	g.emit("str r4, [r0, #4]") // payload = string data ptr
 	g.emit("pop {r4, r5, r6, lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_read_line, .-__lang_read_line")
 }
 
-// emitEnvRuntime emits `__lang_env`, the getenv shim. Looks up
-// the C-string env value, copies it into a length-prefixed lang
-// string. A missing key (getenv returns NULL) yields a fresh
-// empty length-prefixed string. The lang string passed as `name`
-// already has a trailing NUL byte past its data (the strcat
-// runtime preserves that), so we can hand its data pointer to
-// libc getenv directly without copying.
+// emitEnvRuntime emits `__lang_env`, the getenv shim. Returns an
+// `Option[string]` heap object: `Some(value)` for a present key
+// (the C-string is copied into a fresh length-prefixed lang
+// string before being wrapped), `None` for a missing key. The
+// lang string passed as `name` already has a trailing NUL byte
+// past its data (the strcat runtime preserves that), so we can
+// hand its data pointer to libc getenv directly without copying.
+//
+// Tag layout matches `__lang_read_line` and the WASM helper:
+// 0 = Some, 1 = None. Some is 8 bytes [tag, str_ptr];
+// None is 4 bytes [tag].
 func (g *generator) emitEnvRuntime() {
 	g.line("")
 	g.line(".global __lang_env")
@@ -366,27 +391,31 @@ func (g *generator) emitEnvRuntime() {
 	// Allocate strlen + 5 (4 prefix + N data + trailing NUL).
 	g.emit("add r0, r5, #5")
 	g.emit("bl __lang_alloc")
-	g.emit("add r0, r0, #4")    // r0 = data ptr
+	g.emit("add r0, r0, #4")    // r0 = string data ptr
 	g.emit("str r5, [r0, #-4]") // length prefix
-	// memcpy(r0, char_star, strlen + 1) — include NUL.
+	// memcpy(str_data, char_star, strlen + 1) — include NUL.
 	g.emit("push {r0}")
 	g.emit("sub sp, sp, #4") // realign after push
 	g.emit("mov r1, r4")
 	g.emit("add r2, r5, #1")
 	g.emit("bl memcpy")
 	g.emit("add sp, sp, #4")
-	g.emit("pop {r0}")
+	g.emit("pop {r4}") // r4 = string data ptr (recover for wrap)
+	// Wrap as Some(string) — alloc 8 bytes, store [tag=0, str_ptr].
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")     // tag = 0 (Some)
+	g.emit("str r4, [r0, #4]") // payload = string data ptr
 	g.emit("add sp, sp, #4")
 	g.emit("pop {r4, r5, lr}")
 	g.emit("bx lr")
 	g.label(".Lenv_missing")
-	// Empty length-prefixed string: 4 prefix + 1 NUL.
-	g.emit("mov r0, #5")
+	// Allocate None — 4 bytes for the tag alone.
+	g.emit("mov r0, #4")
 	g.emit("bl __lang_alloc")
-	g.emit("add r0, r0, #4")
-	g.emit("mov r1, #0")
-	g.emit("str r1, [r0, #-4]")
-	g.emit("strb r1, [r0]")
+	g.emit("mov r1, #1")
+	g.emit("str r1, [r0]") // tag = 1 (None)
 	g.emit("add sp, sp, #4")
 	g.emit("pop {r4, r5, lr}")
 	g.emit("bx lr")

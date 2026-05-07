@@ -47,9 +47,49 @@ type Info struct {
 	Methods map[string]string
 }
 
+// builtinEnumDecls returns the synthetic enum declarations the
+// checker injects into every program: `Option[T]` and
+// `Result[T, E]`. Variant order matters — runtime helpers
+// (`$read_line`, `$env`) hardcode the tag indices, so `Some` is
+// 0, `None` is 1, `Ok` is 0, `Err` is 1.
+//
+// Users can't shadow these names; trying to declare an `enum
+// Option { … }` in user code triggers the existing redeclared-
+// enum error. The decls live in the AST, not just the checker
+// info, so the formatter / interpreter / IR layers see them
+// just like user-written enums.
+func builtinEnumDecls() []*ast.EnumDecl {
+	return []*ast.EnumDecl{
+		{
+			Name:       "Option",
+			TypeParams: []string{"T"},
+			Variants: []ast.EnumVariant{
+				{Name: "Some", Payloads: []ast.Type{ast.ParamType{Name: "T"}}},
+				{Name: "None"},
+			},
+		},
+		{
+			Name:       "Result",
+			TypeParams: []string{"T", "E"},
+			Variants: []ast.EnumVariant{
+				{Name: "Ok", Payloads: []ast.Type{ast.ParamType{Name: "T"}}},
+				{Name: "Err", Payloads: []ast.Type{ast.ParamType{Name: "E"}}},
+			},
+		},
+	}
+}
+
 // Check type-checks the program. It returns an aggregated error if any
 // problems were found.
 func Check(prog *ast.Program) (*Info, error) {
+	// Prepend the built-in Option / Result decls so user code
+	// can reference them without an explicit declaration. Doing
+	// this once at check-time keeps the AST `prog.Enums` slice
+	// authoritative — subsequent passes (IR, codegen, formatter)
+	// see the same shape.
+	if len(prog.Enums) == 0 || prog.Enums[0].Name != "Option" {
+		prog.Enums = append(builtinEnumDecls(), prog.Enums...)
+	}
 	c := &checker{
 		info: &Info{
 			VarTypes: map[*ast.Var]ast.Type{},
@@ -156,22 +196,25 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.ArrayType{Elem: ast.StringType{}},
 	}
-	// read_line(): string — reads one line from stdin (terminated by
-	// `\n`, which is preserved in the returned string). Returns an
-	// empty string at end-of-file. A real empty line returns "\n",
-	// so callers can disambiguate EOF from a blank line by length.
+	// read_line(): Option[string] — reads one line from stdin.
+	// `Some(line)` carries a non-empty line including the trailing
+	// `\n`; `None` signals end-of-file. The runtime helper
+	// allocates the Option object on the bump heap directly, so
+	// users get the typed shape without writing the wrap
+	// themselves. The returned line preserves its trailing
+	// newline so `Some("")` ≠ `Some("\n")` ≠ `None`.
 	c.info.FuncSigs["read_line"] = &ast.FuncType{
 		Params: []ast.Type{},
-		Result: ast.StringType{},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
 	}
-	// env(name: string): string — reads an environment variable by
-	// name. Returns an empty string when the variable isn't set.
-	// (We'll add a richer Option-style API once the language has
-	// the type machinery for it; the empty-string sentinel is the
-	// MVP.)
+	// env(name: string): Option[string] — looks up an environment
+	// variable. `Some(value)` for a present key, `None` for
+	// missing. (POSIX distinguishes "set to empty" from "not
+	// set"; the runtime helper preserves that — `Some("")` is
+	// returned for an explicitly empty value.)
 	c.info.FuncSigs["env"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
-		Result: ast.StringType{},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
 	}
 	// exit(code: number): void — exits the process immediately with
 	// the given status code. Useful for `eprint(msg); exit(2)`-style
