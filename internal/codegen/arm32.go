@@ -81,6 +81,7 @@ type generator struct {
 	usesReadFile  bool            // true if the program calls read_file() — pulls in __lang_read_file + __build_io_error
 	usesWriteFile bool            // true if the program calls write_file() — pulls in __lang_write_file + __build_io_error
 	usesStreamIO  bool            // true if the program calls open_reader / open_writer / a Reader|Writer method
+	usesStdStreams bool           // true if the program calls stdin / stdout / stderr
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
 }
 
@@ -951,6 +952,32 @@ func (g *generator) emitWriterWriteArm() {
 	g.emit("pop {r4, lr}")
 	g.emit("bx lr")
 	g.line(".size __method_Writer_write, .-__method_Writer_write")
+}
+
+// emitStdStreamRuntime emits the trivial __lang_stdin /
+// __lang_stdout / __lang_stderr constructors. Each allocates
+// a 4-byte Reader / Writer struct around fd 0 / 1 / 2.
+func (g *generator) emitStdStreamRuntime() {
+	g.emitStdStreamArm("__lang_stdin", 0)
+	g.emitStdStreamArm("__lang_stdout", 1)
+	g.emitStdStreamArm("__lang_stderr", 2)
+}
+
+func (g *generator) emitStdStreamArm(name string, fd int) {
+	g.line("")
+	g.line(fmt.Sprintf(".global %s", name))
+	g.line(fmt.Sprintf(".type %s, %%function", name))
+	g.label(name)
+	g.emit("push {lr}")
+	g.emit("sub sp, sp, #4") // alignment
+	g.emit("mov r0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #%d", fd)
+	g.emit("str r1, [r0]")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {lr}")
+	g.emit("bx lr")
+	g.line(fmt.Sprintf(".size %s, .-%s", name, name))
 }
 
 // internString returns a unique .rodata label for s, allocating a new one

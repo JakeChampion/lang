@@ -299,7 +299,7 @@ func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, st
 // replaces the empty-string sentinel that previous PRs used.
 func TestWASMReadLineBuiltin(t *testing.T) {
 	src := `function main(): number {
-		match (read_line()) {
+		match (stdin().read_line()) {
 			Some(line) => { write(line); return len(line); },
 			None => { return -1; }
 		}
@@ -320,7 +320,7 @@ func TestWASMReadLineBuiltin(t *testing.T) {
 // length comparison required.
 func TestWASMReadLineBuiltinEOF(t *testing.T) {
 	src := `function main(): number {
-		match (read_line()) {
+		match (stdin().read_line()) {
 			Some(line) => { return 1; },
 			None => { return 0; }
 		}
@@ -1241,6 +1241,27 @@ func TestWASMReadWriteFileRoundtrip(t *testing.T) {
 	stdout, _, _, _ := runWasmInDir(t, src, nil)
 	if !strings.Contains(stdout, "10") {
 		t.Errorf("stdout should report `10` (len of \"round trip\"); got %q", stdout)
+	}
+}
+
+// stdout() and stderr() Writers route their .write(s) calls
+// to the right host stream. The test pipes them separately so
+// each can be verified.
+func TestWASMStdStreams(t *testing.T) {
+	src := `function main(): number {
+		match (stdout().write("out\n")) { Some(_) => { return 1; }, None => {} }
+		match (stderr().write("err\n")) { Some(_) => { return 2; }, None => {} }
+		return 0;
+	}`
+	stdout, stderr := invokeWasmtime(t, src)
+	if !strings.Contains(stdout, "out\n") {
+		t.Errorf("stdout missing `out`: %q", stdout)
+	}
+	if !strings.Contains(stderr, "err\n") {
+		t.Errorf("stderr missing `err`: %q", stderr)
+	}
+	if strings.Contains(stdout, "err") {
+		t.Errorf("stdout shouldn't contain `err`: %q", stdout)
 	}
 }
 

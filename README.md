@@ -188,10 +188,11 @@ Built-ins:
   are the user-supplied positional args. The first call materialises
   a length-prefixed string array from libc / WASI; subsequent calls
   return the cached pointer.
-- `read_line(): Option[string]` — reads one line from stdin.
-  `Some(line)` carries the line including the trailing `\n`;
-  `None` signals end-of-file. Callers `match` on the result
-  rather than testing a sentinel string.
+- `stdin(): Reader` / `stdout(): Writer` / `stderr(): Writer`
+  — the standard streams as `Reader` / `Writer` values. Use
+  `stdin().read_line()` for line-by-line input;
+  `stdout().write(s)` / `stderr().write(s)` mirror the file
+  streaming methods.
 - `env(name: string): Option[string]` — environment variable
   lookup. `Some(value)` for a present key (including
   explicitly-empty values); `None` for missing.

@@ -400,6 +400,18 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		target = "__lang_open_appender"
 		g.usesStreamIO = true
 		g.usesAlloc = true
+	case "stdin":
+		target = "__lang_stdin"
+		g.usesStdStreams = true
+		g.usesAlloc = true
+	case "stdout":
+		target = "__lang_stdout"
+		g.usesStdStreams = true
+		g.usesAlloc = true
+	case "stderr":
+		target = "__lang_stderr"
+		g.usesStdStreams = true
+		g.usesAlloc = true
 	case "__str_idx", "__arr_idx":
 		// IR-side bounds-check stubs. We don't currently have ARM32
 		// equivalents, so the IR walker adds the bound-check itself

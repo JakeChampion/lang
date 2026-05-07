@@ -99,6 +99,9 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			case "open_reader", "open_writer", "open_appender":
 				g.usesStreamIO = true
 				g.usesAlloc = true
+			case "stdin", "stdout", "stderr":
+				g.usesStdStreams = true
+				g.usesAlloc = true
 			}
 			if strings.HasPrefix(op.Str, "__method_Reader_") ||
 				strings.HasPrefix(op.Str, "__method_Writer_") {
@@ -141,6 +144,9 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	}
 	if g.usesStreamIO {
 		g.emitStreamIORuntime()
+	}
+	if g.usesStdStreams {
+		g.emitStdStreamRuntime()
 	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
