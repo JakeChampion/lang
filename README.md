@@ -110,10 +110,10 @@ Supported:
   `import "./path";` at the top of the entry file. Imports resolve
   relative to the importing file's directory; `.lang` is appended
   automatically. Functions from `import "./util";` are addressed
-  as `util.fn(args)`. The loader detects cycles, mangles non-entry
-  module names internally so the rest of the pipeline sees one
-  flat program. Cross-module struct types aren't supported in this
-  first cut.
+  as `util.fn(args)`; struct types as `util.Foo` (in `var x: util.Foo`
+  / `function f(): util.Foo` / `util.Foo { … }` literal). The loader
+  detects cycles, mangles non-entry module names internally so the
+  rest of the pipeline sees one flat program.
 - Top-level `function` declarations with parameter and return types.
 - **Methods** on structs via the receiver clause
   `function (p: Point) name(): T { ... }`; the checker rewrites call

@@ -454,8 +454,21 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Ident:
 		// Bare identifier is a struct type reference. The checker
 		// validates that the name actually resolves to a struct.
+		// `mod.Foo` is a qualified reference to an imported
+		// module's struct — we encode it as a single
+		// dotted-string in StructType.Name and let modload
+		// rewrite it to `mod__Foo` before the checker runs.
 		p.advance()
-		base = ast.StructType{Name: t.Text}
+		name := t.Text
+		if p.match(lexer.Punct, ".") {
+			p.advance()
+			fieldTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			name = name + "." + fieldTok.Text
+		}
+		base = ast.StructType{Name: name}
 	default:
 		return nil, p.errorf(t.Pos, "expected type, got %q", t.Text)
 	}
@@ -1118,6 +1131,15 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			fname, err := p.expect(lexer.Ident, "")
 			if err != nil {
 				return nil, err
+			}
+			// `mod.Foo { … }` is a qualified struct literal — same
+			// shape as `Foo { … }` but with the module-qualified
+			// type name stitched together as one dotted string.
+			// modload rewrites `mod.Foo` to `mod__Foo` before the
+			// checker runs, so the StructLit.TypeName carries the
+			// dotted form temporarily.
+			if id, ok := expr.(*ast.Ident); ok && p.match(lexer.Punct, "{") {
+				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
 			}
 			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text}
 		default:

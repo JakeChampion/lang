@@ -400,29 +400,66 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		r.rewriteExpr(&x.Then)
 		r.rewriteExpr(&x.Else)
 	case *ast.StructLit:
-		// Same-module struct literal: prefix with selfPrefix.
-		// Cross-module struct literals aren't supported in this
-		// first cut (the parser doesn't accept `mod.Foo { ... }`
-		// either), so we don't try to recognise them here.
-		if r.ownStructs[x.TypeName] {
-			x.TypeName = r.selfPrefix + x.TypeName
-		}
+		// Three shapes here:
+		//   - `Foo { … }` where Foo lives in this module → prefix
+		//     with selfPrefix.
+		//   - `mod.Foo { … }` where mod is one of this module's
+		//     imports → flatten to `<modname>__Foo`.
+		//   - Anything else (a dotted name we don't recognise) is
+		//     a checker-time error; leave it alone.
+		x.TypeName = r.rewriteStructName(x.TypeName)
 		for i := range x.Fields {
 			r.rewriteExpr(&x.Fields[i].Value)
 		}
 	}
 }
 
-// rewriteType prefixes nominal struct-type references that name
-// own-module structs.
+// rewriteStructName turns a struct name (possibly qualified as
+// `mod.Foo` from the parser) into the flat mangled form. Same-
+// module names get selfPrefix; imported names get the imported
+// module's prefix.
+func (r *rewriter) rewriteStructName(name string) string {
+	if dot := indexByte(name, '.'); dot >= 0 {
+		modName, structName := name[:dot], name[dot+1:]
+		if prefix, ok := r.importPrefix(modName); ok {
+			return prefix + structName
+		}
+		// Unrecognised module — leave as-is so the checker can
+		// surface a clear "unknown module" error.
+		return name
+	}
+	if r.ownStructs[name] {
+		return r.selfPrefix + name
+	}
+	return name
+}
+
+// indexByte is a tiny wrapper around strings.IndexByte to keep the
+// modload package's import surface minimal — there's only one
+// caller, and pulling in `strings` for one helper isn't worth the
+// extra import line.
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// rewriteType prefixes nominal struct-type references — own-module
+// names get selfPrefix, qualified `mod.Foo` references get the
+// imported module's prefix. Other type shapes recurse where
+// appropriate.
 func (r *rewriter) rewriteType(slot *ast.Type) {
 	if slot == nil || *slot == nil {
 		return
 	}
 	switch t := (*slot).(type) {
 	case ast.StructType:
-		if r.ownStructs[t.Name] {
-			*slot = ast.StructType{Name: r.selfPrefix + t.Name}
+		newName := r.rewriteStructName(t.Name)
+		if newName != t.Name {
+			*slot = ast.StructType{Name: newName}
 		}
 	case ast.ArrayType:
 		elem := t.Elem
