@@ -45,6 +45,14 @@ type Info struct {
 	// (`__method_<StructName>_<MethodName>`). Call-site rewriting
 	// uses this map to turn `p.area()` into `__method_Point_area(p)`.
 	Methods map[string]string
+	// VariantCallPayloads is keyed by every variant-construction
+	// Call (`Some(42)`, `Ok(v)`, …) with the variant's payload
+	// types AFTER the checker has substituted any type-parameter
+	// references with the concrete instantiation. Codegen uses
+	// this so a payload declared as `T` inside `Option[T]`
+	// resolves to `float` at the construction of `Some(3.14)`,
+	// letting the IR pick `OpFStore` instead of `OpStore`.
+	VariantCallPayloads map[*ast.Call][]ast.Type
 }
 
 // builtinEnumDecls returns the synthetic enum declarations the
@@ -92,12 +100,13 @@ func Check(prog *ast.Program) (*Info, error) {
 	}
 	c := &checker{
 		info: &Info{
-			VarTypes: map[*ast.Var]ast.Type{},
-			Locals:   map[*ast.FuncDecl][]*ast.Var{},
-			FuncSigs: map[string]*ast.FuncType{},
-			Structs:  map[string]*ast.StructDecl{},
-			Enums:    map[string]*ast.EnumDecl{},
-			Methods:  map[string]string{},
+			VarTypes:            map[*ast.Var]ast.Type{},
+			Locals:              map[*ast.FuncDecl][]*ast.Var{},
+			FuncSigs:            map[string]*ast.FuncType{},
+			Structs:             map[string]*ast.StructDecl{},
+			Enums:               map[string]*ast.EnumDecl{},
+			Methods:             map[string]string{},
+			VariantCallPayloads: map[*ast.Call][]ast.Type{},
 		},
 		variantOf: map[string]variantRef{},
 	}
@@ -1040,6 +1049,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							id.Name, i, at, substituteType(vr.payloads[i], sub))
 					}
 				}
+				// Record the substituted (concrete) payload types
+				// so codegen knows whether each slot holds an
+				// f32 vs i32 even when the variant declared its
+				// payload as a type parameter. For non-generic
+				// enums substituteType is a no-op.
+				resolvedPayloads := make([]ast.Type, len(vr.payloads))
+				for i := range vr.payloads {
+					resolvedPayloads[i] = substituteType(vr.payloads[i], sub)
+				}
+				c.info.VariantCallPayloads[n] = resolvedPayloads
 				if ed != nil && len(ed.TypeParams) > 0 {
 					args := make([]ast.Type, len(ed.TypeParams))
 					complete := true

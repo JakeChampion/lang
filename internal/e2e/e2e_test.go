@@ -901,3 +901,23 @@ func TestGenericResultArm(t *testing.T) {
 		t.Errorf("exit = %d, want 4 (len of \"oops\")", code)
 	}
 }
+
+// Generic enum payload typed with `T = float` round-trips on
+// arm32 too. ARM32's `str` is type-agnostic so this never
+// failed at the instruction level, but the IR side now picks
+// OpFStore based on the substituted payload type for symmetry
+// with the WASM path.
+func TestGenericOptionFloatArm(t *testing.T) {
+	src := `function pick(): Option[float] { return Some(3.14); }
+		function main(): number {
+			match (pick()) {
+				Some(v) => { if (v > 3.0) { return 1; } return 2; },
+				None => { return 0; }
+			}
+			return -1;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 1 {
+		t.Errorf("exit = %d, want 1 (Some(3.14) > 3.0)", code)
+	}
+}
