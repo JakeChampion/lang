@@ -1085,6 +1085,26 @@ func TestWASMGenericResult(t *testing.T) {
 // declared payload was `T`, not `float`) and the operand on
 // the stack was f32. The checker now records the substituted
 // payload type so codegen picks `OpFStore`.
+// arena_save / arena_restore work the same way on the WASM
+// backend (memory[40] is the bump cursor). Same test shape as
+// TestArenaResetReclaimsAllocations but routed through wasmtime.
+func TestWASMArenaReset(t *testing.T) {
+	src := `function main(): number {
+		var saved: number = arena_save();
+		var a: number[] = [1, 2, 3, 4, 5];
+		var afterAlloc: number = arena_save();
+		arena_restore(saved);
+		var afterRestore: number = arena_save();
+		if (afterAlloc <= saved) { return 1; }
+		if (afterRestore != saved) { return 2; }
+		if (len(a) != 5) { return 3; }
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM arena_save/restore: exit = %d, want 0", got)
+	}
+}
+
 func TestWASMOptionFloatPayload(t *testing.T) {
 	src := `function pick(): Option[float] { return Some(3.14); }
 		function main(): number {

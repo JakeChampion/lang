@@ -77,6 +77,7 @@ type generator struct {
 	needsReadLine    bool // any `read_line()` call appears — pulls in WASI fd_read + helper + scratch slots
 	needsEnv         bool // any `env(name)` call appears — pulls in WASI environ_* + helper + cache slots
 	needsExit        bool // any `exit(code)` call appears — pulls in WASI proc_exit
+	needsArena       bool // any `arena_save` / `arena_restore` call — emits the two heap-cursor helpers
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
 	needsStdStreams  bool // any stdin() / stdout() / stderr() call — emits trivial constructors that wrap fd 0 / 1 / 2 in Reader / Writer
@@ -273,6 +274,8 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsEnv = true
 				case "exit":
 					g.needsExit = true
+				case "arena_save", "arena_restore":
+					g.needsArena = true
 				case "read_file", "write_file":
 					g.needsFileIO = true
 				case "open_reader", "open_writer", "open_appender":
@@ -449,6 +452,13 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 				case "args", "env", "read_file", "write_file",
 					"open_reader", "open_writer", "open_appender",
 					"stdin", "stdout", "stderr":
+					g.needsArrays = true
+					g.needsRuntime = true
+				case "arena_save", "arena_restore":
+					// Arena helpers read/write the bump cursor
+					// at memory[40]. The data segment that seeds
+					// that cursor is gated on needsArrays, so
+					// we trip that flag here too.
 					g.needsArrays = true
 					g.needsRuntime = true
 				}
@@ -1544,6 +1554,9 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsExit {
 		g.emitExitHelper()
 	}
+	if g.needsArena {
+		g.emitArenaHelpers()
+	}
 	if g.needsFileIO {
 		g.emitFileIOHelpers()
 	}
@@ -2245,6 +2258,28 @@ func (g *generator) emitEnvHelper() {
 	g.line(`i32.const 1`)
 	g.line(`i32.store`)
 	g.line(`local.get $sbase`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitArenaHelpers writes `$arena_save` and `$arena_restore`,
+// the bump-cursor snapshot/restore pair the language exposes
+// for long-running servers. The bump pointer lives at
+// memory[40] (see `$__lang_alloc`); save reads it, restore
+// writes it. No allocation, no syscall — same shape as the
+// arm32 helpers.
+func (g *generator) emitArenaHelpers() {
+	g.line(`(func $arena_save (result i32)`)
+	g.indent++
+	g.line(`i32.const 40`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`)`)
+	g.line(`(func $arena_restore (param $h i32)`)
+	g.indent++
+	g.line(`i32.const 40`)
+	g.line(`local.get $h`)
+	g.line(`i32.store`)
 	g.indent--
 	g.line(`)`)
 }

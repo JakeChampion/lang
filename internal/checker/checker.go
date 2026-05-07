@@ -266,6 +266,25 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// arena_save(): number — snapshots the bump allocator's
+	// current cursor. Pair with arena_restore to free everything
+	// allocated in between in O(1). Designed for long-lived
+	// servers that want to drop per-request allocations between
+	// requests; not safe to retain pointers across the matching
+	// arena_restore call.
+	c.info.FuncSigs["arena_save"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	// arena_restore(handle): void — rewinds the bump allocator
+	// cursor to the value returned by an earlier arena_save.
+	// Anything allocated since that save is reclaimed in one
+	// pointer-store; pointers into that region are no longer
+	// valid (no compile-time enforcement, just discipline).
+	c.info.FuncSigs["arena_restore"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
 	// read_file(path): Result[string, IoError] — reads the entire
 	// file into a single string. WASM builds need a preopen
 	// directory (e.g. `wasmtime --dir=.`); the path is

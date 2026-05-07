@@ -195,7 +195,32 @@ func New() *Interp {
 	i.Builtins["stdout"] = &Builtin{Fn: builtinStdout}
 	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
+	i.Builtins["arena_save"] = &Builtin{Fn: builtinArenaSave}
+	i.Builtins["arena_restore"] = &Builtin{Fn: builtinArenaRestore}
 	return i
+}
+
+// builtinArenaSave / builtinArenaRestore are no-ops in the
+// tree-walking interpreter — Go's GC handles object lifetime.
+// The signatures match the ARM32 / WASM runtime helpers
+// (`number` opaque handle in/out) so user code that compiles
+// to either backend behaves identically when run through
+// the REPL.
+func builtinArenaSave(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("arena_save: expected 0 args, got %d", len(args))
+	}
+	return Number(0), nil
+}
+
+func builtinArenaRestore(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("arena_restore: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Number); !ok {
+		return nil, fmt.Errorf("arena_restore: expected number arg, got %T", args[0])
+	}
+	return Void{}, nil
 }
 
 // builtinEnv looks up an environment variable. An explicit i.Env

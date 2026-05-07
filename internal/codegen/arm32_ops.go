@@ -475,6 +475,14 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		// because exit doesn't come back.
 		target = "__lang_exit"
 		g.usesExit = true
+	case "arena_save":
+		// Snapshot the bump cursor; pair with arena_restore.
+		target = "__lang_arena_save"
+		g.usesArena = true
+	case "arena_restore":
+		// Rewind the bump cursor to the saved value.
+		target = "__lang_arena_restore"
+		g.usesArena = true
 	case "read_file":
 		// `read_file(path)` lowers to a runtime helper that
 		// open(2)s the file, read(2)s it in chunks, and
