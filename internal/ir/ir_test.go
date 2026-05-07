@@ -285,9 +285,24 @@ func TestLowerStringConcatNonLiteralKeepsRuntime(t *testing.T) {
 	mustContainOp(t, prog, "f", OpStrConcat)
 }
 
-func TestLowerStringEquality(t *testing.T) {
+// `lit == lit` folds at compile time to a const; the runtime
+// OpStrEq only fires when at least one side is non-literal.
+func TestLowerStringEqualityFoldsLiterals(t *testing.T) {
 	prog := lowerSource(t, `function f(): boolean { return "a" == "b"; }`)
+	if hasOp(prog, "f", OpStrEq) {
+		t.Errorf("lit == lit must fold; OpStrEq must not appear:\n%s", prog)
+	}
+	mustContainOp(t, prog, "f", OpConstI32)
+}
+
+func TestLowerStringEqualityIdentVsLitShortCircuits(t *testing.T) {
+	prog := lowerSource(t, `function f(s: string): boolean { return s == "ok"; }`)
+	// Length comparison emits a const for the literal length...
+	mustContainOp(t, prog, "f", OpConstI32)
+	// ...and falls back to OpStrEq only when lengths match.
 	mustContainOp(t, prog, "f", OpStrEq)
+	// The if/else split is materialised as OpIf in the IR.
+	mustContainOp(t, prog, "f", OpIf)
 }
 
 // Closure conversion runs as a precondition of Lower, so a nested

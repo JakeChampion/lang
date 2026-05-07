@@ -760,9 +760,35 @@ func TestArm32ConcatLiteralFolds(t *testing.T) {
 	}
 }
 
-func TestArm32StringEqualityCallsStrcmp(t *testing.T) {
-	asm := compile(t, `function f(): boolean { return "a" == "a"; }`)
+// `s == lit` (one-side non-literal) takes the length-short-
+// circuit fast path: load `s.len`, compare against the
+// literal's known length, and only call __lang_strcmp when
+// they match. Saves the function call entirely on length
+// mismatch — the common case for HTTP routing patterns like
+// `path == "/health"`.
+func TestArm32StringEqualityShortCircuitsOnLengthMismatch(t *testing.T) {
+	asm := compile(t, `function f(s: string): boolean { return s == "ok"; }`)
+	// `len(s)` materialises as the prefix-load shape...
+	mustContain(t, asm, "ldr r0, [r0]")
+	// ...compared against the literal length (2).
+	mustContain(t, asm, "ldr r0, =2")
+	// And the byte-level compare still runs on length match.
 	mustContain(t, asm, "bl __lang_strcmp")
+}
+
+// Both literals: fold to a const at compile time.
+// `"a" == "a"` → 1, `"a" == "b"` → 0. No strcmp call at all.
+func TestArm32StringEqualityLiteralFolds(t *testing.T) {
+	asmEq := compile(t, `function f(): boolean { return "a" == "a"; }`)
+	if strings.Contains(asmEq, "bl __lang_strcmp") {
+		t.Errorf("lit == lit must fold; strcmp must not appear:\n%s", asmEq)
+	}
+	mustContain(t, asmEq, "ldr r0, =1")
+	asmNeq := compile(t, `function f(): boolean { return "a" == "b"; }`)
+	if strings.Contains(asmNeq, "bl __lang_strcmp") {
+		t.Errorf("lit == lit must fold; strcmp must not appear:\n%s", asmNeq)
+	}
+	mustContain(t, asmNeq, "ldr r0, =0")
 }
 
 // `len(string)` no longer calls strlen — strings carry the same

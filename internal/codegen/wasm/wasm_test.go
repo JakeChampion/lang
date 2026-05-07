@@ -309,8 +309,10 @@ func TestStringIndexEmitsLoad8(t *testing.T) {
 	mustContain(t, wat, "i32.load8_u")
 }
 
+// Use a parameter to defeat the IR-level lit==lit fold; we
+// want to see the runtime $__str_eq path.
 func TestStringEqualityEmitsHelper(t *testing.T) {
-	wat := compileToWAT(t, `function f(): boolean { return "a" == "a"; }`)
+	wat := compileToWAT(t, `function f(s: string): boolean { return s == "ok"; }`)
 	mustContain(t, wat, "$__str_eq")
 	mustContain(t, wat, "call $__str_eq")
 }
