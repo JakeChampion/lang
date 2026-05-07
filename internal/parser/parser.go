@@ -118,17 +118,19 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			continue
 		}
-		// `pub` is an optional prefix on function or struct decls
-		// at the top level. Track it and consume; the `function` /
-		// `struct` parser stays unaware of visibility — we stamp
-		// the Public flag after the decl is built. A bare `pub`
-		// without a following decl is a parse error.
+		// `pub` is an optional prefix on function, struct, or const
+		// decls at the top level. Track it and consume; the inner
+		// parser stays unaware of visibility — we stamp the Public
+		// flag after the decl is built. A bare `pub` without a
+		// following decl is a parse error.
 		isPub := false
 		if p.match(lexer.Keyword, "pub") {
 			pubTok := p.advance()
-			if !p.match(lexer.Keyword, "function") && !p.match(lexer.Keyword, "struct") {
+			if !p.match(lexer.Keyword, "function") &&
+				!p.match(lexer.Keyword, "struct") &&
+				!p.match(lexer.Keyword, "const") {
 				p.errors = append(p.errors, p.errorf(pubTok.Pos,
-					"`pub` must be followed by `function` or `struct`"))
+					"`pub` must be followed by `function`, `struct`, or `const`"))
 				p.syncToTopLevel()
 				if p.i == before {
 					p.advance()
@@ -150,6 +152,22 @@ func (p *parser) parseProgram() *ast.Program {
 			if sd != nil {
 				sd.Public = isPub
 				prog.Structs = append(prog.Structs, sd)
+			}
+			continue
+		}
+		if p.match(lexer.Keyword, "const") {
+			cd, err := p.parseConstDecl()
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			if cd != nil {
+				cd.Public = isPub
+				prog.Consts = append(prog.Consts, cd)
 			}
 			continue
 		}
@@ -213,6 +231,7 @@ func (p *parser) syncToTopLevel() {
 		if p.match(lexer.Keyword, "function") ||
 			p.match(lexer.Keyword, "struct") ||
 			p.match(lexer.Keyword, "import") ||
+			p.match(lexer.Keyword, "const") ||
 			p.match(lexer.Keyword, "pub") {
 			return
 		}
@@ -424,6 +443,40 @@ func (p *parser) parseStructDecl() (*ast.StructDecl, error) {
 		return nil, err
 	}
 	return &ast.StructDecl{P: kw.Pos, Name: name.Text, Fields: fields}, nil
+}
+
+// parseConstDecl parses a top-level `const NAME[: T] = expr;`. The
+// type annotation is optional; when missing, constfold infers the
+// type from the resolved value. The initialiser is parsed as a
+// general expression — constfold validates that it's actually a
+// constant expression after parsing.
+func (p *parser) parseConstDecl() (*ast.ConstDecl, error) {
+	kw, err := p.expect(lexer.Keyword, "const")
+	if err != nil {
+		return nil, err
+	}
+	name, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	var t ast.Type
+	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		t, err = p.parseType()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	val, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	return &ast.ConstDecl{P: kw.Pos, Name: name.Text, Type: t, Value: val}, nil
 }
 
 func (p *parser) parseType() (ast.Type, error) {

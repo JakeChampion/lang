@@ -30,6 +30,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
@@ -151,6 +152,9 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs 
 	// source for now — multi-file diag plumbing is a future
 	// follow-up.
 	src := srcs[absPath(srcPath)]
+	if err := constfold.Fold(prog); err != nil {
+		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	}
 	info, err := checker.Check(prog)
 	if err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))

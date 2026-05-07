@@ -499,9 +499,9 @@ struct PrivPoint { x: number }`)
 	}
 }
 
-// `pub` is only valid in front of `function` or `struct`. `pub var`
-// (or any other kind of decl) should be rejected with a clear
-// message rather than silently swallowed.
+// `pub` is only valid in front of `function`, `struct`, or `const`.
+// `pub var` (or any other kind of decl) should be rejected with a
+// clear message rather than silently swallowed.
 func TestPubBeforeUnsupportedKindIsError(t *testing.T) {
 	_, err := Parse(`pub var x: number = 1;`)
 	if err == nil {
@@ -509,5 +509,29 @@ func TestPubBeforeUnsupportedKindIsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "pub") {
 		t.Errorf("error should mention `pub`; got %v", err)
+	}
+}
+
+// Top-level `const NAME[: T] = expr;` parses into a ConstDecl on
+// the program. Type annotations and the `pub` prefix are both
+// optional.
+func TestConstDeclParses(t *testing.T) {
+	prog, err := Parse(`const N: number = 42;
+const M = 7;
+pub const PI: float = 3.14;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Consts) != 3 {
+		t.Fatalf("expected 3 const decls, got %d", len(prog.Consts))
+	}
+	if prog.Consts[0].Name != "N" || prog.Consts[0].Type == nil {
+		t.Errorf("first const should be `N: number`; got %+v", prog.Consts[0])
+	}
+	if prog.Consts[1].Name != "M" || prog.Consts[1].Type != nil {
+		t.Errorf("second const should be `M` (no type annotation); got %+v", prog.Consts[1])
+	}
+	if !prog.Consts[2].Public {
+		t.Errorf("third const should be public; got %+v", prog.Consts[2])
 	}
 }

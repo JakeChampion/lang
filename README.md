@@ -115,10 +115,17 @@ Supported:
   detects cycles, mangles non-entry module names internally so the
   rest of the pipeline sees one flat program.
 - **Visibility** — top-level decls are private to their module by
-  default. Mark them `pub function …` / `pub struct …` to expose
-  them across module boundaries; cross-module references to
-  non-`pub` decls fail at load time with a diagnostic that names
-  the offending qualified reference.
+  default. Mark them `pub function …` / `pub struct …` /
+  `pub const …` to expose them across module boundaries;
+  cross-module references to non-`pub` decls fail at load time
+  with a diagnostic that names the offending qualified reference.
+- **Top-level constants** — `const NAME[: T] = expr;` declares a
+  named constant. Initialisers may be literals or arithmetic /
+  comparison / logical / string-concat expressions over earlier
+  consts (`const PI: float = 3.14; const TWO_PI: float = PI * 2.0;`).
+  References fold to literals at compile time; the checker / IR /
+  codegen never see the const decl. `pub const` exports across
+  modules just like `pub function`.
 - Top-level `function` declarations with parameter and return types.
 - **Methods** on structs via the receiver clause
   `function (p: Point) name(): T { ... }`; the checker rewrites call

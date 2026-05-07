@@ -20,10 +20,11 @@
 //
 // Visibility: top-level decls are private to their declaring
 // module by default. Prefixing with `pub` (`pub function …` /
-// `pub struct …`) marks a decl as exported. Cross-module
-// references to non-`pub` decls are rejected during loading with
-// a diagnostic that names the offending qualified reference and
-// suggests the fix.
+// `pub struct …` / `pub const …`) marks a decl as exported.
+// Cross-module references to non-`pub` decls are rejected during
+// loading with a diagnostic that names the offending qualified
+// reference and suggests the fix (with the right keyword for the
+// referenced decl kind).
 //
 // Limitations of this first cut:
 //
@@ -76,11 +77,17 @@ type module struct {
 	name    string
 	prog    *ast.Program
 	imports map[string]*module // local-name → loaded module
-	// publicFuncs and publicStructs hold the original (pre-mangle)
-	// names of `pub` decls, populated when the module loads. The
-	// rewriter uses them to gate cross-module references.
+	// publicFuncs / publicStructs / publicConsts hold the original
+	// (pre-mangle) names of `pub` decls, populated when the module
+	// loads. The rewriter uses them to gate cross-module references.
 	publicFuncs   map[string]bool
 	publicStructs map[string]bool
+	publicConsts  map[string]bool
+	// allConsts is the pre-mangle name set of every const in this
+	// module (public or private). The visibility-error path uses it
+	// to decide whether `mod.X` should suggest `pub function X`
+	// (default) or `pub const X` (when X is a known private const).
+	allConsts map[string]bool
 }
 
 // loadRecursive parses path (if not already loaded), then recurses
@@ -129,6 +136,8 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		imports:       map[string]*module{},
 		publicFuncs:   map[string]bool{},
 		publicStructs: map[string]bool{},
+		publicConsts:  map[string]bool{},
+		allConsts:     map[string]bool{},
 	}
 	for _, fn := range prog.Funcs {
 		if fn.Public {
@@ -138,6 +147,12 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	for _, sd := range prog.Structs {
 		if sd.Public {
 			mod.publicStructs[sd.Name] = true
+		}
+	}
+	for _, cd := range prog.Consts {
+		mod.allConsts[cd.Name] = true
+		if cd.Public {
+			mod.publicConsts[cd.Name] = true
 		}
 	}
 	for i, imp := range prog.Imports {
@@ -210,6 +225,7 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 	for _, mod := range loaded {
 		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
 		combined.Structs = append(combined.Structs, mod.prog.Structs...)
+		combined.Consts = append(combined.Consts, mod.prog.Consts...)
 		combined.Comments = append(combined.Comments, mod.prog.Comments...)
 	}
 	return combined, nil
@@ -238,16 +254,20 @@ func prefixFor(isEntry bool, name string) string {
 // Both rewrites happen in one walk so the mangled output is
 // consistent for the rest of the pipeline.
 func (m *module) rewriteAll(selfPrefix string) []error {
-	// Build the set of own-module function and struct names so we
-	// can recognise internal references (`fn(args)` / `Foo { ... }`)
-	// versus references to outside symbols.
+	// Build the set of own-module function, struct, and const names
+	// so we can recognise internal references (`fn(args)` /
+	// `Foo { ... }` / `K`) versus references to outside symbols.
 	ownFuncs := map[string]bool{}
 	ownStructs := map[string]bool{}
+	ownConsts := map[string]bool{}
 	for _, fn := range m.prog.Funcs {
 		ownFuncs[fn.Name] = true
 	}
 	for _, sd := range m.prog.Structs {
 		ownStructs[sd.Name] = true
+	}
+	for _, cd := range m.prog.Consts {
+		ownConsts[cd.Name] = true
 	}
 
 	r := &rewriter{
@@ -255,6 +275,7 @@ func (m *module) rewriteAll(selfPrefix string) []error {
 		selfPrefix: selfPrefix,
 		ownFuncs:   ownFuncs,
 		ownStructs: ownStructs,
+		ownConsts:  ownConsts,
 		imports:    m.imports,
 	}
 	for _, fn := range m.prog.Funcs {
@@ -275,6 +296,11 @@ func (m *module) rewriteAll(selfPrefix string) []error {
 			r.rewriteType(&sd.Fields[i].Type)
 		}
 	}
+	for _, cd := range m.prog.Consts {
+		cd.Name = selfPrefix + cd.Name
+		r.rewriteType(&cd.Type)
+		r.rewriteExpr(&cd.Value)
+	}
 	return r.errs
 }
 
@@ -284,6 +310,7 @@ type rewriter struct {
 	selfPrefix string             // prefix for this module's own decls
 	ownFuncs   map[string]bool    // names of funcs declared in this module (pre-mangle)
 	ownStructs map[string]bool    // names of structs declared in this module (pre-mangle)
+	ownConsts  map[string]bool    // names of consts declared in this module (pre-mangle)
 	imports    map[string]*module // local name → imported module
 	errs       []error            // visibility / unresolved-name errors collected during the walk
 }
@@ -307,6 +334,27 @@ func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position)
 		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub struct %s …` to make it accessible from other modules)",
 			r.modPath, pos, mod.name, name, name))
 	}
+}
+
+// checkPublicValue gates a `mod.X` reference where X is expected
+// to be a function value or a const — both share the value-style
+// reference shape (`Ident("X")` after rewriting). Public funcs and
+// public consts are accepted. Private decls produce a fix-hint
+// keyed off the actual declaration kind so users see `pub const X`
+// for a private const and `pub function X` for a private function.
+// Unknown names default to the function hint, which is the more
+// common case at this position; unresolved-name errors will surface
+// later in the checker either way.
+func (r *rewriter) checkPublicValue(mod *module, name string, pos ast.Position) {
+	if mod.publicFuncs[name] || mod.publicConsts[name] {
+		return
+	}
+	hint := "function"
+	if mod.allConsts[name] {
+		hint = "const"
+	}
+	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub %s %s …` to make it accessible from other modules)",
+		r.modPath, pos, mod.name, name, hint, name))
 }
 
 // importedModule looks up a local-name binding from this module's
@@ -393,10 +441,10 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 	}
 	switch x := (*slot).(type) {
 	case *ast.Ident:
-		// Same-module function value reference: prefix with
-		// selfPrefix. Cross-module references arrive as
-		// `mod.fn` (FieldAccess) and are handled below.
-		if r.ownFuncs[x.Name] {
+		// Same-module function value or const reference: prefix
+		// with selfPrefix. Cross-module references arrive as
+		// `mod.X` (FieldAccess) and are handled below.
+		if r.ownFuncs[x.Name] || r.ownConsts[x.Name] {
 			x.Name = r.selfPrefix + x.Name
 		}
 	case *ast.Call:
@@ -420,11 +468,13 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			r.rewriteExpr(&x.Args[i])
 		}
 	case *ast.FieldAccess:
-		// `mod.fn` in non-callee position (taking the function as
-		// a value) — rewrite to a direct Ident.
+		// `mod.X` in non-callee position — either a function value
+		// or a const reference. Both rewrite to a flat Ident at
+		// the imported module's mangled name; the imported module
+		// must export the named decl.
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if mod, prefix, ok := r.importedModule(id.Name); ok {
-				r.checkPublicFunc(mod, x.Field, x.P)
+				r.checkPublicValue(mod, x.Field, x.P)
 				*slot = &ast.Ident{P: id.P, Name: prefix + x.Field}
 				return
 			}
