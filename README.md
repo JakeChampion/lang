@@ -155,8 +155,9 @@ Supported:
   time), `switch` (with comma-separated case values, `default`),
   `return`, `break`, `continue`, blocks, expression statements.
 - Types: `number` (32-bit signed), `boolean`, `void`, `float` (32-bit
-  IEEE — `wasm` only), `string`, arrays (`number[]`), nominal struct
-  types, and function types (`(T, U) => V`).
+  IEEE — VFPv2 on ARM32, `f32` on WASM), `string`, arrays
+  (`number[]`), nominal struct types, and function types
+  (`(T, U) => V`).
 - Operators: `+ - * / %`, `== != < > <= >=`, `&& || !`, bitwise
   `& | ^ << >>`, unary `-`. String `+` concatenates, string `==` /
   `!=` compare contents, string indexing returns the byte at that
@@ -262,7 +263,12 @@ spilling. Heap-backed values (arrays, strings, structs) come from
 `__lang_alloc`, a tiny libc-malloc wrapper the emitter generates on
 demand. Strings carry a 4-byte little-endian length prefix at
 `ptr - 4` (with a trailing NUL preserved so libc still works for
-`strcmp` etc.).
+`strcmp` etc.). Float operations use VFPv2 — the emitter declares
+`.fpu vfpv2`, keeps f32 bit patterns flowing through the integer
+operand stack, and `vmov`s them into single-precision s-registers
+just for `vadd.f32` / `vcmp.f32` / etc., so the calling convention
+stays soft-float-style and avoids any `-mfloat-abi=hard` coupling
+with the host gcc.
 
 **WASM**: standard WASM calling convention. A `funcref` table holds
 every function referenced as a value (or hoisted by closure

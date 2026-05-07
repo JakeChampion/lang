@@ -902,12 +902,84 @@ func TestGenericResultArm(t *testing.T) {
 	}
 }
 
-// Note: there's no `TestGenericOptionFloatArm` because the arm32
-// backend doesn't yet support float ops at all (any program
-// using `float` errors at codegen). Float-payload generic enums
-// are exercised on the WASM side via `TestWASMOptionFloatPayload`
-// + `TestWASMResultFloatOk`. When arm32 grows VFP support the
-// matching test goes here.
+// Float arithmetic on arm32 lowers through VFPv2: f32 bit
+// patterns flow through r0..r3 like ints, and the `OpF*` ops
+// `vmov` them into s-registers for the actual instruction. This
+// test exercises the full chain — add, sub, mul, div, unary
+// negate — against expected exit codes computed by the harness.
+func TestArmFloatArithmetic(t *testing.T) {
+	src := `function main(): number {
+		var a: float = 2.5;
+		var b: float = 4.0;
+		var sum: float = a + b;       // 6.5
+		var diff: float = b - a;      // 1.5
+		var prod: float = a * b;      // 10.0
+		var quot: float = b / a;      // 1.6
+		var neg: float = -a;          // -2.5
+		if (sum > 6.0) {
+			if (diff < 2.0) {
+				if (prod >= 9.5) {
+					if (quot <= 2.0) {
+						if (neg < 0.0) {
+							return 7;
+						}
+					}
+				}
+			}
+		}
+		return 0;
+	}`
+	_, code := compileAndRun(t, src)
+	if code != 7 {
+		t.Errorf("exit = %d, want 7 (all five float predicates true)", code)
+	}
+}
+
+// Float comparison ops on arm32 use `vcmp.f32` + `vmrs APSR_nzcv,
+// FPSCR` to pull VFP flags into the integer condition register,
+// then the standard movCC pattern. This test pinpoints each of
+// the four ordered comparisons in isolation.
+func TestArmFloatComparisons(t *testing.T) {
+	cases := []struct {
+		op   string
+		want int
+	}{
+		{"<", 1}, {"<=", 1}, {">", 0}, {">=", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.op, func(t *testing.T) {
+			src := `function main(): number {
+				var a: float = 1.0;
+				var b: float = 2.0;
+				if (a ` + tc.op + ` b) { return 1; }
+				return 0;
+			}`
+			_, code := compileAndRun(t, src)
+			if code != tc.want {
+				t.Errorf("a %s b: exit = %d, want %d", tc.op, code, tc.want)
+			}
+		})
+	}
+}
+
+// Generics with float payload on arm32: same shape as
+// TestWASMOptionFloatPayload, but exercising the VFP path
+// through the IR's OpFStore / OpFLoad helpers used when a
+// generic `T` is substituted with `float`.
+func TestArmGenericOptionFloatPayload(t *testing.T) {
+	src := `function pick(): Option[float] { return Some(3.14); }
+		function main(): number {
+			match (pick()) {
+				Some(v) => { if (v > 3.0) { return 1; } return 2; },
+				None => { return 0; }
+			}
+			return -1;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 1 {
+		t.Errorf("exit = %d, want 1 (Some(3.14) > 3.0)", code)
+	}
+}
 
 // runArmInDir is the arm32 analogue of runWasmInDir. It
 // compiles the program, drops it in a temp dir alongside any

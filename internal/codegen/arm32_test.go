@@ -409,20 +409,14 @@ func TestStringInterningDeduplicates(t *testing.T) {
 	}
 }
 
-func TestArm32RejectsFloatWithClearError(t *testing.T) {
-	prog, err := parser.Parse(`function f(): float { return 1.5; }`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Emit(prog, info); err == nil {
-		t.Fatal("expected error from arm32 backend on float program")
-	} else if !strings.Contains(err.Error(), "float") {
-		t.Errorf("error should mention float, got %v", err)
-	}
+// Floats now lower through VFPv2 — the assembly should declare
+// the FPU and use the `vadd.f32` / `vmov` mnemonics rather than
+// the old "not supported" error.
+func TestArm32EmitsVFPForFloats(t *testing.T) {
+	asm := compile(t, `function f(): float { return 1.5 + 2.25; }`)
+	mustContain(t, asm, ".fpu vfpv2")
+	mustContain(t, asm, "vadd.f32")
+	mustContain(t, asm, "vmov")
 }
 
 // switch lowers to a chain of nested blocks: each case opens an

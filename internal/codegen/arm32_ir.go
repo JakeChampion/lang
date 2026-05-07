@@ -111,6 +111,16 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		}
 	}
 	g.line(`.arch armv7-a`)
+	// Enable VFPv2 so we can emit `vmov` / `vadd.f32` /
+	// `vcmp.f32` etc. for the float ops the IR may carry.
+	// The toolchain's float ABI doesn't matter at our level —
+	// we keep float values flowing through general-purpose
+	// registers as raw 32-bit bit patterns, only pulling them
+	// into VFP s-registers for the actual arithmetic. That
+	// keeps our calling convention identical to the int path
+	// and means no -mfloat-abi mismatch with the host gcc /
+	// linker.
+	g.line(`.fpu vfpv2`)
 	g.line(`.text`)
 	if g.srcFile != "" {
 		g.line(fmt.Sprintf(`.file 1 %q`, g.srcFile))
