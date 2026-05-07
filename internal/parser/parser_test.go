@@ -92,9 +92,9 @@ func TestForProducesForNode(t *testing.T) {
 }
 
 // `for x in arr { body }` desugars to a Block containing a few
-// synthetic `var` declarations and a `while` loop. The user's body
-// runs after the index-bound binding, and a step statement at the
-// tail advances the counter.
+// synthetic `var` declarations and a For loop (not a While, so
+// `continue` advances the index via the For's step slot rather
+// than skipping it).
 func TestForEachOverArrayDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): number {
 		var sum: number = 0;
@@ -112,10 +112,14 @@ func TestForEachOverArrayDesugars(t *testing.T) {
 		t.Fatalf("foreach should desugar to Block, got %T", body[1])
 	}
 	if len(blk.Stmts) != 4 {
-		t.Fatalf("expected 4 inner stmts (iter / len / idx / while), got %d", len(blk.Stmts))
+		t.Fatalf("expected 4 inner stmts (iter / len / idx / for), got %d", len(blk.Stmts))
 	}
-	if _, ok := blk.Stmts[3].(*ast.While); !ok {
-		t.Errorf("last stmt should be a While loop, got %T", blk.Stmts[3])
+	loop, ok := blk.Stmts[3].(*ast.For)
+	if !ok {
+		t.Fatalf("last stmt should be a For loop (so continue hits the step), got %T", blk.Stmts[3])
+	}
+	if loop.Step == nil {
+		t.Errorf("desugared For must carry a step so `continue` advances the index")
 	}
 }
 
@@ -161,6 +165,8 @@ func TestForEachNestedHasUniqueSlots(t *testing.T) {
 			for _, c := range x.Stmts {
 				walk(c)
 			}
+		case *ast.For:
+			walk(x.Body)
 		case *ast.While:
 			walk(x.Body)
 		case *ast.Var:

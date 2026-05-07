@@ -690,29 +690,37 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 		},
 	}}
 
-	// Inner while body: { user-binding; user's body; step }.
+	// User body wrapped in its own Block so the index-binding and
+	// the user's stmts share the loop-scope. The step lives on the
+	// enclosing For (not appended to the body) so `continue` jumps
+	// to the step before re-checking cond — without that the
+	// index never advances on continue and the loop hangs.
 	innerStmts := []ast.Stmt{bindUser}
 	if blk, ok := body.(*ast.Block); ok {
 		innerStmts = append(innerStmts, blk.Stmts...)
 	} else {
 		innerStmts = append(innerStmts, body)
 	}
-	innerStmts = append(innerStmts, stepStmt)
 	innerBlock := &ast.Block{P: kw.Pos, Stmts: innerStmts}
 
-	whileLoop := &ast.While{
+	forLoop := &ast.For{
 		P: kw.Pos,
+		// Init lives on the enclosing Block (declIter / declLen /
+		// declIdx); the For's Init slot is unused so the index
+		// doesn't get re-zeroed on every iteration of an outer
+		// loop that wraps this one.
 		Cond: &ast.Binary{
 			P: kw.Pos, Op: "<",
 			Left:  mkIdent(idxName),
 			Right: mkIdent(lenName),
 		},
+		Step: stepStmt,
 		Body: innerBlock,
 	}
 
 	return &ast.Block{
 		P:     kw.Pos,
-		Stmts: []ast.Stmt{declIter, declLen, declIdx, whileLoop},
+		Stmts: []ast.Stmt{declIter, declLen, declIdx, forLoop},
 	}, nil
 }
 
