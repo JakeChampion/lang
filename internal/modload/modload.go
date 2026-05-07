@@ -225,6 +225,7 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 	for _, mod := range loaded {
 		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
 		combined.Structs = append(combined.Structs, mod.prog.Structs...)
+		combined.Enums = append(combined.Enums, mod.prog.Enums...)
 		combined.Consts = append(combined.Consts, mod.prog.Consts...)
 		combined.Comments = append(combined.Comments, mod.prog.Comments...)
 	}

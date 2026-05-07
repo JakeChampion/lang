@@ -47,6 +47,14 @@ func Format(prog *ast.Program) string {
 		f.formatStructDecl(sd)
 		written = true
 	}
+	for _, ed := range prog.Enums {
+		if written {
+			f.b.WriteByte('\n')
+		}
+		f.drainLeading(ed.P.Line, 0)
+		f.formatEnumDecl(ed)
+		written = true
+	}
 	for _, cd := range prog.Consts {
 		if written {
 			f.b.WriteByte('\n')
@@ -157,6 +165,36 @@ func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
 	f.b.WriteString(" = ")
 	f.formatExpr(cd.Value, precLowest)
 	f.b.WriteString(";\n")
+}
+
+// formatEnumDecl emits `enum Foo { Bar, Baz(T1, T2), … }` on a
+// single line (one variant per `,`). The block-style multi-line
+// form is a follow-up; for now this matches the parser-accepted
+// shape and keeps round-trips byte-stable for short enums.
+func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
+	if ed.Public {
+		f.b.WriteString("pub ")
+	}
+	f.b.WriteString("enum ")
+	f.b.WriteString(ed.Name)
+	f.b.WriteString(" { ")
+	for i, v := range ed.Variants {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		f.b.WriteString(v.Name)
+		if len(v.Payloads) > 0 {
+			f.b.WriteByte('(')
+			for j, p := range v.Payloads {
+				if j > 0 {
+					f.b.WriteString(", ")
+				}
+				f.b.WriteString(formatType(p))
+			}
+			f.b.WriteByte(')')
+		}
+	}
+	f.b.WriteString(" }\n")
 }
 
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
@@ -347,6 +385,36 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.indent(depth + 1)
 			f.b.WriteString("default: ")
 			f.formatBlock(x.Default, depth+1)
+			f.b.WriteByte('\n')
+		}
+		f.indent(depth)
+		f.b.WriteByte('}')
+	case *ast.Match:
+		f.b.WriteString("match (")
+		f.formatExpr(x.Tag, precLowest)
+		f.b.WriteString(") {\n")
+		for i, arm := range x.Arms {
+			f.indent(depth + 1)
+			if arm.IsWildcard {
+				f.b.WriteByte('_')
+			} else {
+				f.b.WriteString(arm.VariantName)
+				if len(arm.Bindings) > 0 {
+					f.b.WriteByte('(')
+					for j, b := range arm.Bindings {
+						if j > 0 {
+							f.b.WriteString(", ")
+						}
+						f.b.WriteString(b)
+					}
+					f.b.WriteByte(')')
+				}
+			}
+			f.b.WriteString(" => ")
+			f.formatBlock(arm.Body, depth+1)
+			if i < len(x.Arms)-1 {
+				f.b.WriteByte(',')
+			}
 			f.b.WriteByte('\n')
 		}
 		f.indent(depth)

@@ -329,3 +329,28 @@ function main(): number { return N; }`)
 		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 	}
 }
+
+// `enum` decls and `match` statements round-trip through
+// parse → format → parse stably, including payload-carrying
+// variants and `pub enum`.
+func TestFormatEnumAndMatchRoundTrip(t *testing.T) {
+	got := formatSrc(t, `pub enum Status { Ok, Err(string) }
+function f(s: Status): number {
+match (s) { Ok => { return 0; }, Err(msg) => { return len(msg); } }
+return 0;
+}`)
+	for _, want := range []string{
+		"pub enum Status { Ok, Err(string) }",
+		"match (s) {",
+		"Ok => {",
+		"Err(msg) => {",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output:\n%s", want, got)
+		}
+	}
+	again := formatSrc(t, got)
+	if got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}

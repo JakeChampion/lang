@@ -483,6 +483,58 @@ func needsImplicitReturn(ops []Op) bool {
 	return last != OpReturn && last != OpReturnVoid
 }
 
+// lookupVariant looks for a variant with the given name across
+// every enum in the program. Returns the owning enum's name, the
+// variant index, and the payload count. Ambiguity (same variant
+// name in two enums) was already rejected by the checker, so the
+// first hit is authoritative.
+func (b *builder) lookupVariant(name string) (enumName string, varIdx int, payloadCount int, ok bool) {
+	for ename, ed := range b.info.Enums {
+		for i, v := range ed.Variants {
+			if v.Name == name {
+				return ename, i, len(v.Payloads), true
+			}
+		}
+	}
+	return "", 0, 0, false
+}
+
+// emitEnumNew lowers a variant constructor: allocate a heap
+// object whose first word is the runtime tag (varIdx) and whose
+// subsequent words hold the evaluated payloads in order. The
+// enum value (the heap pointer) lands on the operand stack.
+//
+// Layout: [tag : i32][payload0 : i32][payload1 : i32]...
+//
+// Total size is `4 + payloadCount * 4`. Payload-less variants
+// still allocate 4 bytes for the tag — uniform layout simplifies
+// match-side loads.
+func (b *builder) emitEnumNew(varIdx int, payloadCount int, args []ast.Expr) error {
+	size := int32(4 + payloadCount*4)
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpAlloc})
+	baseSlot := int32(len(b.locals))
+	b.locals[fmt.Sprintf("__enum_%d", baseSlot)] = baseSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+	// Store tag at offset 0.
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+	b.emit(Op{Kind: OpStore})
+	// Store each payload at offset 4 + i*4.
+	for i, a := range args {
+		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
+		b.emit(Op{Kind: OpAdd})
+		if err := b.expr(a); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStore})
+	}
+	// Push the result pointer.
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	return nil
+}
+
 func (b *builder) emit(op Op) {
 	if op.Pos == (ast.Position{}) {
 		op.Pos = b.curPos
@@ -685,6 +737,72 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.closeScope() // end of switch
+	case *ast.Match:
+		// Lower a `match` to: store the scrutinee pointer, load
+		// its tag once, then for each arm test `tag == k` and
+		// branch in. On match, the arm body runs with payload
+		// fields loaded into freshly-bound locals; we then break
+		// out of the whole match. The structure mirrors `switch`,
+		// extended to bind payload positions.
+		ptrSlot := int32(len(b.locals))
+		b.locals[fmt.Sprintf("__match_p_%d", ptrSlot)] = ptrSlot
+		if err := b.expr(n.Tag); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
+		b.openBlock(BlockTypeVoid)
+		matchEndD := b.depth
+		b.breakStack = append(b.breakStack, matchEndD)
+		for _, arm := range n.Arms {
+			if arm.IsWildcard {
+				if err := b.stmt(arm.Body); err != nil {
+					return err
+				}
+				b.brTo(matchEndD, false)
+				continue
+			}
+			// Resolve variant index by name.
+			_, varIdx, _, ok := b.lookupVariant(arm.VariantName)
+			if !ok {
+				return fmt.Errorf("ir: match arm references unknown variant %q", arm.VariantName)
+			}
+			// Outer per-arm block: skip body when tag mismatch.
+			b.openBlock(BlockTypeVoid)
+			outerArmD := b.depth
+			// Inner block: matched-path target.
+			b.openBlock(BlockTypeVoid)
+			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+			b.emit(Op{Kind: OpLoad}) // tag at ptr+0
+			b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+			b.emit(Op{Kind: OpEq})
+			b.brTo(b.depth, true) // br 0 = exit inner = match
+			b.brTo(outerArmD, false)
+			b.closeScope() // end inner — matched path lands here
+			// Bind payload locals from heap[ptr+4+i*4].
+			for i, name := range arm.Bindings {
+				slot := int32(len(b.locals))
+				b.locals[name] = slot
+				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
+				b.emit(Op{Kind: OpAdd})
+				b.emit(Op{Kind: OpLoad})
+				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+			if err := b.stmt(arm.Body); err != nil {
+				return err
+			}
+			// Bindings stay in b.locals after the arm finishes:
+			// the IR only cares about slot indices (already
+			// stamped into emitted ops), and `scratchCount` at
+			// the end of lowerFunc must reflect every slot we
+			// ever wrote. Two arms with overlapping binding names
+			// won't clash at runtime — at most one arm body runs
+			// per match.
+			b.brTo(matchEndD, false) // jump past remaining arms
+			b.closeScope()           // end outer per-arm block
+		}
+		b.breakStack = b.breakStack[:len(b.breakStack)-1]
+		b.closeScope() // end of match
 	default:
 		return fmt.Errorf("ir: unsupported statement %T", s)
 	}
@@ -713,6 +831,14 @@ func (b *builder) expr(e ast.Expr) error {
 			if _, isLocal := b.locals[n.Name]; !isLocal {
 				b.emit(Op{Kind: OpConstFunc, Str: n.Name})
 				return nil
+			}
+		}
+		// Payload-less variant in expression position (`Red`,
+		// `EOF`). We construct an enum object containing just the
+		// tag — no payloads to store.
+		if _, varIdx, payloadCount, isVariant := b.lookupVariant(n.Name); isVariant && payloadCount == 0 {
+			if _, isLocal := b.locals[n.Name]; !isLocal {
+				return b.emitEnumNew(varIdx, 0, nil)
 			}
 		}
 		idx, ok := b.locals[n.Name]
@@ -1097,6 +1223,14 @@ func (b *builder) call(n *ast.Call) error {
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
+	}
+	// Variant constructor: lower to a heap-allocated tagged-union
+	// object [tag, payload0, payload1, ...]. The checker already
+	// type-checked the args; we just emit the storage.
+	if _, varIdx, payloads, isVariant := b.lookupVariant(id.Name); isVariant {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			return b.emitEnumNew(varIdx, payloads, n.Args)
+		}
 	}
 	// `len(x)` on a string or array is inlined: both layouts carry a
 	// 4-byte little-endian length prefix at `ptr - 4`. The checker

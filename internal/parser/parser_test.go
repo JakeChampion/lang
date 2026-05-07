@@ -535,3 +535,70 @@ pub const PI: float = 3.14;`)
 		t.Errorf("third const should be public; got %+v", prog.Consts[2])
 	}
 }
+
+// `enum Foo { Bar, Baz(string) }` parses into a top-level
+// EnumDecl with variants in declaration order. Payload-less and
+// payload-carrying variants both round-trip correctly.
+func TestEnumDeclParses(t *testing.T) {
+	prog, err := Parse(`enum Status { Ok, Err(string) }
+pub enum Direction { N, S, E, W }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Enums) != 2 {
+		t.Fatalf("expected 2 enum decls, got %d", len(prog.Enums))
+	}
+	st := prog.Enums[0]
+	if st.Name != "Status" || st.Public {
+		t.Errorf("first enum should be private `Status`; got %+v", st)
+	}
+	if len(st.Variants) != 2 {
+		t.Fatalf("Status should have 2 variants; got %d", len(st.Variants))
+	}
+	if st.Variants[0].Name != "Ok" || len(st.Variants[0].Payloads) != 0 {
+		t.Errorf("Ok should be payload-less; got %+v", st.Variants[0])
+	}
+	if st.Variants[1].Name != "Err" || len(st.Variants[1].Payloads) != 1 {
+		t.Errorf("Err should carry one payload; got %+v", st.Variants[1])
+	}
+	if !prog.Enums[1].Public {
+		t.Errorf("Direction should be public; got %+v", prog.Enums[1])
+	}
+}
+
+// `match (e) { Variant => { … }, _ => { … } }` parses into a
+// Match stmt with an Arms slice mirroring the source order.
+func TestMatchStmtParses(t *testing.T) {
+	prog, err := Parse(`enum E { A, B(number) }
+function f(): number {
+	var e: E = A;
+	match (e) {
+		A => { return 1; },
+		B(n) => { return n; }
+	}
+	return -1;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := prog.Funcs[0]
+	var m *ast.Match
+	for _, s := range fn.Body.Stmts {
+		if mm, ok := s.(*ast.Match); ok {
+			m = mm
+			break
+		}
+	}
+	if m == nil {
+		t.Fatal("match stmt not found in function body")
+	}
+	if len(m.Arms) != 2 {
+		t.Fatalf("expected 2 arms; got %d", len(m.Arms))
+	}
+	if m.Arms[0].VariantName != "A" || len(m.Arms[0].Bindings) != 0 {
+		t.Errorf("first arm should be `A =>`; got %+v", m.Arms[0])
+	}
+	if m.Arms[1].VariantName != "B" || len(m.Arms[1].Bindings) != 1 || m.Arms[1].Bindings[0] != "n" {
+		t.Errorf("second arm should be `B(n) =>`; got %+v", m.Arms[1])
+	}
+}

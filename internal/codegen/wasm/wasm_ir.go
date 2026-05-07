@@ -67,6 +67,15 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, ip *ir.Program) (string, 
 		g.needsRuntime = true
 		g.needsArrays = true
 	}
+	// Any enum declaration implies allocation (variant
+	// construction allocates a tagged-union object on the bump
+	// heap). Match dispatch uses no allocation, so this is the
+	// gating signal — if no construction can happen, no allocator
+	// is needed.
+	if len(prog.Enums) > 0 {
+		g.needsRuntime = true
+		g.needsArrays = true
+	}
 
 	// Bump the string-data start past whatever runtime scratch we
 	// claimed. The default base is 64; read_line claims 56..71;

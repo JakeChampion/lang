@@ -127,6 +127,13 @@ Supported:
   codegen never see the const decl. `pub const` exports across
   modules just like `pub function`.
 - Top-level `function` declarations with parameter and return types.
+- **Sum types** via `enum Foo { Bar, Baz(T1, T2) }`. Variants are
+  constructed by name (`Bar`, `Baz(1, 2)`) and consumed via
+  `match (e) { Bar => { … }, Baz(a, b) => { … } }`. Match is
+  exhaustiveness-checked: every variant must be covered or the
+  arm list ends with `_`. Variant payloads bind into per-arm
+  locals. Tagged-union values lower to a heap-allocated
+  `[tag, payload0, …]` block on the bump heap.
 - **Methods** on structs via the receiver clause
   `function (p: Point) name(): T { ... }`; the checker rewrites call
   sites and lowers them as plain functions.

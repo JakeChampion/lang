@@ -118,19 +118,20 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			continue
 		}
-		// `pub` is an optional prefix on function, struct, or const
-		// decls at the top level. Track it and consume; the inner
-		// parser stays unaware of visibility — we stamp the Public
-		// flag after the decl is built. A bare `pub` without a
-		// following decl is a parse error.
+		// `pub` is an optional prefix on function, struct, enum, or
+		// const decls at the top level. Track it and consume; the
+		// inner parser stays unaware of visibility — we stamp the
+		// Public flag after the decl is built. A bare `pub` without
+		// a following decl is a parse error.
 		isPub := false
 		if p.match(lexer.Keyword, "pub") {
 			pubTok := p.advance()
 			if !p.match(lexer.Keyword, "function") &&
 				!p.match(lexer.Keyword, "struct") &&
+				!p.match(lexer.Keyword, "enum") &&
 				!p.match(lexer.Keyword, "const") {
 				p.errors = append(p.errors, p.errorf(pubTok.Pos,
-					"`pub` must be followed by `function`, `struct`, or `const`"))
+					"`pub` must be followed by `function`, `struct`, `enum`, or `const`"))
 				p.syncToTopLevel()
 				if p.i == before {
 					p.advance()
@@ -168,6 +169,22 @@ func (p *parser) parseProgram() *ast.Program {
 			if cd != nil {
 				cd.Public = isPub
 				prog.Consts = append(prog.Consts, cd)
+			}
+			continue
+		}
+		if p.match(lexer.Keyword, "enum") {
+			ed, err := p.parseEnumDecl()
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			if ed != nil {
+				ed.Public = isPub
+				prog.Enums = append(prog.Enums, ed)
 			}
 			continue
 		}
@@ -230,6 +247,7 @@ func (p *parser) syncToTopLevel() {
 	for !p.match(lexer.EOF, "") {
 		if p.match(lexer.Keyword, "function") ||
 			p.match(lexer.Keyword, "struct") ||
+			p.match(lexer.Keyword, "enum") ||
 			p.match(lexer.Keyword, "import") ||
 			p.match(lexer.Keyword, "const") ||
 			p.match(lexer.Keyword, "pub") {
@@ -479,6 +497,67 @@ func (p *parser) parseConstDecl() (*ast.ConstDecl, error) {
 	return &ast.ConstDecl{P: kw.Pos, Name: name.Text, Type: t, Value: val}, nil
 }
 
+// parseEnumDecl parses `enum Foo { Bar, Baz(T1, T2), … }`. Each
+// variant is either a bare identifier (no payload) or an
+// identifier followed by a parenthesised type list. Trailing
+// commas before `}` are allowed.
+func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
+	kw, err := p.expect(lexer.Keyword, "enum")
+	if err != nil {
+		return nil, err
+	}
+	name, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	var variants []ast.EnumVariant
+	if !p.match(lexer.Punct, "}") {
+		for {
+			vname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			variant := ast.EnumVariant{P: vname.Pos, Name: vname.Text}
+			if _, ok := p.accept(lexer.Punct, "("); ok {
+				if !p.match(lexer.Punct, ")") {
+					for {
+						pt, err := p.parseType()
+						if err != nil {
+							return nil, err
+						}
+						variant.Payloads = append(variant.Payloads, pt)
+						if _, ok := p.accept(lexer.Punct, ","); ok {
+							if p.match(lexer.Punct, ")") {
+								break
+							}
+							continue
+						}
+						break
+					}
+				}
+				if _, err := p.expect(lexer.Punct, ")"); err != nil {
+					return nil, err
+				}
+			}
+			variants = append(variants, variant)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				if p.match(lexer.Punct, "}") {
+					break
+				}
+				continue
+			}
+			break
+		}
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	return &ast.EnumDecl{P: kw.Pos, Name: name.Text, Variants: variants}, nil
+}
+
 func (p *parser) parseType() (ast.Type, error) {
 	t := p.peek()
 	var base ast.Type
@@ -611,6 +690,8 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseVar()
 		case "switch":
 			return p.parseSwitch()
+		case "match":
+			return p.parseMatch()
 		case "function":
 			return p.parseLocalFunction()
 		}
@@ -938,6 +1019,101 @@ func (p *parser) parseSwitch() (ast.Stmt, error) {
 		}
 		sw.Cases = append(sw.Cases, &ast.SwitchCase{P: caseKw.Pos, Values: values, Body: body})
 	}
+}
+
+// parseMatch parses `match (<expr>) { Pat => { … }, … }`. The
+// tag expression is parenthesised (matching `switch` and avoiding
+// the `Ident { … }` ambiguity with struct-literal shorthand).
+// Patterns are either:
+//
+//	`_`                — wildcard (must be the last arm)
+//	`Variant`          — payload-less variant
+//	`Variant(a, b)`    — variant with positional payload bindings
+//
+// Each arm body is a brace-block; we require this for consistency
+// with `if` / `for` / `while` and to keep the parser context-light.
+// Arms are separated by commas; a trailing comma is allowed.
+func (p *parser) parseMatch() (ast.Stmt, error) {
+	kw := p.advance() // `match`
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return nil, err
+	}
+	tag, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	m := &ast.Match{P: kw.Pos, Tag: tag}
+	for !p.match(lexer.Punct, "}") {
+		arm, err := p.parseMatchArm()
+		if err != nil {
+			return nil, err
+		}
+		m.Arms = append(m.Arms, arm)
+		if _, ok := p.accept(lexer.Punct, ","); ok {
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
+	t := p.peek()
+	arm := &ast.MatchArm{P: t.Pos}
+	if t.Kind == lexer.Punct && t.Text == "_" {
+		// `_` is lexed as a punct in our lexer? No — the lexer
+		// treats `_` as the start of an identifier. So this branch
+		// never fires; the wildcard always comes through as Ident.
+		p.advance()
+		arm.IsWildcard = true
+	} else if t.Kind == lexer.Ident && t.Text == "_" {
+		p.advance()
+		arm.IsWildcard = true
+	} else if t.Kind == lexer.Ident {
+		p.advance()
+		arm.VariantName = t.Text
+		if _, ok := p.accept(lexer.Punct, "("); ok {
+			if !p.match(lexer.Punct, ")") {
+				for {
+					nameTok, err := p.expect(lexer.Ident, "")
+					if err != nil {
+						return nil, err
+					}
+					arm.Bindings = append(arm.Bindings, nameTok.Text)
+					if _, ok := p.accept(lexer.Punct, ","); ok {
+						if p.match(lexer.Punct, ")") {
+							break
+						}
+						continue
+					}
+					break
+				}
+			}
+			if _, err := p.expect(lexer.Punct, ")"); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		return nil, p.errorf(t.Pos, "expected variant pattern or `_` in match arm, got %s", t.Text)
+	}
+	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
+		return nil, err
+	}
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	arm.Body = body
+	return arm, nil
 }
 
 // parseCaseBody collects statements up to the next `case`, `default`,

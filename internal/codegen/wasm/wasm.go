@@ -2088,8 +2088,8 @@ func watType(t ast.Type) (string, error) {
 	case *ast.FuncType:
 		// Function values are table indices.
 		return "i32", nil
-	case ast.StructType:
-		// Struct values are pointers into linear memory.
+	case ast.StructType, ast.EnumType:
+		// Struct and enum values are heap pointers.
 		return "i32", nil
 	case ast.FloatType:
 		return "f32", nil

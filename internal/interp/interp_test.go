@@ -21,6 +21,9 @@ func evalProgram(t *testing.T, src string) (Value, *Interp) {
 		t.Fatalf("parse: %v", err)
 	}
 	i := New()
+	for _, ed := range prog.Enums {
+		i.RegisterEnum(ed)
+	}
 	for _, fn := range prog.Funcs {
 		i.Register(fn)
 	}
@@ -90,6 +93,9 @@ func TestPrintBuiltin(t *testing.T) {
 	i := New()
 	var buf bytes.Buffer
 	i.Stdout = &buf
+	for _, ed := range prog.Enums {
+		i.RegisterEnum(ed)
+	}
 	for _, fn := range prog.Funcs {
 		i.Register(fn)
 	}
@@ -183,5 +189,40 @@ func TestInterpStructBasic(t *testing.T) {
 	v, _ := evalProgram(t, src)
 	if n, ok := v.(Number); !ok || n != 8 {
 		t.Errorf("got %v, want 8 (4+4)", v)
+	}
+}
+
+// Sum types in the interpreter: a payload-carrying variant
+// constructed and then matched routes through the right arm with
+// payload bindings visible in the arm body.
+func TestInterpEnumMatchPayload(t *testing.T) {
+	src := `enum Pair { Two(number, number) }
+		function main(): number {
+			var p: Pair = Two(7, 5);
+			match (p) {
+				Two(a, b) => { return a + b; }
+			}
+			return -1;
+		}`
+	v, _ := evalProgram(t, src)
+	if n, ok := v.(Number); !ok || n != 12 {
+		t.Errorf("got %v, want 12 (7 + 5)", v)
+	}
+}
+
+// Wildcard arms catch what the explicit arms miss.
+func TestInterpMatchWildcard(t *testing.T) {
+	src := `enum Light { Red, Green, Yellow }
+		function main(): number {
+			var l: Light = Yellow;
+			match (l) {
+				Red => { return 1; },
+				_ => { return 99; }
+			}
+			return 0;
+		}`
+	v, _ := evalProgram(t, src)
+	if n, ok := v.(Number); !ok || n != 99 {
+		t.Errorf("got %v, want 99", v)
 	}
 }

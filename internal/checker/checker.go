@@ -35,6 +35,11 @@ type Info struct {
 	// Structs maps a struct name to its declaration (which carries the
 	// ordered field list — codegen looks up field offsets here).
 	Structs map[string]*ast.StructDecl
+	// Enums maps an enum name to its declaration. The variant list +
+	// payload types live there; codegen looks up the runtime tag
+	// (the variant's index in the variant slice) and the payload
+	// shapes via this map.
+	Enums map[string]*ast.EnumDecl
 	// Methods maps `<StructName>.<MethodName>` to the mangled
 	// top-level function name the receiver-rewriting pass introduces
 	// (`__method_<StructName>_<MethodName>`). Call-site rewriting
@@ -51,8 +56,10 @@ func Check(prog *ast.Program) (*Info, error) {
 			Locals:   map[*ast.FuncDecl][]*ast.Var{},
 			FuncSigs: map[string]*ast.FuncType{},
 			Structs:  map[string]*ast.StructDecl{},
+			Enums:    map[string]*ast.EnumDecl{},
 			Methods:  map[string]string{},
 		},
+		variantOf: map[string]variantRef{},
 	}
 
 	// Register every struct declaration up front so that types
@@ -72,6 +79,45 @@ func Check(prog *ast.Program) (*Info, error) {
 		}
 		c.info.Structs[sd.Name] = sd
 	}
+
+	// Register every enum declaration. Variant names are recorded
+	// in variantOf so an unqualified `Some(x)` or `Red` can be
+	// rewritten into a typed *EnumLit during expression checking.
+	// A variant name shared across two enums is ambiguous; we
+	// drop the entry so subsequent uses surface a clear error.
+	for _, ed := range prog.Enums {
+		if _, dup := c.info.Enums[ed.Name]; dup {
+			c.errf(ed.P, "enum %q redeclared", ed.Name)
+			continue
+		}
+		c.info.Enums[ed.Name] = ed
+		seen := map[string]bool{}
+		for i := range ed.Variants {
+			v := &ed.Variants[i]
+			if seen[v.Name] {
+				c.errf(v.P, "duplicate variant %q in enum %s", v.Name, ed.Name)
+				continue
+			}
+			seen[v.Name] = true
+			if existing, dup := c.variantOf[v.Name]; dup {
+				c.errf(v.P, "variant %q is declared in both %s and %s — qualify references with the enum name (not yet supported, rename one)",
+					v.Name, existing.enumName, ed.Name)
+				delete(c.variantOf, v.Name)
+				continue
+			}
+			c.variantOf[v.Name] = variantRef{
+				enumName: ed.Name,
+				index:    i,
+				payloads: v.Payloads,
+			}
+		}
+	}
+
+	// Now that the enum set is known, walk every type position in
+	// the program and rewrite StructType{Name: X} → EnumType when
+	// X resolves to an enum. The parser doesn't know which named
+	// types are structs vs. enums; we lazily disambiguate here.
+	c.resolveTypeNames(prog)
 
 	// Pre-declare built-ins so user code can call them.
 	c.info.FuncSigs["putchar"] = &ast.FuncType{
@@ -194,6 +240,13 @@ type checker struct {
 	loopDepth   int
 	switchDepth int
 
+	// variantOf maps a variant's bare name (`Some`, `Err`) to the
+	// enum that owns it plus its index. Built during the enum
+	// registration pass; ambiguous names (same variant in two
+	// enums) generate an error and the entry is left as zero-value
+	// so subsequent uses report cleanly.
+	variantOf map[string]variantRef
+
 	// Closure-capture plumbing. While checking a local function body,
 	// captureSink records each outer-scope name read by the body as
 	// a capture; captureOuter is the scope of the immediately
@@ -201,6 +254,118 @@ type checker struct {
 	// outside a local function.
 	captureSink  func(name string, t ast.Type)
 	captureOuter *scope
+}
+
+// resolveTypeNames walks every named-type position the parser may
+// have stamped with `StructType{Name: X}` and rewrites it to
+// `EnumType{Name: X}` when X turns out to be an enum. The parser
+// can't distinguish structs from enums by name alone, so this
+// pass runs after the enum decls have been collected. Function
+// signatures, parameters, var decls, struct fields, array
+// element types, and function-type fields are all visited.
+func (c *checker) resolveTypeNames(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		if fn.Receiver != nil {
+			c.resolveType(&fn.Receiver.Type)
+		}
+		for i := range fn.Params {
+			c.resolveType(&fn.Params[i].Type)
+		}
+		c.resolveType(&fn.ReturnType)
+		c.resolveTypesInBlock(fn.Body)
+	}
+	for _, sd := range prog.Structs {
+		for i := range sd.Fields {
+			c.resolveType(&sd.Fields[i].Type)
+		}
+	}
+	for _, ed := range prog.Enums {
+		for i := range ed.Variants {
+			for j := range ed.Variants[i].Payloads {
+				c.resolveType(&ed.Variants[i].Payloads[j])
+			}
+		}
+	}
+}
+
+func (c *checker) resolveTypesInBlock(b *ast.Block) {
+	if b == nil {
+		return
+	}
+	for _, st := range b.Stmts {
+		switch x := st.(type) {
+		case *ast.Block:
+			c.resolveTypesInBlock(x)
+		case *ast.If:
+			c.resolveTypesInBlock(asBlock(x.Then))
+			c.resolveTypesInBlock(asBlock(x.Else))
+		case *ast.While:
+			c.resolveTypesInBlock(asBlock(x.Body))
+		case *ast.For:
+			c.resolveTypesInBlock(asBlock(x.Body))
+		case *ast.Var:
+			c.resolveType(&x.Type)
+		case *ast.Switch:
+			for _, k := range x.Cases {
+				c.resolveTypesInBlock(k.Body)
+			}
+			c.resolveTypesInBlock(x.Default)
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				c.resolveTypesInBlock(arm.Body)
+			}
+		case *ast.FuncDecl:
+			for i := range x.Params {
+				c.resolveType(&x.Params[i].Type)
+			}
+			c.resolveType(&x.ReturnType)
+			c.resolveTypesInBlock(x.Body)
+		}
+	}
+}
+
+// asBlock turns a Stmt into a *Block where possible — used to
+// reuse resolveTypesInBlock for the if/while/for body slots,
+// which are typed as Stmt but in practice always Block. Returns
+// nil otherwise so the caller skips.
+func asBlock(s ast.Stmt) *ast.Block {
+	if b, ok := s.(*ast.Block); ok {
+		return b
+	}
+	return nil
+}
+
+// resolveType rewrites a single Type slot in place. Handles
+// nominal references (StructType promoted to EnumType when
+// appropriate) plus recurses into composite types.
+func (c *checker) resolveType(slot *ast.Type) {
+	if slot == nil || *slot == nil {
+		return
+	}
+	switch t := (*slot).(type) {
+	case ast.StructType:
+		if _, isEnum := c.info.Enums[t.Name]; isEnum {
+			*slot = ast.EnumType{Name: t.Name}
+		}
+	case ast.ArrayType:
+		elem := t.Elem
+		c.resolveType(&elem)
+		*slot = ast.ArrayType{Elem: elem}
+	case *ast.FuncType:
+		for i := range t.Params {
+			c.resolveType(&t.Params[i])
+		}
+		c.resolveType(&t.Result)
+	}
+}
+
+// variantRef is the resolution target for an unqualified variant
+// name. The checker uses it to rewrite `Circle(3.0)` /
+// `Red` into a typed *EnumLit.
+type variantRef struct {
+	enumName string
+	index    int
+	payloads []ast.Type
 }
 
 func (c *checker) errf(pos ast.Position, format string, args ...any) {
@@ -405,8 +570,89 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.checkBlock(n.Default, s)
 		}
 		c.switchDepth--
+	case *ast.Match:
+		c.checkMatch(n, s)
 	case *ast.FuncDecl:
 		c.checkLocalFunc(n, s)
+	}
+}
+
+// checkMatch type-checks a `match` statement. The scrutinee must
+// be an enum value; each arm's pattern variant must belong to
+// that enum and supply the right number of binding names; the
+// arm list must cover every variant of the enum (or end in a
+// wildcard). Bindings are typed against the matching variant's
+// payload list and bound in a fresh per-arm scope.
+func (c *checker) checkMatch(n *ast.Match, s *scope) {
+	tagT := c.checkExpr(n.Tag, s)
+	if tagT == nil {
+		return
+	}
+	et, ok := tagT.(ast.EnumType)
+	if !ok {
+		c.errf(n.Tag.Pos(), "match scrutinee must be an enum value, got %s", tagT)
+		return
+	}
+	ed, ok := c.info.Enums[et.Name]
+	if !ok {
+		c.errf(n.Tag.Pos(), "unknown enum %q", et.Name)
+		return
+	}
+	covered := map[string]bool{}
+	sawWildcard := false
+	for i, arm := range n.Arms {
+		if arm.IsWildcard {
+			if i != len(n.Arms)-1 {
+				c.errf(arm.P, "wildcard `_` arm must be last in the match")
+			}
+			sawWildcard = true
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		// Find the variant on this enum.
+		varIdx := -1
+		var variant *ast.EnumVariant
+		for j := range ed.Variants {
+			if ed.Variants[j].Name == arm.VariantName {
+				varIdx = j
+				variant = &ed.Variants[j]
+				break
+			}
+		}
+		if varIdx < 0 {
+			c.errf(arm.P, "variant %q is not part of enum %s", arm.VariantName, ed.Name)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if covered[arm.VariantName] {
+			c.errf(arm.P, "variant %q already covered earlier in this match", arm.VariantName)
+		}
+		covered[arm.VariantName] = true
+		if len(arm.Bindings) != len(variant.Payloads) {
+			c.errf(arm.P, "variant %s has %d payload(s), got %d binding(s)",
+				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
+		}
+		// Bind names in a fresh scope so they don't leak into
+		// sibling arms.
+		armScope := newScope(s)
+		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
+		for k, name := range arm.Bindings {
+			var bt ast.Type
+			if k < len(variant.Payloads) {
+				bt = variant.Payloads[k]
+			}
+			arm.BindingTypes[k] = bt
+			armScope.names[name] = bt
+		}
+		c.checkBlock(arm.Body, armScope)
+	}
+	if !sawWildcard {
+		for _, v := range ed.Variants {
+			if !covered[v.Name] {
+				c.errf(n.P, "match is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
+					v.Name, ed.Name)
+			}
+		}
 	}
 }
 
@@ -503,6 +749,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if sig, ok := c.info.FuncSigs[n.Name]; ok {
 			return sig
 		}
+		// A bare name might be a payload-less enum variant.
+		// (Variants with payloads are constructed via Call and
+		// rejected here so the user gets a clearer error.)
+		if vr, ok := c.variantOf[n.Name]; ok {
+			if len(vr.payloads) > 0 {
+				c.errf(n.P, "variant %s expects %d payload argument(s); call it as %s(...)",
+					n.Name, len(vr.payloads), n.Name)
+				return nil
+			}
+			return ast.EnumType{Name: vr.enumName}
+		}
 		// Inside a local function: a name not found in the local
 		// scope might resolve in the enclosing function's scope.
 		// Record it as a capture and return its outer type.
@@ -548,6 +805,28 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return nil
 	case *ast.Call:
+		// Variant constructor: `Some(x)` / `Square(2.0, 3.0)`.
+		// Resolved purely by name so we can type the result as
+		// the owning enum and check argument count + payload
+		// types. Shadowing by a function or local is intentional —
+		// the user can re-bind the name and the variant becomes
+		// inaccessible until the shadow leaves scope.
+		if id, ok := n.Callee.(*ast.Ident); ok {
+			if vr, ok := c.variantOf[id.Name]; ok && !c.isUserFuncOrLocal(id.Name, s) {
+				if len(n.Args) != len(vr.payloads) {
+					c.errf(n.P, "variant %s expects %d argument(s), got %d",
+						id.Name, len(vr.payloads), len(n.Args))
+				}
+				for i, a := range n.Args {
+					at := c.checkExpr(a, s)
+					if i < len(vr.payloads) && at != nil && !ast.Equal(at, vr.payloads[i]) {
+						c.errf(a.Pos(), "variant %s payload %d type %s, expected %s",
+							id.Name, i, at, vr.payloads[i])
+					}
+				}
+				return ast.EnumType{Name: vr.enumName}
+			}
+		}
 		// `len(x)` is a generic builtin: it accepts any string or
 		// array and returns a number. We type-check it here rather
 		// than in FuncSigs because no monomorphic FuncType expresses
