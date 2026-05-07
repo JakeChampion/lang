@@ -96,6 +96,14 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			case "write_file":
 				g.usesWriteFile = true
 				g.usesAlloc = true
+			case "open_reader", "open_writer", "open_appender":
+				g.usesStreamIO = true
+				g.usesAlloc = true
+			}
+			if strings.HasPrefix(op.Str, "__method_Reader_") ||
+				strings.HasPrefix(op.Str, "__method_Writer_") {
+				g.usesStreamIO = true
+				g.usesAlloc = true
 			}
 		}
 	}
@@ -128,13 +136,16 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	if g.usesEnv {
 		g.emitEnvRuntime()
 	}
-	if g.usesReadFile || g.usesWriteFile {
+	if g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
 		g.emitFileIORuntime()
+	}
+	if g.usesStreamIO {
+		g.emitStreamIORuntime()
 	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 	}
-	if len(g.stringOrder) > 0 || g.usesEprint || g.usesReadFile || g.usesWriteFile {
+	if len(g.stringOrder) > 0 || g.usesEprint || g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
 		g.line("")
 		g.line(`.section .rodata`)
 		for _, s := range g.stringOrder {
@@ -151,7 +162,7 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			g.label(".LLangNewline")
 			g.line(`	.byte 10`)
 		}
-		if g.usesReadFile || g.usesWriteFile {
+		if g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
 			// Length-prefixed lang string used by the
 			// IoError.Other variant's "msg" payload. Layout
 			// matches user strings: 4-byte little-endian
@@ -163,7 +174,7 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			g.line(`	.asciz "io error"`)
 		}
 	}
-	if g.usesArgs || g.usesReadLine {
+	if g.usesArgs || g.usesReadLine || g.usesStreamIO {
 		g.line("")
 		g.line(`.section .bss`)
 		if g.usesArgs {
@@ -177,11 +188,13 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			g.label("__lang_args_cache")
 			g.line(`	.word 0`)
 		}
-		if g.usesReadLine {
-			// 4 KiB scratch buffer for read_line; longer lines
-			// truncate at the boundary. Big enough for typical
-			// CLI input; if real programs need more, swap to a
-			// growing alloc.
+		if g.usesReadLine || g.usesStreamIO {
+			// 4 KiB scratch buffer shared by the legacy
+			// stdin reader (`__lang_read_line`) and the
+			// streaming Reader.read_line method. Lines
+			// longer than 4 KiB truncate at the boundary;
+			// follow-ups can switch to a growing alloc when
+			// users hit it.
 			g.line(`.align 2`)
 			g.label("__lang_read_line_buf")
 			g.line(`	.space 4096`)

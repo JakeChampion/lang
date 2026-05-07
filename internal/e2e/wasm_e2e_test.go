@@ -1243,3 +1243,104 @@ func TestWASMReadWriteFileRoundtrip(t *testing.T) {
 		t.Errorf("stdout should report `10` (len of \"round trip\"); got %q", stdout)
 	}
 }
+
+// `open_writer` + `Writer.write` + `Writer.close` produce
+// the file on disk, then `open_reader` + `Reader.read_line`
+// streams it back two lines at a time. EOF on the third
+// `read_line` returns `None`. End-to-end this exercises every
+// streaming primitive in 4b in one shot.
+func TestWASMStreamingRoundtrip(t *testing.T) {
+	src := `function main(): number {
+		match (open_writer("out.txt")) {
+			Ok(w) => {
+				match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
+				match (w.write("line 2\n")) { Some(_) => { return 2; }, None => {} }
+				match (w.close()) { Some(_) => { return 3; }, None => {} }
+			},
+			Err(_) => { return 4; }
+		}
+		match (open_reader("out.txt")) {
+			Ok(r) => {
+				match (r.read_line()) { Some(line) => { write(line); }, None => { return 5; } }
+				match (r.read_line()) { Some(line) => { write(line); }, None => { return 6; } }
+				match (r.read_line()) { Some(_) => { return 7; }, None => {} }
+				match (r.close()) { Some(_) => { return 8; }, None => {} }
+				return 0;
+			},
+			Err(_) => { return 9; }
+		}
+		return -1;
+	}`
+	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	if !strings.Contains(stdout, "line 1\n") || !strings.Contains(stdout, "line 2\n") {
+		t.Errorf("stdout missing both lines; got %q", stdout)
+	}
+}
+
+// `Reader.read_chunk(size)` reads up to `size` bytes; the
+// first call gets up to a full chunk, the next call gets
+// the remainder, and a third call returns None.
+func TestWASMReaderReadChunk(t *testing.T) {
+	src := `function main(): number {
+		match (open_writer("rc.txt")) {
+			Ok(w) => {
+				match (w.write("hello world")) { Some(_) => { return 1; }, None => {} }
+				match (w.close()) { Some(_) => { return 2; }, None => {} }
+			},
+			Err(_) => { return 3; }
+		}
+		match (open_reader("rc.txt")) {
+			Ok(r) => {
+				match (r.read_chunk(5)) {
+					Some(s) => { write(s); write(":"); },
+					None => { return 4; }
+				}
+				match (r.read_chunk(20)) {
+					Some(s) => { write(s); },
+					None => { return 5; }
+				}
+				match (r.read_chunk(20)) {
+					Some(_) => { return 6; },
+					None => { return 0; }
+				}
+			},
+			Err(_) => { return 7; }
+		}
+		return -1;
+	}`
+	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	if !strings.Contains(stdout, "hello: world") {
+		t.Errorf("stdout should contain `hello: world`; got %q", stdout)
+	}
+}
+
+// open_appender preserves existing content and appends new
+// writes at the end. Combined with read_file we can verify
+// the file ends up containing both halves.
+func TestWASMOpenAppender(t *testing.T) {
+	src := `function main(): number {
+		match (open_writer("ap.txt")) {
+			Ok(w) => {
+				match (w.write("first")) { Some(_) => { return 1; }, None => {} }
+				match (w.close()) { Some(_) => { return 2; }, None => {} }
+			},
+			Err(_) => { return 3; }
+		}
+		match (open_appender("ap.txt")) {
+			Ok(w) => {
+				match (w.write("-second")) { Some(_) => { return 4; }, None => {} }
+				match (w.close()) { Some(_) => { return 5; }, None => {} }
+			},
+			Err(_) => { return 6; }
+		}
+		match (read_file("ap.txt")) {
+			Ok(s) => { write(s); return 0; },
+			Err(_) => { return 7; }
+		}
+		return -1;
+	}`
+	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	if !strings.Contains(stdout, "first-second") {
+		t.Errorf("stdout should contain `first-second`; got %q", stdout)
+	}
+}

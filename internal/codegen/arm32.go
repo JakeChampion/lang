@@ -80,6 +80,7 @@ type generator struct {
 	usesEnv       bool            // true if the program calls env() — pulls in __lang_env shim
 	usesReadFile  bool            // true if the program calls read_file() — pulls in __lang_read_file + __build_io_error
 	usesWriteFile bool            // true if the program calls write_file() — pulls in __lang_write_file + __build_io_error
+	usesStreamIO  bool            // true if the program calls open_reader / open_writer / a Reader|Writer method
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
 }
 
@@ -677,6 +678,279 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("pop {r4, r5, r6, lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_write_file, .-__lang_write_file")
+}
+
+// emitStreamIORuntime emits the open_reader / open_writer /
+// open_appender constructors plus the Reader / Writer methods.
+// All Reader / Writer values are 4-byte heap structs holding
+// just the file descriptor; the methods load it before
+// dispatching to libc read(2) / write(2) / close(2).
+//
+// Variant indices match the auto-injected Option / Result
+// (Some=0, None=1, Ok=0, Err=1) and IoError (NotFound=0,
+// PermissionDenied=1, AlreadyExists=2, InvalidUtf8=3,
+// Interrupted=4, Unsupported=5, Other=6).
+func (g *generator) emitStreamIORuntime() {
+	g.emitOpenReaderArm()
+	g.emitOpenWriterArm()
+	g.emitOpenAppenderArm()
+	g.emitReaderReadLineArm()
+	g.emitReaderReadChunkArm()
+	g.emitCloseMethodArm("__method_Reader_close")
+	g.emitCloseMethodArm("__method_Writer_close")
+	g.emitWriterWriteArm()
+}
+
+// emitOpenReaderArm — open(path, O_RDONLY=0). Wraps the
+// resulting fd in a 4-byte Reader struct and returns
+// Result[Reader, IoError].
+func (g *generator) emitOpenReaderArm() {
+	g.emitOpenArm("__lang_open_reader", 0, 0)
+}
+
+// emitOpenWriterArm — open(path, O_WRONLY|O_CREAT|O_TRUNC=0x241, 0644).
+func (g *generator) emitOpenWriterArm() {
+	g.emitOpenArm("__lang_open_writer", 0x241, 0644)
+}
+
+// emitOpenAppenderArm — open(path, O_WRONLY|O_CREAT|O_APPEND=0x441, 0644).
+func (g *generator) emitOpenAppenderArm() {
+	g.emitOpenArm("__lang_open_appender", 0x441, 0644)
+}
+
+// emitOpenArm is the shared body of the three constructors.
+// `flags` is the open(2) flags; `mode` is the file-creation
+// mode (used only when O_CREAT is set).
+func (g *generator) emitOpenArm(name string, flags, mode int) {
+	g.line("")
+	g.line(fmt.Sprintf(".global %s", name))
+	g.line(fmt.Sprintf(".type %s, %%function", name))
+	g.label(name)
+	g.emit("push {r4, r5, lr}")
+	g.emit("sub sp, sp, #4") // 8-byte alignment (12 + 4 = 16)
+	g.emit("mov r4, r0")     // r4 = path
+
+	// open(path, flags, mode)
+	g.emit("mov r1, #%d", flags)
+	g.emit("mov r2, #%d", mode)
+	g.emit("bl open")
+	g.emit("cmp r0, #0")
+	g.emit("bge .L%s_ok", name)
+	g.emit("bl __errno_location")
+	g.emit("ldr r0, [r0]")
+	g.emit("mov r1, r4")
+	g.emit("bl __build_io_error")
+	g.emit("mov r5, r0")
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #1") // Result.Err = tag 1
+	g.emit("str r1, [r0]")
+	g.emit("str r5, [r0, #4]")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.label(fmt.Sprintf(".L%s_ok", name))
+	// Allocate Reader/Writer struct: 4 bytes [fd].
+	g.emit("mov r5, r0") // r5 = fd
+	g.emit("mov r0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("str r5, [r0]")
+	g.emit("mov r5, r0") // r5 = struct ptr
+	// Build Ok(struct).
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")
+	g.emit("str r5, [r0, #4]")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.line(fmt.Sprintf(".size %s, .-%s", name, name))
+}
+
+// emitReaderReadLineArm — Reader.read_line. Read one byte at
+// a time via read(2) into a stack scratch byte, accumulating
+// into a fixed .bss buffer (same one __lang_read_line uses
+// for stdin), then materialise a length-prefixed string.
+// Returns Option[string]; None on EOF before any byte was
+// read.
+func (g *generator) emitReaderReadLineArm() {
+	g.line("")
+	g.line(".global __method_Reader_read_line")
+	g.line(".type __method_Reader_read_line, %function")
+	g.label("__method_Reader_read_line")
+	g.emit("push {r4, r5, r6, r7, lr}")
+	g.emit("sub sp, sp, #4") // 8-byte alignment
+	g.emit("ldr r4, [r0]")   // r4 = fd
+	g.emit("ldr r5, =__lang_read_line_buf")
+	g.emit("mov r6, #0") // r6 = bytes accumulated
+	g.label(".Lrlm_loop")
+	g.emit("cmp r6, #4096")
+	g.emit("bge .Lrlm_done")
+	g.emit("mov r0, r4")
+	g.emit("add r1, r5, r6")
+	g.emit("mov r2, #1")
+	g.emit("bl read")
+	g.emit("cmp r0, #1")
+	g.emit("blt .Lrlm_done")
+	g.emit("add r7, r5, r6")
+	g.emit("ldrb r7, [r7]")
+	g.emit("add r6, r6, #1")
+	g.emit("cmp r7, #10")
+	g.emit("beq .Lrlm_done")
+	g.emit("b .Lrlm_loop")
+	g.label(".Lrlm_done")
+	// EOF on first byte → None.
+	g.emit("cmp r6, #0")
+	g.emit("bne .Lrlm_some")
+	g.emit("mov r0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #1")
+	g.emit("str r1, [r0]")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, r6, r7, lr}")
+	g.emit("bx lr")
+	g.label(".Lrlm_some")
+	// Allocate string: 4 + r6 + 1 (NUL).
+	g.emit("add r0, r6, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add r7, r0, #4")
+	g.emit("str r6, [r7, #-4]")
+	g.emit("mov r0, r7")
+	g.emit("mov r1, r5")
+	g.emit("mov r2, r6")
+	g.emit("bl memcpy")
+	g.emit("add r0, r7, r6")
+	g.emit("mov r1, #0")
+	g.emit("strb r1, [r0]")
+	// Some(string).
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")
+	g.emit("str r7, [r0, #4]")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, r6, r7, lr}")
+	g.emit("bx lr")
+	g.line(".size __method_Reader_read_line, .-__method_Reader_read_line")
+}
+
+// emitReaderReadChunkArm — Reader.read_chunk(size). Single
+// read(2) into a heap-allocated buffer; trim length prefix
+// to actual bytes read; return Some(string) or None.
+func (g *generator) emitReaderReadChunkArm() {
+	g.line("")
+	g.line(".global __method_Reader_read_chunk")
+	g.line(".type __method_Reader_read_chunk, %function")
+	g.label("__method_Reader_read_chunk")
+	g.emit("push {r4, r5, r6, lr}")
+	g.emit("ldr r4, [r0]") // r4 = fd
+	g.emit("mov r5, r1")   // r5 = size
+	// Allocate `4 + size` for prefix + data.
+	g.emit("add r0, r5, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("add r6, r0, #4") // r6 = data ptr
+	// read(fd, data, size)
+	g.emit("mov r0, r4")
+	g.emit("mov r1, r6")
+	g.emit("mov r2, r5")
+	g.emit("bl read")
+	g.emit("cmp r0, #0")
+	g.emit("bgt .Lrcm_some")
+	// EOF → None.
+	g.emit("mov r0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #1")
+	g.emit("str r1, [r0]")
+	g.emit("pop {r4, r5, r6, lr}")
+	g.emit("bx lr")
+	g.label(".Lrcm_some")
+	g.emit("str r0, [r6, #-4]") // length prefix = actual bytes read
+	// Some(data).
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")
+	g.emit("str r6, [r0, #4]")
+	g.emit("pop {r4, r5, r6, lr}")
+	g.emit("bx lr")
+	g.line(".size __method_Reader_read_chunk, .-__method_Reader_read_chunk")
+}
+
+// emitCloseMethodArm — both Reader.close and Writer.close
+// share this shape: close(fd) → Option[IoError].
+func (g *generator) emitCloseMethodArm(name string) {
+	g.line("")
+	g.line(fmt.Sprintf(".global %s", name))
+	g.line(fmt.Sprintf(".type %s, %%function", name))
+	g.label(name)
+	g.emit("push {r4, lr}")
+	g.emit("ldr r0, [r0]") // r0 = fd
+	g.emit("bl close")
+	g.emit("cmp r0, #0")
+	g.emit("blt .L%s_err", name)
+	// None.
+	g.emit("mov r0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #1")
+	g.emit("str r1, [r0]")
+	g.emit("pop {r4, lr}")
+	g.emit("bx lr")
+	g.label(fmt.Sprintf(".L%s_err", name))
+	g.emit("bl __errno_location")
+	g.emit("ldr r0, [r0]")
+	g.emit("ldr r1, =.Lioe_msg")
+	g.emit("bl __build_io_error")
+	g.emit("mov r4, r0")
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")
+	g.emit("str r4, [r0, #4]")
+	g.emit("pop {r4, lr}")
+	g.emit("bx lr")
+	g.line(fmt.Sprintf(".size %s, .-%s", name, name))
+}
+
+// emitWriterWriteArm — Writer.write(s). Single write(2)
+// of the entire string; returns Option[IoError].
+func (g *generator) emitWriterWriteArm() {
+	g.line("")
+	g.line(".global __method_Writer_write")
+	g.line(".type __method_Writer_write, %function")
+	g.label("__method_Writer_write")
+	g.emit("push {r4, lr}")
+	g.emit("sub sp, sp, #4") // alignment
+	g.emit("ldr r2, [r1, #-4]")
+	g.emit("ldr r0, [r0]") // r0 = fd
+	// r1 = string data ptr (already in r1 from arg)
+	// r2 = length (loaded above)
+	g.emit("bl write")
+	g.emit("cmp r0, #0")
+	g.emit("blt .Lwwm_err")
+	// None.
+	g.emit("mov r0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #1")
+	g.emit("str r1, [r0]")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, lr}")
+	g.emit("bx lr")
+	g.label(".Lwwm_err")
+	g.emit("bl __errno_location")
+	g.emit("ldr r0, [r0]")
+	g.emit("ldr r1, =.Lioe_msg")
+	g.emit("bl __build_io_error")
+	g.emit("mov r4, r0")
+	g.emit("mov r0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0]")
+	g.emit("str r4, [r0, #4]")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, lr}")
+	g.emit("bx lr")
+	g.line(".size __method_Writer_write, .-__method_Writer_write")
 }
 
 // internString returns a unique .rodata label for s, allocating a new one

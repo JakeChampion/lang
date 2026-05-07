@@ -16,6 +16,7 @@ package codegen
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
@@ -387,12 +388,32 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		target = "__lang_write_file"
 		g.usesWriteFile = true
 		g.usesAlloc = true
+	case "open_reader":
+		target = "__lang_open_reader"
+		g.usesStreamIO = true
+		g.usesAlloc = true
+	case "open_writer":
+		target = "__lang_open_writer"
+		g.usesStreamIO = true
+		g.usesAlloc = true
+	case "open_appender":
+		target = "__lang_open_appender"
+		g.usesStreamIO = true
+		g.usesAlloc = true
 	case "__str_idx", "__arr_idx":
 		// IR-side bounds-check stubs. We don't currently have ARM32
 		// equivalents, so the IR walker adds the bound-check itself
 		// inline. Fall back to an unchecked address compute that
 		// matches the wasm behaviour for in-range indices.
 		return g.emitInlineIdxHelper(target)
+	}
+	// Reader / Writer method calls arrive as the post-checker
+	// mangled `__method_Reader_*` / `__method_Writer_*` names.
+	// Trip the streaming-IO flag so the runtime helper section
+	// emits the matching helpers.
+	if strings.HasPrefix(target, "__method_Reader_") || strings.HasPrefix(target, "__method_Writer_") {
+		g.usesStreamIO = true
+		g.usesAlloc = true
 	}
 	argc := int(op.I32)
 	if argc <= regArgs {

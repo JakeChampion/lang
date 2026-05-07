@@ -202,9 +202,18 @@ Built-ins:
   file into a string. `Ok(content)` on success; `Err(IoError)`
   with the path attached on failure.
 - `write_file(path, content): Option[IoError]` — truncates and
-  writes. `None` for success, `Some(err)` for failure. Streaming
-  variants come in a follow-up; for now this is appropriate for
-  small files (configs, single-pass tools).
+  writes. `None` for success, `Some(err)` for failure.
+- `open_reader(path): Result[Reader, IoError]` — opens for
+  reading and returns a `Reader` value with `.read_line()`,
+  `.read_chunk(size)`, and `.close()` methods. Use this for
+  files large enough that slurping into a single string is
+  wasteful, or for line-by-line filters.
+- `open_writer(path): Result[Writer, IoError]` — opens for
+  writing (truncates the file). `Writer` has `.write(s)` and
+  `.close()` methods.
+- `open_appender(path): Result[Writer, IoError]` — same as
+  `open_writer` but preserves existing content; writes go
+  to the end of the file.
 
 WASM builds need a preopened directory — pass `wasmtime --dir=...`
 when running, and paths are interpreted relative to that preopen
