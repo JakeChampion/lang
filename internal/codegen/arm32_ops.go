@@ -7,15 +7,19 @@
 // instructions; loads / stores work directly on byte addresses;
 // structured control flow maps to label-and-branch sequences.
 //
-// Floats are not supported on this backend (and rejected at lower
-// time on the AST emitter); OpFAdd / OpFLoad / etc. bubble up as
-// "not yet supported" errors so a future VFP-aware emitter can
-// fill them in without disturbing the integer paths.
+// Floats lower through VFPv2 — values still flow through the
+// integer operand stack (one 32-bit slot each, raw bit pattern),
+// and the float ops `vmov` them into s-registers just for the
+// arithmetic / comparison instruction itself. That keeps the
+// calling convention soft-float-style (no -mfloat-abi=hard
+// coupling with the host gcc) while letting us emit
+// `vadd.f32` / `vcmp.f32` / etc. from the assembler directly.
 
 package codegen
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -176,12 +180,74 @@ func (g *generator) emitOpsFromIR(
 		case ir.OpGeS:
 			g.cmpPop("ge", "lt")
 
-		// -------- floats (not yet implemented) --------
+		// -------- floats (VFP) --------
+		//
+		// Floats live in the same operand-stack slots as ints —
+		// 32 bits per value, passed around as raw bit patterns
+		// in r0..r3 / on the stack. The arithmetic ops pull
+		// the bit pattern into VFP s-registers (s0/s1) via
+		// `vmov`, run the f32 instruction, then move the
+		// result back to r0 for the existing push/pop discipline.
+		// This keeps the calling convention identical to the
+		// int path and avoids any -mfloat-abi coupling with
+		// the host gcc.
 
-		case ir.OpFAdd, ir.OpFSub, ir.OpFMul, ir.OpFDiv,
-			ir.OpFNeg, ir.OpFEq, ir.OpFNe, ir.OpFLt, ir.OpFLe,
-			ir.OpFGt, ir.OpFGe, ir.OpFLoad, ir.OpFStore, ir.OpConstF32:
-			return fmt.Errorf("codegen: float ops are not yet supported by the arm32 backend (use the wasm backend)")
+		case ir.OpFAdd:
+			g.fbinPop()
+			g.emit("vadd.f32 s0, s1, s0")
+			g.emit("vmov r0, s0")
+			g.emit("push {r0}")
+		case ir.OpFSub:
+			g.fbinPop()
+			g.emit("vsub.f32 s0, s1, s0")
+			g.emit("vmov r0, s0")
+			g.emit("push {r0}")
+		case ir.OpFMul:
+			g.fbinPop()
+			g.emit("vmul.f32 s0, s1, s0")
+			g.emit("vmov r0, s0")
+			g.emit("push {r0}")
+		case ir.OpFDiv:
+			g.fbinPop()
+			g.emit("vdiv.f32 s0, s1, s0")
+			g.emit("vmov r0, s0")
+			g.emit("push {r0}")
+		case ir.OpFNeg:
+			g.emit("pop {r0}")
+			g.emit("vmov s0, r0")
+			g.emit("vneg.f32 s0, s0")
+			g.emit("vmov r0, s0")
+			g.emit("push {r0}")
+		case ir.OpFEq:
+			g.fcmpPop("eq", "ne")
+		case ir.OpFNe:
+			g.fcmpPop("ne", "eq")
+		case ir.OpFLt:
+			g.fcmpPop("mi", "pl")
+		case ir.OpFLe:
+			g.fcmpPop("ls", "hi")
+		case ir.OpFGt:
+			g.fcmpPop("gt", "le")
+		case ir.OpFGe:
+			g.fcmpPop("ge", "lt")
+		case ir.OpFLoad:
+			// 32-bit memory load — the VFP-ness is purely
+			// semantic; the bytes go straight into r0.
+			g.emit("pop {r0}")
+			g.emit("ldr r0, [r0]")
+			g.emit("push {r0}")
+		case ir.OpFStore:
+			// 32-bit memory store — same shape as OpStore.
+			g.emit("pop {r0}")
+			g.emit("pop {r1}")
+			g.emit("str r0, [r1]")
+		case ir.OpConstF32:
+			// Materialise the f32 bit pattern as an i32
+			// literal. arm32's `ldr Rd, =imm` handles any
+			// 32-bit value via the constant pool the
+			// assembler builds.
+			g.emit("ldr r0, =%d", int32(math.Float32bits(op.F32)))
+			g.emit("push {r0}")
 
 		// -------- memory --------
 
@@ -313,6 +379,33 @@ func (g *generator) binPop() {
 func (g *generator) cmpPop(trueCC, falseCC string) {
 	g.binPop()
 	g.emit("cmp r1, r0")
+	g.emit("mov%s r0, #1", trueCC)
+	g.emit("mov%s r0, #0", falseCC)
+	g.emit("push {r0}")
+}
+
+// fbinPop is the float counterpart of binPop: pop two 32-bit
+// values off the operand stack as raw bit patterns, then `vmov`
+// them into VFP single-precision registers so the caller can
+// run an `f32` instruction with s1 = lhs, s0 = rhs.
+func (g *generator) fbinPop() {
+	g.emit("pop {r0}")
+	g.emit("pop {r1}")
+	g.emit("vmov s0, r0")
+	g.emit("vmov s1, r1")
+}
+
+// fcmpPop is the float counterpart of cmpPop: f32 compare with
+// VFP, then mirror the `mov<cc>` / `mov<!cc>` pattern back into
+// r0 so the result lands as a 0 / 1 i32 on the operand stack.
+//
+// `vmrs APSR_nzcv, FPSCR` copies VFP's NZCV flags up into the
+// integer condition flags, which then drive the standard ARM
+// condition-code suffixes.
+func (g *generator) fcmpPop(trueCC, falseCC string) {
+	g.fbinPop()
+	g.emit("vcmp.f32 s1, s0")
+	g.emit("vmrs APSR_nzcv, FPSCR")
 	g.emit("mov%s r0, #1", trueCC)
 	g.emit("mov%s r0, #0", falseCC)
 	g.emit("push {r0}")
