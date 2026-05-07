@@ -96,6 +96,10 @@ type Interp struct {
 	Funcs    map[string]*ast.FuncDecl
 	Builtins map[string]*Builtin
 	Stdout   io.Writer
+	// Stderr is where `eprint` writes. Defaults to os.Stderr;
+	// tests / the REPL can override it to capture diagnostic
+	// output independently of Stdout.
+	Stderr io.Writer
 	// Args is what the `args()` builtin returns, in source-program
 	// order (argv[0] first). REPL / test callers can override this
 	// to feed scripted argv without going through os.Args.
@@ -111,13 +115,40 @@ func New() *Interp {
 		Funcs:    map[string]*ast.FuncDecl{},
 		Builtins: map[string]*Builtin{},
 		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
 		Global:   newEnv(nil),
 	}
 	i.Builtins["print"] = &Builtin{Fn: builtinPrint}
+	i.Builtins["write"] = &Builtin{Fn: builtinWrite}
+	i.Builtins["eprint"] = &Builtin{Fn: builtinEprint}
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
 	return i
+}
+
+func builtinWrite(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("write: expected 1 arg, got %d", len(args))
+	}
+	s, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("write: expected string arg, got %T", args[0])
+	}
+	fmt.Fprint(i.Stdout, string(s))
+	return Void{}, nil
+}
+
+func builtinEprint(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("eprint: expected 1 arg, got %d", len(args))
+	}
+	s, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("eprint: expected string arg, got %T", args[0])
+	}
+	fmt.Fprintln(i.Stderr, string(s))
+	return Void{}, nil
 }
 
 func builtinArgs(i *Interp, args []Value) (Value, error) {

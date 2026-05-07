@@ -8,6 +8,7 @@
 package e2e
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -463,6 +464,47 @@ function main(): number { return limits.MAX; }`,
 	}
 }
 
+// compileAndCaptureStreams is compileAndRun split-streams. The
+// `eprint` and `write` e2e tests need to know which file
+// descriptor each builtin lands on, which compileAndRun's
+// CombinedOutput collapses. qemu passes stdin/stdout/stderr
+// straight through, so the parent's split capture is faithful.
+func compileAndCaptureStreams(t *testing.T, src string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	gcc, qemu := tooling(t)
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+	cmd := exec.Command(qemu, binPath)
+	var soBuf, seBuf bytes.Buffer
+	cmd.Stdout = &soBuf
+	cmd.Stderr = &seBuf
+	_ = cmd.Run()
+	return soBuf.String(), seBuf.String(), cmd.ProcessState.ExitCode()
+}
+
 // compileAndRunWithArgs is compileAndRun plus extra positional argv
 // for the qemu-launched binary. argv[0] is the binary path injected
 // by qemu (argv[0] is whatever execve sets). Used by the args()
@@ -557,6 +599,41 @@ func TestArgsBuiltinReadsValueArm(t *testing.T) {
 	out, _ := cmd.CombinedOutput()
 	if !strings.Contains(string(out), "hello") {
 		t.Errorf("expected output to contain `hello`, got %q", string(out))
+	}
+}
+
+// `write` is `print` minus the newline. Three calls back-to-back
+// land on stdout as one continuous run with no separators; the
+// final `print` then closes the line.
+func TestWriteBuiltinArm(t *testing.T) {
+	src := `function main(): number {
+		write("a");
+		write("b");
+		print("c");
+		return 0;
+	}`
+	stdout, _, _ := compileAndCaptureStreams(t, src)
+	if stdout != "ab" + "c\n" {
+		t.Errorf("stdout = %q, want %q", stdout, "abc\n")
+	}
+}
+
+// `eprint` writes to stderr with a trailing newline. Pairing it
+// with `print` on stdout in the same program proves the two
+// builtins land on different file descriptors and don't
+// interfere with each other.
+func TestEprintBuiltinArm(t *testing.T) {
+	src := `function main(): number {
+		print("hi");
+		eprint("err");
+		return 0;
+	}`
+	stdout, stderr, _ := compileAndCaptureStreams(t, src)
+	if stdout != "hi\n" {
+		t.Errorf("stdout = %q, want %q", stdout, "hi\n")
+	}
+	if stderr != "err\n" {
+		t.Errorf("stderr = %q, want %q", stderr, "err\n")
 	}
 }
 
