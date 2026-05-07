@@ -106,6 +106,28 @@ func builtinEnumDecls() []*ast.EnumDecl {
 	}
 }
 
+// builtinStructDecls returns the synthetic struct declarations
+// the checker injects on every program: `Reader` and `Writer`.
+// Both are opaque-by-convention — the user never constructs
+// them directly; `open_reader` / `open_writer` / `open_appender`
+// (and the future `stdin()` / `stdout()` / `stderr()`) are the
+// canonical entry points. The single `fd` field is exposed
+// because we don't have opaque types yet, and because users
+// may need it for FFI escape hatches; it isn't part of the
+// stable surface.
+func builtinStructDecls() []*ast.StructDecl {
+	return []*ast.StructDecl{
+		{
+			Name:   "Reader",
+			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
+		},
+		{
+			Name:   "Writer",
+			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
+		},
+	}
+}
+
 // Check type-checks the program. It returns an aggregated error if any
 // problems were found.
 func Check(prog *ast.Program) (*Info, error) {
@@ -116,6 +138,10 @@ func Check(prog *ast.Program) (*Info, error) {
 	// see the same shape.
 	if len(prog.Enums) == 0 || prog.Enums[0].Name != "Option" {
 		prog.Enums = append(builtinEnumDecls(), prog.Enums...)
+	}
+	// Same shape for the auto-injected Reader / Writer structs.
+	if len(prog.Structs) == 0 || prog.Structs[0].Name != "Reader" {
+		prog.Structs = append(builtinStructDecls(), prog.Structs...)
 	}
 	c := &checker{
 		info: &Info{
@@ -275,6 +301,45 @@ func Check(prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// Streaming I/O constructors. open_reader / open_writer /
+	// open_appender all return `Result[Reader|Writer, IoError]`
+	// — the runtime helpers do the path_open / open(2) and
+	// wrap the resulting fd in a Reader or Writer struct.
+	readerType := ast.StructType{Name: "Reader"}
+	writerType := ast.StructType{Name: "Writer"}
+	ioErrType := ast.EnumType{Name: "IoError"}
+	optionIoErr := ast.EnumType{Name: "Option", Args: []ast.Type{ioErrType}}
+	c.info.FuncSigs["open_reader"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{readerType, ioErrType}},
+	}
+	c.info.FuncSigs["open_writer"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	c.info.FuncSigs["open_appender"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	// Auto-injected methods on Reader / Writer. The names are
+	// the mangled forms the existing method-call rewrite uses
+	// (`r.read_line()` → `__method_Reader_read_line(r)`); we
+	// pre-populate Methods + FuncSigs so the rewrite finds them
+	// and so codegen can resolve the call to a runtime helper
+	// emitted at the same name.
+	registerMethod := func(structName, methodName string, params []ast.Type, result ast.Type) {
+		mangled := "__method_" + structName + "_" + methodName
+		c.info.Methods[structName+"."+methodName] = mangled
+		// First param is the receiver (the auto-injected struct).
+		fullParams := append([]ast.Type{ast.StructType{Name: structName}}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	optionString := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}}
+	registerMethod("Reader", "read_line", nil, optionString)
+	registerMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}}, optionString)
+	registerMethod("Reader", "close", nil, optionIoErr)
+	registerMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
+	registerMethod("Writer", "close", nil, optionIoErr)
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled

@@ -143,6 +143,14 @@ type Interp struct {
 	// function is expected — the interpreter has no story for
 	// resuming after an exit call.
 	Exiter func(code int)
+	// openFiles maps the `fd` field of a Reader / Writer Struct
+	// value back to the *os.File the interpreter is using on
+	// the host side. The codegen backends use real OS file
+	// descriptors directly; the interpreter shadows that with
+	// a ticket-counter scheme so the same Struct-with-fd shape
+	// works in both worlds.
+	openFiles map[int64]*os.File
+	nextFd    int64
 	// Args is what the `args()` builtin returns, in source-program
 	// order (argv[0] first). REPL / test callers can override this
 	// to feed scripted argv without going through os.Args.
@@ -155,13 +163,15 @@ type Interp struct {
 
 func New() *Interp {
 	i := &Interp{
-		Funcs:    map[string]*ast.FuncDecl{},
-		Enums:    map[string]*ast.EnumDecl{},
-		Builtins: map[string]*Builtin{},
-		Stdout:   os.Stdout,
-		Stderr:   os.Stderr,
-		Stdin:    os.Stdin,
-		Exiter:   os.Exit,
+		Funcs:     map[string]*ast.FuncDecl{},
+		Enums:     map[string]*ast.EnumDecl{},
+		Builtins:  map[string]*Builtin{},
+		Stdout:    os.Stdout,
+		Stderr:    os.Stderr,
+		Stdin:     os.Stdin,
+		Exiter:    os.Exit,
+		openFiles: map[int64]*os.File{},
+		nextFd:    100,
 		Global:   newEnv(nil),
 	}
 	i.Builtins["print"] = &Builtin{Fn: builtinPrint}
@@ -174,6 +184,14 @@ func New() *Interp {
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
 	i.Builtins["write_file"] = &Builtin{Fn: builtinWriteFile}
+	i.Builtins["open_reader"] = &Builtin{Fn: builtinOpenReader}
+	i.Builtins["open_writer"] = &Builtin{Fn: builtinOpenWriter}
+	i.Builtins["open_appender"] = &Builtin{Fn: builtinOpenAppender}
+	i.Builtins["__method_Reader_read_line"] = &Builtin{Fn: builtinReaderReadLine}
+	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
+	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
+	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
+	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
 	return i
 }
@@ -327,6 +345,156 @@ func resultErr(v Value) *Enum {
 // override Exiter to capture the requested code; the substitute
 // is expected to be non-returning (panic, longjmp-style abort,
 // or test-only "remember the code and noop").
+// builtinOpenReader / builtinOpenWriter / builtinOpenAppender
+// open the file with the corresponding os.OpenFile flags,
+// register the *os.File in i.openFiles under a fresh ticket id,
+// and wrap the id in a Reader / Writer Struct that goes back
+// into Result[Reader|Writer, IoError].
+func builtinOpenReader(i *Interp, args []Value) (Value, error) {
+	return openHelper(i, args, "Reader", os.O_RDONLY, 0)
+}
+
+func builtinOpenWriter(i *Interp, args []Value) (Value, error) {
+	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+}
+
+func builtinOpenAppender(i *Interp, args []Value) (Value, error) {
+	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+}
+
+func openHelper(i *Interp, args []Value, structName string, flag int, perm os.FileMode) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("open_*: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("open_*: expected string arg, got %T", args[0])
+	}
+	f, err := os.OpenFile(string(path), flag, perm)
+	if err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	id := i.nextFd
+	i.nextFd++
+	i.openFiles[id] = f
+	s := &Struct{
+		TypeName: structName,
+		Fields:   map[string]Value{"fd": Number(id)},
+	}
+	return resultOk(s), nil
+}
+
+// readerFile / writerFile pull the *os.File back out of an
+// interpreter Struct via the openFiles ticket map. Methods
+// validate the receiver before calling read / write.
+func readerFile(i *Interp, v Value) (*os.File, error) {
+	s, ok := v.(*Struct)
+	if !ok {
+		return nil, fmt.Errorf("expected Reader/Writer struct, got %T", v)
+	}
+	fd, ok := s.Fields["fd"].(Number)
+	if !ok {
+		return nil, fmt.Errorf("Reader/Writer.fd not a number")
+	}
+	f, ok := i.openFiles[int64(fd)]
+	if !ok {
+		return nil, fmt.Errorf("Reader/Writer with fd=%d not registered (closed already?)", fd)
+	}
+	return f, nil
+}
+
+func builtinReaderReadLine(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Reader.read_line: expected 1 arg")
+	}
+	f, err := readerFile(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	var buf []byte
+	one := make([]byte, 1)
+	for {
+		n, err := f.Read(one)
+		if n > 0 {
+			buf = append(buf, one[0])
+			if one[0] == '\n' {
+				return optionSome(String(string(buf))), nil
+			}
+		}
+		if err != nil {
+			if len(buf) == 0 {
+				return optionNone(), nil
+			}
+			return optionSome(String(string(buf))), nil
+		}
+	}
+}
+
+func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("Reader.read_chunk: expected 2 args")
+	}
+	f, err := readerFile(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	size, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("Reader.read_chunk: size must be a number")
+	}
+	buf := make([]byte, int(size))
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return optionNone(), nil
+	}
+	return optionSome(String(string(buf[:n]))), nil
+}
+
+func builtinReaderClose(i *Interp, args []Value) (Value, error) {
+	return closeFile(i, args)
+}
+
+func builtinWriterClose(i *Interp, args []Value) (Value, error) {
+	return closeFile(i, args)
+}
+
+func closeFile(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("close: expected 1 arg")
+	}
+	f, err := readerFile(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		return optionSome(classifyIoError("", err)), nil
+	}
+	if s, ok := args[0].(*Struct); ok {
+		if fd, ok := s.Fields["fd"].(Number); ok {
+			delete(i.openFiles, int64(fd))
+		}
+	}
+	return optionNone(), nil
+}
+
+func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("Writer.write: expected 2 args")
+	}
+	f, err := readerFile(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("Writer.write: content must be a string")
+	}
+	if _, err := f.Write([]byte(s)); err != nil {
+		return optionSome(classifyIoError("", err)), nil
+	}
+	return optionNone(), nil
+}
+
 func builtinExit(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("exit: expected 1 arg, got %d", len(args))

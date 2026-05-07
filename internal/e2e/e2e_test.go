@@ -1022,3 +1022,66 @@ func TestWriteFileOkArm(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "from arm")
 	}
 }
+
+// arm32 streaming round-trip — same shape as the WASM
+// version but compiled to native arm assembly and run under
+// qemu. open_writer + Writer.write + Writer.close +
+// open_reader + Reader.read_line + Reader.close.
+func TestStreamingRoundtripArm(t *testing.T) {
+	src := `function main(): number {
+		match (open_writer("out.txt")) {
+			Ok(w) => {
+				match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
+				match (w.write("line 2\n")) { Some(_) => { return 2; }, None => {} }
+				match (w.close()) { Some(_) => { return 3; }, None => {} }
+			},
+			Err(_) => { return 4; }
+		}
+		match (open_reader("out.txt")) {
+			Ok(r) => {
+				match (r.read_line()) { Some(line) => { write(line); }, None => { return 5; } }
+				match (r.read_line()) { Some(line) => { write(line); }, None => { return 6; } }
+				match (r.read_line()) { Some(_) => { return 7; }, None => {} }
+				match (r.close()) { Some(_) => { return 8; }, None => {} }
+				return 0;
+			},
+			Err(_) => { return 9; }
+		}
+		return -1;
+	}`
+	stdout, code, _ := runArmInDir(t, src, nil)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(stdout, "line 1\n") || !strings.Contains(stdout, "line 2\n") {
+		t.Errorf("stdout missing both lines; got %q", stdout)
+	}
+}
+
+func TestReaderReadChunkArm(t *testing.T) {
+	src := `function main(): number {
+		match (open_writer("rc.txt")) {
+			Ok(w) => {
+				match (w.write("hello world")) { Some(_) => { return 1; }, None => {} }
+				match (w.close()) { Some(_) => { return 2; }, None => {} }
+			},
+			Err(_) => { return 3; }
+		}
+		match (open_reader("rc.txt")) {
+			Ok(r) => {
+				match (r.read_chunk(5)) { Some(s) => { write(s); write(":"); }, None => { return 4; } }
+				match (r.read_chunk(20)) { Some(s) => { write(s); }, None => { return 5; } }
+				match (r.read_chunk(20)) { Some(_) => { return 6; }, None => { return 0; } }
+			},
+			Err(_) => { return 7; }
+		}
+		return -1;
+	}`
+	stdout, code, _ := runArmInDir(t, src, nil)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(stdout, "hello: world") {
+		t.Errorf("stdout should contain `hello: world`; got %q", stdout)
+	}
+}

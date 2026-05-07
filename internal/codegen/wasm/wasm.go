@@ -78,6 +78,7 @@ type generator struct {
 	needsEnv         bool // any `env(name)` call appears — pulls in WASI environ_* + helper + cache slots
 	needsExit        bool // any `exit(code)` call appears — pulls in WASI proc_exit
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
+	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -275,6 +276,18 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsExit = true
 				case "read_file", "write_file":
 					g.needsFileIO = true
+				case "open_reader", "open_writer", "open_appender":
+					g.needsFileIO = true
+					g.needsStreamingIO = true
+				}
+				// Method calls on Reader/Writer arrive here as
+				// post-checker mangled `__method_Reader_*` /
+				// `__method_Writer_*` names; trip the streaming
+				// IO flag for any of them.
+				if strings.HasPrefix(id.Name, "__method_Reader_") ||
+					strings.HasPrefix(id.Name, "__method_Writer_") {
+					g.needsFileIO = true
+					g.needsStreamingIO = true
 				}
 			}
 			walk(x.Callee)
@@ -422,7 +435,13 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			// soon as needsArrays is set.
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				switch id.Name {
-				case "args", "read_line", "env", "read_file", "write_file":
+				case "args", "read_line", "env", "read_file", "write_file",
+					"open_reader", "open_writer", "open_appender":
+					g.needsArrays = true
+					g.needsRuntime = true
+				}
+				if strings.HasPrefix(id.Name, "__method_Reader_") ||
+					strings.HasPrefix(id.Name, "__method_Writer_") {
 					g.needsArrays = true
 					g.needsRuntime = true
 				}
@@ -1032,7 +1051,8 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				switch id.Name {
-				case "print", "write", "eprint", "putchar", "args", "read_line", "env", "exit", "read_file", "write_file":
+				case "print", "write", "eprint", "putchar", "args", "read_line", "env", "exit",
+					"read_file", "write_file", "open_reader", "open_writer", "open_appender":
 					g.needsRuntime = true
 					return
 				}
@@ -2265,6 +2285,537 @@ func (g *generator) emitFileIOHelpers() {
 
 	g.emitReadFileHelper()
 	g.emitWriteFileHelper()
+	if g.needsStreamingIO {
+		g.emitStreamingIOHelpers()
+	}
+}
+
+// emitStreamingIOHelpers writes the runtime functions backing
+// `open_reader` / `open_writer` / `open_appender` plus the
+// auto-injected Reader / Writer methods. Layout for the
+// returned struct values is just `[fd : i32]` — 4 bytes total
+// — so $__build_reader / $__build_writer reuse the same store
+// pattern.
+func (g *generator) emitStreamingIOHelpers() {
+	g.emitOpenReaderHelper()
+	g.emitOpenWriterHelper(false)
+	g.emitOpenAppenderHelper()
+	g.emitReaderReadLineMethod()
+	g.emitReaderReadChunkMethod()
+	g.emitReaderCloseMethod()
+	g.emitWriterWriteMethod()
+	g.emitWriterCloseMethod()
+}
+
+// emitOpenReaderHelper writes `$open_reader(path) ->
+// Result[Reader, IoError]`. Calls path_open with the read
+// rights set; on success, allocates a 4-byte Reader struct
+// holding the fd and wraps it in Ok. On failure builds an Err
+// via the shared __build_io_error helper.
+func (g *generator) emitOpenReaderHelper() {
+	g.emitOpenHelper("$open_reader", 0, 0x200026, 0)
+}
+
+// emitOpenWriterHelper writes `$open_writer(path)`. oflags is
+// O_CREAT|O_TRUNC=9, rights are fd_write|fd_seek|fd_filestat_get.
+// (The `appendMode` parameter is unused for now; appender
+// uses the same code path with a different fdflags.)
+func (g *generator) emitOpenWriterHelper(_ bool) {
+	g.emitOpenHelper("$open_writer", 9, 0x200044, 0)
+}
+
+// emitOpenAppenderHelper writes `$open_appender(path)`. Same
+// rights as open_writer, but oflags = O_CREAT only (1) so the
+// existing content stays, and fdflags = O_APPEND (1) so every
+// write goes to the end.
+func (g *generator) emitOpenAppenderHelper() {
+	g.emitOpenHelper("$open_appender", 1, 0x200044, 1)
+}
+
+// emitOpenHelper is the shared body of the three open_*
+// constructors. `name` is the wat function name; `oflags` /
+// `rights` / `fdflags` are the path_open immediates.
+func (g *generator) emitOpenHelper(name string, oflags int, rights int64, fdflags int) {
+	g.linef(`(func %s (param $path i32) (result i32)`, name)
+	g.indent++
+	g.line(`(local $fd_buf i32)`)
+	g.line(`(local $fd i32)`)
+	g.line(`(local $errno i32)`)
+	g.line(`(local $reader i32)`)
+	g.line(`(local $result i32)`)
+
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $fd_buf`)
+
+	g.line(`i32.const 3`)
+	g.line(`i32.const 1`)
+	g.line(`local.get $path`)
+	g.line(`local.get $path`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.linef(`i32.const %d`, oflags)
+	g.linef(`i64.const %d`, rights)
+	g.line(`i64.const 0`)
+	g.linef(`i32.const %d`, fdflags)
+	g.line(`local.get $fd_buf`)
+	g.line(`call $__wasi_path_open`)
+	g.line(`local.set $errno`)
+	g.line(`local.get $errno`)
+	g.line(`if`)
+	g.indent++
+	// Build Err(io_error_from_errno) — Result.Err = tag 1.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $errno`)
+	g.line(`local.get $path`)
+	g.line(`call $__build_io_error`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	g.line(`local.get $fd_buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $fd`)
+
+	// Allocate the Reader / Writer struct (4 bytes — single fd
+	// field at offset 0).
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $reader`)
+	g.line(`local.get $reader`)
+	g.line(`local.get $fd`)
+	g.line(`i32.store`)
+
+	// Build Ok(reader): 8 bytes [tag=0, reader_ptr].
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $reader`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitReaderReadLineMethod writes the Reader.read_line method.
+// Reads bytes from r.fd one at a time into the static
+// 1-byte buffer at memory[68], scanning for `\n`. The
+// matched bytes accumulate on the bump heap (1-byte allocs
+// in a row keep them contiguous); the final length-prefixed
+// string lives just past them.
+//
+// The static iovec at offset 56 (ptr=68, len=1) is reused
+// across calls — the caller is single-threaded so concurrent
+// access can't happen. Heap-allocating the iovec doesn't work
+// because the byte-grain allocator drifts the bump pointer
+// off 4-byte alignment, which wasmtime rejects on fd_read.
+//
+// The mangled name matches what the checker emits at call
+// sites after rewriting `r.read_line()` →
+// `__method_Reader_read_line(r)`.
+func (g *generator) emitReaderReadLineMethod() {
+	g.line(`(func $__method_Reader_read_line (param $r i32) (result i32)`)
+	g.indent++
+	g.line(`(local $fd i32)`)
+	g.line(`(local $start i32)`)
+	g.line(`(local $cur i32)`)
+	g.line(`(local $byte i32)`)
+	g.line(`(local $sbase i32)`)
+	g.line(`(local $sptr i32)`)
+	g.line(`(local $len i32)`)
+	g.line(`(local $i i32)`)
+	g.line(`(local $result i32)`)
+
+	g.line(`local.get $r`)
+	g.line(`i32.load`)
+	g.line(`local.set $fd`)
+
+	// Reset the static iovec to (ptr=68, len=1). The data
+	// segment seeds it at module-init, but Writer.write and
+	// Reader.read_chunk both stomp it, so we re-set it here.
+	g.line(`i32.const 56`)
+	g.line(`i32.const 68`)
+	g.line(`i32.store`)
+	g.line(`i32.const 60`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+
+	// Anchor for accumulated bytes — heap position right now.
+	g.line(`i32.const 0`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $start`)
+	g.line(`local.get $start`)
+	g.line(`local.set $cur`)
+
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	// fd_read(fd, iovs=56, iovs_len=1, nread=64)
+	g.line(`local.get $fd`)
+	g.line(`i32.const 56`)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 64`)
+	g.line(`call $__wasi_fd_read`)
+	g.line(`drop`)
+	g.line(`i32.const 64`)
+	g.line(`i32.load`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $end`)
+	// Append the byte: alloc(1) advances the heap, then store
+	// the byte we just read into the new slot.
+	g.line(`i32.const 1`)
+	g.line(`call $__lang_alloc`)
+	g.line(`drop`)
+	g.line(`i32.const 68`)
+	g.line(`i32.load8_u`)
+	g.line(`local.tee $byte`)
+	g.line(`local.get $cur`)
+	g.line(`local.get $byte`)
+	g.line(`i32.store8`)
+	g.line(`local.get $cur`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $cur`)
+	g.line(`local.get $byte`)
+	g.line(`i32.const 10`)
+	g.line(`i32.eq`)
+	g.line(`br_if $end`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// len = cur - start.
+	g.line(`local.get $cur`)
+	g.line(`local.get $start`)
+	g.line(`i32.sub`)
+	g.line(`local.set $len`)
+
+	// EOF on first byte → Option.None (4 bytes, tag=1).
+	g.line(`local.get $len`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// Materialise length-prefixed string.
+	g.line(`local.get $len`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`local.get $len`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sptr`)
+	// memcpy from start to sptr.
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $copy_end`)
+	g.indent++
+	g.line(`loop $copy`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $len`)
+	g.line(`i32.eq`)
+	g.line(`br_if $copy_end`)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`local.get $start`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.store8`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $copy`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// Some(sptr): 8 bytes [tag=0, sptr].
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $sptr`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitReaderReadChunkMethod writes Reader.read_chunk(size).
+// Single fd_read into a heap buffer of capacity `size`,
+// trimming any unused tail before returning Some(string).
+// Uses the static iovec at memory[56] and nread at
+// memory[64] — same alignment reasoning as read_line.
+func (g *generator) emitReaderReadChunkMethod() {
+	g.line(`(func $__method_Reader_read_chunk (param $r i32) (param $size i32) (result i32)`)
+	g.indent++
+	g.line(`(local $fd i32)`)
+	g.line(`(local $sbase i32)`)
+	g.line(`(local $sptr i32)`)
+	g.line(`(local $n i32)`)
+	g.line(`(local $result i32)`)
+
+	g.line(`local.get $r`)
+	g.line(`i32.load`)
+	g.line(`local.set $fd`)
+
+	// Allocate `4 + size` for the prefix + data; iovec
+	// points into that data so a successful read fills the
+	// data slot directly.
+	g.line(`local.get $size`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sptr`)
+
+	// Point the static iovec at our chunk buffer.
+	g.line(`i32.const 56`)
+	g.line(`local.get $sptr`)
+	g.line(`i32.store`)
+	g.line(`i32.const 60`)
+	g.line(`local.get $size`)
+	g.line(`i32.store`)
+
+	g.line(`local.get $fd`)
+	g.line(`i32.const 56`)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 64`)
+	g.line(`call $__wasi_fd_read`)
+	g.line(`drop`)
+
+	g.line(`i32.const 64`)
+	g.line(`i32.load`)
+	g.line(`local.set $n`)
+
+	// EOF — un-bump the buffer and return None.
+	g.line(`local.get $n`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 40`)
+	g.line(`i32.const 40`)
+	g.line(`i32.load`)
+	g.line(`local.get $size`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.sub`)
+	g.line(`i32.store`)
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// Tighten the buffer: write the actual length and un-bump
+	// any unused tail.
+	g.line(`local.get $sbase`)
+	g.line(`local.get $n`)
+	g.line(`i32.store`)
+	g.line(`local.get $n`)
+	g.line(`local.get $size`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 40`)
+	g.line(`i32.const 40`)
+	g.line(`i32.load`)
+	g.line(`local.get $size`)
+	g.line(`local.get $n`)
+	g.line(`i32.sub`)
+	g.line(`i32.sub`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`end`)
+
+	// Some(sptr).
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $sptr`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitReaderCloseMethod / emitWriterCloseMethod share the same
+// shape — fd_close, return Option[IoError]. We define a
+// single helper template and call it twice with different
+// receiver / function names.
+func (g *generator) emitReaderCloseMethod() {
+	g.emitCloseMethod("$__method_Reader_close")
+}
+
+func (g *generator) emitWriterCloseMethod() {
+	g.emitCloseMethod("$__method_Writer_close")
+}
+
+func (g *generator) emitCloseMethod(name string) {
+	g.linef(`(func %s (param $r i32) (result i32)`, name)
+	g.indent++
+	g.line(`(local $fd i32)`)
+	g.line(`(local $rc i32)`)
+	g.line(`(local $result i32)`)
+	g.line(`local.get $r`)
+	g.line(`i32.load`)
+	g.line(`local.set $fd`)
+	g.line(`local.get $fd`)
+	g.line(`call $__wasi_fd_close`)
+	g.line(`local.set $rc`)
+	g.line(`local.get $rc`)
+	g.line(`if`)
+	g.indent++
+	// Some(io_error_from_errno).
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $rc`)
+	// We don't have the path here — pass the empty string
+	// pointer interned by build_io_error's data segment.
+	// For now use the "io error" string as both path and
+	// message; calling sites that need the path can wrap
+	// the close themselves.
+	g.linef(`i32.const %d`, g.internString(""))
+	g.line(`call $__build_io_error`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// None.
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitWriterWriteMethod writes Writer.write(s). Single
+// fd_write of the entire string. Returns None on success,
+// Some(IoError) on failure. Uses the static iovec at
+// memory[56] and nwritten at memory[64] (same slots the
+// stdin reader / Reader.read_line use — single-threaded so
+// reuse is safe).
+func (g *generator) emitWriterWriteMethod() {
+	g.line(`(func $__method_Writer_write (param $w i32) (param $s i32) (result i32)`)
+	g.indent++
+	g.line(`(local $fd i32)`)
+	g.line(`(local $rc i32)`)
+	g.line(`(local $result i32)`)
+	g.line(`local.get $w`)
+	g.line(`i32.load`)
+	g.line(`local.set $fd`)
+	// Static iovec at 56: ptr=$s, len=$s.length.
+	g.line(`i32.const 56`)
+	g.line(`local.get $s`)
+	g.line(`i32.store`)
+	g.line(`i32.const 60`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	g.line(`local.get $fd`)
+	g.line(`i32.const 56`)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 64`)
+	g.line(`call $__wasi_fd_write`)
+	g.line(`local.set $rc`)
+	g.line(`local.get $rc`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $rc`)
+	g.linef(`i32.const %d`, g.internString(""))
+	g.line(`call $__build_io_error`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Success: None.
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
 }
 
 // emitIoErrorCase writes one branch of the errno → variant
@@ -2655,8 +3206,14 @@ func (g *generator) emitDataSegments() {
 	g.line(`(data (i32.const 24) "\20\00\00\00\01\00\00\00")`)
 	// newline byte at 32
 	g.line(`(data (i32.const 32) "\0a")`)
-	if g.needsReadLine {
-		// read_line iovec at 56: ptr=68 (one-byte buffer), len=1
+	if g.needsReadLine || g.needsStreamingIO {
+		// read_line iovec at 56: ptr=68 (one-byte buffer), len=1.
+		// The Reader.read_line method reuses this static slot
+		// because heap-allocated iovecs aren't reliably aligned
+		// (the byte-grain accumulator drifts the bump pointer)
+		// and wasmtime requires 4-byte alignment on fd_read's
+		// iovs argument. Both helpers run on the single thread
+		// of execution, so static reuse is safe.
 		g.line(`(data (i32.const 56) "\44\00\00\00\01\00\00\00")`)
 	}
 	// Per-function closure cells: 8 bytes each at closuresBase+8*i,

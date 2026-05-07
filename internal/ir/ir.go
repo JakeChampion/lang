@@ -421,6 +421,14 @@ type builder struct {
 	// default is NumberType (i32); float-typed bindings record
 	// FloatType so wasm declares the local as f32.
 	scratchType map[int32]ast.Type
+	// nextSlot is the index the next synthetic scratch slot
+	// will use. Starts at len(params)+len(user locals) and only
+	// ever grows, so reusing a binding name across two match
+	// arms (which both write `b.locals[name] = slot` over the
+	// same key) doesn't undercount the actual slot population.
+	// `len(b.locals)` is no longer authoritative — always go
+	// through allocSlot().
+	nextSlot int32
 	// depth is the current control-stack depth (number of open
 	// block/loop/if scopes). Used to compute relative branch
 	// distances for break/continue.
@@ -450,6 +458,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
 	for i, v := range info.Locals[fn] {
 		b.locals[v.Name] = int32(len(fn.Params) + i)
 	}
+	b.nextSlot = int32(len(fn.Params) + len(info.Locals[fn]))
 	if err := b.stmt(fn.Body); err != nil {
 		return nil, err
 	}
@@ -459,9 +468,17 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
 	// the locals map. Most are i32 (heap pointers or integer tags);
 	// match-arm bindings of float-typed payloads register a
 	// FloatType in scratchType so wasm declares the local as f32.
-	scratchCount := len(b.locals) - (len(fn.Params) + len(info.Locals[fn]))
-	out.ScratchTypes = make([]ast.Type, scratchCount)
+	//
+	// Use the standalone nextSlot counter (rather than
+	// `len(b.locals)`) so two match arms that share a binding
+	// name don't fool the count by overwriting the same map
+	// entry — both still consume distinct slot indices.
 	scratchBase := int32(len(fn.Params) + len(info.Locals[fn]))
+	scratchCount := int(b.nextSlot - scratchBase)
+	if scratchCount < 0 {
+		scratchCount = 0
+	}
+	out.ScratchTypes = make([]ast.Type, scratchCount)
 	for i := range out.ScratchTypes {
 		if t, ok := b.scratchType[scratchBase+int32(i)]; ok && t != nil {
 			out.ScratchTypes[i] = t
@@ -530,7 +547,7 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	size := int32(4 + payloadCount*4)
 	b.emit(Op{Kind: OpConstI32, I32: size})
 	b.emit(Op{Kind: OpAlloc})
-	baseSlot := int32(len(b.locals))
+	baseSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__enum_%d", baseSlot)] = baseSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
 	// Store tag at offset 0.
@@ -570,6 +587,16 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	// Push the result pointer.
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	return nil
+}
+
+// allocSlot reserves the next synthetic local slot index. Use
+// this everywhere a fresh scratch / binding is needed; it
+// stays accurate even when callers also rebind the same key
+// in `b.locals`.
+func (b *builder) allocSlot() int32 {
+	s := b.nextSlot
+	b.nextSlot++
+	return s
 }
 
 func (b *builder) emit(op Op) {
@@ -738,7 +765,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// the on-match jump target, the outer skips the body when no
 		// value matched. Falling off any case body branches to the end
 		// of the switch — no implicit fall-through.
-		tagSlot := int32(len(b.locals))
+		tagSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sw_%d", tagSlot)] = tagSlot
 		if err := b.expr(n.Tag); err != nil {
 			return err
@@ -781,7 +808,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// fields loaded into freshly-bound locals; we then break
 		// out of the whole match. The structure mirrors `switch`,
 		// extended to bind payload positions.
-		ptrSlot := int32(len(b.locals))
+		ptrSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__match_p_%d", ptrSlot)] = ptrSlot
 		if err := b.expr(n.Tag); err != nil {
 			return err
@@ -826,7 +853,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// the wasm backend declares it as f32 instead of
 			// the default i32.
 			for i, name := range arm.Bindings {
-				slot := int32(len(b.locals))
+				slot := b.allocSlot()
 				b.locals[name] = slot
 				bt := ast.Type(ast.NumberType{})
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
@@ -985,7 +1012,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// consumer uses isn't updated, but the IR isn't currently
 		// the production code path for backends; this is enough
 		// for the IR's own tests.
-		baseSlot := int32(len(b.locals))
+		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__arr_lit_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
 		// Length prefix at base+0.
@@ -1016,7 +1043,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// declared offset (4 bytes per field).
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(sd.Fields) * 4)})
 		b.emit(Op{Kind: OpAlloc})
-		baseSlot := int32(len(b.locals))
+		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_lit_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
 		// Map each FieldInit to its offset by scanning the decl.
