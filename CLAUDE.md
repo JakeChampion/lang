@@ -23,3 +23,9 @@ as a constraint to preserve.
 
 The IR layer is target-agnostic; new optimisations should live in `internal/ir`
 so both backends benefit.
+
+## Working with PRs
+
+When you open a PR, subscribe to its activity (`subscribe_pr_activity`)
+without being asked. The user prefers to be alerted via the subscription
+flow rather than driving manual CI checks after the fact.
