@@ -230,6 +230,40 @@ func TestWASMPutcharWritesBytes(t *testing.T) {
 	}
 }
 
+// `for x in arr { ... }` desugars to an index loop; verify the
+// WASM backend produces a runnable module that iterates correctly.
+func TestWASMForEachOverArray(t *testing.T) {
+	src := `
+		function main(): number {
+			var sum: number = 0;
+			for x in [10, 20, 30] {
+				sum = sum + x;
+			}
+			return sum;
+		}`
+	if got := runWasm(t, src); got != 60 {
+		t.Errorf("got %d, want 60 (10+20+30)", got)
+	}
+}
+
+// break and continue inside a foreach body work as expected on the
+// WASM backend.
+func TestWASMForEachBreakContinue(t *testing.T) {
+	src := `
+		function main(): number {
+			var sum: number = 0;
+			for x in [1, 2, 3, 4, 5] {
+				if (x == 2) { continue; }
+				if (x == 5) { break; }
+				sum = sum + x;
+			}
+			return sum;
+		}`
+	if got := runWasm(t, src); got != 8 {
+		t.Errorf("got %d, want 8 (1+3+4)", got)
+	}
+}
+
 func TestWASMArraySumAndMutation(t *testing.T) {
 	src := `function main(): number {
 		var a: number[] = [10, 20, 30, 40];
