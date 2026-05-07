@@ -1,20 +1,31 @@
 // Package codegen emits ARM 32-bit assembly (GNU syntax, suitable for
-// `arm-linux-gnueabihf-as` / gcc) from a checked Program.
+// `arm-linux-gnueabihf-as` / gcc) from a checked Program. Production
+// emit goes through the IR — Lower, Inline, FuseTee, TailCallOptimize,
+// FlattenBranches, and the OptimizeCleanup driver (PropagateCopies,
+// ConstPropagate, Fold, ReduceStrength) all run before EmitFromIR
+// walks the IR ops to assembly. The pipeline is shared with the WASM
+// backend so a new language feature lands once at the IR layer and
+// both backends pick it up.
 //
-// Calling convention: standard AAPCS with one simplification.
+// Calling convention: standard AAPCS.
 //
-//   * Every expression's value is left in r0.
-//   * Binary operators evaluate the left operand, push r0, evaluate the
-//     right operand into r0, then pop the left operand into r1.
-//   * Functions accept up to four parameters (passed in r0–r3). Each
-//     parameter is spilled to a stack slot in the prologue so the rest of
-//     the body can treat them like locals.
-//   * Locals, spilled parameters and stack-allocated array literals all
-//     live at negative offsets from fp.
+//   * Every expression's value lives in r0; the IR's operand stack
+//     maps to the runtime stack via push / pop {r0}.
+//   * Binary operators pop the right operand into r0 and the left
+//     into r1, do the work, and push the result.
+//   * Args 0..3 ride in r0..r3; extras come from the caller's stack
+//     frame at fp+8, fp+12, …
+//   * Leaf functions (no calls in the body) pin their parameters to
+//     callee-saved r4..r{4+P-1} instead of spilling.
+//   * Locals, spilled parameters, and synthetic scratch slots
+//     (ArrayLit / StructLit / Switch / inlined-callee bindings) all
+//     live at negative offsets from fp. Heap-backed values (arrays,
+//     strings, structs) come from `__lang_alloc`, a tiny libc-malloc
+//     wrapper this emitter generates on demand.
 //
-// The output is plain `.s` text — feed it to `gcc` (or `as` + `ld`) to
-// produce a runnable executable, and run it with `qemu-arm` if you're not
-// on an ARM host.
+// The output is plain `.s` text — feed it to `gcc` (or `as` + `ld`)
+// to produce a runnable executable, and run it with `qemu-arm` if
+// you're not on an ARM host.
 package codegen
 
 import (
