@@ -63,22 +63,33 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		}
 	}
 	// Emit the runtime string-concat helper only if the program uses
-	// string `+`. It calls libc strlen / malloc / memcpy, so the linker
-	// pulls those in transitively.
+	// string `+`. It now goes through __lang_alloc to write a
+	// length-prefixed buffer, so any strcat-using program also needs
+	// the alloc helper emitted.
 	if g.usesStrcat {
+		g.usesAlloc = true
 		g.emitStrcatRuntime()
 	}
-	// __lang_alloc wraps libc malloc; arrays / structs / closures that
-	// need heap storage all bottom out here. Strcat already calls
-	// malloc directly, so the runtime emission is independent.
+	// __lang_alloc wraps libc malloc; arrays / structs / closures /
+	// concat results all bottom out here.
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 	}
-	// String literals collected during emit go into .rodata.
+	// String literals go into .rodata with a 4-byte little-endian
+	// length prefix immediately before the data — the same shape
+	// arrays use, so `len(s)` lowers to a single load at `ptr - 4`
+	// (matching len(arr)) and codegen for any IR-driven backend can
+	// treat all heap-or-rodata-resident sequences uniformly. Each
+	// prefix is re-aligned to 4 bytes because the previous string's
+	// trailing NUL might land on an odd offset; `ldr` would fault on
+	// an unaligned word otherwise. The trailing NUL is kept so libc
+	// strlen / strcmp keep working where they're still called.
 	if len(g.stringOrder) > 0 {
 		g.line("")
 		g.line(`.section .rodata`)
 		for _, s := range g.stringOrder {
+			g.line(`.align 2`)
+			g.line(fmt.Sprintf("\t.4byte %d", len(s)))
 			g.label(g.stringLabel[s])
 			g.line("\t.asciz " + escapeForGAS(s))
 		}
@@ -155,32 +166,38 @@ func (g *generator) emitAllocRuntime() {
 }
 
 // emitStrcatRuntime emits a leaf-style helper that allocates a fresh
-// buffer holding the concatenation of two NUL-terminated strings:
+// length-prefixed buffer holding the concatenation of two strings:
 //
-//	r0 = a, r1 = b   →   r0 = malloc'd a ++ b (NUL-terminated)
+//	r0 = a (data ptr), r1 = b (data ptr)   →   r0 = ptr to combined data
 //
-// It uses libc strlen, malloc and memcpy. The buffer is never freed —
-// strings in this language are immutable but not GC'd.
+// Layout matches array literals — a 4-byte little-endian length sits
+// at `result - 4`, with a trailing NUL byte kept past the data so
+// libc strlen / strcmp keep working on the same pointer. The buffer
+// is never freed; strings are immutable but not GC'd.
+//
+// Operands arrive as data pointers (post-prefix), but the lengths
+// live at `ptr - 4`, so the helper grabs them with a single load
+// each rather than walking the buffer with strlen.
 func (g *generator) emitStrcatRuntime() {
 	g.line("")
 	g.line(".global __lang_strcat")
 	g.line(".type __lang_strcat, %function")
 	g.label("__lang_strcat")
 	g.emit("push {r4, r5, r6, r7, lr}")
-	g.emit("sub sp, sp, #4") // 8-byte alignment
-	g.emit("mov r4, r0")     // r4 = a
-	g.emit("mov r5, r1")     // r5 = b
-	g.emit("bl strlen")      // strlen(a) → r0
-	g.emit("mov r6, r0")     // r6 = la
-	g.emit("mov r0, r5")
-	g.emit("bl strlen")      // strlen(b) → r0
-	g.emit("mov r7, r0")     // r7 = lb
+	g.emit("sub sp, sp, #4")    // 8-byte alignment
+	g.emit("mov r4, r0")        // r4 = a (data ptr)
+	g.emit("mov r5, r1")        // r5 = b (data ptr)
+	g.emit("ldr r6, [r0, #-4]") // r6 = la (length prefix)
+	g.emit("ldr r7, [r1, #-4]") // r7 = lb
 	g.emit("add r0, r6, r7")
-	g.emit("add r0, r0, #1") // total + 1 for NUL
-	g.emit("bl malloc")      // r0 = result
-	g.emit("mov r1, r4")     // src = a
-	g.emit("mov r2, r6")     // n = la
-	g.emit("mov r4, r0")     // r4 = result (overwrites a, no longer needed)
+	g.emit("add r0, r0, #5") // 4 (prefix) + la + lb + 1 (trailing NUL)
+	g.emit("bl __lang_alloc")
+	g.emit("add r0, r0, #4") // r0 = data pointer (skip prefix)
+	g.emit("add r1, r6, r7")
+	g.emit("str r1, [r0, #-4]") // store length prefix
+	g.emit("mov r1, r4")        // src = a
+	g.emit("mov r2, r6")        // n = la
+	g.emit("mov r4, r0")        // r4 = result data ptr
 	g.emit("bl memcpy")
 	g.emit("add r0, r4, r6") // dst = result + la
 	g.emit("mov r1, r5")     // src = b
@@ -1168,20 +1185,21 @@ func (g *generator) call(n *ast.Call) error {
 	if !ok {
 		return fmt.Errorf("codegen: indirect call from non-identifier expression")
 	}
-	// `len(x)` is a builtin. Strings are still NUL-terminated on
-	// arm32 so they go through libc strlen; arrays now carry a
-	// 4-byte little-endian length prefix at `base - 4` (set by the
-	// __lang_alloc-backed array literal), which is just one load.
+	// `len(x)` is a builtin. Strings and arrays both carry a 4-byte
+	// little-endian length prefix immediately before the data
+	// pointer, so a single load at `ptr - 4` works for either —
+	// matching the IR's lowering and saving a libc strlen call on
+	// strings.
 	if id.Name == "len" && len(n.Args) == 1 {
 		argT := g.argType(n.Args[0])
-		if _, ok := argT.(ast.StringType); ok {
+		if _, isStr := argT.(ast.StringType); isStr {
 			if err := g.expr(n.Args[0]); err != nil {
 				return err
 			}
-			g.emit("bl strlen")
+			g.emit("ldr r0, [r0, #-4]")
 			return nil
 		}
-		if _, ok := argT.(ast.ArrayType); ok {
+		if _, isArr := argT.(ast.ArrayType); isArr {
 			if err := g.expr(n.Args[0]); err != nil {
 				return err
 			}

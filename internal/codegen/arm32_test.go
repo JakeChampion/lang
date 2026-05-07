@@ -395,7 +395,41 @@ func TestArm32StringEqualityCallsStrcmp(t *testing.T) {
 	mustContain(t, asm, "bl strcmp")
 }
 
-func TestArm32LenStringCallsStrlen(t *testing.T) {
+// `len(string)` no longer calls strlen — strings carry the same
+// 4-byte length prefix as arrays, so the lowering is one load.
+func TestArm32LenStringLoadsPrefix(t *testing.T) {
 	asm := compile(t, `function f(): number { return len("abc"); }`)
-	mustContain(t, asm, "bl strlen")
+	mustContain(t, asm, "ldr r0, [r0, #-4]")
+	if strings.Contains(asm, "bl strlen") {
+		t.Errorf("len(string) must not call strlen:\n%s", asm)
+	}
+}
+
+// String literals in .rodata are emitted with a 4-byte length prefix
+// immediately before the labelled data, with .align 2 ahead of each
+// one so consecutive odd-length strings stay word-aligned.
+func TestArm32StringLiteralHasLengthPrefix(t *testing.T) {
+	asm := compile(t, `function f(): string { return "hi"; }`)
+	mustContain(t, asm, ".align 2")
+	mustContain(t, asm, ".4byte 2")
+	// The data label still owns `.asciz "hi"`; the prefix sits just
+	// above it.
+	mustContain(t, asm, `.asciz "hi"`)
+}
+
+// String concat uses the prefixed buffer directly: read the lengths
+// from the operands' prefixes (no strlen), allocate via __lang_alloc,
+// write the new prefix, and copy the bytes through.
+func TestArm32StrcatReadsPrefixesAndAllocates(t *testing.T) {
+	asm := compile(t, `function f(): string { return "a" + "b"; }`)
+	mustContain(t, asm, "bl __lang_strcat")
+	mustContain(t, asm, "bl __lang_alloc")
+	// Body of __lang_strcat: prefix-loads of both operands, the
+	// alloc, the prefix store, and the two memcpy calls.
+	mustContain(t, asm, "ldr r6, [r0, #-4]")
+	mustContain(t, asm, "ldr r7, [r1, #-4]")
+	mustContain(t, asm, "str r1, [r0, #-4]")
+	if strings.Contains(asm, "bl strlen") {
+		t.Errorf("strcat must not call strlen — lengths come from the prefix:\n%s", asm)
+	}
 }
