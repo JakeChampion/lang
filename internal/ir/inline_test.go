@@ -154,6 +154,84 @@ func TestInlineRecordsFloatScratchTypes(t *testing.T) {
 	}
 }
 
+// Multi-return: a callee with an early `return` inside an if-block
+// inlines now. The inliner wraps the body in an OpBlock and rewrites
+// every OpReturn to OpBr targeting that wrap — control exits the
+// wrap with the value as the block's result, the caller's
+// continuation picks up where it left off.
+func TestInlineMultiReturnWrapsAndRewrites(t *testing.T) {
+	p := loweredAndInlined(t, `function abs(n: number): number {
+		if (n < 0) { return 0 - n; }
+		return n;
+	}
+		function main(): number { return abs(0 - 5); }`)
+	for _, op := range findFunc(p, "main").Ops {
+		if op.Kind == OpCallDirect && op.Str == "abs" {
+			t.Fatalf("abs should have been inlined despite early return:\n%s", p)
+		}
+	}
+	// The wrap must show up as an OpBlock somewhere in main's ops
+	// — that's how the early OpReturn now exits.
+	mustContainOp(t, p, "main", OpBlock)
+}
+
+// The wrap block's result type matches the callee's return type:
+// a float-returning function gets a `block (result f32)`, not the
+// default i32. Without this the validator would reject the
+// inlined region.
+func TestInlineMultiReturnWrapMatchesFloatReturnType(t *testing.T) {
+	p := loweredAndInlined(t, `function pickF(n: number): float {
+		if (n == 0) { return 1.5; }
+		return 2.5;
+	}
+		function main(): float { return pickF(0); }`)
+	main := findFunc(p, "main")
+	// Find the wrap OpBlock and check its blocktype.
+	found := false
+	for _, op := range main.Ops {
+		if op.Kind == OpBlock && op.I32 == BlockTypeF32 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an OpBlock with BlockTypeF32 wrap:\n%s", p)
+	}
+}
+
+// Multi-return body keeps the caller's structured-CF invariants:
+// after splicing, every Block / Loop / If is matched by an End and
+// depth never goes negative.
+func TestInlineMultiReturnPreservesStructuredCF(t *testing.T) {
+	p := loweredAndInlined(t, `function clamp(n: number): number {
+		if (n < 0) { return 0; }
+		if (n > 10) { return 10; }
+		return n;
+	}
+		function main(): number { return clamp(5); }`)
+	for _, fn := range p.Funcs {
+		depth := 0
+		for i, op := range fn.Ops {
+			switch op.Kind {
+			case OpBlock, OpLoop, OpIf:
+				depth++
+			case OpEnd:
+				depth--
+				if depth < 0 {
+					t.Fatalf("%s op %d (%s): depth went negative", fn.Name, i, op.Kind)
+				}
+			case OpBr, OpBrIf:
+				if op.I32 < 0 || op.I32 > int32(depth-1) {
+					t.Errorf("%s op %d (%s %d): depth out of range (depth=%d)",
+						fn.Name, i, op.Kind, op.I32, depth)
+				}
+			}
+		}
+		if depth != 0 {
+			t.Errorf("%s ended at depth %d, want 0", fn.Name, depth)
+		}
+	}
+}
+
 // Inline must preserve structural-CF balance — the substituted body
 // has no internal control flow (eligibility forbids it), so the
 // caller's existing structure is undisturbed.

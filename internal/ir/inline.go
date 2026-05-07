@@ -10,9 +10,12 @@
 // restrictions where they still apply, drop the ones the IR's slot
 // model makes safe):
 //
-//   - the callee's body is a linear op sequence ending in OpReturn
-//     (or OpReturnVoid for void functions). No early returns, no
-//     internal block / loop / if scopes, no break / continue.
+//   - the callee's body ends in OpReturn (or OpReturnVoid for void
+//     functions). Internal block / loop / if scopes ARE allowed,
+//     and so are early returns nested inside them — the inliner
+//     wraps the whole body in a synthetic OpBlock whose result type
+//     matches the callee's, then rewrites every OpReturn to OpBr
+//     so control exits the wrap instead of the function.
 //   - no call-emitting op anywhere in the body — direct calls,
 //     indirect calls, allocation, string-runtime helpers, closure
 //     construction. This forbids recursion implicitly and keeps
@@ -117,7 +120,10 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 
 // isInlineable reports whether fn meets every eligibility rule.
 // Returns false for functions that recurse, contain calls of any
-// kind, use control flow, or exceed the size threshold.
+// kind, or exceed the size threshold. Internal control flow is
+// allowed — the inliner wraps the body when the callee has more
+// than one return so early-exit `OpReturn`s get rewritten to
+// `OpBr` to the wrap block.
 func isInlineable(fn *Func) bool {
 	if len(fn.Ops) == 0 || len(fn.Ops) > inlineSizeLimit {
 		return false
@@ -126,19 +132,41 @@ func isInlineable(fn *Func) bool {
 	if last != OpReturn && last != OpReturnVoid {
 		return false
 	}
-	// Walk the body excluding the trailing terminator. Any other
-	// terminator, control-flow op, or call-emitting op disqualifies
-	// the function.
-	for _, op := range fn.Ops[:len(fn.Ops)-1] {
+	for _, op := range fn.Ops {
 		switch op.Kind {
-		case OpBlock, OpLoop, OpIf, OpElse, OpEnd, OpBr, OpBrIf,
-			OpReturn, OpReturnVoid,
-			OpCallDirect, OpCallIndirect,
+		case OpCallDirect, OpCallIndirect,
 			OpAlloc, OpStrConcat, OpStrEq, OpMakeClosure:
 			return false
 		}
 	}
 	return true
+}
+
+// needsReturnWrap reports whether the callee body has any return
+// other than the trailing one. Multi-return bodies need to be
+// wrapped in an OpBlock so early-exit OpReturns can rewrite to
+// OpBr <wrap>; a single-return body splices in cleanly without
+// the wrap and stays a flat extension of the caller.
+func needsReturnWrap(ops []Op) bool {
+	count := 0
+	for _, op := range ops {
+		if op.Kind == OpReturn || op.Kind == OpReturnVoid {
+			count++
+		}
+	}
+	return count > 1
+}
+
+// returnBlockType chooses the BlockType for the wrap block so its
+// result matches the callee's declared return type.
+func returnBlockType(t ast.Type) int32 {
+	switch t.(type) {
+	case ast.VoidType:
+		return BlockTypeVoid
+	case ast.FloatType:
+		return BlockTypeF32
+	}
+	return BlockTypeI32
 }
 
 // inlineOps walks ops linearly and substitutes every OpCallDirect to
@@ -165,10 +193,22 @@ func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 
 // expandInline produces the op slice that replaces a single
 // OpCallDirect site. It allocates the fresh slot range, emits the
-// arg-binding stores in reverse order (rightmost arg sits on top of
-// the operand stack), splices the callee body with rewritten slot
-// indices, and drops the trailing terminator so control falls into
-// the caller's continuation.
+// arg-binding stores in reverse order (rightmost arg sits on top
+// of the operand stack), then splices the callee body with slot
+// indices rebased onto the caller's fresh range.
+//
+// Two body shapes:
+//
+//   - Single-return callee: the trailing OpReturn is dropped (its
+//     value sits on the operand stack where the caller's
+//     continuation expects it) and the rest of the body splices in
+//     unchanged. No wrap, no extra ops.
+//   - Multi-return callee: the body is wrapped in an OpBlock whose
+//     result type matches the callee's. Every OpReturn inside the
+//     body becomes an OpBr <wrap-depth> so the early exit lands
+//     at the wrap's end with the value as the block's result. The
+//     trailing OpReturn is omitted entirely — falling through the
+//     wrap's OpEnd produces the same final value.
 func expandInline(caller *Func, cand inlineCandidate) []Op {
 	base := int32(len(caller.Params)) + int32(len(caller.Locals)) + int32(len(caller.ScratchTypes))
 	caller.ScratchTypes = append(caller.ScratchTypes, cand.slotTypes...)
@@ -177,24 +217,59 @@ func expandInline(caller *Func, cand inlineCandidate) []Op {
 	// rightmost argument is on top of the operand stack — popping
 	// into reverse-order param slots lands each value in the right
 	// place.
-	out := make([]Op, 0, len(cand.body)+len(cand.slotTypes))
+	out := make([]Op, 0, len(cand.body)+len(cand.slotTypes)+2)
 	for p := int32(len(cand.fn.Params)) - 1; p >= 0; p-- {
 		out = append(out, Op{Kind: OpStoreLocal, I32: base + p})
 	}
 
-	// Splice the callee body with slot indices rebased onto the
-	// caller's fresh range. The trailing OpReturn / OpReturnVoid is
-	// skipped — the value (if any) is already on the operand stack
-	// where the caller's continuation expects it.
-	for i, op := range cand.body {
-		if i == len(cand.body)-1 && (op.Kind == OpReturn || op.Kind == OpReturnVoid) {
-			continue
+	if !needsReturnWrap(cand.body) {
+		// Simple-shape splice: body is flat plus a trailing
+		// OpReturn. Drop the terminator and rebase slot indices.
+		for i, op := range cand.body {
+			if i == len(cand.body)-1 && (op.Kind == OpReturn || op.Kind == OpReturnVoid) {
+				continue
+			}
+			switch op.Kind {
+			case OpLoadLocal, OpStoreLocal, OpTeeLocal:
+				op.I32 += base
+			}
+			out = append(out, op)
 		}
-		switch op.Kind {
-		case OpLoadLocal, OpStoreLocal:
-			op.I32 += base
-		}
-		out = append(out, op)
+		return out
 	}
+
+	// Multi-return shape: wrap the body in an OpBlock so early
+	// returns can `br <depth-to-wrap>` instead of unwinding the
+	// function. Track depth as we walk so each OpReturn gets the
+	// right relative branch immediate.
+	out = append(out, Op{Kind: OpBlock, I32: returnBlockType(cand.fn.ReturnType)})
+	depth := int32(1) // the wrap is open
+	for i, op := range cand.body {
+		isLast := i == len(cand.body)-1
+		switch op.Kind {
+		case OpBlock, OpLoop, OpIf:
+			depth++
+			out = append(out, op)
+		case OpEnd:
+			depth--
+			out = append(out, op)
+		case OpReturn, OpReturnVoid:
+			if isLast {
+				// The wrap is about to close — fall through with the
+				// value already on the operand stack (or nothing for
+				// void). Emitting OpBr 0 here would be valid but
+				// strictly redundant; skipping keeps the inlined
+				// shape one op leaner.
+				continue
+			}
+			out = append(out, Op{Kind: OpBr, I32: depth - 1, Pos: op.Pos})
+		case OpLoadLocal, OpStoreLocal, OpTeeLocal:
+			op.I32 += base
+			out = append(out, op)
+		default:
+			out = append(out, op)
+		}
+	}
+	out = append(out, Op{Kind: OpEnd})
 	return out
 }

@@ -101,12 +101,14 @@ func TestShortCircuitOr(t *testing.T) {
 }
 
 func TestCallEmitsBl(t *testing.T) {
-	// Use a callee with an if-statement so the IR inliner skips it
-	// — otherwise the `bl g` we're looking for gets substituted away.
-	asm := compile(t, `function g(n: number): number {
+	// Use a callee that calls another function — the IR inliner
+	// disqualifies anything containing a call (no recursion / side-
+	// effect duplication), so the `bl g` we're checking for stays.
+	asm := compile(t, `function helper(n: number): number {
 		if (n == 0) { return 1; }
-		return n + 1;
+		return n;
 	}
+function g(n: number): number { return helper(n) + 1; }
 function f(): number { return g(5); }`)
 	mustContain(t, asm, "bl g")
 }
@@ -176,13 +178,12 @@ func TestManyParamsReadsFromCallerStack(t *testing.T) {
 // order, then load r0..r3 from the appropriate offsets and reverse
 // the extras into AAPCS layout (leftmost-stack-arg at sp+0).
 func TestManyArgCallPreallocates(t *testing.T) {
-	// Branchy callee to keep the IR inliner from substituting it
-	// away — we want an actual `bl g` so we can inspect the
-	// arg-passing dance.
+	// Callee with an inner call disqualifies it from inlining; we
+	// want a real `bl g` so the arg-passing dance is visible.
 	asm := compile(t, `
+		function helper(x: number): number { if (x == 0) { return 0; } return x; }
 		function g(a: number, b: number, c: number, d: number, e: number, f: number): number {
-			if (a == 0) { return 0; }
-			return a;
+			return helper(a);
 		}
 		function f(): number { return g(1, 2, 3, 4, 5, 6); }`)
 	// Args 0..3 read from their pushed offsets.
@@ -347,12 +348,10 @@ func TestNonTailRecursionKeepsBl(t *testing.T) {
 // Functions that contain a Call expression are NOT leaves — the
 // existing stack-spill prologue still applies.
 func TestNonLeafKeepsStackSpill(t *testing.T) {
-	// Branchy callee resists IR inlining; `f` then keeps the
-	// non-leaf shape because it makes a real `bl g` call.
-	asm := compile(t, `function g(n: number): number {
-		if (n == 0) { return 0; }
-		return n;
-	}
+	// Callee with an inner call disqualifies inlining; `f` then
+	// keeps the non-leaf shape because it makes a real `bl g`.
+	asm := compile(t, `function helper(n: number): number { return n; }
+function g(n: number): number { return helper(n); }
 function f(n: number): number { return g(n); }`)
 	// `f` calls `g`, so it isn't a leaf — expect the original prologue
 	// (CFI directives may be interleaved between the label and the push).
