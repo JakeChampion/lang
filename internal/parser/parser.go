@@ -9,6 +9,7 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
@@ -102,6 +103,21 @@ func (p *parser) parseProgram() *ast.Program {
 		// after a failed declaration: if recovery would leave us at
 		// the same token, advance once to break the loop.
 		before := p.i
+		if p.match(lexer.Keyword, "import") {
+			imp, err := p.parseImport()
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			if imp != nil {
+				prog.Imports = append(prog.Imports, imp)
+			}
+			continue
+		}
 		if p.match(lexer.Keyword, "struct") {
 			sd, err := p.parseStructDecl()
 			if err != nil {
@@ -133,12 +149,49 @@ func (p *parser) parseProgram() *ast.Program {
 	return prog
 }
 
-// syncToTopLevel advances tokens until the next `function` or `struct`
-// keyword (or EOF), so a malformed top-level declaration doesn't poison
-// the rest of the file.
+// parseImport parses `import "<path>";` and returns the
+// declaration. The local name (used as the prefix in qualified
+// calls like `mod.fn(args)`) is derived from the path's basename
+// without the `.lang` extension. The path is otherwise opaque to
+// the parser — relative-path resolution lives in the driver.
+func (p *parser) parseImport() (*ast.Import, error) {
+	kw := p.advance() // import
+	pathTok, err := p.expect(lexer.String, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	return &ast.Import{
+		P:         kw.Pos,
+		Path:      pathTok.Text,
+		LocalName: importLocalName(pathTok.Text),
+	}, nil
+}
+
+// importLocalName returns the binding name a qualified call uses
+// for an imported module — `import "./math/vec";` → `vec`. Drops
+// any directory prefix and a trailing `.lang` extension.
+func importLocalName(path string) string {
+	base := path
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	if strings.HasSuffix(base, ".lang") {
+		base = base[:len(base)-len(".lang")]
+	}
+	return base
+}
+
+// syncToTopLevel advances tokens until the next `function`, `struct`,
+// or `import` keyword (or EOF), so a malformed top-level declaration
+// doesn't poison the rest of the file.
 func (p *parser) syncToTopLevel() {
 	for !p.match(lexer.EOF, "") {
-		if p.match(lexer.Keyword, "function") || p.match(lexer.Keyword, "struct") {
+		if p.match(lexer.Keyword, "function") ||
+			p.match(lexer.Keyword, "struct") ||
+			p.match(lexer.Keyword, "import") {
 			return
 		}
 		p.advance()

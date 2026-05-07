@@ -429,9 +429,26 @@ type StructDecl struct {
 type Program struct {
 	Funcs   []*FuncDecl
 	Structs []*StructDecl
+	// Imports lists every top-level `import "<path>";` declaration
+	// in source order. The driver loads the referenced files,
+	// mangles their decls under each module's local name, and
+	// stitches the combined program before the checker runs.
+	// Single-file programs leave this empty.
+	Imports []*Import
 	// Comments lists every `//` line comment the lexer collected,
 	// in source order. Most consumers (checker, IR lowering,
 	// codegen) ignore this field; the formatter walks it alongside
 	// the AST to re-emit comments at their original positions.
 	Comments []Comment
+}
+
+// Import is a top-level `import "<path>";` declaration. Path is the
+// raw string-literal text from the source (typically a relative
+// path like "./util" or "./math/vec"); LocalName is derived from
+// the path's basename and is what qualified calls use as the
+// module prefix (`util.fn(args)`).
+type Import struct {
+	P         Position
+	Path      string
+	LocalName string
 }

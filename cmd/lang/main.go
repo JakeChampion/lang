@@ -32,9 +32,21 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/wasm"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/printer"
 )
+
+// absPath returns the canonical absolute form of p, or p itself if
+// the conversion fails. Used to look up source text in the per-file
+// map modload returns.
+func absPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	return abs
+}
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
@@ -130,16 +142,15 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 // the lang process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
 func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs []string) (int, error) {
-	srcBytes, err := os.ReadFile(srcPath)
+	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
 		return 1, err
 	}
-	src := string(srcBytes)
-
-	prog, err := parser.Parse(src)
-	if err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
-	}
+	// `srcs` keys diag back to whichever loaded file the error came
+	// from. The checker still reports against the entry file's
+	// source for now — multi-file diag plumbing is a future
+	// follow-up.
+	src := srcs[absPath(srcPath)]
 	info, err := checker.Check(prog)
 	if err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
