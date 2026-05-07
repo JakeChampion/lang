@@ -210,6 +210,26 @@ func TestInterpEnumMatchPayload(t *testing.T) {
 	}
 }
 
+// Generic enums in the interpreter: type erasure makes the
+// runtime representation independent of T, so a single Enum
+// value works for any instantiation. Constructor inference and
+// match-arm payload extraction both route correctly.
+func TestInterpGenericOption(t *testing.T) {
+	src := `enum Option[T] { Some(T), None }
+		function main(): number {
+			var o: Option[number] = Some(42);
+			match (o) {
+				Some(v) => { return v; },
+				None => { return -1; }
+			}
+			return 99;
+		}`
+	v, _ := evalProgram(t, src)
+	if n, ok := v.(Number); !ok || n != 42 {
+		t.Errorf("got %v, want 42", v)
+	}
+}
+
 // Wildcard arms catch what the explicit arms miss.
 func TestInterpMatchWildcard(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }

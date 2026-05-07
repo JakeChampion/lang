@@ -975,3 +975,64 @@ func TestWASMEnumMatchDispatch(t *testing.T) {
 		t.Errorf("Err arm: got %d, want 4 (len of \"boom\")", got)
 	}
 }
+
+// Generic Option end-to-end on WASM: `Some(42)` constructs
+// `Option[number]`, the match arm extracts the payload, the
+// caller's main returns the value. Type erasure means there's
+// no per-T monomorphization: the WAT treats every payload as
+// i32 regardless of T.
+func TestWASMGenericOptionSome(t *testing.T) {
+	src := `enum Option[T] { Some(T), None }
+		function find(): Option[number] { return Some(42); }
+		function main(): number {
+			match (find()) {
+				Some(v) => { return v; },
+				None => { return -1; }
+			}
+			return 99;
+		}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+// Payload-less variants on generic enums (`None`) flow through
+// the assignment relaxation: the constructor leaves type args
+// unresolved, the var / return slot supplies them, and the match
+// runs the right arm.
+func TestWASMGenericOptionNone(t *testing.T) {
+	src := `enum Option[T] { Some(T), None }
+		function find(): Option[number] { return None; }
+		function main(): number {
+			match (find()) {
+				Some(v) => { return v; },
+				None => { return 7; }
+			}
+			return 99;
+		}`
+	if got := runWasm(t, src); got != 7 {
+		t.Errorf("got %d, want 7 (None arm)", got)
+	}
+}
+
+// Result[T, E] with two type params, both routed at runtime.
+// The error-arm value is a string carried through the heap as
+// any other payload; `len(msg)` exercises the substituted
+// payload type.
+func TestWASMGenericResult(t *testing.T) {
+	src := `enum Result[T, E] { Ok(T), Err(E) }
+		function divide(a: number, b: number): Result[number, string] {
+			if (b == 0) { return Err("zero"); }
+			return Ok(a / b);
+		}
+		function main(): number {
+			match (divide(20, 4)) {
+				Ok(v) => { return v; },
+				Err(msg) => { return len(msg); }
+			}
+			return -1;
+		}`
+	if got := runWasm(t, src); got != 5 {
+		t.Errorf("got %d, want 5 (20/4)", got)
+	}
+}

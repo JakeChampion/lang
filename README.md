@@ -134,6 +134,14 @@ Supported:
   arm list ends with `_`. Variant payloads bind into per-arm
   locals. Tagged-union values lower to a heap-allocated
   `[tag, payload0, …]` block on the bump heap.
+- **Generic enums** via `enum Option[T] { Some(T), None }` and
+  `enum Result[T, E] { Ok(T), Err(E) }`. Type arguments are
+  inferred from constructor payload types (`Some(42)` →
+  `Option[number]`); payload-less variants on generic enums
+  (`None`) infer their type arguments from the surrounding
+  context (var annotation, function return type). Generics are
+  **erased** at runtime — payloads stay i32-uniform on the heap,
+  so generics add zero per-instantiation codegen.
 - **Methods** on structs via the receiver clause
   `function (p: Point) name(): T { ... }`; the checker rewrites call
   sites and lowers them as plain functions.

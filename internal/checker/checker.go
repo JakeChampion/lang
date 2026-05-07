@@ -263,26 +263,40 @@ type checker struct {
 // pass runs after the enum decls have been collected. Function
 // signatures, parameters, var decls, struct fields, array
 // element types, and function-type fields are all visited.
+//
+// Inside an enum decl with type parameters, payload type
+// references that match a parameter name (`T`, `U`) get
+// rewritten to ParamType instead of StructType / EnumType. The
+// parser can't tell them apart at decl time — both look like
+// bare identifiers — so we disambiguate here against the enum's
+// declared TypeParams set.
 func (c *checker) resolveTypeNames(prog *ast.Program) {
 	for _, fn := range prog.Funcs {
 		if fn.Receiver != nil {
-			c.resolveType(&fn.Receiver.Type)
+			c.resolveType(&fn.Receiver.Type, nil)
 		}
 		for i := range fn.Params {
-			c.resolveType(&fn.Params[i].Type)
+			c.resolveType(&fn.Params[i].Type, nil)
 		}
-		c.resolveType(&fn.ReturnType)
+		c.resolveType(&fn.ReturnType, nil)
 		c.resolveTypesInBlock(fn.Body)
 	}
 	for _, sd := range prog.Structs {
 		for i := range sd.Fields {
-			c.resolveType(&sd.Fields[i].Type)
+			c.resolveType(&sd.Fields[i].Type, nil)
 		}
 	}
 	for _, ed := range prog.Enums {
+		var params map[string]bool
+		if len(ed.TypeParams) > 0 {
+			params = make(map[string]bool, len(ed.TypeParams))
+			for _, n := range ed.TypeParams {
+				params[n] = true
+			}
+		}
 		for i := range ed.Variants {
 			for j := range ed.Variants[i].Payloads {
-				c.resolveType(&ed.Variants[i].Payloads[j])
+				c.resolveType(&ed.Variants[i].Payloads[j], params)
 			}
 		}
 	}
@@ -304,7 +318,7 @@ func (c *checker) resolveTypesInBlock(b *ast.Block) {
 		case *ast.For:
 			c.resolveTypesInBlock(asBlock(x.Body))
 		case *ast.Var:
-			c.resolveType(&x.Type)
+			c.resolveType(&x.Type, nil)
 		case *ast.Switch:
 			for _, k := range x.Cases {
 				c.resolveTypesInBlock(k.Body)
@@ -316,9 +330,9 @@ func (c *checker) resolveTypesInBlock(b *ast.Block) {
 			}
 		case *ast.FuncDecl:
 			for i := range x.Params {
-				c.resolveType(&x.Params[i].Type)
+				c.resolveType(&x.Params[i].Type, nil)
 			}
-			c.resolveType(&x.ReturnType)
+			c.resolveType(&x.ReturnType, nil)
 			c.resolveTypesInBlock(x.Body)
 		}
 	}
@@ -337,25 +351,53 @@ func asBlock(s ast.Stmt) *ast.Block {
 
 // resolveType rewrites a single Type slot in place. Handles
 // nominal references (StructType promoted to EnumType when
-// appropriate) plus recurses into composite types.
-func (c *checker) resolveType(slot *ast.Type) {
+// appropriate, or ParamType when the name matches an enclosing
+// enum's type parameter) plus recurses into composite types.
+//
+// `params` carries the type-parameter names visible at this
+// type position. It's nil outside of enum-body contexts. When
+// the name is in `params`, we always rewrite to ParamType —
+// the parameter wins over a same-named enum or struct.
+func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 	if slot == nil || *slot == nil {
 		return
 	}
 	switch t := (*slot).(type) {
 	case ast.StructType:
+		if params[t.Name] {
+			*slot = ast.ParamType{Name: t.Name}
+			return
+		}
 		if _, isEnum := c.info.Enums[t.Name]; isEnum {
 			*slot = ast.EnumType{Name: t.Name}
 		}
+	case ast.EnumType:
+		// `Foo[A, B]` — recurse into args. Params can shadow
+		// individual arg names too (e.g. `Option[T]` inside an
+		// enum body where T is a parameter). We also enforce the
+		// arity here so a wrong-arity instantiation fails before
+		// it becomes a "no Args" enum at the assignment site.
+		args := make([]ast.Type, len(t.Args))
+		copy(args, t.Args)
+		for i := range args {
+			c.resolveType(&args[i], params)
+		}
+		if ed, ok := c.info.Enums[t.Name]; ok {
+			if len(ed.TypeParams) != len(args) {
+				c.errf(ed.P, "enum %s has %d type parameter(s), %d supplied",
+					t.Name, len(ed.TypeParams), len(args))
+			}
+		}
+		*slot = ast.EnumType{Name: t.Name, Args: args}
 	case ast.ArrayType:
 		elem := t.Elem
-		c.resolveType(&elem)
+		c.resolveType(&elem, params)
 		*slot = ast.ArrayType{Elem: elem}
 	case *ast.FuncType:
 		for i := range t.Params {
-			c.resolveType(&t.Params[i])
+			c.resolveType(&t.Params[i], params)
 		}
-		c.resolveType(&t.Result)
+		c.resolveType(&t.Result, params)
 	}
 }
 
@@ -366,6 +408,111 @@ type variantRef struct {
 	enumName string
 	index    int
 	payloads []ast.Type
+}
+
+// substituteType returns t with every ParamType reference
+// replaced by the type bound to that parameter in `sub`. Unbound
+// parameters fall through unchanged so the caller can detect
+// "couldn't fully resolve" cases. Recurses into composite types
+// (arrays, function types, generic enum args) so a payload like
+// `Option[T]` resolves to `Option[number]` when T=number.
+func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
+	if t == nil {
+		return nil
+	}
+	switch x := t.(type) {
+	case ast.ParamType:
+		if v, ok := sub[x.Name]; ok {
+			return v
+		}
+		return x
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substituteType(x.Args[i], sub)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: substituteType(x.Elem, sub)}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: substituteType(x.Result, sub)}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, substituteType(p, sub))
+		}
+		return out
+	}
+	return t
+}
+
+// unifyType records the substitutions that would make `expected`
+// (a type containing ParamType references) equal to `actual` (a
+// concrete type). Updates `sub` in place and returns false on
+// conflict. Concrete-vs-concrete still goes through ast.Equal,
+// so existing strict-checking behaviour is preserved for
+// monomorphic enums.
+func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) bool {
+	if expected == nil || actual == nil {
+		return false
+	}
+	if p, ok := expected.(ast.ParamType); ok {
+		if existing, bound := sub[p.Name]; bound {
+			return ast.Equal(existing, actual)
+		}
+		sub[p.Name] = actual
+		return true
+	}
+	// Generic enum positions: unify pairwise.
+	if e, ok := expected.(ast.EnumType); ok {
+		a, ok := actual.(ast.EnumType)
+		if !ok || a.Name != e.Name || len(a.Args) != len(e.Args) {
+			return false
+		}
+		for i := range e.Args {
+			if !c.unifyType(e.Args[i], a.Args[i], sub) {
+				return false
+			}
+		}
+		return true
+	}
+	// Arrays + function types decompose the same way.
+	if e, ok := expected.(ast.ArrayType); ok {
+		a, ok := actual.(ast.ArrayType)
+		return ok && c.unifyType(e.Elem, a.Elem, sub)
+	}
+	if e, ok := expected.(*ast.FuncType); ok {
+		a, ok := actual.(*ast.FuncType)
+		if !ok || len(e.Params) != len(a.Params) {
+			return false
+		}
+		for i := range e.Params {
+			if !c.unifyType(e.Params[i], a.Params[i], sub) {
+				return false
+			}
+		}
+		return c.unifyType(e.Result, a.Result, sub)
+	}
+	return ast.Equal(expected, actual)
+}
+
+// assignable reports whether a value of type `src` can flow into
+// a slot expecting `dst`. It's strictly equal in most cases;
+// the one relaxation is for payload-less variants on generic
+// enums where the construction site can't infer the type
+// arguments. `None` produces `EnumType{"Option", nil}` which
+// flows into `Option[number]` here without complaint.
+func assignable(dst, src ast.Type) bool {
+	if ast.Equal(dst, src) {
+		return true
+	}
+	d, dok := dst.(ast.EnumType)
+	s, sok := src.(ast.EnumType)
+	if dok && sok && d.Name == s.Name && len(s.Args) == 0 && len(d.Args) > 0 {
+		return true
+	}
+	return false
 }
 
 func (c *checker) errf(pos ast.Position, format string, args ...any) {
@@ -523,7 +670,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			return
 		}
 		got := c.checkExpr(n.Value, s)
-		if got != nil && !ast.Equal(got, want) {
+		if got != nil && !assignable(want, got) {
 			c.errf(n.P, "return type mismatch: function returns %s but expression is %s", want, got)
 		}
 	case *ast.Var:
@@ -536,7 +683,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				return
 			}
 			n.Type = got
-		} else if got != nil && !ast.Equal(got, n.Type) {
+		} else if got != nil && !assignable(n.Type, got) {
 			c.errf(n.P, "cannot assign %s to variable of type %s", got, n.Type)
 		}
 		s.names[n.Name] = n.Type
@@ -598,6 +745,16 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		c.errf(n.Tag.Pos(), "unknown enum %q", et.Name)
 		return
 	}
+	// For generic enums, build a substitution map from the
+	// scrutinee's concrete type arguments. `match (o: Option[number])`
+	// gives us T=number, so the arm `Some(v)` types `v` as
+	// `number` rather than the unresolved `T`.
+	sub := map[string]ast.Type{}
+	if len(ed.TypeParams) == len(et.Args) {
+		for i, p := range ed.TypeParams {
+			sub[p] = et.Args[i]
+		}
+	}
 	covered := map[string]bool{}
 	sawWildcard := false
 	for i, arm := range n.Arms {
@@ -633,13 +790,15 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
 		}
 		// Bind names in a fresh scope so they don't leak into
-		// sibling arms.
+		// sibling arms. Payload types get the type-parameter
+		// substitution applied so `Some(v)` on `Option[number]`
+		// types `v` as `number`, not the abstract `T`.
 		armScope := newScope(s)
 		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		for k, name := range arm.Bindings {
 			var bt ast.Type
 			if k < len(variant.Payloads) {
-				bt = variant.Payloads[k]
+				bt = substituteType(variant.Payloads[k], sub)
 			}
 			arm.BindingTypes[k] = bt
 			armScope.names[name] = bt
@@ -811,18 +970,53 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// types. Shadowing by a function or local is intentional —
 		// the user can re-bind the name and the variant becomes
 		// inaccessible until the shadow leaves scope.
+		//
+		// For generic enums (`Option[T]`, `Result[T, E]`), the
+		// type arguments get inferred from the actual payload arg
+		// types — `Some(42)` → `Option[number]`. Inference only
+		// works when there's at least one type-determining
+		// payload arg; payload-less variants on generic enums
+		// (like `None`) yield an EnumType with empty Args, which
+		// the assignment relaxation in `assignable` lets flow
+		// into a concretely-typed slot at the var / return site.
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			if vr, ok := c.variantOf[id.Name]; ok && !c.isUserFuncOrLocal(id.Name, s) {
 				if len(n.Args) != len(vr.payloads) {
 					c.errf(n.P, "variant %s expects %d argument(s), got %d",
 						id.Name, len(vr.payloads), len(n.Args))
 				}
+				ed := c.info.Enums[vr.enumName]
+				sub := map[string]ast.Type{}
 				for i, a := range n.Args {
 					at := c.checkExpr(a, s)
-					if i < len(vr.payloads) && at != nil && !ast.Equal(at, vr.payloads[i]) {
-						c.errf(a.Pos(), "variant %s payload %d type %s, expected %s",
-							id.Name, i, at, vr.payloads[i])
+					if i >= len(vr.payloads) || at == nil {
+						continue
 					}
+					if !c.unifyType(vr.payloads[i], at, sub) {
+						c.errf(a.Pos(), "variant %s payload %d type %s, expected %s",
+							id.Name, i, at, substituteType(vr.payloads[i], sub))
+					}
+				}
+				if ed != nil && len(ed.TypeParams) > 0 {
+					args := make([]ast.Type, len(ed.TypeParams))
+					complete := true
+					for i, p := range ed.TypeParams {
+						if v, ok := sub[p]; ok {
+							args[i] = v
+						} else {
+							complete = false
+						}
+					}
+					if !complete {
+						// Couldn't fill in every parameter from
+						// the args alone (typical for a
+						// payload-less variant). Leave Args nil
+						// so `assignable` flows the type into
+						// whatever the surrounding context
+						// expects.
+						return ast.EnumType{Name: vr.enumName}
+					}
+					return ast.EnumType{Name: vr.enumName, Args: args}
 				}
 				return ast.EnumType{Name: vr.enumName}
 			}
@@ -875,7 +1069,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		for i, a := range n.Args {
 			at := c.checkExpr(a, s)
-			if i < len(ft.Params) && at != nil && !ast.Equal(at, ft.Params[i]) {
+			if i < len(ft.Params) && at != nil && !assignable(ft.Params[i], at) {
 				c.errf(a.Pos(), "argument %d: expected %s, got %s", i+1, ft.Params[i], at)
 			}
 		}

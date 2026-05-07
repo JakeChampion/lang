@@ -545,3 +545,75 @@ func TestMatchPayloadArityChecked(t *testing.T) {
 		t.Error("expected error: B has 2 payloads but only 1 binding")
 	}
 }
+
+// Generic enums infer their type arguments from the constructor's
+// payload types: `Some(42)` resolves T to `number`, so the
+// resulting type is `Option[number]`. The right-hand side of an
+// assignment with a wrong concrete type fails at the slot.
+func TestGenericVariantInfersTypeArgs(t *testing.T) {
+	good := `enum Option[T] { Some(T), None }
+		function main(): number {
+			var o: Option[number] = Some(42);
+			return 0;
+		}`
+	if err := checkSource(t, good); err != nil {
+		t.Errorf("good: %v", err)
+	}
+	bad := `enum Option[T] { Some(T), None }
+		function main(): number {
+			var o: Option[string] = Some(42);
+			return 0;
+		}`
+	if err := checkSource(t, bad); err == nil {
+		t.Error("expected mismatch: Option[string] vs Option[number]")
+	}
+}
+
+// Payload-less variants on generic enums (`None`) can flow into
+// any concrete instantiation of the same enum because the
+// constructor itself can't determine the type arguments — the
+// surrounding context (var annotation, return type, function
+// arg slot) supplies them.
+func TestPayloadlessGenericVariantFlowsIntoContext(t *testing.T) {
+	src := `enum Option[T] { Some(T), None }
+		function find(): Option[number] { return None; }
+		function main(): number {
+			var o: Option[number] = None;
+			return 0;
+		}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("None should flow into Option[number]: %v", err)
+	}
+}
+
+// Match arms substitute the scrutinee's concrete type arguments
+// into payload bindings: matching `Option[number]` types
+// `Some(v)` so that `v` is `number`, not the abstract `T`.
+func TestMatchSubstitutesTypeArgs(t *testing.T) {
+	src := `enum Option[T] { Some(T), None }
+		function main(): number {
+			var o: Option[number] = Some(7);
+			match (o) {
+				Some(v) => { return v + 1; },
+				None => { return 0; }
+			}
+			return -1;
+		}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("type-substituted match arms should type-check: %v", err)
+	}
+}
+
+// Wrong-arity instantiations (missing or extra type arguments)
+// are rejected at the type position before any value-level
+// checking happens.
+func TestGenericEnumArityChecked(t *testing.T) {
+	src := `enum Pair[A, B] { Both(A, B) }
+		function main(): number {
+			var p: Pair[number] = Both(1, 2);
+			return 0;
+		}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected arity error: Pair has 2 type params, 1 supplied")
+	}
+}
