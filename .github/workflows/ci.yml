@@ -42,6 +42,12 @@ jobs:
       - name: go test (includes ARM end-to-end tests under qemu)
         run: go test -v ./...
 
+      - name: Check examples are formatted
+        # Runs `lang -fmt -d` on every examples/*.lang and fails if
+        # any file would change. Prevents drift between the
+        # formatter's idea of canonical source and what's checked in.
+        run: make fmt-check
+
       - name: Compile every example
         run: |
           go build -o bin/lang ./cmd/lang
