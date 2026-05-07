@@ -163,6 +163,11 @@ Built-ins:
   on ARM32, WASI `fd_write` on WASM).
 - `putchar(n: number): void` — writes one byte.
 - `len(x): number` — array or string length.
+- `args(): string[]` — command-line arguments. argv[0] is the
+  program / module path (matching C and Go conventions); the rest
+  are the user-supplied positional args. The first call materialises
+  a length-prefixed string array from libc / WASI; subsequent calls
+  return the cached pointer.
 
 ## Optimisation
 

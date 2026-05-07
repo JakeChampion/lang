@@ -65,6 +65,18 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		stringLabel: map[string]string{},
 		srcFile:     opts.SourceFile,
 	}
+	// Detect args() usage up-front so the prologue insertion in
+	// `main` knows to save argc / argv. `usesArgs` gets set as a
+	// side-effect of OpCallDirect-to-args in emitCallDirect, but
+	// main is typically emitted first, so we'd miss its prologue.
+	for _, irFn := range ip.Funcs {
+		for _, op := range irFn.Ops {
+			if op.Kind == ir.OpCallDirect && op.Str == "args" {
+				g.usesArgs = true
+				g.usesAlloc = true
+			}
+		}
+	}
 	g.line(`.arch armv7-a`)
 	g.line(`.text`)
 	if g.srcFile != "" {
@@ -79,6 +91,9 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		g.usesAlloc = true
 		g.emitStrcatRuntime()
 	}
+	if g.usesArgs {
+		g.emitArgsRuntime()
+	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 	}
@@ -91,6 +106,19 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			g.label(g.stringLabel[s])
 			g.line("\t.asciz " + escapeForGAS(s))
 		}
+	}
+	if g.usesArgs {
+		g.line("")
+		g.line(`.section .bss`)
+		g.line(`.align 2`)
+		g.label("__lang_argc")
+		g.line(`	.word 0`)
+		g.line(`.align 2`)
+		g.label("__lang_argv")
+		g.line(`	.word 0`)
+		g.line(`.align 2`)
+		g.label("__lang_args_cache")
+		g.line(`	.word 0`)
 	}
 	g.line("")
 	g.line(`.section .note.GNU-stack,"",%progbits`)
@@ -209,6 +237,17 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	epilogue := g.freshLabel("epi_" + fn.Name)
 	bodyLabel := g.freshLabel("body_" + fn.Name)
 	g.label(bodyLabel)
+
+	// If the program calls `args()` anywhere, save the C runtime's
+	// argc / argv (delivered in r0 / r1 to `main`) into globals so
+	// the runtime helper can find them. main always has zero
+	// declared params, so r0 / r1 are still live here.
+	if g.usesArgs && fn.Name == "main" {
+		g.emit("ldr r12, =__lang_argc")
+		g.emit("str r0, [r12]")
+		g.emit("ldr r12, =__lang_argv")
+		g.emit("str r1, [r12]")
+	}
 
 	// Walk the IR ops.
 	if err := g.emitOpsFromIR(irFn, slotOffset, paramReg, epilogue); err != nil {

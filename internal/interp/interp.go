@@ -96,6 +96,10 @@ type Interp struct {
 	Funcs    map[string]*ast.FuncDecl
 	Builtins map[string]*Builtin
 	Stdout   io.Writer
+	// Args is what the `args()` builtin returns, in source-program
+	// order (argv[0] first). REPL / test callers can override this
+	// to feed scripted argv without going through os.Args.
+	Args []string
 	// Global is the env used by REPL-typed top-level statements;
 	// `var x = 7` at the prompt declares x here so the next prompt
 	// can read it.
@@ -112,7 +116,19 @@ func New() *Interp {
 	i.Builtins["print"] = &Builtin{Fn: builtinPrint}
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["len"] = &Builtin{Fn: builtinLen}
+	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
 	return i
+}
+
+func builtinArgs(i *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("args: expected 0 args, got %d", len(args))
+	}
+	out := make(Array, len(i.Args))
+	for k, a := range i.Args {
+		out[k] = String(a)
+	}
+	return out, nil
 }
 
 func builtinLen(_ *Interp, args []Value) (Value, error) {
