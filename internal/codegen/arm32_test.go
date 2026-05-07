@@ -306,15 +306,20 @@ func TestLeafEpilogueOffsetScalesWithParams(t *testing.T) {
 	mustContain(t, asm, "pop {r4, r5, r6, r7, fp, lr}")
 }
 
-// Calling a function value held in a `var` should emit `blx r12`
-// after loading the function pointer from the var's stack slot.
+// Calling a function value held in a `var` lowers to `blx r12`
+// after loading the function pointer. ConstPropagate inlines the
+// function reference itself when the var is bound to a known
+// function name, so the symbol shows up directly via `ldr r0,
+// =<name>` rather than going through the slot. To keep the test
+// honest about the indirect-dispatch path, the function value
+// comes through a parameter (which the propagator can't reason
+// about).
 func TestIndirectCallThroughVar(t *testing.T) {
 	asm := compile(t, `function add(a: number, b: number): number { return a + b; }
-function main(): number {
-	var f = add;
+function call_with(f: (number, number) => number): number {
 	return f(40, 2);
-}`)
-	mustContain(t, asm, "ldr r0, [fp, #-4]")
+}
+function main(): number { return call_with(add); }`)
 	mustContain(t, asm, "blx r12")
 }
 
