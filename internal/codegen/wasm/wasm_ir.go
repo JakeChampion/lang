@@ -67,12 +67,12 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, ip *ir.Program) (string, 
 		g.needsRuntime = true
 		g.needsArrays = true
 	}
-	// Any enum declaration implies allocation (variant
-	// construction allocates a tagged-union object on the bump
-	// heap). Match dispatch uses no allocation, so this is the
-	// gating signal — if no construction can happen, no allocator
-	// is needed.
-	if len(prog.Enums) > 0 {
+	// Variant construction (and the Option-shaped I/O builtins
+	// which build their own enum object) needs the bump
+	// allocator. The auto-injected Option / Result decls don't
+	// imply usage on their own, so we scan for actual variant
+	// references / match statements instead of enum-decl count.
+	if scanEnumUses(prog) || g.needsReadLine || g.needsEnv {
 		g.needsRuntime = true
 		g.needsArrays = true
 	}

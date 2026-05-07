@@ -188,15 +188,22 @@ Built-ins:
   are the user-supplied positional args. The first call materialises
   a length-prefixed string array from libc / WASI; subsequent calls
   return the cached pointer.
-- `read_line(): string` — reads one line from stdin. The trailing
-  `\n` is preserved in the returned string; an empty string signals
-  end-of-file (a blank line returns `"\n"`, length 1, so callers
-  can disambiguate by length).
-- `env(name: string): string` — environment variable lookup.
-  Returns the empty string for missing keys.
+- `read_line(): Option[string]` — reads one line from stdin.
+  `Some(line)` carries the line including the trailing `\n`;
+  `None` signals end-of-file. Callers `match` on the result
+  rather than testing a sentinel string.
+- `env(name: string): Option[string]` — environment variable
+  lookup. `Some(value)` for a present key (including
+  explicitly-empty values); `None` for missing.
 - `exit(code: number): void` — terminates the process with the
   given status. Useful for `eprint(msg); exit(2)` failure paths;
   the success path can just `return` from main.
+
+`Option[T]` and `Result[T, E]` are built into the language —
+they're auto-injected as enums on every program with the
+canonical Rust-shaped variants (`Some(T) / None`,
+`Ok(T) / Err(E)`). Use them anywhere user-defined enums work,
+including in your own function signatures.
 
 ## Optimisation
 

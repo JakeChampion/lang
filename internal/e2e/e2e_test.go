@@ -649,49 +649,53 @@ func runWithStdinEnv(t *testing.T, src, stdin string, extraEnv []string) (stdout
 	return soBuf.String(), seBuf.String(), cmd.ProcessState.ExitCode()
 }
 
-// `read_line()` returns the next stdin line including its
-// trailing `\n`. The exit-code signals end-of-file (the helper
-// returns an empty string at EOF, so callers can break a read
-// loop with `if (len(line) == 0) break;`).
+// `read_line()` returns `Some(line)` for a present line and
+// `None` at EOF — the post-Phase-3 typed shape replaces the
+// empty-string sentinel from earlier PRs.
 func TestReadLineBuiltinArm(t *testing.T) {
 	src := `function main(): number {
-		var line: string = read_line();
-		write(line);
-		return len(line);
+		match (read_line()) {
+			Some(line) => { write(line); return len(line); },
+			None => { return -1; }
+		}
+		return -2;
 	}`
 	stdout, _, code := runWithStdinEnv(t, src, "hello\n", nil)
 	if stdout != "hello\n" {
 		t.Errorf("stdout = %q, want %q", stdout, "hello\n")
 	}
-	// "hello\n" is 6 bytes — the language's `len` returns the
-	// byte count of the string, including the trailing newline.
 	if code != 6 {
 		t.Errorf("exit = %d, want 6 (len of \"hello\\n\")", code)
 	}
 }
 
-// EOF on the first byte yields an empty string, distinguishable
-// from a blank input line ("\n", length 1). Used by callers as
-// the loop-exit signal.
+// EOF routes to the `None` arm. A non-empty line (even just
+// `"\n"`) routes to `Some`. The match arms encode the
+// distinction; callers no longer have to special-case
+// `len(line) == 0`.
 func TestReadLineBuiltinEOFArm(t *testing.T) {
 	src := `function main(): number {
-		var line: string = read_line();
-		return len(line);
+		match (read_line()) {
+			Some(line) => { return 1; },
+			None => { return 0; }
+		}
+		return -1;
 	}`
 	_, _, code := runWithStdinEnv(t, src, "", nil)
 	if code != 0 {
-		t.Errorf("exit = %d, want 0 (EOF returns empty string)", code)
+		t.Errorf("exit = %d, want 0 (EOF routes to None arm)", code)
 	}
 }
 
-// `env(name)` reads a process-level environment variable. A
-// missing key returns an empty string; callers compare with
-// `len(...) == 0` to branch on absence.
+// `env(name)` returns `Some(value)` when the key is set,
+// `None` when it isn't.
 func TestEnvBuiltinArm(t *testing.T) {
 	src := `function main(): number {
-		var v: string = env("LANG_TEST_VAR");
-		write(v);
-		return len(v);
+		match (env("LANG_TEST_VAR")) {
+			Some(v) => { write(v); return len(v); },
+			None => { return -1; }
+		}
+		return -2;
 	}`
 	stdout, _, code := runWithStdinEnv(t, src, "", []string{"LANG_TEST_VAR=hi"})
 	if stdout != "hi" {
@@ -702,16 +706,19 @@ func TestEnvBuiltinArm(t *testing.T) {
 	}
 }
 
-// Missing env returns an empty string. The exit code is 0
-// because `len("")` is 0.
+// Missing env routes to `None`, distinguishable from a present-
+// but-empty value (which would be `Some("")`).
 func TestEnvBuiltinMissingArm(t *testing.T) {
 	src := `function main(): number {
-		var v: string = env("LANG_TEST_DEFINITELY_NOT_SET_XYZ");
-		return len(v);
+		match (env("LANG_TEST_DEFINITELY_NOT_SET_XYZ")) {
+			Some(v) => { return 1; },
+			None => { return 0; }
+		}
+		return -1;
 	}`
 	_, _, code := runWithStdinEnv(t, src, "", nil)
 	if code != 0 {
-		t.Errorf("exit = %d, want 0 (missing env => empty string)", code)
+		t.Errorf("exit = %d, want 0 (missing env routes to None)", code)
 	}
 }
 
@@ -836,12 +843,14 @@ func TestEnumMatchPayloadArm(t *testing.T) {
 // payload-less Ok constructor and the string-carrying Err
 // constructor both work.
 func TestEnumMatchDispatchArm(t *testing.T) {
-	src := `enum Status { Ok, Err(string) }
-		function status(): Status { return Err("boom"); }
+	// Use distinct variant names so this test doesn't collide
+	// with the auto-injected `Result[T, E]` (which owns Ok/Err).
+	src := `enum Status { Good, Bad(string) }
+		function status(): Status { return Bad("boom"); }
 		function main(): number {
 			match (status()) {
-				Ok => { return 0; },
-				Err(msg) => { return len(msg); }
+				Good => { return 0; },
+				Bad(msg) => { return len(msg); }
 			}
 			return -1;
 		}`
@@ -874,8 +883,9 @@ func TestGenericOptionArm(t *testing.T) {
 // through the heap at runtime. The error arm carries a string
 // payload that flows through `len` on extraction.
 func TestGenericResultArm(t *testing.T) {
-	src := `enum Result[T, E] { Ok(T), Err(E) }
-		function check(b: boolean): Result[number, string] {
+	// Use the auto-injected `Result[T, E]` instead of redeclaring
+	// it — Phase 3 makes Result a built-in.
+	src := `function check(b: boolean): Result[number, string] {
 			if (b) { return Ok(7); }
 			return Err("oops");
 		}

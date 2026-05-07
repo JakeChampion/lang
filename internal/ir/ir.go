@@ -415,6 +415,12 @@ type builder struct {
 	// locals maps parameter and var names to their 0-based slot index.
 	// Parameters are slots 0..len(params)-1; vars start at len(params).
 	locals map[string]int32
+	// scratchType records the declared type of synthetic scratch
+	// slots the lowering pass introduces (closure helpers,
+	// per-arm match bindings, struct/enum literal anchors). The
+	// default is NumberType (i32); float-typed bindings record
+	// FloatType so wasm declares the local as f32.
+	scratchType map[int32]ast.Type
 	// depth is the current control-stack depth (number of open
 	// block/loop/if scopes). Used to compute relative branch
 	// distances for break/continue.
@@ -437,7 +443,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
 		Locals:     info.Locals[fn],
 		ReturnType: fn.ReturnType,
 	}
-	b := &builder{info: info, fn: fn, out: out, locals: map[string]int32{}}
+	b := &builder{info: info, fn: fn, out: out, locals: map[string]int32{}, scratchType: map[int32]ast.Type{}}
 	for i, p := range fn.Params {
 		b.locals[p.Name] = int32(i)
 	}
@@ -450,14 +456,18 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
 	// Record the type of every synthetic slot the lowering pass
 	// conjured beyond the user-visible params + locals — ArrayLit
 	// / StructLit / Switch / closure helpers each added entries to
-	// the locals map. The types here are all i32 because every
-	// helper slot stashes a heap pointer or an integer tag; the
-	// inliner appends mixed types from the callee. Codegen reads
-	// ScratchTypes per-slot to declare each with the right type.
+	// the locals map. Most are i32 (heap pointers or integer tags);
+	// match-arm bindings of float-typed payloads register a
+	// FloatType in scratchType so wasm declares the local as f32.
 	scratchCount := len(b.locals) - (len(fn.Params) + len(info.Locals[fn]))
 	out.ScratchTypes = make([]ast.Type, scratchCount)
+	scratchBase := int32(len(fn.Params) + len(info.Locals[fn]))
 	for i := range out.ScratchTypes {
-		out.ScratchTypes[i] = ast.NumberType{}
+		if t, ok := b.scratchType[scratchBase+int32(i)]; ok && t != nil {
+			out.ScratchTypes[i] = t
+		} else {
+			out.ScratchTypes[i] = ast.NumberType{}
+		}
 	}
 	// If the body falls off the end, emit an implicit return so the
 	// downstream consumer doesn't have to check.
@@ -509,7 +519,7 @@ func (b *builder) lookupVariant(name string) (enumName string, varIdx int, paylo
 // Total size is `4 + payloadCount * 4`. Payload-less variants
 // still allocate 4 bytes for the tag — uniform layout simplifies
 // match-side loads.
-func (b *builder) emitEnumNew(varIdx int, payloadCount int, args []ast.Expr) error {
+func (b *builder) emitEnumNew(enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
 	size := int32(4 + payloadCount*4)
 	b.emit(Op{Kind: OpConstI32, I32: size})
 	b.emit(Op{Kind: OpAlloc})
@@ -520,7 +530,17 @@ func (b *builder) emitEnumNew(varIdx int, payloadCount int, args []ast.Expr) err
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 	b.emit(Op{Kind: OpStore})
-	// Store each payload at offset 4 + i*4.
+	// Look up the variant's declared payload types so floats land
+	// in f32-typed slots — `i32.store` of an f32 operand fails
+	// WASM validation, and arm32 doesn't care which mnemonic we
+	// use. Generic enums where T resolves to float still go
+	// through OpStore (declared type is ParamType, not float);
+	// `Option[float]` therefore won't validate on WASM. That's a
+	// followup that needs reinterpret ops + tracked operand types.
+	var payloadTypes []ast.Type
+	if ed, ok := b.info.Enums[enumName]; ok && varIdx < len(ed.Variants) {
+		payloadTypes = ed.Variants[varIdx].Payloads
+	}
 	for i, a := range args {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
@@ -528,7 +548,11 @@ func (b *builder) emitEnumNew(varIdx int, payloadCount int, args []ast.Expr) err
 		if err := b.expr(a); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpStore})
+		if i < len(payloadTypes) && isFloat(payloadTypes[i]) {
+			b.emit(Op{Kind: OpFStore})
+		} else {
+			b.emit(Op{Kind: OpStore})
+		}
 	}
 	// Push the result pointer.
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
@@ -778,14 +802,32 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.brTo(b.depth, true) // br 0 = exit inner = match
 			b.brTo(outerArmD, false)
 			b.closeScope() // end inner — matched path lands here
-			// Bind payload locals from heap[ptr+4+i*4].
+			// Bind payload locals from heap[ptr+4+i*4]. Float
+			// payloads need an f32 load to keep stack types
+			// consistent on WASM; arm32 ignores the choice.
+			// arm.BindingTypes is filled by the checker with
+			// the substituted concrete type (so generic enums
+			// instantiated at `Option[number]` give `number`).
+			// The binding's local also needs the right
+			// declared type — recorded via b.scratchType so
+			// the wasm backend declares it as f32 instead of
+			// the default i32.
 			for i, name := range arm.Bindings {
 				slot := int32(len(b.locals))
 				b.locals[name] = slot
+				bt := ast.Type(ast.NumberType{})
+				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
+					bt = arm.BindingTypes[i]
+				}
+				b.scratchType[slot] = bt
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 				b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
 				b.emit(Op{Kind: OpAdd})
-				b.emit(Op{Kind: OpLoad})
+				if isFloat(bt) {
+					b.emit(Op{Kind: OpFLoad})
+				} else {
+					b.emit(Op{Kind: OpLoad})
+				}
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
 			if err := b.stmt(arm.Body); err != nil {
@@ -836,9 +878,9 @@ func (b *builder) expr(e ast.Expr) error {
 		// Payload-less variant in expression position (`Red`,
 		// `EOF`). We construct an enum object containing just the
 		// tag — no payloads to store.
-		if _, varIdx, payloadCount, isVariant := b.lookupVariant(n.Name); isVariant && payloadCount == 0 {
+		if enumName, varIdx, payloadCount, isVariant := b.lookupVariant(n.Name); isVariant && payloadCount == 0 {
 			if _, isLocal := b.locals[n.Name]; !isLocal {
-				return b.emitEnumNew(varIdx, 0, nil)
+				return b.emitEnumNew(enumName, varIdx, 0, nil)
 			}
 		}
 		idx, ok := b.locals[n.Name]
@@ -977,7 +1019,16 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(f.Value); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpStore})
+			// Pick i32 vs f32 store based on the declared field
+			// type. WASM rejects `i32.store` of an f32 operand,
+			// and arm32 doesn't care which mnemonic we pick (32-
+			// bit register store is untyped at the instruction
+			// level), so this is enforced at the IR level.
+			if isFloat(fieldType(sd.Fields, f.Name)) {
+				b.emit(Op{Kind: OpFStore})
+			} else {
+				b.emit(Op{Kind: OpStore})
+			}
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	case *ast.CaptureRef:
@@ -1015,16 +1066,20 @@ func (b *builder) expr(e ast.Expr) error {
 		// Compute base + offset_of(field), then load the word.
 		// Resolving the offset needs the static type of the target;
 		// we look it up via the local types in the funcs / params,
-		// or via the assumed StructType the checker assigned.
+		// or via the assumed StructType the checker assigned. The
+		// load op (i32 vs f32) follows the field's declared type
+		// for the same WASM-validation reason as struct stores.
 		st := b.fieldOwner(n.Target)
 		sd, ok := b.info.Structs[st]
 		if !ok {
 			return fmt.Errorf("ir: field access on unresolved struct %q", st)
 		}
 		off := -1
+		var ft ast.Type
 		for i, f := range sd.Fields {
 			if f.Name == n.Field {
 				off = i * 4
+				ft = f.Type
 				break
 			}
 		}
@@ -1036,7 +1091,11 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.emit(Op{Kind: OpConstI32, I32: int32(off)})
 		b.emit(Op{Kind: OpAdd})
-		b.emit(Op{Kind: OpLoad})
+		if isFloat(ft) {
+			b.emit(Op{Kind: OpFLoad})
+		} else {
+			b.emit(Op{Kind: OpLoad})
+		}
 	default:
 		return fmt.Errorf("ir: unsupported expression %T", e)
 	}
@@ -1227,9 +1286,9 @@ func (b *builder) call(n *ast.Call) error {
 	// Variant constructor: lower to a heap-allocated tagged-union
 	// object [tag, payload0, payload1, ...]. The checker already
 	// type-checked the args; we just emit the storage.
-	if _, varIdx, payloads, isVariant := b.lookupVariant(id.Name); isVariant {
+	if enumName, varIdx, payloads, isVariant := b.lookupVariant(id.Name); isVariant {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			return b.emitEnumNew(varIdx, payloads, n.Args)
+			return b.emitEnumNew(enumName, varIdx, payloads, n.Args)
 		}
 	}
 	// `len(x)` on a string or array is inlined: both layouts carry a
@@ -1338,16 +1397,19 @@ func (b *builder) assign(n *ast.Assign) error {
 		return nil
 	case *ast.FieldAccess:
 		// `p.field = v` lowers to base + offset; value; store. Same
-		// no-result discipline as index assignment.
+		// no-result discipline as index assignment. Float-typed
+		// fields require an f32 store; everything else is i32.
 		st := b.fieldOwner(t.Target)
 		sd, ok := b.info.Structs[st]
 		if !ok {
 			return fmt.Errorf("ir: field assignment on unresolved struct %q", st)
 		}
 		off := -1
+		var ft ast.Type
 		for i, f := range sd.Fields {
 			if f.Name == t.Field {
 				off = i * 4
+				ft = f.Type
 				break
 			}
 		}
@@ -1364,7 +1426,11 @@ func (b *builder) assign(n *ast.Assign) error {
 		if err := b.expr(n.Value); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpStore})
+		if isFloat(ft) {
+			b.emit(Op{Kind: OpFStore})
+		} else {
+			b.emit(Op{Kind: OpStore})
+		}
 		return nil
 	}
 	return fmt.Errorf("ir: assignment target %T not yet lowered", n.Target)
@@ -1400,4 +1466,16 @@ func isVoid(t ast.Type) bool {
 func isFloat(t ast.Type) bool {
 	_, ok := t.(ast.FloatType)
 	return ok
+}
+
+// fieldType returns the declared type of `name` in fields, or nil
+// if no such field exists. Used by codegen sites that need to
+// pick i32 vs f32 ops based on the field's declared type.
+func fieldType(fields []ast.Param, name string) ast.Type {
+	for _, f := range fields {
+		if f.Name == name {
+			return f.Type
+		}
+	}
+	return nil
 }

@@ -141,6 +141,117 @@ func envParamPresent(fn *ast.FuncDecl) bool {
 	return last.Name == "__env"
 }
 
+// scanEnumUses returns true if the program actually constructs or
+// matches an enum. The auto-injected Option / Result decls show
+// up in `prog.Enums` on every program, so a `len(prog.Enums) > 0`
+// check would over-trigger the bump allocator on programs that
+// never use enums. We look at *Match statements (any match
+// implies a scrutinee that came from somewhere — usually a
+// variant call earlier) and at calls whose callee name matches a
+// variant in any registered enum.
+func scanEnumUses(prog *ast.Program) bool {
+	variants := map[string]bool{}
+	for _, ed := range prog.Enums {
+		for _, v := range ed.Variants {
+			variants[v.Name] = true
+		}
+	}
+	found := false
+	var walk func(any)
+	walk = func(n any) {
+		if found {
+			return
+		}
+		switch x := n.(type) {
+		case *ast.Match:
+			found = true
+		case *ast.Call:
+			if id, ok := x.Callee.(*ast.Ident); ok && variants[id.Name] {
+				found = true
+				return
+			}
+			walk(x.Callee)
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case *ast.Ident:
+			if variants[x.Name] {
+				found = true
+			}
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Switch:
+			walk(x.Tag)
+			for _, k := range x.Cases {
+				for _, v := range k.Values {
+					walk(v)
+				}
+				walk(k.Body)
+			}
+			if x.Default != nil {
+				walk(x.Default)
+			}
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		case *ast.Binary:
+			walk(x.Left)
+			walk(x.Right)
+		case *ast.Unary:
+			walk(x.Operand)
+		case *ast.Index:
+			walk(x.Array)
+			walk(x.Idx)
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.Assign:
+			walk(x.Target)
+			walk(x.Value)
+		case *ast.Ternary:
+			walk(x.Cond)
+			walk(x.Then)
+			walk(x.Else)
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				walk(f.Value)
+			}
+		case *ast.FieldAccess:
+			walk(x.Target)
+		}
+	}
+	for _, fn := range prog.Funcs {
+		walk(fn.Body)
+	}
+	return found
+}
+
 // scanForIOBuiltins records which I/O builtins the program calls so
 // the preamble can pull in only the WASI imports + helpers it
 // actually needs. Unlike scanForArrayUses, this walker does NOT
@@ -207,6 +318,11 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 			}
 			if x.Default != nil {
 				walk(x.Default)
+			}
+		case *ast.Match:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				walk(arm.Body)
 			}
 		case *ast.Binary:
 			walk(x.Left)
@@ -322,6 +438,11 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			}
 			if x.Default != nil {
 				walk(x.Default)
+			}
+		case *ast.Match:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				walk(arm.Body)
 			}
 		case *ast.Ternary:
 			walk(x.Cond)
@@ -480,6 +601,11 @@ func (g *generator) scanIndirectStmt(s ast.Stmt) {
 		}
 		if x.Default != nil {
 			g.scanIndirectStmt(x.Default)
+		}
+	case *ast.Match:
+		g.scanIndirectExpr(x.Tag, false)
+		for _, arm := range x.Arms {
+			g.scanIndirectStmt(arm.Body)
 		}
 	}
 }
@@ -774,6 +900,11 @@ func (g *generator) scanForStringConcat(prog *ast.Program) {
 			if x.Default != nil {
 				walk(x.Default)
 			}
+		case *ast.Match:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				walk(arm.Body)
+			}
 		case *ast.Return:
 			if x.Value != nil {
 				walk(x.Value)
@@ -863,6 +994,11 @@ func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 			}
 			if x.Default != nil {
 				walk(x.Default)
+			}
+		case *ast.Match:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				walk(arm.Body)
 			}
 		case *ast.Return:
 			if x.Value != nil {
@@ -957,6 +1093,11 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 			}
 			if x.Default != nil {
 				walk(x.Default)
+			}
+		case *ast.Match:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				walk(arm.Body)
 			}
 		case *ast.Ternary:
 			walk(x.Cond)
@@ -1604,12 +1745,13 @@ func (g *generator) emitArgsHelper() {
 // emitReadLineHelper writes `$read_line`, a one-byte-at-a-time
 // stdin reader. Each iteration calls fd_read on the iovec at
 // offset 56 (pre-set to read into byte 68); the loop exits at
-// EOF (nread==0) or when the read byte is `\n`. The accumulated
-// bytes get copied into a fresh length-prefixed string on the
-// bump heap, so the result behaves like every other lang string.
+// EOF (nread==0) or when the read byte is `\n`.
 //
-// EOF returns an empty string (length 0). A blank line returns
-// "\n" (length 1) so callers can disambiguate by length.
+// The result is an `Option[string]` heap object: `Some(line)`
+// when at least one byte was read (the line preserves its
+// trailing `\n`); `None` when the first read came back empty
+// (EOF). Tag 0 is `Some`, tag 1 is `None` — the canonical order
+// from the auto-injected Option enum, hardcoded here.
 func (g *generator) emitReadLineHelper() {
 	g.line(`(func $read_line (result i32)`)
 	g.indent++
@@ -1677,6 +1819,23 @@ func (g *generator) emitReadLineHelper() {
 	g.line(`i32.sub`)
 	g.line(`local.set $len`)
 
+	// EOF on first byte → None. Allocate 4 bytes for the tag
+	// and return early. The Option layout convention (tag 1 =
+	// None) is hardcoded here to match the auto-injected enum.
+	g.line(`local.get $len`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $sbase`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
 	// Allocate the result string: 4 (length prefix) + len bytes.
 	g.line(`local.get $len`)
 	g.line(`i32.const 4`)
@@ -1720,12 +1879,26 @@ func (g *generator) emitReadLineHelper() {
 	g.indent--
 	g.line(`end`)
 
+	// Wrap the materialised string in `Some(sptr)`. Layout:
+	// [tag=0 : i32][str_ptr : i32] (8 bytes total). Caller does
+	// match-arm load of payload[0] to recover sptr.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $sbase`) // reuse $sbase as the option ptr
+	g.line(`i32.const 0`)
+	g.line(`i32.store`) // tag = 0 (Some)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
 	g.line(`local.get $sptr`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`return`)
 	g.indent--
 	g.line(`)`)
 }
 
-// emitEnvHelper writes `$env(name) -> string`. The first call
+// emitNoneHelper / emitEnvHelper marker comment
 // initialises the environ buffers via WASI; subsequent calls
 // reuse the cached pointers. The lookup walks the cached
 // environ pointer table, comparing each "KEY=VALUE" entry
@@ -1953,7 +2126,21 @@ func (g *generator) emitEnvHelper() {
 	g.line(`end`)
 	g.indent--
 	g.line(`end`)
+	// Found: wrap the materialised string pointer in
+	// `Some(sptr)`. Layout matches read_line: 8 bytes total
+	// with tag at +0 and the string pointer at +4.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
 	g.line(`local.get $sptr`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
 	g.line(`return`)
 	g.indent--
 	g.line(`end`)
@@ -1970,16 +2157,14 @@ func (g *generator) emitEnvHelper() {
 	g.indent--
 	g.line(`end`)
 
-	// Not found: return a fresh empty length-prefixed string.
+	// Not found: return `None` — a 4-byte heap object with
+	// tag = 1.
 	g.line(`i32.const 4`)
 	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`i32.const 0`)
+	g.line(`local.tee $sbase`)
+	g.line(`i32.const 1`)
 	g.line(`i32.store`)
 	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
 }

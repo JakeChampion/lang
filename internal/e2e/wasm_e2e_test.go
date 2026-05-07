@@ -293,33 +293,40 @@ func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, st
 // `wasmtime --invoke` echoes that on stdout so we can verify
 // both the bytes (via `write`) and the count (via the printed
 // return value).
+// `read_line()` returns `Some(line)` for a present line (with the
+// trailing `\n` preserved) and `None` for end-of-file. Programs
+// pattern-match on the result; the post-Phase-3 typed shape
+// replaces the empty-string sentinel that previous PRs used.
 func TestWASMReadLineBuiltin(t *testing.T) {
 	src := `function main(): number {
-		var line: string = read_line();
-		write(line);
-		return len(line);
+		match (read_line()) {
+			Some(line) => { write(line); return len(line); },
+			None => { return -1; }
+		}
+		return -2;
 	}`
 	stdout, _, _ := runWasmStdinEnv(t, src, "hello\n", nil)
 	if !strings.Contains(stdout, "hello\n") {
 		t.Errorf("stdout missing `hello\\n`: %q", stdout)
 	}
-	// Also check the printed return value (wasmtime echoes int returns).
 	if !strings.Contains(stdout, "6") {
 		t.Errorf("stdout should contain `6` (len of \"hello\\n\"): %q", stdout)
 	}
 }
 
-// EOF on first byte gives an empty string, distinguishable from
-// a blank line ("\n", length 1).
+// EOF on the first byte routes through the `None` arm; a
+// non-empty line (even just "\n") routes through `Some`. The
+// match arms are how callers disambiguate now — no sentinel
+// length comparison required.
 func TestWASMReadLineBuiltinEOF(t *testing.T) {
 	src := `function main(): number {
-		var line: string = read_line();
-		return len(line);
+		match (read_line()) {
+			Some(line) => { return 1; },
+			None => { return 0; }
+		}
+		return -1;
 	}`
 	stdout, _, _ := runWasmStdinEnv(t, src, "", nil)
-	// Returned 0 — but we have to dig past wasmtime's `--invoke`
-	// warning lines and accept that the program output is just
-	// the integer 0.
 	got := 0
 	for _, ln := range strings.Split(stdout, "\n") {
 		ln = strings.TrimSpace(ln)
@@ -334,22 +341,53 @@ func TestWASMReadLineBuiltinEOF(t *testing.T) {
 		}
 	}
 	if got != 0 {
-		t.Errorf("got %d, want 0 (EOF => empty string)", got)
+		t.Errorf("got %d, want 0 (EOF routes to None arm)", got)
 	}
 }
 
-// `env(name)` looks up a WASI-provided environment variable.
-// Missing keys yield an empty string; the test only confirms
-// the present case here.
+// `env(name)` returns `Some(value)` when the key is set (even to
+// empty) and `None` when the key isn't set. The test exercises
+// the `Some` arm; the missing case is in TestWASMEnvBuiltinMissing.
 func TestWASMEnvBuiltin(t *testing.T) {
 	src := `function main(): number {
-		var v: string = env("LANG_TEST_VAR");
-		write(v);
-		return 0;
+		match (env("LANG_TEST_VAR")) {
+			Some(v) => { write(v); return 0; },
+			None => { return 1; }
+		}
+		return -1;
 	}`
 	stdout, _, _ := runWasmStdinEnv(t, src, "", []string{"LANG_TEST_VAR=hi"})
 	if !strings.Contains(stdout, "hi") {
 		t.Errorf("stdout missing `hi`: %q", stdout)
+	}
+}
+
+// Missing env keys route to `None`, distinguishable from a
+// present-but-empty value (which would still be `Some("")`).
+func TestWASMEnvBuiltinMissing(t *testing.T) {
+	src := `function main(): number {
+		match (env("LANG_TEST_DEFINITELY_NOT_SET_XYZ_42")) {
+			Some(v) => { return 1; },
+			None => { return 0; }
+		}
+		return -1;
+	}`
+	stdout, _, _ := runWasmStdinEnv(t, src, "", nil)
+	got := 0
+	for _, ln := range strings.Split(stdout, "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if i := strings.LastIndex(ln, " "); i >= 0 {
+			ln = ln[i+1:]
+		}
+		if n, err := strconv.Atoi(ln); err == nil {
+			got = n
+		}
+	}
+	if got != 0 {
+		t.Errorf("got %d, want 0 (missing env routes to None)", got)
 	}
 }
 
@@ -950,29 +988,32 @@ func TestWASMEnumMatchPayload(t *testing.T) {
 // both branches of a 2-arm enum so a regression in tag dispatch
 // (off-by-one, branch fall-through, etc.) shows up.
 func TestWASMEnumMatchDispatch(t *testing.T) {
-	srcOk := `enum Status { Ok, Err(string) }
-		function status(): Status { return Ok; }
+	// Use distinct variant names so the test program doesn't
+	// collide with the auto-injected Result enum (which owns
+	// `Ok` / `Err`).
+	srcOk := `enum Status { Good, Bad(string) }
+		function status(): Status { return Good; }
 		function main(): number {
 			match (status()) {
-				Ok => { return 0; },
-				Err(msg) => { return 1; }
+				Good => { return 0; },
+				Bad(msg) => { return 1; }
 			}
 			return -1;
 		}`
 	if got := runWasm(t, srcOk); got != 0 {
-		t.Errorf("Ok arm: got %d, want 0", got)
+		t.Errorf("Good arm: got %d, want 0", got)
 	}
-	srcErr := `enum Status { Ok, Err(string) }
-		function status(): Status { return Err("boom"); }
+	srcErr := `enum Status { Good, Bad(string) }
+		function status(): Status { return Bad("boom"); }
 		function main(): number {
 			match (status()) {
-				Ok => { return 0; },
-				Err(msg) => { return len(msg); }
+				Good => { return 0; },
+				Bad(msg) => { return len(msg); }
 			}
 			return -1;
 		}`
 	if got := runWasm(t, srcErr); got != 4 {
-		t.Errorf("Err arm: got %d, want 4 (len of \"boom\")", got)
+		t.Errorf("Bad arm: got %d, want 4 (len of \"boom\")", got)
 	}
 }
 
@@ -1020,8 +1061,8 @@ func TestWASMGenericOptionNone(t *testing.T) {
 // any other payload; `len(msg)` exercises the substituted
 // payload type.
 func TestWASMGenericResult(t *testing.T) {
-	src := `enum Result[T, E] { Ok(T), Err(E) }
-		function divide(a: number, b: number): Result[number, string] {
+	// Use the auto-injected `Result[T, E]` rather than re-declaring it.
+	src := `function divide(a: number, b: number): Result[number, string] {
 			if (b == 0) { return Err("zero"); }
 			return Ok(a / b);
 		}

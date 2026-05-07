@@ -185,7 +185,7 @@ func builtinReadLine(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("read_line: expected 0 args, got %d", len(args))
 	}
 	if i.Stdin == nil {
-		return String(""), nil
+		return &Enum{EnumName: "Option", VariantName: "None", Index: 1}, nil
 	}
 	var buf []byte
 	one := make([]byte, 1)
@@ -194,14 +194,18 @@ func builtinReadLine(i *Interp, args []Value) (Value, error) {
 		if n > 0 {
 			buf = append(buf, one[0])
 			if one[0] == '\n' {
-				return String(string(buf)), nil
+				return optionSome(String(string(buf))), nil
 			}
 		}
 		if err != nil {
-			// EOF mid-line: return what we have so far. If the
-			// caller hadn't read anything yet, this is an empty
-			// string — the EOF sentinel.
-			return String(string(buf)), nil
+			// EOF: empty buffer means we never read a byte, so
+			// signal `None`. A non-empty buffer at EOF mid-line
+			// returns `Some(line)` so the caller still sees the
+			// partial input.
+			if len(buf) == 0 {
+				return optionNone(), nil
+			}
+			return optionSome(String(string(buf))), nil
 		}
 	}
 }
@@ -209,7 +213,8 @@ func builtinReadLine(i *Interp, args []Value) (Value, error) {
 // builtinEnv looks up an environment variable. An explicit i.Env
 // map shadows the process environment so tests can run with a
 // scripted environment; nil falls through to os.LookupEnv.
-// Missing keys return an empty string.
+// Missing keys return `None`; present keys (including those set
+// to empty) return `Some(value)`.
 func builtinEnv(i *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("env: expected 1 arg, got %d", len(args))
@@ -221,12 +226,27 @@ func builtinEnv(i *Interp, args []Value) (Value, error) {
 	if i.Env != nil {
 		v, present := i.Env[string(name)]
 		if !present {
-			return String(""), nil
+			return optionNone(), nil
 		}
-		return String(v), nil
+		return optionSome(String(v)), nil
 	}
-	v, _ := os.LookupEnv(string(name))
-	return String(v), nil
+	v, present := os.LookupEnv(string(name))
+	if !present {
+		return optionNone(), nil
+	}
+	return optionSome(String(v)), nil
+}
+
+// optionSome / optionNone wrap a value into the canonical
+// Option enum's variant — index 0 for Some, 1 for None. The
+// interpreter mirrors the codegen's tag convention so a match
+// arm `Some(v)` extracts the right payload.
+func optionSome(v Value) *Enum {
+	return &Enum{EnumName: "Option", VariantName: "Some", Index: 0, Payloads: []Value{v}}
+}
+
+func optionNone() *Enum {
+	return &Enum{EnumName: "Option", VariantName: "None", Index: 1}
 }
 
 // builtinExit calls i.Exiter, which defaults to os.Exit. Tests
