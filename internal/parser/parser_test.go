@@ -602,3 +602,52 @@ function f(): number {
 		t.Errorf("second arm should be `B(n) =>`; got %+v", m.Arms[1])
 	}
 }
+
+// Generic enum decls carry positional type parameters in
+// brackets after the name. Variant payload types may reference
+// those parameters as bare identifiers; the parser preserves
+// them as `StructType{Name: T}` and the checker rewrites them
+// to ParamType after registration.
+func TestGenericEnumDeclParses(t *testing.T) {
+	prog, err := Parse(`enum Option[T] { Some(T), None }
+enum Result[T, E] { Ok(T), Err(E) }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Enums) != 2 {
+		t.Fatalf("expected 2 enum decls, got %d", len(prog.Enums))
+	}
+	if got := prog.Enums[0].TypeParams; len(got) != 1 || got[0] != "T" {
+		t.Errorf("Option type params should be [T]; got %v", got)
+	}
+	if got := prog.Enums[1].TypeParams; len(got) != 2 || got[0] != "T" || got[1] != "E" {
+		t.Errorf("Result type params should be [T, E]; got %v", got)
+	}
+}
+
+// Generic instantiations parse into `EnumType{Name, Args}` at
+// any type position. `Foo[T][]` (array of generic) keeps the
+// brackets in the right order: generic instantiation first, the
+// array suffix wraps the result.
+func TestGenericInstantiationAtTypePosition(t *testing.T) {
+	prog, err := Parse(`enum Option[T] { Some(T), None }
+function f(): Option[number] { return None; }
+function g(xs: Option[string][]): number { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := prog.Funcs[0]
+	et, ok := f.ReturnType.(ast.EnumType)
+	if !ok || et.Name != "Option" || len(et.Args) != 1 {
+		t.Errorf("f's return type should be Option[number]; got %+v", f.ReturnType)
+	}
+	g := prog.Funcs[1]
+	at, ok := g.Params[0].Type.(ast.ArrayType)
+	if !ok {
+		t.Fatalf("g's first param should be an array; got %+v", g.Params[0].Type)
+	}
+	innerET, ok := at.Elem.(ast.EnumType)
+	if !ok || innerET.Name != "Option" || len(innerET.Args) != 1 {
+		t.Errorf("g's array element should be Option[string]; got %+v", at.Elem)
+	}
+}

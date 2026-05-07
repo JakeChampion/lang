@@ -330,6 +330,26 @@ function main(): number { return N; }`)
 	}
 }
 
+// Generic enum decls and generic instantiations at type
+// positions round-trip through the formatter. The single-line
+// enum form keeps `[T]` next to the name; type positions
+// preserve `Option[number]` rather than collapsing the
+// brackets.
+func TestFormatGenericEnumRoundTrip(t *testing.T) {
+	got := formatSrc(t, `enum Option[T] { Some(T), None }
+function find(): Option[number] { return None; }`)
+	if !strings.Contains(got, "enum Option[T] { Some(T), None }") {
+		t.Errorf("expected generic enum decl with [T]; got:\n%s", got)
+	}
+	if !strings.Contains(got, "Option[number]") {
+		t.Errorf("expected `Option[number]` in return-type position; got:\n%s", got)
+	}
+	again := formatSrc(t, got)
+	if got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
 // `enum` decls and `match` statements round-trip through
 // parse → format → parse stably, including payload-carrying
 // variants and `pub enum`.

@@ -49,10 +49,26 @@ type FuncType struct {
 // field list lives on the program's StructDecl, looked up via Name.
 type StructType struct{ Name string }
 
-// EnumType is a nominal reference to a top-level `enum` declaration.
-// Two EnumTypes are equal iff their Name fields match. The variant
-// list lives on the program's EnumDecl, looked up via Name.
-type EnumType struct{ Name string }
+// EnumType is a nominal reference to a top-level `enum` declaration,
+// optionally with concrete type arguments. `Args` is empty for
+// non-generic enums (`Status`); populated for generic instantiations
+// (`Option[number]` -> `EnumType{Name: "Option", Args: [Number]}`).
+//
+// Two EnumTypes are equal when their names match AND their type
+// argument lists are pairwise equal — `Option[number]` ≠
+// `Option[string]`, even though they share the same EnumDecl.
+type EnumType struct {
+	Name string
+	Args []Type
+}
+
+// ParamType is a stand-in for an enum's type parameter inside its
+// declaration body — it appears in variant payload type lists
+// (`Some(T)` -> the payload type is `ParamType{Name: "T"}`). The
+// checker rewrites ParamType references to concrete types when
+// it instantiates `Option[number]`, so the type machinery never
+// needs to compare two parameters from different scopes.
+type ParamType struct{ Name string }
 
 func (NumberType) isType()  {}
 func (BoolType) isType()    {}
@@ -63,6 +79,7 @@ func (ArrayType) isType()   {}
 func (*FuncType) isType()   {}
 func (StructType) isType()  {}
 func (EnumType) isType()    {}
+func (ParamType) isType()   {}
 func (NumberType) String() string  { return "number" }
 func (BoolType) String() string    { return "boolean" }
 func (VoidType) String() string    { return "void" }
@@ -70,7 +87,20 @@ func (StringType) String() string  { return "string" }
 func (FloatType) String() string   { return "float" }
 func (a ArrayType) String() string { return a.Elem.String() + "[]" }
 func (s StructType) String() string { return s.Name }
-func (e EnumType) String() string  { return e.Name }
+func (e EnumType) String() string {
+	if len(e.Args) == 0 {
+		return e.Name
+	}
+	out := e.Name + "["
+	for i, a := range e.Args {
+		if i > 0 {
+			out += ", "
+		}
+		out += a.String()
+	}
+	return out + "]"
+}
+func (p ParamType) String() string { return p.Name }
 func (f *FuncType) String() string {
 	out := "("
 	for i, p := range f.Params {
@@ -120,6 +150,17 @@ func Equal(a, b Type) bool {
 		return ok && x.Name == y.Name
 	case EnumType:
 		y, ok := b.(EnumType)
+		if !ok || x.Name != y.Name || len(x.Args) != len(y.Args) {
+			return false
+		}
+		for i := range x.Args {
+			if !Equal(x.Args[i], y.Args[i]) {
+				return false
+			}
+		}
+		return true
+	case ParamType:
+		y, ok := b.(ParamType)
 		return ok && x.Name == y.Name
 	}
 	return false
@@ -494,10 +535,19 @@ type StructDecl struct {
 // less constructor like `Red`) or one or more (`Square(float,
 // float)`). Variants are stored in declaration order; the index
 // is the runtime tag.
+//
+// Generic enums declare positional type parameters in brackets
+// after the name: `enum Option[T] { Some(T), None }`. Inside a
+// variant payload list, references to `T` parse as
+// ParamType{Name: "T"}; the checker substitutes them with the
+// concrete type arguments at each instantiation. The runtime
+// representation is type-erased — payloads are uniform i32
+// slots, so generics add no per-instantiation codegen.
 type EnumDecl struct {
-	P        Position
-	Name     string
-	Variants []EnumVariant
+	P          Position
+	Name       string
+	TypeParams []string
+	Variants   []EnumVariant
 	// Public marks the enum as exported across modules. Same
 	// semantics as FuncDecl.Public — `pub enum Foo { … }` lets
 	// other modules name `Foo`, including its variants in match

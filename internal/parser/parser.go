@@ -510,6 +510,27 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Optional generic parameters: `enum Option[T, U] { … }`. We
+	// require at least one identifier between the brackets — empty
+	// `[]` would be ambiguous with the array-type suffix the type
+	// parser uses.
+	var typeParams []string
+	if _, ok := p.accept(lexer.Punct, "["); ok {
+		for {
+			pname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			typeParams = append(typeParams, pname.Text)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				continue
+			}
+			break
+		}
+		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
 	}
@@ -555,7 +576,7 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	return &ast.EnumDecl{P: kw.Pos, Name: name.Text, Variants: variants}, nil
+	return &ast.EnumDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, Variants: variants}, nil
 }
 
 func (p *parser) parseType() (ast.Type, error) {
@@ -622,7 +643,33 @@ func (p *parser) parseType() (ast.Type, error) {
 			}
 			name = name + "." + fieldTok.Text
 		}
-		base = ast.StructType{Name: name}
+		// Generic instantiation: `Foo[T1, T2]`. Distinguished
+		// from the array-suffix loop below by a lookahead — `[`
+		// directly followed by `]` is the array form.
+		if p.match(lexer.Punct, "[") && p.i+1 < len(p.tokens) && !(p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "]") {
+			p.advance() // consume `[`
+			var args []ast.Type
+			for {
+				at, err := p.parseType()
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, at)
+				if _, ok := p.accept(lexer.Punct, ","); ok {
+					continue
+				}
+				break
+			}
+			if _, err := p.expect(lexer.Punct, "]"); err != nil {
+				return nil, err
+			}
+			// Generic instantiations are always enums in this
+			// PR; the checker validates the name actually
+			// resolves to an enum.
+			base = ast.EnumType{Name: name, Args: args}
+		} else {
+			base = ast.StructType{Name: name}
+		}
 	default:
 		return nil, p.errorf(t.Pos, "expected type, got %q", t.Text)
 	}

@@ -850,3 +850,44 @@ func TestEnumMatchDispatchArm(t *testing.T) {
 		t.Errorf("exit = %d, want 4 (len of \"boom\")", code)
 	}
 }
+
+// Generic enum Option end-to-end on arm32 — same scenarios as
+// the WASM tests, but compiled and executed under qemu so the
+// type-erased lowering is exercised on a non-WASM backend too.
+func TestGenericOptionArm(t *testing.T) {
+	src := `enum Option[T] { Some(T), None }
+		function find(): Option[number] { return Some(42); }
+		function main(): number {
+			match (find()) {
+				Some(v) => { return v; },
+				None => { return -1; }
+			}
+			return 99;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42", code)
+	}
+}
+
+// Generic Result[T, E] on arm32 — both type parameters route
+// through the heap at runtime. The error arm carries a string
+// payload that flows through `len` on extraction.
+func TestGenericResultArm(t *testing.T) {
+	src := `enum Result[T, E] { Ok(T), Err(E) }
+		function check(b: boolean): Result[number, string] {
+			if (b) { return Ok(7); }
+			return Err("oops");
+		}
+		function main(): number {
+			match (check(false)) {
+				Ok(v) => { return v; },
+				Err(msg) => { return len(msg); }
+			}
+			return -1;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 4 {
+		t.Errorf("exit = %d, want 4 (len of \"oops\")", code)
+	}
+}

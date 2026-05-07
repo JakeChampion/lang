@@ -177,6 +177,16 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 	}
 	f.b.WriteString("enum ")
 	f.b.WriteString(ed.Name)
+	if len(ed.TypeParams) > 0 {
+		f.b.WriteByte('[')
+		for i, p := range ed.TypeParams {
+			if i > 0 {
+				f.b.WriteString(", ")
+			}
+			f.b.WriteString(p)
+		}
+		f.b.WriteByte(']')
+	}
 	f.b.WriteString(" { ")
 	for i, v := range ed.Variants {
 		if i > 0 {
@@ -664,6 +674,20 @@ func formatType(t ast.Type) string {
 	case ast.FloatType:
 		return "float"
 	case ast.StructType:
+		return x.Name
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x.Name
+		}
+		out := x.Name + "["
+		for i, a := range x.Args {
+			if i > 0 {
+				out += ", "
+			}
+			out += formatType(a)
+		}
+		return out + "]"
+	case ast.ParamType:
 		return x.Name
 	case ast.ArrayType:
 		return formatType(x.Elem) + "[]"
