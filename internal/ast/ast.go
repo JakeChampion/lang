@@ -15,6 +15,17 @@ type Position struct {
 
 func (p Position) String() string { return fmt.Sprintf("%d:%d", p.Line, p.Col) }
 
+// Comment is a `//` line comment captured by the lexer and threaded
+// through to consumers like the formatter that want to re-emit
+// human-written notes. Text excludes the leading `//` and any
+// trailing newline; Pos points at the `//` itself so the formatter
+// can decide whether the comment is leading (different line from
+// the next statement) or trailing (same line as the previous one).
+type Comment struct {
+	Pos  Position
+	Text string
+}
+
 // ---------- Types ----------
 
 type Type interface {
@@ -418,4 +429,9 @@ type StructDecl struct {
 type Program struct {
 	Funcs   []*FuncDecl
 	Structs []*StructDecl
+	// Comments lists every `//` line comment the lexer collected,
+	// in source order. Most consumers (checker, IR lowering,
+	// codegen) ignore this field; the formatter walks it alongside
+	// the AST to re-emit comments at their original positions.
+	Comments []Comment
 }

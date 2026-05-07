@@ -3,7 +3,7 @@ package lexer
 import "testing"
 
 func TestKeywordsAndIdentifiers(t *testing.T) {
-	toks, err := Tokenize("function foo if returnFoo")
+	toks, _, err := Tokenize("function foo if returnFoo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestKeywordsAndIdentifiers(t *testing.T) {
 }
 
 func TestPunctuators(t *testing.T) {
-	toks, err := Tokenize("== != <= >= && || + -")
+	toks, _, err := Tokenize("== != <= >= && || + -")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestPunctuators(t *testing.T) {
 }
 
 func TestComments(t *testing.T) {
-	toks, err := Tokenize("// comment\n42\n// trailing")
+	toks, _, err := Tokenize("// comment\n42\n// trailing")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestComments(t *testing.T) {
 }
 
 func TestPositions(t *testing.T) {
-	toks, err := Tokenize("x\n  y")
+	toks, _, err := Tokenize("x\n  y")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,14 +66,14 @@ func TestPositions(t *testing.T) {
 }
 
 func TestUnknownChar(t *testing.T) {
-	_, err := Tokenize("@")
+	_, _, err := Tokenize("@")
 	if err == nil {
 		t.Fatal("expected error on '@'")
 	}
 }
 
 func TestStringLiteralBasic(t *testing.T) {
-	toks, err := Tokenize(`"hello"`)
+	toks, _, err := Tokenize(`"hello"`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestStringLiteralBasic(t *testing.T) {
 }
 
 func TestStringLiteralEscapes(t *testing.T) {
-	toks, err := Tokenize(`"a\t\nb\"c\\d"`)
+	toks, _, err := Tokenize(`"a\t\nb\"c\\d"`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,19 +94,19 @@ func TestStringLiteralEscapes(t *testing.T) {
 }
 
 func TestStringLiteralUnterminated(t *testing.T) {
-	if _, err := Tokenize(`"oops`); err == nil {
+	if _, _, err := Tokenize(`"oops`); err == nil {
 		t.Error("expected error on unterminated string")
 	}
 }
 
 func TestStringLiteralUnknownEscape(t *testing.T) {
-	if _, err := Tokenize(`"a\zb"`); err == nil {
+	if _, _, err := Tokenize(`"a\zb"`); err == nil {
 		t.Error("expected error on unknown escape")
 	}
 }
 
 func TestFloatLiteral(t *testing.T) {
-	toks, err := Tokenize("1.5 0.25 12.0")
+	toks, _, err := Tokenize("1.5 0.25 12.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestFloatLiteral(t *testing.T) {
 }
 
 func TestFloatKeyword(t *testing.T) {
-	toks, err := Tokenize("float")
+	toks, _, err := Tokenize("float")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestFloatKeyword(t *testing.T) {
 }
 
 func TestCompoundAssignTokens(t *testing.T) {
-	toks, err := Tokenize("+= -= *= /= %= &= |= ^= <<= >>=")
+	toks, _, err := Tokenize("+= -= *= /= %= &= |= ^= <<= >>=")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestCompoundAssignTokens(t *testing.T) {
 }
 
 func TestQuestionMarkPunct(t *testing.T) {
-	toks, err := Tokenize("?")
+	toks, _, err := Tokenize("?")
 	if err != nil {
 		t.Fatal(err)
 	}

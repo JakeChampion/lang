@@ -204,6 +204,76 @@ func TestFormatEndsWithNewline(t *testing.T) {
 	}
 }
 
+// Leading line comments above a statement re-emit on their own
+// lines at the statement's indent level. The lexer captures them;
+// the parser threads them through prog.Comments; the formatter
+// drains them just before each statement.
+func TestFormatPreservesLeadingComment(t *testing.T) {
+	src := `function main(): number {
+  // why we return 42
+  return 42;
+}`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, "  // why we return 42\n  return 42;") {
+		t.Errorf("expected leading comment preserved at statement indent:\n%s", got)
+	}
+}
+
+// Trailing comments on the same source line as a single-line
+// statement re-emit inline, separated by two spaces — the
+// `putchar(70);  // F` shape.
+func TestFormatPreservesTrailingComment(t *testing.T) {
+	src := `function main(): void {
+  putchar(70);  // F
+  putchar(66);  // B
+}`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, "putchar(70);  // F") {
+		t.Errorf("expected trailing comment preserved inline:\n%s", got)
+	}
+	if !strings.Contains(got, "putchar(66);  // B") {
+		t.Errorf("expected second trailing comment preserved inline:\n%s", got)
+	}
+}
+
+// File-level comments before the first declaration emit at the
+// top of the output at depth 0.
+func TestFormatPreservesFileLeadingComment(t *testing.T) {
+	src := `// program description
+function main(): number { return 0; }`
+	got := formatSrc(t, src)
+	if !strings.HasPrefix(got, "// program description\n") {
+		t.Errorf("expected leading file comment at top:\n%s", got)
+	}
+}
+
+// Comments after the last declaration emit at end-of-file before
+// the trailing newline.
+func TestFormatPreservesTrailingFileComment(t *testing.T) {
+	src := `function main(): number { return 0; }
+// outro comment`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, "// outro comment\n") {
+		t.Errorf("expected trailing file comment preserved:\n%s", got)
+	}
+}
+
+// Idempotence still holds with comments — formatting twice
+// produces the same output.
+func TestFormatIdempotentWithComments(t *testing.T) {
+	src := `// header
+function f(): number {
+  // before return
+  return 7;  // trailing
+}
+// outro`
+	first := formatSrc(t, src)
+	second := formatSrc(t, first)
+	if first != second {
+		t.Errorf("comment-bearing format not idempotent:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
 // Multiple top-level decls are separated by a single blank line so
 // they read clearly without bunching.
 func TestFormatBlankLineBetweenTopLevelDecls(t *testing.T) {
