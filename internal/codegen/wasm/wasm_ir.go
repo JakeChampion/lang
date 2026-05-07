@@ -56,6 +56,7 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, ip *ir.Program) (string, 
 	g.scanForRuntimeUses(prog)
 	g.scanForArrayUses(prog)
 	g.scanForStructUses(prog)
+	g.scanForIOBuiltins(prog)
 	g.scanForIndirectCalls(prog)
 	g.scanForStringEq(prog)
 	g.scanForStringConcat(prog)
@@ -65,6 +66,18 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, ip *ir.Program) (string, 
 		g.needsFuncTable = true
 		g.needsRuntime = true
 		g.needsArrays = true
+	}
+
+	// Bump the string-data start past whatever runtime scratch we
+	// claimed. The default base is 64; read_line claims 56..71;
+	// env claims 72..91. Strings (and the heap that follows) move
+	// to 96 when env is in play, 72 when only read_line is.
+	if g.needsEnv {
+		g.stringOffset = 96
+		g.closuresBase = 96
+	} else if g.needsReadLine {
+		g.stringOffset = 72
+		g.closuresBase = 72
 	}
 
 	g.tableIndex = map[string]int{}

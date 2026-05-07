@@ -110,6 +110,30 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.ArrayType{Elem: ast.StringType{}},
 	}
+	// read_line(): string — reads one line from stdin (terminated by
+	// `\n`, which is preserved in the returned string). Returns an
+	// empty string at end-of-file. A real empty line returns "\n",
+	// so callers can disambiguate EOF from a blank line by length.
+	c.info.FuncSigs["read_line"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.StringType{},
+	}
+	// env(name: string): string — reads an environment variable by
+	// name. Returns an empty string when the variable isn't set.
+	// (We'll add a richer Option-style API once the language has
+	// the type machinery for it; the empty-string sentinel is the
+	// MVP.)
+	c.info.FuncSigs["env"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.StringType{},
+	}
+	// exit(code: number): void — exits the process immediately with
+	// the given status code. Useful for `eprint(msg); exit(2)`-style
+	// error paths; the success path can just `return` from main.
+	c.info.FuncSigs["exit"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled

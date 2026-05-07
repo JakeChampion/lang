@@ -246,6 +246,131 @@ func TestWASMArgsBuiltinReadsValue(t *testing.T) {
 	}
 }
 
+// runWasmStdinEnv runs the compiled wasm under wasmtime with
+// scripted stdin, scripted env vars, and returns stdout, stderr,
+// and the exit code separately. wasmtime's `--env KEY=VAL` flag
+// forwards into WASI environ_get; stdin gets piped through.
+func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	wt := wasmtimePath(t)
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	wat, err := wasm.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	watPath := filepath.Join(dir, "prog.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	args := []string{"run", "--invoke", "main"}
+	for _, e := range envs {
+		args = append(args, "--env", e)
+	}
+	args = append(args, watPath)
+	cmd := exec.Command(wt, args...)
+	cmd.Stdin = strings.NewReader(stdin)
+	var soBuf, seBuf bytes.Buffer
+	cmd.Stdout = &soBuf
+	cmd.Stderr = &seBuf
+	_ = cmd.Run()
+	return soBuf.String(), seBuf.String(), cmd.ProcessState.ExitCode()
+}
+
+// `read_line()` reads one line from stdin including the trailing
+// newline. The byte length is reported via main's return value;
+// `wasmtime --invoke` echoes that on stdout so we can verify
+// both the bytes (via `write`) and the count (via the printed
+// return value).
+func TestWASMReadLineBuiltin(t *testing.T) {
+	src := `function main(): number {
+		var line: string = read_line();
+		write(line);
+		return len(line);
+	}`
+	stdout, _, _ := runWasmStdinEnv(t, src, "hello\n", nil)
+	if !strings.Contains(stdout, "hello\n") {
+		t.Errorf("stdout missing `hello\\n`: %q", stdout)
+	}
+	// Also check the printed return value (wasmtime echoes int returns).
+	if !strings.Contains(stdout, "6") {
+		t.Errorf("stdout should contain `6` (len of \"hello\\n\"): %q", stdout)
+	}
+}
+
+// EOF on first byte gives an empty string, distinguishable from
+// a blank line ("\n", length 1).
+func TestWASMReadLineBuiltinEOF(t *testing.T) {
+	src := `function main(): number {
+		var line: string = read_line();
+		return len(line);
+	}`
+	stdout, _, _ := runWasmStdinEnv(t, src, "", nil)
+	// Returned 0 — but we have to dig past wasmtime's `--invoke`
+	// warning lines and accept that the program output is just
+	// the integer 0.
+	got := 0
+	for _, ln := range strings.Split(stdout, "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if i := strings.LastIndex(ln, " "); i >= 0 {
+			ln = ln[i+1:]
+		}
+		if n, err := strconv.Atoi(ln); err == nil {
+			got = n
+		}
+	}
+	if got != 0 {
+		t.Errorf("got %d, want 0 (EOF => empty string)", got)
+	}
+}
+
+// `env(name)` looks up a WASI-provided environment variable.
+// Missing keys yield an empty string; the test only confirms
+// the present case here.
+func TestWASMEnvBuiltin(t *testing.T) {
+	src := `function main(): number {
+		var v: string = env("LANG_TEST_VAR");
+		write(v);
+		return 0;
+	}`
+	stdout, _, _ := runWasmStdinEnv(t, src, "", []string{"LANG_TEST_VAR=hi"})
+	if !strings.Contains(stdout, "hi") {
+		t.Errorf("stdout missing `hi`: %q", stdout)
+	}
+}
+
+// `exit(code)` calls WASI proc_exit, which terminates the
+// process with the given status. wasmtime surfaces that as the
+// host process's exit code.
+func TestWASMExitBuiltin(t *testing.T) {
+	src := `function main(): number {
+		eprint("boom");
+		exit(7);
+		return 0;
+	}`
+	_, stderr, code := runWasmStdinEnv(t, src, "", nil)
+	if !strings.Contains(stderr, "boom") {
+		t.Errorf("stderr missing `boom`: %q", stderr)
+	}
+	if code != 7 {
+		t.Errorf("exit = %d, want 7", code)
+	}
+}
+
 // `write` produces stdout output without a trailing newline.
 // Three consecutive `write` calls concatenate into a single run;
 // the final `print` adds the only newline in the output.

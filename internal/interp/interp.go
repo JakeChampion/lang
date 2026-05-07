@@ -100,6 +100,19 @@ type Interp struct {
 	// tests / the REPL can override it to capture diagnostic
 	// output independently of Stdout.
 	Stderr io.Writer
+	// Stdin is where `read_line` reads. Defaults to os.Stdin;
+	// tests / the REPL can override it to feed scripted input.
+	Stdin io.Reader
+	// Env is the source of `env(name)` lookups. nil means
+	// fall through to os.LookupEnv; a populated map shadows the
+	// process environment so tests can run hermetically.
+	Env map[string]string
+	// Exiter is invoked by the `exit(code)` builtin. Defaults to
+	// os.Exit; tests override it to capture the requested code
+	// without actually killing the process. A non-returning
+	// function is expected — the interpreter has no story for
+	// resuming after an exit call.
+	Exiter func(code int)
 	// Args is what the `args()` builtin returns, in source-program
 	// order (argv[0] first). REPL / test callers can override this
 	// to feed scripted argv without going through os.Args.
@@ -116,6 +129,8 @@ func New() *Interp {
 		Builtins: map[string]*Builtin{},
 		Stdout:   os.Stdout,
 		Stderr:   os.Stderr,
+		Stdin:    os.Stdin,
+		Exiter:   os.Exit,
 		Global:   newEnv(nil),
 	}
 	i.Builtins["print"] = &Builtin{Fn: builtinPrint}
@@ -124,7 +139,81 @@ func New() *Interp {
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
+	i.Builtins["read_line"] = &Builtin{Fn: builtinReadLine}
+	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
+	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
 	return i
+}
+
+// builtinReadLine reads bytes from i.Stdin one at a time until it
+// hits a newline or EOF. The trailing `\n` is included in the
+// returned string when present, so callers can disambiguate
+// "blank line" (returns "\n") from EOF (returns "").
+func builtinReadLine(i *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("read_line: expected 0 args, got %d", len(args))
+	}
+	if i.Stdin == nil {
+		return String(""), nil
+	}
+	var buf []byte
+	one := make([]byte, 1)
+	for {
+		n, err := i.Stdin.Read(one)
+		if n > 0 {
+			buf = append(buf, one[0])
+			if one[0] == '\n' {
+				return String(string(buf)), nil
+			}
+		}
+		if err != nil {
+			// EOF mid-line: return what we have so far. If the
+			// caller hadn't read anything yet, this is an empty
+			// string — the EOF sentinel.
+			return String(string(buf)), nil
+		}
+	}
+}
+
+// builtinEnv looks up an environment variable. An explicit i.Env
+// map shadows the process environment so tests can run with a
+// scripted environment; nil falls through to os.LookupEnv.
+// Missing keys return an empty string.
+func builtinEnv(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("env: expected 1 arg, got %d", len(args))
+	}
+	name, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("env: expected string arg, got %T", args[0])
+	}
+	if i.Env != nil {
+		v, present := i.Env[string(name)]
+		if !present {
+			return String(""), nil
+		}
+		return String(v), nil
+	}
+	v, _ := os.LookupEnv(string(name))
+	return String(v), nil
+}
+
+// builtinExit calls i.Exiter, which defaults to os.Exit. Tests
+// override Exiter to capture the requested code; the substitute
+// is expected to be non-returning (panic, longjmp-style abort,
+// or test-only "remember the code and noop").
+func builtinExit(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("exit: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("exit: expected number arg, got %T", args[0])
+	}
+	if i.Exiter != nil {
+		i.Exiter(int(n))
+	}
+	return Void{}, nil
 }
 
 func builtinWrite(i *Interp, args []Value) (Value, error) {

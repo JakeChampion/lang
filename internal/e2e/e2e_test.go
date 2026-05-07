@@ -602,6 +602,136 @@ func TestArgsBuiltinReadsValueArm(t *testing.T) {
 	}
 }
 
+// runWithStdinEnv builds the program, then runs it under qemu
+// with scripted stdin + extra env vars, returning stdout, stderr,
+// and exit code separately. Used by the read_line / env / exit
+// builtins' e2e tests where any one of those streams is the
+// signal under test.
+func runWithStdinEnv(t *testing.T, src, stdin string, extraEnv []string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	gcc, qemu := tooling(t)
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+	cmd := exec.Command(qemu, binPath)
+	cmd.Stdin = strings.NewReader(stdin)
+	if len(extraEnv) > 0 {
+		// qemu-arm forwards parent env to the guest by default;
+		// append our overrides so they win the lookup.
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
+	var soBuf, seBuf bytes.Buffer
+	cmd.Stdout = &soBuf
+	cmd.Stderr = &seBuf
+	_ = cmd.Run()
+	return soBuf.String(), seBuf.String(), cmd.ProcessState.ExitCode()
+}
+
+// `read_line()` returns the next stdin line including its
+// trailing `\n`. The exit-code signals end-of-file (the helper
+// returns an empty string at EOF, so callers can break a read
+// loop with `if (len(line) == 0) break;`).
+func TestReadLineBuiltinArm(t *testing.T) {
+	src := `function main(): number {
+		var line: string = read_line();
+		write(line);
+		return len(line);
+	}`
+	stdout, _, code := runWithStdinEnv(t, src, "hello\n", nil)
+	if stdout != "hello\n" {
+		t.Errorf("stdout = %q, want %q", stdout, "hello\n")
+	}
+	// "hello\n" is 6 bytes — the language's `len` returns the
+	// byte count of the string, including the trailing newline.
+	if code != 6 {
+		t.Errorf("exit = %d, want 6 (len of \"hello\\n\")", code)
+	}
+}
+
+// EOF on the first byte yields an empty string, distinguishable
+// from a blank input line ("\n", length 1). Used by callers as
+// the loop-exit signal.
+func TestReadLineBuiltinEOFArm(t *testing.T) {
+	src := `function main(): number {
+		var line: string = read_line();
+		return len(line);
+	}`
+	_, _, code := runWithStdinEnv(t, src, "", nil)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (EOF returns empty string)", code)
+	}
+}
+
+// `env(name)` reads a process-level environment variable. A
+// missing key returns an empty string; callers compare with
+// `len(...) == 0` to branch on absence.
+func TestEnvBuiltinArm(t *testing.T) {
+	src := `function main(): number {
+		var v: string = env("LANG_TEST_VAR");
+		write(v);
+		return len(v);
+	}`
+	stdout, _, code := runWithStdinEnv(t, src, "", []string{"LANG_TEST_VAR=hi"})
+	if stdout != "hi" {
+		t.Errorf("stdout = %q, want %q", stdout, "hi")
+	}
+	if code != 2 {
+		t.Errorf("exit = %d, want 2 (len of \"hi\")", code)
+	}
+}
+
+// Missing env returns an empty string. The exit code is 0
+// because `len("")` is 0.
+func TestEnvBuiltinMissingArm(t *testing.T) {
+	src := `function main(): number {
+		var v: string = env("LANG_TEST_DEFINITELY_NOT_SET_XYZ");
+		return len(v);
+	}`
+	_, _, code := runWithStdinEnv(t, src, "", nil)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (missing env => empty string)", code)
+	}
+}
+
+// `exit(code)` short-circuits whatever main was about to return.
+// Pairing it with `eprint` is the canonical "fatal error" shape.
+func TestExitBuiltinArm(t *testing.T) {
+	src := `function main(): number {
+		eprint("boom");
+		exit(7);
+		return 0;
+	}`
+	_, stderr, code := runWithStdinEnv(t, src, "", nil)
+	if stderr != "boom\n" {
+		t.Errorf("stderr = %q, want %q", stderr, "boom\n")
+	}
+	if code != 7 {
+		t.Errorf("exit = %d, want 7", code)
+	}
+}
+
 // `write` is `print` minus the newline. Three calls back-to-back
 // land on stdout as one continuous run with no separators; the
 // final `print` then closes the line.
