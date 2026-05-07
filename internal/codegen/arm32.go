@@ -74,6 +74,8 @@ type generator struct {
 	usesStrcat  bool              // true if the program needs the strcat helper
 	usesAlloc   bool              // true if the program needs the alloc helper (any heap-backed array / struct / closure)
 	usesArgs    bool              // true if the program calls args() — pulls in the runtime helper + main argc/argv save
+	usesWrite   bool              // true if the program calls write() — pulls in __lang_write
+	usesEprint  bool              // true if the program calls eprint() — pulls in __lang_eprint and the newline byte
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
 }
 
@@ -230,6 +232,57 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("pop {r4, r5, r6, r7, r8, r9, r10, lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_args, .-__lang_args")
+}
+
+// emitWriteRuntime emits `__lang_write`, the 1-arg shim that turns
+// the language-level `write(s)` into a libc `write(1, s, len)`
+// syscall. The string's length lives at `s - 4` so we read it
+// without scanning. The helper preserves stack alignment for the
+// call but doesn't touch any callee-saved register the caller
+// expects to keep — it pushes only `lr`.
+func (g *generator) emitWriteRuntime() {
+	g.line("")
+	g.line(".global __lang_write")
+	g.line(".type __lang_write, %function")
+	g.label("__lang_write")
+	g.emit("push {lr}")
+	g.emit("sub sp, sp, #4")    // 8-byte alignment
+	g.emit("ldr r2, [r0, #-4]") // r2 = length
+	g.emit("mov r1, r0")        // r1 = buf
+	g.emit("mov r0, #1")        // r0 = fd (stdout)
+	g.emit("bl write")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_write, .-__lang_write")
+}
+
+// emitEprintRuntime emits `__lang_eprint`, the stderr counterpart
+// to libc `puts`. It performs two libc `write` syscalls: one for
+// the user's string, one for a single-byte newline buffer interned
+// at `.LLangNewline`. We can't just call `puts` here because puts
+// always writes to stdout; we want fd=2 throughout.
+func (g *generator) emitEprintRuntime() {
+	g.line("")
+	g.line(".global __lang_eprint")
+	g.line(".type __lang_eprint, %function")
+	g.label("__lang_eprint")
+	g.emit("push {lr}")
+	g.emit("sub sp, sp, #4") // 8-byte alignment
+	// First call: write(2, s, len(s))
+	g.emit("ldr r2, [r0, #-4]")
+	g.emit("mov r1, r0")
+	g.emit("mov r0, #2")
+	g.emit("bl write")
+	// Second call: write(2, .LLangNewline, 1)
+	g.emit("ldr r1, =.LLangNewline")
+	g.emit("mov r2, #1")
+	g.emit("mov r0, #2")
+	g.emit("bl write")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_eprint, .-__lang_eprint")
 }
 
 // internString returns a unique .rodata label for s, allocating a new one

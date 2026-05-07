@@ -329,6 +329,17 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 	case "print":
 		// `print(s)` is `puts(s)`; puts already adds a newline.
 		target = "puts"
+	case "write":
+		// `write(s)` writes the string to stdout without a
+		// newline. The runtime shim turns the 1-arg lang call
+		// into a libc `write(1, s, len)` syscall.
+		target = "__lang_write"
+		g.usesWrite = true
+	case "eprint":
+		// `eprint(s)` is the stderr counterpart to `print` —
+		// string + newline, both via the libc `write` syscall.
+		target = "__lang_eprint"
+		g.usesEprint = true
 	case "putchar":
 		// putchar takes its arg in r0 like normal — no rewrite needed.
 	case "args":

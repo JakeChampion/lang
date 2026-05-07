@@ -161,6 +161,11 @@ Built-ins:
 
 - `print(s: string): void` — newline-terminating output (libc `puts`
   on ARM32, WASI `fd_write` on WASM).
+- `write(s: string): void` — stdout without a trailing newline.
+  Use to compose your own output formatting (status lines, prompts,
+  custom delimiters).
+- `eprint(s: string): void` — `print` shape but routed to stderr,
+  so error / diagnostic output stays out of the stdout pipe.
 - `putchar(n: number): void` — writes one byte.
 - `len(x): number` — array or string length.
 - `args(): string[]` — command-line arguments. argv[0] is the

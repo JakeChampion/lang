@@ -83,6 +83,23 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.VoidType{},
 	}
+	// write(s: string): void — stdout without a trailing newline.
+	// Use this when you want to format your own output (status
+	// lines, prompts, custom delimiters) instead of one line per
+	// call. Pairs with `print` the way Go's `fmt.Print` /
+	// `fmt.Println` do.
+	c.info.FuncSigs["write"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.VoidType{},
+	}
+	// eprint(s: string): void — `print` shape but routed to stderr.
+	// Useful for error / diagnostic output that shouldn't get
+	// mixed in with stdout when the program is being piped to
+	// another tool.
+	c.info.FuncSigs["eprint"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.VoidType{},
+	}
 	// args(): string[] — returns the program's command-line argv as a
 	// length-prefixed string array. The first element is conventionally
 	// the program / module path (matching argv[0] in C and os.Args[0]

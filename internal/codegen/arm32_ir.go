@@ -65,15 +65,25 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		stringLabel: map[string]string{},
 		srcFile:     opts.SourceFile,
 	}
-	// Detect args() usage up-front so the prologue insertion in
-	// `main` knows to save argc / argv. `usesArgs` gets set as a
-	// side-effect of OpCallDirect-to-args in emitCallDirect, but
-	// main is typically emitted first, so we'd miss its prologue.
+	// Detect args() / write() / eprint() usage up-front. `usesArgs`
+	// matters specifically because the prologue insertion in `main`
+	// depends on it, and main is usually emitted first — without
+	// this scan the side-effect set in emitCallDirect would arrive
+	// too late. The other flags ride along for symmetry; emitting
+	// the helpers ahead of OpCallDirect side-effects has no cost.
 	for _, irFn := range ip.Funcs {
 		for _, op := range irFn.Ops {
-			if op.Kind == ir.OpCallDirect && op.Str == "args" {
+			if op.Kind != ir.OpCallDirect {
+				continue
+			}
+			switch op.Str {
+			case "args":
 				g.usesArgs = true
 				g.usesAlloc = true
+			case "write":
+				g.usesWrite = true
+			case "eprint":
+				g.usesEprint = true
 			}
 		}
 	}
@@ -94,10 +104,16 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	if g.usesArgs {
 		g.emitArgsRuntime()
 	}
+	if g.usesWrite {
+		g.emitWriteRuntime()
+	}
+	if g.usesEprint {
+		g.emitEprintRuntime()
+	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 	}
-	if len(g.stringOrder) > 0 {
+	if len(g.stringOrder) > 0 || g.usesEprint {
 		g.line("")
 		g.line(`.section .rodata`)
 		for _, s := range g.stringOrder {
@@ -105,6 +121,14 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			g.line(fmt.Sprintf("\t.4byte %d", len(s)))
 			g.label(g.stringLabel[s])
 			g.line("\t.asciz " + escapeForGAS(s))
+		}
+		if g.usesEprint {
+			// Single-byte newline buffer for `__lang_eprint`'s
+			// second `write` call. Plain `.byte` (no length
+			// prefix) — eprint passes the address directly to
+			// the libc write syscall with count=1.
+			g.label(".LLangNewline")
+			g.line(`	.byte 10`)
 		}
 	}
 	if g.usesArgs {

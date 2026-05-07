@@ -246,6 +246,45 @@ func TestWASMArgsBuiltinReadsValue(t *testing.T) {
 	}
 }
 
+// `write` produces stdout output without a trailing newline.
+// Three consecutive `write` calls concatenate into a single run;
+// the final `print` adds the only newline in the output.
+func TestWASMWriteBuiltin(t *testing.T) {
+	src := `function main(): number {
+		write("a");
+		write("b");
+		print("c");
+		return 0;
+	}`
+	stdout, _ := invokeWasmtime(t, src)
+	want := "abc\n"
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout = %q, want it to contain %q", stdout, want)
+	}
+}
+
+// `eprint` lands on stderr (fd=2). wasmtime keeps fds 1 and 2
+// separate, so the test can confirm that `print("hi")` shows up
+// on stdout and `eprint("err")` shows up on stderr — without
+// either bleeding into the other stream.
+func TestWASMEprintBuiltin(t *testing.T) {
+	src := `function main(): number {
+		print("hi");
+		eprint("err");
+		return 0;
+	}`
+	stdout, stderr := invokeWasmtime(t, src)
+	if !strings.Contains(stdout, "hi") {
+		t.Errorf("stdout missing `hi`: %q", stdout)
+	}
+	if strings.Contains(stdout, "err") {
+		t.Errorf("stdout should not contain `err`, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "err") {
+		t.Errorf("stderr missing `err`: %q", stderr)
+	}
+}
+
 func runWasm(t *testing.T, src string) int {
 	t.Helper()
 	stdout, _ := invokeWasmtime(t, src)

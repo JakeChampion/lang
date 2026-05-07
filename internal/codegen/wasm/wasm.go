@@ -788,7 +788,7 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 			g.needsRuntime = true
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
-				if id.Name == "print" || id.Name == "putchar" || id.Name == "args" {
+				if id.Name == "print" || id.Name == "write" || id.Name == "eprint" || id.Name == "putchar" || id.Name == "args" {
 					g.needsRuntime = true
 					return
 				}
@@ -1196,36 +1196,69 @@ func (g *generator) emitRuntimePreamble() {
 	// but the first iovec when iovs_len > 1.
 	g.line(`(func $print (param $s i32)`)
 	g.indent++
-	// First call: write the string. iovec[0] at offset 16 = (s, len).
-	g.line(`i32.const 16`)
-	g.line(`local.get $s`)
-	g.line(`i32.store`)
-	g.line(`i32.const 20`)
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`i32.store`)
-	g.line(`i32.const 1`)  // fd = stdout
-	g.line(`i32.const 16`) // iovs ptr
-	g.line(`i32.const 1`)  // iovs_len = 1
-	g.line(`i32.const 36`) // nwritten
-	g.line(`call $__wasi_fd_write`)
-	g.line(`drop`)
+	g.emitFdWriteString(1, "$s")
 	// Second call: write the newline. iovec at offset 24 is pre-init
 	// to (ptr=32, len=1) by a data segment; memory[32] is '\n'.
-	g.line(`i32.const 1`)
-	g.line(`i32.const 24`)
-	g.line(`i32.const 1`)
-	g.line(`i32.const 36`)
-	g.line(`call $__wasi_fd_write`)
-	g.line(`drop`)
+	g.emitFdWriteNewline(1)
+	g.indent--
+	g.line(`)`)
+
+	// write(s) — stdout without a trailing newline. Same shape as
+	// $print's first half; users compose their own newlines / field
+	// separators when they want.
+	g.line(`(func $write (param $s i32)`)
+	g.indent++
+	g.emitFdWriteString(1, "$s")
+	g.indent--
+	g.line(`)`)
+
+	// eprint(s) — `print` shape but routed to fd=2 (stderr). Two
+	// fd_write calls for the same iovs_len=1 reason as $print.
+	g.line(`(func $eprint (param $s i32)`)
+	g.indent++
+	g.emitFdWriteString(2, "$s")
+	g.emitFdWriteNewline(2)
 	g.indent--
 	g.line(`)`)
 
 	if g.needsArgs {
 		g.emitArgsHelper()
 	}
+}
+
+// emitFdWriteString emits one fd_write call that writes a single
+// length-prefixed string to `fd`. local is the wasm local holding
+// the string's data pointer (e.g. "$s"); the string's length
+// lives at `local - 4`. Reuses iovec[0] at offset 16.
+func (g *generator) emitFdWriteString(fd int, local string) {
+	g.line(`i32.const 16`)
+	g.linef(`local.get %s`, local)
+	g.line(`i32.store`)
+	g.line(`i32.const 20`)
+	g.linef(`local.get %s`, local)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	g.linef(`i32.const %d`, fd)
+	g.line(`i32.const 16`) // iovs ptr
+	g.line(`i32.const 1`)  // iovs_len = 1
+	g.line(`i32.const 36`) // nwritten
+	g.line(`call $__wasi_fd_write`)
+	g.line(`drop`)
+}
+
+// emitFdWriteNewline emits one fd_write call that writes the
+// pre-initialised newline iovec at offset 24 (memory[32]='\n')
+// to `fd`. Used by `$print` and `$eprint` after their string
+// write.
+func (g *generator) emitFdWriteNewline(fd int) {
+	g.linef(`i32.const %d`, fd)
+	g.line(`i32.const 24`) // iovs ptr (newline iovec)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 36`)
+	g.line(`call $__wasi_fd_write`)
+	g.line(`drop`)
 }
 
 // emitArgsHelper writes the lazy-initialising `$args` runtime
