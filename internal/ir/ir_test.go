@@ -385,17 +385,17 @@ func TestStructuredControlFlowIsBalanced(t *testing.T) {
 	}
 }
 
-// NumScratch reports how many synthetic i32 slots the lowering pass
+// ScratchTypes records the type of every synthetic slot the lowering pass
 // conjured beyond the user-visible params + locals — codegen needs
 // the count to declare matching WAT locals.
 func TestLowerNumScratchTracked(t *testing.T) {
-	// A program with no synthetic helpers: NumScratch should be zero.
+	// A program with no synthetic helpers: ScratchTypes is empty.
 	pPlain := lowerSource(t, `function f(a: number, b: number): number {
 		var x: number = a + b;
 		return x;
 	}`)
-	if got := pPlain.Funcs[0].NumScratch; got != 0 {
-		t.Errorf("plain function: NumScratch = %d, want 0", got)
+	if got := len(pPlain.Funcs[0].ScratchTypes); got != 0 {
+		t.Errorf("plain function: len(ScratchTypes) = %d, want 0", got)
 	}
 	// A program using array, struct, and switch helpers should report
 	// at least one scratch slot per helper kind.
@@ -405,8 +405,8 @@ func TestLowerNumScratchTracked(t *testing.T) {
 			var p: P = P { x: 5 };
 			switch (n) { case 0: return 0; default: return 1; }
 		}`)
-	if got := pHelpers.Funcs[0].NumScratch; got < 3 {
-		t.Errorf("helper-heavy function: NumScratch = %d, want >= 3", got)
+	if got := len(pHelpers.Funcs[0].ScratchTypes); got < 3 {
+		t.Errorf("helper-heavy function: len(ScratchTypes) = %d, want >= 3", got)
 	}
 }
 
