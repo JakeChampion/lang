@@ -49,6 +49,10 @@ type parser struct {
 	tokens []lexer.Token
 	i      int
 	errors []error
+	// foreachN counts how many `for IDENT in expr` desugars we've
+	// emitted in this Parse so synthetic slot names stay unique
+	// across nested foreach loops.
+	foreachN int
 }
 
 func (p *parser) peek() lexer.Token { return p.tokens[p.i] }
@@ -527,9 +531,28 @@ func (p *parser) parseWhile() (ast.Stmt, error) {
 }
 
 // parseFor produces a real For node so that `continue` can jump to the
-// step expression, not back to the top of the loop body.
+// step expression, not back to the top of the loop body. There are
+// two recognised shapes:
+//
+//   - `for (init; cond; step) body`           — classic C-style.
+//   - `for IDENT in expr body`                — for-each over an
+//     array or string. Desugars at parse time to the equivalent
+//     C-style loop with synthetic length / index slots, so the
+//     rest of the pipeline (checker, IR, codegen) never has to
+//     know foreach exists.
 func (p *parser) parseFor() (ast.Stmt, error) {
 	kw := p.advance()
+
+	// Foreach shape: `for IDENT in expr body`. Detect by looking at
+	// the next two tokens (an Ident followed by the keyword-ish
+	// `in`). The lexer treats `in` as a regular identifier, so we
+	// match on text rather than kind.
+	if p.match(lexer.Ident, "") && p.i+1 < len(p.tokens) {
+		if next := p.tokens[p.i+1]; next.Kind == lexer.Ident && next.Text == "in" {
+			return p.parseForEach(kw)
+		}
+	}
+
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
 	}
@@ -580,6 +603,117 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 	}
 
 	return &ast.For{P: kw.Pos, Init: init, Cond: cond, Step: step, Body: body}, nil
+}
+
+// foreachCounter gives each desugared foreach loop's synthetic vars
+// a unique suffix (`__foreach_iter_3`, `__foreach_idx_3`, …) so
+// nested foreach loops don't clash on slot names. Stored on the
+// parser so it survives recursive calls and tracks per-Parse rather
+// than per-process.
+//
+// The counter doesn't need to be unique across separate Parse calls
+// — each Parse produces a fresh AST whose slot names are scoped to
+// that compilation unit.
+func (p *parser) nextForeachID() int {
+	p.foreachN++
+	return p.foreachN
+}
+
+// parseForEach desugars `for IDENT in expr body` into a Block that
+// declares a synthetic iter / index / length, runs a classic
+// `while idx < length`, binds the user's IDENT inside the loop, and
+// advances the index. The Block wraps everything so the synthetic
+// vars are scoped to the foreach. `break` and `continue` work as
+// expected because they target the inner While.
+//
+// Shape after desugaring:
+//
+//   {
+//     var __foreach_iter_N = expr;
+//     var __foreach_len_N  = len(__foreach_iter_N);
+//     var __foreach_idx_N  = 0;
+//     while (__foreach_idx_N < __foreach_len_N) {
+//       var IDENT = __foreach_iter_N[__foreach_idx_N];
+//       <body>
+//       __foreach_idx_N = __foreach_idx_N + 1;
+//     }
+//   }
+//
+// Works for both arrays (any element type) and strings (each
+// element a number = byte). The IDENT's type is inferred from the
+// indexed expression by the checker.
+func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
+	nameTok := p.advance() // IDENT
+	p.advance()            // `in`
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	body, err := p.parseStmt()
+	if err != nil {
+		return nil, err
+	}
+
+	id := p.nextForeachID()
+	iterName := fmt.Sprintf("__foreach_iter_%d", id)
+	idxName := fmt.Sprintf("__foreach_idx_%d", id)
+	lenName := fmt.Sprintf("__foreach_len_%d", id)
+
+	mkIdent := func(name string) *ast.Ident { return &ast.Ident{P: kw.Pos, Name: name} }
+	mkNum := func(v int64) *ast.NumberLit { return &ast.NumberLit{P: kw.Pos, Value: v} }
+
+	// var __foreach_iter_N = expr;
+	declIter := &ast.Var{P: kw.Pos, Name: iterName, Init: expr}
+	// var __foreach_len_N = len(__foreach_iter_N);
+	declLen := &ast.Var{P: kw.Pos, Name: lenName, Init: &ast.Call{
+		P:      kw.Pos,
+		Callee: mkIdent("len"),
+		Args:   []ast.Expr{mkIdent(iterName)},
+	}}
+	// var __foreach_idx_N = 0;
+	declIdx := &ast.Var{P: kw.Pos, Name: idxName, Init: mkNum(0)}
+
+	// var IDENT = __foreach_iter_N[__foreach_idx_N];
+	bindUser := &ast.Var{P: nameTok.Pos, Name: nameTok.Text, Init: &ast.Index{
+		P:     nameTok.Pos,
+		Array: mkIdent(iterName),
+		Idx:   mkIdent(idxName),
+	}}
+	// __foreach_idx_N = __foreach_idx_N + 1;
+	stepStmt := &ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{
+		P:      kw.Pos,
+		Target: mkIdent(idxName),
+		Value: &ast.Binary{
+			P: kw.Pos, Op: "+",
+			Left:  mkIdent(idxName),
+			Right: mkNum(1),
+		},
+	}}
+
+	// Inner while body: { user-binding; user's body; step }.
+	innerStmts := []ast.Stmt{bindUser}
+	if blk, ok := body.(*ast.Block); ok {
+		innerStmts = append(innerStmts, blk.Stmts...)
+	} else {
+		innerStmts = append(innerStmts, body)
+	}
+	innerStmts = append(innerStmts, stepStmt)
+	innerBlock := &ast.Block{P: kw.Pos, Stmts: innerStmts}
+
+	whileLoop := &ast.While{
+		P: kw.Pos,
+		Cond: &ast.Binary{
+			P: kw.Pos, Op: "<",
+			Left:  mkIdent(idxName),
+			Right: mkIdent(lenName),
+		},
+		Body: innerBlock,
+	}
+
+	return &ast.Block{
+		P:     kw.Pos,
+		Stmts: []ast.Stmt{declIter, declLen, declIdx, whileLoop},
+	}, nil
 }
 
 // parseSwitch parses

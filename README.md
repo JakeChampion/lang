@@ -116,7 +116,8 @@ Supported:
 - `var x: T = expr;` (annotation optional — inferred from the
   initialiser).
 - Statements: `if` / `else`, `while`, `for(init; cond; step)`,
-  `switch` (with comma-separated case values, `default`),
+  `for x in arr / "string"` (desugars to an index loop at parse
+  time), `switch` (with comma-separated case values, `default`),
   `return`, `break`, `continue`, blocks, expression statements.
 - Types: `number` (32-bit signed), `boolean`, `void`, `float` (32-bit
   IEEE — `wasm` only), `string`, arrays (`number[]`), nominal struct

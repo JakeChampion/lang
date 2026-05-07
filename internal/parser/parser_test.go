@@ -91,6 +91,115 @@ func TestForProducesForNode(t *testing.T) {
 	}
 }
 
+// `for x in arr { body }` desugars to a Block containing a few
+// synthetic `var` declarations and a `while` loop. The user's body
+// runs after the index-bound binding, and a step statement at the
+// tail advances the counter.
+func TestForEachOverArrayDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): number {
+		var sum: number = 0;
+		for x in [1, 2, 3] {
+			sum = sum + x;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := prog.Funcs[0].Body.Stmts
+	blk, ok := body[1].(*ast.Block)
+	if !ok {
+		t.Fatalf("foreach should desugar to Block, got %T", body[1])
+	}
+	if len(blk.Stmts) != 4 {
+		t.Fatalf("expected 4 inner stmts (iter / len / idx / while), got %d", len(blk.Stmts))
+	}
+	if _, ok := blk.Stmts[3].(*ast.While); !ok {
+		t.Errorf("last stmt should be a While loop, got %T", blk.Stmts[3])
+	}
+}
+
+// `for c in "hi"` works the same way — strings support `len()` and
+// indexing, so the desugar applies identically.
+func TestForEachOverStringDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): number {
+		var sum: number = 0;
+		for c in "abc" {
+			sum = sum + c;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := prog.Funcs[0].Body.Stmts
+	if _, ok := body[1].(*ast.Block); !ok {
+		t.Fatalf("foreach over string should desugar to Block, got %T", body[1])
+	}
+}
+
+// Nested foreach loops use unique synthetic slot names so the inner
+// loop can't shadow the outer's iterator / length / index.
+func TestForEachNestedHasUniqueSlots(t *testing.T) {
+	prog, err := Parse(`function f(): number {
+		var s: number = 0;
+		for a in [1, 2] {
+			for b in [3, 4] {
+				s = s + a + b;
+			}
+		}
+		return s;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	var walk func(s ast.Stmt)
+	walk = func(s ast.Stmt) {
+		switch x := s.(type) {
+		case *ast.Block:
+			for _, c := range x.Stmts {
+				walk(c)
+			}
+		case *ast.While:
+			walk(x.Body)
+		case *ast.Var:
+			if strings.HasPrefix(x.Name, "__foreach_") {
+				if seen[x.Name] {
+					t.Errorf("duplicate synthetic name %q", x.Name)
+				}
+				seen[x.Name] = true
+			}
+		}
+	}
+	for _, s := range prog.Funcs[0].Body.Stmts {
+		walk(s)
+	}
+	if len(seen) != 6 {
+		t.Errorf("expected 6 synthetic names (3 per nested loop), got %d: %v", len(seen), seen)
+	}
+}
+
+// `break` and `continue` inside a foreach body target the desugared
+// while loop — same semantics as a hand-written index loop.
+func TestForEachBreakContinue(t *testing.T) {
+	prog, err := Parse(`function f(): number {
+		var sum: number = 0;
+		for x in [1, 2, 3, 4] {
+			if (x == 2) { continue; }
+			if (x == 4) { break; }
+			sum = sum + x;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Block); !ok {
+		t.Errorf("foreach with break/continue should still desugar to Block")
+	}
+}
+
 func TestForWithExprInit(t *testing.T) {
 	prog, err := Parse(`function f(): number {
 		var i = 0;

@@ -358,6 +358,42 @@ func TestStringEscapes(t *testing.T) {
 	}
 }
 
+// `for x in arr { ... }` desugars to an index loop; e2e check that
+// the desugared form actually iterates correctly under qemu-arm.
+func TestForEachOverArray(t *testing.T) {
+	src := `
+		function main(): number {
+			var sum: number = 0;
+			for x in [10, 20, 30] {
+				sum = sum + x;
+			}
+			return sum;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 60 {
+		t.Errorf("exit = %d, want 60 (10+20+30)", code)
+	}
+}
+
+// break and continue inside a foreach body target the surrounding
+// loop just like in a hand-written `for`.
+func TestForEachBreakContinue(t *testing.T) {
+	src := `
+		function main(): number {
+			var sum: number = 0;
+			for x in [1, 2, 3, 4, 5] {
+				if (x == 2) { continue; }
+				if (x == 5) { break; }
+				sum = sum + x;
+			}
+			return sum;
+		}`
+	_, code := compileAndRun(t, src)
+	if code != 8 {
+		t.Errorf("exit = %d, want 8 (1+3+4)", code)
+	}
+}
+
 func TestArraySumAndMutation(t *testing.T) {
 	src := `
 		function main(): number {
