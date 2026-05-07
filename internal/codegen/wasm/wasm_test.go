@@ -71,14 +71,19 @@ func TestSimpleFunction(t *testing.T) {
 }
 
 func TestArithmeticOps(t *testing.T) {
-	wat := compileToWAT(t, `function main(): number { return 7 % 3 + (12 & 10); }`)
+	// Use parameters to keep ops visible past constant folding
+	// (literal arithmetic would collapse to a single i32.const).
+	// `%` is intentionally still here — Fold deliberately leaves
+	// rem_s alone so a `1 % 0` source bug surfaces at runtime
+	// rather than getting silently masked.
+	wat := compileToWAT(t, `function main(a: number, b: number): number { return 7 % 3 + (a & b); }`)
 	mustContain(t, wat, "i32.rem_s")
 	mustContain(t, wat, "i32.and")
 	mustContain(t, wat, "i32.add")
 }
 
 func TestComparisonReturnsI32(t *testing.T) {
-	wat := compileToWAT(t, `function f(): boolean { return 1 < 2; }`)
+	wat := compileToWAT(t, `function f(a: number, b: number): boolean { return a < b; }`)
 	mustContain(t, wat, "i32.lt_s")
 	mustContain(t, wat, "(result i32)")
 }

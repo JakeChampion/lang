@@ -66,18 +66,20 @@ func TestCFIDirectivesCoverLeafSavedRegisters(t *testing.T) {
 }
 
 func TestArithmetic(t *testing.T) {
-	asm := compile(t, `function f(): number { return 1 + 2; }`)
+	// Constant folding would collapse literal arithmetic before
+	// emit, so use parameters to keep the binop visible.
+	asm := compile(t, `function f(a: number, b: number): number { return a + b; }`)
 	mustContain(t, asm, "add r0, r1, r0")
 }
 
 func TestSubtractionOrder(t *testing.T) {
 	// Left operand must end up in r1, right in r0; sub must be `r1 - r0`.
-	asm := compile(t, `function f(): number { return 10 - 3; }`)
+	asm := compile(t, `function f(a: number, b: number): number { return a - b; }`)
 	mustContain(t, asm, "sub r0, r1, r0")
 }
 
 func TestComparisonEmitsCondMoves(t *testing.T) {
-	asm := compile(t, `function f(): boolean { return 1 < 2; }`)
+	asm := compile(t, `function f(a: number, b: number): boolean { return a < b; }`)
 	mustContain(t, asm, "movlt r0, #1")
 	mustContain(t, asm, "movge r0, #0")
 }
@@ -212,23 +214,23 @@ func TestModuloUsesIdivmod(t *testing.T) {
 }
 
 func TestBitwiseAnd(t *testing.T) {
-	asm := compile(t, `function f(): number { return 12 & 10; }`)
+	asm := compile(t, `function f(a: number, b: number): number { return a & b; }`)
 	mustContain(t, asm, "and r0, r1, r0")
 }
 
 func TestBitwiseOrXor(t *testing.T) {
-	asm := compile(t, `function f(): number { return 1 | 2 ^ 4; }`)
+	asm := compile(t, `function f(a: number, b: number, c: number): number { return a | b ^ c; }`)
 	mustContain(t, asm, "orr r0, r1, r0")
 	mustContain(t, asm, "eor r0, r1, r0")
 }
 
 func TestShiftLeft(t *testing.T) {
-	asm := compile(t, `function f(): number { return 1 << 3; }`)
+	asm := compile(t, `function f(a: number, b: number): number { return a << b; }`)
 	mustContain(t, asm, "lsl r0, r1, r0")
 }
 
 func TestShiftRight(t *testing.T) {
-	asm := compile(t, `function f(): number { return 16 >> 2; }`)
+	asm := compile(t, `function f(a: number, b: number): number { return a >> b; }`)
 	mustContain(t, asm, "asr r0, r1, r0")
 }
 

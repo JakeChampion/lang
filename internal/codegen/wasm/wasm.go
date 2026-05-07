@@ -29,13 +29,17 @@ import (
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	// ir.Lower runs closure conversion as a precondition (hoisting
 	// nested functions, rewriting captures), then produces an
-	// ir.Program. EmitFromIR turns that into WAT, reusing the
-	// module-level scaffolding (runtime helpers, function table,
-	// closure cells, data segments, exports) defined alongside it.
+	// ir.Program. ir.Fold runs constant folding on the lowered ops
+	// — picking up the post-lowering shapes the AST optimiser can't
+	// see (collapsed ternaries / short-circuits, etc.). EmitFromIR
+	// turns the folded program into WAT, reusing the module-level
+	// scaffolding (runtime helpers, function table, closure cells,
+	// data segments, exports) defined alongside it.
 	ip, err := ir.Lower(prog, info)
 	if err != nil {
 		return "", err
 	}
+	ir.Fold(ip)
 	return EmitFromIR(prog, info, ip)
 }
 
