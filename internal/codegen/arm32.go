@@ -73,9 +73,11 @@ type generator struct {
 	stringOrder []string          // insertion order so output is deterministic
 	usesStrcat  bool              // true if the program needs the strcat helper
 	usesAlloc   bool              // true if the program needs the alloc helper (any heap-backed array / struct / closure)
-	usesArgs    bool              // true if the program calls args() — pulls in the runtime helper + main argc/argv save
-	usesWrite   bool              // true if the program calls write() — pulls in __lang_write
-	usesEprint  bool              // true if the program calls eprint() — pulls in __lang_eprint and the newline byte
+	usesArgs     bool             // true if the program calls args() — pulls in the runtime helper + main argc/argv save
+	usesWrite    bool             // true if the program calls write() — pulls in __lang_write
+	usesEprint   bool             // true if the program calls eprint() — pulls in __lang_eprint and the newline byte
+	usesReadLine bool             // true if the program calls read_line() — pulls in __lang_read_line and the .bss buffer
+	usesEnv      bool             // true if the program calls env() — pulls in __lang_env shim
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
 }
 
@@ -283,6 +285,112 @@ func (g *generator) emitEprintRuntime() {
 	g.emit("pop {lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_eprint, .-__lang_eprint")
+}
+
+// emitReadLineRuntime emits `__lang_read_line`, a stdin one-byte
+// reader. It accumulates into a fixed 4 KiB .bss buffer and then
+// allocates a fresh length-prefixed string on the heap with the
+// captured bytes (including the trailing `\n` when present).
+// EOF mid-line returns whatever has been read so far; an empty
+// string distinguishes "EOF on the first byte" from a blank line
+// (which would return "\n").
+func (g *generator) emitReadLineRuntime() {
+	g.line("")
+	g.line(".global __lang_read_line")
+	g.line(".type __lang_read_line, %function")
+	g.label("__lang_read_line")
+	g.emit("push {r4, r5, r6, lr}") // 16 bytes — already 8-aligned
+	g.emit("ldr r4, =__lang_read_line_buf")
+	g.emit("mov r5, #0") // r5 = bytes read so far
+	g.label(".Lrl_loop")
+	g.emit("cmp r5, #4096")
+	g.emit("bge .Lrl_done")
+	// read(0, buf + r5, 1)
+	g.emit("mov r0, #0")
+	g.emit("add r1, r4, r5")
+	g.emit("mov r2, #1")
+	g.emit("bl read")
+	// EOF (or error) → finish.
+	g.emit("cmp r0, #1")
+	g.emit("blt .Lrl_done")
+	// Examine the byte we just read.
+	g.emit("add r6, r4, r5")
+	g.emit("ldrb r6, [r6]")
+	g.emit("add r5, r5, #1")
+	// If it's '\n', the line is complete.
+	g.emit("cmp r6, #10")
+	g.emit("beq .Lrl_done")
+	g.emit("b .Lrl_loop")
+	g.label(".Lrl_done")
+	// Allocate length + 5 (4 prefix + N data + 1 trailing NUL for libc shape).
+	g.emit("add r0, r5, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add r6, r0, #4")    // r6 = data ptr
+	g.emit("str r5, [r6, #-4]") // length prefix
+	// memcpy(r6, buf, r5)
+	g.emit("mov r0, r6")
+	g.emit("mov r1, r4")
+	g.emit("mov r2, r5")
+	g.emit("bl memcpy")
+	// Trailing NUL at r6 + r5
+	g.emit("add r0, r6, r5")
+	g.emit("mov r1, #0")
+	g.emit("strb r1, [r0]")
+	g.emit("mov r0, r6")
+	g.emit("pop {r4, r5, r6, lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_read_line, .-__lang_read_line")
+}
+
+// emitEnvRuntime emits `__lang_env`, the getenv shim. Looks up
+// the C-string env value, copies it into a length-prefixed lang
+// string. A missing key (getenv returns NULL) yields a fresh
+// empty length-prefixed string. The lang string passed as `name`
+// already has a trailing NUL byte past its data (the strcat
+// runtime preserves that), so we can hand its data pointer to
+// libc getenv directly without copying.
+func (g *generator) emitEnvRuntime() {
+	g.line("")
+	g.line(".global __lang_env")
+	g.line(".type __lang_env, %function")
+	g.label("__lang_env")
+	g.emit("push {r4, r5, lr}")
+	g.emit("sub sp, sp, #4") // 8-byte alignment
+	g.emit("bl getenv")
+	g.emit("cmp r0, #0")
+	g.emit("beq .Lenv_missing")
+	// r4 = char*, r5 = strlen(r4)
+	g.emit("mov r4, r0")
+	g.emit("bl strlen")
+	g.emit("mov r5, r0")
+	// Allocate strlen + 5 (4 prefix + N data + trailing NUL).
+	g.emit("add r0, r5, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add r0, r0, #4")    // r0 = data ptr
+	g.emit("str r5, [r0, #-4]") // length prefix
+	// memcpy(r0, char_star, strlen + 1) — include NUL.
+	g.emit("push {r0}")
+	g.emit("sub sp, sp, #4") // realign after push
+	g.emit("mov r1, r4")
+	g.emit("add r2, r5, #1")
+	g.emit("bl memcpy")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r0}")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.label(".Lenv_missing")
+	// Empty length-prefixed string: 4 prefix + 1 NUL.
+	g.emit("mov r0, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add r0, r0, #4")
+	g.emit("mov r1, #0")
+	g.emit("str r1, [r0, #-4]")
+	g.emit("strb r1, [r0]")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_env, .-__lang_env")
 }
 
 // internString returns a unique .rodata label for s, allocating a new one

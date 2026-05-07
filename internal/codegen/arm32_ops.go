@@ -352,6 +352,27 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		target = "__lang_args"
 		g.usesArgs = true
 		g.usesAlloc = true
+	case "read_line":
+		// `read_line()` reads stdin one byte at a time into a
+		// fixed-size .bss buffer (4 KiB), then copies the
+		// accumulated bytes into a fresh length-prefixed
+		// string on the heap.
+		target = "__lang_read_line"
+		g.usesReadLine = true
+		g.usesAlloc = true
+	case "env":
+		// `env(name)` is a getenv shim: NULL becomes an empty
+		// length-prefixed string, otherwise the C string gets
+		// copied into a fresh heap-allocated lang string.
+		target = "__lang_env"
+		g.usesEnv = true
+		g.usesAlloc = true
+	case "exit":
+		// libc `exit(int)` — never returns. The IR-driven
+		// caller still emits the post-call `push {r0}` for
+		// stack hygiene; that's harmless because exit doesn't
+		// come back.
+		target = "exit"
 	case "__str_idx", "__arr_idx":
 		// IR-side bounds-check stubs. We don't currently have ARM32
 		// equivalents, so the IR walker adds the bound-check itself

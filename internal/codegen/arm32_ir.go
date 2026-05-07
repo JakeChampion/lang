@@ -84,6 +84,12 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 				g.usesWrite = true
 			case "eprint":
 				g.usesEprint = true
+			case "read_line":
+				g.usesReadLine = true
+				g.usesAlloc = true
+			case "env":
+				g.usesEnv = true
+				g.usesAlloc = true
 			}
 		}
 	}
@@ -110,6 +116,12 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	if g.usesEprint {
 		g.emitEprintRuntime()
 	}
+	if g.usesReadLine {
+		g.emitReadLineRuntime()
+	}
+	if g.usesEnv {
+		g.emitEnvRuntime()
+	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 	}
@@ -131,18 +143,29 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			g.line(`	.byte 10`)
 		}
 	}
-	if g.usesArgs {
+	if g.usesArgs || g.usesReadLine {
 		g.line("")
 		g.line(`.section .bss`)
-		g.line(`.align 2`)
-		g.label("__lang_argc")
-		g.line(`	.word 0`)
-		g.line(`.align 2`)
-		g.label("__lang_argv")
-		g.line(`	.word 0`)
-		g.line(`.align 2`)
-		g.label("__lang_args_cache")
-		g.line(`	.word 0`)
+		if g.usesArgs {
+			g.line(`.align 2`)
+			g.label("__lang_argc")
+			g.line(`	.word 0`)
+			g.line(`.align 2`)
+			g.label("__lang_argv")
+			g.line(`	.word 0`)
+			g.line(`.align 2`)
+			g.label("__lang_args_cache")
+			g.line(`	.word 0`)
+		}
+		if g.usesReadLine {
+			// 4 KiB scratch buffer for read_line; longer lines
+			// truncate at the boundary. Big enough for typical
+			// CLI input; if real programs need more, swap to a
+			// growing alloc.
+			g.line(`.align 2`)
+			g.label("__lang_read_line_buf")
+			g.line(`	.space 4096`)
+		}
 	}
 	g.line("")
 	g.line(`.section .note.GNU-stack,"",%progbits`)

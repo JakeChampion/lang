@@ -74,6 +74,9 @@ type generator struct {
 	needsBoundsCheck bool // any array or string Index expression appears
 	needsClosures    bool // any FuncDecl was hoisted by closure conversion
 	needsArgs        bool // any `args()` call appears — pulls in WASI args_*
+	needsReadLine    bool // any `read_line()` call appears — pulls in WASI fd_read + helper + scratch slots
+	needsEnv         bool // any `env(name)` call appears — pulls in WASI environ_* + helper + cache slots
+	needsExit        bool // any `exit(code)` call appears — pulls in WASI proc_exit
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -138,6 +141,105 @@ func envParamPresent(fn *ast.FuncDecl) bool {
 	return last.Name == "__env"
 }
 
+// scanForIOBuiltins records which I/O builtins the program calls so
+// the preamble can pull in only the WASI imports + helpers it
+// actually needs. Unlike scanForArrayUses, this walker does NOT
+// short-circuit — every call site is checked, because the per-
+// builtin flags are independent.
+func (g *generator) scanForIOBuiltins(prog *ast.Program) {
+	var walk func(any)
+	walk = func(n any) {
+		switch x := n.(type) {
+		case *ast.Call:
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				switch id.Name {
+				case "args":
+					g.needsArgs = true
+				case "read_line":
+					g.needsReadLine = true
+				case "env":
+					g.needsEnv = true
+				case "exit":
+					g.needsExit = true
+				}
+			}
+			walk(x.Callee)
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case *ast.Block:
+			for _, s := range x.Stmts {
+				walk(s)
+			}
+		case *ast.If:
+			walk(x.Cond)
+			walk(x.Then)
+			if x.Else != nil {
+				walk(x.Else)
+			}
+		case *ast.While:
+			walk(x.Cond)
+			walk(x.Body)
+		case *ast.For:
+			if x.Init != nil {
+				walk(x.Init)
+			}
+			walk(x.Cond)
+			if x.Step != nil {
+				walk(x.Step)
+			}
+			walk(x.Body)
+		case *ast.Return:
+			if x.Value != nil {
+				walk(x.Value)
+			}
+		case *ast.Var:
+			walk(x.Init)
+		case *ast.ExprStmt:
+			walk(x.Expr)
+		case *ast.Switch:
+			walk(x.Tag)
+			for _, k := range x.Cases {
+				for _, v := range k.Values {
+					walk(v)
+				}
+				walk(k.Body)
+			}
+			if x.Default != nil {
+				walk(x.Default)
+			}
+		case *ast.Binary:
+			walk(x.Left)
+			walk(x.Right)
+		case *ast.Unary:
+			walk(x.Operand)
+		case *ast.Index:
+			walk(x.Array)
+			walk(x.Idx)
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.Assign:
+			walk(x.Target)
+			walk(x.Value)
+		case *ast.Ternary:
+			walk(x.Cond)
+			walk(x.Then)
+			walk(x.Else)
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				walk(f.Value)
+			}
+		case *ast.FieldAccess:
+			walk(x.Target)
+		}
+	}
+	for _, fn := range prog.Funcs {
+		walk(fn.Body)
+	}
+}
+
 // scanForArrayUses pre-walks the program and sets needsArrays if any
 // ArrayLit, Index, or Index-target Assign appears. Arrays imply the
 // runtime preamble (memory + bump allocator).
@@ -194,15 +296,17 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 		case *ast.Unary:
 			walk(x.Operand)
 		case *ast.Call:
-			// `args()` builds a string[] at runtime, so it pulls in
-			// the array preamble (bump allocator + length prefixes)
-			// the same way an `ArrayLit` does. The same call also
-			// records needsArgs so the runtime emits the WASI
-			// args_sizes_get / args_get imports and the cache helper.
-			if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "args" {
-				g.needsArrays = true
-				g.needsRuntime = true
-				g.needsArgs = true
+			// `args()` / `read_line()` / `env()` build length-
+			// prefixed strings at runtime, so they need the array
+			// preamble (bump allocator). `exit()` is detected in
+			// scanForIOBuiltins, since this scan short-circuits as
+			// soon as needsArrays is set.
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				switch id.Name {
+				case "args", "read_line", "env":
+					g.needsArrays = true
+					g.needsRuntime = true
+				}
 			}
 			walk(x.Callee)
 			for _, a := range x.Args {
@@ -788,7 +892,8 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 			g.needsRuntime = true
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
-				if id.Name == "print" || id.Name == "write" || id.Name == "eprint" || id.Name == "putchar" || id.Name == "args" {
+				switch id.Name {
+				case "print", "write", "eprint", "putchar", "args", "read_line", "env", "exit":
 					g.needsRuntime = true
 					return
 				}
@@ -897,12 +1002,30 @@ func (g *generator) internString(s string) int {
 //	44..47  args() cache pointer (0 = not yet built; non-zero = ptr)
 //	48..51  args_sizes_get out: argc
 //	52..55  args_sizes_get out: argv buffer size
-//	64+     string data, each entry: 4-byte length prefix then bytes
+//	56..63  read_line iovec { ptr=68, len=1 }    pre-initialised
+//	64..67  read_line nread out
+//	68..71  read_line single-byte buffer (only byte 68 used)
+//	72..75  env init flag (0 = uninitialised, 1 = environ_get done)
+//	76..79  env count (number of "KEY=VALUE" entries after init)
+//	80..83  env_ptrs heap pointer (filled by environ_get)
+//	84..87  environ_sizes_get out: count
+//	88..91  environ_sizes_get out: bufsize
+//	96+     string data, each entry: 4-byte length prefix then bytes
 func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
 	if g.needsArgs {
 		g.line(`(import "wasi_snapshot_preview1" "args_sizes_get" (func $__wasi_args_sizes_get (param i32 i32) (result i32)))`)
 		g.line(`(import "wasi_snapshot_preview1" "args_get" (func $__wasi_args_get (param i32 i32) (result i32)))`)
+	}
+	if g.needsReadLine {
+		g.line(`(import "wasi_snapshot_preview1" "fd_read" (func $__wasi_fd_read (param i32 i32 i32 i32) (result i32)))`)
+	}
+	if g.needsEnv {
+		g.line(`(import "wasi_snapshot_preview1" "environ_sizes_get" (func $__wasi_environ_sizes_get (param i32 i32) (result i32)))`)
+		g.line(`(import "wasi_snapshot_preview1" "environ_get" (func $__wasi_environ_get (param i32 i32) (result i32)))`)
+	}
+	if g.needsExit {
+		g.line(`(import "wasi_snapshot_preview1" "proc_exit" (func $__wasi_proc_exit (param i32)))`)
 	}
 	g.line(`(memory $mem 1)`)
 
@@ -1224,6 +1347,15 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsArgs {
 		g.emitArgsHelper()
 	}
+	if g.needsReadLine {
+		g.emitReadLineHelper()
+	}
+	if g.needsEnv {
+		g.emitEnvHelper()
+	}
+	if g.needsExit {
+		g.emitExitHelper()
+	}
 }
 
 // emitFdWriteString emits one fd_write call that writes a single
@@ -1469,6 +1601,403 @@ func (g *generator) emitArgsHelper() {
 	g.line(`)`)
 }
 
+// emitReadLineHelper writes `$read_line`, a one-byte-at-a-time
+// stdin reader. Each iteration calls fd_read on the iovec at
+// offset 56 (pre-set to read into byte 68); the loop exits at
+// EOF (nread==0) or when the read byte is `\n`. The accumulated
+// bytes get copied into a fresh length-prefixed string on the
+// bump heap, so the result behaves like every other lang string.
+//
+// EOF returns an empty string (length 0). A blank line returns
+// "\n" (length 1) so callers can disambiguate by length.
+func (g *generator) emitReadLineHelper() {
+	g.line(`(func $read_line (result i32)`)
+	g.indent++
+	g.line(`(local $start i32)`) // start of accumulated bytes on the heap
+	g.line(`(local $cur i32)`)   // next byte to write into
+	g.line(`(local $byte i32)`)
+	g.line(`(local $sbase i32)`)
+	g.line(`(local $sptr i32)`)
+	g.line(`(local $len i32)`)
+	g.line(`(local $i i32)`)
+
+	// Allocate a 0-byte placeholder so $start anchors the heap
+	// position; we'll keep alloc'ing one byte at a time.
+	g.line(`i32.const 0`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $start`)
+	g.line(`local.get $start`)
+	g.line(`local.set $cur`)
+
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	// fd_read(fd=0, iovs=56, iovs_len=1, nread=64)
+	g.line(`i32.const 0`)
+	g.line(`i32.const 56`)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 64`)
+	g.line(`call $__wasi_fd_read`)
+	g.line(`drop`)
+	// EOF when nread == 0
+	g.line(`i32.const 64`)
+	g.line(`i32.load`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $end`)
+	// Append the byte. Allocate one byte to advance the heap and
+	// store the read byte into it.
+	g.line(`i32.const 1`)
+	g.line(`call $__lang_alloc`)
+	g.line(`drop`)
+	g.line(`i32.const 68`)
+	g.line(`i32.load8_u`)
+	g.line(`local.tee $byte`)
+	g.line(`local.get $cur`)
+	g.line(`local.get $byte`)
+	g.line(`i32.store8`)
+	// cur += 1; break if newline
+	g.line(`local.get $cur`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $cur`)
+	g.line(`local.get $byte`)
+	g.line(`i32.const 10`)
+	g.line(`i32.eq`)
+	g.line(`br_if $end`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// len = cur - start
+	g.line(`local.get $cur`)
+	g.line(`local.get $start`)
+	g.line(`i32.sub`)
+	g.line(`local.set $len`)
+
+	// Allocate the result string: 4 (length prefix) + len bytes.
+	g.line(`local.get $len`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`local.get $len`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sptr`)
+
+	// Byte-copy the accumulated buffer into the result.
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $copy_end`)
+	g.indent++
+	g.line(`loop $copy`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $len`)
+	g.line(`i32.eq`)
+	g.line(`br_if $copy_end`)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`local.get $start`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.store8`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $copy`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	g.line(`local.get $sptr`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitEnvHelper writes `$env(name) -> string`. The first call
+// initialises the environ buffers via WASI; subsequent calls
+// reuse the cached pointers. The lookup walks the cached
+// environ pointer table, comparing each "KEY=VALUE" entry
+// against `name` up to the `=`. On match, a fresh
+// length-prefixed string is allocated for the VALUE half.
+// Missing keys return the empty string (data pointer to a
+// pre-built 0-length string entry).
+func (g *generator) emitEnvHelper() {
+	g.line(`(func $env (param $name i32) (result i32)`)
+	g.indent++
+	g.line(`(local $name_len i32)`)
+	g.line(`(local $count i32)`)
+	g.line(`(local $bufsize i32)`)
+	g.line(`(local $env_ptrs i32)`)
+	g.line(`(local $env_buf i32)`)
+	g.line(`(local $i i32)`)
+	g.line(`(local $entry i32)`)
+	g.line(`(local $j i32)`)
+	g.line(`(local $vlen i32)`)
+	g.line(`(local $vstart i32)`)
+	g.line(`(local $sbase i32)`)
+	g.line(`(local $sptr i32)`)
+	g.line(`(local $matches i32)`)
+	g.line(`(local $k i32)`)
+
+	// Lazily init the environ buffers.
+	g.line(`i32.const 72`)
+	g.line(`i32.load`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	// environ_sizes_get(*count_out=84, *bufsize_out=88)
+	g.line(`i32.const 84`)
+	g.line(`i32.const 88`)
+	g.line(`call $__wasi_environ_sizes_get`)
+	g.line(`drop`)
+	g.line(`i32.const 84`)
+	g.line(`i32.load`)
+	g.line(`local.set $count`)
+	g.line(`i32.const 88`)
+	g.line(`i32.load`)
+	g.line(`local.set $bufsize`)
+	// Allocate env_ptrs (count * 4 bytes) and env_buf (bufsize bytes).
+	g.line(`local.get $count`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $env_ptrs`)
+	g.line(`local.get $bufsize`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $env_buf`)
+	g.line(`local.get $env_ptrs`)
+	g.line(`local.get $env_buf`)
+	g.line(`call $__wasi_environ_get`)
+	g.line(`drop`)
+	// Cache.
+	g.line(`i32.const 76`)
+	g.line(`local.get $count`)
+	g.line(`i32.store`)
+	g.line(`i32.const 80`)
+	g.line(`local.get $env_ptrs`)
+	g.line(`i32.store`)
+	g.line(`i32.const 72`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`end`)
+
+	// Load cached count + ptr table.
+	g.line(`i32.const 76`)
+	g.line(`i32.load`)
+	g.line(`local.set $count`)
+	g.line(`i32.const 80`)
+	g.line(`i32.load`)
+	g.line(`local.set $env_ptrs`)
+
+	// name length is stored at name-4.
+	g.line(`local.get $name`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $name_len`)
+
+	// for i in 0..count
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $outer_end`)
+	g.indent++
+	g.line(`loop $outer`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $count`)
+	g.line(`i32.eq`)
+	g.line(`br_if $outer_end`)
+
+	// entry = env_ptrs[i]
+	g.line(`local.get $env_ptrs`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $entry`)
+
+	// Compare entry[0..name_len] with name[0..name_len], then
+	// require entry[name_len] == '='. matches=1 if all good.
+	g.line(`i32.const 1`)
+	g.line(`local.set $matches`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $j`)
+	g.line(`block $cmp_end`)
+	g.indent++
+	g.line(`loop $cmp`)
+	g.indent++
+	g.line(`local.get $j`)
+	g.line(`local.get $name_len`)
+	g.line(`i32.eq`)
+	g.line(`br_if $cmp_end`)
+	g.line(`local.get $entry`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.get $name`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`local.set $matches`)
+	g.line(`br $cmp_end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $j`)
+	g.line(`br $cmp`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// If matches and entry[name_len]=='=', this is our entry.
+	g.line(`local.get $matches`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $entry`)
+	g.line(`local.get $name_len`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.const 61`) // '='
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	// Found. vstart = entry + name_len + 1; scan for NUL.
+	g.line(`local.get $entry`)
+	g.line(`local.get $name_len`)
+	g.line(`i32.add`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $vstart`)
+	g.line(`local.get $vstart`)
+	g.line(`local.set $k`)
+	g.line(`block $vlen_end`)
+	g.indent++
+	g.line(`loop $vlen_loop`)
+	g.indent++
+	g.line(`local.get $k`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $vlen_end`)
+	g.line(`local.get $k`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $k`)
+	g.line(`br $vlen_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $k`)
+	g.line(`local.get $vstart`)
+	g.line(`i32.sub`)
+	g.line(`local.set $vlen`)
+
+	// Allocate result and copy.
+	g.line(`local.get $vlen`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`local.get $vlen`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sptr`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $j`)
+	g.line(`block $vcopy_end`)
+	g.indent++
+	g.line(`loop $vcopy`)
+	g.indent++
+	g.line(`local.get $j`)
+	g.line(`local.get $vlen`)
+	g.line(`i32.eq`)
+	g.line(`br_if $vcopy_end`)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`local.get $vstart`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.store8`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $j`)
+	g.line(`br $vcopy`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $sptr`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $outer`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// Not found: return a fresh empty length-prefixed string.
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitExitHelper writes `$exit(code)`, a one-line wrapper around
+// the WASI proc_exit import. WASI's proc_exit takes the status
+// code as its only parameter and never returns. We expose it as
+// a void-returning lang function; the wasm validator is happy
+// because the wrapper itself doesn't need a result type.
+func (g *generator) emitExitHelper() {
+	g.line(`(func $exit (param $code i32)`)
+	g.indent++
+	g.line(`local.get $code`)
+	g.line(`call $__wasi_proc_exit`)
+	g.indent--
+	g.line(`)`)
+}
+
 // emitDataSegments writes the static-memory initialisers: the runtime
 // iovecs / newline byte plus every interned string with its 4-byte
 // little-endian length prefix.
@@ -1479,6 +2008,10 @@ func (g *generator) emitDataSegments() {
 	g.line(`(data (i32.const 24) "\20\00\00\00\01\00\00\00")`)
 	// newline byte at 32
 	g.line(`(data (i32.const 32) "\0a")`)
+	if g.needsReadLine {
+		// read_line iovec at 56: ptr=68 (one-byte buffer), len=1
+		g.line(`(data (i32.const 56) "\44\00\00\00\01\00\00\00")`)
+	}
 	// Per-function closure cells: 8 bytes each at closuresBase+8*i,
 	// pre-initialised with (table_idx=i, env_ptr=0). Only the
 	// originally top-level functions get cells; hoisted (closure-

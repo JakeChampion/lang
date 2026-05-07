@@ -173,6 +173,15 @@ Built-ins:
   are the user-supplied positional args. The first call materialises
   a length-prefixed string array from libc / WASI; subsequent calls
   return the cached pointer.
+- `read_line(): string` — reads one line from stdin. The trailing
+  `\n` is preserved in the returned string; an empty string signals
+  end-of-file (a blank line returns `"\n"`, length 1, so callers
+  can disambiguate by length).
+- `env(name: string): string` — environment variable lookup.
+  Returns the empty string for missing keys.
+- `exit(code: number): void` — terminates the process with the
+  given status. Useful for `eprint(msg); exit(2)` failure paths;
+  the success path can just `return` from main.
 
 ## Optimisation
 
