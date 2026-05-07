@@ -1254,6 +1254,11 @@ func (b *builder) binary(n *ast.Binary) error {
 			}
 		}
 	}
+	if n.IsStringCmp {
+		if folded, ok := b.maybeFoldStringEq(n); ok {
+			return folded
+		}
+	}
 	if err := b.expr(n.Left); err != nil {
 		return err
 	}
@@ -1289,6 +1294,86 @@ func (b *builder) binary(n *ast.Binary) error {
 	}
 	b.emit(Op{Kind: op})
 	return nil
+}
+
+// maybeFoldStringEq attempts to compile-time-fold a string
+// equality / inequality comparison. Two shapes:
+//
+//  1. lit == lit  →  OpConstI32 0/1   (and the inverse for !=)
+//  2. ident == lit (or lit == ident) →
+//        len(ident) == lit.length
+//          ? <ident == lit at byte level via OpStrEq>
+//          : 0
+//     The length-mismatch path skips the strcmp call entirely;
+//     the length-match path falls through to the existing
+//     `__lang_strcmp` runtime. For the common HTTP-routing
+//     pattern `path == "/health"` (where most paths have
+//     different lengths from the literal) this saves the
+//     function call + the strcmp's internal length compare.
+//
+// Returns (nil, true) on success — the IR has been emitted in
+// place. Returns (_, false) when the shape doesn't apply, in
+// which case the caller falls back to the standard OpStrEq.
+func (b *builder) maybeFoldStringEq(n *ast.Binary) (error, bool) {
+	litL, lOK := n.Left.(*ast.StringLit)
+	litR, rOK := n.Right.(*ast.StringLit)
+	if lOK && rOK {
+		// Both literals — compute the answer at compile time.
+		var v int32 = 0
+		if (n.Op == "==") == (litL.Value == litR.Value) {
+			v = 1
+		}
+		b.emit(Op{Kind: OpConstI32, I32: v})
+		return nil, true
+	}
+	// One side literal, the other a pure identifier (no side
+	// effects to worry about double-evaluating).
+	var lit *ast.StringLit
+	var ident *ast.Ident
+	if lOK {
+		lit = litL
+		if id, ok := n.Right.(*ast.Ident); ok {
+			ident = id
+		}
+	} else if rOK {
+		lit = litR
+		if id, ok := n.Left.(*ast.Ident); ok {
+			ident = id
+		}
+	}
+	if lit == nil || ident == nil {
+		return nil, false
+	}
+	// Don't apply the fold to identifiers that resolve to top-
+	// level functions or aren't local — the codegen path for
+	// non-local strings is more delicate (currently nothing
+	// breaks, but the language has no string globals yet, so
+	// we keep the optimization scoped to locals + params).
+	if _, ok := b.locals[ident.Name]; !ok {
+		return nil, false
+	}
+	// Emit: <ident> ; const 4 ; sub ; load  (i.e. len(ident))
+	if err := b.expr(ident); err != nil {
+		return err, true
+	}
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpSub})
+	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpConstI32, I32: int32(len(lit.Value))})
+	b.emit(Op{Kind: OpEq})
+	b.openIf(BlockTypeI32)
+	if err := b.expr(ident); err != nil {
+		return err, true
+	}
+	b.emit(Op{Kind: OpConstStr, Str: lit.Value})
+	b.emit(Op{Kind: OpStrEq})
+	b.elseBranch()
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.closeScope()
+	if n.Op == "!=" {
+		b.emit(Op{Kind: OpNot})
+	}
+	return nil, true
 }
 
 func intOp(s string) (OpKind, bool) {
