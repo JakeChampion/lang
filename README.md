@@ -53,7 +53,16 @@ qemu-arm factorial
 # WASM
 ./lang -target wasm examples/factorial.lang > factorial.wat
 wasmtime run --invoke main factorial.wat
+
+# Formatter
+./lang -fmt examples/factorial.lang        # writes idiomatic source to stdout
+./lang -fmt -w examples/factorial.lang     # overwrite the file in place
 ```
+
+The formatter strips `//` line comments and blank lines because the
+lexer drops both before they reach the AST — it's a re-emit from the
+parsed tree, not a token-stream transform. Format → parse → format is
+byte-stable.
 
 `go test ./...` runs the unit tests and the IR-level pass tests. The
 e2e tests in `internal/e2e` exercise the full pipeline on both

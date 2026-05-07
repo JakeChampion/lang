@@ -8,8 +8,13 @@
 //	lang --run FILE.lang [-- ARGS...]    # link to a temporary binary and
 //	                                     # execute it under qemu-arm,
 //	                                     # forwarding stdio
+//	lang -fmt FILE.lang                  # write idiomatic, indented source
+//	                                     # to stdout (use -w to overwrite
+//	                                     # the input file in place)
 //
 // The -cc and -qemu flags override the cross-compiler and emulator.
+// Note: the formatter strips `//` line comments and blank lines
+// because the lexer drops both before they reach the AST.
 package main
 
 import (
@@ -25,6 +30,7 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/printer"
 )
 
 func main() {
@@ -34,8 +40,11 @@ func main() {
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it under qemu-arm (arm32 only)")
 	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
+	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place)")
+	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: lang [-target arm32|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
+		fmt.Fprintln(os.Stderr, "       lang -fmt [-w] FILE.lang")
 		fmt.Fprintln(os.Stderr, "       lang -repl")
 		flag.PrintDefaults()
 	}
@@ -56,12 +65,50 @@ func main() {
 	srcPath := flag.Arg(0)
 	progArgs := flag.Args()[1:] // anything after the source path is forwarded to the program
 
+	if *doFmt {
+		if err := formatFile(srcPath, *writeBack); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	os.Exit(code)
+}
+
+// formatFile parses the file at srcPath, formats it, and writes the
+// result either to stdout (writeBack=false) or back to the file
+// itself (writeBack=true). Parse errors are surfaced through the
+// usual diag-formatted message. Comments and blank lines are not
+// preserved — the lexer drops both before they reach the AST.
+func formatFile(srcPath string, writeBack bool) error {
+	srcBytes, err := os.ReadFile(srcPath)
+	if err != nil {
+		return err
+	}
+	src := string(srcBytes)
+	prog, err := parser.Parse(src)
+	if err != nil {
+		return fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	}
+	formatted := printer.Format(prog)
+	if writeBack {
+		// Preserve the file's existing mode so chmod state survives
+		// the rewrite. ReadFile gave us bytes; we still need a stat
+		// for the mode.
+		info, err := os.Stat(srcPath)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(srcPath, []byte(formatted), info.Mode())
+	}
+	_, err = os.Stdout.WriteString(formatted)
+	return err
 }
 
 // run drives the full pipeline. The returned int is the exit code that
