@@ -24,7 +24,6 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/wasm"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
-	"github.com/jakechampion/lang/internal/optimizer"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -83,7 +82,9 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, progArgs 
 	if err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
-	optimizer.Optimize(prog)
+	// Optimisations now run on the IR (Inline / Fold / DCE inside
+	// each backend's Emit), so there's nothing left to do at the
+	// AST level after type checking.
 
 	// WASM target: emit WAT to stdout (or -o file) and stop. The arm32
 	// link / --run paths don't apply.

@@ -43,6 +43,7 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	// cleanly. Order matters: TCO wraps the body in a loop and any
 	// post-TCO Fold would have to know about that wrapper to stay
 	// useful.
+	ir.Inline(ip)
 	ir.Fold(ip)
 	ir.EliminateDeadCode(ip)
 	ir.TailCallOptimize(ip)
