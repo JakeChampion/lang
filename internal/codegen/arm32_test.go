@@ -82,15 +82,20 @@ func TestComparisonEmitsCondMoves(t *testing.T) {
 	mustContain(t, asm, "movge r0, #0")
 }
 
+// `a && b` lowers to `if a then b else 0`; the IR emits it as an
+// OpIf, which the backend translates into `cmp r0, #0; beq <else>`.
 func TestShortCircuitAnd(t *testing.T) {
 	asm := compile(t, `function f(a: boolean, b: boolean): boolean { return a && b; }`)
-	// Left value evaluated, then if zero we branch over the right side.
-	mustContain(t, asm, "beq .Lsc_")
+	mustContain(t, asm, "cmp r0, #0")
+	mustContain(t, asm, "beq .LifElse_")
 }
 
 func TestShortCircuitOr(t *testing.T) {
 	asm := compile(t, `function f(a: boolean, b: boolean): boolean { return a || b; }`)
-	mustContain(t, asm, "bne .Lsc_")
+	// `a || b` is `if a then 1 else b` — same `beq` / OpIf shape, with
+	// the constant-1 branch sitting in the `then` arm.
+	mustContain(t, asm, "cmp r0, #0")
+	mustContain(t, asm, "beq .LifElse_")
 }
 
 func TestCallEmitsBl(t *testing.T) {
@@ -101,21 +106,28 @@ function f(): number { return g(5); }`)
 
 func TestArrayIndex(t *testing.T) {
 	asm := compile(t, `function f(): number { var a: number[] = [1,2,3]; return a[1]; }`)
-	// Element load through the data pointer (base+4): index lsl #2
-	// stays the same, but the base now comes from __lang_alloc.
-	mustContain(t, asm, "ldr r0, [r1, r0, lsl #2]")
+	// Indexing computes `base + idx*4` then dereferences. The
+	// IR-driven path emits the address calc and load as separate
+	// instructions instead of the AST walker's single
+	// `ldr r0, [r1, r0, lsl #2]`.
+	mustContain(t, asm, "add r0, r1, r0, lsl #2")
+	mustContain(t, asm, "ldr r0, [r0]")
 	mustContain(t, asm, "bl __lang_alloc")
 	mustContain(t, asm, ".global __lang_alloc")
 }
 
-// Arrays now carry a 4-byte little-endian length prefix at base-4,
-// so `len(arr)` is a single load through that offset (no libc call).
+// Arrays carry a 4-byte little-endian length prefix at base-4. The
+// IR lowers `len(x)` to `<expr>; const 4; sub; load`, which on arm32
+// becomes a `sub r0, r1, r0` (ptr - 4) followed by `ldr r0, [r0]` —
+// no libc call, just two instructions instead of the AST walker's
+// fused `ldr r0, [r0, #-4]`.
 func TestLenOfArrayLoadsPrefix(t *testing.T) {
 	asm := compile(t, `function f(): number {
 		var a: number[] = [10, 20, 30];
 		return len(a);
 	}`)
-	mustContain(t, asm, "ldr r0, [r0, #-4]")
+	mustContain(t, asm, "sub r0, r1, r0")
+	mustContain(t, asm, "ldr r0, [r0]")
 	if strings.Contains(asm, "bl strlen") {
 		t.Errorf("len(array) must not call strlen:\n%s", asm)
 	}
@@ -153,15 +165,22 @@ func TestManyParamsReadsFromCallerStack(t *testing.T) {
 	mustContain(t, asm, "ldr r12, [fp, #12]") // param 5 (f2)
 }
 
-// >4-arg calls must pre-allocate the AAPCS stack-arg area and load
-// r0..r3 from the temp staging slots.
+// >4-arg calls push each arg onto the IR's operand stack in source
+// order, then load r0..r3 from the appropriate offsets and reverse
+// the extras into AAPCS layout (leftmost-stack-arg at sp+0).
 func TestManyArgCallPreallocates(t *testing.T) {
 	asm := compile(t, `
 		function g(a: number, b: number, c: number, d: number, e: number, f: number): number { return a; }
 		function f(): number { return g(1, 2, 3, 4, 5, 6); }`)
-	// 6 args * 4 bytes = 24, already 8-aligned.
-	mustContain(t, asm, "sub sp, sp, #24")
-	mustContain(t, asm, "add sp, sp, #24")
+	// Args 0..3 read from their pushed offsets.
+	mustContain(t, asm, "ldr r0, [sp, #20]")
+	mustContain(t, asm, "ldr r1, [sp, #16]")
+	mustContain(t, asm, "ldr r2, [sp, #12]")
+	mustContain(t, asm, "ldr r3, [sp, #8]")
+	// Inner-arg slots get reclaimed; extras stay on stack.
+	mustContain(t, asm, "add sp, sp, #16")
+	// After the call, the K extras (2 * 4 bytes here) are popped.
+	mustContain(t, asm, "add sp, sp, #8")
 }
 
 func TestNonExecutableStackNote(t *testing.T) {
@@ -256,21 +275,21 @@ function main(): number {
 	var f = add;
 	return f(40, 2);
 }`)
-	mustContain(t, asm, "ldr r12, [fp, #-4]")
+	mustContain(t, asm, "ldr r0, [fp, #-4]")
 	mustContain(t, asm, "blx r12")
 }
 
-// `return self(args)` should rewrite to argument-update + branch back
-// to the body label, with neither a `bl <self>` nor a jump to the
-// epilogue between them.
+// `return self(args)` is rewritten by ir.TailCallOptimize into a
+// parameter rebind plus a backward `OpBr` to a synthetic loop
+// wrapping the body. On arm32 that materialises as a `b .LloopTop_*`
+// — no `bl <self>` for the recursive call.
 func TestTailRecursionBranchesToBody(t *testing.T) {
 	asm := compile(t, `function sum(n: number, acc: number): number {
 		if (n == 0) { return acc; }
 		return sum(n - 1, acc + n);
 	}`)
-	mustContain(t, asm, ".Lbody_sum_")
-	mustContain(t, asm, "b .Lbody_sum_")
-	// Crucially, no `bl sum` for the recursive call.
+	mustContain(t, asm, ".LloopTop_")
+	mustContain(t, asm, "b .LloopTop_")
 	if strings.Contains(asm, "bl sum") {
 		t.Errorf("tail call should not emit `bl sum`:\n%s", asm)
 	}
@@ -357,6 +376,10 @@ func TestArm32RejectsFloatWithClearError(t *testing.T) {
 	}
 }
 
+// switch lowers to a chain of nested blocks: each case opens an
+// outer "skip-on-no-match" + inner "match-target" block, with
+// br_if on each value comparison. From the assembly side it
+// shows up as a swarm of blkEnd labels and `bne`/`beq` jumps.
 func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 	asm := compile(t, `function f(n: number): number {
 		switch (n) {
@@ -366,16 +389,20 @@ func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 		}
 		return -1;
 	}`)
-	mustContain(t, asm, "sw_body")
-	mustContain(t, asm, "sw_next")
-	mustContain(t, asm, "sw_end")
-	mustContain(t, asm, "beq")
+	mustContain(t, asm, ".LblkEnd_")
+	mustContain(t, asm, "cmp r1, r0")
+	mustContain(t, asm, "moveq r0, #1")
+	if !strings.Contains(asm, "bne") && !strings.Contains(asm, "beq") {
+		t.Errorf("expected switch dispatch to use conditional branches:\n%s", asm)
+	}
 }
 
+// Ternary is just a typed `if/else` in IR (block-result i32), so
+// the assembly is a `beq <else>` + a fall-through `b <end>`.
 func TestArm32TernaryBranches(t *testing.T) {
 	asm := compile(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
-	mustContain(t, asm, "tern_else")
-	mustContain(t, asm, "tern_end")
+	mustContain(t, asm, ".LifElse_")
+	mustContain(t, asm, ".LifEnd_")
 	mustContain(t, asm, "beq")
 }
 
@@ -396,10 +423,12 @@ func TestArm32StringEqualityCallsStrcmp(t *testing.T) {
 }
 
 // `len(string)` no longer calls strlen — strings carry the same
-// 4-byte length prefix as arrays, so the lowering is one load.
+// 4-byte length prefix as arrays, so the lowering threads through
+// the same `<ptr>; const 4; sub; load` IR sequence.
 func TestArm32LenStringLoadsPrefix(t *testing.T) {
 	asm := compile(t, `function f(): number { return len("abc"); }`)
-	mustContain(t, asm, "ldr r0, [r0, #-4]")
+	mustContain(t, asm, "sub r0, r1, r0")
+	mustContain(t, asm, "ldr r0, [r0]")
 	if strings.Contains(asm, "bl strlen") {
 		t.Errorf("len(string) must not call strlen:\n%s", asm)
 	}

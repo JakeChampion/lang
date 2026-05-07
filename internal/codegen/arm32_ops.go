@@ -327,30 +327,40 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 	}
 	argc := int(op.I32)
 	if argc <= regArgs {
-		// Args are on stack with the rightmost on top, so popping
-		// r{argc-1} first yields the right register binding.
+		// Args are on the operand stack with the rightmost on top,
+		// so popping r{argc-1} first lands each in its expected
+		// register.
 		for i := argc - 1; i >= 0; i-- {
 			g.emit("pop {r%d}", i)
 		}
-	} else {
-		// More than 4 args: first 4 go in r0..r3, the rest stay on
-		// the stack as the call's outgoing args. AAPCS expects the
-		// extras pushed in left-to-right order at sp+0, sp+4, …,
-		// which is the current order if we leave them in place.
-		for i := argc - 1; i >= regArgs; i-- {
-			// Extras are already in the right slots; nothing to do.
-			_ = i
-		}
-		for i := regArgs - 1; i >= 0; i-- {
-			off := (argc - 1 - i) * 4
-			g.emit("ldr r%d, [sp, #%d]", i, off)
-		}
-		// After the call we'll need to free the extras off the stack.
+		g.emit("bl %s", target)
+		g.emit("push {r0}")
+		return nil
 	}
+	// argc > 4: register args come from offsets near the top, but
+	// the extras need to be reversed in place — the IR pushed them
+	// rightmost-on-top while AAPCS expects leftmost-on-top in the
+	// callee's stack-arg area at [sp+0]. We:
+	//  1. Read args 0..3 from their stacked offsets into r0..r3.
+	//  2. Move each extra a_{4+j} from its current offset
+	//     [sp+(K-1-j)*4] up to its AAPCS slot [sp+(N-K+j)*4],
+	//     using r12 as a temporary.
+	//  3. Bump sp by (argc-K)*4 = 16 so the new sp[0] is a4.
+	K := argc - regArgs
+	for i := 0; i < regArgs; i++ {
+		off := (argc - 1 - i) * 4
+		g.emit("ldr r%d, [sp, #%d]", i, off)
+	}
+	for j := 0; j < K; j++ {
+		src := (K - 1 - j) * 4
+		dst := (argc - K + j) * 4
+		g.emit("ldr r12, [sp, #%d]", src)
+		g.emit("str r12, [sp, #%d]", dst)
+	}
+	g.emit("add sp, sp, #%d", (argc-K)*4)
 	g.emit("bl %s", target)
-	if argc > regArgs {
-		g.emit("add sp, sp, #%d", (argc-regArgs)*4)
-	}
+	// Free the extras area (K*4 bytes) the AAPCS callee left for us.
+	g.emit("add sp, sp, #%d", K*4)
 	g.emit("push {r0}")
 	return nil
 }
