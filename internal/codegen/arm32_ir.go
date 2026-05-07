@@ -45,12 +45,20 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	// useful.
 	ir.Inline(ip)
 	ir.FuseTee(ip)
-	// PropagateCopies + ConstPropagate + Fold expose new
-	// opportunities for each other; run them to a fixed point so
-	// the cascade settles.
+	// TCO runs BEFORE FlattenBranches: TCO recognises the
+	// `OpCallDirect <self> ; OpReturn` adjacency, but flattening
+	// would push the call into a typed-if arm and break that
+	// pattern. Once TCO has rewritten the recursive shape, the
+	// body's outer scope becomes the wrap loop and FlattenBranches
+	// (which only fires at function-root depth) leaves the
+	// recursive functions alone.
+	ir.TailCallOptimize(ip)
+	ir.FlattenBranches(ip)
+	// PropagateCopies + ConstPropagate + Fold + ReduceStrength
+	// expose new opportunities for each other; run them to a fixed
+	// point so the cascade settles.
 	ir.OptimizeCleanup(ip)
 	ir.EliminateDeadCode(ip)
-	ir.TailCallOptimize(ip)
 
 	g := &generator{
 		info:        info,
