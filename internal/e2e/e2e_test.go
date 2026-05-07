@@ -411,8 +411,8 @@ func TestStringEscapes(t *testing.T) {
 // validates the field access, and the linked binary returns 7.
 func TestCrossModuleStructTypeArm(t *testing.T) {
 	_, code := compileMultiFileAndRun(t, "main.lang", map[string]string{
-		"point.lang": `struct Point { x: number, y: number }
-function make(x: number, y: number): Point {
+		"point.lang": `pub struct Point { x: number, y: number }
+pub function make(x: number, y: number): Point {
 	return Point { x: x, y: y };
 }`,
 		"main.lang": `import "./point";

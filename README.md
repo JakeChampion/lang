@@ -114,6 +114,11 @@ Supported:
   / `function f(): util.Foo` / `util.Foo { … }` literal). The loader
   detects cycles, mangles non-entry module names internally so the
   rest of the pipeline sees one flat program.
+- **Visibility** — top-level decls are private to their module by
+  default. Mark them `pub function …` / `pub struct …` to expose
+  them across module boundaries; cross-module references to
+  non-`pub` decls fail at load time with a diagnostic that names
+  the offending qualified reference.
 - Top-level `function` declarations with parameter and return types.
 - **Methods** on structs via the receiver clause
   `function (p: Point) name(): T { ... }`; the checker rewrites call

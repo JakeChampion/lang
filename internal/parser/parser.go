@@ -118,6 +118,25 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			continue
 		}
+		// `pub` is an optional prefix on function or struct decls
+		// at the top level. Track it and consume; the `function` /
+		// `struct` parser stays unaware of visibility — we stamp
+		// the Public flag after the decl is built. A bare `pub`
+		// without a following decl is a parse error.
+		isPub := false
+		if p.match(lexer.Keyword, "pub") {
+			pubTok := p.advance()
+			if !p.match(lexer.Keyword, "function") && !p.match(lexer.Keyword, "struct") {
+				p.errors = append(p.errors, p.errorf(pubTok.Pos,
+					"`pub` must be followed by `function` or `struct`"))
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			isPub = true
+		}
 		if p.match(lexer.Keyword, "struct") {
 			sd, err := p.parseStructDecl()
 			if err != nil {
@@ -129,6 +148,7 @@ func (p *parser) parseProgram() *ast.Program {
 				continue
 			}
 			if sd != nil {
+				sd.Public = isPub
 				prog.Structs = append(prog.Structs, sd)
 			}
 			continue
@@ -143,6 +163,7 @@ func (p *parser) parseProgram() *ast.Program {
 			continue
 		}
 		if fn != nil {
+			fn.Public = isPub
 			prog.Funcs = append(prog.Funcs, fn)
 		}
 	}
@@ -191,7 +212,8 @@ func (p *parser) syncToTopLevel() {
 	for !p.match(lexer.EOF, "") {
 		if p.match(lexer.Keyword, "function") ||
 			p.match(lexer.Keyword, "struct") ||
-			p.match(lexer.Keyword, "import") {
+			p.match(lexer.Keyword, "import") ||
+			p.match(lexer.Keyword, "pub") {
 			return
 		}
 		p.advance()

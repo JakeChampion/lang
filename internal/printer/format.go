@@ -133,6 +133,9 @@ func (f *formatter) indent(n int) {
 }
 
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
+	if sd.Public {
+		f.b.WriteString("pub ")
+	}
 	f.b.WriteString("struct ")
 	f.b.WriteString(sd.Name)
 	f.b.WriteString(" { ")
@@ -152,6 +155,9 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 // uses multi-line block formatting at the supplied indent level.
 func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	f.indent(depth)
+	if fn.Public {
+		f.b.WriteString("pub ")
+	}
 	f.b.WriteString("function ")
 	if fn.Receiver != nil {
 		f.b.WriteByte('(')

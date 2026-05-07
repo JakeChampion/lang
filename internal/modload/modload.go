@@ -18,16 +18,15 @@
 // references in any module — `mod.fn(args)`, `mod.fn` as a value —
 // get rewritten to flat references at the mangled name.
 //
+// Visibility: top-level decls are private to their declaring
+// module by default. Prefixing with `pub` (`pub function …` /
+// `pub struct …`) marks a decl as exported. Cross-module
+// references to non-`pub` decls are rejected during loading with
+// a diagnostic that names the offending qualified reference and
+// suggests the fix.
+//
 // Limitations of this first cut:
 //
-//   - Cross-module struct types and struct literals aren't
-//     supported. A struct stays private to the module that
-//     declares it. Adding cross-module structs needs the parser
-//     to accept `mod.Foo` in type positions and the rewriter to
-//     follow it through StructLit.TypeName fields.
-//   - Visibility is all-or-nothing — every top-level decl in an
-//     imported module is reachable as `<mod>__<name>`. A future
-//     `pub` keyword could gate this.
 //   - Aliasing (`import "./long/path" as p`) isn't supported;
 //     the local name always comes from the path basename.
 
@@ -63,7 +62,11 @@ func Load(entryPath string) (*ast.Program, map[string]string, error) {
 	if err := loadRecursive(entryAbs, loaded, stack, srcs); err != nil {
 		return nil, nil, err
 	}
-	return combine(loaded, entryAbs), srcs, nil
+	prog, err := combine(loaded, entryAbs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return prog, srcs, nil
 }
 
 // module bundles a parsed file with its canonical path and the
@@ -73,6 +76,11 @@ type module struct {
 	name    string
 	prog    *ast.Program
 	imports map[string]*module // local-name → loaded module
+	// publicFuncs and publicStructs hold the original (pre-mangle)
+	// names of `pub` decls, populated when the module loads. The
+	// rewriter uses them to gate cross-module references.
+	publicFuncs   map[string]bool
+	publicStructs map[string]bool
 }
 
 // loadRecursive parses path (if not already loaded), then recurses
@@ -115,10 +123,22 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	}
 
 	mod := &module{
-		path:    path,
-		name:    importLocalName(path),
-		prog:    prog,
-		imports: map[string]*module{},
+		path:          path,
+		name:          importLocalName(path),
+		prog:          prog,
+		imports:       map[string]*module{},
+		publicFuncs:   map[string]bool{},
+		publicStructs: map[string]bool{},
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Public {
+			mod.publicFuncs[fn.Name] = true
+		}
+	}
+	for _, sd := range prog.Structs {
+		if sd.Public {
+			mod.publicStructs[sd.Name] = true
+		}
 	}
 	for i, imp := range prog.Imports {
 		child := loaded[childPaths[i]]
@@ -169,23 +189,30 @@ func importLocalName(path string) string {
 // decls (own-module calls / values) get rewritten with the
 // matching prefix; cross-module references (`mod.fn`) get
 // rewritten as direct calls to the mangled name.
-func combine(loaded map[string]*module, entryPath string) *ast.Program {
+//
+// Cross-module references to non-`pub` decls are rejected here —
+// the rewriter accumulates those errors and combine returns the
+// first one (other errors are wrapped under it).
+func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) {
 	combined := &ast.Program{}
-	// Track the names every non-entry module exports so internal-
-	// reference rewriting can decide what's a same-module call.
+	var firstErr error
 	for _, mod := range loaded {
-		mod.rewriteAll(prefixFor(mod.path == entryPath, mod.name))
+		errs := mod.rewriteAll(prefixFor(mod.path == entryPath, mod.name))
+		for _, e := range errs {
+			if firstErr == nil {
+				firstErr = e
+			}
+		}
 	}
-	// Walk in deterministic order (by canonical path) so the
-	// combined program's func / struct order is stable across
-	// runs — useful for diff-friendly output and reproducible
-	// builds.
+	if firstErr != nil {
+		return nil, firstErr
+	}
 	for _, mod := range loaded {
 		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
 		combined.Structs = append(combined.Structs, mod.prog.Structs...)
 		combined.Comments = append(combined.Comments, mod.prog.Comments...)
 	}
-	return combined
+	return combined, nil
 }
 
 // prefixFor returns the mangling prefix to apply to a module's own
@@ -210,7 +237,7 @@ func prefixFor(isEntry bool, name string) string {
 //
 // Both rewrites happen in one walk so the mangled output is
 // consistent for the rest of the pipeline.
-func (m *module) rewriteAll(selfPrefix string) {
+func (m *module) rewriteAll(selfPrefix string) []error {
 	// Build the set of own-module function and struct names so we
 	// can recognise internal references (`fn(args)` / `Foo { ... }`)
 	// versus references to outside symbols.
@@ -224,6 +251,7 @@ func (m *module) rewriteAll(selfPrefix string) {
 	}
 
 	r := &rewriter{
+		modPath:    m.path,
 		selfPrefix: selfPrefix,
 		ownFuncs:   ownFuncs,
 		ownStructs: ownStructs,
@@ -247,31 +275,51 @@ func (m *module) rewriteAll(selfPrefix string) {
 			r.rewriteType(&sd.Fields[i].Type)
 		}
 	}
+	return r.errs
 }
 
 // rewriter holds the per-module state the AST walk needs.
 type rewriter struct {
+	modPath    string             // path of the module being rewritten (for error messages)
 	selfPrefix string             // prefix for this module's own decls
 	ownFuncs   map[string]bool    // names of funcs declared in this module (pre-mangle)
 	ownStructs map[string]bool    // names of structs declared in this module (pre-mangle)
 	imports    map[string]*module // local name → imported module
+	errs       []error            // visibility / unresolved-name errors collected during the walk
 }
 
-// importPrefix returns the mangling prefix for an imported module
-// (empty if the import is the entry module, which keeps original
-// names). Used for cross-module reference rewriting.
-func (r *rewriter) importPrefix(localName string) (string, bool) {
+// checkPublicFunc records an error if `fn` isn't exported from
+// `mod`. Cross-module function references go through this gate;
+// same-module references skip it because internal calls aren't
+// visibility-restricted.
+func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
+	if !mod.publicFuncs[fn] {
+		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)",
+			r.modPath, pos, mod.name, fn, fn))
+	}
+}
+
+// checkPublicStruct records an error if `name` isn't an exported
+// struct of `mod`. Used at every cross-module struct-type or
+// struct-literal reference.
+func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position) {
+	if !mod.publicStructs[name] {
+		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub struct %s …` to make it accessible from other modules)",
+			r.modPath, pos, mod.name, name, name))
+	}
+}
+
+// importedModule looks up a local-name binding from this module's
+// import list, returning the resolved module + its mangling prefix.
+// `mod.fn(args)`, `mod.fn` (value), and `mod.Foo` references all
+// route through here; visibility checks at the call sites use the
+// returned *module to ask whether the named decl is `pub`.
+func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 	mod, ok := r.imports[localName]
 	if !ok {
-		return "", false
+		return nil, "", false
 	}
-	// We don't know inside the rewriter whether the imported module
-	// is the entry; just use its name as the prefix. The combine
-	// step ensures entry module's decls have empty selfPrefix, so
-	// importing the entry from a sibling would actually want no
-	// prefix — but that's a strange shape and not our concern in
-	// the first cut. Document the limitation.
-	return mod.name + "__", true
+	return mod, mod.name + "__", true
 }
 
 func (r *rewriter) rewriteBlock(b *ast.Block) {
@@ -357,7 +405,8 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		// access because mod isn't a struct.
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok {
 			if id, ok := fa.Target.(*ast.Ident); ok {
-				if prefix, ok := r.importPrefix(id.Name); ok {
+				if mod, prefix, ok := r.importedModule(id.Name); ok {
+					r.checkPublicFunc(mod, fa.Field, fa.P)
 					x.Callee = &ast.Ident{P: id.P, Name: prefix + fa.Field}
 					for i := range x.Args {
 						r.rewriteExpr(&x.Args[i])
@@ -374,7 +423,8 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		// `mod.fn` in non-callee position (taking the function as
 		// a value) — rewrite to a direct Ident.
 		if id, ok := x.Target.(*ast.Ident); ok {
-			if prefix, ok := r.importPrefix(id.Name); ok {
+			if mod, prefix, ok := r.importedModule(id.Name); ok {
+				r.checkPublicFunc(mod, x.Field, x.P)
 				*slot = &ast.Ident{P: id.P, Name: prefix + x.Field}
 				return
 			}
@@ -404,10 +454,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		//   - `Foo { … }` where Foo lives in this module → prefix
 		//     with selfPrefix.
 		//   - `mod.Foo { … }` where mod is one of this module's
-		//     imports → flatten to `<modname>__Foo`.
+		//     imports → flatten to `<modname>__Foo` after the
+		//     visibility check.
 		//   - Anything else (a dotted name we don't recognise) is
 		//     a checker-time error; leave it alone.
-		x.TypeName = r.rewriteStructName(x.TypeName)
+		x.TypeName = r.rewriteStructNameAt(x.TypeName, x.P)
 		for i := range x.Fields {
 			r.rewriteExpr(&x.Fields[i].Value)
 		}
@@ -417,11 +468,18 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 // rewriteStructName turns a struct name (possibly qualified as
 // `mod.Foo` from the parser) into the flat mangled form. Same-
 // module names get selfPrefix; imported names get the imported
-// module's prefix.
+// module's prefix and trip the visibility check.
 func (r *rewriter) rewriteStructName(name string) string {
+	return r.rewriteStructNameAt(name, ast.Position{})
+}
+
+// rewriteStructNameAt is rewriteStructName plus the source position
+// so visibility errors can point back at the offending reference.
+func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 	if dot := indexByte(name, '.'); dot >= 0 {
 		modName, structName := name[:dot], name[dot+1:]
-		if prefix, ok := r.importPrefix(modName); ok {
+		if mod, prefix, ok := r.importedModule(modName); ok {
+			r.checkPublicStruct(mod, structName, pos)
 			return prefix + structName
 		}
 		// Unrecognised module — leave as-is so the checker can
