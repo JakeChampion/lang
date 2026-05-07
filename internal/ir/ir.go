@@ -55,6 +55,7 @@ const (
 	// Locals (parameter or var). Idx is the 0-based slot.
 	OpLoadLocal  // ()                → T
 	OpStoreLocal // (T)               → ()
+	OpTeeLocal   // (T)               → T   (store + leave value on stack)
 
 	// Integer / pointer arithmetic and comparison. All consume two i32
 	// and produce one i32 except OpNeg / OpNot, which consume one.
@@ -180,6 +181,8 @@ func (k OpKind) String() string {
 		return "local.load"
 	case OpStoreLocal:
 		return "local.store"
+	case OpTeeLocal:
+		return "local.tee"
 	case OpAdd:
 		return "add"
 	case OpSub:
@@ -357,7 +360,7 @@ func (p *Program) String() string {
 
 func formatOp(op Op) string {
 	switch op.Kind {
-	case OpConstI32, OpLoadLocal, OpStoreLocal:
+	case OpConstI32, OpLoadLocal, OpStoreLocal, OpTeeLocal:
 		return fmt.Sprintf("%s %d", op.Kind, op.I32)
 	case OpConstF32:
 		return fmt.Sprintf("%s %g", op.Kind, op.F32)
