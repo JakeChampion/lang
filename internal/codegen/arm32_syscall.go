@@ -27,12 +27,23 @@ const (
 	sysExitGroup = 248
 )
 
-// emitSyscall lowers `mov r7, #num ; svc 0`. The kernel returns
-// the result (or `-errno` on failure) in r0. Other registers
-// (besides r7) are preserved.
+// emitSyscall lowers a save-restore-bracketed `svc 0`. The
+// kernel returns the result (or `-errno` on failure) in r0;
+// every other register (including r7) is preserved across the
+// `svc` itself, but loading the syscall number into r7
+// destroys whatever the caller had there. Since r7 sits in the
+// AAPCS callee-saved range (r4..r11), helpers that issue
+// syscalls would otherwise be silently violating the
+// convention — strcat / read_file / etc. routinely stash live
+// values in r7 across `bl __lang_alloc`. Bracketing with
+// `push {r7}` / `pop {r7}` makes every syscall transparent
+// to its caller; the cost is two extra memory ops, dwarfed by
+// the kernel transition itself.
 func (g *generator) emitSyscall(num int) {
+	g.emit("push {r7}")
 	g.emit("mov r7, #%d", num)
 	g.emit("svc 0")
+	g.emit("pop {r7}")
 }
 
 // emitStartRuntime emits `_start`, the binary's entry point under
