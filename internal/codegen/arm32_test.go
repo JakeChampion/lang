@@ -445,6 +445,42 @@ func TestArm32NoLibcSymbols(t *testing.T) {
 	}
 }
 
+// strcmp short-circuits on pointer equality and on length
+// mismatch before doing any byte-level work; the bulk loop is
+// word-grain (4 bytes per cmp). All three layers should appear
+// in the assembly.
+func TestArm32StrcmpShortCircuitsAndIsWordGrain(t *testing.T) {
+	asm := compile(t, `function f(): boolean { return "abc" == "abc"; }`)
+	// 1. Pointer equality short-circuit.
+	mustContain(t, asm, "cmp r0, r1")
+	mustContain(t, asm, "beq .Lscmp_eq")
+	// 2. Length compare via the prefix.
+	mustContain(t, asm, "ldr r2, [r0, #-4]")
+	mustContain(t, asm, "ldr r3, [r1, #-4]")
+	// 3. Word-grain bulk loop.
+	mustContain(t, asm, ".Lscmp_word:")
+	mustContain(t, asm, "ldr r12, [r0], #4")
+}
+
+// `read_file` now uses one `fstat64(2)` to discover file size
+// instead of the previous `lseek SEEK_END ; lseek SEEK_SET`
+// pair. Saves one syscall per call.
+func TestArm32ReadFileUsesFstat(t *testing.T) {
+	asm := compile(t, `function main(): number {
+		match (read_file("x")) { Ok(_) => { return 0; }, Err(_) => { return 1; } }
+		return -1;
+	}`)
+	// fstat64 syscall = 197 on ARM EABI.
+	mustContain(t, asm, "mov r7, #197")
+	// We load st_size from offset 48 of the kernel's stat64 struct.
+	mustContain(t, asm, "ldr r6, [sp, #48]")
+	// And we no longer issue any lseek (syscall 19) from read_file.
+	// Anchor with a newline so "#19" doesn't false-match "#197".
+	if strings.Contains(asm, "mov r7, #19\n") {
+		t.Errorf("read_file should no longer call lseek:\n%s", asm)
+	}
+}
+
 // memcpy is word-grain on the bulk path (4 bytes per iter)
 // with a byte-grain tail for the last < 4 bytes. The shape pins
 // both halves so any future tweak that drops the bulk loop

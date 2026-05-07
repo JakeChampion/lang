@@ -605,22 +605,29 @@ func (g *generator) emitIoErrCaseArm(errno, tagIdx int, withPathPayload bool) {
 	g.label(skip)
 }
 
-// emitReadFileRuntime — see emitFileIORuntime comment. The
-// arm32 strategy uses lseek to discover file size up front,
-// allocates a single length-prefixed buffer of the exact
-// size, and reads in a loop that handles partial returns by
-// re-issuing read(2). The bump allocator gives each open() a
+// emitReadFileRuntime — see emitFileIORuntime comment. We
+// open the file, ask the kernel for its size with a single
+// `fstat64(2)` (one syscall in place of the two `lseek`s a
+// SEEK_END / SEEK_SET pair would need), then allocate a
+// length-prefixed buffer of the exact size and read into it
+// in a loop that handles partial returns by re-issuing
+// `read(2)`. The bump allocator gives each open() a
 // contiguous slab, so a single allocation suffices.
 //
-// Direct syscalls — no libc, no `__errno_location`. The kernel
-// returns `-errno` directly; we negate it on the error path.
+// `fstat64` doesn't move the file pointer, so the read loop
+// picks up at offset 0 with no rewind needed.
+//
+// Direct syscalls — no libc, no `__errno_location`. The
+// kernel returns `-errno` directly; we negate it on the
+// error path.
 func (g *generator) emitReadFileRuntime() {
 	g.line("")
 	g.line(".global __lang_read_file")
 	g.line(".type __lang_read_file, %function")
 	g.label("__lang_read_file")
 	g.emit("push {r4, r5, r6, r7, r8, lr}")
-	g.emit("mov r4, r0") // r4 = path
+	g.emit("sub sp, sp, #%d", stat64BufferBytes) // scratch for fstat64
+	g.emit("mov r4, r0")                         // r4 = path
 
 	// open(path, O_RDONLY=0)
 	g.emit("mov r1, #0")
@@ -636,22 +643,20 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov r1, #1")
 	g.emit("str r1, [r0]")
 	g.emit("str r5, [r0, #4]")
+	g.emit("add sp, sp, #%d", stat64BufferBytes)
 	g.emit("pop {r4, r5, r6, r7, r8, lr}")
 	g.emit("bx lr")
 
 	g.label(".Lrf_opened")
 	g.emit("mov r5, r0") // r5 = fd
 
-	// size = lseek(fd, 0, SEEK_END=2); rewind via lseek to 0.
+	// fstat64(fd, &buf): fills the kernel struct stat64 in
+	// our stack scratch. st_size's lo32 sits at offset 48
+	// (verified empirically on ARM EABI Linux).
 	g.emit("mov r0, r5")
-	g.emit("mov r1, #0")
-	g.emit("mov r2, #2")
-	g.emitSyscall(sysLseek)
-	g.emit("mov r6, r0") // r6 = file size
-	g.emit("mov r0, r5")
-	g.emit("mov r1, #0")
-	g.emit("mov r2, #0")
-	g.emitSyscall(sysLseek)
+	g.emit("mov r1, sp")
+	g.emitSyscall(sysFstat64)
+	g.emit("ldr r6, [sp, #%d]", stat64SizeOffset) // r6 = st_size lo32
 
 	// Allocate result string: 4 (length) + size + 1 (trailing NUL).
 	g.emit("add r0, r6, #5")
@@ -692,6 +697,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov r1, #0")
 	g.emit("str r1, [r0]")
 	g.emit("str r7, [r0, #4]")
+	g.emit("add sp, sp, #%d", stat64BufferBytes)
 	g.emit("pop {r4, r5, r6, r7, r8, lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_read_file, .-__lang_read_file")
