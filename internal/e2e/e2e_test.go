@@ -68,7 +68,7 @@ func compileAndRun(t *testing.T, src string) (stdout string, exitCode int) {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
-	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 	cmd := exec.Command(qemu, binPath)
@@ -115,7 +115,7 @@ func compileMultiFileAndRun(t *testing.T, entry string, files map[string]string)
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
-	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 	cmd := exec.Command(qemu, binPath)
@@ -494,7 +494,7 @@ func compileAndCaptureStreams(t *testing.T, src string) (stdout, stderr string, 
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
-	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 	cmd := exec.Command(qemu, binPath)
@@ -534,7 +534,7 @@ func compileAndRunWithArgs(t *testing.T, src string, extraArgs ...string) int {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
-	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 	cmdArgs := append([]string{binPath}, extraArgs...)
@@ -592,7 +592,7 @@ func TestArgsBuiltinReadsValueArm(t *testing.T) {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
-	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 	cmd := exec.Command(qemu, binPath, "hello")
@@ -632,7 +632,7 @@ func runWithStdinEnv(t *testing.T, src, stdin string, extraEnv []string) (stdout
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
-	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 	cmd := exec.Command(qemu, binPath)
@@ -1012,7 +1012,7 @@ func runArmInDir(t *testing.T, src string, seed map[string]string) (stdout strin
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
-	if out, err := exec.Command(gcc, "-static", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 	for name, content := range seed {

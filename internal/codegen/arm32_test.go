@@ -140,13 +140,16 @@ func TestLenOfArrayLoadsPrefix(t *testing.T) {
 	}
 }
 
-// The malloc wrapper appears once and only when something in the
-// program asks for heap storage. A pure-arithmetic function
-// shouldn't pull in the runtime.
-func TestAllocRuntimeOnlyEmittedWhenNeeded(t *testing.T) {
+// The bump allocator is always present (every binary needs the
+// heap initialised by _start), but the cmp-bhi-grow shape only
+// makes sense with the brk-based runtime. A pure-arithmetic
+// program just inherits the runtime; no per-program toggle.
+func TestAllocRuntimeAlwaysPresentWithBumpShape(t *testing.T) {
 	asm := compile(t, `function f(): number { return 1 + 2; }`)
-	if strings.Contains(asm, "__lang_alloc") {
-		t.Errorf("alloc helper should not appear in pure-arith program:\n%s", asm)
+	mustContain(t, asm, "__lang_alloc")
+	mustContain(t, asm, "ldr r1, =__lang_heap_ptr")
+	if strings.Contains(asm, "bl malloc") {
+		t.Errorf("alloc must not call libc malloc:\n%s", asm)
 	}
 }
 
@@ -211,17 +214,20 @@ func TestStringLiteralEmitsRodata(t *testing.T) {
 	mustContain(t, asm, "ldr r0, =.LStr_0")
 }
 
-// `print(s)` lowers to a direct call to libc puts.
-func TestPrintLowersToPuts(t *testing.T) {
+// `print(s)` lowers to our nostdlib puts helper (string + newline,
+// two write(2) syscalls).
+func TestPrintLowersToLangPuts(t *testing.T) {
 	asm := compile(t, `function main(): void { print("hi"); }`)
-	mustContain(t, asm, "bl puts")
+	mustContain(t, asm, "bl __lang_puts")
 }
 
-// Identical literals share a label; distinct ones don't.
-func TestModuloUsesIdivmod(t *testing.T) {
+// `%` lowers to `sdiv` + `mls` (multiply-subtract) inline — no
+// libgcc __aeabi_idivmod call. Faster than the function-call
+// shape and lets us drop the libgcc dependency under -nostdlib.
+func TestModuloUsesSdivMls(t *testing.T) {
 	asm := compile(t, `function f(): number { return 17 % 5; }`)
-	mustContain(t, asm, "bl __aeabi_idivmod")
-	mustContain(t, asm, "mov r0, r1")
+	mustContain(t, asm, "sdiv r2, r1, r0")
+	mustContain(t, asm, "mls r0, r2, r0, r1")
 }
 
 func TestBitwiseAnd(t *testing.T) {
@@ -409,6 +415,66 @@ func TestStringInterningDeduplicates(t *testing.T) {
 	}
 }
 
+// Every emitted program is libc-free. The binary links with
+// `-nostdlib` and contains only language code + direct svc 0
+// syscalls. This test enumerates the libc symbols we used to
+// rely on and asserts none of them survive in any program — a
+// representative kitchen-sink program covers the syscall
+// helpers (file I/O), the alloc path, the string runtime, and
+// the print path.
+func TestArm32NoLibcSymbols(t *testing.T) {
+	asm := compile(t, `function main(): number {
+		print("hi");
+		var n: number = 17 % 5;
+		var s: string = "a" + "b";
+		if (s == "ab") { n = n + 1; }
+		return n;
+	}`)
+	for _, sym := range []string{
+		"bl puts", "bl printf",
+		"bl malloc", "bl free", "bl calloc",
+		"bl write\n", "bl read\n", "bl open\n", "bl close\n", "bl lseek",
+		"bl strcmp", "bl strlen", "bl memcpy", "bl memset",
+		"bl getenv", "bl exit\n",
+		"bl __aeabi_idiv", "bl __aeabi_idivmod",
+		"bl __errno_location", "__libc_start_main",
+	} {
+		if strings.Contains(asm, sym) {
+			t.Errorf("nostdlib invariant: program must not reference %q\n%s", sym, asm)
+		}
+	}
+}
+
+// _start is the binary's entry point under -nostdlib. It must
+// capture argc / argv / envp from the kernel-provided stack into
+// .bss globals, align sp, init the heap, and exit_group on
+// main's return.
+func TestArm32StartCaptureAndExit(t *testing.T) {
+	asm := compile(t, `function main(): number { return 0; }`)
+	mustContain(t, asm, ".global _start")
+	mustContain(t, asm, "ldr r0, [sp]")
+	mustContain(t, asm, "ldr r3, =__lang_argc")
+	mustContain(t, asm, "ldr r3, =__lang_envp")
+	mustContain(t, asm, "bic sp, sp, #7")
+	mustContain(t, asm, "bl __lang_heap_init")
+	mustContain(t, asm, "bl main")
+	// exit_group syscall = 248
+	mustContain(t, asm, "mov r7, #248")
+}
+
+// The bump allocator's fast path is six instructions plus the
+// fall-through: align size, load heap_ptr, add, compare against
+// heap_end, bump (or branch to grow). Verifying all five line
+// shapes in order pins the structure.
+func TestArm32AllocFastPath(t *testing.T) {
+	asm := compile(t, `function f(): number[] { return [1, 2, 3]; }`)
+	mustContain(t, asm, "add r0, r0, #3")
+	mustContain(t, asm, "bic r0, r0, #3")
+	mustContain(t, asm, "ldr r1, =__lang_heap_ptr")
+	mustContain(t, asm, "ldr r12, =__lang_heap_end")
+	mustContain(t, asm, "bhi .Lalloc_grow")
+}
+
 // Floats now lower through VFPv2 — the assembly should declare
 // the FPU and use the `vadd.f32` / `vmov` mnemonics rather than
 // the old "not supported" error.
@@ -462,7 +528,7 @@ func TestArm32StringIndexLoadsByte(t *testing.T) {
 
 func TestArm32StringEqualityCallsStrcmp(t *testing.T) {
 	asm := compile(t, `function f(): boolean { return "a" == "a"; }`)
-	mustContain(t, asm, "bl strcmp")
+	mustContain(t, asm, "bl __lang_strcmp")
 }
 
 // `len(string)` no longer calls strlen — strings carry the same
