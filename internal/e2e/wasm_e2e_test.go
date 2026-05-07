@@ -1077,3 +1077,45 @@ func TestWASMGenericResult(t *testing.T) {
 		t.Errorf("got %d, want 5 (20/4)", got)
 	}
 }
+
+// Generic enum payload typed with `T = float` survives the
+// store / load round trip on WASM. Before the
+// VariantCallPayloads side-map landed, `Some(3.14)` failed
+// validation because the IR emitted `OpStore` (the variant's
+// declared payload was `T`, not `float`) and the operand on
+// the stack was f32. The checker now records the substituted
+// payload type so codegen picks `OpFStore`.
+func TestWASMOptionFloatPayload(t *testing.T) {
+	src := `function pick(): Option[float] { return Some(3.14); }
+		function main(): number {
+			match (pick()) {
+				Some(v) => { if (v > 3.0) { return 1; } return 2; },
+				None => { return 0; }
+			}
+			return -1;
+		}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (Some(3.14) > 3.0)", got)
+	}
+}
+
+// Result[float, string] — Ok carries an f32 payload through the
+// heap. Same fix path as Option[float], but with a
+// non-payload-less variant on each arm so the test covers a
+// realistic two-typed-parameter shape.
+func TestWASMResultFloatOk(t *testing.T) {
+	src := `function check(x: float): Result[float, string] {
+			if (x < 0.0) { return Err("negative"); }
+			return Ok(x);
+		}
+		function main(): number {
+			match (check(2.5)) {
+				Ok(v) => { if (v > 2.0) { return 1; } return 2; },
+				Err(msg) => { return 0; }
+			}
+			return -1;
+		}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (Ok(2.5) > 2.0)", got)
+	}
+}

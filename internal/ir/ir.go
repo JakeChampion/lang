@@ -519,7 +519,14 @@ func (b *builder) lookupVariant(name string) (enumName string, varIdx int, paylo
 // Total size is `4 + payloadCount * 4`. Payload-less variants
 // still allocate 4 bytes for the tag — uniform layout simplifies
 // match-side loads.
-func (b *builder) emitEnumNew(enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
+//
+// `callNode` is the originating *ast.Call when this is a
+// payload-carrying construction; nil otherwise. The checker
+// stores type-substituted payload types under that key, which
+// lets us pick OpFStore for an f32 payload even when the
+// variant's declared payload was a type parameter (e.g.
+// `Some(3.14)` on `Option[T]` with `T = float`).
+func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
 	size := int32(4 + payloadCount*4)
 	b.emit(Op{Kind: OpConstI32, I32: size})
 	b.emit(Op{Kind: OpAlloc})
@@ -530,16 +537,22 @@ func (b *builder) emitEnumNew(enumName string, varIdx int, payloadCount int, arg
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 	b.emit(Op{Kind: OpStore})
-	// Look up the variant's declared payload types so floats land
-	// in f32-typed slots — `i32.store` of an f32 operand fails
-	// WASM validation, and arm32 doesn't care which mnemonic we
-	// use. Generic enums where T resolves to float still go
-	// through OpStore (declared type is ParamType, not float);
-	// `Option[float]` therefore won't validate on WASM. That's a
-	// followup that needs reinterpret ops + tracked operand types.
+	// Resolve the payload's concrete type for op selection.
+	// Prefer the checker-supplied substituted types so a generic
+	// enum's `T = float` instantiation gets OpFStore; fall back
+	// to the declared payload list (which contains ParamType
+	// for generic variants — that's harmless because then the
+	// arg can't be float anyway since the constraint failed).
 	var payloadTypes []ast.Type
-	if ed, ok := b.info.Enums[enumName]; ok && varIdx < len(ed.Variants) {
-		payloadTypes = ed.Variants[varIdx].Payloads
+	if callNode != nil {
+		if pts, ok := b.info.VariantCallPayloads[callNode]; ok {
+			payloadTypes = pts
+		}
+	}
+	if payloadTypes == nil {
+		if ed, ok := b.info.Enums[enumName]; ok && varIdx < len(ed.Variants) {
+			payloadTypes = ed.Variants[varIdx].Payloads
+		}
 	}
 	for i, a := range args {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
@@ -880,7 +893,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// tag — no payloads to store.
 		if enumName, varIdx, payloadCount, isVariant := b.lookupVariant(n.Name); isVariant && payloadCount == 0 {
 			if _, isLocal := b.locals[n.Name]; !isLocal {
-				return b.emitEnumNew(enumName, varIdx, 0, nil)
+				return b.emitEnumNew(nil, enumName, varIdx, 0, nil)
 			}
 		}
 		idx, ok := b.locals[n.Name]
@@ -1288,7 +1301,7 @@ func (b *builder) call(n *ast.Call) error {
 	// type-checked the args; we just emit the storage.
 	if enumName, varIdx, payloads, isVariant := b.lookupVariant(id.Name); isVariant {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			return b.emitEnumNew(enumName, varIdx, payloads, n.Args)
+			return b.emitEnumNew(n, enumName, varIdx, payloads, n.Args)
 		}
 	}
 	// `len(x)` on a string or array is inlined: both layouts carry a
