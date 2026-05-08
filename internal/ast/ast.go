@@ -324,6 +324,13 @@ type Call struct {
 	P      Position
 	Callee Expr
 	Args   []Expr
+	// IsPipe is set by the parser when this Call was synthesised
+	// from a `LHS |> Callee(args...)` pipe expression: Args[0] is
+	// the original LHS, Args[1:] are the original explicit args.
+	// All later passes treat IsPipe-flagged calls identically to
+	// any other Call; only the formatter checks the flag so it
+	// can re-render the pipe form on the way out.
+	IsPipe bool
 }
 type Binary struct {
 	P           Position

@@ -459,20 +459,21 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 const (
 	precLowest  = 0
 	precAssign  = 1  // = += -= …
-	precTernary = 2  // ?:
-	precOr      = 3  // ||
-	precAnd     = 4  // &&
-	precEq      = 5  // == !=
-	precCmp     = 6  // < <= > >=
-	precBitOr   = 7  // |
-	precBitXor  = 8  // ^
-	precBitAnd  = 9  // &
-	precShift   = 10 // << >>
-	precAdd     = 11 // + -
-	precMul     = 12 // * / %
-	precCast    = 13 // expr as Type
-	precUnary   = 14
-	precPrimary = 15
+	precPipe    = 2  // |>  (above assignment, below ternary)
+	precTernary = 3  // ?:
+	precOr      = 4  // ||
+	precAnd     = 5  // &&
+	precEq      = 6  // == !=
+	precCmp     = 7  // < <= > >=
+	precBitOr   = 8  // |
+	precBitXor  = 9  // ^
+	precBitAnd  = 10 // &
+	precShift   = 11 // << >>
+	precAdd     = 12 // + -
+	precMul     = 13 // * / %
+	precCast    = 14 // expr as Type
+	precUnary   = 15
+	precPrimary = 16
 )
 
 func binaryPrec(op string) int {
@@ -605,6 +606,32 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte(')')
 		}
 	case *ast.Call:
+		// Pipe-synthesised calls re-render as `LHS |> Callee(rest)`.
+		// Args[0] is the original LHS; Args[1:] are the original
+		// explicit args.
+		if x.IsPipe && len(x.Args) >= 1 {
+			needsParens := parentPrec > precPipe
+			if needsParens {
+				f.b.WriteByte('(')
+			}
+			f.formatExpr(x.Args[0], precPipe)
+			f.b.WriteString(" |> ")
+			f.formatExpr(x.Callee, precPrimary)
+			if len(x.Args) > 1 {
+				f.b.WriteByte('(')
+				for i, a := range x.Args[1:] {
+					if i > 0 {
+						f.b.WriteString(", ")
+					}
+					f.formatExpr(a, precLowest)
+				}
+				f.b.WriteByte(')')
+			}
+			if needsParens {
+				f.b.WriteByte(')')
+			}
+			return
+		}
 		f.formatExpr(x.Callee, precPrimary)
 		f.b.WriteByte('(')
 		for i, a := range x.Args {
@@ -685,7 +712,10 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 func formatType(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.NumberType:
-		return "number"
+		// Use the canonical sized name (`i32`, `i64`, `u32`,
+		// ...) — `number` is the legacy alias and we want fmt
+		// output to converge on the new spelling.
+		return x.String()
 	case ast.BoolType:
 		return "boolean"
 	case ast.VoidType:
@@ -693,7 +723,7 @@ func formatType(t ast.Type) string {
 	case ast.StringType:
 		return "string"
 	case ast.FloatType:
-		return "float"
+		return x.String()
 	case ast.StructType:
 		return x.Name
 	case ast.EnumType:
@@ -712,6 +742,15 @@ func formatType(t ast.Type) string {
 		return x.Name
 	case ast.ArrayType:
 		return formatType(x.Elem) + "[]"
+	case ast.TupleType:
+		out := "("
+		for i, e := range x.Elems {
+			if i > 0 {
+				out += ", "
+			}
+			out += formatType(e)
+		}
+		return out + ")"
 	case *ast.FuncType:
 		out := "("
 		for i, p := range x.Params {

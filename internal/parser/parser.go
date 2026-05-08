@@ -1281,7 +1281,7 @@ var compoundOps = map[string]string{
 }
 
 func (p *parser) parseAssign() (ast.Expr, error) {
-	left, err := p.parseTernary()
+	left, err := p.parsePipe()
 	if err != nil {
 		return nil, err
 	}
@@ -1313,6 +1313,47 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 			}
 			binary := &ast.Binary{P: tok.Pos, Op: op, Left: left, Right: rhs}
 			return &ast.Assign{P: tok.Pos, Target: left, Value: binary}, nil
+		}
+	}
+	return left, nil
+}
+
+// parsePipe handles `x |> f` (data-first pipe) — desugared at parse
+// time to a call with the LHS prepended to the RHS's arg list:
+//
+//	x |> f                  →  f(x)
+//	x |> f(a, b)            →  f(x, a, b)
+//	x |> y.method(a)        →  y.method(x, a)
+//	x |> f |> g             →  g(f(x))               (left-assoc)
+//
+// Precedence sits between assignment and ternary so `1 + 2 |> f`
+// parses as `(1 + 2) |> f` (i.e. `f(1 + 2)`). This matches the
+// OCaml / F# / Elixir / Roc / Gleam convention. The lang stdlib
+// is written subject-first so the first arg is the most natural
+// pipe target.
+func (p *parser) parsePipe() (ast.Expr, error) {
+	left, err := p.parseTernary()
+	if err != nil {
+		return nil, err
+	}
+	for p.match(lexer.Punct, "|>") {
+		pipeTok := p.advance()
+		right, err := p.parseTernary()
+		if err != nil {
+			return nil, err
+		}
+		switch r := right.(type) {
+		case *ast.Call:
+			// `x |> f(a, b)` — prepend x to f's arg list.
+			r.Args = append([]ast.Expr{left}, r.Args...)
+			r.IsPipe = true
+			left = r
+		default:
+			// `x |> f` — wrap as a single-arg call. The pipe
+			// position is preserved on the synthesised Call so
+			// runtime errors point at the pipe rather than the
+			// callee's definition.
+			left = &ast.Call{P: pipeTok.Pos, Callee: r, Args: []ast.Expr{left}, IsPipe: true}
 		}
 	}
 	return left, nil
