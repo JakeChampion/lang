@@ -456,6 +456,15 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		}
 		return "i32"
 	}
+	// signSuffix returns "_s" for signed ops and "_u" for
+	// unsigned. Used by div / rem / shr / comparison ops where
+	// the wasm op set differs by signedness.
+	signSuffix := func() string {
+		if op.Unsigned {
+			return "_u"
+		}
+		return "_s"
+	}
 	switch op.Kind {
 	case ir.OpConstI32:
 		g.linef("i32.const %d", op.I32)
@@ -463,6 +472,8 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.linef("i64.const %d", op.I64)
 	case ir.OpExtendI32S:
 		g.line("i64.extend_i32_s")
+	case ir.OpExtendI32U:
+		g.line("i64.extend_i32_u")
 	case ir.OpWrapI64:
 		g.line("i32.wrap_i64")
 	case ir.OpConstF32:
@@ -498,9 +509,9 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpMul:
 		g.linef("%s.mul", intPrefix())
 	case ir.OpDivS:
-		g.linef("%s.div_s", intPrefix())
+		g.linef("%s.div%s", intPrefix(), signSuffix())
 	case ir.OpRemS:
-		g.linef("%s.rem_s", intPrefix())
+		g.linef("%s.rem%s", intPrefix(), signSuffix())
 	case ir.OpAnd:
 		g.linef("%s.and", intPrefix())
 	case ir.OpOr:
@@ -510,7 +521,7 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpShl:
 		g.linef("%s.shl", intPrefix())
 	case ir.OpShrS:
-		g.linef("%s.shr_s", intPrefix())
+		g.linef("%s.shr%s", intPrefix(), signSuffix())
 	case ir.OpNot:
 		g.linef("%s.eqz", intPrefix())
 	case ir.OpEq:
@@ -518,13 +529,13 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpNe:
 		g.linef("%s.ne", intPrefix())
 	case ir.OpLtS:
-		g.linef("%s.lt_s", intPrefix())
+		g.linef("%s.lt%s", intPrefix(), signSuffix())
 	case ir.OpLeS:
-		g.linef("%s.le_s", intPrefix())
+		g.linef("%s.le%s", intPrefix(), signSuffix())
 	case ir.OpGtS:
-		g.linef("%s.gt_s", intPrefix())
+		g.linef("%s.gt%s", intPrefix(), signSuffix())
 	case ir.OpGeS:
-		g.linef("%s.ge_s", intPrefix())
+		g.linef("%s.ge%s", intPrefix(), signSuffix())
 	case ir.OpFAdd:
 		g.line("f32.add")
 	case ir.OpFSub:

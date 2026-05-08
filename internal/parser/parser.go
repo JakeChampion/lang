@@ -681,8 +681,18 @@ func (p *parser) parseType() (ast.Type, error) {
 		// level keeps the surface honest rather than silently
 		// promoting to i32.
 		return nil, p.errorf(t.Pos, "%s is reserved; not yet wired through codegen", t.Text)
-	case t.Kind == lexer.Keyword && (t.Text == "u8" || t.Text == "u16" || t.Text == "u32" || t.Text == "u64"):
-		return nil, p.errorf(t.Pos, "%s is reserved; not yet wired through codegen", t.Text)
+	case t.Kind == lexer.Keyword && t.Text == "u32":
+		p.advance()
+		base = ast.NumberType{Width: 32, Signed: false, Spelling: t.Text}
+	case t.Kind == lexer.Keyword && t.Text == "u64":
+		p.advance()
+		base = ast.NumberType{Width: 64, Signed: false, Spelling: t.Text}
+	case t.Kind == lexer.Keyword && (t.Text == "u8" || t.Text == "u16"):
+		// Sub-i32 unsigned widths still pending — needs masking
+		// on store + zero-extend on load before arithmetic
+		// behaves correctly. Reserved keyword keeps the syntax
+		// stable for when codegen lands.
+		return nil, p.errorf(t.Pos, "%s is reserved; not yet wired through codegen (use u32 for now)", t.Text)
 	case t.Kind == lexer.Keyword && t.Text == "f64":
 		return nil, p.errorf(t.Pos, "f64 is reserved; not yet wired through codegen")
 	case t.Kind == lexer.Keyword && (t.Text == "float" || t.Text == "f32"):

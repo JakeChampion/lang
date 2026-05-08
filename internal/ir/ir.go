@@ -55,9 +55,13 @@ const (
 	OpConstFunc // (func-id imm)     → i32 (table index)
 
 	// Width-conversion ops between integer types. ExtendI32S
-	// sign-extends an i32 to i64; WrapI64 truncates the low 32 bits.
-	// More widths land alongside u8/u16/u32/u64 in a follow-up.
-	OpExtendI32S // (i32) → i64
+	// sign-extends an i32 to i64; WrapI64 truncates the low 32
+	// bits. ExtendI32U zero-extends — used by `u32 as u64` /
+	// any cast whose source is unsigned. More widths (8/16)
+	// land in a follow-up alongside their underlying mask /
+	// sign-extend story.
+	OpExtendI32S // (i32) → i64 (sign-extend)
+	OpExtendI32U // (i32) → i64 (zero-extend, for unsigned)
 	OpWrapI64    // (i64) → i32
 
 	// Locals (parameter or var). Idx is the 0-based slot.
@@ -183,6 +187,8 @@ func (k OpKind) String() string {
 		return "const.i64"
 	case OpConstF32:
 		return "const.f32"
+	case OpExtendI32U:
+		return "extend.i32_u"
 	case OpExtendI32S:
 		return "extend.i32_s"
 	case OpWrapI64:
@@ -324,6 +330,13 @@ type Op struct {
 	// (8, 16) are reserved — they ship with the unsigned-types
 	// follow-up.
 	Width int
+	// Unsigned selects the `_u` variant of div / rem / shr /
+	// comparison ops (OpDivS becomes i32.div_u, etc.) when the
+	// checker has tagged the surrounding Binary as unsigned.
+	// Default (false) keeps the existing signed-by-default
+	// behaviour. Add / sub / mul / and / or / xor / eq / ne are
+	// signedness-agnostic — the flag has no effect there.
+	Unsigned bool
 	// Str carries OpConstStr's string value and OpCallDirect's callee
 	// name. Empty otherwise.
 	Str string
@@ -1080,10 +1093,20 @@ func (b *builder) expr(e ast.Expr) error {
 		switch {
 		case sw == dw:
 			// Same-width cast (e.g. signed ↔ unsigned of the same
-			// width once we add unsigned types). Bit-identical at
-			// the wasm level — emit nothing.
+			// width). Bit-identical at the wasm level — emit
+			// nothing; the bits stay put and signedness is just
+			// a checker-level annotation.
 		case sw == 32 && dw == 64:
-			b.emit(Op{Kind: OpExtendI32S})
+			// Sign vs zero-extend depends on the SOURCE's
+			// signedness, not the target's. `u32 as i64` zero-
+			// extends (since u32's bits are positive), `i32 as
+			// u64` sign-extends to keep numeric value
+			// consistent.
+			if srcInt.IsSigned() {
+				b.emit(Op{Kind: OpExtendI32S})
+			} else {
+				b.emit(Op{Kind: OpExtendI32U})
+			}
 		case sw == 64 && dw == 32:
 			b.emit(Op{Kind: OpWrapI64})
 		default:
@@ -1693,7 +1716,7 @@ func (b *builder) binary(n *ast.Binary) error {
 	if w == 0 {
 		w = 32
 	}
-	b.emit(Op{Kind: op, Width: w})
+	b.emit(Op{Kind: op, Width: w, Unsigned: n.IsUnsigned})
 	return nil
 }
 

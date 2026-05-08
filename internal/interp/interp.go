@@ -1508,45 +1508,87 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 	ln, lOk := l.(Number)
 	rn, rOk := r.(Number)
 	if lOk && rOk {
+		// Mask the bit-pattern to the binary op's width so that
+		// add/sub/mul wrap the same way wasm does, and so that
+		// unsigned compares & shifts see only the canonical bits.
+		// Width 0 (REPL paths where the checker hasn't fired)
+		// keeps the historical 64-bit semantics.
+		mask := func(v Number) Number {
+			switch b.IntWidth {
+			case 32:
+				return Number(uint32(int64(v)))
+			case 64:
+				return v
+			}
+			return v
+		}
+		signExtend := func(v Number) Number {
+			if b.IntWidth == 32 {
+				return Number(int32(int64(v)))
+			}
+			return v
+		}
+		ln, rn := mask(ln), mask(rn)
 		switch b.Op {
 		case "+":
-			return ln + rn, nil
+			return signExtend(ln + rn), nil
 		case "-":
-			return ln - rn, nil
+			return signExtend(ln - rn), nil
 		case "*":
-			return ln * rn, nil
+			return signExtend(ln * rn), nil
 		case "/":
 			if rn == 0 {
 				return nil, fmt.Errorf("division by zero")
 			}
-			return ln / rn, nil
+			if b.IsUnsigned {
+				return signExtend(Number(uint64(ln) / uint64(rn))), nil
+			}
+			return signExtend(signExtend(ln) / signExtend(rn)), nil
 		case "%":
 			if rn == 0 {
 				return nil, fmt.Errorf("modulo by zero")
 			}
-			return ln % rn, nil
+			if b.IsUnsigned {
+				return signExtend(Number(uint64(ln) % uint64(rn))), nil
+			}
+			return signExtend(signExtend(ln) % signExtend(rn)), nil
 		case "&":
-			return ln & rn, nil
+			return signExtend(ln & rn), nil
 		case "|":
-			return ln | rn, nil
+			return signExtend(ln | rn), nil
 		case "^":
-			return ln ^ rn, nil
+			return signExtend(ln ^ rn), nil
 		case "<<":
-			return ln << rn, nil
+			return signExtend(ln << rn), nil
 		case ">>":
-			return ln >> rn, nil
+			if b.IsUnsigned {
+				return signExtend(Number(uint64(ln) >> uint64(rn))), nil
+			}
+			return signExtend(signExtend(ln) >> rn), nil
 		case "==":
 			return Bool(ln == rn), nil
 		case "!=":
 			return Bool(ln != rn), nil
 		case "<":
-			return Bool(ln < rn), nil
+			if b.IsUnsigned {
+				return Bool(uint64(ln) < uint64(rn)), nil
+			}
+			return Bool(signExtend(ln) < signExtend(rn)), nil
 		case "<=":
-			return Bool(ln <= rn), nil
+			if b.IsUnsigned {
+				return Bool(uint64(ln) <= uint64(rn)), nil
+			}
+			return Bool(signExtend(ln) <= signExtend(rn)), nil
 		case ">":
-			return Bool(ln > rn), nil
+			if b.IsUnsigned {
+				return Bool(uint64(ln) > uint64(rn)), nil
+			}
+			return Bool(signExtend(ln) > signExtend(rn)), nil
 		case ">=":
-			return Bool(ln >= rn), nil
+			if b.IsUnsigned {
+				return Bool(uint64(ln) >= uint64(rn)), nil
+			}
+			return Bool(signExtend(ln) >= signExtend(rn)), nil
 		}
 	}
 	if lb, ok := l.(Bool); ok {

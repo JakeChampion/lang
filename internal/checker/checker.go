@@ -1779,6 +1779,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return ast.NumberType{}
 			}
 			n.IntWidth = common.NormalWidth()
+			n.IsUnsigned = !common.IsSigned()
 			return common
 		case "%", "&", "|", "^", "<<", ">>":
 			c.requireInteger(n.P, lt, n.Op)
@@ -1789,6 +1790,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return ast.NumberType{}
 			}
 			n.IntWidth = common.NormalWidth()
+			n.IsUnsigned = !common.IsSigned()
 			return common
 		case "<", ">", "<=", ">=":
 			if isFloat(lt) || isFloat(rt) {
@@ -1805,6 +1807,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return ast.BoolType{}
 			}
 			n.IntWidth = common.NormalWidth()
+			n.IsUnsigned = !common.IsSigned()
 			return ast.BoolType{}
 		case "==", "!=":
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
