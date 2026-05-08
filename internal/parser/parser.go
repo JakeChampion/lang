@@ -694,7 +694,8 @@ func (p *parser) parseType() (ast.Type, error) {
 		// stable for when codegen lands.
 		return nil, p.errorf(t.Pos, "%s is reserved; not yet wired through codegen (use u32 for now)", t.Text)
 	case t.Kind == lexer.Keyword && t.Text == "f64":
-		return nil, p.errorf(t.Pos, "f64 is reserved; not yet wired through codegen")
+		p.advance()
+		base = ast.FloatType{Width: 64, Spelling: t.Text}
 	case t.Kind == lexer.Keyword && (t.Text == "float" || t.Text == "f32"):
 		p.advance()
 		base = ast.FloatType{Spelling: t.Text}

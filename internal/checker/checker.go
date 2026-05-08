@@ -944,6 +944,12 @@ func assignable(dst, src ast.Type) bool {
 			return true
 		}
 	}
+	// Mirror behaviour for float literals.
+	if _, ok := dst.(ast.FloatType); ok {
+		if sf, ok := src.(ast.FloatType); ok && sf.Polymorphic {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1523,7 +1529,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.StringLit:
 		return ast.StringType{}
 	case *ast.FloatLit:
-		return ast.FloatType{}
+		// Float literals are polymorphic, same shape as integer
+		// literals. If a previous settling pass already locked in
+		// a width, surface it; otherwise return a Polymorphic
+		// placeholder so the surrounding context can decide.
+		if n.Width != 0 {
+			return ast.FloatType{Width: n.Width}
+		}
+		return ast.FloatType{Polymorphic: true}
 	case *ast.Ident:
 		if t, ok := s.lookup(n.Name); ok {
 			return t
@@ -1801,7 +1814,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
 				n.IsFloat = true
-				return ast.FloatType{}
+				common, ok := commonFloatWidth(lt, rt)
+				if !ok {
+					c.errf(n.P, "operator %q requires both operands to share a float type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+					return ast.FloatType{}
+				}
+				c.settleNumeric(n.Left, common)
+				c.settleNumeric(n.Right, common)
+				if !common.Polymorphic {
+					n.FloatWidth = common.NormalWidth()
+				}
+				return common
 			}
 			c.requireInteger(n.P, lt, n.Op)
 			c.requireInteger(n.P, rt, n.Op)
@@ -1837,6 +1860,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
 				n.IsFloat = true
+				if common, ok := commonFloatWidth(lt, rt); ok && !common.Polymorphic {
+					c.settleNumeric(n.Left, common)
+					c.settleNumeric(n.Right, common)
+					n.FloatWidth = common.NormalWidth()
+				}
 				return ast.BoolType{}
 			}
 			c.requireInteger(n.P, lt, n.Op)
@@ -1858,8 +1886,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// side to the concrete side's type before the
 			// equality check fires. `(x: i64) == 0` should not
 			// error on width mismatch — the `0` is a polymorphic
-			// literal that locks in i64 here.
+			// literal that locks in i64 here. Same for floats.
 			if common, common_ok := commonIntegerWidth(lt, rt); common_ok && !common.Polymorphic {
+				c.settleNumeric(n.Left, common)
+				c.settleNumeric(n.Right, common)
+				lt = postSettleType(n.Left, lt)
+				rt = postSettleType(n.Right, rt)
+			} else if common, common_ok := commonFloatWidth(lt, rt); common_ok && !common.Polymorphic {
 				c.settleNumeric(n.Left, common)
 				c.settleNumeric(n.Right, common)
 				lt = postSettleType(n.Left, lt)
@@ -1882,6 +1915,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// main` and never compared them in lang.
 			if isFloat(lt) && isFloat(rt) {
 				n.IsFloat = true
+				if common, ok := commonFloatWidth(lt, rt); ok && !common.Polymorphic {
+					c.settleNumeric(n.Left, common)
+					c.settleNumeric(n.Right, common)
+					n.FloatWidth = common.NormalWidth()
+				}
 			}
 			// Track i64 equality so codegen knows to emit `i64.eq`
 			// / `i64.ne` instead of `i32.eq`/`ne`. Settling
@@ -2119,10 +2157,21 @@ func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
 // Function calls, casts, struct-lit fields, etc. set their own
 // types and shouldn't have hints leak into them.
 func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
-	hn, ok := hint.(ast.NumberType)
-	if !ok || hn.Polymorphic {
-		return
+	switch hn := hint.(type) {
+	case ast.NumberType:
+		if hn.Polymorphic {
+			return
+		}
+		c.settleInt(e, hn)
+	case ast.FloatType:
+		if hn.Polymorphic {
+			return
+		}
+		c.settleFloat(e, hn)
 	}
+}
+
+func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 	width := hn.NormalWidth()
 	isUnsigned := !hn.IsSigned()
 	switch x := e.(type) {
@@ -2134,21 +2183,39 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		}
 	case *ast.Unary:
 		if x.Op == "-" || x.Op == "+" {
-			c.settleNumeric(x.Operand, hint)
+			c.settleInt(x.Operand, hn)
 		}
 	case *ast.Binary:
 		switch x.Op {
 		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
-			// settleNumeric only descends when the binary itself
-			// resolved polymorphic (both operands polymorphic).
-			// A binary that already settled to a concrete type
-			// (i32/i64/etc.) is locked in — settling its leaves
-			// again would silently re-stamp.
 			if x.IntWidth == 0 {
-				c.settleNumeric(x.Left, hint)
-				c.settleNumeric(x.Right, hint)
+				c.settleInt(x.Left, hn)
+				c.settleInt(x.Right, hn)
 				x.IntWidth = width
 				x.IsUnsigned = isUnsigned
+			}
+		}
+	}
+}
+
+func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
+	width := hf.NormalWidth()
+	switch x := e.(type) {
+	case *ast.FloatLit:
+		if x.Width == 0 {
+			x.Width = width
+		}
+	case *ast.Unary:
+		if x.Op == "-" || x.Op == "+" {
+			c.settleFloat(x.Operand, hf)
+		}
+	case *ast.Binary:
+		switch x.Op {
+		case "+", "-", "*", "/":
+			if x.FloatWidth == 0 {
+				c.settleFloat(x.Left, hf)
+				c.settleFloat(x.Right, hf)
+				x.FloatWidth = width
 			}
 		}
 	}
@@ -2168,9 +2235,16 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		if x.Width != 0 {
 			return ast.NumberType{Width: x.Width, Signed: !x.IsUnsigned}
 		}
+	case *ast.FloatLit:
+		if x.Width != 0 {
+			return ast.FloatType{Width: x.Width}
+		}
 	case *ast.Binary:
 		if x.IntWidth != 0 {
 			return ast.NumberType{Width: x.IntWidth, Signed: !x.IsUnsigned}
+		}
+		if x.FloatWidth != 0 {
+			return ast.FloatType{Width: x.FloatWidth}
 		}
 	case *ast.Unary:
 		return postSettleType(x.Operand, prior)
@@ -2214,6 +2288,27 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 	}
 }
 
+// commonFloatWidth mirrors commonIntegerWidth for FloatType. A
+// polymorphic side unifies with whichever concrete width the
+// other side has; mixed concrete widths are an error.
+func commonFloatWidth(lt, rt ast.Type) (ast.FloatType, bool) {
+	ln, lOk := lt.(ast.FloatType)
+	rn, rOk := rt.(ast.FloatType)
+	if !lOk || !rOk {
+		return ast.FloatType{}, false
+	}
+	if ln.Polymorphic && !rn.Polymorphic {
+		return rn, true
+	}
+	if rn.Polymorphic && !ln.Polymorphic {
+		return ln, true
+	}
+	if ln.NormalWidth() != rn.NormalWidth() {
+		return ast.FloatType{}, false
+	}
+	return ln, true
+}
+
 // commonIntegerWidth returns the common NumberType when both sides
 // are integers of the same width + signedness, plus a boolean
 // indicating success. Mixed widths trigger a checker error from
@@ -2244,7 +2339,10 @@ func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 	return ln, true
 }
 func (c *checker) requireFloat(p ast.Position, t ast.Type, op string) {
-	if t != nil && !ast.Equal(t, ast.FloatType{}) {
+	if t == nil {
+		return
+	}
+	if _, ok := t.(ast.FloatType); !ok {
 		c.errf(p, "operator %q requires float, got %s", op, t)
 	}
 }
