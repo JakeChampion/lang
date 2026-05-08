@@ -556,6 +556,41 @@ func TestWASMReturn42(t *testing.T) {
 	}
 }
 
+// i64 round-trips through arithmetic + comparison. main() stays
+// i32 (the test harness reads main's i32 return via int_to_string),
+// but the body holds an i64 value through addition and comparison.
+// Exercises OpExtendI32S on the casts in, OpAdd/OpEq with Width=64
+// in the body, and the i64 wasm types on the local + parameter
+// slots.
+func TestWASMI64Arithmetic(t *testing.T) {
+	src := `function add64(x: i64, y: i64): i64 { return x + y; }
+function main(): i32 {
+    var z: i64 = add64(40 as i64, 2 as i64);
+    if (z == 42 as i64) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (i64 arith mismatch)", got)
+	}
+}
+
+// Mixing i32 and i64 without an `as` cast is a checker error —
+// implicit widening is rejected per docs/LANGUAGE-DIRECTION.md.
+// We can't run this through runWasm (it'd fail compilation), so
+// just verify the checker rejects it.
+func TestI64ImplicitWideningRejected(t *testing.T) {
+	src := `function bad(): i64 { var x: i32 = 1; var y: i64 = 2 as i64; return x + y; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := checker.Check(prog); err == nil {
+		t.Fatalf("expected checker error for mixed i32/i64 add, got none")
+	} else if !strings.Contains(err.Error(), "use `as`") {
+		t.Errorf("expected error mentioning `as`, got: %v", err)
+	}
+}
+
 func TestWASMFactorial(t *testing.T) {
 	src := `function fact(n: number): number {
 		if (n == 0) { return 1; }

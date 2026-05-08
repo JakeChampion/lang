@@ -151,8 +151,8 @@ func TestInlineRecordsFloatScratchTypes(t *testing.T) {
 	if _, ok := main.ScratchTypes[0].(interface{ String() string }); !ok {
 		t.Fatal("ScratchTypes[0] missing")
 	}
-	if got := main.ScratchTypes[0].String(); got != "float" {
-		t.Errorf("ScratchTypes[0] = %s, want float", got)
+	if got := main.ScratchTypes[0].String(); got != "f32" {
+		t.Errorf("ScratchTypes[0] = %s, want f32", got)
 	}
 }
 

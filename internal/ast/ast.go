@@ -33,11 +33,34 @@ type Type interface {
 	isType()
 }
 
-type NumberType struct{}
+// NumberType represents a fixed-width signed or unsigned integer.
+// The zero value (`NumberType{}`) is `i32`/signed for backward
+// compatibility with code written before the sized-integer
+// migration. Equality canonicalises Width=0 to 32 so
+// `NumberType{}` and `NumberType{Width: 32, Signed: true}` compare
+// equal — the source-level keywords `number` and `i32` lower to
+// the zero value (cheaper) and the explicitly-typed forms
+// respectively.
+//
+// Width must be one of 8, 16, 32, or 64. Sub-i32 widths lower to
+// i32 wasm ops with masking on store; i64 uses native i64 ops.
+// Sub-i32 widths are reserved for a follow-up PR — currently only
+// 32 and 64 are exercised end-to-end.
+type NumberType struct {
+	Width  int
+	Signed bool
+}
 type BoolType struct{}
 type VoidType struct{}
 type StringType struct{}
-type FloatType struct{}
+
+// FloatType represents an IEEE-754 binary float. Width is 32 or
+// 64; the zero value is f32 to keep `FloatType{}` working
+// unchanged after the f64 type was added. Currently only Width=32
+// is wired through the backends; f64 is reserved for a follow-up.
+type FloatType struct {
+	Width int
+}
 type ArrayType struct{ Elem Type }
 type FuncType struct {
 	Params []Type
@@ -80,11 +103,18 @@ func (*FuncType) isType()   {}
 func (StructType) isType()  {}
 func (EnumType) isType()    {}
 func (ParamType) isType()   {}
-func (NumberType) String() string  { return "number" }
-func (BoolType) String() string    { return "boolean" }
-func (VoidType) String() string    { return "void" }
-func (StringType) String() string  { return "string" }
-func (FloatType) String() string   { return "float" }
+func (n NumberType) String() string {
+	if n.IsSigned() {
+		return fmt.Sprintf("i%d", n.NormalWidth())
+	}
+	return fmt.Sprintf("u%d", n.NormalWidth())
+}
+func (BoolType) String() string   { return "boolean" }
+func (VoidType) String() string   { return "void" }
+func (StringType) String() string { return "string" }
+func (f FloatType) String() string {
+	return fmt.Sprintf("f%d", f.NormalWidth())
+}
 func (a ArrayType) String() string { return a.Elem.String() + "[]" }
 func (s StructType) String() string { return s.Name }
 func (e EnumType) String() string {
@@ -113,12 +143,42 @@ func (f *FuncType) String() string {
 	return out
 }
 
+// NormalWidth returns the canonical bit-width of a NumberType.
+// Width=0 (the zero value, used by `NumberType{}` for legacy
+// `number` callers) maps to 32 so `NumberType{}` keeps matching
+// the explicit `NumberType{Width: 32, Signed: true}` for `i32`.
+func (n NumberType) NormalWidth() int {
+	if n.Width == 0 {
+		return 32
+	}
+	return n.Width
+}
+
+// IsSigned reports whether a NumberType is signed. The zero value
+// (Width=0) is signed by convention so legacy `NumberType{}` keeps
+// comparing equal to `i32`.
+func (n NumberType) IsSigned() bool {
+	if n.Width == 0 {
+		return true
+	}
+	return n.Signed
+}
+
+// NormalWidth returns the canonical bit-width of a FloatType.
+// Width=0 maps to 32 (legacy `float` / `FloatType{}`).
+func (f FloatType) NormalWidth() int {
+	if f.Width == 0 {
+		return 32
+	}
+	return f.Width
+}
+
 // Equal reports whether two types are structurally equal.
 func Equal(a, b Type) bool {
 	switch x := a.(type) {
 	case NumberType:
-		_, ok := b.(NumberType)
-		return ok
+		y, ok := b.(NumberType)
+		return ok && x.NormalWidth() == y.NormalWidth() && x.IsSigned() == y.IsSigned()
 	case BoolType:
 		_, ok := b.(BoolType)
 		return ok
@@ -129,8 +189,8 @@ func Equal(a, b Type) bool {
 		_, ok := b.(StringType)
 		return ok
 	case FloatType:
-		_, ok := b.(FloatType)
-		return ok
+		y, ok := b.(FloatType)
+		return ok && x.NormalWidth() == y.NormalWidth()
 	case ArrayType:
 		y, ok := b.(ArrayType)
 		return ok && Equal(x.Elem, y.Elem)
@@ -176,6 +236,22 @@ type Expr interface {
 type NumberLit struct {
 	P     Position
 	Value int64
+}
+
+// CastExpr is `expr as Type`. The checker requires Target to be a
+// numeric type; it lowers to truncation/extension/sign-flip ops in
+// the IR. This is the only path between distinct numeric widths
+// (i32 ↔ i64 etc.) — implicit numeric widening is rejected per
+// docs/LANGUAGE-DIRECTION.md.
+type CastExpr struct {
+	P      Position
+	Inner  Expr
+	Target Type
+	// InnerType is the resolved type of `Inner`, set by the checker
+	// so the IR lowering pass can pick the right truncate / extend
+	// op without re-checking. Zero value means the checker didn't
+	// resolve it (treat as the legacy i32 default).
+	InnerType Type
 }
 type BoolLit struct {
 	P     Position
@@ -227,6 +303,10 @@ type Binary struct {
 	// IsFloat is set by the checker when both operands are floats,
 	// so codegen knows to emit f32 instructions instead of i32.
 	IsFloat bool
+	// IntWidth is set by the checker for integer binary ops: 32 for
+	// i32 (the default), 64 for i64. Sub-i32 widths are reserved.
+	// Codegen uses it to pick i32.* vs i64.* instructions.
+	IntWidth int
 }
 type Unary struct {
 	P       Position
@@ -318,6 +398,7 @@ type MakeClosure struct {
 }
 
 func (e *NumberLit) Pos() Position { return e.P }
+func (e *CastExpr) Pos() Position  { return e.P }
 func (e *BoolLit) Pos() Position   { return e.P }
 func (e *StringLit) Pos() Position { return e.P }
 func (e *FloatLit) Pos() Position  { return e.P }
@@ -336,6 +417,7 @@ func (e *CaptureRef) Pos() Position  { return e.P }
 func (e *MakeClosure) Pos() Position { return e.P }
 
 func (*NumberLit) isExpr() {}
+func (*CastExpr) isExpr()  {}
 func (*BoolLit) isExpr()   {}
 func (*StringLit) isExpr() {}
 func (*FloatLit) isExpr()  {}

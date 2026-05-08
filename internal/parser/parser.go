@@ -583,9 +583,29 @@ func (p *parser) parseType() (ast.Type, error) {
 	t := p.peek()
 	var base ast.Type
 	switch {
-	case t.Kind == lexer.Keyword && t.Text == "number":
+	case t.Kind == lexer.Keyword && (t.Text == "number" || t.Text == "i32"):
+		// `number` is the legacy alias; both lower to the
+		// canonical zero-value NumberType so equality keeps
+		// working with code that still compares to
+		// `ast.NumberType{}` directly.
 		p.advance()
 		base = ast.NumberType{}
+	case t.Kind == lexer.Keyword && t.Text == "i64":
+		p.advance()
+		base = ast.NumberType{Width: 64, Signed: true}
+	case t.Kind == lexer.Keyword && (t.Text == "i8" || t.Text == "i16"):
+		// Sub-i32 signed types parse but are reserved — codegen
+		// for these widths is a follow-up. Erroring at the type
+		// level keeps the surface honest rather than silently
+		// promoting to i32.
+		return nil, p.errorf(t.Pos, "%s is reserved; not yet wired through codegen", t.Text)
+	case t.Kind == lexer.Keyword && (t.Text == "u8" || t.Text == "u16" || t.Text == "u32" || t.Text == "u64"):
+		return nil, p.errorf(t.Pos, "%s is reserved; not yet wired through codegen", t.Text)
+	case t.Kind == lexer.Keyword && t.Text == "f64":
+		return nil, p.errorf(t.Pos, "f64 is reserved; not yet wired through codegen")
+	case t.Kind == lexer.Keyword && (t.Text == "float" || t.Text == "f32"):
+		p.advance()
+		base = ast.FloatType{}
 	case t.Kind == lexer.Keyword && t.Text == "boolean":
 		p.advance()
 		base = ast.BoolType{}
@@ -595,9 +615,6 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "string":
 		p.advance()
 		base = ast.StringType{}
-	case t.Kind == lexer.Keyword && t.Text == "float":
-		p.advance()
-		base = ast.FloatType{}
 	case t.Kind == lexer.Punct && t.Text == "(":
 		// Function type: `(T1, T2, ...) => RT`. Empty parens are
 		// allowed for nullary callbacks.
@@ -1385,7 +1402,27 @@ func (p *parser) parseUnary() (ast.Expr, error) {
 		}
 		return &ast.Unary{P: op.Pos, Op: op.Text, Operand: operand}, nil
 	}
-	return p.parseCall()
+	return p.parseCast()
+}
+
+// parseCast handles `expr as Type`. The `as` operator sits between
+// unary and the multiplicative tier — `1 + 2 as i64` parses as
+// `1 + (2 as i64)`, matching Rust. Chained casts (`x as i32 as
+// i64`) are left-associative.
+func (p *parser) parseCast() (ast.Expr, error) {
+	expr, err := p.parseCall()
+	if err != nil {
+		return nil, err
+	}
+	for p.match(lexer.Keyword, "as") {
+		kw := p.advance()
+		target, err := p.parseType()
+		if err != nil {
+			return nil, err
+		}
+		expr = &ast.CastExpr{P: kw.Pos, Inner: expr, Target: target}
+	}
+	return expr, nil
 }
 
 func (p *parser) parseCall() (ast.Expr, error) {

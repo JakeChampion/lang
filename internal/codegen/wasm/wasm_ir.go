@@ -447,9 +447,24 @@ func blockTypeSuffix(bt int32) string {
 // (none today, but the signature gives us room for future passes).
 func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	op := irFn.Ops[opIndex]
+	// intPrefix returns "i32" or "i64" based on the op's Width
+	// annotation. Width=0 falls back to i32 so older IR shapes
+	// (and synthetic ops we emit without a width) keep working.
+	intPrefix := func() string {
+		if op.Width == 64 {
+			return "i64"
+		}
+		return "i32"
+	}
 	switch op.Kind {
 	case ir.OpConstI32:
 		g.linef("i32.const %d", op.I32)
+	case ir.OpConstI64:
+		g.linef("i64.const %d", op.I64)
+	case ir.OpExtendI32S:
+		g.line("i64.extend_i32_s")
+	case ir.OpWrapI64:
+		g.line("i32.wrap_i64")
 	case ir.OpConstF32:
 		g.linef("f32.const %g", op.F32)
 	case ir.OpConstStr:
@@ -477,39 +492,39 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpTeeLocal:
 		g.linef("local.tee $%s", slotName(g.current, irFn, op.I32))
 	case ir.OpAdd:
-		g.line("i32.add")
+		g.linef("%s.add", intPrefix())
 	case ir.OpSub:
-		g.line("i32.sub")
+		g.linef("%s.sub", intPrefix())
 	case ir.OpMul:
-		g.line("i32.mul")
+		g.linef("%s.mul", intPrefix())
 	case ir.OpDivS:
-		g.line("i32.div_s")
+		g.linef("%s.div_s", intPrefix())
 	case ir.OpRemS:
-		g.line("i32.rem_s")
+		g.linef("%s.rem_s", intPrefix())
 	case ir.OpAnd:
-		g.line("i32.and")
+		g.linef("%s.and", intPrefix())
 	case ir.OpOr:
-		g.line("i32.or")
+		g.linef("%s.or", intPrefix())
 	case ir.OpXor:
-		g.line("i32.xor")
+		g.linef("%s.xor", intPrefix())
 	case ir.OpShl:
-		g.line("i32.shl")
+		g.linef("%s.shl", intPrefix())
 	case ir.OpShrS:
-		g.line("i32.shr_s")
+		g.linef("%s.shr_s", intPrefix())
 	case ir.OpNot:
-		g.line("i32.eqz")
+		g.linef("%s.eqz", intPrefix())
 	case ir.OpEq:
-		g.line("i32.eq")
+		g.linef("%s.eq", intPrefix())
 	case ir.OpNe:
-		g.line("i32.ne")
+		g.linef("%s.ne", intPrefix())
 	case ir.OpLtS:
-		g.line("i32.lt_s")
+		g.linef("%s.lt_s", intPrefix())
 	case ir.OpLeS:
-		g.line("i32.le_s")
+		g.linef("%s.le_s", intPrefix())
 	case ir.OpGtS:
-		g.line("i32.gt_s")
+		g.linef("%s.gt_s", intPrefix())
 	case ir.OpGeS:
-		g.line("i32.ge_s")
+		g.linef("%s.ge_s", intPrefix())
 	case ir.OpFAdd:
 		g.line("f32.add")
 	case ir.OpFSub:

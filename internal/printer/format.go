@@ -470,8 +470,9 @@ const (
 	precShift   = 10 // << >>
 	precAdd     = 11 // + -
 	precMul     = 12 // * / %
-	precUnary   = 13
-	precPrimary = 14
+	precCast    = 13 // expr as Type
+	precUnary   = 14
+	precPrimary = 15
 )
 
 func binaryPrec(op string) int {
@@ -504,6 +505,17 @@ func binaryPrec(op string) int {
 // (parentPrec) binds tighter than e's outermost operator.
 func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 	switch x := e.(type) {
+	case *ast.CastExpr:
+		needsParens := parentPrec >= precCast
+		if needsParens {
+			f.b.WriteByte('(')
+		}
+		f.formatExpr(x.Inner, precCast)
+		f.b.WriteString(" as ")
+		f.b.WriteString(x.Target.String())
+		if needsParens {
+			f.b.WriteByte(')')
+		}
 	case *ast.NumberLit:
 		if x.Value < 0 {
 			needsParens := parentPrec >= precUnary
