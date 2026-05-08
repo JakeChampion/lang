@@ -38,8 +38,9 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "hello.lang")
-	if err := os.WriteFile(srcPath, []byte(`function main(): void {
-    println("hello preview2");
+	if err := os.WriteFile(srcPath, []byte(`function main(): number {
+    print("hello preview2");
+    return 0;
 }
 `), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -87,7 +88,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 		t.Fatalf("wasmtime run %s: %v\nstdout:\n%s\nstderr:\n%s",
 			componentPath, err, sout.String(), serr.String())
 	}
-	if got, want := strings.TrimRight(sout.String(), "\n"), "hello preview2"; got != want {
+	if got, want := sout.String(), "hello preview2"; got != want {
 		t.Fatalf("stdout = %q; want %q (stderr=%q)", got, want, serr.String())
 	}
 }
