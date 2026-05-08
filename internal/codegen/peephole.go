@@ -428,10 +428,120 @@ func peepPass(lines []string) []string {
 			continue
 		}
 
+		// 13: if-merge stack-elim — collapse the round-trip
+		// through the operand stack that BlockTypeI32 OpIf
+		// forces. When both arms push r0 and the consumer is
+		// either `pop {r0}` (OpStoreLocal / OpReturn-style)
+		// or `add sp, sp, #4` (OpDrop), we drop the two
+		// pushes and the consumer; r0 already holds the
+		// if-result via each arm's last instruction
+		// (typically `ldr r0, =N`).
+		if collapsed, ok := tryIfMergeStackElim(out, line); ok {
+			out = collapsed
+			continue
+		}
+
 		_ = i
 		out = append(out, line)
 	}
 	return out
+}
+
+// tryIfMergeStackElim recognises the IR's BlockTypeI32 OpIf
+// merge shape:
+//
+//	push {r0}            (then-arm push, last in then body)
+//	b END_LBL
+//	ELSE_LBL:
+//	  ...else body...
+//	push {r0}            (else-arm push, last in else body)
+//	END_LBL:
+//	pop {r0}             (consumer; or `add sp, sp, #4` for OpDrop)
+//
+// and rewrites it by dropping the two pushes and the
+// consumer pop. r0 already holds the if-result on every
+// path (each arm's body ends in `ldr r0, =N` or similar
+// before the trailing push), so the round-trip through the
+// stack is pure overhead. Saves three instructions per OpIf
+// with a value.
+//
+// Only fires for the two consumer shapes we can prove are
+// safe to drop:
+//
+//   - `pop {r0}` — the consumer wants r0; it already has it.
+//   - `add sp, sp, #4` — the consumer was about to drop the
+//     value anyway.
+//
+// Other consumers (e.g. `pop {r1}` for a binop's lhs) need
+// the value at a specific stack offset; we leave those
+// alone.
+func tryIfMergeStackElim(out []string, cur string) ([]string, bool) {
+	curS := trim(cur)
+	if curS != "pop {r0}" && curS != "add sp, sp, #4" {
+		return nil, false
+	}
+	if len(out) < 5 {
+		return nil, false
+	}
+	// out[-1] should be the END label declaration.
+	endLbl, ok := matchLabelDecl(out[len(out)-1])
+	if !ok {
+		return nil, false
+	}
+	// out[-2] should be the else-arm push.
+	elseLastIdx := len(out) - 2
+	if trim(out[elseLastIdx]) != "push {r0}" {
+		return nil, false
+	}
+	// Find the ELSE_LBL: declaration somewhere backward.
+	elseLblIdx := -1
+	for i := elseLastIdx - 1; i >= 0; i-- {
+		if _, ok := matchLabelDecl(out[i]); ok {
+			elseLblIdx = i
+			break
+		}
+	}
+	if elseLblIdx < 1 {
+		return nil, false
+	}
+	// Before ELSE_LBL: should be `b END_LBL`.
+	cc, target, bok := matchBranch(out[elseLblIdx-1])
+	if !bok || cc != "" || target != endLbl {
+		return nil, false
+	}
+	// Before that should be `push {r0}` — the then-arm push.
+	if elseLblIdx < 2 {
+		return nil, false
+	}
+	thenLastIdx := elseLblIdx - 2
+	if trim(out[thenLastIdx]) != "push {r0}" {
+		return nil, false
+	}
+	// All matched — drop the two pushes from `out` and skip
+	// emitting the trailing pop / drop.
+	rewritten := make([]string, 0, len(out)-2)
+	for i, line := range out {
+		if i == thenLastIdx || i == elseLastIdx {
+			continue
+		}
+		rewritten = append(rewritten, line)
+	}
+	return rewritten, true
+}
+
+// matchLabelDecl returns (name, true) when `line` (after
+// trimming) is a label declaration of the form `<name>:`
+// with no other tokens. Used by the if-merge elim to
+// recognise the END / ELSE label boundaries.
+func matchLabelDecl(line string) (string, bool) {
+	s := trim(line)
+	if !strings.HasSuffix(s, ":") {
+		return "", false
+	}
+	if strings.ContainsAny(s, " \t,") {
+		return "", false
+	}
+	return s[:len(s)-1], true
 }
 
 // tryPopFusion recognises two adjacent single-register pops
