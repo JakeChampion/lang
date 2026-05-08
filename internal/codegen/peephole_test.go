@@ -26,13 +26,17 @@ func TestPushPopFoldsToMov(t *testing.T) {
 }
 
 func TestBranchToNextLineDropped(t *testing.T) {
-	in := "\tb .Lend\n.Lend:\n\tmov sp, fp"
+	// `ldr =.Lend` keeps the label alive (it's a reference
+	// that's not a branch, so it doesn't get next-line-elided).
+	// The trailing `b .Lend` is adjacent to the label and gets
+	// dropped.
+	in := "\tldr r1, =.Lend\n\tb .Lend\n.Lend:\n\tmov sp, fp"
 	got := peephole(in)
 	if strings.Contains(got, "\tb .Lend") {
 		t.Errorf("branch should be removed:\n%s", got)
 	}
 	if !strings.Contains(got, ".Lend:") {
-		t.Errorf("label should remain:\n%s", got)
+		t.Errorf("label should remain (referenced by ldr =):\n%s", got)
 	}
 }
 
@@ -64,8 +68,9 @@ func TestSelfMovRemoved(t *testing.T) {
 
 func TestLabelBetweenBlocksFusion(t *testing.T) {
 	// A label between str and ldr means we cannot drop the ldr — other
-	// code may branch to the label and skip the str.
-	in := "\tstr r0, [fp, #-4]\n.Lother:\n\tldr r0, [fp, #-4]"
+	// code may branch to the label and skip the str. Add an external
+	// branch into the label so the dead-label sweep keeps it alive.
+	in := "\tb .Lother\n\tstr r0, [fp, #-4]\n.Lother:\n\tldr r0, [fp, #-4]"
 	got := peephole(in)
 	if !strings.Contains(got, "ldr r0, [fp, #-4]") {
 		t.Errorf("ldr after label was unsafely removed:\n%s", got)
@@ -130,13 +135,15 @@ func TestCmpBranchFusionFloatCondCodes(t *testing.T) {
 // like the unconditional case — the fallthrough target is the
 // same regardless of the branch outcome.
 func TestConditionalBranchToNextLineDropped(t *testing.T) {
-	in := "\tbne .Lnext\n.Lnext:\n\tmov sp, fp"
+	// `ldr =.Lnext` keeps the label alive past the
+	// dead-label sweep.
+	in := "\tldr r1, =.Lnext\n\tbne .Lnext\n.Lnext:\n\tmov sp, fp"
 	got := peephole(in)
 	if strings.Contains(got, "bne .Lnext") {
 		t.Errorf("conditional branch to next line should be removed:\n%s", got)
 	}
 	if !strings.Contains(got, ".Lnext:") {
-		t.Errorf("label should remain:\n%s", got)
+		t.Errorf("label should remain (referenced by ldr =):\n%s", got)
 	}
 }
 
@@ -256,6 +263,80 @@ func TestAddrModeSinkSkipsWhenDstDiffers(t *testing.T) {
 	got := peephole(in)
 	if !strings.Contains(got, "add r2, r1, #4") {
 		t.Errorf("add should remain (r2 may still be live):\n%s", got)
+	}
+}
+
+// Local labels (`.L*`) with no incoming references get dropped
+// — common after branch inversion / next-line elision leaves
+// behind a trampoline label that nothing branches to.
+func TestDeadLabelDropped(t *testing.T) {
+	in := strings.Join([]string{
+		"\tcmp r1, #1",
+		"\tbne .Llive",
+		".Ldead:", // unreferenced — should disappear
+		"\tldr r0, =42",
+		".Llive:",
+		"\tbx lr",
+	}, "\n")
+	got := peephole(in)
+	if strings.Contains(got, ".Ldead:") {
+		t.Errorf("unreferenced .Ldead: should be dropped:\n%s", got)
+	}
+	if !strings.Contains(got, ".Llive:") {
+		t.Errorf("referenced .Llive: must remain:\n%s", got)
+	}
+}
+
+// Externally-visible symbols (no `.L` prefix) are untouched
+// even if no internal reference appears in this snippet —
+// callers from other compilation units can still target them.
+func TestDeadLabelKeepsGlobalSymbols(t *testing.T) {
+	in := "main:\n\tbx lr"
+	got := peephole(in)
+	if !strings.Contains(got, "main:") {
+		t.Errorf("global symbol must remain:\n%s", got)
+	}
+}
+
+// Code between an unconditional branch and the next label is
+// unreachable; the peephole drops it. `ldr =.Lend` is a non-
+// branch reference that keeps the label alive past the
+// dead-label sweep.
+func TestUnreachableAfterBranchDropped(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r2, =.Lend",
+		"\tb .Lend",
+		"\tldr r0, =42", // dead — between b and the next label
+		"\tmov r1, r3",  // also dead
+		".Lend:",
+		"\tbx lr",
+	}, "\n")
+	got := peephole(in)
+	if strings.Contains(got, "ldr r0, =42") || strings.Contains(got, "mov r1, r3") {
+		t.Errorf("instructions after `b` should be dropped:\n%s", got)
+	}
+	if !strings.Contains(got, ".Lend:") {
+		t.Errorf("label must remain:\n%s", got)
+	}
+}
+
+// `bx lr` is also an unconditional control transfer — same
+// dead-code shape as `b LBL`. `ldr =.Lnext` references
+// `.Lnext` so the dead-label sweep doesn't drop it.
+func TestUnreachableAfterBxLrDropped(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r2, =.Lnext",
+		"\tbx lr",
+		"\tldr r0, =42", // dead
+		".Lnext:",
+		"\tldr r1, =1",
+	}, "\n")
+	got := peephole(in)
+	if strings.Contains(got, "ldr r0, =42") {
+		t.Errorf("instruction after `bx lr` should be dropped:\n%s", got)
+	}
+	if !strings.Contains(got, "ldr r1, =1") {
+		t.Errorf("instruction after the next label must remain:\n%s", got)
 	}
 }
 
