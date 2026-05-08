@@ -1,15 +1,23 @@
-// E2E tests for the WASM backend, executed under wasmtime when it's
-// installed. They skip otherwise so `go test ./...` stays green on
-// machines without a WASM runtime.
+// E2E tests for the WASM backend, executed against a preview-2
+// Component Model component under wasmtime. The pipeline is parse
+// → check → wasm.EmitWithOptions{PrintMainResult: true} →
+// wasm-tools parse + component embed + component new (with the
+// wasi-preview1-component-adapter for the legacy entry-point
+// trampoline only) → `wasmtime run`. Tests skip when any of
+// wasm-tools / wasmtime / `LANG_WASI_ADAPTER` is missing so
+// `go test ./...` stays green on machines without the toolchain.
 package e2e
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -19,24 +27,94 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-func wasmtimePath(t *testing.T) string {
+// preview2 tool discovery: cached across the whole test run since
+// the answers don't change. preview2Setup and witDirSetup hold the
+// memoised lookup state; callers go through skipIfPreview2Missing
+// + witRoot.
+var (
+	preview2Once sync.Once
+	preview2Err  error
+
+	witOnce sync.Once
+	witDir  string
+	witErr  error
+)
+
+func skipIfPreview2Missing(t *testing.T) {
 	t.Helper()
-	for _, c := range []string{"wasmtime"} {
-		if p, err := exec.LookPath(c); err == nil {
-			return p
+	preview2Once.Do(func() {
+		if runtime.GOOS == "windows" {
+			preview2Err = errors.New("preview-2 toolchain not exercised on windows")
+			return
 		}
+		if _, err := exec.LookPath("wasm-tools"); err != nil {
+			preview2Err = errors.New("wasm-tools not on PATH")
+			return
+		}
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			preview2Err = errors.New("wasmtime not on PATH")
+			return
+		}
+		adapter := os.Getenv("LANG_WASI_ADAPTER")
+		if adapter == "" {
+			preview2Err = errors.New("LANG_WASI_ADAPTER not set (CI sets this)")
+			return
+		}
+		if _, err := os.Stat(adapter); err != nil {
+			preview2Err = err
+			return
+		}
+	})
+	if preview2Err != nil {
+		t.Skipf("preview-2 prerequisites missing: %v", preview2Err)
 	}
-	t.Skip("wasmtime not installed; skipping WASM e2e test")
-	return ""
 }
 
-// invokeWasmtime runs `wasmtime run --invoke main` against src and
-// returns stdout / stderr separately. Splitting them is important
-// because wasmtime emits an `--invoke` warning on stderr that would
-// otherwise be interleaved with the program's own output.
-func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
+// witRoot locates the `cmd/lang/wit` tree on disk by walking up
+// from the current working directory. wasm-tools resolves WIT
+// imports through a real filesystem path, so we can't ship the
+// tree as `embed.FS` from this package.
+func witRoot(t *testing.T) string {
 	t.Helper()
-	wt := wasmtimePath(t)
+	witOnce.Do(func() {
+		cwd, err := os.Getwd()
+		if err != nil {
+			witErr = err
+			return
+		}
+		for d := cwd; d != "/" && d != "."; d = filepath.Dir(d) {
+			cand := filepath.Join(d, "cmd", "lang", "wit")
+			if _, err := os.Stat(filepath.Join(cand, "lang.wit")); err == nil {
+				witDir = cand
+				return
+			}
+		}
+		witErr = errors.New("cmd/lang/wit not found above " + cwd)
+	})
+	if witErr != nil {
+		t.Fatal(witErr)
+	}
+	return witDir
+}
+
+// runOpts bundles the per-call wasmtime knobs. Empty defaults run
+// the component with no preopened dirs, no env, and no positional
+// args.
+type runOpts struct {
+	args    []string // positional argv after the component path
+	stdin   string
+	envs    []string // KEY=VAL strings forwarded as `--env`
+	workDir string   // when non-empty, mount as `--dir=<workDir>`
+}
+
+// buildComponent runs the in-process parse → check → wasm.Emit
+// pipeline for src, then drives wasm-tools to emit a Component
+// Model component. PrintMainResult is on so `_start` appends
+// main()'s i32 result to stdout via int_to_string + print. Skips
+// the test if the preview-2 toolchain is unavailable.
+func buildComponent(t *testing.T, src string) string {
+	t.Helper()
+	skipIfPreview2Missing(t)
 
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -49,35 +127,20 @@ func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	wat, err := wasm.Emit(prog, info)
+	wat, err := wasm.EmitWithOptions(prog, info, wasm.EmitOptions{
+		PrintMainResult: true,
+	})
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-
-	dir := t.TempDir()
-	watPath := filepath.Join(dir, "prog.wat")
-	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-
-	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
-	var soBuf, seBuf bytes.Buffer
-	cmd.Stdout = &soBuf
-	cmd.Stderr = &seBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("wasmtime: %v\nstdout:\n%s\nstderr:\n%s\n--- wat ---\n%s",
-			err, soBuf.String(), seBuf.String(), wat)
-	}
-	return soBuf.String(), seBuf.String()
+	return finishComponent(t, wat)
 }
 
-// invokeWasmtimeMultiFile is the multi-file analogue of
-// invokeWasmtime: writes each path → src into a temp dir, loads
-// the entry through modload, runs the rest of the pipeline, and
-// invokes `main` under wasmtime.
-func invokeWasmtimeMultiFile(t *testing.T, entry string, files map[string]string) (stdout, stderr string) {
+// buildComponentMulti is buildComponent for a module set loaded
+// through modload (the multi-file analogue).
+func buildComponentMulti(t *testing.T, entry string, files map[string]string) string {
 	t.Helper()
-	wt := wasmtimePath(t)
+	skipIfPreview2Missing(t)
 
 	dir := t.TempDir()
 	for path, contents := range files {
@@ -100,24 +163,93 @@ func invokeWasmtimeMultiFile(t *testing.T, entry string, files map[string]string
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	wat, err := wasm.Emit(prog, info)
+	wat, err := wasm.EmitWithOptions(prog, info, wasm.EmitOptions{
+		PrintMainResult: true,
+	})
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
+	return finishComponent(t, wat)
+}
 
+// finishComponent runs the wasm-tools parse + component embed +
+// component new pipeline against the WAT text produced by
+// wasm.Emit. Returns the path of the resulting component .wasm.
+func finishComponent(t *testing.T, wat string) string {
+	t.Helper()
+	dir := t.TempDir()
 	watPath := filepath.Join(dir, "prog.wat")
 	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
 		t.Fatalf("write wat: %v", err)
 	}
-	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
-	var soBuf, seBuf bytes.Buffer
-	cmd.Stdout = &soBuf
-	cmd.Stderr = &seBuf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("wasmtime: %v\nstdout:\n%s\nstderr:\n%s\n--- wat ---\n%s",
-			err, soBuf.String(), seBuf.String(), wat)
+	modulePath := filepath.Join(dir, "prog.wasm")
+	if out, err := exec.Command("wasm-tools", "parse", watPath, "-o", modulePath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools parse: %v\n%s\n--- wat ---\n%s", err, out, wat)
 	}
-	return soBuf.String(), seBuf.String()
+	embeddedPath := filepath.Join(dir, "prog.embedded.wasm")
+	if out, err := exec.Command("wasm-tools", "component", "embed",
+		witRoot(t), "-w", "lang",
+		modulePath, "-o", embeddedPath,
+	).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools component embed: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "prog.component.wasm")
+	if out, err := exec.Command("wasm-tools", "component", "new",
+		"--adapt", "wasi_snapshot_preview1="+os.Getenv("LANG_WASI_ADAPTER"),
+		embeddedPath, "-o", componentPath,
+	).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools component new: %v\n%s", err, out)
+	}
+	return componentPath
+}
+
+// runComponent runs the component under wasmtime, returning the
+// program's stdout, stderr, and the wasmtime exit code.
+func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	cmdArgs := []string{"run"}
+	if opts.workDir != "" {
+		cmdArgs = append(cmdArgs, "--dir="+opts.workDir)
+	}
+	for _, e := range opts.envs {
+		cmdArgs = append(cmdArgs, "--env", e)
+	}
+	cmdArgs = append(cmdArgs, componentPath)
+	cmdArgs = append(cmdArgs, opts.args...)
+	cmd := exec.Command("wasmtime", cmdArgs...)
+	cmd.Stdin = strings.NewReader(opts.stdin)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	_ = cmd.Run()
+	return so.String(), se.String(), cmd.ProcessState.ExitCode()
+}
+
+// invokeWasmtime compiles src to a Component Model component and
+// runs it under `wasmtime run`. Returns the program's stdout +
+// stderr; fails the test if wasmtime exits non-zero. Use
+// `runWasmStdinEnv` / `runWasmInDir` if you need to script stdin
+// or env vars or expect a non-zero exit.
+func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
+	t.Helper()
+	p := buildComponent(t, src)
+	s, e, ec := runComponent(t, p, runOpts{})
+	if ec != 0 {
+		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
+	}
+	return s, e
+}
+
+// invokeWasmtimeMultiFile is invokeWasmtime for a modload-driven
+// program (entry + sibling files).
+func invokeWasmtimeMultiFile(t *testing.T, entry string, files map[string]string) (stdout, stderr string) {
+	t.Helper()
+	p := buildComponentMulti(t, entry, files)
+	s, e, ec := runComponent(t, p, runOpts{})
+	if ec != 0 {
+		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
+	}
+	return s, e
 }
 
 // runWasmMultiFile invokes `main` and parses the i32 result line
@@ -164,42 +296,15 @@ function main(): number {
 }
 
 // invokeWasmtimeWithArgs is invokeWasmtime plus extra positional
-// argv that wasmtime forwards to the wasm module via WASI.
-// Splitting stdout / stderr matters here too: wasmtime puts its
-// `--invoke` warning on stderr and the program's own output on
-// stdout, so the args() return path can be tested without
-// noise interfering.
+// argv that wasmtime forwards into `wasi:cli/environment.get-arguments`.
+// Component model wasmtime puts the component path at argv[0] just
+// like preview-1 did with the module path, so the args() builtin
+// returns the same shape under both.
 func invokeWasmtimeWithArgs(t *testing.T, src string, extraArgs ...string) (stdout, stderr string) {
 	t.Helper()
-	wt := wasmtimePath(t)
-
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	wat, err := wasm.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	watPath := filepath.Join(dir, "prog.wat")
-	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-	cmdArgs := append([]string{"run", "--invoke", "main", watPath}, extraArgs...)
-	cmd := exec.Command(wt, cmdArgs...)
-	var soBuf, seBuf bytes.Buffer
-	cmd.Stdout = &soBuf
-	cmd.Stderr = &seBuf
-	_ = cmd.Run()
-	return soBuf.String(), seBuf.String()
+	p := buildComponent(t, src)
+	s, e, _ := runComponent(t, p, runOpts{args: extraArgs})
+	return s, e
 }
 
 // args() under wasmtime: argv[0] is the wasm module path that
@@ -246,46 +351,15 @@ func TestWASMArgsBuiltinReadsValue(t *testing.T) {
 	}
 }
 
-// runWasmStdinEnv runs the compiled wasm under wasmtime with
-// scripted stdin, scripted env vars, and returns stdout, stderr,
-// and the exit code separately. wasmtime's `--env KEY=VAL` flag
-// forwards into WASI environ_get; stdin gets piped through.
+// runWasmStdinEnv runs the component under wasmtime with scripted
+// stdin and env, returning stdout, stderr, and the exit code.
+// `--env KEY=VAL` is forwarded by wasmtime to
+// `wasi:cli/environment.get-environment` (preview-2) which is what
+// the env() builtin reads from.
 func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, stderr string, exitCode int) {
 	t.Helper()
-	wt := wasmtimePath(t)
-
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	wat, err := wasm.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	watPath := filepath.Join(dir, "prog.wat")
-	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-	args := []string{"run", "--invoke", "main"}
-	for _, e := range envs {
-		args = append(args, "--env", e)
-	}
-	args = append(args, watPath)
-	cmd := exec.Command(wt, args...)
-	cmd.Stdin = strings.NewReader(stdin)
-	var soBuf, seBuf bytes.Buffer
-	cmd.Stdout = &soBuf
-	cmd.Stderr = &seBuf
-	_ = cmd.Run()
-	return soBuf.String(), seBuf.String(), cmd.ProcessState.ExitCode()
+	p := buildComponent(t, src)
+	return runComponent(t, p, runOpts{stdin: stdin, envs: envs})
 }
 
 // `read_line()` reads one line from stdin including the trailing
@@ -391,9 +465,15 @@ func TestWASMEnvBuiltinMissing(t *testing.T) {
 	}
 }
 
-// `exit(code)` calls WASI proc_exit, which terminates the
-// process with the given status. wasmtime surfaces that as the
-// host process's exit code.
+// `exit(code)` calls preview-1 `proc_exit`, which the adapter
+// turns into `wasi:cli/exit.exit(if code == 0 { Ok(()) }
+// else { Err(()) })`. wasmtime then surfaces that as exit 0 or 1
+// — the integer code is lost in the lift, since wasi:cli/exit's
+// signature is `func(status: result<_, _>)` with no payload.
+// Asserting that exit(non-zero) propagates as a non-zero exit
+// code is the most we can verify under preview-2 0.2.0; preserving
+// arbitrary codes would need `wasi:cli/exit.exit-with-code` which
+// only ships in 0.2.1+.
 func TestWASMExitBuiltin(t *testing.T) {
 	src := `function main(): number {
 		eprint("boom");
@@ -404,8 +484,8 @@ func TestWASMExitBuiltin(t *testing.T) {
 	if !strings.Contains(stderr, "boom") {
 		t.Errorf("stderr missing `boom`: %q", stderr)
 	}
-	if code != 7 {
-		t.Errorf("exit = %d, want 7", code)
+	if code == 0 {
+		t.Errorf("exit = 0, want non-zero (program called exit(7))")
 	}
 }
 
@@ -557,47 +637,41 @@ func TestWASMPrintHelloWorld(t *testing.T) {
 	}
 }
 
-// runWasmFloat parses a 32-bit float result out of wasmtime's stdout.
-// wasmtime prints floats either as a bare decimal or as `f32: N`, so
-// strip a leading type tag if present and parse the rest.
-func runWasmFloat(t *testing.T, src string) float64 {
-	t.Helper()
-	stdout, _ := invokeWasmtime(t, src)
-	for _, ln := range strings.Split(stdout, "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		if i := strings.LastIndex(ln, " "); i >= 0 {
-			ln = ln[i+1:]
-		}
-		if f, err := strconv.ParseFloat(ln, 64); err == nil {
-			return f
-		}
-	}
-	t.Fatalf("could not parse wasmtime float output:\n%s", stdout)
-	return 0
-}
+// Float observation through the component pipeline: stdout only
+// carries i32 results (via PrintMainResult + int_to_string), and
+// `wasi:cli/exit` clamps the exit code to 0/1, so neither channel
+// can carry an f32. Float tests instead express the assertion in
+// the lang program itself — main returns 1 when the expected
+// value matches and 0 otherwise — and we observe the integer.
 
 func TestWASMFloatArithmetic(t *testing.T) {
-	src := `function main(): float { return 1.5 + 2.5; }`
-	if got := runWasmFloat(t, src); got != 4.0 {
-		t.Errorf("got %v, want 4.0", got)
+	src := `function main(): number {
+		if ((1.5 + 2.5) == 4.0) { return 1; }
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (1.5 + 2.5 == 4.0)", got)
 	}
 }
 
 func TestWASMFloatMultiplyAndDivide(t *testing.T) {
-	src := `function main(): float { return 6.0 * 0.5 / 0.25; }`
-	if got := runWasmFloat(t, src); got != 12.0 {
-		t.Errorf("got %v, want 12.0", got)
+	src := `function main(): number {
+		if ((6.0 * 0.5 / 0.25) == 12.0) { return 1; }
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (6.0 * 0.5 / 0.25 == 12.0)", got)
 	}
 }
 
 func TestWASMFloatNegate(t *testing.T) {
 	src := `function f(x: float): float { return -x; }
-		function main(): float { return f(3.5); }`
-	if got := runWasmFloat(t, src); got != -3.5 {
-		t.Errorf("got %v, want -3.5", got)
+		function main(): number {
+			if (f(3.5) == -3.5) { return 1; }
+			return 0;
+		}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (-f(3.5) == -3.5)", got)
 	}
 }
 
@@ -826,35 +900,25 @@ func TestWASMStringConcatPreservesContent(t *testing.T) {
 	}
 }
 
+// runWasmExpectingTrap compiles src, runs the component, and
+// returns true when wasmtime exited non-zero (the trap surface).
+// Used by the array bounds-check tests where the program is
+// expected to abort.
+func runWasmExpectingTrap(t *testing.T, src string) (stdout, stderr string, ok bool) {
+	t.Helper()
+	p := buildComponent(t, src)
+	s, e, ec := runComponent(t, p, runOpts{})
+	return s, e, ec != 0
+}
+
 func TestWASMArrayOutOfBoundsTraps(t *testing.T) {
 	src := `function main(): number {
 		var a: number[] = [1, 2, 3];
 		return a[10];
 	}`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wat, err := wasm.Emit(prog, info)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Run wasmtime expecting non-zero exit (trap).
-	wt := wasmtimePath(t)
-	dir := t.TempDir()
-	watPath := filepath.Join(dir, "prog.wat")
-	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
-	var so, se bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &so, &se
-	if err := cmd.Run(); err == nil {
-		t.Errorf("expected wasmtime to trap on a[10], but it succeeded\nstdout:\n%s\nstderr:\n%s", so.String(), se.String())
+	stdout, stderr, ok := runWasmExpectingTrap(t, src)
+	if !ok {
+		t.Errorf("expected wasmtime to trap on a[10], but it succeeded\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
 }
 
@@ -863,26 +927,7 @@ func TestWASMNegativeIndexTraps(t *testing.T) {
 		var a: number[] = [1, 2, 3];
 		return a[0 - 1];
 	}`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wat, err := wasm.Emit(prog, info)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wt := wasmtimePath(t)
-	dir := t.TempDir()
-	watPath := filepath.Join(dir, "prog.wat")
-	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(wt, "run", "--invoke", "main", watPath)
-	if err := cmd.Run(); err == nil {
+	if _, _, ok := runWasmExpectingTrap(t, src); !ok {
 		t.Errorf("expected wasmtime to trap on a[-1], but it succeeded")
 	}
 }
@@ -1164,38 +1209,15 @@ func TestWASMResultFloatOk(t *testing.T) {
 // back files the program created.
 func runWasmInDir(t *testing.T, src string, seed map[string]string) (stdout, stderr string, exitCode int, dir string) {
 	t.Helper()
-	wt := wasmtimePath(t)
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	wat, err := wasm.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	p := buildComponent(t, src)
 	dir = t.TempDir()
-	watPath := filepath.Join(dir, "prog.wat")
-	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
 	for name, content := range seed {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			t.Fatalf("seed %s: %v", name, err)
 		}
 	}
-	cmd := exec.Command(wt, "run", "--dir="+dir, "--invoke", "main", watPath)
-	var soBuf, seBuf bytes.Buffer
-	cmd.Stdout = &soBuf
-	cmd.Stderr = &seBuf
-	_ = cmd.Run()
-	return soBuf.String(), seBuf.String(), cmd.ProcessState.ExitCode(), dir
+	s, e, ec := runComponent(t, p, runOpts{workDir: dir})
+	return s, e, ec, dir
 }
 
 // `read_file` returns Ok(content) for a present file. The

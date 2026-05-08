@@ -35,15 +35,19 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 // the zero value matches what the original `Emit` produced before
 // options were introduced.
 type EmitOptions struct {
-	// Preview2 swaps any builtin that has a native WASI Preview 2
-	// equivalent off its preview-1 import (currently:
-	// `random_bytes` -> `wasi:random/random.get-random-bytes`).
-	// Other imports stay on preview-1 and are translated by the
-	// preview-1 adapter at `wasm-tools component new` time. Setting
-	// this also exports `cabi_realloc` so the host can allocate
-	// component-model `list<u8>` return buffers in our linear
-	// memory.
-	Preview2 bool
+	// PrintMainResult makes the `_start` wrapper format `main()`'s
+	// integer return value through `int_to_string` and write it to
+	// stdout (followed by a newline) before returning, instead of
+	// dropping the value. Used by the WASM e2e test harness so it
+	// can observe `main`'s i32 result through the component's
+	// stdout — preview-2 components don't preserve arbitrary
+	// integers through `wasi:cli/exit` and there's no `--invoke
+	// main` equivalent for components, so stdout is the only
+	// observation channel left. Has no effect when `main` returns
+	// void; if `main` returns float, the flag is ignored (only the
+	// integer path is wired) and the test should use a PASS/FAIL
+	// shape instead.
+	PrintMainResult bool
 }
 
 // EmitWithOptions is the option-aware sibling of Emit. The two share
@@ -80,7 +84,7 @@ type generator struct {
 	info     *checker.Info
 	indent   int
 	current  *ast.FuncDecl
-	preview2 bool // emit native preview-2 imports + cabi_realloc; otherwise stay on preview-1 names.
+	printMainResult bool // _start prints main()'s i32 return value via int_to_string before returning (test-only).
 	// origTopLevelCount records how many functions the source had
 	// before closure conversion appended hoisted ones. The first
 	// origTopLevelCount entries get static closure cells (env=0)
@@ -102,6 +106,7 @@ type generator struct {
 	needsExit        bool // any `exit(code)` call appears — pulls in WASI proc_exit
 	needsArena       bool // any `arena_save` / `arena_restore` call — emits the two heap-cursor helpers
 	needsRandomBytes bool // any `random_bytes(n)` call — pulls in WASI random_get
+	needsIntToString bool // any `int_to_string(n)` call — emits a small decimal-formatting helper
 	needsTcp         bool // any tcp_* call — pulls in WASI sock_accept + fd_read/fd_write/fd_close on socket fds
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
@@ -303,6 +308,10 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsArena = true
 				case "random_bytes":
 					g.needsRandomBytes = true
+					g.needsArrays = true
+					g.needsRuntime = true
+				case "int_to_string":
+					g.needsIntToString = true
 					g.needsArrays = true
 					g.needsRuntime = true
 				case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
@@ -1252,119 +1261,86 @@ func (g *generator) internString(s string) int {
 //	  (string data starts at 128 instead of 96 when preview-2 streams
 //	  are in play; see EmitFromIRWithOptions.)
 func (g *generator) emitRuntimePreamble() {
-	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
 	if g.needsArgs {
+		// args / env still come in via preview-1; the adapter
+		// translates these to `wasi:cli/environment.get-arguments`
+		// / `get-environment` at component-new time. A native
+		// migration of these two pulls in canonical-ABI list<string>
+		// machinery and is deferred to a follow-up.
 		g.line(`(import "wasi_snapshot_preview1" "args_sizes_get" (func $__wasi_args_sizes_get (param i32 i32) (result i32)))`)
 		g.line(`(import "wasi_snapshot_preview1" "args_get" (func $__wasi_args_get (param i32 i32) (result i32)))`)
-	}
-	if g.needsReadLine || g.needsTcp {
-		g.line(`(import "wasi_snapshot_preview1" "fd_read" (func $__wasi_fd_read (param i32 i32 i32 i32) (result i32)))`)
 	}
 	if g.needsEnv {
 		g.line(`(import "wasi_snapshot_preview1" "environ_sizes_get" (func $__wasi_environ_sizes_get (param i32 i32) (result i32)))`)
 		g.line(`(import "wasi_snapshot_preview1" "environ_get" (func $__wasi_environ_get (param i32 i32) (result i32)))`)
 	}
 	if g.needsExit {
+		// proc_exit is wrapped by the adapter into
+		// `wasi:cli/exit.exit(result<_, _>)`; non-zero codes are
+		// flattened to Err(()), so the host process sees exit 1
+		// for any non-zero code. Documented limitation under
+		// preview-2 0.2.0 — a `wasi:cli/exit.exit-with-code` wrapper
+		// would land in 0.2.1+.
 		g.line(`(import "wasi_snapshot_preview1" "proc_exit" (func $__wasi_proc_exit (param i32)))`)
 	}
-	if g.preview2 {
-		// Preview-2 stdio: get-stdout / get-stderr / get-stdin
-		// return resource handles; output-stream.blocking-write-
-		// and-flush takes (handle, ptr, len, retptr) and flushes
-		// synchronously (matches the existing fd_write semantics
-		// closely enough to drop in for $print / $write / $eprint
-		// / $putchar). input-stream.blocking-read takes (handle,
-		// len_u64, retptr) and writes a result<list<u8>,
-		// stream-error> back through the retptr — see
-		// emitReadLineHelperPreview2 for the call site. The
-		// preview-1 fd_write / fd_read imports above stay, since
-		// file I/O and TCP still go through them (via the
-		// adapter) — those migrate in subsequent steps.
-		g.line(`(import "wasi:cli/stdout@0.2.0" "get-stdout" (func $__wasi_get_stdout (result i32)))`)
-		g.line(`(import "wasi:cli/stderr@0.2.0" "get-stderr" (func $__wasi_get_stderr (result i32)))`)
-		g.line(`(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush" (func $__wasi_blocking_write_and_flush (param i32 i32 i32 i32)))`)
-		if g.needsReadLine || g.needsStreamingIO || g.needsFileIO || g.needsStdStreams || g.needsTcp {
-			// `__method_Reader_read_line` dispatches into the
-			// preview-2 streams path when the Reader wraps
-			// stdin or a file (since step 3c), the `$stdin`
-			// constructor populates a Reader struct with the
-			// cached stdin stream handle, and tcp_recv (step 4)
-			// consumes the input-stream side of an accepted
-			// connection — `blocking-read` covers all three.
-			// `get-stdin` only matters for the first two but
-			// they're the more common case; the unused TCP
-			// branch is harmless.
-			g.line(`(import "wasi:cli/stdin@0.2.0" "get-stdin" (func $__wasi_get_stdin (result i32)))`)
-			g.line(`(import "wasi:io/streams@0.2.0" "[method]input-stream.blocking-read" (func $__wasi_blocking_read (param i32 i64 i32)))`)
-		}
-		if g.needsFileIO || g.needsStreamingIO {
-			// File I/O imports (step 3c). preopens.get-directories
-			// returns the host's preopen list; we take the first
-			// entry as the working directory descriptor and call
-			// descriptor.open-at against it. read/write/append-via-
-			// stream return a stream resource the rest of the
-			// runtime feeds through wasi:io/streams.
-			g.line(`(import "wasi:filesystem/preopens@0.2.0" "get-directories" (func $__wasi_get_directories (param i32)))`)
-			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.open-at" (func $__wasi_descriptor_open_at (param i32 i32 i32 i32 i32 i32 i32)))`)
-			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.read-via-stream" (func $__wasi_descriptor_read_via_stream (param i32 i64 i32)))`)
-			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.write-via-stream" (func $__wasi_descriptor_write_via_stream (param i32 i64 i32)))`)
-			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.append-via-stream" (func $__wasi_descriptor_append_via_stream (param i32 i32)))`)
-		}
-		if g.needsFileIO || g.needsStreamingIO || g.needsTcp {
-			// Stream resource drops — closing a file Reader/Writer
-			// (step 3c) and closing a TCP connection (step 4)
-			// both drop input-stream / output-stream resources to
-			// keep them from leaking on the host. The underlying
-			// descriptor / tcp-socket handles still leak because
-			// the bump allocator can't free the wrapper struct
-			// either; bounded opens per program lifetime keeps
-			// that acceptable.
-			g.line(`(import "wasi:io/streams@0.2.0" "[resource-drop]input-stream" (func $__wasi_input_stream_drop (param i32)))`)
-			g.line(`(import "wasi:io/streams@0.2.0" "[resource-drop]output-stream" (func $__wasi_output_stream_drop (param i32)))`)
-		}
+	// Preview-2 stdio: get-stdout / get-stderr / get-stdin return
+	// resource handles; output-stream.blocking-write-and-flush
+	// takes (handle, ptr, len, retptr) and flushes synchronously
+	// — drop-in for $print / $write / $eprint / $putchar.
+	// input-stream.blocking-read takes (handle, len_u64, retptr)
+	// and writes `result<list<u8>, stream-error>` through the
+	// retptr — see the read_line / read_chunk / tcp_recv call
+	// sites.
+	g.line(`(import "wasi:cli/stdout@0.2.0" "get-stdout" (func $__wasi_get_stdout (result i32)))`)
+	g.line(`(import "wasi:cli/stderr@0.2.0" "get-stderr" (func $__wasi_get_stderr (result i32)))`)
+	g.line(`(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush" (func $__wasi_blocking_write_and_flush (param i32 i32 i32 i32)))`)
+	if g.needsReadLine || g.needsStreamingIO || g.needsFileIO || g.needsStdStreams || g.needsTcp {
+		g.line(`(import "wasi:cli/stdin@0.2.0" "get-stdin" (func $__wasi_get_stdin (result i32)))`)
+		g.line(`(import "wasi:io/streams@0.2.0" "[method]input-stream.blocking-read" (func $__wasi_blocking_read (param i32 i64 i32)))`)
+	}
+	if g.needsFileIO || g.needsStreamingIO {
+		// File I/O imports. preopens.get-directories returns the
+		// host's preopen list; we take the first entry as the
+		// working directory descriptor and call descriptor.open-at
+		// against it. read/write/append-via-stream return a stream
+		// resource the rest of the runtime feeds through
+		// wasi:io/streams.
+		g.line(`(import "wasi:filesystem/preopens@0.2.0" "get-directories" (func $__wasi_get_directories (param i32)))`)
+		g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.open-at" (func $__wasi_descriptor_open_at (param i32 i32 i32 i32 i32 i32 i32)))`)
+		g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.read-via-stream" (func $__wasi_descriptor_read_via_stream (param i32 i64 i32)))`)
+		g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.write-via-stream" (func $__wasi_descriptor_write_via_stream (param i32 i64 i32)))`)
+		g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.append-via-stream" (func $__wasi_descriptor_append_via_stream (param i32 i32)))`)
+	}
+	if g.needsFileIO || g.needsStreamingIO || g.needsTcp {
+		// Stream resource drops — closing a file Reader/Writer
+		// (step 3c) and closing a TCP connection (step 4) both
+		// drop input-stream / output-stream resources to keep
+		// them from leaking on the host. The underlying
+		// descriptor / tcp-socket handles still leak because the
+		// bump allocator can't free the wrapper struct either;
+		// bounded opens per program lifetime keeps that
+		// acceptable.
+		g.line(`(import "wasi:io/streams@0.2.0" "[resource-drop]input-stream" (func $__wasi_input_stream_drop (param i32)))`)
+		g.line(`(import "wasi:io/streams@0.2.0" "[resource-drop]output-stream" (func $__wasi_output_stream_drop (param i32)))`)
 	}
 	if g.needsRandomBytes {
-		if g.preview2 {
-			// Component-model lowered signature for
-			//   get-random-bytes: func(len: u64) -> list<u8>
-			// is `(param i64 i32)` where i32 is a "return area"
-			// pointer. The host calls our exported
-			// `cabi_realloc` to allocate a buffer in our linear
-			// memory, fills it with the random bytes, then
-			// writes the (ptr, len) pair to the return area.
-			// See cmd/lang/wit/lang.wit for the world this
-			// import comes from; the WAT-level module name
-			// `wasi:random/random@0.2.0` matches the legacy
-			// canonical-ABI mangling that wit-bindgen-rust and
-			// `wasm-tools component embed --dummy-names legacy`
-			// also produce.
-			g.line(`(import "wasi:random/random@0.2.0" "get-random-bytes" (func $__wasi_random_get_p2 (param i64 i32)))`)
-		} else {
-			g.line(`(import "wasi_snapshot_preview1" "random_get" (func $__wasi_random_get (param i32 i32) (result i32)))`)
-		}
+		// Component-model lowered signature for
+		//   get-random-bytes: func(len: u64) -> list<u8>
+		// is `(param i64 i32)` where i32 is the return-area
+		// pointer. The host calls our exported `cabi_realloc` to
+		// allocate a buffer in our linear memory, fills it with
+		// the random bytes, then writes the (ptr, len) pair to
+		// the return area.
+		g.line(`(import "wasi:random/random@0.2.0" "get-random-bytes" (func $__wasi_random_get_p2 (param i64 i32)))`)
 	}
-	if g.needsTcp && !g.preview2 {
-		// sock_accept(sock, fdflags, fd_out_ptr) -> errno —
-		// returns the new fd via the out-pointer. Wasmtime
-		// supports this on host-preopened TCP listeners
-		// (`wasmtime --tcp-listen=0.0.0.0:PORT prog.wasm`).
-		g.line(`(import "wasi_snapshot_preview1" "sock_accept" (func $__wasi_sock_accept (param i32 i32 i32) (result i32)))`)
-		// fd_read / fd_close already cover recv / close on
-		// socket fds. fd_read is imported above (gated on
-		// needsReadLine || needsTcp); fd_close is below
-		// (gated on needsFileIO || needsTcp).
-	}
-	if g.needsTcp && g.preview2 {
-		// Step 4: native wasi:sockets. The user-facing API
-		// (tcp_listen / tcp_accept / tcp_recv / tcp_send /
-		// tcp_close) keeps its preview-1 shape — every "fd" the
-		// program sees is a heap pointer to a 12-byte struct
-		// `(tcp_socket, input_stream, output_stream)`; for
-		// listening sockets the stream slots stay 0. The
-		// sock_accept import above is dropped on this path; we
-		// drive the bind / listen / accept pipeline directly,
-		// so the host doesn't need `wasmtime --tcp-listen=…` any
-		// more — the guest binds the port itself.
+	if g.needsTcp {
+		// Native wasi:sockets. The user-facing API (tcp_listen /
+		// tcp_accept / tcp_recv / tcp_send / tcp_close) returns a
+		// heap pointer to a 12-byte struct `(tcp_socket,
+		// input_stream, output_stream)`; for listening sockets
+		// the stream slots stay 0. The host doesn't need
+		// `wasmtime --tcp-listen=…` — the guest binds the port
+		// itself.
 		g.line(`(import "wasi:sockets/instance-network@0.2.0" "instance-network" (func $__wasi_instance_network (result i32)))`)
 		g.line(`(import "wasi:sockets/network@0.2.0" "[resource-drop]network" (func $__wasi_network_drop (param i32)))`)
 		g.line(`(import "wasi:sockets/tcp-create-socket@0.2.0" "create-tcp-socket" (func $__wasi_create_tcp_socket (param i32 i32)))`)
@@ -1383,25 +1359,18 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(import "wasi:io/poll@0.2.0" "[method]pollable.block" (func $__wasi_pollable_block (param i32)))`)
 		g.line(`(import "wasi:io/poll@0.2.0" "[resource-drop]pollable" (func $__wasi_pollable_drop (param i32)))`)
 	}
-	if g.needsFileIO {
-		// path_open / fd_read / fd_close — fd_write is already
-		// imported above for `print`. fd_read shares with the
-		// stdin reader's / TCP recv's import; if any of those
-		// flags is on we still only emit it once.
-		g.line(`(import "wasi_snapshot_preview1" "path_open" (func $__wasi_path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))`)
-		if !g.needsReadLine && !g.needsTcp {
-			g.line(`(import "wasi_snapshot_preview1" "fd_read" (func $__wasi_fd_read (param i32 i32 i32 i32) (result i32)))`)
-		}
-	}
-	if g.needsFileIO || g.needsTcp {
-		g.line(`(import "wasi_snapshot_preview1" "fd_close" (func $__wasi_fd_close (param i32) (result i32)))`)
-	}
 	g.line(`(memory $mem 1)`)
 
-	if g.needsArrays || g.needsStructs {
+	{
 		// $__lang_alloc bumps the allocator pointer at memory[40] and
 		// returns the address that was there before the bump. There's
 		// no free — arrays in lang are immutable but not GC'd.
+		//
+		// Always emit because `$cabi_realloc` (the canonical-ABI
+		// allocator the host calls into) defers to it
+		// unconditionally; an alloc-free program would otherwise
+		// fail to compile at the wasm-tools step with "unknown func
+		// $__lang_alloc".
 		//
 		// Grows memory on demand: if the post-bump end goes past the
 		// current memory size (in pages), call `memory.grow` for the
@@ -1699,51 +1668,30 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`)`)
 	}
 
-	if g.preview2 {
-		g.emitStreamsStdioHelpers()
-	}
+	g.emitStreamsStdioHelpers()
 
-	// putchar(n)
+	// putchar(n) — blocking-write-and-flush(stdout, ptr=0, len=1).
+	// memory[0] holds the byte we just stored.
 	g.line(`(func $putchar (param $n i32)`)
 	g.indent++
 	g.line(`i32.const 0`)
 	g.line(`local.get $n`)
 	g.line(`i32.store8`)
-	if g.preview2 {
-		// blocking-write-and-flush(stdout, ptr=0, len=1).
-		// memory[0] holds the byte we just stored.
-		g.line(`call $__stdout_handle`)
-		g.line(`i32.const 0`)
-		g.line(`i32.const 1`)
-		g.line(`call $__streams_write`)
-	} else {
-		g.line(`i32.const 1`)  // fd = stdout
-		g.line(`i32.const 4`)  // iovs = &iovec at offset 4
-		g.line(`i32.const 1`)  // iovs_len = 1
-		g.line(`i32.const 12`) // nwritten = &offset 12
-		g.line(`call $__wasi_fd_write`)
-		g.line(`drop`)
-	}
+	g.line(`call $__stdout_handle`)
+	g.line(`i32.const 0`)
+	g.line(`i32.const 1`)
+	g.line(`call $__streams_write`)
 	g.indent--
 	g.line(`)`)
 
-	// print(s) — writes the string and a newline (matching the arm32
-	// puts-based lowering). On preview-1 we split into TWO single-iovec
-	// fd_write calls because some wasmtime versions silently drop all
-	// but the first iovec when iovs_len > 1; on preview-2 the same
-	// pattern still works (two blocking-write-and-flush calls), it just
-	// goes through wasi:io/streams instead of fd_write.
+	// print(s) — writes the string and a newline. Two single-iovec
+	// blocking-write-and-flush calls (rather than one with two
+	// iovecs) because some wasmtime versions silently drop all but
+	// the first iovec when iovs_len > 1.
 	g.line(`(func $print (param $s i32)`)
 	g.indent++
-	if g.preview2 {
-		g.emitStreamsWriteString("$__stdout_handle", "$s")
-		g.emitStreamsWriteNewline("$__stdout_handle")
-	} else {
-		g.emitFdWriteString(1, "$s")
-		// Second call: write the newline. iovec at offset 24 is pre-init
-		// to (ptr=32, len=1) by a data segment; memory[32] is '\n'.
-		g.emitFdWriteNewline(1)
-	}
+	g.emitStreamsWriteString("$__stdout_handle", "$s")
+	g.emitStreamsWriteNewline("$__stdout_handle")
 	g.indent--
 	g.line(`)`)
 
@@ -1752,24 +1700,15 @@ func (g *generator) emitRuntimePreamble() {
 	// separators when they want.
 	g.line(`(func $write (param $s i32)`)
 	g.indent++
-	if g.preview2 {
-		g.emitStreamsWriteString("$__stdout_handle", "$s")
-	} else {
-		g.emitFdWriteString(1, "$s")
-	}
+	g.emitStreamsWriteString("$__stdout_handle", "$s")
 	g.indent--
 	g.line(`)`)
 
 	// eprint(s) — `print` shape but routed to stderr.
 	g.line(`(func $eprint (param $s i32)`)
 	g.indent++
-	if g.preview2 {
-		g.emitStreamsWriteString("$__stderr_handle", "$s")
-		g.emitStreamsWriteNewline("$__stderr_handle")
-	} else {
-		g.emitFdWriteString(2, "$s")
-		g.emitFdWriteNewline(2)
-	}
+	g.emitStreamsWriteString("$__stderr_handle", "$s")
+	g.emitStreamsWriteNewline("$__stderr_handle")
 	g.indent--
 	g.line(`)`)
 
@@ -1791,16 +1730,17 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsRandomBytes {
 		g.emitRandomBytesHelper()
 	}
-	if g.preview2 {
-		// `cabi_realloc` is the canonical-ABI allocator the host
-		// invokes to materialise dynamically-sized return values
-		// (e.g. `list<u8>` from `get-random-bytes` or
-		// `input-stream.blocking-read`) in our linear memory.
-		// Always emit it under preview-2 — its cost is one
-		// trivially-tiny function; tracking individual import
-		// dependencies isn't worth the gating complexity.
-		g.emitCabiRealloc()
+	if g.needsIntToString {
+		g.emitIntToStringHelper()
 	}
+	// `cabi_realloc` is the canonical-ABI allocator the host
+	// invokes to materialise dynamically-sized return values
+	// (e.g. `list<u8>` from `get-random-bytes` or
+	// `input-stream.blocking-read`) in our linear memory.
+	// Always emit it — the cost is one trivially-tiny function;
+	// tracking individual import dependencies isn't worth the
+	// gating complexity.
+	g.emitCabiRealloc()
 	if g.needsTcp {
 		g.emitTcpHelpers()
 	}
@@ -1814,20 +1754,20 @@ func (g *generator) emitRuntimePreamble() {
 
 // emitStdStreamHelpers writes `$stdin`, `$stdout`, `$stderr` —
 // trivial constructors that allocate a 4-byte Reader / Writer
-// struct holding either fd 0 / 1 / 2 (preview-1) or the cached
-// preview-2 stream resource handle. Called repeatedly each yields
-// a fresh struct; that's a small allocation cost for a
-// usually-once-per-program lookup, in exchange for not needing
-// static memory slots or a cached-once flag for the *struct*
-// itself (the underlying preview-2 stream handle is cached
-// elsewhere — see emitStreamHandleAccessor).
+// struct holding the cached stdin / stdout / stderr stream
+// resource handle. Called repeatedly each yields a fresh struct;
+// that's a small allocation cost for a usually-once-per-program
+// lookup, in exchange for not needing static memory slots or a
+// cached-once flag for the *struct* itself — the underlying
+// stream handle is cached elsewhere (see
+// emitStreamHandleAccessor).
 func (g *generator) emitStdStreamHelpers() {
-	g.emitStdStream("$stdin", 0, "$__stdin_handle")
-	g.emitStdStream("$stdout", 1, "$__stdout_handle")
-	g.emitStdStream("$stderr", 2, "$__stderr_handle")
+	g.emitStdStream("$stdin", "$__stdin_handle")
+	g.emitStdStream("$stdout", "$__stdout_handle")
+	g.emitStdStream("$stderr", "$__stderr_handle")
 }
 
-func (g *generator) emitStdStream(name string, fd int, p2HandleAccessor string) {
+func (g *generator) emitStdStream(name, handleAccessor string) {
 	g.linef(`(func %s (result i32)`, name)
 	g.indent++
 	g.line(`(local $r i32)`)
@@ -1835,14 +1775,7 @@ func (g *generator) emitStdStream(name string, fd int, p2HandleAccessor string) 
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $r`)
 	g.line(`local.get $r`)
-	if g.preview2 {
-		// Stream handle from the cached get-stdin / get-stdout /
-		// get-stderr accessor — the Reader/Writer struct holds
-		// stream resources end-to-end on the preview-2 path.
-		g.linef(`call %s`, p2HandleAccessor)
-	} else {
-		g.linef(`i32.const %d`, fd)
-	}
+	g.linef(`call %s`, handleAccessor)
 	g.line(`i32.store`)
 	g.line(`local.get $r`)
 	g.indent--
@@ -2139,14 +2072,16 @@ func (g *generator) emitOpenViaStreamHelper(name string, openFlags, descFlags in
 	g.line(`if`)
 	g.indent++
 	// Build Err(IoError) — Result.Err = tag 1, payload via
-	// __build_io_error. The error-code value at retptr+4 is the
-	// preview-2 enum; we pass it as the "errno" — the io-error
-	// table uses preview-1 errno values which differ, but the
-	// fallback path produces a sane error.
+	// __build_io_error. The error-code at retptr+4 is the
+	// `wasi:filesystem/types.error-code` enum index; translate it
+	// to the preview-1 errno space before handing it to the
+	// shared $__build_io_error table (which keys on preview-1
+	// values).
 	g.line(`i32.const 92`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`i32.load`)
+	g.line(`call $__filesystem_error_translate`)
 	g.line(`local.set $errno`)
 	g.line(`i32.const 8`)
 	g.line(`call $__lang_alloc`)
@@ -2465,156 +2400,10 @@ func (g *generator) emitArgsHelper() {
 // (EOF). Tag 0 is `Some`, tag 1 is `None` — the canonical order
 // from the auto-injected Option enum, hardcoded here.
 func (g *generator) emitReadLineHelper() {
-	if g.preview2 {
-		g.line(`(func $read_line (result i32)`)
-		g.indent++
-		g.line(`call $__stdin_handle`)
-		g.line(`call $__stream_read_line`)
-		g.indent--
-		g.line(`)`)
-		return
-	}
 	g.line(`(func $read_line (result i32)`)
 	g.indent++
-	g.line(`(local $start i32)`) // start of accumulated bytes on the heap
-	g.line(`(local $cur i32)`)   // next byte to write into
-	g.line(`(local $byte i32)`)
-	g.line(`(local $sbase i32)`)
-	g.line(`(local $sptr i32)`)
-	g.line(`(local $len i32)`)
-	g.line(`(local $i i32)`)
-
-	// Allocate a 0-byte placeholder so $start anchors the heap
-	// position; we'll keep alloc'ing one byte at a time.
-	g.line(`i32.const 0`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $start`)
-	g.line(`local.get $start`)
-	g.line(`local.set $cur`)
-
-	g.line(`block $end`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	// fd_read(fd=0, iovs=56, iovs_len=1, nread=64)
-	g.line(`i32.const 0`)
-	g.line(`i32.const 56`)
-	g.line(`i32.const 1`)
-	g.line(`i32.const 64`)
-	g.line(`call $__wasi_fd_read`)
-	g.line(`drop`)
-	// EOF when nread == 0
-	g.line(`i32.const 64`)
-	g.line(`i32.load`)
-	g.line(`i32.eqz`)
-	g.line(`br_if $end`)
-	// Append the byte. Allocate one byte to advance the heap and
-	// store the read byte into it.
-	g.line(`i32.const 1`)
-	g.line(`call $__lang_alloc`)
-	g.line(`drop`)
-	g.line(`i32.const 68`)
-	g.line(`i32.load8_u`)
-	g.line(`local.tee $byte`)
-	g.line(`local.get $cur`)
-	g.line(`local.get $byte`)
-	g.line(`i32.store8`)
-	// cur += 1; break if newline
-	g.line(`local.get $cur`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $cur`)
-	g.line(`local.get $byte`)
-	g.line(`i32.const 10`)
-	g.line(`i32.eq`)
-	g.line(`br_if $end`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-
-	// len = cur - start
-	g.line(`local.get $cur`)
-	g.line(`local.get $start`)
-	g.line(`i32.sub`)
-	g.line(`local.set $len`)
-
-	// EOF on first byte → None. Allocate 4 bytes for the tag
-	// and return early. The Option layout convention (tag 1 =
-	// None) is hardcoded here to match the auto-injected enum.
-	g.line(`local.get $len`)
-	g.line(`i32.eqz`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $sbase`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-
-	// Allocate the result string: 4 (length prefix) + len bytes.
-	g.line(`local.get $len`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $len`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sptr`)
-
-	// Byte-copy the accumulated buffer into the result.
-	g.line(`i32.const 0`)
-	g.line(`local.set $i`)
-	g.line(`block $copy_end`)
-	g.indent++
-	g.line(`loop $copy`)
-	g.indent++
-	g.line(`local.get $i`)
-	g.line(`local.get $len`)
-	g.line(`i32.eq`)
-	g.line(`br_if $copy_end`)
-	g.line(`local.get $sptr`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`local.get $start`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`i32.store8`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $copy`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-
-	// Wrap the materialised string in `Some(sptr)`. Layout:
-	// [tag=0 : i32][str_ptr : i32] (8 bytes total). Caller does
-	// match-arm load of payload[0] to recover sptr.
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $sbase`) // reuse $sbase as the option ptr
-	g.line(`i32.const 0`)
-	g.line(`i32.store`) // tag = 0 (Some)
-	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $sptr`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
-	g.line(`return`)
+	g.line(`call $__stdin_handle`)
+	g.line(`call $__stream_read_line`)
 	g.indent--
 	g.line(`)`)
 }
@@ -3093,165 +2882,16 @@ func (g *generator) emitArenaHelpers() {
 // WASI `random_get(buf, n)` fills the buffer with cryptographic-
 // quality random bytes (errno is ignored; the runtime treats
 // any failure as program-fatal, same as our other helpers).
-// emitTcpHelpers emits the WASM/WASI counterparts of the
-// TCP-socket builtins. Preview-1 path: WASI Preview 1 doesn't
-// expose a way to *open* a listening socket from the guest, so
-// the host is expected to pre-open one (`wasmtime --tcp-listen=…
-// prog.wasm`) — `tcp_listen` returns the first preopened socket
-// fd (wasmtime conventionally places it at fd 3). `tcp_accept`
-// calls the experimental `sock_accept` import; `tcp_recv` /
-// `tcp_send` reuse `fd_read` / `fd_write` (which work on socket
-// fds the same as on file fds); `tcp_close` is `fd_close`.
-//
-// Preview-2 path: see emitTcpHelpersPreview2 — `tcp_listen` calls
-// the bind+listen pipeline directly so the program is
-// self-contained, and `tcp_accept` returns a heap struct holding
+// emitTcpHelpers writes the wasi:sockets-flavoured TCP builtins.
+// `tcp_listen` drives the bind+listen pipeline directly so the
+// program is self-contained (no `wasmtime --tcp-listen=…` host
+// flag needed), and `tcp_accept` returns a heap struct holding
 // the per-connection (tcp-socket, input-stream, output-stream)
 // triple instead of a bare fd.
 func (g *generator) emitTcpHelpers() {
-	if g.preview2 {
-		g.emitTcpHelpersPreview2()
-		return
-	}
-	// $tcp_listen(port) — port arg is ignored; we return the
-	// first preopened socket fd. wasmtime starts numbering
-	// preopens at 3 (after stdin/stdout/stderr).
-	g.line(`(func $tcp_listen (param $port i32) (result i32)`)
-	g.indent++
-	g.line(`i32.const 3`)
-	g.indent--
-	g.line(`)`)
-	// $tcp_accept(sock) — call sock_accept with the result-fd
-	// pointer at memory[64] (a scratch slot in the runtime
-	// reserved area). Returns the new fd, or `-errno` on error.
-	g.line(`(func $tcp_accept (param $sock i32) (result i32)`)
-	g.indent++
-	g.line(`(local $err i32)`)
-	g.line(`local.get $sock`)
-	g.line(`i32.const 0`) // fdflags=0
-	g.line(`i32.const 64`) // out-pointer for new fd
-	g.line(`call $__wasi_sock_accept`)
-	g.line(`local.tee $err`)
-	g.line(`if (result i32)`)
-	g.indent++
-	// errno != 0 → return -err so callers see a negative number.
-	g.line(`local.get $err`)
-	g.line(`i32.const 0`)
-	g.line(`i32.sub`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`i32.const 64`)
-	g.line(`i32.load`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`)`)
-	// $tcp_recv(fd, max) — issue an fd_read into a fresh
-	// buffer; return the resulting string (length = bytes
-	// read; 0 on EOF/error).
-	g.line(`(func $tcp_recv (param $fd i32) (param $max i32) (result i32)`)
-	g.indent++
-	g.line(`(local $data i32)`)
-	g.line(`(local $err i32)`)
-	// data = __lang_alloc(max + 5) + 4
-	g.line(`local.get $max`)
-	g.line(`i32.const 5`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $data`)
-	// iovec at memory[56]: { base = data, len = max }
-	g.line(`i32.const 56`)
-	g.line(`local.get $data`)
-	g.line(`i32.store`)
-	g.line(`i32.const 60`)
-	g.line(`local.get $max`)
-	g.line(`i32.store`)
-	// fd_read(fd, iovs=56, iovs_len=1, nread_out=64)
-	g.line(`local.get $fd`)
-	g.line(`i32.const 56`)
-	g.line(`i32.const 1`)
-	g.line(`i32.const 64`)
-	g.line(`call $__wasi_fd_read`)
-	g.line(`local.set $err`)
-	// nread = err == 0 ? *(i32*)64 : 0
-	g.line(`local.get $err`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`i32.const 0`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`i32.const 64`)
-	g.line(`i32.load`)
-	g.indent--
-	g.line(`end`)
-	// Store length prefix at data - 4.
-	g.line(`local.set $err`) // reuse $err to hold nread
-	g.line(`local.get $data`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`local.get $err`)
-	g.line(`i32.store`)
-	// Trailing NUL.
-	g.line(`local.get $data`)
-	g.line(`local.get $err`)
-	g.line(`i32.add`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store8`)
-	g.line(`local.get $data`)
-	g.indent--
-	g.line(`)`)
-	// $tcp_send(fd, data) — fd_write of the entire data
-	// buffer. Returns bytes written or -errno.
-	g.line(`(func $tcp_send (param $fd i32) (param $data i32) (result i32)`)
-	g.indent++
-	g.line(`(local $err i32)`)
-	// iovec at memory[56]: { base=data, len=*(data-4) }
-	g.line(`i32.const 56`)
-	g.line(`local.get $data`)
-	g.line(`i32.store`)
-	g.line(`i32.const 60`)
-	g.line(`local.get $data`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`i32.store`)
-	// fd_write(fd, iovs=56, iovs_len=1, nwritten_out=64)
-	g.line(`local.get $fd`)
-	g.line(`i32.const 56`)
-	g.line(`i32.const 1`)
-	g.line(`i32.const 64`)
-	g.line(`call $__wasi_fd_write`)
-	g.line(`local.tee $err`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`i32.const 0`)
-	g.line(`local.get $err`)
-	g.line(`i32.sub`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`i32.const 64`)
-	g.line(`i32.load`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`)`)
-	// $tcp_close(fd) — fd_close, returns 0 or -errno.
-	g.line(`(func $tcp_close (param $fd i32) (result i32)`)
-	g.indent++
-	g.line(`(local $err i32)`)
-	g.line(`local.get $fd`)
-	g.line(`call $__wasi_fd_close`)
-	g.line(`local.tee $err`)
-	g.line(`i32.const 0`)
-	g.line(`i32.sub`)
-	g.indent--
-	g.line(`)`)
+	g.emitTcpHelpersPreview2()
 }
+
 
 // emitTcpHelpersPreview2 writes the wasi:sockets-flavoured TCP
 // builtins. The user-facing API stays "fd-shaped" — every
@@ -3690,62 +3330,19 @@ func (g *generator) emitTcpClosePreview2() {
 	g.line(`)`)
 }
 
-func (g *generator) emitRandomBytesHelper() {
-	if g.preview2 {
-		g.emitRandomBytesHelperPreview2()
-		return
-	}
-	g.line(`(func $random_bytes (param $n i32) (result i32)`)
-	g.indent++
-	g.line(`(local $data i32)`)
-	// data = __lang_alloc(n + 4) + 4 — same allocation shape as
-	// args() / env() / strcat. Trailing NUL is one extra byte
-	// the alloc rounds up to anyway.
-	g.line(`local.get $n`)
-	g.line(`i32.const 5`) // 4 prefix + 1 NUL
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $data`)
-	// Store length prefix at data - 4.
-	g.line(`local.get $data`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`local.get $n`)
-	g.line(`i32.store`)
-	// random_get(data, n) — result errno ignored.
-	g.line(`local.get $data`)
-	g.line(`local.get $n`)
-	g.line(`call $__wasi_random_get`)
-	g.line(`drop`)
-	// Trailing NUL at data + n.
-	g.line(`local.get $data`)
-	g.line(`local.get $n`)
-	g.line(`i32.add`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store8`)
-	g.line(`local.get $data`)
-	g.indent--
-	g.line(`)`)
-}
-
-// emitRandomBytesHelperPreview2 emits `$random_bytes` against the
-// preview-2 `wasi:random/random.get-random-bytes` import. The
-// canonical-ABI lowered signature is `(param i64 i32)`: the i64 is
-// the requested length and the i32 is a "return area" pointer where
-// the host writes a (ptr, len) pair. The host calls our exported
-// `cabi_realloc` to allocate the buffer in our linear memory, fills
-// it, and writes back. We then memcpy those bytes into a
+// emitRandomBytesHelper emits `$random_bytes` against the
+// `wasi:random/random.get-random-bytes` import. The canonical-ABI
+// lowered signature is `(param i64 i32)`: the i64 is the requested
+// length and the i32 is a "return area" pointer where the host
+// writes a (ptr, len) pair. The host calls our exported
+// `cabi_realloc` to allocate the buffer in our linear memory,
+// fills it, and writes back. We memcpy those bytes into a
 // length-prefixed + NUL-terminated string-shape allocation so the
-// rest of the runtime sees the same layout it does on the
-// preview-1 path.
+// rest of the runtime sees the standard string layout.
 //
 // Memory[92..99] is the static return-area slot — see the runtime
-// memory layout comment near `emitRuntimePreamble`. Reserved only
-// when `needsRandomBytes && preview2` so it doesn't displace
-// strings/closures unnecessarily.
-func (g *generator) emitRandomBytesHelperPreview2() {
+// memory layout comment near `emitRuntimePreamble`.
+func (g *generator) emitRandomBytesHelper() {
 	g.line(`(func $random_bytes (param $n i32) (result i32)`)
 	g.indent++
 	g.line(`(local $data i32) (local $host_ptr i32) (local $host_len i32)`)
@@ -3801,6 +3398,151 @@ func (g *generator) emitRandomBytesHelperPreview2() {
 //	(orig_ptr, orig_size, align, new_size) -> ptr
 //
 // Random-bytes only ever calls it with orig_ptr=0 (fresh
+// emitIntToStringHelper writes `$int_to_string(n) -> string`,
+// formatting `n` as ASCII decimal in lang's standard
+// length-prefixed string layout (`mem[ptr-4]` = length, then
+// content, then a trailing NUL).
+//
+// Implementation:
+//  1. Allocate a 16-byte scratch buffer (max width is
+//     "-2147483648" = 11 chars, comfortably under 16).
+//  2. Walk digits backwards starting from the buffer's far end,
+//     storing `'0' + (n % 10)` and dividing. Unsigned div/rem
+//     handles INT_MIN correctly: `0 - INT_MIN` wraps to
+//     `0x80000000`, whose unsigned interpretation (2147483648) is
+//     the right magnitude.
+//  3. Prepend '-' for negatives.
+//  4. Allocate a fresh string-shaped buffer (4-byte prefix +
+//     content + NUL), memcpy the right-aligned digits in. Two
+//     allocs is wasteful but the common case is single-digit
+//     numbers in tests; the bump allocator can't free either way.
+func (g *generator) emitIntToStringHelper() {
+	g.line(`(func $int_to_string (param $n i32) (result i32)`)
+	g.indent++
+	g.line(`(local $tmp i32) (local $end i32) (local $len i32)`)
+	g.line(`(local $neg i32) (local $buf i32)`)
+	// scratch = __lang_alloc(16); end = scratch + 16
+	g.line(`i32.const 16`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $tmp`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.set $end`)
+
+	// neg = n < 0; if neg: n = -n (unsigned-safe for INT_MIN).
+	g.line(`local.get $n`)
+	g.line(`i32.const 0`)
+	g.line(`i32.lt_s`)
+	g.line(`local.tee $neg`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`local.get $n`)
+	g.line(`i32.sub`)
+	g.line(`local.set $n`)
+	g.indent--
+	g.line(`end`)
+
+	// Special-case 0: emit '0' once. The loop below skips the
+	// initial iteration on n==0, which would leave the buffer
+	// empty.
+	g.line(`local.get $n`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $end`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.tee $end`)
+	g.line(`i32.const 48`) // '0'
+	g.line(`i32.store8`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $n`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $break`)
+	// digit = n % 10 (unsigned)
+	g.line(`local.get $end`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.tee $end`)
+	g.line(`local.get $n`)
+	g.line(`i32.const 10`)
+	g.line(`i32.rem_u`)
+	g.line(`i32.const 48`) // '0'
+	g.line(`i32.add`)
+	g.line(`i32.store8`)
+	// n /= 10 (unsigned)
+	g.line(`local.get $n`)
+	g.line(`i32.const 10`)
+	g.line(`i32.div_u`)
+	g.line(`local.set $n`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// Minus sign.
+	g.line(`local.get $neg`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $end`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.tee $end`)
+	g.line(`i32.const 45`) // '-'
+	g.line(`i32.store8`)
+	g.indent--
+	g.line(`end`)
+
+	// len = (scratch + 16) - end
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $end`)
+	g.line(`i32.sub`)
+	g.line(`local.set $len`)
+
+	// Allocate string buffer (len + 5: 4 prefix + content + NUL).
+	g.line(`local.get $len`)
+	g.line(`i32.const 5`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $buf`)
+	g.line(`local.get $len`)
+	g.line(`i32.store`)
+	// memcpy(buf+4, end, len)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $end`)
+	g.line(`local.get $len`)
+	g.line(`memory.copy`)
+	// Trailing NUL at buf+4+len.
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $len`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store8`)
+	// Return data ptr (buf + 4).
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+}
+
 // allocation) and align=1, so we ignore the realloc-shrink and
 // realloc-grow cases for now. If a future preview-2 import needs
 // real reallocation, the body needs to grow a memcpy from the
@@ -3862,8 +3604,19 @@ func (g *generator) emitFileIOHelpers() {
 	g.line(`(local $result i32)`)
 	// Errno-to-variant table. Common cases get a typed variant;
 	// anything else falls through to Other(path, "io error").
-	// WASI Preview 1 errno values: noent=44, acces=2, exist=20,
-	// intr=27, notsup=58.
+	//
+	// Under preview-2 the value reaching this helper is the
+	// `wasi:filesystem/types.error-code` enum index, NOT a
+	// preview-1 errno; the open helper goes through
+	// `$__filesystem_error_translate` first to remap the enum
+	// values (access=0, exist=7, interrupted=11, no-entry=20,
+	// unsupported=27 in the spec) onto the preview-1 codes the
+	// table below uses (2/20/27/44/58). Two of the preview-2
+	// indexes overlap with preview-1 errnos for different
+	// conditions (`exist`/EEXIST agree; `no-entry` collides with
+	// EEXIST=20; `unsupported` collides with EINTR=27), which is
+	// why the translate step has to run before this helper sees
+	// the value.
 	g.emitIoErrorCase(2, 1, true)   // EACCES → PermissionDenied(path)
 	g.emitIoErrorCase(20, 2, true)  // EEXIST → AlreadyExists(path)
 	g.emitIoErrorCase(27, 4, false) // EINTR  → Interrupted
@@ -3891,11 +3644,51 @@ func (g *generator) emitFileIOHelpers() {
 	g.indent--
 	g.line(`)`)
 
+	g.emitFilesystemErrorTranslate()
 	g.emitReadFileHelper()
 	g.emitWriteFileHelper()
 	if g.needsStreamingIO {
 		g.emitStreamingIOHelpers()
 	}
+}
+
+// emitFilesystemErrorTranslate writes
+// `$__filesystem_error_translate(code) -> errno` — the bridge
+// between `wasi:filesystem/types.error-code` (an enum) and the
+// preview-1 errno values that `$__build_io_error` keys on.
+// Untranslated codes drop through to a sentinel that the
+// io-error table treats as `Other(path, "io error")`.
+func (g *generator) emitFilesystemErrorTranslate() {
+	g.line(`(func $__filesystem_error_translate (param $code i32) (result i32)`)
+	g.indent++
+	type pair struct{ p2, p1 int }
+	for _, p := range []pair{
+		{0, 2},   // access     → EACCES
+		{7, 20},  // exist      → EEXIST
+		{11, 27}, // interrupted → EINTR
+		{20, 44}, // no-entry   → ENOENT
+		{27, 58}, // unsupported → ENOTSUP
+	} {
+		g.line(`local.get $code`)
+		g.linef(`i32.const %d`, p.p2)
+		g.line(`i32.eq`)
+		g.line(`if (result i32)`)
+		g.indent++
+		g.linef(`i32.const %d`, p.p1)
+		g.line(`return`)
+		g.indent--
+		g.line(`else`)
+		g.indent++
+	}
+	// Catch-all: anything else falls through as -1, which doesn't
+	// match any case in $__build_io_error and lands in Other(...).
+	g.line(`i32.const -1`)
+	for range 5 {
+		g.indent--
+		g.line(`end`)
+	}
+	g.indent--
+	g.line(`)`)
 }
 
 // emitStreamingIOHelpers writes the runtime functions backing
@@ -3917,48 +3710,31 @@ func (g *generator) emitStreamingIOHelpers() {
 
 // emitOpenReaderHelper writes `$open_reader(path) ->
 // Result[Reader, IoError]`. On preview-1: path_open with read
-// rights, wraps the resulting fd in a 4-byte Reader struct. On
-// preview-2: descriptor.open-at against the cached preopen
-// directory (open-flags=0, descriptor-flags=1=read), then
+// rights. descriptor.open-at against the cached preopen directory
+// (open-flags=0, descriptor-flags=1=read), then
 // descriptor.read-via-stream for an input-stream resource handle
 // — the Reader struct holds that handle. Errors flow through
-// __build_io_error in either case.
+// __build_io_error.
 func (g *generator) emitOpenReaderHelper() {
-	if g.preview2 {
-		// open-flags=0 (no create / truncate), descriptor-flags=1 (read).
-		g.emitOpenViaStreamHelper("$open_reader", 0, 1, "$__wasi_descriptor_read_via_stream", false)
-		return
-	}
-	g.emitOpenHelper("$open_reader", 0, 0x200026, 0)
+	// open-flags=0 (no create / truncate), descriptor-flags=1 (read).
+	g.emitOpenViaStreamHelper("$open_reader", 0, 1, "$__wasi_descriptor_read_via_stream", false)
 }
 
-// emitOpenWriterHelper writes `$open_writer(path)`. Preview-1:
-// path_open with write+truncate rights. Preview-2: open-at with
+// emitOpenWriterHelper writes `$open_writer(path)`: open-at with
 // open-flags=create|truncate (1|8 = 9), descriptor-flags=write
 // (2), then descriptor.write-via-stream.
-// (The `appendMode` parameter is unused for now; appender
-// uses the dedicated emitOpenAppenderHelper.)
+// (The `appendMode` parameter is unused for now; appender uses
+// the dedicated emitOpenAppenderHelper.)
 func (g *generator) emitOpenWriterHelper(_ bool) {
-	if g.preview2 {
-		// open-flags = create|truncate = 1|8 = 9; descriptor-flags = write = 2.
-		g.emitOpenViaStreamHelper("$open_writer", 9, 2, "$__wasi_descriptor_write_via_stream", false)
-		return
-	}
-	g.emitOpenHelper("$open_writer", 9, 0x200044, 0)
+	g.emitOpenViaStreamHelper("$open_writer", 9, 2, "$__wasi_descriptor_write_via_stream", false)
 }
 
-// emitOpenAppenderHelper writes `$open_appender(path)`. Preview-1:
-// O_CREAT only (no truncate) + fdflags=O_APPEND so writes hit the
-// end. Preview-2: open-flags=create (1), descriptor-flags=write
-// (2), then descriptor.append-via-stream — append-via-stream
-// inherently appends, so we don't need a fdflags equivalent.
+// emitOpenAppenderHelper writes `$open_appender(path)`:
+// open-flags=create (1), descriptor-flags=write (2), then
+// descriptor.append-via-stream — append-via-stream inherently
+// appends.
 func (g *generator) emitOpenAppenderHelper() {
-	if g.preview2 {
-		// open-flags = create = 1; descriptor-flags = write = 2.
-		g.emitOpenViaStreamHelper("$open_appender", 1, 2, "$__wasi_descriptor_append_via_stream", true)
-		return
-	}
-	g.emitOpenHelper("$open_appender", 1, 0x200044, 1)
+	g.emitOpenViaStreamHelper("$open_appender", 1, 2, "$__wasi_descriptor_append_via_stream", true)
 }
 
 // emitOpenHelper is the shared body of the three open_*
@@ -4062,316 +3838,44 @@ func (g *generator) emitOpenHelper(name string, oflags int, rights int64, fdflag
 func (g *generator) emitReaderReadLineMethod() {
 	g.line(`(func $__method_Reader_read_line (param $r i32) (result i32)`)
 	g.indent++
-	g.line(`(local $fd i32)`)
-	g.line(`(local $start i32)`)
-	g.line(`(local $cur i32)`)
-	g.line(`(local $byte i32)`)
-	g.line(`(local $sbase i32)`)
-	g.line(`(local $sptr i32)`)
-	g.line(`(local $len i32)`)
-	g.line(`(local $i i32)`)
-	g.line(`(local $result i32)`)
-
+	// Readers hold an `input-stream` resource handle in mem[$r]
+	// (whether they came from $stdin, $open_reader, or anywhere
+	// else). Delegate to the shared `$__stream_read_line` helper.
 	g.line(`local.get $r`)
 	g.line(`i32.load`)
-	g.line(`local.set $fd`)
-
-	if g.preview2 {
-		// Preview-2 Readers hold an `input-stream` resource
-		// handle in mem[$r] (whether they came from $stdin,
-		// $open_reader, or any other source). Delegate to the
-		// shared `$__stream_read_line` helper; the preview-1
-		// fd_read body below isn't reached.
-		g.line(`local.get $fd`)
-		g.line(`call $__stream_read_line`)
-		g.line(`return`)
-	}
-
-	// Reset the static iovec to (ptr=68, len=1). The data
-	// segment seeds it at module-init, but Writer.write and
-	// Reader.read_chunk both stomp it, so we re-set it here.
-	g.line(`i32.const 56`)
-	g.line(`i32.const 68`)
-	g.line(`i32.store`)
-	g.line(`i32.const 60`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-
-	// Anchor for accumulated bytes — heap position right now.
-	g.line(`i32.const 0`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $start`)
-	g.line(`local.get $start`)
-	g.line(`local.set $cur`)
-
-	g.line(`block $end`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	// fd_read(fd, iovs=56, iovs_len=1, nread=64)
-	g.line(`local.get $fd`)
-	g.line(`i32.const 56`)
-	g.line(`i32.const 1`)
-	g.line(`i32.const 64`)
-	g.line(`call $__wasi_fd_read`)
-	g.line(`drop`)
-	g.line(`i32.const 64`)
-	g.line(`i32.load`)
-	g.line(`i32.eqz`)
-	g.line(`br_if $end`)
-	// Append the byte: alloc(1) advances the heap, then store
-	// the byte we just read into the new slot.
-	g.line(`i32.const 1`)
-	g.line(`call $__lang_alloc`)
-	g.line(`drop`)
-	g.line(`i32.const 68`)
-	g.line(`i32.load8_u`)
-	g.line(`local.tee $byte`)
-	g.line(`local.get $cur`)
-	g.line(`local.get $byte`)
-	g.line(`i32.store8`)
-	g.line(`local.get $cur`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $cur`)
-	g.line(`local.get $byte`)
-	g.line(`i32.const 10`)
-	g.line(`i32.eq`)
-	g.line(`br_if $end`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-
-	// len = cur - start.
-	g.line(`local.get $cur`)
-	g.line(`local.get $start`)
-	g.line(`i32.sub`)
-	g.line(`local.set $len`)
-
-	// EOF on first byte → Option.None (4 bytes, tag=1).
-	g.line(`local.get $len`)
-	g.line(`i32.eqz`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $result`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-
-	// Materialise length-prefixed string.
-	g.line(`local.get $len`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $len`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sptr`)
-	// memcpy from start to sptr.
-	g.line(`i32.const 0`)
-	g.line(`local.set $i`)
-	g.line(`block $copy_end`)
-	g.indent++
-	g.line(`loop $copy`)
-	g.indent++
-	g.line(`local.get $i`)
-	g.line(`local.get $len`)
-	g.line(`i32.eq`)
-	g.line(`br_if $copy_end`)
-	g.line(`local.get $sptr`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`local.get $start`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`i32.store8`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $copy`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-
-	// Some(sptr): 8 bytes [tag=0, sptr].
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $result`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $sptr`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
+	g.line(`call $__stream_read_line`)
 	g.indent--
 	g.line(`)`)
 }
 
 // emitReaderReadChunkMethod writes Reader.read_chunk(size).
 // Preview-1: single fd_read into a heap buffer of capacity
-// `size`, trimming any unused tail before returning
-// Some(string). Preview-2: single
+// `size`. Single
 // `wasi:io/streams.input-stream.blocking-read(size)` against the
 // stream resource handle in mem[$r], `memory.copy` the host's
-// buffer into a length-prefixed string, return Some.
-// Uses the static iovec at memory[56] and nread at memory[64]
-// (preview-1) or the shared retptr at memory[92] (preview-2).
+// buffer into a length-prefixed string, return Some. Uses the
+// shared retptr at memory[92].
 func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`(func $__method_Reader_read_chunk (param $r i32) (param $size i32) (result i32)`)
 	g.indent++
-	g.line(`(local $fd i32)`)
-	g.line(`(local $sbase i32)`)
-	g.line(`(local $sptr i32)`)
-	g.line(`(local $n i32)`)
-	g.line(`(local $result i32)`)
-	if g.preview2 {
-		// Used only by the preview-2 path; declared here because
-		// WAT requires all locals at the function header.
-		g.line(`(local $list_ptr i32)`)
-	}
+	g.line(`(local $fd i32) (local $sbase i32) (local $sptr i32)`)
+	g.line(`(local $n i32) (local $result i32) (local $list_ptr i32)`)
 
 	g.line(`local.get $r`)
 	g.line(`i32.load`)
 	g.line(`local.set $fd`)
 
-	if g.preview2 {
-		// blocking-read(stream, size, retptr=92).
-		g.line(`local.get $fd`)
-		g.line(`local.get $size`)
-		g.line(`i64.extend_i32_u`)
-		g.line(`i32.const 92`)
-		g.line(`call $__wasi_blocking_read`)
-		// Outer disc at retptr+0; non-zero = Err = treat as EOF.
-		g.line(`i32.const 92`)
-		g.line(`i32.load8_u`)
-		g.line(`if`)
-		g.indent++
-		g.line(`i32.const 4`)
-		g.line(`call $__lang_alloc`)
-		g.line(`local.tee $result`)
-		g.line(`i32.const 1`)
-		g.line(`i32.store`)
-		g.line(`local.get $result`)
-		g.line(`return`)
-		g.indent--
-		g.line(`end`)
-		// list_ptr = mem[96], n = mem[100].
-		g.line(`i32.const 96`)
-		g.line(`i32.load`)
-		g.line(`local.set $list_ptr`)
-		g.line(`i32.const 100`)
-		g.line(`i32.load`)
-		g.line(`local.set $n`)
-		// Empty list = EOF on a blocking read.
-		g.line(`local.get $n`)
-		g.line(`i32.eqz`)
-		g.line(`if`)
-		g.indent++
-		g.line(`i32.const 4`)
-		g.line(`call $__lang_alloc`)
-		g.line(`local.tee $result`)
-		g.line(`i32.const 1`)
-		g.line(`i32.store`)
-		g.line(`local.get $result`)
-		g.line(`return`)
-		g.indent--
-		g.line(`end`)
-		// Materialise length-prefixed string + memcpy from the
-		// host buffer.
-		g.line(`local.get $n`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`call $__lang_alloc`)
-		g.line(`local.set $sbase`)
-		g.line(`local.get $sbase`)
-		g.line(`local.get $n`)
-		g.line(`i32.store`)
-		g.line(`local.get $sbase`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`local.set $sptr`)
-		g.line(`local.get $sptr`)
-		g.line(`local.get $list_ptr`)
-		g.line(`local.get $n`)
-		g.line(`memory.copy`)
-		// Some(sptr).
-		g.line(`i32.const 8`)
-		g.line(`call $__lang_alloc`)
-		g.line(`local.set $result`)
-		g.line(`local.get $result`)
-		g.line(`i32.const 0`)
-		g.line(`i32.store`)
-		g.line(`local.get $result`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`local.get $sptr`)
-		g.line(`i32.store`)
-		g.line(`local.get $result`)
-		g.line(`return`)
-	}
-
-	// Allocate `4 + size` for the prefix + data; iovec
-	// points into that data so a successful read fills the
-	// data slot directly.
-	g.line(`local.get $size`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sptr`)
-
-	// Point the static iovec at our chunk buffer.
-	g.line(`i32.const 56`)
-	g.line(`local.get $sptr`)
-	g.line(`i32.store`)
-	g.line(`i32.const 60`)
-	g.line(`local.get $size`)
-	g.line(`i32.store`)
-
+	// blocking-read(stream, size, retptr=92).
 	g.line(`local.get $fd`)
-	g.line(`i32.const 56`)
-	g.line(`i32.const 1`)
-	g.line(`i32.const 64`)
-	g.line(`call $__wasi_fd_read`)
-	g.line(`drop`)
-
-	g.line(`i32.const 64`)
-	g.line(`i32.load`)
-	g.line(`local.set $n`)
-
-	// EOF — un-bump the buffer and return None.
-	g.line(`local.get $n`)
-	g.line(`i32.eqz`)
+	g.line(`local.get $size`)
+	g.line(`i64.extend_i32_u`)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_blocking_read`)
+	// Outer disc at retptr+0; non-zero = Err = treat as EOF.
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
 	g.line(`if`)
 	g.indent++
-	g.line(`i32.const 40`)
-	g.line(`i32.const 40`)
-	g.line(`i32.load`)
-	g.line(`local.get $size`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`i32.sub`)
-	g.line(`i32.store`)
 	g.line(`i32.const 4`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $result`)
@@ -4381,28 +3885,44 @@ func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`return`)
 	g.indent--
 	g.line(`end`)
-
-	// Tighten the buffer: write the actual length and un-bump
-	// any unused tail.
+	// list_ptr = mem[96], n = mem[100].
+	g.line(`i32.const 96`)
+	g.line(`i32.load`)
+	g.line(`local.set $list_ptr`)
+	g.line(`i32.const 100`)
+	g.line(`i32.load`)
+	g.line(`local.set $n`)
+	// Empty list = EOF on a blocking read.
+	g.line(`local.get $n`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Materialise length-prefixed string + memcpy from the host buffer.
+	g.line(`local.get $n`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
 	g.line(`local.get $sbase`)
 	g.line(`local.get $n`)
 	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sptr`)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $list_ptr`)
 	g.line(`local.get $n`)
-	g.line(`local.get $size`)
-	g.line(`i32.lt_u`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 40`)
-	g.line(`i32.const 40`)
-	g.line(`i32.load`)
-	g.line(`local.get $size`)
-	g.line(`local.get $n`)
-	g.line(`i32.sub`)
-	g.line(`i32.sub`)
-	g.line(`i32.store`)
-	g.indent--
-	g.line(`end`)
-
+	g.line(`memory.copy`)
 	// Some(sptr).
 	g.line(`i32.const 8`)
 	g.line(`call $__lang_alloc`)
@@ -4433,60 +3953,18 @@ func (g *generator) emitWriterCloseMethod() {
 	g.emitCloseMethod("$__method_Writer_close", "$__wasi_output_stream_drop")
 }
 
-func (g *generator) emitCloseMethod(name, p2DropImport string) {
+// emitCloseMethod writes a Reader.close / Writer.close that
+// drops the stream resource and returns Option[IoError]. Resource
+// drops are infallible at the canonical-ABI level — there isn't a
+// meaningful error to propagate to the lang program, so we always
+// construct None.
+func (g *generator) emitCloseMethod(name, dropImport string) {
 	g.linef(`(func %s (param $r i32) (result i32)`, name)
 	g.indent++
-	g.line(`(local $fd i32)`)
-	g.line(`(local $rc i32)`)
 	g.line(`(local $result i32)`)
 	g.line(`local.get $r`)
 	g.line(`i32.load`)
-	g.line(`local.set $fd`)
-	if g.preview2 {
-		// Drop the stream resource and return None. Resource
-		// drops are infallible at the canonical-ABI level — there
-		// isn't a meaningful error to propagate to the lang
-		// program, so we never construct Some(IoError).
-		g.line(`local.get $fd`)
-		g.linef(`call %s`, p2DropImport)
-		g.line(`i32.const 4`)
-		g.line(`call $__lang_alloc`)
-		g.line(`local.tee $result`)
-		g.line(`i32.const 1`)
-		g.line(`i32.store`)
-		g.line(`local.get $result`)
-		g.line(`return`)
-	}
-	g.line(`local.get $fd`)
-	g.line(`call $__wasi_fd_close`)
-	g.line(`local.set $rc`)
-	g.line(`local.get $rc`)
-	g.line(`if`)
-	g.indent++
-	// Some(io_error_from_errno).
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $result`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $rc`)
-	// We don't have the path here — pass the empty string
-	// pointer interned by build_io_error's data segment.
-	// For now use the "io error" string as both path and
-	// message; calling sites that need the path can wrap
-	// the close themselves.
-	g.linef(`i32.const %d`, g.internString(""))
-	g.line(`call $__build_io_error`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-	// None.
+	g.linef(`call %s`, dropImport)
 	g.line(`i32.const 4`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $result`)
@@ -4510,73 +3988,22 @@ func (g *generator) emitCloseMethod(name, p2DropImport string) {
 func (g *generator) emitWriterWriteMethod() {
 	g.line(`(func $__method_Writer_write (param $w i32) (param $s i32) (result i32)`)
 	g.indent++
-	g.line(`(local $fd i32)`)
-	g.line(`(local $rc i32)`)
 	g.line(`(local $result i32)`)
+	// $__streams_write loops blocking-write-and-flush in 4 KiB
+	// chunks; it silently swallows stream errors (the helper
+	// returns to caller without a discriminant), so Writer.write
+	// always returns None. Matches the "stdio failures are
+	// unrecoverable for a CLI" posture; a future revision can
+	// switch to a helper that returns the canonical disc and
+	// surface Some(IoError) on partial-write failure.
 	g.line(`local.get $w`)
 	g.line(`i32.load`)
-	g.line(`local.set $fd`)
-	if g.preview2 {
-		// $__streams_write loops blocking-write-and-flush in 4 KiB
-		// chunks. It silently swallows stream errors (returns to
-		// caller without signal), so we don't get to differentiate
-		// success from failure here — Writer.write returns None
-		// either way. A future revision can switch to a chunked
-		// helper that returns the canonical disc; for now matches
-		// the existing "stdio failures are unrecoverable for a CLI"
-		// posture.
-		g.line(`local.get $fd`)
-		g.line(`local.get $s`)
-		g.line(`local.get $s`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
-		g.line(`call $__streams_write`)
-		g.line(`i32.const 4`)
-		g.line(`call $__lang_alloc`)
-		g.line(`local.tee $result`)
-		g.line(`i32.const 1`)
-		g.line(`i32.store`)
-		g.line(`local.get $result`)
-		g.line(`return`)
-	}
-	// Static iovec at 56: ptr=$s, len=$s.length.
-	g.line(`i32.const 56`)
 	g.line(`local.get $s`)
-	g.line(`i32.store`)
-	g.line(`i32.const 60`)
 	g.line(`local.get $s`)
 	g.line(`i32.const 4`)
 	g.line(`i32.sub`)
 	g.line(`i32.load`)
-	g.line(`i32.store`)
-	g.line(`local.get $fd`)
-	g.line(`i32.const 56`)
-	g.line(`i32.const 1`)
-	g.line(`i32.const 64`)
-	g.line(`call $__wasi_fd_write`)
-	g.line(`local.set $rc`)
-	g.line(`local.get $rc`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $result`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $rc`)
-	g.linef(`i32.const %d`, g.internString(""))
-	g.line(`call $__build_io_error`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-	// Success: None.
+	g.line(`call $__streams_write`)
 	g.line(`i32.const 4`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $result`)
@@ -4623,229 +4050,15 @@ func (g *generator) emitIoErrorCase(errno, tagIdx int, withPathPayload bool) {
 }
 
 // emitReadFileHelper writes `$read_file(path) -> Result[string, IoError]`.
-// On preview-1, drives the chunk-loop strategy described above
-// the parent emitFileIOHelpers comment (path_open + fd_read +
-// fd_close). On preview-2, delegates to the same Reader pipeline
-// step 3c migrated to: $open_reader for the stream handle, then
-// a bulk blocking-read loop that fills a growable accumulator,
-// then [resource-drop]input-stream on the way out.
+// Pipeline: $open_reader for the stream handle, bulk
+// blocking-read(4096) loop into a growable accumulator,
+// [resource-drop]input-stream on the way out, wrap in Ok(string).
+// Errors out of $open_reader propagate as-is; stream errors
+// mid-read are treated as EOF (matches Reader.read_chunk).
 func (g *generator) emitReadFileHelper() {
-	if g.preview2 {
-		g.emitReadFileHelperPreview2()
-		return
-	}
-	g.line(`(func $read_file (param $path i32) (result i32)`)
-	g.indent++
-	g.line(`(local $fd_buf i32)`)
-	g.line(`(local $fd i32)`)
-	g.line(`(local $errno i32)`)
-	g.line(`(local $iovec i32)`)
-	g.line(`(local $nread i32)`)
-	g.line(`(local $chunk i32)`)
-	g.line(`(local $n i32)`)
-	g.line(`(local $start i32)`)
-	g.line(`(local $total i32)`)
-	g.line(`(local $result i32)`)
-	g.line(`(local $sptr i32)`)
-	g.line(`(local $sbase i32)`)
-	g.line(`(local $i i32)`)
-
-	// Allocate scratch (fd_buf + iovec + nread) BEFORE the
-	// chunk-loop anchor so the chunks remain heap-contiguous.
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $fd_buf`)
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $iovec`)
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $nread`)
-
-	// path_open(preopen=3, lookup_flags=1 (symlink_follow),
-	//           path_data, path_len, oflags=0,
-	//           rights_base=read|seek|tell|filestat_get,
-	//           rights_inheriting=0, fdflags=0, fd_buf).
-	// wasmtime validates the Rights bits as an enum; passing
-	// `-1` (all bits) trips its TryFromIntError. The minimum
-	// rights set that lets us read + behave normally is
-	// fd_read (2) | fd_seek (4) | fd_tell (32) |
-	// fd_filestat_get (0x200000) = 0x200026.
-	g.line(`i32.const 3`)
-	g.line(`i32.const 1`)
-	g.line(`local.get $path`)
-	g.line(`local.get $path`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`i32.const 0`)
-	g.line(`i64.const 0x200026`)
-	g.line(`i64.const 0`)
-	g.line(`i32.const 0`)
-	g.line(`local.get $fd_buf`)
-	g.line(`call $__wasi_path_open`)
-	g.line(`local.set $errno`)
-	g.line(`local.get $errno`)
-	g.line(`if`)
-	g.indent++
-	// Build Err(__build_io_error(errno, path)).
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $result`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $errno`)
-	g.line(`local.get $path`)
-	g.line(`call $__build_io_error`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-
-	g.line(`local.get $fd_buf`)
-	g.line(`i32.load`)
-	g.line(`local.set $fd`)
-
-	// Anchor the chunk-loop's heap region.
-	g.line(`i32.const 0`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $start`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $total`)
-
-	g.line(`block $loop_end`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	// Allocate a 4 KiB chunk and read into it.
-	g.line(`i32.const 4096`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $chunk`)
-	g.line(`local.get $iovec`)
-	g.line(`local.get $chunk`)
-	g.line(`i32.store`)
-	g.line(`local.get $iovec`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`i32.const 4096`)
-	g.line(`i32.store`)
-	g.line(`local.get $fd`)
-	g.line(`local.get $iovec`)
-	g.line(`i32.const 1`)
-	g.line(`local.get $nread`)
-	g.line(`call $__wasi_fd_read`)
-	g.line(`drop`)
-	g.line(`local.get $nread`)
-	g.line(`i32.load`)
-	g.line(`local.set $n`)
-	// EOF: un-bump the empty chunk we just allocated and exit.
-	g.line(`local.get $n`)
-	g.line(`i32.eqz`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 40`)
-	g.line(`i32.const 40`)
-	g.line(`i32.load`)
-	g.line(`i32.const 4096`)
-	g.line(`i32.sub`)
-	g.line(`i32.store`)
-	g.line(`br $loop_end`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.get $total`)
-	g.line(`local.get $n`)
-	g.line(`i32.add`)
-	g.line(`local.set $total`)
-	// Partial read: un-bump the unused tail and exit.
-	g.line(`local.get $n`)
-	g.line(`i32.const 4096`)
-	g.line(`i32.lt_u`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 40`)
-	g.line(`i32.const 40`)
-	g.line(`i32.load`)
-	g.line(`i32.const 4096`)
-	g.line(`local.get $n`)
-	g.line(`i32.sub`)
-	g.line(`i32.sub`)
-	g.line(`i32.store`)
-	g.line(`br $loop_end`)
-	g.indent--
-	g.line(`end`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-
-	g.line(`local.get $fd`)
-	g.line(`call $__wasi_fd_close`)
-	g.line(`drop`)
-
-	// Allocate the result string with a length prefix and copy.
-	g.line(`local.get $total`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $total`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sptr`)
-
-	g.line(`i32.const 0`)
-	g.line(`local.set $i`)
-	g.line(`block $copy_end`)
-	g.indent++
-	g.line(`loop $copy`)
-	g.indent++
-	g.line(`local.get $i`)
-	g.line(`local.get $total`)
-	g.line(`i32.eq`)
-	g.line(`br_if $copy_end`)
-	g.line(`local.get $sptr`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`local.get $start`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`i32.store8`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $copy`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-
-	// Build Ok(sptr): 8 bytes [tag=0, sptr].
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $result`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $sptr`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.indent--
-	g.line(`)`)
+	g.emitReadFileHelperPreview2()
 }
+
 
 // emitReadFileHelperPreview2 is the streams-flavoured `$read_file`.
 // Pipeline: $open_reader (which goes through wasi:filesystem
@@ -5010,136 +4223,15 @@ func (g *generator) emitReadFileHelperPreview2() {
 }
 
 // emitWriteFileHelper writes
-// `$write_file(path, content) -> Option[IoError]`.
-// On preview-1: one path_open + one fd_write + fd_close. On
-// preview-2: $open_writer + a single blocking-write-and-flush +
-// [resource-drop]output-stream. Returns `None` (4-byte heap
-// object, tag=1) on success and `Some(err)` (8-byte, tag=0 +
-// ioerr_ptr) on failure.
+// `$write_file(path, content) -> Option[IoError]`. Pipeline:
+// $open_writer → single blocking-write-and-flush of the entire
+// content → drop the output-stream resource → return None.
+// open_writer's Result.Err gets repackaged into Option[IoError];
+// mid-write stream errors map to Some(IoError) with errno=29 (EIO).
 func (g *generator) emitWriteFileHelper() {
-	if g.preview2 {
-		g.emitWriteFileHelperPreview2()
-		return
-	}
-	g.line(`(func $write_file (param $path i32) (param $content i32) (result i32)`)
-	g.indent++
-	g.line(`(local $fd_buf i32)`)
-	g.line(`(local $fd i32)`)
-	g.line(`(local $errno i32)`)
-	g.line(`(local $iovec i32)`)
-	g.line(`(local $nwritten i32)`)
-	g.line(`(local $result i32)`)
-
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $fd_buf`)
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $iovec`)
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $nwritten`)
-
-	// path_open(preopen=3, lookup_flags=1, path_data, path_len,
-	//           oflags=O_CREAT|O_TRUNC=9,
-	//           rights_base=fd_write|fd_seek|fd_filestat_get,
-	//           rights_inheriting=0, fdflags=0, fd_buf).
-	// fd_write=0x40 | fd_seek=0x4 | fd_filestat_get=0x200000
-	//   = 0x200044.
-	g.line(`i32.const 3`)
-	g.line(`i32.const 1`)
-	g.line(`local.get $path`)
-	g.line(`local.get $path`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`i32.const 9`)
-	g.line(`i64.const 0x200044`)
-	g.line(`i64.const 0`)
-	g.line(`i32.const 0`)
-	g.line(`local.get $fd_buf`)
-	g.line(`call $__wasi_path_open`)
-	g.line(`local.set $errno`)
-	g.line(`local.get $errno`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $result`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 0`) // Some
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $errno`)
-	g.line(`local.get $path`)
-	g.line(`call $__build_io_error`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-
-	g.line(`local.get $fd_buf`)
-	g.line(`i32.load`)
-	g.line(`local.set $fd`)
-
-	// fd_write(fd, iovec(content_data, content_len), 1, nwritten)
-	g.line(`local.get $iovec`)
-	g.line(`local.get $content`)
-	g.line(`i32.store`)
-	g.line(`local.get $iovec`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $content`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`i32.store`)
-	g.line(`local.get $fd`)
-	g.line(`local.get $iovec`)
-	g.line(`i32.const 1`)
-	g.line(`local.get $nwritten`)
-	g.line(`call $__wasi_fd_write`)
-	g.line(`local.set $errno`)
-
-	g.line(`local.get $fd`)
-	g.line(`call $__wasi_fd_close`)
-	g.line(`drop`)
-
-	// On write failure, return Some(io_error_from_errno).
-	g.line(`local.get $errno`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $result`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $errno`)
-	g.line(`local.get $path`)
-	g.line(`call $__build_io_error`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-
-	// Success: return None — 4-byte heap object with tag=1.
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $result`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
-	g.indent--
-	g.line(`)`)
+	g.emitWriteFileHelperPreview2()
 }
+
 
 // emitWriteFileHelperPreview2 is the streams-flavoured `$write_file`.
 // Pipeline: $open_writer (which goes through wasi:filesystem

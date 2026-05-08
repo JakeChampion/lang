@@ -72,7 +72,6 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	componentPath := filepath.Join(dir, "hello.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-preview2",
 		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
@@ -81,7 +80,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	emit.Stdout = &obuf
 	emit.Stderr = &ebuf
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
+		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
 	}
 
 	// The output should be a Component Model component, recognised
@@ -162,7 +161,6 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	componentPath := filepath.Join(dir, "echo.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-preview2",
 		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
@@ -171,7 +169,7 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	input := "alpha\nbeta\ngamma\n"
@@ -251,7 +249,6 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	componentPath := filepath.Join(dir, "fs.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-preview2",
 		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
@@ -260,7 +257,7 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	// `wasmtime run --dir DIR` preopens DIR as the working
@@ -349,7 +346,6 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	componentPath := filepath.Join(dir, "rwf.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-preview2",
 		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
@@ -358,7 +354,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	run := exec.Command("wasmtime", "run", "--dir", dir, componentPath)
@@ -457,7 +453,6 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	componentPath := filepath.Join(dir, "echo.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-preview2",
 		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
@@ -466,7 +461,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	// Spawn the server. `-S inherit-network` lets the guest

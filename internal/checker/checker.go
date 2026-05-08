@@ -296,6 +296,15 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.StringType{},
 	}
+	// int_to_string(n: number): string — formats n as an ASCII
+	// decimal string ("42", "-1", "0"). Mostly useful in tests
+	// and small CLIs since the language doesn't have a printf
+	// equivalent yet; pairing it with `print` gives "println(n)"
+	// for free.
+	c.info.FuncSigs["int_to_string"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.StringType{},
+	}
 	// TCP socket builtins. C-style API: each returns a raw
 	// fd or a negative errno. A Result-wrapped layer can sit
 	// on top in a follow-up.
@@ -1349,6 +1358,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if _, ok := rt.(ast.StringType); ok {
 					n.IsStringCmp = true
 				}
+			}
+			// Float-vs-float equality has to lower to f32.eq /
+			// f32.ne — using i32.eq on f32 operands fails core-wasm
+			// validation. Latent bug: never hit before because the
+			// preview-1 test path observed floats via `--invoke
+			// main` and never compared them in lang.
+			if isFloat(lt) && isFloat(rt) {
+				n.IsFloat = true
 			}
 			return ast.BoolType{}
 		case "&&", "||":
