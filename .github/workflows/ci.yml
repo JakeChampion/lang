@@ -43,6 +43,13 @@ jobs:
             "https://github.com/bytecodealliance/wasmtime/releases/download/${ADAPTER_VERSION}/wasi_snapshot_preview1.command.wasm"
           echo "LANG_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
 
+      - name: Install gotestsum (compact test output)
+        # `gotestsum --format pkgname-and-test-fails` collapses each
+        # package to a single line and only spills full output for
+        # failed tests, then ends with a "Failed tests" recap. Way
+        # easier to scan a CI log than `go test -v ./...`.
+        run: go install gotest.tools/gotestsum@v1.13.0
+
       - name: Show toolchain versions
         run: |
           go version
@@ -50,6 +57,7 @@ jobs:
           qemu-arm --version | head -1
           wasmtime --version
           wasm-tools --version
+          gotestsum --version
 
       - name: go vet
         run: go vet ./...
@@ -58,7 +66,7 @@ jobs:
         run: go build ./...
 
       - name: go test (includes ARM end-to-end tests under qemu)
-        run: go test -v ./...
+        run: gotestsum --format pkgname-and-test-fails -- ./...
 
       - name: Check examples are formatted
         # Runs `lang -fmt -d` on every examples/*.lang and fails if
