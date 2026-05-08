@@ -545,6 +545,22 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		target = "__lang_random_bytes"
 		g.usesRandomBytes = true
 		g.usesAlloc = true
+	case "tcp_listen":
+		target = "__lang_tcp_listen"
+		g.usesTcp = true
+	case "tcp_accept":
+		target = "__lang_tcp_accept"
+		g.usesTcp = true
+	case "tcp_recv":
+		target = "__lang_tcp_recv"
+		g.usesTcp = true
+		g.usesAlloc = true
+	case "tcp_send":
+		target = "__lang_tcp_send"
+		g.usesTcp = true
+	case "tcp_close":
+		target = "__lang_tcp_close"
+		g.usesTcp = true
 	case "read_file":
 		// `read_file(path)` lowers to a runtime helper that
 		// open(2)s the file, read(2)s it in chunks, and

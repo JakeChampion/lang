@@ -79,6 +79,7 @@ type generator struct {
 	needsExit        bool // any `exit(code)` call appears — pulls in WASI proc_exit
 	needsArena       bool // any `arena_save` / `arena_restore` call — emits the two heap-cursor helpers
 	needsRandomBytes bool // any `random_bytes(n)` call — pulls in WASI random_get
+	needsTcp         bool // any tcp_* call — pulls in WASI sock_accept + fd_read/fd_write/fd_close on socket fds
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
 	needsStdStreams  bool // any stdin() / stdout() / stderr() call — emits trivial constructors that wrap fd 0 / 1 / 2 in Reader / Writer
@@ -279,6 +280,10 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsArena = true
 				case "random_bytes":
 					g.needsRandomBytes = true
+					g.needsArrays = true
+					g.needsRuntime = true
+				case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
+					g.needsTcp = true
 					g.needsArrays = true
 					g.needsRuntime = true
 				case "read_file", "write_file":
@@ -1209,7 +1214,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(import "wasi_snapshot_preview1" "args_sizes_get" (func $__wasi_args_sizes_get (param i32 i32) (result i32)))`)
 		g.line(`(import "wasi_snapshot_preview1" "args_get" (func $__wasi_args_get (param i32 i32) (result i32)))`)
 	}
-	if g.needsReadLine {
+	if g.needsReadLine || g.needsTcp {
 		g.line(`(import "wasi_snapshot_preview1" "fd_read" (func $__wasi_fd_read (param i32 i32 i32 i32) (result i32)))`)
 	}
 	if g.needsEnv {
@@ -1222,15 +1227,28 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsRandomBytes {
 		g.line(`(import "wasi_snapshot_preview1" "random_get" (func $__wasi_random_get (param i32 i32) (result i32)))`)
 	}
+	if g.needsTcp {
+		// sock_accept(sock, fdflags, fd_out_ptr) -> errno —
+		// returns the new fd via the out-pointer. Wasmtime
+		// supports this on host-preopened TCP listeners
+		// (`wasmtime --tcp-listen=0.0.0.0:PORT prog.wasm`).
+		g.line(`(import "wasi_snapshot_preview1" "sock_accept" (func $__wasi_sock_accept (param i32 i32 i32) (result i32)))`)
+		// fd_read / fd_close already cover recv / close on
+		// socket fds. fd_read is imported above (gated on
+		// needsReadLine || needsTcp); fd_close is below
+		// (gated on needsFileIO || needsTcp).
+	}
 	if g.needsFileIO {
 		// path_open / fd_read / fd_close — fd_write is already
 		// imported above for `print`. fd_read shares with the
-		// stdin reader's import; if both flags are on we still
-		// only emit it once.
+		// stdin reader's / TCP recv's import; if any of those
+		// flags is on we still only emit it once.
 		g.line(`(import "wasi_snapshot_preview1" "path_open" (func $__wasi_path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))`)
-		if !g.needsReadLine {
+		if !g.needsReadLine && !g.needsTcp {
 			g.line(`(import "wasi_snapshot_preview1" "fd_read" (func $__wasi_fd_read (param i32 i32 i32 i32) (result i32)))`)
 		}
+	}
+	if g.needsFileIO || g.needsTcp {
 		g.line(`(import "wasi_snapshot_preview1" "fd_close" (func $__wasi_fd_close (param i32) (result i32)))`)
 	}
 	g.line(`(memory $mem 1)`)
@@ -1567,6 +1585,9 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsRandomBytes {
 		g.emitRandomBytesHelper()
+	}
+	if g.needsTcp {
+		g.emitTcpHelpers()
 	}
 	if g.needsFileIO {
 		g.emitFileIOHelpers()
@@ -2304,6 +2325,157 @@ func (g *generator) emitArenaHelpers() {
 // WASI `random_get(buf, n)` fills the buffer with cryptographic-
 // quality random bytes (errno is ignored; the runtime treats
 // any failure as program-fatal, same as our other helpers).
+// emitTcpHelpers emits the WASM/WASI counterparts of the
+// TCP-socket builtins. WASI Preview 1 doesn't expose a way
+// to *open* a listening socket from the guest, so the host
+// is expected to pre-open one (`wasmtime --tcp-listen=…
+// prog.wasm`) — `tcp_listen` returns the first preopened
+// socket fd, which wasmtime conventionally places at fd 3.
+// `tcp_accept` calls the experimental `sock_accept` import;
+// `tcp_recv` / `tcp_send` reuse `fd_read` / `fd_write` (which
+// work on socket fds the same as on file fds); `tcp_close`
+// is `fd_close`.
+func (g *generator) emitTcpHelpers() {
+	// $tcp_listen(port) — port arg is ignored; we return the
+	// first preopened socket fd. wasmtime starts numbering
+	// preopens at 3 (after stdin/stdout/stderr).
+	g.line(`(func $tcp_listen (param $port i32) (result i32)`)
+	g.indent++
+	g.line(`i32.const 3`)
+	g.indent--
+	g.line(`)`)
+	// $tcp_accept(sock) — call sock_accept with the result-fd
+	// pointer at memory[64] (a scratch slot in the runtime
+	// reserved area). Returns the new fd, or `-errno` on error.
+	g.line(`(func $tcp_accept (param $sock i32) (result i32)`)
+	g.indent++
+	g.line(`(local $err i32)`)
+	g.line(`local.get $sock`)
+	g.line(`i32.const 0`) // fdflags=0
+	g.line(`i32.const 64`) // out-pointer for new fd
+	g.line(`call $__wasi_sock_accept`)
+	g.line(`local.tee $err`)
+	g.line(`if (result i32)`)
+	g.indent++
+	// errno != 0 → return -err so callers see a negative number.
+	g.line(`local.get $err`)
+	g.line(`i32.const 0`)
+	g.line(`i32.sub`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`i32.const 64`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`)`)
+	// $tcp_recv(fd, max) — issue an fd_read into a fresh
+	// buffer; return the resulting string (length = bytes
+	// read; 0 on EOF/error).
+	g.line(`(func $tcp_recv (param $fd i32) (param $max i32) (result i32)`)
+	g.indent++
+	g.line(`(local $data i32)`)
+	g.line(`(local $err i32)`)
+	// data = __lang_alloc(max + 5) + 4
+	g.line(`local.get $max`)
+	g.line(`i32.const 5`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $data`)
+	// iovec at memory[56]: { base = data, len = max }
+	g.line(`i32.const 56`)
+	g.line(`local.get $data`)
+	g.line(`i32.store`)
+	g.line(`i32.const 60`)
+	g.line(`local.get $max`)
+	g.line(`i32.store`)
+	// fd_read(fd, iovs=56, iovs_len=1, nread_out=64)
+	g.line(`local.get $fd`)
+	g.line(`i32.const 56`)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 64`)
+	g.line(`call $__wasi_fd_read`)
+	g.line(`local.set $err`)
+	// nread = err == 0 ? *(i32*)64 : 0
+	g.line(`local.get $err`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`i32.const 64`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`end`)
+	// Store length prefix at data - 4.
+	g.line(`local.set $err`) // reuse $err to hold nread
+	g.line(`local.get $data`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`local.get $err`)
+	g.line(`i32.store`)
+	// Trailing NUL.
+	g.line(`local.get $data`)
+	g.line(`local.get $err`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store8`)
+	g.line(`local.get $data`)
+	g.indent--
+	g.line(`)`)
+	// $tcp_send(fd, data) — fd_write of the entire data
+	// buffer. Returns bytes written or -errno.
+	g.line(`(func $tcp_send (param $fd i32) (param $data i32) (result i32)`)
+	g.indent++
+	g.line(`(local $err i32)`)
+	// iovec at memory[56]: { base=data, len=*(data-4) }
+	g.line(`i32.const 56`)
+	g.line(`local.get $data`)
+	g.line(`i32.store`)
+	g.line(`i32.const 60`)
+	g.line(`local.get $data`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	// fd_write(fd, iovs=56, iovs_len=1, nwritten_out=64)
+	g.line(`local.get $fd`)
+	g.line(`i32.const 56`)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 64`)
+	g.line(`call $__wasi_fd_write`)
+	g.line(`local.tee $err`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`local.get $err`)
+	g.line(`i32.sub`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`i32.const 64`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`)`)
+	// $tcp_close(fd) — fd_close, returns 0 or -errno.
+	g.line(`(func $tcp_close (param $fd i32) (result i32)`)
+	g.indent++
+	g.line(`(local $err i32)`)
+	g.line(`local.get $fd`)
+	g.line(`call $__wasi_fd_close`)
+	g.line(`local.tee $err`)
+	g.line(`i32.const 0`)
+	g.line(`i32.sub`)
+	g.indent--
+	g.line(`)`)
+}
+
 func (g *generator) emitRandomBytesHelper() {
 	g.line(`(func $random_bytes (param $n i32) (result i32)`)
 	g.indent++

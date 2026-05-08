@@ -97,6 +97,7 @@ type generator struct {
 	usesExit      bool            // true if the program calls exit() — pulls in __lang_exit (direct exit_group)
 	usesArena     bool            // true if the program calls arena_save / arena_restore — pulls in the two heap-cursor helpers
 	usesRandomBytes bool          // true if the program calls random_bytes() — pulls in __lang_random_bytes (getrandom syscall)
+	usesTcp         bool          // true if the program calls any of tcp_* — pulls in the TCP socket helpers
 	usesReadFile  bool            // true if the program calls read_file() — pulls in __lang_read_file + __build_io_error
 	usesWriteFile bool            // true if the program calls write_file() — pulls in __lang_write_file + __build_io_error
 	usesStreamIO  bool            // true if the program calls open_reader / open_writer / a Reader|Writer method

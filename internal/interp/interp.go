@@ -13,11 +13,26 @@ import (
 	cryptorand "crypto/rand"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 )
+
+// tcpListenerHandle / tcpConnHandle abstract the host TCP
+// types so the interpreter doesn't directly drag `net.*`
+// into every value-handling site. Aliases keep the call
+// shapes identical to net.Listener / net.Conn.
+type tcpListenerHandle = net.Listener
+type tcpConnHandle = net.Conn
+
+// tcpNetListen is a thin indirection so tests can substitute
+// a deterministic listener if needed (currently just calls
+// net.Listen).
+func tcpNetListen(network, address string) (tcpListenerHandle, error) {
+	return net.Listen(network, address)
+}
 
 // Value is the runtime tagged-union of every type the language
 // evaluates to. Concrete kinds: Number, Bool, String, Void, Array,
@@ -152,6 +167,15 @@ type Interp struct {
 	// works in both worlds.
 	openFiles map[int64]*os.File
 	nextFd    int64
+	// tcpListeners / tcpConns are the interpreter's analogue
+	// of OS socket fds. The AOT backends return raw kernel
+	// fds; the interpreter returns opaque integer IDs into
+	// these maps. The numeric value space is disjoint from
+	// the AOT side, but every program treats the returned
+	// number as an opaque token.
+	tcpListeners  map[int64]tcpListenerHandle
+	tcpConns      map[int64]tcpConnHandle
+	tcpNextHandle int64
 	// Args is what the `args()` builtin returns, in source-program
 	// order (argv[0] first). REPL / test callers can override this
 	// to feed scripted argv without going through os.Args.
@@ -199,7 +223,135 @@ func New() *Interp {
 	i.Builtins["arena_save"] = &Builtin{Fn: builtinArenaSave}
 	i.Builtins["arena_restore"] = &Builtin{Fn: builtinArenaRestore}
 	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
+	i.Builtins["tcp_listen"] = &Builtin{Fn: builtinTcpListen}
+	i.Builtins["tcp_accept"] = &Builtin{Fn: builtinTcpAccept}
+	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
+	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
+	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
 	return i
+}
+
+// TCP socket builtins for the interpreter — implemented via
+// Go's net package so REPL / test runs match the AOT
+// backends' behaviour. Listener / connection handles are
+// represented as integer IDs into per-Interp tables; the
+// AOT backends use raw OS fds, the interpreter uses opaque
+// indices into Go-managed maps. The numeric value space is
+// disjoint between the two, but every program treats the
+// returned number as an opaque token.
+
+func builtinTcpListen(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("tcp_listen: expected 1 arg, got %d", len(args))
+	}
+	port, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_listen: expected number arg, got %T", args[0])
+	}
+	ln, err := tcpNetListen("tcp", fmt.Sprintf("0.0.0.0:%d", int(port)))
+	if err != nil {
+		return Number(-1), nil
+	}
+	if i.tcpListeners == nil {
+		i.tcpListeners = map[int64]tcpListenerHandle{}
+	}
+	i.tcpNextHandle++
+	id := i.tcpNextHandle
+	i.tcpListeners[id] = ln
+	return Number(id), nil
+}
+
+func builtinTcpAccept(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("tcp_accept: expected 1 arg, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_accept: expected number arg, got %T", args[0])
+	}
+	ln, ok := i.tcpListeners[int64(id)]
+	if !ok {
+		return Number(-1), nil
+	}
+	conn, err := ln.Accept()
+	if err != nil {
+		return Number(-1), nil
+	}
+	if i.tcpConns == nil {
+		i.tcpConns = map[int64]tcpConnHandle{}
+	}
+	i.tcpNextHandle++
+	cid := i.tcpNextHandle
+	i.tcpConns[cid] = conn
+	return Number(cid), nil
+}
+
+func builtinTcpRecv(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("tcp_recv: expected 2 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_recv: expected number fd arg, got %T", args[0])
+	}
+	max, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_recv: expected number max arg, got %T", args[1])
+	}
+	conn, ok := i.tcpConns[int64(id)]
+	if !ok {
+		return String(""), nil
+	}
+	buf := make([]byte, int(max))
+	n, err := conn.Read(buf)
+	if err != nil || n <= 0 {
+		return String(""), nil
+	}
+	return String(buf[:n]), nil
+}
+
+func builtinTcpSend(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("tcp_send: expected 2 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_send: expected number fd arg, got %T", args[0])
+	}
+	data, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("tcp_send: expected string data arg, got %T", args[1])
+	}
+	conn, ok := i.tcpConns[int64(id)]
+	if !ok {
+		return Number(-1), nil
+	}
+	n, err := conn.Write([]byte(data))
+	if err != nil {
+		return Number(-1), nil
+	}
+	return Number(n), nil
+}
+
+func builtinTcpClose(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("tcp_close: expected 1 arg, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_close: expected number arg, got %T", args[0])
+	}
+	if conn, ok := i.tcpConns[int64(id)]; ok {
+		conn.Close()
+		delete(i.tcpConns, int64(id))
+		return Number(0), nil
+	}
+	if ln, ok := i.tcpListeners[int64(id)]; ok {
+		ln.Close()
+		delete(i.tcpListeners, int64(id))
+		return Number(0), nil
+	}
+	return Number(-1), nil
 }
 
 // builtinRandomBytes returns a string of n cryptographic-

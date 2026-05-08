@@ -17,18 +17,22 @@ package codegen
 // See <asm-generic/unistd.h> + the arm syscall table for the
 // full set; we only pull in the handful the language needs.
 const (
-	sysExit       = 1
-	sysRead       = 3
-	sysWrite      = 4
-	sysOpen       = 5
-	sysClose      = 6
-	sysLseek      = 19
-	sysBrk        = 45
-	sysWritev     = 146
-	sysMmap2      = 192
-	sysFstat64    = 197
-	sysExitGroup  = 248
-	sysGetrandom  = 384
+	sysExit      = 1
+	sysRead      = 3
+	sysWrite     = 4
+	sysOpen      = 5
+	sysClose     = 6
+	sysLseek     = 19
+	sysBrk       = 45
+	sysWritev    = 146
+	sysMmap2     = 192
+	sysFstat64   = 197
+	sysExitGroup = 248
+	sysSocket    = 281
+	sysBind      = 282
+	sysListen    = 284
+	sysAccept    = 285
+	sysGetrandom = 384
 )
 
 // heapReserveBytes is the size of the anonymous mmap region we
@@ -468,4 +472,147 @@ func (g *generator) emitArenaRestoreRuntime() {
 	g.emit("str r0, [r1]")
 	g.emit("bx lr")
 	g.line(".size __lang_arena_restore, .-__lang_arena_restore")
+}
+
+// emitTcpListenRuntime emits `__lang_tcp_listen(port)` —
+// opens a TCP listening socket on 0.0.0.0:port. Returns the
+// listener fd on success, or `-errno` on failure. C-style
+// API; callers check `if (fd < 0)`.
+//
+// Steps: socket(AF_INET, SOCK_STREAM, 0); setsockopt is
+// skipped (caller may see EADDRINUSE briefly after restart);
+// bind to a stack-allocated sockaddr_in; listen with
+// backlog=128.
+func (g *generator) emitTcpListenRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_listen")
+	g.line(".type __lang_tcp_listen, %function")
+	g.label("__lang_tcp_listen")
+	g.emit("push {r4, r5, lr}")
+	g.emit("sub sp, sp, #20") // 16 bytes sockaddr_in + 4 align
+	g.emit("mov r4, r0")      // r4 = port
+	// socket(AF_INET=2, SOCK_STREAM=1, 0)
+	g.emit("mov r0, #2")
+	g.emit("mov r1, #1")
+	g.emit("mov r2, #0")
+	g.emitSyscall(sysSocket)
+	g.emit("cmp r0, #0")
+	g.emit("blt .Ltcp_lst_err") // socket failed; r0 = -errno
+	g.emit("mov r5, r0")        // r5 = listener fd
+	// Build sockaddr_in at sp.
+	g.emit("mov r0, #2")
+	g.emit("strh r0, [sp]")     // sin_family = AF_INET
+	g.emit("rev16 r0, r4")      // htons(port)
+	g.emit("strh r0, [sp, #2]") // sin_port
+	g.emit("mov r0, #0")
+	g.emit("str r0, [sp, #4]")  // sin_addr = 0 (INADDR_ANY)
+	g.emit("str r0, [sp, #8]")  // sin_zero[0..3]
+	g.emit("str r0, [sp, #12]") // sin_zero[4..7]
+	// bind(fd, sa, 16)
+	g.emit("mov r0, r5")
+	g.emit("mov r1, sp")
+	g.emit("mov r2, #16")
+	g.emitSyscall(sysBind)
+	g.emit("cmp r0, #0")
+	g.emit("blt .Ltcp_lst_err")
+	// listen(fd, 128)
+	g.emit("mov r0, r5")
+	g.emit("mov r1, #128")
+	g.emitSyscall(sysListen)
+	g.emit("cmp r0, #0")
+	g.emit("blt .Ltcp_lst_err")
+	// Success — return fd in r0.
+	g.emit("mov r0, r5")
+	g.emit("add sp, sp, #20")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.label(".Ltcp_lst_err")
+	// r0 holds -errno from the failed syscall.
+	g.emit("add sp, sp, #20")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_tcp_listen, .-__lang_tcp_listen")
+}
+
+// emitTcpAcceptRuntime emits `__lang_tcp_accept(fd)` —
+// accepts a connection on the listener fd, returns the new
+// connection fd or `-errno`. Passes NULL for the addr/addrlen
+// out-params; callers don't need the peer address.
+func (g *generator) emitTcpAcceptRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_accept")
+	g.line(".type __lang_tcp_accept, %function")
+	g.label("__lang_tcp_accept")
+	g.emit("mov r1, #0") // addr = NULL
+	g.emit("mov r2, #0") // addrlen = NULL
+	g.emitSyscall(sysAccept)
+	g.emit("bx lr")
+	g.line(".size __lang_tcp_accept, .-__lang_tcp_accept")
+}
+
+// emitTcpRecvRuntime emits `__lang_tcp_recv(fd, max)` —
+// reads up to `max` bytes from the socket fd, returns a
+// fresh length-prefixed lang string with the bytes read.
+// On error or EOF the returned string has length 0. Uses
+// the standard `read(2)` syscall; socket fds support it.
+func (g *generator) emitTcpRecvRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_recv")
+	g.line(".type __lang_tcp_recv, %function")
+	g.label("__lang_tcp_recv")
+	g.emit("push {r4, r5, r6, lr}")
+	g.emit("mov r4, r0") // r4 = fd (saved across calls / syscall)
+	g.emit("mov r5, r1") // r5 = max
+	// Allocate `max + 5` bytes (4 prefix + max data + 1 NUL).
+	g.emit("add r0, r5, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add r6, r0, #4") // r6 = data ptr
+	// read(fd, data, max).
+	g.emit("mov r0, r4")
+	g.emit("mov r1, r6")
+	g.emit("mov r2, r5")
+	g.emitSyscall(sysRead)
+	// Clamp the byte count to ≥ 0 — read returns -errno on
+	// failure and 0 on EOF; both collapse to "empty string".
+	g.emit("cmp r0, #0")
+	g.emit("movlt r0, #0")
+	g.emit("str r0, [r6, #-4]") // length prefix
+	// Trailing NUL at data + n.
+	g.emit("add r1, r6, r0")
+	g.emit("mov r2, #0")
+	g.emit("strb r2, [r1]")
+	g.emit("mov r0, r6") // return data ptr
+	g.emit("pop {r4, r5, r6, lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_tcp_recv, .-__lang_tcp_recv")
+}
+
+// emitTcpSendRuntime emits `__lang_tcp_send(fd, data)` —
+// writes the entire string to the fd via `write(2)`. Returns
+// the syscall result (bytes written or `-errno`). A short-
+// write is reported back to the caller; a real client would
+// loop until len(data) bytes have been written.
+func (g *generator) emitTcpSendRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_send")
+	g.line(".type __lang_tcp_send, %function")
+	g.label("__lang_tcp_send")
+	g.emit("ldr r2, [r1, #-4]") // r2 = len(data)
+	// r1 = data ptr (already in r1 from arg2)
+	// r0 = fd (already in r0 from arg1)
+	g.emitSyscall(sysWrite)
+	g.emit("bx lr")
+	g.line(".size __lang_tcp_send, .-__lang_tcp_send")
+}
+
+// emitTcpCloseRuntime emits `__lang_tcp_close(fd)` —
+// thin wrapper around `close(2)`. Returns 0 or `-errno`.
+func (g *generator) emitTcpCloseRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_close")
+	g.line(".type __lang_tcp_close, %function")
+	g.label("__lang_tcp_close")
+	g.emitSyscall(sysClose)
+	g.emit("bx lr")
+	g.line(".size __lang_tcp_close, .-__lang_tcp_close")
 }

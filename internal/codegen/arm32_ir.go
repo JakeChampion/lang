@@ -113,6 +113,9 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			case "random_bytes":
 				g.usesRandomBytes = true
 				g.usesAlloc = true
+			case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
+				g.usesTcp = true
+				g.usesAlloc = true
 			case "read_file":
 				g.usesReadFile = true
 				g.usesAlloc = true
@@ -198,6 +201,13 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	}
 	if g.usesRandomBytes {
 		g.emitRandomBytesRuntime()
+	}
+	if g.usesTcp {
+		g.emitTcpListenRuntime()
+		g.emitTcpAcceptRuntime()
+		g.emitTcpRecvRuntime()
+		g.emitTcpSendRuntime()
+		g.emitTcpCloseRuntime()
 	}
 	if g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
 		g.emitFileIORuntime()
