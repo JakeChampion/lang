@@ -1,0 +1,12 @@
+// Vendored copy of the wasi:random@0.2.0 WIT package, just the
+// `random` interface (we don't use `insecure` or `insecure-seed`
+// yet). Source: https://github.com/WebAssembly/wasi-random
+package wasi:random@0.2.0;
+
+interface random {
+    /// Return `len` cryptographically-strong pseudo-random bytes.
+    get-random-bytes: func(len: u64) -> list<u8>;
+
+    /// Return a cryptographically-strong pseudo-random `u64` value.
+    get-random-u64: func() -> u64;
+}

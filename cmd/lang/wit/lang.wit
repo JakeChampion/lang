@@ -1,0 +1,11 @@
+// WIT world for the lang component. Currently declares only the
+// preview-2 imports that the wasm backend emits natively (anything
+// not on this list still flows through the preview-1 adapter at
+// component-new time). Add new imports here as we migrate more
+// builtins off preview-1 in subsequent steps of the migration plan
+// (see docs/WASI-PREVIEW2.md).
+package local:lang@0.0.0;
+
+world lang {
+    import wasi:random/random@0.2.0;
+}

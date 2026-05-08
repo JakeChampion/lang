@@ -38,7 +38,14 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "hello.lang")
+	// Exercises both:
+	//   - WASI preview-1 fd_write (the adapter routes it through
+	//     wasi:io/streams under the hood);
+	//   - Native preview-2 wasi:random/random.get-random-bytes —
+	//     bypasses the adapter via the WIT world we embed,
+	//     forcing the canonical-ABI path through `cabi_realloc`.
 	if err := os.WriteFile(srcPath, []byte(`function main(): number {
+    var b = random_bytes(8);
     print("hello preview2");
     return 0;
 }

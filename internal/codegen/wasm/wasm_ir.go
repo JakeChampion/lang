@@ -28,11 +28,18 @@ import (
 // The order of prog.Funcs and ip.Funcs must match: ip.Funcs[i]
 // describes the body of prog.Funcs[i].
 func EmitFromIR(prog *ast.Program, info *checker.Info, ip *ir.Program) (string, error) {
+	return EmitFromIRWithOptions(prog, info, ip, EmitOptions{})
+}
+
+// EmitFromIRWithOptions is the option-aware sibling of EmitFromIR.
+// See `EmitOptions` for the available tuning knobs.
+func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program, opts EmitOptions) (string, error) {
 	if len(prog.Funcs) != len(ip.Funcs) {
 		return "", fmt.Errorf("wasm: prog has %d funcs, ir has %d", len(prog.Funcs), len(ip.Funcs))
 	}
 	g := &generator{
 		info:              info,
+		preview2:          opts.Preview2,
 		origTopLevelCount: countOrigTopLevel(prog),
 		stringPool:        map[string]int{},
 		funcIndex:         map[string]int{},
@@ -87,6 +94,17 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, ip *ir.Program) (string, 
 	} else if g.needsReadLine {
 		g.stringOffset = 72
 		g.closuresBase = 72
+	}
+	// Preview-2 `random_bytes` uses memory[92..99] as the
+	// canonical-ABI return area for `get-random-bytes`. Push the
+	// string base past that slot so neither overlaps a string.
+	if g.needsRandomBytes && g.preview2 {
+		if g.stringOffset < 100 {
+			g.stringOffset = 100
+		}
+		if g.closuresBase < 100 {
+			g.closuresBase = 100
+		}
 	}
 
 	g.tableIndex = map[string]int{}
@@ -162,6 +180,14 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, ip *ir.Program) (string, 
 	}
 	if g.needsRuntime {
 		g.line(`(export "memory" (memory $mem))`)
+	}
+	if g.preview2 && g.needsRandomBytes {
+		// Component-model contract: any host import that returns
+		// a dynamically-sized type (list<u8>, string, …) uses
+		// `cabi_realloc` to allocate space in the guest's linear
+		// memory before writing the bytes. Our wasi:random/random
+		// import returns `list<u8>`, so we have to expose it.
+		g.line(`(export "cabi_realloc" (func $cabi_realloc))`)
 	}
 	g.indent--
 	g.line(")")

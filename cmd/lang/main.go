@@ -21,8 +21,10 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,7 +171,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 	// WASM target: emit WAT to stdout (or -o file) and stop. The arm32
 	// link / --run paths don't apply.
 	if target == "wasm" {
-		text, err := wasm.Emit(prog, info)
+		text, err := wasm.EmitWithOptions(prog, info, wasm.EmitOptions{Preview2: wasiPreview2})
 		if err != nil {
 			return 1, err
 		}
@@ -290,15 +292,30 @@ func link(asm, outPath, cc string, debug bool) error {
 	return nil
 }
 
-// emitPreview2Component wraps the preview-1 WAT in a Component Model
-// component using wasm-tools + the wasi-preview1-component-adapter.
+// witFS bundles the WIT package(s) the wasm backend's preview-2
+// imports refer to. Embedding lets `lang` ship as a single binary —
+// `wasm-tools component embed` reads them from a temp directory we
+// extract at preview-2 emission time. Add new WIT under
+// cmd/lang/wit/ and they'll be picked up automatically.
+//
+//go:embed wit
+var witFS embed.FS
+
+// emitPreview2Component wraps the WAT in a Component Model component
+// using wasm-tools + the wasi-preview1-component-adapter.
 //
 // Pipeline:
 //  1. write WAT to a temp file;
 //  2. `wasm-tools parse` lowers it to a binary core module;
-//  3. `wasm-tools component new --adapt wasi_snapshot_preview1=ADAPTER`
-//     wraps the module in a component that satisfies any preview-2
-//     host (`wasmtime run`, edge-function runtimes, etc.).
+//  3. `wasm-tools component embed` annotates the module with the
+//     `local:lang/lang` WIT world so the component-new step knows
+//     how to lift the native preview-2 imports we emit (e.g.
+//     `wasi:random/random.get-random-bytes`);
+//  4. `wasm-tools component new --adapt wasi_snapshot_preview1=ADAPTER`
+//     composes the module with the adapter; preview-1 imports get
+//     translated to preview-2 by the adapter, native preview-2
+//     imports flow through unchanged. The result satisfies any
+//     preview-2 host (`wasmtime run`, edge-function runtimes, etc.).
 //
 // See docs/WASI-PREVIEW2.md for the broader migration plan.
 func emitPreview2Component(wat, outPath, adapterPath string) error {
@@ -314,6 +331,11 @@ func emitPreview2Component(wat, outPath, adapterPath string) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	witDir := filepath.Join(tmpDir, "wit")
+	if err := extractWIT(witDir); err != nil {
+		return fmt.Errorf("extract embedded WIT: %w", err)
+	}
+
 	watPath := filepath.Join(tmpDir, "prog.wat")
 	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
 		return err
@@ -322,12 +344,40 @@ func emitPreview2Component(wat, outPath, adapterPath string) error {
 	if out, err := exec.Command("wasm-tools", "parse", watPath, "-o", modulePath).CombinedOutput(); err != nil {
 		return fmt.Errorf("wasm-tools parse failed: %w\n%s", err, out)
 	}
+	embeddedPath := filepath.Join(tmpDir, "prog.embedded.wasm")
+	if out, err := exec.Command("wasm-tools", "component", "embed",
+		witDir, "-w", "lang",
+		modulePath, "-o", embeddedPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("wasm-tools component embed failed: %w\n%s", err, out)
+	}
 	if out, err := exec.Command("wasm-tools", "component", "new",
 		"--adapt", "wasi_snapshot_preview1="+adapterPath,
-		modulePath, "-o", outPath).CombinedOutput(); err != nil {
+		embeddedPath, "-o", outPath).CombinedOutput(); err != nil {
 		return fmt.Errorf("wasm-tools component new failed: %w\n%s", err, out)
 	}
 	return nil
+}
+
+// extractWIT walks the embedded `wit/` tree and writes it under
+// dstRoot, preserving the relative directory structure. Used to
+// hand a real on-disk path to `wasm-tools component embed`, which
+// resolves WIT imports through the filesystem.
+func extractWIT(dstRoot string) error {
+	return fs.WalkDir(witFS, "wit", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel("wit", p)
+		dst := filepath.Join(dstRoot, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0o755)
+		}
+		data, err := witFS.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, 0o644)
+	})
 }
 
 // ifErr collapses a Go error into the exit code lang should return.
