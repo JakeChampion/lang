@@ -199,12 +199,59 @@ Deferred:
 - Mutating slice operations (`slice[i] = v`).
 - Slice arithmetic / concatenation.
 
-### PR 3 — Generics for functions + structs
+### PR 3 — Generic functions (shipped); generic structs (deferred)
 
-- `function map<T, U>(xs: [T], f: (T) -> U): Array<U> { ... }`
-- `struct Pair<A, B> { a: A, b: B }`
-- Monomorphization pass. Code-size is a wasm concern — start with
-  always-monomorphize, revisit a heuristic later.
+Generic functions only — generic structs are a follow-up. Same
+bracket form as generic enums for declaration consistency:
+
+```
+function id[T](x: T): T { return x; }
+function first[T](xs: T[]): T { return xs[0]; }
+
+function main(): i32 {
+    var a = id(42);             // T inferred = i32
+    var s = first(["hi", "hi"]); // T inferred = string
+    return a;
+}
+```
+
+What landed:
+- `[T]` / `[T, U]` after the function name in declarations.
+  Same form enums use, so users learn one shape for both.
+- Implicit type-arg inference at call sites — the checker
+  unifies expected ParamType against actual arg types via the
+  pre-existing `unifyType` helper. No explicit `f[i32](...)`
+  syntax yet (would conflict with array indexing; needs
+  lookahead).
+- New `internal/monomorph` package runs after type-checking,
+  before any IR / codegen. Walks the AST, finds every Call to
+  a generic function, mangles the callee name (`id__i32`),
+  records the instantiation, and clones the FuncDecl per-T.
+  Original generic decls are dropped from `prog.Funcs`.
+- Re-checks the rewritten program at the end of the pass so
+  every cloned decl gets its own `FuncSigs` entry + body
+  type-check.
+
+Cost / trade-offs:
+- Code-size grows linearly with instantiations. For our
+  short-lived programs (CLI / edge handlers) and small stdlib
+  surface, that's fine. A heuristic to share dictionaries for
+  cold instantiations is a follow-up.
+- The naïve clone-then-recheck is O(N × M) for N
+  instantiations and M function bodies — fine in practice
+  because both numbers are small. If recheck cost becomes an
+  issue, swap for a targeted body-rewrite that only retypes
+  the cloned functions.
+
+Deferred to a follow-up:
+- Generic structs: `struct Pair[A, B] { first: A, second: B }`.
+  Same shape as generic enums; mostly mechanical from here.
+- Explicit type args at call sites (`f[i32](x)`). Needs
+  lookahead to disambiguate from `arr[i]`.
+- Generic constraints (`T: Eq`, `T: Hash`). Probably never —
+  the lang doesn't have a trait system; users pass functions
+  explicitly when they need polymorphism beyond what's
+  captured by the type variable alone (Gleam's posture).
 
 ### PR 4 — Built-in `Map<K, V>` + ergonomics layer
 

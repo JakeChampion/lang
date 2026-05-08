@@ -54,6 +54,13 @@ type Info struct {
 	// resolves to `float` at the construction of `Some(3.14)`,
 	// letting the IR pick `OpFStore` instead of `OpStore`.
 	VariantCallPayloads map[*ast.Call][]ast.Type
+	// GenericFuncs maps a generic function name to its declaration.
+	// Populated at the start of Check; used by the call-site
+	// inference path to detect "this is a generic call" and to
+	// look up TypeParams. The monomorphisation pass also reads
+	// this when cloning. Empty for programs without generic
+	// functions.
+	GenericFuncs map[string]*ast.FuncDecl
 }
 
 // builtinEnumDecls returns the synthetic enum declarations the
@@ -177,6 +184,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			Enums:               map[string]*ast.EnumDecl{},
 			Methods:             map[string]string{},
 			VariantCallPayloads: map[*ast.Call][]ast.Type{},
+			GenericFuncs:        map[string]*ast.FuncDecl{},
 		},
 		variantOf: map[string]variantRef{},
 	}
@@ -471,6 +479,12 @@ func Check(prog *ast.Program) (*Info, error) {
 			params[i] = p.Type
 		}
 		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, Result: fn.ReturnType}
+		if len(fn.TypeParams) > 0 {
+			// Track generic decls so the call-site inference path
+			// can spot them and the monomorphisation pass knows
+			// which functions to clone.
+			c.info.GenericFuncs[fn.Name] = fn
+		}
 	}
 
 	// Second pass: check bodies.
@@ -523,13 +537,24 @@ type checker struct {
 // declared TypeParams set.
 func (c *checker) resolveTypeNames(prog *ast.Program) {
 	for _, fn := range prog.Funcs {
+		// Collect the function's type parameters so occurrences
+		// of those names in the signature / body resolve to
+		// ParamType rather than dangling StructType references.
+		// Empty for non-generic functions.
+		var params map[string]bool
+		if len(fn.TypeParams) > 0 {
+			params = make(map[string]bool, len(fn.TypeParams))
+			for _, n := range fn.TypeParams {
+				params[n] = true
+			}
+		}
 		if fn.Receiver != nil {
-			c.resolveType(&fn.Receiver.Type, nil)
+			c.resolveType(&fn.Receiver.Type, params)
 		}
 		for i := range fn.Params {
-			c.resolveType(&fn.Params[i].Type, nil)
+			c.resolveType(&fn.Params[i].Type, params)
 		}
-		c.resolveType(&fn.ReturnType, nil)
+		c.resolveType(&fn.ReturnType, params)
 		c.resolveTypesInBlock(fn.Body)
 	}
 	for _, sd := range prog.Structs {
@@ -1376,11 +1401,51 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if len(n.Args) != len(ft.Params) {
 			c.errf(n.P, "function expects %d arguments, got %d", len(ft.Params), len(n.Args))
 		}
+		// If the callee resolves to a generic FuncDecl, infer its
+		// type arguments from the actual argument types and stamp
+		// them on the Call so the monomorphisation pass picks the
+		// right clone. Inference only consults the args — explicit
+		// type-arg syntax (`f[i32](42)`) is reserved.
+		var sub map[string]ast.Type
+		var genericFn *ast.FuncDecl
+		if id, ok := n.Callee.(*ast.Ident); ok {
+			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
+				genericFn = fn
+				sub = make(map[string]ast.Type, len(fn.TypeParams))
+			}
+		}
 		for i, a := range n.Args {
 			at := c.checkExpr(a, s)
-			if i < len(ft.Params) && at != nil && !assignable(ft.Params[i], at) {
-				c.errf(a.Pos(), "argument %d: expected %s, got %s", i+1, ft.Params[i], at)
+			if i < len(ft.Params) && at != nil {
+				expected := ft.Params[i]
+				if sub != nil {
+					if !c.unifyType(expected, at, sub) {
+						c.errf(a.Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
+					}
+				} else if !assignable(expected, at) {
+					c.errf(a.Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
+				}
 			}
+		}
+		if genericFn != nil {
+			// Substitute the inferred sub through the result so
+			// callers see a concrete type, AND record TypeArgs in
+			// declaration order for the monomorphiser.
+			args := make([]ast.Type, len(genericFn.TypeParams))
+			complete := true
+			for i, tp := range genericFn.TypeParams {
+				if v, ok := sub[tp]; ok {
+					args[i] = v
+				} else {
+					c.errf(n.P, "could not infer type parameter %s for %s — explicit type args are not supported yet", tp, genericFn.Name)
+					complete = false
+				}
+			}
+			if complete {
+				n.TypeArgs = args
+				return substituteType(ft.Result, sub)
+			}
+			return nil
 		}
 		return ft.Result
 	case *ast.Binary:

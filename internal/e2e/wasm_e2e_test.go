@@ -24,6 +24,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/wasm"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -127,6 +128,9 @@ func buildComponent(t *testing.T, src string) string {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	wat, err := wasm.EmitWithOptions(prog, info, wasm.EmitOptions{
 		PrintMainResult: true,
 	})
@@ -162,6 +166,9 @@ func buildComponentMulti(t *testing.T, entry string, files map[string]string) st
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	wat, err := wasm.EmitWithOptions(prog, info, wasm.EmitOptions{
 		PrintMainResult: true,
@@ -610,6 +617,45 @@ function main(): i32 {
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (pipe chain mismatch)", got)
+	}
+}
+
+// Generic functions: `function id[T](x: T): T { return x; }`.
+// The checker infers T from the argument type; the
+// monomorphisation pass clones the decl into one copy per
+// concrete instantiation. This test exercises the full
+// pipeline: parse → check (with inference) → monomorph
+// (rewriting `id` to `id__i32`) → IR / codegen.
+func TestWASMGenericFunctionInfersFromArg(t *testing.T) {
+	src := `function id[T](x: T): T { return x; }
+function main(): i32 {
+    var a = id(42);
+    var b = id(7);
+    if (a == 42 && b == 7) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (id() generic mismatch)", got)
+	}
+}
+
+// Same generic, two distinct instantiations — `first[i32]` and
+// `first[string]`. Verifies the monomorphisation pass produces
+// independent clones (not erased dispatch) and the call sites
+// pick the right one.
+func TestWASMGenericFunctionMultipleInstantiations(t *testing.T) {
+	src := `function first[T](xs: T[]): T { return xs[0]; }
+function main(): i32 {
+    var ints: i32[] = [10, 20, 30];
+    var strs: string[] = ["hello", "world"];
+    var n = first(ints);
+    var s = first(strs);
+    print(s);
+    return n;
+}`
+	out := runWasmCapturingStdout(t, src)
+	if out != "hello" {
+		t.Errorf("output = %q, want \"hello\"", out)
 	}
 }
 

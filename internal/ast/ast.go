@@ -383,6 +383,14 @@ type Call struct {
 	// any other Call; only the formatter checks the flag so it
 	// can re-render the pipe form on the way out.
 	IsPipe bool
+	// TypeArgs is filled by the checker when the callee resolves
+	// to a generic function (FuncDecl with non-empty TypeParams).
+	// Each entry is the inferred concrete type for the
+	// corresponding type parameter, in declaration order. Empty
+	// for non-generic calls. The monomorphisation pass uses it
+	// to pick the right cloned function and rewrite the callee
+	// name to the mangled form.
+	TypeArgs []Type
 }
 type Binary struct {
 	P           Position
@@ -677,6 +685,14 @@ type Param struct {
 type FuncDecl struct {
 	P          Position
 	Name       string
+	// TypeParams names the type variables a generic function
+	// introduces — `function id[T](x: T): T` declares
+	// TypeParams=["T"]. The checker rewrites occurrences of
+	// these names in Params / ReturnType to ast.ParamType, then
+	// the monomorphisation pass clones the decl per-instantiation
+	// before IR lowering. After monomorphisation runs, every
+	// FuncDecl that survives has TypeParams empty.
+	TypeParams []string
 	Params     []Param
 	ReturnType Type
 	Body       *Block
