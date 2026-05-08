@@ -296,6 +296,35 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.StringType{},
 	}
+	// TCP socket builtins. C-style API: each returns a raw
+	// fd or a negative errno. A Result-wrapped layer can sit
+	// on top in a follow-up.
+	//
+	// On WASI the host pre-opens the listening socket
+	// (`wasmtime --tcp-listen=0.0.0.0:PORT prog.wasm`); the
+	// `port` argument is currently ignored and the helper
+	// returns the first preopened socket fd (typically 3).
+	// On Linux/arm32 the helper opens the socket itself.
+	c.info.FuncSigs["tcp_listen"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["tcp_accept"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["tcp_recv"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.StringType{},
+	}
+	c.info.FuncSigs["tcp_send"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["tcp_close"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// read_file(path): Result[string, IoError] — reads the entire
 	// file into a single string. WASM builds need a preopen
 	// directory (e.g. `wasmtime --dir=.`); the path is
