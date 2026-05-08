@@ -157,15 +157,16 @@ func TestArrayIndex(t *testing.T) {
 
 // Arrays carry a 4-byte little-endian length prefix at base-4. The
 // IR lowers `len(x)` to `<expr>; const 4; sub; load`, which on arm32
-// becomes a `sub r0, r1, r0` (ptr - 4) followed by `ldr r0, [r0]` —
-// no libc call, just two instructions instead of the AST walker's
-// fused `ldr r0, [r0, #-4]`.
+// becomes a `sub … #4` (after the const-imm peephole) followed by
+// `ldr r0, [r0]` — no libc call, just a couple of instructions.
 func TestLenOfArrayLoadsPrefix(t *testing.T) {
 	asm := compile(t, `function f(): number {
 		var a: number[] = [10, 20, 30];
 		return len(a);
 	}`)
-	mustContain(t, asm, "sub r0, r1, r0")
+	// The const-imm peephole folds the `ldr r0, =4 ; pop ; sub`
+	// trio into a single `sub … #4`.
+	mustContain(t, asm, "sub r0, r1, #4")
 	mustContain(t, asm, "ldr r0, [r0]")
 	if strings.Contains(asm, "bl strlen") {
 		t.Errorf("len(array) must not call strlen:\n%s", asm)
@@ -731,8 +732,9 @@ func TestArm32TernaryBranches(t *testing.T) {
 
 func TestArm32CompoundAssignLowersToBinary(t *testing.T) {
 	asm := compile(t, `function f(): number { var x: number = 5; x += 7; return x; }`)
-	// 7 should appear as an immediate from the binary lowering.
-	mustContain(t, asm, "=7")
+	// `x += 7` lowers via the binary path; the const-imm
+	// peephole folds the load + add trio into `add r0, r1, #7`.
+	mustContain(t, asm, "add r0, r1, #7")
 }
 
 func TestArm32StringIndexLoadsByte(t *testing.T) {
@@ -826,7 +828,10 @@ func TestArm32LenStringLiteralFolds(t *testing.T) {
 // `<ptr>; const 4; sub; load` IR, so testing one suffices.
 func TestArm32LenNonLiteralUsesPrefixLoad(t *testing.T) {
 	asm := compile(t, `function f(s: string): number { return len(s); }`)
-	mustContain(t, asm, "sub r0, r1, r0")
+	// The const-imm peephole folds the `ldr r0, =4 ; pop ; sub`
+	// trio into `sub r0, r1, #4`; the load that follows is the
+	// prefix read.
+	mustContain(t, asm, "sub r0, r1, #4")
 	mustContain(t, asm, "ldr r0, [r0]")
 }
 

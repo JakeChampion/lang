@@ -82,16 +82,14 @@ func peepPass(lines []string) []string {
 			continue
 		}
 
-		// 8: fold `cmp rN, r0` immediately preceded by
-		// `ldr r0, =CONST` (or `mov r0, #CONST`) into
-		// `cmp rN, #CONST`, dropping the load. Common for
-		// `if (x == 0)`, `while (i < 10)` etc. — the const
-		// is the OpConstI32 operand pushed from the IR's
-		// stack-machine binPop. Only fires when the const
-		// fits the simple 0..255 immediate window so we
-		// don't have to reason about ARM's rotated-imm
-		// encoding.
-		if collapsed, ok := tryCmpAgainstConst(out, line); ok {
+		// 8: fold a 3-operand instruction whose third operand is r0
+		// against an `ldr r0, =N` (or `mov r0, #N`) two lines back.
+		// Covers cmp, add, sub, and, orr, eor (imm window 0..255)
+		// and lsl, asr (imm window 0..31). The const enters r0
+		// from the IR's OpConstI32; pop {rM} is the binPop's lhs.
+		// Common for `if (x == 0)`, `while (i < 10)`, `x + 5`,
+		// `n & 0xff`, `i << 4`, etc.
+		if collapsed, ok := tryRrImmFold(out, line); ok {
 			out = collapsed
 			continue
 		}
@@ -102,25 +100,39 @@ func peepPass(lines []string) []string {
 	return out
 }
 
-// tryCmpAgainstConst recognises the three-line shape
+// tryRrImmFold folds a 3-operand register/register/r0
+// instruction against a preceding `ldr r0, =N` (or
+// `mov r0, #N`) by rewriting r0 → #N. Recognises the
+// three-line shape:
 //
 //	ldr r0, =N         (or `mov r0, #N`)
 //	pop {rM}           (M != 0)
-//	cmp rM, r0
+//	<op> [rD,] rM, r0
 //
 // and rewrites it to
 //
 //	pop {rM}
-//	cmp rM, #N
+//	<op> [rD,] rM, #N
 //
-// dropping the const-load entirely. The const enters r0 from
-// the IR's OpConstI32 (followed by the binPop's pop {r0}; the
-// existing push/pop fusion collapses that pair down to just
-// the load). Only safe when N fits in the simple 0..255
-// immediate window — above that we'd need to verify the
-// encoding rules (8-bit rotated by even amounts) and the win
-// is marginal anyway.
-func tryCmpAgainstConst(out []string, cur string) ([]string, bool) {
+// dropping the const-load. The const enters r0 from the IR's
+// OpConstI32 (followed by the binPop's pop {r0}; the existing
+// push/pop fusion has already collapsed that pair down to
+// just the load). Common cases:
+//
+//	cmp r1, r0          → cmp r1, #N         (if (x == N))
+//	add r0, r1, r0      → add r0, r1, #N     (x + N)
+//	sub r0, r1, r0      → sub r0, r1, #N     (x - N)
+//	and r0, r1, r0      → and r0, r1, #N     (x & N)
+//	orr r0, r1, r0      → orr r0, r1, #N     (x | N)
+//	eor r0, r1, r0      → eor r0, r1, #N     (x ^ N)
+//	lsl r0, r1, r0      → lsl r0, r1, #N     (x << N)
+//	asr r0, r1, r0      → asr r0, r1, #N     (x >> N)
+//
+// Encoding windows: 0..255 for the data-processing ops (a
+// conservative subset of ARM's rotated-imm encoding so we
+// don't have to validate the rotation), 0..31 for shifts
+// (the full immediate range the encoding supports).
+func tryRrImmFold(out []string, cur string) ([]string, bool) {
 	if len(out) < 2 {
 		return nil, false
 	}
@@ -135,16 +147,75 @@ func tryCmpAgainstConst(out []string, cur string) ([]string, bool) {
 		// pop into r0 would overwrite the const we just loaded.
 		return nil, false
 	}
-	cmpReg, ok := matchCmpAgainstR0(cur)
-	if !ok || cmpReg != popReg {
+	op, dst, src, ok := matchRrInstr(cur, popReg)
+	if !ok {
 		return nil, false
 	}
-	if imm < 0 || imm > 255 {
+	max, ok := immWindow(op)
+	if !ok || imm < 0 || imm > max {
 		return nil, false
 	}
-	rewritten := append(out[:len(out)-2], popLine)
-	rewritten = append(rewritten, "\tcmp "+cmpReg+", #"+itoa(imm))
+	var rewrittenLine string
+	if dst == "" {
+		// Two-operand form (cmp / cmn / tst / teq).
+		rewrittenLine = "\t" + op + " " + src + ", #" + itoa(imm)
+	} else {
+		rewrittenLine = "\t" + op + " " + dst + ", " + src + ", #" + itoa(imm)
+	}
+	rewritten := append(out[:len(out)-2], popLine, rewrittenLine)
 	return rewritten, true
+}
+
+// matchRrInstr peels back a 3-operand `<op> rD, rN, r0` (or
+// 2-operand `<op> rN, r0` for cmp-shaped instructions). When
+// the source register matches `popReg`, returns the opcode,
+// optional destination, source, and ok=true.
+func matchRrInstr(line, popReg string) (op, dst, src string, ok bool) {
+	s := trim(line)
+	sp := strings.IndexByte(s, ' ')
+	if sp < 0 {
+		return "", "", "", false
+	}
+	mn := s[:sp]
+	rest := s[sp+1:]
+	switch mn {
+	case "cmp":
+		// cmp rN, r0
+		a, b := splitFirst(rest)
+		if a != popReg || b != "r0" {
+			return "", "", "", false
+		}
+		return mn, "", a, true
+	case "add", "sub", "and", "orr", "eor", "lsl", "asr":
+		// op rD, rN, r0
+		first, rest2 := splitFirst(rest)
+		if first == "" {
+			return "", "", "", false
+		}
+		second, third := splitFirst(rest2)
+		if second != popReg || third != "r0" {
+			return "", "", "", false
+		}
+		return mn, first, second, true
+	}
+	return "", "", "", false
+}
+
+// immWindow is the conservative immediate range we accept for
+// each foldable opcode. Data-processing ops (add/sub/and/etc.)
+// use 0..255 — strictly within ARM's 8-bit rotated-imm
+// encoding so no rotation analysis is needed. Shifts use
+// 0..31, the full encoding window for `lsl rD, rN, #imm`
+// and `asr rD, rN, #imm`. cmp shares the data-processing
+// window.
+func immWindow(op string) (int, bool) {
+	switch op {
+	case "cmp", "add", "sub", "and", "orr", "eor":
+		return 255, true
+	case "lsl", "asr":
+		return 31, true
+	}
+	return 0, false
 }
 
 // matchLoadConstR0 returns (N, true) when `line` is one of
@@ -167,21 +238,6 @@ func matchLoadConstR0(line string) (int, bool) {
 
 func matchPop(line string) string {
 	return popReg(line)
-}
-
-// matchCmpAgainstR0 returns the *other* register when `line`
-// is `cmp rN, r0` (N != 0). The form `cmp r0, r0` self-
-// compares and is left alone.
-func matchCmpAgainstR0(line string) (string, bool) {
-	s := trim(line)
-	if !strings.HasPrefix(s, "cmp ") {
-		return "", false
-	}
-	a, b := splitFirst(s[len("cmp "):])
-	if b != "r0" || a == "" || a == "r0" {
-		return "", false
-	}
-	return a, true
 }
 
 // parseAfter returns (n, true) when s begins with prefix and

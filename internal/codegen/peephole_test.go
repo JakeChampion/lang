@@ -140,6 +140,70 @@ func TestConditionalBranchToNextLineDropped(t *testing.T) {
 	}
 }
 
+// The const-imm peephole covers the data-processing ops and
+// the shifts that the IR's binary lowerings emit. Each test
+// asserts the fold drops the const-load and rewrites the op
+// to use an immediate.
+func TestArithImmFold_AddSubAndOrrEor(t *testing.T) {
+	cases := []struct {
+		mnemonic string
+		imm      int
+	}{
+		{"add", 5},
+		{"sub", 12},
+		{"and", 255},
+		{"orr", 16},
+		{"eor", 7},
+	}
+	for _, tc := range cases {
+		in := strings.Join([]string{
+			"\tldr r0, =" + itoa(tc.imm),
+			"\tpop {r1}",
+			"\t" + tc.mnemonic + " r0, r1, r0",
+		}, "\n")
+		got := peephole(in)
+		want := tc.mnemonic + " r0, r1, #" + itoa(tc.imm)
+		if !strings.Contains(got, want) {
+			t.Errorf("%s: expected %q, got:\n%s", tc.mnemonic, want, got)
+		}
+		if strings.Contains(got, "ldr r0, =") {
+			t.Errorf("%s: const-load should be elided:\n%s", tc.mnemonic, got)
+		}
+	}
+}
+
+// Shifts use a 0..31 immediate window (the full encoding). The
+// fold uses the same shape as the data-processing ops.
+func TestArithImmFold_Shifts(t *testing.T) {
+	for _, mn := range []string{"lsl", "asr"} {
+		in := strings.Join([]string{
+			"\tldr r0, =4",
+			"\tpop {r1}",
+			"\t" + mn + " r0, r1, r0",
+		}, "\n")
+		got := peephole(in)
+		want := mn + " r0, r1, #4"
+		if !strings.Contains(got, want) {
+			t.Errorf("%s: expected %q, got:\n%s", mn, want, got)
+		}
+	}
+}
+
+// Shift counts > 31 don't fold — the encoding window is 0..31
+// and out-of-range values aren't valid as immediate operands
+// to `lsl` / `asr`.
+func TestArithImmFold_ShiftsOutOfRangeNotFolded(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r0, =40",
+		"\tpop {r1}",
+		"\tlsl r0, r1, r0",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "ldr r0, =40") {
+		t.Errorf("shift count 40 must not fold (out of range):\n%s", got)
+	}
+}
+
 // `ldr r0, =N ; pop {rN} ; cmp rN, r0` (small N) collapses to
 // `pop {rN} ; cmp rN, #N`, dropping the literal load entirely.
 func TestCmpAgainstSmallConstFolds(t *testing.T) {
