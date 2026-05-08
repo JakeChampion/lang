@@ -120,16 +120,27 @@ func TestComparisonEmitsCondMoves(t *testing.T) {
 // OpIf, which the backend translates into `cmp r0, #0; beq <else>`.
 func TestShortCircuitAnd(t *testing.T) {
 	asm := compile(t, `function f(a: boolean, b: boolean): boolean { return a && b; }`)
+	// `a && b` lowers via OpIf BlockTypeI32; the if-conversion
+	// peep collapses the branch + arms into predicated movs:
+	// `movne` for the then-arm (b), `ldreq` for the else (0).
 	mustContain(t, asm, "cmp r0, #0")
-	mustContain(t, asm, "beq .LifElse_")
+	if !strings.Contains(asm, "movne") && !strings.Contains(asm, "beq .LifElse_") {
+		t.Errorf("expected predicated movne or branch shape:\n%s", asm)
+	}
 }
 
 func TestShortCircuitOr(t *testing.T) {
 	asm := compile(t, `function f(a: boolean, b: boolean): boolean { return a || b; }`)
-	// `a || b` is `if a then 1 else b` — same `beq` / OpIf shape, with
-	// the constant-1 branch sitting in the `then` arm.
+	// `a || b` is `if a then 1 else b` — same OpIf shape, with
+	// the constant-1 in the `then` arm. The if-conversion peep
+	// collapses to `ldrne r0, =1 ; moveq r0, r5` (then = 1 if
+	// a non-zero, else b).
 	mustContain(t, asm, "cmp r0, #0")
-	mustContain(t, asm, "beq .LifElse_")
+	predicated := strings.Contains(asm, "ldrne") || strings.Contains(asm, "movne")
+	branched := strings.Contains(asm, "beq .LifElse_")
+	if !predicated && !branched {
+		t.Errorf("expected predicated form or branch shape:\n%s", asm)
+	}
 }
 
 func TestCallEmitsBl(t *testing.T) {
@@ -726,13 +737,21 @@ func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 	}
 }
 
-// Ternary is just a typed `if/else` in IR (block-result i32), so
-// the assembly is a `beq <else>` + a fall-through `b <end>`.
+// Ternary is just a typed `if/else` in IR (block-result i32).
+// When both arms are predicate-able single instructions (e.g.
+// `ldr r0, =1` / `ldr r0, =2`), the if-conversion peep
+// collapses the branch + ELSE/END labels into a pair of
+// predicated loads — `cmp r0, #0 ; ldrne r0, =1 ; ldreq r0, =2`.
 func TestArm32TernaryBranches(t *testing.T) {
 	asm := compile(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
-	mustContain(t, asm, ".LifElse_")
-	mustContain(t, asm, ".LifEnd_")
-	mustContain(t, asm, "beq")
+	mustContain(t, asm, "cmp r0, #0")
+	// Either the predicated form (ldrne / ldreq) or the
+	// pre-fold branch shape is acceptable.
+	predicated := strings.Contains(asm, "ldrne") && strings.Contains(asm, "ldreq")
+	branched := strings.Contains(asm, ".LifElse_") && strings.Contains(asm, "beq")
+	if !predicated && !branched {
+		t.Errorf("expected predicated form or branch shape:\n%s", asm)
+	}
 }
 
 func TestArm32CompoundAssignLowersToBinary(t *testing.T) {
