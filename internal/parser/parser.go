@@ -583,6 +583,19 @@ func (p *parser) parseType() (ast.Type, error) {
 	t := p.peek()
 	var base ast.Type
 	switch {
+	case t.Kind == lexer.Punct && t.Text == "[":
+		// `[T]` slice view. Distinct from owned `T[]` which is
+		// parsed as a postfix below. Putting the brackets in
+		// front signals "this borrows" — Odin's convention.
+		p.advance()
+		elem, err := p.parseType()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			return nil, err
+		}
+		base = ast.SliceType{Elem: elem}
 	case t.Kind == lexer.Keyword && (t.Text == "number" || t.Text == "i32"):
 		// `number` is the legacy alias; both lower to the
 		// canonical zero-value NumberType so equality keeps
@@ -1504,14 +1517,54 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			expr = &ast.Call{P: open.Pos, Callee: expr, Args: args}
 		case p.match(lexer.Punct, "["):
 			open := p.advance()
-			idx, err := p.parseExpr()
+			// Slicing distinguishes from indexing by the `:`
+			// separator: `arr[i]` indexes, `arr[a:b]` /
+			// `arr[a:]` / `arr[:b]` slices. Either bound is
+			// optional; `arr[:]` is reserved (no use case yet —
+			// errors out).
+			if _, ok := p.accept(lexer.Punct, ":"); ok {
+				// `[:b]` form — low is implicitly 0.
+				var high ast.Expr
+				if !p.match(lexer.Punct, "]") {
+					h, err := p.parseExpr()
+					if err != nil {
+						return nil, err
+					}
+					high = h
+				}
+				if _, err := p.expect(lexer.Punct, "]"); err != nil {
+					return nil, err
+				}
+				if high == nil {
+					return nil, p.errorf(open.Pos, "`[:]` slice form is reserved; use `arr[0:len(arr)]` for now")
+				}
+				expr = &ast.SliceExpr{P: open.Pos, Source: expr, High: high}
+				continue
+			}
+			first, err := p.parseExpr()
 			if err != nil {
 				return nil, err
+			}
+			if _, ok := p.accept(lexer.Punct, ":"); ok {
+				// `[a:b]` or `[a:]` form.
+				var high ast.Expr
+				if !p.match(lexer.Punct, "]") {
+					h, err := p.parseExpr()
+					if err != nil {
+						return nil, err
+					}
+					high = h
+				}
+				if _, err := p.expect(lexer.Punct, "]"); err != nil {
+					return nil, err
+				}
+				expr = &ast.SliceExpr{P: open.Pos, Source: expr, Low: first, High: high}
+				continue
 			}
 			if _, err := p.expect(lexer.Punct, "]"); err != nil {
 				return nil, err
 			}
-			expr = &ast.Index{P: open.Pos, Array: expr, Idx: idx}
+			expr = &ast.Index{P: open.Pos, Array: expr, Idx: first}
 		case p.match(lexer.Punct, "."):
 			dot := p.advance()
 			// Tuple field access uses a numeric selector (`pair.0`,

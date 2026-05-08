@@ -1217,6 +1217,52 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr))
 		}
 		return arr[idx], nil
+	case *ast.SliceExpr:
+		// Slices are stored as `Array` at interp time — same
+		// type because the interpreter doesn't model alias /
+		// ownership. Building one is just a Go-level subslice;
+		// `len(slice)` and indexing fall through to the Array
+		// path automatically.
+		srcV, err := i.evalExpr(x.Source, env)
+		if err != nil {
+			return nil, err
+		}
+		arr, ok := srcV.(Array)
+		if !ok {
+			return nil, fmt.Errorf("cannot slice non-array %T", srcV)
+		}
+		low := int64(0)
+		if x.Low != nil {
+			lv, err := i.evalExpr(x.Low, env)
+			if err != nil {
+				return nil, err
+			}
+			n, ok := lv.(Number)
+			if !ok {
+				return nil, fmt.Errorf("slice low must be number, got %T", lv)
+			}
+			low = int64(n)
+		}
+		high := int64(len(arr))
+		if x.High != nil {
+			hv, err := i.evalExpr(x.High, env)
+			if err != nil {
+				return nil, err
+			}
+			n, ok := hv.(Number)
+			if !ok {
+				return nil, fmt.Errorf("slice high must be number, got %T", hv)
+			}
+			high = int64(n)
+		}
+		if low < 0 || high > int64(len(arr)) || low > high {
+			return nil, fmt.Errorf("slice [%d:%d] out of range for length %d", low, high, len(arr))
+		}
+		// Return a sub-slice; aliases the parent's elements like
+		// the wasm path. Mutation through the slice would write
+		// back to the parent — we don't have mutating slice
+		// operations at lang level yet, so this is moot.
+		return Array(arr[low:high]), nil
 	case *ast.Call:
 		return i.evalCall(x, env)
 	case *ast.Binary:

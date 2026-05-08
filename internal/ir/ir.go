@@ -1063,10 +1063,88 @@ func (b *builder) expr(e ast.Expr) error {
 		if n.IsString {
 			b.emit(Op{Kind: OpCallDirect, Str: "__str_idx", I32: 2})
 			b.emit(Op{Kind: OpLoadByte})
+		} else if n.IsSlice {
+			b.emit(Op{Kind: OpCallDirect, Str: "__slice_idx", I32: 2})
+			b.emit(Op{Kind: OpLoad})
 		} else {
 			b.emit(Op{Kind: OpCallDirect, Str: "__arr_idx", I32: 2})
 			b.emit(Op{Kind: OpLoad})
 		}
+	case *ast.SliceExpr:
+		// Lower `arr[low:high]` to:
+		//   data_ptr = (arr or *slice) + low * 4
+		//   len      = high - low
+		//   slice    = __slice_make(data_ptr, len)
+		// Both bounds default lazily — `low` falls back to 0,
+		// `high` falls back to len(source). Bounds-check happens
+		// at access time inside `__slice_idx`; constructing a
+		// slice with `low > high` is allowed (the resulting
+		// negative len just fails the next bounds check).
+
+		// Push the source's underlying data pointer.
+		if err := b.expr(n.Source); err != nil {
+			return err
+		}
+		if n.SourceIsSlice {
+			// For sub-slicing, dereference: data_ptr lives at
+			// slice + 0.
+			b.emit(Op{Kind: OpLoad})
+		}
+		// data_ptr += low * 4 (skip when low is 0/missing).
+		if n.Low != nil {
+			if err := b.expr(n.Low); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpConstI32, I32: 4})
+			b.emit(Op{Kind: OpMul})
+			b.emit(Op{Kind: OpAdd})
+		}
+		// Stash the data_ptr for later — we still need to push
+		// the len before calling `$__slice_make`.
+		dataSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_slice_data_%d", dataSlot)] = dataSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
+
+		// Compute len = (High or source-len) - (Low or 0).
+		if n.High != nil {
+			if err := b.expr(n.High); err != nil {
+				return err
+			}
+		} else {
+			// Re-evaluate Source's length. Cheap when the source
+			// is an identifier (the common case); a more
+			// expensive source would benefit from evaluating
+			// once into a slot, but we don't have that yet.
+			if err := b.expr(n.Source); err != nil {
+				return err
+			}
+			if n.SourceIsSlice {
+				// len lives at slice + 4.
+				b.emit(Op{Kind: OpConstI32, I32: 4})
+				b.emit(Op{Kind: OpAdd})
+				b.emit(Op{Kind: OpLoad})
+			} else {
+				// Owned arrays / strings carry their length at
+				// data_ptr - 4 (the standard prefix).
+				b.emit(Op{Kind: OpConstI32, I32: 4})
+				b.emit(Op{Kind: OpSub})
+				b.emit(Op{Kind: OpLoad})
+			}
+		}
+		if n.Low != nil {
+			if err := b.expr(n.Low); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpSub})
+		}
+		// Stack now: [len]. Push data, swap argument order via a
+		// temp local, then call `$__slice_make(data, len)`.
+		lenSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_slice_len_%d", lenSlot)] = lenSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
+		b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+		b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+		b.emit(Op{Kind: OpCallDirect, Str: "__slice_make", I32: 2})
 	case *ast.ArrayLit:
 		// Allocate len*4 + 4 bytes (length prefix + payload), store
 		// the length at base+0, then store each element at
@@ -1248,6 +1326,38 @@ func (b *builder) expr(e ast.Expr) error {
 // supports the small set of expression shapes the IR needs to lower
 // FieldAccess: identifiers (var / param), nested field access, and
 // struct literals.
+// exprType returns the static type of `e` for the limited set of
+// shapes the IR layer needs to distinguish at lowering time. Falls
+// back to nil when the expression's type can't be derived purely
+// from local / param / argument metadata. Used by `len()` so we
+// can pick the slice (`+4`) vs array / string (`-4`) offset.
+func (b *builder) exprType(e ast.Expr) ast.Type {
+	switch x := e.(type) {
+	case *ast.Ident:
+		for _, v := range b.info.Locals[b.fn] {
+			if v.Name == x.Name {
+				return v.Type
+			}
+		}
+		for _, p := range b.fn.Params {
+			if p.Name == x.Name {
+				return p.Type
+			}
+		}
+	case *ast.SliceExpr:
+		// Slice expressions always produce a SliceType — the
+		// element type is the same as the source.
+		src := b.exprType(x.Source)
+		switch s := src.(type) {
+		case ast.ArrayType:
+			return ast.SliceType{Elem: s.Elem}
+		case ast.SliceType:
+			return s
+		}
+	}
+	return nil
+}
+
 // targetTupleType returns the static TupleType of `e` when `e`
 // resolves to one. Used by FieldAccess lowering to dispatch
 // numeric-index access without going through the struct path.
@@ -1793,8 +1903,17 @@ func (b *builder) call(n *ast.Call) error {
 				if err := b.expr(n.Args[0]); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpConstI32, I32: 4})
-				b.emit(Op{Kind: OpSub})
+				// Slice values carry the length at slice+4
+				// (after the data_ptr); arrays / strings carry
+				// it at base-4 (the standard prefix). Pick the
+				// offset based on the static type.
+				if _, isSlice := b.exprType(n.Args[0]).(ast.SliceType); isSlice {
+					b.emit(Op{Kind: OpConstI32, I32: 4})
+					b.emit(Op{Kind: OpAdd})
+				} else {
+					b.emit(Op{Kind: OpConstI32, I32: 4})
+					b.emit(Op{Kind: OpSub})
+				}
 				b.emit(Op{Kind: OpLoad})
 				return nil
 			}

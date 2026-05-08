@@ -646,6 +646,17 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte('[')
 		f.formatExpr(x.Idx, precLowest)
 		f.b.WriteByte(']')
+	case *ast.SliceExpr:
+		f.formatExpr(x.Source, precPrimary)
+		f.b.WriteByte('[')
+		if x.Low != nil {
+			f.formatExpr(x.Low, precLowest)
+		}
+		f.b.WriteByte(':')
+		if x.High != nil {
+			f.formatExpr(x.High, precLowest)
+		}
+		f.b.WriteByte(']')
 	case *ast.ArrayLit:
 		f.b.WriteByte('[')
 		for i, el := range x.Elems {
@@ -749,6 +760,8 @@ func formatType(t ast.Type) string {
 		return x.Name
 	case ast.ArrayType:
 		return formatType(x.Elem) + "[]"
+	case ast.SliceType:
+		return "[" + formatType(x.Elem) + "]"
 	case ast.TupleType:
 		out := "("
 		for i, e := range x.Elems {
