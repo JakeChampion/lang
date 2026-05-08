@@ -46,9 +46,17 @@ type Type interface {
 // i32 wasm ops with masking on store; i64 uses native i64 ops.
 // Sub-i32 widths are reserved for a follow-up PR — currently only
 // 32 and 64 are exercised end-to-end.
+//
+// Spelling carries the source-level keyword the parser saw
+// (`"number"`, `"i32"`, ...). It's purely for the formatter so
+// `lang -fmt` round-trips the user's chosen spelling instead of
+// always converging on the canonical name. Equality and codegen
+// ignore it; the zero value means "no source spelling captured,
+// use the canonical name on output".
 type NumberType struct {
-	Width  int
-	Signed bool
+	Width    int
+	Signed   bool
+	Spelling string
 }
 type BoolType struct{}
 type VoidType struct{}
@@ -58,8 +66,13 @@ type StringType struct{}
 // 64; the zero value is f32 to keep `FloatType{}` working
 // unchanged after the f64 type was added. Currently only Width=32
 // is wired through the backends; f64 is reserved for a follow-up.
+//
+// Spelling matches NumberType.Spelling — captures the keyword
+// the parser saw (`"float"`, `"f32"`, ...) so the formatter can
+// preserve it on round-trip.
 type FloatType struct {
-	Width int
+	Width    int
+	Spelling string
 }
 type ArrayType struct{ Elem Type }
 

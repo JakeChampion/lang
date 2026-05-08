@@ -712,9 +712,13 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 func formatType(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.NumberType:
-		// Use the canonical sized name (`i32`, `i64`, `u32`,
-		// ...) — `number` is the legacy alias and we want fmt
-		// output to converge on the new spelling.
+		// Preserve the user's source spelling when the parser
+		// captured one (`number` vs `i32`). Falls back to the
+		// canonical name for synthesised types (e.g. inferred
+		// in the checker).
+		if x.Spelling != "" {
+			return x.Spelling
+		}
 		return x.String()
 	case ast.BoolType:
 		return "boolean"
@@ -723,6 +727,9 @@ func formatType(t ast.Type) string {
 	case ast.StringType:
 		return "string"
 	case ast.FloatType:
+		if x.Spelling != "" {
+			return x.Spelling
+		}
 		return x.String()
 	case ast.StructType:
 		return x.Name
