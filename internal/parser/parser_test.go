@@ -22,7 +22,7 @@ func TestEmptyFunction(t *testing.T) {
 
 func TestPrecedence(t *testing.T) {
 	// 1 + 2 * 3 should parse as 1 + (2 * 3)
-	prog, err := Parse("function f(): number { return 1 + 2 * 3; }")
+	prog, err := Parse("function f(): i32 { return 1 + 2 * 3; }")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestPrecedence(t *testing.T) {
 }
 
 func TestArrayLitAndIndex(t *testing.T) {
-	prog, err := Parse("function f(): number { var a: number[] = [1,2,3]; return a[1]; }")
+	prog, err := Parse("function f(): i32 { var a: i32[] = [1,2,3]; return a[1]; }")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestAssignToCallIsError(t *testing.T) {
 }
 
 func TestIfElse(t *testing.T) {
-	prog, err := Parse("function f(): number { if (true) { return 1; } else { return 2; } }")
+	prog, err := Parse("function f(): i32 { if (true) { return 1; } else { return 2; } }")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestIfElse(t *testing.T) {
 
 // `for` produces a real For node (so `continue` can target the step).
 func TestForProducesForNode(t *testing.T) {
-	prog, err := Parse(`function f(): number {
+	prog, err := Parse(`function f(): i32 {
 		for (var i = 0; i < 3; i = i + 1) { i; }
 		return 0;
 	}`)
@@ -96,8 +96,8 @@ func TestForProducesForNode(t *testing.T) {
 // `continue` advances the index via the For's step slot rather
 // than skipping it).
 func TestForEachOverArrayDesugars(t *testing.T) {
-	prog, err := Parse(`function f(): number {
-		var sum: number = 0;
+	prog, err := Parse(`function f(): i32 {
+		var sum: i32 = 0;
 		for x in [1, 2, 3] {
 			sum = sum + x;
 		}
@@ -126,8 +126,8 @@ func TestForEachOverArrayDesugars(t *testing.T) {
 // `for c in "hi"` works the same way — strings support `len()` and
 // indexing, so the desugar applies identically.
 func TestForEachOverStringDesugars(t *testing.T) {
-	prog, err := Parse(`function f(): number {
-		var sum: number = 0;
+	prog, err := Parse(`function f(): i32 {
+		var sum: i32 = 0;
 		for c in "abc" {
 			sum = sum + c;
 		}
@@ -145,8 +145,8 @@ func TestForEachOverStringDesugars(t *testing.T) {
 // Nested foreach loops use unique synthetic slot names so the inner
 // loop can't shadow the outer's iterator / length / index.
 func TestForEachNestedHasUniqueSlots(t *testing.T) {
-	prog, err := Parse(`function f(): number {
-		var s: number = 0;
+	prog, err := Parse(`function f(): i32 {
+		var s: i32 = 0;
 		for a in [1, 2] {
 			for b in [3, 4] {
 				s = s + a + b;
@@ -189,8 +189,8 @@ func TestForEachNestedHasUniqueSlots(t *testing.T) {
 // `break` and `continue` inside a foreach body target the desugared
 // while loop — same semantics as a hand-written index loop.
 func TestForEachBreakContinue(t *testing.T) {
-	prog, err := Parse(`function f(): number {
-		var sum: number = 0;
+	prog, err := Parse(`function f(): i32 {
+		var sum: i32 = 0;
 		for x in [1, 2, 3, 4] {
 			if (x == 2) { continue; }
 			if (x == 4) { break; }
@@ -207,7 +207,7 @@ func TestForEachBreakContinue(t *testing.T) {
 }
 
 func TestForWithExprInit(t *testing.T) {
-	prog, err := Parse(`function f(): number {
+	prog, err := Parse(`function f(): i32 {
 		var i = 0;
 		for (i = 0; i < 3; i = i + 1) {}
 		return 0;
@@ -220,7 +220,7 @@ func TestForWithExprInit(t *testing.T) {
 
 func TestForEmptyInitAndStep(t *testing.T) {
 	// `for (; cond; ) body` — no init, no step.
-	prog, err := Parse(`function f(): number {
+	prog, err := Parse(`function f(): i32 {
 		var i = 0;
 		for (; i < 3 ;) { i = i + 1; }
 		return i;
@@ -232,7 +232,7 @@ func TestForEmptyInitAndStep(t *testing.T) {
 }
 
 func TestFunctionTypeAnnotation(t *testing.T) {
-	prog, err := Parse(`function apply(f: (number, number) => number, a: number, b: number): number {
+	prog, err := Parse(`function apply(f: (i32, i32) => i32, a: i32, b: i32): i32 {
 		return f(a, b);
 	}`)
 	if err != nil {
@@ -249,7 +249,7 @@ func TestFunctionTypeAnnotation(t *testing.T) {
 }
 
 func TestNullaryFunctionType(t *testing.T) {
-	prog, err := Parse(`function call(f: () => number): number { return f(); }`)
+	prog, err := Parse(`function call(f: () => i32): i32 { return f(); }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestNullaryFunctionType(t *testing.T) {
 // The parser should keep going after a per-statement error so a single
 // run reports every problem, not just the first.
 func TestRecoversAndReportsMultiplePerStatement(t *testing.T) {
-	src := `function f(): number {
+	src := `function f(): i32 {
 		var x = ;
 		var y = 1 +;
 		return 0;
@@ -283,7 +283,7 @@ func TestRecoversAndReportsMultiplePerStatement(t *testing.T) {
 // from being parsed.
 func TestRecoversAtTopLevel(t *testing.T) {
 	src := `garbage tokens here;
-		function good(): number { return 42; }`
+		function good(): i32 { return 42; }`
 	prog, err := Parse(src)
 	if err == nil {
 		t.Fatal("expected errors")
@@ -316,7 +316,7 @@ func TestFloatLiteralAndType(t *testing.T) {
 }
 
 func TestSwitchParsesBasic(t *testing.T) {
-	prog, err := Parse(`function f(n: number): number {
+	prog, err := Parse(`function f(n: i32): i32 {
 		switch (n) {
 			case 1, 2: return 10;
 			case 3: return 30;
@@ -339,7 +339,7 @@ func TestSwitchParsesBasic(t *testing.T) {
 }
 
 func TestSwitchRejectsDuplicateDefault(t *testing.T) {
-	_, err := Parse(`function f(n: number): number {
+	_, err := Parse(`function f(n: i32): i32 {
 		switch (n) { default: return 0; default: return 1; }
 	}`)
 	if err == nil {
@@ -348,7 +348,7 @@ func TestSwitchRejectsDuplicateDefault(t *testing.T) {
 }
 
 func TestCompoundAssignDesugars(t *testing.T) {
-	prog, err := Parse(`function f(): number { var x: number = 1; x += 2; return x; }`)
+	prog, err := Parse(`function f(): i32 { var x: i32 = 1; x += 2; return x; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestCompoundAssignDesugars(t *testing.T) {
 }
 
 func TestTernary(t *testing.T) {
-	prog, err := Parse(`function f(b: boolean): number { return b ? 1 : 2; }`)
+	prog, err := Parse(`function f(b: boolean): i32 { return b ? 1 : 2; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestTernary(t *testing.T) {
 
 func TestTernaryRightAssociative(t *testing.T) {
 	// `a ? b : c ? d : e` parses as `a ? b : (c ? d : e)`.
-	prog, err := Parse(`function f(a: boolean, c: boolean): number {
+	prog, err := Parse(`function f(a: boolean, c: boolean): i32 {
 		return a ? 1 : c ? 2 : 3;
 	}`)
 	if err != nil {
@@ -396,7 +396,7 @@ func TestTernaryRightAssociative(t *testing.T) {
 }
 
 func TestStructDecl(t *testing.T) {
-	prog, err := Parse(`struct Point { x: number, y: number }`)
+	prog, err := Parse(`struct Point { x: i32, y: i32 }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,8 +410,8 @@ func TestStructDecl(t *testing.T) {
 }
 
 func TestStructLitAndFieldAccess(t *testing.T) {
-	prog, err := Parse(`struct P { x: number }
-		function main(): number {
+	prog, err := Parse(`struct P { x: i32 }
+		function main(): i32 {
 			var p: P = P { x: 5 };
 			return p.x;
 		}`)
@@ -430,8 +430,8 @@ func TestStructLitAndFieldAccess(t *testing.T) {
 }
 
 func TestMethodReceiverParsing(t *testing.T) {
-	prog, err := Parse(`struct Point { x: number, y: number }
-		function (p: Point) sum(): number { return p.x + p.y; }`)
+	prog, err := Parse(`struct Point { x: i32, y: i32 }
+		function (p: Point) sum(): i32 { return p.x + p.y; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,8 +456,8 @@ func TestMethodReceiverParsing(t *testing.T) {
 func TestRegularFunctionStillParses(t *testing.T) {
 	// Make sure the receiver lookahead doesn't trigger on a normal
 	// function whose first param is a struct.
-	prog, err := Parse(`struct P { x: number }
-		function describe(p: P): number { return p.x; }`)
+	prog, err := Parse(`struct P { x: i32 }
+		function describe(p: P): i32 { return p.x; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,10 +470,10 @@ func TestRegularFunctionStillParses(t *testing.T) {
 // modload step inspects those when deciding whether a cross-module
 // reference is allowed.
 func TestPubKeywordSetsPublicFlag(t *testing.T) {
-	prog, err := Parse(`pub function exposed(): number { return 1; }
-function hidden(): number { return 2; }
-pub struct PubPoint { x: number }
-struct PrivPoint { x: number }`)
+	prog, err := Parse(`pub function exposed(): i32 { return 1; }
+function hidden(): i32 { return 2; }
+pub struct PubPoint { x: i32 }
+struct PrivPoint { x: i32 }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,7 +503,7 @@ struct PrivPoint { x: number }`)
 // `pub var` (or any other kind of decl) should be rejected with a
 // clear message rather than silently swallowed.
 func TestPubBeforeUnsupportedKindIsError(t *testing.T) {
-	_, err := Parse(`pub var x: number = 1;`)
+	_, err := Parse(`pub var x: i32 = 1;`)
 	if err == nil {
 		t.Fatal("expected parse error for `pub var`")
 	}
@@ -516,7 +516,7 @@ func TestPubBeforeUnsupportedKindIsError(t *testing.T) {
 // the program. Type annotations and the `pub` prefix are both
 // optional.
 func TestConstDeclParses(t *testing.T) {
-	prog, err := Parse(`const N: number = 42;
+	prog, err := Parse(`const N: i32 = 42;
 const M = 7;
 pub const PI: float = 3.14;`)
 	if err != nil {
@@ -526,7 +526,7 @@ pub const PI: float = 3.14;`)
 		t.Fatalf("expected 3 const decls, got %d", len(prog.Consts))
 	}
 	if prog.Consts[0].Name != "N" || prog.Consts[0].Type == nil {
-		t.Errorf("first const should be `N: number`; got %+v", prog.Consts[0])
+		t.Errorf("first const should be `N: i32`; got %+v", prog.Consts[0])
 	}
 	if prog.Consts[1].Name != "M" || prog.Consts[1].Type != nil {
 		t.Errorf("second const should be `M` (no type annotation); got %+v", prog.Consts[1])
@@ -569,8 +569,8 @@ pub enum Direction { N, S, E, W }`)
 // `match (e) { Variant => { … }, _ => { … } }` parses into a
 // Match stmt with an Arms slice mirroring the source order.
 func TestMatchStmtParses(t *testing.T) {
-	prog, err := Parse(`enum E { A, B(number) }
-function f(): number {
+	prog, err := Parse(`enum E { A, B(i32) }
+function f(): i32 {
 	var e: E = A;
 	match (e) {
 		A => { return 1; },
@@ -631,15 +631,15 @@ enum Result[T, E] { Ok(T), Err(E) }`)
 // array suffix wraps the result.
 func TestGenericInstantiationAtTypePosition(t *testing.T) {
 	prog, err := Parse(`enum Option[T] { Some(T), None }
-function f(): Option[number] { return None; }
-function g(xs: Option[string][]): number { return 0; }`)
+function f(): Option[i32] { return None; }
+function g(xs: Option[string][]): i32 { return 0; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f := prog.Funcs[0]
 	et, ok := f.ReturnType.(ast.EnumType)
 	if !ok || et.Name != "Option" || len(et.Args) != 1 {
-		t.Errorf("f's return type should be Option[number]; got %+v", f.ReturnType)
+		t.Errorf("f's return type should be Option[i32]; got %+v", f.ReturnType)
 	}
 	g := prog.Funcs[1]
 	at, ok := g.Params[0].Type.(ast.ArrayType)

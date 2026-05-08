@@ -14,8 +14,8 @@ func loweredAndInlined(t *testing.T, src string) *Program {
 // away, replaced by an OpStoreLocal binding the arg plus the
 // inlined `x * 2` ops.
 func TestInlineSubstitutesBody(t *testing.T) {
-	p := loweredAndInlined(t, `function dbl(x: number): number { return x * 2; }
-		function main(): number { return dbl(7); }`)
+	p := loweredAndInlined(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 { return dbl(7); }`)
 	main := findFunc(p, "main")
 	if main == nil {
 		t.Fatal("main not found")
@@ -35,7 +35,7 @@ func TestInlineSubstitutesBody(t *testing.T) {
 // control-flow disqualifier *and* the recursive call would loop, so
 // either rule rejects it. The OpCallDirect must survive untouched.
 func TestInlineSkipsRecursiveFunction(t *testing.T) {
-	p := loweredAndInlined(t, `function fact(n: number): number {
+	p := loweredAndInlined(t, `function fact(n: i32): i32 {
 		if (n == 0) { return 1; }
 		return n * fact(n - 1);
 	}`)
@@ -46,8 +46,8 @@ func TestInlineSkipsRecursiveFunction(t *testing.T) {
 // arg into a fresh slot once, so the substituted body reads the
 // slot for both uses. No duplication of the arg expression.
 func TestInlineDoesNotDuplicateArgEvaluation(t *testing.T) {
-	p := loweredAndInlined(t, `function dbl(x: number): number { return x + x; }
-		function main(): number { return dbl(3); }`)
+	p := loweredAndInlined(t, `function dbl(x: i32): i32 { return x + x; }
+		function main(): i32 { return dbl(3); }`)
 	main := findFunc(p, "main")
 	// Exactly one OpConstI32 3 (the arg literal) — substitution must
 	// reuse a local rather than re-evaluate.
@@ -66,8 +66,8 @@ func TestInlineDoesNotDuplicateArgEvaluation(t *testing.T) {
 // The IR fold collapses the substituted body's arithmetic later in
 // the pipeline; here we only check that inlining didn't refuse.
 func TestInlineAcceptsArbitraryArgExpressions(t *testing.T) {
-	p := loweredAndInlined(t, `function dbl(x: number): number { return x * 2; }
-		function main(): number { return dbl(1 + 2); }`)
+	p := loweredAndInlined(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 { return dbl(1 + 2); }`)
 	main := findFunc(p, "main")
 	for _, op := range main.Ops {
 		if op.Kind == OpCallDirect && op.Str == "dbl" {
@@ -80,8 +80,8 @@ func TestInlineAcceptsArbitraryArgExpressions(t *testing.T) {
 // same callee don't share state. We check via len(ScratchTypes),
 // which grows by the callee's slot count for every site.
 func TestInlineAppendsFreshSlotsPerCallSite(t *testing.T) {
-	p := loweredAndInlined(t, `function dbl(x: number): number { return x * 2; }
-		function main(): number { return dbl(3) + dbl(4); }`)
+	p := loweredAndInlined(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 { return dbl(3) + dbl(4); }`)
 	main := findFunc(p, "main")
 	// dbl has 1 slot (its single param `x`). Two inlines → 2 fresh
 	// slots beyond main's own (0 params, 0 locals, 0 prior scratches).
@@ -94,9 +94,9 @@ func TestInlineAppendsFreshSlotsPerCallSite(t *testing.T) {
 // candidates — inlining them would duplicate the inner call and
 // could blow recursion. Verify they're left alone.
 func TestInlineSkipsFunctionsContainingCalls(t *testing.T) {
-	p := loweredAndInlined(t, `function add(a: number, b: number): number { return a + b; }
-		function compose(x: number): number { return add(x, x); }
-		function main(): number { return compose(5); }`)
+	p := loweredAndInlined(t, `function add(a: i32, b: i32): i32 { return a + b; }
+		function compose(x: i32): i32 { return add(x, x); }
+		function main(): i32 { return compose(5); }`)
 	// compose contains a call to add, so compose should NOT be
 	// inlined into main.
 	main := findFunc(p, "main")
@@ -118,8 +118,8 @@ func TestInlineSkipsFunctionsContainingCalls(t *testing.T) {
 // arithmetic. Here `2 * y` survives because y is a runtime param,
 // but a literal call like `7 * 2` inside the inlined body folds.
 func TestInlineThenFoldSimplifiesSubstitutedBody(t *testing.T) {
-	p := lowerSource(t, `function bumped(x: number): number { return x + (1 + 2); }
-		function main(n: number): number { return bumped(n); }`)
+	p := lowerSource(t, `function bumped(x: i32): i32 { return x + (1 + 2); }
+		function main(n: i32): i32 { return bumped(n); }`)
 	Inline(p)
 	Fold(p)
 	main := findFunc(p, "main")
@@ -160,8 +160,8 @@ func TestInlineRecordsFloatScratchTypes(t *testing.T) {
 // has no internal control flow (eligibility forbids it), so the
 // caller's existing structure is undisturbed.
 func TestInlineKeepsStructuredCFBalanced(t *testing.T) {
-	p := loweredAndInlined(t, `function dbl(x: number): number { return x * 2; }
-		function main(n: number): number {
+	p := loweredAndInlined(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(n: i32): i32 {
 			if (n > 0) { return dbl(n); }
 			return 0;
 		}`)

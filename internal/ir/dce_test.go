@@ -17,7 +17,7 @@ func loweredAndDCE(t *testing.T, src string) *Program {
 // itself ends with `return`, that synthetic tail is unreachable —
 // DCE should drop it.
 func TestDCEStripsImplicitReturnAfterExplicitOne(t *testing.T) {
-	p := loweredAndDCE(t, `function f(): number { return 7; }`)
+	p := loweredAndDCE(t, `function f(): i32 { return 7; }`)
 	fn := findFunc(p, "f")
 	if fn == nil {
 		t.Fatal("f not found")
@@ -187,7 +187,7 @@ func TestDCEHandlesDeadNestedScope(t *testing.T) {
 
 // DCE is idempotent: a second pass reproduces the same op slice.
 func TestDCEIsIdempotent(t *testing.T) {
-	p := loweredAndDCE(t, `function f(): number {
+	p := loweredAndDCE(t, `function f(): i32 {
 		if (true) { return 1; }
 		return 2;
 	}`)
@@ -203,7 +203,7 @@ func TestDCEIsIdempotent(t *testing.T) {
 // If still matched by an End, depth never negative, depth back to
 // 0 at function end.
 func TestDCEKeepsStructuredCFBalanced(t *testing.T) {
-	p := loweredAndDCE(t, `function f(n: number): number {
+	p := loweredAndDCE(t, `function f(n: i32): i32 {
 		if (n == 0) { return 99; }
 		if (n > 100) {
 			while (n > 50) { n = n - 1; }

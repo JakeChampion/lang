@@ -60,8 +60,8 @@ func returnLit(t *testing.T, prog *ast.Program) ast.Expr {
 // A bare integer const folds and gets substituted as a NumberLit at
 // every reference site. The decl itself is dropped from the program.
 func TestFoldNumberLiteral(t *testing.T) {
-	prog := fold(t, `const N: number = 42;
-function main(): number { return N; }`)
+	prog := fold(t, `const N: i32 = 42;
+function main(): i32 { return N; }`)
 	if len(prog.Consts) != 0 {
 		t.Errorf("expected const decls to be stripped, got %v", prog.Consts)
 	}
@@ -79,7 +79,7 @@ function main(): number { return N; }`)
 // matching kind.
 func TestFoldInferredType(t *testing.T) {
 	prog := fold(t, `const N = 7;
-function main(): number { return N; }`)
+function main(): i32 { return N; }`)
 	if _, ok := returnLit(t, prog).(*ast.NumberLit); !ok {
 		t.Errorf("expected NumberLit substitution, got %T", returnLit(t, prog))
 	}
@@ -136,8 +136,8 @@ function main(): string { return GREETING; }`)
 // consts only. The error names the offending identifier so users
 // can re-order their declarations.
 func TestFoldRejectsForwardReference(t *testing.T) {
-	got := foldErr(t, `const X: number = Y;
-const Y: number = 5;`)
+	got := foldErr(t, `const X: i32 = Y;
+const Y: i32 = 5;`)
 	if !strings.Contains(got, `"Y"`) {
 		t.Errorf("error should mention `Y`; got %v", got)
 	}
@@ -147,8 +147,8 @@ const Y: number = 5;`)
 // literal …) is rejected with an explanatory message rather than
 // silently breaking later in the pipeline.
 func TestFoldRejectsRuntimeExpression(t *testing.T) {
-	got := foldErr(t, `function helper(): number { return 1; }
-const X: number = helper();`)
+	got := foldErr(t, `function helper(): i32 { return 1; }
+const X: i32 = helper();`)
 	if !strings.Contains(got, "not a constant") {
 		t.Errorf("error should explain non-constant; got %v", got)
 	}
@@ -167,7 +167,7 @@ func TestFoldRejectsTypeMismatch(t *testing.T) {
 // Division and modulo by zero in a constant initialiser are caught
 // here so the program never reaches codegen with the poison value.
 func TestFoldRejectsConstantDivByZero(t *testing.T) {
-	got := foldErr(t, `const X: number = 10 / 0;`)
+	got := foldErr(t, `const X: i32 = 10 / 0;`)
 	if !strings.Contains(got, "division by zero") {
 		t.Errorf("error should mention division by zero; got %v", got)
 	}
@@ -178,10 +178,10 @@ func TestFoldRejectsConstantDivByZero(t *testing.T) {
 // conditions inside loops and ifs. This guards against a regression
 // where a new expression node skips the walk.
 func TestFoldSubstitutesAcrossExpressionPositions(t *testing.T) {
-	prog := fold(t, `const N: number = 3;
-function main(): number {
-	var arr: number[] = [N, N + 1, N * 2];
-	var k: number = arr[N - 1];
+	prog := fold(t, `const N: i32 = 3;
+function main(): i32 {
+	var arr: i32[] = [N, N + 1, N * 2];
+	var k: i32 = arr[N - 1];
 	if (k > N) { return k; }
 	return 0;
 }`)

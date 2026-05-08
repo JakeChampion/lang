@@ -1,9 +1,9 @@
-function divisible(n: number, by: number): boolean {
+function divisible(n: i32, by: i32): boolean {
   return n - n / by * by == 0;
 }
 
-function main(): number {
-  var i: number = 1;
+function main(): i32 {
+  var i: i32 = 1;
   while (i <= 15) {
     if (divisible(i, 15)) {
       putchar(70);  // F

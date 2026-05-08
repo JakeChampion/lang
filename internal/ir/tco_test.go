@@ -18,7 +18,7 @@ func loweredAndOptimized(t *testing.T, src string) *Program {
 // disappears, and a new OpBr replaces it. Parameters are re-stored
 // in reverse so each argument lands in the correct slot.
 func TestTCORewritesSelfTailCall(t *testing.T) {
-	src := `function f(n: number, acc: number): number {
+	src := `function f(n: i32, acc: i32): i32 {
 		if (n == 0) { return acc; }
 		return f(n - 1, acc + n);
 	}`
@@ -46,7 +46,7 @@ func TestTCORewritesSelfTailCall(t *testing.T) {
 // loop wrapping and no extra ops. The wrapper carries a real cost
 // (an extra block frame), so we shouldn't pay it for nothing.
 func TestTCOLeavesNonRecursiveFunctionsAlone(t *testing.T) {
-	src := `function add(a: number, b: number): number { return a + b; }`
+	src := `function add(a: i32, b: i32): i32 { return a + b; }`
 	before := lowerSource(t, src)
 	beforeOps := append([]Op(nil), findFunc(before, "add").Ops...)
 	after := loweredAndOptimized(t, src)
@@ -65,7 +65,7 @@ func TestTCOLeavesNonRecursiveFunctionsAlone(t *testing.T) {
 // NOT rewritten — TCO only fires when the call is immediately
 // followed by a return.
 func TestTCOIgnoresNonTailRecursion(t *testing.T) {
-	src := `function fact(n: number): number {
+	src := `function fact(n: i32): i32 {
 		if (n == 0) { return 1; }
 		return n * fact(n - 1);
 	}`
@@ -95,7 +95,7 @@ func TestTCOIgnoresNonTailRecursion(t *testing.T) {
 // call in two extra `if`s pushes the depth from 1 (loop only) to 3
 // (loop + if + if), so the OpBr immediate moves with it.
 func TestTCOBranchDepthMatchesScopeNesting(t *testing.T) {
-	src := `function f(n: number): number {
+	src := `function f(n: i32): i32 {
 		if (n > 100) {
 			if (n > 50) {
 				return f(n - 1);
@@ -142,7 +142,7 @@ func TestTCOBranchDepthMatchesScopeNesting(t *testing.T) {
 // an End, depth never negative, and every Br/BrIf target in range.
 // The wrapper loop + scope-aware depth rewrite has to preserve this.
 func TestTCOOutputStaysBalanced(t *testing.T) {
-	p := loweredAndOptimized(t, `function sumRec(n: number, acc: number): number {
+	p := loweredAndOptimized(t, `function sumRec(n: i32, acc: i32): i32 {
 		if (n == 0) { return acc; }
 		if (n > 100) {
 			while (n > 50) { n = n - 1; }
@@ -177,7 +177,7 @@ func TestTCOOutputStaysBalanced(t *testing.T) {
 // that doesn't fall through any tail-call branch still has its
 // non-tail-call return intact.
 func TestTCOPreservesNonTailReturns(t *testing.T) {
-	src := `function f(n: number): number {
+	src := `function f(n: i32): i32 {
 		if (n == 0) { return 99; }
 		return f(n - 1);
 	}`

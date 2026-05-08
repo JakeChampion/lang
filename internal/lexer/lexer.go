@@ -69,7 +69,6 @@ var keywords = map[string]bool{
 	"return":   true,
 	"true":     true,
 	"false":    true,
-	"number":   true,
 	"boolean":  true,
 	"void":     true,
 	"string":   true,

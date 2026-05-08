@@ -45,7 +45,7 @@ func TestComments(t *testing.T) {
 		t.Fatal(err)
 	}
 	if toks[0].Kind != Number || toks[0].Text != "42" {
-		t.Fatalf("expected number 42, got %v", toks[0])
+		t.Fatalf("expected number-token 42, got %v", toks[0])
 	}
 	if toks[1].Kind != EOF {
 		t.Fatalf("expected EOF, got %v", toks[1])

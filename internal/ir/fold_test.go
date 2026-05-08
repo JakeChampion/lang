@@ -19,7 +19,7 @@ func loweredAndFolded(t *testing.T, src string) *Program {
 // folding both binops, the body collapses to a single OpConstI32 7.
 // The trailing OpReturn keeps it from being completely empty.
 func TestFoldChainedArithmetic(t *testing.T) {
-	p := loweredAndFolded(t, `function f(): number { return 1 + 2 * 3; }`)
+	p := loweredAndFolded(t, `function f(): i32 { return 1 + 2 * 3; }`)
 	fn := findFunc(p, "f")
 	if fn == nil {
 		t.Fatal("f not found")
@@ -59,7 +59,7 @@ func TestFoldNot(t *testing.T) {
 // Shifts mask the count to 0..31 just like the runtime ops; folding
 // `1 << 35` therefore matches the runtime's `1 << (35 & 31)` = 8.
 func TestFoldShiftMasksCount(t *testing.T) {
-	p := loweredAndFolded(t, `function f(): number { return 1 << 35; }`)
+	p := loweredAndFolded(t, `function f(): i32 { return 1 << 35; }`)
 	fn := findFunc(p, "f")
 	if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 8 {
 		t.Errorf("op[0] = %s %d, want OpConstI32 8 (1 << (35 & 31))", fn.Ops[0].Kind, fn.Ops[0].I32)
@@ -71,7 +71,7 @@ func TestFoldShiftMasksCount(t *testing.T) {
 // constants.
 func TestFoldSkipsDivisionAndRemainder(t *testing.T) {
 	for _, op := range []string{"/", "%"} {
-		src := `function f(): number { return 6 ` + op + ` 2; }`
+		src := `function f(): i32 { return 6 ` + op + ` 2; }`
 		p := loweredAndFolded(t, src)
 		fn := findFunc(p, "f")
 		// Expect at least three ops: the two constants and the divs/rems.
@@ -86,7 +86,7 @@ func TestFoldSkipsDivisionAndRemainder(t *testing.T) {
 // surfaces from a ternary `(1 < 2) ? 10 : 20`, which the IR lowers to
 // `OpConstI32 1; OpIf i32; OpConstI32 10; OpElse; OpConstI32 20; OpEnd`.
 func TestFoldConstIfPicksTrueBranch(t *testing.T) {
-	p := loweredAndFolded(t, `function f(): number { return (1 < 2) ? 10 : 20; }`)
+	p := loweredAndFolded(t, `function f(): i32 { return (1 < 2) ? 10 : 20; }`)
 	fn := findFunc(p, "f")
 	for _, op := range fn.Ops {
 		if op.Kind == OpIf || op.Kind == OpElse || op.Kind == OpEnd {
@@ -108,7 +108,7 @@ func TestFoldConstIfPicksTrueBranch(t *testing.T) {
 
 // Constant false condition picks the else branch.
 func TestFoldConstIfPicksFalseBranch(t *testing.T) {
-	p := loweredAndFolded(t, `function f(): number { return (1 > 2) ? 10 : 20; }`)
+	p := loweredAndFolded(t, `function f(): i32 { return (1 > 2) ? 10 : 20; }`)
 	fn := findFunc(p, "f")
 	for _, op := range fn.Ops {
 		if op.Kind == OpConstI32 && op.I32 == 10 {
@@ -129,7 +129,7 @@ func TestFoldConstIfPicksFalseBranch(t *testing.T) {
 // `if (false) { ... }` with no `else` collapses to nothing: the else
 // arm is empty, so we drop the entire if-block.
 func TestFoldConstIfWithNoElseDropsBody(t *testing.T) {
-	p := loweredAndFolded(t, `function f(): number {
+	p := loweredAndFolded(t, `function f(): i32 {
 		if (false) { return 99; }
 		return 1;
 	}`)
@@ -146,8 +146,8 @@ func TestFoldConstIfWithNoElseDropsBody(t *testing.T) {
 // inside a `while` should fold without disturbing the outer loop's
 // scope structure.
 func TestFoldHandlesNestedControlFlow(t *testing.T) {
-	p := loweredAndFolded(t, `function f(): number {
-		var i: number = 0;
+	p := loweredAndFolded(t, `function f(): i32 {
+		var i: i32 = 0;
 		while (i < 3) {
 			if (true) { i = i + 1; }
 		}
@@ -176,7 +176,7 @@ func TestFoldHandlesNestedControlFlow(t *testing.T) {
 // folded ops produces identical output. This is what lets backends
 // rely on a single Fold call.
 func TestFoldIsIdempotent(t *testing.T) {
-	p := loweredAndFolded(t, `function f(): number { return 1 + 2 * 3 + 4; }`)
+	p := loweredAndFolded(t, `function f(): i32 { return 1 + 2 * 3 + 4; }`)
 	before := p.String()
 	Fold(p)
 	after := p.String()
@@ -188,7 +188,7 @@ func TestFoldIsIdempotent(t *testing.T) {
 // Non-constant operands aren't folded — the runtime values can't be
 // known statically, so the Add survives and the locals reads stay.
 func TestFoldLeavesRuntimeOperandsAlone(t *testing.T) {
-	p := loweredAndFolded(t, `function f(a: number, b: number): number { return a + b; }`)
+	p := loweredAndFolded(t, `function f(a: i32, b: i32): i32 { return a + b; }`)
 	mustContainOp(t, p, "f", OpAdd)
 	mustContainOp(t, p, "f", OpLoadLocal)
 }

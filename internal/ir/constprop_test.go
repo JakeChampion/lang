@@ -121,8 +121,8 @@ func TestConstPropSkipsNonConstStore(t *testing.T) {
 // add`. ConstPropagate isn't strictly required for this case, but
 // the test guards against pipeline regression.
 func TestConstPropEnablesEndToEndCollapse(t *testing.T) {
-	p := lowerSource(t, `function f(): number {
-		var x: number = 7;
+	p := lowerSource(t, `function f(): i32 {
+		var x: i32 = 7;
 		return x + 3;
 	}`)
 	Inline(p)
@@ -149,8 +149,8 @@ func TestConstPropEnablesEndToEndCollapse(t *testing.T) {
 // cascade — dead tee dropped, constants now adjacent, fold
 // collapses — settles in one pipeline call.
 func TestConstPropMultiLoadCollapses(t *testing.T) {
-	p := lowerSource(t, `function f(): number {
-		var x: number = 5;
+	p := lowerSource(t, `function f(): i32 {
+		var x: i32 = 5;
 		return x + x;
 	}`)
 	Inline(p)
@@ -196,8 +196,8 @@ func TestFoldRemovesConstDropPair(t *testing.T) {
 
 // Idempotence: a second pass produces identical output.
 func TestConstPropIsIdempotent(t *testing.T) {
-	p := lowerSource(t, `function f(): number {
-		var x: number = 7;
+	p := lowerSource(t, `function f(): i32 {
+		var x: i32 = 7;
 		return x + 3;
 	}`)
 	Inline(p)

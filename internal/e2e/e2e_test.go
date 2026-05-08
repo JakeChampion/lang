@@ -124,7 +124,7 @@ func compileMultiFileAndRun(t *testing.T, entry string, files map[string]string)
 }
 
 func TestExitCode(t *testing.T) {
-	_, code := compileAndRun(t, `function main(): number { return 42; }`)
+	_, code := compileAndRun(t, `function main(): i32 { return 42; }`)
 	if code != 42 {
 		t.Errorf("exit = %d, want 42", code)
 	}
@@ -142,14 +142,14 @@ func TestExitCode(t *testing.T) {
 // directly: arena_save before and after a no-op restore must
 // return the same value.
 func TestArenaResetReclaimsAllocations(t *testing.T) {
-	src := `function main(): number {
-		var saved: number = arena_save();
+	src := `function main(): i32 {
+		var saved: i32 = arena_save();
 		// Allocate something — this advances the heap cursor.
-		var a: number[] = [1, 2, 3, 4, 5];
-		var afterAlloc: number = arena_save();
+		var a: i32[] = [1, 2, 3, 4, 5];
+		var afterAlloc: i32 = arena_save();
 		// Restore to the saved cursor.
 		arena_restore(saved);
-		var afterRestore: number = arena_save();
+		var afterRestore: i32 = arena_save();
 		// The cursor must have advanced after the alloc...
 		if (afterAlloc <= saved) { return 1; }
 		// ...and come back to the saved value after restore.
@@ -169,7 +169,7 @@ func TestArenaResetReclaimsAllocations(t *testing.T) {
 // assert specific values, but length and basic shape checks
 // catch regressions.
 func TestRandomBytesArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var a: string = random_bytes(16);
 		var b: string = random_bytes(16);
 		// Two calls must produce strings of the requested length.
@@ -191,10 +191,10 @@ func TestRandomBytesArm(t *testing.T) {
 // touching the stack to read a/b/c/d.
 func TestLeafFunctionAllRegArgs(t *testing.T) {
 	src := `
-		function leaf(a: number, b: number, c: number, d: number): number {
+		function leaf(a: i32, b: i32, c: i32, d: i32): i32 {
 			return (a + b) * (c + d);
 		}
-		function main(): number { return leaf(2, 3, 4, 5); }`
+		function main(): i32 { return leaf(2, 3, 4, 5); }`
 	_, code := compileAndRun(t, src)
 	if code != 45 {
 		t.Errorf("exit = %d, want 45 ((2+3)*(4+5))", code)
@@ -205,11 +205,11 @@ func TestLeafFunctionAllRegArgs(t *testing.T) {
 // accept another function as a value and call it indirectly.
 func TestFunctionTypeAsParameter(t *testing.T) {
 	src := `
-		function add(a: number, b: number): number { return a + b; }
-		function apply(f: (number, number) => number, a: number, b: number): number {
+		function add(a: i32, b: i32): i32 { return a + b; }
+		function apply(f: (i32, i32) => i32, a: i32, b: i32): i32 {
 			return f(a, b);
 		}
-		function main(): number { return apply(add, 40, 2); }`
+		function main(): i32 { return apply(add, 40, 2); }`
 	_, code := compileAndRun(t, src)
 	if code != 42 {
 		t.Errorf("exit = %d, want 42", code)
@@ -221,11 +221,11 @@ func TestFunctionTypeAsParameter(t *testing.T) {
 // so we can iterate millions of times in O(1) frames.
 func TestDeepTailRecursionDoesNotOverflowStack(t *testing.T) {
 	src := `
-		function countdown(n: number, acc: number): number {
+		function countdown(n: i32, acc: i32): i32 {
 			if (n == 0) { return acc; }
 			return countdown(n - 1, acc + 1);
 		}
-		function main(): number { return countdown(100000, 0); }`
+		function main(): i32 { return countdown(100000, 0); }`
 	// 100000 mod 256 = 160 (the i32 result wraps when used as an
 	// 8-bit exit code).
 	_, code := compileAndRun(t, src)
@@ -238,8 +238,8 @@ func TestDeepTailRecursionDoesNotOverflowStack(t *testing.T) {
 // goes through the indirect-call path (blx r12).
 func TestFunctionValueIndirectCall(t *testing.T) {
 	src := `
-		function add(a: number, b: number): number { return a + b; }
-		function main(): number {
+		function add(a: i32, b: i32): i32 { return a + b; }
+		function main(): i32 {
 			var f = add;
 			return f(40, 2);
 		}`
@@ -251,8 +251,8 @@ func TestFunctionValueIndirectCall(t *testing.T) {
 
 func TestArithmeticAndCalls(t *testing.T) {
 	src := `
-		function add(a: number, b: number): number { return a + b; }
-		function main(): number { return add(40, 2); }`
+		function add(a: i32, b: i32): i32 { return a + b; }
+		function main(): i32 { return add(40, 2); }`
 	_, code := compileAndRun(t, src)
 	if code != 42 {
 		t.Errorf("exit = %d, want 42", code)
@@ -261,11 +261,11 @@ func TestArithmeticAndCalls(t *testing.T) {
 
 func TestFactorialRecursion(t *testing.T) {
 	src := `
-		function fact(n: number): number {
+		function fact(n: i32): i32 {
 			if (n == 0) { return 1; }
 			return n * fact(n - 1);
 		}
-		function main(): number { return fact(5); }`
+		function main(): i32 { return fact(5); }`
 	_, code := compileAndRun(t, src)
 	if code != 120 {
 		t.Errorf("exit = %d, want 120", code)
@@ -274,9 +274,9 @@ func TestFactorialRecursion(t *testing.T) {
 
 func TestWhileLoop(t *testing.T) {
 	src := `
-		function main(): number {
-			var sum: number = 0;
-			var i: number = 1;
+		function main(): i32 {
+			var sum: i32 = 0;
+			var i: i32 = 1;
 			while (i <= 10) { sum = sum + i; i = i + 1; }
 			return sum;
 		}`
@@ -287,7 +287,7 @@ func TestWhileLoop(t *testing.T) {
 }
 
 func TestDivision(t *testing.T) {
-	src := `function main(): number { return 100 / 7; }`
+	src := `function main(): i32 { return 100 / 7; }`
 	_, code := compileAndRun(t, src)
 	if code != 14 {
 		t.Errorf("exit = %d, want 14", code)
@@ -296,10 +296,10 @@ func TestDivision(t *testing.T) {
 
 func TestComparisonsAndShortCircuit(t *testing.T) {
 	src := `
-		function inRange(x: number, lo: number, hi: number): boolean {
+		function inRange(x: i32, lo: i32, hi: i32): boolean {
 			return lo <= x && x <= hi;
 		}
-		function main(): number {
+		function main(): i32 {
 			if (inRange(5, 1, 10) && !inRange(20, 1, 10)) { return 1; }
 			return 0;
 		}`
@@ -311,7 +311,7 @@ func TestComparisonsAndShortCircuit(t *testing.T) {
 
 func TestPutcharOutput(t *testing.T) {
 	src := `
-		function main(): number {
+		function main(): i32 {
 			putchar(72);  // H
 			putchar(73);  // I
 			putchar(10);  // \n
@@ -328,8 +328,8 @@ func TestPutcharOutput(t *testing.T) {
 
 func TestBreakInWhile(t *testing.T) {
 	src := `
-		function main(): number {
-			var i: number = 0;
+		function main(): i32 {
+			var i: i32 = 0;
 			while (true) {
 				if (i == 7) { break; }
 				i = i + 1;
@@ -346,9 +346,9 @@ func TestContinueInForRunsStep(t *testing.T) {
 	// Sum 5..9 (skip i < 5) = 5+6+7+8+9 = 35.
 	// `continue` must still run the step, otherwise we'd loop forever.
 	src := `
-		function main(): number {
-			var sum: number = 0;
-			for (var i: number = 0; i < 10; i = i + 1) {
+		function main(): i32 {
+			var sum: i32 = 0;
+			for (var i: i32 = 0; i < 10; i = i + 1) {
 				if (i < 5) { continue; }
 				sum = sum + i;
 			}
@@ -362,9 +362,9 @@ func TestContinueInForRunsStep(t *testing.T) {
 
 func TestForLoop(t *testing.T) {
 	src := `
-		function main(): number {
-			var sum: number = 0;
-			for (var i: number = 1; i <= 10; i = i + 1) {
+		function main(): i32 {
+			var sum: i32 = 0;
+			for (var i: i32 = 1; i <= 10; i = i + 1) {
 				sum = sum + i;
 			}
 			return sum;
@@ -377,11 +377,11 @@ func TestForLoop(t *testing.T) {
 
 func TestSixArgFunction(t *testing.T) {
 	src := `
-		function sum6(a: number, b: number, c: number,
-		              d: number, e: number, f: number): number {
+		function sum6(a: i32, b: i32, c: i32,
+		              d: i32, e: i32, f: i32): i32 {
 			return a + b + c + d + e + f;
 		}
-		function main(): number { return sum6(1, 2, 4, 8, 16, 32); }`
+		function main(): i32 { return sum6(1, 2, 4, 8, 16, 32); }`
 	_, code := compileAndRun(t, src)
 	if code != 63 {
 		t.Errorf("exit = %d, want 63", code)
@@ -389,7 +389,7 @@ func TestSixArgFunction(t *testing.T) {
 }
 
 func TestModulo(t *testing.T) {
-	src := `function main(): number { return 17 % 5; }`
+	src := `function main(): i32 { return 17 % 5; }`
 	_, code := compileAndRun(t, src)
 	if code != 2 {
 		t.Errorf("exit = %d, want 2", code)
@@ -398,7 +398,7 @@ func TestModulo(t *testing.T) {
 
 func TestBitwiseAndOr(t *testing.T) {
 	// (12 & 10) | 1 = 8 | 1 = 9
-	src := `function main(): number { return (12 & 10) | 1; }`
+	src := `function main(): i32 { return (12 & 10) | 1; }`
 	_, code := compileAndRun(t, src)
 	if code != 9 {
 		t.Errorf("exit = %d, want 9", code)
@@ -407,7 +407,7 @@ func TestBitwiseAndOr(t *testing.T) {
 
 func TestShifts(t *testing.T) {
 	// (1 << 5) >> 2 = 32 >> 2 = 8
-	src := `function main(): number { return (1 << 5) >> 2; }`
+	src := `function main(): i32 { return (1 << 5) >> 2; }`
 	_, code := compileAndRun(t, src)
 	if code != 8 {
 		t.Errorf("exit = %d, want 8", code)
@@ -415,7 +415,7 @@ func TestShifts(t *testing.T) {
 }
 
 func TestStringConcat(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var s: string = "Hello, " + "world!";
 		print(s);
 		return 0;
@@ -432,7 +432,7 @@ func TestStringConcat(t *testing.T) {
 func TestStringConcatChained(t *testing.T) {
 	// Three-part concat exercises a nested concat inside the helper —
 	// `(a + b) + c` allocates twice.
-	src := `function main(): number {
+	src := `function main(): i32 {
 		print("foo" + "-" + "bar");
 		return 0;
 	}`
@@ -443,7 +443,7 @@ func TestStringConcatChained(t *testing.T) {
 }
 
 func TestStringPrint(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		print("Hello, world!");
 		return 0;
 	}`
@@ -458,7 +458,7 @@ func TestStringPrint(t *testing.T) {
 }
 
 func TestStringEscapes(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		print("tab:\there\nnext line");
 		return 0;
 	}`
@@ -476,12 +476,12 @@ func TestStringEscapes(t *testing.T) {
 // validates the field access, and the linked binary returns 7.
 func TestCrossModuleStructTypeArm(t *testing.T) {
 	_, code := compileMultiFileAndRun(t, "main.lang", map[string]string{
-		"point.lang": `pub struct Point { x: number, y: number }
-pub function make(x: number, y: number): Point {
+		"point.lang": `pub struct Point { x: i32, y: i32 }
+pub function make(x: i32, y: i32): Point {
 	return Point { x: x, y: y };
 }`,
 		"main.lang": `import "./point";
-function main(): number {
+function main(): i32 {
 	var p: point.Point = point.make(3, 4);
 	return p.x + p.y;
 }`,
@@ -496,9 +496,9 @@ function main(): number {
 // literals, and the resulting binary returns the resolved value.
 func TestConstFoldedIntoArm(t *testing.T) {
 	src := `
-		const BASE: number = 10;
-		const TWICE: number = BASE * 2;
-		function main(): number { return TWICE + BASE; }`
+		const BASE: i32 = 10;
+		const TWICE: i32 = BASE * 2;
+		function main(): i32 { return TWICE + BASE; }`
 	_, code := compileAndRun(t, src)
 	if code != 30 {
 		t.Errorf("exit = %d, want 30 (10*2 + 10)", code)
@@ -506,14 +506,14 @@ func TestConstFoldedIntoArm(t *testing.T) {
 }
 
 // Cross-module `pub const` reaches the binary intact: the entry
-// imports a module that exports a number-typed const, and the
+// imports a module that exports a i32-typed const, and the
 // folded literal travels through the rewriter and the rest of the
 // pipeline without surprises.
 func TestPubConstAcrossModulesArm(t *testing.T) {
 	_, code := compileMultiFileAndRun(t, "main.lang", map[string]string{
-		"limits.lang": `pub const MAX: number = 42;`,
+		"limits.lang": `pub const MAX: i32 = 42;`,
 		"main.lang": `import "./limits";
-function main(): number { return limits.MAX; }`,
+function main(): i32 { return limits.MAX; }`,
 	})
 	if code != 42 {
 		t.Errorf("exit = %d, want 42", code)
@@ -606,7 +606,7 @@ func compileAndRunWithArgs(t *testing.T, src string, extraArgs ...string) int {
 // passes through, plus whatever extra args we supplied — so
 // `len(args())` should match the count we set up.
 func TestArgsBuiltinArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var a: string[] = args();
 		return len(a);
 	}`
@@ -621,7 +621,7 @@ func TestArgsBuiltinArm(t *testing.T) {
 // allocate a length-prefixed copy, and the language's `print`
 // must then handle it like any other string.
 func TestArgsBuiltinReadsValueArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var a: string[] = args();
 		print(a[1]);
 		return 0;
@@ -709,7 +709,7 @@ func runWithStdinEnv(t *testing.T, src, stdin string, extraEnv []string) (stdout
 // `None` at EOF — the post-Phase-3 typed shape replaces the
 // empty-string sentinel from earlier PRs.
 func TestReadLineBuiltinArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (stdin().read_line()) {
 			Some(line) => { write(line); return len(line); },
 			None => { return -1; }
@@ -730,7 +730,7 @@ func TestReadLineBuiltinArm(t *testing.T) {
 // distinction; callers no longer have to special-case
 // `len(line) == 0`.
 func TestReadLineBuiltinEOFArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (stdin().read_line()) {
 			Some(line) => { return 1; },
 			None => { return 0; }
@@ -746,7 +746,7 @@ func TestReadLineBuiltinEOFArm(t *testing.T) {
 // `env(name)` returns `Some(value)` when the key is set,
 // `None` when it isn't.
 func TestEnvBuiltinArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (env("LANG_TEST_VAR")) {
 			Some(v) => { write(v); return len(v); },
 			None => { return -1; }
@@ -765,7 +765,7 @@ func TestEnvBuiltinArm(t *testing.T) {
 // Missing env routes to `None`, distinguishable from a present-
 // but-empty value (which would be `Some("")`).
 func TestEnvBuiltinMissingArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (env("LANG_TEST_DEFINITELY_NOT_SET_XYZ")) {
 			Some(v) => { return 1; },
 			None => { return 0; }
@@ -781,7 +781,7 @@ func TestEnvBuiltinMissingArm(t *testing.T) {
 // `exit(code)` short-circuits whatever main was about to return.
 // Pairing it with `eprint` is the canonical "fatal error" shape.
 func TestExitBuiltinArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		eprint("boom");
 		exit(7);
 		return 0;
@@ -799,7 +799,7 @@ func TestExitBuiltinArm(t *testing.T) {
 // land on stdout as one continuous run with no separators; the
 // final `print` then closes the line.
 func TestWriteBuiltinArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		write("a");
 		write("b");
 		print("c");
@@ -816,7 +816,7 @@ func TestWriteBuiltinArm(t *testing.T) {
 // builtins land on different file descriptors and don't
 // interfere with each other.
 func TestEprintBuiltinArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		print("hi");
 		eprint("err");
 		return 0;
@@ -832,8 +832,8 @@ func TestEprintBuiltinArm(t *testing.T) {
 
 func TestForEachOverArray(t *testing.T) {
 	src := `
-		function main(): number {
-			var sum: number = 0;
+		function main(): i32 {
+			var sum: i32 = 0;
 			for x in [10, 20, 30] {
 				sum = sum + x;
 			}
@@ -849,8 +849,8 @@ func TestForEachOverArray(t *testing.T) {
 // loop just like in a hand-written `for`.
 func TestForEachBreakContinue(t *testing.T) {
 	src := `
-		function main(): number {
-			var sum: number = 0;
+		function main(): i32 {
+			var sum: i32 = 0;
 			for x in [1, 2, 3, 4, 5] {
 				if (x == 2) { continue; }
 				if (x == 5) { break; }
@@ -866,8 +866,8 @@ func TestForEachBreakContinue(t *testing.T) {
 
 func TestArraySumAndMutation(t *testing.T) {
 	src := `
-		function main(): number {
-			var a: number[] = [10, 20, 30, 40];
+		function main(): i32 {
+			var a: i32[] = [10, 20, 30, 40];
 			a[2] = 100;
 			return a[0] + a[1] + a[2] + a[3];
 		}`
@@ -881,8 +881,8 @@ func TestArraySumAndMutation(t *testing.T) {
 // is constructed, matched, and the bound payloads flow into
 // the result.
 func TestEnumMatchPayloadArm(t *testing.T) {
-	src := `enum Pair { Two(number, number) }
-		function main(): number {
+	src := `enum Pair { Two(i32, i32) }
+		function main(): i32 {
 			var p: Pair = Two(7, 5);
 			match (p) {
 				Two(a, b) => { return a + b; }
@@ -903,7 +903,7 @@ func TestEnumMatchDispatchArm(t *testing.T) {
 	// with the auto-injected `Result[T, E]` (which owns Ok/Err).
 	src := `enum Status { Good, Bad(string) }
 		function status(): Status { return Bad("boom"); }
-		function main(): number {
+		function main(): i32 {
 			match (status()) {
 				Good => { return 0; },
 				Bad(msg) => { return len(msg); }
@@ -921,8 +921,8 @@ func TestEnumMatchDispatchArm(t *testing.T) {
 // type-erased lowering is exercised on a non-WASM backend too.
 func TestGenericOptionArm(t *testing.T) {
 	src := `enum Option[T] { Some(T), None }
-		function find(): Option[number] { return Some(42); }
-		function main(): number {
+		function find(): Option[i32] { return Some(42); }
+		function main(): i32 {
 			match (find()) {
 				Some(v) => { return v; },
 				None => { return -1; }
@@ -941,11 +941,11 @@ func TestGenericOptionArm(t *testing.T) {
 func TestGenericResultArm(t *testing.T) {
 	// Use the auto-injected `Result[T, E]` instead of redeclaring
 	// it — Phase 3 makes Result a built-in.
-	src := `function check(b: boolean): Result[number, string] {
+	src := `function check(b: boolean): Result[i32, string] {
 			if (b) { return Ok(7); }
 			return Err("oops");
 		}
-		function main(): number {
+		function main(): i32 {
 			match (check(false)) {
 				Ok(v) => { return v; },
 				Err(msg) => { return len(msg); }
@@ -964,7 +964,7 @@ func TestGenericResultArm(t *testing.T) {
 // test exercises the full chain — add, sub, mul, div, unary
 // negate — against expected exit codes computed by the harness.
 func TestArmFloatArithmetic(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var a: float = 2.5;
 		var b: float = 4.0;
 		var sum: float = a + b;       // 6.5
@@ -1004,7 +1004,7 @@ func TestArmFloatComparisons(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.op, func(t *testing.T) {
-			src := `function main(): number {
+			src := `function main(): i32 {
 				var a: float = 1.0;
 				var b: float = 2.0;
 				if (a ` + tc.op + ` b) { return 1; }
@@ -1024,7 +1024,7 @@ func TestArmFloatComparisons(t *testing.T) {
 // generic `T` is substituted with `float`.
 func TestArmGenericOptionFloatPayload(t *testing.T) {
 	src := `function pick(): Option[float] { return Some(3.14); }
-		function main(): number {
+		function main(): i32 {
 			match (pick()) {
 				Some(v) => { if (v > 3.0) { return 1; } return 2; },
 				None => { return 0; }
@@ -1085,7 +1085,7 @@ func runArmInDir(t *testing.T, src string, seed map[string]string) (stdout strin
 // `read_file` round-trips a string through libc open/read/close
 // on the arm32 runtime helper.
 func TestReadFileOkArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (read_file("greeting.txt")) {
 			Ok(s) => { write(s); return len(s); },
 			Err(_) => { return -1; }
@@ -1107,7 +1107,7 @@ func TestReadFileOkArm(t *testing.T) {
 // is carried in the variant payload so callers don't need
 // secondary context plumbing.
 func TestReadFileNotFoundArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (read_file("does_not_exist.txt")) {
 			Ok(_) => { return 0; },
 			Err(err) => {
@@ -1131,7 +1131,7 @@ func TestReadFileNotFoundArm(t *testing.T) {
 // `write_file` truncates the target and writes the content via
 // libc open(O_CREAT|O_TRUNC|O_WRONLY) + write + close.
 func TestWriteFileOkArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (write_file("out.txt", "from arm")) {
 			Some(_) => { return 1; },
 			None => { return 0; }
@@ -1156,7 +1156,7 @@ func TestWriteFileOkArm(t *testing.T) {
 // qemu. open_writer + Writer.write + Writer.close +
 // open_reader + Reader.read_line + Reader.close.
 func TestStreamingRoundtripArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (open_writer("out.txt")) {
 			Ok(w) => {
 				match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
@@ -1187,7 +1187,7 @@ func TestStreamingRoundtripArm(t *testing.T) {
 }
 
 func TestReaderReadChunkArm(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (open_writer("rc.txt")) {
 			Ok(w) => {
 				match (w.write("hello world")) { Some(_) => { return 1; }, None => {} }

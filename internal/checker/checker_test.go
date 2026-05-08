@@ -21,11 +21,11 @@ func checkSource(t *testing.T, src string) error {
 
 func TestGoodPrograms(t *testing.T) {
 	for _, src := range []string{
-		`function f(): number { return 1 + 2; }`,
-		`function f(n: number): number { return n * 2; }`,
-		`function f(n: number): boolean { return n < 10; }`,
-		`function main(): number { var x = 1; var y = x + 2; return y; }`,
-		`function main(): number { var a: number[] = [1,2,3]; return a[0]; }`,
+		`function f(): i32 { return 1 + 2; }`,
+		`function f(n: i32): i32 { return n * 2; }`,
+		`function f(n: i32): boolean { return n < 10; }`,
+		`function main(): i32 { var x = 1; var y = x + 2; return y; }`,
+		`function main(): i32 { var a: i32[] = [1,2,3]; return a[0]; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -38,12 +38,12 @@ func TestTypeErrors(t *testing.T) {
 		src  string
 		want string
 	}{
-		{`function f(): number { return true; }`, "return type mismatch"},
-		{`function f(): number { return 1 + true; }`, "requires an integer type"},
+		{`function f(): i32 { return true; }`, "return type mismatch"},
+		{`function f(): i32 { return 1 + true; }`, "requires an integer type"},
 		{`function f(): boolean { return 1; }`, "return type mismatch"},
 		{`function f() { x; }`, "undefined identifier"},
-		{`function f(n: number): number { if (n) { return 0; } return 1; }`, "if condition must be boolean"},
-		{`function f() { var x: number = true; }`, "cannot assign boolean"},
+		{`function f(n: i32): i32 { if (n) { return 0; } return 1; }`, "if condition must be boolean"},
+		{`function f() { var x: i32 = true; }`, "cannot assign boolean"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -60,7 +60,7 @@ func TestTypeErrors(t *testing.T) {
 // The checker should accumulate multiple errors and report them all in
 // a single diag.Errors aggregate.
 func TestMultipleErrorsAreReported(t *testing.T) {
-	src := `function f(): number {
+	src := `function f(): i32 {
 		return true;
 		var x = unknownThing;
 	}`
@@ -116,7 +116,7 @@ func TestFloatArithmeticTypechecks(t *testing.T) {
 func TestFloatRejectsMixedArithmetic(t *testing.T) {
 	cases := []string{
 		`function f(x: float): float { return x + 1; }`,
-		`function f(x: number): float { return x + 1.5; }`,
+		`function f(x: i32): float { return x + 1.5; }`,
 		`function f(x: float): float { return x % 1.0; }`, // % is integer-only
 	}
 	for _, src := range cases {
@@ -138,7 +138,7 @@ func TestStringEqualityTypechecks(t *testing.T) {
 }
 
 func TestStringIndexReturnsNumber(t *testing.T) {
-	src := `function f(): number {
+	src := `function f(): i32 {
 		var s: string = "abc";
 		return s[1];
 	}`
@@ -148,15 +148,15 @@ func TestStringIndexReturnsNumber(t *testing.T) {
 }
 
 func TestLenOnString(t *testing.T) {
-	src := `function f(): number { return len("hello"); }`
+	src := `function f(): i32 { return len("hello"); }`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestLenRejectsNumber(t *testing.T) {
-	if err := checkSource(t, `function f(): number { return len(42); }`); err == nil {
-		t.Error("expected error len(number)")
+	if err := checkSource(t, `function f(): i32 { return len(42); }`); err == nil {
+		t.Error("expected error len(i32)")
 	}
 }
 
@@ -178,8 +178,8 @@ func TestStringCmpFlagSet(t *testing.T) {
 }
 
 func TestUndefinedIdentifierSuggestsClosest(t *testing.T) {
-	prog, err := parser.Parse(`function f(): number {
-		var counter: number = 0;
+	prog, err := parser.Parse(`function f(): i32 {
+		var counter: i32 = 0;
 		return countr;
 	}`)
 	if err != nil {
@@ -206,8 +206,8 @@ func TestUndefinedIdentifierSuggestsClosest(t *testing.T) {
 }
 
 func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
-	prog, err := parser.Parse(`function f(): number {
-		var counter: number = 0;
+	prog, err := parser.Parse(`function f(): i32 {
+		var counter: i32 = 0;
 		return totallyUnrelated;
 	}`)
 	if err != nil {
@@ -225,7 +225,7 @@ func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
 }
 
 func TestSwitchTypechecks(t *testing.T) {
-	src := `function f(n: number): number {
+	src := `function f(n: i32): i32 {
 		switch (n) {
 			case 1, 2: return 10;
 			case 3: return 30;
@@ -239,8 +239,8 @@ func TestSwitchTypechecks(t *testing.T) {
 }
 
 func TestStructTypechecks(t *testing.T) {
-	src := `struct Point { x: number, y: number }
-		function main(): number {
+	src := `struct Point { x: i32, y: i32 }
+		function main(): i32 {
 			var p: Point = Point { x: 1, y: 2 };
 			p.x = 10;
 			return p.x + p.y;
@@ -251,7 +251,7 @@ func TestStructTypechecks(t *testing.T) {
 }
 
 func TestSwitchRejectsTypeMismatchedCase(t *testing.T) {
-	src := `function f(n: number): number {
+	src := `function f(n: i32): i32 {
 		switch (n) { case true: return 1; default: return 0; }
 	}`
 	if err := checkSource(t, src); err == nil {
@@ -260,7 +260,7 @@ func TestSwitchRejectsTypeMismatchedCase(t *testing.T) {
 }
 
 func TestSwitchRejectsFloatTag(t *testing.T) {
-	src := `function f(x: float): number {
+	src := `function f(x: float): i32 {
 		switch (x) { case 1.0: return 1; default: return 0; }
 	}`
 	if err := checkSource(t, src); err == nil {
@@ -269,7 +269,7 @@ func TestSwitchRejectsFloatTag(t *testing.T) {
 }
 
 func TestBreakInSwitchAllowed(t *testing.T) {
-	src := `function f(n: number): number {
+	src := `function f(n: i32): i32 {
 		switch (n) { case 1: break; default: break; }
 		return 0;
 	}`
@@ -279,7 +279,7 @@ func TestBreakInSwitchAllowed(t *testing.T) {
 }
 
 func TestContinueInSwitchOutsideLoopRejected(t *testing.T) {
-	src := `function f(n: number): number {
+	src := `function f(n: i32): i32 {
 		switch (n) { case 1: continue; default: return 0; }
 	}`
 	if err := checkSource(t, src); err == nil {
@@ -289,7 +289,7 @@ func TestContinueInSwitchOutsideLoopRejected(t *testing.T) {
 
 func TestTernaryTypechecks(t *testing.T) {
 	for _, src := range []string{
-		`function f(b: boolean): number { return b ? 1 : 2; }`,
+		`function f(b: boolean): i32 { return b ? 1 : 2; }`,
 		`function f(b: boolean): float { return b ? 1.5 : 2.5; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
@@ -299,20 +299,20 @@ func TestTernaryTypechecks(t *testing.T) {
 }
 
 func TestTernaryRejectsNonBoolCond(t *testing.T) {
-	if err := checkSource(t, `function f(): number { return 1 ? 2 : 3; }`); err == nil {
+	if err := checkSource(t, `function f(): i32 { return 1 ? 2 : 3; }`); err == nil {
 		t.Error("expected error for non-bool cond")
 	}
 }
 
 func TestTernaryRejectsBranchTypeMismatch(t *testing.T) {
-	if err := checkSource(t, `function f(b: boolean): number { return b ? 1 : true; }`); err == nil {
+	if err := checkSource(t, `function f(b: boolean): i32 { return b ? 1 : true; }`); err == nil {
 		t.Error("expected error for mismatched branches")
 	}
 }
 
 func TestCompoundAssignTypechecks(t *testing.T) {
-	src := `function f(): number {
-		var x: number = 0;
+	src := `function f(): i32 {
+		var x: i32 = 0;
 		x += 1; x -= 1; x *= 2; x /= 2; x %= 3;
 		x &= 7; x |= 8; x ^= 1; x <<= 1; x >>= 1;
 		return x;
@@ -323,7 +323,7 @@ func TestCompoundAssignTypechecks(t *testing.T) {
 }
 
 func TestStructLitMissingField(t *testing.T) {
-	src := `struct P { x: number, y: number }
+	src := `struct P { x: i32, y: i32 }
 		function f(): P { return P { x: 1 }; }`
 	if err := checkSource(t, src); err == nil {
 		t.Error("expected error for missing field y")
@@ -331,15 +331,15 @@ func TestStructLitMissingField(t *testing.T) {
 }
 
 func TestStructLitWrongFieldType(t *testing.T) {
-	src := `struct P { x: number }
+	src := `struct P { x: i32 }
 		function f(): P { return P { x: true }; }`
 	if err := checkSource(t, src); err == nil {
-		t.Error("expected error for boolean as number field")
+		t.Error("expected error for boolean as i32 field")
 	}
 }
 
 func TestUnknownStructType(t *testing.T) {
-	src := `function f(): number {
+	src := `function f(): i32 {
 		var p: NoSuchStruct = NoSuchStruct { x: 1 };
 		return p.x;
 	}`
@@ -349,8 +349,8 @@ func TestUnknownStructType(t *testing.T) {
 }
 
 func TestNestedFunctionTypechecks(t *testing.T) {
-	src := `function makeAdder(n: number): (number) => number {
-		function add(x: number): number { return x + n; }
+	src := `function makeAdder(n: i32): (i32) => i32 {
+		function add(x: i32): i32 { return x + n; }
 		return add;
 	}`
 	if err := checkSource(t, src); err != nil {
@@ -359,9 +359,9 @@ func TestNestedFunctionTypechecks(t *testing.T) {
 }
 
 func TestNestedFunctionRecordsCaptures(t *testing.T) {
-	prog, err := parser.Parse(`function outer(seed: number): number {
-		var bonus: number = 100;
-		function inner(x: number): number { return x + seed + bonus; }
+	prog, err := parser.Parse(`function outer(seed: i32): i32 {
+		var bonus: i32 = 100;
+		function inner(x: i32): i32 { return x + seed + bonus; }
 		return inner(1);
 	}`)
 	if err != nil {
@@ -389,8 +389,8 @@ func TestNestedFunctionRecordsCaptures(t *testing.T) {
 
 func TestCaptureOfNonScalarRejected(t *testing.T) {
 	// String capture isn't supported in this PR.
-	src := `function outer(s: string): number {
-		function inner(): number { return len(s); }
+	src := `function outer(s: string): i32 {
+		function inner(): i32 { return len(s); }
 		return inner();
 	}`
 	if err := checkSource(t, src); err == nil {
@@ -399,9 +399,9 @@ func TestCaptureOfNonScalarRejected(t *testing.T) {
 }
 
 func TestMethodTypechecksAndRewritesCall(t *testing.T) {
-	prog, err := parser.Parse(`struct Point { x: number, y: number }
-		function (p: Point) sum(): number { return p.x + p.y; }
-		function main(): number {
+	prog, err := parser.Parse(`struct Point { x: i32, y: i32 }
+		function (p: Point) sum(): i32 { return p.x + p.y; }
+		function main(): i32 {
 			var p: Point = Point { x: 10, y: 32 };
 			return p.sum();
 		}`)
@@ -443,15 +443,15 @@ func TestMethodTypechecksAndRewritesCall(t *testing.T) {
 }
 
 func TestMethodRejectsNonStructReceiver(t *testing.T) {
-	src := `function (n: number) double(): number { return n + n; }`
+	src := `function (n: i32) double(): i32 { return n + n; }`
 	if err := checkSource(t, src); err == nil {
 		t.Error("expected error for non-struct receiver")
 	}
 }
 
 func TestMethodCallOnUnknownMethodErrors(t *testing.T) {
-	src := `struct P { x: number }
-		function main(): number {
+	src := `struct P { x: i32 }
+		function main(): i32 {
 			var p: P = P { x: 1 };
 			return p.unknown();
 		}`
@@ -462,8 +462,8 @@ func TestMethodCallOnUnknownMethodErrors(t *testing.T) {
 
 // Variant constructors type-check argument count + payload types.
 func TestEnumVariantConstructorTypeChecks(t *testing.T) {
-	good := `enum E { Pair(number, number) }
-		function main(): number {
+	good := `enum E { Pair(i32, i32) }
+		function main(): i32 {
 			var e: E = Pair(1, 2);
 			return 0;
 		}`
@@ -471,8 +471,8 @@ func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 		t.Errorf("good source should type-check: %v", err)
 	}
 
-	wrongCount := `enum E { Pair(number, number) }
-		function main(): number {
+	wrongCount := `enum E { Pair(i32, i32) }
+		function main(): i32 {
 			var e: E = Pair(1);
 			return 0;
 		}`
@@ -480,8 +480,8 @@ func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 		t.Error("expected error for wrong arg count")
 	}
 
-	wrongType := `enum E { Pair(number, number) }
-		function main(): number {
+	wrongType := `enum E { Pair(i32, i32) }
+		function main(): i32 {
 			var e: E = Pair(1, "two");
 			return 0;
 		}`
@@ -494,7 +494,7 @@ func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 // rejected with a diagnostic naming the missing variant.
 func TestMatchExhaustivenessChecked(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
-		function main(): number {
+		function main(): i32 {
 			var l: Light = Green;
 			match (l) {
 				Red => { return 1; },
@@ -515,7 +515,7 @@ func TestMatchExhaustivenessChecked(t *testing.T) {
 // variant is listed explicitly.
 func TestMatchWildcardCoversMissingVariants(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
-		function main(): number {
+		function main(): i32 {
 			var l: Light = Green;
 			match (l) {
 				Red => { return 1; },
@@ -532,8 +532,8 @@ func TestMatchWildcardCoversMissingVariants(t *testing.T) {
 // arity, mirroring how variant construction validates argument
 // counts at the constructor site.
 func TestMatchPayloadArityChecked(t *testing.T) {
-	src := `enum E { A, B(number, number) }
-		function main(): number {
+	src := `enum E { A, B(i32, i32) }
+		function main(): i32 {
 			var e: E = A;
 			match (e) {
 				A => { return 0; },
@@ -547,25 +547,25 @@ func TestMatchPayloadArityChecked(t *testing.T) {
 }
 
 // Generic enums infer their type arguments from the constructor's
-// payload types: `Some(42)` resolves T to `number`, so the
-// resulting type is `Option[number]`. The right-hand side of an
+// payload types: `Some(42)` resolves T to `i32`, so the
+// resulting type is `Option[i32]`. The right-hand side of an
 // assignment with a wrong concrete type fails at the slot.
 func TestGenericVariantInfersTypeArgs(t *testing.T) {
 	good := `enum Option[T] { Some(T), None }
-		function main(): number {
-			var o: Option[number] = Some(42);
+		function main(): i32 {
+			var o: Option[i32] = Some(42);
 			return 0;
 		}`
 	if err := checkSource(t, good); err != nil {
 		t.Errorf("good: %v", err)
 	}
 	bad := `enum Option[T] { Some(T), None }
-		function main(): number {
+		function main(): i32 {
 			var o: Option[string] = Some(42);
 			return 0;
 		}`
 	if err := checkSource(t, bad); err == nil {
-		t.Error("expected mismatch: Option[string] vs Option[number]")
+		t.Error("expected mismatch: Option[string] vs Option[i32]")
 	}
 }
 
@@ -576,23 +576,23 @@ func TestGenericVariantInfersTypeArgs(t *testing.T) {
 // arg slot) supplies them.
 func TestPayloadlessGenericVariantFlowsIntoContext(t *testing.T) {
 	src := `enum Option[T] { Some(T), None }
-		function find(): Option[number] { return None; }
-		function main(): number {
-			var o: Option[number] = None;
+		function find(): Option[i32] { return None; }
+		function main(): i32 {
+			var o: Option[i32] = None;
 			return 0;
 		}`
 	if err := checkSource(t, src); err != nil {
-		t.Errorf("None should flow into Option[number]: %v", err)
+		t.Errorf("None should flow into Option[i32]: %v", err)
 	}
 }
 
 // Match arms substitute the scrutinee's concrete type arguments
-// into payload bindings: matching `Option[number]` types
-// `Some(v)` so that `v` is `number`, not the abstract `T`.
+// into payload bindings: matching `Option[i32]` types
+// `Some(v)` so that `v` is `i32`, not the abstract `T`.
 func TestMatchSubstitutesTypeArgs(t *testing.T) {
 	src := `enum Option[T] { Some(T), None }
-		function main(): number {
-			var o: Option[number] = Some(7);
+		function main(): i32 {
+			var o: Option[i32] = Some(7);
 			match (o) {
 				Some(v) => { return v + 1; },
 				None => { return 0; }
@@ -609,8 +609,8 @@ func TestMatchSubstitutesTypeArgs(t *testing.T) {
 // checking happens.
 func TestGenericEnumArityChecked(t *testing.T) {
 	src := `enum Pair[A, B] { Both(A, B) }
-		function main(): number {
-			var p: Pair[number] = Both(1, 2);
+		function main(): i32 {
+			var p: Pair[i32] = Both(1, 2);
 			return 0;
 		}`
 	if err := checkSource(t, src); err == nil {

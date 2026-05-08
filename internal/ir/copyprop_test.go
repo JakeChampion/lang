@@ -86,8 +86,8 @@ func TestPropagateCopiesReplacesDeadStoreWithDrop(t *testing.T) {
 // inlines, fuses, and copy-propagates to a single `const 7 ; const
 // 2 ; mul`. Once Fold runs the whole thing collapses to const 14.
 func TestPropagateCopiesEnablesFoldToCollapseInlinedCall(t *testing.T) {
-	p := lowerSource(t, `function dbl(x: number): number { return x * 2; }
-		function main(): number { return dbl(7); }`)
+	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 { return dbl(7); }`)
 	Inline(p)
 	FuseTee(p)
 	PropagateCopies(p)
@@ -108,8 +108,8 @@ func TestPropagateCopiesEnablesFoldToCollapseInlinedCall(t *testing.T) {
 // scratches alone — those slots are read multiple times during
 // helper expansion, so the read counts protect them.
 func TestPropagateCopiesPreservesHelperSlots(t *testing.T) {
-	p := lowerSource(t, `function f(): number {
-		var a: number[] = [10, 20, 30];
+	p := lowerSource(t, `function f(): i32 {
+		var a: i32[] = [10, 20, 30];
 		return a[1];
 	}`)
 	PropagateCopies(p)
@@ -133,8 +133,8 @@ func TestPropagateCopiesPreservesHelperSlots(t *testing.T) {
 
 // Idempotence: running the pass twice produces the same op list.
 func TestPropagateCopiesIsIdempotent(t *testing.T) {
-	p := lowerSource(t, `function dbl(x: number): number { return x * 2; }
-		function main(): number { return dbl(7); }`)
+	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 { return dbl(7); }`)
 	Inline(p)
 	FuseTee(p)
 	PropagateCopies(p)

@@ -8,7 +8,7 @@ import (
 // Identical inputs produce no diff at all — empty string out, so
 // callers can use `len(diff) == 0` as a fast same-content check.
 func TestUnifiedDiffEmptyWhenIdentical(t *testing.T) {
-	src := "function f(): number {\n  return 1;\n}\n"
+	src := "function f(): i32 {\n  return 1;\n}\n"
 	got := UnifiedDiff(src, src, "a.lang", "b.lang")
 	if got != "" {
 		t.Errorf("expected empty diff for identical inputs, got:\n%s", got)

@@ -53,7 +53,7 @@ func mustContain(t *testing.T, asm, needle string) {
 }
 
 func TestPrologueEpilogue(t *testing.T) {
-	asm := compile(t, `function f(): number { return 0; }`)
+	asm := compile(t, `function f(): i32 { return 0; }`)
 	mustContain(t, asm, "push {fp, lr}")
 	mustContain(t, asm, "mov fp, sp")
 	mustContain(t, asm, "pop {fp, lr}")
@@ -66,7 +66,7 @@ func TestPrologueEpilogue(t *testing.T) {
 // (SourceFile != ""). Release binaries skip them to save the
 // .eh_frame section weight.
 func TestCFIDirectivesPresentInDebugMode(t *testing.T) {
-	asm := compileDebug(t, `function f(): number { return 0; }`)
+	asm := compileDebug(t, `function f(): i32 { return 0; }`)
 	mustContain(t, asm, ".cfi_startproc")
 	mustContain(t, asm, ".cfi_def_cfa_offset 8")
 	mustContain(t, asm, ".cfi_offset fp, -8")
@@ -79,7 +79,7 @@ func TestCFIDirectivesPresentInDebugMode(t *testing.T) {
 // the linker's `.eh_frame` for our code stays at zero bytes.
 // Saves ~50 bytes per function.
 func TestCFIDirectivesAbsentInReleaseMode(t *testing.T) {
-	asm := compile(t, `function f(): number { return 0; }`)
+	asm := compile(t, `function f(): i32 { return 0; }`)
 	if strings.Contains(asm, ".cfi_") {
 		t.Errorf("release build must not emit .cfi_* directives:\n%s", asm)
 	}
@@ -88,7 +88,7 @@ func TestCFIDirectivesAbsentInReleaseMode(t *testing.T) {
 // Leaf functions push extra callee-saved registers, so each gets its
 // own .cfi_offset entry — but only in debug mode.
 func TestCFIDirectivesCoverLeafSavedRegisters(t *testing.T) {
-	asm := compileDebug(t, `function add(a: number, b: number): number { return a + b; }`)
+	asm := compileDebug(t, `function add(a: i32, b: i32): i32 { return a + b; }`)
 	// (P+2)*4 = (2+2)*4 = 16
 	mustContain(t, asm, ".cfi_def_cfa_offset 16")
 	mustContain(t, asm, ".cfi_offset r4, -16")
@@ -100,18 +100,18 @@ func TestCFIDirectivesCoverLeafSavedRegisters(t *testing.T) {
 func TestArithmetic(t *testing.T) {
 	// Constant folding would collapse literal arithmetic before
 	// emit, so use parameters to keep the binop visible.
-	asm := compile(t, `function f(a: number, b: number): number { return a + b; }`)
+	asm := compile(t, `function f(a: i32, b: i32): i32 { return a + b; }`)
 	mustContain(t, asm, "add r0, r1, r0")
 }
 
 func TestSubtractionOrder(t *testing.T) {
 	// Left operand must end up in r1, right in r0; sub must be `r1 - r0`.
-	asm := compile(t, `function f(a: number, b: number): number { return a - b; }`)
+	asm := compile(t, `function f(a: i32, b: i32): i32 { return a - b; }`)
 	mustContain(t, asm, "sub r0, r1, r0")
 }
 
 func TestComparisonEmitsCondMoves(t *testing.T) {
-	asm := compile(t, `function f(a: number, b: number): boolean { return a < b; }`)
+	asm := compile(t, `function f(a: i32, b: i32): boolean { return a < b; }`)
 	mustContain(t, asm, "movlt r0, #1")
 	mustContain(t, asm, "movge r0, #0")
 }
@@ -146,16 +146,16 @@ func TestShortCircuitOr(t *testing.T) {
 func TestCallEmitsBl(t *testing.T) {
 	// Use a callee with an if-statement so the IR inliner skips it
 	// — otherwise the `bl g` we're looking for gets substituted away.
-	asm := compile(t, `function g(n: number): number {
+	asm := compile(t, `function g(n: i32): i32 {
 		if (n == 0) { return 1; }
 		return n + 1;
 	}
-function f(): number { return g(5); }`)
+function f(): i32 { return g(5); }`)
 	mustContain(t, asm, "bl g")
 }
 
 func TestArrayIndex(t *testing.T) {
-	asm := compile(t, `function f(): number { var a: number[] = [1,2,3]; return a[1]; }`)
+	asm := compile(t, `function f(): i32 { var a: i32[] = [1,2,3]; return a[1]; }`)
 	// Indexing computes `base + idx*4` then dereferences. The
 	// IR-driven path emits the address calc and load as separate
 	// instructions instead of the AST walker's single
@@ -172,8 +172,8 @@ func TestArrayIndex(t *testing.T) {
 // down to a single `ldr rD, [rB, #-4]` — one instruction
 // instead of the unfused `ldr/push/ldr/push/pop/pop/sub/ldr`.
 func TestLenOfArrayLoadsPrefix(t *testing.T) {
-	asm := compile(t, `function f(): number {
-		var a: number[] = [10, 20, 30];
+	asm := compile(t, `function f(): i32 {
+		var a: i32[] = [10, 20, 30];
 		return len(a);
 	}`)
 	mustContain(t, asm, "ldr r0, [r1, #-4]")
@@ -187,7 +187,7 @@ func TestLenOfArrayLoadsPrefix(t *testing.T) {
 // makes sense with the brk-based runtime. A pure-arithmetic
 // program just inherits the runtime; no per-program toggle.
 func TestAllocRuntimeAlwaysPresentWithBumpShape(t *testing.T) {
-	asm := compile(t, `function f(): number { return 1 + 2; }`)
+	asm := compile(t, `function f(): i32 { return 1 + 2; }`)
 	mustContain(t, asm, "__lang_alloc")
 	mustContain(t, asm, "ldr r1, =__lang_heap_ptr")
 	if strings.Contains(asm, "bl malloc") {
@@ -196,21 +196,21 @@ func TestAllocRuntimeAlwaysPresentWithBumpShape(t *testing.T) {
 }
 
 func TestAssignment(t *testing.T) {
-	asm := compile(t, `function f(): number { var x = 0; x = 5; return x; }`)
+	asm := compile(t, `function f(): i32 { var x = 0; x = 5; return x; }`)
 	// x at fp-4: store of 5 must hit that slot.
 	mustContain(t, asm, "str r0, [fp, #-4]")
 }
 
 func TestFrameSizeAlignedTo8(t *testing.T) {
 	// Three locals: 12 bytes, must round to 16.
-	asm := compile(t, `function f(): number { var a = 1; var b = 2; var c = 3; return a + b + c; }`)
+	asm := compile(t, `function f(): i32 { var a = 1; var b = 2; var c = 3; return a + b + c; }`)
 	mustContain(t, asm, "sub sp, sp, #16")
 }
 
 // A function with >4 params should fetch the extras from the caller's
 // stack frame (fp+8, fp+12, …) into local slots.
 func TestManyParamsReadsFromCallerStack(t *testing.T) {
-	asm := compile(t, `function f(a: number, b: number, c: number, d: number, e: number, f2: number): number {
+	asm := compile(t, `function f(a: i32, b: i32, c: i32, d: i32, e: i32, f2: i32): i32 {
 		return a + b + c + d + e + f2;
 	}`)
 	mustContain(t, asm, "ldr r12, [fp, #8]")  // param 4 (e)
@@ -225,11 +225,11 @@ func TestManyArgCallPreallocates(t *testing.T) {
 	// away — we want an actual `bl g` so we can inspect the
 	// arg-passing dance.
 	asm := compile(t, `
-		function g(a: number, b: number, c: number, d: number, e: number, f: number): number {
+		function g(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32): i32 {
 			if (a == 0) { return 0; }
 			return a;
 		}
-		function f(): number { return g(1, 2, 3, 4, 5, 6); }`)
+		function f(): i32 { return g(1, 2, 3, 4, 5, 6); }`)
 	// Args 0..3 read from their pushed offsets.
 	mustContain(t, asm, "ldr r0, [sp, #20]")
 	mustContain(t, asm, "ldr r1, [sp, #16]")
@@ -242,7 +242,7 @@ func TestManyArgCallPreallocates(t *testing.T) {
 }
 
 func TestNonExecutableStackNote(t *testing.T) {
-	asm := compile(t, `function f(): number { return 0; }`)
+	asm := compile(t, `function f(): i32 { return 0; }`)
 	mustContain(t, asm, `.section .note.GNU-stack,"",%progbits`)
 }
 
@@ -295,29 +295,29 @@ func TestPrintNonLiteralKeepsHelper(t *testing.T) {
 // libgcc __aeabi_idivmod call. Faster than the function-call
 // shape and lets us drop the libgcc dependency under -nostdlib.
 func TestModuloUsesSdivMls(t *testing.T) {
-	asm := compile(t, `function f(): number { return 17 % 5; }`)
+	asm := compile(t, `function f(): i32 { return 17 % 5; }`)
 	mustContain(t, asm, "sdiv r2, r1, r0")
 	mustContain(t, asm, "mls r0, r2, r0, r1")
 }
 
 func TestBitwiseAnd(t *testing.T) {
-	asm := compile(t, `function f(a: number, b: number): number { return a & b; }`)
+	asm := compile(t, `function f(a: i32, b: i32): i32 { return a & b; }`)
 	mustContain(t, asm, "and r0, r1, r0")
 }
 
 func TestBitwiseOrXor(t *testing.T) {
-	asm := compile(t, `function f(a: number, b: number, c: number): number { return a | b ^ c; }`)
+	asm := compile(t, `function f(a: i32, b: i32, c: i32): i32 { return a | b ^ c; }`)
 	mustContain(t, asm, "orr r0, r1, r0")
 	mustContain(t, asm, "eor r0, r1, r0")
 }
 
 func TestShiftLeft(t *testing.T) {
-	asm := compile(t, `function f(a: number, b: number): number { return a << b; }`)
+	asm := compile(t, `function f(a: i32, b: i32): i32 { return a << b; }`)
 	mustContain(t, asm, "lsl r0, r1, r0")
 }
 
 func TestShiftRight(t *testing.T) {
-	asm := compile(t, `function f(a: number, b: number): number { return a >> b; }`)
+	asm := compile(t, `function f(a: i32, b: i32): i32 { return a >> b; }`)
 	mustContain(t, asm, "asr r0, r1, r0")
 }
 
@@ -347,7 +347,7 @@ func TestNoStrcatHelperWhenUnused(t *testing.T) {
 // pushes r4..r{4+P-1} alongside fp/lr and reads through `mov r0, r4`
 // rather than `ldr r0, [fp, ...]`.
 func TestLeafFunctionPinsParamsToRegisters(t *testing.T) {
-	asm := compile(t, `function add(a: number, b: number): number { return a + b; }`)
+	asm := compile(t, `function add(a: i32, b: i32): i32 { return a + b; }`)
 	mustContain(t, asm, "push {r4, r5, fp, lr}")
 	mustContain(t, asm, "mov r4, r0")
 	mustContain(t, asm, "mov r5, r1")
@@ -365,7 +365,7 @@ func TestLeafFunctionPinsParamsToRegisters(t *testing.T) {
 // the callee-saved set and lr — verified by qemu-arm e2e tests
 // which exit -1 / return wrong values without this offset.
 func TestLeafEpilogueStepsSPPastSavedRegs(t *testing.T) {
-	asm := compile(t, `function add(a: number, b: number): number { return a + b; }`)
+	asm := compile(t, `function add(a: i32, b: i32): i32 { return a + b; }`)
 	// 2 params → fp - 8 lands sp at saved r4.
 	mustContain(t, asm, "sub sp, fp, #8")
 	mustContain(t, asm, "pop {r4, r5, fp, lr}")
@@ -377,7 +377,7 @@ func TestLeafEpilogueStepsSPPastSavedRegs(t *testing.T) {
 // Same check at 4 params: epilogue offset scales with the param
 // count (4 saved regs × 4 = 16).
 func TestLeafEpilogueOffsetScalesWithParams(t *testing.T) {
-	asm := compile(t, `function leaf(a: number, b: number, c: number, d: number): number {
+	asm := compile(t, `function leaf(a: i32, b: i32, c: i32, d: i32): i32 {
 		return (a + b) * (c + d);
 	}`)
 	mustContain(t, asm, "sub sp, fp, #16")
@@ -393,11 +393,11 @@ func TestLeafEpilogueOffsetScalesWithParams(t *testing.T) {
 // comes through a parameter (which the propagator can't reason
 // about).
 func TestIndirectCallThroughVar(t *testing.T) {
-	asm := compile(t, `function add(a: number, b: number): number { return a + b; }
-function call_with(f: (number, number) => number): number {
+	asm := compile(t, `function add(a: i32, b: i32): i32 { return a + b; }
+function call_with(f: (i32, i32) => i32): i32 {
 	return f(40, 2);
 }
-function main(): number { return call_with(add); }`)
+function main(): i32 { return call_with(add); }`)
 	mustContain(t, asm, "blx r12")
 }
 
@@ -406,7 +406,7 @@ function main(): number { return call_with(add); }`)
 // wrapping the body. On arm32 that materialises as a `b .LloopTop_*`
 // — no `bl <self>` for the recursive call.
 func TestTailRecursionBranchesToBody(t *testing.T) {
-	asm := compile(t, `function sum(n: number, acc: number): number {
+	asm := compile(t, `function sum(n: i32, acc: i32): i32 {
 		if (n == 0) { return acc; }
 		return sum(n - 1, acc + n);
 	}`)
@@ -427,7 +427,7 @@ func TestTailRecursionBranchesToBody(t *testing.T) {
 // Non-tail recursion (the recursive call isn't the return value) must
 // still emit a regular `bl` so register state is preserved across it.
 func TestNonTailRecursionKeepsBl(t *testing.T) {
-	asm := compile(t, `function fact(n: number): number {
+	asm := compile(t, `function fact(n: i32): i32 {
 		if (n == 0) { return 1; }
 		return n * fact(n - 1);
 	}`)
@@ -439,11 +439,11 @@ func TestNonTailRecursionKeepsBl(t *testing.T) {
 func TestNonLeafKeepsStackSpill(t *testing.T) {
 	// Branchy callee resists IR inlining; `f` then keeps the
 	// non-leaf shape because it makes a real `bl g` call.
-	asm := compile(t, `function g(n: number): number {
+	asm := compile(t, `function g(n: i32): i32 {
 		if (n == 0) { return 0; }
 		return n;
 	}
-function f(n: number): number { return g(n); }`)
+function f(n: i32): i32 { return g(n); }`)
 	// `f` calls `g`, so it isn't a leaf — expect the original prologue.
 	// In release builds (default) `.cfi_*` is suppressed, so the push
 	// follows the label directly.
@@ -454,9 +454,9 @@ function f(n: number): number { return g(n); }`)
 
 // EmitWithOptions(SourceFile: …) should declare the source file and
 // emit `.loc 1 <line> <col>` before each statement so `gcc -g` can
-// build a DWARF line-number table.
+// build a DWARF line-i32 table.
 func TestDwarfLocDirectives(t *testing.T) {
-	src := `function f(): number {
+	src := `function f(): i32 {
 	var x = 1;
 	return x;
 }`
@@ -480,7 +480,7 @@ func TestDwarfLocDirectives(t *testing.T) {
 // Plain Emit (no Options) should not emit any debug directives — the
 // CI smoke output and existing tests must stay byte-identical.
 func TestNoDebugDirectivesByDefault(t *testing.T) {
-	asm := compile(t, `function f(): number { return 0; }`)
+	asm := compile(t, `function f(): i32 { return 0; }`)
 	if strings.Contains(asm, ".file") || strings.Contains(asm, ".loc") {
 		t.Errorf("default Emit should not emit debug directives:\n%s", asm)
 	}
@@ -509,9 +509,9 @@ func TestStringInterningDeduplicates(t *testing.T) {
 // helpers (file I/O), the alloc path, the string runtime, and
 // the print path.
 func TestArm32NoLibcSymbols(t *testing.T) {
-	asm := compile(t, `function main(): number {
+	asm := compile(t, `function main(): i32 {
 		print("hi");
-		var n: number = 17 % 5;
+		var n: i32 = 17 % 5;
 		var s: string = "a" + "b";
 		if (s == "ab") { n = n + 1; }
 		return n;
@@ -552,7 +552,7 @@ func TestArm32StrcmpShortCircuitsAndIsWordGrain(t *testing.T) {
 // instead of the previous `lseek SEEK_END ; lseek SEEK_SET`
 // pair. Saves one syscall per call.
 func TestArm32ReadFileUsesFstat(t *testing.T) {
-	asm := compile(t, `function main(): number {
+	asm := compile(t, `function main(): i32 {
 		match (read_file("x")) { Ok(_) => { return 0; }, Err(_) => { return 1; } }
 		return -1;
 	}`)
@@ -648,7 +648,7 @@ func TestWriteLiteralFoldsToInlineWrite(t *testing.T) {
 // .bss globals, align sp, init the heap, and exit_group on
 // main's return.
 func TestArm32StartCaptureAndExit(t *testing.T) {
-	asm := compile(t, `function main(): number { return 0; }`)
+	asm := compile(t, `function main(): i32 { return 0; }`)
 	mustContain(t, asm, ".global _start")
 	mustContain(t, asm, "ldr r0, [sp]")
 	mustContain(t, asm, "ldr r3, =__lang_argc")
@@ -670,7 +670,7 @@ func TestArm32StartCaptureAndExit(t *testing.T) {
 // The 64 MiB pre-reserved mmap region means we never call brk
 // during alloc — Linux populates pages lazily on first touch.
 func TestArm32AllocFastPath(t *testing.T) {
-	asm := compile(t, `function f(): number[] { return [1, 2, 3]; }`)
+	asm := compile(t, `function f(): i32[] { return [1, 2, 3]; }`)
 	mustContain(t, asm, "add r0, r0, #3")
 	mustContain(t, asm, "bic r0, r0, #3")
 	mustContain(t, asm, "ldr r1, =__lang_heap_ptr")
@@ -690,7 +690,7 @@ func TestArm32AllocFastPath(t *testing.T) {
 // `_start` reserves the bump arena via a single mmap2 syscall
 // at heap_init time — modern allocator interface, no brk.
 func TestArm32HeapInitUsesMmap(t *testing.T) {
-	asm := compile(t, `function main(): number { return 0; }`)
+	asm := compile(t, `function main(): i32 { return 0; }`)
 	// mmap2 syscall = 192 on ARM EABI.
 	mustContain(t, asm, "mov r7, #192")
 	// We pass MAP_PRIVATE|MAP_ANONYMOUS = 0x22 in r3.
@@ -719,7 +719,7 @@ func TestArm32EmitsVFPForFloats(t *testing.T) {
 // `cmp rN, #imm` form. Each switch case ends up as a one-line
 // cmp + conditional branch.
 func TestArm32SwitchEmitsBranchChain(t *testing.T) {
-	asm := compile(t, `function f(n: number): number {
+	asm := compile(t, `function f(n: i32): i32 {
 		switch (n) {
 			case 1, 2: return 10;
 			case 3: return 30;
@@ -743,7 +743,7 @@ func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 // collapses the branch + ELSE/END labels into a pair of
 // predicated loads — `cmp r0, #0 ; ldrne r0, =1 ; ldreq r0, =2`.
 func TestArm32TernaryBranches(t *testing.T) {
-	asm := compile(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
+	asm := compile(t, `function f(b: boolean): i32 { return b ? 1 : 2; }`)
 	mustContain(t, asm, "cmp r0, #0")
 	// Either the predicated form (ldrne / ldreq) or the
 	// pre-fold branch shape is acceptable.
@@ -755,14 +755,14 @@ func TestArm32TernaryBranches(t *testing.T) {
 }
 
 func TestArm32CompoundAssignLowersToBinary(t *testing.T) {
-	asm := compile(t, `function f(): number { var x: number = 5; x += 7; return x; }`)
+	asm := compile(t, `function f(): i32 { var x: i32 = 5; x += 7; return x; }`)
 	// `x += 7` lowers via the binary path; the const-imm
 	// peephole folds the load + add trio into `add r0, r1, #7`.
 	mustContain(t, asm, "add r0, r1, #7")
 }
 
 func TestArm32StringIndexLoadsByte(t *testing.T) {
-	asm := compile(t, `function f(): number { var s: string = "abc"; return s[1]; }`)
+	asm := compile(t, `function f(): i32 { var s: string = "abc"; return s[1]; }`)
 	mustContain(t, asm, "ldrb")
 }
 
@@ -771,7 +771,7 @@ func TestArm32StringIndexLoadsByte(t *testing.T) {
 // .rodata for this case — the byte is materialised inline.
 func TestArm32StringIndexLiteralFolds(t *testing.T) {
 	// 'b' is byte 0x62 = 98.
-	asm := compile(t, `function f(): number { return "abc"[1]; }`)
+	asm := compile(t, `function f(): i32 { return "abc"[1]; }`)
 	mustContain(t, asm, "ldr r0, =98")
 	if strings.Contains(asm, `.asciz "abc"`) {
 		t.Errorf("\"literal\"[const] must not emit the literal data:\n%s", asm)
@@ -834,7 +834,7 @@ func TestArm32StringEqualityLiteralFolds(t *testing.T) {
 // emitted into .rodata for this case (nothing else references
 // the data, just its length).
 func TestArm32LenStringLiteralFolds(t *testing.T) {
-	asm := compile(t, `function f(): number { return len("abc"); }`)
+	asm := compile(t, `function f(): i32 { return len("abc"); }`)
 	mustContain(t, asm, "ldr r0, =3")
 	if strings.Contains(asm, "ldr r0, =.LStr_") {
 		t.Errorf("len(literal) must not load the string data:\n%s", asm)
@@ -851,7 +851,7 @@ func TestArm32LenStringLiteralFolds(t *testing.T) {
 // Both shapes (strings + arrays) bottom out in the same
 // `<ptr>; const 4; sub; load` IR, so testing one suffices.
 func TestArm32LenNonLiteralUsesPrefixLoad(t *testing.T) {
-	asm := compile(t, `function f(s: string): number { return len(s); }`)
+	asm := compile(t, `function f(s: string): i32 { return len(s); }`)
 	// The const-imm + address-mode-sink peeps fold the entire
 	// `<ptr>; const 4; sub; load` IR into a single
 	// `ldr rD, [base, #-4]`.

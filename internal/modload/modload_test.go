@@ -109,9 +109,9 @@ func callsDirect(fn *ast.FuncDecl, target string) bool {
 // reference.
 func TestLoadCombinesEntryAndImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `pub function greet(): number { return 42; }`,
+		"util.lang": `pub function greet(): i32 { return 42; }`,
 		"main.lang": `import "./util";
-function main(): number { return util.greet(); }`,
+function main(): i32 { return util.greet(); }`,
 	})
 	prog, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
@@ -141,10 +141,10 @@ function main(): number { return util.greet(); }`,
 // still a reference to the now-mangled name.
 func TestLoadRenamesSameModuleFunctionValue(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function add(a: number, b: number): number { return a + b; }
-function pickAdd(): (number, number) => number { return add; }`,
+		"util.lang": `function add(a: i32, b: i32): i32 { return a + b; }
+function pickAdd(): (i32, i32) => i32 { return add; }`,
 		"main.lang": `import "./util";
-function main(): number { return 0; }`,
+function main(): i32 { return 0; }`,
 	})
 	prog, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
@@ -172,11 +172,11 @@ function main(): number { return 0; }`,
 // import in a sibling subdirectory resolves through filepath.Join.
 func TestLoadResolvesRelativeToImporter(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"helpers/inner.lang": `pub function answer(): number { return 7; }`,
+		"helpers/inner.lang": `pub function answer(): i32 { return 7; }`,
 		"helpers/util.lang": `import "./inner";
-pub function call_inner(): number { return inner.answer(); }`,
+pub function call_inner(): i32 { return inner.answer(); }`,
 		"main.lang": `import "./helpers/util";
-function main(): number { return util.call_inner(); }`,
+function main(): i32 { return util.call_inner(); }`,
 	})
 	prog, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
@@ -195,9 +195,9 @@ function main(): number { return util.call_inner(); }`,
 func TestLoadDetectsCycle(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"a.lang": `import "./b";
-pub function fa(): number { return b.fb(); }`,
+pub function fa(): i32 { return b.fb(); }`,
 		"b.lang": `import "./a";
-pub function fb(): number { return a.fa(); }`,
+pub function fb(): i32 { return a.fa(); }`,
 	})
 	_, _, err := Load(filepath.Join(dir, "a.lang"))
 	if err == nil {
@@ -212,11 +212,11 @@ pub function fb(): number { return a.fa(); }`,
 // load-time error — qualified calls would be ambiguous.
 func TestLoadRejectsDuplicateLocalName(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"a/util.lang": `pub function fa(): number { return 1; }`,
-		"b/util.lang": `pub function fb(): number { return 2; }`,
+		"a/util.lang": `pub function fa(): i32 { return 1; }`,
+		"b/util.lang": `pub function fb(): i32 { return 2; }`,
 		"main.lang": `import "./a/util";
 import "./b/util";
-function main(): number { return util.fa(); }`,
+function main(): i32 { return util.fa(); }`,
 	})
 	_, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err == nil {
@@ -229,7 +229,7 @@ function main(): number { return util.fa(); }`,
 // to round-trip cleanly.
 func TestLoadSingleFileNoImports(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `function main(): number { return 99; }`,
+		"main.lang": `function main(): i32 { return 99; }`,
 	})
 	prog, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
@@ -246,12 +246,12 @@ func TestLoadSingleFileNoImports(t *testing.T) {
 // reference to it gets flattened.
 func TestLoadRewritesCrossModuleStructType(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `pub struct Point { x: number, y: number }
-pub function make(x: number, y: number): Point {
+		"point.lang": `pub struct Point { x: i32, y: i32 }
+pub function make(x: i32, y: i32): Point {
 	return Point { x: x, y: y };
 }`,
 		"main.lang": `import "./point";
-function main(): number {
+function main(): i32 {
 	var p: point.Point = point.make(3, 4);
 	return p.x + p.y;
 }`,
@@ -294,9 +294,9 @@ function main(): number {
 // flatten it to the mangled form before the checker sees it.
 func TestLoadRewritesCrossModuleStructLit(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `pub struct Point { x: number, y: number }`,
+		"point.lang": `pub struct Point { x: i32, y: i32 }`,
 		"main.lang": `import "./point";
-function main(): number {
+function main(): i32 {
 	var p: point.Point = point.Point { x: 5, y: 7 };
 	return p.x;
 }`,
@@ -321,11 +321,11 @@ function main(): number {
 // position the parser might emit.
 func TestLoadRewritesCrossModuleReturnType(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `pub struct Point { x: number, y: number }
+		"point.lang": `pub struct Point { x: i32, y: i32 }
 pub function origin(): Point { return Point { x: 0, y: 0 }; }`,
 		"main.lang": `import "./point";
 function pickOrigin(): point.Point { return point.origin(); }
-function main(): number { return pickOrigin().x; }`,
+function main(): i32 { return pickOrigin().x; }`,
 	})
 	prog, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
@@ -349,9 +349,9 @@ function main(): number { return pickOrigin().x; }`,
 // hints at the fix.
 func TestLoadRejectsPrivateFunctionAccess(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function secret(): number { return 9; }`,
+		"util.lang": `function secret(): i32 { return 9; }`,
 		"main.lang": `import "./util";
-function main(): number { return util.secret(); }`,
+function main(): i32 { return util.secret(); }`,
 	})
 	_, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err == nil {
@@ -366,10 +366,10 @@ function main(): number { return util.secret(); }`,
 // as a value, not calling it) are equally rejected.
 func TestLoadRejectsPrivateFunctionValueReference(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function secret(): number { return 9; }`,
+		"util.lang": `function secret(): i32 { return 9; }`,
 		"main.lang": `import "./util";
-function main(): number {
-	var f: () => number = util.secret;
+function main(): i32 {
+	var f: () => i32 = util.secret;
 	return f();
 }`,
 	})
@@ -386,9 +386,9 @@ function main(): number {
 // rejected. The fix-hint mentions `pub struct`.
 func TestLoadRejectsPrivateStructType(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `struct Point { x: number, y: number }`,
+		"point.lang": `struct Point { x: i32, y: i32 }`,
 		"main.lang": `import "./point";
-function main(): number {
+function main(): i32 {
 	var p: point.Point = point.Point { x: 1, y: 2 };
 	return p.x;
 }`,
@@ -407,10 +407,10 @@ function main(): number {
 // referenced from a `pub` function in the same file loads cleanly.
 func TestLoadAllowsPrivateAccessWithinSameModule(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function helper(): number { return 1; }
-pub function exposed(): number { return helper() + 1; }`,
+		"util.lang": `function helper(): i32 { return 1; }
+pub function exposed(): i32 { return helper() + 1; }`,
 		"main.lang": `import "./util";
-function main(): number { return util.exposed(); }`,
+function main(): i32 { return util.exposed(); }`,
 	})
 	prog, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
@@ -430,9 +430,9 @@ function main(): number { return util.exposed(); }`,
 // for resolving references afterwards.
 func TestLoadCombinesPubConstAcrossModules(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"limits.lang": `pub const MAX: number = 100;`,
+		"limits.lang": `pub const MAX: i32 = 100;`,
 		"main.lang": `import "./limits";
-function main(): number { return limits.MAX; }`,
+function main(): i32 { return limits.MAX; }`,
 	})
 	prog, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
@@ -467,9 +467,9 @@ function main(): number { return limits.MAX; }`,
 // module's decls so the diagnostic matches the actual decl kind.
 func TestLoadRejectsPrivateConstAccess(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"limits.lang": `const MAX: number = 100;`,
+		"limits.lang": `const MAX: i32 = 100;`,
 		"main.lang": `import "./limits";
-function main(): number { return limits.MAX; }`,
+function main(): i32 { return limits.MAX; }`,
 	})
 	_, _, err := Load(filepath.Join(dir, "main.lang"))
 	if err == nil {
@@ -487,9 +487,9 @@ function main(): number { return limits.MAX; }`,
 // diagnostics can find the right file for any error position.
 func TestLoadReturnsPerFileSources(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `pub function f(): number { return 1; }`,
+		"util.lang": `pub function f(): i32 { return 1; }`,
 		"main.lang": `import "./util";
-function main(): number { return util.f(); }`,
+function main(): i32 { return util.f(); }`,
 	})
 	_, srcs, err := Load(filepath.Join(dir, "main.lang"))
 	if err != nil {

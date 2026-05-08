@@ -68,8 +68,8 @@ func TestFuseTeeRequiresImmediateAdjacency(t *testing.T) {
 // immediate load of the same slot; FuseTee collapses those into
 // `local.tee` so codegen emits one WAT op instead of two.
 func TestFuseTeeAfterInlinedCall(t *testing.T) {
-	p := lowerSource(t, `function dbl(x: number): number { return x * 2; }
-		function main(): number { return dbl(7); }`)
+	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 { return dbl(7); }`)
 	Inline(p)
 	FuseTee(p)
 	main := findFunc(p, "main")
@@ -124,8 +124,8 @@ func TestFuseTeeHandlesMultipleSites(t *testing.T) {
 
 // FuseTee is idempotent — a second pass produces the same op list.
 func TestFuseTeeIsIdempotent(t *testing.T) {
-	p := lowerSource(t, `function f(): number {
-		var x: number = 5;
+	p := lowerSource(t, `function f(): i32 {
+		var x: i32 = 5;
 		return x + 1;
 	}`)
 	FuseTee(p)
