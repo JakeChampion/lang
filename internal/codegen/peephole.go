@@ -82,10 +82,149 @@ func peepPass(lines []string) []string {
 			continue
 		}
 
+		// 8: fold `cmp rN, r0` immediately preceded by
+		// `ldr r0, =CONST` (or `mov r0, #CONST`) into
+		// `cmp rN, #CONST`, dropping the load. Common for
+		// `if (x == 0)`, `while (i < 10)` etc. — the const
+		// is the OpConstI32 operand pushed from the IR's
+		// stack-machine binPop. Only fires when the const
+		// fits the simple 0..255 immediate window so we
+		// don't have to reason about ARM's rotated-imm
+		// encoding.
+		if collapsed, ok := tryCmpAgainstConst(out, line); ok {
+			out = collapsed
+			continue
+		}
+
 		_ = i
 		out = append(out, line)
 	}
 	return out
+}
+
+// tryCmpAgainstConst recognises the three-line shape
+//
+//	ldr r0, =N         (or `mov r0, #N`)
+//	pop {rM}           (M != 0)
+//	cmp rM, r0
+//
+// and rewrites it to
+//
+//	pop {rM}
+//	cmp rM, #N
+//
+// dropping the const-load entirely. The const enters r0 from
+// the IR's OpConstI32 (followed by the binPop's pop {r0}; the
+// existing push/pop fusion collapses that pair down to just
+// the load). Only safe when N fits in the simple 0..255
+// immediate window — above that we'd need to verify the
+// encoding rules (8-bit rotated by even amounts) and the win
+// is marginal anyway.
+func tryCmpAgainstConst(out []string, cur string) ([]string, bool) {
+	if len(out) < 2 {
+		return nil, false
+	}
+	loadLine := out[len(out)-2]
+	popLine := out[len(out)-1]
+	imm, ok := matchLoadConstR0(loadLine)
+	if !ok {
+		return nil, false
+	}
+	popReg := matchPop(popLine)
+	if popReg == "" || popReg == "r0" {
+		// pop into r0 would overwrite the const we just loaded.
+		return nil, false
+	}
+	cmpReg, ok := matchCmpAgainstR0(cur)
+	if !ok || cmpReg != popReg {
+		return nil, false
+	}
+	if imm < 0 || imm > 255 {
+		return nil, false
+	}
+	rewritten := append(out[:len(out)-2], popLine)
+	rewritten = append(rewritten, "\tcmp "+cmpReg+", #"+itoa(imm))
+	return rewritten, true
+}
+
+// matchLoadConstR0 returns (N, true) when `line` is one of
+//   - `ldr r0, =N`
+//   - `mov r0, #N`
+// for some non-negative integer N. The two forms are
+// equivalent at runtime — the assembler picks `mov` when N
+// fits the encoding. We accept both for symmetry across
+// hand-written and gas-rewritten code.
+func matchLoadConstR0(line string) (int, bool) {
+	s := trim(line)
+	if v, ok := parseAfter(s, "ldr r0, ="); ok {
+		return v, true
+	}
+	if v, ok := parseAfter(s, "mov r0, #"); ok {
+		return v, true
+	}
+	return 0, false
+}
+
+func matchPop(line string) string {
+	return popReg(line)
+}
+
+// matchCmpAgainstR0 returns the *other* register when `line`
+// is `cmp rN, r0` (N != 0). The form `cmp r0, r0` self-
+// compares and is left alone.
+func matchCmpAgainstR0(line string) (string, bool) {
+	s := trim(line)
+	if !strings.HasPrefix(s, "cmp ") {
+		return "", false
+	}
+	a, b := splitFirst(s[len("cmp "):])
+	if b != "r0" || a == "" || a == "r0" {
+		return "", false
+	}
+	return a, true
+}
+
+// parseAfter returns (n, true) when s begins with prefix and
+// what follows is a non-negative decimal integer. Used to
+// pull the immediate out of `ldr r0, =N` / `mov r0, #N`.
+func parseAfter(s, prefix string) (int, bool) {
+	if !strings.HasPrefix(s, prefix) {
+		return 0, false
+	}
+	rest := s[len(prefix):]
+	if rest == "" {
+		return 0, false
+	}
+	n := 0
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+		if n > 1<<30 {
+			return 0, false
+		}
+	}
+	return n, true
+}
+
+// itoa is the int → decimal string for the small immediates
+// the cmp-against-const peephole emits. The standard library
+// strconv.Itoa would work, but a tiny inline avoids pulling
+// strconv into this otherwise-string-handling-only file.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [12]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
 }
 
 // tryCmpBranchFusion recognises the four-line shape
