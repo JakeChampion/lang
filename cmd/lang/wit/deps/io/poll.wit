@@ -1,0 +1,11 @@
+package wasi:io@0.2.0;
+
+// Vendored subset of wasi:io/poll@0.2.0 — only `pollable.block`
+// and `[resource-drop]pollable`, which the wasm backend uses to
+// wait for a wasi:sockets `tcp-socket.accept` to become ready.
+// Source: https://github.com/WebAssembly/wasi-io
+interface poll {
+    resource pollable {
+        block: func();
+    }
+}

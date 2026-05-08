@@ -114,20 +114,41 @@ The IR's existing `Reader` / `Writer` types stay; only the runtime
 helpers change shape. After 3c lands, the only preview-1 imports
 left are TCP (handled in step 4) plus args / env (step 5 or 6).
 
-### Step 4 — Migrate sockets to `wasi:sockets/tcp`
+### Step 4 — Migrate sockets to `wasi:sockets/tcp` (shipped)
 
-`tcp_listen(port)` finally works guest-side:
+`tcp_listen(port)` now works guest-side. The pipeline:
 
-1. `wasi:sockets/instance-network.instance-network()` gets the
-   network handle.
-2. `wasi:sockets/tcp.start-listen(network, local-address)` opens
-   a listener.
-3. `accept()` returns `(tcp-socket, input-stream, output-stream)`
-   — the streams plug straight into the existing `Reader` /
-   `Writer` types.
+1. `wasi:sockets/instance-network.instance-network()` produces the
+   network handle (cached at memory[124], init bit 4 in the
+   flags byte).
+2. `wasi:sockets/tcp-create-socket.create-tcp-socket(ipv4)`
+   allocates a `tcp-socket` resource.
+3. `tcp-socket.start-bind` (15-i32 lowering: self + `borrow<network>`
+   + 12 i32s for the `ip-socket-address` variant + retptr) +
+   `finish-bind` set the address; we always emit the IPv4 case
+   bound to 0.0.0.0:port.
+4. `start-listen` + `finish-listen` flip the socket into listen
+   mode.
+5. `tcp_accept` calls `tcp-socket.subscribe` + `pollable.block`
+   to wait for a connection, then `tcp-socket.accept` returns
+   `(tcp-socket, input-stream, output-stream)` — a 16-byte
+   canonical-ABI result that needs a dynamically-allocated retptr
+   since the static 12-byte slot at memory[92] doesn't fit.
 
-The `--tcp-listen=…` host flag becomes optional; programs are
-self-contained.
+The user-facing builtins keep their preview-1 shape for
+backward compatibility — every "fd" the program sees from
+`tcp_listen` / `tcp_accept` is now a heap pointer to a 12-byte
+struct `(tcp_socket, input_stream, output_stream)`. Listener
+structs leave the two stream slots zero. `tcp_recv` /
+`tcp_send` / `tcp_close` consume that struct: recv blocks-reads
+from the input-stream slot, send chunks through the
+output-stream via `$__streams_write`, and close drops streams
+first then the parent socket (the canonical-ABI rejects parent
+drops with live children).
+
+The `--tcp-listen=…` host flag is no longer needed; the only
+host privilege the program needs is `-S inherit-network` so
+wasmtime allows `create-tcp-socket` and `start-bind`.
 
 ### Step 5 — Add `wasi:http` handler target
 

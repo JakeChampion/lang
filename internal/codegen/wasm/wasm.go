@@ -1240,13 +1240,16 @@ func (g *generator) internString(s string) int {
 //	         first $eprint call)
 //	112..115 preview-2 stream-handle init flags
 //	         (bit 0 = stdout cached, bit 1 = stderr cached,
-//	          bit 2 = stdin cached, bit 3 = preopen cached)
+//	          bit 2 = stdin cached, bit 3 = preopen cached,
+//	          bit 4 = network cached)
 //	116..119 preview-2 stdin input-stream resource handle (cached on
 //	         first $read_line call)
 //	120..123 preview-2 preopen descriptor handle (cached on first
 //	         file open; resolves paths relative to it via open-at)
+//	124..127 preview-2 network resource handle (cached on first
+//	         tcp_listen / tcp_accept; from instance-network())
 //	96+     string data, each entry: 4-byte length prefix then bytes
-//	  (string data starts at 124 instead of 96 when preview-2 streams
+//	  (string data starts at 128 instead of 96 when preview-2 streams
 //	  are in play; see EmitFromIRWithOptions.)
 func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
@@ -1280,14 +1283,17 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(import "wasi:cli/stdout@0.2.0" "get-stdout" (func $__wasi_get_stdout (result i32)))`)
 		g.line(`(import "wasi:cli/stderr@0.2.0" "get-stderr" (func $__wasi_get_stderr (result i32)))`)
 		g.line(`(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush" (func $__wasi_blocking_write_and_flush (param i32 i32 i32 i32)))`)
-		if g.needsReadLine || g.needsStreamingIO || g.needsFileIO || g.needsStdStreams {
+		if g.needsReadLine || g.needsStreamingIO || g.needsFileIO || g.needsStdStreams || g.needsTcp {
 			// `__method_Reader_read_line` dispatches into the
 			// preview-2 streams path when the Reader wraps
-			// stdin or a file (since step 3c), and the
-			// `$stdin` constructor populates a Reader struct
-			// with the cached stdin stream handle — so the
-			// imports come in for any streaming-IO or
-			// std-stream usage, not just bare `read_line()`.
+			// stdin or a file (since step 3c), the `$stdin`
+			// constructor populates a Reader struct with the
+			// cached stdin stream handle, and tcp_recv (step 4)
+			// consumes the input-stream side of an accepted
+			// connection — `blocking-read` covers all three.
+			// `get-stdin` only matters for the first two but
+			// they're the more common case; the unused TCP
+			// branch is harmless.
 			g.line(`(import "wasi:cli/stdin@0.2.0" "get-stdin" (func $__wasi_get_stdin (result i32)))`)
 			g.line(`(import "wasi:io/streams@0.2.0" "[method]input-stream.blocking-read" (func $__wasi_blocking_read (param i32 i64 i32)))`)
 		}
@@ -1297,16 +1303,22 @@ func (g *generator) emitRuntimePreamble() {
 			// entry as the working directory descriptor and call
 			// descriptor.open-at against it. read/write/append-via-
 			// stream return a stream resource the rest of the
-			// runtime feeds through wasi:io/streams. Resource
-			// drops keep streams from leaking on close — file
-			// descriptors themselves leak (bump-allocator can't
-			// free, and opening a bounded number of files per
-			// program is acceptable).
+			// runtime feeds through wasi:io/streams.
 			g.line(`(import "wasi:filesystem/preopens@0.2.0" "get-directories" (func $__wasi_get_directories (param i32)))`)
 			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.open-at" (func $__wasi_descriptor_open_at (param i32 i32 i32 i32 i32 i32 i32)))`)
 			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.read-via-stream" (func $__wasi_descriptor_read_via_stream (param i32 i64 i32)))`)
 			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.write-via-stream" (func $__wasi_descriptor_write_via_stream (param i32 i64 i32)))`)
 			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.append-via-stream" (func $__wasi_descriptor_append_via_stream (param i32 i32)))`)
+		}
+		if g.needsFileIO || g.needsStreamingIO || g.needsTcp {
+			// Stream resource drops — closing a file Reader/Writer
+			// (step 3c) and closing a TCP connection (step 4)
+			// both drop input-stream / output-stream resources to
+			// keep them from leaking on the host. The underlying
+			// descriptor / tcp-socket handles still leak because
+			// the bump allocator can't free the wrapper struct
+			// either; bounded opens per program lifetime keeps
+			// that acceptable.
 			g.line(`(import "wasi:io/streams@0.2.0" "[resource-drop]input-stream" (func $__wasi_input_stream_drop (param i32)))`)
 			g.line(`(import "wasi:io/streams@0.2.0" "[resource-drop]output-stream" (func $__wasi_output_stream_drop (param i32)))`)
 		}
@@ -1331,7 +1343,7 @@ func (g *generator) emitRuntimePreamble() {
 			g.line(`(import "wasi_snapshot_preview1" "random_get" (func $__wasi_random_get (param i32 i32) (result i32)))`)
 		}
 	}
-	if g.needsTcp {
+	if g.needsTcp && !g.preview2 {
 		// sock_accept(sock, fdflags, fd_out_ptr) -> errno —
 		// returns the new fd via the out-pointer. Wasmtime
 		// supports this on host-preopened TCP listeners
@@ -1341,6 +1353,35 @@ func (g *generator) emitRuntimePreamble() {
 		// socket fds. fd_read is imported above (gated on
 		// needsReadLine || needsTcp); fd_close is below
 		// (gated on needsFileIO || needsTcp).
+	}
+	if g.needsTcp && g.preview2 {
+		// Step 4: native wasi:sockets. The user-facing API
+		// (tcp_listen / tcp_accept / tcp_recv / tcp_send /
+		// tcp_close) keeps its preview-1 shape — every "fd" the
+		// program sees is a heap pointer to a 12-byte struct
+		// `(tcp_socket, input_stream, output_stream)`; for
+		// listening sockets the stream slots stay 0. The
+		// sock_accept import above is dropped on this path; we
+		// drive the bind / listen / accept pipeline directly,
+		// so the host doesn't need `wasmtime --tcp-listen=…` any
+		// more — the guest binds the port itself.
+		g.line(`(import "wasi:sockets/instance-network@0.2.0" "instance-network" (func $__wasi_instance_network (result i32)))`)
+		g.line(`(import "wasi:sockets/network@0.2.0" "[resource-drop]network" (func $__wasi_network_drop (param i32)))`)
+		g.line(`(import "wasi:sockets/tcp-create-socket@0.2.0" "create-tcp-socket" (func $__wasi_create_tcp_socket (param i32 i32)))`)
+		// start-bind takes the canonical-ABI flattening of
+		// `ip-socket-address` — a 1-i32 discriminant plus an
+		// 11-i32 max payload (ipv4 uses 5 slots, ipv6 needs 11,
+		// the variant joins them). Total params: self,
+		// borrow<network>, disc, 11 flat slots, retptr = 15 i32.
+		g.line(`(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-bind" (func $__wasi_tcp_start_bind (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))`)
+		g.line(`(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.finish-bind" (func $__wasi_tcp_finish_bind (param i32 i32)))`)
+		g.line(`(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-listen" (func $__wasi_tcp_start_listen (param i32 i32)))`)
+		g.line(`(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.finish-listen" (func $__wasi_tcp_finish_listen (param i32 i32)))`)
+		g.line(`(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.accept" (func $__wasi_tcp_accept (param i32 i32)))`)
+		g.line(`(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.subscribe" (func $__wasi_tcp_subscribe (param i32) (result i32)))`)
+		g.line(`(import "wasi:sockets/tcp@0.2.0" "[resource-drop]tcp-socket" (func $__wasi_tcp_socket_drop (param i32)))`)
+		g.line(`(import "wasi:io/poll@0.2.0" "[method]pollable.block" (func $__wasi_pollable_block (param i32)))`)
+		g.line(`(import "wasi:io/poll@0.2.0" "[resource-drop]pollable" (func $__wasi_pollable_drop (param i32)))`)
 	}
 	if g.needsFileIO {
 		// path_open / fd_read / fd_close — fd_write is already
@@ -3053,16 +3094,25 @@ func (g *generator) emitArenaHelpers() {
 // quality random bytes (errno is ignored; the runtime treats
 // any failure as program-fatal, same as our other helpers).
 // emitTcpHelpers emits the WASM/WASI counterparts of the
-// TCP-socket builtins. WASI Preview 1 doesn't expose a way
-// to *open* a listening socket from the guest, so the host
-// is expected to pre-open one (`wasmtime --tcp-listen=…
-// prog.wasm`) — `tcp_listen` returns the first preopened
-// socket fd, which wasmtime conventionally places at fd 3.
-// `tcp_accept` calls the experimental `sock_accept` import;
-// `tcp_recv` / `tcp_send` reuse `fd_read` / `fd_write` (which
-// work on socket fds the same as on file fds); `tcp_close`
-// is `fd_close`.
+// TCP-socket builtins. Preview-1 path: WASI Preview 1 doesn't
+// expose a way to *open* a listening socket from the guest, so
+// the host is expected to pre-open one (`wasmtime --tcp-listen=…
+// prog.wasm`) — `tcp_listen` returns the first preopened socket
+// fd (wasmtime conventionally places it at fd 3). `tcp_accept`
+// calls the experimental `sock_accept` import; `tcp_recv` /
+// `tcp_send` reuse `fd_read` / `fd_write` (which work on socket
+// fds the same as on file fds); `tcp_close` is `fd_close`.
+//
+// Preview-2 path: see emitTcpHelpersPreview2 — `tcp_listen` calls
+// the bind+listen pipeline directly so the program is
+// self-contained, and `tcp_accept` returns a heap struct holding
+// the per-connection (tcp-socket, input-stream, output-stream)
+// triple instead of a bare fd.
 func (g *generator) emitTcpHelpers() {
+	if g.preview2 {
+		g.emitTcpHelpersPreview2()
+		return
+	}
 	// $tcp_listen(port) — port arg is ignored; we return the
 	// first preopened socket fd. wasmtime starts numbering
 	// preopens at 3 (after stdin/stdout/stderr).
@@ -3199,6 +3249,443 @@ func (g *generator) emitTcpHelpers() {
 	g.line(`local.tee $err`)
 	g.line(`i32.const 0`)
 	g.line(`i32.sub`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitTcpHelpersPreview2 writes the wasi:sockets-flavoured TCP
+// builtins. The user-facing API stays "fd-shaped" — every
+// tcp_listen / tcp_accept return value is a 12-byte heap struct
+// `(tcp_socket, input_stream, output_stream)`; for listening
+// sockets the two stream slots are 0 (no streams attached until a
+// connection is accepted). tcp_recv / tcp_send / tcp_close all
+// take that pointer back and read the appropriate slot.
+//
+// The (tcp-socket, input-stream, output-stream) triple is the
+// shape `tcp-socket.accept` returns natively, so the
+// per-connection struct is a direct lift of the canonical-ABI
+// payload. For tcp_close to be a single function the listener and
+// connection structs share the same shape — listeners just zero
+// the stream slots, and tcp_close skips drops on zero-handle
+// slots. The bump allocator can't free the struct itself, so it
+// leaks; same trade-off step 3c made for descriptors.
+func (g *generator) emitTcpHelpersPreview2() {
+	g.emitNetworkHandleAccessor()
+	g.emitTcpListenPreview2()
+	g.emitTcpAcceptPreview2()
+	g.emitTcpRecvPreview2()
+	g.emitTcpSendPreview2()
+	g.emitTcpClosePreview2()
+}
+
+// emitNetworkHandleAccessor writes
+// `$__network_handle (result i32)` — the lazily-initialising
+// accessor over `wasi:sockets/instance-network.instance-network`.
+// Mirrors the stdin/stdout/stderr cached-handle pattern: the
+// result lives at memory[124], with bit 4 of the init-flags byte
+// at memory[112] tracking whether the slot is populated. Resource
+// handles are opaque ints where 0 is a valid value, so the
+// flag-bit indirection is necessary.
+func (g *generator) emitNetworkHandleAccessor() {
+	g.line(`(func $__network_handle (result i32)`)
+	g.indent++
+	g.line(`(local $h i32)`)
+	g.line(`i32.const 112`)
+	g.line(`i32.load`)
+	g.line(`i32.const 16`) // bit 4
+	g.line(`i32.and`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`i32.const 124`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`call $__wasi_instance_network`)
+	g.line(`local.tee $h`)
+	g.line(`i32.const 124`)
+	g.line(`local.get $h`)
+	g.line(`i32.store`)
+	g.line(`i32.const 112`)
+	g.line(`i32.const 112`)
+	g.line(`i32.load`)
+	g.line(`i32.const 16`)
+	g.line(`i32.or`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitTcpListenPreview2 writes `$tcp_listen(port) -> i32` for the
+// wasi:sockets path. Pipeline: create-tcp-socket(ipv4) →
+// start-bind + finish-bind (0.0.0.0:port) → start-listen +
+// finish-listen → return a 12-byte heap struct
+// `(tcp_socket, 0, 0)`. On any error returns -errno (the inner
+// error-code byte) so callers can treat negative as failure —
+// matches the preview-1 contract for backward compatibility.
+//
+// `start-bind` takes 15 i32 params: self + borrow<network> +
+// `ip-socket-address` flattened (1 disc + 11 payload) + retptr.
+// We always emit the IPv4 case bound to 0.0.0.0:port; the unused
+// payload slots beyond the IPv4 5-slot prefix are zero-padded
+// because the variant joins the wider IPv6 layout.
+func (g *generator) emitTcpListenPreview2() {
+	g.line(`(func $tcp_listen (param $port i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sock i32) (local $struct i32)`)
+
+	// create-tcp-socket(0=ipv4, retptr=92) -> result<tcp-socket, error-code>
+	g.line(`i32.const 0`)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_create_tcp_socket`)
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	// errno from retptr+4 (i8 enum), return -errno.
+	g.line(`i32.const 0`)
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.sub`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $sock`)
+
+	// start-bind(self, borrow<network>, ip-socket-address ipv4(0.0.0.0:port), retptr=92)
+	g.line(`local.get $sock`)
+	g.line(`call $__network_handle`)
+	g.line(`i32.const 0`)         // disc = 0 (ipv4)
+	g.line(`local.get $port`)     // ipv4-socket-address.port
+	g.line(`i32.const 0`)         // ipv4 byte 0
+	g.line(`i32.const 0`)         // ipv4 byte 1
+	g.line(`i32.const 0`)         // ipv4 byte 2
+	g.line(`i32.const 0`)         // ipv4 byte 3
+	g.line(`i32.const 0`)         // pad: ipv6 flow-info / ipv4 unused
+	g.line(`i32.const 0`)         // pad
+	g.line(`i32.const 0`)         // pad
+	g.line(`i32.const 0`)         // pad
+	g.line(`i32.const 0`)         // pad
+	g.line(`i32.const 0`)         // pad — total 6 padding slots beyond the ipv4 5-slot prefix
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_tcp_start_bind`)
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.sub`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// finish-bind(self, retptr).
+	g.line(`local.get $sock`)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_tcp_finish_bind`)
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.sub`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// start-listen(self, retptr).
+	g.line(`local.get $sock`)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_tcp_start_listen`)
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.sub`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// finish-listen(self, retptr).
+	g.line(`local.get $sock`)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_tcp_finish_listen`)
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.sub`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// Allocate 12-byte struct (sock, 0, 0).
+	g.line(`i32.const 12`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $struct`)
+	g.line(`local.get $sock`)
+	g.line(`i32.store`)
+	g.line(`local.get $struct`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $struct`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $struct`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitTcpAcceptPreview2 writes `$tcp_accept(listener) -> i32`.
+// Pipeline: subscribe(sock) → pollable.block → accept. The
+// `accept` result is `result<tuple<tcp-socket, input-stream,
+// output-stream>, error-code>`, lowered to 16 bytes (1 disc + 3
+// pad + 12 payload). Our shared retptr at memory[92] is only 12
+// bytes wide, so we allocate a fresh 16-byte scratch via
+// __lang_alloc. The pointer leaks (bump allocator) — that's a
+// 16-byte cost per accept, acceptable for the connection
+// lifetime.
+func (g *generator) emitTcpAcceptPreview2() {
+	g.line(`(func $tcp_accept (param $listener i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sock i32) (local $pollable i32) (local $retptr i32)`)
+	g.line(`(local $newsock i32) (local $instream i32) (local $outstream i32) (local $struct i32)`)
+	// Subscribe + block until a connection is ready. accept is
+	// non-blocking on the wasi:sockets API; without the poll we'd
+	// just get would-block on the first call.
+	g.line(`local.get $listener`)
+	g.line(`i32.load`)
+	g.line(`local.tee $sock`)
+	g.line(`call $__wasi_tcp_subscribe`)
+	g.line(`local.tee $pollable`)
+	g.line(`call $__wasi_pollable_block`)
+	g.line(`local.get $pollable`)
+	g.line(`call $__wasi_pollable_drop`)
+
+	// Allocate a 16-byte retptr scratch.
+	g.line(`i32.const 16`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $retptr`)
+	g.line(`local.get $sock`)
+	g.line(`local.get $retptr`)
+	g.line(`call $__wasi_tcp_accept`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	// errno at retptr+4.
+	g.line(`i32.const 0`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.sub`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// Ok payload at retptr+4: tuple<i32, i32, i32>.
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $newsock`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $instream`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $outstream`)
+
+	// Allocate 12-byte connection struct.
+	g.line(`i32.const 12`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $struct`)
+	g.line(`local.get $newsock`)
+	g.line(`i32.store`)
+	g.line(`local.get $struct`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $instream`)
+	g.line(`i32.store`)
+	g.line(`local.get $struct`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $outstream`)
+	g.line(`i32.store`)
+	g.line(`local.get $struct`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitTcpRecvPreview2 writes `$tcp_recv(conn, max) -> string`.
+// Loads input_stream from the connection struct, calls
+// blocking-read, materialises a length-prefixed string from the
+// host buffer. On stream errors / EOF we return an empty string
+// — same shape preview-1 tcp_recv produces on fd_read errno.
+func (g *generator) emitTcpRecvPreview2() {
+	g.line(`(func $tcp_recv (param $conn i32) (param $max i32) (result i32)`)
+	g.indent++
+	g.line(`(local $stream i32) (local $list_ptr i32) (local $n i32)`)
+	g.line(`(local $sbase i32) (local $sptr i32)`)
+	// stream = mem[conn + 4]
+	g.line(`local.get $conn`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $stream`)
+	// blocking-read(stream, max, retptr=92)
+	g.line(`local.get $stream`)
+	g.line(`local.get $max`)
+	g.line(`i64.extend_i32_u`)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_blocking_read`)
+	// On Err, treat as empty.
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`i32.const 100`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.set $n`)
+	g.line(`i32.const 96`)
+	g.line(`i32.load`)
+	g.line(`local.set $list_ptr`)
+	// Allocate length-prefixed string of size $n + 5 (4 prefix + NUL),
+	// matching the existing string-from-bytes allocation pattern.
+	g.line(`local.get $n`)
+	g.line(`i32.const 5`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`local.get $n`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sptr`)
+	// memcpy host buffer into our string body.
+	g.line(`local.get $sptr`)
+	g.line(`local.get $list_ptr`)
+	g.line(`local.get $n`)
+	g.line(`memory.copy`)
+	g.line(`local.get $sptr`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitTcpSendPreview2 writes `$tcp_send(conn, data) -> i32`.
+// Loads output_stream from the connection struct, sends the
+// string via the chunked $__streams_write helper. Returns the
+// content length on success or -1 on failure. The preview-1
+// version surfaced -errno; we don't have a meaningful errno here
+// since stream errors get translated upstream, so -1 is the best
+// negative sentinel.
+func (g *generator) emitTcpSendPreview2() {
+	g.line(`(func $tcp_send (param $conn i32) (param $data i32) (result i32)`)
+	g.indent++
+	g.line(`(local $stream i32) (local $len i32)`)
+	g.line(`local.get $conn`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $stream`)
+	g.line(`local.get $data`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $len`)
+	g.line(`local.get $stream`)
+	g.line(`local.get $data`)
+	g.line(`local.get $len`)
+	g.line(`call $__streams_write`)
+	g.line(`local.get $len`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitTcpClosePreview2 writes `$tcp_close(conn) -> i32`. Drops
+// the resources the struct holds: input + output streams first
+// (only if non-zero — listener structs zero those slots), then
+// the parent tcp-socket. The order matters: the canonical-ABI
+// resource layer rejects dropping a parent that still has live
+// children with "resource has children", so streams must go
+// before the socket. Resource drops are infallible, so the
+// return value is always 0.
+func (g *generator) emitTcpClosePreview2() {
+	g.line(`(func $tcp_close (param $struct i32) (result i32)`)
+	g.indent++
+	g.line(`(local $h i32)`)
+	// input-stream first (child of tcp-socket).
+	g.line(`local.get $struct`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.tee $h`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $h`)
+	g.line(`call $__wasi_input_stream_drop`)
+	g.indent--
+	g.line(`end`)
+	// output-stream (also a child).
+	g.line(`local.get $struct`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.tee $h`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $h`)
+	g.line(`call $__wasi_output_stream_drop`)
+	g.indent--
+	g.line(`end`)
+	// Now the socket itself.
+	g.line(`local.get $struct`)
+	g.line(`i32.load`)
+	g.line(`call $__wasi_tcp_socket_drop`)
+	g.line(`i32.const 0`)
 	g.indent--
 	g.line(`)`)
 }

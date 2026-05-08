@@ -1,0 +1,22 @@
+package wasi:sockets@0.2.0;
+
+// Vendored subset of wasi:sockets/tcp@0.2.0 — only the methods
+// the wasm backend actually emits: start/finish-bind,
+// start/finish-listen, accept, subscribe, plus the
+// `[resource-drop]tcp-socket` import. The full API includes
+// connect/shutdown/keep-alive/etc.; we lower lang's narrower
+// listen+accept+stream pattern.
+interface tcp {
+    use wasi:io/streams@0.2.0.{input-stream, output-stream};
+    use wasi:io/poll@0.2.0.{pollable};
+    use network.{network, ip-socket-address, error-code};
+
+    resource tcp-socket {
+        start-bind: func(network: borrow<network>, local-address: ip-socket-address) -> result<_, error-code>;
+        finish-bind: func() -> result<_, error-code>;
+        start-listen: func() -> result<_, error-code>;
+        finish-listen: func() -> result<_, error-code>;
+        accept: func() -> result<tuple<tcp-socket, input-stream, output-stream>, error-code>;
+        subscribe: func() -> pollable;
+    }
+}
