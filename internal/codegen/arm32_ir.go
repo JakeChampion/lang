@@ -110,6 +110,9 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 				g.usesExit = true
 			case "arena_save", "arena_restore":
 				g.usesArena = true
+			case "random_bytes":
+				g.usesRandomBytes = true
+				g.usesAlloc = true
 			case "read_file":
 				g.usesReadFile = true
 				g.usesAlloc = true
@@ -192,6 +195,9 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	if g.usesArena {
 		g.emitArenaSaveRuntime()
 		g.emitArenaRestoreRuntime()
+	}
+	if g.usesRandomBytes {
+		g.emitRandomBytesRuntime()
 	}
 	if g.usesReadFile || g.usesWriteFile || g.usesStreamIO {
 		g.emitFileIORuntime()

@@ -10,6 +10,7 @@
 package interp
 
 import (
+	cryptorand "crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -197,7 +198,29 @@ func New() *Interp {
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
 	i.Builtins["arena_save"] = &Builtin{Fn: builtinArenaSave}
 	i.Builtins["arena_restore"] = &Builtin{Fn: builtinArenaRestore}
+	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
 	return i
+}
+
+// builtinRandomBytes returns a string of n cryptographic-
+// quality random bytes from `crypto/rand`. Mirrors the AOT
+// backends' `getrandom(2)` / WASI `random_get` behaviour.
+func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("random_bytes: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("random_bytes: expected number arg, got %T", args[0])
+	}
+	if n < 0 {
+		return nil, fmt.Errorf("random_bytes: negative length %d", int(n))
+	}
+	buf := make([]byte, int(n))
+	if _, err := cryptorand.Read(buf); err != nil {
+		return nil, fmt.Errorf("random_bytes: %v", err)
+	}
+	return String(buf), nil
 }
 
 // builtinArenaSave / builtinArenaRestore are no-ops in the

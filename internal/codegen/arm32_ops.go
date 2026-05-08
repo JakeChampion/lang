@@ -538,6 +538,13 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		// Rewind the bump cursor to the saved value.
 		target = "__lang_arena_restore"
 		g.usesArena = true
+	case "random_bytes":
+		// `random_bytes(n)` allocates a fresh string and fills
+		// it with kernel CSPRNG output via the getrandom(2)
+		// syscall.
+		target = "__lang_random_bytes"
+		g.usesRandomBytes = true
+		g.usesAlloc = true
 	case "read_file":
 		// `read_file(path)` lowers to a runtime helper that
 		// open(2)s the file, read(2)s it in chunks, and

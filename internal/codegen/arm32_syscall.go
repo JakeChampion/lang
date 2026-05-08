@@ -17,17 +17,18 @@ package codegen
 // See <asm-generic/unistd.h> + the arm syscall table for the
 // full set; we only pull in the handful the language needs.
 const (
-	sysExit      = 1
-	sysRead      = 3
-	sysWrite     = 4
-	sysOpen      = 5
-	sysClose     = 6
-	sysLseek     = 19
-	sysBrk       = 45
-	sysWritev    = 146
-	sysMmap2     = 192
-	sysFstat64   = 197
-	sysExitGroup = 248
+	sysExit       = 1
+	sysRead       = 3
+	sysWrite      = 4
+	sysOpen       = 5
+	sysClose      = 6
+	sysLseek      = 19
+	sysBrk        = 45
+	sysWritev     = 146
+	sysMmap2      = 192
+	sysFstat64    = 197
+	sysExitGroup  = 248
+	sysGetrandom  = 384
 )
 
 // heapReserveBytes is the size of the anonymous mmap region we
@@ -381,10 +382,53 @@ func (g *generator) emitPutcharRuntime() {
 	g.line(".size __lang_putchar, .-__lang_putchar")
 }
 
+// emitRandomBytesRuntime emits `__lang_random_bytes(n)` —
+// allocates a fresh length-prefixed lang string of n bytes
+// and fills it with kernel-provided cryptographic randomness
+// via the `getrandom(2)` syscall. Returns the string's data
+// pointer.
+//
+// `getrandom(buf, n, 0)` reads from the kernel's CSPRNG,
+// blocking until enough entropy is available (rare on a
+// running system; typically returns immediately). flags=0
+// means "draw from /dev/urandom". The syscall fills the
+// buffer with cryptographically-strong random bytes,
+// suitable for session IDs, request IDs, etc.
+func (g *generator) emitRandomBytesRuntime() {
+	g.line("")
+	g.line(".global __lang_random_bytes")
+	g.line(".type __lang_random_bytes, %function")
+	g.label("__lang_random_bytes")
+	g.emit("push {r4, r5, lr}")
+	g.emit("sub sp, sp, #4") // 8-byte alignment for bl __lang_alloc
+	g.emit("mov r4, r0")     // r4 = N
+	// Allocate N + 5 bytes (4 prefix + N data + 1 trailing NUL).
+	g.emit("add r0, r4, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add r5, r0, #4")    // r5 = data ptr (post-prefix)
+	g.emit("str r4, [r5, #-4]") // length prefix
+	// getrandom(buf, len, flags=0) — blocking, /dev/urandom source.
+	g.emit("mov r0, r5")
+	g.emit("mov r1, r4")
+	g.emit("mov r2, #0")
+	g.emitSyscall(sysGetrandom)
+	// Trailing NUL keeps the libc-shaped invariant our other
+	// helpers rely on (`__lang_strcat` etc. peek at one byte
+	// past the data pointer).
+	g.emit("add r1, r5, r4")
+	g.emit("mov r2, #0")
+	g.emit("strb r2, [r1]")
+	g.emit("mov r0, r5")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.line(".size __lang_random_bytes, .-__lang_random_bytes")
+}
+
 // emitExitRuntime emits the exit() builtin as a direct
-// `exit_group` syscall. exit_group reaps the whole process group;
-// we don't have threads, but the kernel's recommendation for a
-// "really exit" call is exit_group regardless.
+// `exit_group` syscall. exit_group reaps the whole process
+// group; we don't have threads, but the kernel's recommendation
+// for a "really exit" call is exit_group regardless.
 func (g *generator) emitExitRuntime() {
 	g.line("")
 	g.line(".type __lang_exit, %function")
