@@ -143,6 +143,23 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, ip *ir.Program) (string, 
 	for _, fn := range prog.Funcs {
 		g.linef(`(export %q (func $%s))`, fn.Name, fn.Name)
 	}
+	// WASI command convention (preview-1 and preview-2 alike) wants
+	// `_start` as the entry point — that's what `wasmtime run`
+	// invokes, and what the wasi-preview1-component-adapter needs to
+	// see when wrapping us into a Component Model component. We
+	// already export `main`; emit a thin `_start (() -> ())` wrapper
+	// that calls it and drops any return value, then export it.
+	if mainFn := g.funcDecls["main"]; mainFn != nil {
+		g.line(`(func $_start`)
+		g.indent++
+		g.line(`(call $main)`)
+		if !ast.Equal(mainFn.ReturnType, ast.VoidType{}) {
+			g.line(`drop`)
+		}
+		g.indent--
+		g.line(`)`)
+		g.line(`(export "_start" (func $_start))`)
+	}
 	if g.needsRuntime {
 		g.line(`(export "memory" (memory $mem))`)
 	}
