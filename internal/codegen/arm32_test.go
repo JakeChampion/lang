@@ -399,8 +399,15 @@ func TestTailRecursionBranchesToBody(t *testing.T) {
 		if (n == 0) { return acc; }
 		return sum(n - 1, acc + n);
 	}`)
-	mustContain(t, asm, ".LloopTop_")
-	mustContain(t, asm, "b .LloopTop_")
+	// Tail call rewrites to a backward branch. After
+	// adjacent-label merging the loop-top may share a label
+	// with the function-body label (`.Lbody_sum_*`); either
+	// shape is fine as long as we see a backward branch and
+	// no `bl sum`.
+	if !strings.Contains(asm, "b .LloopTop_") &&
+		!strings.Contains(asm, "b .Lbody_sum_") {
+		t.Errorf("expected backward branch to loop-top / body label:\n%s", asm)
+	}
 	if strings.Contains(asm, "bl sum") {
 		t.Errorf("tail call should not emit `bl sum`:\n%s", asm)
 	}
