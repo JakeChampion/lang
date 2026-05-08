@@ -259,6 +259,57 @@ func TestAddrModeSinkSkipsWhenDstDiffers(t *testing.T) {
 	}
 }
 
+// mov-chain elim: `mov r0, rB ; mov rA, r0` followed by some
+// r0-not-using lines and then a pure r0-overwrite drops the
+// first mov, since r0 was dead from the second mov onward.
+func TestMovChainElimDropsRedundantR0Load(t *testing.T) {
+	in := strings.Join([]string{
+		"\tmov r0, r4",
+		"\tmov r1, r0",
+		"\tcmp r1, #0",
+		"\tbne .LifElse",
+		"\tldr r0, =1", // pure r0-overwrite — chain ends here
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "mov r1, r4") {
+		t.Errorf("expected fused `mov r1, r4`, got:\n%s", got)
+	}
+	if strings.Contains(got, "mov r0, r4") {
+		t.Errorf("dead mov r0, r4 should be elided:\n%s", got)
+	}
+}
+
+// When the next r0-write isn't pure (e.g. `add r0, r0, #N`
+// reads r0), the chain isn't safe to fold — we'd be reading
+// from a register we just dropped.
+func TestMovChainElim_NotPureWriteSkipped(t *testing.T) {
+	in := strings.Join([]string{
+		"\tmov r0, r4",
+		"\tmov r1, r0",
+		"\tadd r0, r0, #1", // reads r0, writes r0 — chain must remain
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "mov r0, r4") {
+		t.Errorf("first mov must remain (next op reads r0):\n%s", got)
+	}
+}
+
+// An intervening instruction that reads r0 invalidates the
+// fold — the second mov can't be eliminated because r0's
+// value was consumed.
+func TestMovChainElim_InterveningR0ReadSkipped(t *testing.T) {
+	in := strings.Join([]string{
+		"\tmov r0, r4",
+		"\tmov r1, r0",
+		"\tstr r0, [r2]", // reads r0
+		"\tldr r0, =5",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "mov r0, r4") {
+		t.Errorf("first mov must remain (str reads r0):\n%s", got)
+	}
+}
+
 // `ldr r0, =N ; pop {rN} ; cmp rN, r0` (small N) collapses to
 // `pop {rN} ; cmp rN, #N`, dropping the literal load entirely.
 func TestCmpAgainstSmallConstFolds(t *testing.T) {
