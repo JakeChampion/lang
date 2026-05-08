@@ -119,10 +119,106 @@ func peepPass(lines []string) []string {
 			continue
 		}
 
+		// 11: branch inversion — collapse a conditional-over-
+		// unconditional branch pair when the conditional's
+		// target is the *next* label:
+		//
+		//     b<cc> THEN
+		//     b ELSE
+		//   THEN:
+		//
+		// is equivalent to (and one instruction shorter than)
+		//
+		//     b<!cc> ELSE
+		//   THEN:
+		//
+		// since whichever branch is taken lands at the same
+		// place. Common in switch dispatch — every case emits
+		// this exact shape from the IR's nested-block lowering.
+		if collapsed, ok := tryBranchInversion(out, line); ok {
+			out = collapsed
+			out = append(out, line)
+			continue
+		}
+
 		_ = i
 		out = append(out, line)
 	}
 	return out
+}
+
+// tryBranchInversion recognises the three-line pattern
+//
+//	b<cc> THEN          (conditional branch over the next line)
+//	b ELSE              (unconditional fallback)
+//   THEN:               (`cur` — the conditional's target)
+//
+// and rewrites it to
+//
+//	b<!cc> ELSE         (jump to else when !cc holds; else fall through)
+//   THEN:
+//
+// dropping the unconditional branch. Saves one instruction per
+// match — every IR-level switch case dispatches through exactly
+// this shape, so the per-case overhead drops from 3 lines to 2.
+func tryBranchInversion(out []string, cur string) ([]string, bool) {
+	if len(out) < 2 {
+		return nil, false
+	}
+	condCC, condTarget, ok := matchBranch(out[len(out)-2])
+	if !ok || condCC == "" {
+		return nil, false
+	}
+	uncondCC, uncondTarget, ok := matchBranch(out[len(out)-1])
+	if !ok || uncondCC != "" {
+		return nil, false
+	}
+	if !isLabel(cur, condTarget) {
+		return nil, false
+	}
+	inv, ok := invertCondCode(condCC)
+	if !ok {
+		return nil, false
+	}
+	rewritten := append(out[:len(out)-2], "\tb"+inv+" "+uncondTarget)
+	return rewritten, true
+}
+
+// invertCondCode returns the opposite ARM condition code.
+// All eight standard pairs are recognised; `al` (always) has
+// no opposite and isn't accepted as a conditional branch.
+func invertCondCode(cc string) (string, bool) {
+	switch cc {
+	case "eq":
+		return "ne", true
+	case "ne":
+		return "eq", true
+	case "cs":
+		return "cc", true
+	case "cc":
+		return "cs", true
+	case "mi":
+		return "pl", true
+	case "pl":
+		return "mi", true
+	case "vs":
+		return "vc", true
+	case "vc":
+		return "vs", true
+	case "hi":
+		return "ls", true
+	case "ls":
+		return "hi", true
+	case "ge":
+		return "lt", true
+	case "lt":
+		return "ge", true
+	case "gt":
+		return "le", true
+	case "le":
+		return "gt", true
+	}
+	return "", false
 }
 
 // tryMovChainElim recognises an `r0` redundancy of the form

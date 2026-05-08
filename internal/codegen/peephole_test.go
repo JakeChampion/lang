@@ -259,6 +259,76 @@ func TestAddrModeSinkSkipsWhenDstDiffers(t *testing.T) {
 	}
 }
 
+// Branch inversion: `b<cc> THEN ; b ELSE ; THEN:` collapses
+// to `b<!cc> ELSE ; THEN:` — the conditional jumps to the
+// fallthrough alternative instead of forking around a
+// trivial trampoline.
+func TestBranchInversionCollapsesPair(t *testing.T) {
+	in := strings.Join([]string{
+		"\tcmp r1, #1",
+		"\tbeq .LblkEnd_5",
+		"\tb .LblkEnd_4",
+		".LblkEnd_5:",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "bne .LblkEnd_4") {
+		t.Errorf("expected `bne .LblkEnd_4`, got:\n%s", got)
+	}
+	if strings.Contains(got, "beq .LblkEnd_5") {
+		t.Errorf("conditional branch over the next label should be folded away:\n%s", got)
+	}
+	if strings.Contains(got, "\tb .LblkEnd_4\n") {
+		t.Errorf("unconditional branch should be elided:\n%s", got)
+	}
+}
+
+// All the standard cc pairs invert correctly.
+func TestBranchInversionEveryCondCode(t *testing.T) {
+	pairs := [][2]string{
+		{"eq", "ne"},
+		{"ne", "eq"},
+		{"cs", "cc"},
+		{"cc", "cs"},
+		{"mi", "pl"},
+		{"pl", "mi"},
+		{"vs", "vc"},
+		{"vc", "vs"},
+		{"hi", "ls"},
+		{"ls", "hi"},
+		{"ge", "lt"},
+		{"lt", "ge"},
+		{"gt", "le"},
+		{"le", "gt"},
+	}
+	for _, p := range pairs {
+		in := strings.Join([]string{
+			"\tb" + p[0] + " .Lthen",
+			"\tb .Lelse",
+			".Lthen:",
+		}, "\n")
+		got := peephole(in)
+		want := "b" + p[1] + " .Lelse"
+		if !strings.Contains(got, want) {
+			t.Errorf("%s should invert to %s; got:\n%s", p[0], p[1], got)
+		}
+	}
+}
+
+// When the conditional branch's target *isn't* the next
+// label, the fold can't fire — taking either branch leads
+// to a different place.
+func TestBranchInversionSkipsWhenTargetDiffers(t *testing.T) {
+	in := strings.Join([]string{
+		"\tbeq .Lother",
+		"\tb .Lelse",
+		".Lthen:",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "beq .Lother") {
+		t.Errorf("beq should remain (target isn't the next label):\n%s", got)
+	}
+}
+
 // mov-chain elim: `mov r0, rB ; mov rA, r0` followed by some
 // r0-not-using lines and then a pure r0-overwrite drops the
 // first mov, since r0 was dead from the second mov onward.
