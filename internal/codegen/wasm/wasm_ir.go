@@ -39,7 +39,7 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	}
 	g := &generator{
 		info:              info,
-		preview2:          opts.Preview2,
+		printMainResult:   opts.PrintMainResult,
 		origTopLevelCount: countOrigTopLevel(prog),
 		stringPool:        map[string]int{},
 		funcIndex:         map[string]int{},
@@ -64,19 +64,27 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	g.scanForArrayUses(prog)
 	g.scanForStructUses(prog)
 	g.scanForIOBuiltins(prog)
+	if g.printMainResult {
+		// Force the int_to_string helper in even if the program
+		// doesn't call it itself, since `_start` will, and force
+		// the runtime so $__lang_alloc is wired up for the
+		// helper's two bump-allocs.
+		g.needsIntToString = true
+		g.needsRuntime = true
+	}
 	g.scanForIndirectCalls(prog)
 	g.scanForStringEq(prog)
 	g.scanForStringConcat(prog)
 	g.scanForBoundsCheck(prog)
-	// Preview-2 read_file / write_file are implemented in terms of
-	// $open_reader / $open_writer (which emitStreamingIOHelpers
-	// emits), so promote needsFileIO to also pull in
+	// read_file / write_file are implemented in terms of
+	// $open_reader / $open_writer (emitStreamingIOHelpers emits
+	// them), so promote needsFileIO to also pull in
 	// needsStreamingIO. The cost is the Reader/Writer method
 	// helpers landing in modules that wouldn't otherwise call them
 	// directly — small, tree-shakeable; the alternative
 	// (re-implementing the open pipeline inline) duplicates the
 	// canonical-ABI machinery.
-	if g.preview2 && g.needsFileIO {
+	if g.needsFileIO {
 		g.needsStreamingIO = true
 	}
 	if len(prog.Funcs) > g.origTopLevelCount {
@@ -125,17 +133,15 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	//   120..123 preopen descriptor handle (cached working dir),
 	//   124..127 network handle (cached on first
 	//           tcp_listen / tcp_accept).
-	// Push the string base past those slots whenever preview-2 is
-	// on, regardless of which preview-2 features the program
-	// actually exercises. The cost is 36 static bytes per module;
-	// the alternative (gating each slot independently) is fragile.
-	if g.preview2 {
-		if g.stringOffset < 128 {
-			g.stringOffset = 128
-		}
-		if g.closuresBase < 128 {
-			g.closuresBase = 128
-		}
+	// Push the string base past those slots regardless of which
+	// preview-2 features the program actually exercises. The cost
+	// is 36 static bytes per module; the alternative (gating each
+	// slot independently) is fragile.
+	if g.stringOffset < 128 {
+		g.stringOffset = 128
+	}
+	if g.closuresBase < 128 {
+		g.closuresBase = 128
 	}
 
 	g.tableIndex = map[string]int{}
@@ -162,9 +168,16 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	g.line("(module")
 	g.indent++
 
-	if g.needsRuntime {
-		g.emitRuntimePreamble()
-	}
+	// Under preview-2, emitRuntimePreamble holds $cabi_realloc and
+	// the imports the host always wires (stdout / stderr handles,
+	// `wasi:io/streams.blocking-write-and-flush`, plus the output-
+	// stream drop), and we always export `cabi_realloc` from the
+	// component boundary. Force needsRuntime so the helper is
+	// available even for tiny programs that don't otherwise touch
+	// runtime helpers (e.g. a float-arithmetic compute that just
+	// returns an int).
+	g.needsRuntime = true
+	g.emitRuntimePreamble()
 
 	for i, sig := range g.indirectSigs {
 		g.linef("(type $t%d %s)", i, g.watFuncType(sig))
@@ -198,11 +211,22 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	// see when wrapping us into a Component Model component. We
 	// already export `main`; emit a thin `_start (() -> ())` wrapper
 	// that calls it and drops any return value, then export it.
+	//
+	// Test harness escape hatch: with `EmitOptions.PrintMainResult`
+	// set, `_start` formats main's i32 result through int_to_string
+	// and prints it before returning. The WASM e2e tests rely on
+	// this to observe main's value over stdout — components don't
+	// expose `--invoke main` and `wasi:cli/exit` clamps the exit
+	// code to 0/1, so stdout is the only channel.
 	if mainFn := g.funcDecls["main"]; mainFn != nil {
 		g.line(`(func $_start`)
 		g.indent++
 		g.line(`(call $main)`)
-		if !ast.Equal(mainFn.ReturnType, ast.VoidType{}) {
+		mainReturnsInt := !ast.Equal(mainFn.ReturnType, ast.VoidType{}) && ast.Equal(mainFn.ReturnType, ast.NumberType{})
+		if g.printMainResult && mainReturnsInt {
+			g.line(`call $int_to_string`)
+			g.line(`call $print`)
+		} else if !ast.Equal(mainFn.ReturnType, ast.VoidType{}) {
 			g.line(`drop`)
 		}
 		g.indent--
@@ -212,16 +236,13 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	if g.needsRuntime {
 		g.line(`(export "memory" (memory $mem))`)
 	}
-	if g.preview2 {
-		// Component-model contract: any host import that returns
-		// a dynamically-sized type (list<u8>, string, …) uses
-		// `cabi_realloc` to allocate space in the guest's linear
-		// memory before writing the bytes. Both `get-random-bytes`
-		// and `input-stream.blocking-read` use it; export
-		// unconditionally under preview-2 rather than gate on
-		// each individual import.
-		g.line(`(export "cabi_realloc" (func $cabi_realloc))`)
-	}
+	// Component-model contract: any host import that returns a
+	// dynamically-sized type (list<u8>, string, …) uses
+	// `cabi_realloc` to allocate space in the guest's linear
+	// memory before writing the bytes. Both `get-random-bytes`
+	// and `input-stream.blocking-read` use it; export
+	// unconditionally rather than gate on each individual import.
+	g.line(`(export "cabi_realloc" (func $cabi_realloc))`)
 	g.indent--
 	g.line(")")
 	return g.out.String(), nil

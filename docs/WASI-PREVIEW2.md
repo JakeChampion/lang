@@ -165,10 +165,64 @@ function handle(req: HttpRequest): HttpResponse {
 instead of `main()`. The runtime takes care of the request /
 response plumbing.
 
-### Step 6 — Drop preview-1 emission
+### Step 6 — Drop preview-1 emission (shipped)
 
-Once steps 2-5 cover every builtin, remove the preview-1 code
-paths and make preview 2 the default.
+`-target wasm` now always emits a Component Model component;
+the `-wasi-preview2` flag is gone (the option implied it was
+optional, but there's no preview-1 path to fall back on
+anymore) and `-wasi-adapter PATH` is required so `wasm-tools
+component new --adapt …` can wrap our core module's `_start`
+into `wasi:cli/run.run`.
+
+What got removed:
+
+- The `EmitOptions.Preview2` field (was a no-op for the public
+  API; deleted entirely).
+- All `if !g.preview2 { … }` branches in
+  `internal/codegen/wasm/wasm.go` plus the `g.preview2` field on
+  the generator.
+- `emitOpenHelper` (preview-1 `path_open`-based open),
+  `emitFdWriteString` / `emitFdWriteNewline` (preview-1 print
+  helpers), the preview-1 bodies of `emitReadLineHelper`,
+  `emitReadFileHelper`, `emitWriteFileHelper`,
+  `emitReaderReadLineMethod`, `emitReaderReadChunkMethod`,
+  `emitWriterWriteMethod`, `emitCloseMethod`, and the preview-1
+  TCP helpers.
+- The `wasi_snapshot_preview1` imports for `fd_write`, `fd_read`,
+  `fd_close`, `path_open`, `random_get`, and `sock_accept`.
+
+What stayed on preview-1 (translated by the adapter's
+entry-point trampoline):
+
+- `args_sizes_get` / `args_get`.
+- `environ_sizes_get` / `environ_get`.
+- `proc_exit` — the adapter wraps this into
+  `wasi:cli/exit.exit(result)`; non-zero codes are flattened to
+  `Err(())`, so the host process sees exit 1 for any non-zero
+  code. Documented limitation under preview-2 0.2.0; preserving
+  arbitrary integer codes would need
+  `wasi:cli/exit.exit-with-code` from 0.2.1+.
+
+A new `int_to_string(n: number): string` builtin landed
+alongside this: the WASM e2e harness needs to observe
+`main()`'s i32 return value over stdout (components don't
+expose `--invoke main` and `wasi:cli/exit` clamps the exit
+code), and `_start` formats the value through `int_to_string`
++ `print` when the test harness sets the new
+`EmitOptions.PrintMainResult` flag.
+
+Two latent bugs surfaced and got fixed in passing:
+
+- `==` / `!=` between floats was lowering to `i32.eq` / `i32.ne`
+  (the checker forgot to set `BinaryExpr.IsFloat` on equality
+  ops). Never hit before because the preview-1 path observed
+  floats via `wasmtime --invoke main`, never compared them in
+  lang.
+- `cabi_realloc` referenced `$__lang_alloc` unconditionally but
+  the alloc helper was gated on `needsArrays || needsStructs`.
+  Tiny programs that didn't use arrays / structs failed to
+  compile with `unknown func $__lang_alloc`. Now `$__lang_alloc`
+  is always emitted.
 
 ## External dependencies
 
@@ -179,20 +233,23 @@ paths and make preview 2 the default.
 - **`wasi_snapshot_preview1.command.wasm`** — the preview-1 →
   preview-2 adapter, also from the Bytecode Alliance. Vendored
   in `vendor/wasi-adapter/` (~120 KB).
-- **`wasmtime`** ≥ 14 — already installed by CI for our preview-1
-  e2e tests. Preview 2 component support is built in.
+- **`wasmtime`** ≥ 14 — required at runtime; CI installs the
+  latest release. Preview 2 component support is built in.
 
 ## Testing strategy
 
-- Steps 1-2 run *both* preview-1 and preview-2 e2e tests for the
-  same lang program. The preview-2 path uses
-  `wasmtime run prog.component.wasm`; the preview-1 path uses
-  `wasmtime run --wasi=preview1 prog.wasm` (existing).
-- Step 3+ progressively replaces the preview-1 imports; preview-1
-  tests start to be flagged as deprecated and eventually removed
-  in step 6.
-- Each step's PR includes a smoke test that the new component
-  runs end-to-end through `wasmtime`.
+- The WASM e2e suite (internal/e2e/wasm_e2e_test.go +
+  wasm_preview2_test.go) all goes through the component pipeline:
+  `wasm.EmitWithOptions{PrintMainResult: true}` →
+  `wasm-tools component embed`/`new --adapt` →
+  `wasmtime run`. Tests skip if any of wasm-tools, wasmtime, or
+  the adapter (LANG_WASI_ADAPTER) is missing.
+- `runWasm`-style helpers parse main's i32 return value off the
+  trailing line of stdout — `_start` formats it via
+  `int_to_string` + `print` when `PrintMainResult` is set.
+- Float-arithmetic tests express the assertion in lang itself
+  (return 1 on match, 0 otherwise) since float values can't ride
+  the i32 stdout channel.
 
 ## Open questions
 

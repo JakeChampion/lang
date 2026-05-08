@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -223,6 +224,7 @@ func New() *Interp {
 	i.Builtins["arena_save"] = &Builtin{Fn: builtinArenaSave}
 	i.Builtins["arena_restore"] = &Builtin{Fn: builtinArenaRestore}
 	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
+	i.Builtins["int_to_string"] = &Builtin{Fn: builtinIntToString}
 	i.Builtins["tcp_listen"] = &Builtin{Fn: builtinTcpListen}
 	i.Builtins["tcp_accept"] = &Builtin{Fn: builtinTcpAccept}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
@@ -373,6 +375,17 @@ func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("random_bytes: %v", err)
 	}
 	return String(buf), nil
+}
+
+func builtinIntToString(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("int_to_string: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("int_to_string: expected number arg, got %T", args[0])
+	}
+	return String(strconv.Itoa(int(n))), nil
 }
 
 // builtinArenaSave / builtinArenaRestore are no-ops in the

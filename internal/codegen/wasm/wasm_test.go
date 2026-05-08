@@ -148,33 +148,38 @@ func TestRecursionDirectCall(t *testing.T) {
 
 func TestStringsLowerToLinearMemory(t *testing.T) {
 	wat := compileToWAT(t, `function main(): void { print("hi"); }`)
-	mustContain(t, wat, `(import "wasi_snapshot_preview1" "fd_write"`)
+	// After step 6 every print goes through wasi:io/streams; the
+	// preview-1 fd_write import is gone.
+	mustContain(t, wat, `(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush"`)
+	mustContain(t, wat, `(import "wasi:cli/stdout@0.2.0" "get-stdout"`)
 	mustContain(t, wat, "(memory $mem 1)")
 	mustContain(t, wat, `(func $print`)
 	mustContain(t, wat, `(func $putchar`)
 	mustContain(t, wat, "call $print")
 	// Length-prefixed string entry: 2 bytes "hi" so prefix is \02\00\00\00.
 	mustContain(t, wat, `\02\00\00\00hi`)
-	// Pointer to the chars (after the 4-byte prefix) starts at 64+4=68.
-	mustContain(t, wat, "i32.const 68")
+	// Preview-2 layout pushes the string base from 64 to 128 (the
+	// canonical-ABI scratch slots reserve memory[92..127]); chars
+	// for the first interned string therefore start at 128+4=132.
+	mustContain(t, wat, "i32.const 132")
 }
 
-// Programs that don't touch strings, print or putchar should stay free
-// of the WASI import and runtime helpers.
+// Programs that don't touch strings, print or putchar still pull in
+// the runtime preamble after step 6 — the component model exports
+// `cabi_realloc` and the host always wires
+// `wasi:io/streams.blocking-write-and-flush` whether the program
+// uses it or not. The test now asserts the *minimum* shape under
+// preview-2: stdio imports come in unconditionally, the bump
+// allocator is required (cabi_realloc defers to it), and the
+// preview-1 imports are gone.
 func TestNoRuntimeWhenUnused(t *testing.T) {
 	wat := compileToWAT(t, `function main(): number { return 42; }`)
 	if strings.Contains(wat, "wasi_snapshot_preview1") {
-		t.Errorf("WASI import emitted unnecessarily:\n%s", wat)
+		t.Errorf("preview-1 import leaked into WAT:\n%s", wat)
 	}
-	if strings.Contains(wat, "(memory $mem") {
-		t.Errorf("memory emitted unnecessarily:\n%s", wat)
-	}
-	if strings.Contains(wat, "$__lang_alloc") {
-		t.Errorf("bump allocator emitted unnecessarily:\n%s", wat)
-	}
-	if strings.Contains(wat, "(table") {
-		t.Errorf("function table emitted unnecessarily:\n%s", wat)
-	}
+	mustContain(t, wat, `(import "wasi:cli/stdout@0.2.0" "get-stdout"`)
+	mustContain(t, wat, `$__lang_alloc`)
+	mustContain(t, wat, `(export "cabi_realloc" (func $cabi_realloc))`)
 }
 
 // Array literals lower to bump-allocator + per-element store, with a

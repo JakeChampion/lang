@@ -59,8 +59,7 @@ func main() {
 	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	debug := flag.Bool("g", false, "emit DWARF line info + .cfi_* unwind tables (arm32 only); off by default for smaller, faster-startup release binaries")
-	wasiPreview2 := flag.Bool("wasi-preview2", false, "wrap the WASM output as a WASI Preview 2 Component Model component (requires wasm-tools + a preview1-component-adapter, see docs/WASI-PREVIEW2.md)")
-	wasiAdapter := flag.String("wasi-adapter", "", "path to the wasi_snapshot_preview1.command.wasm adapter (used with -wasi-preview2)")
+	wasiAdapter := flag.String("wasi-adapter", "", "path to the wasi_snapshot_preview1.command.wasm adapter (required for -target wasm; see docs/WASI-PREVIEW2.md)")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -96,7 +95,7 @@ func main() {
 		os.Exit(code)
 	}
 
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *debug, *wasiPreview2, *wasiAdapter, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *debug, *wasiAdapter, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -147,7 +146,7 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 // run drives the full pipeline. The returned int is the exit code that
 // the lang process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug bool, wasiPreview2 bool, wasiAdapter string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug bool, wasiAdapter string, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
 		return 1, err
@@ -168,30 +167,26 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 	// each backend's Emit), so there's nothing left to do at the
 	// AST level after type checking.
 
-	// WASM target: emit WAT to stdout (or -o file) and stop. The arm32
-	// link / --run paths don't apply.
+	// WASM target: always emit a WASI Preview 2 Component Model
+	// component. Preview-1 was the historical fallback while the
+	// migration in docs/WASI-PREVIEW2.md was in flight; once every
+	// builtin had a preview-2 path (steps 2-5), the preview-1 emit
+	// was retired in step 6.
 	if target == "wasm" {
-		text, err := wasm.EmitWithOptions(prog, info, wasm.EmitOptions{Preview2: wasiPreview2})
+		text, err := wasm.Emit(prog, info)
 		if err != nil {
 			return 1, err
 		}
-		if wasiPreview2 {
-			if outPath == "" {
-				return 1, fmt.Errorf("-wasi-preview2 requires -o OUTPUT (component is a binary)")
-			}
-			if wasiAdapter == "" {
-				return 1, fmt.Errorf("-wasi-preview2 requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)")
-			}
-			if err := emitPreview2Component(text, outPath, wasiAdapter); err != nil {
-				return 1, err
-			}
-			return 0, nil
-		}
 		if outPath == "" {
-			_, err = os.Stdout.WriteString(text)
-			return ifErr(err), err
+			return 1, fmt.Errorf("-target wasm requires -o OUTPUT (the component is a binary)")
 		}
-		return ifErr(os.WriteFile(outPath, []byte(text), 0o644)), nil
+		if wasiAdapter == "" {
+			return 1, fmt.Errorf("-target wasm requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)")
+		}
+		if err := emitPreview2Component(text, outPath, wasiAdapter); err != nil {
+			return 1, err
+		}
+		return 0, nil
 	}
 	if target != "arm32" {
 		return 1, fmt.Errorf("unknown target %q (want arm32 or wasm)", target)
