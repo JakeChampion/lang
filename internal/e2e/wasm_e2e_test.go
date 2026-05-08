@@ -659,6 +659,44 @@ function main(): i32 {
 	}
 }
 
+// Generic struct: `struct Pair[A, B] { first: A, second: B }`.
+// Field types use the type parameters; the checker stamps
+// inferred type-args on the struct literal, the monomorpher
+// clones a Pair__i32__string decl per concrete instantiation,
+// and field access through Pair[i32, string].first returns i32.
+func TestWASMGenericStructInfersAndMonomorphises(t *testing.T) {
+	src := `struct Pair[A, B] { first: A, second: B }
+function main(): i32 {
+    var p = Pair { first: 42, second: "hello" };
+    print(p.second);
+    return p.first;
+}`
+	out := runWasmCapturingStdout(t, src)
+	if out != "hello" {
+		t.Errorf("output = %q, want \"hello\"", out)
+	}
+}
+
+// Generic function over a generic struct — exercises the
+// monomorpher's per-clone substitution + the post-clone type-
+// slot mangling pass: unbox[T](b: Box[T]): T gets cloned at
+// T=i32 and T=string with param types Box[i32] / Box[string]
+// respectively, both then mangled to Box__i32 / Box__string.
+func TestWASMGenericFunctionOverGenericStruct(t *testing.T) {
+	src := `struct Box[T] { val: T }
+function unbox[T](b: Box[T]): T { return b.val; }
+function main(): i32 {
+    var i = Box { val: 7 };
+    var s = Box { val: "world" };
+    print(unbox(s));
+    return unbox(i);
+}`
+	out := runWasmCapturingStdout(t, src)
+	if out != "world" {
+		t.Errorf("output = %q, want \"world\"", out)
+	}
+}
+
 // Match guards: `<pattern> when <bool> => <body>`. The guard
 // runs with the pattern's bindings in scope; if it evaluates to
 // false the arm is skipped and the match falls through to the
