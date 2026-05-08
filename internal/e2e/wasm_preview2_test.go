@@ -63,10 +63,11 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 		"-o", componentPath,
 		srcPath,
 	)
-	var ebuf bytes.Buffer
+	var obuf, ebuf bytes.Buffer
+	emit.Stdout = &obuf
 	emit.Stderr = &ebuf
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -wasi-preview2: %v\n%s", err, ebuf.String())
+		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
 	}
 
 	// The output should be a Component Model component, recognised
