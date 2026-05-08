@@ -1239,9 +1239,12 @@ func (g *generator) internString(s string) int {
 //	108..111 preview-2 stderr output-stream resource handle (cached on
 //	         first $eprint call)
 //	112..115 preview-2 stream-handle init flags
-//	         (bit 0 = stdout cached, bit 1 = stderr cached)
+//	         (bit 0 = stdout cached, bit 1 = stderr cached,
+//	          bit 2 = stdin cached)
+//	116..119 preview-2 stdin input-stream resource handle (cached on
+//	         first $read_line call)
 //	96+     string data, each entry: 4-byte length prefix then bytes
-//	  (string data starts at 116 instead of 96 when preview-2 streams
+//	  (string data starts at 120 instead of 96 when preview-2 streams
 //	  are in play; see EmitFromIRWithOptions.)
 func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
@@ -1260,17 +1263,29 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(import "wasi_snapshot_preview1" "proc_exit" (func $__wasi_proc_exit (param i32)))`)
 	}
 	if g.preview2 {
-		// Preview-2 stdio: get-stdout / get-stderr return resource
-		// handles; output-stream.blocking-write-and-flush takes
-		// (handle, ptr, len, retptr) and flushes synchronously
-		// (matches the existing fd_write semantics closely enough
-		// to drop in for $print / $write / $eprint / $putchar).
-		// The preview-1 fd_write import above stays, since file
-		// I/O and TCP send still go through it (via the adapter)
-		// — those migrate in subsequent steps.
+		// Preview-2 stdio: get-stdout / get-stderr / get-stdin
+		// return resource handles; output-stream.blocking-write-
+		// and-flush takes (handle, ptr, len, retptr) and flushes
+		// synchronously (matches the existing fd_write semantics
+		// closely enough to drop in for $print / $write / $eprint
+		// / $putchar). input-stream.blocking-read takes (handle,
+		// len_u64, retptr) and writes a result<list<u8>,
+		// stream-error> back through the retptr — see
+		// emitReadLineHelperPreview2 for the call site. The
+		// preview-1 fd_write / fd_read imports above stay, since
+		// file I/O and TCP still go through them (via the
+		// adapter) — those migrate in subsequent steps.
 		g.line(`(import "wasi:cli/stdout@0.2.0" "get-stdout" (func $__wasi_get_stdout (result i32)))`)
 		g.line(`(import "wasi:cli/stderr@0.2.0" "get-stderr" (func $__wasi_get_stderr (result i32)))`)
 		g.line(`(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush" (func $__wasi_blocking_write_and_flush (param i32 i32 i32 i32)))`)
+		if g.needsReadLine || g.needsStreamingIO {
+			// `__method_Reader_read_line` also dispatches into the
+			// preview-2 streams path when the Reader's fd is 0
+			// (i.e. wraps stdin), so the imports come in for the
+			// streaming-IO case too — not just bare `read_line()`.
+			g.line(`(import "wasi:cli/stdin@0.2.0" "get-stdin" (func $__wasi_get_stdin (result i32)))`)
+			g.line(`(import "wasi:io/streams@0.2.0" "[method]input-stream.blocking-read" (func $__wasi_blocking_read (param i32 i64 i32)))`)
+		}
 	}
 	if g.needsRandomBytes {
 		if g.preview2 {
@@ -1710,16 +1725,16 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsRandomBytes {
 		g.emitRandomBytesHelper()
-		if g.preview2 {
-			// `cabi_realloc` is the canonical-ABI allocator the
-			// host invokes to materialise `list<u8>` return
-			// values in our linear memory. Tied to the same
-			// flag as the preview-2 random import — adding a
-			// new preview-2 import that returns a list/string
-			// type should reuse this helper rather than emit
-			// its own.
-			g.emitCabiRealloc()
-		}
+	}
+	if g.preview2 {
+		// `cabi_realloc` is the canonical-ABI allocator the host
+		// invokes to materialise dynamically-sized return values
+		// (e.g. `list<u8>` from `get-random-bytes` or
+		// `input-stream.blocking-read`) in our linear memory.
+		// Always emit it under preview-2 — its cost is one
+		// trivially-tiny function; tracking individual import
+		// dependencies isn't worth the gating complexity.
+		g.emitCabiRealloc()
 	}
 	if g.needsTcp {
 		g.emitTcpHelpers()
@@ -1808,11 +1823,18 @@ func (g *generator) emitFdWriteNewline(fd int) {
 //
 //	104..107 stdout handle
 //	108..111 stderr handle
-//	112..115 init flags  (bit 0 = stdout cached, bit 1 = stderr cached)
-//	 92..103 result<_, stream-error> retptr area (12 bytes)
+//	112..115 init flags  (bit 0 = stdout cached, bit 1 = stderr cached,
+//	                      bit 2 = stdin cached)
+//	116..119 stdin handle (only when needsReadLine && preview2)
+//	 92..103 result<_, stream-error> retptr area (12 bytes; shared with
+//	         result<list<u8>, stream-error>)
 func (g *generator) emitStreamsStdioHelpers() {
 	g.emitStreamHandleAccessor("$__stdout_handle", "$__wasi_get_stdout", 104, 1)
 	g.emitStreamHandleAccessor("$__stderr_handle", "$__wasi_get_stderr", 108, 2)
+	if g.needsReadLine || g.needsStreamingIO {
+		g.emitStreamHandleAccessor("$__stdin_handle", "$__wasi_get_stdin", 116, 4)
+		g.emitStdinStreamsReadLine()
+	}
 
 	// $__streams_write(handle, ptr, len) — wrap blocking-write-and-flush.
 	g.line(`(func $__streams_write (param $handle i32) (param $ptr i32) (param $len i32)`)
@@ -2105,9 +2127,13 @@ func (g *generator) emitArgsHelper() {
 }
 
 // emitReadLineHelper writes `$read_line`, a one-byte-at-a-time
-// stdin reader. Each iteration calls fd_read on the iovec at
-// offset 56 (pre-set to read into byte 68); the loop exits at
-// EOF (nread==0) or when the read byte is `\n`.
+// stdin reader. Each iteration reads one byte; the loop exits at
+// EOF or when the read byte is `\n`. The preview-1 path uses
+// fd_read on the iovec at offset 56 (which points at byte 68);
+// the preview-2 path is a single delegation to the private
+// `$__stdin_read_line` helper that emitStreamsStdioHelpers writes
+// (also reused by `__method_Reader_read_line` for Readers wrapping
+// stdin).
 //
 // The result is an `Option[string]` heap object: `Some(line)`
 // when at least one byte was read (the line preserves its
@@ -2115,6 +2141,14 @@ func (g *generator) emitArgsHelper() {
 // (EOF). Tag 0 is `Some`, tag 1 is `None` — the canonical order
 // from the auto-injected Option enum, hardcoded here.
 func (g *generator) emitReadLineHelper() {
+	if g.preview2 {
+		g.line(`(func $read_line (result i32)`)
+		g.indent++
+		g.line(`call $__stdin_read_line`)
+		g.indent--
+		g.line(`)`)
+		return
+	}
 	g.line(`(func $read_line (result i32)`)
 	g.indent++
 	g.line(`(local $start i32)`) // start of accumulated bytes on the heap
@@ -2256,6 +2290,177 @@ func (g *generator) emitReadLineHelper() {
 	g.line(`i32.store`)
 	g.line(`local.get $sbase`)
 	g.line(`return`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitStdinStreamsReadLine writes the private
+// `$__stdin_read_line` helper — the streams-flavoured stdin line
+// reader shared between the bare `$read_line` global and
+// `__method_Reader_read_line`'s fd==0 fast-path. Reads stdin one
+// byte at a time via
+// `wasi:io/streams.input-stream.blocking-read(1)`, accumulating
+// into a heap buffer, and packages the result as `Option[string]`
+// — `None` on EOF before any byte, `Some(line)` (newline included)
+// otherwise.
+//
+// The accumulator is a separate, growable allocation rather than
+// the implicit cursor-based anchor the preview-1 path uses.
+// Reason: each blocking-read goes through the host's
+// `cabi_realloc`, which shares our bump cursor — so the host's
+// per-byte buffers and our would-be accumulator slots interleave
+// in the heap, and the "cursor advances by exactly 1 per
+// iteration" invariant the preview-1 helper relies on no longer
+// holds. Initial buffer is 64 bytes; we double on overflow and
+// `memory.copy` the prefix into the new region.
+//
+// EOF detection: the canonical-ABI result discriminant at the
+// retptr is non-zero (`Err(stream-error)`) or the returned list is
+// length 0. The error resource leaks here — we don't import
+// `[resource-drop]error`. Acceptable trade-off for now: a CLI
+// program hits stream errors at most once per process lifetime.
+func (g *generator) emitStdinStreamsReadLine() {
+	g.line(`(func $__stdin_read_line (result i32)`)
+	g.indent++
+	g.line(`(local $buf i32) (local $buf_size i32) (local $cur_offset i32)`)
+	g.line(`(local $byte i32) (local $list_ptr i32)`)
+	g.line(`(local $new_buf i32) (local $new_size i32)`)
+	g.line(`(local $sbase i32) (local $sptr i32)`)
+
+	// Initial accumulator: 64 bytes. Doubles on overflow.
+	g.line(`i32.const 64`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $buf`)
+	g.line(`i32.const 64`)
+	g.line(`local.set $buf_size`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $cur_offset`)
+
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	// blocking-read(handle, 1, retptr=92).
+	g.line(`call $__stdin_handle`)
+	g.line(`i64.const 1`)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_blocking_read`)
+
+	// Outer disc at retptr+0; non-zero = Err = treat as EOF.
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`br_if $end`)
+
+	// list_len at retptr+8; zero-length = EOF on blocking read.
+	g.line(`i32.const 100`)
+	g.line(`i32.load`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $end`)
+
+	// list_ptr at retptr+4 → byte = mem[list_ptr].
+	g.line(`i32.const 96`)
+	g.line(`i32.load`)
+	g.line(`local.set $list_ptr`)
+	g.line(`local.get $list_ptr`)
+	g.line(`i32.load8_u`)
+	g.line(`local.set $byte`)
+
+	// Grow the buffer if it's full. new_size = buf_size * 2.
+	g.line(`local.get $cur_offset`)
+	g.line(`local.get $buf_size`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf_size`)
+	g.line(`i32.const 1`)
+	g.line(`i32.shl`)
+	g.line(`local.set $new_size`)
+	g.line(`local.get $new_size`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $new_buf`)
+	g.line(`local.get $new_buf`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $cur_offset`)
+	g.line(`memory.copy`)
+	g.line(`local.get $new_buf`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $new_size`)
+	g.line(`local.set $buf_size`)
+	g.indent--
+	g.line(`end`)
+
+	// mem[buf + cur_offset] = byte
+	g.line(`local.get $buf`)
+	g.line(`local.get $cur_offset`)
+	g.line(`i32.add`)
+	g.line(`local.get $byte`)
+	g.line(`i32.store8`)
+
+	// cur_offset += 1
+	g.line(`local.get $cur_offset`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $cur_offset`)
+
+	// Break on newline.
+	g.line(`local.get $byte`)
+	g.line(`i32.const 10`)
+	g.line(`i32.eq`)
+	g.line(`br_if $end`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// Empty (no bytes consumed) = None. Tag 1 = None per the
+	// auto-injected Option enum layout.
+	g.line(`local.get $cur_offset`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $sbase`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// Materialise as a length-prefixed string.
+	g.line(`local.get $cur_offset`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`local.get $cur_offset`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sptr`)
+
+	// memory.copy(sptr, buf, cur_offset)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $cur_offset`)
+	g.line(`memory.copy`)
+
+	// Wrap in Some(sptr): tag=0 + payload.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $sbase`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $sptr`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
 	g.indent--
 	g.line(`)`)
 }
@@ -3077,6 +3282,23 @@ func (g *generator) emitReaderReadLineMethod() {
 	g.line(`local.get $r`)
 	g.line(`i32.load`)
 	g.line(`local.set $fd`)
+
+	if g.preview2 {
+		// Preview-2 routes stdin reads (fd=0) through native
+		// wasi:io/streams instead of the preview-1 fd_read this
+		// method otherwise uses. The bytes that come back via
+		// the streams adapter are identical, but we save a hop
+		// through the wasi-preview1 adapter component for the
+		// hottest read path.
+		g.line(`local.get $fd`)
+		g.line(`i32.eqz`)
+		g.line(`if`)
+		g.indent++
+		g.line(`call $__stdin_read_line`)
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
+	}
 
 	// Reset the static iovec to (ptr=68, len=1). The data
 	// segment seeds it at module-init, but Writer.write and
