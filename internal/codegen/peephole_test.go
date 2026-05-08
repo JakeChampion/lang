@@ -266,6 +266,72 @@ func TestAddrModeSinkSkipsWhenDstDiffers(t *testing.T) {
 	}
 }
 
+// Two adjacent label declarations merge into one. References
+// to the dropped label get rewritten to the kept label.
+func TestAdjacentLabelMergeRewritesReferences(t *testing.T) {
+	in := strings.Join([]string{
+		"\tb .Lsecond",
+		".Lfirst:",
+		".Lsecond:", // adjacent — merges with .Lfirst
+		"\tldr r0, =.Lsecond",
+		"\tbx lr",
+	}, "\n")
+	got := peephole(in)
+	if strings.Contains(got, ".Lsecond") {
+		t.Errorf(".Lsecond references should be rewritten to .Lfirst:\n%s", got)
+	}
+	if !strings.Contains(got, ".Lfirst") {
+		t.Errorf(".Lfirst must remain:\n%s", got)
+	}
+}
+
+// Branch threading: `b L1` where `L1: b L2` rewrites the
+// outer branch to target `L2` directly, skipping the
+// trampoline label. Tested at the helper level so we see
+// the threading output without the rest of the peephole
+// cascade further collapsing the result.
+func TestBranchThreadingSkipsTrampoline(t *testing.T) {
+	in := strings.Join([]string{
+		"\tb .Lthrough",
+		".Lpre:",
+		"\tldr r0, =1",
+		".Lthrough:",
+		"\tb .Ltarget",
+		".Lpost:",
+		"\tldr r1, =2",
+		".Ltarget:",
+		"\tbx lr",
+	}, "\n")
+	got := threadBranches(in)
+	if !strings.Contains(got, "\tb .Ltarget\n") {
+		t.Errorf("outer `b .Lthrough` should be threaded to `b .Ltarget`:\n%s", got)
+	}
+}
+
+// Pop-pair fusion: `pop {r0} ; pop {r1}` (sequential regs)
+// becomes `pop {r0, r1}` — one ldm instead of two ldrs.
+func TestPopFusionAdjacentRegisters(t *testing.T) {
+	in := "\tpop {r0}\n\tpop {r1}\n\tcmp r0, r1"
+	got := peephole(in)
+	if !strings.Contains(got, "pop {r0, r1}") {
+		t.Errorf("expected fused `pop {r0, r1}`, got:\n%s", got)
+	}
+	if strings.Contains(got, "\tpop {r0}\n\tpop {r1}") {
+		t.Errorf("separate pops should be gone:\n%s", got)
+	}
+}
+
+// Pop-pair fusion only fires when the registers are in
+// increasing order — `pop {r1} ; pop {r0}` would put the
+// wrong values in each register if merged.
+func TestPopFusion_BackwardOrderUntouched(t *testing.T) {
+	in := "\tpop {r1}\n\tpop {r0}\n\tcmp r1, r0"
+	got := peephole(in)
+	if !strings.Contains(got, "\tpop {r1}\n\tpop {r0}") {
+		t.Errorf("backward-order pops must not fuse:\n%s", got)
+	}
+}
+
 // Local labels (`.L*`) with no incoming references get dropped
 // — common after branch inversion / next-line elision leaves
 // behind a trampoline label that nothing branches to.

@@ -29,15 +29,18 @@ import "strings"
 //
 // Run to a fixed point so cascades — e.g. dropping a branch reveals a
 // new push/pop adjacency — are caught. Each iteration runs the
-// line-window passes followed by a global dead-label sweep
-// and a dead-code-after-`b` sweep: removing unreferenced
-// local labels can re-adjacent two instructions that the
-// line-window passes can then fuse, and an unconditional
-// control transfer makes everything until the next label
-// unreachable.
+// line-window passes followed by global sweeps that can re-
+// adjacent instructions for the line-window peeps to pick up:
+//
+//   - dead-label removal
+//   - dead-code-after-uncond-branch removal
+//   - adjacent-label merge (LBL1: ; LBL2: → keep one, rename refs)
+//   - branch threading (b L1 where L1: just `b L2` → b L2)
 func peephole(asm string) string {
 	for {
 		next := strings.Join(peepPass(strings.Split(asm, "\n")), "\n")
+		next = mergeAdjacentLabels(next)
+		next = threadBranches(next)
 		next = removeDeadLabels(next)
 		next = removeUnreachableAfterUncondBranch(next)
 		if next == asm {
@@ -45,6 +48,162 @@ func peephole(asm string) string {
 		}
 		asm = next
 	}
+}
+
+// removeUnreachableAfterUncondBranch drops instructions
+// sandwiched between an unconditional control transfer
+// mergeAdjacentLabels collapses `LBL1: ; LBL2:` (two label
+// declarations on consecutive lines) into a single label by
+// rewriting every reference to LBL2 → LBL1 and dropping
+// LBL2's declaration. The two labels point at the same
+// address either way, but the merge can re-adjacent
+// instructions for the line-window peeps to consume.
+//
+// Only fires for `.L`-prefixed local labels; externally-
+// visible symbols (`main`, `__lang_*`, etc.) are left alone.
+func mergeAdjacentLabels(asm string) string {
+	lines := strings.Split(asm, "\n")
+	rename := map[string]string{}
+	prevLabel := ""
+	for _, line := range lines {
+		s := trim(line)
+		if strings.HasPrefix(s, ".L") && strings.HasSuffix(s, ":") &&
+			!strings.ContainsAny(s, " \t,") {
+			name := s[:len(s)-1]
+			if prevLabel != "" {
+				// rename name → prevLabel (drop name's declaration).
+				rename[name] = prevLabel
+			} else {
+				prevLabel = name
+			}
+			continue
+		}
+		// Non-label line breaks the adjacent-label streak.
+		prevLabel = ""
+	}
+	if len(rename) == 0 {
+		return asm
+	}
+	// Emit, applying renames to references and dropping the
+	// merged-away label declarations.
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		s := trim(line)
+		if strings.HasPrefix(s, ".L") && strings.HasSuffix(s, ":") &&
+			!strings.ContainsAny(s, " \t,") {
+			name := s[:len(s)-1]
+			if _, dropped := rename[name]; dropped {
+				continue
+			}
+			out = append(out, line)
+			continue
+		}
+		out = append(out, applyLabelRename(line, rename))
+	}
+	return strings.Join(out, "\n")
+}
+
+// threadBranches rewrites `b LBL` (or `b<cc> LBL`) where
+// LBL's body is just another `b TARGET`. The trampoline
+// label gets bypassed; downstream dead-label-elim drops it
+// once nothing references it.
+//
+// Iteration in the surrounding fixed-point loop catches
+// chains (LBL1 → LBL2 → LBL3) — each pass collapses one hop.
+func threadBranches(asm string) string {
+	lines := strings.Split(asm, "\n")
+	// Build a label → target map: when label LBL's first
+	// non-label, non-directive line is `b TARGET`, record
+	// the redirect.
+	redirects := map[string]string{}
+	for i, line := range lines {
+		s := trim(line)
+		if !(strings.HasPrefix(s, ".L") && strings.HasSuffix(s, ":") &&
+			!strings.ContainsAny(s, " \t,")) {
+			continue
+		}
+		name := s[:len(s)-1]
+		// Look forward for the first executable instruction.
+		for j := i + 1; j < len(lines); j++ {
+			t := trim(lines[j])
+			if t == "" || strings.HasSuffix(t, ":") || strings.HasPrefix(t, ".") {
+				continue
+			}
+			cc, target, ok := matchBranch(lines[j])
+			if !ok || cc != "" || target == name {
+				break
+			}
+			redirects[name] = target
+			break
+		}
+	}
+	if len(redirects) == 0 {
+		return asm
+	}
+	// Apply redirects to every branch reference.
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		s := trim(line)
+		if cc, target, ok := matchBranch(line); ok {
+			if redir, redirOK := redirects[target]; redirOK && redir != target {
+				if cc == "" {
+					out = append(out, "\tb "+redir)
+				} else {
+					out = append(out, "\tb"+cc+" "+redir)
+				}
+				continue
+			}
+		}
+		_ = s
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// applyLabelRename rewrites every `.L*` token in `line` that
+// matches a key in `rename` to its mapped value. Used by
+// mergeAdjacentLabels to redirect references after dropping
+// a duplicate label declaration.
+func applyLabelRename(line string, rename map[string]string) string {
+	if len(rename) == 0 {
+		return line
+	}
+	// Walk the line, finding `.L`-prefixed tokens. Token
+	// boundaries: any non-identifier character or end-of-string.
+	var b strings.Builder
+	b.Grow(len(line))
+	i := 0
+	for i < len(line) {
+		c := line[i]
+		if c == '.' && i+1 < len(line) && line[i+1] == 'L' {
+			// Walk to the end of the identifier.
+			j := i + 2
+			for j < len(line) && isIdentByte(line[j]) {
+				j++
+			}
+			tok := line[i:j]
+			if mapped, ok := rename[tok]; ok {
+				b.WriteString(mapped)
+			} else {
+				b.WriteString(tok)
+			}
+			i = j
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+// isIdentByte reports whether c can appear inside an
+// assembly identifier (after the `.L` prefix). Includes
+// digits, letters, and underscore.
+func isIdentByte(c byte) bool {
+	return (c >= '0' && c <= '9') ||
+		(c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z') ||
+		c == '_'
 }
 
 // removeUnreachableAfterUncondBranch drops instructions
@@ -236,7 +395,18 @@ func peepPass(lines []string) []string {
 			continue
 		}
 
-		// 11: branch inversion — collapse a conditional-over-
+		// 11: pop fusion — `pop {r0} ; pop {r1}` (or any
+		// register pair where the first reg < second reg)
+		// collapses to `pop {r0, r1}`. ARM `pop {rA, rB}`
+		// pops in increasing-register order from sp, so two
+		// separate pops with sequential dest regs produce
+		// the same effect as one ldm.
+		if collapsed, ok := tryPopFusion(out, line); ok {
+			out = collapsed
+			continue
+		}
+
+		// 12: branch inversion — collapse a conditional-over-
 		// unconditional branch pair when the conditional's
 		// target is the *next* label:
 		//
@@ -262,6 +432,64 @@ func peepPass(lines []string) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// tryPopFusion recognises two adjacent single-register pops
+// where the registers are in ARM's increasing order, and
+// merges them into one multi-register pop:
+//
+//	pop {rA}
+//	pop {rB}     (rB > rA, e.g. r1 > r0)
+//
+// becomes
+//
+//	pop {rA, rB}
+//
+// `pop {rA, rB}` (= `ldmia sp!, {rA, rB}`) loads in
+// increasing-register order from sp upward, which matches
+// the two-pop sequence exactly. Saves one cycle per merge.
+//
+// Pop pairs in the wrong order (`pop {r1} ; pop {r0}`)
+// don't merge because `pop {r0, r1}` would put the wrong
+// values in each register.
+func tryPopFusion(out []string, cur string) ([]string, bool) {
+	if len(out) < 1 {
+		return nil, false
+	}
+	prev := out[len(out)-1]
+	regA := popReg(prev)
+	regB := popReg(cur)
+	if regA == "" || regB == "" {
+		return nil, false
+	}
+	a, ok := parseRegNumber(regA)
+	if !ok {
+		return nil, false
+	}
+	b, ok := parseRegNumber(regB)
+	if !ok {
+		return nil, false
+	}
+	if b <= a {
+		return nil, false
+	}
+	rewritten := append(out[:len(out)-1], "\tpop {"+regA+", "+regB+"}")
+	return rewritten, true
+}
+
+// parseRegNumber returns the integer N in `rN` (e.g.
+// `r0` → 0, `r12` → 12). Returns ok=false for non-register
+// or unrecognised forms.
+func parseRegNumber(reg string) (int, bool) {
+	if !strings.HasPrefix(reg, "r") {
+		return 0, false
+	}
+	rest := reg[1:]
+	if rest == "" {
+		return 0, false
+	}
+	n, ok := parseDecimal(rest)
+	return n, ok
 }
 
 // tryBranchInversion recognises the three-line pattern
