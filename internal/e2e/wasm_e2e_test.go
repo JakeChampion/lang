@@ -697,6 +697,54 @@ function main(): i32 {
 	}
 }
 
+// `use IDENT : TYPE <- EXPR;` desugars at parse time into a
+// synthesised local callback function whose body is the rest of
+// the enclosing block. The desugar is Gleam-style — it
+// generalises Result-chaining without a typeclass / monad
+// system, since the callback signature is whatever the
+// receiving function expects.
+func TestWASMUseSyntax(t *testing.T) {
+	src := `function tryThing(callback: (i32) => Option[i32]): Option[i32] {
+    return callback(42);
+}
+function compute(): Option[i32] {
+    use n: i32 <- tryThing();
+    return Some(n + 1);
+}
+function main(): i32 {
+    if let Some(v) = compute() {
+        return v;
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 43 {
+		t.Errorf("got %d, want 43 (use syntax single-callback)", got)
+	}
+}
+
+// Chained `use` — each one consumes the rest of the block as
+// its callback's body, producing a series of nested closures.
+// Inner closure captures the outer closure's binding (`a` in
+// the body of __use_1 references __use_2's param).
+func TestWASMUseChained(t *testing.T) {
+	src := `function tryThing(cb: (i32) => Option[i32]): Option[i32] { return cb(10); }
+function tryOther(cb: (i32) => Option[i32]): Option[i32] { return cb(20); }
+function compute(): Option[i32] {
+    use a: i32 <- tryThing();
+    use b: i32 <- tryOther();
+    return Some(a + b);
+}
+function main(): i32 {
+    if let Some(v) = compute() {
+        return v;
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 30 {
+		t.Errorf("got %d, want 30 (chained use)", got)
+	}
+}
+
 // `let Variant(b) = expr else { divergent };` —
 // pattern-binding declaration with mandatory-divergent else.
 // Bindings flow into the enclosing scope, so subsequent

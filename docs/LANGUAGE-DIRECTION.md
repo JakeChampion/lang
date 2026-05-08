@@ -313,8 +313,15 @@ Deferred to a follow-up:
   match falls through to the next arm. Conservative
   exhaustiveness: a guarded arm doesn't count as covering the
   variant, so a fallback arm (or `_`) is required.
-- `use` syntax (Gleam-style). Replaces a future `?` because it
-  generalizes more.
+- `use` syntax (Gleam-style) — **shipped**. `use IDENT : TYPE <-
+  EXPR;` desugars at parse time to a synthesised local callback
+  function whose body is the rest of the enclosing block; EXPR
+  is rewritten to call with the callback appended as the last
+  arg. Chains nest naturally so flat `use a <- ...; use b <-
+  ...; return ...;` produces the expected closure tree without
+  manual indentation. Type annotation on the binding required
+  for now (inference from the receiving function's callback
+  parameter is a follow-up).
 
 ### PR 5 — Memory model first-class
 
