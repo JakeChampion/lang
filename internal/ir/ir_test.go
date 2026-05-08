@@ -563,6 +563,41 @@ func TestLowerArithIdentities(t *testing.T) {
 	}
 }
 
+// Self-identity folds collapse `x op x` to a known constant
+// or the operand itself. Inspired by Cranelift's icmp.isle /
+// arithmetic.isle. Restricted to plain identifiers so we
+// don't double-evaluate side effects.
+func TestLowerSelfIdentityFolds(t *testing.T) {
+	cases := []struct {
+		op       string
+		bannedOp OpKind
+		desc     string
+	}{
+		{"-", OpSub, "x - x"},
+		{"^", OpXor, "x ^ x"},
+		{"|", OpOr, "x | x"},
+		{"&", OpAnd, "x & x"},
+		{"==", OpEq, "x == x"},
+		{"!=", OpNe, "x != x"},
+		{"<", OpLtS, "x < x"},
+		{"<=", OpLeS, "x <= x"},
+		{">", OpGtS, "x > x"},
+		{">=", OpGeS, "x >= x"},
+	}
+	for _, tc := range cases {
+		retType := "number"
+		if tc.op == "==" || tc.op == "!=" || tc.op == "<" ||
+			tc.op == "<=" || tc.op == ">" || tc.op == ">=" {
+			retType = "boolean"
+		}
+		src := "function f(x: number): " + retType + " { return x " + tc.op + " x; }"
+		prog := lowerSource(t, src)
+		if hasOp(prog, "f", tc.bannedOp) {
+			t.Errorf("%s should fold; %s must not appear:\n%s", tc.desc, tc.bannedOp, prog)
+		}
+	}
+}
+
 // `x * 2^k` strength-reduces to `x << k` (k > 0). For
 // non-power-of-two multipliers the OpMul stays.
 func TestLowerArithStrengthReducesMulPow2(t *testing.T) {

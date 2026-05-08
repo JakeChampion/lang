@@ -1246,6 +1246,9 @@ func (b *builder) binary(n *ast.Binary) error {
 		if folded, ok := b.maybeFoldArithIdentity(n); ok {
 			return folded
 		}
+		if folded, ok := b.maybeFoldSelfIdentity(n); ok {
+			return folded
+		}
 	}
 	if n.IsStringConcat {
 		// Compile-time fold: `"foo" + "bar"` collapses to the
@@ -1417,6 +1420,61 @@ func constNumber(e ast.Expr) (int32, bool) {
 		}
 	}
 	return 0, false
+}
+
+// maybeFoldSelfIdentity recognises self-on-both-sides patterns
+// for an Ident — the result is independent of the value and
+// can be replaced with the appropriate constant. Inspired by
+// Cranelift's icmp.isle / arithmetic.isle rules.
+//
+//	x - x   → 0
+//	x ^ x   → 0
+//	x | x   → x
+//	x & x   → x
+//	x == x  → 1
+//	x != x  → 0
+//	x <  x  → 0
+//	x <= x  → 1
+//	x >  x  → 0
+//	x >= x  → 1
+//
+// Skipped:
+//
+//	x + x  — not a self-identity (would be `x * 2`); already
+//	         strength-reduces via the existing pow2 fold when
+//	         one side is `2`.
+//	x * x  — not an identity, real square computation.
+//	x / x  — would be 1, but x might be 0 → runtime trap; we
+//	         can't fold without changing observable behaviour.
+//	x % x  — same divisor-zero concern.
+//	String / float ops — caller already gates on integer.
+//
+// Restricted to plain identifiers (n.Left and n.Right both
+// `*ast.Ident` with the same name) so we don't double-evaluate
+// expressions with side effects.
+func (b *builder) maybeFoldSelfIdentity(n *ast.Binary) (error, bool) {
+	idL, ok := n.Left.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+	idR, ok := n.Right.(*ast.Ident)
+	if !ok || idL.Name != idR.Name {
+		return nil, false
+	}
+	switch n.Op {
+	case "-", "^":
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		return nil, true
+	case "|", "&":
+		return b.expr(n.Left), true
+	case "==", "<=", ">=":
+		b.emit(Op{Kind: OpConstI32, I32: 1})
+		return nil, true
+	case "!=", "<", ">":
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		return nil, true
+	}
+	return nil, false
 }
 
 // powerOfTwo returns (k, true) when n == 1 << k for some
