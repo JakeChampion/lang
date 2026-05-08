@@ -367,6 +367,11 @@ Deferred to a follow-up:
   (T) => U)` ⇒ binding has type `T`) and stamps the synthesised
   FuncDecl. Generic-callee inference is still TODO; for those
   callees the explicit `: TYPE` is still needed.
+- **Enum methods (shipped).** `function (self: Option[i32])
+  unwrap_or(fallback: i32): i32 { … }` defines a method on the
+  enum type. Same hoisting + call-site rewriting as struct
+  methods (`__method_<EnumName>_<MethodName>`). Receiver type
+  must be a known struct or enum; non-named types still error.
 
 ### PR 5 — Memory model first-class
 

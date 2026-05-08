@@ -704,6 +704,49 @@ func TestWASMU16Array(t *testing.T) {
 	}
 }
 
+// Methods on user-defined enums. The receiver clause `(self:
+// Color)` makes `c.is_red()` resolve to a hoisted top-level
+// function `__method_Color_is_red`. Verifies dispatch on a
+// non-generic enum's payload-less variants.
+func TestWASMEnumMethod(t *testing.T) {
+	src := `enum Color { Red, Green, Blue }
+function (self: Color) is_red(): boolean {
+    match (self) {
+        Red => { return true; },
+        _ => { return false; },
+    }
+}
+function main(): i32 {
+    var c: Color = Red;
+    if (c.is_red()) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (enum method dispatch)", got)
+	}
+}
+
+// Methods on a generic enum (`Option[T]`). Verifies the method
+// receiver picks up `T` from the value's runtime instantiation.
+func TestWASMEnumMethodGeneric(t *testing.T) {
+	src := `function (self: Option[i32]) unwrap_or(fallback: i32): i32 {
+    match (self) {
+        Some(v) => { return v; },
+        None => { return fallback; },
+    }
+}
+function main(): i32 {
+    var s: Option[i32] = Some(7);
+    var n: Option[i32] = None;
+    if (s.unwrap_or(0) != 7) { return 1; }
+    if (n.unwrap_or(99) != 99) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (generic enum method)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

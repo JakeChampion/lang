@@ -458,21 +458,30 @@ func Check(prog *ast.Program) (*Info, error) {
 	// about methods.
 	for _, fn := range prog.Funcs {
 		if fn.Receiver != nil {
-			st, ok := fn.Receiver.Type.(ast.StructType)
-			if !ok {
-				c.errf(fn.P, "method receiver type must be a struct, got %s", fn.Receiver.Type)
+			var typeName string
+			switch rt := fn.Receiver.Type.(type) {
+			case ast.StructType:
+				if _, ok := c.info.Structs[rt.Name]; !ok {
+					c.errf(fn.P, "method receiver references unknown struct %q", rt.Name)
+					continue
+				}
+				typeName = rt.Name
+			case ast.EnumType:
+				if _, ok := c.info.Enums[rt.Name]; !ok {
+					c.errf(fn.P, "method receiver references unknown enum %q", rt.Name)
+					continue
+				}
+				typeName = rt.Name
+			default:
+				c.errf(fn.P, "method receiver type must be a struct or enum, got %s", fn.Receiver.Type)
 				continue
 			}
-			if _, ok := c.info.Structs[st.Name]; !ok {
-				c.errf(fn.P, "method receiver references unknown struct %q", st.Name)
-				continue
-			}
-			methodKey := st.Name + "." + fn.Name
+			methodKey := typeName + "." + fn.Name
 			if _, dup := c.info.Methods[methodKey]; dup {
-				c.errf(fn.P, "method %q on struct %s redeclared", fn.Name, st.Name)
+				c.errf(fn.P, "method %q on %s redeclared", fn.Name, typeName)
 				continue
 			}
-			mangled := "__method_" + st.Name + "_" + fn.Name
+			mangled := "__method_" + typeName + "_" + fn.Name
 			// Rewrite the FuncDecl so codegen sees a regular
 			// top-level function with the receiver as its first
 			// parameter.
@@ -1780,14 +1789,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return ast.NumberType{}
 		}
 		// Method call dispatch: `target.method(args)` where target is a
-		// struct value and the struct has a method of that name. We
-		// rewrite the Call node in place to `mangledName(target, args)`
-		// so the rest of the pipeline (codegen, IR) only ever sees a
-		// regular function call.
+		// struct or enum value with a method of that name. We rewrite
+		// the Call node in place to `mangledName(target, args)` so the
+		// rest of the pipeline (codegen, IR) only ever sees a regular
+		// function call.
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			tt := c.checkExpr(fa.Target, s)
-			if st, ok := tt.(ast.StructType); ok {
-				key := st.Name + "." + fa.Field
+			var typeName string
+			switch t := tt.(type) {
+			case ast.StructType:
+				typeName = t.Name
+			case ast.EnumType:
+				typeName = t.Name
+			}
+			if typeName != "" {
+				key := typeName + "." + fa.Field
 				if mangled, ok := c.info.Methods[key]; ok {
 					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
