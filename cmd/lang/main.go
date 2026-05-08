@@ -53,7 +53,7 @@ func absPath(p string) string {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm32", "code-generation backend: arm32 (default) or wasm")
+	target := flag.String("target", "arm32", "code-generation backend: arm32 (default), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
 	cc := flag.String("cc", "arm-linux-gnueabihf-gcc", "ARM cross-compiler used to link when -o or --run is set (arm32 only)")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it under qemu-arm (arm32 only)")
 	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
@@ -172,24 +172,35 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 	// migration in docs/WASI-PREVIEW2.md was in flight; once every
 	// builtin had a preview-2 path (steps 2-5), the preview-1 emit
 	// was retired in step 6.
-	if target == "wasm" {
-		text, err := wasm.Emit(prog, info)
+	if target == "wasm" || target == "wasi-http" {
+		opts := wasm.EmitOptions{}
+		world := "lang"
+		if target == "wasi-http" {
+			// Step 5: HTTP handler target. The world EXPORTS
+			// wasi:http/incoming-handler — `wasmtime serve`
+			// dispatches inbound requests into the user's
+			// `handle(req: HttpRequest): HttpResponse`. No
+			// `_start`; no `main()` is required.
+			opts.HttpHandler = true
+			world = "http"
+		}
+		text, err := wasm.EmitWithOptions(prog, info, opts)
 		if err != nil {
 			return 1, err
 		}
 		if outPath == "" {
-			return 1, fmt.Errorf("-target wasm requires -o OUTPUT (the component is a binary)")
+			return 1, fmt.Errorf("-target %s requires -o OUTPUT (the component is a binary)", target)
 		}
 		if wasiAdapter == "" {
-			return 1, fmt.Errorf("-target wasm requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)")
+			return 1, fmt.Errorf("-target %s requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)", target)
 		}
-		if err := emitPreview2Component(text, outPath, wasiAdapter); err != nil {
+		if err := emitPreview2ComponentWorld(text, outPath, wasiAdapter, world); err != nil {
 			return 1, err
 		}
 		return 0, nil
 	}
 	if target != "arm32" {
-		return 1, fmt.Errorf("unknown target %q (want arm32 or wasm)", target)
+		return 1, fmt.Errorf("unknown target %q (want arm32, wasm, or wasi-http)", target)
 	}
 
 	emitOpts := codegen.Options{}
@@ -296,24 +307,23 @@ func link(asm, outPath, cc string, debug bool) error {
 //go:embed wit
 var witFS embed.FS
 
-// emitPreview2Component wraps the WAT in a Component Model component
-// using wasm-tools + the wasi-preview1-component-adapter.
-//
-// Pipeline:
+// emitPreview2ComponentWorld wraps the WAT in a Component Model
+// component matching the named WIT world (currently `lang` for the
+// CLI target or `http` for the HTTP-handler target). Pipeline:
 //  1. write WAT to a temp file;
 //  2. `wasm-tools parse` lowers it to a binary core module;
 //  3. `wasm-tools component embed` annotates the module with the
-//     `local:lang/lang` WIT world so the component-new step knows
-//     how to lift the native preview-2 imports we emit (e.g.
-//     `wasi:random/random.get-random-bytes`);
+//     `local:lang/<world>` WIT world so the component-new step
+//     knows how to lift the native preview-2 imports we emit and,
+//     for the http world, where the exported
+//     `wasi:http/incoming-handler.handle` lives;
 //  4. `wasm-tools component new --adapt wasi_snapshot_preview1=ADAPTER`
-//     composes the module with the adapter; preview-1 imports get
-//     translated to preview-2 by the adapter, native preview-2
-//     imports flow through unchanged. The result satisfies any
-//     preview-2 host (`wasmtime run`, edge-function runtimes, etc.).
-//
-// See docs/WASI-PREVIEW2.md for the broader migration plan.
-func emitPreview2Component(wat, outPath, adapterPath string) error {
+//     composes the module with the adapter; preview-1 imports
+//     (args/env/proc_exit) get translated to preview-2 by the
+//     adapter, native preview-2 imports flow through unchanged.
+//     The result satisfies any preview-2 host (`wasmtime run`,
+//     `wasmtime serve`, edge-function runtimes, etc.).
+func emitPreview2ComponentWorld(wat, outPath, adapterPath, world string) error {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		return fmt.Errorf("wasm-tools not found on PATH (install from https://github.com/bytecodealliance/wasm-tools): %w", err)
 	}
@@ -341,7 +351,7 @@ func emitPreview2Component(wat, outPath, adapterPath string) error {
 	}
 	embeddedPath := filepath.Join(tmpDir, "prog.embedded.wasm")
 	if out, err := exec.Command("wasm-tools", "component", "embed",
-		witDir, "-w", "lang",
+		witDir, "-w", world,
 		modulePath, "-o", embeddedPath).CombinedOutput(); err != nil {
 		return fmt.Errorf("wasm-tools component embed failed: %w\n%s", err, out)
 	}

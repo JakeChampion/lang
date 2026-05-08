@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -543,4 +544,153 @@ func itoa(n int) string {
 		b[i] = '-'
 	}
 	return string(b[i:])
+}
+
+// TestWasmPreview2HttpHandler exercises step 5: the
+// `lang -target wasi-http` build mode emits a component that
+// implements `wasi:http/incoming-handler.handle`. We compile a
+// tiny router (path == /hello → 200 "world"; POST any path
+// echoes the body), spawn `wasmtime serve`, drive it with curl
+// equivalents through Go's net/http client, and assert that
+// method / path / body all flow through correctly.
+//
+// This is the same WIT shape Fastly Compute, Netlify Edge
+// Functions, and Unikraft Cloud target — proxy-world components
+// produced here run on any of those without extra glue.
+func TestWasmPreview2HttpHandler(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+	}
+	if _, err := os.Stat(adapter); err != nil {
+		t.Skipf("adapter %q not readable: %v", adapter, err)
+	}
+
+	// Pick a free port. wasmtime serve's --addr binds eagerly
+	// without retrying, so we hand it a kernel-assigned ephemeral
+	// port and hope nobody else races us into it before serve
+	// starts. Same trade-off as TestWasmPreview2TcpEcho.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "router.lang")
+	src := `function handle(req: HttpRequest): HttpResponse {
+    if (req.path == "/hello") {
+        return HttpResponse { status: 200, body: "world" };
+    }
+    if (req.method == "POST") {
+        return HttpResponse { status: 200, body: req.body };
+    }
+    return HttpResponse { status: 404, body: "not found" };
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "router.component.wasm")
+	emit := exec.Command(bin,
+		"-target", "wasi-http",
+		"-wasi-adapter", adapter,
+		"-o", componentPath,
+		srcPath,
+	)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("lang -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	run := exec.Command("wasmtime", "serve", "--addr", addr, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime serve start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	// Wait for wasmtime to start listening. wasmtime serve writes
+	// "Serving HTTP on http://…" to stderr once it's bound, but
+	// dialing in a retry loop is simpler and matches what other
+	// component-model HTTP harnesses do.
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	var resp *http.Response
+	for {
+		resp, err = client.Get("http://" + addr + "/hello")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial /hello: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("/hello status = %d; want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "world" {
+		t.Errorf("/hello body = %q; want %q", string(body), "world")
+	}
+
+	resp, err = client.Get("http://" + addr + "/missing")
+	if err != nil {
+		t.Fatalf("get /missing: %v", err)
+	}
+	if resp.StatusCode != 404 {
+		t.Errorf("/missing status = %d; want 404", resp.StatusCode)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "not found" {
+		t.Errorf("/missing body = %q; want %q", string(body), "not found")
+	}
+
+	// POST round-trip exercises the body-read pipeline (consume +
+	// stream + bulk blocking-read). Use a short body that fits in
+	// one read; the doubling accumulator is exercised separately
+	// by spec-shaped programs but we keep this one fast.
+	want := "echo me back"
+	resp, err = client.Post("http://"+addr+"/echo", "text/plain", strings.NewReader(want))
+	if err != nil {
+		t.Fatalf("post /echo: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("POST status = %d; want 200", resp.StatusCode)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != want {
+		t.Errorf("POST body echo = %q; want %q", string(body), want)
+	}
 }

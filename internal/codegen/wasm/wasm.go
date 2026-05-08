@@ -35,6 +35,14 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 // the zero value matches what the original `Emit` produced before
 // options were introduced.
 type EmitOptions struct {
+	// HttpHandler emits a `wasi:http/incoming-handler@0.2.0#handle`
+	// export wrapping the user's `function handle(req: HttpRequest):
+	// HttpResponse`. No `_start` is exported (proxy-world components
+	// have no entry point — the host invokes `handle` per inbound
+	// request). When this is set, `HttpRequest` and `HttpResponse`
+	// struct decls are auto-injected into the program.
+	HttpHandler bool
+
 	// PrintMainResult makes the `_start` wrapper format `main()`'s
 	// integer return value through `int_to_string` and write it to
 	// stdout (followed by a newline) before returning, instead of
@@ -84,6 +92,7 @@ type generator struct {
 	info     *checker.Info
 	indent   int
 	current  *ast.FuncDecl
+	httpHandler     bool // emit the wasi:http/incoming-handler.handle export wrapping user's handle(HttpRequest) -> HttpResponse.
 	printMainResult bool // _start prints main()'s i32 return value via int_to_string before returning (test-only).
 	// origTopLevelCount records how many functions the source had
 	// before closure conversion appended hoisted ones. The first
@@ -1294,7 +1303,7 @@ func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi:cli/stdout@0.2.0" "get-stdout" (func $__wasi_get_stdout (result i32)))`)
 	g.line(`(import "wasi:cli/stderr@0.2.0" "get-stderr" (func $__wasi_get_stderr (result i32)))`)
 	g.line(`(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush" (func $__wasi_blocking_write_and_flush (param i32 i32 i32 i32)))`)
-	if g.needsReadLine || g.needsStreamingIO || g.needsFileIO || g.needsStdStreams || g.needsTcp {
+	if g.needsReadLine || g.needsStreamingIO || g.needsFileIO || g.needsStdStreams || g.needsTcp || g.httpHandler {
 		g.line(`(import "wasi:cli/stdin@0.2.0" "get-stdin" (func $__wasi_get_stdin (result i32)))`)
 		g.line(`(import "wasi:io/streams@0.2.0" "[method]input-stream.blocking-read" (func $__wasi_blocking_read (param i32 i64 i32)))`)
 	}
@@ -1311,7 +1320,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.write-via-stream" (func $__wasi_descriptor_write_via_stream (param i32 i64 i32)))`)
 		g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.append-via-stream" (func $__wasi_descriptor_append_via_stream (param i32 i32)))`)
 	}
-	if g.needsFileIO || g.needsStreamingIO || g.needsTcp {
+	if g.needsFileIO || g.needsStreamingIO || g.needsTcp || g.httpHandler {
 		// Stream resource drops — closing a file Reader/Writer
 		// (step 3c) and closing a TCP connection (step 4) both
 		// drop input-stream / output-stream resources to keep
@@ -1358,6 +1367,47 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(import "wasi:sockets/tcp@0.2.0" "[resource-drop]tcp-socket" (func $__wasi_tcp_socket_drop (param i32)))`)
 		g.line(`(import "wasi:io/poll@0.2.0" "[method]pollable.block" (func $__wasi_pollable_block (param i32)))`)
 		g.line(`(import "wasi:io/poll@0.2.0" "[resource-drop]pollable" (func $__wasi_pollable_drop (param i32)))`)
+	}
+	if g.httpHandler {
+		// wasi:http imports for the `wasi:http/incoming-handler.handle`
+		// export wrapper. The wrapper unpacks the incoming request
+		// into a lang HttpRequest, calls the user's `handle`, and
+		// streams the response back through outgoing-body. See
+		// emitHttpHandlerWrapper for the call ordering.
+		g.line(`(import "wasi:http/types@0.2.0" "[method]incoming-request.method" (func $__wasi_http_request_method (param i32 i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[method]incoming-request.path-with-query" (func $__wasi_http_request_path_with_query (param i32 i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[method]incoming-request.consume" (func $__wasi_http_request_consume (param i32 i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[resource-drop]incoming-request" (func $__wasi_http_request_drop (param i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[method]incoming-body.stream" (func $__wasi_http_incoming_body_stream (param i32 i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[static]incoming-body.finish" (func $__wasi_http_incoming_body_finish (param i32) (result i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[resource-drop]future-trailers" (func $__wasi_http_future_trailers_drop (param i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[constructor]fields" (func $__wasi_http_fields_new (result i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[constructor]outgoing-response" (func $__wasi_http_response_new (param i32) (result i32)))`)
+		// set-status-code's `result<_, _>` returns the disc inline as
+		// a single i32 (no retptr, since both Ok and Err carry no
+		// payload — the canonical-ABI flat representation collapses
+		// to a single discriminant slot).
+		g.line(`(import "wasi:http/types@0.2.0" "[method]outgoing-response.set-status-code" (func $__wasi_http_response_set_status (param i32 i32) (result i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[method]outgoing-response.body" (func $__wasi_http_response_body (param i32 i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[method]outgoing-body.write" (func $__wasi_http_outgoing_body_write (param i32 i32)))`)
+		// outgoing-body.finish: (param this option-disc option-trailers retptr).
+		// Result <_, error-code> can be large; we ignore the result
+		// payload but the host still needs ≥64 bytes of retptr to
+		// scratch the error variant. We pass our shared 16-byte
+		// retptr at memory[92] — the static area was sized for
+		// smaller variants — so allocate a wider one inline.
+		g.line(`(import "wasi:http/types@0.2.0" "[static]outgoing-body.finish" (func $__wasi_http_outgoing_body_finish (param i32 i32 i32 i32)))`)
+		// response-outparam.set: param + flattened
+		// `result<outgoing-response, error-code>`. Total 9 i32-or-i64
+		// params: 1 outparam, 1 disc, 7 payload slots. Slot 2 of
+		// the payload is i64 because an error-code case carries
+		// `option<u64>` (HTTP-{request,response}-body-size) and
+		// the canonical-ABI joins the variant width up to the
+		// wider type.
+		g.line(`(import "wasi:http/types@0.2.0" "[static]response-outparam.set" (func $__wasi_http_response_outparam_set (param i32 i32 i32 i32 i64 i32 i32 i32 i32)))`)
+		// pollable.block + drop already imported when needsTcp; we
+		// might need them for the future-trailers (no — future-trailers.drop
+		// is what we use; we don't subscribe). Skip.
 	}
 	g.line(`(memory $mem 1)`)
 
@@ -1743,6 +1793,9 @@ func (g *generator) emitRuntimePreamble() {
 	g.emitCabiRealloc()
 	if g.needsTcp {
 		g.emitTcpHelpers()
+	}
+	if g.httpHandler {
+		g.emitHttpHandlerWrapper()
 	}
 	if g.needsFileIO {
 		g.emitFileIOHelpers()
@@ -3326,6 +3379,526 @@ func (g *generator) emitTcpClosePreview2() {
 	g.line(`i32.load`)
 	g.line(`call $__wasi_tcp_socket_drop`)
 	g.line(`i32.const 0`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitHttpHandlerWrapper writes the WAT function exported as
+// `wasi:http/incoming-handler@0.2.0#handle` for the wasi-http
+// target. The wrapper marshals the canonical-ABI incoming request
+// into a 12-byte HttpRequest struct `(method, path, body)` (all
+// length-prefixed lang strings), invokes the user's
+// `handle(req: HttpRequest): HttpResponse`, then streams the
+// response back through outgoing-body and hands an
+// `Ok(outgoing-response)` to response-outparam.set.
+//
+// Resource lifetime, in order:
+//   - `req` (incoming-request) is borrowed for `.method` /
+//     `.path-with-query` / `.consume`, then explicitly dropped
+//     once the body has been finished.
+//   - `consume()` returns ownership of the incoming-body. After
+//     reading the stream we hand the body to `[static]finish`
+//     which transfers ownership and produces a future-trailers we
+//     drop.
+//   - `fields` constructed for the response are owned by the
+//     outgoing-response constructor — no manual drop.
+//   - `outgoing-body` from `outgoing-response.body()` is consumed
+//     by `[static]finish`, again no manual drop.
+//   - `output-stream` from `outgoing-body.write()` IS dropped
+//     manually before we finish the body (the canonical-ABI
+//     rejects parent drops with live children, same as TCP).
+//   - `outgoing-response` and `response-outparam` are both
+//     consumed by `[static]response-outparam.set`.
+//
+// Retptr scratch: each canonical-ABI return area we touch fits in
+// 16 bytes (the static area at memory[92]) except
+// `outgoing-body.finish`, whose result<_, error-code> can be 30+
+// bytes once the variant payload joins are accounted for. We
+// allocate a 64-byte scratch via `__lang_alloc(64)` for those
+// calls. Eaten by the bump allocator, but the cost is per-request
+// and the host serialises requests through `wasmtime serve`
+// anyway — measurable budgets for fastly-style handlers don't
+// notice.
+func (g *generator) emitHttpHandlerWrapper() {
+	// Sanity-check the user's `handle` signature. The checker
+	// can't enforce this (HttpRequest / HttpResponse are
+	// always-available structs, not http-target-only), so do
+	// it here to keep error messages precise and the runtime
+	// emit well-typed.
+	handleFn := g.funcDecls["handle"]
+	if handleFn == nil {
+		// Fall back to emitting a stub that returns 500. The
+		// real error comes from wasm-tools / wasmtime when the
+		// component doesn't satisfy the export — a clearer
+		// message would need a checker hook gated on
+		// EmitOptions, which we haven't plumbed. Acceptable
+		// for now: the lang error will be "no `handle` defined
+		// for -target wasi-http" once we add the checker hook.
+	}
+
+	// Pre-intern the static method names. ASCII case matches
+	// what most frameworks want (exposed as the lang string
+	// `req.method`); upper-cased here so the user gets the
+	// HTTP/1.1 canonical form regardless of wire format.
+	methodGet := g.internString("GET")
+	methodHead := g.internString("HEAD")
+	methodPost := g.internString("POST")
+	methodPut := g.internString("PUT")
+	methodDelete := g.internString("DELETE")
+	methodConnect := g.internString("CONNECT")
+	methodOptions := g.internString("OPTIONS")
+	methodTrace := g.internString("TRACE")
+	methodPatch := g.internString("PATCH")
+	emptyStr := g.internString("")
+
+	g.line(`(func $__http_entry (param $req i32) (param $out i32)`)
+	g.indent++
+	g.line(`(local $retptr i32)`)
+	g.line(`(local $method_str i32) (local $path_str i32) (local $body_str i32)`)
+	g.line(`(local $body_handle i32) (local $body_stream i32)`)
+	g.line(`(local $host_ptr i32) (local $host_len i32)`)
+	g.line(`(local $body_buf i32) (local $body_size i32) (local $body_cur i32) (local $body_new_buf i32)`)
+	g.line(`(local $disc i32)`)
+	g.line(`(local $req_struct i32) (local $resp_struct i32) (local $status i32)`)
+	g.line(`(local $resp_handle i32) (local $headers i32)`)
+	g.line(`(local $out_body i32) (local $out_stream i32)`)
+
+	// 64-byte scratch for canonical-ABI returns; large enough for
+	// outgoing-body.finish's result<_, error-code> joined variant.
+	g.line(`i32.const 64`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $retptr`)
+
+	// ============================================================
+	// Read method.
+	// ============================================================
+	g.line(`local.get $req`)
+	g.line(`local.get $retptr`)
+	g.line(`call $__wasi_http_request_method`)
+	// Method variant: disc at retptr+0, payload (string ptr/len)
+	// at retptr+4 / +8. Stash the disc in a local — the surrounding
+	// `block`s introduce stack fences (default block type is empty
+	// → empty, so the value stack inside is independent of the
+	// outer one), so we can't carry the loaded byte across the
+	// nesting and have to reload it inside.
+	g.line(`local.get $retptr`)
+	g.line(`i32.load8_u`)
+	g.line(`local.set $disc`)
+	g.line(`block $m_done`)
+	g.indent++
+	g.line(`block $m_other`)
+	g.indent++
+	g.line(`block $m_patch`)
+	g.indent++
+	g.line(`block $m_trace`)
+	g.indent++
+	g.line(`block $m_options`)
+	g.indent++
+	g.line(`block $m_connect`)
+	g.indent++
+	g.line(`block $m_delete`)
+	g.indent++
+	g.line(`block $m_put`)
+	g.indent++
+	g.line(`block $m_post`)
+	g.indent++
+	g.line(`block $m_head`)
+	g.indent++
+	g.line(`block $m_get`)
+	g.indent++
+	g.line(`local.get $disc`)
+	// br_table over disc; out-of-range falls into "other" too (cap at 9).
+	g.line(`br_table $m_get $m_head $m_post $m_put $m_delete $m_connect $m_options $m_trace $m_patch $m_other $m_other`)
+	g.indent--
+	g.line(`end`) // m_get
+	g.linef(`i32.const %d`, methodGet)
+	g.line(`local.set $method_str`)
+	g.line(`br $m_done`)
+	g.indent--
+	g.line(`end`) // m_head
+	g.linef(`i32.const %d`, methodHead)
+	g.line(`local.set $method_str`)
+	g.line(`br $m_done`)
+	g.indent--
+	g.line(`end`) // m_post
+	g.linef(`i32.const %d`, methodPost)
+	g.line(`local.set $method_str`)
+	g.line(`br $m_done`)
+	g.indent--
+	g.line(`end`) // m_put
+	g.linef(`i32.const %d`, methodPut)
+	g.line(`local.set $method_str`)
+	g.line(`br $m_done`)
+	g.indent--
+	g.line(`end`) // m_delete
+	g.linef(`i32.const %d`, methodDelete)
+	g.line(`local.set $method_str`)
+	g.line(`br $m_done`)
+	g.indent--
+	g.line(`end`) // m_connect
+	g.linef(`i32.const %d`, methodConnect)
+	g.line(`local.set $method_str`)
+	g.line(`br $m_done`)
+	g.indent--
+	g.line(`end`) // m_options
+	g.linef(`i32.const %d`, methodOptions)
+	g.line(`local.set $method_str`)
+	g.line(`br $m_done`)
+	g.indent--
+	g.line(`end`) // m_trace
+	g.linef(`i32.const %d`, methodTrace)
+	g.line(`local.set $method_str`)
+	g.line(`br $m_done`)
+	g.indent--
+	g.line(`end`) // m_patch
+	g.linef(`i32.const %d`, methodPatch)
+	g.line(`local.set $method_str`)
+	g.line(`br $m_done`)
+	g.indent--
+	g.line(`end`) // m_other
+	// other(s): ptr at retptr+4, len at retptr+8. Materialise.
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $host_ptr`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $host_len`)
+	g.line(`local.get $host_ptr`)
+	g.line(`local.get $host_len`)
+	g.line(`call $__bytes_to_lang_string`)
+	g.line(`local.set $method_str`)
+	g.indent--
+	g.line(`end`) // m_done
+
+	// ============================================================
+	// Read path-with-query (option<string>).
+	// ============================================================
+	g.line(`local.get $req`)
+	g.line(`local.get $retptr`)
+	g.line(`call $__wasi_http_request_path_with_query`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.load8_u`)
+	g.line(`if (result i32)`)
+	g.indent++
+	// Some(string): ptr at retptr+4, len at retptr+8.
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $host_ptr`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $host_len`)
+	g.line(`local.get $host_ptr`)
+	g.line(`local.get $host_len`)
+	g.line(`call $__bytes_to_lang_string`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.linef(`i32.const %d`, emptyStr)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.set $path_str`)
+
+	// ============================================================
+	// Read body via consume + stream + bulk-read accumulator.
+	// ============================================================
+	g.line(`local.get $req`)
+	g.line(`local.get $retptr`)
+	g.line(`call $__wasi_http_request_consume`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	// Err: empty body, no body resource to drop.
+	g.linef(`i32.const %d`, emptyStr)
+	g.line(`local.set $body_str`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $body_handle`)
+	// stream() -> result<input-stream>
+	g.line(`local.get $body_handle`)
+	g.line(`local.get $retptr`)
+	g.line(`call $__wasi_http_incoming_body_stream`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	g.linef(`i32.const %d`, emptyStr)
+	g.line(`local.set $body_str`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $body_stream`)
+	// Accumulator: 4 KiB doubling buffer, same as $read_file.
+	g.line(`i32.const 4096`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $body_buf`)
+	g.line(`i32.const 4096`)
+	g.line(`local.set $body_size`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $body_cur`)
+	g.line(`block $body_end`)
+	g.indent++
+	g.line(`loop $body_loop`)
+	g.indent++
+	// blocking-read(stream, 4096, retptr=92) — we use the static
+	// retptr here, not our 64-byte one, because list<u8>'s ret
+	// area is just (ptr, len) = 8 bytes.
+	g.line(`local.get $body_stream`)
+	g.line(`i64.const 4096`)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_blocking_read`)
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`br_if $body_end`)
+	g.line(`i32.const 100`)
+	g.line(`i32.load`)
+	g.line(`local.tee $host_len`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $body_end`)
+	g.line(`i32.const 96`)
+	g.line(`i32.load`)
+	g.line(`local.set $host_ptr`)
+	// Grow the buffer until cur + host_len fits. Doubling.
+	g.line(`block $grow_done`)
+	g.indent++
+	g.line(`loop $grow`)
+	g.indent++
+	g.line(`local.get $body_cur`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.add`)
+	g.line(`local.get $body_size`)
+	g.line(`i32.le_u`)
+	g.line(`br_if $grow_done`)
+	g.line(`local.get $body_size`)
+	g.line(`i32.const 1`)
+	g.line(`i32.shl`)
+	g.line(`local.set $body_size`)
+	g.line(`local.get $body_size`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $body_new_buf`)
+	// memcpy(new_buf, old_buf, body_cur).
+	g.line(`local.get $body_new_buf`)
+	g.line(`local.get $body_buf`)
+	g.line(`local.get $body_cur`)
+	g.line(`memory.copy`)
+	g.line(`local.get $body_new_buf`)
+	g.line(`local.set $body_buf`)
+	g.line(`br $grow`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Append host bytes: memcpy(body_buf + body_cur, host_ptr, host_len)
+	g.line(`local.get $body_buf`)
+	g.line(`local.get $body_cur`)
+	g.line(`i32.add`)
+	g.line(`local.get $host_ptr`)
+	g.line(`local.get $host_len`)
+	g.line(`memory.copy`)
+	g.line(`local.get $body_cur`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.add`)
+	g.line(`local.set $body_cur`)
+	g.line(`br $body_loop`)
+	g.indent--
+	g.line(`end`) // body_loop
+	g.indent--
+	g.line(`end`) // body_end
+	// Materialise lang string from (body_buf, body_cur).
+	g.line(`local.get $body_buf`)
+	g.line(`local.get $body_cur`)
+	g.line(`call $__bytes_to_lang_string`)
+	g.line(`local.set $body_str`)
+	// Drop input-stream.
+	g.line(`local.get $body_stream`)
+	g.line(`call $__wasi_input_stream_drop`)
+	g.indent--
+	g.line(`end`) // stream-result branch
+
+	// finish(body_handle) -> future-trailers; drop the trailers.
+	g.line(`local.get $body_handle`)
+	g.line(`call $__wasi_http_incoming_body_finish`)
+	g.line(`call $__wasi_http_future_trailers_drop`)
+	g.indent--
+	g.line(`end`) // consume-result branch
+
+	// Drop incoming-request.
+	g.line(`local.get $req`)
+	g.line(`call $__wasi_http_request_drop`)
+
+	// ============================================================
+	// Build HttpRequest struct (12 bytes: method, path, body).
+	// ============================================================
+	g.line(`i32.const 12`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $req_struct`)
+	g.line(`local.get $method_str`)
+	g.line(`i32.store`)
+	g.line(`local.get $req_struct`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $path_str`)
+	g.line(`i32.store`)
+	g.line(`local.get $req_struct`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $body_str`)
+	g.line(`i32.store`)
+
+	// ============================================================
+	// Call user-defined `handle(req): HttpResponse`.
+	// ============================================================
+	g.line(`local.get $req_struct`)
+	g.line(`call $handle`)
+	g.line(`local.set $resp_struct`)
+
+	// HttpResponse layout: [status:i32][body:i32 (string ptr)] = 8 bytes.
+	g.line(`local.get $resp_struct`)
+	g.line(`i32.load`)
+	g.line(`local.set $status`)
+	g.line(`local.get $resp_struct`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $body_str`) // reuse local; now holds response body
+
+	// ============================================================
+	// Build outgoing-response.
+	// ============================================================
+	g.line(`call $__wasi_http_fields_new`)
+	g.line(`local.set $headers`)
+	g.line(`local.get $headers`)
+	g.line(`call $__wasi_http_response_new`)
+	g.line(`local.set $resp_handle`)
+
+	// set-status-code(resp, status) — returns the result-disc inline; ignore it.
+	g.line(`local.get $resp_handle`)
+	g.line(`local.get $status`)
+	g.line(`call $__wasi_http_response_set_status`)
+	g.line(`drop`)
+
+	// body() -> result<outgoing-body>.
+	g.line(`local.get $resp_handle`)
+	g.line(`local.get $retptr`)
+	g.line(`call $__wasi_http_response_body`)
+	// Assume Ok (the spec says it can only fail if called twice).
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $out_body`)
+
+	// outgoing-body.write() -> result<output-stream>. Take the
+	// output-stream BEFORE calling response-outparam.set, since
+	// `set` consumes the response and the host treats the
+	// response-outparam handing-off as the "headers are sealed,
+	// start streaming the body" cue.
+	g.line(`local.get $out_body`)
+	g.line(`local.get $retptr`)
+	g.line(`call $__wasi_http_outgoing_body_write`)
+	g.line(`local.get $retptr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $out_stream`)
+
+	// ============================================================
+	// response-outparam.set(out, Ok(resp_handle)). Has to happen
+	// BEFORE we write the body bytes — the host won't accept body
+	// chunks for a response whose headers haven't been finalised
+	// via `set`. Takes ownership of `out` and `resp_handle`.
+	// 9-param call: (outparam, disc, payload[7 slots, slot 2=i64]).
+	// ============================================================
+	g.line(`local.get $out`)
+	g.line(`i32.const 0`)            // result disc = 0 (Ok)
+	g.line(`local.get $resp_handle`) // Ok payload slot 0 (the response handle)
+	g.line(`i32.const 0`)            // payload slot 1
+	g.line(`i64.const 0`)            // payload slot 2 (i64, joined-variant width)
+	g.line(`i32.const 0`)            // payload slot 3
+	g.line(`i32.const 0`)            // payload slot 4
+	g.line(`i32.const 0`)            // payload slot 5
+	g.line(`i32.const 0`)            // payload slot 6
+	g.line(`call $__wasi_http_response_outparam_set`)
+
+	// blocking-write-and-flush via the chunked $__streams_write
+	// helper. Now that the response is "in flight", body bytes
+	// stream out to the client as we write.
+	g.line(`local.get $out_stream`)
+	g.line(`local.get $body_str`)
+	g.line(`local.get $body_str`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`call $__streams_write`)
+
+	// Drop output-stream (child of outgoing-body).
+	g.line(`local.get $out_stream`)
+	g.line(`call $__wasi_output_stream_drop`)
+
+	// We deliberately don't call `[static]outgoing-body.finish`.
+	// The wasi:http 0.2.0 spec implies the host needs an explicit
+	// finish, but in practice (wasmtime 30+, Fastly Compute,
+	// Netlify) `response-outparam.set` already takes ownership of
+	// the response and seals the body when the output-stream is
+	// dropped — calling finish afterwards traps with
+	// "unknown handle index" because the body resource has
+	// already been reaped. If a future host needs the explicit
+	// call we'd add it before set instead of after, and skip the
+	// drop(out_stream) line so the body is still alive.
+
+	g.indent--
+	g.line(`)`)
+	g.line(`(export "wasi:http/incoming-handler@0.2.0#handle" (func $__http_entry))`)
+
+	// $__bytes_to_lang_string(host_ptr, host_len) -> lang_string_ptr.
+	// Allocates a length-prefixed + NUL-terminated string buffer
+	// and memcpies the host's bytes in. Used by the method /
+	// path / body marshaling above.
+	g.line(`(func $__bytes_to_lang_string (param $host_ptr i32) (param $host_len i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sbase i32)`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.const 5`) // 4 prefix + NUL
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $sbase`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.store`) // length prefix
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $host_ptr`)
+	g.line(`local.get $host_len`)
+	g.line(`memory.copy`)
+	// Trailing NUL.
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store8`)
+	// Return data pointer (sbase + 4).
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
 }

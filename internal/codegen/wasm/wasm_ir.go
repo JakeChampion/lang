@@ -39,6 +39,7 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	}
 	g := &generator{
 		info:              info,
+		httpHandler:       opts.HttpHandler,
 		printMainResult:   opts.PrintMainResult,
 		origTopLevelCount: countOrigTopLevel(prog),
 		stringPool:        map[string]int{},
@@ -71,6 +72,15 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		// helper's two bump-allocs.
 		g.needsIntToString = true
 		g.needsRuntime = true
+	}
+	if g.httpHandler {
+		// The handle wrapper allocates HttpRequest / HttpResponse
+		// structs, copies bodies into lang-shape strings, and
+		// builds outgoing-response — all of which lean on the
+		// bump allocator + the struct field-store machinery.
+		g.needsRuntime = true
+		g.needsArrays = true
+		g.needsStructs = true
 	}
 	g.scanForIndirectCalls(prog)
 	g.scanForStringEq(prog)
@@ -218,7 +228,7 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	// this to observe main's value over stdout — components don't
 	// expose `--invoke main` and `wasi:cli/exit` clamps the exit
 	// code to 0/1, so stdout is the only channel.
-	if mainFn := g.funcDecls["main"]; mainFn != nil {
+	if mainFn := g.funcDecls["main"]; mainFn != nil && !g.httpHandler {
 		g.line(`(func $_start`)
 		g.indent++
 		g.line(`(call $main)`)
@@ -231,6 +241,16 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		}
 		g.indent--
 		g.line(`)`)
+		g.line(`(export "_start" (func $_start))`)
+	} else if g.httpHandler {
+		// Proxy components don't run a `main()` — `wasmtime serve`
+		// invokes the exported `wasi:http/incoming-handler.handle`
+		// per request — but the wasi-preview1-component-adapter
+		// (`command.wasm`) still wires its own `wasi:cli/run.run`
+		// to a `_start` core export, so we emit an empty stub.
+		// Switching to the dedicated `proxy.wasm` adapter would
+		// drop this requirement; we don't ship that yet.
+		g.line(`(func $_start)`)
 		g.line(`(export "_start" (func $_start))`)
 	}
 	if g.needsRuntime {

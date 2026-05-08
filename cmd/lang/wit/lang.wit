@@ -1,9 +1,13 @@
-// WIT world for the lang component. Currently declares only the
-// preview-2 imports that the wasm backend emits natively (anything
-// not on this list still flows through the preview-1 adapter at
-// component-new time). Add new imports here as we migrate more
-// builtins off preview-1 in subsequent steps of the migration plan
-// (see docs/WASI-PREVIEW2.md).
+// WIT worlds for the lang components. Two flavours:
+//
+//   - `lang` is the CLI world: imports the preview-2 interfaces
+//     the WASM backend emits natively, runs `_start` once via
+//     wasi:cli/run.run (wired through the preview-1 adapter).
+//   - `http` is the HTTP-handler world: same imports as `lang`
+//     plus wasi:http/types, and EXPORTS
+//     wasi:http/incoming-handler so the host (e.g.
+//     `wasmtime serve`) can dispatch inbound requests into the
+//     user's `handle(req: HttpRequest): HttpResponse`.
 package local:lang@0.0.0;
 
 world lang {
@@ -19,4 +23,20 @@ world lang {
     import wasi:sockets/tcp-create-socket@0.2.0;
     import wasi:sockets/tcp@0.2.0;
     import wasi:random/random@0.2.0;
+}
+
+world http {
+    import wasi:cli/stdin@0.2.0;
+    import wasi:cli/stdout@0.2.0;
+    import wasi:cli/stderr@0.2.0;
+    import wasi:io/streams@0.2.0;
+    import wasi:io/poll@0.2.0;
+    import wasi:io/error@0.2.0;
+    import wasi:filesystem/types@0.2.0;
+    import wasi:filesystem/preopens@0.2.0;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+    import wasi:http/types@0.2.0;
+    export wasi:http/incoming-handler@0.2.0;
 }
