@@ -285,6 +285,17 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// random_bytes(n: number): string — returns a fresh string
+	// of n cryptographic-quality random bytes from the
+	// kernel's CSPRNG (`getrandom(2)` on Linux,
+	// `wasi_snapshot_preview1.random_get` on WASM). Useful
+	// for session IDs, request IDs, nonce generation, etc.
+	// The string has no encoding — it's raw bytes — so
+	// `s[i]` returns a number 0..255.
+	c.info.FuncSigs["random_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.StringType{},
+	}
 	// read_file(path): Result[string, IoError] — reads the entire
 	// file into a single string. WASM builds need a preopen
 	// directory (e.g. `wasmtime --dir=.`); the path is

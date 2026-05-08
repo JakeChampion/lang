@@ -164,6 +164,28 @@ func TestArenaResetReclaimsAllocations(t *testing.T) {
 	}
 }
 
+// random_bytes(n) returns a fresh string of n cryptographic-
+// quality random bytes (via getrandom(2) on arm32). We can't
+// assert specific values, but length and basic shape checks
+// catch regressions.
+func TestRandomBytesArm(t *testing.T) {
+	src := `function main(): number {
+		var a: string = random_bytes(16);
+		var b: string = random_bytes(16);
+		// Two calls must produce strings of the requested length.
+		if (len(a) != 16) { return 1; }
+		if (len(b) != 16) { return 2; }
+		// And those strings must (almost certainly) differ —
+		// 16 bytes of CSPRNG output collide with probability 2^-128.
+		if (a == b) { return 3; }
+		return 0;
+	}`
+	_, code := compileAndRun(t, src)
+	if code != 0 {
+		t.Errorf("random_bytes: exit = %d, want 0", code)
+	}
+}
+
 // A leaf function with several params exercises the register-pinned
 // prologue: the body still produces the right answer despite never
 // touching the stack to read a/b/c/d.

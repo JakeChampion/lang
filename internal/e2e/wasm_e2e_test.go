@@ -1105,6 +1105,23 @@ func TestWASMArenaReset(t *testing.T) {
 	}
 }
 
+// random_bytes(n) on WASM goes through `wasi_snapshot_preview1.
+// random_get`. Same length / non-equality assertions as the
+// arm32 version.
+func TestWASMRandomBytes(t *testing.T) {
+	src := `function main(): number {
+		var a: string = random_bytes(16);
+		var b: string = random_bytes(16);
+		if (len(a) != 16) { return 1; }
+		if (len(b) != 16) { return 2; }
+		if (a == b) { return 3; }
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM random_bytes: exit = %d, want 0", got)
+	}
+}
+
 func TestWASMOptionFloatPayload(t *testing.T) {
 	src := `function pick(): Option[float] { return Some(3.14); }
 		function main(): number {

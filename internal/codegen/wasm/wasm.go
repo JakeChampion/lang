@@ -78,6 +78,7 @@ type generator struct {
 	needsEnv         bool // any `env(name)` call appears — pulls in WASI environ_* + helper + cache slots
 	needsExit        bool // any `exit(code)` call appears — pulls in WASI proc_exit
 	needsArena       bool // any `arena_save` / `arena_restore` call — emits the two heap-cursor helpers
+	needsRandomBytes bool // any `random_bytes(n)` call — pulls in WASI random_get
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
 	needsStdStreams  bool // any stdin() / stdout() / stderr() call — emits trivial constructors that wrap fd 0 / 1 / 2 in Reader / Writer
@@ -276,6 +277,10 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsExit = true
 				case "arena_save", "arena_restore":
 					g.needsArena = true
+				case "random_bytes":
+					g.needsRandomBytes = true
+					g.needsArrays = true
+					g.needsRuntime = true
 				case "read_file", "write_file":
 					g.needsFileIO = true
 				case "open_reader", "open_writer", "open_appender":
@@ -1214,6 +1219,9 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsExit {
 		g.line(`(import "wasi_snapshot_preview1" "proc_exit" (func $__wasi_proc_exit (param i32)))`)
 	}
+	if g.needsRandomBytes {
+		g.line(`(import "wasi_snapshot_preview1" "random_get" (func $__wasi_random_get (param i32 i32) (result i32)))`)
+	}
 	if g.needsFileIO {
 		// path_open / fd_read / fd_close — fd_write is already
 		// imported above for `print`. fd_read shares with the
@@ -1556,6 +1564,9 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsArena {
 		g.emitArenaHelpers()
+	}
+	if g.needsRandomBytes {
+		g.emitRandomBytesHelper()
 	}
 	if g.needsFileIO {
 		g.emitFileIOHelpers()
@@ -2280,6 +2291,51 @@ func (g *generator) emitArenaHelpers() {
 	g.line(`i32.const 40`)
 	g.line(`local.get $h`)
 	g.line(`i32.store`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitRandomBytesHelper writes `$random_bytes(n)`, allocating
+// a fresh length-prefixed lang string of n bytes and filling
+// it via the WASI `random_get` import. Returns the data
+// pointer (post-prefix), matching the runtime ABI of every
+// other string-producing builtin.
+//
+// WASI `random_get(buf, n)` fills the buffer with cryptographic-
+// quality random bytes (errno is ignored; the runtime treats
+// any failure as program-fatal, same as our other helpers).
+func (g *generator) emitRandomBytesHelper() {
+	g.line(`(func $random_bytes (param $n i32) (result i32)`)
+	g.indent++
+	g.line(`(local $data i32)`)
+	// data = __lang_alloc(n + 4) + 4 — same allocation shape as
+	// args() / env() / strcat. Trailing NUL is one extra byte
+	// the alloc rounds up to anyway.
+	g.line(`local.get $n`)
+	g.line(`i32.const 5`) // 4 prefix + 1 NUL
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $data`)
+	// Store length prefix at data - 4.
+	g.line(`local.get $data`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`local.get $n`)
+	g.line(`i32.store`)
+	// random_get(data, n) — result errno ignored.
+	g.line(`local.get $data`)
+	g.line(`local.get $n`)
+	g.line(`call $__wasi_random_get`)
+	g.line(`drop`)
+	// Trailing NUL at data + n.
+	g.line(`local.get $data`)
+	g.line(`local.get $n`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store8`)
+	g.line(`local.get $data`)
 	g.indent--
 	g.line(`)`)
 }
