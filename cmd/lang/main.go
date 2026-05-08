@@ -180,7 +180,10 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 			if wasiAdapter == "" {
 				return 1, fmt.Errorf("-wasi-preview2 requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)")
 			}
-			return ifErr(emitPreview2Component(text, outPath, wasiAdapter)), nil
+			if err := emitPreview2Component(text, outPath, wasiAdapter); err != nil {
+				return 1, err
+			}
+			return 0, nil
 		}
 		if outPath == "" {
 			_, err = os.Stdout.WriteString(text)
