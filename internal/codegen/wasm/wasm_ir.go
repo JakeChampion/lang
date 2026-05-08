@@ -106,29 +106,35 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		g.stringOffset = 72
 		g.closuresBase = 72
 	}
-	// Preview-2 reserves memory[92..123] for canonical-ABI scratch:
+	// Preview-2 reserves memory[92..127] for canonical-ABI scratch:
 	//   92..103 retptr area (sized for `result<list<u8>,
-	//           stream-error>`; also fits all the canonical-ABI
+	//           stream-error>`; also fits the smaller canonical-ABI
 	//           returns we use — `(ptr, len)` from
 	//           `get-random-bytes` and `get-directories`,
 	//           `result<X, error-code>` from `open-at` and the
-	//           `*-via-stream` family),
+	//           `*-via-stream` family). Doesn't fit `accept`'s
+	//           16-byte `result<tuple<3 i32>, error-code>`, so
+	//           tcp_accept allocates its retptr dynamically via
+	//           `__lang_alloc(16)`,
 	//   104..107 stdout output-stream handle,
 	//   108..111 stderr output-stream handle,
 	//   112..115 init flags for the cached handles
-	//           (bits 0/1/2/3 = stdout/stderr/stdin/preopen),
+	//           (bits 0/1/2/3/4 = stdout/stderr/stdin/preopen/
+	//           network),
 	//   116..119 stdin input-stream handle,
-	//   120..123 preopen descriptor handle (cached working dir).
+	//   120..123 preopen descriptor handle (cached working dir),
+	//   124..127 network handle (cached on first
+	//           tcp_listen / tcp_accept).
 	// Push the string base past those slots whenever preview-2 is
 	// on, regardless of which preview-2 features the program
-	// actually exercises. The cost is 32 static bytes per module;
+	// actually exercises. The cost is 36 static bytes per module;
 	// the alternative (gating each slot independently) is fragile.
 	if g.preview2 {
-		if g.stringOffset < 124 {
-			g.stringOffset = 124
+		if g.stringOffset < 128 {
+			g.stringOffset = 128
 		}
-		if g.closuresBase < 124 {
-			g.closuresBase = 124
+		if g.closuresBase < 128 {
+			g.closuresBase = 128
 		}
 	}
 

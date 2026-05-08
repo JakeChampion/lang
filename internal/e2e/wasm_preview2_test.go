@@ -10,12 +10,15 @@ package e2e
 
 import (
 	"bytes"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWasmPreview2HelloWorld(t *testing.T) {
@@ -375,4 +378,174 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	if want := strings.Repeat("hello world\n", 600); string(on_disk) != want {
 		t.Fatalf("on-disk len=%d, want %d", len(on_disk), len(want))
 	}
+}
+
+// TestWasmPreview2TcpEcho exercises the wasi:sockets pipeline:
+// the guest itself binds a TCP port, accepts one connection,
+// echoes the bytes received, then closes. Pre-step-4 this would
+// have required `wasmtime --tcp-listen=…` since preview-1 had
+// no way for the guest to open a listener; now the guest is
+// self-contained — the only host privilege needed is
+// `-S inherit-network` for outbound socket creation.
+//
+// Picking a port: we open + immediately close a transient
+// listener on :0 to extract a free ephemeral port number, then
+// hand it to the guest via wasmtime's positional args. Race
+// window is tiny but non-zero; if the test ever flakes here,
+// that's the cause.
+func TestWasmPreview2TcpEcho(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+	}
+	if _, err := os.Stat(adapter); err != nil {
+		t.Skipf("adapter %q not readable: %v", adapter, err)
+	}
+
+	// Pick a free port — open a listener on :0, capture the
+	// kernel-assigned port, close before the guest tries to
+	// bind. There's a tiny race against another process grabbing
+	// the same port, but it's localhost-only and the test is
+	// short-lived.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "echo.lang")
+	// Hardcode the port in the source instead of plumbing
+	// args() — args() comes back as `Array<string>` and the
+	// language doesn't have a string-to-int builtin yet, so
+	// passing the port through would need a bespoke parser.
+	// Acceptable: the port is templated in via Go string
+	// formatting at build time.
+	src := strings.Replace(`function main(): number {
+    var sock = tcp_listen(__PORT__);
+    if (sock < 0) { return 1; }
+    var conn = tcp_accept(sock);
+    if (conn < 0) { return 2; }
+    var msg = tcp_recv(conn, 1024);
+    var sent = tcp_send(conn, msg);
+    if (sent < 0) { return 3; }
+    tcp_close(conn);
+    tcp_close(sock);
+    return 0;
+}
+`, "__PORT__", strings.TrimSpace(itoa(port)), 1)
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "echo.component.wasm")
+	emit := exec.Command(bin,
+		"-target", "wasm",
+		"-wasi-preview2",
+		"-wasi-adapter", adapter,
+		"-o", componentPath,
+		srcPath,
+	)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	// Spawn the server. `-S inherit-network` lets the guest
+	// create + bind sockets via wasi:sockets — without it the
+	// host denies tcp-create-socket / start-bind.
+	run := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime run start: %v", err)
+	}
+	// Make sure we always reap the process even on failure.
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	// Connect with a short retry loop — wasmtime takes a moment
+	// to spin up the component and reach start-listen.
+	deadline := time.Now().Add(5 * time.Second)
+	var conn net.Conn
+	for {
+		conn, err = net.Dial("tcp", net.JoinHostPort("127.0.0.1", itoa(port)))
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	defer conn.Close()
+
+	want := "hello from the host\n"
+	if _, err := conn.Write([]byte(want)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// Half-close the write side so the guest's blocking-read
+	// returns even if it asked for more bytes than we sent.
+	if cw, ok := conn.(*net.TCPConn); ok {
+		cw.CloseWrite()
+	}
+
+	got, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("echo = %q; want %q (stderr=%q)", string(got), want, serr.String())
+	}
+	if err := run.Wait(); err != nil {
+		t.Fatalf("wasmtime exit: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+	}
+}
+
+// itoa is a tiny strconv.Itoa shim — we don't import strconv
+// elsewhere in this file and the cost of pulling it in for one
+// call isn't worth it.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [12]byte
+	i := len(b)
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
 }
