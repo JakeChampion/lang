@@ -284,3 +284,95 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 		t.Fatalf("on-disk = %q; want %q", string(on_disk), want)
 	}
 }
+
+// TestWasmPreview2ReadWriteFile exercises the convenience
+// helpers `write_file` / `read_file` through the preview-2
+// pipeline. Both delegate to the open_reader / open_writer
+// helpers from step 3c, so they go through native
+// `wasi:filesystem` instead of preview-1 `path_open`.
+func TestWasmPreview2ReadWriteFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+	}
+	if _, err := os.Stat(adapter); err != nil {
+		t.Skipf("adapter %q not readable: %v", adapter, err)
+	}
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "rwf.lang")
+	// Force the read_file accumulator to grow at least once so we
+	// also exercise the doubling + memory.copy path. The initial
+	// buffer is 4 KiB, so we write a payload past that.
+	if err := os.WriteFile(srcPath, []byte(`function main(): number {
+    var content = "";
+    var i = 0;
+    while (i < 600) {
+        content = content + "hello world\n";
+        i = i + 1;
+    }
+    match (write_file("rwf.txt", content)) {
+        Some(_) => { return 1; },
+        None => {}
+    }
+    match (read_file("rwf.txt")) {
+        Ok(s) => {
+            if (len(s) == len(content)) { print("match"); }
+            else { print("mismatch"); }
+        },
+        Err(_) => { return 2; }
+    }
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "rwf.component.wasm")
+	emit := exec.Command(bin,
+		"-target", "wasm",
+		"-wasi-preview2",
+		"-wasi-adapter", adapter,
+		"-o", componentPath,
+		srcPath,
+	)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	run := exec.Command("wasmtime", "run", "--dir", dir, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Run(); err != nil {
+		t.Fatalf("wasmtime run: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+	}
+	if got := strings.TrimRight(sout.String(), "\n"); got != "match" {
+		t.Fatalf("stdout = %q; want %q (stderr=%q)", got, "match", serr.String())
+	}
+	on_disk, err := os.ReadFile(filepath.Join(dir, "rwf.txt"))
+	if err != nil {
+		t.Fatalf("read rwf.txt: %v", err)
+	}
+	if want := strings.Repeat("hello world\n", 600); string(on_disk) != want {
+		t.Fatalf("on-disk len=%d, want %d", len(on_disk), len(want))
+	}
+}

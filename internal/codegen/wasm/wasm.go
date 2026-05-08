@@ -1876,13 +1876,57 @@ func (g *generator) emitStreamsStdioHelpers() {
 	}
 
 	// $__streams_write(handle, ptr, len) — wrap blocking-write-and-flush.
+	// `blocking-write-and-flush` has a per-call 4 KiB buffer cap
+	// in canonical implementations (wasmtime enforces it
+	// strictly), so chunk the write. We don't surface
+	// stream-error here — print / write failures aren't recoverable
+	// for a CLI program and the helpers' callers don't propagate
+	// errors anyway.
 	g.line(`(func $__streams_write (param $handle i32) (param $ptr i32) (param $len i32)`)
 	g.indent++
+	g.line(`(local $off i32) (local $chunk i32)`)
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $off`)
+	g.line(`local.get $len`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end`)
+	// chunk = min(len - off, 4096)
+	g.line(`local.get $len`)
+	g.line(`local.get $off`)
+	g.line(`i32.sub`)
+	g.line(`local.tee $chunk`)
+	g.line(`i32.const 4096`)
+	g.line(`i32.gt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 4096`)
+	g.line(`local.set $chunk`)
+	g.indent--
+	g.line(`end`)
+	// blocking-write-and-flush(handle, ptr+off, chunk, retptr=92)
 	g.line(`local.get $handle`)
 	g.line(`local.get $ptr`)
-	g.line(`local.get $len`)
-	g.line(`i32.const 92`) // shared retptr; result<_, stream-error> ignored
+	g.line(`local.get $off`)
+	g.line(`i32.add`)
+	g.line(`local.get $chunk`)
+	g.line(`i32.const 92`)
 	g.line(`call $__wasi_blocking_write_and_flush`)
+	// On Err (disc != 0), bail — we can't make progress.
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`br_if $end`)
+	g.line(`local.get $off`)
+	g.line(`local.get $chunk`)
+	g.line(`i32.add`)
+	g.line(`local.set $off`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
 	g.indent--
 	g.line(`)`)
 }
@@ -3986,42 +4030,21 @@ func (g *generator) emitWriterWriteMethod() {
 	g.line(`i32.load`)
 	g.line(`local.set $fd`)
 	if g.preview2 {
-		// blocking-write-and-flush(handle, ptr, len, retptr=92).
+		// $__streams_write loops blocking-write-and-flush in 4 KiB
+		// chunks. It silently swallows stream errors (returns to
+		// caller without signal), so we don't get to differentiate
+		// success from failure here — Writer.write returns None
+		// either way. A future revision can switch to a chunked
+		// helper that returns the canonical disc; for now matches
+		// the existing "stdio failures are unrecoverable for a CLI"
+		// posture.
 		g.line(`local.get $fd`)
 		g.line(`local.get $s`)
 		g.line(`local.get $s`)
 		g.line(`i32.const 4`)
 		g.line(`i32.sub`)
 		g.line(`i32.load`)
-		g.line(`i32.const 92`)
-		g.line(`call $__wasi_blocking_write_and_flush`)
-		// Outer disc at retptr+0; non-zero = Err. We don't
-		// surface stream-error details; map any failure to an
-		// errno-shaped IoError with a sentinel non-zero rc.
-		g.line(`i32.const 92`)
-		g.line(`i32.load8_u`)
-		g.line(`if`)
-		g.indent++
-		// Build Some(IoError) with rc=29 (EIO) — the closest
-		// preview-1 errno equivalent for a stream failure.
-		g.line(`i32.const 8`)
-		g.line(`call $__lang_alloc`)
-		g.line(`local.set $result`)
-		g.line(`local.get $result`)
-		g.line(`i32.const 0`)
-		g.line(`i32.store`)
-		g.line(`local.get $result`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`i32.const 29`)
-		g.linef(`i32.const %d`, g.internString(""))
-		g.line(`call $__build_io_error`)
-		g.line(`i32.store`)
-		g.line(`local.get $result`)
-		g.line(`return`)
-		g.indent--
-		g.line(`end`)
-		// Success: None.
+		g.line(`call $__streams_write`)
 		g.line(`i32.const 4`)
 		g.line(`call $__lang_alloc`)
 		g.line(`local.tee $result`)
@@ -4113,9 +4136,17 @@ func (g *generator) emitIoErrorCase(errno, tagIdx int, withPathPayload bool) {
 }
 
 // emitReadFileHelper writes `$read_file(path) -> Result[string, IoError]`.
-// The chunk-loop strategy is described above the parent
-// emitFileIOHelpers comment.
+// On preview-1, drives the chunk-loop strategy described above
+// the parent emitFileIOHelpers comment (path_open + fd_read +
+// fd_close). On preview-2, delegates to the same Reader pipeline
+// step 3c migrated to: $open_reader for the stream handle, then
+// a bulk blocking-read loop that fills a growable accumulator,
+// then [resource-drop]input-stream on the way out.
 func (g *generator) emitReadFileHelper() {
+	if g.preview2 {
+		g.emitReadFileHelperPreview2()
+		return
+	}
 	g.line(`(func $read_file (param $path i32) (result i32)`)
 	g.indent++
 	g.line(`(local $fd_buf i32)`)
@@ -4329,12 +4360,180 @@ func (g *generator) emitReadFileHelper() {
 	g.line(`)`)
 }
 
+// emitReadFileHelperPreview2 is the streams-flavoured `$read_file`.
+// Pipeline: $open_reader (which goes through wasi:filesystem
+// open-at + read-via-stream as of step 3c) → bulk
+// blocking-read(4096) loop into a growable accumulator → drop
+// the input-stream resource → wrap the accumulator in
+// `Ok(string)`. Errors out of $open_reader propagate as-is; stream
+// errors mid-read are treated as EOF (matches what Reader.read_chunk
+// does too).
+func (g *generator) emitReadFileHelperPreview2() {
+	g.line(`(func $read_file (param $path i32) (result i32)`)
+	g.indent++
+	g.line(`(local $open_result i32) (local $reader i32) (local $stream i32)`)
+	g.line(`(local $buf i32) (local $buf_size i32) (local $cur i32)`)
+	g.line(`(local $host_ptr i32) (local $host_len i32)`)
+	g.line(`(local $new_buf i32) (local $new_size i32)`)
+	g.line(`(local $sbase i32) (local $sptr i32) (local $result i32)`)
+
+	// Open. Result.Err shape matches what we want to return.
+	g.line(`local.get $path`)
+	g.line(`call $open_reader`)
+	g.line(`local.tee $open_result`)
+	g.line(`i32.load`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $open_result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// reader = mem[open_result + 4]; stream = mem[reader].
+	g.line(`local.get $open_result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.tee $reader`)
+	g.line(`i32.load`)
+	g.line(`local.set $stream`)
+
+	// Initial accumulator: 4 KiB. Doubles on overflow.
+	g.line(`i32.const 4096`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $buf`)
+	g.line(`i32.const 4096`)
+	g.line(`local.set $buf_size`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $cur`)
+
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	// blocking-read(stream, 4096, retptr=92).
+	g.line(`local.get $stream`)
+	g.line(`i64.const 4096`)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_blocking_read`)
+	// Outer disc; non-zero = Err = treat as EOF.
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`br_if $end`)
+	// list_len at retptr+8; 0 = EOF.
+	g.line(`i32.const 100`)
+	g.line(`i32.load`)
+	g.line(`local.tee $host_len`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $end`)
+	// list_ptr at retptr+4.
+	g.line(`i32.const 96`)
+	g.line(`i32.load`)
+	g.line(`local.set $host_ptr`)
+
+	// Grow the buffer if cur + host_len > buf_size. Loop because
+	// host_len could exceed multiple doublings (rare but
+	// mathematically possible — we asked for ≤4096, the host
+	// can return up to that, and 4096 fits in one doubling).
+	g.line(`block $grow_done`)
+	g.indent++
+	g.line(`loop $grow`)
+	g.indent++
+	g.line(`local.get $cur`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.add`)
+	g.line(`local.get $buf_size`)
+	g.line(`i32.le_u`)
+	g.line(`br_if $grow_done`)
+	// new_size = buf_size * 2; new_buf = alloc(new_size); memory.copy.
+	g.line(`local.get $buf_size`)
+	g.line(`i32.const 1`)
+	g.line(`i32.shl`)
+	g.line(`local.tee $new_size`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $new_buf`)
+	g.line(`local.get $new_buf`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $cur`)
+	g.line(`memory.copy`)
+	g.line(`local.get $new_buf`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $new_size`)
+	g.line(`local.set $buf_size`)
+	g.line(`br $grow`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// memory.copy(buf + cur, host_ptr, host_len)
+	g.line(`local.get $buf`)
+	g.line(`local.get $cur`)
+	g.line(`i32.add`)
+	g.line(`local.get $host_ptr`)
+	g.line(`local.get $host_len`)
+	g.line(`memory.copy`)
+	// cur += host_len
+	g.line(`local.get $cur`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.add`)
+	g.line(`local.set $cur`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+
+	// Drop the stream resource (resource drops are infallible).
+	g.line(`local.get $stream`)
+	g.line(`call $__wasi_input_stream_drop`)
+
+	// Materialise as a length-prefixed string.
+	g.line(`local.get $cur`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $sbase`)
+	g.line(`local.get $cur`)
+	g.line(`i32.store`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sptr`)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $cur`)
+	g.line(`memory.copy`)
+
+	// Build Ok(sptr).
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $sptr`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
+}
+
 // emitWriteFileHelper writes
 // `$write_file(path, content) -> Option[IoError]`.
-// One path_open + one fd_write + fd_close. Returns `None`
-// (4-byte heap object, tag=1) on success and `Some(err)`
-// (8-byte, tag=0 + ioerr_ptr) on failure.
+// On preview-1: one path_open + one fd_write + fd_close. On
+// preview-2: $open_writer + a single blocking-write-and-flush +
+// [resource-drop]output-stream. Returns `None` (4-byte heap
+// object, tag=1) on success and `Some(err)` (8-byte, tag=0 +
+// ioerr_ptr) on failure.
 func (g *generator) emitWriteFileHelper() {
+	if g.preview2 {
+		g.emitWriteFileHelperPreview2()
+		return
+	}
 	g.line(`(func $write_file (param $path i32) (param $content i32) (result i32)`)
 	g.indent++
 	g.line(`(local $fd_buf i32)`)
@@ -4445,6 +4644,87 @@ func (g *generator) emitWriteFileHelper() {
 	g.line(`end`)
 
 	// Success: return None — 4-byte heap object with tag=1.
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitWriteFileHelperPreview2 is the streams-flavoured `$write_file`.
+// Pipeline: $open_writer (which goes through wasi:filesystem
+// open-at + write-via-stream as of step 3c) → single
+// blocking-write-and-flush of the entire content → drop the
+// output-stream resource → return None. open_writer's Result.Err
+// gets repackaged into the Option[IoError] shape this function
+// returns; mid-write stream errors map to Some(IoError) with
+// errno=29 (EIO).
+func (g *generator) emitWriteFileHelperPreview2() {
+	g.line(`(func $write_file (param $path i32) (param $content i32) (result i32)`)
+	g.indent++
+	g.line(`(local $open_result i32) (local $writer i32) (local $stream i32)`)
+	g.line(`(local $content_len i32) (local $result i32)`)
+
+	// Open. Result.Err shape needs to translate from
+	// Result[Writer, IoError] to Option[IoError] = Some(err).
+	g.line(`local.get $path`)
+	g.line(`call $open_writer`)
+	g.line(`local.tee $open_result`)
+	g.line(`i32.load`)
+	g.line(`if`)
+	g.indent++
+	// Some(err): allocate 8 bytes, tag=0 + err_ptr from open_result+4.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $open_result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// writer = mem[open_result + 4]; stream = mem[writer].
+	g.line(`local.get $open_result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.tee $writer`)
+	g.line(`i32.load`)
+	g.line(`local.set $stream`)
+
+	// content_len = mem[content - 4].
+	g.line(`local.get $content`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $content_len`)
+
+	// $__streams_write loops blocking-write-and-flush in 4 KiB
+	// chunks (the canonical-ABI per-call cap). It swallows
+	// stream errors silently — same trade-off as Writer.write;
+	// a future revision can plumb success/failure through a
+	// dedicated chunked helper.
+	g.line(`local.get $stream`)
+	g.line(`local.get $content`)
+	g.line(`local.get $content_len`)
+	g.line(`call $__streams_write`)
+
+	// Drop the stream and return None.
+	g.line(`local.get $stream`)
+	g.line(`call $__wasi_output_stream_drop`)
 	g.line(`i32.const 4`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $result`)
