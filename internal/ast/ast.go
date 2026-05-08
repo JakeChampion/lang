@@ -62,6 +62,15 @@ type FloatType struct {
 	Width int
 }
 type ArrayType struct{ Elem Type }
+
+// TupleType is an anonymous heterogeneous tuple — `(i32, string)`,
+// `(i32, i32, bool)`, etc. Two tuples are equal when their element
+// types match pairwise. Single-element tuples (`(i32,)`) require
+// the trailing comma in source so they can't be confused with
+// grouping parentheses.
+type TupleType struct {
+	Elems []Type
+}
 type FuncType struct {
 	Params []Type
 	Result Type
@@ -99,6 +108,7 @@ func (VoidType) isType()    {}
 func (StringType) isType()  {}
 func (FloatType) isType()   {}
 func (ArrayType) isType()   {}
+func (TupleType) isType()   {}
 func (*FuncType) isType()   {}
 func (StructType) isType()  {}
 func (EnumType) isType()    {}
@@ -116,6 +126,22 @@ func (f FloatType) String() string {
 	return fmt.Sprintf("f%d", f.NormalWidth())
 }
 func (a ArrayType) String() string { return a.Elem.String() + "[]" }
+func (t TupleType) String() string {
+	out := "("
+	for i, e := range t.Elems {
+		if i > 0 {
+			out += ", "
+		}
+		out += e.String()
+	}
+	if len(t.Elems) == 1 {
+		// Trailing comma is required in source for unambiguous
+		// parsing; mirror it on the way out so re-parsing gives
+		// the same shape.
+		out += ","
+	}
+	return out + ")"
+}
 func (s StructType) String() string { return s.Name }
 func (e EnumType) String() string {
 	if len(e.Args) == 0 {
@@ -194,6 +220,17 @@ func Equal(a, b Type) bool {
 	case ArrayType:
 		y, ok := b.(ArrayType)
 		return ok && Equal(x.Elem, y.Elem)
+	case TupleType:
+		y, ok := b.(TupleType)
+		if !ok || len(x.Elems) != len(y.Elems) {
+			return false
+		}
+		for i := range x.Elems {
+			if !Equal(x.Elems[i], y.Elems[i]) {
+				return false
+			}
+		}
+		return true
 	case *FuncType:
 		y, ok := b.(*FuncType)
 		if !ok || len(x.Params) != len(y.Params) || !Equal(x.Result, y.Result) {
@@ -344,6 +381,14 @@ type StructLit struct {
 	Fields   []FieldInit
 }
 
+// TupleLit is `(e1, e2, …)`. Codegen lowers tuples to heap-allocated
+// records — same shape as a struct, but anonymous and addressed by
+// position rather than name.
+type TupleLit struct {
+	P     Position
+	Elems []Expr
+}
+
 type FieldInit struct {
 	Name  string
 	Value Expr
@@ -411,6 +456,7 @@ func (e *Unary) Pos() Position     { return e.P }
 func (e *Assign) Pos() Position      { return e.P }
 func (e *Ternary) Pos() Position     { return e.P }
 func (e *StructLit) Pos() Position   { return e.P }
+func (e *TupleLit) Pos() Position    { return e.P }
 func (e *FieldAccess) Pos() Position { return e.P }
 func (e *EnumLit) Pos() Position     { return e.P }
 func (e *CaptureRef) Pos() Position  { return e.P }
@@ -430,6 +476,7 @@ func (*Unary) isExpr()     {}
 func (*Assign) isExpr()      {}
 func (*Ternary) isExpr()     {}
 func (*StructLit) isExpr()   {}
+func (*TupleLit) isExpr()    {}
 func (*FieldAccess) isExpr() {}
 func (*EnumLit) isExpr()     {}
 func (*CaptureRef) isExpr()  {}

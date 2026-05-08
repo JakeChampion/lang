@@ -664,6 +664,15 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.formatExpr(fld.Value, precLowest)
 		}
 		f.b.WriteString(" }")
+	case *ast.TupleLit:
+		f.b.WriteByte('(')
+		for i, e := range x.Elems {
+			if i > 0 {
+				f.b.WriteString(", ")
+			}
+			f.formatExpr(e, precLowest)
+		}
+		f.b.WriteByte(')')
 	case *ast.FieldAccess:
 		f.formatExpr(x.Target, precPrimary)
 		f.b.WriteByte('.')

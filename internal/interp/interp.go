@@ -1260,10 +1260,35 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			s.Fields[f.Name] = v
 		}
 		return s, nil
+	case *ast.TupleLit:
+		// Reuse Array — tuples are positional by construction, so a
+		// flat slice of values is the right shape and avoids a new
+		// Value subtype just for tuples.
+		out := make(Array, len(x.Elems))
+		for i2, e := range x.Elems {
+			v, err := i.evalExpr(e, env)
+			if err != nil {
+				return nil, err
+			}
+			out[i2] = v
+		}
+		return out, nil
 	case *ast.FieldAccess:
 		tv, err := i.evalExpr(x.Target, env)
 		if err != nil {
 			return nil, err
+		}
+		// Tuple field access: numeric field name, target is an
+		// Array (tuples piggy-back on Array at interp time).
+		if arr, ok := tv.(Array); ok {
+			idx, err := strconv.Atoi(x.Field)
+			if err != nil {
+				return nil, fmt.Errorf("tuple access requires numeric index, got %q", x.Field)
+			}
+			if idx < 0 || idx >= len(arr) {
+				return nil, fmt.Errorf("tuple has %d elements; index %d out of range", len(arr), idx)
+			}
+			return arr[idx], nil
 		}
 		s, ok := tv.(*Struct)
 		if !ok {

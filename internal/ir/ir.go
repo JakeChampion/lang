@@ -32,6 +32,7 @@ package ir
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -1104,6 +1105,27 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: headerBytes})
 		b.emit(Op{Kind: OpAdd})
+	case *ast.TupleLit:
+		// Same shape as StructLit — alloc N words, store each
+		// element at offset i*4. We don't have per-element type
+		// info here, so fall back to integer / pointer stores
+		// for everything; an i64 or f32 element would need
+		// per-position widths (revisit when those land).
+		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Elems) * 4)})
+		b.emit(Op{Kind: OpAlloc})
+		baseSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_tup_%d", baseSlot)] = baseSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+		for i, elem := range n.Elems {
+			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+			b.emit(Op{Kind: OpConstI32, I32: int32(i * 4)})
+			b.emit(Op{Kind: OpAdd})
+			if err := b.expr(elem); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStore})
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	case *ast.StructLit:
 		sd, ok := b.info.Structs[n.TypeName]
 		if !ok {
@@ -1174,27 +1196,37 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures))})
 	case *ast.FieldAccess:
 		// Compute base + offset_of(field), then load the word.
-		// Resolving the offset needs the static type of the target;
-		// we look it up via the local types in the funcs / params,
-		// or via the assumed StructType the checker assigned. The
-		// load op (i32 vs f32) follows the field's declared type
-		// for the same WASM-validation reason as struct stores.
-		st := b.fieldOwner(n.Target)
-		sd, ok := b.info.Structs[st]
-		if !ok {
-			return fmt.Errorf("ir: field access on unresolved struct %q", st)
-		}
-		off := -1
+		// Tuple field access uses a numeric selector (`pair.0`);
+		// resolve the offset against the tuple's static element
+		// list, otherwise fall through to the struct path.
 		var ft ast.Type
-		for i, f := range sd.Fields {
-			if f.Name == n.Field {
-				off = i * 4
-				ft = f.Type
-				break
+		off := -1
+		if tup, ok := b.targetTupleType(n.Target); ok {
+			idx, err := strconv.Atoi(n.Field)
+			if err != nil {
+				return fmt.Errorf("ir: tuple field selector %q is not numeric", n.Field)
 			}
-		}
-		if off < 0 {
-			return fmt.Errorf("ir: struct %s has no field %q", st, n.Field)
+			if idx < 0 || idx >= len(tup.Elems) {
+				return fmt.Errorf("ir: tuple has %d elements; index %d out of range", len(tup.Elems), idx)
+			}
+			off = idx * 4
+			ft = tup.Elems[idx]
+		} else {
+			st := b.fieldOwner(n.Target)
+			sd, ok := b.info.Structs[st]
+			if !ok {
+				return fmt.Errorf("ir: field access on unresolved struct %q", st)
+			}
+			for i, f := range sd.Fields {
+				if f.Name == n.Field {
+					off = i * 4
+					ft = f.Type
+					break
+				}
+			}
+			if off < 0 {
+				return fmt.Errorf("ir: struct %s has no field %q", st, n.Field)
+			}
 		}
 		if err := b.expr(n.Target); err != nil {
 			return err
@@ -1216,6 +1248,52 @@ func (b *builder) expr(e ast.Expr) error {
 // supports the small set of expression shapes the IR needs to lower
 // FieldAccess: identifiers (var / param), nested field access, and
 // struct literals.
+// targetTupleType returns the static TupleType of `e` when `e`
+// resolves to one. Used by FieldAccess lowering to dispatch
+// numeric-index access without going through the struct path.
+func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		for _, v := range b.info.Locals[b.fn] {
+			if v.Name == x.Name {
+				if t, ok := v.Type.(ast.TupleType); ok {
+					return t, true
+				}
+			}
+		}
+		for _, p := range b.fn.Params {
+			if p.Name == x.Name {
+				if t, ok := p.Type.(ast.TupleType); ok {
+					return t, true
+				}
+			}
+		}
+	case *ast.TupleLit:
+		elems := make([]ast.Type, 0, len(x.Elems))
+		// The checker has already type-checked inner exprs, but
+		// we don't have access to their resolved types from the
+		// IR layer without re-checking. Skip the optimisation
+		// for raw `(...).N` access by punting back to fieldOwner
+		// (which won't find it either, surfacing a compile-time
+		// error) — in practice nobody writes `(1,2).0` because
+		// they could just write `1`. If this becomes a real
+		// pattern, plumb expr types through checker.Info.
+		_ = elems
+	case *ast.FieldAccess:
+		// Nested tuple access — need to walk down. Only one level
+		// supported: `pair.0.field` where `pair.0` is a tuple.
+		if outer, ok := b.targetTupleType(x.Target); ok {
+			idx, err := strconv.Atoi(x.Field)
+			if err == nil && idx >= 0 && idx < len(outer.Elems) {
+				if t, ok := outer.Elems[idx].(ast.TupleType); ok {
+					return t, true
+				}
+			}
+		}
+	}
+	return ast.TupleType{}, false
+}
+
 func (b *builder) fieldOwner(e ast.Expr) string {
 	switch x := e.(type) {
 	case *ast.Ident:
