@@ -98,6 +98,7 @@ var keywords = map[string]bool{
 	"const":    true,
 	"enum":     true,
 	"match":    true,
+	"when":     true,
 }
 
 // Multi-character punctuators, longest first. The 3-char compound

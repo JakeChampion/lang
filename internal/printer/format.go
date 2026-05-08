@@ -420,6 +420,10 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 					f.b.WriteByte(')')
 				}
 			}
+			if arm.Guard != nil {
+				f.b.WriteString(" when ")
+				f.formatExpr(arm.Guard, precLowest)
+			}
 			f.b.WriteString(" => ")
 			f.formatBlock(arm.Body, depth+1)
 			if i < len(x.Arms)-1 {
