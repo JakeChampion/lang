@@ -696,6 +696,9 @@ func TestArm32EmitsVFPForFloats(t *testing.T) {
 // outer "skip-on-no-match" + inner "match-target" block, with
 // br_if on each value comparison. From the assembly side it
 // shows up as a swarm of blkEnd labels and `bne`/`beq` jumps.
+// The cmp+branch peephole collapses each comparison's 4-line
+// boolean materialise into a single `b<cc>`, so the assertion
+// is just on cmp + the conditional branch shape.
 func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 	asm := compile(t, `function f(n: number): number {
 		switch (n) {
@@ -707,7 +710,6 @@ func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 	}`)
 	mustContain(t, asm, ".LblkEnd_")
 	mustContain(t, asm, "cmp r1, r0")
-	mustContain(t, asm, "moveq r0, #1")
 	if !strings.Contains(asm, "bne") && !strings.Contains(asm, "beq") {
 		t.Errorf("expected switch dispatch to use conditional branches:\n%s", asm)
 	}

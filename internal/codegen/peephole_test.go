@@ -72,6 +72,74 @@ func TestLabelBetweenBlocksFusion(t *testing.T) {
 	}
 }
 
+// The cmpPop / fcmpPop materialise + branch sequence collapses
+// to a single conditional branch that uses the flags already
+// set by the preceding cmp / vcmp.
+func TestCmpBranchFusionEqElseBranch(t *testing.T) {
+	in := strings.Join([]string{
+		"\tcmp r1, r0",
+		"\tmoveq r0, #1",
+		"\tmovne r0, #0",
+		"\tcmp r0, #0",
+		"\tbeq .LifElse",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "bne .LifElse") {
+		t.Errorf("expected bne .LifElse, got:\n%s", got)
+	}
+	if strings.Contains(got, "moveq r0, #1") || strings.Contains(got, "movne r0, #0") {
+		t.Errorf("mov pair should be folded away:\n%s", got)
+	}
+	if strings.Count(got, "cmp") != 1 {
+		t.Errorf("only the original cmp should remain; got:\n%s", got)
+	}
+}
+
+func TestCmpBranchFusionLtBrIf(t *testing.T) {
+	in := strings.Join([]string{
+		"\tcmp r1, r0",
+		"\tmovlt r0, #1",
+		"\tmovge r0, #0",
+		"\tcmp r0, #0",
+		"\tbne .Lloop",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "blt .Lloop") {
+		t.Errorf("expected blt .Lloop, got:\n%s", got)
+	}
+}
+
+func TestCmpBranchFusionFloatCondCodes(t *testing.T) {
+	// fcmpPop emits the same materialise pair after the
+	// vcmp.f32 + vmrs sequence — peephole shape matches.
+	in := strings.Join([]string{
+		"\tvcmp.f32 s1, s0",
+		"\tvmrs APSR_nzcv, FPSCR",
+		"\tmovmi r0, #1",
+		"\tmovpl r0, #0",
+		"\tcmp r0, #0",
+		"\tbeq .LifElse",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "bpl .LifElse") {
+		t.Errorf("expected bpl .LifElse, got:\n%s", got)
+	}
+}
+
+// Conditional branch to the very next instruction is dead, just
+// like the unconditional case — the fallthrough target is the
+// same regardless of the branch outcome.
+func TestConditionalBranchToNextLineDropped(t *testing.T) {
+	in := "\tbne .Lnext\n.Lnext:\n\tmov sp, fp"
+	got := peephole(in)
+	if strings.Contains(got, "bne .Lnext") {
+		t.Errorf("conditional branch to next line should be removed:\n%s", got)
+	}
+	if !strings.Contains(got, ".Lnext:") {
+		t.Errorf("label should remain:\n%s", got)
+	}
+}
+
 func TestFixedPointMultiplePasses(t *testing.T) {
 	// First pass removes the self-mov; that puts str/ldr adjacent and
 	// the second pass drops the ldr. Without the fixed-point loop only
