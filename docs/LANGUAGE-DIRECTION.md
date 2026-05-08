@@ -144,6 +144,15 @@ Status:
   `<`, `<=`, `>`, `>=`), wasm codegen picks `_u` vs `_s`
   variants, and the i32-to-i64 cast picks `i64.extend_i32_u` for
   unsigned sources / `i64.extend_i32_s` for signed.
+- Polymorphic numeric literals (PR 1 follow-up): integer
+  literals are inferred against the surrounding type — `var x:
+  i64 = 1` works without `1 as i64`, `f(x, 0)` resolves the
+  `0` against the parameter type, `(x: u32) / 2` settles `2` to
+  u32, and `(x: i64) == 0` likewise. The checker stamps a
+  resolved `Width` on `*ast.NumberLit` once the context is
+  known; the IR picks `i32.const` vs `i64.const` from that
+  field. Out-of-range literals (`var x: i32 = 5_000_000_000`)
+  are now rejected at the checker rather than silently wrapping.
 - Sub-i32 widths (`i8`, `i16`, `u8`, `u16`) are keyword-reserved
   but still error out at parse time — not yet wired through
   codegen. Use `u32` / `i32` for now.

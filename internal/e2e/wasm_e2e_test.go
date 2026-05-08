@@ -572,12 +572,50 @@ func TestWASMReturn42(t *testing.T) {
 func TestWASMI64Arithmetic(t *testing.T) {
 	src := `function add64(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
-    var z: i64 = add64(40 as i64, 2 as i64);
-    if (z == 42 as i64) { return 0; }
+    var z: i64 = add64(40, 2);
+    if (z == 42) { return 0; }
     return 1;
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (i64 arith mismatch)", got)
+	}
+}
+
+// Polymorphic numeric literals: a bare `1` flows into any
+// integer-typed slot — `var x: i64 = 1` works without `1 as
+// i64`, `f(x, 0)` resolves the `0` against f's parameter type,
+// `x + 1` settles the `1` to x's width. This test exercises all
+// three sites in a single program and verifies the wasm output
+// runs end-to-end.
+func TestWASMPolymorphicNumericLiterals(t *testing.T) {
+	src := `function add64(x: i64, y: i64): i64 { return x + y; }
+function main(): i32 {
+    var a: i64 = 40;
+    var b: u32 = 4294967295;
+    var c: u64 = 1 << 62;
+    if (add64(a, 2) != 42) { return 1; }
+    if (b / 2 != 2147483647) { return 2; }
+    if (c <= 0) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (polymorphic literal mismatch)", got)
+	}
+}
+
+// Out-of-range polymorphic literal in i32 context is rejected:
+// `var x: i32 = 5000000000` is way past 2^31 so the checker
+// should refuse rather than silently wrap.
+func TestPolymorphicLiteralI32Overflow(t *testing.T) {
+	src := `function bad(): i32 { var x: i32 = 5000000000; return x; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := checker.Check(prog); err == nil {
+		t.Fatalf("expected checker error for out-of-range i32 literal, got none")
+	} else if !strings.Contains(err.Error(), "fit") {
+		t.Errorf("expected 'fit' in error, got: %v", err)
 	}
 }
 
@@ -589,11 +627,11 @@ function main(): i32 {
 // signed reading would give -1 > 1 = false.
 func TestWASMU32Unsigned(t *testing.T) {
 	src := `function main(): i32 {
-    var x: u32 = 4294967295 as u32;
-    var half: u32 = x / (2 as u32);
-    if (half != 2147483647 as u32) { return 1; }
-    if (!(x > (1 as u32))) { return 2; }
-    if ((x >> (1 as u32)) != 2147483647 as u32) { return 3; }
+    var x: u32 = 4294967295;
+    var half: u32 = x / 2;
+    if (half != 2147483647) { return 1; }
+    if (!(x > 1)) { return 2; }
+    if ((x >> 1) != 2147483647) { return 3; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -602,19 +640,17 @@ func TestWASMU32Unsigned(t *testing.T) {
 }
 
 // u64 unsigned arithmetic. Builds a value with the high bit set
-// via `(1 as u64) << 63` and checks div / compare under unsigned
-// semantics: dividing the high-bit-set value by 2 should equal
-// `1 << 62`, and x > 1 should be true (under signed it would be
-// false because the top bit reads as a sign bit). We construct
-// the comparison constant the same way (`1 << 62`) because the
-// parser's polymorphic numeric literals default to i32 and
-// truncate values that don't fit there.
+// via `1 << 63` (the literals settle to u64 from `var x: u64`)
+// and checks div / compare under unsigned semantics: dividing
+// the high-bit-set value by 2 should equal `1 << 62`, and x > 1
+// should be true (under signed it would be false because the
+// top bit reads as a sign bit).
 func TestWASMU64Unsigned(t *testing.T) {
 	src := `function main(): i32 {
-    var x: u64 = (1 as u64) << (63 as u64);
-    var half: u64 = x / (2 as u64);
-    if (half != ((1 as u64) << (62 as u64))) { return 1; }
-    if (!(x > (1 as u64))) { return 2; }
+    var x: u64 = 1 << 63;
+    var half: u64 = x / 2;
+    if (half != 1 << 62) { return 1; }
+    if (!(x > 1)) { return 2; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {

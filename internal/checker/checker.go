@@ -934,6 +934,16 @@ func assignable(dst, src ast.Type) bool {
 	if dok && sok && d.Name == s.Name && len(s.Args) == 0 && len(d.Args) > 0 {
 		return true
 	}
+	// Polymorphic numeric literal: NumberType{Polymorphic:true}
+	// flows into any concrete integer type. The checker is
+	// expected to have stamped the resolved width onto the
+	// literal AST node already (via c.settleNumeric); this is
+	// the type-system side of that handshake.
+	if _, ok := dst.(ast.NumberType); ok {
+		if sn, ok := src.(ast.NumberType); ok && sn.Polymorphic {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1221,6 +1231,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			return
 		}
 		got := c.checkExpr(n.Value, s)
+		c.settleNumeric(n.Value, want)
 		if got != nil && !assignable(want, got) {
 			c.errf(n.P, "return type mismatch: function returns %s but expression is %s", want, got)
 		}
@@ -1229,6 +1240,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errf(n.P, "variable %q already declared in this scope", n.Name)
 		}
 		got := c.checkExpr(n.Init, s)
+		if n.Type != nil {
+			c.settleNumeric(n.Init, n.Type)
+		}
 		if n.Type == nil {
 			if got == nil {
 				return
@@ -1473,16 +1487,27 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	switch n := e.(type) {
 	case *ast.NumberLit:
-		// All integer literals start out as `i32`. Polymorphic
-		// resolution from contextual type ("the literal `1` in
-		// `let x: i64 = 1` is i64") is a follow-up; for now the
-		// caller writes `1 as i64`.
-		return ast.NumberType{}
+		// Integer literals are polymorphic: at the binary-op /
+		// var-init / cast-inner / arg / return layer the checker
+		// reconciles them against the surrounding expected type
+		// via `c.settleNumeric`. If the literal already has a
+		// resolved Width (set by a previous settling pass — e.g.
+		// from a re-check during monomorphisation), report that.
+		if n.Width != 0 {
+			return ast.NumberType{Width: n.Width, Signed: !n.IsUnsigned}
+		}
+		return ast.NumberType{Polymorphic: true}
 	case *ast.CastExpr:
 		// Currently restricted to numeric → numeric. Bool and
 		// string casts (via `as`) come back when the use case
 		// arises; today they'd just hide a bug.
 		inner := c.checkExpr(n.Inner, s)
+		// `1 as u64`: settle the literal at the cast target's
+		// width so the IR emits an i64.const, not an i32.const
+		// that overflows. Without this, a literal like
+		// `4611686018427387904 as u64` silently truncated to 0.
+		c.settleNumeric(n.Inner, n.Target)
+		inner = postSettleType(n.Inner, inner)
 		n.InnerType = inner
 		_, innerIsNum := inner.(ast.NumberType)
 		_, innerIsFloat := inner.(ast.FloatType)
@@ -1721,6 +1746,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			at := c.checkExpr(a, s)
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
+				// Polymorphic-literal settling: `f(1)` where f
+				// expects i64 needs the literal to lock in i64
+				// before assignable / unifyType run, otherwise
+				// the i32-default would mismatch the expected
+				// param type.
+				c.settleNumeric(a, expected)
+				at = postSettleType(a, at)
 				if sub != nil {
 					if !c.unifyType(expected, at, sub) {
 						c.errf(a.Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
@@ -1778,8 +1810,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.errf(n.P, "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 				return ast.NumberType{}
 			}
-			n.IntWidth = common.NormalWidth()
-			n.IsUnsigned = !common.IsSigned()
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			if !common.Polymorphic {
+				n.IntWidth = common.NormalWidth()
+				n.IsUnsigned = !common.IsSigned()
+			}
 			return common
 		case "%", "&", "|", "^", "<<", ">>":
 			c.requireInteger(n.P, lt, n.Op)
@@ -1789,8 +1825,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.errf(n.P, "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 				return ast.NumberType{}
 			}
-			n.IntWidth = common.NormalWidth()
-			n.IsUnsigned = !common.IsSigned()
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			if !common.Polymorphic {
+				n.IntWidth = common.NormalWidth()
+				n.IsUnsigned = !common.IsSigned()
+			}
 			return common
 		case "<", ">", "<=", ">=":
 			if isFloat(lt) || isFloat(rt) {
@@ -1806,10 +1846,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.errf(n.P, "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 				return ast.BoolType{}
 			}
-			n.IntWidth = common.NormalWidth()
-			n.IsUnsigned = !common.IsSigned()
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			if !common.Polymorphic {
+				n.IntWidth = common.NormalWidth()
+				n.IsUnsigned = !common.IsSigned()
+			}
 			return ast.BoolType{}
 		case "==", "!=":
+			// Polymorphic-literal compare: settle the literal
+			// side to the concrete side's type before the
+			// equality check fires. `(x: i64) == 0` should not
+			// error on width mismatch — the `0` is a polymorphic
+			// literal that locks in i64 here.
+			if common, common_ok := commonIntegerWidth(lt, rt); common_ok && !common.Polymorphic {
+				c.settleNumeric(n.Left, common)
+				c.settleNumeric(n.Right, common)
+				lt = postSettleType(n.Left, lt)
+				rt = postSettleType(n.Right, rt)
+			}
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
 				c.errf(n.P, "cannot compare %s and %s", lt, rt)
 			}
@@ -1829,8 +1884,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.IsFloat = true
 			}
 			// Track i64 equality so codegen knows to emit `i64.eq`
-			// / `i64.ne` instead of `i32.eq`/`ne`.
-			if common, ok := commonIntegerWidth(lt, rt); ok {
+			// / `i64.ne` instead of `i32.eq`/`ne`. Settling
+			// already happened above (before the equality check
+			// fired) so just record the width here.
+			if common, ok := commonIntegerWidth(lt, rt); ok && !common.Polymorphic {
 				n.IntWidth = common.NormalWidth()
 			}
 			return ast.BoolType{}
@@ -1859,7 +1916,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.Assign:
 		lt := c.checkExpr(n.Target, s)
 		rt := c.checkExpr(n.Value, s)
-		if lt != nil && rt != nil && !ast.Equal(lt, rt) {
+		if lt != nil {
+			c.settleNumeric(n.Value, lt)
+			rt = postSettleType(n.Value, rt)
+		}
+		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !assignable(lt, rt) {
 			c.errf(n.P, "cannot assign %s to %s", rt, lt)
 		}
 		// Restrict assignment targets the same way `=` does for
@@ -1925,6 +1986,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if vt == nil {
 				continue
 			}
+			c.settleNumeric(f.Value, expected)
+			vt = postSettleType(f.Value, vt)
 			if sub != nil {
 				if !c.unifyType(expected, vt, sub) {
 					c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
@@ -2041,15 +2104,139 @@ func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
 	}
 }
 
+// settleNumeric stamps the resolved integer type onto every
+// polymorphic-literal node it can reach in `e`. The hint must be
+// an ast.NumberType describing the resolved width + signedness;
+// non-integer hints are no-ops. This is invoked at every site
+// where a known-concrete type meets an expression that may
+// contain Width=0 NumberLits — variable initialisers, return
+// statements, function arguments, struct fields, cast inners,
+// assignments, and the binary-op merging path.
+//
+// The walker only descends through expressions that legitimately
+// "carry through" the type: literals, unary +/-, and arithmetic
+// / bitwise binary ops where the IntWidth isn't already set.
+// Function calls, casts, struct-lit fields, etc. set their own
+// types and shouldn't have hints leak into them.
+func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
+	hn, ok := hint.(ast.NumberType)
+	if !ok || hn.Polymorphic {
+		return
+	}
+	width := hn.NormalWidth()
+	isUnsigned := !hn.IsSigned()
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if x.Width == 0 {
+			x.Width = width
+			x.IsUnsigned = isUnsigned
+			c.checkLiteralFits(x, hn)
+		}
+	case *ast.Unary:
+		if x.Op == "-" || x.Op == "+" {
+			c.settleNumeric(x.Operand, hint)
+		}
+	case *ast.Binary:
+		switch x.Op {
+		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
+			// settleNumeric only descends when the binary itself
+			// resolved polymorphic (both operands polymorphic).
+			// A binary that already settled to a concrete type
+			// (i32/i64/etc.) is locked in — settling its leaves
+			// again would silently re-stamp.
+			if x.IntWidth == 0 {
+				c.settleNumeric(x.Left, hint)
+				c.settleNumeric(x.Right, hint)
+				x.IntWidth = width
+				x.IsUnsigned = isUnsigned
+			}
+		}
+	}
+}
+
+// postSettleType returns the post-settling type of `e`. After
+// `c.settleNumeric` has stamped concrete widths onto polymorphic
+// nodes, the original type returned by `checkExpr` is stale —
+// for a NumberLit it was a Polymorphic placeholder, for a
+// Binary it was Polymorphic from
+// `commonIntegerWidth(poly, poly)`. This helper recomputes the
+// type from whatever the settling pass stamped. Non-numeric
+// expressions return `prior` unchanged.
+func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if x.Width != 0 {
+			return ast.NumberType{Width: x.Width, Signed: !x.IsUnsigned}
+		}
+	case *ast.Binary:
+		if x.IntWidth != 0 {
+			return ast.NumberType{Width: x.IntWidth, Signed: !x.IsUnsigned}
+		}
+	case *ast.Unary:
+		return postSettleType(x.Operand, prior)
+	}
+	return prior
+}
+
+// checkLiteralFits reports an error if the literal's value is
+// outside the range representable by the resolved integer type.
+// Run once the width has been decided. For unsigned types the
+// value must be in [0, 2^width); for signed it must be in
+// [-2^(width-1), 2^(width-1)).
+func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
+	w := t.NormalWidth()
+	if t.IsSigned() {
+		var min, max int64
+		switch w {
+		case 32:
+			min, max = -1<<31, 1<<31-1
+		case 64:
+			return
+		default:
+			return
+		}
+		if lit.Value < min || lit.Value > max {
+			c.errf(lit.P, "literal %d does not fit in %s", lit.Value, t)
+		}
+	} else {
+		var max uint64
+		switch w {
+		case 32:
+			max = 1<<32 - 1
+		case 64:
+			return
+		default:
+			return
+		}
+		if lit.Value < 0 || uint64(lit.Value) > max {
+			c.errf(lit.P, "literal %d does not fit in %s", lit.Value, t)
+		}
+	}
+}
+
 // commonIntegerWidth returns the common NumberType when both sides
 // are integers of the same width + signedness, plus a boolean
 // indicating success. Mixed widths trigger a checker error from
 // the caller — `as` is required for explicit conversion.
+//
+// Polymorphic-literal placeholders (NumberType{Polymorphic:true})
+// unify with any concrete integer type: the more-specific side
+// wins. `1 + (x: i64)` returns i64 here so the binary's IntWidth
+// gets stamped to 64; the caller is responsible for settling the
+// polymorphic literal's recorded width via c.settleNumeric.
+// Two placeholders return a placeholder, which the caller
+// eventually settles to i32 if no further hint arrives.
 func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 	ln, lOk := lt.(ast.NumberType)
 	rn, rOk := rt.(ast.NumberType)
 	if !lOk || !rOk {
 		return ast.NumberType{}, false
+	}
+	if ln.Polymorphic && !rn.Polymorphic {
+		return rn, true
+	}
+	if rn.Polymorphic && !ln.Polymorphic {
+		return ln, true
 	}
 	if ln.NormalWidth() != rn.NormalWidth() || ln.IsSigned() != rn.IsSigned() {
 		return ast.NumberType{}, false

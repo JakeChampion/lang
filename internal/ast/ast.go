@@ -57,6 +57,17 @@ type NumberType struct {
 	Width    int
 	Signed   bool
 	Spelling string
+	// Polymorphic is set on the NumberType returned for an
+	// unsettled NumberLit ("polymorphic numeric literal" — `1`,
+	// `42`). It flows through `assignable` to any concrete
+	// integer type and through `commonIntegerWidth` so the
+	// other operand's width wins. Once the literal is settled
+	// (the surrounding context demands a concrete width), the
+	// checker stamps `Width` on the NumberLit AST node and
+	// returns the concrete NumberType from the affected call
+	// sites. Polymorphic propagates through ast.Equal as a
+	// "matches anything int" wildcard.
+	Polymorphic bool
 }
 type BoolType struct{}
 type VoidType struct{}
@@ -334,6 +345,20 @@ type Expr interface {
 type NumberLit struct {
 	P     Position
 	Value int64
+	// Width is set by the checker once the literal's type has
+	// been resolved. 0 means "default i32" for backwards
+	// compatibility (the ir's NumberLit lowering treats 0 the
+	// same as 32). Polymorphic literals in expected-type
+	// context pick up the expected width here so the IR can
+	// emit `i64.const`/`i32.const` correctly without adding
+	// implicit widening.
+	Width int
+	// IsUnsigned tracks whether the resolved type was a `u32`
+	// or `u64` (vs `i32`/`i64`). It doesn't affect how the
+	// literal itself is emitted — bit pattern is identical —
+	// but `*ast.CastExpr.InnerType` and the checker's record
+	// of the literal's type need to know.
+	IsUnsigned bool
 }
 
 // CastExpr is `expr as Type`. The checker requires Target to be a
