@@ -38,15 +38,19 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "hello.lang")
-	// Exercises both:
-	//   - WASI preview-1 fd_write (the adapter routes it through
-	//     wasi:io/streams under the hood);
-	//   - Native preview-2 wasi:random/random.get-random-bytes —
-	//     bypasses the adapter via the WIT world we embed,
-	//     forcing the canonical-ABI path through `cabi_realloc`.
+	// Exercises three native preview-2 paths through one program:
+	//   - wasi:random/random.get-random-bytes (canonical-ABI list<u8>
+	//     return + cabi_realloc, from step 2);
+	//   - wasi:cli/stdout.get-stdout + wasi:io/streams output-stream
+	//     blocking-write-and-flush (the print path, step 3);
+	//   - wasi:cli/stderr.get-stderr + same blocking-write-and-flush
+	//     (the eprint path).
+	// The preview-1 adapter no longer touches stdio for us — the
+	// imports above reach the host directly.
 	if err := os.WriteFile(srcPath, []byte(`function main(): number {
     var b = random_bytes(8);
     print("hello preview2");
+    eprint("err preview2");
     return 0;
 }
 `), 0o644); err != nil {
@@ -98,5 +102,8 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	}
 	if got, want := strings.TrimRight(sout.String(), "\n"), "hello preview2"; got != want {
 		t.Fatalf("stdout = %q; want %q (stderr=%q)", got, want, serr.String())
+	}
+	if got, want := strings.TrimRight(serr.String(), "\n"), "err preview2"; got != want {
+		t.Fatalf("stderr = %q; want %q (stdout=%q)", got, want, sout.String())
 	}
 }

@@ -1,0 +1,45 @@
+// Vendored copy of the wasi:io@0.2.0 WIT package, just the
+// `error` and `streams` interfaces and only the methods the wasm
+// backend currently emits (output-stream.blocking-write-and-flush
+// for print / eprint; resource drops needed by component-new).
+// Source: https://github.com/WebAssembly/wasi-io
+package wasi:io@0.2.0;
+
+interface error {
+    /// A handle to an underlying error returned by an I/O operation. The
+    /// host owns the resource; the guest can only drop it.
+    resource error;
+}
+
+interface streams {
+    use error.{error};
+
+    /// The reason a `read` / `write` failed.
+    variant stream-error {
+        /// The last operation (read or write) failed before completion.
+        last-operation-failed(error),
+        /// The stream is closed: no more data will be produced or
+        /// accepted.
+        closed,
+    }
+
+    /// An input bytestream — read-side of a stream.
+    resource input-stream {
+        /// Perform a non-blocking read of up to `len` bytes.
+        read: func(len: u64) -> result<list<u8>, stream-error>;
+        /// Perform a blocking read of up to `len` bytes.
+        blocking-read: func(len: u64) -> result<list<u8>, stream-error>;
+    }
+
+    /// An output bytestream — write-side of a stream.
+    resource output-stream {
+        /// Check how many bytes are permitted to be written without blocking.
+        check-write: func() -> result<u64, stream-error>;
+        /// Perform a non-blocking write.
+        write: func(contents: list<u8>) -> result<_, stream-error>;
+        /// Perform a write, blocking until all bytes have been flushed.
+        blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
+        /// Block until any pending output has been written.
+        blocking-flush: func() -> result<_, stream-error>;
+    }
+}

@@ -95,15 +95,23 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		g.stringOffset = 72
 		g.closuresBase = 72
 	}
-	// Preview-2 `random_bytes` uses memory[92..99] as the
-	// canonical-ABI return area for `get-random-bytes`. Push the
-	// string base past that slot so neither overlaps a string.
-	if g.needsRandomBytes && g.preview2 {
-		if g.stringOffset < 100 {
-			g.stringOffset = 100
+	// Preview-2 reserves memory[92..115] for canonical-ABI scratch:
+	//   92..103 retptr area (sized for `result<list<u8>,
+	//           stream-error>`; also fits the (ptr, len) pair from
+	//           `get-random-bytes`),
+	//   104..107 stdout output-stream handle,
+	//   108..111 stderr output-stream handle,
+	//   112..115 init flags for the cached handles.
+	// Push the string base past those slots whenever preview-2 is
+	// on, regardless of which preview-2 features the program
+	// actually exercises. The cost is 24 static bytes per module;
+	// the alternative (gating each slot independently) is fragile.
+	if g.preview2 {
+		if g.stringOffset < 116 {
+			g.stringOffset = 116
 		}
-		if g.closuresBase < 100 {
-			g.closuresBase = 100
+		if g.closuresBase < 116 {
+			g.closuresBase = 116
 		}
 	}
 

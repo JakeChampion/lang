@@ -1,0 +1,21 @@
+// Vendored copies of the wasi:cli@0.2.0 stdin / stdout / stderr
+// interfaces. Each is a minimal accessor that hands the guest an
+// `input-stream` or `output-stream` resource handle from
+// wasi:io/streams; the guest reads / writes through those streams.
+// Source: https://github.com/WebAssembly/wasi-cli
+package wasi:cli@0.2.0;
+
+interface stdin {
+    use wasi:io/streams@0.2.0.{input-stream};
+    get-stdin: func() -> input-stream;
+}
+
+interface stdout {
+    use wasi:io/streams@0.2.0.{output-stream};
+    get-stdout: func() -> output-stream;
+}
+
+interface stderr {
+    use wasi:io/streams@0.2.0.{output-stream};
+    get-stderr: func() -> output-stream;
+}
