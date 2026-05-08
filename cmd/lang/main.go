@@ -57,6 +57,8 @@ func main() {
 	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	debug := flag.Bool("g", false, "emit DWARF line info + .cfi_* unwind tables (arm32 only); off by default for smaller, faster-startup release binaries")
+	wasiPreview2 := flag.Bool("wasi-preview2", false, "wrap the WASM output as a WASI Preview 2 Component Model component (requires wasm-tools + a preview1-component-adapter, see docs/WASI-PREVIEW2.md)")
+	wasiAdapter := flag.String("wasi-adapter", "", "path to the wasi_snapshot_preview1.command.wasm adapter (used with -wasi-preview2)")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -92,7 +94,7 @@ func main() {
 		os.Exit(code)
 	}
 
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *debug, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *debug, *wasiPreview2, *wasiAdapter, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -143,7 +145,7 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 // run drives the full pipeline. The returned int is the exit code that
 // the lang process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug bool, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug bool, wasiPreview2 bool, wasiAdapter string, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
 		return 1, err
@@ -170,6 +172,15 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 		text, err := wasm.Emit(prog, info)
 		if err != nil {
 			return 1, err
+		}
+		if wasiPreview2 {
+			if outPath == "" {
+				return 1, fmt.Errorf("-wasi-preview2 requires -o OUTPUT (component is a binary)")
+			}
+			if wasiAdapter == "" {
+				return 1, fmt.Errorf("-wasi-preview2 requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)")
+			}
+			return ifErr(emitPreview2Component(text, outPath, wasiAdapter)), nil
 		}
 		if outPath == "" {
 			_, err = os.Stdout.WriteString(text)
@@ -272,6 +283,46 @@ func link(asm, outPath, cc string, debug bool) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		keep = true
 		return fmt.Errorf("%s failed: %w\n%s\n(temporary assembly retained at %s)", cc, err, out, asmPath)
+	}
+	return nil
+}
+
+// emitPreview2Component wraps the preview-1 WAT in a Component Model
+// component using wasm-tools + the wasi-preview1-component-adapter.
+//
+// Pipeline:
+//  1. write WAT to a temp file;
+//  2. `wasm-tools parse` lowers it to a binary core module;
+//  3. `wasm-tools component new --adapt wasi_snapshot_preview1=ADAPTER`
+//     wraps the module in a component that satisfies any preview-2
+//     host (`wasmtime run`, edge-function runtimes, etc.).
+//
+// See docs/WASI-PREVIEW2.md for the broader migration plan.
+func emitPreview2Component(wat, outPath, adapterPath string) error {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		return fmt.Errorf("wasm-tools not found on PATH (install from https://github.com/bytecodealliance/wasm-tools): %w", err)
+	}
+	if _, err := os.Stat(adapterPath); err != nil {
+		return fmt.Errorf("wasi-preview1-component-adapter not readable at %q: %w", adapterPath, err)
+	}
+	tmpDir, err := os.MkdirTemp("", "lang-component-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	watPath := filepath.Join(tmpDir, "prog.wat")
+	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
+		return err
+	}
+	modulePath := filepath.Join(tmpDir, "prog.wasm")
+	if out, err := exec.Command("wasm-tools", "parse", watPath, "-o", modulePath).CombinedOutput(); err != nil {
+		return fmt.Errorf("wasm-tools parse failed: %w\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "component", "new",
+		"--adapt", "wasi_snapshot_preview1="+adapterPath,
+		modulePath, "-o", outPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("wasm-tools component new failed: %w\n%s", err, out)
 	}
 	return nil
 }

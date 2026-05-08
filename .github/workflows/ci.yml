@@ -26,12 +26,30 @@ jobs:
           curl https://wasmtime.dev/install.sh -sSf | bash
           echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
 
+      - name: Install wasm-tools + preview1-component-adapter (for WASI Preview 2 e2e)
+        # `wasm-tools component new --adapt` wraps our preview-1 core
+        # module in a Component Model component. The adapter binary
+        # comes from the same release stream as wasmtime; we pin a
+        # known-good version here and cache the path the test reads.
+        env:
+          WASM_TOOLS_VERSION: "1.225.0"
+          ADAPTER_VERSION: "v34.0.1"
+        run: |
+          curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASM_TOOLS_VERSION}/wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux.tar.gz" \
+            | tar -xz -C "$HOME"
+          echo "$HOME/wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+          mkdir -p "$HOME/wasi-adapter"
+          curl -sSfL -o "$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" \
+            "https://github.com/bytecodealliance/wasmtime/releases/download/${ADAPTER_VERSION}/wasi_snapshot_preview1.command.wasm"
+          echo "LANG_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
+
       - name: Show toolchain versions
         run: |
           go version
           arm-linux-gnueabihf-gcc --version | head -1
           qemu-arm --version | head -1
           wasmtime --version
+          wasm-tools --version
 
       - name: go vet
         run: go vet ./...
