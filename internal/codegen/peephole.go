@@ -441,6 +441,34 @@ func peepPass(lines []string) []string {
 			continue
 		}
 
+		// 14: if-conversion. After PR #104 elided the stack
+		// dance, simple if-else patterns reduce to:
+		//
+		//     b<cc> ELSE_LBL
+		//     <single predicate-able then-arm instr>
+		//     b END_LBL
+		//   ELSE_LBL:
+		//     <single predicate-able else-arm instr>
+		//   END_LBL:
+		//
+		// ARM allows predicates on most data-processing and
+		// load instructions, so we can drop both branches and
+		// the ELSE label, replacing the arm bodies with the
+		// predicated forms (the then-arm runs when !cc, the
+		// else-arm when cc):
+		//
+		//     <then-instr with predicate !cc>
+		//     <else-instr with predicate cc>
+		//   END_LBL:
+		//
+		// Cranelift selects.isle inspiration; same shape ARM
+		// hardware encourages with its rich predicate support.
+		if collapsed, ok := tryIfConversion(out, line); ok {
+			out = collapsed
+			out = append(out, line)
+			continue
+		}
+
 		_ = i
 		out = append(out, line)
 	}
@@ -527,6 +555,141 @@ func tryIfMergeStackElim(out []string, cur string) ([]string, bool) {
 		rewritten = append(rewritten, line)
 	}
 	return rewritten, true
+}
+
+// tryIfConversion folds the if-else shape into two
+// predicated instructions:
+//
+//     b<cc> ELSE_LBL              <then-instr with !cc>
+//     <single then-instr>         <else-instr with cc>
+//     b END_LBL              →    END_LBL:        ← `cur`
+//   ELSE_LBL:
+//     <single else-instr>
+//   END_LBL:                       ← `cur`
+//
+// Saves three instructions per simple if-else: the
+// conditional branch, the unconditional branch, and the
+// ELSE label declaration drop out. The END_LBL declaration
+// stays so external references (other branches into END)
+// still resolve.
+//
+// Triggered when emitting an `END_LBL:` line and looking
+// back five lines for the matching shape.
+func tryIfConversion(out []string, cur string) ([]string, bool) {
+	endLbl, ok := matchLabelDecl(cur)
+	if !ok {
+		return nil, false
+	}
+	if len(out) < 5 {
+		return nil, false
+	}
+	// out[-1] should be the predicate-able else-arm instr.
+	elseInstr := out[len(out)-1]
+	if !isPredicateable(elseInstr) {
+		return nil, false
+	}
+	// out[-2] should be ELSE_LBL:.
+	elseLbl, ok := matchLabelDecl(out[len(out)-2])
+	if !ok {
+		return nil, false
+	}
+	// out[-3] should be `b END_LBL` (unconditional).
+	cc, target, bok := matchBranch(out[len(out)-3])
+	if !bok || cc != "" || target != endLbl {
+		return nil, false
+	}
+	// out[-4] should be the predicate-able then-arm instr.
+	thenInstr := out[len(out)-4]
+	if !isPredicateable(thenInstr) {
+		return nil, false
+	}
+	// out[-5] should be `b<cc> ELSE_LBL`.
+	branchCC, branchTarget, bok2 := matchBranch(out[len(out)-5])
+	if !bok2 || branchCC == "" || branchTarget != elseLbl {
+		return nil, false
+	}
+	invCC, ok := invertCondCode(branchCC)
+	if !ok {
+		return nil, false
+	}
+	// ELSE_LBL must have no other references — adjacent-label
+	// merge (#103) can give an inner if's ELSE label an
+	// external incoming branch from an outer if's `b<cc>`.
+	// Predicating the else-arm instruction in place would
+	// then change behaviour for those external entries: the
+	// instruction's predicate would gate execution against
+	// the *outer* cmp's flags, not the (now-eliminated) inner
+	// branch's. Conservatively bail when other refs exist.
+	if countLabelReferences(out[:len(out)-5], elseLbl) != 0 {
+		return nil, false
+	}
+	rewritten := append([]string{}, out[:len(out)-5]...)
+	rewritten = append(rewritten, addCondCode(thenInstr, invCC))
+	rewritten = append(rewritten, addCondCode(elseInstr, branchCC))
+	return rewritten, true
+}
+
+// countLabelReferences counts how many times `label` appears
+// as a token in `lines`. Label declarations (`<label>:`)
+// don't count — only references via `b<cc> label`,
+// `ldr rD, =label`, etc.
+func countLabelReferences(lines []string, label string) int {
+	count := 0
+	for _, line := range lines {
+		s := trim(line)
+		// Skip the declaration itself.
+		if strings.HasSuffix(s, ":") && !strings.ContainsAny(s, " \t,") {
+			if s[:len(s)-1] == label {
+				continue
+			}
+		}
+		for _, tok := range strings.FieldsFunc(s, func(r rune) bool {
+			switch r {
+			case ' ', '\t', ',', '[', ']', '!', '=', '#':
+				return true
+			}
+			return false
+		}) {
+			if tok == label {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// isPredicateable reports whether `line` is a single ARM
+// instruction we know how to attach a `<cc>` suffix to. The
+// whitelist covers the data-processing, load, store, and
+// shift mnemonics our codegen emits in arm bodies; ARM
+// hardware also predicates many other instructions, but
+// we conservatively skip what we don't directly use.
+func isPredicateable(line string) bool {
+	s := trim(line)
+	sp := strings.IndexAny(s, " \t")
+	if sp < 0 {
+		return false
+	}
+	switch s[:sp] {
+	case "mov", "mvn", "ldr", "ldrb", "ldrh", "str", "strb", "strh",
+		"add", "sub", "rsb", "and", "orr", "eor", "bic",
+		"mul", "lsl", "lsr", "asr", "ror", "neg":
+		return true
+	}
+	return false
+}
+
+// addCondCode inserts a condition-code suffix into the
+// mnemonic of `line`. `ldr r0, =1` with cc=`eq` becomes
+// `\tldreq r0, =1`. The leading whitespace is normalised
+// to a single tab.
+func addCondCode(line, cc string) string {
+	s := trim(line)
+	sp := strings.IndexAny(s, " \t")
+	if sp < 0 {
+		return line
+	}
+	return "\t" + s[:sp] + cc + s[sp:]
 }
 
 // matchLabelDecl returns (name, true) when `line` (after

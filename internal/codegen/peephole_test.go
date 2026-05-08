@@ -266,6 +266,56 @@ func TestAddrModeSinkSkipsWhenDstDiffers(t *testing.T) {
 	}
 }
 
+// If-conversion: when both arms are single predicate-able
+// instructions, drop the branches + ELSE_LBL and predicate
+// the arm bodies in place.
+func TestIfConversionFoldsLdrPair(t *testing.T) {
+	in := strings.Join([]string{
+		"\tcmp r1, #0",
+		"\tble .Lelse",
+		"\tldr r0, =1",
+		"\tb .Lend",
+		".Lelse:",
+		"\tldr r0, =0",
+		".Lend:",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "ldrgt r0, =1") {
+		t.Errorf("expected predicated `ldrgt r0, =1`, got:\n%s", got)
+	}
+	if !strings.Contains(got, "ldrle r0, =0") {
+		t.Errorf("expected predicated `ldrle r0, =0`, got:\n%s", got)
+	}
+	if strings.Contains(got, "ble .Lelse") {
+		t.Errorf("conditional branch should be elided:\n%s", got)
+	}
+	if strings.Contains(got, "b .Lend") {
+		t.Errorf("unconditional branch should be elided:\n%s", got)
+	}
+}
+
+// If-conversion bails when the ELSE label has external
+// references — adjacent-label-merge can give an inner if's
+// ELSE label an incoming branch from an outer if; predicating
+// the else-arm in place would change behaviour for the
+// external entry.
+func TestIfConversionSkipsWhenElseLblExternallyReferenced(t *testing.T) {
+	in := strings.Join([]string{
+		"\tb .Lelse", // external reference to .Lelse
+		"\tcmp r1, #0",
+		"\tble .Lelse",
+		"\tldr r0, =1",
+		"\tb .Lend",
+		".Lelse:",
+		"\tldr r0, =0",
+		".Lend:",
+	}, "\n")
+	got := peephole(in)
+	if strings.Contains(got, "ldrgt") || strings.Contains(got, "ldrle") {
+		t.Errorf("if-conversion must not fire when ELSE has external refs:\n%s", got)
+	}
+}
+
 // If-merge stack-elim: when both arms push r0 and the
 // consumer is `pop {r0}`, the round-trip through the stack
 // is pure overhead — both arms already wrote r0 directly.
