@@ -1999,11 +1999,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		t := c.checkExpr(n.Operand, s)
 		switch n.Op {
 		case "-":
-			if isFloat(t) {
+			if ft, ok := t.(ast.FloatType); ok {
 				n.IsFloat = true
-				return ast.FloatType{}
+				// Propagate polymorphism — `-3.14` should still
+				// be polymorphic so it can settle to f32 / f64.
+				return ft
 			}
 			c.requireNumber(n.P, t, n.Op)
+			// Propagate the operand's NumberType (including its
+			// Polymorphic flag) so unary minus on a polymorphic
+			// literal stays polymorphic; otherwise `var s: i8 =
+			// -7` couldn't settle the literal.
+			if nt, ok := t.(ast.NumberType); ok {
+				return nt
+			}
 			return ast.NumberType{}
 		case "!":
 			c.requireBool(n.P, t, n.Op)
@@ -2321,6 +2330,10 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 	if t.IsSigned() {
 		var min, max int64
 		switch w {
+		case 8:
+			min, max = -1<<7, 1<<7-1
+		case 16:
+			min, max = -1<<15, 1<<15-1
 		case 32:
 			min, max = -1<<31, 1<<31-1
 		case 64:
@@ -2334,6 +2347,10 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 	} else {
 		var max uint64
 		switch w {
+		case 8:
+			max = 1<<8 - 1
+		case 16:
+			max = 1<<16 - 1
 		case 32:
 			max = 1<<32 - 1
 		case 64:

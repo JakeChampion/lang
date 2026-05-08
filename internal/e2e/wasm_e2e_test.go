@@ -619,6 +619,45 @@ func TestPolymorphicLiteralI32Overflow(t *testing.T) {
 	}
 }
 
+// Sub-i32 widths (u8 / i8 / u16 / i16). Storage lives in i32
+// locals (wasm has no narrower locals); the bookkeeping is in
+// the casts: narrowing masks to dw bits, signed widening emits
+// `i32.extend8_s` / `i32.extend16_s`. Arithmetic is at i32
+// precision.
+func TestWASMSubI32Widths(t *testing.T) {
+	src := `function main(): i32 {
+    var a: u8 = 200;
+    var b: u8 = 50;
+    var sum: u8 = (a + b) as u8;
+    if (sum != 250) { return 1; }
+    var s: i8 = -7;
+    var widened: i32 = s as i32;
+    if (widened != -7) { return 2; }
+    var u: u16 = 65000;
+    var u32_form: u32 = u as u32;
+    if (u32_form != 65000) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (sub-i32 width arithmetic)", got)
+	}
+}
+
+// Out-of-range polymorphic literal in u8 context is rejected.
+// `var x: u8 = 300` exceeds 2^8-1 so the checker should refuse.
+func TestSubI32LiteralOverflow(t *testing.T) {
+	src := `function bad(): i32 { var x: u8 = 300; return x as i32; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := checker.Check(prog); err == nil {
+		t.Fatalf("expected checker error for out-of-range u8 literal, got none")
+	} else if !strings.Contains(err.Error(), "fit") {
+		t.Errorf("expected 'fit' in error, got: %v", err)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

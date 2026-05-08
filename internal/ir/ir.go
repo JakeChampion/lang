@@ -61,11 +61,13 @@ const (
 	// any cast whose source is unsigned. More widths (8/16)
 	// land in a follow-up alongside their underlying mask /
 	// sign-extend story.
-	OpExtendI32S  // (i32) → i64 (sign-extend)
-	OpExtendI32U  // (i32) → i64 (zero-extend, for unsigned)
-	OpWrapI64     // (i64) → i32
-	OpFPromoteF32 // (f32) → f64
-	OpFDemoteF64  // (f64) → f32
+	OpExtendI32S   // (i32) → i64 (sign-extend)
+	OpExtendI32U   // (i32) → i64 (zero-extend, for unsigned)
+	OpWrapI64      // (i64) → i32
+	OpFPromoteF32  // (f32) → f64
+	OpFDemoteF64   // (f64) → f32
+	OpSignExtend8  // (i32) → i32 (sign-extend low byte; lowers to i32.extend8_s)
+	OpSignExtend16 // (i32) → i32 (sign-extend low halfword; lowers to i32.extend16_s)
 
 	// Locals (parameter or var). Idx is the 0-based slot.
 	OpLoadLocal  // ()                → T
@@ -208,6 +210,10 @@ func (k OpKind) String() string {
 		return "promote.f32"
 	case OpFDemoteF64:
 		return "demote.f64"
+	case OpSignExtend8:
+		return "extend8_s"
+	case OpSignExtend16:
+		return "extend16_s"
 	case OpConstStr:
 		return "const.str"
 	case OpConstFunc:
@@ -1120,16 +1126,53 @@ func (b *builder) expr(e ast.Expr) error {
 			case sw == dw:
 				// Same-width cast (signed ↔ unsigned). Bit-
 				// identical at the wasm level.
-			case sw == 32 && dw == 64:
-				// Sign vs zero-extend depends on the SOURCE's
-				// signedness, not the target's.
+			case sw <= 32 && dw <= 32:
+				// Sub-i32 ↔ i32 / sub-i32 ↔ sub-i32 stays in i32
+				// storage. Narrowing (32→16, 32→8, 16→8) needs a
+				// mask to keep the upper bits clean. Widening
+				// when SOURCE is signed needs an explicit
+				// sign-extend so high bits become 1s if the
+				// source's MSB was set.
+				if dw < sw {
+					// Narrowing: mask to keep dw bits.
+					b.emit(Op{Kind: OpConstI32, I32: int32((1 << dw) - 1)})
+					b.emit(Op{Kind: OpAnd})
+				} else if srcInt.IsSigned() {
+					// Widening signed: sign-extend via wasm's
+					// dedicated `i32.extend8_s` / `i32.extend16_s`.
+					switch sw {
+					case 8:
+						b.emit(Op{Kind: OpSignExtend8})
+					case 16:
+						b.emit(Op{Kind: OpSignExtend16})
+					}
+				}
+				// Widening unsigned within i32 needs no op — the
+				// source's narrow value already has zeros above
+				// its width by construction (every store narrows).
+			case sw <= 32 && dw == 64:
+				// Sub-i32 → i64 first widens to i32 (with sign-
+				// extend if the source was signed), then extends
+				// to i64. The first step's mask was already
+				// applied at the producing store, so for unsigned
+				// sources nothing intermediate is needed.
 				if srcInt.IsSigned() {
+					switch sw {
+					case 8:
+						b.emit(Op{Kind: OpSignExtend8})
+					case 16:
+						b.emit(Op{Kind: OpSignExtend16})
+					}
 					b.emit(Op{Kind: OpExtendI32S})
 				} else {
 					b.emit(Op{Kind: OpExtendI32U})
 				}
-			case sw == 64 && dw == 32:
+			case sw == 64 && dw <= 32:
 				b.emit(Op{Kind: OpWrapI64})
+				if dw < 32 {
+					b.emit(Op{Kind: OpConstI32, I32: int32((1 << dw) - 1)})
+					b.emit(Op{Kind: OpAnd})
+				}
 			default:
 				return fmt.Errorf("ir: cast from %s to %s not yet supported", n.InnerType, n.Target)
 			}
