@@ -299,7 +299,12 @@ Deferred to a follow-up:
   assignment and ternary so `1 + 2 |> f` is `f(1 + 2)`. The
   formatter round-trips the pipe form via an `IsPipe` flag on
   Call.
-- `let else` / `if let`.
+- `if let` — **shipped**. `if let Variant(b) = expr { … } [else
+  { … }]` — pattern-binding without the match ceremony. The
+  `let` keyword is now reserved (otherwise unused; will replace
+  `var` for binding declarations in a future ergonomics pass).
+  `let else` (mandatory-divergent variant) is the natural
+  follow-up.
 - `match` guards — **shipped**. Spelled `<pattern> when <bool> =>
   <body>`. Guard runs with bindings in scope; on false, the
   match falls through to the next arm. Conservative

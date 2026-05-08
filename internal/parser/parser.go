@@ -54,6 +54,15 @@ type parser struct {
 	// emitted in this Parse so synthetic slot names stay unique
 	// across nested foreach loops.
 	foreachN int
+	// noStructLit suppresses the `Ident { … }` struct-literal
+	// shortcut while parsing expressions in positions that
+	// otherwise greedily consume a trailing `{` as the body —
+	// `if let Variant(b) = expr { … }` being the motivating
+	// case. The flag is saved + restored around the affected
+	// expression so nested expressions (`if let Some(x) = obj { … }`
+	// where `obj` is a method call returning a Foo, NOT a
+	// struct literal) still work correctly.
+	noStructLit bool
 }
 
 func (p *parser) peek() lexer.Token { return p.tokens[p.i] }
@@ -839,6 +848,70 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 
 func (p *parser) parseIf() (ast.Stmt, error) {
 	kw := p.advance()
+	// `if let <Variant>(b1, …) = <expr> { … }` — pattern-binding
+	// shorthand for a one-arm match. Disambiguated by the `let`
+	// keyword right after `if`. The match's payload bindings are
+	// in scope for Then only.
+	if p.match(lexer.Keyword, "let") {
+		p.advance() // let
+		variantTok, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		var bindings []string
+		if _, ok := p.accept(lexer.Punct, "("); ok {
+			if !p.match(lexer.Punct, ")") {
+				for {
+					nameTok, err := p.expect(lexer.Ident, "")
+					if err != nil {
+						return nil, err
+					}
+					bindings = append(bindings, nameTok.Text)
+					if _, ok := p.accept(lexer.Punct, ","); ok {
+						if p.match(lexer.Punct, ")") {
+							break
+						}
+						continue
+					}
+					break
+				}
+			}
+			if _, err := p.expect(lexer.Punct, ")"); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := p.expect(lexer.Punct, "="); err != nil {
+			return nil, err
+		}
+		// Suppress trailing struct-literal parsing while reading
+		// the source — the `{` that follows opens Then.
+		prevNS := p.noStructLit
+		p.noStructLit = true
+		src, err := p.parseExpr()
+		p.noStructLit = prevNS
+		if err != nil {
+			return nil, err
+		}
+		then, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		var els ast.Stmt
+		if _, ok := p.accept(lexer.Keyword, "else"); ok {
+			els, err = p.parseStmt()
+			if err != nil {
+				return nil, err
+			}
+		}
+		return &ast.IfLet{
+			P:           kw.Pos,
+			VariantName: variantTok.Text,
+			Bindings:    bindings,
+			Source:      src,
+			Then:        then,
+			Else:        els,
+		}, nil
+	}
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
 	}
@@ -1726,8 +1799,10 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		p.advance()
 		// `Foo { x: 1, y: 2 }`. The `{` immediately after an identifier
 		// can only mean a struct literal in expression position — there
-		// are no other constructs of that shape.
-		if p.match(lexer.Punct, "{") {
+		// are no other constructs of that shape. Suppressed in
+		// `if let` source positions where the trailing `{` opens
+		// the if-body.
+		if !p.noStructLit && p.match(lexer.Punct, "{") {
 			return p.parseStructLit(t.Pos, t.Text)
 		}
 		return &ast.Ident{P: t.Pos, Name: t.Text}, nil

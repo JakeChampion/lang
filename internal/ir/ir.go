@@ -687,6 +687,57 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 		b.closeScope()
+	case *ast.IfLet:
+		// Lower `if let Variant(b1, b2, ...) = src { Then } [else
+		// { Else }]` as: store the source pointer, compare its tag
+		// to Variant's index, and on match bind payload fields
+		// into Then-scope locals before running Then. On mismatch
+		// run Else.
+		_, varIdx, _, ok := b.lookupVariant(n.VariantName)
+		if !ok {
+			return fmt.Errorf("ir: if-let references unknown variant %q", n.VariantName)
+		}
+		ptrSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__iflet_p_%d", ptrSlot)] = ptrSlot
+		if err := b.expr(n.Source); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
+		// tag at ptr+0; compare to varIdx → i32 0/1.
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpLoad})
+		b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+		b.emit(Op{Kind: OpEq})
+		b.openIf(BlockTypeVoid)
+		// Match: bind payloads, run Then.
+		for i, name := range n.Bindings {
+			slot := b.allocSlot()
+			b.locals[name] = slot
+			bt := ast.Type(ast.NumberType{})
+			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
+				bt = n.BindingTypes[i]
+			}
+			b.scratchType[slot] = bt
+			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+			b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
+			b.emit(Op{Kind: OpAdd})
+			if isFloat(bt) {
+				b.emit(Op{Kind: OpFLoad})
+			} else {
+				b.emit(Op{Kind: OpLoad})
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		}
+		if err := b.stmt(n.Then); err != nil {
+			return err
+		}
+		if n.Else != nil {
+			b.elseBranch()
+			if err := b.stmt(n.Else); err != nil {
+				return err
+			}
+		}
+		b.closeScope()
 	case *ast.While:
 		// `block` carries break, `loop` carries continue. The body sits
 		// inside both: br 1 exits the outer block (break); br 0 jumps
