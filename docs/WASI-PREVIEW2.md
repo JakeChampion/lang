@@ -75,16 +75,19 @@ time.
 
 Splits across multiple PRs to keep blast radius bounded:
 
-- **3a — stdio writes (this PR).** `print` / `write` / `eprint` /
-  `putchar` migrate from preview-1 `fd_write(fd=1|2, …)` to
-  preview-2 `wasi:cli/stdout.get-stdout` / `get-stderr` +
+- **3a — stdio writes.** `print` / `write` / `eprint` / `putchar`
+  migrate from preview-1 `fd_write(fd=1|2, …)` to preview-2
+  `wasi:cli/stdout.get-stdout` / `get-stderr` +
   `wasi:io/streams.[method]output-stream.blocking-write-and-flush`.
   The handle returned by `get-stdout` / `get-stderr` is cached on
   first use in static memory (resource handles are opaque ints
   where 0 is valid, so the cache uses an init-flag bitfield rather
   than a 0-sentinel).
-- **3b — `read_line` / stdin (next).** Move to
-  `wasi:cli/stdin.get-stdin` + `[method]input-stream.blocking-read`.
+- **3b — `read_line` / stdin (this PR).** `wasi:cli/stdin.get-stdin`
+  + `wasi:io/streams.[method]input-stream.blocking-read`.
+  `__method_Reader_read_line` dispatches at runtime: fd==0 routes
+  through the streams path (so `stdin().read_line()` benefits);
+  other Readers stay on preview-1 `fd_read` until step 3c.
 - **3c — file I/O (after 3b).** `read_file` / `write_file` /
   `open_reader` / `open_writer` move from `path_open` +
   `fd_read` / `fd_write` to

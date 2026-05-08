@@ -107,3 +107,81 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 		t.Fatalf("stderr = %q; want %q (stdout=%q)", got, want, sout.String())
 	}
 }
+
+// TestWasmPreview2StdinReadLine exercises the native preview-2
+// stdin path: `wasi:cli/stdin.get-stdin` +
+// `wasi:io/streams.input-stream.blocking-read`, with the host
+// allocating each byte through our `cabi_realloc` export. Echoes
+// each line back via the streams stdout writer (step 3a), so this
+// test covers the full preview-2 stdio surface.
+func TestWasmPreview2StdinReadLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+	}
+	if _, err := os.Stat(adapter); err != nil {
+		t.Skipf("adapter %q not readable: %v", adapter, err)
+	}
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "echo.lang")
+	// Loop until EOF, writing each line back. write() doesn't add
+	// a newline; read_line preserves the trailing '\n', so we get
+	// byte-for-byte echo.
+	if err := os.WriteFile(srcPath, []byte(`function main(): number {
+    while (true) {
+        match (stdin().read_line()) {
+            Some(line) => { write(line); },
+            None => { return 0; }
+        }
+    }
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "echo.component.wasm")
+	emit := exec.Command(bin,
+		"-target", "wasm",
+		"-wasi-preview2",
+		"-wasi-adapter", adapter,
+		"-o", componentPath,
+		srcPath,
+	)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	input := "alpha\nbeta\ngamma\n"
+	run := exec.Command("wasmtime", "run", componentPath)
+	run.Stdin = strings.NewReader(input)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Run(); err != nil {
+		t.Fatalf("wasmtime run %s: %v\nstdout:\n%s\nstderr:\n%s",
+			componentPath, err, sout.String(), serr.String())
+	}
+	if got := sout.String(); got != input {
+		t.Fatalf("stdout = %q; want %q (stderr=%q)", got, input, serr.String())
+	}
+}

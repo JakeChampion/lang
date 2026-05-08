@@ -95,23 +95,24 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		g.stringOffset = 72
 		g.closuresBase = 72
 	}
-	// Preview-2 reserves memory[92..115] for canonical-ABI scratch:
+	// Preview-2 reserves memory[92..119] for canonical-ABI scratch:
 	//   92..103 retptr area (sized for `result<list<u8>,
 	//           stream-error>`; also fits the (ptr, len) pair from
 	//           `get-random-bytes`),
 	//   104..107 stdout output-stream handle,
 	//   108..111 stderr output-stream handle,
-	//   112..115 init flags for the cached handles.
+	//   112..115 init flags for the cached handles,
+	//   116..119 stdin input-stream handle.
 	// Push the string base past those slots whenever preview-2 is
 	// on, regardless of which preview-2 features the program
-	// actually exercises. The cost is 24 static bytes per module;
+	// actually exercises. The cost is 28 static bytes per module;
 	// the alternative (gating each slot independently) is fragile.
 	if g.preview2 {
-		if g.stringOffset < 116 {
-			g.stringOffset = 116
+		if g.stringOffset < 120 {
+			g.stringOffset = 120
 		}
-		if g.closuresBase < 116 {
-			g.closuresBase = 116
+		if g.closuresBase < 120 {
+			g.closuresBase = 120
 		}
 	}
 
@@ -189,12 +190,14 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	if g.needsRuntime {
 		g.line(`(export "memory" (memory $mem))`)
 	}
-	if g.preview2 && g.needsRandomBytes {
+	if g.preview2 {
 		// Component-model contract: any host import that returns
 		// a dynamically-sized type (list<u8>, string, …) uses
 		// `cabi_realloc` to allocate space in the guest's linear
-		// memory before writing the bytes. Our wasi:random/random
-		// import returns `list<u8>`, so we have to expose it.
+		// memory before writing the bytes. Both `get-random-bytes`
+		// and `input-stream.blocking-read` use it; export
+		// unconditionally under preview-2 rather than gate on
+		// each individual import.
 		g.line(`(export "cabi_realloc" (func $cabi_realloc))`)
 	}
 	g.indent--
