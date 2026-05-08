@@ -266,6 +266,80 @@ func TestAddrModeSinkSkipsWhenDstDiffers(t *testing.T) {
 	}
 }
 
+// If-merge stack-elim: when both arms push r0 and the
+// consumer is `pop {r0}`, the round-trip through the stack
+// is pure overhead — both arms already wrote r0 directly.
+// Drop the two pushes and the consumer pop.
+func TestIfMergeStackElimWithPopConsumer(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r1, =.LifElse",
+		"\tldr r2, =.LifEnd", // keep both labels alive
+		"\tldr r0, =1",
+		"\tpush {r0}", // then-arm push
+		"\tb .LifEnd",
+		".LifElse:",
+		"\tldr r0, =0",
+		"\tpush {r0}", // else-arm push
+		".LifEnd:",
+		"\tpop {r0}", // merge consumer
+	}, "\n")
+	got := peephole(in)
+	if strings.Contains(got, "push {r0}") {
+		t.Errorf("if-merge pushes should be elided:\n%s", got)
+	}
+	if strings.Contains(got, "pop {r0}") {
+		t.Errorf("merge consumer pop should be elided:\n%s", got)
+	}
+}
+
+// Same elim works when the consumer is `add sp, sp, #4` (the
+// IR's OpDrop), since dropping the value matches dropping
+// the pushes.
+func TestIfMergeStackElimWithDropConsumer(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r1, =.LifElse",
+		"\tldr r2, =.LifEnd",
+		"\tldr r0, =1",
+		"\tpush {r0}",
+		"\tb .LifEnd",
+		".LifElse:",
+		"\tldr r0, =0",
+		"\tpush {r0}",
+		".LifEnd:",
+		"\tadd sp, sp, #4", // OpDrop
+	}, "\n")
+	got := peephole(in)
+	if strings.Contains(got, "push {r0}") {
+		t.Errorf("pushes should be elided:\n%s", got)
+	}
+	if strings.Contains(got, "add sp, sp, #4") {
+		t.Errorf("OpDrop should be elided:\n%s", got)
+	}
+}
+
+// When the consumer is something other than `pop {r0}` /
+// `add sp, sp, #4` (e.g. `pop {r1}` for a binPop's lhs),
+// the elim doesn't fire — the pop reads from a specific
+// stack offset, which would be wrong without the pushes.
+func TestIfMergeStackElim_BinPopConsumerSkipped(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r1, =.LifElse",
+		"\tldr r2, =.LifEnd",
+		"\tldr r0, =1",
+		"\tpush {r0}",
+		"\tb .LifEnd",
+		".LifElse:",
+		"\tldr r0, =0",
+		"\tpush {r0}",
+		".LifEnd:",
+		"\tpop {r1}", // wrong consumer
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "push {r0}") {
+		t.Errorf("pushes must remain (consumer reads r1):\n%s", got)
+	}
+}
+
 // Two adjacent label declarations merge into one. References
 // to the dropped label get rewritten to the kept label.
 func TestAdjacentLabelMergeRewritesReferences(t *testing.T) {
