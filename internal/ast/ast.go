@@ -640,12 +640,19 @@ type Match struct {
 // the variant's payload positions); each binding's type is the
 // matching payload type from the EnumDecl. WildcardPattern arms
 // have an empty VariantName and Bindings.
+//
+// Guard is an optional expression of type bool that's evaluated
+// after the pattern matches and the bindings are in scope. When
+// the guard is false the arm is skipped — the match falls
+// through to the next arm. Spelled `<pattern> when <expr> => …`
+// in source. Nil for unconditional arms.
 type MatchArm struct {
 	P            Position
 	VariantName  string   // empty when IsWildcard is true
 	Bindings     []string // payload binding names, in payload order
 	BindingTypes []Type   // resolved by the checker; same length as Bindings
 	IsWildcard   bool     // `_ => …`
+	Guard        Expr     // optional `when <expr>`; nil for unconditional arms
 	Body         *Block
 }
 

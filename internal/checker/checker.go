@@ -1038,7 +1038,19 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			if i != len(n.Arms)-1 {
 				c.errf(arm.P, "wildcard `_` arm must be last in the match")
 			}
-			sawWildcard = true
+			// Wildcard with a guard doesn't satisfy exhaustiveness
+			// because the guard might be false at runtime — only
+			// an unguarded `_` is the canonical "covers
+			// everything" form.
+			if arm.Guard == nil {
+				sawWildcard = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+				}
+			}
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -1060,7 +1072,15 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		if covered[arm.VariantName] {
 			c.errf(arm.P, "variant %q already covered earlier in this match", arm.VariantName)
 		}
-		covered[arm.VariantName] = true
+		// Guarded arms don't fully cover the variant: the guard
+		// might be false at runtime, in which case the match
+		// falls through. Leaving `covered[...]` clear means a
+		// later unguarded arm for the same variant (or a
+		// wildcard) is required for exhaustiveness — and is no
+		// longer flagged as a duplicate.
+		if arm.Guard == nil {
+			covered[arm.VariantName] = true
+		}
 		if len(arm.Bindings) != len(variant.Payloads) {
 			c.errf(arm.P, "variant %s has %d payload(s), got %d binding(s)",
 				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
@@ -1078,6 +1098,14 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			}
 			arm.BindingTypes[k] = bt
 			armScope.names[name] = bt
+		}
+		// Guard runs in the bindings-in-scope frame so it can
+		// reference the payload names. Required to be bool.
+		if arm.Guard != nil {
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+			}
 		}
 		c.checkBlock(arm.Body, armScope)
 	}

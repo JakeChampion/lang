@@ -1215,6 +1215,19 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 	} else {
 		return nil, p.errorf(t.Pos, "expected variant pattern or `_` in match arm, got %s", t.Text)
 	}
+	// Optional guard: `<pattern> when <expr> => <body>`. The
+	// guard expression has bindings in scope (so a guard like
+	// `when n > 0` references the variant payload bound by the
+	// pattern). Pre-`=>` so the syntax reads in pattern → guard
+	// → body order.
+	if p.match(lexer.Keyword, "when") {
+		p.advance()
+		guard, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		arm.Guard = guard
+	}
 	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
 		return nil, err
 	}

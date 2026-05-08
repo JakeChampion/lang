@@ -659,6 +659,34 @@ function main(): i32 {
 	}
 }
 
+// Match guards: `<pattern> when <bool> => <body>`. The guard
+// runs with the pattern's bindings in scope; if it evaluates to
+// false the arm is skipped and the match falls through to the
+// next arm. Exhaustiveness is conservative — a guarded arm
+// doesn't count as covering the variant, so a fallback arm (or
+// `_`) is required.
+func TestWASMMatchGuards(t *testing.T) {
+	src := `function classify(o: Option[i32]): i32 {
+    match (o) {
+        Some(n) when n > 0 => { return 1; },
+        Some(n) when n < 0 => { return -1; },
+        Some(n) => { return 0; },
+        None => { return -2; },
+    }
+    return -99;
+}
+function main(): i32 {
+    if (classify(Some(5)) != 1) { return 1; }
+    if (classify(Some(0 - 7)) != -1) { return 2; }
+    if (classify(Some(0)) != 0) { return 3; }
+    if (classify(None) != -2) { return 4; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (match guard mismatch at step %d)", got, got)
+	}
+}
+
 // Slice views (`[T]`) — `arr[a:b]` produces a non-owning view
 // over the parent's storage. Verifies len + indexing on a slice
 // over an owned array AND sub-slicing (slice-of-slice).

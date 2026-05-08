@@ -1096,6 +1096,21 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 						}
 					}
 				}
+				// Guard runs with bindings in scope; on false,
+				// fall through to the next arm.
+				if arm.Guard != nil {
+					gv, err := i.evalExpr(arm.Guard, armEnv)
+					if err != nil {
+						return result{}, err
+					}
+					gb, ok := gv.(Bool)
+					if !ok {
+						return result{}, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+					}
+					if !bool(gb) {
+						continue
+					}
+				}
 				r, err := i.execBlock(arm.Body, armEnv)
 				if err != nil {
 					return result{}, err

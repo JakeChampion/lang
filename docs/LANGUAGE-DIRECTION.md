@@ -270,7 +270,11 @@ Deferred to a follow-up:
   formatter round-trips the pipe form via an `IsPipe` flag on
   Call.
 - `let else` / `if let`.
-- `match` guards (`when n > 0`).
+- `match` guards — **shipped**. Spelled `<pattern> when <bool> =>
+  <body>`. Guard runs with bindings in scope; on false, the
+  match falls through to the next arm. Conservative
+  exhaustiveness: a guarded arm doesn't count as covering the
+  variant, so a fallback arm (or `_`) is required.
 - `use` syntax (Gleam-style). Replaces a future `?` because it
   generalizes more.
 

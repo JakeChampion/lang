@@ -844,6 +844,26 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.breakStack = append(b.breakStack, matchEndD)
 		for _, arm := range n.Arms {
 			if arm.IsWildcard {
+				// Guarded wildcard arm: the guard runs in the
+				// outer scope (no bindings to introduce). On
+				// false, fall through to the next arm via the
+				// per-arm block; on true, run the body and
+				// br to matchEnd.
+				if arm.Guard != nil {
+					b.openBlock(BlockTypeVoid)
+					armEndD := b.depth
+					if err := b.expr(arm.Guard); err != nil {
+						return err
+					}
+					b.emit(Op{Kind: OpNot})
+					b.brTo(armEndD, true) // skip if !guard
+					if err := b.stmt(arm.Body); err != nil {
+						return err
+					}
+					b.brTo(matchEndD, false)
+					b.closeScope()
+					continue
+				}
 				if err := b.stmt(arm.Body); err != nil {
 					return err
 				}
@@ -894,6 +914,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 					b.emit(Op{Kind: OpLoad})
 				}
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+			// Optional guard: with bindings now in locals, run
+			// the guard expression. On false, branch out of the
+			// per-arm block (= fall through to the next arm) so
+			// the pattern conceptually doesn't match this value.
+			if arm.Guard != nil {
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpNot})
+				b.brTo(outerArmD, true)
 			}
 			if err := b.stmt(arm.Body); err != nil {
 				return err
