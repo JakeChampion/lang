@@ -28,6 +28,28 @@ import (
 // free of the extra structure so they can be loaded under minimal
 // hosts.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
+	return EmitWithOptions(prog, info, EmitOptions{})
+}
+
+// EmitOptions tunes the WAT emission. Each field is conservative —
+// the zero value matches what the original `Emit` produced before
+// options were introduced.
+type EmitOptions struct {
+	// Preview2 swaps any builtin that has a native WASI Preview 2
+	// equivalent off its preview-1 import (currently:
+	// `random_bytes` -> `wasi:random/random.get-random-bytes`).
+	// Other imports stay on preview-1 and are translated by the
+	// preview-1 adapter at `wasm-tools component new` time. Setting
+	// this also exports `cabi_realloc` so the host can allocate
+	// component-model `list<u8>` return buffers in our linear
+	// memory.
+	Preview2 bool
+}
+
+// EmitWithOptions is the option-aware sibling of Emit. The two share
+// the same lowering pipeline (closure conversion → IR → IR opts →
+// EmitFromIR); the options only influence the WAT layer.
+func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (string, error) {
 	// ir.Lower runs closure conversion as a precondition (hoisting
 	// nested functions, rewriting captures), then produces an
 	// ir.Program. ir.Fold runs constant folding on the lowered ops
@@ -50,14 +72,15 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	// folding). Run them to a fixed point so the cascade settles.
 	ir.OptimizeCleanup(ip)
 	ir.EliminateDeadCode(ip)
-	return EmitFromIR(prog, info, ip)
+	return EmitFromIRWithOptions(prog, info, ip, opts)
 }
 
 type generator struct {
-	out     strings.Builder
-	info    *checker.Info
-	indent  int
-	current *ast.FuncDecl
+	out      strings.Builder
+	info     *checker.Info
+	indent   int
+	current  *ast.FuncDecl
+	preview2 bool // emit native preview-2 imports + cabi_realloc; otherwise stay on preview-1 names.
 	// origTopLevelCount records how many functions the source had
 	// before closure conversion appended hoisted ones. The first
 	// origTopLevelCount entries get static closure cells (env=0)
@@ -1207,7 +1230,11 @@ func (g *generator) internString(s string) int {
 //	80..83  env_ptrs heap pointer (filled by environ_get)
 //	84..87  environ_sizes_get out: count
 //	88..91  environ_sizes_get out: bufsize
+//	92..95  preview-2 random retptr.ptr (when needsRandomBytes && preview2)
+//	96..99  preview-2 random retptr.len (paired with the slot above)
 //	96+     string data, each entry: 4-byte length prefix then bytes
+//	  (string data starts at 100 instead of 96 when the preview-2
+//	  random retptr is in play; see EmitFromIRWithOptions.)
 func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
 	if g.needsArgs {
@@ -1225,7 +1252,24 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(import "wasi_snapshot_preview1" "proc_exit" (func $__wasi_proc_exit (param i32)))`)
 	}
 	if g.needsRandomBytes {
-		g.line(`(import "wasi_snapshot_preview1" "random_get" (func $__wasi_random_get (param i32 i32) (result i32)))`)
+		if g.preview2 {
+			// Component-model lowered signature for
+			//   get-random-bytes: func(len: u64) -> list<u8>
+			// is `(param i64 i32)` where i32 is a "return area"
+			// pointer. The host calls our exported
+			// `cabi_realloc` to allocate a buffer in our linear
+			// memory, fills it with the random bytes, then
+			// writes the (ptr, len) pair to the return area.
+			// See cmd/lang/wit/lang.wit for the world this
+			// import comes from; the WAT-level module name
+			// `wasi:random/random@0.2.0` matches the legacy
+			// canonical-ABI mangling that wit-bindgen-rust and
+			// `wasm-tools component embed --dummy-names legacy`
+			// also produce.
+			g.line(`(import "wasi:random/random@0.2.0" "get-random-bytes" (func $__wasi_random_get_p2 (param i64 i32)))`)
+		} else {
+			g.line(`(import "wasi_snapshot_preview1" "random_get" (func $__wasi_random_get (param i32 i32) (result i32)))`)
+		}
 	}
 	if g.needsTcp {
 		// sock_accept(sock, fdflags, fd_out_ptr) -> errno —
@@ -1257,18 +1301,50 @@ func (g *generator) emitRuntimePreamble() {
 		// $__lang_alloc bumps the allocator pointer at memory[40] and
 		// returns the address that was there before the bump. There's
 		// no free — arrays in lang are immutable but not GC'd.
+		//
+		// Grows memory on demand: if the post-bump end goes past the
+		// current memory size (in pages), call `memory.grow` for the
+		// shortfall. The original implementation skipped this, which
+		// was fine for tiny programs but breaks under preview-2 — the
+		// preview-1 adapter calls our exported `cabi_realloc` (which
+		// hits this allocator) requesting a full 64 KiB page at
+		// startup and the canonical-ABI runtime check fails as soon
+		// as we hand back a pointer past the current memory.
 		g.line(`(func $__lang_alloc (param $size i32) (result i32)`)
 		g.indent++
-		g.line(`(local $ptr i32)`)
+		g.line(`(local $ptr i32) (local $end i32) (local $need i32)`)
 		// ptr = mem[40]
 		g.line(`i32.const 40`)
 		g.line(`i32.load`)
 		g.line(`local.set $ptr`)
-		// mem[40] = ptr + size
-		g.line(`i32.const 40`)
+		// end = ptr + size
 		g.line(`local.get $ptr`)
 		g.line(`local.get $size`)
 		g.line(`i32.add`)
+		g.line(`local.set $end`)
+		// need = ((end + 65535) >> 16) - memory.size
+		g.line(`local.get $end`)
+		g.line(`i32.const 65535`)
+		g.line(`i32.add`)
+		g.line(`i32.const 16`)
+		g.line(`i32.shr_u`)
+		g.line(`memory.size`)
+		g.line(`i32.sub`)
+		g.line(`local.set $need`)
+		// if (i32) need > 0: memory.grow need (drop result; trust host).
+		g.line(`local.get $need`)
+		g.line(`i32.const 0`)
+		g.line(`i32.gt_s`)
+		g.line(`if`)
+		g.indent++
+		g.line(`local.get $need`)
+		g.line(`memory.grow`)
+		g.line(`drop`)
+		g.indent--
+		g.line(`end`)
+		// mem[40] = end
+		g.line(`i32.const 40`)
+		g.line(`local.get $end`)
 		g.line(`i32.store`)
 		g.line(`local.get $ptr`)
 		g.indent--
@@ -1585,6 +1661,16 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsRandomBytes {
 		g.emitRandomBytesHelper()
+		if g.preview2 {
+			// `cabi_realloc` is the canonical-ABI allocator the
+			// host invokes to materialise `list<u8>` return
+			// values in our linear memory. Tied to the same
+			// flag as the preview-2 random import — adding a
+			// new preview-2 import that returns a list/string
+			// type should reuse this helper rather than emit
+			// its own.
+			g.emitCabiRealloc()
+		}
 	}
 	if g.needsTcp {
 		g.emitTcpHelpers()
@@ -2477,6 +2563,10 @@ func (g *generator) emitTcpHelpers() {
 }
 
 func (g *generator) emitRandomBytesHelper() {
+	if g.preview2 {
+		g.emitRandomBytesHelperPreview2()
+		return
+	}
 	g.line(`(func $random_bytes (param $n i32) (result i32)`)
 	g.indent++
 	g.line(`(local $data i32)`)
@@ -2508,6 +2598,90 @@ func (g *generator) emitRandomBytesHelper() {
 	g.line(`i32.const 0`)
 	g.line(`i32.store8`)
 	g.line(`local.get $data`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitRandomBytesHelperPreview2 emits `$random_bytes` against the
+// preview-2 `wasi:random/random.get-random-bytes` import. The
+// canonical-ABI lowered signature is `(param i64 i32)`: the i64 is
+// the requested length and the i32 is a "return area" pointer where
+// the host writes a (ptr, len) pair. The host calls our exported
+// `cabi_realloc` to allocate the buffer in our linear memory, fills
+// it, and writes back. We then memcpy those bytes into a
+// length-prefixed + NUL-terminated string-shape allocation so the
+// rest of the runtime sees the same layout it does on the
+// preview-1 path.
+//
+// Memory[92..99] is the static return-area slot — see the runtime
+// memory layout comment near `emitRuntimePreamble`. Reserved only
+// when `needsRandomBytes && preview2` so it doesn't displace
+// strings/closures unnecessarily.
+func (g *generator) emitRandomBytesHelperPreview2() {
+	g.line(`(func $random_bytes (param $n i32) (result i32)`)
+	g.indent++
+	g.line(`(local $data i32) (local $host_ptr i32) (local $host_len i32)`)
+	// get-random-bytes(len: u64, retptr) — host writes (ptr, len) at retptr.
+	g.line(`local.get $n`)
+	g.line(`i64.extend_i32_u`)
+	g.line(`i32.const 92`) // retptr slot
+	g.line(`call $__wasi_random_get_p2`)
+	// Read back (host_ptr, host_len) from the retptr slot.
+	g.line(`i32.const 92`)
+	g.line(`i32.load`)
+	g.line(`local.set $host_ptr`)
+	g.line(`i32.const 96`)
+	g.line(`i32.load`)
+	g.line(`local.set $host_len`)
+	// Allocate string-shape buffer: 4-byte length prefix + bytes + NUL.
+	g.line(`local.get $host_len`)
+	g.line(`i32.const 5`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $data`)
+	// Length prefix at data - 4.
+	g.line(`local.get $data`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.store`)
+	// memory.copy(dest=data, src=host_ptr, n=host_len). The host
+	// allocated host_ptr via cabi_realloc, so it lives in our
+	// linear memory and memory.copy can move it freely.
+	g.line(`local.get $data`)
+	g.line(`local.get $host_ptr`)
+	g.line(`local.get $host_len`)
+	g.line(`memory.copy`)
+	// Trailing NUL at data + host_len.
+	g.line(`local.get $data`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store8`)
+	g.line(`local.get $data`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitCabiRealloc emits the canonical-ABI realloc entry point that
+// the preview-2 host invokes to allocate `list<u8>` (and other
+// dynamically-sized) return buffers in our linear memory. The
+// signature is fixed by the canonical ABI:
+//
+//	(orig_ptr, orig_size, align, new_size) -> ptr
+//
+// Random-bytes only ever calls it with orig_ptr=0 (fresh
+// allocation) and align=1, so we ignore the realloc-shrink and
+// realloc-grow cases for now. If a future preview-2 import needs
+// real reallocation, the body needs to grow a memcpy from the
+// previous buffer.
+func (g *generator) emitCabiRealloc() {
+	g.line(`(func $cabi_realloc (param $orig_ptr i32) (param $orig_size i32) (param $align i32) (param $new_size i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $new_size`)
+	g.line(`call $__lang_alloc`)
 	g.indent--
 	g.line(`)`)
 }

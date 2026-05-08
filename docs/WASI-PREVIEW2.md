@@ -33,7 +33,7 @@ Each step is shippable on its own — earlier steps don't break when
 later steps land, and tests for the preview-1 path keep running
 until step 5.
 
-### Step 1 — Component Model scaffolding *(this PR)*
+### Step 1 — Component Model scaffolding
 
 - Add `--wasi-preview2` flag to the `lang` CLI (off by default).
 - When the flag is on, post-process the existing preview-1 module
@@ -48,20 +48,28 @@ This step delivers no new capability — programs still use the
 preview-1 imports under the hood — but it lays the wiring for
 subsequent steps.
 
-### Step 2 — Migrate `random_bytes`
+### Step 2 — Migrate `random_bytes` *(this PR)*
 
 Smallest blast radius. Replace the `random_get` import with the
 preview-2 equivalent:
 
 ```
 (import "wasi:random/random@0.2.0" "get-random-bytes"
-        (func $rng (param i64) (result <list u8>)))
+        (func $rng (param i64 i32)))
 ```
 
-`list u8` is a component-level type (a record `{ptr: u32, len:
-u32}` from the canonical ABI's lowering). The codegen learns to
-lift / lower that exactly once, here, and reuses the pattern in
-later steps.
+`list u8` is a component-level type; the canonical-ABI legacy
+mangling lowers it to `(param i64 i32)` where the i64 is the
+requested length and the i32 is a "return area" pointer where the
+host writes a `(ptr, len)` pair. The host calls our exported
+`cabi_realloc` to allocate the buffer in our linear memory; we
+memcpy the bytes into a length-prefixed + NUL-terminated string
+(matching the existing `random_bytes` shape) before returning.
+
+The same lift/lower pattern is reused in later steps. Other
+WASI imports (`fd_write`, `fd_read`, args, env, …) still go
+through the preview-1 adapter at `wasm-tools component new`
+time.
 
 ### Step 3 — Migrate stdio + file I/O to streams
 
