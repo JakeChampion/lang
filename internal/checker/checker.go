@@ -613,6 +613,8 @@ func (c *checker) resolveTypesInBlock(b *ast.Block) {
 		case *ast.IfLet:
 			c.resolveTypesInBlock(asBlock(x.Then))
 			c.resolveTypesInBlock(asBlock(x.Else))
+		case *ast.LetElse:
+			c.resolveTypesInBlock(x.Else)
 		case *ast.While:
 			c.resolveTypesInBlock(asBlock(x.Body))
 		case *ast.For:
@@ -647,6 +649,54 @@ func asBlock(s ast.Stmt) *ast.Block {
 		return b
 	}
 	return nil
+}
+
+// blockDiverges reports whether every control-flow path
+// through `b` exits via Return / Break / Continue. Used by
+// `let else` to enforce the divergent-else contract — without
+// it, fall-through would leave the pattern's bindings
+// uninitialised in the surrounding scope. Conservative: a
+// block whose last statement is itself a divergent statement
+// counts; nested ifs / matches must have ALL arms divergent.
+func blockDiverges(b *ast.Block) bool {
+	if b == nil || len(b.Stmts) == 0 {
+		return false
+	}
+	return stmtDiverges(b.Stmts[len(b.Stmts)-1])
+}
+
+func stmtDiverges(s ast.Stmt) bool {
+	switch x := s.(type) {
+	case *ast.Return, *ast.Break, *ast.Continue:
+		return true
+	case *ast.Block:
+		return blockDiverges(x)
+	case *ast.If:
+		// Both arms must diverge (and the else arm must
+		// exist) — a one-armed if can fall through.
+		if x.Else == nil {
+			return false
+		}
+		return stmtDiverges(x.Then) && stmtDiverges(x.Else)
+	case *ast.IfLet:
+		if x.Else == nil {
+			return false
+		}
+		return stmtDiverges(x.Then) && stmtDiverges(x.Else)
+	case *ast.Match:
+		// Every arm must diverge for the match itself to
+		// diverge. Wildcard arm is required for the match to
+		// be exhaustive at this point (the checker has
+		// already verified that), so we don't need a separate
+		// "did we see a wildcard" branch.
+		for _, arm := range x.Arms {
+			if !blockDiverges(arm.Body) {
+				return false
+			}
+		}
+		return len(x.Arms) > 0
+	}
+	return false
 }
 
 // resolveType rewrites a single Type slot in place. Handles
@@ -997,6 +1047,67 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.checkStmt(n.Then, s)
 		if n.Else != nil {
 			c.checkStmt(n.Else, s)
+		}
+	case *ast.LetElse:
+		// Same shape as IfLet but bindings escape into the
+		// surrounding scope (= mutate `s` directly) and the
+		// else block must diverge.
+		st := c.checkExpr(n.Source, s)
+		et, ok := st.(ast.EnumType)
+		if !ok {
+			if st != nil {
+				c.errf(n.Source.Pos(), "let-else source must be an enum value, got %s", st)
+			}
+			c.checkBlock(n.Else, s)
+			return
+		}
+		ed := c.info.Enums[et.Name]
+		if ed == nil {
+			c.errf(n.Source.Pos(), "unknown enum %q", et.Name)
+			c.checkBlock(n.Else, s)
+			return
+		}
+		var sub map[string]ast.Type
+		if len(ed.TypeParams) == len(et.Args) && len(et.Args) > 0 {
+			sub = make(map[string]ast.Type, len(ed.TypeParams))
+			for i, tp := range ed.TypeParams {
+				sub[tp] = et.Args[i]
+			}
+		}
+		var variant *ast.EnumVariant
+		for i := range ed.Variants {
+			if ed.Variants[i].Name == n.VariantName {
+				variant = &ed.Variants[i]
+				break
+			}
+		}
+		if variant == nil {
+			c.errf(n.P, "variant %q is not part of enum %s", n.VariantName, ed.Name)
+			c.checkBlock(n.Else, s)
+			return
+		}
+		if len(n.Bindings) != len(variant.Payloads) {
+			c.errf(n.P, "variant %s has %d payload(s), got %d binding(s)",
+				n.VariantName, len(variant.Payloads), len(n.Bindings))
+		}
+		// Bindings flow into the ENCLOSING scope so later
+		// statements see them. Conceptually: the else branch
+		// diverges, so on fall-through to the rest of the
+		// block, the bindings are guaranteed initialised.
+		n.BindingTypes = make([]ast.Type, len(n.Bindings))
+		for k, name := range n.Bindings {
+			var bt ast.Type
+			if k < len(variant.Payloads) {
+				bt = substituteType(variant.Payloads[k], sub)
+			}
+			n.BindingTypes[k] = bt
+			s.names[name] = bt
+		}
+		// Else runs in its own block scope (the bindings
+		// aren't available there — only on the match path).
+		c.checkBlock(n.Else, s)
+		if !blockDiverges(n.Else) {
+			c.errf(n.Else.P, "let-else: else branch must diverge (return / break / continue)")
 		}
 	case *ast.IfLet:
 		// Source must produce an enum whose variant list contains

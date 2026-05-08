@@ -375,6 +375,12 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 		if x.Else != nil {
 			substituteStmt(x.Else, sub)
 		}
+	case *ast.LetElse:
+		substituteExpr(x.Source, sub)
+		for i := range x.BindingTypes {
+			x.BindingTypes[i] = substituteType(x.BindingTypes[i], sub)
+		}
+		substituteBlock(x.Else, sub)
 	case *ast.While:
 		substituteExpr(x.Cond, sub)
 		substituteStmt(x.Body, sub)
@@ -513,6 +519,13 @@ func cloneStmt(s ast.Stmt) ast.Stmt {
 		if x.Else != nil {
 			c.Else = cloneStmt(x.Else)
 		}
+		return &c
+	case *ast.LetElse:
+		c := *x
+		c.Source = cloneExpr(x.Source)
+		c.Bindings = append([]string(nil), x.Bindings...)
+		c.BindingTypes = append([]ast.Type(nil), x.BindingTypes...)
+		c.Else = cloneBlock(x.Else)
 		return &c
 	case *ast.While:
 		c := *x
@@ -692,6 +705,9 @@ func walkStmtStructLits(s ast.Stmt, fn func(*ast.StructLit)) {
 		if x.Else != nil {
 			walkStmtStructLits(x.Else, fn)
 		}
+	case *ast.LetElse:
+		walkExprStructLits(x.Source, fn)
+		walkBlockStructLits(x.Else, fn)
 	case *ast.While:
 		walkExprStructLits(x.Cond, fn)
 		walkStmtStructLits(x.Body, fn)
@@ -898,6 +914,11 @@ func rewriteStmtTypes(s ast.Stmt, info *checker.Info, into map[instKey][]ast.Typ
 		if x.Else != nil {
 			rewriteStmtTypes(x.Else, info, into)
 		}
+	case *ast.LetElse:
+		for i := range x.BindingTypes {
+			x.BindingTypes[i] = rewriteType(x.BindingTypes[i], info, into)
+		}
+		rewriteBlockTypes(x.Else, info, into)
 	case *ast.While:
 		rewriteStmtTypes(x.Body, info, into)
 	case *ast.For:
@@ -946,6 +967,9 @@ func walkStmt(s ast.Stmt, fn func(*ast.Call)) {
 		if x.Else != nil {
 			walkStmt(x.Else, fn)
 		}
+	case *ast.LetElse:
+		walkExpr(x.Source, fn)
+		walkBlock(x.Else, fn)
 	case *ast.While:
 		walkExpr(x.Cond, fn)
 		walkStmt(x.Body, fn)

@@ -326,6 +326,24 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.b.WriteString(" else ")
 			f.formatStmt(x.Else, depth)
 		}
+	case *ast.LetElse:
+		f.b.WriteString("let ")
+		f.b.WriteString(x.VariantName)
+		if len(x.Bindings) > 0 {
+			f.b.WriteByte('(')
+			for j, b := range x.Bindings {
+				if j > 0 {
+					f.b.WriteString(", ")
+				}
+				f.b.WriteString(b)
+			}
+			f.b.WriteByte(')')
+		}
+		f.b.WriteString(" = ")
+		f.formatExpr(x.Source, precLowest)
+		f.b.WriteString(" else ")
+		f.formatBlock(x.Else, depth)
+		f.b.WriteByte(';')
 	case *ast.IfLet:
 		f.b.WriteString("if let ")
 		f.b.WriteString(x.VariantName)

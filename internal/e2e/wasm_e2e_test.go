@@ -697,6 +697,37 @@ function main(): i32 {
 	}
 }
 
+// `let Variant(b) = expr else { divergent };` —
+// pattern-binding declaration with mandatory-divergent else.
+// Bindings flow into the enclosing scope, so subsequent
+// statements see them as if they were declared via `var`.
+// The else branch must terminate the surrounding control
+// flow; the checker enforces this at compile time.
+func TestWASMLetElseHappyPath(t *testing.T) {
+	src := `function getOpt(): Option[i32] { return Some(42); }
+function main(): i32 {
+    let Some(n) = getOpt() else { return 1; };
+    return n;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (let-else Some path)", got)
+	}
+}
+
+// Mismatch path: source returns None, else block runs and
+// returns 1. Verifies the bindings stay unread on the diverging
+// path so the lowering doesn't trip on uninitialised slots.
+func TestWASMLetElseMismatchDiverges(t *testing.T) {
+	src := `function getOpt(): Option[i32] { return None; }
+function main(): i32 {
+    let Some(n) = getOpt() else { return 1; };
+    return n;
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (let-else None should take else)", got)
+	}
+}
+
 // `if let Variant(b) = expr { … }` — pattern-binding without
 // the match ceremony. Common need in HTTP handlers / Result
 // chains where you want to unwrap one variant and proceed flat

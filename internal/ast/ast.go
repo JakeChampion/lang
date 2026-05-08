@@ -627,6 +627,22 @@ type IfLet struct {
 	Then         Stmt
 	Else         Stmt // may be nil
 }
+
+// LetElse is `let <Variant>(b1, b2, …) = <expr> else { <divergent>
+// };` — pattern-binding declaration with a mandatory-divergent
+// else. On match, the bindings are introduced into the enclosing
+// scope (live for the rest of the block). On mismatch, the else
+// block runs and must terminate the surrounding control flow
+// (return / break / continue) — the checker enforces this so
+// fall-through into "bindings used uninitialised" is impossible.
+type LetElse struct {
+	P            Position
+	VariantName  string
+	Bindings     []string
+	BindingTypes []Type
+	Source       Expr
+	Else         *Block
+}
 type While struct {
 	P    Position
 	Cond Expr
@@ -718,6 +734,7 @@ type MatchArm struct {
 func (s *Block) Pos() Position    { return s.P }
 func (s *If) Pos() Position       { return s.P }
 func (s *IfLet) Pos() Position    { return s.P }
+func (s *LetElse) Pos() Position  { return s.P }
 func (s *While) Pos() Position    { return s.P }
 func (s *For) Pos() Position      { return s.P }
 func (s *Break) Pos() Position    { return s.P }
@@ -732,6 +749,7 @@ func (s *FuncDecl) Pos() Position { return s.P }
 func (*Block) isStmt()    {}
 func (*If) isStmt()       {}
 func (*IfLet) isStmt()    {}
+func (*LetElse) isStmt()  {}
 func (*While) isStmt()    {}
 func (*For) isStmt()      {}
 func (*Break) isStmt()    {}

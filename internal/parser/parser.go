@@ -827,6 +827,8 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseReturn()
 		case "var":
 			return p.parseVar()
+		case "let":
+			return p.parseLetElse()
 		case "switch":
 			return p.parseSwitch()
 		case "match":
@@ -1410,6 +1412,73 @@ func (p *parser) parseVar() (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.Var{P: kw.Pos, Name: name.Text, Type: typ, Init: init}, nil
+}
+
+// parseLetElse parses `let <Variant>(b1, b2, …) = <expr> else
+// { <divergent> };`. Bindings introduced by the pattern are
+// added to the enclosing scope (live for the rest of the
+// block); the else branch must terminate the surrounding
+// control flow — the checker enforces that, here we just parse
+// the syntax.
+func (p *parser) parseLetElse() (ast.Stmt, error) {
+	kw := p.advance() // let
+	variantTok, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	var bindings []string
+	if _, ok := p.accept(lexer.Punct, "("); ok {
+		if !p.match(lexer.Punct, ")") {
+			for {
+				nameTok, err := p.expect(lexer.Ident, "")
+				if err != nil {
+					return nil, err
+				}
+				bindings = append(bindings, nameTok.Text)
+				if _, ok := p.accept(lexer.Punct, ","); ok {
+					if p.match(lexer.Punct, ")") {
+						break
+					}
+					continue
+				}
+				break
+			}
+		}
+		if _, err := p.expect(lexer.Punct, ")"); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	// Suppress trailing struct-literal parsing while reading
+	// the source, so `obj { … }` doesn't eat the `else`-side
+	// trailer. The Var-init form doesn't need this because it
+	// uses `;`, but `let else` follows the source with `else`.
+	prevNS := p.noStructLit
+	p.noStructLit = true
+	src, err := p.parseExpr()
+	p.noStructLit = prevNS
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Keyword, "else"); err != nil {
+		return nil, err
+	}
+	elseBlk, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	return &ast.LetElse{
+		P:           kw.Pos,
+		VariantName: variantTok.Text,
+		Bindings:    bindings,
+		Source:      src,
+		Else:        elseBlk,
+	}, nil
 }
 
 // ---------- Expressions ----------

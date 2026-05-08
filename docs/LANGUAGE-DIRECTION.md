@@ -300,11 +300,14 @@ Deferred to a follow-up:
   formatter round-trips the pipe form via an `IsPipe` flag on
   Call.
 - `if let` — **shipped**. `if let Variant(b) = expr { … } [else
-  { … }]` — pattern-binding without the match ceremony. The
-  `let` keyword is now reserved (otherwise unused; will replace
-  `var` for binding declarations in a future ergonomics pass).
-  `let else` (mandatory-divergent variant) is the natural
-  follow-up.
+  { … }]` — pattern-binding without the match ceremony.
+- `let else` — **shipped**. `let Variant(b) = expr else {
+  divergent };` — pattern-binding declaration whose bindings
+  flow into the enclosing scope; the else branch must
+  terminate the surrounding control flow. Checker enforces
+  divergence via `blockDiverges` (recursive: a block diverges
+  iff its last statement does; if/match diverge iff every arm
+  diverges).
 - `match` guards — **shipped**. Spelled `<pattern> when <bool> =>
   <body>`. Guard runs with bindings in scope; on false, the
   match falls through to the next arm. Conservative
