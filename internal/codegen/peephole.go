@@ -94,10 +94,151 @@ func peepPass(lines []string) []string {
 			continue
 		}
 
+		// 9: address-mode sink — fold `add/sub rD, rB, #N`
+		// followed by `ldr rD, [rD]` (or ldrb) into a single
+		// `ldr rD, [rB, #±N]`. The trailing load overwrites
+		// rD, so the temp register isn't read after the load
+		// and the original add/sub becomes pure overhead.
+		// Same shape Cranelift's ISLE tutorial calls out as
+		// "sink the offset into the addressing mode".
+		if collapsed, ok := tryAddrModeSink(out, line); ok {
+			out = collapsed
+			continue
+		}
+
 		_ = i
 		out = append(out, line)
 	}
 	return out
+}
+
+// tryAddrModeSink recognises the two-line shape
+//
+//	add  rD, rB, #N        (or `sub rD, rB, #N`)
+//	ldr  rD, [rD]          (or `ldrb`)
+//
+// and rewrites it to
+//
+//	ldr  rD, [rB, #N]      (negated for sub)
+//
+// dropping the address compute. The trailing load overwrites
+// rD, so the add/sub's only consumer is gone — the original
+// instruction becomes dead. Stores are intentionally not
+// folded: `str rX, [rD]` doesn't write rD, so subsequent code
+// might still read it, and verifying that requires liveness.
+//
+// Offset window is 0..255 (the same conservative window the
+// preceding tryRrImmFold uses). ARMv7-A actually accepts
+// -4095..4095 for word/byte loads, so we leave headroom for
+// future widening if a hot path appears.
+func tryAddrModeSink(out []string, cur string) ([]string, bool) {
+	if len(out) < 1 {
+		return nil, false
+	}
+	prev := out[len(out)-1]
+	op, dst, base, imm, ok := matchAddSubImm(prev)
+	if !ok {
+		return nil, false
+	}
+	loadOp, ld, addrReg, ok := matchLoadIndirect(cur)
+	if !ok || ld != dst || addrReg != dst {
+		return nil, false
+	}
+	signed := imm
+	if op == "sub" {
+		signed = -imm
+	}
+	if signed < -4095 || signed > 4095 {
+		return nil, false
+	}
+	rewrittenLine := "\t" + loadOp + " " + ld + ", [" + base + ", #" + signedItoa(signed) + "]"
+	rewritten := append(out[:len(out)-1], rewrittenLine)
+	return rewritten, true
+}
+
+// matchAddSubImm peels back `add rD, rB, #N` or `sub rD, rB, #N`,
+// returning the opcode, destination, base, and immediate.
+func matchAddSubImm(line string) (op, dst, base string, imm int, ok bool) {
+	s := trim(line)
+	switch {
+	case strings.HasPrefix(s, "add "):
+		op = "add"
+		s = s[len("add "):]
+	case strings.HasPrefix(s, "sub "):
+		op = "sub"
+		s = s[len("sub "):]
+	default:
+		return "", "", "", 0, false
+	}
+	first, rest := splitFirst(s)
+	second, third := splitFirst(rest)
+	if first == "" || second == "" || !strings.HasPrefix(third, "#") {
+		return "", "", "", 0, false
+	}
+	n, ok := parseDecimal(third[1:])
+	if !ok {
+		return "", "", "", 0, false
+	}
+	return op, first, second, n, true
+}
+
+// matchLoadIndirect peels back `ldr rD, [rA]` (or ldrb) with
+// no offset — the candidate for sinking an address compute
+// into. Returns the opcode, destination, and the bracketed
+// register.
+func matchLoadIndirect(line string) (op, dst, base string, ok bool) {
+	s := trim(line)
+	switch {
+	case strings.HasPrefix(s, "ldr "):
+		op = "ldr"
+		s = s[len("ldr "):]
+	case strings.HasPrefix(s, "ldrb "):
+		op = "ldrb"
+		s = s[len("ldrb "):]
+	default:
+		return "", "", "", false
+	}
+	dst, rest := splitFirst(s)
+	if dst == "" || !strings.HasPrefix(rest, "[") || !strings.HasSuffix(rest, "]") {
+		return "", "", "", false
+	}
+	inner := rest[1 : len(rest)-1]
+	if strings.ContainsAny(inner, ",") {
+		// Already has an offset — leave alone.
+		return "", "", "", false
+	}
+	return op, dst, inner, true
+}
+
+// parseDecimal accepts a non-negative decimal integer string
+// and returns its value. Leading sign / hex / negative not
+// accepted — the callers of tryAddrModeSink only feed it the
+// `#N` form arith-imm peeps emit.
+func parseDecimal(s string) (int, bool) {
+	if s == "" {
+		return 0, false
+	}
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+		if n > 1<<30 {
+			return 0, false
+		}
+	}
+	return n, true
+}
+
+// signedItoa renders a (possibly negative) integer in decimal
+// — the bare itoa elsewhere only handles non-negatives.
+func signedItoa(n int) string {
+	if n < 0 {
+		return "-" + itoa(-n)
+	}
+	return itoa(n)
 }
 
 // tryRrImmFold folds a 3-operand register/register/r0
