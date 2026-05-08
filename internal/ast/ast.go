@@ -100,10 +100,22 @@ type FuncType struct {
 	Result Type
 }
 
-// StructType is a nominal reference to a top-level `struct` declaration.
-// Two StructTypes are equal iff their Name fields match. The actual
-// field list lives on the program's StructDecl, looked up via Name.
-type StructType struct{ Name string }
+// StructType is a nominal reference to a top-level `struct`
+// declaration, optionally with concrete type arguments. `Args`
+// is empty for non-generic structs (`Point`); populated for
+// generic instantiations (`Pair[i32, string]` →
+// `StructType{Name: "Pair", Args: [i32, string]}`).
+//
+// Two StructTypes are equal when their names match AND their
+// type argument lists are pairwise equal — same shape as
+// EnumType. The monomorphisation pass mangles populated-Args
+// references into a flat name (`Pair__i32__string`) before any
+// later stage sees them, so codegen / interp / printer keep
+// their existing "names match" assumption.
+type StructType struct {
+	Name string
+	Args []Type
+}
 
 // EnumType is a nominal reference to a top-level `enum` declaration,
 // optionally with concrete type arguments. `Args` is empty for
@@ -168,7 +180,19 @@ func (t TupleType) String() string {
 	}
 	return out + ")"
 }
-func (s StructType) String() string { return s.Name }
+func (s StructType) String() string {
+	if len(s.Args) == 0 {
+		return s.Name
+	}
+	out := s.Name + "["
+	for i, a := range s.Args {
+		if i > 0 {
+			out += ", "
+		}
+		out += a.String()
+	}
+	return out + "]"
+}
 func (e EnumType) String() string {
 	if len(e.Args) == 0 {
 		return e.Name
@@ -273,7 +297,15 @@ func Equal(a, b Type) bool {
 		return true
 	case StructType:
 		y, ok := b.(StructType)
-		return ok && x.Name == y.Name
+		if !ok || x.Name != y.Name || len(x.Args) != len(y.Args) {
+			return false
+		}
+		for i := range x.Args {
+			if !Equal(x.Args[i], y.Args[i]) {
+				return false
+			}
+		}
+		return true
 	case EnumType:
 		y, ok := b.(EnumType)
 		if !ok || x.Name != y.Name || len(x.Args) != len(y.Args) {
@@ -446,6 +478,14 @@ type StructLit struct {
 	P        Position
 	TypeName string
 	Fields   []FieldInit
+	// TypeArgs is filled by the checker when the literal
+	// instantiates a generic struct (StructDecl with non-empty
+	// TypeParams). Each entry is the inferred concrete type for
+	// the corresponding type parameter, in declaration order.
+	// The monomorphisation pass uses it to mangle TypeName into
+	// `<base>__<arg1>__<arg2>` and clear the field. After
+	// monomorph runs, every StructLit has TypeArgs empty.
+	TypeArgs []Type
 }
 
 // TupleLit is `(e1, e2, …)`. Codegen lowers tuples to heap-allocated
@@ -733,9 +773,17 @@ type FuncDecl struct {
 // field occupies 4 bytes and lives at offset 4*index from the struct's
 // base pointer.
 type StructDecl struct {
-	P      Position
-	Name   string
-	Fields []Param
+	P    Position
+	Name string
+	// TypeParams names the type variables a generic struct
+	// introduces — `struct Pair[A, B] { … }` declares
+	// TypeParams=["A", "B"]. The checker rewrites occurrences of
+	// these names in field types to ast.ParamType, then the
+	// monomorphisation pass clones the decl per-instantiation
+	// before IR lowering. After monomorph runs, every StructDecl
+	// has TypeParams empty.
+	TypeParams []string
+	Fields     []Param
 	// Public marks this declaration as exported from its module.
 	// Set by the parser when the source carries `pub struct …`.
 	// Same semantics as FuncDecl.Public — private structs can't be

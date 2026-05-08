@@ -453,6 +453,26 @@ func (p *parser) parseStructDecl() (*ast.StructDecl, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Optional type parameters: `struct Pair[A, B] { … }`. Same
+	// bracket form generic enums + functions use.
+	var typeParams []string
+	if p.match(lexer.Punct, "[") {
+		p.advance()
+		for {
+			pname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			typeParams = append(typeParams, pname.Text)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				continue
+			}
+			break
+		}
+		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
 	}
@@ -483,7 +503,7 @@ func (p *parser) parseStructDecl() (*ast.StructDecl, error) {
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	return &ast.StructDecl{P: kw.Pos, Name: name.Text, Fields: fields}, nil
+	return &ast.StructDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, Fields: fields}, nil
 }
 
 // parseConstDecl parses a top-level `const NAME[: T] = expr;`. The

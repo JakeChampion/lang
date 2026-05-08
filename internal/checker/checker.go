@@ -61,6 +61,10 @@ type Info struct {
 	// this when cloning. Empty for programs without generic
 	// functions.
 	GenericFuncs map[string]*ast.FuncDecl
+	// GenericStructs is the StructDecl analogue of GenericFuncs —
+	// tracks struct decls with non-empty TypeParams for the
+	// monomorphisation pass.
+	GenericStructs map[string]*ast.StructDecl
 }
 
 // builtinEnumDecls returns the synthetic enum declarations the
@@ -185,6 +189,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			Methods:             map[string]string{},
 			VariantCallPayloads: map[*ast.Call][]ast.Type{},
 			GenericFuncs:        map[string]*ast.FuncDecl{},
+			GenericStructs:      map[string]*ast.StructDecl{},
 		},
 		variantOf: map[string]variantRef{},
 	}
@@ -205,6 +210,12 @@ func Check(prog *ast.Program) (*Info, error) {
 			seen[f.Name] = true
 		}
 		c.info.Structs[sd.Name] = sd
+		if len(sd.TypeParams) > 0 {
+			// Track generic struct decls so the monomorph pass
+			// knows which ones to clone, and post-monomorph
+			// callers can tell "we used to be generic".
+			c.info.GenericStructs[sd.Name] = sd
+		}
 	}
 
 	// Register every enum declaration. Variant names are recorded
@@ -558,8 +569,18 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 		c.resolveTypesInBlock(fn.Body)
 	}
 	for _, sd := range prog.Structs {
+		// Same as functions / enums: register type params so
+		// occurrences in field types resolve to ParamType
+		// instead of dangling StructType references.
+		var params map[string]bool
+		if len(sd.TypeParams) > 0 {
+			params = make(map[string]bool, len(sd.TypeParams))
+			for _, n := range sd.TypeParams {
+				params[n] = true
+			}
+		}
 		for i := range sd.Fields {
-			c.resolveType(&sd.Fields[i].Type, nil)
+			c.resolveType(&sd.Fields[i].Type, params)
 		}
 	}
 	for _, ed := range prog.Enums {
@@ -646,6 +667,18 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		}
 		if _, isEnum := c.info.Enums[t.Name]; isEnum {
 			*slot = ast.EnumType{Name: t.Name}
+			return
+		}
+		// Already a StructType — recurse into Args (populated
+		// when the type came back through resolveType for a
+		// generic struct's instantiation).
+		if len(t.Args) > 0 {
+			args := make([]ast.Type, len(t.Args))
+			copy(args, t.Args)
+			for i := range args {
+				c.resolveType(&args[i], params)
+			}
+			*slot = ast.StructType{Name: t.Name, Args: args}
 		}
 	case ast.EnumType:
 		// `Foo[A, B]` — recurse into args. Params can shadow
@@ -653,10 +686,24 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		// enum body where T is a parameter). We also enforce the
 		// arity here so a wrong-arity instantiation fails before
 		// it becomes a "no Args" enum at the assignment site.
+		//
+		// The parser optimistically wraps every `Name[…]` form as
+		// EnumType because at parse time it doesn't know which
+		// names are structs vs enums. If the name resolves to a
+		// generic struct we rewrite into a StructType with the
+		// same Args here. Same arity check.
 		args := make([]ast.Type, len(t.Args))
 		copy(args, t.Args)
 		for i := range args {
 			c.resolveType(&args[i], params)
+		}
+		if sd, ok := c.info.Structs[t.Name]; ok {
+			if len(sd.TypeParams) != len(args) {
+				c.errf(sd.P, "struct %s has %d type parameter(s), %d supplied",
+					t.Name, len(sd.TypeParams), len(args))
+			}
+			*slot = ast.StructType{Name: t.Name, Args: args}
+			return
 		}
 		if ed, ok := c.info.Enums[t.Name]; ok {
 			if len(ed.TypeParams) != len(args) {
@@ -711,8 +758,25 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 			args[i] = substituteType(x.Args[i], sub)
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substituteType(x.Args[i], sub)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
 	case ast.ArrayType:
 		return ast.ArrayType{Elem: substituteType(x.Elem, sub)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: substituteType(x.Elem, sub)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = substituteType(x.Elems[i], sub)
+		}
+		return out
 	case *ast.FuncType:
 		out := &ast.FuncType{Result: substituteType(x.Result, sub)}
 		for _, p := range x.Params {
@@ -753,10 +817,39 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 		}
 		return true
 	}
-	// Arrays + function types decompose the same way.
+	// Generic struct positions: same shape as enums.
+	if e, ok := expected.(ast.StructType); ok {
+		a, ok := actual.(ast.StructType)
+		if !ok || a.Name != e.Name || len(a.Args) != len(e.Args) {
+			return false
+		}
+		for i := range e.Args {
+			if !c.unifyType(e.Args[i], a.Args[i], sub) {
+				return false
+			}
+		}
+		return true
+	}
+	// Arrays + slices + tuples + function types decompose the same way.
 	if e, ok := expected.(ast.ArrayType); ok {
 		a, ok := actual.(ast.ArrayType)
 		return ok && c.unifyType(e.Elem, a.Elem, sub)
+	}
+	if e, ok := expected.(ast.SliceType); ok {
+		a, ok := actual.(ast.SliceType)
+		return ok && c.unifyType(e.Elem, a.Elem, sub)
+	}
+	if e, ok := expected.(ast.TupleType); ok {
+		a, ok := actual.(ast.TupleType)
+		if !ok || len(e.Elems) != len(a.Elems) {
+			return false
+		}
+		for i := range e.Elems {
+			if !c.unifyType(e.Elems[i], a.Elems[i], sub) {
+				return false
+			}
+		}
+		return true
 	}
 	if e, ok := expected.(*ast.FuncType); ok {
 		a, ok := actual.(*ast.FuncType)
@@ -1626,8 +1719,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		for _, f := range sd.Fields {
 			fieldT[f.Name] = f.Type
 		}
+		// For generic structs we infer type-args from field
+		// values via the same `unifyType` machinery used for
+		// generic function calls. Empty for non-generic structs.
+		var sub map[string]ast.Type
+		if len(sd.TypeParams) > 0 {
+			sub = make(map[string]ast.Type, len(sd.TypeParams))
+		}
 		for _, f := range n.Fields {
-			if _, ok := fieldT[f.Name]; !ok {
+			expected, present := fieldT[f.Name]
+			if !present {
 				c.errf(n.P, "struct %s has no field %q", sd.Name, f.Name)
 				continue
 			}
@@ -1636,14 +1737,41 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			seen[f.Name] = true
 			vt := c.checkExpr(f.Value, s)
-			if vt != nil && !ast.Equal(vt, fieldT[f.Name]) {
-				c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, fieldT[f.Name], vt)
+			if vt == nil {
+				continue
+			}
+			if sub != nil {
+				if !c.unifyType(expected, vt, sub) {
+					c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
+				}
+			} else if !ast.Equal(vt, expected) {
+				c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
 			}
 		}
 		for _, f := range sd.Fields {
 			if !seen[f.Name] {
 				c.errf(n.P, "struct literal missing field %q", f.Name)
 			}
+		}
+		if len(sd.TypeParams) > 0 {
+			args := make([]ast.Type, len(sd.TypeParams))
+			complete := true
+			for i, tp := range sd.TypeParams {
+				if v, ok := sub[tp]; ok {
+					args[i] = v
+				} else {
+					c.errf(n.P, "could not infer type parameter %s for struct %s — explicit type args are not supported yet", tp, sd.Name)
+					complete = false
+				}
+			}
+			if complete {
+				// Stamp on the StructLit so the monomorpher
+				// can rewrite TypeName without re-running
+				// inference.
+				n.TypeArgs = args
+				return ast.StructType{Name: sd.Name, Args: args}
+			}
+			return nil
 		}
 		return ast.StructType{Name: sd.Name}
 	case *ast.TupleLit:
@@ -1689,6 +1817,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		for _, f := range sd.Fields {
 			if f.Name == n.Field {
+				if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+					// Generic struct field: substitute the
+					// type-arg values into the field's
+					// declared type so callers see the
+					// concrete type (`Pair[i32, string].first`
+					// → i32, not `A`).
+					sub := make(map[string]ast.Type, len(sd.TypeParams))
+					for i, tp := range sd.TypeParams {
+						sub[tp] = st.Args[i]
+					}
+					return substituteType(f.Type, sub)
+				}
 				return f.Type
 			}
 		}

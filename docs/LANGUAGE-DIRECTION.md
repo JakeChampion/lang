@@ -199,7 +199,7 @@ Deferred:
 - Mutating slice operations (`slice[i] = v`).
 - Slice arithmetic / concatenation.
 
-### PR 3 — Generic functions (shipped); generic structs (deferred)
+### PR 3 — Generic functions + generic structs (both shipped)
 
 Generic functions only — generic structs are a follow-up. Same
 bracket form as generic enums for declaration consistency:
@@ -243,11 +243,41 @@ Cost / trade-offs:
   issue, swap for a targeted body-rewrite that only retypes
   the cloned functions.
 
+Generic structs (also shipped, follow-up to functions):
+
+```
+struct Pair[A, B] { first: A, second: B }
+struct Box[T] { val: T }
+
+function unbox[T](b: Box[T]): T { return b.val; }
+```
+
+What landed:
+- `struct Foo[A, B] { … }` parses identically to enum type
+  params.
+- `StructType.Args []Type` — populated for generic
+  instantiations. Equality is pairwise on Args (matches
+  EnumType).
+- Checker infers Args from struct-literal field values via
+  the same `unifyType` machinery. `StructLit.TypeArgs []Type`
+  carries the inference result for the monomorphiser.
+- Monomorphiser clones generic StructDecls per unique
+  instantiation. After cloning + substitution, a fixed-point
+  loop walks every Type slot in surviving (monomorphic)
+  bodies / params / returns and mangles `StructType{Args}`
+  references — catches function clones whose substituted
+  param types were `Box[i32]` and need to become
+  `Box__i32`. Two passes typically suffice; the loop iterates
+  to catch nested instantiations.
+- Field access through a generic struct's instance
+  substitutes the type-args before returning the field type
+  (`Pair[i32, string].first` → `i32`, not `A`).
+
 Deferred to a follow-up:
-- Generic structs: `struct Pair[A, B] { first: A, second: B }`.
-  Same shape as generic enums; mostly mechanical from here.
-- Explicit type args at call sites (`f[i32](x)`). Needs
-  lookahead to disambiguate from `arr[i]`.
+- Explicit type args at call / type sites (`f[i32](x)` /
+  `Pair[i32, string] { … }`). Needs lookahead to
+  disambiguate from `arr[i]`. Inference covers the
+  ergonomic baseline.
 - Generic constraints (`T: Eq`, `T: Hash`). Probably never —
   the lang doesn't have a trait system; users pass functions
   explicitly when they need polymorphism beyond what's
