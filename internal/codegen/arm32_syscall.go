@@ -212,21 +212,55 @@ func (g *generator) emitMemcpyRuntime() {
 }
 
 // emitStrlenRuntime walks a NUL-terminated C string and returns
-// its length in r0. Used only by the env() / args() helpers when
-// they're copying kernel-provided strings into lang strings —
-// length-prefixed lang strings already know their length.
+// its length in r0. Word-grain on the bulk path: each iteration
+// reads a 4-byte word and tests for a NUL byte using the
+// classic `(word - 0x01010101) & ~word & 0x80808080` bit-trick
+// (non-zero iff some byte in the word is zero), falling into a
+// short byte-scan to find the exact NUL only when one is
+// detected. ~4× faster than the byte-grain loop on long
+// strings; the overhead on short strings is one extra word
+// load + the bit-twiddle, which is still cheaper than four
+// individual byte-loads.
+//
+// Used only by the env() / args() helpers when they're copying
+// kernel-provided strings into lang strings — length-prefixed
+// lang strings already know their length.
+//
+// Safe against page-fault past end: env / argv strings live in
+// the kernel-provided initial-stack region which is mapped
+// continuously, so reading 4 bytes past any NUL stays within
+// mapped memory.
 func (g *generator) emitStrlenRuntime() {
 	g.line("")
 	g.line(".type __lang_strlen, %function")
 	g.label("__lang_strlen")
-	g.emit("mov r1, r0")
-	g.label(".Lsl_loop")
-	g.emit("ldrb r2, [r1], #1")
-	g.emit("cmp r2, #0")
-	g.emit("bne .Lsl_loop")
-	// r1 points one past the NUL → length = r1 - r0 - 1.
-	g.emit("sub r0, r1, r0")
-	g.emit("sub r0, r0, #1")
+	g.emit("push {r4, lr}")           // save callee-saved r4 + lr (paired for 8-byte sp align)
+	g.emit("mov r4, r0")              // r4 = saved start ptr (for length compute at end)
+	g.emit("ldr r2, =0x01010101")     // magic1 — subtrahend
+	g.emit("ldr r3, =0x80808080")     // magic2 — high-bit mask
+	g.label(".Lsl_word")
+	g.emit("ldr r12, [r0]")           // r12 = word at current ptr
+	g.emit("sub r1, r12, r2")         // r1 = word - magic1
+	g.emit("bic r1, r1, r12")         //     & ~word
+	g.emit("ands r1, r1, r3")         //     & magic2 ; sets Z if no NUL
+	g.emit("bne .Lsl_byte")
+	g.emit("add r0, r0, #4")
+	g.emit("b .Lsl_word")
+	g.label(".Lsl_byte")
+	// r12 holds the word containing a NUL; r0 points at it.
+	// Find the NUL byte by testing each byte position.
+	g.emit("tst r12, #0xff")
+	g.emit("beq .Lsl_done")
+	g.emit("add r0, r0, #1")
+	g.emit("tst r12, #0xff00")
+	g.emit("beq .Lsl_done")
+	g.emit("add r0, r0, #1")
+	g.emit("tst r12, #0xff0000")
+	g.emit("beq .Lsl_done")
+	g.emit("add r0, r0, #1") // must be byte 3 — the bit-trick guaranteed some byte is NUL
+	g.label(".Lsl_done")
+	g.emit("sub r0, r0, r4") // r0 = end - start = length
+	g.emit("pop {r4, lr}")
 	g.emit("bx lr")
 	g.line(".size __lang_strlen, .-__lang_strlen")
 }

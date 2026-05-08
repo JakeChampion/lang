@@ -888,3 +888,15 @@ func TestArm32StrcatReadsPrefixesAndAllocates(t *testing.T) {
 		t.Errorf("strcat must not call strlen — lengths come from the prefix:\n%s", asm)
 	}
 }
+
+// __lang_strlen uses a word-grain bit-trick on the bulk path:
+// each iteration loads a 4-byte word and tests for a NUL byte
+// via `(word - 0x01010101) & ~word & 0x80808080`. Pinning the
+// shape so a future regression to byte-grain is caught.
+func TestArm32StrlenWordGrain(t *testing.T) {
+	asm := compile(t, `function f(): Option[string] { return env("PATH"); }`)
+	mustContain(t, asm, "ldr r2, =0x01010101")
+	mustContain(t, asm, "ldr r3, =0x80808080")
+	mustContain(t, asm, ".Lsl_word:")
+	mustContain(t, asm, ".Lsl_byte:")
+}
