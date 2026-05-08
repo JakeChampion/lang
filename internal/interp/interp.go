@@ -956,6 +956,28 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 			return i.execStmt(x.Else, e)
 		}
 		return result{flow: flowNormal}, nil
+	case *ast.IfLet:
+		src, err := i.evalExpr(x.Source, e)
+		if err != nil {
+			return result{}, err
+		}
+		ev, ok := src.(*Enum)
+		if !ok {
+			return result{}, fmt.Errorf("interp: if-let source is %T, expected enum value", src)
+		}
+		if ev.VariantName == x.VariantName {
+			thenEnv := newEnv(e)
+			for j, name := range x.Bindings {
+				if j < len(ev.Payloads) {
+					thenEnv.declare(name, ev.Payloads[j])
+				}
+			}
+			return i.execStmt(x.Then, thenEnv)
+		}
+		if x.Else != nil {
+			return i.execStmt(x.Else, e)
+		}
+		return result{flow: flowNormal}, nil
 	case *ast.While:
 		for {
 			c, err := i.evalExpr(x.Cond, e)

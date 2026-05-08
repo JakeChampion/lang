@@ -608,6 +608,25 @@ type If struct {
 	Then Stmt
 	Else Stmt // may be nil
 }
+
+// IfLet is `if let <Variant>(b1, b2, …) = <expr> { … }
+// [else { … }]` — pattern-binding inside an if without the
+// match ceremony. The pattern is a single variant constructor;
+// on match, payload fields bind into Bindings (typed via
+// BindingTypes, filled by the checker like match arms) and Then
+// runs. On mismatch, Else runs (or the if falls through).
+//
+// Lowered to a one-arm match plus a wildcard fallthrough — see
+// the IR pass.
+type IfLet struct {
+	P            Position
+	VariantName  string
+	Bindings     []string
+	BindingTypes []Type // resolved by the checker; same length as Bindings
+	Source       Expr
+	Then         Stmt
+	Else         Stmt // may be nil
+}
 type While struct {
 	P    Position
 	Cond Expr
@@ -698,6 +717,7 @@ type MatchArm struct {
 
 func (s *Block) Pos() Position    { return s.P }
 func (s *If) Pos() Position       { return s.P }
+func (s *IfLet) Pos() Position    { return s.P }
 func (s *While) Pos() Position    { return s.P }
 func (s *For) Pos() Position      { return s.P }
 func (s *Break) Pos() Position    { return s.P }
@@ -711,6 +731,7 @@ func (s *FuncDecl) Pos() Position { return s.P }
 
 func (*Block) isStmt()    {}
 func (*If) isStmt()       {}
+func (*IfLet) isStmt()    {}
 func (*While) isStmt()    {}
 func (*For) isStmt()      {}
 func (*Break) isStmt()    {}

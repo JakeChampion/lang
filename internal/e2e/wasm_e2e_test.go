@@ -697,6 +697,40 @@ function main(): i32 {
 	}
 }
 
+// `if let Variant(b) = expr { … }` — pattern-binding without
+// the match ceremony. Common need in HTTP handlers / Result
+// chains where you want to unwrap one variant and proceed flat
+// instead of nesting in `match`.
+func TestWASMIfLetMatch(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[i32] = Some(42);
+    if let Some(n) = o {
+        return n;
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (if-let Some(42) bind)", got)
+	}
+}
+
+// `if let` with a non-matching variant + an `else` branch — the
+// else runs and the bindings from the pattern aren't in scope.
+func TestWASMIfLetMismatchTakesElse(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[i32] = None;
+    if let Some(n) = o {
+        return 1;
+    } else {
+        return 2;
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 2 {
+		t.Errorf("got %d, want 2 (if-let None should take else)", got)
+	}
+}
+
 // Match guards: `<pattern> when <bool> => <body>`. The guard
 // runs with the pattern's bindings in scope; if it evaluates to
 // false the arm is skipped and the match falls through to the

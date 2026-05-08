@@ -610,6 +610,9 @@ func (c *checker) resolveTypesInBlock(b *ast.Block) {
 		case *ast.If:
 			c.resolveTypesInBlock(asBlock(x.Then))
 			c.resolveTypesInBlock(asBlock(x.Else))
+		case *ast.IfLet:
+			c.resolveTypesInBlock(asBlock(x.Then))
+			c.resolveTypesInBlock(asBlock(x.Else))
 		case *ast.While:
 			c.resolveTypesInBlock(asBlock(x.Body))
 		case *ast.For:
@@ -992,6 +995,74 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errf(n.Cond.Pos(), "if condition must be boolean, got %s", t)
 		}
 		c.checkStmt(n.Then, s)
+		if n.Else != nil {
+			c.checkStmt(n.Else, s)
+		}
+	case *ast.IfLet:
+		// Source must produce an enum whose variant list contains
+		// VariantName. Bindings are in scope for Then only.
+		st := c.checkExpr(n.Source, s)
+		et, ok := st.(ast.EnumType)
+		if !ok {
+			if st != nil {
+				c.errf(n.Source.Pos(), "if-let source must be an enum value, got %s", st)
+			}
+			c.checkStmt(n.Then, s)
+			if n.Else != nil {
+				c.checkStmt(n.Else, s)
+			}
+			return
+		}
+		ed := c.info.Enums[et.Name]
+		if ed == nil {
+			c.errf(n.Source.Pos(), "unknown enum %q", et.Name)
+			c.checkStmt(n.Then, s)
+			if n.Else != nil {
+				c.checkStmt(n.Else, s)
+			}
+			return
+		}
+		// Resolve type-arg substitution so generic enums
+		// (`Option[i32]`, `Result[T, E]`) bind payloads to the
+		// concrete instantiated types instead of the abstract
+		// parameters.
+		var sub map[string]ast.Type
+		if len(ed.TypeParams) == len(et.Args) && len(et.Args) > 0 {
+			sub = make(map[string]ast.Type, len(ed.TypeParams))
+			for i, tp := range ed.TypeParams {
+				sub[tp] = et.Args[i]
+			}
+		}
+		var variant *ast.EnumVariant
+		for i := range ed.Variants {
+			if ed.Variants[i].Name == n.VariantName {
+				variant = &ed.Variants[i]
+				break
+			}
+		}
+		if variant == nil {
+			c.errf(n.P, "variant %q is not part of enum %s", n.VariantName, ed.Name)
+			c.checkStmt(n.Then, s)
+			if n.Else != nil {
+				c.checkStmt(n.Else, s)
+			}
+			return
+		}
+		if len(n.Bindings) != len(variant.Payloads) {
+			c.errf(n.P, "variant %s has %d payload(s), got %d binding(s)",
+				n.VariantName, len(variant.Payloads), len(n.Bindings))
+		}
+		thenScope := newScope(s)
+		n.BindingTypes = make([]ast.Type, len(n.Bindings))
+		for k, name := range n.Bindings {
+			var bt ast.Type
+			if k < len(variant.Payloads) {
+				bt = substituteType(variant.Payloads[k], sub)
+			}
+			n.BindingTypes[k] = bt
+			thenScope.names[name] = bt
+		}
+		c.checkStmt(n.Then, thenScope)
 		if n.Else != nil {
 			c.checkStmt(n.Else, s)
 		}

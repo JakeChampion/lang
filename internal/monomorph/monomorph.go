@@ -362,6 +362,19 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 		if x.Else != nil {
 			substituteStmt(x.Else, sub)
 		}
+	case *ast.IfLet:
+		substituteExpr(x.Source, sub)
+		// BindingTypes are concrete after the checker stamped
+		// them in the original generic body; substitute so
+		// per-clone they specialise to the concrete instantiation
+		// of the enum / struct payload.
+		for i := range x.BindingTypes {
+			x.BindingTypes[i] = substituteType(x.BindingTypes[i], sub)
+		}
+		substituteStmt(x.Then, sub)
+		if x.Else != nil {
+			substituteStmt(x.Else, sub)
+		}
 	case *ast.While:
 		substituteExpr(x.Cond, sub)
 		substituteStmt(x.Body, sub)
@@ -487,6 +500,16 @@ func cloneStmt(s ast.Stmt) ast.Stmt {
 		c := *x
 		c.Cond = cloneExpr(x.Cond)
 		c.Then = cloneStmt(x.Then).(*ast.Block)
+		if x.Else != nil {
+			c.Else = cloneStmt(x.Else)
+		}
+		return &c
+	case *ast.IfLet:
+		c := *x
+		c.Source = cloneExpr(x.Source)
+		c.Bindings = append([]string(nil), x.Bindings...)
+		c.BindingTypes = append([]ast.Type(nil), x.BindingTypes...)
+		c.Then = cloneStmt(x.Then)
 		if x.Else != nil {
 			c.Else = cloneStmt(x.Else)
 		}
@@ -659,6 +682,12 @@ func walkStmtStructLits(s ast.Stmt, fn func(*ast.StructLit)) {
 		walkExprStructLits(x.Value, fn)
 	case *ast.If:
 		walkExprStructLits(x.Cond, fn)
+		walkStmtStructLits(x.Then, fn)
+		if x.Else != nil {
+			walkStmtStructLits(x.Else, fn)
+		}
+	case *ast.IfLet:
+		walkExprStructLits(x.Source, fn)
 		walkStmtStructLits(x.Then, fn)
 		if x.Else != nil {
 			walkStmtStructLits(x.Else, fn)
@@ -861,6 +890,14 @@ func rewriteStmtTypes(s ast.Stmt, info *checker.Info, into map[instKey][]ast.Typ
 		if x.Else != nil {
 			rewriteStmtTypes(x.Else, info, into)
 		}
+	case *ast.IfLet:
+		for i := range x.BindingTypes {
+			x.BindingTypes[i] = rewriteType(x.BindingTypes[i], info, into)
+		}
+		rewriteStmtTypes(x.Then, info, into)
+		if x.Else != nil {
+			rewriteStmtTypes(x.Else, info, into)
+		}
 	case *ast.While:
 		rewriteStmtTypes(x.Body, info, into)
 	case *ast.For:
@@ -899,6 +936,12 @@ func walkStmt(s ast.Stmt, fn func(*ast.Call)) {
 		walkExpr(x.Value, fn)
 	case *ast.If:
 		walkExpr(x.Cond, fn)
+		walkStmt(x.Then, fn)
+		if x.Else != nil {
+			walkStmt(x.Else, fn)
+		}
+	case *ast.IfLet:
+		walkExpr(x.Source, fn)
 		walkStmt(x.Then, fn)
 		if x.Else != nil {
 			walkStmt(x.Else, fn)
