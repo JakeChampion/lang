@@ -125,6 +125,30 @@ func builtinStructDecls() []*ast.StructDecl {
 			Name:   "Writer",
 			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
 		},
+		// HttpRequest / HttpResponse back the
+		// `lang -target wasi-http` mode (step 5 of
+		// docs/WASI-PREVIEW2.md). They're always available so
+		// CLI-target programs can construct one for tests, but
+		// the wasm backend only emits the
+		// `wasi:http/incoming-handler.handle` wrapper +
+		// imports under `EmitOptions.HttpHandler`. Keep these
+		// fields minimal for now — query params, headers, and
+		// trailers are deferred follow-ups.
+		{
+			Name: "HttpRequest",
+			Fields: []ast.Param{
+				{Name: "method", Type: ast.StringType{}},
+				{Name: "path", Type: ast.StringType{}},
+				{Name: "body", Type: ast.StringType{}},
+			},
+		},
+		{
+			Name: "HttpResponse",
+			Fields: []ast.Param{
+				{Name: "status", Type: ast.NumberType{}},
+				{Name: "body", Type: ast.StringType{}},
+			},
+		},
 	}
 }
 

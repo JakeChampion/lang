@@ -150,20 +150,86 @@ The `--tcp-listen=…` host flag is no longer needed; the only
 host privilege the program needs is `-S inherit-network` so
 wasmtime allows `create-tcp-socket` and `start-bind`.
 
-### Step 5 — Add `wasi:http` handler target
+### Step 5 — Add `wasi:http` handler target (shipped)
 
-A new compile mode: `lang -target=wasi-http prog.lang` produces
+A new compile mode: `lang -target wasi-http prog.lang` produces
 a component implementing `wasi:http/incoming-handler.handle`.
 The lang program declares:
 
 ```
 function handle(req: HttpRequest): HttpResponse {
-    ...
+    if (req.path == "/hello") {
+        return HttpResponse { status: 200, body: "world" };
+    }
+    return HttpResponse { status: 404, body: "not found" };
 }
 ```
 
-instead of `main()`. The runtime takes care of the request /
-response plumbing.
+instead of `main()`. The component matches the upstream
+`wasi:http/proxy` world shape, so the same artifact runs under
+`wasmtime serve`, Fastly Compute, Netlify Edge Functions, and
+Unikraft Cloud — anywhere that hosts a wasi:http proxy
+component.
+
+Auto-injected struct shape:
+
+- `HttpRequest { method: string, path: string, body: string }` —
+  `method` is the canonical HTTP verb ("GET", "POST", ...);
+  for `other(s)` cases the wire string is passed through.
+- `HttpResponse { status: number, body: string }` — `status`
+  is the i32 HTTP status code; `body` is written verbatim.
+
+Headers, query parameters, and trailers are deferred — they
+need a `fields`-shaped multi-map at the lang level, which is
+its own design decision (lang doesn't have a `map` type yet).
+For the targeted use cases (Fastly-Compute-style edge handlers
+that mostly consume the body, route by path, and emit JSON or
+HTML), this surface is enough to ship real programs.
+
+Wrapper pipeline (see `emitHttpHandlerWrapper`):
+
+1. `incoming-request.method()` — variant lowered through a
+   `br_table` over the discriminant; static interned strings for
+   the canonical 9 verbs, materialise the `other(s)` payload via
+   `__bytes_to_lang_string`.
+2. `incoming-request.path-with-query()` — `option<string>`; on
+   `None` use the empty string.
+3. `incoming-request.consume()` → `incoming-body.stream()` →
+   bulk `blocking-read(4096)` loop into a doubling accumulator
+   (same shape as `read_file`'s preview-2 path), drop the
+   stream, finish the body.
+4. Drop the `incoming-request`.
+5. Build the `HttpRequest` struct, call user `handle`, read
+   the returned `HttpResponse`.
+6. `[constructor]fields()` (empty headers) →
+   `[constructor]outgoing-response(headers)` →
+   `set-status-code` → `body()` → `body.write()` to obtain the
+   output-stream.
+7. `response-outparam.set(out, Ok(response))` —
+   **before** writing body bytes, since the host treats the
+   `set` call as the "headers sealed, body can flow" cue.
+8. `blocking-write-and-flush` the body via the chunked
+   `__streams_write` helper; drop the output-stream.
+9. We don't call `outgoing-body.finish` — wasmtime ≥ 30,
+   Fastly, and Netlify all treat dropping the output-stream as
+   the body terminator. Calling finish post-`set` traps with
+   "unknown handle index" because the body has already been
+   reaped on the host side.
+
+Static layout note: the http handler still emits a no-op
+`_start` export. The wasi-preview1 adapter (`command.wasm`)
+unconditionally wires `wasi:cli/run.run` to call `_start`, even
+though `wasmtime serve` never invokes run; switching to the
+proxy variant of the adapter would drop this requirement.
+
+Limitations / follow-ups:
+
+- No `wasi:cli/environment` import (= `args()` / `env()` will
+  fail to satisfy at component-new time inside a handler). Add
+  to the `http` world if a real handler needs it.
+- No headers, no query parsing, no trailers (see above).
+- The body accumulator copies on grow rather than chaining —
+  fine for typical request sizes; revisit if measurable.
 
 ### Step 6 — Drop preview-1 emission (shipped)
 
