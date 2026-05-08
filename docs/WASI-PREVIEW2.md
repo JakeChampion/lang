@@ -103,12 +103,12 @@ Splits across multiple PRs to keep blast radius bounded:
   drops (`[resource-drop]input-stream` /
   `[resource-drop]output-stream`) replace `fd_close`.
 
-  Not covered here, deferred: `read_file` / `write_file`. Those
-  helpers still call preview-1 `path_open` + `fd_read` /
-  `fd_write` (routed through the adapter); migrating them
-  requires either inlining the streams loop or threading the new
-  Reader/Writer machinery through their existing fd-anchored
-  bodies. Independent follow-up.
+  Follow-up shipped separately: `read_file` / `write_file` now
+  delegate to `$open_reader` / `$open_writer` + a chunked
+  blocking-read / blocking-write-and-flush loop. With that, no
+  user-visible builtin still routes through preview-1
+  `path_open` / `fd_read` / `fd_write` (the imports stay declared
+  for now since other internal paths still reference them).
 
 The IR's existing `Reader` / `Writer` types stay; only the runtime
 helpers change shape. After 3c lands, the only preview-1 imports

@@ -68,6 +68,17 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	g.scanForStringEq(prog)
 	g.scanForStringConcat(prog)
 	g.scanForBoundsCheck(prog)
+	// Preview-2 read_file / write_file are implemented in terms of
+	// $open_reader / $open_writer (which emitStreamingIOHelpers
+	// emits), so promote needsFileIO to also pull in
+	// needsStreamingIO. The cost is the Reader/Writer method
+	// helpers landing in modules that wouldn't otherwise call them
+	// directly — small, tree-shakeable; the alternative
+	// (re-implementing the open pipeline inline) duplicates the
+	// canonical-ABI machinery.
+	if g.preview2 && g.needsFileIO {
+		g.needsStreamingIO = true
+	}
 	if len(prog.Funcs) > g.origTopLevelCount {
 		g.needsClosures = true
 		g.needsFuncTable = true
