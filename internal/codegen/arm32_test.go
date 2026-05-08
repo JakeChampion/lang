@@ -697,8 +697,10 @@ func TestArm32EmitsVFPForFloats(t *testing.T) {
 // br_if on each value comparison. From the assembly side it
 // shows up as a swarm of blkEnd labels and `bne`/`beq` jumps.
 // The cmp+branch peephole collapses each comparison's 4-line
-// boolean materialise into a single `b<cc>`, so the assertion
-// is just on cmp + the conditional branch shape.
+// boolean materialise into a single `b<cc>`, and the cmp-against-
+// const peephole rewrites comparisons against small literals to
+// `cmp rN, #imm` form. Each switch case ends up as a one-line
+// cmp + conditional branch.
 func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 	asm := compile(t, `function f(n: number): number {
 		switch (n) {
@@ -709,7 +711,10 @@ func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 		return -1;
 	}`)
 	mustContain(t, asm, ".LblkEnd_")
-	mustContain(t, asm, "cmp r1, r0")
+	// Each case lowers to `cmp rN, #<value>`.
+	mustContain(t, asm, "cmp r1, #1")
+	mustContain(t, asm, "cmp r1, #2")
+	mustContain(t, asm, "cmp r1, #3")
 	if !strings.Contains(asm, "bne") && !strings.Contains(asm, "beq") {
 		t.Errorf("expected switch dispatch to use conditional branches:\n%s", asm)
 	}
@@ -772,8 +777,10 @@ func TestArm32StringEqualityShortCircuitsOnLengthMismatch(t *testing.T) {
 	asm := compile(t, `function f(s: string): boolean { return s == "ok"; }`)
 	// `len(s)` materialises as the prefix-load shape...
 	mustContain(t, asm, "ldr r0, [r0]")
-	// ...compared against the literal length (2).
-	mustContain(t, asm, "ldr r0, =2")
+	// ...compared against the literal length (2). The cmp-
+	// against-const peephole folds the `ldr r0, =2 ; cmp rN, r0`
+	// pair into a single `cmp rN, #2`.
+	mustContain(t, asm, "cmp r1, #2")
 	// And the byte-level compare still runs on length match.
 	mustContain(t, asm, "bl __lang_strcmp")
 }

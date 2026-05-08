@@ -140,6 +140,66 @@ func TestConditionalBranchToNextLineDropped(t *testing.T) {
 	}
 }
 
+// `ldr r0, =N ; pop {rN} ; cmp rN, r0` (small N) collapses to
+// `pop {rN} ; cmp rN, #N`, dropping the literal load entirely.
+func TestCmpAgainstSmallConstFolds(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r0, =0",
+		"\tpop {r1}",
+		"\tcmp r1, r0",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "cmp r1, #0") {
+		t.Errorf("expected `cmp r1, #0`, got:\n%s", got)
+	}
+	if strings.Contains(got, "ldr r0, =0") {
+		t.Errorf("ldr should be elided:\n%s", got)
+	}
+}
+
+func TestCmpAgainstSmallConstFolds_NonZero(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r0, =42",
+		"\tpop {r3}",
+		"\tcmp r3, r0",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "cmp r3, #42") {
+		t.Errorf("expected `cmp r3, #42`, got:\n%s", got)
+	}
+}
+
+// Constants outside the simple 0..255 window stay as `ldr =N`
+// so we don't have to reason about ARM's rotated-imm encoding.
+func TestCmpAgainstLargeConstNotFolded(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r0, =1000",
+		"\tpop {r1}",
+		"\tcmp r1, r0",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "ldr r0, =1000") {
+		t.Errorf("ldr =1000 should not fold (out of imm window):\n%s", got)
+	}
+	if strings.Contains(got, "cmp r1, #1000") {
+		t.Errorf("must not emit cmp r1, #1000 — encoding not validated:\n%s", got)
+	}
+}
+
+// `pop {r0}` between the load and the cmp would overwrite the
+// const we just loaded; the peephole leaves that case alone.
+func TestCmpAgainstConstNotFoldedWhenPopClobbersR0(t *testing.T) {
+	in := strings.Join([]string{
+		"\tldr r0, =5",
+		"\tpop {r0}",
+		"\tcmp r0, r0",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "ldr r0, =5") {
+		t.Errorf("ldr should stay (pop clobbers r0):\n%s", got)
+	}
+}
+
 func TestFixedPointMultiplePasses(t *testing.T) {
 	// First pass removes the self-mov; that puts str/ldr adjacent and
 	// the second pass drops the ldr. Without the fixed-point loop only
