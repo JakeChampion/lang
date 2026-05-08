@@ -264,6 +264,34 @@ func (f FloatType) NormalWidth() int {
 	return f.Width
 }
 
+// ElemSizeBytes returns the in-memory footprint, in bytes, of a
+// single element of `t` when stored in an array / slice. The
+// language stores everything on a 4-byte word grid by default;
+// the exception is sub-i32 integers (`u8`/`i8` use 1 byte,
+// `u16`/`i16` use 2 bytes) and i64 / u64 / f64 (8 bytes).
+// Pointer-shaped types (string / Array / struct / enum / tuple
+// / slice) are 4 bytes — they hold a heap pointer.
+func ElemSizeBytes(t Type) int {
+	switch x := t.(type) {
+	case NumberType:
+		switch x.NormalWidth() {
+		case 8:
+			return 1
+		case 16:
+			return 2
+		case 64:
+			return 8
+		}
+		return 4
+	case FloatType:
+		if x.NormalWidth() == 64 {
+			return 8
+		}
+		return 4
+	}
+	return 4
+}
+
 // Equal reports whether two types are structurally equal.
 func Equal(a, b Type) bool {
 	switch x := a.(type) {
@@ -403,6 +431,15 @@ type Ident struct {
 type ArrayLit struct {
 	P     Position
 	Elems []Expr
+	// ElemType is set by the checker once each element is typed
+	// (or settled, for polymorphic numeric literals). The IR uses
+	// it to pick a stride (1 byte for `[u8]` / `[i8]`, 2 for
+	// `[u16]` / `[i16]`, 4 for `[i32]` / `[u32]` / `[f32]` /
+	// pointers, 8 for `[i64]` / `[u64]` / `[f64]`) and to choose
+	// between i32.store / i32.store8 / i32.store16 / i64.store /
+	// f32.store / f64.store. nil falls back to the historical
+	// 4-byte-per-element layout.
+	ElemType Type
 }
 type Index struct {
 	P     Position
@@ -420,6 +457,12 @@ type Index struct {
 	// loads data_ptr first and then offsets into the parent
 	// array's storage.
 	IsSlice bool
+	// ElemType is set by the checker for array / slice indexing
+	// once the element type has been resolved. Used by the IR
+	// to pick the right stride + load width (1 byte for u8, 4
+	// for i32, etc.). nil falls back to the historical 4-byte
+	// stride.
+	ElemType Type
 }
 
 // SliceExpr is `arr[a:b]`, `arr[a:]`, or `arr[:b]` — produces a

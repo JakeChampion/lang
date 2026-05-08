@@ -658,6 +658,52 @@ func TestSubI32LiteralOverflow(t *testing.T) {
 	}
 }
 
+// Owned u8 arrays. Storage is 1-byte-per-element with a 4-byte
+// length prefix; reads use `i32.load8_u`. Verifies a literal
+// of three bytes round-trips through indexing.
+func TestWASMU8Array(t *testing.T) {
+	src := `function main(): i32 {
+    var bytes: u8[] = [255, 0, 66];
+    if (bytes[0] != 255) { return 1; }
+    if (bytes[1] != 0) { return 2; }
+    if (bytes[2] != 66) { return 3; }
+    if (len(bytes) != 3) { return 4; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (u8 array)", got)
+	}
+}
+
+// Owned i8 arrays. Same shape as the u8 test but the load is
+// sign-extending (`i32.load8_s`), so -1 reads back as -1.
+func TestWASMI8Array(t *testing.T) {
+	src := `function main(): i32 {
+    var v: i8[] = [-1, 1, 127];
+    if ((v[0] as i32) != -1) { return 1; }
+    if ((v[1] as i32) != 1) { return 2; }
+    if ((v[2] as i32) != 127) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (i8 array)", got)
+	}
+}
+
+// Owned u16 arrays. 2-byte stride, zero-extending load.
+func TestWASMU16Array(t *testing.T) {
+	src := `function main(): i32 {
+    var v: u16[] = [65000, 1, 32768];
+    if (v[0] != 65000) { return 1; }
+    if (v[1] != 1) { return 2; }
+    if (v[2] != 32768) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (u16 array)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

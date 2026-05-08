@@ -160,8 +160,16 @@ Status:
   masks (`x as u8` ⇒ `i32.const 0xFF; i32.and`), unsigned
   widening is a no-op, signed widening uses
   `i32.extend8_s` / `i32.extend16_s`. Polymorphic-literal
-  range checking covers all four widths. Memory-stride array
-  support (`[u8]` byte buffers) is the next follow-up.
+  range checking covers all four widths.
+- Memory-stride owned arrays shipped: `u8[]` / `i8[]` use
+  1-byte stride, `u16[]` / `i16[]` use 2-byte stride. Loads
+  pick `i32.load8_u/_s` / `i32.load16_u/_s` per element-type
+  signedness; stores use `i32.store8` / `i32.store16`. Bounds
+  checking goes through dedicated per-stride helpers
+  (`__str_idx` reused for stride=1, new `__arr_idx_2` for
+  halfwords, new `__arr_idx_8` reserved for i64/f64). Slice
+  views over sub-i32 arrays and write-side `arr[i] = v` for
+  sub-i32 arrays are the next follow-up.
 - `f64` shipped (PR 1 follow-up): parser accepts the keyword,
   IR has `OpConstF64` + Width-aware float binary ops + the
   `OpFPromoteF32` / `OpFDemoteF64` cast ops, wasm codegen picks

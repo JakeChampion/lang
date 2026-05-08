@@ -598,6 +598,14 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.line("i32.load8_u")
 	case ir.OpStoreI8:
 		g.line("i32.store8")
+	case ir.OpStoreI16:
+		g.line("i32.store16")
+	case ir.OpLoadI8S:
+		g.line("i32.load8_s")
+	case ir.OpLoadI16U:
+		g.line("i32.load16_u")
+	case ir.OpLoadI16S:
+		g.line("i32.load16_s")
 	case ir.OpAlloc:
 		g.line("call $__lang_alloc")
 	case ir.OpStrEq:

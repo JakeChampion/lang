@@ -116,6 +116,10 @@ const (
 	OpFLoad    // (addr)             → f32
 	OpFStore   // (addr, value)      → ()
 	OpStoreI8  // (addr, value)      → ()  (writes the low byte)
+	OpLoadI8S  // (addr)             → i32 (sign-extended low byte)
+	OpLoadI16U // (addr)             → i32 (zero-extended halfword)
+	OpLoadI16S // (addr)             → i32 (sign-extended halfword)
+	OpStoreI16 // (addr, value)      → ()  (writes the low halfword)
 
 	// Heap allocation: pop a size in bytes and push the base pointer
 	// the bump allocator returns.
@@ -292,6 +296,14 @@ func (k OpKind) String() string {
 		return "f.store"
 	case OpStoreI8:
 		return "store_i8"
+	case OpStoreI16:
+		return "store_i16"
+	case OpLoadI8S:
+		return "load_i8_s"
+	case OpLoadI16U:
+		return "load_i16_u"
+	case OpLoadI16S:
+		return "load_i16_s"
 	case OpAlloc:
 		return "alloc"
 	case OpStrEq:
@@ -684,7 +696,7 @@ func (b *builder) openIf(bt int32) {
 	b.emit(Op{Kind: OpIf, I32: bt})
 	b.depth++
 }
-func (b *builder) elseBranch()  { b.emit(Op{Kind: OpElse}) }
+func (b *builder) elseBranch() { b.emit(Op{Kind: OpElse}) }
 func (b *builder) closeScope() {
 	b.emit(Op{Kind: OpEnd})
 	b.depth--
@@ -1303,22 +1315,64 @@ func (b *builder) expr(e ast.Expr) error {
 		// `s[i]` and `a[i]` lower the same way at the IR level: push
 		// base, push index, call into the bounds-checking helper
 		// (modelled here as a runtime function call), and load the
-		// byte / word at the resulting address.
+		// byte / word at the resulting address. Element width
+		// changes the load op + which helper picks up the stride;
+		// `__str_idx` already does (i*1 + bounds-check) so we
+		// reuse it for sub-i32 owned arrays.
 		if err := b.expr(n.Array); err != nil {
 			return err
 		}
 		if err := b.expr(n.Idx); err != nil {
 			return err
 		}
+		// Resolve the element type to pick stride + load width.
+		elemType := n.ElemType
+		stride := int32(4)
+		loadOp := OpLoad
+		if elemType != nil {
+			stride = int32(ast.ElemSizeBytes(elemType))
+			if nt, ok := elemType.(ast.NumberType); ok {
+				switch nt.NormalWidth() {
+				case 8:
+					if nt.IsSigned() {
+						loadOp = OpLoadI8S
+					} else {
+						loadOp = OpLoadByte
+					}
+				case 16:
+					if nt.IsSigned() {
+						loadOp = OpLoadI16S
+					} else {
+						loadOp = OpLoadI16U
+					}
+				}
+			}
+			if _, ok := elemType.(ast.FloatType); ok {
+				loadOp = OpFLoad
+			}
+		}
 		if n.IsString {
 			b.emit(Op{Kind: OpCallDirect, Str: "__str_idx", I32: 2})
 			b.emit(Op{Kind: OpLoadByte})
 		} else if n.IsSlice {
 			b.emit(Op{Kind: OpCallDirect, Str: "__slice_idx", I32: 2})
-			b.emit(Op{Kind: OpLoad})
+			b.emit(Op{Kind: loadOp})
 		} else {
-			b.emit(Op{Kind: OpCallDirect, Str: "__arr_idx", I32: 2})
-			b.emit(Op{Kind: OpLoad})
+			// Per-stride helper: __str_idx for byte arrays
+			// (stride=1, also reused for raw strings),
+			// __arr_idx for the historical i32-stride layout,
+			// __arr_idx_2 for u16/i16, __arr_idx_8 for i64/f64.
+			helper := "__arr_idx"
+			switch stride {
+			case 1:
+				helper = "__str_idx"
+			case 2:
+				helper = "__arr_idx_2"
+			case 8:
+				helper = "__arr_idx_8"
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+			b.emit(Op{Kind: loadOp})
 		}
 	case *ast.SliceExpr:
 		// Lower `arr[low:high]` to:
@@ -1396,21 +1450,34 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 		b.emit(Op{Kind: OpCallDirect, Str: "__slice_make", I32: 2})
 	case *ast.ArrayLit:
-		// Allocate len*4 + 4 bytes (length prefix + payload), store
-		// the length at base+0, then store each element at
-		// base+4+i*4 and leave the content pointer on the stack.
-		// Codegen mirrors this layout in the live WASM emitter.
+		// Allocate len*stride + 4 bytes (length prefix + payload),
+		// store the length at base+0, then store each element at
+		// base+4+i*stride and leave the content pointer on the
+		// stack. Stride defaults to 4 (the historical i32 / pointer
+		// layout) but drops to 1 / 2 for byte / halfword arrays
+		// per ast.ElemSizeBytes.
 		const headerBytes = 4
 		nElems := int32(len(n.Elems))
-		b.emit(Op{Kind: OpConstI32, I32: headerBytes + nElems*4})
+		stride := int32(4)
+		if n.ElemType != nil {
+			stride = int32(ast.ElemSizeBytes(n.ElemType))
+		}
+		storeOp := OpStore
+		if n.ElemType != nil {
+			if nt, ok := n.ElemType.(ast.NumberType); ok {
+				switch nt.NormalWidth() {
+				case 8:
+					storeOp = OpStoreI8
+				case 16:
+					storeOp = OpStoreI16
+				}
+			}
+			if _, ok := n.ElemType.(ast.FloatType); ok {
+				storeOp = OpFStore
+			}
+		}
+		b.emit(Op{Kind: OpConstI32, I32: headerBytes + nElems*stride})
 		b.emit(Op{Kind: OpAlloc})
-		// Use a fresh local for the base. The caller's lowerFunc
-		// already declared every Var in info.Locals; the synthetic
-		// slot we need here lives at len(locals) and we extend
-		// b.locals in place. The Func.Locals slice the codegen
-		// consumer uses isn't updated, but the IR isn't currently
-		// the production code path for backends; this is enough
-		// for the IR's own tests.
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__arr_lit_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
@@ -1418,15 +1485,15 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: nElems})
 		b.emit(Op{Kind: OpStore})
-		// Each element at base + 4 + i*4.
+		// Each element at base + 4 + i*stride.
 		for i, el := range n.Elems {
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-			b.emit(Op{Kind: OpConstI32, I32: int32(headerBytes + i*4)})
+			b.emit(Op{Kind: OpConstI32, I32: int32(headerBytes) + int32(i)*stride})
 			b.emit(Op{Kind: OpAdd})
 			if err := b.expr(el); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpStore})
+			b.emit(Op{Kind: storeOp})
 		}
 		// Push the *content* pointer (base + 4) so the value matches
 		// what the rest of the language expects from an ArrayLit.
@@ -1818,9 +1885,9 @@ func (b *builder) binary(n *ast.Binary) error {
 //
 //  1. lit == lit  →  OpConstI32 0/1   (and the inverse for !=)
 //  2. ident == lit (or lit == ident) →
-//        len(ident) == lit.length
-//          ? <ident == lit at byte level via OpStrEq>
-//          : 0
+//     len(ident) == lit.length
+//     ? <ident == lit at byte level via OpStrEq>
+//     : 0
 //     The length-mismatch path skips the strcmp call entirely;
 //     the length-match path falls through to the existing
 //     `__lang_strcmp` runtime. For the common HTTP-routing
@@ -1912,7 +1979,8 @@ func (b *builder) maybeFoldArithIdentity(n *ast.Binary) (error, bool) {
 // resolve to a compile-time integer constant. Currently:
 //   - NumberLit       (e.g. `5`)
 //   - Unary("-", num) (e.g. `-1`, which the parser builds as
-//                      a unary minus on a positive literal)
+//     a unary minus on a positive literal)
+//
 // Returns the int32 value and true on a hit.
 func constNumber(e ast.Expr) (int32, bool) {
 	if n, ok := e.(*ast.NumberLit); ok {
