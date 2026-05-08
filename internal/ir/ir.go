@@ -1075,7 +1075,16 @@ func (b *builder) expr(e ast.Expr) error {
 	b.curPos = e.Pos()
 	switch n := e.(type) {
 	case *ast.NumberLit:
-		b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
+		// The checker stamps Width on the literal once a concrete
+		// type is known (i32 default, i64 / u32 / u64 from
+		// expected-type context). Width=0 means "default i32" for
+		// literals the checker never settled (e.g. unused-expression
+		// statements, type-erased generic paths).
+		if n.Width == 64 {
+			b.emit(Op{Kind: OpConstI64, I64: n.Value})
+		} else {
+			b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
+		}
 	case *ast.CastExpr:
 		if err := b.expr(n.Inner); err != nil {
 			return err
