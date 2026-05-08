@@ -271,6 +271,12 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 			}
 		}
 		b.WriteByte('"')
+	case *ast.CastExpr:
+		b.WriteString("(as ")
+		b.WriteString(x.Target.String())
+		b.WriteByte(' ')
+		printExpr(b, x.Inner)
+		b.WriteByte(')')
 	case *ast.Ident:
 		b.WriteString(x.Name)
 	case *ast.Unary:

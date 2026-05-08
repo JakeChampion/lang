@@ -72,6 +72,23 @@ var keywords = map[string]bool{
 	"void":     true,
 	"string":   true,
 	"float":    true,
+	// Sized numeric type names. `number` is retained as an alias
+	// for `i32` and `float` for `f32` until the deprecation window
+	// closes (PR 5 of docs/LANGUAGE-DIRECTION.md). Sub-i32 widths
+	// (i8, i16, u8, u16) and unsigned 32/64 widths (u32, u64) are
+	// keyword-reserved here but not yet wired through codegen —
+	// they ship in a follow-up.
+	"i8":  true,
+	"i16": true,
+	"i32": true,
+	"i64": true,
+	"u8":  true,
+	"u16": true,
+	"u32": true,
+	"u64": true,
+	"f32": true,
+	"f64": true,
+	"as":  true,
 	"switch":   true,
 	"case":     true,
 	"default":  true,

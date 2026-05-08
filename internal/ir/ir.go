@@ -47,10 +47,17 @@ const (
 	OpInvalid OpKind = iota
 
 	// Constants
-	OpConstI32   // (i32 imm)         → i32
-	OpConstF32   // (f32 imm)         → f32
-	OpConstStr   // (string-id imm)   → i32 (pointer)
-	OpConstFunc  // (func-id imm)     → i32 (table index)
+	OpConstI32  // (i32 imm)         → i32
+	OpConstI64  // (i64 imm)         → i64
+	OpConstF32  // (f32 imm)         → f32
+	OpConstStr  // (string-id imm)   → i32 (pointer)
+	OpConstFunc // (func-id imm)     → i32 (table index)
+
+	// Width-conversion ops between integer types. ExtendI32S
+	// sign-extends an i32 to i64; WrapI64 truncates the low 32 bits.
+	// More widths land alongside u8/u16/u32/u64 in a follow-up.
+	OpExtendI32S // (i32) → i64
+	OpWrapI64    // (i64) → i32
 
 	// Locals (parameter or var). Idx is the 0-based slot.
 	OpLoadLocal  // ()                → T
@@ -171,8 +178,14 @@ func (k OpKind) String() string {
 	switch k {
 	case OpConstI32:
 		return "const.i32"
+	case OpConstI64:
+		return "const.i64"
 	case OpConstF32:
 		return "const.f32"
+	case OpExtendI32S:
+		return "extend.i32_s"
+	case OpWrapI64:
+		return "wrap.i64"
 	case OpConstStr:
 		return "const.str"
 	case OpConstFunc:
@@ -297,8 +310,19 @@ type Op struct {
 	// OpCallDirect/OpCallIndirect/OpMakeClosure, and the table index
 	// for OpConstFunc.
 	I32 int32
+	// I64 is the immediate for OpConstI64.
+	I64 int64
 	// F32 is the immediate for OpConstF32.
 	F32 float32
+	// Width is the operand bit-width for integer arithmetic /
+	// comparison ops that exist in multiple widths (OpAdd, OpSub,
+	// ..., OpEq, ..., OpNot, the load/store ops, and the local
+	// load/stores via the operand type). Zero is treated as 32 so
+	// existing emit paths keep producing i32 ops without code
+	// changes; explicit `Width: 64` selects i64. Sub-i32 widths
+	// (8, 16) are reserved — they ship with the unsigned-types
+	// follow-up.
+	Width int
 	// Str carries OpConstStr's string value and OpCallDirect's callee
 	// name. Empty otherwise.
 	Str string
@@ -896,6 +920,32 @@ func (b *builder) expr(e ast.Expr) error {
 	switch n := e.(type) {
 	case *ast.NumberLit:
 		b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
+	case *ast.CastExpr:
+		if err := b.expr(n.Inner); err != nil {
+			return err
+		}
+		// Pick the conversion op from the source/target widths.
+		// We only handle integer ↔ integer right now; float casts
+		// land with the f64 follow-up.
+		srcInt, srcIsInt := n.InnerType.(ast.NumberType)
+		dstInt, dstIsInt := n.Target.(ast.NumberType)
+		if !srcIsInt || !dstIsInt {
+			return fmt.Errorf("ir: non-integer casts not yet supported (got %s → %s)", n.InnerType, n.Target)
+		}
+		sw := srcInt.NormalWidth()
+		dw := dstInt.NormalWidth()
+		switch {
+		case sw == dw:
+			// Same-width cast (e.g. signed ↔ unsigned of the same
+			// width once we add unsigned types). Bit-identical at
+			// the wasm level — emit nothing.
+		case sw == 32 && dw == 64:
+			b.emit(Op{Kind: OpExtendI32S})
+		case sw == 64 && dw == 32:
+			b.emit(Op{Kind: OpWrapI64})
+		default:
+			return fmt.Errorf("ir: cast from %s to %s not yet supported", n.InnerType, n.Target)
+		}
 	case *ast.BoolLit:
 		v := int32(0)
 		if n.Value {
@@ -1305,7 +1355,15 @@ func (b *builder) binary(n *ast.Binary) error {
 	if !ok {
 		return fmt.Errorf("ir: unsupported binary %q", n.Op)
 	}
-	b.emit(Op{Kind: op})
+	// Width=0 means "unannotated by the checker", which happens
+	// for IR-test inputs that bypass the checker entirely. Treat
+	// as i32 so existing tests pass; checker-produced trees set
+	// IntWidth explicitly.
+	w := n.IntWidth
+	if w == 0 {
+		w = 32
+	}
+	b.emit(Op{Kind: op, Width: w})
 	return nil
 }
 

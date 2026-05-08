@@ -1133,6 +1133,26 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
 		return Number(x.Value), nil
+	case *ast.CastExpr:
+		// All integers live in `Number` (int64) at interp time, so
+		// most numeric casts are no-ops semantically. The exception
+		// is i64 → i32, which truncates the high 32 bits. Float
+		// casts aren't wired here because the interpreter doesn't
+		// currently model float values; the WASM / arm32 backends
+		// own floats end-to-end.
+		v, err := i.evalExpr(x.Inner, env)
+		if err != nil {
+			return nil, err
+		}
+		if tgt, ok := x.Target.(ast.NumberType); ok {
+			if src, ok := v.(Number); ok {
+				if tgt.NormalWidth() == 32 {
+					return Number(int32(int64(src))), nil
+				}
+				return src, nil
+			}
+		}
+		return nil, fmt.Errorf("cast from %T to %s not supported in the interpreter", v, x.Target)
 	case *ast.BoolLit:
 		return Bool(x.Value), nil
 	case *ast.StringLit:

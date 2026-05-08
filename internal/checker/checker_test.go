@@ -39,7 +39,7 @@ func TestTypeErrors(t *testing.T) {
 		want string
 	}{
 		{`function f(): number { return true; }`, "return type mismatch"},
-		{`function f(): number { return 1 + true; }`, "requires number"},
+		{`function f(): number { return 1 + true; }`, "requires an integer type"},
 		{`function f(): boolean { return 1; }`, "return type mismatch"},
 		{`function f() { x; }`, "undefined identifier"},
 		{`function f(n: number): number { if (n) { return 0; } return 1; }`, "if condition must be boolean"},

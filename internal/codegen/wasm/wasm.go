@@ -4973,9 +4973,16 @@ func wasmEscape(s string) string {
 // ---------- type mapping ----------
 
 func watType(t ast.Type) (string, error) {
-	switch t.(type) {
-	case ast.NumberType, ast.BoolType, ast.StringType:
-		// Strings are pointers into linear memory, so they're i32 too.
+	switch v := t.(type) {
+	case ast.NumberType:
+		// Sub-i32 widths still live in an i32 wasm slot (with
+		// masking on store) — only i64 needs the wider wasm type.
+		if v.NormalWidth() == 64 {
+			return "i64", nil
+		}
+		return "i32", nil
+	case ast.BoolType, ast.StringType:
+		// Strings are pointers into linear memory, so they're i32.
 		return "i32", nil
 	case ast.ArrayType:
 		// Arrays are pointers into linear memory.
@@ -4987,6 +4994,9 @@ func watType(t ast.Type) (string, error) {
 		// Struct and enum values are heap pointers.
 		return "i32", nil
 	case ast.FloatType:
+		if v.NormalWidth() == 64 {
+			return "f64", nil
+		}
 		return "f32", nil
 	}
 	return "", fmt.Errorf("wasm: type %s isn't supported by this backend yet", t)

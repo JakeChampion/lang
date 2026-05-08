@@ -1144,7 +1144,26 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	switch n := e.(type) {
 	case *ast.NumberLit:
+		// All integer literals start out as `i32`. Polymorphic
+		// resolution from contextual type ("the literal `1` in
+		// `let x: i64 = 1` is i64") is a follow-up; for now the
+		// caller writes `1 as i64`.
 		return ast.NumberType{}
+	case *ast.CastExpr:
+		// Currently restricted to numeric → numeric. Bool and
+		// string casts (via `as`) come back when the use case
+		// arises; today they'd just hide a bug.
+		inner := c.checkExpr(n.Inner, s)
+		n.InnerType = inner
+		_, innerIsNum := inner.(ast.NumberType)
+		_, innerIsFloat := inner.(ast.FloatType)
+		_, targetIsNum := n.Target.(ast.NumberType)
+		_, targetIsFloat := n.Target.(ast.FloatType)
+		if (innerIsNum || innerIsFloat) && (targetIsNum || targetIsFloat) {
+			return n.Target
+		}
+		c.errf(n.P, "cannot cast %s to %s; only numeric casts are supported", inner, n.Target)
+		return n.Target
 	case *ast.BoolLit:
 		return ast.BoolType{}
 	case *ast.StringLit:
@@ -1348,20 +1367,31 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			fallthrough
 		case "-", "*", "/":
-			// Same-type number+number or float+float arithmetic.
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
 				n.IsFloat = true
 				return ast.FloatType{}
 			}
-			c.requireNumber(n.P, lt, n.Op)
-			c.requireNumber(n.P, rt, n.Op)
-			return ast.NumberType{}
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				c.errf(n.P, "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				return ast.NumberType{}
+			}
+			n.IntWidth = common.NormalWidth()
+			return common
 		case "%", "&", "|", "^", "<<", ">>":
-			c.requireNumber(n.P, lt, n.Op)
-			c.requireNumber(n.P, rt, n.Op)
-			return ast.NumberType{}
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				c.errf(n.P, "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				return ast.NumberType{}
+			}
+			n.IntWidth = common.NormalWidth()
+			return common
 		case "<", ">", "<=", ">=":
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
@@ -1369,8 +1399,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.IsFloat = true
 				return ast.BoolType{}
 			}
-			c.requireNumber(n.P, lt, n.Op)
-			c.requireNumber(n.P, rt, n.Op)
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				c.errf(n.P, "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				return ast.BoolType{}
+			}
+			n.IntWidth = common.NormalWidth()
 			return ast.BoolType{}
 		case "==", "!=":
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
@@ -1390,6 +1426,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// main` and never compared them in lang.
 			if isFloat(lt) && isFloat(rt) {
 				n.IsFloat = true
+			}
+			// Track i64 equality so codegen knows to emit `i64.eq`
+			// / `i64.ne` instead of `i32.eq`/`ne`.
+			if common, ok := commonIntegerWidth(lt, rt); ok {
+				n.IntWidth = common.NormalWidth()
 			}
 			return ast.BoolType{}
 		case "&&", "||":
@@ -1509,8 +1550,36 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 
 func (c *checker) requireNumber(p ast.Position, t ast.Type, op string) {
 	if t != nil && !ast.Equal(t, ast.NumberType{}) {
-		c.errf(p, "operator %q requires number, got %s", op, t)
+		c.errf(p, "operator %q requires i32, got %s", op, t)
 	}
+}
+
+// requireInteger matches any integer type — i32, i64, eventually
+// the unsigned widths. Used by arithmetic checks that allow either
+// width as long as both sides agree.
+func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
+	if t == nil {
+		return
+	}
+	if _, ok := t.(ast.NumberType); !ok {
+		c.errf(p, "operator %q requires an integer type, got %s", op, t)
+	}
+}
+
+// commonIntegerWidth returns the common NumberType when both sides
+// are integers of the same width + signedness, plus a boolean
+// indicating success. Mixed widths trigger a checker error from
+// the caller — `as` is required for explicit conversion.
+func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
+	ln, lOk := lt.(ast.NumberType)
+	rn, rOk := rt.(ast.NumberType)
+	if !lOk || !rOk {
+		return ast.NumberType{}, false
+	}
+	if ln.NormalWidth() != rn.NormalWidth() || ln.IsSigned() != rn.IsSigned() {
+		return ast.NumberType{}, false
+	}
+	return ln, true
 }
 func (c *checker) requireFloat(p ast.Position, t ast.Type, op string) {
 	if t != nil && !ast.Equal(t, ast.FloatType{}) {
