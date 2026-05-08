@@ -185,7 +185,13 @@ Slices (deferred to PR 2.5):
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally
   and parsers cleanly.
-- Pipe operator `|>` (data-first; stdlib written subject-first).
+- Pipe operator `|>` — **shipped early as a standalone PR** since
+  it's a parse-time desugar with no codegen impact and the
+  ergonomic win is immediate. Data-first (`x |> f(a, b)` →
+  `f(x, a, b)`); chains left-associate; precedence sits between
+  assignment and ternary so `1 + 2 |> f` is `f(1 + 2)`. The
+  formatter round-trips the pipe form via an `IsPipe` flag on
+  Call.
 - `let else` / `if let`.
 - `match` guards (`when n > 0`).
 - `use` syntax (Gleam-style). Replaces a future `?` because it

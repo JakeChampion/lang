@@ -593,6 +593,26 @@ function main(): i32 {
 	}
 }
 
+// Pipe operator `|>` — data-first call sugar. `x |> f(a, b)`
+// desugars at parse time to `f(x, a, b)`. Chains left-associate
+// so `x |> f |> g` is `g(f(x))`. Below uses single-arg piping
+// (`5 |> double` → `double(5)`) plus prepending into an existing
+// arg list (`x |> add(3)` → `add(x, 3)`).
+func TestWASMPipeOperator(t *testing.T) {
+	src := `function double(n: i32): i32 { return n * 2; }
+function add(a: i32, b: i32): i32 { return a + b; }
+function main(): i32 {
+    var x = 5 |> double;
+    var y = x |> add(3);
+    var z = y |> double |> add(4);
+    if (x == 10 && y == 13 && z == 30) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (pipe chain mismatch)", got)
+	}
+}
+
 // Heterogeneous tuples — i32 and string in the same value.
 // Exercises mixing pointer and integer fields in the heap layout.
 func TestWASMTupleHeterogeneous(t *testing.T) {
