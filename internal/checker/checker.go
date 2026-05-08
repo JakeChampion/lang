@@ -1414,6 +1414,55 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 }
 
+// inferUseParam fills in `fn`'s first-parameter type by reading
+// the source-call's signature. The parser left the slot nil
+// when the user wrote `use IDENT <- EXPR;` (no `: TYPE`); this
+// function looks up the call's callee in `c.info.FuncSigs`,
+// finds the trailing function-typed parameter (the callback
+// slot the callback is being passed into), and stamps the
+// callback's first parameter from there. On failure (callee
+// not a bare identifier we can resolve, or the receiving
+// param isn't function-typed) it records an error pointing at
+// the `use` site.
+func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
+	if len(fn.Params) == 0 || fn.Params[0].Type != nil {
+		return
+	}
+	src := fn.UseInferSource
+	if src == nil {
+		return
+	}
+	id, ok := src.Callee.(*ast.Ident)
+	if !ok {
+		c.errf(fn.P, "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation")
+		return
+	}
+	sig, ok := c.info.FuncSigs[id.Name]
+	if !ok {
+		// Maybe it's a local function in the outer scope.
+		if t, ok := outer.lookup(id.Name); ok {
+			if ft, isFunc := t.(*ast.FuncType); isFunc {
+				sig = ft
+			}
+		}
+	}
+	if sig == nil || len(sig.Params) == 0 {
+		c.errf(fn.P, "use: callee %q has no signature; add an explicit `: TYPE` annotation", id.Name)
+		return
+	}
+	last := sig.Params[len(sig.Params)-1]
+	cbSig, isFunc := last.(*ast.FuncType)
+	if !isFunc {
+		c.errf(fn.P, "use: callee %q's last parameter isn't a function — add an explicit `: TYPE` annotation", id.Name)
+		return
+	}
+	if len(cbSig.Params) == 0 {
+		c.errf(fn.P, "use: callee %q's callback takes no arguments — there's nothing to bind", id.Name)
+		return
+	}
+	fn.Params[0].Type = cbSig.Params[0]
+}
+
 // checkLocalFunc type-checks a nested function and records its
 // captured outer-scope variables. The local name is bound in the
 // surrounding scope so subsequent calls (and recursion through the
@@ -1421,6 +1470,16 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 // its own params, plus a capture-sink that registers any outer-scope
 // name the body reads.
 func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
+	// `use IDENT <- EXPR;` synthesises a callback FuncDecl whose
+	// first parameter has no source-level type annotation. Infer
+	// it from the receiving call's signature: that call's last
+	// parameter is itself a FuncType (the callback slot we're
+	// being passed into), and its first parameter is the binding
+	// type. Generic-callee inference is a follow-up — for now we
+	// require the callee to resolve to a concrete signature.
+	if fn.UseInferSource != nil {
+		c.inferUseParam(fn, outer)
+	}
 	// Bind the function's name in the outer scope so subsequent code
 	// can call it.
 	sig := &ast.FuncType{Result: fn.ReturnType}
