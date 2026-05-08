@@ -613,6 +613,46 @@ function main(): i32 {
 	}
 }
 
+// Slice views (`[T]`) — `arr[a:b]` produces a non-owning view
+// over the parent's storage. Verifies len + indexing on a slice
+// over an owned array AND sub-slicing (slice-of-slice).
+// Exercises the new $__slice_make + $__slice_idx runtime helpers,
+// plus the `len(slice)` codegen path that loads length from
+// `slice + 4` instead of `arr - 4`.
+func TestWASMSliceViews(t *testing.T) {
+	src := `function main(): i32 {
+    var arr: i32[] = [10, 20, 30, 40, 50];
+    var s: [i32] = arr[1:4];          // [20, 30, 40]
+    if (len(s) != 3) { return 1; }
+    if (s[0] != 20) { return 2; }
+    if (s[1] != 30) { return 3; }
+    if (s[2] != 40) { return 4; }
+    var t = s[1:3];                   // [30, 40]
+    if (len(t) != 2) { return 5; }
+    if (t[0] != 30 || t[1] != 40) { return 6; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (slice view mismatch at step %d)", got, got)
+	}
+}
+
+// `arr[:b]` and `arr[a:]` — half-bounded slice forms. Low
+// defaults to 0; high defaults to len(source).
+func TestWASMSliceHalfBoundedForms(t *testing.T) {
+	src := `function main(): i32 {
+    var arr: i32[] = [1, 2, 3, 4, 5];
+    var head: [i32] = arr[:3];
+    if (len(head) != 3 || head[0] != 1 || head[2] != 3) { return 1; }
+    var tail: [i32] = arr[2:];
+    if (len(tail) != 3 || tail[0] != 3 || tail[2] != 5) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (half-bounded slice mismatch at step %d)", got, got)
+	}
+}
+
 // Heterogeneous tuples — i32 and string in the same value.
 // Exercises mixing pointer and integer fields in the heap layout.
 func TestWASMTupleHeterogeneous(t *testing.T) {

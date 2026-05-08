@@ -308,6 +308,17 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteByte('[')
 		printExpr(b, x.Idx)
 		b.WriteByte(']')
+	case *ast.SliceExpr:
+		printExpr(b, x.Source)
+		b.WriteByte('[')
+		if x.Low != nil {
+			printExpr(b, x.Low)
+		}
+		b.WriteByte(':')
+		if x.High != nil {
+			printExpr(b, x.High)
+		}
+		b.WriteByte(']')
 	case *ast.ArrayLit:
 		b.WriteByte('[')
 		for i, el := range x.Elems {

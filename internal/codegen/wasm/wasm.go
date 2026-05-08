@@ -1038,6 +1038,22 @@ func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 			g.needsBoundsCheck = true
 			g.needsRuntime = true
 			return
+		case *ast.SliceExpr:
+			// Slicing pulls in the same heap-record machinery
+			// as bounds-checked indexing — the slice constructor
+			// is alloc + 2× store, plus indexing on slice values
+			// goes through `$__slice_idx`.
+			g.needsBoundsCheck = true
+			g.needsRuntime = true
+			g.needsStructs = true
+			walk(x.Source)
+			if x.Low != nil {
+				walk(x.Low)
+			}
+			if x.High != nil {
+				walk(x.High)
+			}
+			return
 		case *ast.Binary:
 			walk(x.Left)
 			walk(x.Right)
@@ -1721,6 +1737,66 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`end`)
 		g.line(`local.get $base`)
 		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
+
+		// Slice helpers — gated on the same flag as bounds-check
+		// since slice creation, indexing, and len all need to
+		// access the (data_ptr, len) heap pair.
+		//
+		// Slice memory layout: 8 bytes at slice_ptr —
+		//   [+0..+3] data_ptr (i32, aliases the parent array's
+		//            element-0 address shifted by `low * 4`)
+		//   [+4..+7] len (i32)
+		g.line(`(func $__slice_make (param $data i32) (param $len i32) (result i32)`)
+		g.indent++
+		g.line(`(local $s i32)`)
+		g.line(`i32.const 8`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.tee $s`)
+		g.line(`local.get $data`)
+		g.line(`i32.store`)
+		g.line(`local.get $s`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`local.get $len`)
+		g.line(`i32.store`)
+		g.line(`local.get $s`)
+		g.indent--
+		g.line(`)`)
+
+		g.line(`(func $__slice_idx (param $slice i32) (param $i i32) (result i32)`)
+		g.indent++
+		g.line(`(local $data i32) (local $len i32)`)
+		g.line(`local.get $slice`)
+		g.line(`i32.load`)
+		g.line(`local.set $data`)
+		g.line(`local.get $slice`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`i32.load`)
+		g.line(`local.set $len`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 0`)
+		g.line(`i32.lt_s`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $i`)
+		g.line(`local.get $len`)
+		g.line(`i32.ge_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $data`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 4`)
+		g.line(`i32.mul`)
 		g.line(`i32.add`)
 		g.indent--
 		g.line(`)`)
@@ -4992,8 +5068,11 @@ func watType(t ast.Type) (string, error) {
 	case ast.BoolType, ast.StringType:
 		// Strings are pointers into linear memory, so they're i32.
 		return "i32", nil
-	case ast.ArrayType:
-		// Arrays are pointers into linear memory.
+	case ast.ArrayType, ast.SliceType:
+		// Arrays and slices are both heap-pointer values at the
+		// wasm level — slices point to an 8-byte
+		// (data_ptr, len) struct, arrays point at the data
+		// (with a length prefix at base-4).
 		return "i32", nil
 	case *ast.FuncType:
 		// Function values are table indices.

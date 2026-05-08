@@ -76,6 +76,17 @@ type FloatType struct {
 }
 type ArrayType struct{ Elem Type }
 
+// SliceType is a non-owning view into an Array<T>. Spelled `[T]`
+// in source — distinct from owned `T[]` so the API surface
+// signals "this borrows" without a borrow checker. Codegen
+// lowers a slice value to a pointer to an 8-byte heap struct
+// `{data_ptr: i32, len: i32}` — `data_ptr` aliases the parent
+// array's storage, so a slice + its parent share the parent's
+// lifetime. Bump-allocator semantics make that contract trivial:
+// everything alive at the end of the arena lives until the
+// arena resets.
+type SliceType struct{ Elem Type }
+
 // TupleType is an anonymous heterogeneous tuple — `(i32, string)`,
 // `(i32, i32, bool)`, etc. Two tuples are equal when their element
 // types match pairwise. Single-element tuples (`(i32,)`) require
@@ -121,6 +132,7 @@ func (VoidType) isType()    {}
 func (StringType) isType()  {}
 func (FloatType) isType()   {}
 func (ArrayType) isType()   {}
+func (SliceType) isType()   {}
 func (TupleType) isType()   {}
 func (*FuncType) isType()   {}
 func (StructType) isType()  {}
@@ -139,6 +151,7 @@ func (f FloatType) String() string {
 	return fmt.Sprintf("f%d", f.NormalWidth())
 }
 func (a ArrayType) String() string { return a.Elem.String() + "[]" }
+func (s SliceType) String() string { return "[" + s.Elem.String() + "]" }
 func (t TupleType) String() string {
 	out := "("
 	for i, e := range t.Elems {
@@ -232,6 +245,9 @@ func Equal(a, b Type) bool {
 		return ok && x.NormalWidth() == y.NormalWidth()
 	case ArrayType:
 		y, ok := b.(ArrayType)
+		return ok && Equal(x.Elem, y.Elem)
+	case SliceType:
+		y, ok := b.(SliceType)
 		return ok && Equal(x.Elem, y.Elem)
 	case TupleType:
 		y, ok := b.(TupleType)
@@ -332,6 +348,29 @@ type Index struct {
 	// the AST level but lower differently: arrays read 4 bytes per
 	// slot, strings read 1 byte and zero-extend to a number.
 	IsString bool
+	// IsSlice is set by the checker when the indexed value is a
+	// slice (`[T]`) rather than an owned array. Slice indexing
+	// goes through one extra level of indirection — the slice
+	// holds a `(data_ptr, len)` struct, so accessing element i
+	// loads data_ptr first and then offsets into the parent
+	// array's storage.
+	IsSlice bool
+}
+
+// SliceExpr is `arr[a:b]`, `arr[a:]`, or `arr[:b]` — produces a
+// non-owning view that shares the parent array's storage. Either
+// bound may be nil for "use 0" (low) or "use len(arr)" (high).
+// Source-level support for unbounded forms (`arr[:]`) is reserved.
+type SliceExpr struct {
+	P      Position
+	Source Expr
+	Low    Expr // nil = 0
+	High   Expr // nil = len(Source)
+	// SourceIsSlice is set by the checker when Source is itself a
+	// slice (vs. an owned Array). Sub-slicing has to dereference
+	// the parent slice's data_ptr instead of stepping past an
+	// owned array's length prefix.
+	SourceIsSlice bool
 }
 type Call struct {
 	P      Position
@@ -470,6 +509,7 @@ func (e *FloatLit) Pos() Position  { return e.P }
 func (e *Ident) Pos() Position     { return e.P }
 func (e *ArrayLit) Pos() Position  { return e.P }
 func (e *Index) Pos() Position     { return e.P }
+func (e *SliceExpr) Pos() Position { return e.P }
 func (e *Call) Pos() Position      { return e.P }
 func (e *Binary) Pos() Position    { return e.P }
 func (e *Unary) Pos() Position     { return e.P }
@@ -490,6 +530,7 @@ func (*FloatLit) isExpr()  {}
 func (*Ident) isExpr()     {}
 func (*ArrayLit) isExpr()  {}
 func (*Index) isExpr()     {}
+func (*SliceExpr) isExpr() {}
 func (*Call) isExpr()      {}
 func (*Binary) isExpr()    {}
 func (*Unary) isExpr()     {}

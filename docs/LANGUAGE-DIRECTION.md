@@ -161,13 +161,43 @@ Tuples (deferred to a follow-up):
   (binding semantics in match arms, function params, etc.) so
   punted.
 
-Slices (deferred to PR 2.5):
-- Slice/view type `[T]` distinct from owned `Array<T>` (or
-  current `T[]`). Open question: keep `T[]` for owned + `[T]`
-  for view? Or unify? Lean Odin-style: `[T]` view + `Array<T>`
-  owned, deprecate `T[]`.
-- String slicing returns `[u8]` views.
-- Views borrow lifetime from their parent (arena-scoped).
+### PR 2.5 — Slice views (shipped)
+
+Non-owning views over `Array<T>`. Spelled `[T]` in source —
+distinct from owned `T[]` so the API surface signals "this
+borrows" without needing a borrow checker.
+
+What landed:
+- `[T]` slice type. `T[]` (owned) stays for declarations.
+- Slicing syntax: `arr[a:b]`, `arr[a:]`, `arr[:b]`. The fully
+  unbounded `arr[:]` form is reserved (errors with a hint).
+- `len(slice)` reads from `slice + 4`; `len(arr)` and
+  `len(str)` keep their `base - 4` shape. The IR's `len()`
+  fold picks the right offset by static type.
+- Indexing: `slice[i]` goes through a new `$__slice_idx`
+  runtime helper that bounds-checks against the slice's len
+  and dereferences `data_ptr` before stepping. Same trap
+  semantics as array indexing.
+- Sub-slicing: `slice[a:b]` works, dereferencing the parent's
+  `data_ptr` once before computing the new view's start.
+
+ABI: a slice value is a heap pointer to an 8-byte struct —
+`{ data_ptr: i32, len: i32 }`. `data_ptr` aliases the parent's
+storage, so the bump allocator's "everything alive at scope
+exit" semantics make the borrow lifetime trivial.
+
+Element stride is fixed at 4 bytes — works for `[i32]`,
+`[string]`, `[Foo]` (struct ptr), and `[T[]]` (array ptr). A
+slice over `[i64]` or `[f64]` needs a stride argument and is
+deferred to the unsigned-types follow-up.
+
+Deferred:
+- String slicing (`str[a:b]` returning a `[u8]` or string view).
+  Splitting bytes from string is its own design pass; not
+  blocking real handler code that just wants array slicing.
+- `[u8]` view of strings.
+- Mutating slice operations (`slice[i] = v`).
+- Slice arithmetic / concatenation.
 
 ### PR 3 — Generics for functions + structs
 

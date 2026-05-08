@@ -1224,6 +1224,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if arr, ok := at.(ast.ArrayType); ok {
 			return arr.Elem
 		}
+		if sl, ok := at.(ast.SliceType); ok {
+			n.IsSlice = true
+			return sl.Elem
+		}
 		// `s[i]` on a string returns the byte at i as a number.
 		if _, ok := at.(ast.StringType); ok {
 			n.IsString = true
@@ -1231,6 +1235,31 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		if at != nil {
 			c.errf(n.P, "indexing non-array value of type %s", at)
+		}
+		return nil
+	case *ast.SliceExpr:
+		st := c.checkExpr(n.Source, s)
+		if n.Low != nil {
+			lt := c.checkExpr(n.Low, s)
+			if lt != nil && !ast.Equal(lt, ast.NumberType{}) {
+				c.errf(n.Low.Pos(), "slice low bound must be i32, got %s", lt)
+			}
+		}
+		if n.High != nil {
+			ht := c.checkExpr(n.High, s)
+			if ht != nil && !ast.Equal(ht, ast.NumberType{}) {
+				c.errf(n.High.Pos(), "slice high bound must be i32, got %s", ht)
+			}
+		}
+		if arr, ok := st.(ast.ArrayType); ok {
+			return ast.SliceType{Elem: arr.Elem}
+		}
+		if sl, ok := st.(ast.SliceType); ok {
+			n.SourceIsSlice = true
+			return sl
+		}
+		if st != nil {
+			c.errf(n.P, "cannot slice value of type %s", st)
 		}
 		return nil
 	case *ast.Call:
@@ -1312,11 +1341,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			at := c.checkExpr(n.Args[0], s)
 			switch at.(type) {
-			case ast.StringType, ast.ArrayType:
+			case ast.StringType, ast.ArrayType, ast.SliceType:
 				// fine
 			default:
 				if at != nil {
-					c.errf(n.Args[0].Pos(), "len: expected string or array, got %s", at)
+					c.errf(n.Args[0].Pos(), "len: expected string, array, or slice, got %s", at)
 				}
 			}
 			return ast.NumberType{}
