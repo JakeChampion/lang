@@ -1081,6 +1081,8 @@ func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 			}
 		case *ast.FieldAccess:
 			walk(x.Target)
+		case *ast.CastExpr:
+			walk(x.Inner)
 		case *ast.Block:
 			for _, s := range x.Stmts {
 				walk(s)
@@ -1737,6 +1739,68 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`end`)
 		g.line(`local.get $base`)
 		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
+
+		// Stride-aware variants for sub-i32 (`__str_idx` already
+		// covers stride=1) and i64/f64 arrays. Same bounds-check
+		// shape as `__arr_idx`; the only delta is the multiplier
+		// applied to the index when computing the byte address.
+		g.line(`(func $__arr_idx_2 (param $base i32) (param $i i32) (result i32)`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`i32.const 0`)
+		g.line(`i32.lt_s`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $i`)
+		g.line(`local.get $base`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`i32.ge_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $base`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 2`)
+		g.line(`i32.mul`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
+
+		g.line(`(func $__arr_idx_8 (param $base i32) (param $i i32) (result i32)`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`i32.const 0`)
+		g.line(`i32.lt_s`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $i`)
+		g.line(`local.get $base`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`i32.ge_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $base`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 8`)
+		g.line(`i32.mul`)
 		g.line(`i32.add`)
 		g.indent--
 		g.line(`)`)

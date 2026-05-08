@@ -1248,6 +1248,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		got := c.checkExpr(n.Init, s)
 		if n.Type != nil {
 			c.settleNumeric(n.Init, n.Type)
+			got = postSettleType(n.Init, got)
 		}
 		if n.Type == nil {
 			if got == nil {
@@ -1639,6 +1640,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.errf(el.Pos(), "array element type %s, expected %s", t, elemT)
 			}
 		}
+		n.ElemType = elemT
 		return ast.ArrayType{Elem: elemT}
 	case *ast.Index:
 		at := c.checkExpr(n.Array, s)
@@ -1647,10 +1649,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errf(n.Idx.Pos(), "index must be an integer, got %s", it)
 		}
 		if arr, ok := at.(ast.ArrayType); ok {
+			n.ElemType = arr.Elem
 			return arr.Elem
 		}
 		if sl, ok := at.(ast.SliceType); ok {
 			n.IsSlice = true
+			n.ElemType = sl.Elem
 			return sl.Elem
 		}
 		// `s[i]` on a string returns the byte at i as a number.
@@ -2236,6 +2240,24 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 			return
 		}
 		c.settleFloat(e, hn)
+	case ast.ArrayType:
+		// Array-literal element-type propagation: `var x: [u8] =
+		// [1, 2, 3]` should settle each element to u8 so the IR
+		// emits 1-byte stores. Stamp the AST node's ElemType too
+		// so the IR's ArrayLit lowering picks the right stride.
+		if al, ok := e.(*ast.ArrayLit); ok {
+			al.ElemType = hn.Elem
+			for _, el := range al.Elems {
+				c.settleNumeric(el, hn.Elem)
+			}
+		}
+	case ast.SliceType:
+		if al, ok := e.(*ast.ArrayLit); ok {
+			al.ElemType = hn.Elem
+			for _, el := range al.Elems {
+				c.settleNumeric(el, hn.Elem)
+			}
+		}
 	}
 }
 
@@ -2316,6 +2338,10 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		}
 	case *ast.Unary:
 		return postSettleType(x.Operand, prior)
+	case *ast.ArrayLit:
+		if x.ElemType != nil {
+			return ast.ArrayType{Elem: x.ElemType}
+		}
 	}
 	return prior
 }
