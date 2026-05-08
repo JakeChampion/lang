@@ -849,6 +849,13 @@ type FuncDecl struct {
 	// this list to size the env block and to know how to materialise
 	// each capture at the def site.
 	Captures []Param
+	// UseInferSource is set by the parser on a synthesised
+	// `use`-callback FuncDecl when the source omitted the type
+	// annotation (`use n <- foo(x);`). It points at the call the
+	// callback is being passed into; the checker reads the
+	// callee's signature to infer the missing parameter type.
+	// Nil otherwise.
+	UseInferSource *Call
 }
 
 // StructDecl is a top-level `struct` declaration. Fields are stored in

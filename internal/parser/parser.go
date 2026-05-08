@@ -1489,12 +1489,16 @@ func (p *parser) parseUse(parent *ast.Block) error {
 	if err != nil {
 		return err
 	}
-	if _, err := p.expect(lexer.Punct, ":"); err != nil {
-		return err
-	}
-	bindType, err := p.parseType()
-	if err != nil {
-		return err
+	// `: TYPE` is optional. Without it, the checker infers the
+	// param type from the receiving call's signature (the last
+	// param of which is a function-typed callback whose first
+	// param is what we want).
+	var bindType ast.Type
+	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		bindType, err = p.parseType()
+		if err != nil {
+			return err
+		}
 	}
 	// `<-` lexes as two punct tokens (`<` then `-`). Accept both.
 	if _, err := p.expect(lexer.Punct, "<"); err != nil {
@@ -1557,6 +1561,12 @@ func (p *parser) parseUse(parent *ast.Block) error {
 		ReturnType: rt,
 		Body:       body,
 		IsLocal:    true,
+	}
+	if bindType == nil {
+		// Defer param-type inference to the checker: it'll peek
+		// at srcCall's callee, find the trailing function-typed
+		// param, and stamp this callback's first param accordingly.
+		cb.UseInferSource = srcCall
 	}
 	parent.Stmts = append(parent.Stmts, cb)
 	// Append the callback as the last argument of the source call

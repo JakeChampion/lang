@@ -840,6 +840,30 @@ function main(): i32 {
 // generalises Result-chaining without a typeclass / monad
 // system, since the callback signature is whatever the
 // receiving function expects.
+// `use` without an explicit type annotation: the checker peeks
+// at the receiving function's callback parameter type and fills
+// in the binding's type automatically. Same shape as the
+// annotated `use IDENT: T <- ...` test, but with the `: T`
+// dropped on both lines.
+func TestWASMUseInferredType(t *testing.T) {
+	src := `function tryThing(callback: (i32) => Option[i32]): Option[i32] {
+    return callback(42);
+}
+function compute(): Option[i32] {
+    use n <- tryThing();
+    return Some(n + 1);
+}
+function main(): i32 {
+    if let Some(v) = compute() {
+        return v;
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 43 {
+		t.Errorf("got %d, want 43 (use inference)", got)
+	}
+}
+
 func TestWASMUseSyntax(t *testing.T) {
 	src := `function tryThing(callback: (i32) => Option[i32]): Option[i32] {
     return callback(42);
