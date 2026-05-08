@@ -1,0 +1,149 @@
+# WASI Preview 2 migration plan
+
+## Goal
+
+Move the WASM backend from WASI Preview 1 (the legacy core-module
+`wasi_snapshot_preview1.fd_*` import shape) to **WASI Preview 2** —
+Component Model components, native resource types, streams, and the
+`wasi:http` interface for edge-function serving.
+
+End state: `lang -target=wasm prog.lang` produces a `.component.wasm`
+that runs in any preview-2 host (`wasmtime run`, edge-function
+runtimes, etc.) and uses the modern WASI interfaces directly.
+
+## Why
+
+- **Real socket support.** Preview 1's socket story is host-preopen
+  only (`wasmtime --tcp-listen=…`); preview 2's `wasi:sockets/tcp`
+  lets the guest call `start-listen` and accept connections itself.
+- **Streams instead of fd-based I/O.** `wasi:io/streams.read` /
+  `.write` are async-shaped, compose with `pollable`, and carry
+  proper error types instead of bare errno integers.
+- **`wasi:http`.** Components implementing
+  `wasi:http/incoming-handler` are the deployment shape for edge
+  functions on Cloudflare, Fastly, Cosmonic, etc. — plain
+  `function handle(req): Response` instead of `main()` polling a
+  socket.
+- **Future-proof.** Preview 1 is frozen; new WASI features only ship
+  in preview 2 / 0.3.
+
+## Migration steps
+
+Each step is shippable on its own — earlier steps don't break when
+later steps land, and tests for the preview-1 path keep running
+until step 5.
+
+### Step 1 — Component Model scaffolding *(this PR)*
+
+- Add `--wasi-preview2` flag to the `lang` CLI (off by default).
+- When the flag is on, post-process the existing preview-1 module
+  with `wasm-tools component new --adapt
+  wasi_snapshot_preview1=$ADAPTER` to produce a Component Model
+  binary. Hosts that expect preview-2 components can now run our
+  output unchanged.
+- Add `wasm-tools` + the adapter (`wasi_snapshot_preview1.wasm`)
+  to CI's tooling install.
+
+This step delivers no new capability — programs still use the
+preview-1 imports under the hood — but it lays the wiring for
+subsequent steps.
+
+### Step 2 — Migrate `random_bytes`
+
+Smallest blast radius. Replace the `random_get` import with the
+preview-2 equivalent:
+
+```
+(import "wasi:random/random@0.2.0" "get-random-bytes"
+        (func $rng (param i64) (result <list u8>)))
+```
+
+`list u8` is a component-level type (a record `{ptr: u32, len:
+u32}` from the canonical ABI's lowering). The codegen learns to
+lift / lower that exactly once, here, and reuses the pattern in
+later steps.
+
+### Step 3 — Migrate stdio + file I/O to streams
+
+`wasi:io/streams` replaces `fd_read` / `fd_write`. Resource
+handles propagate through `Reader` / `Writer`:
+
+```
+type Reader  = resource handle (wasi:io/streams.input-stream)
+type Writer  = resource handle (wasi:io/streams.output-stream)
+```
+
+`read_file` / `write_file` move from `path_open` to
+`wasi:filesystem/types.descriptor`'s `open-at`. The IR's existing
+`Reader` / `Writer` types stay; only the runtime helpers change
+shape.
+
+### Step 4 — Migrate sockets to `wasi:sockets/tcp`
+
+`tcp_listen(port)` finally works guest-side:
+
+1. `wasi:sockets/instance-network.instance-network()` gets the
+   network handle.
+2. `wasi:sockets/tcp.start-listen(network, local-address)` opens
+   a listener.
+3. `accept()` returns `(tcp-socket, input-stream, output-stream)`
+   — the streams plug straight into the existing `Reader` /
+   `Writer` types.
+
+The `--tcp-listen=…` host flag becomes optional; programs are
+self-contained.
+
+### Step 5 — Add `wasi:http` handler target
+
+A new compile mode: `lang -target=wasi-http prog.lang` produces
+a component implementing `wasi:http/incoming-handler.handle`.
+The lang program declares:
+
+```
+function handle(req: HttpRequest): HttpResponse {
+    ...
+}
+```
+
+instead of `main()`. The runtime takes care of the request /
+response plumbing.
+
+### Step 6 — Drop preview-1 emission
+
+Once steps 2-5 cover every builtin, remove the preview-1 code
+paths and make preview 2 the default.
+
+## External dependencies
+
+- **`wasm-tools`** (Bytecode Alliance). The
+  `wasm-tools component new --adapt …` command wraps a core
+  module in a Component Model component using the supplied
+  adapter. CI installs the latest release.
+- **`wasi_snapshot_preview1.command.wasm`** — the preview-1 →
+  preview-2 adapter, also from the Bytecode Alliance. Vendored
+  in `vendor/wasi-adapter/` (~120 KB).
+- **`wasmtime`** ≥ 14 — already installed by CI for our preview-1
+  e2e tests. Preview 2 component support is built in.
+
+## Testing strategy
+
+- Steps 1-2 run *both* preview-1 and preview-2 e2e tests for the
+  same lang program. The preview-2 path uses
+  `wasmtime run prog.component.wasm`; the preview-1 path uses
+  `wasmtime run --wasi=preview1 prog.wasm` (existing).
+- Step 3+ progressively replaces the preview-1 imports; preview-1
+  tests start to be flagged as deprecated and eventually removed
+  in step 6.
+- Each step's PR includes a smoke test that the new component
+  runs end-to-end through `wasmtime`.
+
+## Open questions
+
+- **Adapter sourcing.** Vendoring the adapter binary in-repo keeps
+  builds offline-friendly but bloats clones. Alternative: have the
+  `lang` CLI download it on first preview-2 build and cache in
+  `~/.cache/lang/`. Decision deferred to step 2.
+- **Multi-target binary names.** Currently
+  `lang -o prog prog.lang` produces a single output. Preview 2 mode
+  produces a `.component.wasm` instead — same path, different
+  contents, or `.component.wasm` extension forced? Settle in step 2.
