@@ -1,0 +1,9 @@
+// Vendored copy of just the wasi:clocks@0.2.0 wall-clock interface
+// — needed only because wasi:filesystem/types references its
+// `datetime` record. We don't actually use any clock methods.
+// Source: https://github.com/WebAssembly/wasi-clocks
+package wasi:clocks@0.2.0;
+
+interface wall-clock {
+    record datetime { seconds: u64, nanoseconds: u32 }
+}

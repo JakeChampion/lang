@@ -95,24 +95,29 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		g.stringOffset = 72
 		g.closuresBase = 72
 	}
-	// Preview-2 reserves memory[92..119] for canonical-ABI scratch:
+	// Preview-2 reserves memory[92..123] for canonical-ABI scratch:
 	//   92..103 retptr area (sized for `result<list<u8>,
-	//           stream-error>`; also fits the (ptr, len) pair from
-	//           `get-random-bytes`),
+	//           stream-error>`; also fits all the canonical-ABI
+	//           returns we use — `(ptr, len)` from
+	//           `get-random-bytes` and `get-directories`,
+	//           `result<X, error-code>` from `open-at` and the
+	//           `*-via-stream` family),
 	//   104..107 stdout output-stream handle,
 	//   108..111 stderr output-stream handle,
-	//   112..115 init flags for the cached handles,
-	//   116..119 stdin input-stream handle.
+	//   112..115 init flags for the cached handles
+	//           (bits 0/1/2/3 = stdout/stderr/stdin/preopen),
+	//   116..119 stdin input-stream handle,
+	//   120..123 preopen descriptor handle (cached working dir).
 	// Push the string base past those slots whenever preview-2 is
 	// on, regardless of which preview-2 features the program
-	// actually exercises. The cost is 28 static bytes per module;
+	// actually exercises. The cost is 32 static bytes per module;
 	// the alternative (gating each slot independently) is fragile.
 	if g.preview2 {
-		if g.stringOffset < 120 {
-			g.stringOffset = 120
+		if g.stringOffset < 124 {
+			g.stringOffset = 124
 		}
-		if g.closuresBase < 120 {
-			g.closuresBase = 120
+		if g.closuresBase < 124 {
+			g.closuresBase = 124
 		}
 	}
 

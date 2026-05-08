@@ -1,0 +1,50 @@
+package wasi:filesystem@0.2.0;
+
+// Vendored subset of the wasi:filesystem@0.2.0 types interface —
+// only the resources / methods the wasm backend's preview-2 file
+// I/O actually emits (open-at + read/write/append via-stream +
+// resource drops). Source:
+// https://github.com/WebAssembly/wasi-filesystem
+interface types {
+    use wasi:io/streams@0.2.0.{input-stream, output-stream, error};
+    use wasi:clocks/wall-clock@0.2.0.{datetime};
+
+    type filesize = u64;
+
+    enum descriptor-type {
+        unknown, block-device, character-device, directory,
+        fifo, symbolic-link, regular-file, socket,
+    }
+
+    flags path-flags { symlink-follow }
+    flags open-flags { create, directory, exclusive, truncate }
+    flags descriptor-flags {
+        read, write, file-integrity-sync, data-integrity-sync,
+        requested-write-sync, mutate-directory,
+    }
+
+    enum error-code {
+        access, would-block, already, bad-descriptor, busy,
+        deadlock, quota, exist, file-too-large, illegal-byte-sequence,
+        in-progress, interrupted, invalid, io, is-directory, loop,
+        too-many-links, message-size, name-too-long, no-device,
+        no-entry, no-lock, insufficient-memory, insufficient-space,
+        not-directory, not-empty, not-recoverable, unsupported,
+        no-tty, no-such-device, overflow, not-permitted, pipe,
+        read-only, invalid-seek, text-file-busy, cross-device,
+    }
+
+    resource descriptor {
+        read-via-stream: func(offset: filesize) -> result<input-stream, error-code>;
+        write-via-stream: func(offset: filesize) -> result<output-stream, error-code>;
+        append-via-stream: func() -> result<output-stream, error-code>;
+        open-at: func(
+            path-flags: path-flags,
+            path: string,
+            open-flags: open-flags,
+            %flags: descriptor-flags,
+        ) -> result<descriptor, error-code>;
+    }
+
+    filesystem-error-code: func(err: borrow<error>) -> option<error-code>;
+}
