@@ -204,6 +204,61 @@ func TestArithImmFold_ShiftsOutOfRangeNotFolded(t *testing.T) {
 	}
 }
 
+// Address-mode sink: `add rD, rB, #N ; ldr rD, [rD]` collapses
+// to `ldr rD, [rB, #N]` — the load overwrites rD, so the
+// add's only consumer is gone.
+func TestAddrModeSinkAddImm(t *testing.T) {
+	in := strings.Join([]string{
+		"\tadd r0, r1, #4",
+		"\tldr r0, [r0]",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "ldr r0, [r1, #4]") {
+		t.Errorf("expected `ldr r0, [r1, #4]`, got:\n%s", got)
+	}
+	if strings.Contains(got, "add r0, r1, #4") {
+		t.Errorf("add should be elided:\n%s", got)
+	}
+}
+
+// `sub` with a positive immediate becomes a negated offset in
+// the addressing mode.
+func TestAddrModeSinkSubBecomesNegOffset(t *testing.T) {
+	in := strings.Join([]string{
+		"\tsub r0, r1, #4",
+		"\tldr r0, [r0]",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "ldr r0, [r1, #-4]") {
+		t.Errorf("expected `ldr r0, [r1, #-4]`, got:\n%s", got)
+	}
+}
+
+// ldrb shares the same fold shape as ldr.
+func TestAddrModeSinkLdrb(t *testing.T) {
+	in := strings.Join([]string{
+		"\tadd r0, r1, #2",
+		"\tldrb r0, [r0]",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "ldrb r0, [r1, #2]") {
+		t.Errorf("expected `ldrb r0, [r1, #2]`, got:\n%s", got)
+	}
+}
+
+// When the load destination differs from the add's destination,
+// the add result might still be live, so the fold is skipped.
+func TestAddrModeSinkSkipsWhenDstDiffers(t *testing.T) {
+	in := strings.Join([]string{
+		"\tadd r2, r1, #4",
+		"\tldr r0, [r2]",
+	}, "\n")
+	got := peephole(in)
+	if !strings.Contains(got, "add r2, r1, #4") {
+		t.Errorf("add should remain (r2 may still be live):\n%s", got)
+	}
+}
+
 // `ldr r0, =N ; pop {rN} ; cmp rN, r0` (small N) collapses to
 // `pop {rN} ; cmp rN, #N`, dropping the literal load entirely.
 func TestCmpAgainstSmallConstFolds(t *testing.T) {

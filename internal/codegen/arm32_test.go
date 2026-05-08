@@ -155,19 +155,17 @@ func TestArrayIndex(t *testing.T) {
 	mustContain(t, asm, ".global __lang_alloc")
 }
 
-// Arrays carry a 4-byte little-endian length prefix at base-4. The
-// IR lowers `len(x)` to `<expr>; const 4; sub; load`, which on arm32
-// becomes a `sub … #4` (after the const-imm peephole) followed by
-// `ldr r0, [r0]` — no libc call, just a couple of instructions.
+// Arrays carry a 4-byte little-endian length prefix at base-4.
+// The IR lowers `len(x)` to `<expr>; const 4; sub; load`. The
+// const-imm + address-mode-sink peeps fold this all the way
+// down to a single `ldr rD, [rB, #-4]` — one instruction
+// instead of the unfused `ldr/push/ldr/push/pop/pop/sub/ldr`.
 func TestLenOfArrayLoadsPrefix(t *testing.T) {
 	asm := compile(t, `function f(): number {
 		var a: number[] = [10, 20, 30];
 		return len(a);
 	}`)
-	// The const-imm peephole folds the `ldr r0, =4 ; pop ; sub`
-	// trio into a single `sub … #4`.
-	mustContain(t, asm, "sub r0, r1, #4")
-	mustContain(t, asm, "ldr r0, [r0]")
+	mustContain(t, asm, "ldr r0, [r1, #-4]")
 	if strings.Contains(asm, "bl strlen") {
 		t.Errorf("len(array) must not call strlen:\n%s", asm)
 	}
@@ -828,11 +826,10 @@ func TestArm32LenStringLiteralFolds(t *testing.T) {
 // `<ptr>; const 4; sub; load` IR, so testing one suffices.
 func TestArm32LenNonLiteralUsesPrefixLoad(t *testing.T) {
 	asm := compile(t, `function f(s: string): number { return len(s); }`)
-	// The const-imm peephole folds the `ldr r0, =4 ; pop ; sub`
-	// trio into `sub r0, r1, #4`; the load that follows is the
-	// prefix read.
-	mustContain(t, asm, "sub r0, r1, #4")
-	mustContain(t, asm, "ldr r0, [r0]")
+	// The const-imm + address-mode-sink peeps fold the entire
+	// `<ptr>; const 4; sub; load` IR into a single
+	// `ldr rD, [base, #-4]`.
+	mustContain(t, asm, "ldr r0, [r1, #-4]")
 }
 
 // String literals in .rodata are emitted with a 4-byte length prefix
