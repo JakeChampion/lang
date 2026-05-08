@@ -1230,11 +1230,19 @@ func (g *generator) internString(s string) int {
 //	80..83  env_ptrs heap pointer (filled by environ_get)
 //	84..87  environ_sizes_get out: count
 //	88..91  environ_sizes_get out: bufsize
-//	92..95  preview-2 random retptr.ptr (when needsRandomBytes && preview2)
-//	96..99  preview-2 random retptr.len (paired with the slot above)
+//	92..103 preview-2 canonical-ABI retptr area (12 bytes: enough for
+//	         result<list<u8>, stream-error> as well as the smaller
+//	         (ptr, len) pair from `get-random-bytes`). Single-threaded,
+//	         so the slot is shared between calls.
+//	104..107 preview-2 stdout output-stream resource handle (cached on
+//	         first $print / $write / $putchar call)
+//	108..111 preview-2 stderr output-stream resource handle (cached on
+//	         first $eprint call)
+//	112..115 preview-2 stream-handle init flags
+//	         (bit 0 = stdout cached, bit 1 = stderr cached)
 //	96+     string data, each entry: 4-byte length prefix then bytes
-//	  (string data starts at 100 instead of 96 when the preview-2
-//	  random retptr is in play; see EmitFromIRWithOptions.)
+//	  (string data starts at 116 instead of 96 when preview-2 streams
+//	  are in play; see EmitFromIRWithOptions.)
 func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
 	if g.needsArgs {
@@ -1250,6 +1258,19 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsExit {
 		g.line(`(import "wasi_snapshot_preview1" "proc_exit" (func $__wasi_proc_exit (param i32)))`)
+	}
+	if g.preview2 {
+		// Preview-2 stdio: get-stdout / get-stderr return resource
+		// handles; output-stream.blocking-write-and-flush takes
+		// (handle, ptr, len, retptr) and flushes synchronously
+		// (matches the existing fd_write semantics closely enough
+		// to drop in for $print / $write / $eprint / $putchar).
+		// The preview-1 fd_write import above stays, since file
+		// I/O and TCP send still go through it (via the adapter)
+		// — those migrate in subsequent steps.
+		g.line(`(import "wasi:cli/stdout@0.2.0" "get-stdout" (func $__wasi_get_stdout (result i32)))`)
+		g.line(`(import "wasi:cli/stderr@0.2.0" "get-stderr" (func $__wasi_get_stderr (result i32)))`)
+		g.line(`(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush" (func $__wasi_blocking_write_and_flush (param i32 i32 i32 i32)))`)
 	}
 	if g.needsRandomBytes {
 		if g.preview2 {
@@ -1598,31 +1619,51 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`)`)
 	}
 
+	if g.preview2 {
+		g.emitStreamsStdioHelpers()
+	}
+
 	// putchar(n)
 	g.line(`(func $putchar (param $n i32)`)
 	g.indent++
 	g.line(`i32.const 0`)
 	g.line(`local.get $n`)
 	g.line(`i32.store8`)
-	g.line(`i32.const 1`)  // fd = stdout
-	g.line(`i32.const 4`)  // iovs = &iovec at offset 4
-	g.line(`i32.const 1`)  // iovs_len = 1
-	g.line(`i32.const 12`) // nwritten = &offset 12
-	g.line(`call $__wasi_fd_write`)
-	g.line(`drop`)
+	if g.preview2 {
+		// blocking-write-and-flush(stdout, ptr=0, len=1).
+		// memory[0] holds the byte we just stored.
+		g.line(`call $__stdout_handle`)
+		g.line(`i32.const 0`)
+		g.line(`i32.const 1`)
+		g.line(`call $__streams_write`)
+	} else {
+		g.line(`i32.const 1`)  // fd = stdout
+		g.line(`i32.const 4`)  // iovs = &iovec at offset 4
+		g.line(`i32.const 1`)  // iovs_len = 1
+		g.line(`i32.const 12`) // nwritten = &offset 12
+		g.line(`call $__wasi_fd_write`)
+		g.line(`drop`)
+	}
 	g.indent--
 	g.line(`)`)
 
 	// print(s) — writes the string and a newline (matching the arm32
-	// puts-based lowering). We split this into TWO single-iovec
+	// puts-based lowering). On preview-1 we split into TWO single-iovec
 	// fd_write calls because some wasmtime versions silently drop all
-	// but the first iovec when iovs_len > 1.
+	// but the first iovec when iovs_len > 1; on preview-2 the same
+	// pattern still works (two blocking-write-and-flush calls), it just
+	// goes through wasi:io/streams instead of fd_write.
 	g.line(`(func $print (param $s i32)`)
 	g.indent++
-	g.emitFdWriteString(1, "$s")
-	// Second call: write the newline. iovec at offset 24 is pre-init
-	// to (ptr=32, len=1) by a data segment; memory[32] is '\n'.
-	g.emitFdWriteNewline(1)
+	if g.preview2 {
+		g.emitStreamsWriteString("$__stdout_handle", "$s")
+		g.emitStreamsWriteNewline("$__stdout_handle")
+	} else {
+		g.emitFdWriteString(1, "$s")
+		// Second call: write the newline. iovec at offset 24 is pre-init
+		// to (ptr=32, len=1) by a data segment; memory[32] is '\n'.
+		g.emitFdWriteNewline(1)
+	}
 	g.indent--
 	g.line(`)`)
 
@@ -1631,16 +1672,24 @@ func (g *generator) emitRuntimePreamble() {
 	// separators when they want.
 	g.line(`(func $write (param $s i32)`)
 	g.indent++
-	g.emitFdWriteString(1, "$s")
+	if g.preview2 {
+		g.emitStreamsWriteString("$__stdout_handle", "$s")
+	} else {
+		g.emitFdWriteString(1, "$s")
+	}
 	g.indent--
 	g.line(`)`)
 
-	// eprint(s) — `print` shape but routed to fd=2 (stderr). Two
-	// fd_write calls for the same iovs_len=1 reason as $print.
+	// eprint(s) — `print` shape but routed to stderr.
 	g.line(`(func $eprint (param $s i32)`)
 	g.indent++
-	g.emitFdWriteString(2, "$s")
-	g.emitFdWriteNewline(2)
+	if g.preview2 {
+		g.emitStreamsWriteString("$__stderr_handle", "$s")
+		g.emitStreamsWriteNewline("$__stderr_handle")
+	} else {
+		g.emitFdWriteString(2, "$s")
+		g.emitFdWriteNewline(2)
+	}
 	g.indent--
 	g.line(`)`)
 
@@ -1743,6 +1792,108 @@ func (g *generator) emitFdWriteNewline(fd int) {
 	g.line(`i32.const 36`)
 	g.line(`call $__wasi_fd_write`)
 	g.line(`drop`)
+}
+
+// emitStreamsStdioHelpers writes the preview-2 stdio helpers:
+//   - $__stdout_handle / $__stderr_handle: lazily call get-stdout
+//     / get-stderr and cache the resource handle in static memory
+//     (handles are opaque ints and 0 is a valid handle, so the
+//     cache uses an init-flag bitfield rather than a 0-sentinel);
+//   - $__streams_write: a single blocking-write-and-flush call
+//     against (handle, ptr, len). Result <_, stream-error> is
+//     written to the shared retptr slot at offset 92 and ignored
+//     — failures on stdio in a CLI are effectively unrecoverable.
+//
+// Memory slots come from the runtime layout block above:
+//
+//	104..107 stdout handle
+//	108..111 stderr handle
+//	112..115 init flags  (bit 0 = stdout cached, bit 1 = stderr cached)
+//	 92..103 result<_, stream-error> retptr area (12 bytes)
+func (g *generator) emitStreamsStdioHelpers() {
+	g.emitStreamHandleAccessor("$__stdout_handle", "$__wasi_get_stdout", 104, 1)
+	g.emitStreamHandleAccessor("$__stderr_handle", "$__wasi_get_stderr", 108, 2)
+
+	// $__streams_write(handle, ptr, len) — wrap blocking-write-and-flush.
+	g.line(`(func $__streams_write (param $handle i32) (param $ptr i32) (param $len i32)`)
+	g.indent++
+	g.line(`local.get $handle`)
+	g.line(`local.get $ptr`)
+	g.line(`local.get $len`)
+	g.line(`i32.const 92`) // shared retptr; result<_, stream-error> ignored
+	g.line(`call $__wasi_blocking_write_and_flush`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitStreamHandleAccessor writes a `name (result i32)` helper that
+// returns the cached resource handle at memory[handleSlot]. On the
+// first call, it invokes `getterImport` (e.g. $__wasi_get_stdout),
+// stores the result, and sets the corresponding bit (1 << (initBit-1)
+// in our convention) in the init-flags byte at offset 112. The
+// init-flag indirection is necessary because resource handles are
+// opaque ints where 0 is a valid value, so we can't use a 0-sentinel
+// to detect "not yet cached".
+func (g *generator) emitStreamHandleAccessor(name, getterImport string, handleSlot, initMask int) {
+	g.linef(`(func %s (result i32)`, name)
+	g.indent++
+	g.line(`(local $h i32)`)
+	g.line(`i32.const 112`)
+	g.line(`i32.load`)
+	g.linef(`i32.const %d`, initMask)
+	g.line(`i32.and`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.linef(`i32.const %d`, handleSlot)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.linef(`call %s`, getterImport)
+	g.line(`local.tee $h`)
+	// Store handle at handleSlot, then OR initMask into the flag byte.
+	g.linef(`i32.const %d`, handleSlot)
+	g.line(`local.get $h`)
+	g.line(`i32.store`)
+	g.line(`i32.const 112`)
+	g.line(`i32.const 112`)
+	g.line(`i32.load`)
+	g.linef(`i32.const %d`, initMask)
+	g.line(`i32.or`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitStreamsWriteString emits the call sequence for writing a
+// length-prefixed string through the preview-2 streams API:
+// load the cached handle, push (data_ptr, len), call
+// $__streams_write. `handleAccessor` is the WAT name of the
+// `$__stdout_handle` / `$__stderr_handle` helper to use; `local`
+// is the wasm local holding the string's data pointer (e.g. "$s")
+// — the length lives at `local - 4`, the same shape every other
+// string-passing helper expects.
+func (g *generator) emitStreamsWriteString(handleAccessor, local string) {
+	g.linef(`call %s`, handleAccessor)
+	g.linef(`local.get %s`, local)
+	g.linef(`local.get %s`, local)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`call $__streams_write`)
+}
+
+// emitStreamsWriteNewline emits one $__streams_write call against
+// the pre-initialised newline byte at memory[32]. Used by $print
+// / $eprint after the string body to mirror the arm32 puts-based
+// lowering.
+func (g *generator) emitStreamsWriteNewline(handleAccessor string) {
+	g.linef(`call %s`, handleAccessor)
+	g.line(`i32.const 32`) // newline byte
+	g.line(`i32.const 1`)
+	g.line(`call $__streams_write`)
 }
 
 // emitArgsHelper writes the lazy-initialising `$args` runtime

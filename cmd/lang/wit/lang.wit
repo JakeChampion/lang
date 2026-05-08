@@ -7,5 +7,8 @@
 package local:lang@0.0.0;
 
 world lang {
+    import wasi:cli/stdout@0.2.0;
+    import wasi:cli/stderr@0.2.0;
+    import wasi:io/streams@0.2.0;
     import wasi:random/random@0.2.0;
 }

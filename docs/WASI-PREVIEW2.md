@@ -73,18 +73,27 @@ time.
 
 ### Step 3 — Migrate stdio + file I/O to streams
 
-`wasi:io/streams` replaces `fd_read` / `fd_write`. Resource
-handles propagate through `Reader` / `Writer`:
+Splits across multiple PRs to keep blast radius bounded:
 
-```
-type Reader  = resource handle (wasi:io/streams.input-stream)
-type Writer  = resource handle (wasi:io/streams.output-stream)
-```
+- **3a — stdio writes (this PR).** `print` / `write` / `eprint` /
+  `putchar` migrate from preview-1 `fd_write(fd=1|2, …)` to
+  preview-2 `wasi:cli/stdout.get-stdout` / `get-stderr` +
+  `wasi:io/streams.[method]output-stream.blocking-write-and-flush`.
+  The handle returned by `get-stdout` / `get-stderr` is cached on
+  first use in static memory (resource handles are opaque ints
+  where 0 is valid, so the cache uses an init-flag bitfield rather
+  than a 0-sentinel).
+- **3b — `read_line` / stdin (next).** Move to
+  `wasi:cli/stdin.get-stdin` + `[method]input-stream.blocking-read`.
+- **3c — file I/O (after 3b).** `read_file` / `write_file` /
+  `open_reader` / `open_writer` move from `path_open` +
+  `fd_read` / `fd_write` to
+  `wasi:filesystem/types.descriptor.open-at` + the same streams
+  interface as stdio.
 
-`read_file` / `write_file` move from `path_open` to
-`wasi:filesystem/types.descriptor`'s `open-at`. The IR's existing
-`Reader` / `Writer` types stay; only the runtime helpers change
-shape.
+The IR's existing `Reader` / `Writer` types stay; only the runtime
+helpers change shape. After 3c lands, the only preview-1 imports
+left are TCP (handled in step 4) plus args / env (step 5 or 6).
 
 ### Step 4 — Migrate sockets to `wasi:sockets/tcp`
 
