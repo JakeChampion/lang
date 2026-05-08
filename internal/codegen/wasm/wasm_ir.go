@@ -498,6 +498,10 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.line("f64.promote_f32")
 	case ir.OpFDemoteF64:
 		g.line("f32.demote_f64")
+	case ir.OpSignExtend8:
+		g.line("i32.extend8_s")
+	case ir.OpSignExtend16:
+		g.line("i32.extend16_s")
 	case ir.OpConstF32:
 		g.linef("f32.const %g", op.F32)
 	case ir.OpConstF64:

@@ -153,9 +153,15 @@ Status:
   known; the IR picks `i32.const` vs `i64.const` from that
   field. Out-of-range literals (`var x: i32 = 5_000_000_000`)
   are now rejected at the checker rather than silently wrapping.
-- Sub-i32 widths (`i8`, `i16`, `u8`, `u16`) are keyword-reserved
-  but still error out at parse time — not yet wired through
-  codegen. Use `u32` / `i32` for now.
+- Sub-i32 widths (`i8`, `i16`, `u8`, `u16`) shipped as scalar
+  types: variables and arithmetic at sub-i32 precision live in
+  i32 storage at the wasm level (the wasm validator wants i32
+  locals), and the cast lowering bridges widths — narrowing
+  masks (`x as u8` ⇒ `i32.const 0xFF; i32.and`), unsigned
+  widening is a no-op, signed widening uses
+  `i32.extend8_s` / `i32.extend16_s`. Polymorphic-literal
+  range checking covers all four widths. Memory-stride array
+  support (`[u8]` byte buffers) is the next follow-up.
 - `f64` shipped (PR 1 follow-up): parser accepts the keyword,
   IR has `OpConstF64` + Width-aware float binary ops + the
   `OpFPromoteF32` / `OpFDemoteF64` cast ops, wasm codegen picks
