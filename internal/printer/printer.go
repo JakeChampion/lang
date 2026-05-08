@@ -430,7 +430,33 @@ func printForStep(b *strings.Builder, s ast.Stmt) {
 func printType(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.NumberType:
-		return "number"
+		// Match the canonical i32 / u32 / i64 / u64 / i8 / i16
+		// / u8 / u16 spellings the parser now requires; the
+		// historical `number` alias was removed.
+		if x.Spelling != "" {
+			return x.Spelling
+		}
+		if !x.IsSigned() {
+			switch x.NormalWidth() {
+			case 8:
+				return "u8"
+			case 16:
+				return "u16"
+			case 32:
+				return "u32"
+			case 64:
+				return "u64"
+			}
+		}
+		switch x.NormalWidth() {
+		case 8:
+			return "i8"
+		case 16:
+			return "i16"
+		case 64:
+			return "i64"
+		}
+		return "i32"
 	case ast.BoolType:
 		return "boolean"
 	case ast.VoidType:

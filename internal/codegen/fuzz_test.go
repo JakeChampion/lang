@@ -16,17 +16,17 @@ import (
 // Run with: go test -fuzz=FuzzEmit ./internal/codegen
 func FuzzEmit(f *testing.F) {
 	seeds := []string{
-		`function f(): number { return 1; }`,
-		`function f(n: number): number { return n * 2; }`,
+		`function f(): i32 { return 1; }`,
+		`function f(n: i32): i32 { return n * 2; }`,
 		`function f(): boolean { return true && (1 < 2); }`,
-		`function f(): number { var a: number[] = [1, 2, 3]; return a[1]; }`,
-		`function f(): number {
+		`function f(): i32 { var a: i32[] = [1, 2, 3]; return a[1]; }`,
+		`function f(): i32 {
 			var sum = 0;
 			for (var i = 0; i < 10; i = i + 1) { sum = sum + i; }
 			return sum;
 		}`,
 		`function main(): void { print("hi" + " there"); }`,
-		`function loop(): number {
+		`function loop(): i32 {
 			while (true) { break; }
 			return 0;
 		}`,

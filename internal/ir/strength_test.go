@@ -233,7 +233,7 @@ func TestReduceStrengthLeavesNonPow2Multipliers(t *testing.T) {
 // `x << 2`. The const+drop and identity rules combine in a single
 // fixed-point sweep.
 func TestReduceStrengthCleanupCascade(t *testing.T) {
-	p := lowerSource(t, `function f(x: number): number { return x * 4 + 0; }`)
+	p := lowerSource(t, `function f(x: i32): i32 { return x * 4 + 0; }`)
 	OptimizeCleanup(p)
 	fn := findFunc(p, "f")
 	hasShl := false
@@ -256,7 +256,7 @@ func TestReduceStrengthCleanupCascade(t *testing.T) {
 // Idempotent: a second ReduceStrength on already-reduced ops
 // produces identical output.
 func TestReduceStrengthIsIdempotent(t *testing.T) {
-	p := lowerSource(t, `function f(x: number): number { return x * 8 + x * 1; }`)
+	p := lowerSource(t, `function f(x: i32): i32 { return x * 8 + x * 1; }`)
 	ReduceStrength(p)
 	before := p.String()
 	ReduceStrength(p)

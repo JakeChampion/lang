@@ -41,13 +41,13 @@ func mustContain(t *testing.T, wat, needle string) {
 // before the value-referenced `target`, so funcIndex["target"] = 2
 // but tableIndex["target"] = 0. The pushed value must be 0.
 func TestFunctionValueUsesTableIndexNotFuncIndex(t *testing.T) {
-	src := `function unrelated_a(x: number): number { return x + 1; }
-	function unrelated_b(x: number): number { return x + 2; }
-	function target(x: number): number { return x * 10; }
-	function apply(f: (number) => number, x: number): number {
+	src := `function unrelated_a(x: i32): i32 { return x + 1; }
+	function unrelated_b(x: i32): i32 { return x + 2; }
+	function target(x: i32): i32 { return x * 10; }
+	function apply(f: (i32) => i32, x: i32): i32 {
 		return f(x);
 	}
-	function main(): number { return apply(target, 4); }`
+	function main(): i32 { return apply(target, 4); }`
 	wat := compileToWAT(t, src)
 	// The funcref table holds only `target` (index 0). The value
 	// pushed for `target` in `apply(target, 4)` must be 0, matching
@@ -63,7 +63,7 @@ func TestFunctionValueUsesTableIndexNotFuncIndex(t *testing.T) {
 }
 
 func TestSimpleFunction(t *testing.T) {
-	wat := compileToWAT(t, `function main(): number { return 42; }`)
+	wat := compileToWAT(t, `function main(): i32 { return 42; }`)
 	mustContain(t, wat, "(module")
 	mustContain(t, wat, `(func $main (result i32)`)
 	mustContain(t, wat, "i32.const 42")
@@ -76,14 +76,14 @@ func TestArithmeticOps(t *testing.T) {
 	// `%` is intentionally still here — Fold deliberately leaves
 	// rem_s alone so a `1 % 0` source bug surfaces at runtime
 	// rather than getting silently masked.
-	wat := compileToWAT(t, `function main(a: number, b: number): number { return 7 % 3 + (a & b); }`)
+	wat := compileToWAT(t, `function main(a: i32, b: i32): i32 { return 7 % 3 + (a & b); }`)
 	mustContain(t, wat, "i32.rem_s")
 	mustContain(t, wat, "i32.and")
 	mustContain(t, wat, "i32.add")
 }
 
 func TestComparisonReturnsI32(t *testing.T) {
-	wat := compileToWAT(t, `function f(a: number, b: number): boolean { return a < b; }`)
+	wat := compileToWAT(t, `function f(a: i32, b: i32): boolean { return a < b; }`)
 	mustContain(t, wat, "i32.lt_s")
 	mustContain(t, wat, "(result i32)")
 }
@@ -95,7 +95,7 @@ func TestShortCircuitAnd(t *testing.T) {
 }
 
 func TestIfElse(t *testing.T) {
-	wat := compileToWAT(t, `function f(n: number): number {
+	wat := compileToWAT(t, `function f(n: i32): i32 {
 		if (n == 0) { return 1; } else { return 2; }
 	}`)
 	mustContain(t, wat, "if")
@@ -104,7 +104,7 @@ func TestIfElse(t *testing.T) {
 }
 
 func TestWhileBreakContinue(t *testing.T) {
-	wat := compileToWAT(t, `function f(): number {
+	wat := compileToWAT(t, `function f(): i32 {
 		var i = 0;
 		while (true) {
 			if (i == 5) { break; }
@@ -121,7 +121,7 @@ func TestWhileBreakContinue(t *testing.T) {
 }
 
 func TestForLoopWithStep(t *testing.T) {
-	wat := compileToWAT(t, `function f(): number {
+	wat := compileToWAT(t, `function f(): i32 {
 		var sum = 0;
 		for (var i = 0; i < 10; i = i + 1) {
 			if (i < 5) { continue; }
@@ -139,7 +139,7 @@ func TestForLoopWithStep(t *testing.T) {
 }
 
 func TestRecursionDirectCall(t *testing.T) {
-	wat := compileToWAT(t, `function fact(n: number): number {
+	wat := compileToWAT(t, `function fact(n: i32): i32 {
 		if (n == 0) { return 1; }
 		return n * fact(n - 1);
 	}`)
@@ -173,7 +173,7 @@ func TestStringsLowerToLinearMemory(t *testing.T) {
 // allocator is required (cabi_realloc defers to it), and the
 // preview-1 imports are gone.
 func TestNoRuntimeWhenUnused(t *testing.T) {
-	wat := compileToWAT(t, `function main(): number { return 42; }`)
+	wat := compileToWAT(t, `function main(): i32 { return 42; }`)
 	if strings.Contains(wat, "wasi_snapshot_preview1") {
 		t.Errorf("preview-1 import leaked into WAT:\n%s", wat)
 	}
@@ -186,8 +186,8 @@ func TestNoRuntimeWhenUnused(t *testing.T) {
 // synthetic i32 scratch local holding the base pointer between the
 // alloc and the stores.
 func TestArrayLitEmitsAllocAndStores(t *testing.T) {
-	wat := compileToWAT(t, `function f(): number {
-		var a: number[] = [10, 20, 30];
+	wat := compileToWAT(t, `function f(): i32 {
+		var a: i32[] = [10, 20, 30];
 		return a[1];
 	}`)
 	mustContain(t, wat, "(func $__lang_alloc")
@@ -203,8 +203,8 @@ func TestArrayLitEmitsAllocAndStores(t *testing.T) {
 // Index assignment lowers to i32.store and leaves nothing on the
 // stack; no `drop` should be emitted by the surrounding ExprStmt.
 func TestIndexAssignEmitsStore(t *testing.T) {
-	wat := compileToWAT(t, `function f(): number {
-		var a: number[] = [0, 0];
+	wat := compileToWAT(t, `function f(): i32 {
+		var a: i32[] = [0, 0];
 		a[0] = 7;
 		return a[0];
 	}`)
@@ -218,11 +218,11 @@ func TestIndexAssignEmitsStore(t *testing.T) {
 // callers (`apply`, `main`) stay out.
 func TestIndirectCallEmitsTable(t *testing.T) {
 	wat := compileToWAT(t, `
-		function add(a: number, b: number): number { return a + b; }
-		function apply(f: (number, number) => number, a: number, b: number): number {
+		function add(a: i32, b: i32): i32 { return a + b; }
+		function apply(f: (i32, i32) => i32, a: i32, b: i32): i32 {
 			return f(a, b);
 		}
-		function main(): number { return apply(add, 40, 2); }`)
+		function main(): i32 { return apply(add, 40, 2); }`)
 	mustContain(t, wat, "(type $t0 (func (param i32) (param i32) (result i32)))")
 	mustContain(t, wat, "(table $fns 1 funcref)")
 	mustContain(t, wat, "(elem (i32.const 0) $add)")
@@ -235,8 +235,8 @@ func TestIndirectCallEmitsTable(t *testing.T) {
 // calling f goes through call_indirect.
 func TestFunctionValueLocal(t *testing.T) {
 	wat := compileToWAT(t, `
-		function add(a: number, b: number): number { return a + b; }
-		function main(): number {
+		function add(a: i32, b: i32): i32 { return a + b; }
+		function main(): i32 {
 			var f = add;
 			return f(40, 2);
 		}`)
@@ -270,7 +270,7 @@ func TestFloatLocalAndParam(t *testing.T) {
 }
 
 func TestSwitchEmitsBlockAndScratch(t *testing.T) {
-	wat := compileToWAT(t, `function f(n: number): number {
+	wat := compileToWAT(t, `function f(n: i32): i32 {
 		switch (n) {
 			case 1: return 10;
 			case 2, 3: return 20;
@@ -288,7 +288,7 @@ func TestSwitchEmitsBlockAndScratch(t *testing.T) {
 }
 
 func TestTernaryEmitsIfResult(t *testing.T) {
-	wat := compileToWAT(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
+	wat := compileToWAT(t, `function f(b: boolean): i32 { return b ? 1 : 2; }`)
 	mustContain(t, wat, "if (result i32)")
 	mustContain(t, wat, "i32.const 1")
 	mustContain(t, wat, "i32.const 2")
@@ -300,7 +300,7 @@ func TestTernaryFloatEmitsF32Result(t *testing.T) {
 }
 
 func TestCompoundAssignLowersToBinary(t *testing.T) {
-	wat := compileToWAT(t, `function f(): number { var x: number = 5; x += 7; return x; }`)
+	wat := compileToWAT(t, `function f(): i32 { var x: i32 = 5; x += 7; return x; }`)
 	// `x += 7` lowers to `x = x + 7`. The IR encodes the tee with a
 	// (store, load) pair the FuseTee pass collapses into a single
 	// OpTeeLocal — codegen emits `local.tee $x`.
@@ -310,7 +310,7 @@ func TestCompoundAssignLowersToBinary(t *testing.T) {
 }
 
 func TestStringIndexEmitsLoad8(t *testing.T) {
-	wat := compileToWAT(t, `function f(): number { var s: string = "abc"; return s[1]; }`)
+	wat := compileToWAT(t, `function f(): i32 { var s: string = "abc"; return s[1]; }`)
 	mustContain(t, wat, "i32.load8_u")
 }
 
@@ -323,7 +323,7 @@ func TestStringEqualityEmitsHelper(t *testing.T) {
 }
 
 func TestLenOfStringInlinesPrefixLoad(t *testing.T) {
-	wat := compileToWAT(t, `function f(): number { return len("hello"); }`)
+	wat := compileToWAT(t, `function f(): i32 { return len("hello"); }`)
 	// len is an inline `i32.load (s - 4)`, not a call.
 	mustContain(t, wat, "i32.const 4")
 	mustContain(t, wat, "i32.sub")
@@ -334,8 +334,8 @@ func TestLenOfStringInlinesPrefixLoad(t *testing.T) {
 }
 
 func TestStructLitAllocatesAndStores(t *testing.T) {
-	wat := compileToWAT(t, `struct P { x: number, y: number }
-		function main(): number {
+	wat := compileToWAT(t, `struct P { x: i32, y: i32 }
+		function main(): i32 {
 			var p: P = P { x: 1, y: 2 };
 			return p.x + p.y;
 		}`)
@@ -356,8 +356,8 @@ func TestStringConcatEmitsHelper(t *testing.T) {
 }
 
 func TestArrayIndexBoundsChecked(t *testing.T) {
-	wat := compileToWAT(t, `function f(): number {
-		var a: number[] = [1, 2, 3];
+	wat := compileToWAT(t, `function f(): i32 {
+		var a: i32[] = [1, 2, 3];
 		return a[0];
 	}`)
 	mustContain(t, wat, "$__arr_idx")
@@ -366,17 +366,17 @@ func TestArrayIndexBoundsChecked(t *testing.T) {
 }
 
 func TestStringIndexBoundsChecked(t *testing.T) {
-	wat := compileToWAT(t, `function f(): number { var s: string = "abc"; return s[0]; }`)
+	wat := compileToWAT(t, `function f(): i32 { var s: string = "abc"; return s[0]; }`)
 	mustContain(t, wat, "$__str_idx")
 	mustContain(t, wat, "call $__str_idx")
 }
 
 func TestClosureHoistsAndCaptures(t *testing.T) {
-	wat := compileToWAT(t, `function makeAdder(n: number): (number) => number {
-		function add(x: number): number { return x + n; }
+	wat := compileToWAT(t, `function makeAdder(n: i32): (i32) => i32 {
+		function add(x: i32): i32 { return x + n; }
 		return add;
 	}
-	function main(): number {
+	function main(): i32 {
 		var f = makeAdder(7);
 		return f(35);
 	}`)

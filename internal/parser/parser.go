@@ -663,13 +663,11 @@ func (p *parser) parseType() (ast.Type, error) {
 			return nil, err
 		}
 		base = ast.SliceType{Elem: elem}
-	case t.Kind == lexer.Keyword && (t.Text == "number" || t.Text == "i32"):
-		// `number` is the legacy alias; both lower to the
-		// canonical zero-value NumberType so equality keeps
-		// working with code that still compares to
-		// `ast.NumberType{}` directly. Spelling tracks which
-		// keyword the user wrote so `lang -fmt` round-trips it
-		// rather than coercing to a single canonical name.
+	case t.Kind == lexer.Keyword && t.Text == "i32":
+		// Canonical 32-bit signed integer. Stored as the zero-
+		// value `NumberType{Spelling: "i32"}` so historical
+		// equality checks against `ast.NumberType{}` keep
+		// working (NormalWidth maps Width=0 to 32).
 		p.advance()
 		base = ast.NumberType{Spelling: t.Text}
 	case t.Kind == lexer.Keyword && t.Text == "i64":

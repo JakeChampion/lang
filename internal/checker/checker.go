@@ -1527,7 +1527,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 			captured[name] = t
 			captureOrder = append(captureOrder, name)
 		default:
-			c.errf(fn.P, "captured variable %q has unsupported type %s (only number, boolean, float can be captured)", name, t)
+			c.errf(fn.P, "captured variable %q has unsupported type %s (only integers, booleans, and floats can be captured)", name, t)
 		}
 	}
 	c.captureOuter = outer
@@ -1644,7 +1644,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		at := c.checkExpr(n.Array, s)
 		it := c.checkExpr(n.Idx, s)
 		if it != nil && !ast.Equal(it, ast.NumberType{}) {
-			c.errf(n.Idx.Pos(), "index must be number, got %s", it)
+			c.errf(n.Idx.Pos(), "index must be an integer, got %s", it)
 		}
 		if arr, ok := at.(ast.ArrayType); ok {
 			return arr.Elem

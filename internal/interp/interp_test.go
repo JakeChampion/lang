@@ -38,7 +38,7 @@ func evalProgram(t *testing.T, src string) (Value, *Interp) {
 }
 
 func TestSimpleArithmetic(t *testing.T) {
-	v, _ := evalProgram(t, `function main(): number { return 1 + 2 * 3; }`)
+	v, _ := evalProgram(t, `function main(): i32 { return 1 + 2 * 3; }`)
 	if n, ok := v.(Number); !ok || n != 7 {
 		t.Errorf("got %v, want 7", v)
 	}
@@ -46,11 +46,11 @@ func TestSimpleArithmetic(t *testing.T) {
 
 func TestRecursionFactorial(t *testing.T) {
 	v, _ := evalProgram(t, `
-		function fact(n: number): number {
+		function fact(n: i32): i32 {
 			if (n == 0) { return 1; }
 			return n * fact(n - 1);
 		}
-		function main(): number { return fact(6); }`)
+		function main(): i32 { return fact(6); }`)
 	if n, ok := v.(Number); !ok || n != 720 {
 		t.Errorf("got %v, want 720", v)
 	}
@@ -58,9 +58,9 @@ func TestRecursionFactorial(t *testing.T) {
 
 func TestForLoopWithBreakContinue(t *testing.T) {
 	v, _ := evalProgram(t, `
-		function main(): number {
-			var sum: number = 0;
-			for (var i: number = 0; i < 10; i = i + 1) {
+		function main(): i32 {
+			var sum: i32 = 0;
+			for (var i: i32 = 0; i < 10; i = i + 1) {
 				if (i == 3) { continue; }
 				if (i == 7) { break; }
 				sum = sum + i;
@@ -75,8 +75,8 @@ func TestForLoopWithBreakContinue(t *testing.T) {
 
 func TestArrayIndexAndAssign(t *testing.T) {
 	v, _ := evalProgram(t, `
-		function main(): number {
-			var a: number[] = [10, 20, 30];
+		function main(): i32 {
+			var a: i32[] = [10, 20, 30];
 			a[1] = 99;
 			return a[0] + a[1] + a[2];
 		}`)
@@ -109,8 +109,8 @@ func TestPrintBuiltin(t *testing.T) {
 
 func TestIndirectCallViaLocal(t *testing.T) {
 	v, _ := evalProgram(t, `
-		function dbl(x: number): number { return x * 2; }
-		function main(): number {
+		function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 {
 			var f = dbl;
 			return f(7);
 		}`)
@@ -134,7 +134,7 @@ func TestREPLEvaluatesExpressions(t *testing.T) {
 }
 
 func TestREPLDeclaresThenCallsFunction(t *testing.T) {
-	in := strings.NewReader("function dbl(x: number): number { return x * 2; }\ndbl(21)\n")
+	in := strings.NewReader("function dbl(x: i32): i32 { return x * 2; }\ndbl(21)\n")
 	var out bytes.Buffer
 	if err := REPL(in, &out); err != nil {
 		t.Fatal(err)
@@ -145,14 +145,14 @@ func TestREPLDeclaresThenCallsFunction(t *testing.T) {
 }
 
 func TestInterpLenOfString(t *testing.T) {
-	if got := evalProgramValue(t, `function main(): number { return len("hello"); }`); got != Number(5) {
+	if got := evalProgramValue(t, `function main(): i32 { return len("hello"); }`); got != Number(5) {
 		t.Errorf("got %v, want 5", got)
 	}
 }
 
 func TestInterpLenOfArray(t *testing.T) {
-	if got := evalProgramValue(t, `function main(): number {
-		var a: number[] = [1, 2, 3, 4];
+	if got := evalProgramValue(t, `function main(): i32 {
+		var a: i32[] = [1, 2, 3, 4];
 		return len(a);
 	}`); got != Number(4) {
 		t.Errorf("got %v, want 4", got)
@@ -160,7 +160,7 @@ func TestInterpLenOfArray(t *testing.T) {
 }
 
 func TestInterpStringIndex(t *testing.T) {
-	if got := evalProgramValue(t, `function main(): number {
+	if got := evalProgramValue(t, `function main(): i32 {
 		var s: string = "ABC";
 		return s[1];
 	}`); got != Number(int64('B')) {
@@ -180,8 +180,8 @@ func TestInterpStringEquality(t *testing.T) {
 }
 
 func TestInterpStructBasic(t *testing.T) {
-	src := `struct Point { x: number, y: number }
-		function main(): number {
+	src := `struct Point { x: i32, y: i32 }
+		function main(): i32 {
 			var p: Point = Point { x: 3, y: 4 };
 			p.x = p.x + 1;
 			return p.x + p.y;
@@ -196,8 +196,8 @@ func TestInterpStructBasic(t *testing.T) {
 // constructed and then matched routes through the right arm with
 // payload bindings visible in the arm body.
 func TestInterpEnumMatchPayload(t *testing.T) {
-	src := `enum Pair { Two(number, number) }
-		function main(): number {
+	src := `enum Pair { Two(i32, i32) }
+		function main(): i32 {
 			var p: Pair = Two(7, 5);
 			match (p) {
 				Two(a, b) => { return a + b; }
@@ -216,8 +216,8 @@ func TestInterpEnumMatchPayload(t *testing.T) {
 // match-arm payload extraction both route correctly.
 func TestInterpGenericOption(t *testing.T) {
 	src := `enum Option[T] { Some(T), None }
-		function main(): number {
-			var o: Option[number] = Some(42);
+		function main(): i32 {
+			var o: Option[i32] = Some(42);
 			match (o) {
 				Some(v) => { return v; },
 				None => { return -1; }
@@ -233,7 +233,7 @@ func TestInterpGenericOption(t *testing.T) {
 // Wildcard arms catch what the explicit arms miss.
 func TestInterpMatchWildcard(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
-		function main(): number {
+		function main(): i32 {
 			var l: Light = Yellow;
 			match (l) {
 				Red => { return 1; },
@@ -262,10 +262,10 @@ func TestInterpTcpSocketEcho(t *testing.T) {
 	// dial). A full echo loop would need goroutine
 	// orchestration; that's covered by the AOT backends'
 	// integration tests on real ports.
-	src := `function main(): number {
-		var fd: number = tcp_listen(0);
+	src := `function main(): i32 {
+		var fd: i32 = tcp_listen(0);
 		if (fd < 0) { return 1; }
-		var c: number = tcp_close(fd);
+		var c: i32 = tcp_close(fd);
 		if (c != 0) { return 2; }
 		return 0;
 	}`

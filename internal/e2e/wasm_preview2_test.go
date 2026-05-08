@@ -51,7 +51,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	//     (the eprint path).
 	// The preview-1 adapter no longer touches stdio for us — the
 	// imports above reach the host directly.
-	if err := os.WriteFile(srcPath, []byte(`function main(): number {
+	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
     var b = random_bytes(8);
     print("hello preview2");
     eprint("err preview2");
@@ -140,7 +140,7 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	// Loop until EOF, writing each line back. write() doesn't add
 	// a newline; read_line preserves the trailing '\n', so we get
 	// byte-for-byte echo.
-	if err := os.WriteFile(srcPath, []byte(`function main(): number {
+	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
     while (true) {
         match (stdin().read_line()) {
             Some(line) => { write(line); },
@@ -217,7 +217,7 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "fs.lang")
-	if err := os.WriteFile(srcPath, []byte(`function main(): number {
+	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
     match (open_writer("out.txt")) {
         Ok(w) => {
             match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
@@ -314,7 +314,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	// Force the read_file accumulator to grow at least once so we
 	// also exercise the doubling + memory.copy path. The initial
 	// buffer is 4 KiB, so we write a payload past that.
-	if err := os.WriteFile(srcPath, []byte(`function main(): number {
+	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
     var content = "";
     var i = 0;
     while (i < 600) {
@@ -386,7 +386,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 // `-S inherit-network` for outbound socket creation.
 //
 // Picking a port: we open + immediately close a transient
-// listener on :0 to extract a free ephemeral port number, then
+// listener on :0 to extract a free ephemeral port i32, then
 // hand it to the guest via wasmtime's positional args. Race
 // window is tiny but non-zero; if the test ever flakes here,
 // that's the cause.
@@ -428,7 +428,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	// passing the port through would need a bespoke parser.
 	// Acceptable: the port is templated in via Go string
 	// formatting at build time.
-	src := strings.Replace(`function main(): number {
+	src := strings.Replace(`function main(): i32 {
     var sock = tcp_listen(__PORT__);
     if (sock < 0) { return 1; }
     var conn = tcp_accept(sock);

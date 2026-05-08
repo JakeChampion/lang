@@ -7,7 +7,7 @@ import "testing"
 // one — both arms now leave the value on the operand stack and the
 // trailing return consumes it once.
 func TestFlattenIfReturnAndTrailingReturn(t *testing.T) {
-	p := lowerSource(t, `function f(n: number): number {
+	p := lowerSource(t, `function f(n: i32): i32 {
 		if (n == 0) { return 1; }
 		return 2;
 	}`)
@@ -32,7 +32,7 @@ func TestFlattenIfReturnAndTrailingReturn(t *testing.T) {
 // validator knows what each arm pushes. Float-returning function
 // gets `if (result f32)`.
 func TestFlattenPreservesReturnType(t *testing.T) {
-	p := lowerSource(t, `function f(n: number): float {
+	p := lowerSource(t, `function f(n: i32): float {
 		if (n == 0) { return 1.5; }
 		return 2.5;
 	}`)
@@ -52,7 +52,7 @@ func TestFlattenPreservesReturnType(t *testing.T) {
 // An if that already has an explicit else doesn't need flattening
 // — the rewrite skips it cleanly.
 func TestFlattenLeavesIfWithElseAlone(t *testing.T) {
-	p := lowerSource(t, `function f(n: number): number {
+	p := lowerSource(t, `function f(n: i32): i32 {
 		if (n == 0) { return 1; } else { return 2; }
 	}`)
 	before := p.String()
@@ -68,9 +68,9 @@ func TestFlattenLeavesIfWithElseAlone(t *testing.T) {
 // (A while loop in the continuation makes the depth math complex
 // and the splice unsound — leave it for a smarter analysis.)
 func TestFlattenSkipsContinuationWithControlFlow(t *testing.T) {
-	p := lowerSource(t, `function f(n: number): number {
+	p := lowerSource(t, `function f(n: i32): i32 {
 		if (n == 0) { return 1; }
-		var sum: number = 0;
+		var sum: i32 = 0;
 		while (n > 0) { sum = sum + n; n = n - 1; }
 		return sum;
 	}`)
@@ -87,7 +87,7 @@ func TestFlattenSkipsContinuationWithControlFlow(t *testing.T) {
 // flatten + fold: `if (true) { return 1; } return 2;` collapses
 // to `return 1`.
 func TestFlattenComposesWithConstIfPruning(t *testing.T) {
-	p := lowerSource(t, `function f(): number {
+	p := lowerSource(t, `function f(): i32 {
 		if (true) { return 1; }
 		return 2;
 	}`)
@@ -124,7 +124,7 @@ func TestFlattenComposesWithConstIfPruning(t *testing.T) {
 // Void-returning functions flatten too: both `OpReturnVoid`s merge
 // into a single trailing OpReturnVoid after a void-typed if.
 func TestFlattenVoidFunction(t *testing.T) {
-	p := lowerSource(t, `function f(n: number): void {
+	p := lowerSource(t, `function f(n: i32): void {
 		if (n == 0) { return; }
 		return;
 	}`)
@@ -154,7 +154,7 @@ func TestFlattenVoidFunction(t *testing.T) {
 // is matched by an End, depth never goes negative, br depths in
 // range.
 func TestFlattenKeepsStructuredCFBalanced(t *testing.T) {
-	p := lowerSource(t, `function f(n: number): number {
+	p := lowerSource(t, `function f(n: i32): i32 {
 		if (n == 0) { return 99; }
 		return n + 1;
 	}`)
@@ -184,7 +184,7 @@ func TestFlattenKeepsStructuredCFBalanced(t *testing.T) {
 
 // Idempotent: a second pass produces the same op list.
 func TestFlattenIsIdempotent(t *testing.T) {
-	p := lowerSource(t, `function f(n: number): number {
+	p := lowerSource(t, `function f(n: i32): i32 {
 		if (n == 0) { return 1; }
 		return 2;
 	}`)

@@ -50,7 +50,7 @@ func hasOp(p *Program, fnName string, want OpKind) bool {
 }
 
 func TestLowerSimpleArithmetic(t *testing.T) {
-	p := lowerSource(t, `function f(): number { return 1 + 2 * 3; }`)
+	p := lowerSource(t, `function f(): i32 { return 1 + 2 * 3; }`)
 	if len(p.Funcs) != 1 {
 		t.Fatalf("got %d funcs", len(p.Funcs))
 	}
@@ -74,9 +74,9 @@ func TestLowerSimpleArithmetic(t *testing.T) {
 }
 
 func TestLowerLocals(t *testing.T) {
-	p := lowerSource(t, `function f(): number {
-		var x: number = 5;
-		var y: number = x + 1;
+	p := lowerSource(t, `function f(): i32 {
+		var x: i32 = 5;
+		var y: i32 = x + 1;
 		return y;
 	}`)
 	mustContainOp(t, p, "f", OpStoreLocal)
@@ -84,7 +84,7 @@ func TestLowerLocals(t *testing.T) {
 }
 
 func TestLowerIfElse(t *testing.T) {
-	p := lowerSource(t, `function f(n: number): number {
+	p := lowerSource(t, `function f(n: i32): i32 {
 		if (n == 0) { return 1; } else { return 2; }
 	}`)
 	mustContainOp(t, p, "f", OpIf)
@@ -94,8 +94,8 @@ func TestLowerIfElse(t *testing.T) {
 }
 
 func TestLowerWhileBreakContinue(t *testing.T) {
-	p := lowerSource(t, `function f(): number {
-		var i: number = 0;
+	p := lowerSource(t, `function f(): i32 {
+		var i: i32 = 0;
 		while (i < 10) {
 			if (i == 5) { break; }
 			i = i + 1;
@@ -112,9 +112,9 @@ func TestLowerWhileBreakContinue(t *testing.T) {
 }
 
 func TestLowerForLoopWithStep(t *testing.T) {
-	p := lowerSource(t, `function f(): number {
-		var sum: number = 0;
-		for (var i: number = 0; i < 10; i = i + 1) {
+	p := lowerSource(t, `function f(): i32 {
+		var sum: i32 = 0;
+		for (var i: i32 = 0; i < 10; i = i + 1) {
 			sum = sum + i;
 		}
 		return sum;
@@ -129,8 +129,8 @@ func TestLowerForLoopWithStep(t *testing.T) {
 }
 
 func TestLowerDirectCall(t *testing.T) {
-	p := lowerSource(t, `function add(a: number, b: number): number { return a + b; }
-		function main(): number { return add(2, 3); }`)
+	p := lowerSource(t, `function add(a: i32, b: i32): i32 { return a + b; }
+		function main(): i32 { return add(2, 3); }`)
 	main := findFunc(p, "main")
 	if main == nil {
 		t.Fatal("main not found")
@@ -147,8 +147,8 @@ func TestLowerDirectCall(t *testing.T) {
 }
 
 func TestLowerIndirectCall(t *testing.T) {
-	p := lowerSource(t, `function add(a: number, b: number): number { return a + b; }
-		function apply(f: (number, number) => number, a: number, b: number): number {
+	p := lowerSource(t, `function add(a: i32, b: i32): i32 { return a + b; }
+		function apply(f: (i32, i32) => i32, a: i32, b: i32): i32 {
 			return f(a, b);
 		}`)
 	apply := findFunc(p, "apply")
@@ -184,7 +184,7 @@ func TestLowerFloatArithmetic(t *testing.T) {
 }
 
 func TestLowerImplicitReturn(t *testing.T) {
-	p := lowerSource(t, `function f(): void { var x: number = 0; }`)
+	p := lowerSource(t, `function f(): void { var x: i32 = 0; }`)
 	last := p.Funcs[0].Ops[len(p.Funcs[0].Ops)-1]
 	if last.Kind != OpReturnVoid {
 		t.Errorf("expected trailing return_void, got %s", last.Kind)
@@ -192,7 +192,7 @@ func TestLowerImplicitReturn(t *testing.T) {
 }
 
 func TestLowerImplicitReturnNumber(t *testing.T) {
-	p := lowerSource(t, `function f(): number { var x: number = 0; }`)
+	p := lowerSource(t, `function f(): i32 { var x: i32 = 0; }`)
 	ops := p.Funcs[0].Ops
 	if ops[len(ops)-1].Kind != OpReturn {
 		t.Errorf("expected trailing return, got %s", ops[len(ops)-1].Kind)
@@ -212,7 +212,7 @@ func findFunc(p *Program, name string) *Func {
 }
 
 func TestLowerSwitch(t *testing.T) {
-	prog := lowerSource(t, `function f(n: number): number {
+	prog := lowerSource(t, `function f(n: i32): i32 {
 		switch (n) {
 			case 1, 2: return 10;
 			case 3: return 30;
@@ -229,7 +229,7 @@ func TestLowerSwitch(t *testing.T) {
 }
 
 func TestLowerTernary(t *testing.T) {
-	prog := lowerSource(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
+	prog := lowerSource(t, `function f(b: boolean): i32 { return b ? 1 : 2; }`)
 	// Ternary lowers to a typed `if i32 ... else ... end`.
 	mustContainOp(t, prog, "f", OpIf)
 	mustContainOp(t, prog, "f", OpElse)
@@ -238,8 +238,8 @@ func TestLowerTernary(t *testing.T) {
 }
 
 func TestLowerArrayLitAndIndex(t *testing.T) {
-	prog := lowerSource(t, `function f(): number {
-		var a: number[] = [10, 20, 30];
+	prog := lowerSource(t, `function f(): i32 {
+		var a: i32[] = [10, 20, 30];
 		return a[1];
 	}`)
 	mustContainOp(t, prog, "f", OpAlloc)
@@ -250,7 +250,7 @@ func TestLowerArrayLitAndIndex(t *testing.T) {
 }
 
 func TestLowerStringIndex(t *testing.T) {
-	prog := lowerSource(t, `function f(): number {
+	prog := lowerSource(t, `function f(): i32 {
 		var s: string = "abc";
 		return s[1];
 	}`)
@@ -259,8 +259,8 @@ func TestLowerStringIndex(t *testing.T) {
 }
 
 func TestLowerStructLitAndFieldAccess(t *testing.T) {
-	prog := lowerSource(t, `struct P { x: number, y: number }
-		function main(): number {
+	prog := lowerSource(t, `struct P { x: i32, y: i32 }
+		function main(): i32 {
 			var p: P = P { x: 10, y: 32 };
 			return p.x + p.y;
 		}`)
@@ -310,9 +310,9 @@ func TestLowerStringEqualityIdentVsLitShortCircuits(t *testing.T) {
 // Funcs list with a generated `__closure_*` name and the original
 // def site should emit OpMakeClosure.
 func TestLowerNestedFunctionHoists(t *testing.T) {
-	prog := lowerSource(t, `function outer(): number {
-		var n: number = 7;
-		function inner(): number { return n + 1; }
+	prog := lowerSource(t, `function outer(): i32 {
+		var n: i32 = 7;
+		function inner(): i32 { return n + 1; }
 		return inner();
 	}`)
 	// Two functions in the IR: the outer and the hoisted inner.
@@ -341,9 +341,9 @@ func TestLowerNestedFunctionHoists(t *testing.T) {
 // Captures lower to env-relative loads inside the hoisted body: the
 // IR walks `local.get $__env; const offset; add; load`.
 func TestLowerCaptureRefIsEnvRelativeLoad(t *testing.T) {
-	prog := lowerSource(t, `function outer(): number {
-		var n: number = 5;
-		function inner(): number { return n; }
+	prog := lowerSource(t, `function outer(): i32 {
+		var n: i32 = 5;
+		function inner(): i32 { return n; }
 		return inner();
 	}`)
 	var hoisted *Func
@@ -378,9 +378,9 @@ func TestLowerCaptureRefIsEnvRelativeLoad(t *testing.T) {
 // 0 at function entry and exit. This is the precondition any
 // structured-control-flow target (WAT, etc.) relies on.
 func TestStructuredControlFlowIsBalanced(t *testing.T) {
-	prog := lowerSource(t, `function f(n: number): number {
-		var sum: number = 0;
-		for (var i: number = 0; i < n; i = i + 1) {
+	prog := lowerSource(t, `function f(n: i32): i32 {
+		var sum: i32 = 0;
+		for (var i: i32 = 0; i < n; i = i + 1) {
 			if (i == 5) { break; }
 			if (i == 7) { continue; }
 			switch (i) {
@@ -423,8 +423,8 @@ func TestStructuredControlFlowIsBalanced(t *testing.T) {
 // the count to declare matching WAT locals.
 func TestLowerNumScratchTracked(t *testing.T) {
 	// A program with no synthetic helpers: ScratchTypes is empty.
-	pPlain := lowerSource(t, `function f(a: number, b: number): number {
-		var x: number = a + b;
+	pPlain := lowerSource(t, `function f(a: i32, b: i32): i32 {
+		var x: i32 = a + b;
 		return x;
 	}`)
 	if got := len(pPlain.Funcs[0].ScratchTypes); got != 0 {
@@ -432,9 +432,9 @@ func TestLowerNumScratchTracked(t *testing.T) {
 	}
 	// A program using array, struct, and switch helpers should report
 	// at least one scratch slot per helper kind.
-	pHelpers := lowerSource(t, `struct P { x: number }
-		function f(n: number): number {
-			var a: number[] = [1, 2, 3];
+	pHelpers := lowerSource(t, `struct P { x: i32 }
+		function f(n: i32): i32 {
+			var a: i32[] = [1, 2, 3];
 			var p: P = P { x: 5 };
 			switch (n) { case 0: return 0; default: return 1; }
 		}`)
@@ -447,8 +447,8 @@ func TestLowerNumScratchTracked(t *testing.T) {
 // local so codegen can resolve a `(type $tN)` clause without tracing
 // back through the preceding OpLoadLocal.
 func TestLowerCallIndirectCarriesSig(t *testing.T) {
-	prog := lowerSource(t, `function add(a: number, b: number): number { return a + b; }
-		function apply(f: (number, number) => number, a: number, b: number): number {
+	prog := lowerSource(t, `function add(a: i32, b: i32): i32 { return a + b; }
+		function apply(f: (i32, i32) => i32, a: i32, b: i32): i32 {
 			return f(a, b);
 		}`)
 	apply := findFunc(prog, "apply")
@@ -476,8 +476,8 @@ func TestLowerCallIndirectCarriesSig(t *testing.T) {
 // (e.g. operands inside an expression statement carry the line of
 // that expression).
 func TestLowerStampsSourcePositions(t *testing.T) {
-	src := `function f(a: number, b: number): number {
-		var x: number = a + b;
+	src := `function f(a: i32, b: i32): i32 {
+		var x: i32 = a + b;
 		return x;
 	}`
 	prog := lowerSource(t, src)
@@ -508,10 +508,10 @@ func TestLowerStampsSourcePositions(t *testing.T) {
 // so codegen can resolve both the funcref-table index and the env
 // block size.
 func TestLowerMakeClosureCarriesNameAndCount(t *testing.T) {
-	prog := lowerSource(t, `function outer(): number {
-		var a: number = 1;
-		var b: number = 2;
-		function inner(): number { return a + b; }
+	prog := lowerSource(t, `function outer(): i32 {
+		var a: i32 = 1;
+		var b: i32 = 2;
+		function inner(): i32 { return a + b; }
 		return inner();
 	}`)
 	outer := findFunc(prog, "outer")
@@ -544,16 +544,16 @@ func TestLowerArithIdentities(t *testing.T) {
 		bannedOp OpKind // op that the fold should remove
 		desc     string
 	}{
-		{`function f(x: number): number { return x + 0; }`, OpAdd, "x + 0"},
-		{`function f(x: number): number { return 0 + x; }`, OpAdd, "0 + x"},
-		{`function f(x: number): number { return x - 0; }`, OpSub, "x - 0"},
-		{`function f(x: number): number { return x * 1; }`, OpMul, "x * 1"},
-		{`function f(x: number): number { return 1 * x; }`, OpMul, "1 * x"},
-		{`function f(x: number): number { return x | 0; }`, OpOr, "x | 0"},
-		{`function f(x: number): number { return x ^ 0; }`, OpXor, "x ^ 0"},
-		{`function f(x: number): number { return x & -1; }`, OpAnd, "x & -1"},
-		{`function f(x: number): number { return x << 0; }`, OpShl, "x << 0"},
-		{`function f(x: number): number { return x >> 0; }`, OpShrS, "x >> 0"},
+		{`function f(x: i32): i32 { return x + 0; }`, OpAdd, "x + 0"},
+		{`function f(x: i32): i32 { return 0 + x; }`, OpAdd, "0 + x"},
+		{`function f(x: i32): i32 { return x - 0; }`, OpSub, "x - 0"},
+		{`function f(x: i32): i32 { return x * 1; }`, OpMul, "x * 1"},
+		{`function f(x: i32): i32 { return 1 * x; }`, OpMul, "1 * x"},
+		{`function f(x: i32): i32 { return x | 0; }`, OpOr, "x | 0"},
+		{`function f(x: i32): i32 { return x ^ 0; }`, OpXor, "x ^ 0"},
+		{`function f(x: i32): i32 { return x & -1; }`, OpAnd, "x & -1"},
+		{`function f(x: i32): i32 { return x << 0; }`, OpShl, "x << 0"},
+		{`function f(x: i32): i32 { return x >> 0; }`, OpShrS, "x >> 0"},
 	}
 	for _, tc := range cases {
 		prog := lowerSource(t, tc.src)
@@ -585,12 +585,12 @@ func TestLowerSelfIdentityFolds(t *testing.T) {
 		{">=", OpGeS, "x >= x"},
 	}
 	for _, tc := range cases {
-		retType := "number"
+		retType := "i32"
 		if tc.op == "==" || tc.op == "!=" || tc.op == "<" ||
 			tc.op == "<=" || tc.op == ">" || tc.op == ">=" {
 			retType = "boolean"
 		}
-		src := "function f(x: number): " + retType + " { return x " + tc.op + " x; }"
+		src := "function f(x: i32): " + retType + " { return x " + tc.op + " x; }"
 		prog := lowerSource(t, src)
 		if hasOp(prog, "f", tc.bannedOp) {
 			t.Errorf("%s should fold; %s must not appear:\n%s", tc.desc, tc.bannedOp, prog)
@@ -607,12 +607,12 @@ func TestLowerArithStrengthReducesMulPow2(t *testing.T) {
 		bannedOp OpKind
 		desc     string
 	}{
-		{`function f(x: number): number { return x * 2; }`, OpShl, OpMul, "x * 2"},
-		{`function f(x: number): number { return x * 4; }`, OpShl, OpMul, "x * 4"},
-		{`function f(x: number): number { return x * 16; }`, OpShl, OpMul, "x * 16"},
-		{`function f(x: number): number { return 8 * x; }`, OpShl, OpMul, "8 * x"},
-		{`function f(x: number): number { return x * 3; }`, OpMul, OpShl, "x * 3"},
-		{`function f(x: number): number { return x * 7; }`, OpMul, OpShl, "x * 7"},
+		{`function f(x: i32): i32 { return x * 2; }`, OpShl, OpMul, "x * 2"},
+		{`function f(x: i32): i32 { return x * 4; }`, OpShl, OpMul, "x * 4"},
+		{`function f(x: i32): i32 { return x * 16; }`, OpShl, OpMul, "x * 16"},
+		{`function f(x: i32): i32 { return 8 * x; }`, OpShl, OpMul, "8 * x"},
+		{`function f(x: i32): i32 { return x * 3; }`, OpMul, OpShl, "x * 3"},
+		{`function f(x: i32): i32 { return x * 7; }`, OpMul, OpShl, "x * 7"},
 	}
 	for _, tc := range cases {
 		prog := lowerSource(t, tc.src)

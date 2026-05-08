@@ -30,11 +30,11 @@ func roundTrip(t *testing.T, src string) {
 }
 
 func TestRoundtripNumbers(t *testing.T) {
-	roundTrip(t, `function f(): number { return 42; }`)
+	roundTrip(t, `function f(): i32 { return 42; }`)
 }
 
 func TestRoundtripArithmetic(t *testing.T) {
-	roundTrip(t, `function f(): number { return 1 + 2 * 3 - 4 / 5; }`)
+	roundTrip(t, `function f(): i32 { return 1 + 2 * 3 - 4 / 5; }`)
 }
 
 func TestRoundtripBooleans(t *testing.T) {
@@ -42,38 +42,38 @@ func TestRoundtripBooleans(t *testing.T) {
 }
 
 func TestRoundtripIfElse(t *testing.T) {
-	roundTrip(t, `function f(n: number): number {
+	roundTrip(t, `function f(n: i32): i32 {
 		if (n == 0) { return 1; } else { return 2; }
 	}`)
 }
 
 func TestRoundtripWhileAndAssign(t *testing.T) {
-	roundTrip(t, `function f(): number {
-		var i: number = 0;
-		var sum: number = 0;
+	roundTrip(t, `function f(): i32 {
+		var i: i32 = 0;
+		var sum: i32 = 0;
 		while (i < 10) { sum = sum + i; i = i + 1; }
 		return sum;
 	}`)
 }
 
 func TestRoundtripArraysAndIndexing(t *testing.T) {
-	roundTrip(t, `function f(): number {
-		var a: number[] = [1, 2, 3];
+	roundTrip(t, `function f(): i32 {
+		var a: i32[] = [1, 2, 3];
 		a[0] = 99;
 		return a[0] + a[1];
 	}`)
 }
 
 func TestRoundtripRecursiveFactorial(t *testing.T) {
-	roundTrip(t, `function fact(n: number): number {
+	roundTrip(t, `function fact(n: i32): i32 {
 		if (n == 0) { return 1; }
 		return n * fact(n - 1);
 	}
-	function main(): number { return fact(5); }`)
+	function main(): i32 { return fact(5); }`)
 }
 
 func TestRoundtripUnary(t *testing.T) {
-	roundTrip(t, `function f(): number { return -1 + -(2 + 3); }`)
+	roundTrip(t, `function f(): i32 { return -1 + -(2 + 3); }`)
 }
 
 func TestRoundtripStrings(t *testing.T) {
@@ -84,9 +84,9 @@ func TestRoundtripStrings(t *testing.T) {
 }
 
 func TestRoundtripForBreakContinue(t *testing.T) {
-	roundTrip(t, `function f(): number {
-		var sum: number = 0;
-		for (var i: number = 0; i < 10; i = i + 1) {
+	roundTrip(t, `function f(): i32 {
+		var sum: i32 = 0;
+		for (var i: i32 = 0; i < 10; i = i + 1) {
 			if (i == 3) { continue; }
 			if (i == 7) { break; }
 			sum = sum + i;
@@ -96,11 +96,11 @@ func TestRoundtripForBreakContinue(t *testing.T) {
 }
 
 func TestRoundtripFunctionType(t *testing.T) {
-	roundTrip(t, `function apply(f: (number, number) => number, a: number, b: number): number {
+	roundTrip(t, `function apply(f: (i32, i32) => i32, a: i32, b: i32): i32 {
 		return f(a, b);
 	}
-	function add(x: number, y: number): number { return x + y; }
-	function main(): number { return apply(add, 1, 2); }`)
+	function add(x: i32, y: i32): i32 { return x + y; }
+	function main(): i32 { return apply(add, 1, 2); }`)
 }
 
 func TestRoundtripStringEscapes(t *testing.T) {
@@ -248,7 +248,7 @@ func zeroExpr(e ast.Expr) {
 }
 
 func TestRoundtripSwitch(t *testing.T) {
-	roundTrip(t, `function f(n: number): number {
+	roundTrip(t, `function f(n: i32): i32 {
 		switch (n) {
 			case 1, 2: return 10;
 			case 3: return 30;
@@ -259,18 +259,18 @@ func TestRoundtripSwitch(t *testing.T) {
 }
 
 func TestRoundtripTernary(t *testing.T) {
-	roundTrip(t, `function f(b: boolean): number { return b ? 1 : 2; }`)
+	roundTrip(t, `function f(b: boolean): i32 { return b ? 1 : 2; }`)
 }
 
 func TestRoundtripCompoundAssign(t *testing.T) {
 	// The printer always emits the desugared `x = x + 1` form, which
 	// re-parses to the same AST.
-	roundTrip(t, `function f(): number { var x: number = 0; x += 1; return x; }`)
+	roundTrip(t, `function f(): i32 { var x: i32 = 0; x += 1; return x; }`)
 }
 
 func TestRoundtripStruct(t *testing.T) {
-	roundTrip(t, `struct Point { x: number, y: number }
-		function main(): number {
+	roundTrip(t, `struct Point { x: i32, y: i32 }
+		function main(): i32 {
 			var p: Point = Point { x: 1, y: 2 };
 			p.x = 10;
 			return p.x + p.y;
@@ -278,13 +278,13 @@ func TestRoundtripStruct(t *testing.T) {
 }
 
 func TestRoundtripNestedFunction(t *testing.T) {
-	roundTrip(t, `function makeAdder(n: number): (number) => number {
-		function add(x: number): number { return x + n; }
+	roundTrip(t, `function makeAdder(n: i32): (i32) => i32 {
+		function add(x: i32): i32 { return x + n; }
 		return add;
 	}`)
 }
 
 func TestRoundtripMethod(t *testing.T) {
-	roundTrip(t, `struct Point { x: number, y: number }
-		function (p: Point) sum(): number { return p.x + p.y; }`)
+	roundTrip(t, `struct Point { x: i32, y: i32 }
+		function (p: Point) sum(): i32 { return p.x + p.y; }`)
 }

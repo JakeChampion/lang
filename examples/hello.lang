@@ -1,4 +1,4 @@
-function main(): number {
+function main(): i32 {
   print("Hello, world!");
   return 0;
 }

@@ -287,12 +287,12 @@ func runWasmMultiFile(t *testing.T, entry string, files map[string]string) int {
 // arm32 e2e check, run through wasmtime.
 func TestWASMCrossModuleStructType(t *testing.T) {
 	got := runWasmMultiFile(t, "main.lang", map[string]string{
-		"point.lang": `pub struct Point { x: number, y: number }
-pub function make(x: number, y: number): Point {
+		"point.lang": `pub struct Point { x: i32, y: i32 }
+pub function make(x: i32, y: i32): Point {
 	return Point { x: x, y: y };
 }`,
 		"main.lang": `import "./point";
-function main(): number {
+function main(): i32 {
 	var p: point.Point = point.make(3, 4);
 	return p.x + p.y;
 }`,
@@ -319,7 +319,7 @@ func invokeWasmtimeWithArgs(t *testing.T, src string, extraArgs ...string) (stdo
 // `wasmtime run --invoke main mod.wat alpha beta` therefore yields
 // argv = [mod.wat, alpha, beta] and `len(args()) == 3`.
 func TestWASMArgsBuiltin(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var a: string[] = args();
 		return len(a);
 	}`
@@ -347,7 +347,7 @@ func TestWASMArgsBuiltin(t *testing.T) {
 // path lands the bytes in a length-prefixed string that the
 // language's `print` lowers via fd_write like any other string.
 func TestWASMArgsBuiltinReadsValue(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var a: string[] = args();
 		print(a[1]);
 		return 0;
@@ -379,7 +379,7 @@ func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, st
 // pattern-match on the result; the post-Phase-3 typed shape
 // replaces the empty-string sentinel that previous PRs used.
 func TestWASMReadLineBuiltin(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (stdin().read_line()) {
 			Some(line) => { write(line); return len(line); },
 			None => { return -1; }
@@ -400,7 +400,7 @@ func TestWASMReadLineBuiltin(t *testing.T) {
 // match arms are how callers disambiguate now — no sentinel
 // length comparison required.
 func TestWASMReadLineBuiltinEOF(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (stdin().read_line()) {
 			Some(line) => { return 1; },
 			None => { return 0; }
@@ -430,7 +430,7 @@ func TestWASMReadLineBuiltinEOF(t *testing.T) {
 // empty) and `None` when the key isn't set. The test exercises
 // the `Some` arm; the missing case is in TestWASMEnvBuiltinMissing.
 func TestWASMEnvBuiltin(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (env("LANG_TEST_VAR")) {
 			Some(v) => { write(v); return 0; },
 			None => { return 1; }
@@ -446,7 +446,7 @@ func TestWASMEnvBuiltin(t *testing.T) {
 // Missing env keys route to `None`, distinguishable from a
 // present-but-empty value (which would still be `Some("")`).
 func TestWASMEnvBuiltinMissing(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (env("LANG_TEST_DEFINITELY_NOT_SET_XYZ_42")) {
 			Some(v) => { return 1; },
 			None => { return 0; }
@@ -482,7 +482,7 @@ func TestWASMEnvBuiltinMissing(t *testing.T) {
 // arbitrary codes would need `wasi:cli/exit.exit-with-code` which
 // only ships in 0.2.1+.
 func TestWASMExitBuiltin(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		eprint("boom");
 		exit(7);
 		return 0;
@@ -500,7 +500,7 @@ func TestWASMExitBuiltin(t *testing.T) {
 // Three consecutive `write` calls concatenate into a single run;
 // the final `print` adds the only newline in the output.
 func TestWASMWriteBuiltin(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		write("a");
 		write("b");
 		print("c");
@@ -518,7 +518,7 @@ func TestWASMWriteBuiltin(t *testing.T) {
 // on stdout and `eprint("err")` shows up on stderr — without
 // either bleeding into the other stream.
 func TestWASMEprintBuiltin(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		print("hi");
 		eprint("err");
 		return 0;
@@ -558,7 +558,7 @@ func runWasm(t *testing.T, src string) int {
 }
 
 func TestWASMReturn42(t *testing.T) {
-	if got := runWasm(t, `function main(): number { return 42; }`); got != 42 {
+	if got := runWasm(t, `function main(): i32 { return 42; }`); got != 42 {
 		t.Errorf("got %d, want 42", got)
 	}
 }
@@ -1110,18 +1110,18 @@ func TestI64ImplicitWideningRejected(t *testing.T) {
 }
 
 func TestWASMFactorial(t *testing.T) {
-	src := `function fact(n: number): number {
+	src := `function fact(n: i32): i32 {
 		if (n == 0) { return 1; }
 		return n * fact(n - 1);
 	}
-	function main(): number { return fact(5); }`
+	function main(): i32 { return fact(5); }`
 	if got := runWasm(t, src); got != 120 {
 		t.Errorf("got %d, want 120", got)
 	}
 }
 
 func TestWASMForLoopWithBreakContinue(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var sum = 0;
 		for (var i = 0; i < 10; i = i + 1) {
 			if (i < 5) { continue; }
@@ -1145,13 +1145,13 @@ func TestWASMForLoopWithBreakContinue(t *testing.T) {
 // dispatching through `apply(target, 4)` must hit `target` (which
 // returns 40), not trap or hit a different entry.
 func TestWASMFunctionValueOrderIndependent(t *testing.T) {
-	src := `function unrelated_a(x: number): number { return x + 1; }
-	function unrelated_b(x: number): number { return x + 2; }
-	function target(x: number): number { return x * 10; }
-	function apply(f: (number) => number, x: number): number {
+	src := `function unrelated_a(x: i32): i32 { return x + 1; }
+	function unrelated_b(x: i32): i32 { return x + 2; }
+	function target(x: i32): i32 { return x * 10; }
+	function apply(f: (i32) => i32, x: i32): i32 {
 		return f(x);
 	}
-	function main(): number { return apply(target, 4); }`
+	function main(): i32 { return apply(target, 4); }`
 	if got := runWasm(t, src); got != 40 {
 		t.Errorf("got %d, want 40", got)
 	}
@@ -1180,7 +1180,7 @@ func runWasmCapturingStdout(t *testing.T, src string) string {
 }
 
 func TestWASMPrintHelloWorld(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		print("Hello, world!");
 		return 0;
 	}`
@@ -1198,7 +1198,7 @@ func TestWASMPrintHelloWorld(t *testing.T) {
 // value matches and 0 otherwise — and we observe the integer.
 
 func TestWASMFloatArithmetic(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		if ((1.5 + 2.5) == 4.0) { return 1; }
 		return 0;
 	}`
@@ -1208,7 +1208,7 @@ func TestWASMFloatArithmetic(t *testing.T) {
 }
 
 func TestWASMFloatMultiplyAndDivide(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		if ((6.0 * 0.5 / 0.25) == 12.0) { return 1; }
 		return 0;
 	}`
@@ -1219,7 +1219,7 @@ func TestWASMFloatMultiplyAndDivide(t *testing.T) {
 
 func TestWASMFloatNegate(t *testing.T) {
 	src := `function f(x: float): float { return -x; }
-		function main(): number {
+		function main(): i32 {
 			if (f(3.5) == -3.5) { return 1; }
 			return 0;
 		}`
@@ -1229,7 +1229,7 @@ func TestWASMFloatNegate(t *testing.T) {
 }
 
 func TestWASMPutcharWritesBytes(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		putchar(72); putchar(73); putchar(10);
 		return 0;
 	}`
@@ -1243,8 +1243,8 @@ func TestWASMPutcharWritesBytes(t *testing.T) {
 // WASM backend produces a runnable module that iterates correctly.
 func TestWASMForEachOverArray(t *testing.T) {
 	src := `
-		function main(): number {
-			var sum: number = 0;
+		function main(): i32 {
+			var sum: i32 = 0;
 			for x in [10, 20, 30] {
 				sum = sum + x;
 			}
@@ -1259,8 +1259,8 @@ func TestWASMForEachOverArray(t *testing.T) {
 // WASM backend.
 func TestWASMForEachBreakContinue(t *testing.T) {
 	src := `
-		function main(): number {
-			var sum: number = 0;
+		function main(): i32 {
+			var sum: i32 = 0;
 			for x in [1, 2, 3, 4, 5] {
 				if (x == 2) { continue; }
 				if (x == 5) { break; }
@@ -1274,8 +1274,8 @@ func TestWASMForEachBreakContinue(t *testing.T) {
 }
 
 func TestWASMArraySumAndMutation(t *testing.T) {
-	src := `function main(): number {
-		var a: number[] = [10, 20, 30, 40];
+	src := `function main(): i32 {
+		var a: i32[] = [10, 20, 30, 40];
 		a[2] = 100;
 		return a[0] + a[1] + a[2] + a[3];
 	}`
@@ -1287,9 +1287,9 @@ func TestWASMArraySumAndMutation(t *testing.T) {
 // Nested ArrayLits get distinct scratch locals so the inner literal
 // can finish allocating before the outer one assigns its base.
 func TestWASMNestedArrayLits(t *testing.T) {
-	src := `function main(): number {
-		var inner: number[] = [3, 4];
-		var outer: number[] = [1, 2, inner[0]];
+	src := `function main(): i32 {
+		var inner: i32[] = [3, 4];
+		var outer: i32[] = [1, 2, inner[0]];
 		return outer[2] + inner[1];
 	}`
 	if got := runWasm(t, src); got != 7 {
@@ -1299,11 +1299,11 @@ func TestWASMNestedArrayLits(t *testing.T) {
 
 func TestWASMIndirectCallApply(t *testing.T) {
 	src := `
-		function add(a: number, b: number): number { return a + b; }
-		function apply(f: (number, number) => number, a: number, b: number): number {
+		function add(a: i32, b: i32): i32 { return a + b; }
+		function apply(f: (i32, i32) => i32, a: i32, b: i32): i32 {
 			return f(a, b);
 		}
-		function main(): number { return apply(add, 40, 2); }`
+		function main(): i32 { return apply(add, 40, 2); }`
 	if got := runWasm(t, src); got != 42 {
 		t.Errorf("got %d, want 42", got)
 	}
@@ -1311,8 +1311,8 @@ func TestWASMIndirectCallApply(t *testing.T) {
 
 func TestWASMFunctionValueInVar(t *testing.T) {
 	src := `
-		function dbl(x: number): number { return x * 2; }
-		function main(): number {
+		function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 {
 			var f = dbl;
 			return f(7);
 		}`
@@ -1322,7 +1322,7 @@ func TestWASMFunctionValueInVar(t *testing.T) {
 }
 
 func TestWASMSwitchBasic(t *testing.T) {
-	src := `function classify(n: number): number {
+	src := `function classify(n: i32): i32 {
 		switch (n) {
 			case 0: return 100;
 			case 1, 2, 3: return 200;
@@ -1331,7 +1331,7 @@ func TestWASMSwitchBasic(t *testing.T) {
 		}
 		return -1;
 	}
-	function main(): number {
+	function main(): i32 {
 		return classify(0) + classify(2) + classify(7) + classify(99);
 	}`
 	// 100 + 200 + 700 + 0 = 1000
@@ -1342,9 +1342,9 @@ func TestWASMSwitchBasic(t *testing.T) {
 
 func TestWASMSwitchBreakInLoop(t *testing.T) {
 	// `break` inside a case exits the switch, not the enclosing loop.
-	src := `function main(): number {
-		var sum: number = 0;
-		for (var i: number = 0; i < 5; i = i + 1) {
+	src := `function main(): i32 {
+		var sum: i32 = 0;
+		for (var i: i32 = 0; i < 5; i = i + 1) {
 			switch (i) {
 				case 2: break;
 				default: sum = sum + i;
@@ -1359,16 +1359,16 @@ func TestWASMSwitchBreakInLoop(t *testing.T) {
 }
 
 func TestWASMTernary(t *testing.T) {
-	src := `function abs(n: number): number { return n < 0 ? 0 - n : n; }
-		function main(): number { return abs(-7); }`
+	src := `function abs(n: i32): i32 { return n < 0 ? 0 - n : n; }
+		function main(): i32 { return abs(-7); }`
 	if got := runWasm(t, src); got != 7 {
 		t.Errorf("got %d, want 7", got)
 	}
 }
 
 func TestWASMCompoundAssign(t *testing.T) {
-	src := `function main(): number {
-		var x: number = 1;
+	src := `function main(): i32 {
+		var x: i32 = 1;
 		x += 2;
 		x *= 5;
 		x -= 1;
@@ -1381,20 +1381,20 @@ func TestWASMCompoundAssign(t *testing.T) {
 }
 
 func TestWASMLenOfString(t *testing.T) {
-	src := `function main(): number { return len("hello"); }`
+	src := `function main(): i32 { return len("hello"); }`
 	if got := runWasm(t, src); got != 5 {
 		t.Errorf("got %d, want 5", got)
 	}
 }
 
 func TestWASMStringIndexAndCompare(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var s: string = "abc";
-		var byte: number = s[1];
+		var byte: i32 = s[1];
 		var equal: boolean = "yes" == "yes";
 		var different: boolean = "yes" == "no";
 		// 'b' = 98; equal=1, different=0 → 98 + 1 - 0 = 99
-		var ok: number = 0;
+		var ok: i32 = 0;
 		if (equal) { ok = ok + 1; }
 		if (different) { ok = ok - 1; }
 		return byte + ok;
@@ -1406,8 +1406,8 @@ func TestWASMStringIndexAndCompare(t *testing.T) {
 }
 
 func TestWASMStructBasic(t *testing.T) {
-	src := `struct Point { x: number, y: number }
-		function main(): number {
+	src := `struct Point { x: i32, y: i32 }
+		function main(): i32 {
 			var p: Point = Point { x: 10, y: 32 };
 			p.x = p.x + 5;
 			return p.x + p.y;
@@ -1419,9 +1419,9 @@ func TestWASMStructBasic(t *testing.T) {
 }
 
 func TestWASMStructPassByReference(t *testing.T) {
-	src := `struct Box { v: number }
+	src := `struct Box { v: i32 }
 		function bump(b: Box): void { b.v = b.v + 100; }
-		function main(): number {
+		function main(): i32 {
 			var b: Box = Box { v: 5 };
 			bump(b);
 			return b.v;
@@ -1432,7 +1432,7 @@ func TestWASMStructPassByReference(t *testing.T) {
 }
 
 func TestWASMStringConcat(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var a: string = "hello, ";
 		var b: string = "world";
 		var c: string = a + b;
@@ -1465,8 +1465,8 @@ func runWasmExpectingTrap(t *testing.T, src string) (stdout, stderr string, ok b
 }
 
 func TestWASMArrayOutOfBoundsTraps(t *testing.T) {
-	src := `function main(): number {
-		var a: number[] = [1, 2, 3];
+	src := `function main(): i32 {
+		var a: i32[] = [1, 2, 3];
 		return a[10];
 	}`
 	stdout, stderr, ok := runWasmExpectingTrap(t, src)
@@ -1476,8 +1476,8 @@ func TestWASMArrayOutOfBoundsTraps(t *testing.T) {
 }
 
 func TestWASMNegativeIndexTraps(t *testing.T) {
-	src := `function main(): number {
-		var a: number[] = [1, 2, 3];
+	src := `function main(): i32 {
+		var a: i32[] = [1, 2, 3];
 		return a[0 - 1];
 	}`
 	if _, _, ok := runWasmExpectingTrap(t, src); !ok {
@@ -1487,8 +1487,8 @@ func TestWASMNegativeIndexTraps(t *testing.T) {
 
 func TestWASMInBoundsStillWorks(t *testing.T) {
 	// Make sure the bounds check doesn't break the happy path.
-	src := `function main(): number {
-		var a: number[] = [10, 20, 30];
+	src := `function main(): i32 {
+		var a: i32[] = [10, 20, 30];
 		return a[1];
 	}`
 	if got := runWasm(t, src); got != 20 {
@@ -1497,11 +1497,11 @@ func TestWASMInBoundsStillWorks(t *testing.T) {
 }
 
 func TestWASMClosureFactory(t *testing.T) {
-	src := `function makeAdder(n: number): (number) => number {
-		function add(x: number): number { return x + n; }
+	src := `function makeAdder(n: i32): (i32) => i32 {
+		function add(x: i32): i32 { return x + n; }
 		return add;
 	}
-	function main(): number {
+	function main(): i32 {
 		var f = makeAdder(7);
 		return f(35);
 	}`
@@ -1512,11 +1512,11 @@ func TestWASMClosureFactory(t *testing.T) {
 
 func TestWASMClosureMultipleInstances(t *testing.T) {
 	// Two closures over different captured values shouldn't share state.
-	src := `function makeAdder(n: number): (number) => number {
-		function add(x: number): number { return x + n; }
+	src := `function makeAdder(n: i32): (i32) => i32 {
+		function add(x: i32): i32 { return x + n; }
 		return add;
 	}
-	function main(): number {
+	function main(): i32 {
 		var add5 = makeAdder(5);
 		var add10 = makeAdder(10);
 		return add5(1) + add10(1);
@@ -1528,12 +1528,12 @@ func TestWASMClosureMultipleInstances(t *testing.T) {
 }
 
 func TestWASMClosureCapturesParamAndVar(t *testing.T) {
-	src := `function outer(seed: number): number {
-		var bonus: number = 100;
-		function inner(x: number): number { return x + seed + bonus; }
+	src := `function outer(seed: i32): i32 {
+		var bonus: i32 = 100;
+		function inner(x: i32): i32 { return x + seed + bonus; }
 		return inner(2);
 	}
-	function main(): number { return outer(40); }`
+	function main(): i32 { return outer(40); }`
 	// 2 + 40 + 100 = 142
 	if got := runWasm(t, src); got != 142 {
 		t.Errorf("got %d, want 142", got)
@@ -1541,9 +1541,9 @@ func TestWASMClosureCapturesParamAndVar(t *testing.T) {
 }
 
 func TestWASMMethodOnStruct(t *testing.T) {
-	src := `struct Point { x: number, y: number }
-		function (p: Point) sum(): number { return p.x + p.y; }
-		function main(): number {
+	src := `struct Point { x: i32, y: i32 }
+		function (p: Point) sum(): i32 { return p.x + p.y; }
+		function main(): i32 {
 			var p: Point = Point { x: 10, y: 32 };
 			return p.sum();
 		}`
@@ -1554,9 +1554,9 @@ func TestWASMMethodOnStruct(t *testing.T) {
 
 func TestWASMMethodWithExtraArg(t *testing.T) {
 	// `b.shifted(7)` rewrites to `__method_Box_shifted(b, 7)`.
-	src := `struct Box { v: number }
-		function (b: Box) shifted(n: number): number { return b.v + n; }
-		function main(): number {
+	src := `struct Box { v: i32 }
+		function (b: Box) shifted(n: i32): i32 { return b.v + n; }
+		function main(): i32 {
 			var b: Box = Box { v: 5 };
 			return b.shifted(37);
 		}`
@@ -1569,8 +1569,8 @@ func TestWASMMethodWithExtraArg(t *testing.T) {
 // carrying variant gets constructed, then matched, with the
 // bound payload flowing into the returned value.
 func TestWASMEnumMatchPayload(t *testing.T) {
-	src := `enum Pair { Two(number, number) }
-		function main(): number {
+	src := `enum Pair { Two(i32, i32) }
+		function main(): i32 {
 			var p: Pair = Two(7, 5);
 			match (p) {
 				Two(a, b) => { return a + b; }
@@ -1591,7 +1591,7 @@ func TestWASMEnumMatchDispatch(t *testing.T) {
 	// `Ok` / `Err`).
 	srcOk := `enum Status { Good, Bad(string) }
 		function status(): Status { return Good; }
-		function main(): number {
+		function main(): i32 {
 			match (status()) {
 				Good => { return 0; },
 				Bad(msg) => { return 1; }
@@ -1603,7 +1603,7 @@ func TestWASMEnumMatchDispatch(t *testing.T) {
 	}
 	srcErr := `enum Status { Good, Bad(string) }
 		function status(): Status { return Bad("boom"); }
-		function main(): number {
+		function main(): i32 {
 			match (status()) {
 				Good => { return 0; },
 				Bad(msg) => { return len(msg); }
@@ -1616,14 +1616,14 @@ func TestWASMEnumMatchDispatch(t *testing.T) {
 }
 
 // Generic Option end-to-end on WASM: `Some(42)` constructs
-// `Option[number]`, the match arm extracts the payload, the
+// `Option[i32]`, the match arm extracts the payload, the
 // caller's main returns the value. Type erasure means there's
 // no per-T monomorphization: the WAT treats every payload as
 // i32 regardless of T.
 func TestWASMGenericOptionSome(t *testing.T) {
 	src := `enum Option[T] { Some(T), None }
-		function find(): Option[number] { return Some(42); }
-		function main(): number {
+		function find(): Option[i32] { return Some(42); }
+		function main(): i32 {
 			match (find()) {
 				Some(v) => { return v; },
 				None => { return -1; }
@@ -1641,8 +1641,8 @@ func TestWASMGenericOptionSome(t *testing.T) {
 // runs the right arm.
 func TestWASMGenericOptionNone(t *testing.T) {
 	src := `enum Option[T] { Some(T), None }
-		function find(): Option[number] { return None; }
-		function main(): number {
+		function find(): Option[i32] { return None; }
+		function main(): i32 {
 			match (find()) {
 				Some(v) => { return v; },
 				None => { return 7; }
@@ -1660,11 +1660,11 @@ func TestWASMGenericOptionNone(t *testing.T) {
 // payload type.
 func TestWASMGenericResult(t *testing.T) {
 	// Use the auto-injected `Result[T, E]` rather than re-declaring it.
-	src := `function divide(a: number, b: number): Result[number, string] {
+	src := `function divide(a: i32, b: i32): Result[i32, string] {
 			if (b == 0) { return Err("zero"); }
 			return Ok(a / b);
 		}
-		function main(): number {
+		function main(): i32 {
 			match (divide(20, 4)) {
 				Ok(v) => { return v; },
 				Err(msg) => { return len(msg); }
@@ -1687,12 +1687,12 @@ func TestWASMGenericResult(t *testing.T) {
 // backend (memory[40] is the bump cursor). Same test shape as
 // TestArenaResetReclaimsAllocations but routed through wasmtime.
 func TestWASMArenaReset(t *testing.T) {
-	src := `function main(): number {
-		var saved: number = arena_save();
-		var a: number[] = [1, 2, 3, 4, 5];
-		var afterAlloc: number = arena_save();
+	src := `function main(): i32 {
+		var saved: i32 = arena_save();
+		var a: i32[] = [1, 2, 3, 4, 5];
+		var afterAlloc: i32 = arena_save();
 		arena_restore(saved);
-		var afterRestore: number = arena_save();
+		var afterRestore: i32 = arena_save();
 		if (afterAlloc <= saved) { return 1; }
 		if (afterRestore != saved) { return 2; }
 		if (len(a) != 5) { return 3; }
@@ -1707,7 +1707,7 @@ func TestWASMArenaReset(t *testing.T) {
 // random_get`. Same length / non-equality assertions as the
 // arm32 version.
 func TestWASMRandomBytes(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		var a: string = random_bytes(16);
 		var b: string = random_bytes(16);
 		if (len(a) != 16) { return 1; }
@@ -1722,7 +1722,7 @@ func TestWASMRandomBytes(t *testing.T) {
 
 func TestWASMOptionFloatPayload(t *testing.T) {
 	src := `function pick(): Option[float] { return Some(3.14); }
-		function main(): number {
+		function main(): i32 {
 			match (pick()) {
 				Some(v) => { if (v > 3.0) { return 1; } return 2; },
 				None => { return 0; }
@@ -1743,7 +1743,7 @@ func TestWASMResultFloatOk(t *testing.T) {
 			if (x < 0.0) { return Err("negative"); }
 			return Ok(x);
 		}
-		function main(): number {
+		function main(): i32 {
 			match (check(2.5)) {
 				Ok(v) => { if (v > 2.0) { return 1; } return 2; },
 				Err(msg) => { return 0; }
@@ -1777,7 +1777,7 @@ func runWasmInDir(t *testing.T, src string, seed map[string]string) (stdout, std
 // program writes the content back to stdout so we can verify
 // both the read path and the type-erased Result unwrap.
 func TestWASMReadFileOk(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (read_file("greeting.txt")) {
 			Ok(s) => { write(s); return 0; },
 			Err(_) => { return 1; }
@@ -1796,7 +1796,7 @@ func TestWASMReadFileOk(t *testing.T) {
 // we passed must be visible in the variant payload — that's
 // the cribbed-from-Roc affordance the design relies on.
 func TestWASMReadFileNotFound(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (read_file("does_not_exist.txt")) {
 			Ok(_) => { return 0; },
 			Err(err) => {
@@ -1818,7 +1818,7 @@ func TestWASMReadFileNotFound(t *testing.T) {
 // verify by reading the file back from the host side after
 // the program returns.
 func TestWASMWriteFileOk(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (write_file("out.txt", "wrote it\n")) {
 			Some(_) => { return 1; },
 			None => { return 0; }
@@ -1839,7 +1839,7 @@ func TestWASMWriteFileOk(t *testing.T) {
 // lengths via the language's `len`. Exercises both helpers
 // in the same program.
 func TestWASMReadWriteFileRoundtrip(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (write_file("rt.txt", "round trip")) {
 			Some(_) => { return 1; },
 			None => {}
@@ -1860,7 +1860,7 @@ func TestWASMReadWriteFileRoundtrip(t *testing.T) {
 // to the right host stream. The test pipes them separately so
 // each can be verified.
 func TestWASMStdStreams(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (stdout().write("out\n")) { Some(_) => { return 1; }, None => {} }
 		match (stderr().write("err\n")) { Some(_) => { return 2; }, None => {} }
 		return 0;
@@ -1883,7 +1883,7 @@ func TestWASMStdStreams(t *testing.T) {
 // `read_line` returns `None`. End-to-end this exercises every
 // streaming primitive in 4b in one shot.
 func TestWASMStreamingRoundtrip(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (open_writer("out.txt")) {
 			Ok(w) => {
 				match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
@@ -1914,7 +1914,7 @@ func TestWASMStreamingRoundtrip(t *testing.T) {
 // first call gets up to a full chunk, the next call gets
 // the remainder, and a third call returns None.
 func TestWASMReaderReadChunk(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (open_writer("rc.txt")) {
 			Ok(w) => {
 				match (w.write("hello world")) { Some(_) => { return 1; }, None => {} }
@@ -1951,7 +1951,7 @@ func TestWASMReaderReadChunk(t *testing.T) {
 // writes at the end. Combined with read_file we can verify
 // the file ends up containing both halves.
 func TestWASMOpenAppender(t *testing.T) {
-	src := `function main(): number {
+	src := `function main(): i32 {
 		match (open_writer("ap.txt")) {
 			Ok(w) => {
 				match (w.write("first")) { Some(_) => { return 1; }, None => {} }

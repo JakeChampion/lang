@@ -130,8 +130,8 @@ Five PRs, each shippable. Breaking changes are fine — single user.
 - Explicit conversion only (`x as i64`); no implicit widening.
 - `f32` (existing) and `f64` (new); current `float` becomes alias
   for `f32`.
-- Existing programs using `number` keep compiling — `number` stays
-  as a deprecation alias for `i32` until PR 5.
+- The historical `number` alias was dropped in PR 1's
+  follow-up cleanup; use `i32` / `i64` / `u32` etc. directly.
 - Update WASM codegen: i64 ops via `i64.*` instructions.
 - arm32 codegen: i64 deferred — error out with a clear message if
   used; everything else routes through existing i32 codegen.
@@ -370,7 +370,8 @@ Deferred to a follow-up:
   the arena story.
 - Document the lifetime contract for slices/views (must outlive
   the arena they reference).
-- Drop the `number` deprecation alias.
+  (The `number` deprecation alias has already been dropped — see
+  PR 1's status block.)
 
 ## Deferred — not in any of the above five PRs
 

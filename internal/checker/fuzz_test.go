@@ -14,11 +14,11 @@ import (
 // Run with: go test -fuzz=FuzzCheck ./internal/checker
 func FuzzCheck(f *testing.F) {
 	seeds := []string{
-		`function f(): number { return 1; }`,
-		`function f(n: number): number { return n + 1; }`,
+		`function f(): i32 { return 1; }`,
+		`function f(n: i32): i32 { return n + 1; }`,
 		`function f(): boolean { return true && (1 < 2); }`,
-		`function f(): number { var a: number[] = [1, 2, 3]; return a[1]; }`,
-		`function f(): number {
+		`function f(): i32 { var a: i32[] = [1, 2, 3]; return a[1]; }`,
+		`function f(): i32 {
 			var sum = 0;
 			var i = 0;
 			while (i < 10) { sum = sum + i; i = i + 1; }
@@ -27,8 +27,8 @@ func FuzzCheck(f *testing.F) {
 		// Programs that already type-check incorrectly. The checker
 		// should still come back without panicking — it just collects
 		// errors.
-		`function f(): number { return true; }`,
-		`function f(): number { return undefined_thing; }`,
+		`function f(): i32 { return true; }`,
+		`function f(): i32 { return undefined_thing; }`,
 	}
 	for _, s := range seeds {
 		f.Add(s)
