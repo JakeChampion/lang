@@ -687,6 +687,66 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 		b.closeScope()
+	case *ast.LetElse:
+		// Lower as: store source ptr, compare tag to varIdx.
+		// On match (then-arm): bind payloads into locals declared
+		// at the OUTER scope so they survive past the LetElse.
+		// On mismatch: run the else block — checker has verified
+		// the else diverges, so codegen-wise we don't need to
+		// worry about the bindings being read on that path.
+		_, varIdx, _, ok := b.lookupVariant(n.VariantName)
+		if !ok {
+			return fmt.Errorf("ir: let-else references unknown variant %q", n.VariantName)
+		}
+		ptrSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__letelse_p_%d", ptrSlot)] = ptrSlot
+		// Pre-allocate the binding slots BEFORE the if so the
+		// stores inside the matched branch land in slots the
+		// surrounding scope can read.
+		bindingSlots := make([]int32, len(n.Bindings))
+		for i, name := range n.Bindings {
+			slot := b.allocSlot()
+			bt := ast.Type(ast.NumberType{})
+			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
+				bt = n.BindingTypes[i]
+			}
+			b.scratchType[slot] = bt
+			b.locals[name] = slot
+			bindingSlots[i] = slot
+		}
+		if err := b.expr(n.Source); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpLoad}) // tag at ptr+0
+		b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+		b.emit(Op{Kind: OpEq})
+		b.openIf(BlockTypeVoid)
+		// Match: load each payload field into its pre-allocated
+		// outer-scope slot.
+		for i, slot := range bindingSlots {
+			bt := ast.Type(ast.NumberType{})
+			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
+				bt = n.BindingTypes[i]
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+			b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
+			b.emit(Op{Kind: OpAdd})
+			if isFloat(bt) {
+				b.emit(Op{Kind: OpFLoad})
+			} else {
+				b.emit(Op{Kind: OpLoad})
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+		}
+		b.elseBranch()
+		// Else block. The checker has verified divergence so
+		// codegen doesn't need to do anything special.
+		if err := b.stmt(n.Else); err != nil {
+			return err
+		}
+		b.closeScope()
 	case *ast.IfLet:
 		// Lower `if let Variant(b1, b2, ...) = src { Then } [else
 		// { Else }]` as: store the source pointer, compare its tag
