@@ -366,8 +366,12 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// Implicit return-value padding so the validator stays happy when
 	// the body falls off the end without a final return.
 	if !ast.Equal(fn.ReturnType, ast.VoidType{}) && !endsWithReturn(irFn.Ops) {
-		if ast.Equal(fn.ReturnType, ast.FloatType{}) {
-			g.line("f32.const 0")
+		if ft, isFloat := fn.ReturnType.(ast.FloatType); isFloat {
+			if ft.NormalWidth() == 64 {
+				g.line("f64.const 0")
+			} else {
+				g.line("f32.const 0")
+			}
 		} else {
 			g.line("i32.const 0")
 		}
@@ -438,6 +442,10 @@ func blockTypeSuffix(bt int32) string {
 		return " (result i32)"
 	case ir.BlockTypeF32:
 		return " (result f32)"
+	case ir.BlockTypeI64:
+		return " (result i64)"
+	case ir.BlockTypeF64:
+		return " (result f64)"
 	}
 	return ""
 }
@@ -455,6 +463,16 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 			return "i64"
 		}
 		return "i32"
+	}
+	// floatPrefix mirrors intPrefix for f32 / f64 ops. Width=0
+	// keeps the historical f32 default so non-float-specific code
+	// paths that emit float ops without setting Width stay
+	// correct.
+	floatPrefix := func() string {
+		if op.Width == 64 {
+			return "f64"
+		}
+		return "f32"
 	}
 	// signSuffix returns "_s" for signed ops and "_u" for
 	// unsigned. Used by div / rem / shr / comparison ops where
@@ -476,8 +494,14 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.line("i64.extend_i32_u")
 	case ir.OpWrapI64:
 		g.line("i32.wrap_i64")
+	case ir.OpFPromoteF32:
+		g.line("f64.promote_f32")
+	case ir.OpFDemoteF64:
+		g.line("f32.demote_f64")
 	case ir.OpConstF32:
 		g.linef("f32.const %g", op.F32)
+	case ir.OpConstF64:
+		g.linef("f64.const %g", op.F64)
 	case ir.OpConstStr:
 		g.linef("i32.const %d", g.internString(op.Str))
 	case ir.OpConstFunc:
@@ -537,27 +561,27 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpGeS:
 		g.linef("%s.ge%s", intPrefix(), signSuffix())
 	case ir.OpFAdd:
-		g.line("f32.add")
+		g.linef("%s.add", floatPrefix())
 	case ir.OpFSub:
-		g.line("f32.sub")
+		g.linef("%s.sub", floatPrefix())
 	case ir.OpFMul:
-		g.line("f32.mul")
+		g.linef("%s.mul", floatPrefix())
 	case ir.OpFDiv:
-		g.line("f32.div")
+		g.linef("%s.div", floatPrefix())
 	case ir.OpFNeg:
-		g.line("f32.neg")
+		g.linef("%s.neg", floatPrefix())
 	case ir.OpFEq:
-		g.line("f32.eq")
+		g.linef("%s.eq", floatPrefix())
 	case ir.OpFNe:
-		g.line("f32.ne")
+		g.linef("%s.ne", floatPrefix())
 	case ir.OpFLt:
-		g.line("f32.lt")
+		g.linef("%s.lt", floatPrefix())
 	case ir.OpFLe:
-		g.line("f32.le")
+		g.linef("%s.le", floatPrefix())
 	case ir.OpFGt:
-		g.line("f32.gt")
+		g.linef("%s.gt", floatPrefix())
 	case ir.OpFGe:
-		g.line("f32.ge")
+		g.linef("%s.ge", floatPrefix())
 	case ir.OpLoad:
 		g.line("i32.load")
 	case ir.OpStore:

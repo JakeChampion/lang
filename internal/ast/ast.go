@@ -84,6 +84,10 @@ type StringType struct{}
 type FloatType struct {
 	Width    int
 	Spelling string
+	// Polymorphic flags an unsettled `*ast.FloatLit` so the
+	// checker can propagate it to the surrounding expected type
+	// the same way NumberType.Polymorphic works for ints.
+	Polymorphic bool
 }
 type ArrayType struct{ Elem Type }
 
@@ -387,6 +391,10 @@ type StringLit struct {
 type FloatLit struct {
 	P     Position
 	Value float64
+	// Width is set by the checker once a concrete float type is
+	// known (`var x: f64 = 1.5` → 64). 0 means "default f32" for
+	// backwards compatibility.
+	Width int
 }
 type Ident struct {
 	P    Position
@@ -464,6 +472,10 @@ type Binary struct {
 	// IsFloat is set by the checker when both operands are floats,
 	// so codegen knows to emit f32 instructions instead of i32.
 	IsFloat bool
+	// FloatWidth is set by the checker for float binary ops: 32 for
+	// f32 (the default), 64 for f64. Codegen uses it to pick
+	// f32.* vs f64.* instructions.
+	FloatWidth int
 	// IntWidth is set by the checker for integer binary ops: 32 for
 	// i32 (the default), 64 for i64. Sub-i32 widths fold through
 	// i32 ops for arithmetic; the integer SIZE that matters

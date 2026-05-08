@@ -619,6 +619,52 @@ func TestPolymorphicLiteralI32Overflow(t *testing.T) {
 	}
 }
 
+// f64 arithmetic round-trips through addition + comparison. Same
+// shape as the i64 test but for double-precision floats.
+// Verifies the polymorphic float literal `0.5` settles to f64
+// from the var annotation, the arithmetic compiles to `f64.add`,
+// and the comparison to `f64.eq`.
+func TestWASMF64Arithmetic(t *testing.T) {
+	src := `function add64f(x: f64, y: f64): f64 { return x + y; }
+function main(): i32 {
+    var z: f64 = add64f(1.5, 2.5);
+    if (z == 4.0) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (f64 arith mismatch)", got)
+	}
+}
+
+// f32 ↔ f64 cast support. `as f64` widens (f64.promote_f32);
+// `as f32` narrows (f32.demote_f64). Verifies both directions
+// round-trip a value through the cast.
+func TestWASMFloatCasts(t *testing.T) {
+	src := `function main(): i32 {
+    var a: f32 = 1.25;
+    var b: f64 = a as f64;
+    var c: f32 = b as f32;
+    if (c == a) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (f32/f64 cast mismatch)", got)
+	}
+}
+
+// Mixing f32 and f64 without an explicit cast is a checker
+// error — same rule as i32/i64.
+func TestF32F64MixRejected(t *testing.T) {
+	src := `function bad(): f64 { var x: f32 = 1.0; var y: f64 = 2.0; return x + y; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := checker.Check(prog); err == nil {
+		t.Fatalf("expected checker error for mixed f32/f64 add, got none")
+	}
+}
+
 // u32 unsigned arithmetic. Verifies wasm picks `_u` variants of
 // div/rem/shr/compare. 0xFFFFFFFF interpreted as u32 is
 // 4_294_967_295, so dividing by 2 unsigned gives 0x7FFFFFFF

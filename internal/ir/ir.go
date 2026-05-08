@@ -51,6 +51,7 @@ const (
 	OpConstI32  // (i32 imm)         → i32
 	OpConstI64  // (i64 imm)         → i64
 	OpConstF32  // (f32 imm)         → f32
+	OpConstF64  // (f64 imm)         → f64
 	OpConstStr  // (string-id imm)   → i32 (pointer)
 	OpConstFunc // (func-id imm)     → i32 (table index)
 
@@ -60,9 +61,11 @@ const (
 	// any cast whose source is unsigned. More widths (8/16)
 	// land in a follow-up alongside their underlying mask /
 	// sign-extend story.
-	OpExtendI32S // (i32) → i64 (sign-extend)
-	OpExtendI32U // (i32) → i64 (zero-extend, for unsigned)
-	OpWrapI64    // (i64) → i32
+	OpExtendI32S  // (i32) → i64 (sign-extend)
+	OpExtendI32U  // (i32) → i64 (zero-extend, for unsigned)
+	OpWrapI64     // (i64) → i32
+	OpFPromoteF32 // (f32) → f64
+	OpFDemoteF64  // (f64) → f32
 
 	// Locals (parameter or var). Idx is the 0-based slot.
 	OpLoadLocal  // ()                → T
@@ -165,6 +168,8 @@ const (
 	BlockTypeVoid int32 = 0
 	BlockTypeI32  int32 = 1
 	BlockTypeF32  int32 = 2
+	BlockTypeI64  int32 = 3
+	BlockTypeF64  int32 = 4
 )
 
 // blockTypeName returns a short mnemonic for use in formatted output.
@@ -174,6 +179,10 @@ func blockTypeName(bt int32) string {
 		return "i32"
 	case BlockTypeF32:
 		return "f32"
+	case BlockTypeI64:
+		return "i64"
+	case BlockTypeF64:
+		return "f64"
 	}
 	return "void"
 }
@@ -187,12 +196,18 @@ func (k OpKind) String() string {
 		return "const.i64"
 	case OpConstF32:
 		return "const.f32"
+	case OpConstF64:
+		return "const.f64"
 	case OpExtendI32U:
 		return "extend.i32_u"
 	case OpExtendI32S:
 		return "extend.i32_s"
 	case OpWrapI64:
 		return "wrap.i64"
+	case OpFPromoteF32:
+		return "promote.f32"
+	case OpFDemoteF64:
+		return "demote.f64"
 	case OpConstStr:
 		return "const.str"
 	case OpConstFunc:
@@ -321,6 +336,8 @@ type Op struct {
 	I64 int64
 	// F32 is the immediate for OpConstF32.
 	F32 float32
+	// F64 is the immediate for OpConstF64.
+	F64 float64
 	// Width is the operand bit-width for integer arithmetic /
 	// comparison ops that exist in multiple widths (OpAdd, OpSub,
 	// ..., OpEq, ..., OpNot, the load/store ops, and the local
@@ -402,6 +419,8 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %d", op.Kind, op.I32)
 	case OpConstF32:
 		return fmt.Sprintf("%s %g", op.Kind, op.F32)
+	case OpConstF64:
+		return fmt.Sprintf("%s %g", op.Kind, op.F64)
 	case OpConstStr:
 		return fmt.Sprintf("%s %q", op.Kind, op.Str)
 	case OpConstFunc:
@@ -1089,35 +1108,42 @@ func (b *builder) expr(e ast.Expr) error {
 		if err := b.expr(n.Inner); err != nil {
 			return err
 		}
-		// Pick the conversion op from the source/target widths.
-		// We only handle integer ↔ integer right now; float casts
-		// land with the f64 follow-up.
 		srcInt, srcIsInt := n.InnerType.(ast.NumberType)
 		dstInt, dstIsInt := n.Target.(ast.NumberType)
-		if !srcIsInt || !dstIsInt {
-			return fmt.Errorf("ir: non-integer casts not yet supported (got %s → %s)", n.InnerType, n.Target)
-		}
-		sw := srcInt.NormalWidth()
-		dw := dstInt.NormalWidth()
+		srcFloat, srcIsFloat := n.InnerType.(ast.FloatType)
+		dstFloat, dstIsFloat := n.Target.(ast.FloatType)
 		switch {
-		case sw == dw:
-			// Same-width cast (e.g. signed ↔ unsigned of the same
-			// width). Bit-identical at the wasm level — emit
-			// nothing; the bits stay put and signedness is just
-			// a checker-level annotation.
-		case sw == 32 && dw == 64:
-			// Sign vs zero-extend depends on the SOURCE's
-			// signedness, not the target's. `u32 as i64` zero-
-			// extends (since u32's bits are positive), `i32 as
-			// u64` sign-extends to keep numeric value
-			// consistent.
-			if srcInt.IsSigned() {
-				b.emit(Op{Kind: OpExtendI32S})
-			} else {
-				b.emit(Op{Kind: OpExtendI32U})
+		case srcIsInt && dstIsInt:
+			sw := srcInt.NormalWidth()
+			dw := dstInt.NormalWidth()
+			switch {
+			case sw == dw:
+				// Same-width cast (signed ↔ unsigned). Bit-
+				// identical at the wasm level.
+			case sw == 32 && dw == 64:
+				// Sign vs zero-extend depends on the SOURCE's
+				// signedness, not the target's.
+				if srcInt.IsSigned() {
+					b.emit(Op{Kind: OpExtendI32S})
+				} else {
+					b.emit(Op{Kind: OpExtendI32U})
+				}
+			case sw == 64 && dw == 32:
+				b.emit(Op{Kind: OpWrapI64})
+			default:
+				return fmt.Errorf("ir: cast from %s to %s not yet supported", n.InnerType, n.Target)
 			}
-		case sw == 64 && dw == 32:
-			b.emit(Op{Kind: OpWrapI64})
+		case srcIsFloat && dstIsFloat:
+			sw := srcFloat.NormalWidth()
+			dw := dstFloat.NormalWidth()
+			switch {
+			case sw == dw:
+				// f32→f32 / f64→f64 is identity.
+			case sw == 32 && dw == 64:
+				b.emit(Op{Kind: OpFPromoteF32})
+			case sw == 64 && dw == 32:
+				b.emit(Op{Kind: OpFDemoteF64})
+			}
 		default:
 			return fmt.Errorf("ir: cast from %s to %s not yet supported", n.InnerType, n.Target)
 		}
@@ -1130,7 +1156,14 @@ func (b *builder) expr(e ast.Expr) error {
 	case *ast.StringLit:
 		b.emit(Op{Kind: OpConstStr, Str: n.Value})
 	case *ast.FloatLit:
-		b.emit(Op{Kind: OpConstF32, F32: float32(n.Value)})
+		// The checker stamps `Width` on the literal once a
+		// concrete float type is known; Width=0 means the literal
+		// stayed at the f32 default (no expected-type pressure).
+		if n.Width == 64 {
+			b.emit(Op{Kind: OpConstF64, F64: n.Value})
+		} else {
+			b.emit(Op{Kind: OpConstF32, F32: float32(n.Value)})
+		}
 	case *ast.Ident:
 		// A top-level function name in non-callee position is a function
 		// reference; it materialises as a table index.
@@ -1710,7 +1743,15 @@ func (b *builder) binary(n *ast.Binary) error {
 		if !ok {
 			return fmt.Errorf("ir: unsupported float binary %q", n.Op)
 		}
-		b.emit(Op{Kind: op})
+		// FloatWidth=0 means "unannotated by the checker", which
+		// happens for IR-test inputs that bypass the checker.
+		// Treat as f32 so existing tests pass; checker-produced
+		// trees set it explicitly for f64 ops.
+		w := n.FloatWidth
+		if w == 0 {
+			w = 32
+		}
+		b.emit(Op{Kind: op, Width: w})
 		return nil
 	}
 	op, ok := intOp(n.Op)

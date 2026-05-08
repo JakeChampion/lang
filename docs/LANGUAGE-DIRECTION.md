@@ -156,7 +156,13 @@ Status:
 - Sub-i32 widths (`i8`, `i16`, `u8`, `u16`) are keyword-reserved
   but still error out at parse time — not yet wired through
   codegen. Use `u32` / `i32` for now.
-- `f64`: still deferred. `float` continues to mean `f32`.
+- `f64` shipped (PR 1 follow-up): parser accepts the keyword,
+  IR has `OpConstF64` + Width-aware float binary ops + the
+  `OpFPromoteF32` / `OpFDemoteF64` cast ops, wasm codegen picks
+  `f64.*` instructions when `Op.Width == 64`, and float
+  literals (`1.5`, `3.14`) participate in the same polymorphic-
+  literal flow as integer literals. `float` is still an alias
+  for `f32`.
 
 ### PR 2 — Tuples (shipped) + slice views (deferred)
 
