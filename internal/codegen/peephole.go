@@ -28,15 +28,132 @@ import "strings"
 //                                       `if (a <cond> b)`.
 //
 // Run to a fixed point so cascades — e.g. dropping a branch reveals a
-// new push/pop adjacency — are caught.
+// new push/pop adjacency — are caught. Each iteration runs the
+// line-window passes followed by a global dead-label sweep
+// and a dead-code-after-`b` sweep: removing unreferenced
+// local labels can re-adjacent two instructions that the
+// line-window passes can then fuse, and an unconditional
+// control transfer makes everything until the next label
+// unreachable.
 func peephole(asm string) string {
 	for {
 		next := strings.Join(peepPass(strings.Split(asm, "\n")), "\n")
+		next = removeDeadLabels(next)
+		next = removeUnreachableAfterUncondBranch(next)
 		if next == asm {
 			return next
 		}
 		asm = next
 	}
+}
+
+// removeUnreachableAfterUncondBranch drops instructions
+// sandwiched between an unconditional control transfer
+// (`b LBL`, `bx lr`) and the next label declaration. The
+// kernel never returns from `bx lr`, and `b LBL` always
+// branches, so the gap is dead.
+//
+// Branch inversion (#101), const-if pruning (fold.go), and
+// the various next-line branch elisions all leave behind
+// these dead gaps — the IR walker emits a trailing
+// "fallthrough" instruction that the new control flow
+// makes unreachable. Cleaning them up in the peephole pass
+// shrinks the asm and exposes more opportunities for the
+// line-window peeps.
+func removeUnreachableAfterUncondBranch(asm string) string {
+	lines := strings.Split(asm, "\n")
+	out := make([]string, 0, len(lines))
+	skipping := false
+	for _, line := range lines {
+		s := trim(line)
+		isLabelDecl := strings.HasSuffix(s, ":") && !strings.ContainsAny(s, " \t,")
+		isAsmDirective := strings.HasPrefix(s, ".") && !isLabelDecl
+		if skipping {
+			// Resume emitting at the next label declaration.
+			// `.cfi_*` and other assembler directives don't
+			// affect runtime behaviour, but we keep them in
+			// case the linker / debugger relies on the
+			// surrounding shape.
+			if isLabelDecl || isAsmDirective || s == "" {
+				skipping = false
+				out = append(out, line)
+				continue
+			}
+			// Drop this line — unreachable.
+			continue
+		}
+		out = append(out, line)
+		if isUnconditionalTransfer(s) {
+			skipping = true
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// isUnconditionalTransfer reports whether `s` (already
+// trimmed) is an unconditional control transfer — code
+// after which never executes via fallthrough.
+func isUnconditionalTransfer(s string) bool {
+	switch {
+	case s == "bx lr":
+		return true
+	case strings.HasPrefix(s, "b "):
+		// `b <label>` — unconditional. `b<cc>` always has a
+		// suffix on the mnemonic (`bne`, `bge`, etc.), so the
+		// space immediately after `b` is the unique marker.
+		return true
+	}
+	return false
+}
+
+// removeDeadLabels drops `.L*:` declarations that no other line
+// references. Branch-inversion (#101) and the assorted next-line
+// elisions leave behind unreachable trampoline labels that
+// add visual noise and, worse, block downstream peeps that
+// require two instructions to be adjacent. Externally-visible
+// symbols (`main`, `__lang_*`, etc.) are left alone — only
+// `.L`-prefixed local labels are eligible.
+func removeDeadLabels(asm string) string {
+	lines := strings.Split(asm, "\n")
+	// Two-pass: first collect every label name referenced
+	// anywhere in the asm (as a branch target, an `=symbol`
+	// load, or any other position). Second pass drops label
+	// declarations whose names didn't appear.
+	referenced := map[string]bool{}
+	for _, line := range lines {
+		// Skip the line itself if it's a label declaration —
+		// the colon-suffix form isn't a reference.
+		s := trim(line)
+		if strings.HasSuffix(s, ":") && !strings.ContainsAny(s, " \t,") {
+			continue
+		}
+		// Tokenise on whitespace + commas + brackets + `=` so
+		// `ldr r0, =.LStr_3` and `b<cc> .LblkEnd_5` both surface
+		// the label as a standalone token.
+		for _, tok := range strings.FieldsFunc(s, func(r rune) bool {
+			switch r {
+			case ' ', '\t', ',', '[', ']', '!', '=', '#':
+				return true
+			}
+			return false
+		}) {
+			if strings.HasPrefix(tok, ".L") {
+				referenced[tok] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		s := trim(line)
+		if strings.HasPrefix(s, ".L") && strings.HasSuffix(s, ":") {
+			name := s[:len(s)-1]
+			if !referenced[name] {
+				continue // dead label; drop it
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 func peepPass(lines []string) []string {
