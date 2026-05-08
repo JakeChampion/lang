@@ -440,9 +440,16 @@ type Binary struct {
 	// so codegen knows to emit f32 instructions instead of i32.
 	IsFloat bool
 	// IntWidth is set by the checker for integer binary ops: 32 for
-	// i32 (the default), 64 for i64. Sub-i32 widths are reserved.
-	// Codegen uses it to pick i32.* vs i64.* instructions.
+	// i32 (the default), 64 for i64. Sub-i32 widths fold through
+	// i32 ops for arithmetic; the integer SIZE that matters
+	// at the wasm-op level is captured here. Codegen uses it to
+	// pick i32.* vs i64.* instructions.
 	IntWidth int
+	// IsUnsigned is set by the checker when both operands of an
+	// integer binary op are unsigned (u32 / u64 / etc.). Codegen
+	// uses it to pick the `_u` variant of div / rem / shr /
+	// comparison operators.
+	IsUnsigned bool
 }
 type Unary struct {
 	P       Position

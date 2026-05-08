@@ -136,6 +136,19 @@ Five PRs, each shippable. Breaking changes are fine — single user.
 - arm32 codegen: i64 deferred — error out with a clear message if
   used; everything else routes through existing i32 codegen.
 
+Status:
+- `i32` / `i64` shipped (PR 1 main).
+- `u32` / `u64` shipped (PR 1 follow-up): checker tracks
+  signedness as part of `NumberType`, IR's `Op` carries an
+  `Unsigned` flag for the ops where it matters (`/`, `%`, `>>`,
+  `<`, `<=`, `>`, `>=`), wasm codegen picks `_u` vs `_s`
+  variants, and the i32-to-i64 cast picks `i64.extend_i32_u` for
+  unsigned sources / `i64.extend_i32_s` for signed.
+- Sub-i32 widths (`i8`, `i16`, `u8`, `u16`) are keyword-reserved
+  but still error out at parse time — not yet wired through
+  codegen. Use `u32` / `i32` for now.
+- `f64`: still deferred. `float` continues to mean `f32`.
+
 ### PR 2 — Tuples (shipped) + slice views (deferred)
 
 Tuples landed standalone — slices got split into a follow-up.

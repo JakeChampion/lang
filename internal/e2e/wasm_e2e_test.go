@@ -581,6 +581,61 @@ function main(): i32 {
 	}
 }
 
+// u32 unsigned arithmetic. Verifies wasm picks `_u` variants of
+// div/rem/shr/compare. 0xFFFFFFFF interpreted as u32 is
+// 4_294_967_295, so dividing by 2 unsigned gives 0x7FFFFFFF
+// (2_147_483_647); the same bit-pattern read as i32 would be
+// -1 / 2 = 0. Comparing 0xFFFFFFFF unsigned > 1 is true; the
+// signed reading would give -1 > 1 = false.
+func TestWASMU32Unsigned(t *testing.T) {
+	src := `function main(): i32 {
+    var x: u32 = 4294967295 as u32;
+    var half: u32 = x / (2 as u32);
+    if (half != 2147483647 as u32) { return 1; }
+    if (!(x > (1 as u32))) { return 2; }
+    if ((x >> (1 as u32)) != 2147483647 as u32) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (u32 unsigned arithmetic)", got)
+	}
+}
+
+// u64 unsigned arithmetic. Builds a value with the high bit set
+// via `(1 as u64) << 63` and checks div / compare under unsigned
+// semantics: dividing the high-bit-set value by 2 should equal
+// `1 << 62`, and x > 1 should be true (under signed it would be
+// false because the top bit reads as a sign bit). We construct
+// the comparison constant the same way (`1 << 62`) because the
+// parser's polymorphic numeric literals default to i32 and
+// truncate values that don't fit there.
+func TestWASMU64Unsigned(t *testing.T) {
+	src := `function main(): i32 {
+    var x: u64 = (1 as u64) << (63 as u64);
+    var half: u64 = x / (2 as u64);
+    if (half != ((1 as u64) << (62 as u64))) { return 1; }
+    if (!(x > (1 as u64))) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (u64 unsigned arithmetic)", got)
+	}
+}
+
+// Mixing u32 with i32 without a cast is a checker error — same
+// rule as i32/i64. Signedness is part of the integer type, so
+// the implicit-widening rejection applies here too.
+func TestU32SignedMixRejected(t *testing.T) {
+	src := `function bad(): i32 { var x: i32 = 1; var y: u32 = 2 as u32; return x + y; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := checker.Check(prog); err == nil {
+		t.Fatalf("expected checker error for mixed i32/u32 add, got none")
+	}
+}
+
 // Tuple multi-return + numeric field access. divmod returns a
 // 2-tuple; main destructures it via `.0` / `.1` (full pattern
 // destructuring `let (q, r) = ...` lands in a follow-up).
