@@ -343,6 +343,15 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 			printExpr(b, f.Value)
 		}
 		b.WriteString(" }")
+	case *ast.TupleLit:
+		b.WriteByte('(')
+		for i, e := range x.Elems {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			printExpr(b, e)
+		}
+		b.WriteByte(')')
 	case *ast.FieldAccess:
 		printExpr(b, x.Target)
 		b.WriteByte('.')

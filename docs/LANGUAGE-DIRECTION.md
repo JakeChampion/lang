@@ -136,16 +136,37 @@ Five PRs, each shippable. Breaking changes are fine — single user.
 - arm32 codegen: i64 deferred — error out with a clear message if
   used; everything else routes through existing i32 codegen.
 
-### PR 2 — Tuples + slice views
+### PR 2 — Tuples (shipped) + slice views (deferred)
 
-- `(T, U, V)` tuple type with destructuring (`let (a, b) = pair`).
-- Multi-return via tuples.
-- Slice/view type `[T]` distinct from owned `Array<T>` (or current
-  `T[]`). Open question: keep `T[]` for owned + `[T]` for view?
-  Or unify under one syntax and pick semantics from context? Lean
-  Odin-style: `[T]` view + `Array<T>` owned, deprecate `T[]`.
-- String slicing returns `[u8]` views (or a string-view type if
-  the seamless-slice tag-bit story lands first).
+Tuples landed standalone — slices got split into a follow-up.
+
+Tuples (in):
+- `(T, U, V)` tuple type with N≥2 elements. No singleton tuples
+  (avoids the trailing-comma rule); `()` is reserved for the
+  function-type-of-no-args case.
+- Tuple literals `(e1, e2, …)` with N≥2.
+- Numeric field access: `pair.0`, `pair.1`. The lexer already
+  hands `.N` back as a number; the parser routes it to a
+  `FieldAccess` with the digit string as `Field`.
+- Multi-return via tuples: `function divmod(a: i32, b: i32):
+  (i32, i32) { return (a / b, a % b); }`.
+- Codegen: tuples lower to heap-allocated records (same shape as
+  structs but anonymous, addressed by position). Each element
+  gets a 4-byte slot.
+
+Tuples (deferred to a follow-up):
+- Pattern destructuring `let (a, b) = pair;`. Workaround today
+  is `var p = pair(); var a = p.0; var b = p.1;` — wordy but
+  works. Adding `DestructureVar` cleanly is its own design pass
+  (binding semantics in match arms, function params, etc.) so
+  punted.
+
+Slices (deferred to PR 2.5):
+- Slice/view type `[T]` distinct from owned `Array<T>` (or
+  current `T[]`). Open question: keep `T[]` for owned + `[T]`
+  for view? Or unify? Lean Odin-style: `[T]` view + `Array<T>`
+  owned, deprecate `T[]`.
+- String slicing returns `[u8]` views.
 - Views borrow lifetime from their parent (arena-scoped).
 
 ### PR 3 — Generics for functions + structs

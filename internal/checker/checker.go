@@ -8,6 +8,7 @@ package checker
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
@@ -1523,8 +1524,35 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		return ast.StructType{Name: sd.Name}
+	case *ast.TupleLit:
+		elems := make([]ast.Type, len(n.Elems))
+		for i, e := range n.Elems {
+			t := c.checkExpr(e, s)
+			if t == nil {
+				return nil
+			}
+			elems[i] = t
+		}
+		return ast.TupleType{Elems: elems}
 	case *ast.FieldAccess:
 		tt := c.checkExpr(n.Target, s)
+		// Tuple field access: `pair.0`, `pair.1`. The Field name
+		// is the digit string from the parser; reject anything
+		// that isn't a non-negative integer in range, but defer
+		// to the struct path otherwise so `obj.fieldName` keeps
+		// working.
+		if tup, ok := tt.(ast.TupleType); ok {
+			idx, err := strconv.Atoi(n.Field)
+			if err != nil || idx < 0 {
+				c.errf(n.P, "tuple field access requires a numeric index, got %q", n.Field)
+				return nil
+			}
+			if idx >= len(tup.Elems) {
+				c.errf(n.P, "tuple has %d elements; index %d is out of range", len(tup.Elems), idx)
+				return nil
+			}
+			return tup.Elems[idx]
+		}
 		st, ok := tt.(ast.StructType)
 		if !ok {
 			if tt != nil {

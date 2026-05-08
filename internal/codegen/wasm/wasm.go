@@ -562,6 +562,14 @@ func (g *generator) scanForStructUses(prog *ast.Program) {
 		case *ast.StructLit:
 			g.needsStructs = true
 			g.needsRuntime = true
+		case *ast.TupleLit:
+			// Tuples share the heap-record codegen with structs;
+			// the same `needsStructs` flag pulls in __lang_alloc.
+			g.needsStructs = true
+			g.needsRuntime = true
+			for _, e := range x.Elems {
+				walk(e)
+			}
 		case *ast.FieldAccess:
 			walk(x.Target)
 		case *ast.Block:
@@ -4990,8 +4998,8 @@ func watType(t ast.Type) (string, error) {
 	case *ast.FuncType:
 		// Function values are table indices.
 		return "i32", nil
-	case ast.StructType, ast.EnumType:
-		// Struct and enum values are heap pointers.
+	case ast.StructType, ast.EnumType, ast.TupleType:
+		// Struct, enum and tuple values are heap pointers.
 		return "i32", nil
 	case ast.FloatType:
 		if v.NormalWidth() == 64 {

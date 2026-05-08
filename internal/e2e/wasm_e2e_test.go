@@ -574,6 +574,39 @@ function main(): i32 {
 	}
 }
 
+// Tuple multi-return + numeric field access. divmod returns a
+// 2-tuple; main destructures it via `.0` / `.1` (full pattern
+// destructuring `let (q, r) = ...` lands in a follow-up).
+// Exercises TupleLit construction (heap-alloc + per-element
+// store), TupleType return slot, and numeric-index FieldAccess.
+func TestWASMTupleMultiReturn(t *testing.T) {
+	src := `function divmod(a: i32, b: i32): (i32, i32) {
+    return (a / b, a - (a / b) * b);
+}
+function main(): i32 {
+    var p = divmod(17, 5);
+    if (p.0 == 3 && p.1 == 2) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (divmod tuple mismatch)", got)
+	}
+}
+
+// Heterogeneous tuples — i32 and string in the same value.
+// Exercises mixing pointer and integer fields in the heap layout.
+func TestWASMTupleHeterogeneous(t *testing.T) {
+	src := `function pair(): (i32, string) { return (42, "hello"); }
+function main(): i32 {
+    var p = pair();
+    if (p.0 == 42) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (tuple heterogeneous mismatch)", got)
+	}
+}
+
 // Mixing i32 and i64 without an `as` cast is a checker error —
 // implicit widening is rejected per docs/LANGUAGE-DIRECTION.md.
 // We can't run this through runWasm (it'd fail compilation), so

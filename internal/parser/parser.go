@@ -616,17 +616,22 @@ func (p *parser) parseType() (ast.Type, error) {
 		p.advance()
 		base = ast.StringType{}
 	case t.Kind == lexer.Punct && t.Text == "(":
-		// Function type: `(T1, T2, ...) => RT`. Empty parens are
-		// allowed for nullary callbacks.
+		// `(T1, T2, ...)` followed by `=>` is a function type; the
+		// same shape NOT followed by `=>` is a tuple type, but only
+		// when there are at least 2 elements (single-element
+		// "tuples" don't exist; empty parens are still reserved
+		// for the function-type-of-no-args case). This shape lets
+		// `function f(): (i32, string)` parse as a multi-return
+		// tuple without a trailing-comma rule.
 		p.advance()
-		var params []ast.Type
+		var elems []ast.Type
 		if !p.match(lexer.Punct, ")") {
 			for {
 				pt, err := p.parseType()
 				if err != nil {
 					return nil, err
 				}
-				params = append(params, pt)
+				elems = append(elems, pt)
 				if _, ok := p.accept(lexer.Punct, ","); !ok {
 					break
 				}
@@ -635,14 +640,17 @@ func (p *parser) parseType() (ast.Type, error) {
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return nil, err
 		}
-		if _, err := p.expect(lexer.Punct, "=>"); err != nil {
-			return nil, err
+		if _, isArrow := p.accept(lexer.Punct, "=>"); isArrow {
+			ret, err := p.parseType()
+			if err != nil {
+				return nil, err
+			}
+			base = &ast.FuncType{Params: elems, Result: ret}
+		} else if len(elems) >= 2 {
+			base = ast.TupleType{Elems: elems}
+		} else {
+			return nil, p.errorf(t.Pos, "expected `=>` after parameter list (function type) or 2+ comma-separated types (tuple type)")
 		}
-		ret, err := p.parseType()
-		if err != nil {
-			return nil, err
-		}
-		base = &ast.FuncType{Params: params, Result: ret}
 	case t.Kind == lexer.Ident:
 		// Bare identifier is a struct type reference. The checker
 		// validates that the name actually resolves to a struct.
@@ -1463,6 +1471,15 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			expr = &ast.Index{P: open.Pos, Array: expr, Idx: idx}
 		case p.match(lexer.Punct, "."):
 			dot := p.advance()
+			// Tuple field access uses a numeric selector (`pair.0`,
+			// `pair.1`). The lexer hands these back as a `Number`
+			// token; reuse the FieldAccess shape with a stringified
+			// index so codegen can stay uniform.
+			if num := p.peek(); num.Kind == lexer.Number {
+				p.advance()
+				expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: num.Text}
+				continue
+			}
 			fname, err := p.expect(lexer.Ident, "")
 			if err != nil {
 				return nil, err
@@ -1565,15 +1582,38 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	case lexer.Punct:
 		switch t.Text {
 		case "(":
-			p.advance()
-			e, err := p.parseExpr()
+			// `(e)` is grouping; `(e1, e2, ...)` (>=2 elements) is
+			// a tuple literal. Single-element "tuples" don't exist
+			// as a syntactic form — `(e)` always groups.
+			open := p.advance()
+			first, err := p.parseExpr()
 			if err != nil {
 				return nil, err
+			}
+			if _, isComma := p.accept(lexer.Punct, ","); !isComma {
+				if _, err := p.expect(lexer.Punct, ")"); err != nil {
+					return nil, err
+				}
+				return first, nil
+			}
+			elems := []ast.Expr{first}
+			for {
+				if p.match(lexer.Punct, ")") {
+					break // trailing comma allowed
+				}
+				e, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				elems = append(elems, e)
+				if _, ok := p.accept(lexer.Punct, ","); !ok {
+					break
+				}
 			}
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return nil, err
 			}
-			return e, nil
+			return &ast.TupleLit{P: open.Pos, Elems: elems}, nil
 		case "[":
 			open := p.advance()
 			var elems []ast.Expr
