@@ -106,10 +106,215 @@ func peepPass(lines []string) []string {
 			continue
 		}
 
+		// 10: mov-chain elimination. The push/pop-fusion peep
+		// often leaves a `mov r0, rB ; mov rA, r0` pair where
+		// the first mov is dead because nothing reads r0
+		// before it's reassigned. When the current line is a
+		// pure r0-overwrite and no instruction between the
+		// chain and now reads r0, drop the leading mov and
+		// rewrite the pair into `mov rA, rB`.
+		if collapsed, ok := tryMovChainElim(out, line); ok {
+			out = collapsed
+			out = append(out, line)
+			continue
+		}
+
 		_ = i
 		out = append(out, line)
 	}
 	return out
+}
+
+// tryMovChainElim recognises an `r0` redundancy of the form
+//
+//	mov r0, rB
+//	mov rA, r0          (A != 0)
+//	[lines that don't read r0]
+//	<pure r0 overwrite>     ← `cur`
+//
+// and rewrites the leading pair as a single `mov rA, rB`.
+// Returns the lines preceding `cur` after the rewrite plus
+// `true`. The caller appends `cur` itself.
+//
+// This is the cleanup the cmp-imm peephole's surrounding
+// fusion pattern leaves behind: after `mov r0, r4 ; mov r1,
+// r0 ; cmp r1, #0 ; bne L`, the first mov is dead because
+// the next thing to touch r0 is whatever the then-arm starts
+// with (`ldr r0, =1`, etc.), which pure-overwrites r0.
+//
+// Conservative: capped at a 12-line backward scan, only fires
+// when no intervening instruction reads r0, and `cur` must
+// be a recognised pure overwrite of r0 (not an op like
+// `add r0, r0, #N` that reads r0 first).
+func tryMovChainElim(out []string, cur string) ([]string, bool) {
+	if !isPureR0Write(cur) {
+		return nil, false
+	}
+	for i := len(out) - 1; i >= 0 && i >= len(out)-12; i-- {
+		line := out[i]
+		if dst, ok := matchMovOtherFromR0(line); ok {
+			if i == 0 {
+				return nil, false
+			}
+			src, ok := matchMovR0FromOther(out[i-1])
+			if !ok {
+				return nil, false
+			}
+			rewritten := append([]string{}, out[:i-1]...)
+			rewritten = append(rewritten, "\tmov "+dst+", "+src)
+			rewritten = append(rewritten, out[i+1:]...)
+			return rewritten, true
+		}
+		if readsR0(line) || writesR0(line) {
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+// matchMovOtherFromR0 returns (rA, true) when `line` is
+// `mov rA, r0` with A != 0.
+func matchMovOtherFromR0(line string) (string, bool) {
+	s := trim(line)
+	if !strings.HasPrefix(s, "mov ") {
+		return "", false
+	}
+	a, b := splitFirst(s[len("mov "):])
+	if b != "r0" || a == "" || a == "r0" {
+		return "", false
+	}
+	return a, true
+}
+
+// matchMovR0FromOther returns (rB, true) when `line` is
+// `mov r0, rB` for some general-purpose register rB != r0.
+func matchMovR0FromOther(line string) (string, bool) {
+	s := trim(line)
+	if !strings.HasPrefix(s, "mov r0, ") {
+		return "", false
+	}
+	src := strings.TrimSpace(s[len("mov r0, "):])
+	if src == "" || src == "r0" {
+		return "", false
+	}
+	if !strings.HasPrefix(src, "r") {
+		return "", false
+	}
+	return src, true
+}
+
+// isPureR0Write reports whether `line` writes r0 without
+// reading it. The whitelist below covers the codegen patterns
+// that arise after the existing peeps run; anything else
+// stays as-is and the chain-elim fold won't fire.
+func isPureR0Write(line string) bool {
+	s := trim(line)
+	switch {
+	case strings.HasPrefix(s, "ldr r0, ="):
+		// `ldr r0, =CONST` — pure write from the literal pool.
+		return true
+	case strings.HasPrefix(s, "mov r0, #"):
+		// `mov r0, #imm` — pure immediate write.
+		return true
+	case strings.HasPrefix(s, "mov r0, "):
+		// `mov r0, rN` — pure register copy iff rN != r0
+		// (self-mov is already dropped by an earlier rule).
+		src := strings.TrimSpace(s[len("mov r0, "):])
+		return src != "r0" && strings.HasPrefix(src, "r")
+	case s == "pop {r0}":
+		return true
+	case strings.HasPrefix(s, "ldr r0, ["):
+		// `ldr r0, [base, ...]` — pure iff base != r0.
+		// Strip the bracket and check the first token.
+		inner := s[len("ldr r0, ["):]
+		end := strings.IndexByte(inner, ']')
+		if end < 0 {
+			return false
+		}
+		operand := inner[:end]
+		base, _ := splitFirst(operand)
+		if base == "" {
+			base = strings.TrimSpace(operand)
+		}
+		return base != "r0"
+	}
+	return false
+}
+
+// readsR0 reports whether `line` references r0 in any
+// operand position (we don't distinguish source from
+// destination here — anything that touches r0 breaks the
+// dead-r0 chain we're trying to fold).
+func readsR0(line string) bool {
+	s := trim(line)
+	// Quick reject: lines that don't mention r0 at all.
+	if !strings.Contains(s, "r0") {
+		return false
+	}
+	// Walk the line splitting on spaces / commas / brackets.
+	tokens := strings.FieldsFunc(s, func(r rune) bool {
+		switch r {
+		case ' ', ',', '[', ']', '!', '\t':
+			return true
+		}
+		return false
+	})
+	for i, t := range tokens {
+		if t != "r0" {
+			continue
+		}
+		// Skip the first operand for opcodes that write their
+		// first operand without reading it.
+		if i == 1 && isWriteFirstOp(tokens[0]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// writesR0 reports whether `line` writes r0 (any addressing
+// shape). Used to bound the dead-chain scan: once r0 is
+// reassigned, the chain we're tracking is gone.
+func writesR0(line string) bool {
+	s := trim(line)
+	if !strings.Contains(s, "r0") {
+		return false
+	}
+	tokens := strings.FieldsFunc(s, func(r rune) bool {
+		switch r {
+		case ' ', ',', '[', ']', '!', '\t':
+			return true
+		}
+		return false
+	})
+	if len(tokens) < 2 {
+		return false
+	}
+	return isWriteFirstOp(tokens[0]) && tokens[1] == "r0"
+}
+
+// isWriteFirstOp reports whether `mn` writes its first
+// operand. The whitelist covers the integer / address-compute
+// mnemonics our codegen emits; ops not on the list (cmp,
+// str, push, etc.) read all operands.
+func isWriteFirstOp(mn string) bool {
+	// Strip optional condition-code suffix from `b<cc>` /
+	// `mov<cc>` etc. — we only care about the base mnemonic.
+	for _, suffix := range []string{"eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al"} {
+		if strings.HasSuffix(mn, suffix) && len(mn) > len(suffix) {
+			mn = mn[:len(mn)-len(suffix)]
+		}
+	}
+	switch mn {
+	case "mov", "mvn", "ldr", "ldrb", "ldrh",
+		"add", "sub", "rsb", "and", "orr", "eor", "bic",
+		"mul", "lsl", "lsr", "asr", "ror",
+		"sdiv", "udiv", "mls", "neg",
+		"vmov", "vadd.f32", "vsub.f32", "vmul.f32", "vdiv.f32", "vneg.f32":
+		return true
+	}
+	return false
 }
 
 // tryAddrModeSink recognises the two-line shape
