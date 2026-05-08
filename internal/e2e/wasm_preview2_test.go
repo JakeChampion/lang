@@ -185,3 +185,102 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 		t.Fatalf("stdout = %q; want %q (stderr=%q)", got, input, serr.String())
 	}
 }
+
+// TestWasmPreview2FileRoundtrip exercises the native preview-2
+// file I/O path: open_writer + Writer.write + Writer.close, then
+// open_reader + Reader.read_line + Reader.close. Both go through
+// `wasi:filesystem/preopens.get-directories`,
+// `wasi:filesystem/types.descriptor.open-at`, and the appropriate
+// `*-via-stream` to materialise an `input-stream` /
+// `output-stream` resource the Reader/Writer struct holds. No
+// preview-1 path_open / fd_read / fd_write involved on either
+// side.
+func TestWasmPreview2FileRoundtrip(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+	}
+	if _, err := os.Stat(adapter); err != nil {
+		t.Skipf("adapter %q not readable: %v", adapter, err)
+	}
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "fs.lang")
+	if err := os.WriteFile(srcPath, []byte(`function main(): number {
+    match (open_writer("out.txt")) {
+        Ok(w) => {
+            match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
+            match (w.write("line 2\n")) { Some(_) => { return 2; }, None => {} }
+            match (w.close()) { Some(_) => { return 3; }, None => {} }
+        },
+        Err(_) => { return 4; }
+    }
+    match (open_reader("out.txt")) {
+        Ok(r) => {
+            match (r.read_line()) { Some(line) => { write(line); }, None => { return 5; } }
+            match (r.read_line()) { Some(line) => { write(line); }, None => { return 6; } }
+            match (r.read_line()) { Some(_) => { return 7; }, None => {} }
+            match (r.close()) { Some(_) => { return 8; }, None => {} }
+        },
+        Err(_) => { return 9; }
+    }
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "fs.component.wasm")
+	emit := exec.Command(bin,
+		"-target", "wasm",
+		"-wasi-preview2",
+		"-wasi-adapter", adapter,
+		"-o", componentPath,
+		srcPath,
+	)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("lang -wasi-preview2: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	// `wasmtime run --dir DIR` preopens DIR as the working
+	// directory, which `get-directories` returns to us as the
+	// first preopen descriptor — that's where `open-at` resolves
+	// "out.txt" against.
+	run := exec.Command("wasmtime", "run", "--dir", dir, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Run(); err != nil {
+		t.Fatalf("wasmtime run: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+	}
+	want := "line 1\nline 2\n"
+	if got := sout.String(); got != want {
+		t.Fatalf("stdout = %q; want %q (stderr=%q)", got, want, serr.String())
+	}
+	// Verify the file actually got written.
+	on_disk, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("read out.txt: %v", err)
+	}
+	if string(on_disk) != want {
+		t.Fatalf("on-disk = %q; want %q", string(on_disk), want)
+	}
+}

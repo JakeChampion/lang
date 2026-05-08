@@ -1240,11 +1240,13 @@ func (g *generator) internString(s string) int {
 //	         first $eprint call)
 //	112..115 preview-2 stream-handle init flags
 //	         (bit 0 = stdout cached, bit 1 = stderr cached,
-//	          bit 2 = stdin cached)
+//	          bit 2 = stdin cached, bit 3 = preopen cached)
 //	116..119 preview-2 stdin input-stream resource handle (cached on
 //	         first $read_line call)
+//	120..123 preview-2 preopen descriptor handle (cached on first
+//	         file open; resolves paths relative to it via open-at)
 //	96+     string data, each entry: 4-byte length prefix then bytes
-//	  (string data starts at 120 instead of 96 when preview-2 streams
+//	  (string data starts at 124 instead of 96 when preview-2 streams
 //	  are in play; see EmitFromIRWithOptions.)
 func (g *generator) emitRuntimePreamble() {
 	g.line(`(import "wasi_snapshot_preview1" "fd_write" (func $__wasi_fd_write (param i32 i32 i32 i32) (result i32)))`)
@@ -1278,13 +1280,35 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(import "wasi:cli/stdout@0.2.0" "get-stdout" (func $__wasi_get_stdout (result i32)))`)
 		g.line(`(import "wasi:cli/stderr@0.2.0" "get-stderr" (func $__wasi_get_stderr (result i32)))`)
 		g.line(`(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush" (func $__wasi_blocking_write_and_flush (param i32 i32 i32 i32)))`)
-		if g.needsReadLine || g.needsStreamingIO {
-			// `__method_Reader_read_line` also dispatches into the
-			// preview-2 streams path when the Reader's fd is 0
-			// (i.e. wraps stdin), so the imports come in for the
-			// streaming-IO case too — not just bare `read_line()`.
+		if g.needsReadLine || g.needsStreamingIO || g.needsFileIO || g.needsStdStreams {
+			// `__method_Reader_read_line` dispatches into the
+			// preview-2 streams path when the Reader wraps
+			// stdin or a file (since step 3c), and the
+			// `$stdin` constructor populates a Reader struct
+			// with the cached stdin stream handle — so the
+			// imports come in for any streaming-IO or
+			// std-stream usage, not just bare `read_line()`.
 			g.line(`(import "wasi:cli/stdin@0.2.0" "get-stdin" (func $__wasi_get_stdin (result i32)))`)
 			g.line(`(import "wasi:io/streams@0.2.0" "[method]input-stream.blocking-read" (func $__wasi_blocking_read (param i32 i64 i32)))`)
+		}
+		if g.needsFileIO || g.needsStreamingIO {
+			// File I/O imports (step 3c). preopens.get-directories
+			// returns the host's preopen list; we take the first
+			// entry as the working directory descriptor and call
+			// descriptor.open-at against it. read/write/append-via-
+			// stream return a stream resource the rest of the
+			// runtime feeds through wasi:io/streams. Resource
+			// drops keep streams from leaking on close — file
+			// descriptors themselves leak (bump-allocator can't
+			// free, and opening a bounded number of files per
+			// program is acceptable).
+			g.line(`(import "wasi:filesystem/preopens@0.2.0" "get-directories" (func $__wasi_get_directories (param i32)))`)
+			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.open-at" (func $__wasi_descriptor_open_at (param i32 i32 i32 i32 i32 i32 i32)))`)
+			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.read-via-stream" (func $__wasi_descriptor_read_via_stream (param i32 i64 i32)))`)
+			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.write-via-stream" (func $__wasi_descriptor_write_via_stream (param i32 i64 i32)))`)
+			g.line(`(import "wasi:filesystem/types@0.2.0" "[method]descriptor.append-via-stream" (func $__wasi_descriptor_append_via_stream (param i32 i32)))`)
+			g.line(`(import "wasi:io/streams@0.2.0" "[resource-drop]input-stream" (func $__wasi_input_stream_drop (param i32)))`)
+			g.line(`(import "wasi:io/streams@0.2.0" "[resource-drop]output-stream" (func $__wasi_output_stream_drop (param i32)))`)
 		}
 	}
 	if g.needsRandomBytes {
@@ -1749,17 +1773,20 @@ func (g *generator) emitRuntimePreamble() {
 
 // emitStdStreamHelpers writes `$stdin`, `$stdout`, `$stderr` —
 // trivial constructors that allocate a 4-byte Reader / Writer
-// struct around fd 0 / 1 / 2. Called repeatedly each yields a
-// fresh struct; that's a small allocation cost for a usually-
-// once-per-program lookup, in exchange for not needing static
-// memory slots or a cached-once flag.
+// struct holding either fd 0 / 1 / 2 (preview-1) or the cached
+// preview-2 stream resource handle. Called repeatedly each yields
+// a fresh struct; that's a small allocation cost for a
+// usually-once-per-program lookup, in exchange for not needing
+// static memory slots or a cached-once flag for the *struct*
+// itself (the underlying preview-2 stream handle is cached
+// elsewhere — see emitStreamHandleAccessor).
 func (g *generator) emitStdStreamHelpers() {
-	g.emitStdStream("$stdin", 0)
-	g.emitStdStream("$stdout", 1)
-	g.emitStdStream("$stderr", 2)
+	g.emitStdStream("$stdin", 0, "$__stdin_handle")
+	g.emitStdStream("$stdout", 1, "$__stdout_handle")
+	g.emitStdStream("$stderr", 2, "$__stderr_handle")
 }
 
-func (g *generator) emitStdStream(name string, fd int) {
+func (g *generator) emitStdStream(name string, fd int, p2HandleAccessor string) {
 	g.linef(`(func %s (result i32)`, name)
 	g.indent++
 	g.line(`(local $r i32)`)
@@ -1767,7 +1794,14 @@ func (g *generator) emitStdStream(name string, fd int) {
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $r`)
 	g.line(`local.get $r`)
-	g.linef(`i32.const %d`, fd)
+	if g.preview2 {
+		// Stream handle from the cached get-stdin / get-stdout /
+		// get-stderr accessor — the Reader/Writer struct holds
+		// stream resources end-to-end on the preview-2 path.
+		g.linef(`call %s`, p2HandleAccessor)
+	} else {
+		g.linef(`i32.const %d`, fd)
+	}
 	g.line(`i32.store`)
 	g.line(`local.get $r`)
 	g.indent--
@@ -1831,9 +1865,14 @@ func (g *generator) emitFdWriteNewline(fd int) {
 func (g *generator) emitStreamsStdioHelpers() {
 	g.emitStreamHandleAccessor("$__stdout_handle", "$__wasi_get_stdout", 104, 1)
 	g.emitStreamHandleAccessor("$__stderr_handle", "$__wasi_get_stderr", 108, 2)
-	if g.needsReadLine || g.needsStreamingIO {
+	if g.needsReadLine || g.needsStreamingIO || g.needsStdStreams || g.needsFileIO {
 		g.emitStreamHandleAccessor("$__stdin_handle", "$__wasi_get_stdin", 116, 4)
+	}
+	if g.needsReadLine || g.needsStreamingIO || g.needsFileIO {
 		g.emitStdinStreamsReadLine()
+	}
+	if g.needsFileIO || g.needsStreamingIO {
+		g.emitPreopenDirHelper()
 	}
 
 	// $__streams_write(handle, ptr, len) — wrap blocking-write-and-flush.
@@ -1916,6 +1955,206 @@ func (g *generator) emitStreamsWriteNewline(handleAccessor string) {
 	g.line(`i32.const 32`) // newline byte
 	g.line(`i32.const 1`)
 	g.line(`call $__streams_write`)
+}
+
+// emitPreopenDirHelper writes `$__preopen_dir (result i32)` — a
+// lazily-initialising accessor over the host's first preopen
+// directory descriptor. Mirrors the preview-1 convention of
+// resolving paths against `fd=3`. Called by the preview-2
+// open_reader / open_writer / open_appender / read_file /
+// write_file helpers; the descriptor handle gets cached at
+// memory[120] (init bit 3 in the flag byte at memory[112]).
+//
+// The `get-directories` import returns `list<tuple<descriptor,
+// string>>`; canonical-ABI lowering passes us a retptr we read
+// (host_list_ptr, host_list_len) from. Each tuple is 12 bytes
+// `(descriptor i32, name_ptr i32, name_len i32)` (4-byte aligned),
+// so the first descriptor lives at `host_list_ptr + 0`. We
+// ignore the name and any subsequent preopens.
+func (g *generator) emitPreopenDirHelper() {
+	g.line(`(func $__preopen_dir (result i32)`)
+	g.indent++
+	g.line(`(local $h i32) (local $list_ptr i32)`)
+	// Already cached?
+	g.line(`i32.const 112`)
+	g.line(`i32.load`)
+	g.line(`i32.const 8`) // bit 3
+	g.line(`i32.and`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`i32.const 120`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// get-directories(retptr=92) → mem[92]=ptr, mem[96]=len.
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_get_directories`)
+	g.line(`i32.const 92`)
+	g.line(`i32.load`)
+	g.line(`local.set $list_ptr`)
+	// First tuple's descriptor handle at list_ptr + 0.
+	g.line(`local.get $list_ptr`)
+	g.line(`i32.load`)
+	g.line(`local.tee $h`)
+	g.line(`i32.const 120`)
+	g.line(`local.get $h`)
+	g.line(`i32.store`)
+	g.line(`i32.const 112`)
+	g.line(`i32.const 112`)
+	g.line(`i32.load`)
+	g.line(`i32.const 8`)
+	g.line(`i32.or`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitOpenViaStreamHelper writes a private
+// `$<name>(path) -> result<stream, errno>` helper that opens a
+// path under the cached preopen directory and returns the
+// requested stream type. It packages errors as a 2-element slot:
+// retptr+0 is the stream handle on success / errno on failure;
+// retptr+4 is the errno (0 on success). Callers (open_reader /
+// open_writer / open_appender) wrap that into the Result[Reader|
+// Writer, IoError] shape.
+//
+// `openFlags` and `descFlags` are the WIT-level `open-flags` and
+// `descriptor-flags` immediates. `viaStreamImport` is the
+// canonical-ABI lowered name of the via-stream call to use after
+// the open succeeds (`$__wasi_descriptor_read_via_stream`,
+// `$__wasi_descriptor_write_via_stream`, or
+// `$__wasi_descriptor_append_via_stream`). Append-via-stream has
+// a shorter signature `(param i32 i32)` (no offset), so callers
+// pass `appendMode=true` to skip the offset push.
+func (g *generator) emitOpenViaStreamHelper(name string, openFlags, descFlags int, viaStreamImport string, appendMode bool) {
+	g.linef(`(func %s (param $path i32) (result i32)`, name)
+	g.indent++
+	g.line(`(local $errno i32) (local $desc i32) (local $stream i32) (local $result i32)`)
+
+	// open-at(preopen, path-flags=1=symlink-follow, path_ptr,
+	// path_len, open-flags, descriptor-flags, retptr=92).
+	g.line(`call $__preopen_dir`)
+	g.line(`i32.const 1`) // path-flags = symlink-follow
+	g.line(`local.get $path`)
+	g.line(`local.get $path`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.linef(`i32.const %d`, openFlags)
+	g.linef(`i32.const %d`, descFlags)
+	g.line(`i32.const 92`)
+	g.line(`call $__wasi_descriptor_open_at`)
+
+	// Outer disc at retptr+0; non-zero = Err(error-code).
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	// Build Err(IoError) — Result.Err = tag 1, payload via
+	// __build_io_error. The error-code value at retptr+4 is the
+	// preview-2 enum; we pass it as the "errno" — the io-error
+	// table uses preview-1 errno values which differ, but the
+	// fallback path produces a sane error.
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $errno`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $errno`)
+	g.line(`local.get $path`)
+	g.line(`call $__build_io_error`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// Ok: descriptor at retptr+4. Fetch a stream from it. The
+	// descriptor itself is intentionally leaked (the bump
+	// allocator can't free, and the program lifetime is bounded).
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $desc`)
+	if appendMode {
+		// append-via-stream(self, retptr=92).
+		g.line(`local.get $desc`)
+		g.line(`i32.const 92`)
+		g.linef(`call %s`, viaStreamImport)
+	} else {
+		// read/write-via-stream(self, offset=0, retptr=92).
+		g.line(`local.get $desc`)
+		g.line(`i64.const 0`)
+		g.line(`i32.const 92`)
+		g.linef(`call %s`, viaStreamImport)
+	}
+	g.line(`i32.const 92`)
+	g.line(`i32.load8_u`)
+	g.line(`if`)
+	g.indent++
+	// Stream open failed. Treat as IoError with the inner errno.
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $errno`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $errno`)
+	g.line(`local.get $path`)
+	g.line(`call $__build_io_error`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+
+	// Ok: stream at retptr+4. Allocate Reader/Writer struct
+	// holding the stream handle, return Ok wrapper.
+	g.line(`i32.const 92`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $stream`)
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $desc`) // reuse $desc as the struct ptr
+	g.line(`local.get $stream`)
+	g.line(`i32.store`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $result`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 0`) // Result.Ok = tag 0
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $desc`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.indent--
+	g.line(`)`)
 }
 
 // emitArgsHelper writes the lazy-initialising `$args` runtime
@@ -2144,7 +2383,8 @@ func (g *generator) emitReadLineHelper() {
 	if g.preview2 {
 		g.line(`(func $read_line (result i32)`)
 		g.indent++
-		g.line(`call $__stdin_read_line`)
+		g.line(`call $__stdin_handle`)
+		g.line(`call $__stream_read_line`)
 		g.indent--
 		g.line(`)`)
 		return
@@ -2295,10 +2535,11 @@ func (g *generator) emitReadLineHelper() {
 }
 
 // emitStdinStreamsReadLine writes the private
-// `$__stdin_read_line` helper — the streams-flavoured stdin line
-// reader shared between the bare `$read_line` global and
-// `__method_Reader_read_line`'s fd==0 fast-path. Reads stdin one
-// byte at a time via
+// `$__stream_read_line(handle) -> Option[string]` helper — the
+// streams-flavoured line reader shared between the bare
+// `$read_line` global, `__method_Reader_read_line` (preview-2),
+// and any other path that reads a line from an `input-stream`
+// resource. Reads one byte at a time via
 // `wasi:io/streams.input-stream.blocking-read(1)`, accumulating
 // into a heap buffer, and packages the result as `Option[string]`
 // — `None` on EOF before any byte, `Some(line)` (newline included)
@@ -2320,7 +2561,7 @@ func (g *generator) emitReadLineHelper() {
 // `[resource-drop]error`. Acceptable trade-off for now: a CLI
 // program hits stream errors at most once per process lifetime.
 func (g *generator) emitStdinStreamsReadLine() {
-	g.line(`(func $__stdin_read_line (result i32)`)
+	g.line(`(func $__stream_read_line (param $handle i32) (result i32)`)
 	g.indent++
 	g.line(`(local $buf i32) (local $buf_size i32) (local $cur_offset i32)`)
 	g.line(`(local $byte i32) (local $list_ptr i32)`)
@@ -2341,7 +2582,7 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.line(`loop $loop`)
 	g.indent++
 	// blocking-read(handle, 1, retptr=92).
-	g.line(`call $__stdin_handle`)
+	g.line(`local.get $handle`)
 	g.line(`i64.const 1`)
 	g.line(`i32.const 92`)
 	g.line(`call $__wasi_blocking_read`)
@@ -3144,27 +3385,48 @@ func (g *generator) emitStreamingIOHelpers() {
 }
 
 // emitOpenReaderHelper writes `$open_reader(path) ->
-// Result[Reader, IoError]`. Calls path_open with the read
-// rights set; on success, allocates a 4-byte Reader struct
-// holding the fd and wraps it in Ok. On failure builds an Err
-// via the shared __build_io_error helper.
+// Result[Reader, IoError]`. On preview-1: path_open with read
+// rights, wraps the resulting fd in a 4-byte Reader struct. On
+// preview-2: descriptor.open-at against the cached preopen
+// directory (open-flags=0, descriptor-flags=1=read), then
+// descriptor.read-via-stream for an input-stream resource handle
+// — the Reader struct holds that handle. Errors flow through
+// __build_io_error in either case.
 func (g *generator) emitOpenReaderHelper() {
+	if g.preview2 {
+		// open-flags=0 (no create / truncate), descriptor-flags=1 (read).
+		g.emitOpenViaStreamHelper("$open_reader", 0, 1, "$__wasi_descriptor_read_via_stream", false)
+		return
+	}
 	g.emitOpenHelper("$open_reader", 0, 0x200026, 0)
 }
 
-// emitOpenWriterHelper writes `$open_writer(path)`. oflags is
-// O_CREAT|O_TRUNC=9, rights are fd_write|fd_seek|fd_filestat_get.
+// emitOpenWriterHelper writes `$open_writer(path)`. Preview-1:
+// path_open with write+truncate rights. Preview-2: open-at with
+// open-flags=create|truncate (1|8 = 9), descriptor-flags=write
+// (2), then descriptor.write-via-stream.
 // (The `appendMode` parameter is unused for now; appender
-// uses the same code path with a different fdflags.)
+// uses the dedicated emitOpenAppenderHelper.)
 func (g *generator) emitOpenWriterHelper(_ bool) {
+	if g.preview2 {
+		// open-flags = create|truncate = 1|8 = 9; descriptor-flags = write = 2.
+		g.emitOpenViaStreamHelper("$open_writer", 9, 2, "$__wasi_descriptor_write_via_stream", false)
+		return
+	}
 	g.emitOpenHelper("$open_writer", 9, 0x200044, 0)
 }
 
-// emitOpenAppenderHelper writes `$open_appender(path)`. Same
-// rights as open_writer, but oflags = O_CREAT only (1) so the
-// existing content stays, and fdflags = O_APPEND (1) so every
-// write goes to the end.
+// emitOpenAppenderHelper writes `$open_appender(path)`. Preview-1:
+// O_CREAT only (no truncate) + fdflags=O_APPEND so writes hit the
+// end. Preview-2: open-flags=create (1), descriptor-flags=write
+// (2), then descriptor.append-via-stream — append-via-stream
+// inherently appends, so we don't need a fdflags equivalent.
 func (g *generator) emitOpenAppenderHelper() {
+	if g.preview2 {
+		// open-flags = create = 1; descriptor-flags = write = 2.
+		g.emitOpenViaStreamHelper("$open_appender", 1, 2, "$__wasi_descriptor_append_via_stream", true)
+		return
+	}
 	g.emitOpenHelper("$open_appender", 1, 0x200044, 1)
 }
 
@@ -3284,20 +3546,14 @@ func (g *generator) emitReaderReadLineMethod() {
 	g.line(`local.set $fd`)
 
 	if g.preview2 {
-		// Preview-2 routes stdin reads (fd=0) through native
-		// wasi:io/streams instead of the preview-1 fd_read this
-		// method otherwise uses. The bytes that come back via
-		// the streams adapter are identical, but we save a hop
-		// through the wasi-preview1 adapter component for the
-		// hottest read path.
+		// Preview-2 Readers hold an `input-stream` resource
+		// handle in mem[$r] (whether they came from $stdin,
+		// $open_reader, or any other source). Delegate to the
+		// shared `$__stream_read_line` helper; the preview-1
+		// fd_read body below isn't reached.
 		g.line(`local.get $fd`)
-		g.line(`i32.eqz`)
-		g.line(`if`)
-		g.indent++
-		g.line(`call $__stdin_read_line`)
+		g.line(`call $__stream_read_line`)
 		g.line(`return`)
-		g.indent--
-		g.line(`end`)
 	}
 
 	// Reset the static iovec to (ptr=68, len=1). The data
@@ -3438,10 +3694,14 @@ func (g *generator) emitReaderReadLineMethod() {
 }
 
 // emitReaderReadChunkMethod writes Reader.read_chunk(size).
-// Single fd_read into a heap buffer of capacity `size`,
-// trimming any unused tail before returning Some(string).
-// Uses the static iovec at memory[56] and nread at
-// memory[64] — same alignment reasoning as read_line.
+// Preview-1: single fd_read into a heap buffer of capacity
+// `size`, trimming any unused tail before returning
+// Some(string). Preview-2: single
+// `wasi:io/streams.input-stream.blocking-read(size)` against the
+// stream resource handle in mem[$r], `memory.copy` the host's
+// buffer into a length-prefixed string, return Some.
+// Uses the static iovec at memory[56] and nread at memory[64]
+// (preview-1) or the shared retptr at memory[92] (preview-2).
 func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`(func $__method_Reader_read_chunk (param $r i32) (param $size i32) (result i32)`)
 	g.indent++
@@ -3450,10 +3710,91 @@ func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`(local $sptr i32)`)
 	g.line(`(local $n i32)`)
 	g.line(`(local $result i32)`)
+	if g.preview2 {
+		// Used only by the preview-2 path; declared here because
+		// WAT requires all locals at the function header.
+		g.line(`(local $list_ptr i32)`)
+	}
 
 	g.line(`local.get $r`)
 	g.line(`i32.load`)
 	g.line(`local.set $fd`)
+
+	if g.preview2 {
+		// blocking-read(stream, size, retptr=92).
+		g.line(`local.get $fd`)
+		g.line(`local.get $size`)
+		g.line(`i64.extend_i32_u`)
+		g.line(`i32.const 92`)
+		g.line(`call $__wasi_blocking_read`)
+		// Outer disc at retptr+0; non-zero = Err = treat as EOF.
+		g.line(`i32.const 92`)
+		g.line(`i32.load8_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`i32.const 4`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.tee $result`)
+		g.line(`i32.const 1`)
+		g.line(`i32.store`)
+		g.line(`local.get $result`)
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
+		// list_ptr = mem[96], n = mem[100].
+		g.line(`i32.const 96`)
+		g.line(`i32.load`)
+		g.line(`local.set $list_ptr`)
+		g.line(`i32.const 100`)
+		g.line(`i32.load`)
+		g.line(`local.set $n`)
+		// Empty list = EOF on a blocking read.
+		g.line(`local.get $n`)
+		g.line(`i32.eqz`)
+		g.line(`if`)
+		g.indent++
+		g.line(`i32.const 4`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.tee $result`)
+		g.line(`i32.const 1`)
+		g.line(`i32.store`)
+		g.line(`local.get $result`)
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
+		// Materialise length-prefixed string + memcpy from the
+		// host buffer.
+		g.line(`local.get $n`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.set $sbase`)
+		g.line(`local.get $sbase`)
+		g.line(`local.get $n`)
+		g.line(`i32.store`)
+		g.line(`local.get $sbase`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`local.set $sptr`)
+		g.line(`local.get $sptr`)
+		g.line(`local.get $list_ptr`)
+		g.line(`local.get $n`)
+		g.line(`memory.copy`)
+		// Some(sptr).
+		g.line(`i32.const 8`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.set $result`)
+		g.line(`local.get $result`)
+		g.line(`i32.const 0`)
+		g.line(`i32.store`)
+		g.line(`local.get $result`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`local.get $sptr`)
+		g.line(`i32.store`)
+		g.line(`local.get $result`)
+		g.line(`return`)
+	}
 
 	// Allocate `4 + size` for the prefix + data; iovec
 	// points into that data so a successful read fills the
@@ -3549,18 +3890,19 @@ func (g *generator) emitReaderReadChunkMethod() {
 }
 
 // emitReaderCloseMethod / emitWriterCloseMethod share the same
-// shape — fd_close, return Option[IoError]. We define a
-// single helper template and call it twice with different
-// receiver / function names.
+// shape — fd_close (preview-1) or `[resource-drop]input-stream`
+// / `[resource-drop]output-stream` (preview-2). Both flavours
+// return Option[IoError]; the streams path always succeeds (resource
+// drops can't fail), so we always emit `None`.
 func (g *generator) emitReaderCloseMethod() {
-	g.emitCloseMethod("$__method_Reader_close")
+	g.emitCloseMethod("$__method_Reader_close", "$__wasi_input_stream_drop")
 }
 
 func (g *generator) emitWriterCloseMethod() {
-	g.emitCloseMethod("$__method_Writer_close")
+	g.emitCloseMethod("$__method_Writer_close", "$__wasi_output_stream_drop")
 }
 
-func (g *generator) emitCloseMethod(name string) {
+func (g *generator) emitCloseMethod(name, p2DropImport string) {
 	g.linef(`(func %s (param $r i32) (result i32)`, name)
 	g.indent++
 	g.line(`(local $fd i32)`)
@@ -3569,6 +3911,21 @@ func (g *generator) emitCloseMethod(name string) {
 	g.line(`local.get $r`)
 	g.line(`i32.load`)
 	g.line(`local.set $fd`)
+	if g.preview2 {
+		// Drop the stream resource and return None. Resource
+		// drops are infallible at the canonical-ABI level — there
+		// isn't a meaningful error to propagate to the lang
+		// program, so we never construct Some(IoError).
+		g.line(`local.get $fd`)
+		g.linef(`call %s`, p2DropImport)
+		g.line(`i32.const 4`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.tee $result`)
+		g.line(`i32.const 1`)
+		g.line(`i32.store`)
+		g.line(`local.get $result`)
+		g.line(`return`)
+	}
 	g.line(`local.get $fd`)
 	g.line(`call $__wasi_fd_close`)
 	g.line(`local.set $rc`)
@@ -3609,12 +3966,16 @@ func (g *generator) emitCloseMethod(name string) {
 	g.line(`)`)
 }
 
-// emitWriterWriteMethod writes Writer.write(s). Single
-// fd_write of the entire string. Returns None on success,
-// Some(IoError) on failure. Uses the static iovec at
-// memory[56] and nwritten at memory[64] (same slots the
-// stdin reader / Reader.read_line use — single-threaded so
-// reuse is safe).
+// emitWriterWriteMethod writes Writer.write(s). On preview-1, a
+// single fd_write of the entire string. On preview-2, a single
+// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
+// against the cached resource handle in mem[$w] — the Writer
+// struct holds a stream handle end-to-end on the preview-2 path.
+// Returns None on success, Some(IoError) on failure. Uses the
+// static iovec at memory[56] and nwritten at memory[64] (same
+// slots the stdin reader / Reader.read_line use — single-threaded
+// so reuse is safe). On the streams path, retptr lives at memory
+// 92 (shared canonical-ABI return area).
 func (g *generator) emitWriterWriteMethod() {
 	g.line(`(func $__method_Writer_write (param $w i32) (param $s i32) (result i32)`)
 	g.indent++
@@ -3624,6 +3985,51 @@ func (g *generator) emitWriterWriteMethod() {
 	g.line(`local.get $w`)
 	g.line(`i32.load`)
 	g.line(`local.set $fd`)
+	if g.preview2 {
+		// blocking-write-and-flush(handle, ptr, len, retptr=92).
+		g.line(`local.get $fd`)
+		g.line(`local.get $s`)
+		g.line(`local.get $s`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`i32.const 92`)
+		g.line(`call $__wasi_blocking_write_and_flush`)
+		// Outer disc at retptr+0; non-zero = Err. We don't
+		// surface stream-error details; map any failure to an
+		// errno-shaped IoError with a sentinel non-zero rc.
+		g.line(`i32.const 92`)
+		g.line(`i32.load8_u`)
+		g.line(`if`)
+		g.indent++
+		// Build Some(IoError) with rc=29 (EIO) — the closest
+		// preview-1 errno equivalent for a stream failure.
+		g.line(`i32.const 8`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.set $result`)
+		g.line(`local.get $result`)
+		g.line(`i32.const 0`)
+		g.line(`i32.store`)
+		g.line(`local.get $result`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`i32.const 29`)
+		g.linef(`i32.const %d`, g.internString(""))
+		g.line(`call $__build_io_error`)
+		g.line(`i32.store`)
+		g.line(`local.get $result`)
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
+		// Success: None.
+		g.line(`i32.const 4`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.tee $result`)
+		g.line(`i32.const 1`)
+		g.line(`i32.store`)
+		g.line(`local.get $result`)
+		g.line(`return`)
+	}
 	// Static iovec at 56: ptr=$s, len=$s.length.
 	g.line(`i32.const 56`)
 	g.line(`local.get $s`)

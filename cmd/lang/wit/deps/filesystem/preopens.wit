@@ -1,0 +1,11 @@
+package wasi:filesystem@0.2.0;
+
+// `get-directories` returns the host's preopened directories —
+// each tuple is `(descriptor, name)`. The wasm backend takes the
+// first one as the working directory and resolves all paths
+// relative to it (mirrors the preview-1 `fd=3` convention).
+interface preopens {
+    use types.{descriptor};
+
+    get-directories: func() -> list<tuple<descriptor, string>>;
+}

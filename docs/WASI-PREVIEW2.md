@@ -83,16 +83,32 @@ Splits across multiple PRs to keep blast radius bounded:
   first use in static memory (resource handles are opaque ints
   where 0 is valid, so the cache uses an init-flag bitfield rather
   than a 0-sentinel).
-- **3b — `read_line` / stdin (this PR).** `wasi:cli/stdin.get-stdin`
-  + `wasi:io/streams.[method]input-stream.blocking-read`.
+- **3b — `read_line` / stdin.** `wasi:cli/stdin.get-stdin` +
+  `wasi:io/streams.[method]input-stream.blocking-read`.
   `__method_Reader_read_line` dispatches at runtime: fd==0 routes
   through the streams path (so `stdin().read_line()` benefits);
   other Readers stay on preview-1 `fd_read` until step 3c.
-- **3c — file I/O (after 3b).** `read_file` / `write_file` /
-  `open_reader` / `open_writer` move from `path_open` +
-  `fd_read` / `fd_write` to
-  `wasi:filesystem/types.descriptor.open-at` + the same streams
-  interface as stdio.
+- **3c — file I/O via streams (this PR).** Reader/Writer structs
+  hold `input-stream` / `output-stream` resource handles end-to-
+  end (no more fds). `open_reader` / `open_writer` /
+  `open_appender` migrate to
+  `wasi:filesystem/preopens.get-directories` (cached on first use)
+  +
+  `wasi:filesystem/types.descriptor.open-at` +
+  `descriptor.read-via-stream` /
+  `descriptor.write-via-stream` /
+  `descriptor.append-via-stream`. Reader/Writer methods
+  (`read_line`, `read_chunk`, `write`, `close`) drop their
+  preview-1 fd dispatch and always go through streams. Resource
+  drops (`[resource-drop]input-stream` /
+  `[resource-drop]output-stream`) replace `fd_close`.
+
+  Not covered here, deferred: `read_file` / `write_file`. Those
+  helpers still call preview-1 `path_open` + `fd_read` /
+  `fd_write` (routed through the adapter); migrating them
+  requires either inlining the streams loop or threading the new
+  Reader/Writer machinery through their existing fd-anchored
+  bodies. Independent follow-up.
 
 The IR's existing `Reader` / `Writer` types stay; only the runtime
 helpers change shape. After 3c lands, the only preview-1 imports
