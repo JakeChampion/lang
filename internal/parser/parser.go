@@ -587,12 +587,14 @@ func (p *parser) parseType() (ast.Type, error) {
 		// `number` is the legacy alias; both lower to the
 		// canonical zero-value NumberType so equality keeps
 		// working with code that still compares to
-		// `ast.NumberType{}` directly.
+		// `ast.NumberType{}` directly. Spelling tracks which
+		// keyword the user wrote so `lang -fmt` round-trips it
+		// rather than coercing to a single canonical name.
 		p.advance()
-		base = ast.NumberType{}
+		base = ast.NumberType{Spelling: t.Text}
 	case t.Kind == lexer.Keyword && t.Text == "i64":
 		p.advance()
-		base = ast.NumberType{Width: 64, Signed: true}
+		base = ast.NumberType{Width: 64, Signed: true, Spelling: t.Text}
 	case t.Kind == lexer.Keyword && (t.Text == "i8" || t.Text == "i16"):
 		// Sub-i32 signed types parse but are reserved — codegen
 		// for these widths is a follow-up. Erroring at the type
@@ -605,7 +607,7 @@ func (p *parser) parseType() (ast.Type, error) {
 		return nil, p.errorf(t.Pos, "f64 is reserved; not yet wired through codegen")
 	case t.Kind == lexer.Keyword && (t.Text == "float" || t.Text == "f32"):
 		p.advance()
-		base = ast.FloatType{}
+		base = ast.FloatType{Spelling: t.Text}
 	case t.Kind == lexer.Keyword && t.Text == "boolean":
 		p.advance()
 		base = ast.BoolType{}

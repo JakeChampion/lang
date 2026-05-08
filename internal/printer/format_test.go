@@ -23,8 +23,8 @@ func formatSrc(t *testing.T, src string) string {
 // indentation; the body opens with `{` on the same line as the
 // signature and closes with `}` aligned to the function's column.
 func TestFormatSimpleFunction(t *testing.T) {
-	got := formatSrc(t, `function f(): i32 { return 42; }`)
-	want := "function f(): i32 {\n  return 42;\n}\n"
+	got := formatSrc(t, `function f(): number { return 42; }`)
+	want := "function f(): number {\n  return 42;\n}\n"
 	if got != want {
 		t.Errorf("got:\n%q\nwant:\n%q", got, want)
 	}
@@ -33,9 +33,9 @@ func TestFormatSimpleFunction(t *testing.T) {
 // Nested blocks indent further. `if` / `else` chain stays on the
 // same line as the closing brace of the previous arm.
 func TestFormatIfElseIndents(t *testing.T) {
-	got := formatSrc(t, `function f(n: i32): i32 { if (n == 0) { return 1; } else { return n; } }`)
+	got := formatSrc(t, `function f(n: number): number { if (n == 0) { return 1; } else { return n; } }`)
 	want := strings.Join([]string{
-		"function f(n: i32): i32 {",
+		"function f(n: number): number {",
 		"  if (n == 0) {",
 		"    return 1;",
 		"  } else {",
@@ -73,7 +73,7 @@ func TestFormatMinimalParens(t *testing.T) {
 		{`a && (b || c)`, `a && (b || c)`},           // explicit grouping preserved
 	}
 	for _, tc := range cases {
-		got := formatSrc(t, "function f(a: boolean, b: boolean, c: boolean): i32 { return "+tc.in+"; }")
+		got := formatSrc(t, "function f(a: boolean, b: boolean, c: boolean): number { return "+tc.in+"; }")
 		// The relevant fragment is on the second line, between
 		// "  return " and ";".
 		if !strings.Contains(got, "return "+tc.want+";") {
@@ -82,14 +82,14 @@ func TestFormatMinimalParens(t *testing.T) {
 	}
 }
 
-// Negative i32 / f32 literals format as unary `-` over a
+// Negative number / float literals format as unary `-` over a
 // positive literal, matching how the parser models them.
 func TestFormatNegativeLiterals(t *testing.T) {
-	got := formatSrc(t, `function f(): i32 { return -7; }`)
+	got := formatSrc(t, `function f(): number { return -7; }`)
 	if !strings.Contains(got, "return -7;") {
 		t.Errorf("expected `return -7;` in:\n%s", got)
 	}
-	got = formatSrc(t, `function f(): f32 { return -1.5; }`)
+	got = formatSrc(t, `function f(): float { return -1.5; }`)
 	if !strings.Contains(got, "return -1.5;") {
 		t.Errorf("expected `return -1.5;` in:\n%s", got)
 	}
@@ -98,7 +98,7 @@ func TestFormatNegativeLiterals(t *testing.T) {
 // Floats with no fractional part get a `.0` so re-lex still
 // classifies them as Float, not Number.
 func TestFormatFloatLiteralKeepsDecimal(t *testing.T) {
-	got := formatSrc(t, `function f(): f32 { return 5.0; }`)
+	got := formatSrc(t, `function f(): float { return 5.0; }`)
 	if !strings.Contains(got, "5.0") {
 		t.Errorf("expected `5.0` to survive in:\n%s", got)
 	}
@@ -106,9 +106,9 @@ func TestFormatFloatLiteralKeepsDecimal(t *testing.T) {
 
 // Method declarations preserve the receiver clause.
 func TestFormatMethod(t *testing.T) {
-	got := formatSrc(t, `struct Point { x: i32, y: i32 }
-function (p: Point) sum(): i32 { return p.x + p.y; }`)
-	if !strings.Contains(got, "function (p: Point) sum(): i32 {") {
+	got := formatSrc(t, `struct Point { x: number, y: number }
+function (p: Point) sum(): number { return p.x + p.y; }`)
+	if !strings.Contains(got, "function (p: Point) sum(): number {") {
 		t.Errorf("expected method receiver clause to survive:\n%s", got)
 	}
 }
@@ -116,7 +116,7 @@ function (p: Point) sum(): i32 { return p.x + p.y; }`)
 // Switch statements indent each case and the optional default; the
 // case bodies use the same multi-line block formatting.
 func TestFormatSwitch(t *testing.T) {
-	got := formatSrc(t, `function f(n: i32): i32 {
+	got := formatSrc(t, `function f(n: number): number {
 		switch (n) {
 			case 1, 2: return 10;
 			case 3: return 30;
@@ -139,7 +139,7 @@ func TestFormatSwitch(t *testing.T) {
 // semicolons separating the slots; init's trailing `;` is part of
 // the Var/ExprStmt, step has no trailing `;`.
 func TestFormatForLoop(t *testing.T) {
-	got := formatSrc(t, `function f(): i32 {
+	got := formatSrc(t, `function f(): number {
 		var sum = 0;
 		for (var i = 0; i < 3; i = i + 1) { sum = sum + i; }
 		return sum;
@@ -153,13 +153,13 @@ func TestFormatForLoop(t *testing.T) {
 // identical output. Idempotence is the contract every formatter
 // honours so editors can run it on every save without churn.
 func TestFormatIsIdempotent(t *testing.T) {
-	src := `struct Point { x: i32, y: i32 }
-function (p: Point) magnitude(): i32 { return p.x * p.x + p.y * p.y; }
-function factorial(n: i32, acc: i32): i32 {
+	src := `struct Point { x: number, y: number }
+function (p: Point) magnitude(): number { return p.x * p.x + p.y * p.y; }
+function factorial(n: number, acc: number): number {
 	if (n == 0) { return acc; }
 	return factorial(n - 1, acc * n);
 }
-function main(): i32 {
+function main(): number {
 	var origin = Point { x: 3, y: 4 };
 	return origin.magnitude() + factorial(5, 1);
 }`
@@ -175,17 +175,17 @@ function main(): i32 {
 // the formatted output reparse without errors".
 func TestFormatRoundTripsThroughParser(t *testing.T) {
 	srcs := []string{
-		`function f(): i32 { return 1 + 2 * 3; }`,
-		`function f(a: i32, b: i32): i32 { return a < b ? a : b; }`,
+		`function f(): number { return 1 + 2 * 3; }`,
+		`function f(a: number, b: number): number { return a < b ? a : b; }`,
 		`function f(s: string): boolean { return s == "x"; }`,
-		`function f(): i32 { var a: i32[] = [1, 2, 3]; return a[1]; }`,
-		`function f(n: i32): i32 {
+		`function f(): number { var a: number[] = [1, 2, 3]; return a[1]; }`,
+		`function f(n: number): number {
 			if (n == 0) { return 1; }
 			while (n > 0) { n = n - 1; }
 			return n;
 		}`,
-		`struct P { x: i32, y: i32 }
-function f(p: P): i32 { return p.x + p.y; }`,
+		`struct P { x: number, y: number }
+function f(p: P): number { return p.x + p.y; }`,
 	}
 	for _, src := range srcs {
 		formatted := formatSrc(t, src)
@@ -198,7 +198,7 @@ function f(p: P): i32 { return p.x + p.y; }`,
 // Trailing newline at end of file — every editor expects it; many
 // VCSs flag its absence as a diff hazard.
 func TestFormatEndsWithNewline(t *testing.T) {
-	got := formatSrc(t, `function f(): i32 { return 0; }`)
+	got := formatSrc(t, `function f(): number { return 0; }`)
 	if !strings.HasSuffix(got, "\n") {
 		t.Errorf("output must end with newline; got %q", got)
 	}
@@ -209,7 +209,7 @@ func TestFormatEndsWithNewline(t *testing.T) {
 // the parser threads them through prog.Comments; the formatter
 // drains them just before each statement.
 func TestFormatPreservesLeadingComment(t *testing.T) {
-	src := `function main(): i32 {
+	src := `function main(): number {
   // why we return 42
   return 42;
 }`
@@ -240,7 +240,7 @@ func TestFormatPreservesTrailingComment(t *testing.T) {
 // top of the output at depth 0.
 func TestFormatPreservesFileLeadingComment(t *testing.T) {
 	src := `// program description
-function main(): i32 { return 0; }`
+function main(): number { return 0; }`
 	got := formatSrc(t, src)
 	if !strings.HasPrefix(got, "// program description\n") {
 		t.Errorf("expected leading file comment at top:\n%s", got)
@@ -250,7 +250,7 @@ function main(): i32 { return 0; }`
 // Comments after the last declaration emit at end-of-file before
 // the trailing newline.
 func TestFormatPreservesTrailingFileComment(t *testing.T) {
-	src := `function main(): i32 { return 0; }
+	src := `function main(): number { return 0; }
 // outro comment`
 	got := formatSrc(t, src)
 	if !strings.Contains(got, "// outro comment\n") {
@@ -262,7 +262,7 @@ func TestFormatPreservesTrailingFileComment(t *testing.T) {
 // produces the same output.
 func TestFormatIdempotentWithComments(t *testing.T) {
 	src := `// header
-function f(): i32 {
+function f(): number {
   // before return
   return 7;  // trailing
 }
@@ -277,8 +277,8 @@ function f(): i32 {
 // Multiple top-level decls are separated by a single blank line so
 // they read clearly without bunching.
 func TestFormatBlankLineBetweenTopLevelDecls(t *testing.T) {
-	got := formatSrc(t, `function a(): i32 { return 1; }
-function b(): i32 { return 2; }`)
+	got := formatSrc(t, `function a(): number { return 1; }
+function b(): number { return 2; }`)
 	// Expect two functions separated by exactly one blank line —
 	// `}\n\nfunction b…` (closing brace, newline, blank line,
 	// next function).
@@ -291,9 +291,9 @@ function b(): i32 { return 2; }`)
 // `function` / `struct` so private vs exported decls stay
 // distinguishable in formatted source.
 func TestFormatPubKeywordRoundTrips(t *testing.T) {
-	got := formatSrc(t, `pub struct Point { x: i32, y: i32 }
-pub function exposed(): i32 { return 1; }
-function hidden(): i32 { return 2; }`)
+	got := formatSrc(t, `pub struct Point { x: number, y: number }
+pub function exposed(): number { return 1; }
+function hidden(): number { return 2; }`)
 	if !strings.Contains(got, "pub struct Point") {
 		t.Errorf("expected `pub struct Point` in output:\n%s", got)
 	}
@@ -309,13 +309,13 @@ function hidden(): i32 { return 2; }`)
 // annotation preserved. `pub const` round-trips like other `pub`
 // decls; the resulting source reparses identically.
 func TestFormatConstDeclRoundTrips(t *testing.T) {
-	got := formatSrc(t, `const N: i32 = 42;
-pub const PI: f32 = 3.14;
+	got := formatSrc(t, `const N: number = 42;
+pub const PI: float = 3.14;
 const M = 7;
-function main(): i32 { return N; }`)
+function main(): number { return N; }`)
 	for _, want := range []string{
-		"const N: i32 = 42;",
-		"pub const PI: f32 = 3.14;",
+		"const N: number = 42;",
+		"pub const PI: float = 3.14;",
 		"const M = 7;",
 	} {
 		if !strings.Contains(got, want) {
@@ -333,16 +333,16 @@ function main(): i32 { return N; }`)
 // Generic enum decls and generic instantiations at type
 // positions round-trip through the formatter. The single-line
 // enum form keeps `[T]` next to the name; type positions
-// preserve `Option[i32]` rather than collapsing the
+// preserve `Option[number]` rather than collapsing the
 // brackets.
 func TestFormatGenericEnumRoundTrip(t *testing.T) {
 	got := formatSrc(t, `enum Option[T] { Some(T), None }
-function find(): Option[i32] { return None; }`)
+function find(): Option[number] { return None; }`)
 	if !strings.Contains(got, "enum Option[T] { Some(T), None }") {
 		t.Errorf("expected generic enum decl with [T]; got:\n%s", got)
 	}
-	if !strings.Contains(got, "Option[i32]") {
-		t.Errorf("expected `Option[i32]` in return-type position; got:\n%s", got)
+	if !strings.Contains(got, "Option[number]") {
+		t.Errorf("expected `Option[number]` in return-type position; got:\n%s", got)
 	}
 	again := formatSrc(t, got)
 	if got != again {
@@ -355,7 +355,7 @@ function find(): Option[i32] { return None; }`)
 // variants and `pub enum`.
 func TestFormatEnumAndMatchRoundTrip(t *testing.T) {
 	got := formatSrc(t, `pub enum Status { Ok, Err(string) }
-function f(s: Status): i32 {
+function f(s: Status): number {
 match (s) { Ok => { return 0; }, Err(msg) => { return len(msg); } }
 return 0;
 }`)
