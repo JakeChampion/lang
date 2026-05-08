@@ -37,11 +37,13 @@ func Convert(prog *ast.Program, info *checker.Info) error {
 	// Walk every top-level body and rewrite inner FuncDecl statements.
 	for _, fn := range prog.Funcs {
 		c.outerFn = fn
+		c.hostFn = fn
 		if err := c.rewriteBlock(fn.Body, nil); err != nil {
 			return err
 		}
 	}
 	c.outerFn = nil
+	c.hostFn = nil
 	// Append hoisted functions after the rewrite finishes so the
 	// indices we stamped into MakeClosure nodes match prog.Funcs.
 	prog.Funcs = append(prog.Funcs, c.appended...)
@@ -57,6 +59,14 @@ type converter struct {
 	// prog.Funcs (i.e. its funcref-table index).
 	funcIdx  map[string]int
 	appended []*ast.FuncDecl
+	// hostFn is the FuncDecl that owns the body we're currently
+	// walking. For top-level entries it equals outerFn; for
+	// nested local functions, it's the hoisted FuncDecl whose
+	// body recursive rewriteBlock calls are processing. Vars
+	// introduced by hoisting nested closures are registered
+	// against hostFn so each hoisted function has a complete
+	// per-function locals list at IR time.
+	hostFn *ast.FuncDecl
 	// outerFn is the top-level FuncDecl whose body we're currently
 	// rewriting. Var statements introduced for `MakeClosure` are
 	// recorded under it in info.Locals so the codegen pass declares
@@ -365,10 +375,20 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 	c.info.FuncSigs[hoistedName] = hoistedSig
 
 	// Rewrite the body's captured-name references and any nested
-	// closures.
+	// closures. Swap hostFn so any Vars we introduce while
+	// processing nested local functions inside this body get
+	// attributed to THIS function's locals — not the outermost
+	// top-level entry. Without that fix, IR processing of the
+	// hoisted fn would fail to find a slot for the nested-
+	// closure Var (it'd be in the top-level's locals list, not
+	// this hoisted function's).
+	prevHost := c.hostFn
+	c.hostFn = fn
 	if err := c.rewriteBlock(fn.Body, ctx); err != nil {
+		c.hostFn = prevHost
 		return nil, err
 	}
+	c.hostFn = prevHost
 
 	// Reserve the hoisted function's table index now (after existing
 	// top-level funcs and any earlier hoisted ones).
@@ -408,13 +428,21 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 		Type: userSig,
 		Init: mc,
 	}
-	// Register the new Var with the checker's per-function locals so
-	// codegen declares a slot for it. The current outerFn is the
-	// nearest top-level function; nested closures within nested
-	// closures still attach to their containing top-level entry.
-	if c.outerFn != nil {
+	// Register the new Var against its IMMEDIATE host function —
+	// the one whose body the nested decl appeared in. For a
+	// top-level body, host == outerFn. For a nested local
+	// function inside another local function, host is the
+	// surrounding hoisted FuncDecl, so each hoisted function
+	// ends up with a complete per-function locals list at IR
+	// time. Falling back to outerFn if hostFn isn't set would
+	// re-introduce the chained-`use` slot bug.
+	host := c.hostFn
+	if host == nil {
+		host = c.outerFn
+	}
+	if host != nil {
 		c.info.VarTypes[v] = userSig
-		c.info.Locals[c.outerFn] = append(c.info.Locals[c.outerFn], v)
+		c.info.Locals[host] = append(c.info.Locals[host], v)
 	}
 	return v, nil
 }

@@ -63,6 +63,17 @@ type parser struct {
 	// where `obj` is a method call returning a Foo, NOT a
 	// struct literal) still work correctly.
 	noStructLit bool
+	// returnTypeStack tracks the return type of the function
+	// currently being parsed. Pushed by parseFunction on entry,
+	// popped on exit. The `use` desugar uses the top of stack
+	// to fill in the synthesised callback function's return
+	// type — every `use` chain ultimately routes back to the
+	// surrounding function's return.
+	returnTypeStack []ast.Type
+	// useN counts synthesised `use` callback decls so each one
+	// gets a unique name. Resets per Parse() so module-local
+	// names stay deterministic.
+	useN int
 }
 
 func (p *parser) peek() lexer.Token { return p.tokens[p.i] }
@@ -372,7 +383,11 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		ret = t
 	}
 
+	// Track the return type so any `use` desugar inside the body
+	// can stamp it onto the synthesised callback's signature.
+	p.returnTypeStack = append(p.returnTypeStack, ret)
 	body, err := p.parseBlock()
+	p.returnTypeStack = p.returnTypeStack[:len(p.returnTypeStack)-1]
 	if err != nil {
 		return nil, err
 	}
@@ -787,6 +802,23 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 	block := &ast.Block{P: open.Pos}
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		before := p.i
+		// `use IDENT : TYPE <- EXPR;` is a statement-position
+		// desugar — the rest of the current block becomes the
+		// callback's body. Handled inline so we have access to
+		// the in-progress block builder.
+		if p.match(lexer.Keyword, "use") {
+			if err := p.parseUse(block); err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToStmt()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			// `use` consumes the rest of the block as its
+			// callback body, so the current block is finished.
+			break
+		}
 		s, err := p.parseStmt()
 		if err != nil {
 			p.errors = append(p.errors, err)
@@ -1412,6 +1444,116 @@ func (p *parser) parseVar() (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.Var{P: kw.Pos, Name: name.Text, Type: typ, Init: init}, nil
+}
+
+// parseUse desugars `use IDENT : TYPE <- EXPR;` plus the
+// remaining statements of the enclosing block into a synthesised
+// local function declaration + a return-statement that calls
+// EXPR with the local function appended as the last argument.
+//
+// Example:
+//
+//	function compute(s: string): Result[i32, string] {
+//	    use n: i32 <- result.try(parse(s));
+//	    return Ok(n + 1);
+//	}
+//
+// becomes (post-parse):
+//
+//	function compute(s: string): Result[i32, string] {
+//	    function __use_1(n: i32): Result[i32, string] {
+//	        return Ok(n + 1);
+//	    }
+//	    return result.try(parse(s), __use_1);
+//	}
+//
+// The synthesised callback's return type is read from
+// `parser.returnTypeStack` — every `use` chain ultimately
+// returns through the surrounding function. Type annotation
+// on the binding is required for now; an inference pass can
+// peek at EXPR's callback parameter type as a follow-up.
+func (p *parser) parseUse(parent *ast.Block) error {
+	kw := p.advance() // use
+	nameTok, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return err
+	}
+	if _, err := p.expect(lexer.Punct, ":"); err != nil {
+		return err
+	}
+	bindType, err := p.parseType()
+	if err != nil {
+		return err
+	}
+	// `<-` lexes as two punct tokens (`<` then `-`). Accept both.
+	if _, err := p.expect(lexer.Punct, "<"); err != nil {
+		return err
+	}
+	if _, err := p.expect(lexer.Punct, "-"); err != nil {
+		return err
+	}
+	src, err := p.parseExpr()
+	if err != nil {
+		return err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return err
+	}
+	srcCall, ok := src.(*ast.Call)
+	if !ok {
+		return p.errorf(kw.Pos, "use expression must be a function call (so the callback can be appended as the last arg)")
+	}
+	// Parse the rest of the block as the callback body. parseBlock
+	// expects a leading `{`, so synthesise one — the actual
+	// `}` we consume here ends both the callback and the parent
+	// block. We open a synthetic block, slurp statements until
+	// the upcoming `}`, then leave that `}` for the caller's
+	// loop to consume.
+	body := &ast.Block{P: kw.Pos}
+	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		before := p.i
+		if p.match(lexer.Keyword, "use") {
+			// Nested use — recursive desugar. The callback body
+			// is itself the parent for further use chains.
+			if err := p.parseUse(body); err != nil {
+				return err
+			}
+			break
+		}
+		s, err := p.parseStmt()
+		if err != nil {
+			return err
+		}
+		if s != nil {
+			body.Stmts = append(body.Stmts, s)
+		}
+		if p.i == before {
+			p.advance()
+		}
+	}
+	if len(p.returnTypeStack) == 0 {
+		return p.errorf(kw.Pos, "use must appear inside a function body")
+	}
+	rt := p.returnTypeStack[len(p.returnTypeStack)-1]
+
+	// Synthesise the local callback function.
+	p.useN++
+	callbackName := fmt.Sprintf("__use_%d", p.useN)
+	cb := &ast.FuncDecl{
+		P:          kw.Pos,
+		Name:       callbackName,
+		Params:     []ast.Param{{Name: nameTok.Text, Type: bindType}},
+		ReturnType: rt,
+		Body:       body,
+		IsLocal:    true,
+	}
+	parent.Stmts = append(parent.Stmts, cb)
+	// Append the callback as the last argument of the source call
+	// + emit a `return` so the surrounding function returns its
+	// value.
+	srcCall.Args = append(srcCall.Args, &ast.Ident{P: kw.Pos, Name: callbackName})
+	parent.Stmts = append(parent.Stmts, &ast.Return{P: kw.Pos, Value: srcCall})
+	return nil
 }
 
 // parseLetElse parses `let <Variant>(b1, b2, …) = <expr> else
