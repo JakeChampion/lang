@@ -36,6 +36,7 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/printer"
 )
@@ -161,6 +162,13 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
+		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	}
+	// Monomorphise generic functions before any later stage sees
+	// the program — IR / codegen / interp only ever deal with
+	// concrete, name-mangled clones. No-op when the program has
+	// no generic decls.
+	if err := monomorph.Run(prog, info); err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
 	// Optimisations now run on the IR (Inline / Fold / DCE inside

@@ -305,6 +305,28 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Optional type parameters: `function id[T](x: T): T`.
+	// Reuses the bracket form enums use (`enum Option[T]`) so
+	// parsers / readers learn one shape for both generic decls
+	// and generic instantiations.
+	var typeParams []string
+	if p.match(lexer.Punct, "[") {
+		p.advance() // [
+		for {
+			pname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			typeParams = append(typeParams, pname.Text)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				continue
+			}
+			break
+		}
+		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
 	}
@@ -348,6 +370,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	return &ast.FuncDecl{
 		P:          kw.Pos,
 		Name:       name.Text,
+		TypeParams: typeParams,
 		Params:     params,
 		ReturnType: ret,
 		Body:       body,
