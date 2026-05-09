@@ -66,11 +66,12 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	g.scanForStructUses(prog)
 	g.scanForIOBuiltins(prog)
 	if g.printMainResult {
-		// Force the int_to_string helper in even if the program
-		// doesn't call it itself, since `_start` will, and force
-		// the runtime so $__lang_alloc is wired up for the
-		// helper's two bump-allocs.
-		g.needsIntToString = true
+		// `_start` calls `int_to_string` to format main()'s i32
+		// return; the helper itself lives in the lang prelude
+		// now. Treeshake's `extras` parameter (set elsewhere
+		// via the same flag) keeps the prelude function alive
+		// even if user code doesn't reference it; here we just
+		// pull the runtime in for the helper's bump-allocs.
 		g.needsRuntime = true
 	}
 	if g.httpHandler {
