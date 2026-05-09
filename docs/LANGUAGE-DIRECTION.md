@@ -332,13 +332,17 @@ Deferred to a follow-up:
   single allocation, Wyhash hash function.
   - **First cut shipped (linear-search foundation).** Auto-
     injects a non-generic `Map` struct (i32 keys + i32 values
-    only, fixed capacity at construction). API is
-    `map_new(cap)` / `m.len()` / `m.has(k)` / `m.get(k)` /
-    `m.set(k, v)`. Wasm runtime helpers do linear search;
-    overflow traps. Future PRs generalise to `Map[K, V]`,
-    swap the linear search for the IndexMap fingerprint
-    table, add Wyhash, wire dynamic resize, and ship the
-    map-literal syntax.
+    only). API is `map_new(cap)` / `m.len()` / `m.has(k)` /
+    `m.get(k)` / `m.set(k, v)`. Wasm runtime helpers do
+    linear search.
+  - **Dynamic resize shipped.** `m.set(k, v)` doubles the
+    backing buffer (or jumps to 4 if cap=0) when full and
+    copies the existing entries over. The bump allocator
+    can't reclaim the old buffer; that pays back when the
+    arena resets at scope exit (PR 5).
+  - Future PRs generalise to `Map[K, V]`, swap the linear
+    search for the IndexMap fingerprint table, add Wyhash,
+    and ship the map-literal syntax.
 - Map literals: TBD syntax. `{ "k": v }` collides with struct
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally
