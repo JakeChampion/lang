@@ -590,10 +590,31 @@ Deferred to a follow-up:
 
 ## Deferred — not in any of the above five PRs
 
-- **Closures via lambda-set defunctionalisation.** Currently
-  closures go through a function table; works, just not optimal.
-  Re-lowering them at IR-time after we have generics + monomorph
-  is the natural moment.
+- **Closures via lambda-set defunctionalisation —
+  monomorphic flow shipped.** The doc-roadmap's biggest
+  deferred item lands incrementally. Roc's full
+  lambda-set treatment (per-call-site tagged-union
+  dispatch over the finite set of lambdas that flow into
+  each function-typed slot) is still ahead, but the
+  monomorphic-flow case — exactly one MakeClosure flow
+  source per slot, by far the dominant pattern in
+  closureconv'd output for handler / nested-function code
+  — now defunctionalises at IR time. The
+  `internal/ir/defunctionalise.go` pass walks each
+  function, identifies slots written exactly once by an
+  OpStoreLocal directly preceded by OpMakeClosure, and
+  rewrites every `OpLoadLocal slot; OpCallIndirect` pair
+  to load env_ptr inline + dispatch via a new
+  `OpCallClosureDirect` op (a plain `call $name` at the
+  wasm layer). Saves the function-table indirection +
+  the wasm `call_indirect` runtime type check on every
+  closure invocation that fits the pattern. Cross-
+  function closure returns (the `makeAdder` factory
+  shape) keep going through `call_indirect` — the
+  conservative analysis disqualifies any slot whose
+  flow source isn't an immediate MakeClosure. Future
+  follow-up: extend to the multi-flow case (tagged-union
+  dispatch over 2..N lambdas).
 - **Compile-time uniqueness analysis** for in-place mutation
   (Morphic-style). Real performance win for programs that build
   up + transform big structures. Needs the IR to track ownership

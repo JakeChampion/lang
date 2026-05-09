@@ -90,6 +90,16 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 		return "", err
 	}
 	ir.Inline(ip)
+	// Defunctionalise rewrites monomorphic-flow closure calls
+	// (`var f = MakeClosure(...); ... f(args)`) to direct calls
+	// to the hoisted target, eliminating the `call_indirect`
+	// dispatch + the function-table type check. Runs after
+	// Inline so the direct calls it produces are themselves
+	// candidates for further inlining if the hoisted body
+	// fits — and before FuseTee / Cleanup so the load+const+add
+	// scratch arithmetic the rewrite synthesises gets folded /
+	// peep-holed alongside the rest.
+	ir.Defunctionalise(ip)
 	ir.FuseTee(ip)
 	ir.FlattenBranches(ip)
 	// PropagateCopies + ConstPropagate + Fold + ReduceStrength
