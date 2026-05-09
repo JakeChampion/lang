@@ -1409,6 +1409,12 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if got != nil && !assignable(want, got) {
 			c.errf(n.P, "return type mismatch: function returns %s but expression is %s", want, got)
 		}
+	case *ast.Defer:
+		// Just type-check the expression; its result is
+		// discarded (defer is statement-shaped, not
+		// expression-shaped). The IR builder is responsible
+		// for replaying the expression at function exits.
+		c.checkExpr(n.Expr, s)
 	case *ast.Var:
 		if _, dup := s.names[n.Name]; dup {
 			c.errf(n.P, "variable %q already declared in this scope", n.Name)

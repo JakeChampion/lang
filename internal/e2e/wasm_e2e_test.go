@@ -1541,6 +1541,86 @@ func TestWASMMapIterStringKeys(t *testing.T) {
 	}
 }
 
+// `defer EXPR;` schedules the expression to run when the
+// enclosing function exits. Multiple defers run in LIFO
+// order; conditionally-registered defers (inside an if-branch
+// that didn't fire) are no-ops via per-defer "active" flags.
+// Side-effect observation goes through a Map passed by ref.
+func TestWASMDeferBasic(t *testing.T) {
+	src := `function inner(trace: Map[string, i32]): i32 {
+    trace.set("body-start", 1);
+    defer trace.set("first-defer", 10);
+    defer trace.set("second-defer", 20);
+    trace.set("body-end", 2);
+    return 42;
+}
+function main(): i32 {
+    var trace: Map[string, i32] = map_new(8);
+    var r: i32 = inner(trace);
+    if (r != 42) { return 1; }
+    if (trace.len() != 4) { return 2; }
+    if (trace.get_or("body-start", 0) != 1) { return 3; }
+    if (trace.get_or("body-end", 0) != 2) { return 4; }
+    if (trace.get_or("first-defer", 0) != 10) { return 5; }
+    if (trace.get_or("second-defer", 0) != 20) { return 6; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (defer basic)", got)
+	}
+}
+
+// Conditionally-registered defer: a defer inside an
+// if-branch that doesn't run shouldn't fire at function exit.
+func TestWASMDeferConditional(t *testing.T) {
+	src := `function run(fired: Map[i32, i32], taken: boolean): i32 {
+    if (taken) {
+        defer fired.set(1, 100);
+    }
+    defer fired.set(2, 200);
+    return 0;
+}
+function main(): i32 {
+    var fired: Map[i32, i32] = map_new(4);
+    run(fired, false);
+    if (fired.has(1)) { return 1; }
+    if (!fired.has(2)) { return 2; }
+    fired.clear();
+    run(fired, true);
+    if (!fired.has(1)) { return 3; }
+    if (!fired.has(2)) { return 4; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (defer conditional)", got)
+	}
+}
+
+// Defer fires before each return, even early returns.
+func TestWASMDeferEarlyReturn(t *testing.T) {
+	src := `function early(counts: Map[string, i32], branch: i32): i32 {
+    defer counts.set("count", counts.get_or("count", 0) + 1);
+    if (branch == 1) {
+        return 10;
+    }
+    if (branch == 2) {
+        return 20;
+    }
+    return 30;
+}
+function main(): i32 {
+    var counts: Map[string, i32] = map_new(4);
+    if (early(counts, 1) != 10) { return 1; }
+    if (early(counts, 2) != 20) { return 2; }
+    if (early(counts, 0) != 30) { return 3; }
+    if (counts.get_or("count", 0) != 3) { return 4; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (defer early-return)", got)
+	}
+}
+
 // `m.get_or(k, default)` returns the existing value or the
 // supplied default. Saves the `if let Some(v) = m.get(k) {
 // v } else { d }` ceremony for the common-case lookup.

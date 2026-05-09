@@ -517,6 +517,78 @@ type builder struct {
 	// lowered. emit() stamps it onto every op so backends can drive
 	// per-statement DWARF / .loc directives.
 	curPos ast.Position
+	// defers is the in-source-order list of every Defer
+	// statement in the function body, collected by a pre-walk
+	// before any IR emission. deferSlots holds the synthetic
+	// "active" flag local for each defer; lowering the Defer
+	// statement sets the flag to 1, and the cleanup blocks
+	// emitted before each return run the deferred expression
+	// only when the flag is set.
+	defers     []*ast.Defer
+	deferSlots []int32
+}
+
+// collectDefers walks `s` recursively and appends every
+// `*ast.Defer` it finds (in source-declaration order) to
+// `out`. Function-bodies of nested local FuncDecls are NOT
+// traversed — those have their own defer scope handled by
+// lowerFunc when they're lowered separately.
+func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
+	if s == nil {
+		return
+	}
+	switch x := s.(type) {
+	case *ast.Block:
+		for _, st := range x.Stmts {
+			collectDefers(st, out)
+		}
+	case *ast.If:
+		collectDefers(x.Then, out)
+		collectDefers(x.Else, out)
+	case *ast.IfLet:
+		collectDefers(x.Then, out)
+		collectDefers(x.Else, out)
+	case *ast.LetElse:
+		collectDefers(x.Else, out)
+	case *ast.While:
+		collectDefers(x.Body, out)
+	case *ast.For:
+		collectDefers(x.Init, out)
+		collectDefers(x.Step, out)
+		collectDefers(x.Body, out)
+	case *ast.Switch:
+		for _, k := range x.Cases {
+			collectDefers(k.Body, out)
+		}
+		collectDefers(x.Default, out)
+	case *ast.Match:
+		for _, arm := range x.Arms {
+			collectDefers(arm.Body, out)
+		}
+	case *ast.Defer:
+		*out = append(*out, x)
+	}
+}
+
+// emitDeferCleanup walks the registered defers in reverse
+// source order and emits `if active[i] { <expr>; }` for each.
+// Called from `Return` lowering and from the implicit-return
+// path at the end of `lowerFunc`.
+func (b *builder) emitDeferCleanup() error {
+	for i := len(b.defers) - 1; i >= 0; i-- {
+		b.emit(Op{Kind: OpLoadLocal, I32: b.deferSlots[i]})
+		b.openIf(BlockTypeVoid)
+		// Evaluate the deferred expression. Drop the result
+		// — defer's expression value is unused.
+		if err := b.expr(b.defers[i].Expr); err != nil {
+			return err
+		}
+		if exprLeavesValue(b.defers[i].Expr, b.info) {
+			b.emit(Op{Kind: OpDrop})
+		}
+		b.closeScope()
+	}
+	return nil
 }
 
 func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
@@ -534,6 +606,19 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
 		b.locals[v.Name] = int32(len(fn.Params) + i)
 	}
 	b.nextSlot = int32(len(fn.Params) + len(info.Locals[fn]))
+	// Pre-walk the function body to find every Defer
+	// statement. Each gets an "active" flag local: 0 by
+	// default; the IR sets it to 1 when the Defer statement
+	// is reached at runtime, and the per-exit cleanup block
+	// runs the deferred expression only when the flag is set.
+	// That makes a defer reached inside a conditional a
+	// no-op when the conditional didn't fire.
+	collectDefers(fn.Body, &b.defers)
+	for i := range b.defers {
+		slot := b.allocSlot()
+		b.deferSlots = append(b.deferSlots, slot)
+		b.locals[fmt.Sprintf("__defer_%d_active", i)] = slot
+	}
 	if err := b.stmt(fn.Body); err != nil {
 		return nil, err
 	}
@@ -562,8 +647,13 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
 		}
 	}
 	// If the body falls off the end, emit an implicit return so the
-	// downstream consumer doesn't have to check.
+	// downstream consumer doesn't have to check. Run any
+	// registered defers first — same shape as the explicit
+	// Return path.
 	if needsImplicitReturn(out.Ops) {
+		if err := b.emitDeferCleanup(); err != nil {
+			return nil, err
+		}
 		if isVoid(fn.ReturnType) {
 			b.emit(Op{Kind: OpReturnVoid})
 		} else if isFloat(fn.ReturnType) {
@@ -919,14 +1009,48 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		b.brTo(b.contStack[len(b.contStack)-1], false)
 	case *ast.Return:
+		// Cleanup-before-return: replay every active defer in
+		// LIFO order. Evaluate the return value first into a
+		// temp local so cleanup runs after the value is fixed
+		// (matches Go's "defer sees the return value" only at
+		// the cost of pushing the value through a slot — the
+		// language doesn't have named return values for
+		// defers to mutate, so this is just for correctness
+		// when the return expression has side effects).
 		if n.Value == nil {
+			if err := b.emitDeferCleanup(); err != nil {
+				return err
+			}
 			b.emit(Op{Kind: OpReturnVoid})
 			return nil
 		}
 		if err := b.expr(n.Value); err != nil {
 			return err
 		}
+		// Stash the value in a synthetic local so we can run
+		// defers after it's evaluated.
+		if len(b.defers) > 0 {
+			slot := b.allocSlot()
+			b.scratchType[slot] = b.fn.ReturnType
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			if err := b.emitDeferCleanup(); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		}
 		b.emit(Op{Kind: OpReturn})
+	case *ast.Defer:
+		// Find this Defer's index in the pre-collected list
+		// (pointer identity — collectDefers walked the same
+		// AST). Set the corresponding active flag.
+		for i, d := range b.defers {
+			if d == n {
+				b.emit(Op{Kind: OpConstI32, I32: 1})
+				b.emit(Op{Kind: OpStoreLocal, I32: b.deferSlots[i]})
+				return nil
+			}
+		}
+		return fmt.Errorf("ir: Defer node not registered (compiler bug)")
 	case *ast.Var:
 		if err := b.expr(n.Init); err != nil {
 			return err

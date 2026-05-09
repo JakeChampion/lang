@@ -790,6 +790,19 @@ type Return struct {
 	P     Position
 	Value Expr // may be nil
 }
+
+// Defer schedules `Expr` to be evaluated when the enclosing
+// function exits (every return path + falloff). Multiple
+// defers run in LIFO order. Each Defer node has a synthesised
+// `IsActive` local stamped on it by the IR builder; reaching
+// the defer statement at runtime sets the local to 1, and the
+// per-exit cleanup block only runs the deferred expression
+// when the local is set. That makes a defer reached inside a
+// conditional a no-op when the conditional didn't fire.
+type Defer struct {
+	P    Position
+	Expr Expr
+}
 type Var struct {
 	P    Position
 	Name string
@@ -860,6 +873,7 @@ func (s *For) Pos() Position      { return s.P }
 func (s *Break) Pos() Position    { return s.P }
 func (s *Continue) Pos() Position { return s.P }
 func (s *Return) Pos() Position   { return s.P }
+func (s *Defer) Pos() Position    { return s.P }
 func (s *Var) Pos() Position      { return s.P }
 func (s *ExprStmt) Pos() Position { return s.P }
 func (s *Switch) Pos() Position   { return s.P }
@@ -875,6 +889,7 @@ func (*For) isStmt()      {}
 func (*Break) isStmt()    {}
 func (*Continue) isStmt() {}
 func (*Return) isStmt()   {}
+func (*Defer) isStmt()    {}
 func (*Var) isStmt()      {}
 func (*ExprStmt) isStmt() {}
 func (*Switch) isStmt()   {}

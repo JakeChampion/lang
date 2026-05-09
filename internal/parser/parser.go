@@ -866,6 +866,8 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseBreakContinue(false)
 		case "return":
 			return p.parseReturn()
+		case "defer":
+			return p.parseDefer()
 		case "var":
 			return p.parseVar()
 		case "let":
@@ -1426,6 +1428,24 @@ func (p *parser) parseReturn() (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.Return{P: kw.Pos, Value: val}, nil
+}
+
+// parseDefer parses `defer EXPR;`. The IR collects every Defer
+// statement in the function body and emits the deferred
+// expressions in LIFO order before each return + at the end of
+// the function. Conditional defers (registered inside a branch
+// that didn't run at runtime) are skipped via per-defer
+// "active" flags the IR builder synthesises.
+func (p *parser) parseDefer() (ast.Stmt, error) {
+	kw := p.advance()
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	return &ast.Defer{P: kw.Pos, Expr: expr}, nil
 }
 
 func (p *parser) parseVar() (ast.Stmt, error) {

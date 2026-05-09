@@ -461,8 +461,19 @@ Deferred to a follow-up:
   resets at exit. CLI default = process-wide arena, freed on exit.
   HTTP handler default = per-request arena, freed when the
   response is sealed.
-- `defer` keyword for scope-bound cleanup. Pairs naturally with
-  the arena story.
+- **`defer` keyword shipped.** `defer EXPR;` schedules `EXPR`
+  to run when the enclosing function exits. Multiple defers
+  run in LIFO order. Each Defer node gets a synthesised
+  "active" i32 local; reaching the statement at runtime sets
+  the flag, and the cleanup blocks emitted before each
+  return + at the end of the function run the deferred
+  expression only when the flag is set. Defers registered
+  inside a conditional that didn't fire are no-ops. The
+  return value is evaluated before defer cleanup runs (the
+  IR routes it through a temp slot), matching Go's "you
+  can't mutate the return value from a defer" semantics
+  without giving up named-return-value support that this
+  language doesn't have anyway.
 - Document the lifetime contract for slices/views (must outlive
   the arena they reference).
   (The `number` deprecation alias has already been dropped — see
