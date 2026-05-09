@@ -515,6 +515,14 @@ Deferred to a follow-up:
     `=` padding on encode, decoding terminates at the first
     non-base64 character. Strings are treated as raw byte
     arrays so the round-trip is content-preserving.
+  - **hex shipped.** `hex_encode(s)` / `hex_decode(s)`
+    builtins. Lowercase output (`0-9a-f`); decode accepts
+    both cases. Decoding terminates at the first non-hex
+    char or odd-length tail without raising — the prefix
+    length on the result reflects what was actually
+    decoded so `len()` lets callers detect truncation.
+    Same byte-array semantics as base64 (round-trip is
+    content-preserving).
 
 ## Open questions to settle as we go
 
