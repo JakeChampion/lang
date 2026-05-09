@@ -2104,32 +2104,32 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if (innerIsNum || innerIsFloat) && (targetIsNum || targetIsFloat) {
 			return n.Target
 		}
-		// Any owned array, slice, or string → i32 — recover
-		// the data pointer for the bulk-memory primitives.
-		// All three lower to a single i32 at runtime; the
-		// cast is the source-level escape hatch the prelude
-		// uses to call __memcpy / __store_i32 against the
-		// underlying bytes.
+		// Any owned array, slice, string, or struct → i32 —
+		// recover the data / wrapper pointer for the bulk-
+		// memory primitives. All four lower to a single i32 at
+		// runtime; the cast is the source-level escape hatch
+		// the prelude uses to call __memcpy / __store_i32
+		// against the underlying memory.
 		if nt, ok := n.Target.(ast.NumberType); ok && nt.NormalWidth() == 32 {
 			switch inner.(type) {
-			case ast.ArrayType, ast.SliceType, ast.StringType:
+			case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
 				return n.Target
 			}
 		}
-		// Reverse direction: `i32 → T[]` and `i32 → string`
-		// promote a raw pointer back to a typed handle. The
-		// runtime layout is identical (lang ABI for both is
-		// "value = data pointer, length prefix at base-4");
-		// only the type-level view changes. Used by the
-		// prelude when a builtin returns a freshly allocated
-		// raw block that the caller wants to expose as a
-		// typed collection — e.g. `__array_append_string`'s
-		// rebuild loop.
+		// Reverse direction: `i32 → T[]`, `i32 → string`,
+		// and `i32 → struct` promote a raw pointer back to a
+		// typed handle. The runtime layout is identical (lang
+		// ABI for arrays/strings is "value = data pointer,
+		// length prefix at base-4"; for structs, "value = base
+		// pointer, fields at constant offsets") — only the
+		// type-level view changes. Used by the prelude when a
+		// builtin returns a freshly allocated raw block that
+		// the caller wants to expose as a typed collection
+		// (`__array_append_string`'s rebuild loop) or as a
+		// wrapper struct (`map_new`'s Map handle).
 		if nt, ok := inner.(ast.NumberType); ok && nt.NormalWidth() == 32 {
-			if _, ok := n.Target.(ast.ArrayType); ok {
-				return n.Target
-			}
-			if _, ok := n.Target.(ast.StringType); ok {
+			switch n.Target.(type) {
+			case ast.ArrayType, ast.StringType, ast.StructType:
 				return n.Target
 			}
 		}
@@ -3155,6 +3155,17 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 			return ast.FloatType{Width: x.Width}
 		}
 	case *ast.Binary:
+		// Comparison ops (`==`, `!=`, `<`, `<=`, `>`, `>=`)
+		// stamp IntWidth / FloatWidth on the Binary node so
+		// codegen knows whether to emit `i32.eq` vs `i64.eq`
+		// vs `f32.eq` etc. — but their RESULT type is bool,
+		// not the operand width. Without this guard a
+		// `var b: boolean = a == b;` would re-type the rhs as
+		// the operand's NumberType and fail the assignment.
+		switch x.Op {
+		case "==", "!=", "<", "<=", ">", ">=":
+			return ast.BoolType{}
+		}
 		if x.IntWidth != 0 {
 			return ast.NumberType{Width: x.IntWidth, Signed: !x.IsUnsigned}
 		}

@@ -793,9 +793,15 @@ the lang's abstraction layers.
    like any builtin. Drives buffer-management code that
    doesn't yet have a clean lang-level shape — the
    remaining wat string methods (`to_lower`, `to_upper`,
-   `bytes`) migrated using these primitives in the next
-   PR; the Map runtime migration is the larger pending
-   consumer. Backends without bulk-memory (eg arm32 today)
+   `bytes`) migrated using these primitives, then the Map
+   runtime followed (~1184 wat lines → ~280 lang lines).
+   The map's `__method_Map_*` calls keep their type-rich
+   FuncSigs registrations (the language doesn't yet have
+   generic methods on a generic struct), with a codegen
+   alias that rewrites each call to its concrete `_impl`
+   counterpart in the prelude — same pattern as the
+   `__array_append_jsonvalue → __array_append_string`
+   alias. Backends without bulk-memory (eg arm32 today)
    trip an "unsupported" path during codegen; wat is the
    only consumer for now.
 

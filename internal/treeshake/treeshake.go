@@ -39,6 +39,26 @@ var watHelperDeps = map[string][]string{
 	// jsonvalue identifier, so explicitly pull the shared
 	// lang body in when only the jsonvalue alias is used.
 	"__array_append_jsonvalue": {"__array_append_string"},
+	// Map runtime: AST-level calls go through the
+	// type-rich `__method_Map_*` / `map_new` /
+	// `__method_MapIter_*` names; the prelude bodies live
+	// under `_impl` suffixes that the codegen alias rewrites
+	// to. Pull each impl in when its alias is referenced.
+	"map_new":                 {"map_new_impl"},
+	"__method_Map_len":        {"__map_len_impl"},
+	"__method_Map_has":        {"__map_has_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_get":        {"__map_get_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_get_or":     {"__map_get_or_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_set":        {"__map_set_impl", "__map_grow", "__map_hash"},
+	"__method_Map_delete":     {"__map_delete_impl", "__map_hash"},
+	"__method_Map_clear":      {"__map_clear_impl"},
+	"__method_Map_keys":       {"__map_keys_impl", "__map_column"},
+	"__method_Map_values":     {"__map_values_impl", "__map_column"},
+	"__method_Map_iter":       {"__map_iter_impl"},
+	"__method_MapIter_has_next": {"__mapiter_has_next_impl"},
+	"__method_MapIter_key":      {"__mapiter_key_impl", "__mapiter_entry_addr"},
+	"__method_MapIter_value":    {"__mapiter_value_impl", "__mapiter_entry_addr"},
+	"__method_MapIter_advance":  {"__mapiter_advance_impl"},
 }
 
 // Run mutates `prog.Funcs` to retain only functions reachable
@@ -257,6 +277,12 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 			walkExpr(f.Value, byName, enqueue)
 		}
 	case *ast.MapLit:
+		// IR lowers `Map { ... }` to map_new + a chain of
+		// __method_Map_set calls — pull both alias names so
+		// the codegen-emitted impls stay alive even when no
+		// AST Call references them directly.
+		enqueue("map_new")
+		enqueue("__method_Map_set")
 		for _, en := range x.Entries {
 			walkExpr(en.Key, byName, enqueue)
 			walkExpr(en.Value, byName, enqueue)

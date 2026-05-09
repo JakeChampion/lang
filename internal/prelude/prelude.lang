@@ -1383,3 +1383,358 @@ function json_parse(s: string): Option[JsonValue] {
     if (p.error != 0 || p.pos < len(p.s)) { return None; }
     return Some(v);
 }
+
+
+// === Generic Map[K, V] runtime ===
+//
+// Auto-injected `Map` (a single-field i32-wrapper struct
+// holding a kv-buffer pointer) plus its IndexMap-shaped
+// open-addressing core. The wat shims `__memcpy`, `__memset`,
+// `__alloc`, `__load_i32`, `__store_i32`, plus the slice /
+// struct ↔ i32 escape-hatch casts let the runtime live in
+// lang without sacrificing the byte-level layout the
+// existing test suite already pins down.
+//
+// Lang-side: declarations use `i32` for K / V because the
+// language doesn't yet have generic methods. The checker
+// keeps its existing generic FuncSigs registrations
+// (`(Map[K,V], K, V) → void` etc.) and the IR rewrites
+// `__method_Map_*` / `map_new` calls to these `_impl`
+// counterparts at codegen time — same shape as the
+// `__array_append_jsonvalue → __array_append_string` alias
+// in internal/codegen/wasm/wasm_ir.go.
+//
+// kv buffer layout (Map's `data` field points here):
+//
+//   +0   cap     : i32 — bucket count, power-of-2, ≥ 4
+//   +4   len     : i32 — live entry count
+//   +8   keyKind : i32 — 0 = i32-sized scalar, 1 = string
+//   +12  _pad    : i32 — reserved (future fingerprint metadata)
+//   +16  buckets : i32[cap]            (-1 empty, -2 tombstone)
+//   +16+cap*4  entries : (k,v)[cap]    8-byte (k:i32, v:i32) pairs
+//
+// Total: 16 + 12*cap bytes.
+
+function __map_pow2_ceil(n: i32): i32 {
+    if (n <= 4) { return 4; }
+    var p: i32 = 4;
+    while (p < n) {
+        if (p >= 1073741824) { return p; }   // saturate at 2^30
+        p = p << 1;
+    }
+    return p;
+}
+
+// Hash function:
+//   keyKind 0 (i32-sized scalar): Wang's integer mix.
+//   keyKind 1 (string)          : FNV-1a 32-bit over the bytes.
+// Both produce a 32-bit hash that callers mask down to
+// `cap - 1` (cap is power-of-2). The unsigned shifts go
+// through `as u32` because the lang's `>>` defaults to
+// `i32.shr_s` on i32 operands.
+function __map_hash(k: i32, keyKind: i32): i32 {
+    // Single shared `h` declaration so the wasm emitter
+    // (which names locals by their lang identifier) doesn't
+    // see a duplicate across the scalar / string branches.
+    var h: i32 = 0;
+    if (keyKind == 0) {
+        h = k ^ 61;
+        h = h ^ (((h as u32) >> (16 as u32)) as i32);
+        h = h + (h << 3);
+        h = h ^ (((h as u32) >> (4 as u32)) as i32);
+        h = h * 668265261;                      // 0x27d4eb2d
+        h = h ^ (((h as u32) >> (15 as u32)) as i32);
+        return h;
+    }
+    h = 0 - 2128831035;                         // 0x811c9dc5 sign-flipped
+    var s: string = k as string;
+    var sLen: i32 = len(s);
+    var i: i32 = 0;
+    while (i < sLen) {
+        h = h ^ s[i];
+        h = h * 16777619;                       // 0x01000193
+        i = i + 1;
+    }
+    return h;
+}
+
+function map_new_impl(cap_hint: i32, keyKind: i32): i32 {
+    var cap: i32 = __map_pow2_ceil(cap_hint);
+    var buf: i32 = __alloc(16 + 12 * cap);
+    __store_i32(buf,      cap);
+    __store_i32(buf + 4,  0);
+    __store_i32(buf + 8,  keyKind);
+    __store_i32(buf + 12, 0);
+    __memset(buf + 16, 255, cap * 4);            // buckets → all -1
+    var m: i32 = __alloc(4);
+    __store_i32(m, buf);
+    return m;
+}
+
+function __map_len_impl(m: i32): i32 {
+    var buf: i32 = __load_i32(m);
+    return __load_i32(buf + 4);
+}
+
+// __map_lookup returns the entry index of the matching key,
+// or -1 if not present. Linear probing over the bucket array,
+// skipping tombstones (which keep probing valid past
+// deletions).
+function __map_lookup(m: i32, k: i32): i32 {
+    var buf: i32 = __load_i32(m);
+    var cap: i32 = __load_i32(buf);
+    var keyKind: i32 = __load_i32(buf + 8);
+    var mask: i32 = cap - 1;
+    var entriesBase: i32 = buf + 16 + cap * 4;
+    var bucket: i32 = __map_hash(k, keyKind) & mask;
+    while (true) {
+        var b: i32 = __load_i32(buf + 16 + bucket * 4);
+        if (b == 0 - 1) { return 0 - 1; }
+        if (b != 0 - 2) {
+            var entryK: i32 = __load_i32(entriesBase + b * 8);
+            var eq: boolean = false;
+            if (keyKind == 0) {
+                eq = entryK == k;
+            } else {
+                eq = (entryK as string) == (k as string);
+            }
+            if (eq) { return b; }
+        }
+        bucket = (bucket + 1) & mask;
+    }
+    return 0 - 1;       // unreachable
+}
+
+function __map_has_impl(m: i32, k: i32): boolean {
+    return __map_lookup(m, k) != (0 - 1);
+}
+
+function __map_get_impl(m: i32, k: i32): Option[i32] {
+    var idx: i32 = __map_lookup(m, k);
+    if (idx == 0 - 1) { return None; }
+    var buf: i32 = __load_i32(m);
+    var cap: i32 = __load_i32(buf);
+    var entriesBase: i32 = buf + 16 + cap * 4;
+    return Some(__load_i32(entriesBase + idx * 8 + 4));
+}
+
+function __map_get_or_impl(m: i32, k: i32, fallback: i32): i32 {
+    var idx: i32 = __map_lookup(m, k);
+    if (idx == 0 - 1) { return fallback; }
+    var buf: i32 = __load_i32(m);
+    var cap: i32 = __load_i32(buf);
+    var entriesBase: i32 = buf + 16 + cap * 4;
+    return __load_i32(entriesBase + idx * 8 + 4);
+}
+
+// __map_grow doubles the kv buffer's capacity and re-hashes
+// every existing entry into the new bucket array. Updates
+// the wrapper's data ptr in place; returns the new buffer
+// for the inline caller. The bump allocator can't reclaim
+// the old buffer; that pays back when the arena resets at
+// scope exit.
+function __map_grow(m: i32): i32 {
+    var oldBuf: i32 = __load_i32(m);
+    var oldCap: i32 = __load_i32(oldBuf);
+    var oldLen: i32 = __load_i32(oldBuf + 4);
+    var oldKK:  i32 = __load_i32(oldBuf + 8);
+    var oldEntries: i32 = oldBuf + 16 + oldCap * 4;
+    var newCap: i32 = 4;
+    if (oldCap != 0) { newCap = oldCap << 1; }
+    var newMask: i32 = newCap - 1;
+    var newBuf: i32 = __alloc(16 + 12 * newCap);
+    __store_i32(newBuf,      newCap);
+    __store_i32(newBuf + 4,  oldLen);
+    __store_i32(newBuf + 8,  oldKK);
+    __store_i32(newBuf + 12, 0);
+    __memset(newBuf + 16, 255, newCap * 4);      // empty buckets
+    var newEntries: i32 = newBuf + 16 + newCap * 4;
+    var i: i32 = 0;
+    while (i < oldLen) {
+        var key: i32 = __load_i32(oldEntries + i * 8);
+        var val: i32 = __load_i32(oldEntries + i * 8 + 4);
+        __store_i32(newEntries + i * 8,     key);
+        __store_i32(newEntries + i * 8 + 4, val);
+        var bucket: i32 = __map_hash(key, oldKK) & newMask;
+        while (true) {
+            var b: i32 = __load_i32(newBuf + 16 + bucket * 4);
+            if (b == 0 - 1) {
+                __store_i32(newBuf + 16 + bucket * 4, i);
+                break;
+            }
+            bucket = (bucket + 1) & newMask;
+        }
+        i = i + 1;
+    }
+    __store_i32(m, newBuf);
+    return newBuf;
+}
+
+function __map_set_impl(m: i32, k: i32, v: i32) {
+    var buf: i32 = __load_i32(m);
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    // 75% load factor: trigger when (len + 1) * 4 >= cap * 3.
+    if ((len_ + 1) * 4 >= cap * 3) {
+        __map_grow(m);
+        buf = __load_i32(m);
+        cap = __load_i32(buf);
+        len_ = __load_i32(buf + 4);
+    }
+    var keyKind: i32 = __load_i32(buf + 8);
+    var mask: i32 = cap - 1;
+    var entriesBase: i32 = buf + 16 + cap * 4;
+    var bucket: i32 = __map_hash(k, keyKind) & mask;
+    var insertSlot: i32 = 0 - 1;
+    var done: boolean = false;
+    while (!done) {
+        var b: i32 = __load_i32(buf + 16 + bucket * 4);
+        if (b == 0 - 1) {
+            if (insertSlot == 0 - 1) { insertSlot = bucket; }
+            done = true;
+        } else if (b == 0 - 2) {
+            if (insertSlot == 0 - 1) { insertSlot = bucket; }
+            bucket = (bucket + 1) & mask;
+        } else {
+            var entryK: i32 = __load_i32(entriesBase + b * 8);
+            var eq: boolean = false;
+            if (keyKind == 0) {
+                eq = entryK == k;
+            } else {
+                eq = (entryK as string) == (k as string);
+            }
+            if (eq) {
+                __store_i32(entriesBase + b * 8 + 4, v);
+                return;
+            }
+            bucket = (bucket + 1) & mask;
+        }
+    }
+    // Append entry at index = len.
+    __store_i32(entriesBase + len_ * 8,     k);
+    __store_i32(entriesBase + len_ * 8 + 4, v);
+    __store_i32(buf + 16 + insertSlot * 4, len_);
+    __store_i32(buf + 4, len_ + 1);
+}
+
+// Snapshot keys / values into a freshly-allocated `i32[]`.
+// Insertion order preserved up to any deletions (which use
+// swap-with-last, reordering past the deleted slot). The
+// returned i32[] reinterprets cleanly as the caller-typed
+// `K[]` / `V[]` since both lower to a 4-byte-pointer-stride
+// owned array at the wasm level.
+function __map_column(m: i32, kvOffset: i32): i32 {
+    var buf: i32 = __load_i32(m);
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    var entriesBase: i32 = buf + 16 + cap * 4;
+    var arr: i32 = __alloc(4 + len_ * 4);
+    __store_i32(arr, len_);
+    var i: i32 = 0;
+    while (i < len_) {
+        var v: i32 = __load_i32(entriesBase + i * 8 + kvOffset);
+        __store_i32(arr + 4 + i * 4, v);
+        i = i + 1;
+    }
+    return arr + 4;
+}
+
+function __map_keys_impl(m: i32): i32 {
+    return __map_column(m, 0);
+}
+
+function __map_values_impl(m: i32): i32 {
+    return __map_column(m, 4);
+}
+
+function __map_delete_impl(m: i32, k: i32): boolean {
+    var buf: i32 = __load_i32(m);
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    var keyKind: i32 = __load_i32(buf + 8);
+    var mask: i32 = cap - 1;
+    var entriesBase: i32 = buf + 16 + cap * 4;
+    var bucket: i32 = __map_hash(k, keyKind) & mask;
+    var foundBucket: i32 = 0 - 1;
+    var idx: i32 = 0;
+    while (true) {
+        var b: i32 = __load_i32(buf + 16 + bucket * 4);
+        if (b == 0 - 1) { break; }
+        if (b != 0 - 2) {
+            var entryK: i32 = __load_i32(entriesBase + b * 8);
+            var eq: boolean = false;
+            if (keyKind == 0) {
+                eq = entryK == k;
+            } else {
+                eq = (entryK as string) == (k as string);
+            }
+            if (eq) {
+                foundBucket = bucket;
+                idx = b;
+                break;
+            }
+        }
+        bucket = (bucket + 1) & mask;
+    }
+    if (foundBucket == 0 - 1) { return false; }
+    // Tombstone the bucket so subsequent probes skip past it.
+    __store_i32(buf + 16 + foundBucket * 4, 0 - 2);
+    var last: i32 = len_ - 1;
+    if (idx != last) {
+        // Swap-with-last in the entries array, then patch the
+        // moved entry's bucket pointer to its new index. The
+        // last entry is alive (about to be removed) so the
+        // probe will hit it.
+        var lastKey: i32 = __load_i32(entriesBase + last * 8);
+        var lastBucket: i32 = __map_hash(lastKey, keyKind) & mask;
+        while (__load_i32(buf + 16 + lastBucket * 4) != last) {
+            lastBucket = (lastBucket + 1) & mask;
+        }
+        var lastVal: i32 = __load_i32(entriesBase + last * 8 + 4);
+        __store_i32(entriesBase + idx * 8,     lastKey);
+        __store_i32(entriesBase + idx * 8 + 4, lastVal);
+        __store_i32(buf + 16 + lastBucket * 4, idx);
+    }
+    __store_i32(buf + 4, last);
+    return true;
+}
+
+function __map_clear_impl(m: i32) {
+    var buf: i32 = __load_i32(m);
+    var cap: i32 = __load_i32(buf);
+    __store_i32(buf + 4, 0);
+    __memset(buf + 16, 255, cap * 4);
+}
+
+function __map_iter_impl(m: i32): i32 {
+    var it: i32 = __alloc(8);
+    __store_i32(it,     __load_i32(m));     // data ptr
+    __store_i32(it + 4, 0);                  // cursor
+    return it;
+}
+
+function __mapiter_has_next_impl(it: i32): boolean {
+    var buf: i32 = __load_i32(it);
+    var i: i32 = __load_i32(it + 4);
+    return i < __load_i32(buf + 4);
+}
+
+// Shared address arithmetic for MapIter.key() / .value().
+function __mapiter_entry_addr(it: i32): i32 {
+    var buf: i32 = __load_i32(it);
+    var cap: i32 = __load_i32(buf);
+    var i: i32 = __load_i32(it + 4);
+    return buf + 16 + cap * 4 + i * 8;
+}
+
+function __mapiter_key_impl(it: i32): i32 {
+    return __load_i32(__mapiter_entry_addr(it));
+}
+
+function __mapiter_value_impl(it: i32): i32 {
+    return __load_i32(__mapiter_entry_addr(it) + 4);
+}
+
+function __mapiter_advance_impl(it: i32) {
+    __store_i32(it + 4, __load_i32(it + 4) + 1);
+}
