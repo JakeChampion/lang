@@ -4151,62 +4151,204 @@ func (g *generator) emitStringMethodHelpers() {
 }
 
 // emitMapHelpers writes the runtime functions backing the
-// auto-injected `Map[i32, i32]` type (see
-// docs/LANGUAGE-DIRECTION.md PR 4). First-cut implementation
-// is fixed-capacity linear search; the IndexMap-shape with
-// fingerprint metadata + Wyhash + dynamic resize lands in a
-// follow-up.
+// auto-injected generic `Map[K, V]` (see PR 4 of
+// docs/LANGUAGE-DIRECTION.md). IndexMap shape: insertion-
+// ordered entries array + open-addressed bucket index.
 //
-// Map struct layout (a single i32 wrapper around a pointer):
+// Map struct layout (single-i32 wrapper):
 //
-//	+0  data: i32 (pointer to the kv buffer)
+//	+0  data: i32 — pointer to the kv buffer below
 //
-// Buffer layout (data points here):
+// kv buffer layout (data points here):
 //
-//	+0   cap : i32  — bucket capacity (fixed at construction)
-//	+4   len : i32  — current entry count
-//	+8   k0, v0, k1, v1, ...   — pairs of i32 (8 bytes each)
+//	+0   cap     : i32 — bucket count, power-of-2, ≥ 4
+//	+4   len     : i32 — live entry count
+//	+8   keyKind : i32 — 0 = i32-sized scalar, 1 = string
+//	+12  _pad    : i32 — reserved (future fingerprint metadata)
+//	+16  buckets : i32[cap]  — entry-index-or-sentinel array
+//	                          (-1 = empty, -2 = tombstone)
+//	+16+cap*4  entries : (k:i32, v:i32)[cap]
+//	                  — flat (key, value) pairs in insertion order
 //
-// Total buffer size: 8 + cap*8 bytes.
+// Total buffer size: 16 + 12*cap bytes.
+//
+// Operations:
+//   - lookup / has / get: hash key → probe bucket array,
+//     skipping tombstones, until we hit either the key
+//     (→ found) or an empty slot (→ not found). O(1) expected.
+//   - set: probe; on hit, update value in the entries slot;
+//     on miss, append entry, write its index into the
+//     terminating bucket (or first tombstone seen along the
+//     probe).
+//   - delete: probe; tombstone the bucket; swap-with-last in
+//     the entries array and patch the swapped entry's bucket
+//     to point at its new location. Trades insertion order
+//     past the deletion point for O(1) removal.
+//   - resize: when `(len + 1) * 4 ≥ cap * 3` (75% load
+//     factor), double cap and re-insert all entries.
+//
+// Hash function: Wang's integer mix for scalar keys, FNV-1a
+// 32-bit for string keys. Both produce a 32-bit hash that we
+// mask to `cap - 1` (cap is power-of-2). Wyhash-flavour upgrade
+// is straightforward once we want the better mixing
+// guarantees on adversarial inputs.
 func (g *generator) emitMapHelpers() {
-	// Buffer layout for the auto-injected generic Map[K, V]:
-	//
-	//   [0]  cap     : i32   — bucket capacity
-	//   [4]  len     : i32   — current entry count
-	//   [8]  keyKind : i32   — 0 = i32-sized scalar, 1 = string
-	//   [12] k0, v0, k1, v1, ... — pairs of i32 (8 bytes each)
-	//
-	// The wrapper struct stays single-i32 (`{data: i32}`); all
-	// per-instance state lives in the buffer header so methods
-	// can dispatch on keyKind without ABI changes.
-	const headerBytes = 12
+	const (
+		emptyBucket = -1
+		tombstone   = -2
+	)
 
-	// $map_new(cap, keyKind): allocate the wrapper + buffer,
-	// write cap / len(=0) / keyKind, return the wrapper pointer.
-	g.line(`(func $map_new (param $cap i32) (param $keyKind i32) (result i32)`)
+	// $__map_pow2_ceil(n): i32 — round n up to the next
+	// power-of-2, clamped to a minimum of 4.
+	g.line(`(func $__map_pow2_ceil (param $n i32) (result i32)`)
 	g.indent++
-	g.line(`(local $buf i32) (local $m i32)`)
-	// buf = alloc(12 + cap*8)
-	g.line(`local.get $cap`)
-	g.line(`i32.const 8`)
+	g.line(`local.get $n`)
+	g.line(`i32.const 4`)
+	g.line(`i32.le_s`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 4`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// 1 << (32 - clz(n - 1))
+	g.line(`i32.const 1`)
+	g.line(`i32.const 32`)
+	g.line(`local.get $n`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`i32.clz`)
+	g.line(`i32.sub`)
+	g.line(`i32.shl`)
+	g.indent--
+	g.line(`)`)
+
+	// $__map_hash(k, keyKind): i32 — Wang's integer mix for
+	// scalar keys, FNV-1a 32-bit for string keys. Both produce
+	// a 32-bit hash that callers mask down to `cap - 1`.
+	g.line(`(func $__map_hash (param $k i32) (param $keyKind i32) (result i32)`)
+	g.indent++
+	g.line(`(local $h i32) (local $i i32) (local $sLen i32)`)
+	g.line(`local.get $keyKind`)
+	g.line(`i32.eqz`)
+	g.line(`if (result i32)`)
+	g.indent++
+	// Wang's integer mix.
+	g.line(`local.get $k`)
+	g.line(`i32.const 61`)
+	g.line(`i32.xor`)
+	g.line(`local.tee $h`)
+	g.line(`i32.const 16`)
+	g.line(`i32.shr_u`)
+	g.line(`local.get $h`)
+	g.line(`i32.xor`)
+	g.line(`local.set $h`)
+	g.line(`local.get $h`)
+	g.line(`local.get $h`)
+	g.line(`i32.const 3`)
+	g.line(`i32.shl`)
+	g.line(`i32.add`)
+	g.line(`local.set $h`)
+	g.line(`local.get $h`)
+	g.line(`local.get $h`)
+	g.line(`i32.const 4`)
+	g.line(`i32.shr_u`)
+	g.line(`i32.xor`)
+	g.line(`i32.const 0x27d4eb2d`)
 	g.line(`i32.mul`)
-	g.linef(`i32.const %d`, headerBytes)
+	g.line(`local.set $h`)
+	g.line(`local.get $h`)
+	g.line(`local.get $h`)
+	g.line(`i32.const 15`)
+	g.line(`i32.shr_u`)
+	g.line(`i32.xor`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// FNV-1a 32-bit. h = 0x811c9dc5; for each byte b in k:
+	//   h = (h ^ b) * 0x01000193.
+	g.line(`i32.const 0x811c9dc5`)
+	g.line(`local.set $h`)
+	g.line(`local.get $k`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.ge_s`)
+	g.line(`br_if $break`)
+	g.line(`local.get $h`)
+	g.line(`local.get $k`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.xor`)
+	g.line(`i32.const 0x01000193`)
+	g.line(`i32.mul`)
+	g.line(`local.set $h`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $h`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`)`)
+
+	// $map_new(cap_hint, keyKind): allocate the wrapper and a
+	// kv buffer with `cap = max(4, pow2_ceil(cap_hint))`,
+	// initialise the bucket array to all-empty (`-1`, written
+	// as 0xFF byte fills via memory.fill).
+	g.line(`(func $map_new (param $cap_hint i32) (param $keyKind i32) (result i32)`)
+	g.indent++
+	g.line(`(local $cap i32) (local $buf i32) (local $m i32)`)
+	g.line(`local.get $cap_hint`)
+	g.line(`call $__map_pow2_ceil`)
+	g.line(`local.set $cap`)
+	// buf = alloc(16 + 12*cap)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 12`)
+	g.line(`i32.mul`)
+	g.line(`i32.const 16`)
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $buf`)
-	// buf[0] = cap
+	// header
 	g.line(`local.get $buf`)
 	g.line(`local.get $cap`)
 	g.line(`i32.store`)
-	// buf[4] = 0 (len)
 	g.line(`local.get $buf`)
 	g.line(`i32.const 0`)
 	g.line(`i32.store offset=4`)
-	// buf[8] = keyKind
 	g.line(`local.get $buf`)
 	g.line(`local.get $keyKind`)
 	g.line(`i32.store offset=8`)
-	// m = alloc(4); m[0] = buf
+	g.line(`local.get $buf`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store offset=12`)
+	// memory.fill(buf+16, 0xFF, cap*4) → buckets all `-1`
+	g.line(`local.get $buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`i32.const 255`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`memory.fill`)
+	// wrap: m = alloc(4); m[0] = buf
 	g.line(`i32.const 4`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $m`)
@@ -4216,7 +4358,7 @@ func (g *generator) emitMapHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// $__method_Map_len: load buf, read buf[4].
+	// $__method_Map_len(m): i32 — header field at buf[4].
 	g.line(`(func $__method_Map_len (param $m i32) (result i32)`)
 	g.indent++
 	g.line(`local.get $m`)
@@ -4225,42 +4367,76 @@ func (g *generator) emitMapHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// $__map_find: returns the index of the first entry with
-	// a matching key, or -1 if none. The comparison branches
-	// on `buf[8]` (keyKind): 0 = i32-eq for scalar keys,
-	// 1 = byte-level string equality via $__str_eq.
-	g.line(`(func $__map_find (param $m i32) (param $k i32) (result i32)`)
+	// $__map_lookup(m, k): i32 — returns the entry index of
+	// the matching key, or `-1` if not present. Linear probing
+	// over the bucket array, skipping tombstones (which keep
+	// probing valid past deletions).
+	g.line(`(func $__map_lookup (param $m i32) (param $k i32) (result i32)`)
 	g.indent++
-	g.line(`(local $buf i32) (local $i i32) (local $len i32)`)
-	g.line(`(local $keyKind i32) (local $entryK i32) (local $eq i32)`)
+	g.line(`(local $buf i32) (local $cap i32) (local $keyKind i32)`)
+	g.line(`(local $mask i32) (local $bucket i32) (local $b i32)`)
+	g.line(`(local $entriesBase i32) (local $entryK i32) (local $eq i32)`)
 	g.line(`local.get $m`)
 	g.line(`i32.load`)
 	g.line(`local.tee $buf`)
-	g.line(`i32.load offset=4`) // len
-	g.line(`local.set $len`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
 	g.line(`local.get $buf`)
-	g.line(`i32.load offset=8`) // keyKind
+	g.line(`i32.load offset=8`)
 	g.line(`local.set $keyKind`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $i`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.set $mask`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $entriesBase`)
+	g.line(`local.get $k`)
+	g.line(`local.get $keyKind`)
+	g.line(`call $__map_hash`)
+	g.line(`local.get $mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $bucket`)
 	g.line(`block $break`)
 	g.indent++
 	g.line(`loop $loop`)
 	g.indent++
-	// if i >= len: break
-	g.line(`local.get $i`)
-	g.line(`local.get $len`)
-	g.line(`i32.ge_s`)
-	g.line(`br_if $break`)
-	// entryK = buf[12 + i*8]
+	// b = buckets[bucket]
 	g.line(`local.get $buf`)
-	g.line(`local.get $i`)
+	g.line(`local.get $bucket`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=16`)
+	g.line(`local.set $b`)
+	// empty → not found
+	g.line(`local.get $b`)
+	g.line(`i32.const -1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const -1`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// not tombstone → compare keys
+	g.line(`local.get $b`)
+	g.line(`i32.const -2`)
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $b`)
 	g.line(`i32.const 8`)
 	g.line(`i32.mul`)
 	g.line(`i32.add`)
-	g.line(`i32.load offset=12`)
+	g.line(`i32.load`)
 	g.line(`local.set $entryK`)
-	// eq = (keyKind == 0) ? entryK == k : __str_eq(entryK, k)
 	g.line(`local.get $keyKind`)
 	g.line(`i32.eqz`)
 	g.line(`if (result i32)`)
@@ -4280,15 +4456,19 @@ func (g *generator) emitMapHelpers() {
 	g.line(`local.get $eq`)
 	g.line(`if`)
 	g.indent++
-	g.line(`local.get $i`)
+	g.line(`local.get $b`)
 	g.line(`return`)
 	g.indent--
 	g.line(`end`)
-	// i++
-	g.line(`local.get $i`)
+	g.indent--
+	g.line(`end`)
+	// bucket = (bucket + 1) & mask
+	g.line(`local.get $bucket`)
 	g.line(`i32.const 1`)
 	g.line(`i32.add`)
-	g.line(`local.set $i`)
+	g.line(`local.get $mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $bucket`)
 	g.line(`br $loop`)
 	g.indent--
 	g.line(`end`)
@@ -4298,31 +4478,31 @@ func (g *generator) emitMapHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// $__method_Map_has: find != -1 → true.
+	// $__method_Map_has(m, k): bool
 	g.line(`(func $__method_Map_has (param $m i32) (param $k i32) (result i32)`)
 	g.indent++
 	g.line(`local.get $m`)
 	g.line(`local.get $k`)
-	g.line(`call $__map_find`)
+	g.line(`call $__map_lookup`)
 	g.line(`i32.const -1`)
 	g.line(`i32.ne`)
 	g.indent--
 	g.line(`)`)
 
-	// $__method_Map_get: find → idx; if -1 return None, else
-	// return Some(buf[12 + idx*8 + 4]).
+	// $__method_Map_get(m, k): Option[V]
 	g.line(`(func $__method_Map_get (param $m i32) (param $k i32) (result i32)`)
 	g.indent++
-	g.line(`(local $idx i32) (local $opt i32) (local $buf i32)`)
+	g.line(`(local $idx i32) (local $opt i32) (local $buf i32) (local $cap i32)`)
+	g.line(`(local $entriesBase i32)`)
 	g.line(`local.get $m`)
 	g.line(`local.get $k`)
-	g.line(`call $__map_find`)
-	g.line(`local.tee $idx`)
+	g.line(`call $__map_lookup`)
+	g.line(`local.set $idx`)
+	g.line(`local.get $idx`)
 	g.line(`i32.const -1`)
 	g.line(`i32.eq`)
 	g.line(`if`)
 	g.indent++
-	// None: alloc 4 bytes, store tag=1.
 	g.line(`i32.const 4`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $opt`)
@@ -4332,41 +4512,248 @@ func (g *generator) emitMapHelpers() {
 	g.line(`return`)
 	g.indent--
 	g.line(`end`)
-	// Some(value): alloc 8 bytes, tag=0 at +0, value at +4.
+	// Some(v): alloc 8, tag=0, value at +4.
 	g.line(`i32.const 8`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $opt`)
 	g.line(`local.get $opt`)
 	g.line(`i32.const 0`)
 	g.line(`i32.store`)
-	g.line(`local.get $opt`)
-	// value = buf[12 + idx*8 + 4]
 	g.line(`local.get $m`)
 	g.line(`i32.load`)
 	g.line(`local.tee $buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $entriesBase`)
+	g.line(`local.get $opt`)
+	g.line(`local.get $entriesBase`)
 	g.line(`local.get $idx`)
 	g.line(`i32.const 8`)
 	g.line(`i32.mul`)
 	g.line(`i32.add`)
-	g.line(`i32.load offset=16`) // 12 (header) + 4 (skip key) = 16
+	g.line(`i32.load offset=4`)
 	g.line(`i32.store offset=4`)
 	g.line(`local.get $opt`)
 	g.indent--
 	g.line(`)`)
 
-	// $__map_grow: allocate a new buffer with 2× capacity (or
-	// 4 if the current cap is 0), copy the existing k/v pairs
-	// over, rewrite the Map wrapper's data pointer to point at
-	// the new buffer, and return the new buffer's address. The
-	// caller is responsible for re-reading cap / buf locals
-	// after the call — the bump allocator can't reclaim the
-	// old buffer, but no other state references it once the
-	// wrapper has been updated.
+	// $__method_Map_set(m, k, v): probe; on hit update value
+	// in-place; on miss append entry + write its index into
+	// the terminating bucket (or first tombstone seen along
+	// the probe). Resize first when the next insert would
+	// push past the 75% load factor.
+	g.line(`(func $__method_Map_set (param $m i32) (param $k i32) (param $v i32)`)
+	g.indent++
+	g.line(`(local $buf i32) (local $cap i32) (local $len i32)`)
+	g.line(`(local $keyKind i32) (local $mask i32)`)
+	g.line(`(local $bucket i32) (local $b i32) (local $insertSlot i32)`)
+	g.line(`(local $entriesBase i32) (local $entryK i32) (local $eq i32)`)
+	// Resize check: (len + 1) * 4 >= cap * 3 ?
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.tee $buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load offset=4`)
+	g.line(`local.set $len`)
+	g.line(`local.get $len`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 3`)
+	g.line(`i32.mul`)
+	g.line(`i32.ge_s`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $m`)
+	g.line(`call $__map_grow`)
+	g.line(`drop`)
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.tee $buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load offset=4`)
+	g.line(`local.set $len`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load offset=8`)
+	g.line(`local.set $keyKind`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.set $mask`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $entriesBase`)
+	g.line(`local.get $k`)
+	g.line(`local.get $keyKind`)
+	g.line(`call $__map_hash`)
+	g.line(`local.get $mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $bucket`)
+	g.line(`i32.const -1`)
+	g.line(`local.set $insertSlot`)
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`local.get $bucket`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=16`)
+	g.line(`local.set $b`)
+	// empty → done probing; insert here (or earlier tomb).
+	g.line(`local.get $b`)
+	g.line(`i32.const -1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $insertSlot`)
+	g.line(`i32.const -1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $bucket`)
+	g.line(`local.set $insertSlot`)
+	g.indent--
+	g.line(`end`)
+	g.line(`br $break`)
+	g.indent--
+	g.line(`end`)
+	// tombstone → record first; keep probing.
+	g.line(`local.get $b`)
+	g.line(`i32.const -2`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $insertSlot`)
+	g.line(`i32.const -1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $bucket`)
+	g.line(`local.set $insertSlot`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// alive entry → compare keys.
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $entryK`)
+	g.line(`local.get $keyKind`)
+	g.line(`i32.eqz`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`local.get $entryK`)
+	g.line(`local.get $k`)
+	g.line(`i32.eq`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $entryK`)
+	g.line(`local.get $k`)
+	g.line(`call $__str_eq`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.set $eq`)
+	g.line(`local.get $eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $v`)
+	g.line(`i32.store offset=4`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $bucket`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.get $mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $bucket`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Append entry at index = len.
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $len`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $k`)
+	g.line(`i32.store`)
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $len`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $v`)
+	g.line(`i32.store offset=4`)
+	// buckets[insertSlot] = len
+	g.line(`local.get $buf`)
+	g.line(`local.get $insertSlot`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $len`)
+	g.line(`i32.store offset=16`)
+	// len = len + 1
+	g.line(`local.get $buf`)
+	g.line(`local.get $len`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`i32.store offset=4`)
+	g.indent--
+	g.line(`)`)
+
+	// $__map_grow: double capacity, allocate fresh buffer,
+	// re-hash + re-insert each existing entry into the new
+	// bucket array. Returns the new buffer pointer; the
+	// wrapper is updated in place. The bump allocator can't
+	// reclaim the old buffer; that pays back when the arena
+	// resets at scope exit.
 	g.line(`(func $__map_grow (param $m i32) (result i32)`)
 	g.indent++
 	g.line(`(local $old_buf i32) (local $old_cap i32) (local $old_len i32)`)
-	g.line(`(local $old_kk i32)`)
-	g.line(`(local $new_buf i32) (local $new_cap i32) (local $i i32)`)
+	g.line(`(local $old_kk i32) (local $old_entries i32)`)
+	g.line(`(local $new_buf i32) (local $new_cap i32) (local $new_mask i32)`)
+	g.line(`(local $new_entries i32)`)
+	g.line(`(local $i i32) (local $key i32) (local $val i32)`)
+	g.line(`(local $bucket i32) (local $b i32)`)
 	g.line(`local.get $m`)
 	g.line(`i32.load`)
 	g.line(`local.tee $old_buf`)
@@ -4378,7 +4765,14 @@ func (g *generator) emitMapHelpers() {
 	g.line(`local.get $old_buf`)
 	g.line(`i32.load offset=8`)
 	g.line(`local.set $old_kk`)
-	// new_cap = old_cap == 0 ? 4 : old_cap * 2
+	g.line(`local.get $old_buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $old_cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $old_entries`)
 	g.line(`local.get $old_cap`)
 	g.line(`i32.eqz`)
 	g.line(`if (result i32)`)
@@ -4393,12 +4787,14 @@ func (g *generator) emitMapHelpers() {
 	g.indent--
 	g.line(`end`)
 	g.line(`local.set $new_cap`)
-	// new_buf = alloc(12 + new_cap*8); new_buf[0..12] = new
-	// header (cap, old_len, old_kk).
 	g.line(`local.get $new_cap`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.set $new_mask`)
+	g.line(`local.get $new_cap`)
 	g.line(`i32.const 12`)
+	g.line(`i32.mul`)
+	g.line(`i32.const 16`)
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $new_buf`)
@@ -4411,8 +4807,28 @@ func (g *generator) emitMapHelpers() {
 	g.line(`local.get $new_buf`)
 	g.line(`local.get $old_kk`)
 	g.line(`i32.store offset=8`)
-	// Copy each entry from offset 12+i*8 to 12+i*8 in the new
-	// buffer.
+	g.line(`local.get $new_buf`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store offset=12`)
+	// Reset bucket array to empty.
+	g.line(`local.get $new_buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`i32.const 255`)
+	g.line(`local.get $new_cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`memory.fill`)
+	g.line(`local.get $new_buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $new_cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $new_entries`)
+	// For each old entry, copy to new entries[i] and probe
+	// the new bucket array for an empty slot.
 	g.line(`i32.const 0`)
 	g.line(`local.set $i`)
 	g.line(`block $break`)
@@ -4423,32 +4839,77 @@ func (g *generator) emitMapHelpers() {
 	g.line(`local.get $old_len`)
 	g.line(`i32.ge_s`)
 	g.line(`br_if $break`)
-	// key
+	g.line(`local.get $old_entries`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $key`)
+	g.line(`local.get $old_entries`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=4`)
+	g.line(`local.set $val`)
+	g.line(`local.get $new_entries`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $key`)
+	g.line(`i32.store`)
+	g.line(`local.get $new_entries`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $val`)
+	g.line(`i32.store offset=4`)
+	g.line(`local.get $key`)
+	g.line(`local.get $old_kk`)
+	g.line(`call $__map_hash`)
+	g.line(`local.get $new_mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $bucket`)
+	g.line(`block $insertBreak`)
+	g.indent++
+	g.line(`loop $insertLoop`)
+	g.indent++
 	g.line(`local.get $new_buf`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`local.get $old_buf`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`i32.load offset=12`)
-	g.line(`i32.store offset=12`)
-	// value
-	g.line(`local.get $new_buf`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`local.get $old_buf`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 8`)
+	g.line(`local.get $bucket`)
+	g.line(`i32.const 4`)
 	g.line(`i32.mul`)
 	g.line(`i32.add`)
 	g.line(`i32.load offset=16`)
+	g.line(`local.set $b`)
+	g.line(`local.get $b`)
+	g.line(`i32.const -1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $new_buf`)
+	g.line(`local.get $bucket`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $i`)
 	g.line(`i32.store offset=16`)
+	g.line(`br $insertBreak`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $bucket`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.get $new_mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $bucket`)
+	g.line(`br $insertLoop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
 	g.line(`local.get $i`)
 	g.line(`i32.const 1`)
 	g.line(`i32.add`)
@@ -4458,7 +4919,6 @@ func (g *generator) emitMapHelpers() {
 	g.line(`end`)
 	g.indent--
 	g.line(`end`)
-	// m[0] = new_buf
 	g.line(`local.get $m`)
 	g.line(`local.get $new_buf`)
 	g.line(`i32.store`)
@@ -4466,97 +4926,31 @@ func (g *generator) emitMapHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// $__method_Map_set: find → idx; if -1, append; else
-	// update buf[8+idx*8+4] = v. On overflow (len == cap),
-	// $__map_grow doubles the buffer and rewrites m[0] before
-	// the insert continues. No return value.
-	g.line(`(func $__method_Map_set (param $m i32) (param $k i32) (param $v i32)`)
-	g.indent++
-	g.line(`(local $idx i32) (local $buf i32) (local $len i32) (local $cap i32) (local $entry i32)`)
-	g.line(`local.get $m`)
-	g.line(`local.get $k`)
-	g.line(`call $__map_find`)
-	g.line(`local.set $idx`)
-	g.line(`local.get $m`)
-	g.line(`i32.load`)
-	g.line(`local.set $buf`)
-	g.line(`local.get $idx`)
-	g.line(`i32.const -1`)
-	g.line(`i32.ne`)
-	g.line(`if`)
-	g.indent++
-	// Update existing: buf[12 + idx*8 + 4] = v
-	g.line(`local.get $buf`)
-	g.line(`local.get $idx`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`local.get $v`)
-	g.line(`i32.store offset=16`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-	// Insert: check capacity, grow if full, then write k+v.
-	g.line(`local.get $buf`)
-	g.line(`i32.load`) // cap
-	g.line(`local.set $cap`)
-	g.line(`local.get $buf`)
-	g.line(`i32.load offset=4`) // len
-	g.line(`local.set $len`)
-	g.line(`local.get $len`)
-	g.line(`local.get $cap`)
-	g.line(`i32.ge_s`)
-	g.line(`if`)
-	g.indent++
-	g.line(`local.get $m`)
-	g.line(`call $__map_grow`)
-	g.line(`local.set $buf`)
-	g.line(`local.get $buf`)
-	g.line(`i32.load`)
-	g.line(`local.set $cap`)
-	g.indent--
-	g.line(`end`)
-	// entry_addr = buf + 12 + len*8 (well, base = buf, then
-	// store at offset 12 / 16)
-	g.line(`local.get $buf`)
-	g.line(`local.get $len`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`local.tee $entry`)
-	g.line(`local.get $k`)
-	g.line(`i32.store offset=12`)
-	g.line(`local.get $entry`)
-	g.line(`local.get $v`)
-	g.line(`i32.store offset=16`)
-	// buf[4] = len + 1
-	g.line(`local.get $buf`)
-	g.line(`local.get $len`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`i32.store offset=4`)
-	g.indent--
-	g.line(`)`)
-
-	// $__method_Map_keys / $__method_Map_values: allocate a
-	// length-prefixed i32 array of size len, copy the
-	// corresponding column out of the kv buffer in insertion
-	// order, return the content pointer (caller sees the
-	// array's data area, not the length prefix). The result is
-	// a snapshot — mutating the map afterwards doesn't affect
-	// the returned array. Same shape as a regular `i32[]`
-	// literal so `len()` / indexing / `for…in` patterns work
-	// unchanged.
-	emitMapColumn := func(funcName string, kvOffset int) {
-		g.linef(`(func %s (param $m i32) (result i32)`, funcName)
+	// $__method_Map_keys / $__method_Map_values: snapshot one
+	// column of the entries array into a freshly-allocated
+	// length-prefixed `i32[]`. Insertion order preserved up to
+	// any deletions (which use swap-with-last).
+	emitMapColumn := func(name string, kvOffset int) {
+		g.linef(`(func %s (param $m i32) (result i32)`, name)
 		g.indent++
-		g.line(`(local $buf i32) (local $len i32) (local $arr i32) (local $i i32)`)
+		g.line(`(local $buf i32) (local $cap i32) (local $len i32)`)
+		g.line(`(local $arr i32) (local $entriesBase i32) (local $i i32)`)
 		g.line(`local.get $m`)
 		g.line(`i32.load`)
 		g.line(`local.tee $buf`)
+		g.line(`i32.load`)
+		g.line(`local.set $cap`)
+		g.line(`local.get $buf`)
 		g.line(`i32.load offset=4`)
 		g.line(`local.set $len`)
-		// arr = alloc(4 + len*4); arr[0] = len
+		g.line(`local.get $buf`)
+		g.line(`i32.const 16`)
+		g.line(`i32.add`)
+		g.line(`local.get $cap`)
+		g.line(`i32.const 4`)
+		g.line(`i32.mul`)
+		g.line(`i32.add`)
+		g.line(`local.set $entriesBase`)
 		g.line(`local.get $len`)
 		g.line(`i32.const 4`)
 		g.line(`i32.mul`)
@@ -4566,7 +4960,6 @@ func (g *generator) emitMapHelpers() {
 		g.line(`local.tee $arr`)
 		g.line(`local.get $len`)
 		g.line(`i32.store`)
-		// for i in 0..len: arr[4 + i*4] = buf[12 + i*8 + kvOffset]
 		g.line(`i32.const 0`)
 		g.line(`local.set $i`)
 		g.line(`block $break`)
@@ -4577,19 +4970,17 @@ func (g *generator) emitMapHelpers() {
 		g.line(`local.get $len`)
 		g.line(`i32.ge_s`)
 		g.line(`br_if $break`)
-		// arr + 4 + i*4
 		g.line(`local.get $arr`)
 		g.line(`local.get $i`)
 		g.line(`i32.const 4`)
 		g.line(`i32.mul`)
 		g.line(`i32.add`)
-		// buf + 12 + i*8 (load offset=kvOffset+12)
-		g.line(`local.get $buf`)
+		g.line(`local.get $entriesBase`)
 		g.line(`local.get $i`)
 		g.line(`i32.const 8`)
 		g.line(`i32.mul`)
 		g.line(`i32.add`)
-		g.linef(`i32.load offset=%d`, 12+kvOffset)
+		g.linef(`i32.load offset=%d`, kvOffset)
 		g.line(`i32.store offset=4`)
 		g.line(`local.get $i`)
 		g.line(`i32.const 1`)
@@ -4600,7 +4991,6 @@ func (g *generator) emitMapHelpers() {
 		g.line(`end`)
 		g.indent--
 		g.line(`end`)
-		// Return content ptr (skip the length prefix).
 		g.line(`local.get $arr`)
 		g.line(`i32.const 4`)
 		g.line(`i32.add`)
@@ -4610,18 +5000,117 @@ func (g *generator) emitMapHelpers() {
 	emitMapColumn("$__method_Map_keys", 0)
 	emitMapColumn("$__method_Map_values", 4)
 
-	// $__method_Map_delete: linear search for k. If found,
-	// swap the last entry into the matched slot (O(1)) and
-	// decrement len; return true. Else return false. Trades
-	// insertion order for speed — callers that need stable
-	// ordering can rebuild via keys() / values() snapshots.
+	// $__method_Map_delete(m, k): bool — probe to find key.
+	// On hit: tombstone the bucket; if the entry isn't the
+	// last in the entries array, swap-with-last and patch the
+	// swapped entry's bucket pointer to the deleted slot's
+	// index. Returns true. On miss, returns false.
 	g.line(`(func $__method_Map_delete (param $m i32) (param $k i32) (result i32)`)
 	g.indent++
-	g.line(`(local $idx i32) (local $buf i32) (local $last i32)`)
+	g.line(`(local $buf i32) (local $cap i32) (local $len i32)`)
+	g.line(`(local $keyKind i32) (local $mask i32)`)
+	g.line(`(local $bucket i32) (local $b i32)`)
+	g.line(`(local $entriesBase i32) (local $entryK i32) (local $eq i32)`)
+	g.line(`(local $foundBucket i32) (local $idx i32) (local $last i32)`)
+	g.line(`(local $lastKey i32) (local $lastBucket i32)`)
 	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.tee $buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load offset=4`)
+	g.line(`local.set $len`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load offset=8`)
+	g.line(`local.set $keyKind`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.set $mask`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $entriesBase`)
 	g.line(`local.get $k`)
-	g.line(`call $__map_find`)
-	g.line(`local.tee $idx`)
+	g.line(`local.get $keyKind`)
+	g.line(`call $__map_hash`)
+	g.line(`local.get $mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $bucket`)
+	g.line(`i32.const -1`)
+	g.line(`local.set $foundBucket`)
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`local.get $bucket`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=16`)
+	g.line(`local.set $b`)
+	g.line(`local.get $b`)
+	g.line(`i32.const -1`)
+	g.line(`i32.eq`)
+	g.line(`br_if $break`)
+	g.line(`local.get $b`)
+	g.line(`i32.const -2`)
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $entryK`)
+	g.line(`local.get $keyKind`)
+	g.line(`i32.eqz`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`local.get $entryK`)
+	g.line(`local.get $k`)
+	g.line(`i32.eq`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $entryK`)
+	g.line(`local.get $k`)
+	g.line(`call $__str_eq`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.set $eq`)
+	g.line(`local.get $eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $bucket`)
+	g.line(`local.set $foundBucket`)
+	g.line(`local.get $b`)
+	g.line(`local.set $idx`)
+	g.line(`br $break`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $bucket`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.get $mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $bucket`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $foundBucket`)
 	g.line(`i32.const -1`)
 	g.line(`i32.eq`)
 	g.line(`if`)
@@ -4630,49 +5119,99 @@ func (g *generator) emitMapHelpers() {
 	g.line(`return`)
 	g.indent--
 	g.line(`end`)
-	g.line(`local.get $m`)
-	g.line(`i32.load`)
-	g.line(`local.set $buf`)
+	// Tombstone the bucket.
 	g.line(`local.get $buf`)
-	g.line(`i32.load offset=4`)
+	g.line(`local.get $foundBucket`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.const -2`)
+	g.line(`i32.store offset=16`)
+	g.line(`local.get $len`)
 	g.line(`i32.const 1`)
 	g.line(`i32.sub`)
 	g.line(`local.set $last`)
-	// If idx != last, copy buf[last] over buf[idx].
 	g.line(`local.get $idx`)
 	g.line(`local.get $last`)
 	g.line(`i32.ne`)
 	g.line(`if`)
 	g.indent++
-	// buf + 12 + idx*8 = buf + 12 + last*8 (key)
-	g.line(`local.get $buf`)
-	g.line(`local.get $idx`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`local.get $buf`)
+	// Find the last entry's bucket so we can patch it after
+	// the swap. The last entry is alive (about to be removed
+	// from the array) so the probe will hit it.
+	g.line(`local.get $entriesBase`)
 	g.line(`local.get $last`)
 	g.line(`i32.const 8`)
 	g.line(`i32.mul`)
 	g.line(`i32.add`)
-	g.line(`i32.load offset=12`)
-	g.line(`i32.store offset=12`)
-	// And value at +16
+	g.line(`i32.load`)
+	g.line(`local.set $lastKey`)
+	g.line(`local.get $lastKey`)
+	g.line(`local.get $keyKind`)
+	g.line(`call $__map_hash`)
+	g.line(`local.get $mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $lastBucket`)
+	g.line(`block $lastBreak`)
+	g.indent++
+	g.line(`loop $lastLoop`)
+	g.indent++
 	g.line(`local.get $buf`)
-	g.line(`local.get $idx`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`local.get $buf`)
-	g.line(`local.get $last`)
-	g.line(`i32.const 8`)
+	g.line(`local.get $lastBucket`)
+	g.line(`i32.const 4`)
 	g.line(`i32.mul`)
 	g.line(`i32.add`)
 	g.line(`i32.load offset=16`)
+	g.line(`local.get $last`)
+	g.line(`i32.eq`)
+	g.line(`br_if $lastBreak`)
+	g.line(`local.get $lastBucket`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.get $mask`)
+	g.line(`i32.and`)
+	g.line(`local.set $lastBucket`)
+	g.line(`br $lastLoop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Move entries[last] → entries[idx].
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $idx`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $last`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $idx`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $last`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=4`)
+	g.line(`i32.store offset=4`)
+	// buckets[lastBucket] = idx (point at the moved entry).
+	g.line(`local.get $buf`)
+	g.line(`local.get $lastBucket`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $idx`)
 	g.line(`i32.store offset=16`)
 	g.indent--
 	g.line(`end`)
-	// buf[4] = last (i.e. len - 1)
+	// len = last (i.e. len - 1)
 	g.line(`local.get $buf`)
 	g.line(`local.get $last`)
 	g.line(`i32.store offset=4`)

@@ -1360,6 +1360,133 @@ func TestWASMMapStringStringValues(t *testing.T) {
 	}
 }
 
+// Stress-test the IndexMap probe + resize machinery: insert
+// 100 entries (more than fits in any single resize step),
+// look each one back up, delete every other entry, verify
+// the surviving keys still look up correctly. Exercises
+// linear probing on hash collisions (Wang-mix for i32 won't
+// avoid them at scale), resize-on-load-factor, and
+// tombstone handling on delete.
+func TestWASMMapHashStress(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    var i: i32 = 0;
+    while (i < 100) {
+        m.set(i, i * 7 + 1);
+        i = i + 1;
+    }
+    if (m.len() != 100) { return 1; }
+    // Verify every insert is reachable.
+    var j: i32 = 0;
+    while (j < 100) {
+        if let Some(v) = m.get(j) {
+            if (v != j * 7 + 1) { return 100 + j; }
+        } else {
+            return 200 + j;
+        }
+        j = j + 1;
+    }
+    // Update every entry's value.
+    var k: i32 = 0;
+    while (k < 100) {
+        m.set(k, k * 11 + 2);
+        k = k + 1;
+    }
+    if (m.len() != 100) { return 2; }
+    // Delete every even key. After deletion, even keys must
+    // miss and odd keys must still hit.
+    var d: i32 = 0;
+    while (d < 100) {
+        if (!m.delete(d)) { return 300 + d; }
+        d = d + 2;
+    }
+    if (m.len() != 50) { return 3; }
+    var c: i32 = 0;
+    while (c < 100) {
+        if (c % 2 == 0) {
+            if (m.has(c)) { return 400 + c; }
+        } else {
+            if let Some(v) = m.get(c) {
+                if (v != c * 11 + 2) { return 500 + c; }
+            } else {
+                return 600 + c;
+            }
+        }
+        c = c + 1;
+    }
+    // Re-insert deleted keys; tombstone reuse should mean
+    // the load factor stays manageable.
+    var r: i32 = 0;
+    while (r < 100) {
+        m.set(r, r);
+        r = r + 2;
+    }
+    if (m.len() != 100) { return 4; }
+    // Every key should now be present.
+    var f: i32 = 0;
+    while (f < 100) {
+        if let Some(v) = m.get(f) {
+            if (f % 2 == 0) {
+                if (v != f) { return 700 + f; }
+            } else {
+                if (v != f * 11 + 2) { return 800 + f; }
+            }
+        } else {
+            return 900 + f;
+        }
+        f = f + 1;
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map hash-probe stress)", got)
+	}
+}
+
+// String-keyed stress test using a deterministic key
+// generator to exercise the FNV-1a path's collision
+// behaviour at scale.
+func TestWASMMapStringHashStress(t *testing.T) {
+	src := `function digit(n: i32): string {
+    if (n == 0) { return "0"; }
+    if (n == 1) { return "1"; }
+    if (n == 2) { return "2"; }
+    if (n == 3) { return "3"; }
+    if (n == 4) { return "4"; }
+    if (n == 5) { return "5"; }
+    if (n == 6) { return "6"; }
+    if (n == 7) { return "7"; }
+    if (n == 8) { return "8"; }
+    return "9";
+}
+function key_of(i: i32): string {
+    return "k_" + digit(i / 10) + digit(i % 10);
+}
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    var i: i32 = 0;
+    while (i < 80) {
+        m.set(key_of(i), i);
+        i = i + 1;
+    }
+    if (m.len() != 80) { return 1; }
+    var j: i32 = 0;
+    while (j < 80) {
+        if let Some(v) = m.get(key_of(j)) {
+            if (v != j) { return 100 + j; }
+        } else {
+            return 200 + j;
+        }
+        j = j + 1;
+    }
+    if (m.has("k_99")) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map string-key stress)", got)
+	}
+}
+
 // String-keyed Map literal — KeyType is inferred from the
 // first key, so the IR's map_new call gets keyKind=1.
 func TestWASMMapStringKeyLiteral(t *testing.T) {
