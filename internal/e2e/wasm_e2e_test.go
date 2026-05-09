@@ -3451,3 +3451,63 @@ func TestWASMUrlCoder(t *testing.T) {
 		t.Errorf("WASM url_encode/decode: exit = %d, want 0", got)
 	}
 }
+
+// `query_parse(s)` splits a URL-encoded query string into a
+// `Map[string, string]`. Pairs separated by `&`; within each
+// pair, `=` separates key from value. Both halves are
+// url_decode'd. Pair without `=` records empty value.
+func TestWASMQueryParse(t *testing.T) {
+	src := `function main(): i32 {
+		// Standard pairs with %-encoded value.
+		var m: Map[string, string] = query_parse("a=1&b=2&c=hello%20world");
+		if (m.len() != 3) { return 1; }
+		match (m.get("a")) {
+			Some(v) => { if (v != "1") { return 2; } },
+			None => { return 3; }
+		}
+		match (m.get("b")) {
+			Some(v) => { if (v != "2") { return 4; } },
+			None => { return 5; }
+		}
+		match (m.get("c")) {
+			Some(v) => { if (v != "hello world") { return 6; } },
+			None => { return 7; }
+		}
+
+		// Encoded key.
+		var m2: Map[string, string] = query_parse("k%3D%26=v");
+		match (m2.get("k=&")) {
+			Some(v) => { if (v != "v") { return 10; } },
+			None => { return 11; }
+		}
+
+		// Pair without '=' becomes key + empty-string value.
+		var m3: Map[string, string] = query_parse("flag&x=1");
+		if (m3.len() != 2) { return 20; }
+		match (m3.get("flag")) {
+			Some(v) => { if (v != "") { return 21; } },
+			None => { return 22; }
+		}
+
+		// Empty input -> empty map.
+		var m4: Map[string, string] = query_parse("");
+		if (m4.len() != 0) { return 30; }
+
+		// Trailing '&' is ignored (empty pair, no key, no
+		// store).
+		var m5: Map[string, string] = query_parse("a=1&");
+		if (m5.len() != 1) { return 40; }
+
+		// Empty value with '=': key recorded, value empty.
+		var m6: Map[string, string] = query_parse("k=");
+		match (m6.get("k")) {
+			Some(v) => { if (v != "") { return 50; } },
+			None => { return 51; }
+		}
+
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM query_parse: exit = %d, want 0", got)
+	}
+}
