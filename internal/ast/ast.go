@@ -583,6 +583,22 @@ type TupleLit struct {
 	Elems []Expr
 }
 
+// MapLit is `Map { k: v, k2: v2, ... }`. Distinct from StructLit
+// because the keys are arbitrary expressions, not field names.
+// Lowers to a `map_new(len(entries))` followed by per-entry
+// `m.set(k, v)` calls. For now keys + values are both i32; the
+// concrete-typed surface mirrors the auto-injected `Map` struct.
+type MapLit struct {
+	P       Position
+	Entries []MapEntry
+}
+
+// MapEntry is a single `key: value` pair inside a MapLit.
+type MapEntry struct {
+	Key   Expr
+	Value Expr
+}
+
 type FieldInit struct {
 	Name  string
 	Value Expr
@@ -652,6 +668,7 @@ func (e *Assign) Pos() Position      { return e.P }
 func (e *Ternary) Pos() Position     { return e.P }
 func (e *StructLit) Pos() Position   { return e.P }
 func (e *TupleLit) Pos() Position    { return e.P }
+func (e *MapLit) Pos() Position      { return e.P }
 func (e *FieldAccess) Pos() Position { return e.P }
 func (e *EnumLit) Pos() Position     { return e.P }
 func (e *CaptureRef) Pos() Position  { return e.P }
@@ -673,6 +690,7 @@ func (*Assign) isExpr()      {}
 func (*Ternary) isExpr()     {}
 func (*StructLit) isExpr()   {}
 func (*TupleLit) isExpr()    {}
+func (*MapLit) isExpr()      {}
 func (*FieldAccess) isExpr() {}
 func (*EnumLit) isExpr()     {}
 func (*CaptureRef) isExpr()  {}

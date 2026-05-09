@@ -1993,6 +1993,39 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string) (ast.Expr, er
 	return &ast.StructLit{P: pos, TypeName: typeName, Fields: fields}, nil
 }
 
+// parseMapLit parses `Map { key: value, key: value, ... }`. Both
+// keys and values are arbitrary expressions; trailing commas are
+// allowed. Empty `Map {}` is also valid and produces an empty
+// map. Lowering happens at IR-build time — no runtime difference
+// from `var m = map_new(N); m.set(k, v); ...`.
+func (p *parser) parseMapLit(pos ast.Position) (ast.Expr, error) {
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	var entries []ast.MapEntry
+	for !p.match(lexer.Punct, "}") {
+		key, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(lexer.Punct, ":"); err != nil {
+			return nil, err
+		}
+		val, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, ast.MapEntry{Key: key, Value: val})
+		if _, ok := p.accept(lexer.Punct, ","); !ok {
+			break
+		}
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	return &ast.MapLit{P: pos, Entries: entries}, nil
+}
+
 func (p *parser) parsePrimary() (ast.Expr, error) {
 	t := p.peek()
 	switch t.Kind {
@@ -2031,8 +2064,14 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		// can only mean a struct literal in expression position — there
 		// are no other constructs of that shape. Suppressed in
 		// `if let` source positions where the trailing `{` opens
-		// the if-body.
+		// the if-body. Special case: `Map { 1: 10, 2: 20 }` parses
+		// as a MapLit instead — the auto-injected `Map` type has no
+		// user-accessible fields, so a brace-form here always means
+		// a map literal.
 		if !p.noStructLit && p.match(lexer.Punct, "{") {
+			if t.Text == "Map" {
+				return p.parseMapLit(t.Pos)
+			}
 			return p.parseStructLit(t.Pos, t.Text)
 		}
 		return &ast.Ident{P: t.Pos, Name: t.Text}, nil
