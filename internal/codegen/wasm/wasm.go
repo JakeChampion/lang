@@ -114,6 +114,7 @@ type generator struct {
 	needsEnv         bool // any `env(name)` call appears — pulls in WASI environ_* + helper + cache slots
 	needsExit        bool // any `exit(code)` call appears — pulls in WASI proc_exit
 	needsArena       bool // any `arena_save` / `arena_restore` call — emits the two heap-cursor helpers
+	needsMap         bool // any `map_new()` or `__method_Map_*` call — emits the Map runtime helpers
 	needsRandomBytes bool // any `random_bytes(n)` call — pulls in WASI random_get
 	needsIntToString bool // any `int_to_string(n)` call — emits a small decimal-formatting helper
 	needsTcp         bool // any tcp_* call — pulls in WASI sock_accept + fd_read/fd_write/fd_close on socket fds
@@ -327,6 +328,9 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsTcp = true
 					g.needsArrays = true
 					g.needsRuntime = true
+				case "map_new":
+					g.needsMap = true
+					g.needsRuntime = true
 				case "read_file", "write_file":
 					g.needsFileIO = true
 				case "open_reader", "open_writer", "open_appender":
@@ -353,6 +357,10 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					strings.HasPrefix(id.Name, "__method_Writer_") {
 					g.needsFileIO = true
 					g.needsStreamingIO = true
+				}
+				if strings.HasPrefix(id.Name, "__method_Map_") {
+					g.needsMap = true
+					g.needsRuntime = true
 				}
 			}
 			walk(x.Callee)
@@ -1925,6 +1933,9 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsArena {
 		g.emitArenaHelpers()
 	}
+	if g.needsMap {
+		g.emitMapHelpers()
+	}
 	if g.needsRandomBytes {
 		g.emitRandomBytesHelper()
 	}
@@ -3070,6 +3081,241 @@ func (g *generator) emitArenaHelpers() {
 	g.line(`i32.const 40`)
 	g.line(`local.get $h`)
 	g.line(`i32.store`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitMapHelpers writes the runtime functions backing the
+// auto-injected `Map[i32, i32]` type (see
+// docs/LANGUAGE-DIRECTION.md PR 4). First-cut implementation
+// is fixed-capacity linear search; the IndexMap-shape with
+// fingerprint metadata + Wyhash + dynamic resize lands in a
+// follow-up.
+//
+// Map struct layout (a single i32 wrapper around a pointer):
+//
+//	+0  data: i32 (pointer to the kv buffer)
+//
+// Buffer layout (data points here):
+//
+//	+0   cap : i32  — bucket capacity (fixed at construction)
+//	+4   len : i32  — current entry count
+//	+8   k0, v0, k1, v1, ...   — pairs of i32 (8 bytes each)
+//
+// Total buffer size: 8 + cap*8 bytes.
+func (g *generator) emitMapHelpers() {
+	// $map_new: allocate the wrapper struct + the kv buffer,
+	// write cap, zero len, return the wrapper pointer.
+	g.line(`(func $map_new (param $cap i32) (result i32)`)
+	g.indent++
+	g.line(`(local $buf i32) (local $m i32)`)
+	// buf = alloc(8 + cap*8)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $buf`)
+	// buf[0] = cap
+	g.line(`local.get $buf`)
+	g.line(`local.get $cap`)
+	g.line(`i32.store`)
+	// buf[4] = 0 (len)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store offset=4`)
+	// m = alloc(4); m[0] = buf
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $m`)
+	g.line(`local.get $buf`)
+	g.line(`i32.store`)
+	g.line(`local.get $m`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_Map_len: load buf, read buf[4].
+	g.line(`(func $__method_Map_len (param $m i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`i32.load offset=4`)
+	g.indent--
+	g.line(`)`)
+
+	// Linear-search loop body shared by has / get / set: scans
+	// the kv pairs comparing keys, leaves either the matching
+	// entry's address on the stack (if found) or len.
+	//
+	// Exposed as $__map_find: returns the index of the first
+	// entry with matching key, or -1 if none.
+	g.line(`(func $__map_find (param $m i32) (param $k i32) (result i32)`)
+	g.indent++
+	g.line(`(local $buf i32) (local $i i32) (local $len i32)`)
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.tee $buf`)
+	g.line(`i32.load offset=4`) // len
+	g.line(`local.set $len`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	// if i >= len: break
+	g.line(`local.get $i`)
+	g.line(`local.get $len`)
+	g.line(`i32.ge_s`)
+	g.line(`br_if $break`)
+	// if buf[8 + i*8] == k: return i
+	g.line(`local.get $buf`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=8`)
+	g.line(`local.get $k`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// i++
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const -1`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_Map_has: find != -1 → true.
+	g.line(`(func $__method_Map_has (param $m i32) (param $k i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $m`)
+	g.line(`local.get $k`)
+	g.line(`call $__map_find`)
+	g.line(`i32.const -1`)
+	g.line(`i32.ne`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_Map_get: find → idx; if -1 return None, else
+	// return Some(buf[8 + idx*8 + 4]).
+	g.line(`(func $__method_Map_get (param $m i32) (param $k i32) (result i32)`)
+	g.indent++
+	g.line(`(local $idx i32) (local $opt i32) (local $buf i32)`)
+	g.line(`local.get $m`)
+	g.line(`local.get $k`)
+	g.line(`call $__map_find`)
+	g.line(`local.tee $idx`)
+	g.line(`i32.const -1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	// None: alloc 4 bytes, store tag=1.
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $opt`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $opt`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Some(value): alloc 8 bytes, tag=0 at +0, value at +4.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $opt`)
+	g.line(`local.get $opt`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $opt`)
+	// value = buf[8 + idx*8 + 4]
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.tee $buf`)
+	g.line(`local.get $idx`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=12`) // 8 (header) + 4 (skip key) = 12
+	g.line(`i32.store offset=4`)
+	g.line(`local.get $opt`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_Map_set: find → idx; if -1, append; else
+	// update buf[8+idx*8+4] = v. On overflow (len == cap),
+	// trap (resize is the next PR). No return value.
+	g.line(`(func $__method_Map_set (param $m i32) (param $k i32) (param $v i32)`)
+	g.indent++
+	g.line(`(local $idx i32) (local $buf i32) (local $len i32) (local $cap i32) (local $entry i32)`)
+	g.line(`local.get $m`)
+	g.line(`local.get $k`)
+	g.line(`call $__map_find`)
+	g.line(`local.set $idx`)
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $idx`)
+	g.line(`i32.const -1`)
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	// Update existing: buf[8 + idx*8 + 4] = v
+	g.line(`local.get $buf`)
+	g.line(`local.get $idx`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $v`)
+	g.line(`i32.store offset=12`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Insert: check capacity, then write k+v, bump len.
+	g.line(`local.get $buf`)
+	g.line(`i32.load`) // cap
+	g.line(`local.set $cap`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load offset=4`) // len
+	g.line(`local.set $len`)
+	g.line(`local.get $len`)
+	g.line(`local.get $cap`)
+	g.line(`i32.ge_s`)
+	g.line(`if`)
+	g.indent++
+	g.line(`unreachable`) // overflow — resize comes in a follow-up PR
+	g.indent--
+	g.line(`end`)
+	// entry_addr = buf + 8 + len*8
+	g.line(`local.get $buf`)
+	g.line(`local.get $len`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.tee $entry`)
+	g.line(`local.get $k`)
+	g.line(`i32.store offset=8`)
+	g.line(`local.get $entry`)
+	g.line(`local.get $v`)
+	g.line(`i32.store offset=12`)
+	// buf[4] = len + 1
+	g.line(`local.get $buf`)
+	g.line(`local.get $len`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`i32.store offset=4`)
 	g.indent--
 	g.line(`)`)
 }

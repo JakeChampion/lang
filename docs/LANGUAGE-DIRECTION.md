@@ -330,6 +330,15 @@ Deferred to a follow-up:
 - Built-in IndexMap-shaped `Map<K, V>`: insertion-ordered,
   flat `[(k,v)]` + Zig-style fingerprint metadata index table,
   single allocation, Wyhash hash function.
+  - **First cut shipped (linear-search foundation).** Auto-
+    injects a non-generic `Map` struct (i32 keys + i32 values
+    only, fixed capacity at construction). API is
+    `map_new(cap)` / `m.len()` / `m.has(k)` / `m.get(k)` /
+    `m.set(k, v)`. Wasm runtime helpers do linear search;
+    overflow traps. Future PRs generalise to `Map[K, V]`,
+    swap the linear search for the IndexMap fingerprint
+    table, add Wyhash, wire dynamic resize, and ship the
+    map-literal syntax.
 - Map literals: TBD syntax. `{ "k": v }` collides with struct
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally
