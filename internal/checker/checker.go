@@ -1359,6 +1359,21 @@ func assignable(dst, src ast.Type) bool {
 	if dok && sok && d.Name == s.Name && len(s.Args) == 0 && len(d.Args) > 0 {
 		return true
 	}
+	// Generic enum with polymorphic-numeric type-args inferred
+	// from a literal payload — `Some(1)` returns
+	// `Option[NumberType{Polymorphic}]`, and the destination
+	// `Option[i64]` flows in here after settleNumeric stamped
+	// the literal's width. Walk pairwise: each src Arg must be
+	// assignable to its dst Arg (recursive), so nested enums
+	// like `Option[Option[i64]] = Some(Some(1))` also work.
+	if dok && sok && d.Name == s.Name && len(d.Args) == len(s.Args) && len(d.Args) > 0 {
+		for i := range d.Args {
+			if !assignable(d.Args[i], s.Args[i]) {
+				return false
+			}
+		}
+		return true
+	}
 	// Same relaxation for generic struct values: a builtin like
 	// `map_new(cap)` returns `StructType{Name: "Map"}` with no
 	// Args; the destination context (e.g. `var m: Map[i32,
@@ -2980,6 +2995,52 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.settleNumeric(el, hn.Elem)
 			}
 		}
+	case ast.EnumType:
+		// Variant constructor with a destination annotation:
+		// `var o: Option[i64] = Some(1);` — the literal `1`
+		// otherwise defaults to i32 and the assignment fails.
+		// Build the type-param substitution from the hint's
+		// Args, look up the variant's declared payload types,
+		// and settle each constructor arg against its
+		// substituted payload type. This is the second-pass
+		// counterpart to the variant-call's pre-settle (which
+		// only fires when payloads are non-generic). Also
+		// re-stamps `VariantCallPayloads` so the IR's
+		// emitEnumNew picks the resolved (no-longer-polymorphic)
+		// payload type for slot sizing + store-op selection.
+		call, ok := e.(*ast.Call)
+		if !ok {
+			return
+		}
+		id, ok := call.Callee.(*ast.Ident)
+		if !ok {
+			return
+		}
+		vr, isVariant := c.variantOf[id.Name]
+		if !isVariant {
+			return
+		}
+		ed := c.info.Enums[vr.enumName]
+		if ed == nil || len(ed.TypeParams) != len(hn.Args) {
+			return
+		}
+		sub := map[string]ast.Type{}
+		for i, tp := range ed.TypeParams {
+			sub[tp] = hn.Args[i]
+		}
+		resolvedPayloads := make([]ast.Type, len(vr.payloads))
+		for i := range vr.payloads {
+			resolvedPayloads[i] = substituteType(vr.payloads[i], sub)
+		}
+		for i, a := range call.Args {
+			if i >= len(resolvedPayloads) {
+				break
+			}
+			if resolvedPayloads[i] != nil {
+				c.settleNumeric(a, resolvedPayloads[i])
+			}
+		}
+		c.info.VariantCallPayloads[call] = resolvedPayloads
 	}
 }
 

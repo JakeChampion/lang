@@ -3012,6 +3012,46 @@ func TestWASMEnumMatchPayloadF64(t *testing.T) {
 	}
 }
 
+// Bare-literal version of the same — the destination
+// annotation `Option[i64]` flows into `Some(...)` via
+// settleNumeric's EnumType case, locking the literal to i64
+// before assignable runs. No `as i64` cast on the literal.
+func TestWASMEnumPayloadInferredI64(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[i64] = Some(4294967296);
+    match (o) {
+        Some(n) => {
+            if (n == 4294967296) { return 1; }
+            return 0;
+        },
+        None => { return -1; }
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (Option[i64] inferred)", got)
+	}
+}
+
+// Same shape with f64 — `var o: Option[f64] = Some(3.5);`
+// resolves the literal from the destination type.
+func TestWASMEnumPayloadInferredF64(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[f64] = Some(3.5);
+    match (o) {
+        Some(x) => {
+            if (x > 3.4) { if (x < 3.6) { return 1; } }
+            return 0;
+        },
+        None => { return -1; }
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (Option[f64] inferred)", got)
+	}
+}
+
 // Mixed-width payloads: a variant with (i64, i32) lays out
 // payload[0] at offset 8 (8-byte aligned) and payload[1] at
 // offset 16 — total enum size is 20 bytes (4 tag + 4 align-pad

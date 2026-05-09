@@ -512,9 +512,19 @@ Deferred to a follow-up:
   non-generic wide-payload variants accept bare numeric
   literals without an explicit `as i64` cast — `W(8589934592,
   7)` settles the first arg to i64 from the declared payload
-  type. Generic `Option[i64]` / `Option[f64]` still want the
-  cast on the literal until contextual flow from the
-  destination annotation back into the constructor arg lands.
+  type. Contextual flow from the destination annotation back
+  into a generic-enum constructor arg also shipped:
+  `var o: Option[i64] = Some(1);` resolves the literal to i64
+  via `settleNumeric`'s `EnumType` case, which builds the
+  type-param substitution from the destination's `Args`,
+  walks each arg with the substituted payload type, and
+  re-stamps `VariantCallPayloads` so the IR's `emitEnumNew`
+  picks the resolved (no-longer-polymorphic) payload type for
+  slot sizing + store-op selection. `assignable` got a
+  symmetric pairwise-args relaxation so generic enums whose
+  arg types differ only by polymorphic-vs-concrete-numeric
+  flow into a concretely-typed slot — `Some(Some(1))` into
+  `Option[Option[i64]]` works too.
 
 ### PR 5 — Memory model first-class
 
