@@ -583,6 +583,21 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.StringType{},
 	}
 
+	// base64_encode(s): standard-alphabet RFC 4648 base64
+	// encoding of the input bytes (the string is treated as a
+	// raw byte array). base64_decode(s): inverse; non-base64
+	// characters terminate decoding without error so partial
+	// inputs round-trip cleanly. For strict / fallible decode
+	// semantics, callers can compare lengths.
+	c.info.FuncSigs["base64_encode"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.StringType{},
+	}
+	c.info.FuncSigs["base64_decode"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.StringType{},
+	}
+
 	// Built-in numeric methods. The receiver type is `NumberType`
 	// keyed by width + signedness; the dispatch path above maps
 	// `i32` / `u32` / `i64` / `u64` value types to the

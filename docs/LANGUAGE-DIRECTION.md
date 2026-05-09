@@ -510,6 +510,11 @@ Deferred to a follow-up:
 - **Standard library shaping.** json, url parsing, base64, hex,
   random — all the usual suspects for edge handlers. After PRs 1-4
   the type system is rich enough to design these properly.
+  - **base64 shipped.** `base64_encode(s)` /
+    `base64_decode(s)` builtins, RFC 4648 standard alphabet,
+    `=` padding on encode, decoding terminates at the first
+    non-base64 character. Strings are treated as raw byte
+    arrays so the round-trip is content-preserving.
 
 ## Open questions to settle as we go
 
