@@ -410,3 +410,69 @@ function url_parse(s: string): Option[Url] {
 
     return Some(u);
 }
+
+// === Query string parsing ===
+//
+// `query_parse(s)` splits a URL-encoded query string into a
+// `Map[string, string[]]`. Pairs separated by `&`; within a
+// pair, `=` separates key from value. Both halves are
+// `url_decode`'d. Duplicate keys all preserved — values for
+// the same key collect into a `string[]` in insertion order.
+// A pair without `=` records the key with a single-element
+// empty-string array. Empty input yields an empty map.
+// Trailing `&` is ignored.
+
+function query_parse(s: string): Map[string, string[]] {
+    var m: Map[string, string[]] = map_new(8);
+    var n: i32 = len(s);
+    if (n == 0) { return m; }
+
+    var pair_start: i32 = 0;
+    var i: i32 = 0;
+    // Walk one past the end so a final pair without a
+    // trailing `&` still gets processed via the `i == n`
+    // sentinel.
+    while (i <= n) {
+        var sep: boolean = false;
+        if (i == n) { sep = true; }
+        else if (s[i] == 38) { sep = true; }   // '&'
+        if (sep) {
+            var pair_len: i32 = i - pair_start;
+            if (pair_len > 0) {
+                __query_pair(m, s, pair_start, i);
+            }
+            pair_start = i + 1;
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32) {
+    // Find '=' in [start, end).
+    var eq: i32 = -1;
+    var j: i32 = start;
+    while (j < end) {
+        if (s[j] == 61) { eq = j; break; }   // '='
+        j = j + 1;
+    }
+    var key: string = "";
+    var val: string = "";
+    if (eq >= 0) {
+        key = url_decode(s[start:eq]);
+        val = url_decode(s[eq+1:end]);
+    } else {
+        key = url_decode(s[start:end]);
+    }
+    // Append-or-create: probe the map; on hit, copy + append;
+    // else create a one-element array.
+    match (m.get(key)) {
+        Some(existing) => {
+            m.set(key, __array_append_string(existing, val));
+        },
+        None => {
+            var arr: string[] = [val];
+            m.set(key, arr);
+        }
+    }
+}

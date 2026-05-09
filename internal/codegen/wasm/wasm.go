@@ -116,11 +116,12 @@ type generator struct {
 	needsStrMethods  bool // any `s.starts_with` / `.ends_with` / `.contains` call
 	needsStrFromBytes bool // any `string_from_bytes(bs)` call
 	needsBase64       bool // any `base64_encode` / `base64_decode` call
-	needsHex          bool // any `hex_encode(s)` / `hex_decode(s)` call
+	needsHex                bool // any `hex_encode(s)` / `hex_decode(s)` call
+	needsArrayAppendString  bool // any `__array_append_string(arr, v)` call
 	// `url_parse(s)` migrated to lang prelude; no flag.
 	// `url_encode` / `url_decode` migrated to the lang prelude
 	// (PR 176); no flag needed.
-	needsQueryParse   bool // any `query_parse(s)` call
+	// `query_parse(s)` migrated to lang prelude; no flag.
 	needsJsonEncode   bool // any `json_encode(v)` call — emits the encoder + buffer-builder helpers
 	needsJsonParse    bool // any `json_parse(s)` call
 	needsStructs     bool
@@ -366,6 +367,9 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 				case "hex_encode", "hex_decode":
 					g.needsHex = true
 					g.needsRuntime = true
+				case "__array_append_string":
+					g.needsArrayAppendString = true
+					g.needsRuntime = true
 				case "url_parse":
 					// Now lives in the lang prelude
 					// (internal/prelude/prelude.lang).
@@ -374,16 +378,7 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					// (internal/prelude/prelude.lang). No
 					// wat-side gating needed.
 				case "query_parse":
-					// Still wat. Calls url_decode (now lang
-					// prelude) — see watHelperDeps in
-					// internal/treeshake to keep the call
-					// site live.
-					g.needsQueryParse = true
-					g.needsMap = true
-					g.needsStrEq = true
-					g.needsStrSlice = true
-					g.needsBoundsCheck = true
-					g.needsRuntime = true
+					// Now lives in the lang prelude.
 				case "json_encode":
 					// Walks a JsonValue tree, recursing through
 					// JArray / JObject. Pulls Map (for
@@ -2194,12 +2189,13 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsHex {
 		g.emitHexHelpers()
 	}
+	if g.needsArrayAppendString {
+		g.emitArrayAppendStringHelper()
+	}
 	// `url_parse` migrated to lang prelude; no wat helper.
 	// `url_encode` / `url_decode` migrated to the lang prelude
 	// (internal/prelude/prelude.lang); no wat-side emission.
-	if g.needsQueryParse {
-		g.emitQueryParseHelper()
-	}
+	// `query_parse` migrated to lang prelude; no wat helper.
 	if g.needsJsonEncode {
 		g.emitJsonEncodeHelpers()
 	}
@@ -4867,286 +4863,6 @@ func (g *generator) emitStringMethodHelpers() {
 
 
 
-// emitQueryParseHelper writes `$query_parse(s)` — split a
-// URL-encoded query string into a Map[string, string[]].
-// Pairs are separated by `&`; within a pair, `=` separates
-// key from value. Keys and values are url_decode'd before
-// storage. Duplicate keys (`?tag=a&tag=b`) all preserved —
-// values for the same key collect into a string[] in
-// insertion order. A pair without `=` records the key with a
-// single-element empty-string array. Empty input yields an
-// empty map. `+` is left alone — callers handling form-
-// encoded data should pre-process before calling.
-func (g *generator) emitQueryParseHelper() {
-	g.line(`(func $query_parse (param $s i32) (result i32)`)
-	g.indent++
-	g.line(`(local $sLen i32) (local $i i32)`)
-	g.line(`(local $pair_start i32) (local $pair_len i32)`)
-	g.line(`(local $eq i32) (local $j i32)`)
-	g.line(`(local $key i32) (local $val i32) (local $m i32)`)
-	g.line(`(local $sep i32) (local $existing i32) (local $oldLen i32)`)
-	g.line(`(local $newArr i32) (local $oldArr i32) (local $k2 i32)`)
-	// m = map_new(8, 1)  ;; keyKind=1=string
-	g.line(`i32.const 8`)
-	g.line(`i32.const 1`)
-	g.line(`call $map_new`)
-	g.line(`local.set $m`)
-	// sLen
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`local.set $sLen`)
-	// Empty input: return the empty map.
-	g.line(`local.get $sLen`)
-	g.line(`i32.eqz`)
-	g.line(`if`)
-	g.indent++
-	g.line(`local.get $m`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-	g.line(`block $end`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	// sep = (i >= sLen) || s[i] == '&'
-	g.line(`local.get $i`)
-	g.line(`local.get $sLen`)
-	g.line(`i32.ge_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`i32.const 1`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $s`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`i32.const 38`) // '&'
-	g.line(`i32.eq`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.set $sep`)
-	g.line(`local.get $sep`)
-	g.line(`if`)
-	g.indent++
-	// pair_len = i - pair_start
-	g.line(`local.get $i`)
-	g.line(`local.get $pair_start`)
-	g.line(`i32.sub`)
-	g.line(`local.tee $pair_len`)
-	g.line(`i32.const 0`)
-	g.line(`i32.gt_u`)
-	g.line(`if`)
-	g.indent++
-	// Find '=' in [pair_start, i)
-	g.line(`i32.const -1`)
-	g.line(`local.set $eq`)
-	g.line(`local.get $pair_start`)
-	g.line(`local.set $j`)
-	g.line(`block $end_eq`)
-	g.indent++
-	g.line(`loop $eq_loop`)
-	g.indent++
-	g.line(`local.get $j`)
-	g.line(`local.get $i`)
-	g.line(`i32.ge_u`)
-	g.line(`br_if $end_eq`)
-	g.line(`local.get $s`)
-	g.line(`local.get $j`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`i32.const 61`) // '='
-	g.line(`i32.eq`)
-	g.line(`if`)
-	g.indent++
-	g.line(`local.get $j`)
-	g.line(`local.set $eq`)
-	g.line(`br $end_eq`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.get $j`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $j`)
-	g.line(`br $eq_loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	// Slice + decode key/val based on whether '=' was found.
-	g.line(`local.get $eq`)
-	g.line(`i32.const 0`)
-	g.line(`i32.ge_s`)
-	g.line(`if`)
-	g.indent++
-	// key = url_decode(s[pair_start:eq])
-	g.line(`local.get $s`)
-	g.line(`local.get $pair_start`)
-	g.line(`local.get $eq`)
-	g.line(`call $__str_slice`)
-	g.line(`call $url_decode`)
-	g.line(`local.set $key`)
-	// val = url_decode(s[eq+1:i])
-	g.line(`local.get $s`)
-	g.line(`local.get $eq`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.get $i`)
-	g.line(`call $__str_slice`)
-	g.line(`call $url_decode`)
-	g.line(`local.set $val`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	// key = url_decode(s[pair_start:i])
-	g.line(`local.get $s`)
-	g.line(`local.get $pair_start`)
-	g.line(`local.get $i`)
-	g.line(`call $__str_slice`)
-	g.line(`call $url_decode`)
-	g.line(`local.set $key`)
-	// val = ""
-	g.line(`local.get $s`)
-	g.line(`i32.const 0`)
-	g.line(`i32.const 0`)
-	g.line(`call $__str_slice`)
-	g.line(`local.set $val`)
-	g.indent--
-	g.line(`end`)
-	// Append-or-create: if key already in map, allocate a
-	// new array of len+1, copy existing values, append the
-	// new one, store back. Else allocate a fresh 1-element
-	// array.
-	g.line(`local.get $m`)
-	g.line(`local.get $key`)
-	g.line(`call $__method_Map_get`)
-	g.line(`local.tee $existing`)
-	g.line(`i32.load`)
-	g.line(`i32.eqz`) // tag == 0 means Some
-	g.line(`if`)
-	g.indent++
-	// Some: read existing array ptr; oldLen = len(arr).
-	g.line(`local.get $existing`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`i32.load`)
-	g.line(`local.set $oldArr`)
-	g.line(`local.get $oldArr`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`local.set $oldLen`)
-	// alloc(4 + (oldLen+1)*4); newArr = ptr + 4.
-	g.line(`local.get $oldLen`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`i32.const 4`)
-	g.line(`i32.mul`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $newArr`)
-	g.line(`local.get $oldLen`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`i32.store`)
-	g.line(`local.get $newArr`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $newArr`)
-	// Copy existing values: for k2 in 0..oldLen.
-	g.line(`i32.const 0`)
-	g.line(`local.set $k2`)
-	g.line(`block $end_copy`)
-	g.indent++
-	g.line(`loop $copy_loop`)
-	g.indent++
-	g.line(`local.get $k2`)
-	g.line(`local.get $oldLen`)
-	g.line(`i32.ge_u`)
-	g.line(`br_if $end_copy`)
-	g.line(`local.get $newArr`)
-	g.line(`local.get $k2`)
-	g.line(`i32.const 4`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`local.get $oldArr`)
-	g.line(`local.get $k2`)
-	g.line(`i32.const 4`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`i32.load`)
-	g.line(`i32.store`)
-	g.line(`local.get $k2`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $k2`)
-	g.line(`br $copy_loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	// Append new value at index oldLen.
-	g.line(`local.get $newArr`)
-	g.line(`local.get $oldLen`)
-	g.line(`i32.const 4`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`local.get $val`)
-	g.line(`i32.store`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	// None: alloc 1-element array.
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $newArr`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $newArr`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.tee $newArr`)
-	g.line(`local.get $val`)
-	g.line(`i32.store`)
-	g.indent--
-	g.line(`end`)
-	// m.set(key, newArr)
-	g.line(`local.get $m`)
-	g.line(`local.get $key`)
-	g.line(`local.get $newArr`)
-	g.line(`call $__method_Map_set`)
-	g.indent--
-	g.line(`end`) // pair_len > 0
-	// pair_start = i + 1
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $pair_start`)
-	g.indent--
-	g.line(`end`) // sep
-	// If we just hit sLen, we're done.
-	g.line(`local.get $i`)
-	g.line(`local.get $sLen`)
-	g.line(`i32.ge_u`)
-	g.line(`br_if $end`)
-	// i++
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`) // $end
-	g.line(`local.get $m`)
-	g.indent--
-	g.line(`)`)
-}
 
 // emitJsonEncodeHelpers writes the JSON encoder runtime —
 // `$json_encode(v)` plus the supporting `__json_buf_*`
@@ -8726,6 +8442,65 @@ func (g *generator) emitHexHelpers() {
 	g.line(`local.get $oi`)
 	g.line(`i32.store`)
 	g.line(`local.get $dst`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitArrayAppendStringHelper writes
+// `$__array_append_string(arr, v)` — return a fresh
+// length-prefixed `string[]` of length `len(arr) + 1`,
+// copying the existing entries and appending `v` at the end.
+// Used by the lang prelude's `query_parse` to accumulate
+// per-key value lists. Generic per-element-stride versions
+// (for arbitrary `T[]` where T is pointer-sized) are a
+// follow-up; today the only call site is `string[] +
+// string`.
+func (g *generator) emitArrayAppendStringHelper() {
+	g.line(`(func $__array_append_string (param $arr i32) (param $v i32) (result i32)`)
+	g.indent++
+	g.line(`(local $oldLen i32) (local $newPtr i32)`)
+	g.line(`local.get $arr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $oldLen`)
+	// alloc((oldLen+1)*4 + 4)
+	g.line(`local.get $oldLen`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $newPtr`)
+	g.line(`local.get $oldLen`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`i32.store`)
+	// memcpy(newPtr+4, arr, oldLen*4)
+	g.line(`local.get $newPtr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $arr`)
+	g.line(`local.get $oldLen`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`memory.copy`)
+	// Append v at index oldLen.
+	g.line(`local.get $newPtr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $oldLen`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $v`)
+	g.line(`i32.store`)
+	// Return content ptr.
+	g.line(`local.get $newPtr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
 }

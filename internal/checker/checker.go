@@ -730,30 +730,26 @@ func Check(prog *ast.Program) (*Info, error) {
 	// `url_parse(s)` lives in the lang prelude
 	// (internal/prelude/prelude.lang).
 
+	// `__array_append_string(arr, v)` — return a fresh
+	// `string[]` of length `len(arr) + 1`. Identifier prefixed
+	// `__` because it's a primitive-shaped helper rather than
+	// a public stdlib piece — the prelude uses it internally
+	// (`query_parse` accumulates value lists per key) and
+	// individual handler code can call it too. Generic
+	// per-element arrays would be cleaner; today specific
+	// `string[]` is the single use case.
+	c.info.FuncSigs["__array_append_string"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.StringType{}},
+			ast.StringType{},
+		},
+		Result: ast.ArrayType{Elem: ast.StringType{}},
+	}
+
 	// `url_encode(s)` / `url_decode(s)` live in the lang
 	// prelude (internal/prelude/prelude.lang).
 
-	// query_parse(s): split a URL-encoded query string (the
-	// part after `?`, no leading `?`) into a Map[string,
-	// string[]]. Keys and values are url_decode'd. Pairs are
-	// separated by `&`; within a pair, `=` separates key
-	// from value. Duplicate keys (`?tag=a&tag=b`) all
-	// preserved — values for the same key collect into a
-	// string array in insertion order. A pair with no `=`
-	// records the key with a single-element empty-string
-	// array. Empty input yields an empty map. `+` is left
-	// alone — callers wanting form-encoded semantics should
-	// pre-process.
-	c.info.FuncSigs["query_parse"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}},
-		Result: ast.StructType{
-			Name: "Map",
-			Args: []ast.Type{
-				ast.StringType{},
-				ast.ArrayType{Elem: ast.StringType{}},
-			},
-		},
-	}
+	// `query_parse(s)` lives in the lang prelude.
 
 	// json_encode(v: JsonValue): string — serialize a
 	// JsonValue tree to its canonical JSON text. Strings
