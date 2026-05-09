@@ -26,17 +26,17 @@ import (
 // watHelperDeps lists the prelude functions a still-in-wat
 // helper depends on. The wat helpers don't go through the
 // AST walker, so tree-shake needs this hint to know that
-// e.g. `query_parse` (wat) calls `url_decode` (lang
-// prelude) and shouldn't drop the latter when only the
+// e.g. some still-in-wat helper calls a lang-prelude
+// function and shouldn't drop the latter when only the
 // former is referenced.
 //
 // Each entry stays around only until that wat helper is
 // itself migrated to lang; once the dependency lives in a
 // lang body, the AST walker picks it up automatically and
-// the entry can be removed.
-var watHelperDeps = map[string][]string{
-	"query_parse": {"url_decode"},
-}
+// the entry can be removed. Empty today — `query_parse`
+// migrated to the prelude in PR 181, removing the only
+// previous entry.
+var watHelperDeps = map[string][]string{}
 
 // Run mutates `prog.Funcs` to retain only functions reachable
 // from the program's entry points. Function-typed values
