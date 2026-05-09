@@ -1397,6 +1397,39 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
 		}
 	case *ast.SliceExpr:
+		// String slicing: copy into a fresh length-prefixed
+		// string. Owns its bytes (matches the rest of the
+		// language's string semantics — no separate view type
+		// for strings yet). Bounds-check happens inside the
+		// helper.
+		if n.IsString {
+			if err := b.expr(n.Source); err != nil {
+				return err
+			}
+			if n.Low != nil {
+				if err := b.expr(n.Low); err != nil {
+					return err
+				}
+			} else {
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+			}
+			if n.High != nil {
+				if err := b.expr(n.High); err != nil {
+					return err
+				}
+			} else {
+				// Fall back to source length: re-evaluate
+				// Source then read its length prefix.
+				if err := b.expr(n.Source); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpConstI32, I32: 4})
+				b.emit(Op{Kind: OpSub})
+				b.emit(Op{Kind: OpLoad})
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3})
+			break
+		}
 		// Lower `arr[low:high]` to:
 		//   data_ptr = (arr or *slice) + low * 4
 		//   len      = high - low

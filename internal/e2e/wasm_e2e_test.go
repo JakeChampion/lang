@@ -1070,6 +1070,36 @@ func TestWASMSliceWrites(t *testing.T) {
 	}
 }
 
+// String slicing — `s[a:b]` returns a freshly allocated
+// substring. Bounds checked; default low/high mean 0 and
+// len(s) respectively.
+func TestWASMStringSlice(t *testing.T) {
+	src := `function main(): i32 {
+    var greeting: string = "hello world";
+    var hello: string = greeting[0:5];
+    var world: string = greeting[6:11];
+    var dot: string = greeting[5:6];
+    if (len(hello) != 5) { return 1; }
+    if (len(world) != 5) { return 2; }
+    if (len(dot) != 1) { return 3; }
+    if (hello != "hello") { return 4; }
+    if (world != "world") { return 5; }
+    if (dot != " ") { return 6; }
+    // Open-ended low / high.
+    var prefix: string = greeting[:5];
+    var suffix: string = greeting[6:];
+    if (prefix != "hello") { return 7; }
+    if (suffix != "world") { return 8; }
+    // Empty slice.
+    var empty: string = greeting[3:3];
+    if (len(empty) != 0) { return 9; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (string slicing)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

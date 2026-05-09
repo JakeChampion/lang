@@ -479,9 +479,16 @@ type SliceExpr struct {
 	// the parent slice's data_ptr instead of stepping past an
 	// owned array's length prefix.
 	SourceIsSlice bool
+	// IsString is set by the checker when Source is a string. The
+	// IR lowers string slicing to a copy-into-fresh-string helper
+	// (`__str_slice`) rather than the array-style view shape — a
+	// string value is owned + length-prefixed, no separate
+	// data-pointer indirection.
+	IsString bool
 	// ElemType is set by the checker once the source's element
 	// type is known. The IR uses it to pick the stride for the
-	// `low * stride` byte offset on slice creation.
+	// `low * stride` byte offset on slice creation. Unused for
+	// IsString slices.
 	ElemType Type
 }
 type Call struct {
