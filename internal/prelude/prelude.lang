@@ -16,6 +16,23 @@ function (s: string) is_empty(): boolean {
     return len(s) == 0;
 }
 
+// `s.repeat(n)` — `n` copies of s concatenated. `n <= 0`
+// returns empty; `n == 1` returns a fresh independent copy
+// of s (the `+` lowering allocates). Quadratic on large n
+// because each `+` allocates a fresh buffer; if a benchmark
+// shows that's a real bottleneck, drop to a single-pass
+// memcpy via a `__memcpy` shim.
+function (s: string) repeat(n: i32): string {
+    if (n <= 0) { return ""; }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        out = out + s;
+        i = i + 1;
+    }
+    return out;
+}
+
 // `s.parse_int()` — decimal i32 parser. Optional leading `-`;
 // rejects empty input, lone `-`, any non-digit character,
 // embedded whitespace, and out-of-range values
