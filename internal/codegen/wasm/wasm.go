@@ -4112,6 +4112,24 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`(local $req_struct i32) (local $resp_struct i32) (local $status i32)`)
 	g.line(`(local $resp_handle i32) (local $headers i32)`)
 	g.line(`(local $out_body i32) (local $out_stream i32)`)
+	g.line(`(local $__arena_handle i32)`)
+
+	// Implicit per-request arena: save the bump cursor at
+	// entry, restore it before returning so every allocation
+	// the handler made (request struct, body string, response
+	// body, intermediate string concat results, Map snapshots,
+	// etc.) gets reclaimed in one pointer-store. The host has
+	// already consumed the response body via the outgoing-body
+	// writes by the time we restore — no live data references
+	// the freed region.
+	//
+	// Same shape as the user-controlled `arena { … }` block,
+	// just hoisted to the request-handler boundary so callers
+	// don't have to wrap their bodies manually. Pairs with the
+	// doc-roadmap "Implicit per-handler / per-CLI-invocation
+	// arena defaults still TBD" item — settled here.
+	g.line(`call $arena_save`)
+	g.line(`local.set $__arena_handle`)
 
 	// 64-byte scratch for canonical-ABI returns; large enough for
 	// outgoing-body.finish's result<_, error-code> joined variant.
@@ -4512,6 +4530,12 @@ func (g *generator) emitHttpHandlerWrapper() {
 	// already been reaped. If a future host needs the explicit
 	// call we'd add it before set instead of after, and skip the
 	// drop(out_stream) line so the body is still alive.
+
+	// Restore the bump cursor — see the matching arena_save at
+	// function entry. Every request-scoped allocation is now
+	// reclaimed.
+	g.line(`local.get $__arena_handle`)
+	g.line(`call $arena_restore`)
 
 	g.indent--
 	g.line(`)`)

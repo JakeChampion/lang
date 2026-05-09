@@ -537,9 +537,18 @@ Deferred to a follow-up:
   rules). Anything allocated inside the block must NOT
   escape — the language doesn't (yet) statically enforce
   this, so callers shouldn't return pointers to in-block
-  allocations. Implicit per-handler / per-CLI-invocation
-  arena defaults still TBD; for now this is an explicit
-  user-controlled scope.
+  allocations. **Implicit per-handler arena shipped.**
+  `-target wasi-http`'s `__http_entry` wrapper now opens an
+  arena_save at the top and arena_restore right before
+  exit, so every per-request allocation (the HttpRequest /
+  HttpResponse structs, body strings, intermediate concat
+  results, Map snapshots, etc.) gets reclaimed in one
+  pointer-store at handler return. The host has already
+  consumed the response body via outgoing-body writes by
+  the time the restore runs — no live data references the
+  freed region. CLI invocations don't need the wrapper:
+  the process exits after `main`, so the OS reclaims
+  everything for free.
 - **`defer` keyword shipped.** `defer EXPR;` schedules `EXPR`
   to run when the enclosing function exits. Multiple defers
   run in LIFO order. Each Defer node gets a synthesised
