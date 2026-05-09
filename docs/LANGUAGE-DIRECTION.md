@@ -361,9 +361,30 @@ Deferred to a follow-up:
     by the type name (`Map` is auto-injected and has no
     user-visible fields, so the brace form unambiguously
     means a map literal).
-  - Future PRs generalise to `Map[K, V]`, swap the linear
-    search for the IndexMap fingerprint table, add Wyhash,
-    and ship the map-literal syntax.
+  - **Generic `Map[K, V]` shipped.** The auto-injected
+    `Map` struct now carries `TypeParams=["K", "V"]`. K is
+    restricted to i32-sized scalars (i32 / u32 / sub-i32
+    widths) or `string`; V is restricted to pointer-sized
+    types (any 4-byte storage — i32 / string / struct /
+    enum / array / slice ptr). The runtime stores a
+    `keyKind` tag in the buffer header (cap, len, keyKind,
+    entries...) so the linear-search core branches between
+    i32-eq and `__str_eq` without per-instantiation
+    monomorphisation. Method dispatch substitutes K / V
+    from the receiver's TypeArgs into the registered
+    method signatures so `(m: Map[string, i32]).set(k, v)`
+    type-checks `k` as string and `v` as i32. `map_new`
+    return-type inference flows from the destination
+    context (`var m: Map[string, i32] = map_new(8)`) so no
+    explicit type-arg syntax is needed yet. Map literals
+    infer K / V from the first entry's types. Map's struct
+    is excluded from the monomorpher (a single helper set
+    handles every instantiation via the runtime keyKind
+    tag).
+  - Future PRs swap the linear search for the IndexMap
+    fingerprint table + Wyhash, lift the i32-sized-only
+    restriction (i64 / u64 / f64 keys + values), and add
+    map iteration via a non-allocating cursor.
 - Map literals: TBD syntax. `{ "k": v }` collides with struct
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally

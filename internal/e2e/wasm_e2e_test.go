@@ -755,7 +755,7 @@ function main(): i32 {
 // land in follow-ups.
 func TestWASMMapBasics(t *testing.T) {
 	src := `function main(): i32 {
-    var m: Map = map_new(8);
+    var m: Map[i32, i32] = map_new(8);
     if (m.len() != 0) { return 1; }
     if (m.has(7)) { return 2; }
     m.set(7, 42);
@@ -799,7 +799,7 @@ func TestWASMMapBasics(t *testing.T) {
 // along.
 func TestWASMMapResize(t *testing.T) {
 	src := `function main(): i32 {
-    var m: Map = map_new(2);
+    var m: Map[i32, i32] = map_new(2);
     var i: i32 = 0;
     while (i < 12) {
         m.set(i, i * 10);
@@ -828,7 +828,7 @@ func TestWASMMapResize(t *testing.T) {
 // `for` work the way they do on any other array.
 func TestWASMMapKeysValues(t *testing.T) {
 	src := `function main(): i32 {
-    var m: Map = map_new(4);
+    var m: Map[i32, i32] = map_new(4);
     m.set(10, 100);
     m.set(20, 200);
     m.set(30, 300);
@@ -865,7 +865,7 @@ func TestWASMMapKeysValues(t *testing.T) {
 // subsequent lookups return None.
 func TestWASMMapDelete(t *testing.T) {
 	src := `function main(): i32 {
-    var m: Map = map_new(4);
+    var m: Map[i32, i32] = map_new(4);
     m.set(1, 10);
     m.set(2, 20);
     m.set(3, 30);
@@ -907,7 +907,7 @@ func TestWASMMapDelete(t *testing.T) {
 // initial fill never triggers a resize.
 func TestWASMMapLiteral(t *testing.T) {
 	src := `function main(): i32 {
-    var m: Map = Map { 1: 10, 2: 20, 3: 30 };
+    var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
     if (m.len() != 3) { return 1; }
     if let Some(v) = m.get(2) {
         if (v != 20) { return 2; }
@@ -916,11 +916,11 @@ func TestWASMMapLiteral(t *testing.T) {
     }
     if let Some(_) = m.get(99) { return 4; }
     // Empty literal works too.
-    var empty: Map = Map {};
+    var empty: Map[i32, i32] = Map {};
     if (empty.len() != 0) { return 5; }
     if (empty.has(0)) { return 6; }
     // Trailing comma is fine.
-    var m2: Map = Map { 7: 700, };
+    var m2: Map[i32, i32] = Map { 7: 700, };
     if (m2.len() != 1) { return 7; }
     return 0;
 }`
@@ -1284,6 +1284,100 @@ func TestWASMStringBytes(t *testing.T) {
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (string <-> bytes round-trip)", got)
+	}
+}
+
+// String-keyed Map[string, i32]. Same API as Map[i32, i32];
+// equality at the runtime layer dispatches to byte-level
+// strcmp via the buffer's keyKind tag.
+func TestWASMMapStringKeys(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m.set("hello", 1);
+    m.set("world", 2);
+    m.set("foo", 3);
+    if (m.len() != 3) { return 1; }
+    if (!m.has("hello")) { return 2; }
+    if (!m.has("world")) { return 3; }
+    if (m.has("missing")) { return 4; }
+    if let Some(v) = m.get("hello") {
+        if (v != 1) { return 5; }
+    } else {
+        return 6;
+    }
+    if let Some(v) = m.get("world") {
+        if (v != 2) { return 7; }
+    } else {
+        return 8;
+    }
+    if let Some(_) = m.get("missing") {
+        return 9;
+    }
+    // Update + len stays the same.
+    m.set("hello", 100);
+    if (m.len() != 3) { return 10; }
+    if let Some(v) = m.get("hello") {
+        if (v != 100) { return 11; }
+    } else {
+        return 12;
+    }
+    // Delete.
+    if (!m.delete("foo")) { return 13; }
+    if (m.has("foo")) { return 14; }
+    if (m.len() != 2) { return 15; }
+    if (m.delete("foo")) { return 16; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map[string, i32])", got)
+	}
+}
+
+// Map[string, string]. Both K and V are pointer-sized.
+func TestWASMMapStringStringValues(t *testing.T) {
+	src := `function main(): i32 {
+    var headers: Map[string, string] = map_new(4);
+    headers.set("content-type", "text/plain");
+    headers.set("x-trace-id", "abc123");
+    if (headers.len() != 2) { return 1; }
+    if let Some(v) = headers.get("content-type") {
+        if (v != "text/plain") { return 2; }
+    } else {
+        return 3;
+    }
+    if let Some(v) = headers.get("x-trace-id") {
+        if (v != "abc123") { return 4; }
+    } else {
+        return 5;
+    }
+    if let Some(_) = headers.get("missing") {
+        return 6;
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map[string, string])", got)
+	}
+}
+
+// String-keyed Map literal — KeyType is inferred from the
+// first key, so the IR's map_new call gets keyKind=1.
+func TestWASMMapStringKeyLiteral(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+    if (m.len() != 3) { return 1; }
+    if let Some(v) = m.get("b") {
+        if (v != 2) { return 2; }
+    } else {
+        return 3;
+    }
+    if let Some(_) = m.get("d") {
+        return 4;
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (string-keyed Map literal)", got)
 	}
 }
 
