@@ -700,7 +700,17 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		if g.needsClosures && isUser && g.inTable[op.Str] {
 			g.line("i32.const 0")
 		}
-		g.linef("call $%s", op.Str)
+		// Alias map for shared-implementation wat helpers.
+		// `__array_append_jsonvalue` (lang sig) shares its
+		// body with `__array_append_string` since both are
+		// 4-byte-pointer-stride; emit a call to the shared
+		// wat function rather than a duplicate.
+		name := op.Str
+		switch name {
+		case "__array_append_jsonvalue":
+			name = "__array_append_string"
+		}
+		g.linef("call $%s", name)
 	case ir.OpCallIndirect:
 		if op.Sig == nil {
 			return fmt.Errorf("wasm/ir: OpCallIndirect missing sig")

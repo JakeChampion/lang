@@ -292,10 +292,16 @@ func injectPrelude(prog *ast.Program) error {
 	if err != nil {
 		return fmt.Errorf("prelude: %w", err)
 	}
+	// Append funcs, structs, and enums separately. The
+	// IsPrelude flag is only on FuncDecl today (struct /
+	// enum decls aren't filtered by tests, since their
+	// shape is part of the auto-injected stdlib).
 	for _, fn := range pre.Funcs {
 		fn.IsPrelude = true
 		prog.Funcs = append(prog.Funcs, fn)
 	}
+	prog.Structs = append(prog.Structs, pre.Structs...)
+	prog.Enums = append(prog.Enums, pre.Enums...)
 	return nil
 }
 
@@ -775,25 +781,30 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.ArrayType{Elem: ast.StringType{}},
 	}
 
+	// `__array_append_jsonvalue(arr, v)` — same shape as
+	// `__array_append_string` but for `JsonValue[]`.
+	// `json_parse` builds JArray payloads incrementally.
+	// Generic per-element-stride append is the right
+	// long-term shape; today both lang signatures lower to
+	// the same wat helper (4-byte-pointer-stride is
+	// type-erased at the wat layer).
+	c.info.FuncSigs["__array_append_jsonvalue"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.EnumType{Name: "JsonValue"}},
+			ast.EnumType{Name: "JsonValue"},
+		},
+		Result: ast.ArrayType{Elem: ast.EnumType{Name: "JsonValue"}},
+	}
+
 	// `url_encode(s)` / `url_decode(s)` live in the lang
 	// prelude (internal/prelude/prelude.lang).
 
 	// `query_parse(s)` lives in the lang prelude.
 
 	// `json_encode(v)` lives in the lang prelude.
-	// json_parse(s): inverse of json_encode. Returns
-	// Option[JsonValue]; None on any malformed input. The
-	// grammar is RFC 8259; numbers are stored verbatim as
-	// JNumber's string payload (no validation beyond the
-	// digit/`.`/`e[+-]`/digit shape). String escapes are
-	// decoded — `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`,
-	// `\t`, `\uXXXX` for BMP code points (surrogate pairs
-	// not yet handled — emit them as-is). Whitespace
-	// between tokens follows the spec.
-	c.info.FuncSigs["json_parse"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}},
-		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.EnumType{Name: "JsonValue"}}},
-	}
+	// `json_parse` migrated to the lang prelude
+	// (internal/prelude/prelude.lang); its signature is
+	// registered via the prelude's FuncDecl.
 
 	// Built-in numeric methods. The receiver type is `NumberType`
 	// keyed by width + signedness; the dispatch path above maps
@@ -1322,6 +1333,13 @@ func assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
 	}
+	// Polymorphic empty-array literal (`[]`) — its concrete
+	// element type is filled in from `dst` by settleEmptyArray.
+	if da, dok := dst.(ast.ArrayType); dok {
+		if sa, sok := src.(ast.ArrayType); sok && sa.Elem == nil && da.Elem != nil {
+			return true
+		}
+	}
 	d, dok := dst.(ast.EnumType)
 	s, sok := src.(ast.EnumType)
 	if dok && sok && d.Name == s.Name && len(s.Args) == 0 && len(d.Args) > 0 {
@@ -1676,6 +1694,14 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		if n.Type == nil {
 			if got == nil {
+				return
+			}
+			// Polymorphic empty array `[]` with no annotation
+			// to settle from — surface the original missing-
+			// annotation error here rather than silently
+			// recording a nil-elem type.
+			if at, ok := got.(ast.ArrayType); ok && at.Elem == nil {
+				c.errf(n.P, "empty array literal needs a type annotation")
 				return
 			}
 			n.Type = got
@@ -2094,8 +2120,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return nil
 	case *ast.ArrayLit:
 		if len(n.Elems) == 0 {
-			c.errf(n.P, "empty array literal needs a type annotation")
-			return nil
+			// Polymorphic-empty marker, resolved by the
+			// surrounding context (Var annotation, function
+			// arg, return type) via settleEmptyArray below.
+			// If nothing settles it, the var-assignment site
+			// raises the missing-annotation error.
+			return ast.ArrayType{Elem: nil}
 		}
 		elemT := c.checkExpr(n.Elems[0], s)
 		for _, el := range n.Elems[1:] {

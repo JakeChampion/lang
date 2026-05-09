@@ -564,3 +564,262 @@ function json_encode(v: JsonValue): string {
         }
     }
 }
+
+// === JSON parsing ===
+//
+// `json_parse(s)` is the inverse of `json_encode`. Returns
+// `Option[JsonValue]`; `None` on any malformed input.
+// Recursive descent over a `__JsonParser` state struct
+// (s + pos + error). Numbers are stored verbatim as
+// `JNumber`'s string payload. String escapes are decoded
+// (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`,
+// `\uXXXX` for BMP code points). Surrogate pairs aren't
+// combined yet.
+
+struct __JsonParser {
+    s: string,
+    pos: i32,
+    error: i32,
+}
+
+function __json_p_skip_ws(p: __JsonParser) {
+    var n: i32 = len(p.s);
+    while (p.pos < n) {
+        var b: i32 = p.s[p.pos];
+        if (b != 32 && b != 9 && b != 10 && b != 13) { break; }
+        p.pos = p.pos + 1;
+    }
+}
+
+function __json_p_byte(p: __JsonParser): i32 {
+    if (p.pos >= len(p.s)) { return 0; }
+    return p.s[p.pos];
+}
+
+function __json_hex_value(c: i32): i32 {
+    if (c >= 48 && c <= 57)  { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    if (c >= 65 && c <= 70)  { return c - 55; }
+    return -1;
+}
+
+function __json_p_number(p: __JsonParser): JsonValue {
+    var start: i32 = p.pos;
+    var n: i32 = len(p.s);
+    var b: i32 = 0;
+    // Optional '-'
+    if (__json_p_byte(p) == 45) { p.pos = p.pos + 1; }
+    // At least one digit.
+    b = __json_p_byte(p);
+    if (b < 48 || b > 57) { p.error = 1; return JNull; }
+    // Integer digits.
+    while (p.pos < n) {
+        b = p.s[p.pos];
+        if (b < 48 || b > 57) { break; }
+        p.pos = p.pos + 1;
+    }
+    // Optional '.<digits>'.
+    if (__json_p_byte(p) == 46) {
+        p.pos = p.pos + 1;
+        while (p.pos < n) {
+            b = p.s[p.pos];
+            if (b < 48 || b > 57) { break; }
+            p.pos = p.pos + 1;
+        }
+    }
+    // Optional [eE][+-]?<digits>.
+    b = __json_p_byte(p);
+    if (b == 101 || b == 69) {
+        p.pos = p.pos + 1;
+        b = __json_p_byte(p);
+        if (b == 43 || b == 45) { p.pos = p.pos + 1; }
+        while (p.pos < n) {
+            b = p.s[p.pos];
+            if (b < 48 || b > 57) { break; }
+            p.pos = p.pos + 1;
+        }
+    }
+    return JNumber(p.s[start:p.pos]);
+}
+
+function __json_p_string(p: __JsonParser): string {
+    if (__json_p_byte(p) != 34) { p.error = 1; return ""; }
+    p.pos = p.pos + 1;
+    var out: string = "";
+    var n: i32 = len(p.s);
+    var b: i32 = 0;
+    while (true) {
+        b = __json_p_byte(p);
+        if (b == 0) { p.error = 1; return ""; }
+        if (b == 34) { p.pos = p.pos + 1; return out; }
+        if (b == 92) {                                  // '\\'
+            p.pos = p.pos + 1;
+            var esc: i32 = __json_p_byte(p);
+            if (esc == 0) { p.error = 1; return ""; }
+            if (esc == 117) {                           // 'u' — \uXXXX
+                p.pos = p.pos + 1;
+                if (p.pos + 4 > n) { p.error = 1; return ""; }
+                var u: i32 = 0;
+                var i: i32 = 0;
+                while (i < 4) {
+                    var hv: i32 = __json_hex_value(p.s[p.pos]);
+                    if (hv < 0) { p.error = 1; return ""; }
+                    u = (u << 4) | hv;
+                    p.pos = p.pos + 1;
+                    i = i + 1;
+                }
+                // UTF-8 encode the BMP code point.
+                if (u < 128) {
+                    var ub1: u8[] = [u as u8];
+                    out = out + string_from_bytes(ub1);
+                } else if (u < 2048) {
+                    var ub2: u8[] = [
+                        ((u >> 6) | 192) as u8,
+                        ((u & 63) | 128) as u8
+                    ];
+                    out = out + string_from_bytes(ub2);
+                } else {
+                    var ub3: u8[] = [
+                        ((u >> 12) | 224) as u8,
+                        (((u >> 6) & 63) | 128) as u8,
+                        ((u & 63) | 128) as u8
+                    ];
+                    out = out + string_from_bytes(ub3);
+                }
+            } else {
+                var ch: i32 = -1;
+                if (esc == 34 || esc == 92 || esc == 47) { ch = esc; }
+                else if (esc == 110) { ch = 10; }
+                else if (esc == 114) { ch = 13; }
+                else if (esc == 116) { ch = 9; }
+                else if (esc == 98)  { ch = 8; }
+                else if (esc == 102) { ch = 12; }
+                else { p.error = 1; return ""; }
+                var sb: u8[] = [ch as u8];
+                out = out + string_from_bytes(sb);
+                p.pos = p.pos + 1;
+            }
+        } else {
+            out = out + p.s[p.pos:p.pos+1];
+            p.pos = p.pos + 1;
+        }
+    }
+    return "";   // unreachable
+}
+
+function __json_p_array(p: __JsonParser): JsonValue {
+    p.pos = p.pos + 1;                                  // consume '['
+    __json_p_skip_ws(p);
+    if (__json_p_byte(p) == 93) {                       // ']'
+        p.pos = p.pos + 1;
+        var empty: JsonValue[] = [];
+        return JArray(empty);
+    }
+    var arr: JsonValue[] = [];
+    while (true) {
+        var elem: JsonValue = __json_p_value(p);
+        if (p.error != 0) { return JNull; }
+        arr = __array_append_jsonvalue(arr, elem);
+        __json_p_skip_ws(p);
+        var b: i32 = __json_p_byte(p);
+        if (b == 44) {                                  // ','
+            p.pos = p.pos + 1;
+            __json_p_skip_ws(p);
+            continue;
+        }
+        if (b == 93) {                                  // ']'
+            p.pos = p.pos + 1;
+            return JArray(arr);
+        }
+        p.error = 1;
+        return JNull;
+    }
+    return JNull;   // unreachable
+}
+
+function __json_p_object(p: __JsonParser): JsonValue {
+    p.pos = p.pos + 1;                                  // consume '{'
+    __json_p_skip_ws(p);
+    var m: Map[string, JsonValue] = map_new(8);
+    if (__json_p_byte(p) == 125) {                      // '}'
+        p.pos = p.pos + 1;
+        return JObject(m);
+    }
+    while (true) {
+        var key: string = __json_p_string(p);
+        if (p.error != 0) { return JNull; }
+        __json_p_skip_ws(p);
+        if (__json_p_byte(p) != 58) {                   // ':'
+            p.error = 1; return JNull;
+        }
+        p.pos = p.pos + 1;
+        var val: JsonValue = __json_p_value(p);
+        if (p.error != 0) { return JNull; }
+        m.set(key, val);
+        __json_p_skip_ws(p);
+        var b: i32 = __json_p_byte(p);
+        if (b == 44) {                                  // ','
+            p.pos = p.pos + 1;
+            __json_p_skip_ws(p);
+            continue;
+        }
+        if (b == 125) {                                 // '}'
+            p.pos = p.pos + 1;
+            return JObject(m);
+        }
+        p.error = 1;
+        return JNull;
+    }
+    return JNull;   // unreachable
+}
+
+function __json_p_value(p: __JsonParser): JsonValue {
+    __json_p_skip_ws(p);
+    var b: i32 = __json_p_byte(p);
+    if (b == 0) { p.error = 1; return JNull; }
+    if (b == 110) {                                     // 'n' — null
+        if (p.pos + 4 > len(p.s)) { p.error = 1; return JNull; }
+        if (p.s[p.pos+1] != 117 || p.s[p.pos+2] != 108 || p.s[p.pos+3] != 108) {
+            p.error = 1; return JNull;
+        }
+        p.pos = p.pos + 4;
+        return JNull;
+    }
+    if (b == 116) {                                     // 't' — true
+        if (p.pos + 4 > len(p.s)) { p.error = 1; return JNull; }
+        if (p.s[p.pos+1] != 114 || p.s[p.pos+2] != 117 || p.s[p.pos+3] != 101) {
+            p.error = 1; return JNull;
+        }
+        p.pos = p.pos + 4;
+        return JBool(true);
+    }
+    if (b == 102) {                                     // 'f' — false
+        if (p.pos + 5 > len(p.s)) { p.error = 1; return JNull; }
+        if (p.s[p.pos+1] != 97 || p.s[p.pos+2] != 108 ||
+            p.s[p.pos+3] != 115 || p.s[p.pos+4] != 101) {
+            p.error = 1; return JNull;
+        }
+        p.pos = p.pos + 5;
+        return JBool(false);
+    }
+    if (b == 34) {                                      // '"' — string
+        var s: string = __json_p_string(p);
+        if (p.error != 0) { return JNull; }
+        return JString(s);
+    }
+    if (b == 91)  { return __json_p_array(p); }         // '['
+    if (b == 123) { return __json_p_object(p); }        // '{'
+    if (b == 45 || (b >= 48 && b <= 57)) {              // '-' or digit
+        return __json_p_number(p);
+    }
+    p.error = 1;
+    return JNull;
+}
+
+function json_parse(s: string): Option[JsonValue] {
+    var p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0 };
+    var v: JsonValue = __json_p_value(p);
+    __json_p_skip_ws(p);
+    if (p.error != 0 || p.pos < len(p.s)) { return None; }
+    return Some(v);
+}
