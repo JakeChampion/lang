@@ -4007,6 +4007,61 @@ func TestWASMJsonParse(t *testing.T) {
 	}
 }
 
+// json_parse surrogate-pair handling: `"😀"`
+// (U+1F600 GRINNING FACE) decodes to a 4-byte UTF-8
+// sequence (F0 9F 98 80). Lone surrogates fall back to
+// U+FFFD REPLACEMENT CHARACTER (EF BF BD), matching Go's
+// encoding/json + most strict UTF-8 emitters.
+func TestWASMJsonParseSurrogatePairs(t *testing.T) {
+	src := "function main(): i32 {\n" +
+		"    // Astral pair: \\uD83D\\uDE00 = U+1F600 = F0 9F 98 80.\n" +
+		"    match (json_parse(\"\\\"\\\\uD83D\\\\uDE00\\\"\")) {\n" +
+		"        Some(v) => { match (v) {\n" +
+		"            JString(s) => {\n" +
+		"                if (len(s) != 4) { return 1; }\n" +
+		"                if ((s[0] as i32) != 240) { return 2; }\n" +
+		"                if ((s[1] as i32) != 159) { return 3; }\n" +
+		"                if ((s[2] as i32) != 152) { return 4; }\n" +
+		"                if ((s[3] as i32) != 128) { return 5; }\n" +
+		"            },\n" +
+		"            JNull => { return 6; }, JBool(_) => { return 6; }, JNumber(_) => { return 6; }, JArray(_) => { return 6; }, JObject(_) => { return 6; }\n" +
+		"        } },\n" +
+		"        None => { return 7; }\n" +
+		"    }\n" +
+		"    // Lone high surrogate: emits U+FFFD = EF BF BD.\n" +
+		"    match (json_parse(\"\\\"\\\\uD800x\\\"\")) {\n" +
+		"        Some(v) => { match (v) {\n" +
+		"            JString(s) => {\n" +
+		"                if (len(s) != 4) { return 8; }\n" +
+		"                if ((s[0] as i32) != 239) { return 9; }\n" +
+		"                if ((s[1] as i32) != 191) { return 10; }\n" +
+		"                if ((s[2] as i32) != 189) { return 11; }\n" +
+		"                if ((s[3] as i32) != 120) { return 12; }   // 'x'\n" +
+		"            },\n" +
+		"            JNull => { return 13; }, JBool(_) => { return 13; }, JNumber(_) => { return 13; }, JArray(_) => { return 13; }, JObject(_) => { return 13; }\n" +
+		"        } },\n" +
+		"        None => { return 14; }\n" +
+		"    }\n" +
+		"    // Lone low surrogate: emits U+FFFD too.\n" +
+		"    match (json_parse(\"\\\"\\\\uDC00\\\"\")) {\n" +
+		"        Some(v) => { match (v) {\n" +
+		"            JString(s) => {\n" +
+		"                if (len(s) != 3) { return 15; }\n" +
+		"                if ((s[0] as i32) != 239) { return 16; }\n" +
+		"                if ((s[1] as i32) != 191) { return 17; }\n" +
+		"                if ((s[2] as i32) != 189) { return 18; }\n" +
+		"            },\n" +
+		"            JNull => { return 19; }, JBool(_) => { return 19; }, JNumber(_) => { return 19; }, JArray(_) => { return 19; }, JObject(_) => { return 19; }\n" +
+		"        } },\n" +
+		"        None => { return 20; }\n" +
+		"    }\n" +
+		"    return 0;\n" +
+		"}"
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("json_parse surrogate pairs: exit = %d, want 0", got)
+	}
+}
+
 // `f32.to_string()` / `f64.to_string()` — decimal text
 // formatting. Not bit-exact (truncate-to-N digits), so
 // assertions match what the simple algorithm produces:

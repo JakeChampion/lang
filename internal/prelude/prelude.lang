@@ -642,6 +642,59 @@ function __json_p_number(p: __JsonParser): JsonValue {
     return JNumber(p.s[start:p.pos]);
 }
 
+// __json_emit_codepoint encodes a single Unicode scalar value
+// as the matching UTF-8 byte sequence (1-4 bytes) and appends
+// it to `out`. Supports the full Unicode range up to
+// U+10FFFF; the caller is expected to have resolved any
+// surrogate pairs into a single code point already.
+function __json_emit_codepoint(out: string, cp: i32): string {
+    if (cp < 128) {
+        var ub1: u8[] = [cp as u8];
+        return out + string_from_bytes(ub1);
+    }
+    if (cp < 2048) {
+        var ub2: u8[] = [
+            ((cp >> 6) | 192) as u8,
+            ((cp & 63) | 128) as u8
+        ];
+        return out + string_from_bytes(ub2);
+    }
+    if (cp < 65536) {
+        var ub3: u8[] = [
+            ((cp >> 12) | 224) as u8,
+            (((cp >> 6) & 63) | 128) as u8,
+            ((cp & 63) | 128) as u8
+        ];
+        return out + string_from_bytes(ub3);
+    }
+    var ub4: u8[] = [
+        ((cp >> 18) | 240) as u8,
+        (((cp >> 12) & 63) | 128) as u8,
+        (((cp >> 6) & 63) | 128) as u8,
+        ((cp & 63) | 128) as u8
+    ];
+    return out + string_from_bytes(ub4);
+}
+
+// __json_p_uhex parses 4 hex digits at p.pos (without
+// consuming the leading `\u`) and returns the decoded value.
+// Sets p.error and returns 0 on any non-hex digit or
+// past-end-of-input. Does NOT consume the hex digits past
+// what it reads — it advances p.pos by 4 on success.
+function __json_p_uhex(p: __JsonParser): i32 {
+    if (p.pos + 4 > len(p.s)) { p.error = 1; return 0; }
+    var u: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var hv: i32 = __json_hex_value(p.s[p.pos]);
+        if (hv < 0) { p.error = 1; return 0; }
+        u = (u << 4) | hv;
+        p.pos = p.pos + 1;
+        i = i + 1;
+    }
+    return u;
+}
+
 function __json_p_string(p: __JsonParser): string {
     if (__json_p_byte(p) != 34) { p.error = 1; return ""; }
     p.pos = p.pos + 1;
@@ -658,33 +711,37 @@ function __json_p_string(p: __JsonParser): string {
             if (esc == 0) { p.error = 1; return ""; }
             if (esc == 117) {                           // 'u' — \uXXXX
                 p.pos = p.pos + 1;
-                if (p.pos + 4 > n) { p.error = 1; return ""; }
-                var u: i32 = 0;
-                var i: i32 = 0;
-                while (i < 4) {
-                    var hv: i32 = __json_hex_value(p.s[p.pos]);
-                    if (hv < 0) { p.error = 1; return ""; }
-                    u = (u << 4) | hv;
-                    p.pos = p.pos + 1;
-                    i = i + 1;
-                }
-                // UTF-8 encode the BMP code point.
-                if (u < 128) {
-                    var ub1: u8[] = [u as u8];
-                    out = out + string_from_bytes(ub1);
-                } else if (u < 2048) {
-                    var ub2: u8[] = [
-                        ((u >> 6) | 192) as u8,
-                        ((u & 63) | 128) as u8
-                    ];
-                    out = out + string_from_bytes(ub2);
+                var u: i32 = __json_p_uhex(p);
+                if (p.error != 0) { return ""; }
+                // High surrogate (D800..DBFF): combine with
+                // the following low surrogate (DC00..DFFF) to
+                // form a single astral code point. Lone or
+                // mismatched surrogates fall back to U+FFFD
+                // (REPLACEMENT CHARACTER) — matches Go's
+                // encoding/json + most strict UTF-8 emitters.
+                if (u >= 55296 && u <= 56319) {
+                    if (p.pos + 6 > n
+                        || p.s[p.pos] != 92
+                        || p.s[p.pos+1] != 117) {
+                        out = __json_emit_codepoint(out, 65533);
+                    } else {
+                        p.pos = p.pos + 2;
+                        var low: i32 = __json_p_uhex(p);
+                        if (p.error != 0) { return ""; }
+                        if (low < 56320 || low > 57343) {
+                            out = __json_emit_codepoint(out, 65533);
+                            out = __json_emit_codepoint(out, low);
+                        } else {
+                            var cp: i32 = 65536
+                                + ((u - 55296) << 10)
+                                + (low - 56320);
+                            out = __json_emit_codepoint(out, cp);
+                        }
+                    }
+                } else if (u >= 56320 && u <= 57343) {
+                    out = __json_emit_codepoint(out, 65533);
                 } else {
-                    var ub3: u8[] = [
-                        ((u >> 12) | 224) as u8,
-                        (((u >> 6) & 63) | 128) as u8,
-                        ((u & 63) | 128) as u8
-                    ];
-                    out = out + string_from_bytes(ub3);
+                    out = __json_emit_codepoint(out, u);
                 }
             } else {
                 var ch: i32 = -1;
