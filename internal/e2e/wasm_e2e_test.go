@@ -929,6 +929,38 @@ func TestWASMMapLiteral(t *testing.T) {
 	}
 }
 
+// Sub-i32 array writes: `arr[i] = v` for byte / halfword
+// arrays. Stride-aware bounds-check helper + width-aware
+// store (i32.store8 for u8/i8, i32.store16 for u16/i16). Read
+// path was already wired in PR 134; this completes the symmetry.
+func TestWASMSubI32ArrayWrites(t *testing.T) {
+	src := `function main(): i32 {
+    var bytes: u8[] = [1, 2, 3, 4];
+    bytes[0] = 250;
+    bytes[2] = 99;
+    if (bytes[0] != 250) { return 1; }
+    if (bytes[1] != 2) { return 2; }
+    if (bytes[2] != 99) { return 3; }
+    if (bytes[3] != 4) { return 4; }
+
+    var halves: u16[] = [10, 20, 30];
+    halves[1] = 65000;
+    if (halves[0] != 10) { return 5; }
+    if (halves[1] != 65000) { return 6; }
+    if (halves[2] != 30) { return 7; }
+
+    var sgn: i8[] = [0, 0, 0];
+    sgn[1] = -42;
+    if ((sgn[0] as i32) != 0) { return 8; }
+    if ((sgn[1] as i32) != -42) { return 9; }
+    if ((sgn[2] as i32) != 0) { return 10; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (sub-i32 array writes)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

@@ -2343,20 +2343,49 @@ func (b *builder) assign(n *ast.Assign) error {
 		return nil
 	case *ast.Index:
 		// `a[i] = v` lowers to a bounds-checked address compute via
-		// __arr_idx, then a regular i32.store. Doesn't leave a value
-		// on the stack — exprLeavesValue special-cases this shape so
-		// no drop is emitted by the surrounding ExprStmt.
+		// the right per-stride helper, then a width-aware store.
+		// Doesn't leave a value on the stack — exprLeavesValue
+		// special-cases this shape so no drop is emitted by the
+		// surrounding ExprStmt. Element-width choice mirrors the
+		// read path: stride 1 / 2 / 4 / 8 picks helper +
+		// `i32.store8` / `i32.store16` / `i32.store` /
+		// `f32.store`. Float arrays use OpFStore.
+		stride := int32(4)
+		storeOp := OpStore
+		if t.ElemType != nil {
+			stride = int32(ast.ElemSizeBytes(t.ElemType))
+			if nt, ok := t.ElemType.(ast.NumberType); ok {
+				switch nt.NormalWidth() {
+				case 8:
+					storeOp = OpStoreI8
+				case 16:
+					storeOp = OpStoreI16
+				}
+			}
+			if isFloat(t.ElemType) {
+				storeOp = OpFStore
+			}
+		}
+		helper := "__arr_idx"
+		switch stride {
+		case 1:
+			helper = "__str_idx"
+		case 2:
+			helper = "__arr_idx_2"
+		case 8:
+			helper = "__arr_idx_8"
+		}
 		if err := b.expr(t.Array); err != nil {
 			return err
 		}
 		if err := b.expr(t.Idx); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpCallDirect, Str: "__arr_idx", I32: 2})
+		b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
 		if err := b.expr(n.Value); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpStore})
+		b.emit(Op{Kind: storeOp})
 		return nil
 	case *ast.FieldAccess:
 		// `p.field = v` lowers to base + offset; value; store. Same
