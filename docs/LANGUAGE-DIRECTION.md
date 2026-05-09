@@ -700,10 +700,11 @@ Deferred to a follow-up:
     json_encode. String escapes decoded: `\"`, `\\`, `\/`,
     `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX` for BMP code
     points (UTF-8 1/2/3-byte encoding). Surrogate pairs
-    aren't combined yet — they emit individual 3-byte
-    sequences which produces invalid UTF-8 for true
-    astral code points; standard pairing is a follow-up.
-    Whitespace between tokens follows the spec.
+    are now combined: `😀` becomes the 4-byte
+    UTF-8 sequence for U+1F600 (😀). Lone or mismatched
+    surrogates fall back to U+FFFD REPLACEMENT CHARACTER,
+    matching Go's `encoding/json` and most strict UTF-8
+    emitters. Whitespace between tokens follows the spec.
 
 ## Stdlib implementation strategy: hand-written wat vs IR-routed
 
