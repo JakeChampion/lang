@@ -553,10 +553,31 @@ Deferred to a follow-up:
   can't mutate the return value from a defer" semantics
   without giving up named-return-value support that this
   language doesn't have anyway.
-- Document the lifetime contract for slices/views (must outlive
-  the arena they reference).
-  (The `number` deprecation alias has already been dropped — see
-  PR 1's status block.)
+- **Slice / view lifetime contract.** A `[T]` slice is a
+  non-owning `{data_ptr, len}` pair into a parent owner —
+  another slice, an `T[]` array, a `string`, or any heap
+  buffer the bump allocator handed out. The slice **must
+  not outlive its parent's arena scope.** Concretely:
+  - A slice taken inside an `arena { ... }` block is invalid
+    after the block exits (the storage it points at was
+    reclaimed by the matching `arena_restore`). Returning
+    such a slice from the block is undefined behaviour;
+    there's no static check today, just discipline.
+  - A slice taken from a function-local `string` / array
+    must not be returned past the caller's arena unless
+    the caller's arena is the same as (or wider than) the
+    parent's. In practice, the request handler's outer
+    arena owns everything allocated during the request, so
+    slices flow freely within that scope. They become
+    invalid once the handler returns and the per-request
+    arena tears down.
+  - The bump allocator's "everything alive at scope exit
+    until the arena resets" model means the borrow-checker
+    story is purely scope-based: track which arena owns the
+    parent, and confine slice usage to that arena's
+    lifetime.
+- (The `number` deprecation alias has already been dropped
+  — see PR 1's status block.)
 
 ## Deferred — not in any of the above five PRs
 
@@ -848,6 +869,25 @@ the lang's abstraction layers.
 - **Map literal syntax**: see PR 4 candidates. Lean `Map { ... }`.
 - **`Bytes` vs `[u8]`**: distinct nominal type or just a slice of
   u8? Lean `[u8]` for symmetry with other slices.
-- **Closure capture semantics**: by-value vs by-reference, escape
-  analysis. Currently undocumented; settle when re-lowering for
-  defunctionalisation.
+- **Closure capture semantics**: by-value at closure-
+  creation time. The closureconv pass evaluates each
+  captured name once at the `MakeClosure` site and stores
+  the value in a freshly-allocated env block; the hoisted
+  function reads it via env-relative loads. For pointer-
+  shaped types (`string`, arrays, slices, structs, enums,
+  closures themselves) the value is the heap / wrapper
+  pointer at capture time — so mutations *through* the
+  pointer are visible to the closure (the closure shares
+  the same underlying buffer) but reassigning the outer
+  variable to a new pointer is not. For scalar types
+  (`i32`, `u32`, `i64`, `f32`, `f64`, `boolean`) the value
+  itself is copied; later mutations of the outer scalar
+  don't reach the closure. Escape analysis (statically
+  verifying the captured pointer's parent arena outlives
+  the closure) is deferred — the current model leans on
+  the bump allocator: closures stay valid while the arena
+  that owns their captures is alive, which in practice
+  means "until the request handler returns". Settle the
+  formal escape rules when re-lowering for
+  defunctionalisation; until then the rule is "captures
+  must outlive the closure".
