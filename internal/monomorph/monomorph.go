@@ -358,6 +358,8 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 		substituteExpr(x.Init, sub)
 	case *ast.Block:
 		substituteBlock(x, sub)
+	case *ast.Arena:
+		substituteBlock(x.Body, sub)
 	case *ast.If:
 		substituteExpr(x.Cond, sub)
 		substituteStmt(x.Then, sub)
@@ -509,6 +511,10 @@ func cloneStmt(s ast.Stmt) ast.Stmt {
 		return &c
 	case *ast.Block:
 		return cloneBlock(x)
+	case *ast.Arena:
+		c := *x
+		c.Body = cloneBlock(x.Body)
+		return &c
 	case *ast.If:
 		c := *x
 		c.Cond = cloneExpr(x.Cond)
@@ -733,6 +739,8 @@ func walkStmtStructLits(s ast.Stmt, fn func(*ast.StructLit)) {
 		walkStmtStructLits(x.Body, fn)
 	case *ast.Block:
 		walkBlockStructLits(x, fn)
+	case *ast.Arena:
+		walkBlockStructLits(x.Body, fn)
 	case *ast.Match:
 		walkExprStructLits(x.Tag, fn)
 		for _, arm := range x.Arms {
@@ -914,6 +922,8 @@ func rewriteStmtTypes(s ast.Stmt, info *checker.Info, into map[instKey][]ast.Typ
 		// info.Locals, which the existing Var case handles.
 	case *ast.Block:
 		rewriteBlockTypes(x, info, into)
+	case *ast.Arena:
+		rewriteBlockTypes(x.Body, info, into)
 	case *ast.If:
 		rewriteStmtTypes(x.Then, info, into)
 		if x.Else != nil {
@@ -1001,6 +1011,8 @@ func walkStmt(s ast.Stmt, fn func(*ast.Call)) {
 		walkStmt(x.Body, fn)
 	case *ast.Block:
 		walkBlock(x, fn)
+	case *ast.Arena:
+		walkBlock(x.Body, fn)
 	case *ast.Match:
 		walkExpr(x.Tag, fn)
 		for _, arm := range x.Arms {

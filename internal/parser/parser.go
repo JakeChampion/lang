@@ -868,6 +868,8 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseReturn()
 		case "defer":
 			return p.parseDefer()
+		case "arena":
+			return p.parseArena()
 		case "var":
 			return p.parseVar()
 		case "let":
@@ -1446,6 +1448,24 @@ func (p *parser) parseDefer() (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.Defer{P: kw.Pos, Expr: expr}, nil
+}
+
+// parseArena parses `arena { … }` — a syntactic scope whose
+// allocations are reclaimed when the block exits. Lowers to
+// `arena_save → body → arena_restore` so the bump-allocator
+// cursor snaps back. Caller has consumed nothing yet; we
+// advance past `arena`, demand `{`, and delegate to
+// parseBlock.
+func (p *parser) parseArena() (ast.Stmt, error) {
+	kw := p.advance() // arena
+	if !p.match(lexer.Punct, "{") {
+		return nil, p.errorf(kw.Pos, "arena requires a `{ … }` block")
+	}
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Arena{P: kw.Pos, Body: body}, nil
 }
 
 func (p *parser) parseVar() (ast.Stmt, error) {

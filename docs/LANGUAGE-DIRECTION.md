@@ -474,10 +474,18 @@ Deferred to a follow-up:
 
 ### PR 5 — Memory model first-class
 
-- `arena` as a language concept. Each scope opens an arena that
-  resets at exit. CLI default = process-wide arena, freed on exit.
-  HTTP handler default = per-request arena, freed when the
-  response is sealed.
+- **`arena { … }` block shipped.** Sugar for `arena_save() →
+  body → arena_restore()` so the bump-allocator cursor snaps
+  back when the block exits. Every allocation made inside
+  the block is reclaimed at exit; nested blocks each get
+  their own snap. Bindings declared inside an arena block
+  are scoped to it (regular block-scoping, no special
+  rules). Anything allocated inside the block must NOT
+  escape — the language doesn't (yet) statically enforce
+  this, so callers shouldn't return pointers to in-block
+  allocations. Implicit per-handler / per-CLI-invocation
+  arena defaults still TBD; for now this is an explicit
+  user-controlled scope.
 - **`defer` keyword shipped.** `defer EXPR;` schedules `EXPR`
   to run when the enclosing function exits. Multiple defers
   run in LIFO order. Each Defer node gets a synthesised

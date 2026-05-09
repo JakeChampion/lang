@@ -1457,6 +1457,13 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// expression-shaped). The IR builder is responsible
 		// for replaying the expression at function exits.
 		c.checkExpr(n.Expr, s)
+	case *ast.Arena:
+		// `arena { … }` introduces a new lexical scope same
+		// as a plain block; the special semantics (cursor
+		// snap on exit) are an IR-level concern. The body's
+		// scope shadows but doesn't leak — same model as
+		// any other block.
+		c.checkBlock(n.Body, s)
 	case *ast.Var:
 		if _, dup := s.names[n.Name]; dup {
 			c.errf(n.P, "variable %q already declared in this scope", n.Name)

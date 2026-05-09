@@ -101,6 +101,7 @@ var keywords = map[string]bool{
 	"match":    true,
 	"when":     true,
 	"defer":    true,
+	"arena":    true,
 }
 
 // Multi-character punctuators, longest first. The 3-char compound

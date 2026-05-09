@@ -2863,6 +2863,50 @@ func TestWASMArenaReset(t *testing.T) {
 	}
 }
 
+// `arena { … }` block is sugar for arena_save → body →
+// arena_restore. Verifies the cursor snaps back: a fresh
+// arena_save before vs after the block returns the same
+// value, even though the block allocated a 5-element
+// array. Bindings declared inside the block are scoped to
+// the block (compile-time check via referring after the
+// block — would be an undefined-name error). Nested arena
+// blocks each get their own snap, so the inner block's
+// allocations are reclaimed before the outer block ends.
+func TestWASMArenaScope(t *testing.T) {
+	src := `function main(): i32 {
+		var before: i32 = arena_save();
+		arena {
+			var a: i32[] = [1, 2, 3, 4, 5];
+			if (len(a) != 5) { return 1; }
+		}
+		var after: i32 = arena_save();
+		if (before != after) { return 2; }
+
+		// Nested arena blocks — inner cursor snaps before
+		// outer's allocations, outer snaps before any.
+		var outerStart: i32 = arena_save();
+		arena {
+			var x: i32[] = [10, 20, 30];
+			var midway: i32 = arena_save();
+			if (midway <= outerStart) { return 3; }
+			arena {
+				var y: i32[] = [40, 50];
+				if (len(y) != 2) { return 4; }
+			}
+			var afterInner: i32 = arena_save();
+			if (afterInner != midway) { return 5; }
+			if (len(x) != 3) { return 6; }
+		}
+		var outerEnd: i32 = arena_save();
+		if (outerEnd != outerStart) { return 7; }
+
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM arena {…} block: exit = %d, want 0", got)
+	}
+}
+
 // random_bytes(n) on WASM goes through `wasi_snapshot_preview1.
 // random_get`. Same length / non-equality assertions as the
 // arm32 version.

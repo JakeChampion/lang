@@ -317,6 +317,9 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 	switch x := s.(type) {
 	case *ast.Block:
 		f.formatBlock(x, depth)
+	case *ast.Arena:
+		f.b.WriteString("arena ")
+		f.formatBlock(x.Body, depth)
 	case *ast.If:
 		f.b.WriteString("if (")
 		f.formatExpr(x.Cond, precLowest)

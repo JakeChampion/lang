@@ -384,6 +384,8 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 	switch x := s.(type) {
 	case *ast.Block:
 		r.rewriteBlock(x)
+	case *ast.Arena:
+		r.rewriteBlock(x.Body)
 	case *ast.If:
 		r.rewriteExpr(&x.Cond)
 		r.rewriteStmt(x.Then)

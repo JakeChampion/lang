@@ -232,6 +232,8 @@ func scanEnumUses(prog *ast.Program) bool {
 			for _, s := range x.Stmts {
 				walk(s)
 			}
+		case *ast.Arena:
+			walk(x.Body)
 		case *ast.If:
 			walk(x.Cond)
 			walk(x.Then)
@@ -426,6 +428,13 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 			for _, s := range x.Stmts {
 				walk(s)
 			}
+		case *ast.Arena:
+			// `arena { … }` lowers to arena_save → body →
+			// arena_restore at IR time, so the helpers need
+			// to be in the binary even if user code never
+			// names them directly.
+			g.needsArena = true
+			walk(x.Body)
 		case *ast.If:
 			walk(x.Cond)
 			walk(x.Then)
@@ -526,6 +535,8 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			for _, s := range x.Stmts {
 				walk(s)
 			}
+		case *ast.Arena:
+			walk(x.Body)
 		case *ast.If:
 			walk(x.Cond)
 			walk(x.Then)
@@ -643,6 +654,8 @@ func (g *generator) scanForStructUses(prog *ast.Program) {
 			for _, s := range x.Stmts {
 				walk(s)
 			}
+		case *ast.Arena:
+			walk(x.Body)
 		case *ast.If:
 			walk(x.Cond)
 			walk(x.Then)
@@ -737,6 +750,8 @@ func (g *generator) scanIndirectStmt(s ast.Stmt) {
 		for _, ss := range x.Stmts {
 			g.scanIndirectStmt(ss)
 		}
+	case *ast.Arena:
+		g.scanIndirectStmt(x.Body)
 	case *ast.If:
 		g.scanIndirectExpr(x.Cond, false)
 		g.scanIndirectStmt(x.Then)
@@ -962,6 +977,8 @@ func (g *generator) scanForStringEq(prog *ast.Program) {
 			for _, s := range x.Stmts {
 				walk(s)
 			}
+		case *ast.Arena:
+			walk(x.Body)
 		case *ast.If:
 			walk(x.Cond)
 			walk(x.Then)
@@ -1047,6 +1064,8 @@ func (g *generator) scanForStringConcat(prog *ast.Program) {
 			for _, s := range x.Stmts {
 				walk(s)
 			}
+		case *ast.Arena:
+			walk(x.Body)
 		case *ast.If:
 			walk(x.Cond)
 			walk(x.Then)
@@ -1166,6 +1185,8 @@ func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 			for _, s := range x.Stmts {
 				walk(s)
 			}
+		case *ast.Arena:
+			walk(x.Body)
 		case *ast.If:
 			walk(x.Cond)
 			walk(x.Then)
@@ -1246,6 +1267,8 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 			for _, s := range x.Stmts {
 				walk(s)
 			}
+		case *ast.Arena:
+			walk(x.Body)
 		case *ast.If:
 			walk(x.Cond)
 			walk(x.Then)

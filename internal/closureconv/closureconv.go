@@ -120,6 +120,8 @@ func (c *converter) rewriteStmt(s ast.Stmt, ctx *captureCtx) (ast.Stmt, error) {
 		return c.hoist(n, ctx)
 	case *ast.Block:
 		return n, c.rewriteBlock(n, ctx)
+	case *ast.Arena:
+		return n, c.rewriteBlock(n.Body, ctx)
 	case *ast.If:
 		nc, err := c.rewriteExpr(n.Cond, ctx)
 		if err != nil {
