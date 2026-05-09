@@ -1721,6 +1721,114 @@ func TestWASMMapIter(t *testing.T) {
 	}
 }
 
+// Wide-V Map: Map[K, i64] / Map[K, f64] need a boxing dance
+// since the shared wat helpers see all values as i32. The IR
+// allocates an 8-byte cell on each set / get_or-fallback, stores
+// the wide value there, and passes / returns the cell pointer
+// transparently. get translates the helper's Option[i32] into
+// a real wide-payload Option[V] inline; MapIter.value()
+// dereferences the returned pointer.
+func TestWASMMapValueI64(t *testing.T) {
+	// 4294967296 = 2^32 — picks the entire upper word so a
+	// truncating store would visibly clear the high bits.
+	src := `function main(): i32 {
+    var m: Map[i32, i64] = map_new(8);
+    m.set(1, 4294967296 as i64);
+    m.set(2, 8589934592 as i64);
+    match (m.get(1)) {
+        Some(v) => { if (v != (4294967296 as i64)) { return 1; } },
+        None => { return 2; }
+    }
+    match (m.get(2)) {
+        Some(v) => { if (v != (8589934592 as i64)) { return 3; } },
+        None => { return 4; }
+    }
+    match (m.get(99)) {
+        Some(v) => { return 5; },
+        None => { }
+    }
+    var fallback: i64 = m.get_or(99, 7777777777 as i64);
+    if (fallback != (7777777777 as i64)) { return 6; }
+    var hit: i64 = m.get_or(1, 0 as i64);
+    if (hit != (4294967296 as i64)) { return 7; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map[i32, i64] roundtrip)", got)
+	}
+}
+
+// `Map[string, f64]` — same boxing path, exercised through
+// f64.store / f64.load on the wide-V cell + the wide-payload
+// Option[f64] return projection.
+func TestWASMMapValueF64(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, f64] = map_new(8);
+    m.set("pi", 3.14 as f64);
+    m.set("e", 2.71 as f64);
+    match (m.get("pi")) {
+        Some(v) => {
+            if (v < (3.13 as f64)) { return 1; }
+            if (v > (3.15 as f64)) { return 2; }
+        },
+        None => { return 3; }
+    }
+    match (m.get("e")) {
+        Some(v) => {
+            if (v < (2.70 as f64)) { return 4; }
+            if (v > (2.72 as f64)) { return 5; }
+        },
+        None => { return 6; }
+    }
+    match (m.get("missing")) {
+        Some(v) => { return 7; },
+        None => { }
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map[string, f64] roundtrip)", got)
+	}
+}
+
+// Map literal with wide values — same boxing path the user-side
+// `m.set(k, v)` uses; the literal lowering pre-allocates a cell
+// for each entry's value before calling the shared
+// `__method_Map_set` helper.
+func TestWASMMapLiteralWideValue(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
+    match (m.get(2)) {
+        Some(v) => { if (v == (8589934592 as i64)) { return 0; } },
+        None => { return 1; }
+    }
+    return 2;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map literal wide value)", got)
+	}
+}
+
+// MapIter.value() with wide V: the helper still returns a cell
+// pointer (wat side stays i32), and the IR unboxes it on the
+// way out.
+func TestWASMMapIterValueWide(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
+    var sum: i64 = 0 as i64;
+    var it: MapIter[i32, i64] = m.iter();
+    while (it.has_next()) {
+        sum = sum + it.value();
+        it.advance();
+    }
+    if (sum == (12884901888 as i64)) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (MapIter.value wide V)", got)
+	}
+}
+
 // Cursor iteration over a string-keyed map. Verifies the
 // type-system substitution returns string-typed key /
 // i32-typed value at the call site.
