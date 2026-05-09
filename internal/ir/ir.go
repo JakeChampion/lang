@@ -1326,9 +1326,13 @@ func (b *builder) expr(e ast.Expr) error {
 			return err
 		}
 		// Resolve the element type to pick stride + load width.
+		// loadWidth is non-zero only for the 64-bit case; the
+		// wasm codegen's intPrefix / floatPrefix honour it on
+		// OpLoad / OpFLoad.
 		elemType := n.ElemType
 		stride := int32(4)
 		loadOp := OpLoad
+		loadWidth := 0
 		if elemType != nil {
 			stride = int32(ast.ElemSizeBytes(elemType))
 			if nt, ok := elemType.(ast.NumberType); ok {
@@ -1345,10 +1349,15 @@ func (b *builder) expr(e ast.Expr) error {
 					} else {
 						loadOp = OpLoadI16U
 					}
+				case 64:
+					loadWidth = 64
 				}
 			}
-			if _, ok := elemType.(ast.FloatType); ok {
+			if ft, ok := elemType.(ast.FloatType); ok {
 				loadOp = OpFLoad
+				if ft.NormalWidth() == 64 {
+					loadWidth = 64
+				}
 			}
 		}
 		if n.IsString {
@@ -1356,7 +1365,7 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpLoadByte})
 		} else if n.IsSlice {
 			b.emit(Op{Kind: OpCallDirect, Str: "__slice_idx", I32: 2})
-			b.emit(Op{Kind: loadOp})
+			b.emit(Op{Kind: loadOp, Width: loadWidth})
 		} else {
 			// Per-stride helper: __str_idx for byte arrays
 			// (stride=1, also reused for raw strings),
@@ -1372,7 +1381,7 @@ func (b *builder) expr(e ast.Expr) error {
 				helper = "__arr_idx_8"
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
-			b.emit(Op{Kind: loadOp})
+			b.emit(Op{Kind: loadOp, Width: loadWidth})
 		}
 	case *ast.SliceExpr:
 		// Lower `arr[low:high]` to:
@@ -1462,7 +1471,12 @@ func (b *builder) expr(e ast.Expr) error {
 		if n.ElemType != nil {
 			stride = int32(ast.ElemSizeBytes(n.ElemType))
 		}
+		// Pick (storeOp, storeWidth) from element type. Width is
+		// non-zero only for the 64-bit case; the wasm codegen's
+		// `intPrefix` / `floatPrefix` helpers honour it on
+		// OpStore / OpFStore.
 		storeOp := OpStore
+		storeWidth := 0
 		if n.ElemType != nil {
 			if nt, ok := n.ElemType.(ast.NumberType); ok {
 				switch nt.NormalWidth() {
@@ -1470,10 +1484,15 @@ func (b *builder) expr(e ast.Expr) error {
 					storeOp = OpStoreI8
 				case 16:
 					storeOp = OpStoreI16
+				case 64:
+					storeWidth = 64
 				}
 			}
-			if _, ok := n.ElemType.(ast.FloatType); ok {
+			if ft, ok := n.ElemType.(ast.FloatType); ok {
 				storeOp = OpFStore
+				if ft.NormalWidth() == 64 {
+					storeWidth = 64
+				}
 			}
 		}
 		b.emit(Op{Kind: OpConstI32, I32: headerBytes + nElems*stride})
@@ -1493,7 +1512,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(el); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: storeOp})
+			b.emit(Op{Kind: storeOp, Width: storeWidth})
 		}
 		// Push the *content* pointer (base + 4) so the value matches
 		// what the rest of the language expects from an ArrayLit.
@@ -2352,6 +2371,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		// `f32.store`. Float arrays use OpFStore.
 		stride := int32(4)
 		storeOp := OpStore
+		storeWidth := 0
 		if t.ElemType != nil {
 			stride = int32(ast.ElemSizeBytes(t.ElemType))
 			if nt, ok := t.ElemType.(ast.NumberType); ok {
@@ -2360,10 +2380,15 @@ func (b *builder) assign(n *ast.Assign) error {
 					storeOp = OpStoreI8
 				case 16:
 					storeOp = OpStoreI16
+				case 64:
+					storeWidth = 64
 				}
 			}
-			if isFloat(t.ElemType) {
+			if ft, ok := t.ElemType.(ast.FloatType); ok {
 				storeOp = OpFStore
+				if ft.NormalWidth() == 64 {
+					storeWidth = 64
+				}
 			}
 		}
 		helper := "__arr_idx"
@@ -2385,7 +2410,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		if err := b.expr(n.Value); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: storeOp})
+		b.emit(Op{Kind: storeOp, Width: storeWidth})
 		return nil
 	case *ast.FieldAccess:
 		// `p.field = v` lowers to base + offset; value; store. Same
