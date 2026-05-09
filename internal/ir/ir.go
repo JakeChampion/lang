@@ -1423,25 +1423,33 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpITruncF32, Width: dw, Unsigned: !dstInt.IsSigned()})
 			}
 		default:
-			// Slice / array of u8 → i32: surface the data
-			// pointer for the bulk-memory primitives.
+			// Any owned array / slice / string → i32: surface
+			// the data pointer for the bulk-memory primitives.
 			if _, ok := n.Target.(ast.NumberType); ok {
-				if sl, ok := n.InnerType.(ast.SliceType); ok {
-					if e, ok := sl.Elem.(ast.NumberType); ok && e.Width == 8 && !e.Signed {
-						// slice value is a pointer to a
-						// `{data_ptr, len}` header — load the
-						// data_ptr at offset 0.
-						b.emit(Op{Kind: OpLoad})
-						return nil
-					}
+				switch n.InnerType.(type) {
+				case ast.SliceType:
+					// slice value is a pointer to a
+					// `{data_ptr, len}` header — load the
+					// data_ptr at offset 0.
+					b.emit(Op{Kind: OpLoad})
+					return nil
+				case ast.ArrayType, ast.StringType:
+					// owned-array / string values ARE the
+					// data pointer; the length prefix lives
+					// at data - 4. No ops needed.
+					return nil
 				}
-				if ar, ok := n.InnerType.(ast.ArrayType); ok {
-					if e, ok := ar.Elem.(ast.NumberType); ok && e.Width == 8 && !e.Signed {
-						// owned array value already IS the data
-						// pointer; the length prefix lives at
-						// data - 4. No ops needed.
-						return nil
-					}
+			}
+			// Reverse direction: i32 → T[] / string. Pure
+			// type-level reinterpret; the runtime value is
+			// the same i32 pointer, just exposed under a
+			// typed handle.
+			if nt, ok := n.InnerType.(ast.NumberType); ok && nt.NormalWidth() == 32 {
+				if _, ok := n.Target.(ast.ArrayType); ok {
+					return nil
+				}
+				if _, ok := n.Target.(ast.StringType); ok {
+					return nil
 				}
 			}
 			return fmt.Errorf("ir: cast from %s to %s not yet supported", n.InnerType, n.Target)
