@@ -1487,6 +1487,60 @@ function main(): i32 {
 	}
 }
 
+// Non-allocating cursor iteration via `m.iter()`. Walks the
+// entries in insertion order using has_next / key / value /
+// advance. The MapIter struct is allocated once per loop;
+// each step is just a load + arithmetic.
+func TestWASMMapIter(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i32, i32] = Map { 10: 100, 20: 200, 30: 300, 40: 400 };
+    var sum_keys: i32 = 0;
+    var sum_vals: i32 = 0;
+    var count: i32 = 0;
+    var it: MapIter[i32, i32] = m.iter();
+    while (it.has_next()) {
+        sum_keys = sum_keys + it.key();
+        sum_vals = sum_vals + it.value();
+        count = count + 1;
+        it.advance();
+    }
+    if (count != 4) { return 1; }
+    if (sum_keys != 100) { return 2; }   // 10+20+30+40
+    if (sum_vals != 1000) { return 3; }  // 100+200+300+400
+    // Iteration over an empty map yields zero steps.
+    var empty: Map[i32, i32] = map_new(4);
+    var it2: MapIter[i32, i32] = empty.iter();
+    if (it2.has_next()) { return 4; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map.iter cursor)", got)
+	}
+}
+
+// Cursor iteration over a string-keyed map. Verifies the
+// type-system substitution returns string-typed key /
+// i32-typed value at the call site.
+func TestWASMMapIterStringKeys(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+    var concat: string = "";
+    var sum: i32 = 0;
+    var it: MapIter[string, i32] = m.iter();
+    while (it.has_next()) {
+        concat = concat + it.key();
+        sum = sum + it.value();
+        it.advance();
+    }
+    if (concat != "abc") { return 1; }
+    if (sum != 6) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map.iter string keys)", got)
+	}
+}
+
 // String-keyed Map literal — KeyType is inferred from the
 // first key, so the IR's map_new call gets keyKind=1.
 func TestWASMMapStringKeyLiteral(t *testing.T) {

@@ -188,6 +188,23 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "data", Type: ast.NumberType{}},
 			},
 		},
+		// MapIter[K, V] — non-allocating cursor-style
+		// iterator over Map[K, V]. The struct holds a
+		// pointer back to the map's kv buffer plus the
+		// current entry index. `m.iter()` constructs a
+		// fresh MapIter; iteration uses
+		// `it.has_next()` / `it.key()` / `it.value()` /
+		// `it.advance()` which all stay i32-shaped on the
+		// wasm side (Key / Value are reinterpreted via the
+		// type-system substitution path).
+		{
+			Name:       "MapIter",
+			TypeParams: []string{"K", "V"},
+			Fields: []ast.Param{
+				{Name: "data", Type: ast.NumberType{}},
+				{Name: "i", Type: ast.NumberType{}},
+			},
+		},
 	}
 }
 
@@ -517,6 +534,24 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerMapMethod("keys", nil, ast.ArrayType{Elem: keyParam})
 	registerMapMethod("values", nil, ast.ArrayType{Elem: valueParam})
 	registerMapMethod("delete", []ast.Type{keyParam}, ast.BoolType{})
+	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
+	registerMapMethod("iter", nil, mapIterKV)
+
+	// MapIter[K, V] — paired with Map's iter() above. The
+	// receiver has K + V from the map's TypeArgs which
+	// flow through the same dispatch-path substitution. The
+	// runtime helpers stay i32-shaped; the type system
+	// reinterprets Key / Value at the call site.
+	registerMapIterMethod := func(methodName string, params []ast.Type, result ast.Type) {
+		mangled := "__method_MapIter_" + methodName
+		c.info.Methods["MapIter."+methodName] = mangled
+		fullParams := append([]ast.Type{mapIterKV}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	registerMapIterMethod("has_next", nil, ast.BoolType{})
+	registerMapIterMethod("key", nil, keyParam)
+	registerMapIterMethod("value", nil, valueParam)
+	registerMapIterMethod("advance", nil, ast.VoidType{})
 
 	// Built-in string methods. The receiver type is
 	// StringType (not StructType), so we can't use
@@ -1996,7 +2031,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// (or enum) decl whose name appears between
 			// `__method_` and the trailing `_<MethodName>`.
 			rest := id.Name[len("__method_"):]
-			if idx := strings.LastIndex(rest, "_"); idx > 0 {
+			// Split at the FIRST underscore so multi-word
+			// method names like `Map_has_next` resolve to
+			// `Map` (not `Map_has`). Type names themselves
+			// can't contain underscores by parser rule.
+			if idx := strings.Index(rest, "_"); idx > 0 {
 				typeName := rest[:idx]
 				var typeParams []string
 				if sd := c.info.Structs[typeName]; sd != nil {
@@ -2507,7 +2546,7 @@ func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
 // runtime. The monomorpher skips these so the helper-method
 // dispatch keeps working unchanged.
 func isRuntimeGenericStruct(name string) bool {
-	return name == "Map"
+	return name == "Map" || name == "MapIter"
 }
 
 // stampStructTypeArgs flows TypeArgs from a destination struct
