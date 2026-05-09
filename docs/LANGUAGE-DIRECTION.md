@@ -585,7 +585,17 @@ Deferred to a follow-up:
     `exprType` / `targetTupleType` now consult
     `b.scratchType` via the slot map, so match-arm-bound
     struct values (`Some(u) => u.scheme`) work — first time
-    we exercised that path. JSON is the next stdlib piece.
+    we exercised that path.
+  - **`url_encode(s)` / `url_decode(s)` shipped.** RFC 3986
+    percent-encoding. The unreserved set
+    (`A-Za-z0-9-_.~`) passes through unchanged; everything
+    else is emitted as `%HH` (uppercase hex). Decoding is
+    forgiving — malformed `%` sequences (non-hex following,
+    truncated tail) are passed through verbatim rather than
+    raising. `+` is NOT translated to space; callers
+    handling `application/x-www-form-urlencoded` data should
+    swap `+` → ` ` before decoding. JSON is the next stdlib
+    piece.
 
 ## Open questions to settle as we go
 
