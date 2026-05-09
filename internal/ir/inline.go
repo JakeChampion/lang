@@ -173,13 +173,15 @@ func isInlineable(fn *Func) bool {
 }
 
 // inlineOps walks ops linearly and substitutes every OpCallDirect
-// to a known candidate. Calls to non-candidate functions are left
-// untouched. The fn argument is the caller, mutated in place: each
-// substitution appends the callee's slot types to fn.ScratchTypes.
+// (and OpCallClosureDirect — defunctionalisation produces those
+// at known target names too) to a known candidate. Calls to
+// non-candidate functions are left untouched. The fn argument is
+// the caller, mutated in place: each substitution appends the
+// callee's slot types to fn.ScratchTypes.
 func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 	out := make([]Op, 0, len(ops))
 	for _, op := range ops {
-		if op.Kind != OpCallDirect {
+		if op.Kind != OpCallDirect && op.Kind != OpCallClosureDirect {
 			out = append(out, op)
 			continue
 		}

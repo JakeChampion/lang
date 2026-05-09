@@ -100,6 +100,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// scratch arithmetic the rewrite synthesises gets folded /
 	// peep-holed alongside the rest.
 	ir.Defunctionalise(ip)
+	// Re-run Inline after Defunctionalise so the just-emitted
+	// `OpCallClosureDirect` calls to small hoisted closures
+	// also get substituted (the inliner recognises both
+	// OpCallDirect and OpCallClosureDirect as inlineable
+	// targets). Without this second pass, the defunctionalised
+	// closure body still pays a call per use.
+	ir.Inline(ip)
 	ir.FuseTee(ip)
 	ir.FlattenBranches(ip)
 	// PropagateCopies + ConstPropagate + Fold + ReduceStrength
