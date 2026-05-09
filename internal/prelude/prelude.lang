@@ -299,3 +299,114 @@ function (n: f32) to_string(): string {
 function (n: f64) to_string(): string {
     return __float_to_string(n, 15);
 }
+
+// === URL parsing ===
+//
+// `url_parse(s)` decomposes an absolute or relative URL into
+// the auto-injected `Url` struct. Returns `Option[Url]`;
+// `None` only on completely empty input — best-effort parse
+// otherwise with empty strings for missing sections and
+// `port = 0` when unspecified or unparseable. No %-decoding;
+// `query` and `fragment` are returned raw.
+
+function url_parse(s: string): Option[Url] {
+    var n: i32 = len(s);
+    if (n == 0) { return None; }
+
+    var u: Url = Url {
+        scheme: "",
+        host: "",
+        port: 0,
+        path: "",
+        query: "",
+        fragment: ""
+    };
+
+    // Find scheme: look for ":" followed by "//".
+    var scheme_end: i32 = -1;
+    var i: i32 = 0;
+    while (i + 2 < n) {
+        if (s[i] == 58 && s[i+1] == 47 && s[i+2] == 47) {
+            if (i > 0) { scheme_end = i; }
+            break;
+        }
+        i = i + 1;
+    }
+
+    var rest_start: i32 = 0;
+    if (scheme_end >= 0) {
+        u.scheme = s[0:scheme_end];
+        rest_start = scheme_end + 3;
+    }
+
+    // Find fragment '#' from rest_start onwards.
+    var frag_start: i32 = n;
+    i = rest_start;
+    while (i < n) {
+        if (s[i] == 35) { frag_start = i; break; }   // '#'
+        i = i + 1;
+    }
+    if (frag_start < n) {
+        u.fragment = s[frag_start+1:n];
+    }
+
+    // Find query '?' in [rest_start, frag_start).
+    var query_start: i32 = frag_start;
+    i = rest_start;
+    while (i < frag_start) {
+        if (s[i] == 63) { query_start = i; break; }   // '?'
+        i = i + 1;
+    }
+    if (query_start < frag_start) {
+        u.query = s[query_start+1:frag_start];
+    }
+
+    // Find authority end. With a scheme, scan for the first
+    // '/' in [rest_start, query_start). Without a scheme the
+    // whole [rest_start, ...] is the path, so authority_end
+    // collapses to rest_start.
+    var authority_end: i32 = query_start;
+    if (scheme_end >= 0) {
+        i = rest_start;
+        while (i < query_start) {
+            if (s[i] == 47) { authority_end = i; break; }   // '/'
+            i = i + 1;
+        }
+    } else {
+        authority_end = rest_start;
+    }
+
+    // Authority — split host:port.
+    if (rest_start < authority_end) {
+        var colon: i32 = authority_end;
+        i = rest_start;
+        while (i < authority_end) {
+            if (s[i] == 58) { colon = i; break; }   // ':'
+            i = i + 1;
+        }
+        if (colon < authority_end) {
+            u.host = s[rest_start:colon];
+            // Port: digits only, max 65535. Any non-digit or
+            // out-of-range value zeroes the port.
+            var port: i32 = 0;
+            i = colon + 1;
+            while (i < authority_end) {
+                var b: i32 = s[i];
+                if (b < 48 || b > 57) { port = 0; break; }
+                port = port * 10 + (b - 48);
+                if (port > 65535) { port = 0; break; }
+                i = i + 1;
+            }
+            u.port = port;
+        } else {
+            u.host = s[rest_start:authority_end];
+        }
+    }
+
+    // Path: [authority_end, query_start).
+    if (authority_end < query_start) {
+        u.path = s[authority_end:query_start];
+    }
+
+    return Some(u);
+}
