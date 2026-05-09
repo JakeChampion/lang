@@ -511,6 +511,21 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerStringMethod("split", []ast.Type{ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}})
 	registerStringMethod("replace", []ast.Type{ast.StringType{}, ast.StringType{}}, ast.StringType{})
 
+	// Built-in numeric methods. The receiver type is `NumberType`
+	// keyed by width + signedness; the dispatch path above maps
+	// `i32` / `u32` / `i64` / `u64` value types to the
+	// corresponding `__method_<typename>_<method>` mangled name.
+	registerNumberMethod := func(typeName string, methodName string, recv ast.NumberType, params []ast.Type, result ast.Type) {
+		mangled := "__method_" + typeName + "_" + methodName
+		c.info.Methods[typeName+"."+methodName] = mangled
+		fullParams := append([]ast.Type{recv}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	registerNumberMethod("i32", "to_string", ast.NumberType{}, nil, ast.StringType{})
+	registerNumberMethod("u32", "to_string", ast.NumberType{Width: 32, Signed: false}, nil, ast.StringType{})
+	registerNumberMethod("i64", "to_string", ast.NumberType{Width: 64, Signed: true}, nil, ast.StringType{})
+	registerNumberMethod("u64", "to_string", ast.NumberType{Width: 64, Signed: false}, nil, ast.StringType{})
+
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
 	// top-level names (`__method_<Type>_<Name>`) with the receiver
@@ -1870,6 +1885,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			case ast.StringType:
 				_ = t
 				typeName = "string"
+			case ast.NumberType:
+				// Method dispatch on integer types names by
+				// width / signedness so a `t.to_string()` on
+				// an i64 value can resolve to a different
+				// (i64-aware) helper than the i32 variant.
+				switch {
+				case t.NormalWidth() == 64 && t.IsSigned():
+					typeName = "i64"
+				case t.NormalWidth() == 64 && !t.IsSigned():
+					typeName = "u64"
+				case !t.IsSigned():
+					typeName = "u32"
+				default:
+					typeName = "i32"
+				}
 			}
 			if typeName != "" {
 				key := typeName + "." + fa.Field

@@ -1225,6 +1225,38 @@ func TestWASMStringReplace(t *testing.T) {
 	}
 }
 
+// `n.to_string()` on each integer width. Method-syntax sugar
+// over the existing decimal formatter; the wrappers go through
+// a shared `__int_to_string_u64(magnitude, neg)` core that
+// handles every signed / unsigned / 32 / 64 case.
+func TestWASMNumberToString(t *testing.T) {
+	src := `function main(): i32 {
+    var a: i32 = 42;
+    if (a.to_string() != "42") { return 1; }
+    var b: i32 = -123;
+    if (b.to_string() != "-123") { return 2; }
+    var z: i32 = 0;
+    if (z.to_string() != "0") { return 3; }
+
+    var u: u32 = 4294967295;
+    if (u.to_string() != "4294967295") { return 4; }
+    var u2: u32 = 1;
+    if (u2.to_string() != "1") { return 5; }
+
+    var i: i64 = (1 << 40) + 7;
+    if (i.to_string() != "1099511627783") { return 6; }
+    var ineg: i64 = 0 - ((1 << 40) + 7);
+    if (ineg.to_string() != "-1099511627783") { return 7; }
+
+    var big: u64 = (1 << 63);
+    if (big.to_string() != "9223372036854775808") { return 8; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (number to_string)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64
