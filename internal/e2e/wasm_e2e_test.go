@@ -1541,6 +1541,35 @@ func TestWASMMapIterStringKeys(t *testing.T) {
 	}
 }
 
+// base64 round-trip: encode arbitrary bytes, decode back,
+// verify equality. Covers the full alphabet (A-Z, a-z, 0-9,
+// +, /), no-padding (3-byte aligned), 1-byte-padding (length
+// % 3 == 1), and 2-byte-padding (length % 3 == 2) inputs.
+func TestWASMBase64(t *testing.T) {
+	src := `function main(): i32 {
+    if (base64_encode("") != "") { return 1; }
+    if (base64_encode("f") != "Zg==") { return 2; }
+    if (base64_encode("fo") != "Zm8=") { return 3; }
+    if (base64_encode("foo") != "Zm9v") { return 4; }
+    if (base64_encode("foob") != "Zm9vYg==") { return 5; }
+    if (base64_encode("fooba") != "Zm9vYmE=") { return 6; }
+    if (base64_encode("foobar") != "Zm9vYmFy") { return 7; }
+    if (base64_encode("hello world") != "aGVsbG8gd29ybGQ=") { return 8; }
+    if (base64_decode("") != "") { return 9; }
+    if (base64_decode("Zg==") != "f") { return 10; }
+    if (base64_decode("Zm8=") != "fo") { return 11; }
+    if (base64_decode("Zm9v") != "foo") { return 12; }
+    if (base64_decode("Zm9vYg==") != "foob") { return 13; }
+    if (base64_decode("Zm9vYmE=") != "fooba") { return 14; }
+    if (base64_decode("Zm9vYmFy") != "foobar") { return 15; }
+    if (base64_decode("aGVsbG8gd29ybGQ=") != "hello world") { return 16; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (base64)", got)
+	}
+}
+
 // `defer EXPR;` schedules the expression to run when the
 // enclosing function exits. Multiple defers run in LIFO
 // order; conditionally-registered defers (inside an if-branch
