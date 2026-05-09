@@ -79,9 +79,14 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		// structs, copies bodies into lang-shape strings, and
 		// builds outgoing-response — all of which lean on the
 		// bump allocator + the struct field-store machinery.
+		// Plus an implicit per-request arena scope around the
+		// whole wrapper body (see emitHttpHandlerWrapper) so
+		// every per-request allocation is reclaimed in one
+		// pointer-store at handler exit.
 		g.needsRuntime = true
 		g.needsArrays = true
 		g.needsStructs = true
+		g.needsArena = true
 	}
 	g.scanForIndirectCalls(prog)
 	g.scanForStringEq(prog)
