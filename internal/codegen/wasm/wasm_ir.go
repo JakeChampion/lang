@@ -34,8 +34,13 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, ip *ir.Program) (string, 
 // EmitFromIRWithOptions is the option-aware sibling of EmitFromIR.
 // See `EmitOptions` for the available tuning knobs.
 func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program, opts EmitOptions) (string, error) {
-	if len(prog.Funcs) != len(ip.Funcs) {
-		return "", fmt.Errorf("wasm: prog has %d funcs, ir has %d", len(prog.Funcs), len(ip.Funcs))
+	// IR-level DCE may leave ip.Funcs as a subset of
+	// prog.Funcs — every IR func still must have a matching
+	// AST entry, but the reverse isn't required. The emit
+	// loop further down looks each IR function up by name in
+	// g.funcDecls (built from prog.Funcs).
+	if len(prog.Funcs) < len(ip.Funcs) {
+		return "", fmt.Errorf("wasm: prog has %d funcs but ir has %d (ir must be a subset)", len(prog.Funcs), len(ip.Funcs))
 	}
 	g := &generator{
 		info:              info,
@@ -47,6 +52,7 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		sigIndex:          map[string]int{},
 		inTable:           map[string]bool{},
 		funcDecls:         map[string]*ast.FuncDecl{},
+		emittedFuncs:      map[string]bool{},
 	}
 	for i, fn := range prog.Funcs {
 		g.funcIndex[fn.Name] = i
@@ -199,10 +205,22 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		g.linef("(type $t%d %s)", i, g.watFuncType(sig))
 	}
 
-	for i, fn := range prog.Funcs {
-		if err := g.emitFuncFromIR(fn, ip.Funcs[i]); err != nil {
+	// Iterate the IR's function list (which post-DCE may be a
+	// subset of the AST's prog.Funcs) and look up each
+	// matching FuncDecl by name. Decoupling the two slices
+	// lets IR-level dead-function elimination drop unused
+	// bodies while leaving prog.Funcs intact for the AST scans
+	// (scanForStringConcat / scanForArrayUses / etc., all of
+	// which walk the AST not the IR).
+	for _, irFn := range ip.Funcs {
+		fn := g.funcDecls[irFn.Name]
+		if fn == nil {
+			return "", fmt.Errorf("wasm/ir: ir func %q has no matching ast.FuncDecl", irFn.Name)
+		}
+		if err := g.emitFuncFromIR(fn, irFn); err != nil {
 			return "", err
 		}
+		g.emittedFuncs[irFn.Name] = true
 	}
 
 	if g.needsFuncTable {
@@ -218,7 +236,13 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		g.emitDataSegments()
 	}
 
+	// Export only functions that survived IR-level DCE — the
+	// emit loop below iterates ip.Funcs, so any export whose
+	// $name isn't in g.emittedFuncs would dangle.
 	for _, fn := range prog.Funcs {
+		if !g.emittedFuncs[fn.Name] {
+			continue
+		}
 		g.linef(`(export %q (func $%s))`, fn.Name, fn.Name)
 	}
 	// WASI command convention (preview-1 and preview-2 alike) wants
@@ -708,50 +732,9 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		if g.needsClosures && isUser && g.inTable[op.Str] {
 			g.line("i32.const 0")
 		}
-		// Alias map for prelude functions whose lang-side
-		// signatures need types the language doesn't yet
-		// have (generic methods on Map[K,V]) or that share a
-		// body across multiple checker-side type-views
-		// (`__array_append_jsonvalue` and
-		// `__array_append_string` both lower to one
-		// 4-byte-pointer-stride append). The checker keeps
-		// the type-rich registration; the IR rewrites the
-		// call name at emit time so wasm dispatches to the
-		// concrete `_impl` body.
 		name := op.Str
-		switch name {
-		case "__array_append_jsonvalue":
-			name = "__array_append_string"
-		case "map_new":
-			name = "map_new_impl"
-		case "__method_Map_len":
-			name = "__map_len_impl"
-		case "__method_Map_has":
-			name = "__map_has_impl"
-		case "__method_Map_get":
-			name = "__map_get_impl"
-		case "__method_Map_get_or":
-			name = "__map_get_or_impl"
-		case "__method_Map_set":
-			name = "__map_set_impl"
-		case "__method_Map_delete":
-			name = "__map_delete_impl"
-		case "__method_Map_clear":
-			name = "__map_clear_impl"
-		case "__method_Map_keys":
-			name = "__map_keys_impl"
-		case "__method_Map_values":
-			name = "__map_values_impl"
-		case "__method_Map_iter":
-			name = "__map_iter_impl"
-		case "__method_MapIter_has_next":
-			name = "__mapiter_has_next_impl"
-		case "__method_MapIter_key":
-			name = "__mapiter_key_impl"
-		case "__method_MapIter_value":
-			name = "__mapiter_value_impl"
-		case "__method_MapIter_advance":
-			name = "__mapiter_advance_impl"
+		if dst, ok := codegenAliasMap[name]; ok {
+			name = dst
 		}
 		g.linef("call $%s", name)
 	case ir.OpCallIndirect:

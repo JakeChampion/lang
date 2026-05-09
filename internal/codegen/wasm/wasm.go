@@ -28,6 +28,40 @@ import (
 // each indirect-call signature. Modules that touch none of those stay
 // free of the extra structure so they can be loaded under minimal
 // hosts.
+
+// codegenAliasMap collects the IR-level call-name rewrites the
+// wasm emitter applies at OpCallDirect emit time. Two flavours
+// coexist:
+//
+//   - prelude shims sharing one body (`__array_append_jsonvalue`
+//     and `__array_append_string` both 4-byte-pointer-stride);
+//   - generic-method dispatch on Map[K, V] / MapIter[K, V] where
+//     the lang doesn't yet have generic methods on a generic
+//     struct, so the prelude declares concrete `_impl`
+//     counterparts and the call name routes through the alias.
+//
+// Used by the call-emit switch AND by IR-level dead-function
+// elimination, which would otherwise drop the impls (their AST
+// callers only reference the source name).
+var codegenAliasMap = map[string]string{
+	"__array_append_jsonvalue":  "__array_append_string",
+	"map_new":                   "map_new_impl",
+	"__method_Map_len":          "__map_len_impl",
+	"__method_Map_has":          "__map_has_impl",
+	"__method_Map_get":          "__map_get_impl",
+	"__method_Map_get_or":       "__map_get_or_impl",
+	"__method_Map_set":          "__map_set_impl",
+	"__method_Map_delete":       "__map_delete_impl",
+	"__method_Map_clear":        "__map_clear_impl",
+	"__method_Map_keys":         "__map_keys_impl",
+	"__method_Map_values":       "__map_values_impl",
+	"__method_Map_iter":         "__map_iter_impl",
+	"__method_MapIter_has_next": "__mapiter_has_next_impl",
+	"__method_MapIter_key":      "__mapiter_key_impl",
+	"__method_MapIter_value":    "__mapiter_value_impl",
+	"__method_MapIter_advance":  "__mapiter_advance_impl",
+}
+
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	return EmitWithOptions(prog, info, EmitOptions{})
 }
@@ -122,6 +156,26 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// folding). Run them to a fixed point so the cascade settles.
 	ir.OptimizeCleanup(ip)
 	ir.EliminateDeadCode(ip)
+	// IR-level dead-function elimination: drop top-level
+	// functions whose body the inliner / defunctionaliser
+	// left without any remaining callers. Treeshake at the
+	// AST level couldn't see this (it ran before IR rewrites).
+	// Trims ip.Funcs only — prog.Funcs stays intact so the
+	// AST-walking scan-for-uses passes (needsStrConcat /
+	// needsArrays / etc.) still see the full program.
+	deadFuncExtras := []string(nil)
+	if opts.PrintMainResult {
+		deadFuncExtras = append(deadFuncExtras, "int_to_string")
+	}
+	if live := ir.LiveFunctionsWithAliases(ip, codegenAliasMap, deadFuncExtras...); live != nil {
+		out := ip.Funcs[:0]
+		for _, irFn := range ip.Funcs {
+			if live[irFn.Name] {
+				out = append(out, irFn)
+			}
+		}
+		ip.Funcs = out
+	}
 	return EmitFromIRWithOptions(prog, info, ip, opts)
 }
 
@@ -212,6 +266,13 @@ type generator struct {
 	// per-capture types decide between i32.store and f32.store when
 	// packing the env block.
 	funcDecls map[string]*ast.FuncDecl
+
+	// emittedFuncs tracks which functions actually had a body
+	// emitted. After IR-level DCE, ip.Funcs may be a subset of
+	// prog.Funcs — names absent from emittedFuncs must NOT appear
+	// in `(export ... (func $name))` declarations or any other
+	// place that would dangle without a definition.
+	emittedFuncs map[string]bool
 }
 
 type stringEntry struct {
