@@ -535,6 +535,7 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerMapMethod("values", nil, ast.ArrayType{Elem: valueParam})
 	registerMapMethod("delete", []ast.Type{keyParam}, ast.BoolType{})
 	registerMapMethod("clear", nil, ast.VoidType{})
+	registerMapMethod("get_or", []ast.Type{keyParam, valueParam}, valueParam)
 	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
 	registerMapMethod("iter", nil, mapIterKV)
 
