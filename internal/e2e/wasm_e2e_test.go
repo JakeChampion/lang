@@ -1852,6 +1852,51 @@ func TestWASMMapIterStringKeys(t *testing.T) {
 	}
 }
 
+// __memcpy / __memset bridge functions: wat-shim wrappers
+// around wasm's bulk-memory `memory.copy` / `memory.fill`.
+// They're the unlock for migrating helpers that build /
+// scan growable byte buffers (the json buffer family + map
+// runtime). This test exercises both via raw alloc + an
+// `as_bytes` slice view, then pokes through the slice's
+// data_ptr to verify the bytes landed.
+//
+// `as_bytes` returns a [u8] slice whose data_ptr aliases
+// the string payload, so casting that pointer back to an
+// i32 lets us drive __memcpy / __memset against arbitrary
+// regions for testing. Production usage will always call
+// __memcpy through dedicated buffer-management code.
+func TestWASMBulkMemoryPrimitives(t *testing.T) {
+	src := `function main(): i32 {
+    // __memset: clear 8 bytes starting at the second slot
+    // of a 16-byte buffer, leave the first 8 alone.
+    var buf: u8[] = [
+        65 as u8, 66 as u8, 67 as u8, 68 as u8,
+        69 as u8, 70 as u8, 71 as u8, 72 as u8,
+        73 as u8, 74 as u8, 75 as u8, 76 as u8,
+        77 as u8, 78 as u8, 79 as u8, 80 as u8
+    ];
+    var bs: [u8] = buf[0:16];
+    var base: i32 = (bs as i32);
+    __memset(base + 8, 0, 8);
+    if (buf[0]  != 65)  { return 1; }
+    if (buf[7]  != 72)  { return 2; }
+    if (buf[8]  != 0)   { return 3; }
+    if (buf[15] != 0)   { return 4; }
+    // __memcpy: copy first 4 bytes onto the now-zeroed
+    // back half so the buffer reads ABCDEFGHABCD0000.
+    __memcpy(base + 8, base, 4);
+    if (buf[8]  != 65)  { return 5; }
+    if (buf[9]  != 66)  { return 6; }
+    if (buf[10] != 67)  { return 7; }
+    if (buf[11] != 68)  { return 8; }
+    if (buf[12] != 0)   { return 9; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("__memcpy/__memset: exit = %d, want 0", got)
+	}
+}
+
 // base64 round-trip: encode arbitrary bytes, decode back,
 // verify equality. Covers the full alphabet (A-Z, a-z, 0-9,
 // +, /), no-padding (3-byte aligned), 1-byte-padding (length

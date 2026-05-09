@@ -777,10 +777,26 @@ the lang's abstraction layers.
    the recursive ones (`json_*`) and anything that needs a
    primitive still missing from lang (e.g., raw byte
    pokes for the JSON encoder's growable buffer).
-3. **Bridge functions for wasm intrinsics.** Some lang
-   prelude code wants direct access to `memory.copy` /
-   `memory.fill`. Add tiny wat-shim builtins (`__memcpy`,
-   `__memset`) that the prelude calls explicitly.
+3. **Bridge functions for wasm intrinsics shipped.**
+   `__memcpy(dst, src, n)` and `__memset(dst, b, n)` are
+   thin wat-shim wrappers around wasm's bulk-memory
+   `memory.copy` / `memory.fill`. Both take three i32s
+   and return void; signatures registered in the checker
+   so the prelude can call them like any builtin. Drives
+   buffer-management code that doesn't yet have a clean
+   lang-level shape — the json buffer family and the Map
+   runtime are the immediate consumers. Backends without
+   bulk-memory (eg arm32 today) trip an "unsupported"
+   path during codegen; wat is the only consumer for now.
+
+   Drive-by escape hatch: `[u8]` slice and `u8[]` owned
+   array now cast to `i32` to recover the data pointer.
+   Slice cast loads the i32 at slice+0 (the data_ptr field
+   of the `{data_ptr, len}` slice header); array cast is a
+   no-op since an owned-array value already IS the data
+   pointer (length lives at data-4). Together with the
+   bulk-memory shims this is enough to express growable-
+   buffer scratch code in lang without dropping into wat.
 
 **Why not migrate everything at once:**
 
