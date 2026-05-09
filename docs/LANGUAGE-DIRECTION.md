@@ -771,12 +771,17 @@ the lang's abstraction layers.
 2. **Phase B: migrate higher-level stdlib.** `parse_int`,
    `parse_float`, `s.repeat`, `url_encode`, `url_decode`,
    `query_parse`, `url_parse`, `json_encode`, `json_parse`,
-   `f32.to_string`, `f64.to_string` — each move from wat to
-   prelude on its own per-PR cadence. Order: simplest
-   first (`s.repeat`, `parse_int`); deferred until last:
-   the recursive ones (`json_*`) and anything that needs a
-   primitive still missing from lang (e.g., raw byte
-   pokes for the JSON encoder's growable buffer).
+   `f32.to_string`, `f64.to_string` — all shipped on a
+   per-PR cadence. Phase B continued with the string
+   methods that don't need allocation primitives:
+   `starts_with`, `ends_with`, `contains`, `index_of`, and
+   `trim` migrated together (the supporting `__bytes_eq`
+   wat helper stays for now since `split` / `replace`
+   still depend on it; `__is_ascii_ws` retired with `trim`).
+   Remaining wat string methods (`to_lower`, `to_upper`,
+   `bytes`, `split`, `replace`) want a fixed-size mutable
+   `u8[]` allocation primitive — next on the bridge-funcs
+   list, alongside the Map runtime migration.
 3. **Bridge functions for wasm intrinsics shipped.**
    `__memcpy(dst, src, n)` and `__memset(dst, b, n)` are
    thin wat-shim wrappers around wasm's bulk-memory

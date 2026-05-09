@@ -714,11 +714,10 @@ func Check(prog *ast.Program) (*Info, error) {
 		fullParams := append([]ast.Type{ast.StringType{}}, params...)
 		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
 	}
-	registerStringMethod("starts_with", []ast.Type{ast.StringType{}}, ast.BoolType{})
-	registerStringMethod("ends_with", []ast.Type{ast.StringType{}}, ast.BoolType{})
-	registerStringMethod("contains", []ast.Type{ast.StringType{}}, ast.BoolType{})
-	registerStringMethod("index_of", []ast.Type{ast.StringType{}}, ast.NumberType{})
-	registerStringMethod("trim", nil, ast.StringType{})
+	// `starts_with` / `ends_with` / `contains` / `index_of`
+	// / `trim` migrated to the lang prelude
+	// (internal/prelude/prelude.lang); their signatures are
+	// registered via the prelude's FuncDecls.
 	registerStringMethod("to_lower", nil, ast.StringType{})
 	registerStringMethod("to_upper", nil, ast.StringType{})
 	registerStringMethod("split", []ast.Type{ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}})
