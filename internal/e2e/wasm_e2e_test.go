@@ -1348,9 +1348,13 @@ func TestWASMParseInt(t *testing.T) {
 			Some(v) => { if (v != 2147483647) { return 7; } },
 			None => { return 8; }
 		}
-		// -2^31 (min i32).
+		// -2^31 (min i32). The literal -2147483648 isn't
+		// directly expressible (the lexer reads the minus
+		// separately, leaving the positive literal one past
+		// i32 max), so verify via arithmetic:
+		// v + 2147483647 must equal -1.
 		match ("-2147483648".parse_int()) {
-			Some(v) => { if (v != -2147483648) { return 9; } },
+			Some(v) => { if (v + 2147483647 != -1) { return 9; } },
 			None => { return 10; }
 		}
 
