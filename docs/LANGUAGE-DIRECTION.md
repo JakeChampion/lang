@@ -196,12 +196,21 @@ Tuples (in):
   structs but anonymous, addressed by position). Each element
   gets a 4-byte slot.
 
-Tuples (deferred to a follow-up):
-- Pattern destructuring `let (a, b) = pair;`. Workaround today
-  is `var p = pair(); var a = p.0; var b = p.1;` — wordy but
-  works. Adding `DestructureVar` cleanly is its own design pass
-  (binding semantics in match arms, function params, etc.) so
-  punted.
+Tuples (follow-up status):
+- **Statement-level destructuring shipped.** `let (a, b) = pair;`
+  binds each name to the corresponding tuple element in the
+  enclosing scope. The parser routes `let` followed by `(` to
+  the destructure branch (variant binding `let Some(x) = … else
+  …` is unaffected); the checker requires a tuple-typed init
+  whose arity matches the name list, then registers each name
+  + a synthesised hidden temp as locals so the IR can do one
+  evaluation followed by per-name field loads. Arity ≥ 2
+  (consistent with the no-singleton-tuples rule). Mixed
+  element types just work — the IR picks `Load` vs `FLoad`
+  per element.
+- Match-arm and function-parameter destructuring is a separate
+  pass (binding semantics differ enough that they're worth
+  designing on their own).
 
 ### PR 2.5 — Slice views (shipped)
 

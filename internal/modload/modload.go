@@ -409,6 +409,8 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 	case *ast.Var:
 		r.rewriteType(&x.Type)
 		r.rewriteExpr(&x.Init)
+	case *ast.Destructure:
+		r.rewriteExpr(&x.Init)
 	case *ast.ExprStmt:
 		r.rewriteExpr(&x.Expr)
 	case *ast.Switch:

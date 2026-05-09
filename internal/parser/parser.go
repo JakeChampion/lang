@@ -1603,6 +1603,13 @@ func (p *parser) parseUse(parent *ast.Block) error {
 // the syntax.
 func (p *parser) parseLetElse() (ast.Stmt, error) {
 	kw := p.advance() // let
+	// `let (a, b, ...) = expr;` — tuple destructuring shorthand.
+	// No `else` branch: a tuple is statically arity-checked, so
+	// the binding can't fail at runtime the way enum
+	// destructuring can.
+	if p.match(lexer.Punct, "(") {
+		return p.parseTupleDestructure(kw.Pos)
+	}
 	variantTok, err := p.expect(lexer.Ident, "")
 	if err != nil {
 		return nil, err
@@ -1660,6 +1667,51 @@ func (p *parser) parseLetElse() (ast.Stmt, error) {
 		Source:      src,
 		Else:        elseBlk,
 	}, nil
+}
+
+// parseTupleDestructure handles `let (a, b, …) = expr;` —
+// position-based binding into the enclosing scope from a
+// tuple-typed expression. Caller has consumed `let`; the
+// upcoming `(` opens the binding list. At least 2 names
+// are required (matches the no-singleton-tuples rule).
+func (p *parser) parseTupleDestructure(letPos ast.Position) (ast.Stmt, error) {
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return nil, err
+	}
+	var names []string
+	if !p.match(lexer.Punct, ")") {
+		for {
+			nameTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			names = append(names, nameTok.Text)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				if p.match(lexer.Punct, ")") {
+					break
+				}
+				continue
+			}
+			break
+		}
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	if len(names) < 2 {
+		return nil, p.errorf(letPos, "tuple destructure needs at least 2 names")
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	src, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	return &ast.Destructure{P: letPos, Names: names, Init: src}, nil
 }
 
 // ---------- Expressions ----------

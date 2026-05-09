@@ -267,6 +267,8 @@ func scanEnumUses(prog *ast.Program) bool {
 			}
 		case *ast.Var:
 			walk(x.Init)
+		case *ast.Destructure:
+			walk(x.Init)
 		case *ast.ExprStmt:
 			walk(x.Expr)
 		case *ast.Binary:
@@ -448,6 +450,8 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 			}
 		case *ast.Var:
 			walk(x.Init)
+		case *ast.Destructure:
+			walk(x.Init)
 		case *ast.ExprStmt:
 			walk(x.Expr)
 		case *ast.Switch:
@@ -545,6 +549,8 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 				walk(x.Value)
 			}
 		case *ast.Var:
+			walk(x.Init)
+		case *ast.Destructure:
 			walk(x.Init)
 		case *ast.ExprStmt:
 			walk(x.Expr)
@@ -661,6 +667,8 @@ func (g *generator) scanForStructUses(prog *ast.Program) {
 			}
 		case *ast.Var:
 			walk(x.Init)
+		case *ast.Destructure:
+			walk(x.Init)
 		case *ast.ExprStmt:
 			walk(x.Expr)
 		case *ast.Switch:
@@ -752,6 +760,8 @@ func (g *generator) scanIndirectStmt(s ast.Stmt) {
 			g.scanIndirectExpr(x.Value, false)
 		}
 	case *ast.Var:
+		g.scanIndirectExpr(x.Init, false)
+	case *ast.Destructure:
 		g.scanIndirectExpr(x.Init, false)
 	case *ast.ExprStmt:
 		g.scanIndirectExpr(x.Expr, false)
@@ -976,6 +986,8 @@ func (g *generator) scanForStringEq(prog *ast.Program) {
 			}
 		case *ast.Var:
 			walk(x.Init)
+		case *ast.Destructure:
+			walk(x.Init)
 		case *ast.ExprStmt:
 			walk(x.Expr)
 		}
@@ -1074,6 +1086,8 @@ func (g *generator) scanForStringConcat(prog *ast.Program) {
 				walk(x.Value)
 			}
 		case *ast.Var:
+			walk(x.Init)
+		case *ast.Destructure:
 			walk(x.Init)
 		case *ast.ExprStmt:
 			walk(x.Expr)
@@ -1192,6 +1206,8 @@ func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 			}
 		case *ast.Var:
 			walk(x.Init)
+		case *ast.Destructure:
+			walk(x.Init)
 		case *ast.ExprStmt:
 			walk(x.Expr)
 		}
@@ -1253,6 +1269,8 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 				walk(x.Value)
 			}
 		case *ast.Var:
+			walk(x.Init)
+		case *ast.Destructure:
 			walk(x.Init)
 		case *ast.ExprStmt:
 			walk(x.Expr)

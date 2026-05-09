@@ -193,6 +193,17 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 		b.WriteString(" = ")
 		printExpr(b, x.Init)
 		b.WriteByte(';')
+	case *ast.Destructure:
+		b.WriteString("let (")
+		for i, n := range x.Names {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(n)
+		}
+		b.WriteString(") = ")
+		printExpr(b, x.Init)
+		b.WriteByte(';')
 	case *ast.ExprStmt:
 		printExpr(b, x.Expr)
 		b.WriteByte(';')

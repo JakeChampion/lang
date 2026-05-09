@@ -809,6 +809,18 @@ type Var struct {
 	Type Type // may be nil — inferred
 	Init Expr
 }
+
+// Destructure is `let (a, b, ...) = expr;` — bind each name to the
+// corresponding element of the tuple-typed expression. The checker
+// validates Init is a tuple of arity len(Names) and registers a
+// synthetic local under TempName so the IR can keep the tuple
+// pointer in a slot for the per-name field loads.
+type Destructure struct {
+	P        Position
+	Names    []string
+	Init     Expr
+	TempName string // checker-stamped: name of the synthesised tuple-holding local.
+}
 type ExprStmt struct {
 	P    Position
 	Expr Expr
@@ -875,6 +887,7 @@ func (s *Continue) Pos() Position { return s.P }
 func (s *Return) Pos() Position   { return s.P }
 func (s *Defer) Pos() Position    { return s.P }
 func (s *Var) Pos() Position      { return s.P }
+func (s *Destructure) Pos() Position { return s.P }
 func (s *ExprStmt) Pos() Position { return s.P }
 func (s *Switch) Pos() Position   { return s.P }
 func (s *Match) Pos() Position    { return s.P }
@@ -891,6 +904,7 @@ func (*Continue) isStmt() {}
 func (*Return) isStmt()   {}
 func (*Defer) isStmt()    {}
 func (*Var) isStmt()      {}
+func (*Destructure) isStmt() {}
 func (*ExprStmt) isStmt() {}
 func (*Switch) isStmt()   {}
 func (*Match) isStmt()    {}

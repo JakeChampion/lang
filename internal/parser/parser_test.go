@@ -651,3 +651,55 @@ function g(xs: Option[string][]): i32 { return 0; }`)
 		t.Errorf("g's array element should be Option[string]; got %+v", at.Elem)
 	}
 }
+
+// `let (a, b) = expr;` parses to a *ast.Destructure carrying
+// the identifier list and the source expression — distinct
+// from `let Variant(x) = …` which routes to *ast.LetElse.
+func TestTupleDestructureParses(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		let (a, b) = (1, 2);
+		return a + b;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	d, ok := stmts[0].(*ast.Destructure)
+	if !ok {
+		t.Fatalf("first stmt should be *ast.Destructure; got %T", stmts[0])
+	}
+	if len(d.Names) != 2 || d.Names[0] != "a" || d.Names[1] != "b" {
+		t.Errorf("names = %v, want [a b]", d.Names)
+	}
+	if _, ok := d.Init.(*ast.TupleLit); !ok {
+		t.Errorf("Init should be a TupleLit; got %T", d.Init)
+	}
+}
+
+// Tuple destructure requires at least 2 names — the language
+// already reserves 1-element tuples (no singleton tuples), so
+// `let (a) = …;` is treated as a parse error rather than a
+// silently-degenerate binding.
+func TestTupleDestructureSingleNameError(t *testing.T) {
+	_, err := Parse(`function f(): i32 { let (a) = (1, 2); return a; }`)
+	if err == nil {
+		t.Fatal("expected parse error for single-name destructure")
+	}
+}
+
+// `let Variant(b) = …` continues to route to LetElse — the
+// tuple-destructure branch must not steal it. Smoke test.
+func TestLetVariantStillParses(t *testing.T) {
+	prog, err := Parse(`enum Option[T] { Some(T), None }
+function f(): i32 {
+	let Some(x) = Some(1) else { return 0; };
+	return x;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	if _, ok := stmts[0].(*ast.LetElse); !ok {
+		t.Errorf("first stmt should still be *ast.LetElse; got %T", stmts[0])
+	}
+}

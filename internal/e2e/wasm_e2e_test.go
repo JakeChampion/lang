@@ -3046,6 +3046,41 @@ func TestWASMOpenAppender(t *testing.T) {
 	}
 }
 
+// TestWASMTupleDestructure covers the basic let-destructure
+// shape — one statement, multiple bindings — plus a divmod-
+// style multi-return, a mixed-type tuple, and a 3-element
+// destructure for arity > 2.
+func TestWASMTupleDestructure(t *testing.T) {
+	src := `function divmod(a: i32, b: i32): (i32, i32) {
+		return (a / b, a % b);
+	}
+	function main(): i32 {
+		// Basic two-name destructure of a tuple literal.
+		let (a, b) = (10, 32);
+		if (a != 10) { return 1; }
+		if (b != 32) { return 2; }
+
+		// Multi-return: divmod(17, 5) == (3, 2)
+		let (q, r) = divmod(17, 5);
+		if (q != 3) { return 3; }
+		if (r != 2) { return 4; }
+
+		// Mixed element types — i32 + string, both work.
+		let (n, s) = (7, "hi");
+		if (n != 7) { return 5; }
+		if (s != "hi") { return 6; }
+
+		// Three-element destructure: arity > 2 OK.
+		let (x, y, z) = (1, 2, 3);
+		if (x + y + z != 6) { return 7; }
+
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM tuple destructure: exit = %d, want 0", got)
+	}
+}
+
 // TestWASMHex covers the round-trip plus some edge cases:
 // empty string, ASCII text, every nibble exercised. Decode
 // of an odd-length input or a non-hex char terminates

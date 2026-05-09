@@ -410,6 +410,17 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteString(" = ")
 		f.formatExpr(x.Init, precLowest)
 		f.b.WriteByte(';')
+	case *ast.Destructure:
+		f.b.WriteString("let (")
+		for i, n := range x.Names {
+			if i > 0 {
+				f.b.WriteString(", ")
+			}
+			f.b.WriteString(n)
+		}
+		f.b.WriteString(") = ")
+		f.formatExpr(x.Init, precLowest)
+		f.b.WriteByte(';')
 	case *ast.ExprStmt:
 		f.formatExpr(x.Expr, precLowest)
 		f.b.WriteByte(';')
