@@ -3577,3 +3577,57 @@ func TestWASMQueryParse(t *testing.T) {
 		t.Errorf("WASM query_parse: exit = %d, want 0", got)
 	}
 }
+
+// `json_encode(v: JsonValue): string` — serialize the
+// auto-injected JsonValue tree to canonical JSON text.
+// Covers each variant, nested arrays/objects, and the
+// escape-encoding path for strings.
+func TestWASMJsonEncode(t *testing.T) {
+	src := `function main(): i32 {
+		// Primitives.
+		if (json_encode(JNull) != "null") { return 1; }
+		if (json_encode(JBool(true)) != "true") { return 2; }
+		if (json_encode(JBool(false)) != "false") { return 3; }
+		if (json_encode(JNumber("42")) != "42") { return 4; }
+		if (json_encode(JNumber("3.14")) != "3.14") { return 5; }
+		if (json_encode(JString("hi")) != "\"hi\"") { return 6; }
+		if (json_encode(JString("")) != "\"\"") { return 7; }
+
+		// String escapes.
+		if (json_encode(JString("a\"b")) != "\"a\\\"b\"") { return 10; }
+		if (json_encode(JString("a\\b")) != "\"a\\\\b\"") { return 11; }
+		if (json_encode(JString("line\nbreak")) != "\"line\\nbreak\"") { return 12; }
+		if (json_encode(JString("\t")) != "\"\\t\"") { return 13; }
+		if (json_encode(JString("\r")) != "\"\\r\"") { return 14; }
+
+		// Empty object — empty array literal needs a type
+		// annotation that's awkward at construction site, so
+		// just exercise empty objects.
+		var emptyMap: Map[string, JsonValue] = map_new(4);
+		if (json_encode(JObject(emptyMap)) != "{}") { return 20; }
+
+		// Heterogeneous array.
+		var a: JsonValue[] = [JNumber("1"), JString("two"), JBool(true), JNull];
+		if (json_encode(JArray(a)) != "[1,\"two\",true,null]") { return 30; }
+
+		// Object — insertion order preserved (IndexMap).
+		var m: Map[string, JsonValue] = map_new(4);
+		m.set("name", JString("alice"));
+		m.set("age", JNumber("30"));
+		m.set("admin", JBool(false));
+		if (json_encode(JObject(m)) != "{\"name\":\"alice\",\"age\":30,\"admin\":false}") {
+			return 40;
+		}
+
+		// Nested: object containing an array of numbers.
+		var inner: JsonValue[] = [JNumber("1"), JNumber("2"), JNumber("3")];
+		var outer: Map[string, JsonValue] = map_new(2);
+		outer.set("nums", JArray(inner));
+		if (json_encode(JObject(outer)) != "{\"nums\":[1,2,3]}") { return 50; }
+
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM json_encode: exit = %d, want 0", got)
+	}
+}
