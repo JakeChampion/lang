@@ -16,6 +16,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/treeshake"
 )
 
 // Emit returns the WAT module text for prog.
@@ -62,6 +63,11 @@ type EmitOptions struct {
 // the same lowering pipeline (closure conversion → IR → IR opts →
 // EmitFromIR); the options only influence the WAT layer.
 func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (string, error) {
+	// Tree-shake unreferenced functions before lowering so the
+	// auto-injected lang prelude (internal/prelude) only pays
+	// for what user code actually calls. Idempotent on
+	// already-pruned input.
+	treeshake.Run(prog)
 	// ir.Lower runs closure conversion as a precondition (hoisting
 	// nested functions, rewriting captures), then produces an
 	// ir.Program. ir.Fold runs constant folding on the lowered ops
@@ -4956,189 +4962,6 @@ func (g *generator) emitStringMethodHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// $__method_string_parse_int(s): Option[i32] — decimal i32
-	// parser. Accepts optional leading `-`; rejects empty input,
-	// any non-digit character, and overflow (the underlying
-	// accumulator is i64 so we get an exact bound check against
-	// the signed-i32 range). Returns the standard Option layout:
-	// 4-byte None{tag=1} or 8-byte Some{tag=0, val}.
-	g.line(`(func $__method_string_parse_int (param $s i32) (result i32)`)
-	g.indent++
-	g.line(`(local $sLen i32) (local $i i32) (local $b i32)`)
-	g.line(`(local $acc i64) (local $neg i32) (local $opt i32)`)
-	g.line(`(local $val i32)`)
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`local.set $sLen`)
-	// Empty -> None.
-	g.line(`local.get $sLen`)
-	g.line(`i32.eqz`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $opt`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $opt`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-	// Optional leading '-'. Lone '-' is None.
-	g.line(`local.get $s`)
-	g.line(`i32.load8_u`)
-	g.line(`i32.const 45`) // '-'
-	g.line(`i32.eq`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 1`)
-	g.line(`local.set $neg`)
-	g.line(`i32.const 1`)
-	g.line(`local.set $i`)
-	g.line(`local.get $sLen`)
-	g.line(`i32.const 1`)
-	g.line(`i32.eq`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $opt`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $opt`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	// Loop with two exit targets: clean exit (i >= sLen)
-	// jumps `br $done` past both blocks into the range
-	// check + Some emit; bad input / overflow does
-	// `br $bad` which falls through to the None emit at
-	// the end of $bad.
-	g.line(`block $done`)
-	g.indent++
-	g.line(`block $bad`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	g.line(`local.get $i`)
-	g.line(`local.get $sLen`)
-	g.line(`i32.ge_u`)
-	g.line(`if`)
-	g.indent++
-	g.line(`br $done`) // exit loop + both blocks: post-$done = range check
-	g.indent--
-	g.line(`end`)
-	g.line(`local.get $s`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`local.set $b`)
-	g.line(`local.get $b`)
-	g.line(`i32.const 48`) // '0'
-	g.line(`i32.lt_u`)
-	g.line(`br_if $bad`)
-	g.line(`local.get $b`)
-	g.line(`i32.const 57`) // '9'
-	g.line(`i32.gt_u`)
-	g.line(`br_if $bad`)
-	g.line(`local.get $acc`)
-	g.line(`i64.const 10`)
-	g.line(`i64.mul`)
-	g.line(`local.get $b`)
-	g.line(`i32.const 48`)
-	g.line(`i32.sub`)
-	g.line(`i64.extend_i32_u`)
-	g.line(`i64.add`)
-	g.line(`local.set $acc`)
-	// Overflow guard: anything > 2^32 is definitely beyond
-	// even the unsigned-i32 range, so it can never fit a
-	// signed i32 regardless of sign.
-	g.line(`local.get $acc`)
-	g.line(`i64.const 4294967296`)
-	g.line(`i64.ge_u`)
-	g.line(`br_if $bad`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`) // loop
-	g.indent--
-	g.line(`end`) // $bad — falls through to None emit
-	// $bad path lands here. Emit None and return.
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $opt`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $opt`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`) // $done
-	// Range check: positive must fit i32 signed (≤ 2^31-1);
-	// negative must satisfy acc ≤ 2^31 so -acc fits.
-	g.line(`local.get $neg`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $acc`)
-	g.line(`i64.const 2147483648`)
-	g.line(`i64.gt_u`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $opt`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $opt`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-	g.line(`i64.const 0`)
-	g.line(`local.get $acc`)
-	g.line(`i64.sub`)
-	g.line(`i32.wrap_i64`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $acc`)
-	g.line(`i64.const 2147483647`)
-	g.line(`i64.gt_u`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 4`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $opt`)
-	g.line(`i32.const 1`)
-	g.line(`i32.store`)
-	g.line(`local.get $opt`)
-	g.line(`return`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.get $acc`)
-	g.line(`i32.wrap_i64`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.set $val`)
-	// Some(val): alloc 8, tag=0 at +0, value at +4.
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $opt`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store`)
-	g.line(`local.get $opt`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $val`)
-	g.line(`i32.store`)
-	g.line(`local.get $opt`)
-	g.indent--
-	g.line(`)`)
 
 	// $__method_string_parse_float(s): Option[f32] — decimal
 	// f32 parser. Accepts:

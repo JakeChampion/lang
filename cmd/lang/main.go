@@ -171,6 +171,10 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 	if err := monomorph.Run(prog, info); err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
+	// Tree-shake (removing unreferenced prelude helpers) is
+	// done inside each backend's Emit, so it sees a fully
+	// monomorphised program here without main.go having to
+	// orchestrate it.
 	// Optimisations now run on the IR (Inline / Fold / DCE inside
 	// each backend's Emit), so there's nothing left to do at the
 	// AST level after type checking.
