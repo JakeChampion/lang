@@ -90,34 +90,21 @@ func TestInlineAppendsFreshSlotsPerCallSite(t *testing.T) {
 	}
 }
 
-// Functions whose body contains a direct call ARE inlined under
-// the extended inliner — single-pass substitution means the inner
-// call survives in the spliced body. The single-pass walk + body-
-// snapshot capture together prevent recursive growth.
-func TestInlineKeepsInnerCallsThroughInlinedBody(t *testing.T) {
+// Two-level call chain (`main → compose → add`): the inliner
+// iterates a fixpoint pass set, so on pass 1 compose substitutes
+// into main with the add call still in the spliced body; pass 2
+// then sees the now-exposed add call at top level and substitutes
+// that too. End state: main has neither call op — both bodies are
+// flat in main.
+func TestInlineFlattensTwoLevelCallChain(t *testing.T) {
 	p := loweredAndInlined(t, `function add(a: i32, b: i32): i32 { return a + b; }
 		function compose(x: i32): i32 { return add(x, x); }
 		function main(): i32 { return compose(5); }`)
-	// compose got inlined into main; the inner add call survived
-	// the splice (single-pass inliner doesn't re-walk substituted
-	// bodies).
 	main := findFunc(p, "main")
-	hasComposeCall, hasAddCall := false, false
 	for _, op := range main.Ops {
 		if op.Kind == OpCallDirect {
-			switch op.Str {
-			case "compose":
-				hasComposeCall = true
-			case "add":
-				hasAddCall = true
-			}
+			t.Errorf("expected both compose and add to be inlined; saw call %q:\n%s", op.Str, p)
 		}
-	}
-	if hasComposeCall {
-		t.Errorf("expected compose to be inlined into main:\n%s", p)
-	}
-	if !hasAddCall {
-		t.Errorf("expected the inner add call to survive in main after inlining compose:\n%s", p)
 	}
 }
 

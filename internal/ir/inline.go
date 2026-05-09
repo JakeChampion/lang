@@ -63,20 +63,45 @@ const inlineSizeLimit = 80
 // slots. The pass is conservative — programs without inlineable
 // callees are unchanged in O(N) walk time.
 //
+// Iterates up to inlineMaxPasses times: a single pass substitutes
+// the OUTER callee (e.g. inlining `s.contains(...)` into main),
+// but the inlined body may itself contain calls to other eligible
+// callees (`__substr_eq` from inside `contains`). Without a
+// second pass, those inner calls survive — the prelude is full of
+// "small helper calls another small helper" chains. Cap the
+// iteration count to bound code growth on the worst case.
+//
 // Order in the production pipeline: Lower → Inline → Fold → DCE →
 // (TCO if arm32) → emit. Inlining first exposes constant
 // arithmetic in substituted bodies (e.g. `dbl(7)` becomes `7 * 2`)
 // for Fold to collapse, then DCE drops anything unreachable that
 // surfaces.
 func Inline(prog *Program) {
-	candidates := findInlineCandidates(prog)
-	if len(candidates) == 0 {
-		return
-	}
-	for _, fn := range prog.Funcs {
-		fn.Ops = inlineOps(fn, fn.Ops, candidates)
+	for i := 0; i < inlineMaxPasses; i++ {
+		candidates := findInlineCandidates(prog)
+		if len(candidates) == 0 {
+			return
+		}
+		changed := false
+		for _, fn := range prog.Funcs {
+			before := len(fn.Ops)
+			fn.Ops = inlineOps(fn, fn.Ops, candidates)
+			if len(fn.Ops) != before {
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
 	}
 }
+
+// inlineMaxPasses caps the iteration depth. Three passes covers
+// the deepest call chain the migrated prelude builds today
+// (`Map.set` → `__map_grow` / `__map_hash` → no further inlineable
+// callees). Bumping further has diminishing returns and risks
+// runaway code growth on pathological inputs.
+const inlineMaxPasses = 3
 
 // inlineCandidate is an eligible callee snapshot taken before any
 // rewriting begins. Storing the body slice keeps the inliner from
