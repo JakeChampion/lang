@@ -352,6 +352,15 @@ Deferred to a follow-up:
     swap-with-last (O(1)); insertion order isn't preserved
     after a delete. Future PRs may add `delete_ordered`
     alongside the IndexMap layout.
+  - **Map-literal syntax shipped.** `Map { 1: 10, 2: 20 }`
+    parses as a `MapLit` AST node and lowers to a
+    `map_new(N)` + per-entry `set` sequence. `Map {}` and
+    trailing commas are accepted. Picked over `#{ ... }` /
+    `Map.from([...])` for natural reading; the parser
+    discriminates against the regular struct-literal path
+    by the type name (`Map` is auto-injected and has no
+    user-visible fields, so the brace form unambiguously
+    means a map literal).
   - Future PRs generalise to `Map[K, V]`, swap the linear
     search for the IndexMap fingerprint table, add Wyhash,
     and ship the map-literal syntax.

@@ -2196,6 +2196,27 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			elems[i] = t
 		}
 		return ast.TupleType{Elems: elems}
+	case *ast.MapLit:
+		// Each key + value must be i32 (the Map[i32, i32]
+		// foundation; future generic Map[K, V] PR generalises
+		// this). Polymorphic numeric literals settle to i32 on
+		// the way through.
+		i32Type := ast.NumberType{}
+		for _, ent := range n.Entries {
+			kt := c.checkExpr(ent.Key, s)
+			c.settleNumeric(ent.Key, i32Type)
+			kt = postSettleType(ent.Key, kt)
+			if kt != nil && !ast.Equal(kt, i32Type) {
+				c.errf(ent.Key.Pos(), "map key must be i32, got %s", kt)
+			}
+			vt := c.checkExpr(ent.Value, s)
+			c.settleNumeric(ent.Value, i32Type)
+			vt = postSettleType(ent.Value, vt)
+			if vt != nil && !ast.Equal(vt, i32Type) {
+				c.errf(ent.Value.Pos(), "map value must be i32, got %s", vt)
+			}
+		}
+		return ast.StructType{Name: "Map"}
 	case *ast.FieldAccess:
 		tt := c.checkExpr(n.Target, s)
 		// Tuple field access: `pair.0`, `pair.1`. The Field name

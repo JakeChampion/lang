@@ -902,6 +902,33 @@ func TestWASMMapDelete(t *testing.T) {
 	}
 }
 
+// `Map { k: v, ... }` literal syntax desugars to map_new +
+// set calls. The capacity is sized to the entry count so the
+// initial fill never triggers a resize.
+func TestWASMMapLiteral(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map = Map { 1: 10, 2: 20, 3: 30 };
+    if (m.len() != 3) { return 1; }
+    if let Some(v) = m.get(2) {
+        if (v != 20) { return 2; }
+    } else {
+        return 3;
+    }
+    if let Some(_) = m.get(99) { return 4; }
+    // Empty literal works too.
+    var empty: Map = Map {};
+    if (empty.len() != 0) { return 5; }
+    if (empty.has(0)) { return 6; }
+    // Trailing comma is fine.
+    var m2: Map = Map { 7: 700, };
+    if (m2.len() != 1) { return 7; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (map literal)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

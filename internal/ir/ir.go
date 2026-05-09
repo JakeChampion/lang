@@ -1500,6 +1500,32 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: headerBytes})
 		b.emit(Op{Kind: OpAdd})
+	case *ast.MapLit:
+		// Lower `Map { k1: v1, k2: v2, ... }` to:
+		//   var __m = map_new(N);
+		//   __m.set(k1, v1);
+		//   __m.set(k2, v2);
+		//   ...
+		//   __m
+		// where N is the entry count (so no resize on the
+		// initial fill). Stash the constructed Map handle in a
+		// fresh local so each `set` call can reload it.
+		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
+		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 1})
+		mapSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
+		for _, ent := range n.Entries {
+			b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+			if err := b.expr(ent.Key); err != nil {
+				return err
+			}
+			if err := b.expr(ent.Value); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
 	case *ast.TupleLit:
 		// Same shape as StructLit — alloc N words, store each
 		// element at offset i*4. We don't have per-element type

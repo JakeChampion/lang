@@ -367,6 +367,16 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 			for _, a := range x.Args {
 				walk(a)
 			}
+		case *ast.MapLit:
+			// `Map { k: v, ... }` desugars to map_new + set
+			// calls during IR lowering; trip the Map flag at
+			// AST-walk time so the runtime helpers get emitted.
+			g.needsMap = true
+			g.needsRuntime = true
+			for _, e := range x.Entries {
+				walk(e.Key)
+				walk(e.Value)
+			}
 		case *ast.Block:
 			for _, s := range x.Stmts {
 				walk(s)
