@@ -1736,6 +1736,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.ElemType = sl.Elem
 			return sl
 		}
+		if _, ok := st.(ast.StringType); ok {
+			n.IsString = true
+			return ast.StringType{}
+		}
 		if st != nil {
 			c.errf(n.P, "cannot slice value of type %s", st)
 		}

@@ -106,6 +106,7 @@ type generator struct {
 	needsArrays   bool
 	needsStrEq       bool // any String == String / != comparison
 	needsStrConcat   bool // any String + String concatenation
+	needsStrSlice    bool // any `s[a:b]` on a string — emits $__str_slice
 	needsStructs     bool
 	needsBoundsCheck bool // any array or string Index expression appears
 	needsClosures    bool // any FuncDecl was hoisted by closure conversion
@@ -1060,10 +1061,14 @@ func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 			// Slicing pulls in the same heap-record machinery
 			// as bounds-checked indexing — the slice constructor
 			// is alloc + 2× store, plus indexing on slice values
-			// goes through `$__slice_idx`.
+			// goes through `$__slice_idx`. String slicing has
+			// its own dedicated copy-into-fresh-string helper.
 			g.needsBoundsCheck = true
 			g.needsRuntime = true
 			g.needsStructs = true
+			if x.IsString {
+				g.needsStrSlice = true
+			}
 			walk(x.Source)
 			if x.Low != nil {
 				walk(x.Low)
@@ -1898,6 +1903,80 @@ func (g *generator) emitRuntimePreamble() {
 		emitSliceIdx("$__slice_idx_1", 1)
 		emitSliceIdx("$__slice_idx_2", 2)
 		emitSliceIdx("$__slice_idx_8", 8)
+	}
+
+	if g.needsStrSlice {
+		// $__str_slice(base, low, high) — copy bytes
+		// `base[low..high]` into a fresh length-prefixed string
+		// and return the new string's content pointer. Bounds
+		// check matches the rest of the family: low >= 0, high
+		// <= source length, low <= high.
+		g.line(`(func $__str_slice (param $base i32) (param $low i32) (param $high i32) (result i32)`)
+		g.indent++
+		g.line(`(local $src_len i32) (local $new_len i32) (local $out i32)`)
+		// src_len = base[-4]
+		g.line(`local.get $base`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`local.set $src_len`)
+		// low < 0 → trap
+		g.line(`local.get $low`)
+		g.line(`i32.const 0`)
+		g.line(`i32.lt_s`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		// high > src_len → trap
+		g.line(`local.get $high`)
+		g.line(`local.get $src_len`)
+		g.line(`i32.gt_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		// low > high → trap
+		g.line(`local.get $low`)
+		g.line(`local.get $high`)
+		g.line(`i32.gt_s`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		// new_len = high - low
+		g.line(`local.get $high`)
+		g.line(`local.get $low`)
+		g.line(`i32.sub`)
+		g.line(`local.set $new_len`)
+		// out = alloc(4 + new_len)
+		g.line(`local.get $new_len`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.set $out`)
+		// out[0] = new_len
+		g.line(`local.get $out`)
+		g.line(`local.get $new_len`)
+		g.line(`i32.store`)
+		// memory.copy(out + 4, base + low, new_len)
+		g.line(`local.get $out`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`local.get $base`)
+		g.line(`local.get $low`)
+		g.line(`i32.add`)
+		g.line(`local.get $new_len`)
+		g.line(`memory.copy`)
+		// Return content pointer (out + 4).
+		g.line(`local.get $out`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
 	}
 
 	g.emitStreamsStdioHelpers()
