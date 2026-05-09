@@ -302,17 +302,46 @@ func injectPrelude(prog *ast.Program) error {
 // Check type-checks the program. It returns an aggregated error if any
 // problems were found.
 func Check(prog *ast.Program) (*Info, error) {
-	// Prepend the built-in Option / Result decls so user code
-	// can reference them without an explicit declaration. Doing
-	// this once at check-time keeps the AST `prog.Enums` slice
-	// authoritative — subsequent passes (IR, codegen, formatter)
-	// see the same shape.
-	if len(prog.Enums) == 0 || prog.Enums[0].Name != "Option" {
-		prog.Enums = append(builtinEnumDecls(), prog.Enums...)
+	// Prepend the built-in Option / Result / IoError /
+	// JsonValue enums so user code (and the lang prelude)
+	// can reference them without an explicit declaration.
+	// Each is injected individually if the user hasn't
+	// already declared the same name — earlier the
+	// "auto-inject only when prog.Enums[0].Name != Option"
+	// heuristic skipped EVERY builtin if the user declared
+	// their own Option, which broke the prelude's json_encode
+	// (uses JsonValue).
+	{
+		userEnums := map[string]bool{}
+		for _, ed := range prog.Enums {
+			userEnums[ed.Name] = true
+		}
+		var inject []*ast.EnumDecl
+		for _, ed := range builtinEnumDecls() {
+			if !userEnums[ed.Name] {
+				inject = append(inject, ed)
+			}
+		}
+		if len(inject) > 0 {
+			prog.Enums = append(inject, prog.Enums...)
+		}
 	}
-	// Same shape for the auto-injected Reader / Writer structs.
-	if len(prog.Structs) == 0 || prog.Structs[0].Name != "Reader" {
-		prog.Structs = append(builtinStructDecls(), prog.Structs...)
+	// Same shape for the auto-injected structs (Reader,
+	// Writer, HttpRequest, HttpResponse, Map, MapIter, Url).
+	{
+		userStructs := map[string]bool{}
+		for _, sd := range prog.Structs {
+			userStructs[sd.Name] = true
+		}
+		var inject []*ast.StructDecl
+		for _, sd := range builtinStructDecls() {
+			if !userStructs[sd.Name] {
+				inject = append(inject, sd)
+			}
+		}
+		if len(inject) > 0 {
+			prog.Structs = append(inject, prog.Structs...)
+		}
 	}
 	// Inject the lang-source prelude (small stdlib helpers
 	// expressed in lang itself; see internal/prelude). Runs
@@ -751,18 +780,7 @@ func Check(prog *ast.Program) (*Info, error) {
 
 	// `query_parse(s)` lives in the lang prelude.
 
-	// json_encode(v: JsonValue): string — serialize a
-	// JsonValue tree to its canonical JSON text. Strings
-	// are escape-encoded (`"`, `\`, control chars + the
-	// non-ASCII set passes through verbatim — UTF-8 bytes
-	// are valid JSON). Numbers emit their textual
-	// representation as-is, so the responsibility for valid
-	// numeric formatting sits with the caller. Arrays /
-	// objects recurse. Pairs with `json_parse(s)`.
-	c.info.FuncSigs["json_encode"] = &ast.FuncType{
-		Params: []ast.Type{ast.EnumType{Name: "JsonValue"}},
-		Result: ast.StringType{},
-	}
+	// `json_encode(v)` lives in the lang prelude.
 	// json_parse(s): inverse of json_encode. Returns
 	// Option[JsonValue]; None on any malformed input. The
 	// grammar is RFC 8259; numbers are stored verbatim as

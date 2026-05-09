@@ -380,15 +380,7 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 				case "query_parse":
 					// Now lives in the lang prelude.
 				case "json_encode":
-					// Walks a JsonValue tree, recursing through
-					// JArray / JObject. Pulls Map (for
-					// JObject's iteration), runtime/strings,
-					// and the bounds-check / arrays helpers.
-					g.needsJsonEncode = true
-					g.needsMap = true
-					g.needsRuntime = true
-					g.needsArrays = true
-					g.needsBoundsCheck = true
+					// Now lives in the lang prelude.
 				case "json_parse":
 					// Reuses the encoder's buffer-builder for
 					// string accumulation (decoding escapes)
@@ -5524,21 +5516,14 @@ func (g *generator) emitJsonEncodeHelpers() {
 		g.line(`)`)
 	}
 
-	// $json_encode(v): public entry point. New buffer,
-	// encode in place, return content pointer (= buf + 8,
-	// which has the len prefix at -4).
-	g.line(`(func $json_encode (param $v i32) (result i32)`)
-	g.indent++
-	g.line(`(local $buf i32)`)
-	g.line(`call $__json_buf_new`)
-	g.line(`local.set $buf`)
-	g.line(`local.get $v`)
-	g.line(`local.get $buf`)
-	g.line(`call $__json_encode_into`)
-	g.line(`i32.const 8`)
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`)`)
+	// `$json_encode` migrated to the lang prelude
+	// (internal/prelude/prelude.lang); the
+	// `__json_buf_*` + `__json_encode_into` helpers above
+	// remain here because `$json_parse` still needs the
+	// growable-buffer family for its `\uXXXX` escape
+	// path. Once json_parse migrates too, the whole
+	// `emitJsonEncodeHelpers` block can shrink to just
+	// the buffer family and the escape helper.
 }
 
 // emitJsonParseHelpers writes `$json_parse(s)` plus its
