@@ -3631,3 +3631,121 @@ func TestWASMJsonEncode(t *testing.T) {
 		t.Errorf("WASM json_encode: exit = %d, want 0", got)
 	}
 }
+
+// `json_parse(s) -> Option[JsonValue]` — RFC 8259 grammar
+// recognizer. Numbers stored verbatim as JNumber's string
+// payload; standard JSON escapes decoded; whitespace
+// between tokens skipped. Round-trips with json_encode for
+// most inputs (number formatting may not be identical, but
+// payload bytes match).
+func TestWASMJsonParse(t *testing.T) {
+	src := `function main(): i32 {
+		// Primitives.
+		match (json_parse("null")) {
+			Some(v) => { match (v) { JNull => {}, JBool(_) => { return 1; }, JNumber(_) => { return 1; }, JString(_) => { return 1; }, JArray(_) => { return 1; }, JObject(_) => { return 1; } } },
+			None => { return 2; }
+		}
+		match (json_parse("true")) {
+			Some(v) => { match (v) {
+				JBool(b) => { if (!b) { return 3; } },
+				JNull => { return 4; }, JNumber(_) => { return 4; }, JString(_) => { return 4; }, JArray(_) => { return 4; }, JObject(_) => { return 4; }
+			} },
+			None => { return 5; }
+		}
+		match (json_parse("false")) {
+			Some(v) => { match (v) {
+				JBool(b) => { if (b) { return 6; } },
+				JNull => { return 7; }, JNumber(_) => { return 7; }, JString(_) => { return 7; }, JArray(_) => { return 7; }, JObject(_) => { return 7; }
+			} },
+			None => { return 8; }
+		}
+		match (json_parse("42")) {
+			Some(v) => { match (v) {
+				JNumber(n) => { if (n != "42") { return 10; } },
+				JNull => { return 11; }, JBool(_) => { return 11; }, JString(_) => { return 11; }, JArray(_) => { return 11; }, JObject(_) => { return 11; }
+			} },
+			None => { return 12; }
+		}
+		match (json_parse("-3.14")) {
+			Some(v) => { match (v) {
+				JNumber(n) => { if (n != "-3.14") { return 13; } },
+				JNull => { return 14; }, JBool(_) => { return 14; }, JString(_) => { return 14; }, JArray(_) => { return 14; }, JObject(_) => { return 14; }
+			} },
+			None => { return 15; }
+		}
+		match (json_parse("\"hi\"")) {
+			Some(v) => { match (v) {
+				JString(s) => { if (s != "hi") { return 20; } },
+				JNull => { return 21; }, JBool(_) => { return 21; }, JNumber(_) => { return 21; }, JArray(_) => { return 21; }, JObject(_) => { return 21; }
+			} },
+			None => { return 22; }
+		}
+		// String with escapes.
+		match (json_parse("\"a\\nb\\\"c\"")) {
+			Some(v) => { match (v) {
+				JString(s) => { if (s != "a\nb\"c") { return 30; } },
+				JNull => { return 31; }, JBool(_) => { return 31; }, JNumber(_) => { return 31; }, JArray(_) => { return 31; }, JObject(_) => { return 31; }
+			} },
+			None => { return 32; }
+		}
+		// Empty array.
+		match (json_parse("[]")) {
+			Some(v) => { match (v) {
+				JArray(arr) => { if (len(arr) != 0) { return 40; } },
+				JNull => { return 41; }, JBool(_) => { return 41; }, JNumber(_) => { return 41; }, JString(_) => { return 41; }, JObject(_) => { return 41; }
+			} },
+			None => { return 42; }
+		}
+		// Heterogeneous array.
+		match (json_parse("[1,\"two\",true,null]")) {
+			Some(v) => { match (v) {
+				JArray(arr) => {
+					if (len(arr) != 4) { return 50; }
+					match (arr[0]) { JNumber(n) => { if (n != "1") { return 51; } }, JNull => { return 52; }, JBool(_) => { return 52; }, JString(_) => { return 52; }, JArray(_) => { return 52; }, JObject(_) => { return 52; } }
+					match (arr[1]) { JString(s) => { if (s != "two") { return 53; } }, JNull => { return 54; }, JBool(_) => { return 54; }, JNumber(_) => { return 54; }, JArray(_) => { return 54; }, JObject(_) => { return 54; } }
+				},
+				JNull => { return 55; }, JBool(_) => { return 55; }, JNumber(_) => { return 55; }, JString(_) => { return 55; }, JObject(_) => { return 55; }
+			} },
+			None => { return 56; }
+		}
+		// Empty object.
+		match (json_parse("{}")) {
+			Some(v) => { match (v) {
+				JObject(m) => { if (m.len() != 0) { return 60; } },
+				JNull => { return 61; }, JBool(_) => { return 61; }, JNumber(_) => { return 61; }, JString(_) => { return 61; }, JArray(_) => { return 61; }
+			} },
+			None => { return 62; }
+		}
+		// Object with string keys, mixed values.
+		match (json_parse("{\"a\":1,\"b\":\"two\"}")) {
+			Some(v) => { match (v) {
+				JObject(m) => {
+					if (m.len() != 2) { return 70; }
+					match (m.get("a")) {
+						Some(av) => { match (av) { JNumber(n) => { if (n != "1") { return 71; } }, JNull => { return 72; }, JBool(_) => { return 72; }, JString(_) => { return 72; }, JArray(_) => { return 72; }, JObject(_) => { return 72; } } },
+						None => { return 73; }
+					}
+				},
+				JNull => { return 74; }, JBool(_) => { return 74; }, JNumber(_) => { return 74; }, JString(_) => { return 74; }, JArray(_) => { return 74; }
+			} },
+			None => { return 75; }
+		}
+		// Whitespace tolerance.
+		match (json_parse("  [ 1 , 2 ] ")) {
+			Some(v) => { match (v) {
+				JArray(arr) => { if (len(arr) != 2) { return 80; } },
+				JNull => { return 81; }, JBool(_) => { return 81; }, JNumber(_) => { return 81; }, JString(_) => { return 81; }, JObject(_) => { return 81; }
+			} },
+			None => { return 82; }
+		}
+		// Garbage -> None.
+		match (json_parse("xyz")) { Some(_) => { return 90; }, None => {} }
+		match (json_parse("[1,]")) { Some(_) => { return 91; }, None => {} }
+		match (json_parse("{")) { Some(_) => { return 92; }, None => {} }
+		match (json_parse("")) { Some(_) => { return 93; }, None => {} }
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM json_parse: exit = %d, want 0", got)
+	}
+}

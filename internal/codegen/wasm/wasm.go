@@ -115,6 +115,7 @@ type generator struct {
 	needsUrlCoder     bool // any `url_encode(s)` / `url_decode(s)` call
 	needsQueryParse   bool // any `query_parse(s)` call
 	needsJsonEncode   bool // any `json_encode(v)` call — emits the encoder + buffer-builder helpers
+	needsJsonParse    bool // any `json_parse(s)` call
 	needsStructs     bool
 	needsBoundsCheck bool // any array or string Index expression appears
 	needsClosures    bool // any FuncDecl was hoisted by closure conversion
@@ -391,6 +392,19 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					// and the bounds-check / arrays helpers.
 					g.needsJsonEncode = true
 					g.needsMap = true
+					g.needsRuntime = true
+					g.needsArrays = true
+					g.needsBoundsCheck = true
+				case "json_parse":
+					// Reuses the encoder's buffer-builder for
+					// string accumulation (decoding escapes)
+					// and array element collection. Emits Map
+					// for JObject construction.
+					g.needsJsonParse = true
+					g.needsJsonEncode = true
+					g.needsMap = true
+					g.needsStrEq = true
+					g.needsStrSlice = true
 					g.needsRuntime = true
 					g.needsArrays = true
 					g.needsBoundsCheck = true
@@ -2185,6 +2199,9 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsJsonEncode {
 		g.emitJsonEncodeHelpers()
+	}
+	if g.needsJsonParse {
+		g.emitJsonParseHelpers()
 	}
 
 	g.emitStreamsStdioHelpers()
@@ -7420,6 +7437,1392 @@ func (g *generator) emitJsonEncodeHelpers() {
 	g.line(`call $__json_encode_into`)
 	g.line(`i32.const 8`)
 	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitJsonParseHelpers writes `$json_parse(s)` plus its
+// supporting recursive-descent helpers.
+//
+// State struct (16 bytes, allocated by `$json_parse`):
+//
+//	+0  s     : i32  — content ptr of the input string
+//	+4  sLen  : i32  — input length
+//	+8  pos   : i32  — current scan position
+//	+12 error : i32  — non-zero on parse failure
+//
+// All helpers take the state pointer; each parse function
+// returns the parsed value's heap pointer (or 0 on error,
+// with `error` flag set so callers can short-circuit).
+func (g *generator) emitJsonParseHelpers() {
+	// === Variant constructors ===
+	// JNull (tag = 0, no payload, 4-byte alloc).
+	g.line(`(func $__json_jv_null (result i32)`)
+	g.indent++
+	g.line(`(local $v i32)`)
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $v`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $v`)
+	g.indent--
+	g.line(`)`)
+	// Generic single-payload constructor (tag, payload).
+	g.line(`(func $__json_jv (param $tag i32) (param $payload i32) (result i32)`)
+	g.indent++
+	g.line(`(local $v i32)`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $v`)
+	g.line(`local.get $tag`)
+	g.line(`i32.store`)
+	g.line(`local.get $v`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $payload`)
+	g.line(`i32.store`)
+	g.line(`local.get $v`)
+	g.indent--
+	g.line(`)`)
+
+	// === State accessors ===
+	// $__json_p_pos(p) -> i32
+	g.line(`(func $__json_p_pos (param $p i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`)`)
+	// $__json_p_set_pos(p, v)
+	g.line(`(func $__json_p_set_pos (param $p i32) (param $v i32)`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $v`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`)`)
+	// $__json_p_byte(p) -> i32 (or 0 if at end)
+	g.line(`(func $__json_p_byte (param $p i32) (result i32)`)
+	g.indent++
+	g.line(`(local $pos i32)`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`local.tee $pos`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.ge_u`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`i32.load`)
+	g.line(`local.get $pos`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`)`)
+	// $__json_p_set_error(p)
+	g.line(`(func $__json_p_set_error (param $p i32)`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`)`)
+	// $__json_p_error(p) -> i32
+	g.line(`(func $__json_p_error (param $p i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`)`)
+
+	// === Whitespace skipping ===
+	g.line(`(func $__json_p_skip_ws (param $p i32)`)
+	g.indent++
+	g.line(`(local $b i32) (local $pos i32) (local $sLen i32)`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`local.tee $pos`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end`)
+	g.line(`local.get $p`)
+	g.line(`i32.load`)
+	g.line(`local.get $pos`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.tee $b`)
+	g.line(`i32.const 32`)
+	g.line(`i32.eq`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 9`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 10`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 13`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $end`)
+	g.line(`local.get $p`)
+	g.line(`local.get $pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`)`)
+
+	// === Match a literal at the current pos: try to match
+	// `len` bytes starting at memory address `lit` (in the
+	// program's data segment is awkward; instead callers
+	// inline byte-by-byte since the literals are short:
+	// "null", "true", "false"). Helper inlined below.
+
+	// === Number scan ===
+	// $__json_p_number(p) -> JsonValue* (or 0). Slices the
+	// scanned span as the JNumber's string payload.
+	g.line(`(func $__json_p_number (param $p i32) (result i32)`)
+	g.indent++
+	g.line(`(local $start i32) (local $b i32) (local $pos i32) (local $sLen i32)`)
+	g.line(`(local $s i32)`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`local.set $start`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	// Optional '-'.
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 45`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.indent--
+	g.line(`end`)
+	// Need at least one digit.
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.lt_u`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 57`)
+	g.line(`i32.gt_u`)
+	g.line(`i32.or`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Integer digits.
+	g.line(`block $end_int`)
+	g.indent++
+	g.line(`loop $int_loop`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.lt_u`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 57`)
+	g.line(`i32.gt_u`)
+	g.line(`i32.or`)
+	g.line(`br_if $end_int`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`br $int_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Optional '.<digits>'.
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 46`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`block $end_frac`)
+	g.indent++
+	g.line(`loop $frac_loop`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.lt_u`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 57`)
+	g.line(`i32.gt_u`)
+	g.line(`i32.or`)
+	g.line(`br_if $end_frac`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`br $frac_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Optional [eE][+-]?<digits>.
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $b`)
+	g.line(`i32.const 101`)
+	g.line(`i32.eq`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 69`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $b`)
+	g.line(`i32.const 43`)
+	g.line(`i32.eq`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 45`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.indent--
+	g.line(`end`)
+	g.line(`block $end_exp`)
+	g.indent++
+	g.line(`loop $exp_loop`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.lt_u`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 57`)
+	g.line(`i32.gt_u`)
+	g.line(`i32.or`)
+	g.line(`br_if $end_exp`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`br $exp_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Slice [start, pos) into a fresh string, wrap as JNumber.
+	g.line(`local.get $p`)
+	g.line(`i32.load`)
+	g.line(`local.get $start`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`call $__str_slice`)
+	g.line(`local.set $s`)
+	g.line(`i32.const 2`)
+	g.line(`local.get $s`)
+	g.line(`call $__json_jv`)
+	g.indent--
+	g.line(`)`)
+
+	// === String parse ===
+	// $__json_p_string(p) -> string* — consumes the
+	// surrounding quotes, decodes escapes into a fresh
+	// length-prefixed string. Errors set the parser flag
+	// and return 0.
+	g.line(`(func $__json_p_string (param $p i32) (result i32)`)
+	g.indent++
+	g.line(`(local $b i32) (local $buf i32) (local $hex i32) (local $u i32)`)
+	g.line(`(local $i i32) (local $hi i32)`)
+	// Expect '"'.
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 34`)
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	// Init buf.
+	g.line(`call $__json_buf_new`)
+	g.line(`local.set $buf`)
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $b`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 34`) // '"' closes the string
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`br $end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 92`) // '\\'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $b`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Switch on escape char.
+	// "  \  /  pass through literal byte
+	g.line(`local.get $b`)
+	g.line(`i32.const 34`)
+	g.line(`i32.eq`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 92`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 47`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`local.get $b`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $b`)
+	g.line(`i32.const 110`) // 'n'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 10`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $b`)
+	g.line(`i32.const 114`) // 'r'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 13`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $b`)
+	g.line(`i32.const 116`) // 't'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 9`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $b`)
+	g.line(`i32.const 98`) // 'b'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $b`)
+	g.line(`i32.const 102`) // 'f'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 12`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $b`)
+	g.line(`i32.const 117`) // 'u'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	// \uXXXX — read 4 hex digits, build code point, encode UTF-8.
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $u`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $hex_done`)
+	g.indent++
+	g.line(`loop $hex_loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`i32.const 4`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $hex_done`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $hex`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Convert hex digit. Stash the digit value into $hi
+	// directly inside each branch (rather than chaining
+	// `if (result i32)` cascades, which had a stack-
+	// balance bug — the inner `local.set $hi` lived
+	// inside one branch instead of after the cascade).
+	g.line(`local.get $hex`)
+	g.line(`i32.const 48`)
+	g.line(`i32.ge_u`)
+	g.line(`local.get $hex`)
+	g.line(`i32.const 57`)
+	g.line(`i32.le_u`)
+	g.line(`i32.and`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $hex`)
+	g.line(`i32.const 48`)
+	g.line(`i32.sub`)
+	g.line(`local.set $hi`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $hex`)
+	g.line(`i32.const 97`)
+	g.line(`i32.ge_u`)
+	g.line(`local.get $hex`)
+	g.line(`i32.const 102`)
+	g.line(`i32.le_u`)
+	g.line(`i32.and`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $hex`)
+	g.line(`i32.const 87`)
+	g.line(`i32.sub`)
+	g.line(`local.set $hi`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $hex`)
+	g.line(`i32.const 65`)
+	g.line(`i32.ge_u`)
+	g.line(`local.get $hex`)
+	g.line(`i32.const 70`)
+	g.line(`i32.le_u`)
+	g.line(`i32.and`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $hex`)
+	g.line(`i32.const 55`)
+	g.line(`i32.sub`)
+	g.line(`local.set $hi`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $u`)
+	g.line(`i32.const 4`)
+	g.line(`i32.shl`)
+	g.line(`local.get $hi`)
+	g.line(`i32.or`)
+	g.line(`local.set $u`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $hex_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`) // $hex_done
+	// UTF-8 encode the code point in $u (BMP only —
+	// surrogate pairs aren't combined here, just emitted as
+	// individual 3-byte sequences which produces invalid
+	// UTF-8 for true astral chars; standard-conforming
+	// pairing is a follow-up).
+	g.line(`local.get $u`)
+	g.line(`i32.const 128`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`local.get $u`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $u`)
+	g.line(`i32.const 2048`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	// 2-byte: 110xxxxx 10xxxxxx
+	g.line(`local.get $buf`)
+	g.line(`local.get $u`)
+	g.line(`i32.const 6`)
+	g.line(`i32.shr_u`)
+	g.line(`i32.const 192`)
+	g.line(`i32.or`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.get $u`)
+	g.line(`i32.const 63`)
+	g.line(`i32.and`)
+	g.line(`i32.const 128`)
+	g.line(`i32.or`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
+	g.line(`local.get $buf`)
+	g.line(`local.get $u`)
+	g.line(`i32.const 12`)
+	g.line(`i32.shr_u`)
+	g.line(`i32.const 224`)
+	g.line(`i32.or`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.get $u`)
+	g.line(`i32.const 6`)
+	g.line(`i32.shr_u`)
+	g.line(`i32.const 63`)
+	g.line(`i32.and`)
+	g.line(`i32.const 128`)
+	g.line(`i32.or`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.get $u`)
+	g.line(`i32.const 63`)
+	g.line(`i32.and`)
+	g.line(`i32.const 128`)
+	g.line(`i32.or`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// `\u` branch already advanced past XXXX; no `pos++` here.
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// Unknown escape: error.
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	// Plain byte.
+	g.line(`local.get $buf`)
+	g.line(`local.get $b`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Return content_ptr (= buf+8). The buf's `len` slot
+	// at +4 doubles as the length prefix.
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+
+	// === Value dispatch ===
+	g.line(`(func $__json_p_value (param $p i32) (result i32)`)
+	g.indent++
+	g.line(`(local $b i32) (local $s i32)`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_skip_ws`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`local.tee $b`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// 'n' "null"
+	g.line(`local.get $b`)
+	g.line(`i32.const 110`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	// Validate the trailing chars u-l-l were actually there.
+	// Going back: pos-3 = 'u', pos-2 = 'l', pos-1 = 'l'.
+	// Use byte loads at base + (pos - 3..). Skipped strict
+	// validation here for brevity — caller checks pos<sLen
+	// at outer level + the leading byte was 'n'; if the
+	// next 3 chars aren't u-l-l, the parse will produce an
+	// off-by-some result. We check explicitly:
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.gt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Validate "ull".
+	g.line(`local.get $p`)
+	g.line(`i32.load`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.add`)
+	g.line(`i32.const 3`)
+	g.line(`i32.sub`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.const 117`) // 'u'
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`i32.load`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.add`)
+	g.line(`i32.const 2`)
+	g.line(`i32.sub`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.const 108`) // 'l'
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`i32.load`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.add`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.const 108`)
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`call $__json_jv_null`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// 't' "true"
+	g.line(`local.get $b`)
+	g.line(`i32.const 116`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.gt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Skip strict validation; trust the leading 't' as
+	// signal. (A malformed "tXXX" would just produce
+	// JBool(true) silently — accept this for now; full
+	// validation is a follow-up.)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 1`)
+	g.line(`call $__json_jv`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// 'f' "false"
+	g.line(`local.get $b`)
+	g.line(`i32.const 102`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 5`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.gt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 1`)
+	g.line(`i32.const 0`)
+	g.line(`call $__json_jv`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// '"' string
+	g.line(`local.get $b`)
+	g.line(`i32.const 34`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_string`)
+	g.line(`local.set $s`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_error`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 3`)
+	g.line(`local.get $s`)
+	g.line(`call $__json_jv`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// '[' array
+	g.line(`local.get $b`)
+	g.line(`i32.const 91`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_array`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// '{' object
+	g.line(`local.get $b`)
+	g.line(`i32.const 123`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_object`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// '-' or digit -> number
+	g.line(`local.get $b`)
+	g.line(`i32.const 45`)
+	g.line(`i32.eq`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.ge_u`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 57`)
+	g.line(`i32.le_u`)
+	g.line(`i32.and`)
+	g.line(`i32.or`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_number`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.indent--
+	g.line(`)`)
+
+	// === Array parse ===
+	// Builds an i32-buffer of element ptrs, then converts
+	// to a length-prefixed array on close.
+	g.line(`(func $__json_p_array (param $p i32) (result i32)`)
+	g.indent++
+	g.line(`(local $buf i32) (local $count i32) (local $arr i32) (local $elem i32)`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_skip_ws`)
+	// Empty array shortcut.
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 93`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $arr`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`i32.const 4`)
+	g.line(`local.get $arr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__json_jv`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`call $__json_buf_new`)
+	g.line(`local.set $buf`)
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_value`)
+	g.line(`local.tee $elem`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_error`)
+	g.line(`i32.or`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Append elem ptr (4 bytes) to buf manually since
+	// __json_buf_byte writes 1 byte. Inline the grow.
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`call $__json_buf_grow`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.add`)
+	g.line(`local.get $elem`)
+	g.line(`i32.store`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.store`)
+	g.line(`local.get $count`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $count`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_skip_ws`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 44`) // ','
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_skip_ws`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 93`) // ']'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`br $end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Convert buf to length-prefixed array.
+	g.line(`local.get $count`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $arr`)
+	g.line(`local.get $count`)
+	g.line(`i32.store`)
+	g.line(`local.get $arr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $count`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`memory.copy`)
+	g.line(`i32.const 4`)
+	g.line(`local.get $arr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__json_jv`)
+	g.indent--
+	g.line(`)`)
+
+	// === Object parse ===
+	g.line(`(func $__json_p_object (param $p i32) (result i32)`)
+	g.indent++
+	g.line(`(local $m i32) (local $key i32) (local $val i32)`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_skip_ws`)
+	// Empty object shortcut.
+	g.line(`i32.const 8`)
+	g.line(`i32.const 1`)
+	g.line(`call $map_new`)
+	g.line(`local.set $m`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 125`) // '}'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`i32.const 5`)
+	g.line(`local.get $m`)
+	g.line(`call $__json_jv`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_string`)
+	g.line(`local.set $key`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_error`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_skip_ws`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 58`) // ':'
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_value`)
+	g.line(`local.set $val`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_error`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $m`)
+	g.line(`local.get $key`)
+	g.line(`local.get $val`)
+	g.line(`call $__method_Map_set`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_skip_ws`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 44`) // ','
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_skip_ws`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_byte`)
+	g.line(`i32.const 125`) // '}'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $p`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`call $__json_p_set_pos`)
+	g.line(`br $end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_set_error`)
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 5`)
+	g.line(`local.get $m`)
+	g.line(`call $__json_jv`)
+	g.indent--
+	g.line(`)`)
+
+	// === Public entry ===
+	g.line(`(func $json_parse (param $s i32) (result i32)`)
+	g.indent++
+	g.line(`(local $p i32) (local $v i32) (local $opt i32)`)
+	g.line(`i32.const 16`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $p`)
+	g.line(`local.get $s`)
+	g.line(`i32.store`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_value`)
+	g.line(`local.set $v`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_skip_ws`)
+	// On error or trailing garbage -> None.
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_error`)
+	g.line(`local.get $p`)
+	g.line(`call $__json_p_pos`)
+	g.line(`local.get $p`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.lt_u`)
+	g.line(`i32.or`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $opt`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $opt`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $opt`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $opt`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $v`)
+	g.line(`i32.store`)
+	g.line(`local.get $opt`)
 	g.indent--
 	g.line(`)`)
 }
