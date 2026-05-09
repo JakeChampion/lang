@@ -368,13 +368,16 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 				case "hex_encode", "hex_decode":
 					g.needsHex = true
 					g.needsRuntime = true
-				case "__memcpy", "__memset":
+				case "__memcpy", "__memset", "__alloc_u8":
 					// Wat shims that wrap wasm's bulk-memory
-					// `memory.copy` / `memory.fill`. Exposed to
-					// the lang prelude so high-level helpers
-					// (map runtime migration, json buffer
-					// family) can build growable buffers
-					// without dropping out of the language.
+					// `memory.copy` / `memory.fill` plus a tiny
+					// allocator that lays out a u8[] header for
+					// the lang side. Exposed to the lang prelude
+					// so high-level helpers (map runtime
+					// migration, json buffer family, the
+					// remaining string-method migrations) can
+					// build growable buffers without dropping
+					// out of the language.
 					g.needsBulkMemory = true
 					g.needsRuntime = true
 				case "__array_append_string", "__array_append_jsonvalue":
@@ -3970,92 +3973,6 @@ func (g *generator) emitStringMethodHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// `starts_with`, `ends_with`, `contains`, `index_of`,
-	// `trim` (and the supporting `__is_ascii_ws` helper)
-	// migrated to the lang prelude
-	// (internal/prelude/prelude.lang). The remaining wat
-	// helpers below — `to_lower`, `to_upper`, `split`,
-	// `replace`, `bytes` — still need allocation primitives
-	// that the prelude doesn't yet expose.
-
-	// $__method_string_to_lower(s): string — fresh string with
-	// every ASCII A-Z byte mapped to a-z. Non-ASCII bytes are
-	// copied verbatim. UTF-8 multibyte sequences are unaffected
-	// since their leading bytes are all >= 0x80.
-	emitStringCaseFold := func(name string, srcBase int, dstBase int) {
-		g.linef(`(func %s (param $s i32) (result i32)`, name)
-		g.indent++
-		g.line(`(local $sLen i32) (local $out i32) (local $i i32) (local $b i32)`)
-		g.line(`local.get $s`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
-		g.line(`local.set $sLen`)
-		g.line(`local.get $sLen`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`call $__lang_alloc`)
-		g.line(`local.set $out`)
-		g.line(`local.get $out`)
-		g.line(`local.get $sLen`)
-		g.line(`i32.store`)
-		g.line(`i32.const 0`)
-		g.line(`local.set $i`)
-		g.line(`block $break`)
-		g.indent++
-		g.line(`loop $loop`)
-		g.indent++
-		g.line(`local.get $i`)
-		g.line(`local.get $sLen`)
-		g.line(`i32.ge_s`)
-		g.line(`br_if $break`)
-		// b = s[i]
-		g.line(`local.get $s`)
-		g.line(`local.get $i`)
-		g.line(`i32.add`)
-		g.line(`i32.load8_u`)
-		g.line(`local.set $b`)
-		// if srcBase <= b <= srcBase+25: b += dstBase - srcBase
-		g.line(`local.get $b`)
-		g.linef(`i32.const %d`, srcBase)
-		g.line(`i32.ge_u`)
-		g.line(`local.get $b`)
-		g.linef(`i32.const %d`, srcBase+26)
-		g.line(`i32.lt_u`)
-		g.line(`i32.and`)
-		g.line(`if`)
-		g.indent++
-		g.line(`local.get $b`)
-		g.linef(`i32.const %d`, dstBase-srcBase)
-		g.line(`i32.add`)
-		g.line(`local.set $b`)
-		g.indent--
-		g.line(`end`)
-		// out[4 + i] = b
-		g.line(`local.get $out`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`local.get $i`)
-		g.line(`i32.add`)
-		g.line(`local.get $b`)
-		g.line(`i32.store8`)
-		g.line(`local.get $i`)
-		g.line(`i32.const 1`)
-		g.line(`i32.add`)
-		g.line(`local.set $i`)
-		g.line(`br $loop`)
-		g.indent--
-		g.line(`end`)
-		g.indent--
-		g.line(`end`)
-		g.line(`local.get $out`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.indent--
-		g.line(`)`)
-	}
-	emitStringCaseFold("$__method_string_to_lower", 65, 97) // A-Z → a-z
-	emitStringCaseFold("$__method_string_to_upper", 97, 65) // a-z → A-Z
 
 	// $__method_string_split(s, sep): string[] — splits s on
 	// each occurrence of sep, returning an array of substrings.
@@ -4460,39 +4377,6 @@ func (g *generator) emitStringMethodHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// $__method_string_bytes(s): u8[] — copies the string's
-	// bytes into a fresh u8[] (1-byte stride). The result is
-	// independently owned; mutations don't affect the source
-	// string.
-	g.line(`(func $__method_string_bytes (param $s i32) (result i32)`)
-	g.indent++
-	g.line(`(local $sLen i32) (local $arr i32)`)
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`local.set $sLen`)
-	// arr = alloc(4 + sLen); arr[0] = sLen
-	g.line(`local.get $sLen`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $arr`)
-	g.line(`local.get $sLen`)
-	g.line(`i32.store`)
-	// memory.copy(arr + 4, s, sLen)
-	g.line(`local.get $arr`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $s`)
-	g.line(`local.get $sLen`)
-	g.line(`memory.copy`)
-	// Return content ptr.
-	g.line(`local.get $arr`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`)`)
 
 	// `$__method_string_is_empty` migrated to the lang
 	// prelude (internal/prelude/prelude.lang). Removed the
@@ -6058,23 +5942,34 @@ func (g *generator) emitHexHelpers() {
 // bulk-memory `memory.copy` / `memory.fill` instructions so
 // the lang prelude can call them as regular functions.
 //
-// Both helpers are exposed under the `__memcpy` / `__memset`
-// naming the doc roadmap calls out (see "Stdlib implementation
-// strategy → Bridge functions for wasm intrinsics"). They're
-// the unlock for migrating helpers that build / scan growable
-// byte buffers — today the json buffer family and the map
-// runtime live as 1000+-line wat blocks because their
-// memcpy / memset access can't yet be expressed in lang.
+// Three helpers are exposed under the `__memcpy` / `__memset`
+// / `__alloc_u8` naming the doc roadmap calls out (see
+// "Stdlib implementation strategy → Bridge functions for
+// wasm intrinsics"). They're the unlock for migrating
+// helpers that build / scan growable byte buffers — today
+// the map runtime + remaining string methods live as
+// 1000+-line wat blocks because their memcpy / memset /
+// alloc access can't yet be expressed in lang.
 //
 // Args:
 //
 //	__memcpy(dst, src, n) — copy n bytes from src to dst.
 //	__memset(dst, b, n)   — write byte b to each of n bytes
 //	                        starting at dst.
+//	__alloc_u8(n)         — allocate a fresh `u8[]` of length
+//	                        n, zero-initialised. The lang
+//	                        array layout is [len:i32, data...]
+//	                        with the user-visible pointer
+//	                        addressing the data; `__lang_alloc`
+//	                        returns the buffer base, we write
+//	                        the length prefix, and return
+//	                        base + 4. `string_from_bytes(buf)`
+//	                        is the natural way to seal it
+//	                        back into a string.
 //
-// Both treat overlapping ranges per the wasm spec: `memory.copy`
-// is required to behave correctly regardless of overlap (the
-// engine picks the right copy direction).
+// memcpy / memset treat overlapping ranges per the wasm spec:
+// `memory.copy` is required to behave correctly regardless
+// of overlap (the engine picks the right copy direction).
 func (g *generator) emitBulkMemoryHelpers() {
 	g.line(`(func $__memcpy (param $dst i32) (param $src i32) (param $n i32)`)
 	g.indent++
@@ -6091,6 +5986,29 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.line(`local.get $b`)
 	g.line(`local.get $n`)
 	g.line(`memory.fill`)
+	g.indent--
+	g.line(`)`)
+
+	g.line(`(func $__alloc_u8 (param $n i32) (result i32)`)
+	g.indent++
+	g.line(`(local $base i32)`)
+	// Allocate n + 4 bytes (length prefix + payload).
+	g.line(`local.get $n`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $base`)
+	// Write the length prefix.
+	g.line(`local.get $base`)
+	g.line(`local.get $n`)
+	g.line(`i32.store`)
+	// __lang_alloc memory comes from a freshly bumped region
+	// that wasm initialises to zero, so the payload bytes are
+	// already 0; no explicit memset needed.
+	// Return the user-visible pointer (data, not header).
+	g.line(`local.get $base`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
 }

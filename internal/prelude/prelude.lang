@@ -133,6 +133,47 @@ function (s: string) trim(): string {
     return s[low:high];
 }
 
+// `s.bytes()` — returns a fresh `u8[]` whose contents are
+// independently owned. Use `s.as_bytes()` (slice form) when
+// you don't need ownership; that's the zero-copy companion.
+function (s: string) bytes(): u8[] {
+    var n: i32 = len(s);
+    var out: u8[] = __alloc_u8(n);
+    if (n > 0) {
+        __memcpy(out as i32, s.as_bytes() as i32, n);
+    }
+    return out;
+}
+
+// __string_case_fold drives `to_lower` / `to_upper`.
+// Allocates a fresh `u8[]` of the same length, byte-by-byte
+// remaps any A..A+25 source range to dstBase..dstBase+25,
+// passes everything else through. Non-ASCII bytes (>= 0x80)
+// always fall outside the [srcBase, srcBase+26) check, so
+// UTF-8 multibyte sequences pass through unchanged.
+function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string {
+    var n: i32 = len(s);
+    var buf: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b >= srcBase && b < srcBase + 26) {
+            b = b + (dstBase - srcBase);
+        }
+        buf[i] = b as u8;
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+function (s: string) to_lower(): string {
+    return __string_case_fold(s, 65, 97);     // A-Z → a-z
+}
+
+function (s: string) to_upper(): string {
+    return __string_case_fold(s, 97, 65);     // a-z → A-Z
+}
+
 // === URL percent-encoding (RFC 3986) ===
 //
 // `url_encode(s)` / `url_decode(s)` — public stdlib pair.
