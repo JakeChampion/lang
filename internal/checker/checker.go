@@ -691,15 +691,7 @@ func Check(prog *ast.Program) (*Info, error) {
 	// (internal/prelude/prelude.lang). The receiver-hoisting
 	// + dispatch wires it through the same way as any
 	// `__method_string_*`.
-	// `s.parse_float()` — decimal f32 parser. Accepts an
-	// optional leading `-`, optional integer digits, optional
-	// `.fraction`, and optional `e[+-]?digits` exponent.
-	// Rejects empty input, lone `-`, missing both integer and
-	// fraction parts, and trailing garbage. Returns Option[f32];
-	// the precision-loss for very long mantissas is documented
-	// rather than fatal (we cap accumulation at i64's 2^53
-	// precision boundary and adjust the exponent).
-	registerStringMethod("parse_float", nil, ast.EnumType{Name: "Option", Args: []ast.Type{ast.FloatType{}}})
+	// `s.parse_float()` lives in the lang prelude.
 
 	c.info.FuncSigs["string_from_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},

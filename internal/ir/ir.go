@@ -68,6 +68,14 @@ const (
 	OpFDemoteF64   // (f64) → f32
 	OpSignExtend8  // (i32) → i32 (sign-extend low byte; lowers to i32.extend8_s)
 	OpSignExtend16 // (i32) → i32 (sign-extend low halfword; lowers to i32.extend16_s)
+	// Int ↔ float conversions. Width is the SOURCE width
+	// for I→F (32 or 64) and the DESTINATION width for F→I.
+	// `Unsigned` flags signed vs unsigned reading of the
+	// integer side (per wasm's _s / _u suffix).
+	OpFConvertI32 // (i32) → f32 / f64; Width=32 → f32, =64 → f64; Unsigned for _u variant
+	OpFConvertI64 // (i64) → f32 / f64; Width=32 → f32, =64 → f64; Unsigned for _u variant
+	OpITruncF32   // (f32) → i32 / i64; Width=32 → i32, =64 → i64
+	OpITruncF64   // (f64) → i32 / i64; Width=32 → i32, =64 → i64
 
 	// Locals (parameter or var). Idx is the 0-based slot.
 	OpLoadLocal  // ()                → T
@@ -218,6 +226,14 @@ func (k OpKind) String() string {
 		return "extend8_s"
 	case OpSignExtend16:
 		return "extend16_s"
+	case OpFConvertI32:
+		return "convert.i32"
+	case OpFConvertI64:
+		return "convert.i64"
+	case OpITruncF32:
+		return "trunc.f32"
+	case OpITruncF64:
+		return "trunc.f64"
 	case OpConstStr:
 		return "const.str"
 	case OpConstFunc:
@@ -1388,6 +1404,32 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpFPromoteF32})
 			case sw == 64 && dw == 32:
 				b.emit(Op{Kind: OpFDemoteF64})
+			}
+		case srcIsInt && dstIsFloat:
+			// int → float. Width on the resulting Op is the
+			// destination's float width; Unsigned is the
+			// SOURCE side's signed-ness.
+			dw := dstFloat.NormalWidth()
+			if srcInt.NormalWidth() == 64 {
+				b.emit(Op{Kind: OpFConvertI64, Width: dw, Unsigned: !srcInt.IsSigned()})
+			} else {
+				// Sub-i32 widths already live in i32 storage at
+				// the wasm level; the cast op reads the i32 and
+				// converts to the requested float width.
+				b.emit(Op{Kind: OpFConvertI32, Width: dw, Unsigned: !srcInt.IsSigned()})
+			}
+		case srcIsFloat && dstIsInt:
+			// float → int (truncate-toward-zero). Width on the
+			// op is the destination's int width; Unsigned chosen
+			// per the destination's signed-ness.
+			dw := dstInt.NormalWidth()
+			if dw < 32 {
+				dw = 32
+			}
+			if srcFloat.NormalWidth() == 64 {
+				b.emit(Op{Kind: OpITruncF64, Width: dw, Unsigned: !dstInt.IsSigned()})
+			} else {
+				b.emit(Op{Kind: OpITruncF32, Width: dw, Unsigned: !dstInt.IsSigned()})
 			}
 		default:
 			return fmt.Errorf("ir: cast from %s to %s not yet supported", n.InnerType, n.Target)

@@ -502,6 +502,63 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.line("i32.extend8_s")
 	case ir.OpSignExtend16:
 		g.line("i32.extend16_s")
+	case ir.OpFConvertI32:
+		// Width selects f32 vs f64; Unsigned selects _u vs _s.
+		w := op.Width
+		if w == 0 {
+			w = 32
+		}
+		suf := "_s"
+		if op.Unsigned {
+			suf = "_u"
+		}
+		if w == 64 {
+			g.line("f64.convert_i32" + suf)
+		} else {
+			g.line("f32.convert_i32" + suf)
+		}
+	case ir.OpFConvertI64:
+		w := op.Width
+		if w == 0 {
+			w = 32
+		}
+		suf := "_s"
+		if op.Unsigned {
+			suf = "_u"
+		}
+		if w == 64 {
+			g.line("f64.convert_i64" + suf)
+		} else {
+			g.line("f32.convert_i64" + suf)
+		}
+	case ir.OpITruncF32:
+		w := op.Width
+		if w == 0 {
+			w = 32
+		}
+		suf := "_s"
+		if op.Unsigned {
+			suf = "_u"
+		}
+		if w == 64 {
+			g.line("i64.trunc_sat_f32" + suf)
+		} else {
+			g.line("i32.trunc_sat_f32" + suf)
+		}
+	case ir.OpITruncF64:
+		w := op.Width
+		if w == 0 {
+			w = 32
+		}
+		suf := "_s"
+		if op.Unsigned {
+			suf = "_u"
+		}
+		if w == 64 {
+			g.line("i64.trunc_sat_f64" + suf)
+		} else {
+			g.line("i32.trunc_sat_f64" + suf)
+		}
 	case ir.OpConstF32:
 		g.linef("f32.const %g", op.F32)
 	case ir.OpConstF64:
