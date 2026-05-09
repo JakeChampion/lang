@@ -810,6 +810,25 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.ArrayType{Elem: ast.EnumType{Name: "JsonValue"}},
 	}
 
+	// `__memcpy(dst, src, n)` / `__memset(dst, b, n)` —
+	// thin lang-callable wrappers around wasm's bulk-memory
+	// `memory.copy` / `memory.fill`. The doc-roadmap calls
+	// them out as the unlock for moving the json buffer
+	// family + the Map runtime from hand-written wat into
+	// the lang prelude (every growable-byte-buffer pattern
+	// needs them). All three params are i32 byte counts /
+	// pointers; the helpers return void. Backends without
+	// bulk-memory (eg arm32 today) trip an "unsupported"
+	// path during codegen — wat is for now the only consumer.
+	c.info.FuncSigs["__memcpy"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["__memset"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+
 	// `url_encode(s)` / `url_decode(s)` live in the lang
 	// prelude (internal/prelude/prelude.lang).
 
@@ -2083,9 +2102,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.NumberType{Polymorphic: true}
 	case *ast.CastExpr:
-		// Currently restricted to numeric → numeric. Bool and
-		// string casts (via `as`) come back when the use case
-		// arises; today they'd just hide a bug.
+		// Numeric ↔ numeric is the common case. The one
+		// exception: a `[u8]` slice or `u8[]` array can cast
+		// to `i32` to recover its data-pointer for the
+		// bulk-memory primitives (__memcpy / __memset). It's
+		// an explicit low-level escape hatch — useful inside
+		// prelude buffer-management helpers, marked by the
+		// cast at the source level.
 		inner := c.checkExpr(n.Inner, s)
 		// `1 as u64`: settle the literal at the cast target's
 		// width so the IR emits an i64.const, not an i32.const
@@ -2101,7 +2124,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if (innerIsNum || innerIsFloat) && (targetIsNum || targetIsFloat) {
 			return n.Target
 		}
-		c.errf(n.P, "cannot cast %s to %s; only numeric casts are supported", inner, n.Target)
+		// Slice / array of u8 → i32 (data pointer).
+		if nt, ok := n.Target.(ast.NumberType); ok && nt.NormalWidth() == 32 {
+			isU8Slice := false
+			if sl, ok := inner.(ast.SliceType); ok {
+				if e, ok := sl.Elem.(ast.NumberType); ok && e.Width == 8 && !e.Signed {
+					isU8Slice = true
+				}
+			}
+			isU8Array := false
+			if ar, ok := inner.(ast.ArrayType); ok {
+				if e, ok := ar.Elem.(ast.NumberType); ok && e.Width == 8 && !e.Signed {
+					isU8Array = true
+				}
+			}
+			if isU8Slice || isU8Array {
+				return n.Target
+			}
+		}
+		c.errf(n.P, "cannot cast %s to %s; only numeric casts (and [u8]/u8[] → i32 data-pointer) are supported", inner, n.Target)
 		return n.Target
 	case *ast.BoolLit:
 		return ast.BoolType{}

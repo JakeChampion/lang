@@ -117,6 +117,7 @@ type generator struct {
 	needsStrFromBytes bool // any `string_from_bytes(bs)` call
 	needsBase64       bool // any `base64_encode` / `base64_decode` call
 	needsHex                bool // any `hex_encode(s)` / `hex_decode(s)` call
+	needsBulkMemory         bool // any `__memcpy(dst, src, n)` / `__memset(dst, b, n)` call — emits bulk-memory wat shims
 	needsArrayAppendString  bool // any `__array_append_string(arr, v)` call
 	// `url_parse(s)` migrated to lang prelude; no flag.
 	// `url_encode` / `url_decode` migrated to the lang prelude
@@ -366,6 +367,15 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsRuntime = true
 				case "hex_encode", "hex_decode":
 					g.needsHex = true
+					g.needsRuntime = true
+				case "__memcpy", "__memset":
+					// Wat shims that wrap wasm's bulk-memory
+					// `memory.copy` / `memory.fill`. Exposed to
+					// the lang prelude so high-level helpers
+					// (map runtime migration, json buffer
+					// family) can build growable buffers
+					// without dropping out of the language.
+					g.needsBulkMemory = true
 					g.needsRuntime = true
 				case "__array_append_string", "__array_append_jsonvalue":
 					// Both are 4-byte-pointer-stride append; one
@@ -2166,6 +2176,9 @@ func (g *generator) emitRuntimePreamble() {
 
 	if g.needsHex {
 		g.emitHexHelpers()
+	}
+	if g.needsBulkMemory {
+		g.emitBulkMemoryHelpers()
 	}
 	if g.needsArrayAppendString {
 		g.emitArrayAppendStringHelper()
@@ -6349,6 +6362,47 @@ func (g *generator) emitHexHelpers() {
 	g.line(`local.get $oi`)
 	g.line(`i32.store`)
 	g.line(`local.get $dst`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitBulkMemoryHelpers writes thin wat shims around wasm's
+// bulk-memory `memory.copy` / `memory.fill` instructions so
+// the lang prelude can call them as regular functions.
+//
+// Both helpers are exposed under the `__memcpy` / `__memset`
+// naming the doc roadmap calls out (see "Stdlib implementation
+// strategy → Bridge functions for wasm intrinsics"). They're
+// the unlock for migrating helpers that build / scan growable
+// byte buffers — today the json buffer family and the map
+// runtime live as 1000+-line wat blocks because their
+// memcpy / memset access can't yet be expressed in lang.
+//
+// Args:
+//
+//	__memcpy(dst, src, n) — copy n bytes from src to dst.
+//	__memset(dst, b, n)   — write byte b to each of n bytes
+//	                        starting at dst.
+//
+// Both treat overlapping ranges per the wasm spec: `memory.copy`
+// is required to behave correctly regardless of overlap (the
+// engine picks the right copy direction).
+func (g *generator) emitBulkMemoryHelpers() {
+	g.line(`(func $__memcpy (param $dst i32) (param $src i32) (param $n i32)`)
+	g.indent++
+	g.line(`local.get $dst`)
+	g.line(`local.get $src`)
+	g.line(`local.get $n`)
+	g.line(`memory.copy`)
+	g.indent--
+	g.line(`)`)
+
+	g.line(`(func $__memset (param $dst i32) (param $b i32) (param $n i32)`)
+	g.indent++
+	g.line(`local.get $dst`)
+	g.line(`local.get $b`)
+	g.line(`local.get $n`)
+	g.line(`memory.fill`)
 	g.indent--
 	g.line(`)`)
 }
