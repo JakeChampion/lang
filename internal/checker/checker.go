@@ -679,11 +679,8 @@ func Check(prog *ast.Program) (*Info, error) {
 	// (internal/prelude/prelude.lang); the receiver-hoisting
 	// machinery + builtin-receivers extension wires it
 	// through automatically.
-	// `s.repeat(n)` — `n` copies of s concatenated. `n <= 0`
-	// returns an empty string; `n == 1` returns the input
-	// unchanged; otherwise allocates `len(s) * n` bytes and
-	// memcpy's the source into each slot.
-	registerStringMethod("repeat", []ast.Type{ast.NumberType{}}, ast.StringType{})
+	// `s.repeat(n)` lives in the lang prelude
+	// (internal/prelude/prelude.lang).
 	// `s.as_bytes()` — non-copying companion to `s.bytes()`. Returns
 	// a `[u8]` slice header whose data_ptr aliases the string's
 	// payload and whose len is `len(s)`. Sharing the parent's
