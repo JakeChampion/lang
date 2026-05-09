@@ -1323,6 +1323,58 @@ func TestWASMStringAsBytes(t *testing.T) {
 	}
 }
 
+// `s.parse_int(): Option[i32]` — decimal parser. Covers
+// success cases (positive, negative, single digit, zero,
+// boundary values 2^31-1 / -2^31), and failure cases
+// (empty, lone "-", non-digit, embedded space, overflow,
+// trailing garbage).
+func TestWASMParseInt(t *testing.T) {
+	src := `function main(): i32 {
+		// Successes:
+		match ("42".parse_int()) {
+			Some(v) => { if (v != 42) { return 1; } },
+			None => { return 2; }
+		}
+		match ("0".parse_int()) {
+			Some(v) => { if (v != 0) { return 3; } },
+			None => { return 4; }
+		}
+		match ("-7".parse_int()) {
+			Some(v) => { if (v != -7) { return 5; } },
+			None => { return 6; }
+		}
+		// 2^31 - 1 (max i32).
+		match ("2147483647".parse_int()) {
+			Some(v) => { if (v != 2147483647) { return 7; } },
+			None => { return 8; }
+		}
+		// -2^31 (min i32).
+		match ("-2147483648".parse_int()) {
+			Some(v) => { if (v != -2147483648) { return 9; } },
+			None => { return 10; }
+		}
+
+		// Failures: each must come back None.
+		match ("".parse_int()) { Some(_) => { return 20; }, None => {} }
+		match ("-".parse_int()) { Some(_) => { return 21; }, None => {} }
+		match ("abc".parse_int()) { Some(_) => { return 22; }, None => {} }
+		match ("12 34".parse_int()) { Some(_) => { return 23; }, None => {} }
+		match ("12a".parse_int()) { Some(_) => { return 24; }, None => {} }
+		// Overflow (2^31 is one past i32 max).
+		match ("2147483648".parse_int()) { Some(_) => { return 25; }, None => {} }
+		// Underflow.
+		match ("-2147483649".parse_int()) { Some(_) => { return 26; }, None => {} }
+		// Way out of range.
+		match ("99999999999999".parse_int()) { Some(_) => { return 27; }, None => {} }
+		// Plus sign not accepted.
+		match ("+1".parse_int()) { Some(_) => { return 28; }, None => {} }
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (parse_int)", got)
+	}
+}
+
 // String-keyed Map[string, i32]. Same API as Map[i32, i32];
 // equality at the runtime layer dispatches to byte-level
 // strcmp via the buffer's keyKind tag.

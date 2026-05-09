@@ -583,6 +583,13 @@ func Check(prog *ast.Program) (*Info, error) {
 	// lifetime is fine under the bump allocator (the string's
 	// storage lives until the arena tears down).
 	registerStringMethod("as_bytes", nil, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}})
+	// `s.parse_int()` — parses a decimal i32, accepting an optional
+	// leading `-`. Returns `None` on empty input, any non-digit
+	// character, or out-of-range value (including the `-2^31..2^31-1`
+	// boundary). Float / hex / scientific syntaxes are NOT
+	// accepted — separate methods will land alongside, each with
+	// its own error semantics.
+	registerStringMethod("parse_int", nil, ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}})
 
 	c.info.FuncSigs["string_from_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
