@@ -606,8 +606,23 @@ Deferred to a follow-up:
     `=` records the key with a single-element empty-string
     array. Empty input yields an empty map. Trailing `&`
     is ignored. `+` is left alone — callers handling form-
-    encoded data should pre-process. JSON is the next
-    stdlib piece.
+    encoded data should pre-process.
+  - **`json_encode(v)` shipped.** Auto-injected `JsonValue`
+    enum (variants `JNull`, `JBool(boolean)`,
+    `JNumber(string)`, `JString(string)`,
+    `JArray(JsonValue[])`, `JObject(Map[string,
+    JsonValue])`) plus the encoder. Numbers carry their
+    textual representation as a string — JSON's number
+    grammar exceeds f32/f64 precision, and storing the
+    digits verbatim preserves round-trip fidelity for
+    parse-then-encode. Strings get the standard escape
+    treatment (`"`, `\\`, `\n`, `\r`, `\t`, `\u00XX` for
+    other controls); UTF-8 bytes ≥ 0x20 pass through
+    verbatim — JSON allows them. The encoder uses a
+    growable `[cap, len, data...]` buffer with a 2x
+    doubling grow, returning a length-prefixed string
+    where the buffer's `len` slot doubles as the prefix.
+    `json_parse` (the inverse) is the next piece.
 
 ## Open questions to settle as we go
 

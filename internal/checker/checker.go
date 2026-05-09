@@ -116,6 +116,37 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "Other", Payloads: []ast.Type{ast.StringType{}, ast.StringType{}}},
 			},
 		},
+		// JsonValue — recursive AST representation for JSON
+		// documents. Numbers carry their textual representation
+		// (the JSON spec doesn't fix precision); callers that
+		// want a numeric type call `s.parse_int()` /
+		// `s.parse_float()` on the payload. Self-referential
+		// variants (JArray → JsonValue[], JObject →
+		// Map[string, JsonValue]) work because enum payloads
+		// are heap-allocated, breaking the size cycle. Pairs
+		// with the `json_encode(v)` builtin (and the future
+		// `json_parse(s) -> Option[JsonValue]`).
+		{
+			Name: "JsonValue",
+			Variants: []ast.EnumVariant{
+				{Name: "JNull"},
+				{Name: "JBool", Payloads: []ast.Type{ast.BoolType{}}},
+				{Name: "JNumber", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "JString", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "JArray", Payloads: []ast.Type{
+					ast.ArrayType{Elem: ast.EnumType{Name: "JsonValue"}},
+				}},
+				{Name: "JObject", Payloads: []ast.Type{
+					ast.StructType{
+						Name: "Map",
+						Args: []ast.Type{
+							ast.StringType{},
+							ast.EnumType{Name: "JsonValue"},
+						},
+					},
+				}},
+			},
+		},
 	}
 }
 
@@ -710,6 +741,19 @@ func Check(prog *ast.Program) (*Info, error) {
 				ast.ArrayType{Elem: ast.StringType{}},
 			},
 		},
+	}
+
+	// json_encode(v: JsonValue): string — serialize a
+	// JsonValue tree to its canonical JSON text. Strings
+	// are escape-encoded (`"`, `\`, control chars + the
+	// non-ASCII set passes through verbatim — UTF-8 bytes
+	// are valid JSON). Numbers emit their textual
+	// representation as-is, so the responsibility for valid
+	// numeric formatting sits with the caller. Arrays /
+	// objects recurse. Pairs with `json_parse(s)`.
+	c.info.FuncSigs["json_encode"] = &ast.FuncType{
+		Params: []ast.Type{ast.EnumType{Name: "JsonValue"}},
+		Result: ast.StringType{},
 	}
 
 	// Built-in numeric methods. The receiver type is `NumberType`

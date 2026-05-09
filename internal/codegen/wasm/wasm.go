@@ -114,6 +114,7 @@ type generator struct {
 	needsUrlParse     bool // any `url_parse(s)` call — emits the Url builder + parser helpers
 	needsUrlCoder     bool // any `url_encode(s)` / `url_decode(s)` call
 	needsQueryParse   bool // any `query_parse(s)` call
+	needsJsonEncode   bool // any `json_encode(v)` call — emits the encoder + buffer-builder helpers
 	needsStructs     bool
 	needsBoundsCheck bool // any array or string Index expression appears
 	needsClosures    bool // any FuncDecl was hoisted by closure conversion
@@ -383,6 +384,16 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsStrSlice = true
 					g.needsBoundsCheck = true
 					g.needsRuntime = true
+				case "json_encode":
+					// Walks a JsonValue tree, recursing through
+					// JArray / JObject. Pulls Map (for
+					// JObject's iteration), runtime/strings,
+					// and the bounds-check / arrays helpers.
+					g.needsJsonEncode = true
+					g.needsMap = true
+					g.needsRuntime = true
+					g.needsArrays = true
+					g.needsBoundsCheck = true
 				case "read_file", "write_file":
 					g.needsFileIO = true
 				case "open_reader", "open_writer", "open_appender":
@@ -2171,6 +2182,9 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsQueryParse {
 		g.emitQueryParseHelper()
+	}
+	if g.needsJsonEncode {
+		g.emitJsonEncodeHelpers()
 	}
 
 	g.emitStreamsStdioHelpers()
@@ -6729,6 +6743,683 @@ func (g *generator) emitQueryParseHelper() {
 	g.indent--
 	g.line(`end`) // $end
 	g.line(`local.get $m`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitJsonEncodeHelpers writes the JSON encoder runtime —
+// `$json_encode(v)` plus the supporting `__json_buf_*`
+// growable-string-builder helpers and `__json_escape_into`.
+//
+// Buffer layout: `[cap:i32 @ 0, len:i32 @ 4, data:[cap]u8 @ 8]`.
+// Returned strings reuse the inner `len` slot as the length
+// prefix — content_ptr = buf+8, content_ptr - 4 = len. The
+// 4-byte `cap` slot is wasted on finalize, that's the cost of
+// the doubling-grow strategy.
+//
+// JsonValue variant tags (declaration order):
+//
+//	JNull = 0, JBool = 1, JNumber = 2, JString = 3,
+//	JArray = 4, JObject = 5.
+func (g *generator) emitJsonEncodeHelpers() {
+	// $__json_buf_new(): allocate a fresh growable buffer
+	// (cap=256, len=0).
+	g.line(`(func $__json_buf_new (result i32)`)
+	g.indent++
+	g.line(`(local $b i32)`)
+	g.line(`i32.const 264`) // 256 + 8
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $b`)
+	g.line(`i32.const 256`)
+	g.line(`i32.store`) // cap
+	g.line(`local.get $b`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`) // len
+	g.line(`local.get $b`)
+	g.indent--
+	g.line(`)`)
+
+	// $__json_buf_grow(buf, need): ensure cap - len >= need.
+	// If not, alloc a fresh 2x-or-more-bytes buffer, copy
+	// the existing payload over, return the new buf ptr.
+	// Otherwise return buf unchanged.
+	g.line(`(func $__json_buf_grow (param $buf i32) (param $need i32) (result i32)`)
+	g.indent++
+	g.line(`(local $cap i32) (local $len i32) (local $newCap i32) (local $nb i32)`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $len`)
+	g.line(`local.get $len`)
+	g.line(`local.get $need`)
+	g.line(`i32.add`)
+	g.line(`local.get $cap`)
+	g.line(`i32.le_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// newCap = max(cap*2, len+need)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 1`)
+	g.line(`i32.shl`)
+	g.line(`local.set $newCap`)
+	g.line(`local.get $newCap`)
+	g.line(`local.get $len`)
+	g.line(`local.get $need`)
+	g.line(`i32.add`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $len`)
+	g.line(`local.get $need`)
+	g.line(`i32.add`)
+	g.line(`local.set $newCap`)
+	g.indent--
+	g.line(`end`)
+	// nb = alloc(newCap + 8); store cap, len; memcpy data.
+	g.line(`local.get $newCap`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $nb`)
+	g.line(`local.get $newCap`)
+	g.line(`i32.store`)
+	g.line(`local.get $nb`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $len`)
+	g.line(`i32.store`)
+	g.line(`local.get $nb`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $len`)
+	g.line(`memory.copy`)
+	g.line(`local.get $nb`)
+	g.indent--
+	g.line(`)`)
+
+	// $__json_buf_byte(buf, b) -> new buf ptr
+	g.line(`(func $__json_buf_byte (param $buf i32) (param $b i32) (result i32)`)
+	g.indent++
+	g.line(`(local $len i32)`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 1`)
+	g.line(`call $__json_buf_grow`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $len`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $len`)
+	g.line(`i32.add`)
+	g.line(`local.get $b`)
+	g.line(`i32.store8`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $len`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`i32.store`)
+	g.line(`local.get $buf`)
+	g.indent--
+	g.line(`)`)
+
+	// $__json_buf_str(buf, s) -> new buf ptr
+	g.line(`(func $__json_buf_str (param $buf i32) (param $s i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $len i32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $sLen`)
+	g.line(`call $__json_buf_grow`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $len`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $len`)
+	g.line(`i32.add`)
+	g.line(`local.get $s`)
+	g.line(`local.get $sLen`)
+	g.line(`memory.copy`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $len`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.add`)
+	g.line(`i32.store`)
+	g.line(`local.get $buf`)
+	g.indent--
+	g.line(`)`)
+
+	// $__json_buf_hex(buf, n): write 2 lowercase hex digits.
+	// Used by the \u00XX control-char escape.
+	g.line(`(func $__json_buf_hex (param $buf i32) (param $n i32) (result i32)`)
+	g.indent++
+	g.line(`(local $hi i32) (local $lo i32)`)
+	g.line(`local.get $n`)
+	g.line(`i32.const 4`)
+	g.line(`i32.shr_u`)
+	g.line(`i32.const 15`)
+	g.line(`i32.and`)
+	g.line(`local.set $hi`)
+	g.line(`local.get $n`)
+	g.line(`i32.const 15`)
+	g.line(`i32.and`)
+	g.line(`local.set $lo`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $hi`)
+	g.line(`i32.const 10`)
+	g.line(`i32.lt_u`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`local.get $hi`)
+	g.line(`i32.const 48`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $hi`)
+	g.line(`i32.const 87`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`end`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.get $lo`)
+	g.line(`i32.const 10`)
+	g.line(`i32.lt_u`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`local.get $lo`)
+	g.line(`i32.const 48`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $lo`)
+	g.line(`i32.const 87`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`end`)
+	g.line(`call $__json_buf_byte`)
+	g.indent--
+	g.line(`)`)
+
+	// $__json_escape_into(s, buf) -> new buf ptr. Walks the
+	// bytes of s, emits JSON escape sequences for `"`, `\`,
+	// and the standard control chars. Bytes >= 0x20 outside
+	// `"` and `\` pass through verbatim — UTF-8 byte
+	// sequences are valid JSON.
+	g.line(`(func $__json_escape_into (param $s i32) (param $buf i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $i i32) (local $b i32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end`)
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.set $b`)
+	// '"' 34 → \"
+	g.line(`local.get $b`)
+	g.line(`i32.const 34`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 92`) // backslash
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 34`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// '\\' 92 → \\
+	g.line(`local.get $b`)
+	g.line(`i32.const 92`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 92`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 92`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// '\n' 10 → \n
+	g.line(`local.get $b`)
+	g.line(`i32.const 10`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 92`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 110`) // 'n'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// '\r' 13 → \r
+	g.line(`local.get $b`)
+	g.line(`i32.const 13`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 92`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 114`) // 'r'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// '\t' 9 → \t
+	g.line(`local.get $b`)
+	g.line(`i32.const 9`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 92`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 116`) // 't'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// Other control chars (< 0x20): \u00XX
+	g.line(`local.get $b`)
+	g.line(`i32.const 32`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 92`) // \
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 117`) // 'u'
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 48`) // '0'
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 48`) // '0'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.get $b`)
+	g.line(`call $__json_buf_hex`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// Pass through.
+	g.line(`local.get $buf`)
+	g.line(`local.get $b`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $buf`)
+	g.indent--
+	g.line(`)`)
+
+	// $__json_encode_into(v, buf) -> new buf ptr. Recurses
+	// through JsonValue variants. v is the heap pointer to
+	// the enum (tag at +0, payload at +4 for variants that
+	// carry one).
+	g.line(`(func $__json_encode_into (param $v i32) (param $buf i32) (result i32)`)
+	g.indent++
+	g.line(`(local $tag i32) (local $payload i32)`)
+	g.line(`(local $arr i32) (local $aLen i32) (local $i i32)`)
+	g.line(`(local $m i32) (local $cap i32) (local $mLen i32) (local $kvBase i32)`)
+	g.line(`(local $first i32) (local $entryIdx i32)`)
+	g.line(`local.get $v`)
+	g.line(`i32.load`)
+	g.line(`local.set $tag`)
+	g.line(`local.get $v`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $payload`)
+	// JNull → "null"
+	g.line(`local.get $tag`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`call $__json_str_null`)
+	g.line(`call $__json_buf_str`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// JBool(b) — payload is i32 0/1.
+	g.line(`local.get $tag`)
+	g.line(`i32.const 1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $payload`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`call $__json_str_true`)
+	g.line(`call $__json_buf_str`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`call $__json_str_false`)
+	g.line(`call $__json_buf_str`)
+	g.indent--
+	g.line(`end`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// JNumber(s) — payload is a string ptr; emit verbatim.
+	g.line(`local.get $tag`)
+	g.line(`i32.const 2`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`local.get $payload`)
+	g.line(`call $__json_buf_str`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// JString(s) — emit "..." with escapes.
+	g.line(`local.get $tag`)
+	g.line(`i32.const 3`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 34`) // '"'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $payload`)
+	g.line(`local.get $buf`)
+	g.line(`call $__json_escape_into`)
+	g.line(`i32.const 34`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// JArray(arr) — payload is an i32[] of JsonValue ptrs.
+	g.line(`local.get $tag`)
+	g.line(`i32.const 4`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $payload`)
+	g.line(`local.set $arr`)
+	g.line(`local.get $arr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $aLen`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 91`) // '['
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.line(`block $end_arr`)
+	g.indent++
+	g.line(`loop $arr_loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $aLen`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end_arr`)
+	g.line(`local.get $i`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 44`) // ','
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`end`)
+	// arr[i] is a JsonValue ptr.
+	g.line(`local.get $arr`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.get $buf`)
+	g.line(`call $__json_encode_into`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $arr_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 93`) // ']'
+	g.line(`call $__json_buf_byte`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// JObject(m) — payload is a Map[string, JsonValue].
+	// Iterate via direct buffer access since we know the
+	// internal layout (header at +0..+16, buckets, then
+	// entries). The Map struct value is m, and the buffer
+	// pointer is at m[0]. cap is at buf[0], len at buf[4].
+	// Entries start at buf + 16 + cap*4, each is (k:i32,
+	// v:i32) = 8 bytes in insertion order.
+	g.line(`local.get $tag`)
+	g.line(`i32.const 5`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $payload`)
+	g.line(`local.set $m`)
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.tee $kvBase`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
+	g.line(`local.get $kvBase`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $mLen`)
+	// entries base = kvBase + 16 + cap*4
+	g.line(`local.get $kvBase`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $kvBase`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 123`) // '{'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.line(`block $end_obj`)
+	g.indent++
+	g.line(`loop $obj_loop`)
+	g.indent++
+	g.line(`local.get $entryIdx`)
+	g.line(`local.get $mLen`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end_obj`)
+	g.line(`local.get $entryIdx`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 44`) // ','
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`end`)
+	// "key":val
+	g.line(`local.get $buf`)
+	g.line(`i32.const 34`) // '"'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	// key = entries[idx].k
+	g.line(`local.get $kvBase`)
+	g.line(`local.get $entryIdx`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.get $buf`)
+	g.line(`call $__json_escape_into`)
+	g.line(`i32.const 34`) // '"'
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 58`) // ':'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	// val = entries[idx].v (a JsonValue ptr)
+	g.line(`local.get $kvBase`)
+	g.line(`local.get $entryIdx`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.get $buf`)
+	g.line(`call $__json_encode_into`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $entryIdx`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $entryIdx`)
+	g.line(`br $obj_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 125`) // '}'
+	g.line(`call $__json_buf_byte`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Unknown tag: shouldn't happen — return buf unchanged.
+	g.line(`local.get $buf`)
+	g.indent--
+	g.line(`)`)
+
+	// Tiny helpers that return the literal strings "null",
+	// "true", "false" — pulling these from the string pool
+	// would be cleaner but the pool requires a pre-pass; a
+	// dedicated 1-byte-per-char alloc is cheap enough.
+	for _, lit := range []struct {
+		name, body string
+	}{
+		{"$__json_str_null", "null"},
+		{"$__json_str_true", "true"},
+		{"$__json_str_false", "false"},
+	} {
+		g.linef(`(func %s (result i32)`, lit.name)
+		g.indent++
+		// Allocate the string fresh each call. The bump
+		// allocator makes this trivially cheap, and we don't
+		// want to keep a singleton (which would need a static
+		// data segment + initialisation).
+		g.linef(`(local $s i32)`)
+		g.linef(`i32.const %d`, len(lit.body)+4)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.tee $s`)
+		g.linef(`i32.const %d`, len(lit.body))
+		g.line(`i32.store`)
+		// Write each byte.
+		for i, c := range []byte(lit.body) {
+			g.line(`local.get $s`)
+			g.linef(`i32.const %d`, 4+i)
+			g.line(`i32.add`)
+			g.linef(`i32.const %d`, c)
+			g.line(`i32.store8`)
+		}
+		g.line(`local.get $s`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
+	}
+
+	// $json_encode(v): public entry point. New buffer,
+	// encode in place, return content pointer (= buf + 8,
+	// which has the len prefix at -4).
+	g.line(`(func $json_encode (param $v i32) (result i32)`)
+	g.indent++
+	g.line(`(local $buf i32)`)
+	g.line(`call $__json_buf_new`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $v`)
+	g.line(`local.get $buf`)
+	g.line(`call $__json_encode_into`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
 }
