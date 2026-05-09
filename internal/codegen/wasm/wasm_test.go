@@ -32,6 +32,13 @@ func mustContain(t *testing.T, wat, needle string) {
 	}
 }
 
+func mustNotContain(t *testing.T, wat, needle string) {
+	t.Helper()
+	if strings.Contains(wat, needle) {
+		t.Errorf("expected output NOT to contain %q\n--- output ---\n%s", needle, wat)
+	}
+}
+
 // In legacy mode (no closures), function values are bare table
 // indices. The funcref table is built from the inTable subset of
 // prog.Funcs in declaration order, so the table position of a
@@ -384,10 +391,11 @@ func TestClosureHoistsAndCaptures(t *testing.T) {
 	// __env parameter; closure cells live at offset 64.
 	mustContain(t, wat, "$__closure_add_")
 	mustContain(t, wat, "(param $__env i32)")
-	// MakeClosure allocates 8 bytes for the closure pair and stores
-	// the env pointer at +4.
-	mustContain(t, wat, "$__cl_scratch")
+	// The env block stores the captured var.
 	mustContain(t, wat, "$__env_scratch")
-	// Indirect call through the closure dispatches via call_indirect.
-	mustContain(t, wat, "call_indirect")
+	// Defunctionalisation + factory-flow analysis recognise that
+	// makeAdder always returns the same closure target, so the
+	// call site dispatches directly. No call_indirect, no
+	// closure-pair allocation in main.
+	mustNotContain(t, wat, "call_indirect")
 }

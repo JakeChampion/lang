@@ -67,11 +67,13 @@ func TestDefuncRewritesCapturingClosure(t *testing.T) {
 	}
 }
 
-// Cross-function closure return (the closure-factory pattern):
-// `var f = makeAdder(7);` puts a closure pair into f, but the
-// flow source is a CALL, not a MakeClosure. The conservative
-// analysis keeps these as OpCallIndirect.
-func TestDefuncSkipsCrossFunctionFlow(t *testing.T) {
+// Cross-function closure factory: `var f = makeAdder(7);` puts
+// a closure pair into f from a function that always returns the
+// same closure target. The phase-0 analyseReturnTargets pass
+// recognises makeAdder as monomorphic-returning that target,
+// and the slot's call site defunctionalises just like a direct
+// MakeClosure flow source.
+func TestDefuncRewritesClosureFactoryFlow(t *testing.T) {
 	p := loweredAndDefuncd(t, `function makeAdder(n: i32): (i32) => i32 {
 		function add(x: i32): i32 { return x + n; }
 		return add;
@@ -84,13 +86,9 @@ func TestDefuncSkipsCrossFunctionFlow(t *testing.T) {
 	if main == nil {
 		t.Fatal("main not found")
 	}
-	hasIndirect := false
 	for _, op := range main.Ops {
 		if op.Kind == OpCallIndirect {
-			hasIndirect = true
+			t.Errorf("expected the closure-factory call to be defunctionalised:\n%s", p)
 		}
-	}
-	if !hasIndirect {
-		t.Errorf("expected OpCallIndirect to survive on a cross-function closure flow:\n%s", p)
 	}
 }
