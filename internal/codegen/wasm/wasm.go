@@ -5307,6 +5307,35 @@ func (g *generator) emitMapHelpers() {
 	g.line(`i32.store offset=4`)
 	g.indent--
 	g.line(`)`)
+
+	// $__method_Map_clear(m): void — drop every live entry by
+	// resetting `len` to 0 and refilling the bucket array with
+	// all-empty (-1, written as 0xFF byte fills). The entries
+	// array's storage is overwritten on subsequent inserts; we
+	// don't bother zeroing it here. The kv buffer + cap stay
+	// the same, so `clear` is O(cap) rather than O(len) but
+	// avoids any allocation.
+	g.line(`(func $__method_Map_clear (param $m i32)`)
+	g.indent++
+	g.line(`(local $buf i32) (local $cap i32)`)
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.tee $buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store offset=4`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`i32.const 255`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`memory.fill`)
+	g.indent--
+	g.line(`)`)
 }
 
 // emitRandomBytesHelper writes `$random_bytes(n)`, allocating
