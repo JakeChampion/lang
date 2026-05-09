@@ -1009,6 +1009,36 @@ func TestWASMF64Array(t *testing.T) {
 	}
 }
 
+// Slice views over sub-i32 / wide arrays. Verifies that
+// `arr[a:b]` produces a slice with the right element stride —
+// indexing into the slice should match the underlying array.
+func TestWASMSubI32Slices(t *testing.T) {
+	src := `function main(): i32 {
+    var bytes: u8[] = [10, 20, 30, 40, 50];
+    var view: [u8] = bytes[1:4];
+    if (len(view) != 3) { return 1; }
+    if (view[0] != 20) { return 2; }
+    if (view[1] != 30) { return 3; }
+    if (view[2] != 40) { return 4; }
+
+    var halves: u16[] = [1, 2, 3, 4];
+    var hview: [u16] = halves[2:];
+    if (len(hview) != 2) { return 5; }
+    if (hview[0] != 3) { return 6; }
+    if (hview[1] != 4) { return 7; }
+
+    var wide: i64[] = [(1 << 40), (1 << 41), (1 << 42)];
+    var wview: [i64] = wide[1:3];
+    if (len(wview) != 2) { return 8; }
+    if (wview[0] != (1 << 41)) { return 9; }
+    if (wview[1] != (1 << 42)) { return 10; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (sub-i32 / wide slices)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

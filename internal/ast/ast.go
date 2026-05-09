@@ -479,6 +479,10 @@ type SliceExpr struct {
 	// the parent slice's data_ptr instead of stepping past an
 	// owned array's length prefix.
 	SourceIsSlice bool
+	// ElemType is set by the checker once the source's element
+	// type is known. The IR uses it to pick the stride for the
+	// `low * stride` byte offset on slice creation.
+	ElemType Type
 }
 type Call struct {
 	P      Position

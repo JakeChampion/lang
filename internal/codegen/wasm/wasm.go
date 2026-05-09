@@ -1848,40 +1848,56 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`)`)
 
-		g.line(`(func $__slice_idx (param $slice i32) (param $i i32) (result i32)`)
-		g.indent++
-		g.line(`(local $data i32) (local $len i32)`)
-		g.line(`local.get $slice`)
-		g.line(`i32.load`)
-		g.line(`local.set $data`)
-		g.line(`local.get $slice`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`i32.load`)
-		g.line(`local.set $len`)
-		g.line(`local.get $i`)
-		g.line(`i32.const 0`)
-		g.line(`i32.lt_s`)
-		g.line(`if`)
-		g.indent++
-		g.line(`unreachable`)
-		g.indent--
-		g.line(`end`)
-		g.line(`local.get $i`)
-		g.line(`local.get $len`)
-		g.line(`i32.ge_u`)
-		g.line(`if`)
-		g.indent++
-		g.line(`unreachable`)
-		g.indent--
-		g.line(`end`)
-		g.line(`local.get $data`)
-		g.line(`local.get $i`)
-		g.line(`i32.const 4`)
-		g.line(`i32.mul`)
-		g.line(`i32.add`)
-		g.indent--
-		g.line(`)`)
+		// $__slice_idx_N: same shape, scaled stride. The IR
+		// picks the helper to call from the slice's element
+		// type (1 for `[u8]` / `[i8]`, 2 for `[u16]` /
+		// `[i16]`, 4 for the historical i32-stride layout, 8
+		// for `[i64]` / `[u64]` / `[f64]`).
+		emitSliceIdx := func(name string, stride int) {
+			g.linef(`(func %s (param $slice i32) (param $i i32) (result i32)`, name)
+			g.indent++
+			g.line(`(local $data i32) (local $len i32)`)
+			g.line(`local.get $slice`)
+			g.line(`i32.load`)
+			g.line(`local.set $data`)
+			g.line(`local.get $slice`)
+			g.line(`i32.const 4`)
+			g.line(`i32.add`)
+			g.line(`i32.load`)
+			g.line(`local.set $len`)
+			g.line(`local.get $i`)
+			g.line(`i32.const 0`)
+			g.line(`i32.lt_s`)
+			g.line(`if`)
+			g.indent++
+			g.line(`unreachable`)
+			g.indent--
+			g.line(`end`)
+			g.line(`local.get $i`)
+			g.line(`local.get $len`)
+			g.line(`i32.ge_u`)
+			g.line(`if`)
+			g.indent++
+			g.line(`unreachable`)
+			g.indent--
+			g.line(`end`)
+			g.line(`local.get $data`)
+			if stride == 1 {
+				g.line(`local.get $i`)
+				g.line(`i32.add`)
+			} else {
+				g.line(`local.get $i`)
+				g.linef(`i32.const %d`, stride)
+				g.line(`i32.mul`)
+				g.line(`i32.add`)
+			}
+			g.indent--
+			g.line(`)`)
+		}
+		emitSliceIdx("$__slice_idx", 4)
+		emitSliceIdx("$__slice_idx_1", 1)
+		emitSliceIdx("$__slice_idx_2", 2)
+		emitSliceIdx("$__slice_idx_8", 8)
 	}
 
 	g.emitStreamsStdioHelpers()
