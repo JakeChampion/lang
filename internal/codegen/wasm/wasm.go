@@ -100,6 +100,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// scratch arithmetic the rewrite synthesises gets folded /
 	// peep-holed alongside the rest.
 	ir.Defunctionalise(ip)
+	// Drop the 8-byte closure-pair allocation when every reader
+	// of the slot has been rewritten to a defunctionalised
+	// direct call. The pair's fn_idx field is dead in that
+	// case; the slot can hold env_ptr directly. Saves one
+	// __lang_alloc per closure that fully defunctionalises.
+	ir.ElideClosurePair(ip)
 	// Re-run Inline after Defunctionalise so the just-emitted
 	// `OpCallClosureDirect` calls to small hoisted closures
 	// also get substituted (the inliner recognises both

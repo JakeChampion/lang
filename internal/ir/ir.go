@@ -183,6 +183,16 @@ const (
 	// an 8-byte closure pair `{fn_idx, env_ptr}`, and yields the closure
 	// pointer.
 	OpMakeClosure // (cap_0 ... cap_{n-1}) → i32 (closure ptr)
+
+	// OpMakeEnv is the defunctionalised-closure form of
+	// OpMakeClosure. Allocates and populates only the env
+	// block (skipping the 8-byte {fn_idx, env_ptr} pair),
+	// pushing env_ptr directly. Synthesised by the
+	// elide-closure-pair pass when every reader of the
+	// closure slot ended up as a defunctionalised
+	// OpCallClosureDirect — the pair's fn_idx field
+	// becomes dead, the pair allocation goes away with it.
+	OpMakeEnv // (cap_0 ... cap_{n-1}) → i32 (env ptr or 0)
 )
 
 // BlockType describes the type a block / loop / if leaves on the stack
@@ -364,6 +374,8 @@ func (k OpKind) String() string {
 		return "return_void"
 	case OpMakeClosure:
 		return "make_closure"
+	case OpMakeEnv:
+		return "make_env"
 	}
 	return "<invalid>"
 }
@@ -479,7 +491,7 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %s argc=%d", op.Kind, op.Str, op.I32)
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)
-	case OpMakeClosure:
+	case OpMakeClosure, OpMakeEnv:
 		return fmt.Sprintf("%s %s caps=%d", op.Kind, op.Str, op.I32)
 	}
 	return op.Kind.String()

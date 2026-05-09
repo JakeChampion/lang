@@ -389,11 +389,13 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 }
 
 // maxClosureCaptures returns the largest capture count of any
-// OpMakeClosure in ops, or -1 if there are no MakeClosure ops.
+// OpMakeClosure / OpMakeEnv in ops, or -1 if neither appears.
+// Both ops emit through the same wat path and need the same
+// per-capture scratch locals.
 func maxClosureCaptures(ops []ir.Op) int {
 	max := -1
 	for _, op := range ops {
-		if op.Kind == ir.OpMakeClosure && int(op.I32) > max {
+		if (op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv) && int(op.I32) > max {
 			max = int(op.I32)
 		}
 	}
@@ -778,7 +780,7 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		// already in place from the inlined closure-pair
 		// load the defunctionalise pass synthesised.
 		g.linef("call $%s", op.Str)
-	case ir.OpMakeClosure:
+	case ir.OpMakeClosure, ir.OpMakeEnv:
 		return g.emitMakeClosureFromIR(op)
 	default:
 		return fmt.Errorf("wasm/ir: unsupported op %s", op.Kind)
@@ -793,9 +795,11 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 // Captures list, which closureconv populated with the right ast.Type
 // for each captured outer-scope variable.
 func (g *generator) emitMakeClosureFromIR(op ir.Op) error {
-	tIdx, ok := g.tableIndex[op.Str]
-	if !ok {
-		return fmt.Errorf("wasm/ir: closure target %q not in funcref table", op.Str)
+	envOnly := op.Kind == ir.OpMakeEnv
+	if !envOnly {
+		if _, ok := g.tableIndex[op.Str]; !ok {
+			return fmt.Errorf("wasm/ir: closure target %q not in funcref table", op.Str)
+		}
 	}
 	hoisted := g.lookupFunc(op.Str)
 	if hoisted == nil {
@@ -835,6 +839,20 @@ func (g *generator) emitMakeClosureFromIR(op ir.Op) error {
 		}
 	}
 
+	if envOnly {
+		// Push env_ptr (or 0 when there are no captures). The
+		// pair allocation is skipped — every reader of this
+		// closure was rewritten by Defunctionalise +
+		// ElideClosurePair to consume env_ptr directly.
+		if n > 0 {
+			g.line("local.get $__env_scratch")
+		} else {
+			g.line("i32.const 0")
+		}
+		return nil
+	}
+
+	tIdx := g.tableIndex[op.Str]
 	// Allocate the 8-byte closure pair. Use local.tee so the result
 	// stays on the stack for the trailing fn_idx store.
 	g.line("i32.const 8")
