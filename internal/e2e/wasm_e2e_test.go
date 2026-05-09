@@ -1132,6 +1132,37 @@ func TestWASMStringMethods(t *testing.T) {
 	}
 }
 
+// More string methods: index_of, trim, to_lower, to_upper.
+func TestWASMStringMethodsExtra(t *testing.T) {
+	src := `function main(): i32 {
+    var s: string = "hello world";
+    if (s.index_of("hello") != 0) { return 1; }
+    if (s.index_of("world") != 6) { return 2; }
+    if (s.index_of(" ") != 5) { return 3; }
+    if (s.index_of("xyz") != -1) { return 4; }
+    if (s.index_of("") != 0) { return 5; }
+    if (s.index_of("hello world!") != -1) { return 6; }
+
+    var padded: string = "  hello   ";
+    var trimmed: string = padded.trim();
+    if (trimmed != "hello") { return 7; }
+    if (len(trimmed) != 5) { return 8; }
+    var blank: string = "    ";
+    if (blank.trim() != "") { return 9; }
+    var nopad: string = "abc";
+    if (nopad.trim() != "abc") { return 10; }
+
+    if ("Hello, World!".to_lower() != "hello, world!") { return 11; }
+    if ("Hello, World!".to_upper() != "HELLO, WORLD!") { return 12; }
+    // Non-letter ASCII bytes are unchanged.
+    if ("abc 123!".to_upper() != "ABC 123!") { return 13; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (extra string methods)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64
