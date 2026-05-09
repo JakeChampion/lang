@@ -401,9 +401,17 @@ Deferred to a follow-up:
     Stress-tested with 100+ entries through inserts /
     updates / interleaved deletes / re-inserts on both
     i32-keyed and string-keyed maps.
+  - **Cursor iteration shipped.** `m.iter()` returns a
+    `MapIter[K, V]` that holds a pointer back to the kv
+    buffer plus a current entry index. The struct is
+    allocated once per loop; each step is just a load
+    plus arithmetic. The API is `it.has_next()`,
+    `it.key()`, `it.value()`, `it.advance()`. Iteration
+    walks entries in insertion order (preserved up to any
+    deletes; swap-with-last `delete` reorders past the
+    deleted slot).
   - Future PRs lift the i32-sized-only restriction (i64 /
-    u64 / f64 keys + values), and add map iteration via a
-    non-allocating cursor (`m.iter() -> MapIter[K, V]`).
+    u64 / f64 keys + values).
 - Map literals: TBD syntax. `{ "k": v }` collides with struct
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally

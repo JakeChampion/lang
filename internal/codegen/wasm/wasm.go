@@ -369,7 +369,8 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsFileIO = true
 					g.needsStreamingIO = true
 				}
-				if strings.HasPrefix(id.Name, "__method_Map_") {
+				if strings.HasPrefix(id.Name, "__method_Map_") ||
+					strings.HasPrefix(id.Name, "__method_MapIter_") {
 					g.needsMap = true
 					g.needsRuntime = true
 					g.needsStrEq = true
@@ -5216,6 +5217,94 @@ func (g *generator) emitMapHelpers() {
 	g.line(`local.get $last`)
 	g.line(`i32.store offset=4`)
 	g.line(`i32.const 1`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_Map_iter(m): MapIter[K, V] — allocate the
+	// 8-byte iterator struct (data ptr + cursor index) and
+	// initialise it. data = m.data so we can read len /
+	// keyKind / entries[] directly without going through the
+	// wrapper on every step.
+	g.line(`(func $__method_Map_iter (param $m i32) (result i32)`)
+	g.indent++
+	g.line(`(local $it i32)`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $it`)
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	g.line(`local.get $it`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store offset=4`)
+	g.line(`local.get $it`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_MapIter_has_next(it): bool — i < len.
+	g.line(`(func $__method_MapIter_has_next (param $it i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $it`)
+	g.line(`i32.load offset=4`)
+	g.line(`local.get $it`)
+	g.line(`i32.load`)
+	g.line(`i32.load offset=4`)
+	g.line(`i32.lt_s`)
+	g.indent--
+	g.line(`)`)
+
+	// $__map_iter_entry_addr(it): i32 — returns the address
+	// of the current entry's (k, v) pair within the kv buffer.
+	// Shared by key / value so they don't each duplicate the
+	// header-walking arithmetic.
+	g.line(`(func $__map_iter_entry_addr (param $it i32) (result i32)`)
+	g.indent++
+	g.line(`(local $buf i32)`)
+	g.line(`local.get $it`)
+	g.line(`i32.load`)
+	g.line(`local.tee $buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load`) // cap
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $it`)
+	g.line(`i32.load offset=4`) // i
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_MapIter_key(it): K
+	g.line(`(func $__method_MapIter_key (param $it i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $it`)
+	g.line(`call $__map_iter_entry_addr`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_MapIter_value(it): V
+	g.line(`(func $__method_MapIter_value (param $it i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $it`)
+	g.line(`call $__map_iter_entry_addr`)
+	g.line(`i32.load offset=4`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_MapIter_advance(it): void — i++.
+	g.line(`(func $__method_MapIter_advance (param $it i32)`)
+	g.indent++
+	g.line(`local.get $it`)
+	g.line(`local.get $it`)
+	g.line(`i32.load offset=4`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`i32.store offset=4`)
 	g.indent--
 	g.line(`)`)
 }
