@@ -746,23 +746,8 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StructType{Name: "Url"}}},
 	}
 
-	// url_encode / url_decode: RFC 3986 percent-encoding. The
-	// "unreserved" set (`A-Za-z0-9-_.~`) passes through
-	// unchanged; every other byte is emitted as `%HH`
-	// (uppercase hex). url_decode is forgiving — malformed
-	// `%` sequences (non-hex following, truncated tail) are
-	// passed through verbatim rather than raising. `+` is NOT
-	// translated to space; callers handling
-	// application/x-www-form-urlencoded data should swap `+`
-	// → ` ` before decoding.
-	c.info.FuncSigs["url_encode"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}},
-		Result: ast.StringType{},
-	}
-	c.info.FuncSigs["url_decode"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}},
-		Result: ast.StringType{},
-	}
+	// `url_encode(s)` / `url_decode(s)` live in the lang
+	// prelude (internal/prelude/prelude.lang).
 
 	// query_parse(s): split a URL-encoded query string (the
 	// part after `?`, no leading `?`) into a Map[string,

@@ -118,7 +118,8 @@ type generator struct {
 	needsBase64       bool // any `base64_encode` / `base64_decode` call
 	needsHex          bool // any `hex_encode(s)` / `hex_decode(s)` call
 	needsUrlParse     bool // any `url_parse(s)` call — emits the Url builder + parser helpers
-	needsUrlCoder     bool // any `url_encode(s)` / `url_decode(s)` call
+	// `url_encode` / `url_decode` migrated to the lang prelude
+	// (PR 176); no flag needed.
 	needsQueryParse   bool // any `query_parse(s)` call
 	needsJsonEncode   bool // any `json_encode(v)` call — emits the encoder + buffer-builder helpers
 	needsJsonParse    bool // any `json_parse(s)` call
@@ -379,14 +380,15 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsStrSlice = true
 					g.needsBoundsCheck = true
 				case "url_encode", "url_decode":
-					g.needsUrlCoder = true
-					g.needsRuntime = true
+					// Now lives in the lang prelude
+					// (internal/prelude/prelude.lang). No
+					// wat-side gating needed.
 				case "query_parse":
-					// Builds a Map[string, string] internally
-					// and decodes pairs via url_decode. Trip
-					// every supporting flag.
+					// Still wat. Calls url_decode (now lang
+					// prelude) — see watHelperDeps in
+					// internal/treeshake to keep the call
+					// site live.
 					g.needsQueryParse = true
-					g.needsUrlCoder = true
 					g.needsMap = true
 					g.needsStrEq = true
 					g.needsStrSlice = true
@@ -1230,14 +1232,16 @@ func (g *generator) scanForStringConcat(prog *ast.Program) {
 func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 	var walk func(any)
 	walk = func(n any) {
-		if g.needsBoundsCheck {
-			return
-		}
+		// Don't short-circuit on `g.needsBoundsCheck` —
+		// SliceExpr sets BOTH `needsBoundsCheck` and
+		// `needsStrSlice` (when on a string), so an Index
+		// earlier in the walk shouldn't prevent a later
+		// SliceExpr from setting `needsStrSlice`. Each
+		// flag-set is idempotent.
 		switch x := n.(type) {
 		case *ast.Index:
 			g.needsBoundsCheck = true
 			g.needsRuntime = true
-			return
 		case *ast.SliceExpr:
 			// Slicing pulls in the same heap-record machinery
 			// as bounds-checked indexing — the slice constructor
@@ -2213,9 +2217,8 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsUrlParse {
 		g.emitUrlParseHelper()
 	}
-	if g.needsUrlCoder {
-		g.emitUrlCoderHelpers()
-	}
+	// `url_encode` / `url_decode` migrated to the lang prelude
+	// (internal/prelude/prelude.lang); no wat-side emission.
 	if g.needsQueryParse {
 		g.emitQueryParseHelper()
 	}
@@ -5829,417 +5832,6 @@ func (g *generator) emitUrlParseHelper() {
 	g.line(`)`)
 }
 
-// emitUrlCoderHelpers writes `$url_encode(s)` /
-// `$url_decode(s)` — RFC 3986 percent-encoding. Encoding
-// passes through the unreserved set (`A-Za-z0-9-_.~`) and
-// emits `%HH` (uppercase hex) for everything else; decoding
-// is forgiving — malformed `%` sequences (non-hex
-// following, truncated tail) are passed through verbatim.
-func (g *generator) emitUrlCoderHelpers() {
-	// Helper: `__url_is_unreserved(b)` — true for
-	// `A-Z`, `a-z`, `0-9`, `-`, `_`, `.`, `~`. Returns i32
-	// boolean (0/1) as the OR of the per-class membership
-	// tests, no branching.
-	g.line(`(func $__url_is_unreserved (param $b i32) (result i32)`)
-	g.indent++
-	// A-Z
-	g.line(`local.get $b`)
-	g.line(`i32.const 65`)
-	g.line(`i32.ge_u`)
-	g.line(`local.get $b`)
-	g.line(`i32.const 90`)
-	g.line(`i32.le_u`)
-	g.line(`i32.and`)
-	// a-z
-	g.line(`local.get $b`)
-	g.line(`i32.const 97`)
-	g.line(`i32.ge_u`)
-	g.line(`local.get $b`)
-	g.line(`i32.const 122`)
-	g.line(`i32.le_u`)
-	g.line(`i32.and`)
-	g.line(`i32.or`)
-	// 0-9
-	g.line(`local.get $b`)
-	g.line(`i32.const 48`)
-	g.line(`i32.ge_u`)
-	g.line(`local.get $b`)
-	g.line(`i32.const 57`)
-	g.line(`i32.le_u`)
-	g.line(`i32.and`)
-	g.line(`i32.or`)
-	// '-' (45)
-	g.line(`local.get $b`)
-	g.line(`i32.const 45`)
-	g.line(`i32.eq`)
-	g.line(`i32.or`)
-	// '.' (46)
-	g.line(`local.get $b`)
-	g.line(`i32.const 46`)
-	g.line(`i32.eq`)
-	g.line(`i32.or`)
-	// '_' (95)
-	g.line(`local.get $b`)
-	g.line(`i32.const 95`)
-	g.line(`i32.eq`)
-	g.line(`i32.or`)
-	// '~' (126)
-	g.line(`local.get $b`)
-	g.line(`i32.const 126`)
-	g.line(`i32.eq`)
-	g.line(`i32.or`)
-	g.indent--
-	g.line(`)`)
-
-	// $url_encode(s): allocate worst-case (3 × len) + 4-byte
-	// length prefix, copy bytes through, store the actual
-	// written length at the prefix on exit.
-	g.line(`(func $url_encode (param $s i32) (result i32)`)
-	g.indent++
-	g.line(`(local $sLen i32) (local $i i32) (local $b i32)`)
-	g.line(`(local $out i32) (local $dst i32) (local $oi i32) (local $hi i32) (local $lo i32)`)
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`local.set $sLen`)
-	// Allocate sLen*3 + 4 bytes (worst case: every byte → %HH).
-	g.line(`local.get $sLen`)
-	g.line(`i32.const 3`)
-	g.line(`i32.mul`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $out`)
-	g.line(`local.get $out`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $dst`)
-	g.line(`block $end`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	g.line(`local.get $i`)
-	g.line(`local.get $sLen`)
-	g.line(`i32.ge_u`)
-	g.line(`br_if $end`)
-	// b = s[i]
-	g.line(`local.get $s`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`local.set $b`)
-	g.line(`local.get $b`)
-	g.line(`call $__url_is_unreserved`)
-	g.line(`if`)
-	g.indent++
-	// dst[oi] = b; oi++
-	g.line(`local.get $dst`)
-	g.line(`local.get $oi`)
-	g.line(`i32.add`)
-	g.line(`local.get $b`)
-	g.line(`i32.store8`)
-	g.line(`local.get $oi`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $oi`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	// dst[oi] = '%'
-	g.line(`local.get $dst`)
-	g.line(`local.get $oi`)
-	g.line(`i32.add`)
-	g.line(`i32.const 37`) // '%'
-	g.line(`i32.store8`)
-	// hi = (b >> 4) & 0xf; uppercase hex char.
-	g.line(`local.get $b`)
-	g.line(`i32.const 4`)
-	g.line(`i32.shr_u`)
-	g.line(`i32.const 15`)
-	g.line(`i32.and`)
-	g.line(`local.tee $hi`)
-	g.line(`i32.const 10`)
-	g.line(`i32.lt_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $hi`)
-	g.line(`i32.const 48`) // '0'
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $hi`)
-	g.line(`i32.const 55`) // 'A' - 10
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.set $hi`)
-	g.line(`local.get $dst`)
-	g.line(`local.get $oi`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`i32.add`)
-	g.line(`local.get $hi`)
-	g.line(`i32.store8`)
-	// lo = b & 0xf
-	g.line(`local.get $b`)
-	g.line(`i32.const 15`)
-	g.line(`i32.and`)
-	g.line(`local.tee $lo`)
-	g.line(`i32.const 10`)
-	g.line(`i32.lt_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $lo`)
-	g.line(`i32.const 48`)
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $lo`)
-	g.line(`i32.const 55`)
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.set $lo`)
-	g.line(`local.get $dst`)
-	g.line(`local.get $oi`)
-	g.line(`i32.const 2`)
-	g.line(`i32.add`)
-	g.line(`i32.add`)
-	g.line(`local.get $lo`)
-	g.line(`i32.store8`)
-	g.line(`local.get $oi`)
-	g.line(`i32.const 3`)
-	g.line(`i32.add`)
-	g.line(`local.set $oi`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	// Patch length prefix to actually-written count.
-	g.line(`local.get $out`)
-	g.line(`local.get $oi`)
-	g.line(`i32.store`)
-	g.line(`local.get $dst`)
-	g.indent--
-	g.line(`)`)
-
-	// $url_decode(s): allocate sLen + 4 (output never longer
-	// than input). Walk bytes; '%' followed by 2 hex digits
-	// emits the decoded byte; otherwise pass through.
-	g.line(`(func $url_decode (param $s i32) (result i32)`)
-	g.indent++
-	g.line(`(local $sLen i32) (local $i i32) (local $b i32) (local $h1 i32) (local $h2 i32)`)
-	g.line(`(local $out i32) (local $dst i32) (local $oi i32)`)
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`local.set $sLen`)
-	g.line(`local.get $sLen`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $out`)
-	g.line(`local.get $out`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $dst`)
-	g.line(`block $end`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	g.line(`local.get $i`)
-	g.line(`local.get $sLen`)
-	g.line(`i32.ge_u`)
-	g.line(`br_if $end`)
-	g.line(`local.get $s`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`local.set $b`)
-	// '%' + 2 hex digits → decoded byte. Otherwise pass
-	// through. Helper: __hex_value isn't always emitted
-	// (only when needsHex), so inline a tiny check here.
-	g.line(`local.get $b`)
-	g.line(`i32.const 37`) // '%'
-	g.line(`i32.eq`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 2`)
-	g.line(`i32.add`)
-	g.line(`local.get $sLen`)
-	g.line(`i32.lt_u`)
-	g.line(`i32.and`)
-	g.line(`if`)
-	g.indent++
-	g.line(`local.get $s`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`call $__url_hex_val`)
-	g.line(`local.set $h1`)
-	g.line(`local.get $s`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.const 2`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`call $__url_hex_val`)
-	g.line(`local.set $h2`)
-	g.line(`local.get $h1`)
-	g.line(`i32.const 0`)
-	g.line(`i32.ge_s`)
-	g.line(`local.get $h2`)
-	g.line(`i32.const 0`)
-	g.line(`i32.ge_s`)
-	g.line(`i32.and`)
-	g.line(`if`)
-	g.indent++
-	// Valid %HH: emit (h1<<4)|h2, advance i by 3.
-	g.line(`local.get $dst`)
-	g.line(`local.get $oi`)
-	g.line(`i32.add`)
-	g.line(`local.get $h1`)
-	g.line(`i32.const 4`)
-	g.line(`i32.shl`)
-	g.line(`local.get $h2`)
-	g.line(`i32.or`)
-	g.line(`i32.store8`)
-	g.line(`local.get $oi`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $oi`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 3`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	// Pass-through: copy byte, advance by 1.
-	g.line(`local.get $dst`)
-	g.line(`local.get $oi`)
-	g.line(`i32.add`)
-	g.line(`local.get $b`)
-	g.line(`i32.store8`)
-	g.line(`local.get $oi`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $oi`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	// Patch length prefix.
-	g.line(`local.get $out`)
-	g.line(`local.get $oi`)
-	g.line(`i32.store`)
-	g.line(`local.get $dst`)
-	g.indent--
-	g.line(`)`)
-
-	// Local helper: parse a single hex digit byte -> 0..15
-	// (or -1 for non-hex). Don't reuse $__hex_value because
-	// that lives in the hex stdlib module which is gated
-	// separately by needsHex; url-decoding shouldn't pull in
-	// hex_encode / hex_decode just to share this 1-line
-	// table.
-	g.line(`(func $__url_hex_val (param $c i32) (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 48`)
-	g.line(`i32.lt_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`i32.const -1`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 57`)
-	g.line(`i32.le_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 48`)
-	g.line(`i32.sub`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 97`)
-	g.line(`i32.ge_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 102`)
-	g.line(`i32.le_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 87`)
-	g.line(`i32.sub`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`i32.const -1`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 65`)
-	g.line(`i32.ge_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 70`)
-	g.line(`i32.le_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 55`)
-	g.line(`i32.sub`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`i32.const -1`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`i32.const -1`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`)`)
-}
 
 // emitQueryParseHelper writes `$query_parse(s)` — split a
 // URL-encoded query string into a Map[string, string[]].
