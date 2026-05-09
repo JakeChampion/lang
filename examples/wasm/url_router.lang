@@ -1,0 +1,72 @@
+// url_router.lang — wasi:http handler that demonstrates URL
+// parsing + query-string handling. Returns a JSON object
+// describing what it parsed out of req.path.
+//
+// Showcases: `url_parse` returning Option[Url], the auto-
+// injected Url struct (scheme / host / port / path / query /
+// fragment), `query_parse` returning Map[string, string[]]
+// (multi-value semantics — `?tag=a&tag=b` collects both),
+// the pipe operator `|>`, defunctionalised closures via
+// `use` syntax (Gleam-style CPS) for fall-through error
+// handling.
+//
+//   $ lang -target wasi-http -wasi-adapter ... -o url.wasm url_router.lang
+//   $ wasmtime serve url.wasm &
+//   $ curl 'http://localhost:8080/search?q=lang&tag=fast&tag=small'
+//   {"path":"/search","q":"lang","tags":["fast","small"]}
+// Pull each value of a multi-valued key out as a JString
+// array. `query_parse` always returns the full list per key,
+// even for single-valued keys.
+function values_as_jarray(values: string[]): JsonValue {
+  var arr: JsonValue[] = [];
+  var i: i32 = 0;
+  while (i < len(values)) {
+    arr = __array_append_jsonvalue(arr, JString(values[i]));
+    i = i + 1;
+  }
+  return JArray(arr);
+}
+
+// Build a JSON object reporting the path + first value of `q`
+// (if any) + every value of `tag`.
+function describe(path: string, q: Map[string, string[]]): JsonValue {
+  var out: Map[string, JsonValue] = map_new(4);
+  out.set("path", JString(path));
+  match (q.get("q")) {
+    Some(qs) => {
+      if (len(qs) > 0) {
+        out.set("q", JString(qs[0]));
+      }
+    },
+    None => {}
+  }
+  match (q.get("tag")) {
+    Some(tags) => {
+      out.set("tags", values_as_jarray(tags));
+    },
+    None => {}
+  }
+  return JObject(out);
+}
+
+function handle(req: HttpRequest): HttpResponse {
+  // Build a "synthetic" full URL so url_parse has a host
+  // to anchor against — req.path on its own is path+query.
+  var full: string = "http://example.local" + req.path;
+  match (url_parse(full)) {
+    None => {
+      return HttpResponse { status: 400, body: "bad URL\n" };
+    },
+    Some(u) => {
+      // u.path is the scheme/host-stripped path; u.query
+      // is the raw `?` payload (no leading `?`).
+      var q: Map[string, string[]] = query_parse(u.query);
+      // Pipe form: describe(...) |> json_encode is the
+      // same as json_encode(describe(...)). Pure parse-
+      // time desugar — no runtime cost.
+      var body: string = describe(u.path, q) |> json_encode;
+      return HttpResponse { status: 200, body: body };
+    }
+  }
+  return HttpResponse { status: 500, body: "unreachable\n" };
+}
