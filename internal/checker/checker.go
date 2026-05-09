@@ -504,6 +504,10 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerStringMethod("starts_with", []ast.Type{ast.StringType{}}, ast.BoolType{})
 	registerStringMethod("ends_with", []ast.Type{ast.StringType{}}, ast.BoolType{})
 	registerStringMethod("contains", []ast.Type{ast.StringType{}}, ast.BoolType{})
+	registerStringMethod("index_of", []ast.Type{ast.StringType{}}, ast.NumberType{})
+	registerStringMethod("trim", nil, ast.StringType{})
+	registerStringMethod("to_lower", nil, ast.StringType{})
+	registerStringMethod("to_upper", nil, ast.StringType{})
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled

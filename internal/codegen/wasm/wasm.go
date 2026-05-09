@@ -367,6 +367,13 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 				if strings.HasPrefix(id.Name, "__method_string_") {
 					g.needsStrMethods = true
 					g.needsRuntime = true
+					// `trim` allocates a fresh substring via
+					// `$__str_slice`; we emit all string-method
+					// helpers as a single block, so always pull
+					// the slice helper in when any string method
+					// is in use.
+					g.needsStrSlice = true
+					g.needsBoundsCheck = true
 				}
 			}
 			walk(x.Callee)
@@ -3388,6 +3395,267 @@ func (g *generator) emitStringMethodHelpers() {
 	g.line(`i32.const 0`)
 	g.indent--
 	g.line(`)`)
+
+	// $__method_string_index_of(s, needle): i32 — returns the
+	// position of the first occurrence of needle in s, or -1 if
+	// not found. Empty needle returns 0 (matches strstr / std).
+	g.line(`(func $__method_string_index_of (param $s i32) (param $needle i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $nLen i32) (local $i i32) (local $last i32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`local.get $needle`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $nLen`)
+	g.line(`local.get $nLen`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $nLen`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.gt_s`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const -1`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $sLen`)
+	g.line(`local.get $nLen`)
+	g.line(`i32.sub`)
+	g.line(`local.set $last`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $last`)
+	g.line(`i32.gt_s`)
+	g.line(`br_if $break`)
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`local.get $needle`)
+	g.line(`local.get $nLen`)
+	g.line(`call $__bytes_eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const -1`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_string_trim(s): string — returns a fresh
+	// string with leading and trailing ASCII whitespace
+	// removed. Whitespace = space (0x20), tab (0x09), LF
+	// (0x0A), CR (0x0D), VT (0x0B), FF (0x0C). The result is
+	// either a copy or empty; trim never aliases the source's
+	// storage, matching `__str_slice`'s ownership shape.
+	g.line(`(func $__method_string_trim (param $s i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $low i32) (local $high i32) (local $b i32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $low`)
+	g.line(`local.get $sLen`)
+	g.line(`local.set $high`)
+	// Advance low while bytes are whitespace.
+	g.line(`block $low_done`)
+	g.indent++
+	g.line(`loop $low_loop`)
+	g.indent++
+	g.line(`local.get $low`)
+	g.line(`local.get $high`)
+	g.line(`i32.ge_s`)
+	g.line(`br_if $low_done`)
+	g.line(`local.get $s`)
+	g.line(`local.get $low`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.tee $b`)
+	g.line(`call $__is_ascii_ws`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $low_done`)
+	g.line(`local.get $low`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $low`)
+	g.line(`br $low_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Decrement high while bytes are whitespace.
+	g.line(`block $high_done`)
+	g.indent++
+	g.line(`loop $high_loop`)
+	g.indent++
+	g.line(`local.get $high`)
+	g.line(`local.get $low`)
+	g.line(`i32.le_s`)
+	g.line(`br_if $high_done`)
+	g.line(`local.get $s`)
+	g.line(`local.get $high`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.tee $b`)
+	g.line(`call $__is_ascii_ws`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $high_done`)
+	g.line(`local.get $high`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.set $high`)
+	g.line(`br $high_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Tail-call __str_slice(s, low, high).
+	g.line(`local.get $s`)
+	g.line(`local.get $low`)
+	g.line(`local.get $high`)
+	g.line(`call $__str_slice`)
+	g.indent--
+	g.line(`)`)
+
+	// $__is_ascii_ws(b): i32 — 1 if b is one of
+	// SP/TAB/LF/CR/VT/FF, else 0.
+	g.line(`(func $__is_ascii_ws (param $b i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $b`)
+	g.line(`i32.const 32`)
+	g.line(`i32.eq`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 9`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 10`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 13`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 11`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 12`)
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_string_to_lower(s): string — fresh string with
+	// every ASCII A-Z byte mapped to a-z. Non-ASCII bytes are
+	// copied verbatim. UTF-8 multibyte sequences are unaffected
+	// since their leading bytes are all >= 0x80.
+	emitStringCaseFold := func(name string, srcBase int, dstBase int) {
+		g.linef(`(func %s (param $s i32) (result i32)`, name)
+		g.indent++
+		g.line(`(local $sLen i32) (local $out i32) (local $i i32) (local $b i32)`)
+		g.line(`local.get $s`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`local.set $sLen`)
+		g.line(`local.get $sLen`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.set $out`)
+		g.line(`local.get $out`)
+		g.line(`local.get $sLen`)
+		g.line(`i32.store`)
+		g.line(`i32.const 0`)
+		g.line(`local.set $i`)
+		g.line(`block $break`)
+		g.indent++
+		g.line(`loop $loop`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`local.get $sLen`)
+		g.line(`i32.ge_s`)
+		g.line(`br_if $break`)
+		// b = s[i]
+		g.line(`local.get $s`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+		g.line(`local.set $b`)
+		// if srcBase <= b <= srcBase+25: b += dstBase - srcBase
+		g.line(`local.get $b`)
+		g.linef(`i32.const %d`, srcBase)
+		g.line(`i32.ge_u`)
+		g.line(`local.get $b`)
+		g.linef(`i32.const %d`, srcBase+26)
+		g.line(`i32.lt_u`)
+		g.line(`i32.and`)
+		g.line(`if`)
+		g.indent++
+		g.line(`local.get $b`)
+		g.linef(`i32.const %d`, dstBase-srcBase)
+		g.line(`i32.add`)
+		g.line(`local.set $b`)
+		g.indent--
+		g.line(`end`)
+		// out[4 + i] = b
+		g.line(`local.get $out`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`local.get $b`)
+		g.line(`i32.store8`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 1`)
+		g.line(`i32.add`)
+		g.line(`local.set $i`)
+		g.line(`br $loop`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $out`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
+	}
+	emitStringCaseFold("$__method_string_to_lower", 65, 97) // A-Z → a-z
+	emitStringCaseFold("$__method_string_to_upper", 97, 65) // a-z → A-Z
 }
 
 // emitMapHelpers writes the runtime functions backing the
