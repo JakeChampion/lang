@@ -1,0 +1,23 @@
+// echo_handler.lang — wasi:http echo handler.
+//
+// Returns a plain-text body summarising the inbound request:
+// method, path, body length, body. Demonstrates the minimal
+// shape every wasi-http handler takes.
+//
+// Showcases: `function handle(req: HttpRequest): HttpResponse`
+// — the wasi:http/incoming-handler entry point. The codegen
+// wraps this in the per-request implicit arena (PR #200): all
+// the strings the handler builds get reclaimed when the
+// handler returns, so multi-request long-running deployments
+// don't leak.
+//
+//   $ lang -target wasi-http -wasi-adapter ... -o echo.wasm echo_handler.lang
+//   $ wasmtime serve echo.wasm
+//   $ curl -X POST -d 'hello' http://localhost:8080/foo/bar
+//   POST /foo/bar (5 bytes)
+//
+//   hello
+function handle(req: HttpRequest): HttpResponse {
+  var body: string = req.method + " " + req.path + " (" + len(req.body).to_string() + " bytes)\n\n" + req.body;
+  return HttpResponse { status: 200, body: body };
+}

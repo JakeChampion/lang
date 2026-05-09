@@ -1,0 +1,158 @@
+// todo_api.lang — wasi:http TODO-shaped API. The lang doesn't
+// have module-level `var`s yet, so cross-request state is not
+// modelled; treat this as a routing + JSON request/response
+// demo. A real version would persist via a file (open_writer
+// / open_reader) or an external store.
+//
+// Routes:
+//   GET    /todos          — return a fixed seed list
+//   POST   /todos          — echo the parsed body back as a
+//                            todo with id=42
+//   GET    /todos/<id>     — return one fixed todo
+//
+// Showcases: nested match over JsonValue (parse a request
+// body and validate its shape), method-tuple dispatch in
+// `handle`, JsonValue-tree construction for responses, the
+// `s.starts_with` / `s.parse_int` string methods, the
+// generic Map[K, V] / MapIter API, the implicit per-request
+// arena (every JsonValue + Map allocation gets reclaimed at
+// handler return — see PR #200).
+//
+//   $ lang -target wasi-http -wasi-adapter ... -o todo.wasm todo_api.lang
+//   $ wasmtime serve todo.wasm &
+//   $ curl http://localhost:8080/todos
+//   [{"id":1,"text":"buy milk"},{"id":2,"text":"feed cat"}]
+function ok(body: string): HttpResponse {
+  return HttpResponse { status: 200, body: body };
+}
+
+function err(code: i32, msg: string): HttpResponse {
+  return HttpResponse { status: code, body: msg + "\n" };
+}
+
+// Build a JsonValue object {"id": id, "text": text}.
+function todo_json(id: i32, text: string): JsonValue {
+  var m: Map[string, JsonValue] = map_new(2);
+  m.set("id", JNumber(id.to_string()));
+  m.set("text", JString(text));
+  return JObject(m);
+}
+
+// Path /todos/<id> → Some(id). Returns None on shape
+// mismatch or non-integer trailing segment.
+function path_id(path: string): Option[i32] {
+  var prefix: string = "/todos/";
+  if (!path.starts_with(prefix)) {
+    return None;
+  }
+  return path[len(prefix):len(path)].parse_int();
+}
+
+// Pull `text` field out of a parsed JsonValue request body.
+// Returns None on any structural mismatch (not an object,
+// missing field, wrong field type).
+function extract_text(v: JsonValue): Option[string] {
+  match (v) {
+    JObject(m) => {
+      match (m.get("text")) {
+        Some(text_v) => {
+          match (text_v) {
+            JString(t) => {
+              return Some(t);
+            },
+            JNull => {
+              return None;
+            },
+            JBool(_) => {
+              return None;
+            },
+            JNumber(_) => {
+              return None;
+            },
+            JArray(_) => {
+              return None;
+            },
+            JObject(_) => {
+              return None;
+            }
+          }
+        },
+        None => {
+          return None;
+        }
+      }
+    },
+    JNull => {
+      return None;
+    },
+    JBool(_) => {
+      return None;
+    },
+    JNumber(_) => {
+      return None;
+    },
+    JString(_) => {
+      return None;
+    },
+    JArray(_) => {
+      return None;
+    }
+  }
+  return None;  // unreachable
+}
+
+function handle_list(): HttpResponse {
+  var arr: JsonValue[] = [];
+  arr = __array_append_jsonvalue(arr, todo_json(1, "buy milk"));
+  arr = __array_append_jsonvalue(arr, todo_json(2, "feed cat"));
+  return ok(json_encode(JArray(arr)));
+}
+
+function handle_create(body: string): HttpResponse {
+  match (json_parse(body)) {
+    None => {
+      return err(400, "invalid JSON");
+    },
+    Some(v) => {
+      match (extract_text(v)) {
+        Some(text) => {
+          return ok(json_encode(todo_json(42, text)));
+        },
+        None => {
+          return err(400, "expected {\"text\": string}");
+        }
+      }
+    }
+  }
+  return err(500, "unreachable");
+}
+
+function handle_get_one(id: i32): HttpResponse {
+  if (id == 1) {
+    return ok(json_encode(todo_json(1, "buy milk")));
+  }
+  if (id == 2) {
+    return ok(json_encode(todo_json(2, "feed cat")));
+  }
+  return err(404, "not found");
+}
+
+function handle(req: HttpRequest): HttpResponse {
+  if (req.method == "GET" && req.path == "/todos") {
+    return handle_list();
+  }
+  if (req.method == "POST" && req.path == "/todos") {
+    return handle_create(req.body);
+  }
+  if (req.method == "GET" && req.path.starts_with("/todos/")) {
+    match (path_id(req.path)) {
+      Some(id) => {
+        return handle_get_one(id);
+      },
+      None => {
+        return err(400, "bad id");
+      }
+    }
+  }
+  return err(404, "not found");
+}
