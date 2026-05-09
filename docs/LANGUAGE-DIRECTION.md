@@ -773,26 +773,29 @@ the lang's abstraction layers.
    `query_parse`, `url_parse`, `json_encode`, `json_parse`,
    `f32.to_string`, `f64.to_string` — all shipped on a
    per-PR cadence. Phase B continued with the string
-   methods that don't need allocation primitives:
-   `starts_with`, `ends_with`, `contains`, `index_of`, and
-   `trim` migrated together (the supporting `__bytes_eq`
-   wat helper stays for now since `split` / `replace`
-   still depend on it; `__is_ascii_ws` retired with `trim`).
-   Remaining wat string methods (`to_lower`, `to_upper`,
-   `bytes`, `split`, `replace`) want a fixed-size mutable
-   `u8[]` allocation primitive — next on the bridge-funcs
-   list, alongside the Map runtime migration.
+   methods: `starts_with`, `ends_with`, `contains`,
+   `index_of`, `trim` (slice-based, no allocation), then
+   `to_lower`, `to_upper`, `bytes` (allocation-based,
+   built on the new `__alloc_u8` primitive). The
+   supporting `__is_ascii_ws` wat helper retired with
+   `trim`; `__bytes_eq` stays for `split` / `replace`
+   which haven't migrated yet (their variable-length
+   array growth still needs a primitive — likely an
+   `__array_grow_u8` companion or similar).
 3. **Bridge functions for wasm intrinsics shipped.**
-   `__memcpy(dst, src, n)` and `__memset(dst, b, n)` are
-   thin wat-shim wrappers around wasm's bulk-memory
-   `memory.copy` / `memory.fill`. Both take three i32s
-   and return void; signatures registered in the checker
-   so the prelude can call them like any builtin. Drives
-   buffer-management code that doesn't yet have a clean
-   lang-level shape — the json buffer family and the Map
-   runtime are the immediate consumers. Backends without
-   bulk-memory (eg arm32 today) trip an "unsupported"
-   path during codegen; wat is the only consumer for now.
+   `__memcpy(dst, src, n)`, `__memset(dst, b, n)`, and
+   `__alloc_u8(n): u8[]` are thin wat-shim wrappers around
+   wasm's bulk-memory `memory.copy` / `memory.fill` plus a
+   tiny `__lang_alloc` + length-prefix sealer. Signatures
+   registered in the checker so the prelude can call them
+   like any builtin. Drives buffer-management code that
+   doesn't yet have a clean lang-level shape — the
+   remaining wat string methods (`to_lower`, `to_upper`,
+   `bytes`) migrated using these primitives in the next
+   PR; the Map runtime migration is the larger pending
+   consumer. Backends without bulk-memory (eg arm32 today)
+   trip an "unsupported" path during codegen; wat is the
+   only consumer for now.
 
    Drive-by escape hatch: `[u8]` slice and `u8[]` owned
    array now cast to `i32` to recover the data pointer.

@@ -715,14 +715,12 @@ func Check(prog *ast.Program) (*Info, error) {
 		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
 	}
 	// `starts_with` / `ends_with` / `contains` / `index_of`
-	// / `trim` migrated to the lang prelude
-	// (internal/prelude/prelude.lang); their signatures are
-	// registered via the prelude's FuncDecls.
-	registerStringMethod("to_lower", nil, ast.StringType{})
-	registerStringMethod("to_upper", nil, ast.StringType{})
+	// / `trim` / `to_lower` / `to_upper` / `bytes` migrated
+	// to the lang prelude (internal/prelude/prelude.lang);
+	// their signatures are registered via the prelude's
+	// FuncDecls.
 	registerStringMethod("split", []ast.Type{ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}})
 	registerStringMethod("replace", []ast.Type{ast.StringType{}, ast.StringType{}}, ast.StringType{})
-	registerStringMethod("bytes", nil, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}})
 	// `s.is_empty()` lives in the lang prelude
 	// (internal/prelude/prelude.lang); the receiver-hoisting
 	// machinery + builtin-receivers extension wires it
@@ -826,6 +824,16 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["__memset"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
+	}
+	// `__alloc_u8(n)` returns a fresh `u8[]` of length n,
+	// zero-initialised. Pairs with `__memcpy` / `__memset` /
+	// the `[u8] → i32` data-pointer cast so prelude code can
+	// build a single-pass byte buffer (next migration: the
+	// remaining wat string methods that allocate result
+	// strings — to_lower, to_upper, bytes, split, replace).
+	c.info.FuncSigs["__alloc_u8"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 	}
 
 	// `url_encode(s)` / `url_decode(s)` live in the lang
