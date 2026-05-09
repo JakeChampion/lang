@@ -820,10 +820,17 @@ the lang's abstraction layers.
   for the most aggressive helpers: `i32 ↔ f32` bit-cast (for
   the float formatter's exponent bit pattern), `memory.copy`
   shim (for the json buffer). Add these incrementally.
-- The IR doesn't aggressively inline cross-function yet — a
-  one-line method like `s.is_empty()` carries a call cost
-  until the IR gets a small-function inliner. Acceptable
-  for now; revisit when profiling shows it.
+- The IR inliner now handles small functions with internal
+  control flow + non-recursive direct calls (extended in
+  the post-Map-runtime cleanup so the migrated prelude's
+  prefix / scan / hash helpers actually inline). Bodies up
+  to 80 ops with internal `if` / `while` / `return` substitute
+  cleanly; the wrapper-block + br-translation shape lets
+  early returns fall through to the caller's continuation.
+  Recursion + closure-call ops still disqualify. Compounds
+  for every hot prelude helper — `__substr_eq`, `__map_hash`,
+  the small char classifiers — that previously paid full
+  call overhead per use.
 - Each migration removes per-PR risk: the migrated helper is
   validated against the existing test suite (no behavior
   change), so the wat → lang transition is observable only
