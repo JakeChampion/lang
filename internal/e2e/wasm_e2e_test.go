@@ -1541,6 +1541,40 @@ func TestWASMMapIterStringKeys(t *testing.T) {
 	}
 }
 
+// `m.clear()` resets the map back to empty without freeing
+// the kv buffer. Subsequent inserts reuse the existing
+// allocation and re-grow if needed.
+func TestWASMMapClear(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+    if (m.len() != 3) { return 1; }
+    m.clear();
+    if (m.len() != 0) { return 2; }
+    if (m.has("a")) { return 3; }
+    if let Some(_) = m.get("b") { return 4; }
+    // Re-insert after clear works (bucket array was reset
+    // to all-empty so the linear probe terminates).
+    m.set("hello", 42);
+    m.set("world", 99);
+    if (m.len() != 2) { return 5; }
+    if let Some(v) = m.get("hello") {
+        if (v != 42) { return 6; }
+    } else {
+        return 7;
+    }
+    if let Some(v) = m.get("world") {
+        if (v != 99) { return 8; }
+    } else {
+        return 9;
+    }
+    if (m.has("a")) { return 10; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map.clear)", got)
+	}
+}
+
 // String-keyed Map literal — KeyType is inferred from the
 // first key, so the IR's map_new call gets keyKind=1.
 func TestWASMMapStringKeyLiteral(t *testing.T) {
