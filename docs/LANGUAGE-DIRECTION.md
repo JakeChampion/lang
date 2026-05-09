@@ -471,6 +471,24 @@ Deferred to a follow-up:
   enum type. Same hoisting + call-site rewriting as struct
   methods (`__method_<EnumName>_<MethodName>`). Receiver type
   must be a known struct or enum; non-named types still error.
+- **Wide enum payloads shipped.** Variants whose payloads
+  include `i64` / `u64` / `f64` lay them out at 8-byte
+  alignment in the heap object (4-byte tag, optional 4-byte
+  pad, then the wide slot) and lower with `i64.store` /
+  `f64.store` plus the matching loads on the match-arm /
+  if-let / let-else paths. The IR's `payloadLayout` /
+  `payloadStoreOp` / `payloadLoadOp` helpers compute offsets
+  + ops once and the three lowering sites consume them
+  uniformly. `Option[i64]` and `Option[f64]` round-trip
+  bit-exact; mixed-width variants like `enum Wide { W(i64,
+  i32) }` lay out their second slot after the first finishes.
+  Pre-settle on the variant constructor's arg list also lets
+  non-generic wide-payload variants accept bare numeric
+  literals without an explicit `as i64` cast — `W(8589934592,
+  7)` settles the first arg to i64 from the declared payload
+  type. Generic `Option[i64]` / `Option[f64]` still want the
+  cast on the literal until contextual flow from the
+  destination annotation back into the constructor arg lands.
 
 ### PR 5 — Memory model first-class
 

@@ -2853,6 +2853,115 @@ func TestWASMEnumMatchPayload(t *testing.T) {
 	}
 }
 
+// Wide-payload variants: `Option[i64]` round-trips an i64 value
+// through Some(...) construction and a match-arm bind. This
+// fails on the pre-wide-payload IR (uniform 4-byte slot) because
+// the value gets truncated on store. A passing test confirms the
+// IR's payloadLayout / payloadStoreOp / payloadLoadOp handshake
+// picks 8-byte slots and i64.store / i64.load for i64 payloads.
+//
+// The explicit `as i64` cast on the literal is needed today
+// because polymorphic-literal inference doesn't yet flow from
+// an enum-constructor's destination annotation back into the
+// argument expression — `var o: Option[i64] = Some(1)` reads
+// the `1` as i32 and rejects the assignment. Separate concern
+// from the wide-payload IR work; once contextual literal
+// inference covers enum constructors the casts can drop.
+func TestWASMEnumMatchPayloadI64(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[i64] = Some(4294967296 as i64);
+    match (o) {
+        Some(n) => {
+            if (n == (4294967296 as i64)) { return 1; }
+            return 0;
+        },
+        None => { return -1; }
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (Option[i64] roundtrip)", got)
+	}
+}
+
+// `Option[f64]` round-trips an f64 through Some + match. f64
+// values use the same 8-byte payload slot as i64 but go through
+// f64.store / f64.load.
+func TestWASMEnumMatchPayloadF64(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[f64] = Some(3.5 as f64);
+    match (o) {
+        Some(x) => {
+            if (x > (3.4 as f64)) { if (x < (3.6 as f64)) { return 1; } }
+            return 0;
+        },
+        None => { return -1; }
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (Option[f64] roundtrip)", got)
+	}
+}
+
+// Mixed-width payloads: a variant with (i64, i32) lays out
+// payload[0] at offset 8 (8-byte aligned) and payload[1] at
+// offset 16 — total enum size is 20 bytes (4 tag + 4 align-pad
+// + 8 i64 + 4 i32). The match-arm load must mirror the same
+// offset table or both bindings come back as garbage.
+func TestWASMEnumMatchPayloadWideMixed(t *testing.T) {
+	// No `as i64` cast on the literals — the variant's declared
+	// payload type drives the polymorphic-literal settle (the
+	// non-generic-enum case where vr.payloads[i] is already
+	// concrete). Generic Option[i64] still needs the cast since
+	// the type-param substitution only fires when an arg
+	// provides the concrete type.
+	src := `enum Wide { W(i64, i32) }
+function main(): i32 {
+    var w: Wide = W(8589934592, 7);
+    match (w) {
+        W(big, small) => {
+            if (big == 8589934592) { if (small == 7) { return 1; } }
+            return 0;
+        }
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (mixed-width enum payload)", got)
+	}
+}
+
+// Same shape via `if let` — the alternate lowering path mirrors
+// match's payload-load offsets, so wide payloads must work here
+// too.
+func TestWASMIfLetPayloadI64(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[i64] = Some(4294967296 as i64);
+    if let Some(n) = o {
+        if (n == (4294967296 as i64)) { return 1; }
+        return 0;
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (if-let Option[i64])", got)
+	}
+}
+
+// And via `let else` — the third payload-load lowering path.
+func TestWASMLetElsePayloadI64(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[i64] = Some(4294967296 as i64);
+    let Some(n) = o else { return -1; };
+    if (n == (4294967296 as i64)) { return 1; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (let-else Option[i64])", got)
+	}
+}
+
 // Multi-variant dispatch picks the right arm. The test exercises
 // both branches of a 2-arm enum so a regression in tag dispatch
 // (off-by-one, branch fall-through, etc.) shows up.
