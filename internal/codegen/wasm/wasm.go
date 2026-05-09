@@ -117,7 +117,8 @@ type generator struct {
 	needsStrFromBytes bool // any `string_from_bytes(bs)` call
 	// `base64_encode` / `base64_decode` migrated to lang
 	// prelude; no flag needed.
-	needsHex                bool // any `hex_encode(s)` / `hex_decode(s)` call
+	// `hex_encode` / `hex_decode` migrated to lang prelude;
+	// no flag needed.
 	needsBulkMemory         bool // any `__memcpy(dst, src, n)` / `__memset(dst, b, n)` call — emits bulk-memory wat shims
 	needsArrayAppendString  bool // any `__array_append_string(arr, v)` call
 	// `url_parse(s)` migrated to lang prelude; no flag.
@@ -367,8 +368,8 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					// Now lives in the lang prelude
 					// (internal/prelude/prelude.lang).
 				case "hex_encode", "hex_decode":
-					g.needsHex = true
-					g.needsRuntime = true
+					// Now lives in the lang prelude
+					// (internal/prelude/prelude.lang).
 				case "__memcpy", "__memset", "__alloc_u8":
 					// Wat shims that wrap wasm's bulk-memory
 					// `memory.copy` / `memory.fill` plus a tiny
@@ -2176,9 +2177,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`)`)
 	}
 
-	if g.needsHex {
-		g.emitHexHelpers()
-	}
+	// `hex_*` migrated to lang prelude; no wat helper.
 	if g.needsBulkMemory {
 		g.emitBulkMemoryHelpers()
 	}
@@ -4684,296 +4683,6 @@ func (g *generator) emitMapHelpers() {
 	g.line(`)`)
 }
 
-// emitHexHelpers writes the runtime backing `hex_encode(s)` /
-// `hex_decode(s)`. Encoding is lowercase (`0-9a-f`); decoding
-// terminates at the first non-hex character or at an
-// odd-length tail without raising. Like base64, this treats
-// the input string as a raw byte array — non-ASCII content
-// round-trips byte-for-byte.
-func (g *generator) emitHexHelpers() {
-	// $__hex_char(d): map a 4-bit nibble (0..15) to its
-	// lowercase ASCII representation. d<10 → '0'+d, else
-	// 'a'+(d-10) which is `d+87`.
-	g.line(`(func $__hex_char (param $d i32) (result i32)`)
-	g.indent++
-	g.line(`local.get $d`)
-	g.line(`i32.const 10`)
-	g.line(`i32.lt_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $d`)
-	g.line(`i32.const 48`) // '0'
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $d`)
-	g.line(`i32.const 87`) // 'a' - 10
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`)`)
-
-	// $__hex_value(c): inverse of $__hex_char. Returns 0..15
-	// for '0'-'9' / 'a'-'f' / 'A'-'F'; -1 for anything else
-	// so the decoder can terminate on the first non-hex byte.
-	g.line(`(func $__hex_value (param $c i32) (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 48`) // '0'
-	g.line(`i32.lt_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`i32.const -1`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 57`) // '9'
-	g.line(`i32.le_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 48`)
-	g.line(`i32.sub`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 97`) // 'a'
-	g.line(`i32.ge_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 102`) // 'f'
-	g.line(`i32.le_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 87`) // 'a' - 10
-	g.line(`i32.sub`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`i32.const -1`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 65`) // 'A'
-	g.line(`i32.ge_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 70`) // 'F'
-	g.line(`i32.le_u`)
-	g.line(`if (result i32)`)
-	g.indent++
-	g.line(`local.get $c`)
-	g.line(`i32.const 55`) // 'A' - 10
-	g.line(`i32.sub`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`i32.const -1`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`i32.const -1`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`)`)
-
-	// $hex_encode(s): encode each byte as 2 lowercase hex
-	// chars. Output length is exactly 2*input length.
-	g.line(`(func $hex_encode (param $s i32) (result i32)`)
-	g.indent++
-	g.line(`(local $len i32) (local $out i32) (local $dst i32)`)
-	g.line(`(local $i i32) (local $b i32)`)
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`local.set $len`)
-	// allocate len*2 + 4 bytes
-	g.line(`local.get $len`)
-	g.line(`i32.const 1`)
-	g.line(`i32.shl`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $out`)
-	// length prefix = len*2
-	g.line(`local.get $out`)
-	g.line(`local.get $len`)
-	g.line(`i32.const 1`)
-	g.line(`i32.shl`)
-	g.line(`i32.store`)
-	// dst = out + 4
-	g.line(`local.get $out`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $dst`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $i`)
-	g.line(`block $break`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	g.line(`local.get $i`)
-	g.line(`local.get $len`)
-	g.line(`i32.ge_u`)
-	g.line(`br_if $break`)
-	// b = s[i]
-	g.line(`local.get $s`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`local.set $b`)
-	// dst[i*2] = hex_char(b >> 4)
-	g.line(`local.get $dst`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.shl`)
-	g.line(`i32.add`)
-	g.line(`local.get $b`)
-	g.line(`i32.const 4`)
-	g.line(`i32.shr_u`)
-	g.line(`i32.const 15`)
-	g.line(`i32.and`)
-	g.line(`call $__hex_char`)
-	g.line(`i32.store8`)
-	// dst[i*2 + 1] = hex_char(b & 0xf)
-	g.line(`local.get $dst`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.shl`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`i32.add`)
-	g.line(`local.get $b`)
-	g.line(`i32.const 15`)
-	g.line(`i32.and`)
-	g.line(`call $__hex_char`)
-	g.line(`i32.store8`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.get $dst`)
-	g.indent--
-	g.line(`)`)
-
-	// $hex_decode(s): decode pairs of hex chars into bytes.
-	// Bails out at the first non-hex char or odd-length tail
-	// and writes the actually-decoded length to the prefix
-	// so callers can use `len()` to detect short input.
-	g.line(`(func $hex_decode (param $s i32) (result i32)`)
-	g.indent++
-	g.line(`(local $len i32) (local $out i32) (local $dst i32)`)
-	g.line(`(local $i i32) (local $oi i32) (local $hi i32) (local $lo i32)`)
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`local.set $len`)
-	// allocate len/2 + 4 bytes (round down)
-	g.line(`local.get $len`)
-	g.line(`i32.const 1`)
-	g.line(`i32.shr_u`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $out`)
-	g.line(`local.get $out`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $dst`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $i`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $oi`)
-	g.line(`block $break`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	// need 2 chars: i + 1 < len
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.get $len`)
-	g.line(`i32.ge_u`)
-	g.line(`br_if $break`)
-	// hi = hex_value(s[i])
-	g.line(`local.get $s`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`call $__hex_value`)
-	g.line(`local.tee $hi`)
-	g.line(`i32.const 0`)
-	g.line(`i32.lt_s`)
-	g.line(`br_if $break`)
-	// lo = hex_value(s[i+1])
-	g.line(`local.get $s`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`call $__hex_value`)
-	g.line(`local.tee $lo`)
-	g.line(`i32.const 0`)
-	g.line(`i32.lt_s`)
-	g.line(`br_if $break`)
-	// dst[oi] = (hi << 4) | lo
-	g.line(`local.get $dst`)
-	g.line(`local.get $oi`)
-	g.line(`i32.add`)
-	g.line(`local.get $hi`)
-	g.line(`i32.const 4`)
-	g.line(`i32.shl`)
-	g.line(`local.get $lo`)
-	g.line(`i32.or`)
-	g.line(`i32.store8`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 2`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`local.get $oi`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $oi`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	// patch length prefix to actually-written count
-	g.line(`local.get $out`)
-	g.line(`local.get $oi`)
-	g.line(`i32.store`)
-	g.line(`local.get $dst`)
-	g.indent--
-	g.line(`)`)
-}
 
 // emitBulkMemoryHelpers writes thin wat shims around wasm's
 // bulk-memory `memory.copy` / `memory.fill` instructions so

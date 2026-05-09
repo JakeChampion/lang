@@ -334,6 +334,63 @@ function base64_decode(s: string): string {
     return string_from_bytes(buf);
 }
 
+// === Hex (lowercase) ===
+//
+// `hex_encode(s)` / `hex_decode(s)` — round-trip
+// content-preserving on raw bytes. Encode emits lowercase
+// `0-9a-f`. Decode accepts both cases; terminates at the
+// first non-hex character or at an odd-length tail without
+// raising — partial inputs round-trip cleanly. Companion
+// to base64 with no `=` padding.
+
+function __hex_lower_char(d: i32): i32 {
+    if (d < 10) { return d + 48; }      // '0' + d
+    return d + 87;                       // 'a' - 10 + d
+}
+
+function __hex_value(c: i32): i32 {
+    if (c >= 48 && c < 58)  { return c - 48; }      // 0-9
+    if (c >= 97 && c < 103) { return c - 87; }      // a-f
+    if (c >= 65 && c < 71)  { return c - 55; }      // A-F
+    return 0 - 1;
+}
+
+function hex_encode(s: string): string {
+    var n: i32 = len(s);
+    if (n == 0) { return ""; }
+    var buf: u8[] = __alloc_u8(n * 2);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        buf[i * 2]     = __hex_lower_char((b >> 4) & 15) as u8;
+        buf[i * 2 + 1] = __hex_lower_char(b & 15) as u8;
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+function hex_decode(s: string): string {
+    var sLen: i32 = len(s);
+    // Walk forward to count consecutive valid hex chars;
+    // first non-hex (or odd-length tail) terminates.
+    var n: i32 = 0;
+    while (n < sLen) {
+        if (__hex_value(s[n]) < 0) { break; }
+        n = n + 1;
+    }
+    var pairs: i32 = n / 2;
+    if (pairs == 0) { return ""; }
+    var buf: u8[] = __alloc_u8(pairs);
+    var i: i32 = 0;
+    while (i < pairs) {
+        var hi: i32 = __hex_value(s[i * 2]);
+        var lo: i32 = __hex_value(s[i * 2 + 1]);
+        buf[i] = ((hi << 4) | lo) as u8;
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
 // === URL percent-encoding (RFC 3986) ===
 //
 // `url_encode(s)` / `url_decode(s)` — public stdlib pair.
