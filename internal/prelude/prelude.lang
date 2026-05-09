@@ -235,6 +235,105 @@ function (s: string) replace(old: string, new: string): string {
     return out + s[start:n];
 }
 
+// === Base64 (RFC 4648, standard alphabet) ===
+//
+// `base64_encode(s)` / `base64_decode(s)` — round-trip
+// content-preserving on raw bytes. Encode emits `=` padding
+// to align to a 4-character group. Decode terminates at
+// the first non-base64 character (so trailing `=` padding
+// works without special handling), preserving the bytes
+// successfully decoded up to that point.
+
+function __b64_alphabet(v: i32): i32 {
+    if (v < 26)  { return v + 65; }     // A-Z (0..25 → 65..90)
+    if (v < 52)  { return v + 71; }     // a-z (26..51 → 97..122)
+    if (v < 62)  { return v - 4; }      // 0-9 (52..61 → 48..57)
+    if (v == 62) { return 43; }         // '+'
+    return 47;                          // '/'
+}
+
+function __b64_decode_char(c: i32): i32 {
+    if (c >= 65 && c < 91)  { return c - 65; }     // A-Z
+    if (c >= 97 && c < 123) { return c - 71; }     // a-z
+    if (c >= 48 && c < 58)  { return c + 4; }      // 0-9 (48..57 → 52..61)
+    if (c == 43) { return 62; }                    // '+'
+    if (c == 47) { return 63; }                    // '/'
+    return 0 - 1;
+}
+
+function base64_encode(s: string): string {
+    var n: i32 = len(s);
+    if (n == 0) { return ""; }
+    var out_len: i32 = ((n + 2) / 3) * 4;
+    var buf: u8[] = __alloc_u8(out_len);
+    var i: i32 = 0;
+    var j: i32 = 0;
+    // Single shared `b0` / `b1` / `b2` declarations so the
+    // wasm emitter (which names locals by lang identifier)
+    // doesn't trip on duplicate declarations across the
+    // sibling 3-byte / 1-byte / 2-byte branches.
+    var b0: i32 = 0;
+    var b1: i32 = 0;
+    var b2: i32 = 0;
+    while (i + 3 <= n) {
+        b0 = s[i];
+        b1 = s[i + 1];
+        b2 = s[i + 2];
+        buf[j]     = __b64_alphabet(b0 >> 2) as u8;
+        buf[j + 1] = __b64_alphabet(((b0 & 3) << 4) | (b1 >> 4)) as u8;
+        buf[j + 2] = __b64_alphabet(((b1 & 15) << 2) | (b2 >> 6)) as u8;
+        buf[j + 3] = __b64_alphabet(b2 & 63) as u8;
+        i = i + 3;
+        j = j + 4;
+    }
+    var rem: i32 = n - i;
+    if (rem == 1) {
+        b0 = s[i];
+        buf[j]     = __b64_alphabet(b0 >> 2) as u8;
+        buf[j + 1] = __b64_alphabet((b0 & 3) << 4) as u8;
+        buf[j + 2] = 61 as u8;                      // '='
+        buf[j + 3] = 61 as u8;
+    } else if (rem == 2) {
+        b0 = s[i];
+        b1 = s[i + 1];
+        buf[j]     = __b64_alphabet(b0 >> 2) as u8;
+        buf[j + 1] = __b64_alphabet(((b0 & 3) << 4) | (b1 >> 4)) as u8;
+        buf[j + 2] = __b64_alphabet((b1 & 15) << 2) as u8;
+        buf[j + 3] = 61 as u8;
+    }
+    return string_from_bytes(buf);
+}
+
+function base64_decode(s: string): string {
+    var sLen: i32 = len(s);
+    // Walk forward to count consecutive valid base64 chars;
+    // first non-base64 (eg `=` padding) terminates the input.
+    var n: i32 = 0;
+    while (n < sLen) {
+        if (__b64_decode_char(s[n]) < 0) { break; }
+        n = n + 1;
+    }
+    if (n == 0) { return ""; }
+    var out_len: i32 = (n * 3) / 4;
+    if (out_len == 0) { return ""; }
+    var buf: u8[] = __alloc_u8(out_len);
+    var i: i32 = 0;
+    var j: i32 = 0;
+    var acc: i32 = 0;       // 6-bit-shift accumulator
+    var bits: i32 = 0;      // bits currently held in acc
+    while (i < n) {
+        acc = (acc << 6) | __b64_decode_char(s[i]);
+        bits = bits + 6;
+        if (bits >= 8) {
+            bits = bits - 8;
+            buf[j] = ((acc >> bits) & 255) as u8;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
 // === URL percent-encoding (RFC 3986) ===
 //
 // `url_encode(s)` / `url_decode(s)` — public stdlib pair.
