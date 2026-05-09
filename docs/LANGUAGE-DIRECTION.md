@@ -623,6 +623,17 @@ Deferred to a follow-up:
     doubling grow, returning a length-prefixed string
     where the buffer's `len` slot doubles as the prefix.
     `json_parse` is the inverse direction (see below).
+  - **`f32.to_string()` / `f64.to_string()` shipped.** Decimal
+    text formatting on the float types. Up to 7 fractional
+    digits for f32 / 15 for f64 (matching IEEE 754 single /
+    double precision); trailing zeros are trimmed and the
+    decimal point is dropped if the fraction is zero.
+    Special values get canonical names: `NaN`, `Inf`, `-Inf`.
+    NOT bit-exact Steele/White / Ryu — close-enough-for-handler
+    output, same trade-off as `parse_float`. Round-trip
+    `parse_float(x.to_string())` recovers `x` to within f32
+    epsilon for typical values; pathological cases lose
+    trailing precision.
   - **`json_parse(s)` shipped.** RFC 8259 grammar
     recognizer; returns `Option[JsonValue]` (None on any
     malformed input). Recursive-descent built around a

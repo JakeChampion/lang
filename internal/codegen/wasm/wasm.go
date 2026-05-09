@@ -128,6 +128,7 @@ type generator struct {
 	needsRandomBytes bool // any `random_bytes(n)` call — pulls in WASI random_get
 	needsIntToString bool // any `int_to_string(n)` call — emits a small decimal-formatting helper
 	needsNumToString bool // any `(i32 / u32 / i64 / u64).to_string()` method call — wraps the i64 formatter
+	needsFloatToString bool // any `(f32 / f64).to_string()` method call
 	needsTcp         bool // any tcp_* call — pulls in WASI sock_accept + fd_read/fd_write/fd_close on socket fds
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
@@ -461,6 +462,21 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					strings.HasPrefix(id.Name, "__method_i64_to_string") ||
 					strings.HasPrefix(id.Name, "__method_u64_to_string") {
 					g.needsNumToString = true
+					g.needsRuntime = true
+				}
+				if strings.HasPrefix(id.Name, "__method_f32_to_string") ||
+					strings.HasPrefix(id.Name, "__method_f64_to_string") {
+					g.needsFloatToString = true
+					// Pulls in the integer formatter for the
+					// integral half + the bump allocator + the
+					// digit append helpers + the json
+					// growable-buffer family (for the fraction
+					// digit emit / trim path).
+					g.needsNumToString = true
+					g.needsJsonEncode = true
+					g.needsMap = true
+					g.needsArrays = true
+					g.needsBoundsCheck = true
 					g.needsRuntime = true
 				}
 			}
@@ -2274,6 +2290,9 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsNumToString {
 		g.emitNumberToStringHelpers()
+	}
+	if g.needsFloatToString {
+		g.emitFloatToStringHelpers()
 	}
 	// `cabi_realloc` is the canonical-ABI allocator the host
 	// invokes to materialise dynamically-sized return values
@@ -11722,6 +11741,459 @@ func (g *generator) emitNumberToStringHelpers() {
 	g.line(`local.get $n`)
 	g.line(`i32.const 0`)
 	g.line(`call $__int_to_string_u64`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitFloatToStringHelpers writes `$__method_f32_to_string`
+// and `$__method_f64_to_string`. The algorithm:
+//   - Detect NaN and ±Inf and emit their canonical names.
+//   - Sign: emit '-' if negative, then negate.
+//   - Integer part: truncate-to-i64, format via the existing
+//     `$__int_to_string_u64`.
+//   - Fractional part: subtract integer, multiply by 10^k
+//     where k = 7 (f32) or 15 (f64), truncate to i64, emit
+//     exactly k digits with leading zeros, then trim
+//     trailing zeros (and drop the leading `.` if all
+//     digits were zero).
+//
+// NOT bit-exact Steele/White / Ryu — close-enough-for-handler
+// output, matching parse_float's tolerance. A 7-digit f32
+// representation round-trips through parse_float to within
+// f32 epsilon for typical values; pathological cases lose
+// trailing precision.
+func (g *generator) emitFloatToStringHelpers() {
+	// Internal helper: write the canonical name (NaN / Inf /
+	// -Inf) into a fresh string. Used by both width helpers.
+	g.line(`(func $__float_special (param $name i32) (param $nameLen i32) (result i32)`)
+	g.indent++
+	g.line(`(local $out i32)`)
+	g.line(`local.get $nameLen`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $out`)
+	g.line(`local.get $nameLen`)
+	g.line(`i32.store`)
+	g.line(`local.get $out`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $name`)
+	g.line(`local.get $nameLen`)
+	g.line(`memory.copy`)
+	g.line(`local.get $out`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+
+	// Internal helper: append a string to a json buffer.
+	// Wraps __json_buf_str so we can use the buffer as the
+	// scratch builder (it already grows on demand).
+
+	// Emit `n` decimal digits of `frac` (i64) into buf,
+	// padding with leading zeros, then trim trailing zeros
+	// in place by adjusting buf.len. If all digits were
+	// zero, also remove the trailing `.` (caller appended
+	// it before calling). Returns the (possibly grown) buf.
+	g.line(`(func $__float_emit_frac (param $buf i32) (param $frac i64) (param $k i32) (result i32)`)
+	g.indent++
+	g.line(`(local $i i32) (local $div i64) (local $digit i64)`)
+	g.line(`(local $start i32) (local $pos i32) (local $b i32)`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $start`) // start of fraction digits
+	// div = 10^(k-1)
+	g.line(`i64.const 1`)
+	g.line(`local.set $div`)
+	g.line(`i32.const 1`)
+	g.line(`local.set $i`)
+	g.line(`block $end_pow`)
+	g.indent++
+	g.line(`loop $pow_loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $k`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end_pow`)
+	g.line(`local.get $div`)
+	g.line(`i64.const 10`)
+	g.line(`i64.mul`)
+	g.line(`local.set $div`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $pow_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Loop k times: emit digit = frac/div, frac %= div, div /= 10.
+	g.line(`block $end_emit`)
+	g.indent++
+	g.line(`loop $emit_loop`)
+	g.indent++
+	g.line(`local.get $div`)
+	g.line(`i64.const 0`)
+	g.line(`i64.le_s`)
+	g.line(`br_if $end_emit`)
+	g.line(`local.get $frac`)
+	g.line(`local.get $div`)
+	g.line(`i64.div_s`)
+	g.line(`local.set $digit`)
+	g.line(`local.get $frac`)
+	g.line(`local.get $digit`)
+	g.line(`local.get $div`)
+	g.line(`i64.mul`)
+	g.line(`i64.sub`)
+	g.line(`local.set $frac`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $digit`)
+	g.line(`i32.wrap_i64`)
+	g.line(`i32.const 48`)
+	g.line(`i32.add`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $div`)
+	g.line(`i64.const 10`)
+	g.line(`i64.div_s`)
+	g.line(`local.set $div`)
+	g.line(`br $emit_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Trim trailing zeros: while buf.len > start && data[buf.len-1] == '0': buf.len--
+	g.line(`block $end_trim`)
+	g.indent++
+	g.line(`loop $trim_loop`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.tee $pos`)
+	g.line(`local.get $start`)
+	g.line(`i32.le_u`)
+	g.line(`br_if $end_trim`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.set $b`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.ne`)
+	g.line(`br_if $end_trim`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $pos`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`i32.store`)
+	g.line(`br $trim_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// If all digits were zero (pos == start), remove the
+	// trailing '.' by decrementing buf.len once more.
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.get $start`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $start`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $buf`)
+	g.indent--
+	g.line(`)`)
+
+	// Pre-built byte sequences for special-case names.
+	// `__float_special` copies these into a fresh string.
+	// We use direct writes to a stack-allocated 4-byte
+	// space rather than pulling in the data segment.
+
+	// $__method_f32_to_string(n: f32): string
+	g.line(`(func $__method_f32_to_string (param $n f32) (result i32)`)
+	g.indent++
+	g.line(`(local $buf i32) (local $intPart i64) (local $frac f64) (local $fracInt i64)`)
+	g.line(`(local $intStr i32) (local $tmp i32) (local $nd f64)`)
+	// NaN: n != n
+	g.line(`local.get $n`)
+	g.line(`local.get $n`)
+	g.line(`f32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $tmp`)
+	g.line(`i32.const 3`)
+	g.line(`i32.store`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.const 78`) // 'N'
+	g.line(`i32.store8`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 5`)
+	g.line(`i32.add`)
+	g.line(`i32.const 97`) // 'a'
+	g.line(`i32.store8`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 6`)
+	g.line(`i32.add`)
+	g.line(`i32.const 78`) // 'N'
+	g.line(`i32.store8`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Inf: |n| == Inf
+	g.line(`local.get $n`)
+	g.line(`f32.abs`)
+	g.line(`f32.const inf`)
+	g.line(`f32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`call $__json_buf_new`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $n`)
+	g.line(`f32.const 0`)
+	g.line(`f32.lt`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 45`) // '-'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 73`) // 'I'
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 110`) // 'n'
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 102`) // 'f'
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Build buf.
+	g.line(`call $__json_buf_new`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $n`)
+	g.line(`f32.const 0`)
+	g.line(`f32.lt`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 45`) // '-'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $n`)
+	g.line(`f32.neg`)
+	g.line(`local.set $n`)
+	g.indent--
+	g.line(`end`)
+	// Promote to f64 for sufficient mantissa headroom.
+	g.line(`local.get $n`)
+	g.line(`f64.promote_f32`)
+	g.line(`local.set $nd`)
+	// intPart = (i64) trunc(nd)
+	g.line(`local.get $nd`)
+	g.line(`i64.trunc_sat_f64_s`)
+	g.line(`local.set $intPart`)
+	g.line(`local.get $intPart`)
+	g.line(`i32.const 0`)
+	g.line(`call $__int_to_string_u64`)
+	g.line(`local.set $intStr`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $intStr`)
+	g.line(`call $__json_buf_str`)
+	g.line(`local.set $buf`)
+	// frac = nd - (f64)intPart
+	g.line(`local.get $nd`)
+	g.line(`local.get $intPart`)
+	g.line(`f64.convert_i64_s`)
+	g.line(`f64.sub`)
+	g.line(`f64.abs`)
+	g.line(`local.set $frac`)
+	g.line(`local.get $frac`)
+	g.line(`f64.const 1e-7`)
+	g.line(`f64.gt`)
+	g.line(`if`)
+	g.indent++
+	// Emit '.', then 7 digits of fraction.
+	g.line(`local.get $buf`)
+	g.line(`i32.const 46`) // '.'
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $frac`)
+	g.line(`f64.const 10000000`)
+	g.line(`f64.mul`)
+	g.line(`i64.trunc_sat_f64_s`)
+	g.line(`local.set $fracInt`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $fracInt`)
+	g.line(`i32.const 7`)
+	g.line(`call $__float_emit_frac`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_f64_to_string(n: f64): string — same shape
+	// as the f32 helper but with 15 fractional digits.
+	g.line(`(func $__method_f64_to_string (param $n f64) (result i32)`)
+	g.indent++
+	g.line(`(local $buf i32) (local $intPart i64) (local $frac f64) (local $fracInt i64)`)
+	g.line(`(local $intStr i32) (local $tmp i32)`)
+	g.line(`local.get $n`)
+	g.line(`local.get $n`)
+	g.line(`f64.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $tmp`)
+	g.line(`i32.const 3`)
+	g.line(`i32.store`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.const 78`)
+	g.line(`i32.store8`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 5`)
+	g.line(`i32.add`)
+	g.line(`i32.const 97`)
+	g.line(`i32.store8`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 6`)
+	g.line(`i32.add`)
+	g.line(`i32.const 78`)
+	g.line(`i32.store8`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $n`)
+	g.line(`f64.abs`)
+	g.line(`f64.const inf`)
+	g.line(`f64.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`call $__json_buf_new`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $n`)
+	g.line(`f64.const 0`)
+	g.line(`f64.lt`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 45`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 73`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 110`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 102`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`call $__json_buf_new`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $n`)
+	g.line(`f64.const 0`)
+	g.line(`f64.lt`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 45`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $n`)
+	g.line(`f64.neg`)
+	g.line(`local.set $n`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $n`)
+	g.line(`i64.trunc_sat_f64_s`)
+	g.line(`local.set $intPart`)
+	g.line(`local.get $intPart`)
+	g.line(`i32.const 0`)
+	g.line(`call $__int_to_string_u64`)
+	g.line(`local.set $intStr`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $intStr`)
+	g.line(`call $__json_buf_str`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $n`)
+	g.line(`local.get $intPart`)
+	g.line(`f64.convert_i64_s`)
+	g.line(`f64.sub`)
+	g.line(`f64.abs`)
+	g.line(`local.set $frac`)
+	g.line(`local.get $frac`)
+	g.line(`f64.const 1e-15`)
+	g.line(`f64.gt`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $buf`)
+	g.line(`i32.const 46`)
+	g.line(`call $__json_buf_byte`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $frac`)
+	g.line(`f64.const 1e15`)
+	g.line(`f64.mul`)
+	g.line(`i64.trunc_sat_f64_s`)
+	g.line(`local.set $fracInt`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $fracInt`)
+	g.line(`i32.const 15`)
+	g.line(`call $__float_emit_frac`)
+	g.line(`local.set $buf`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
 }

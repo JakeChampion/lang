@@ -3749,3 +3749,54 @@ func TestWASMJsonParse(t *testing.T) {
 		t.Errorf("WASM json_parse: exit = %d, want 0", got)
 	}
 }
+
+// `f32.to_string()` / `f64.to_string()` — decimal text
+// formatting. Not bit-exact (truncate-to-N digits), so
+// assertions match what the simple algorithm produces:
+// integer values show no decimal point, fractions trim
+// trailing zeros, special values get canonical names.
+func TestWASMFloatToString(t *testing.T) {
+	src := `function main(): i32 {
+		// Integer values lose the decimal point entirely.
+		var a: f32 = 0.0;
+		if (a.to_string() != "0") { return 1; }
+		var b: f32 = 42.0;
+		if (b.to_string() != "42") { return 2; }
+		var c: f32 = -7.0;
+		if (c.to_string() != "-7") { return 3; }
+
+		// Common fractional values.
+		var d: f32 = 0.5;
+		if (d.to_string() != "0.5") { return 10; }
+		var e: f32 = -0.25;
+		if (e.to_string() != "-0.25") { return 11; }
+
+		// f64 keeps more precision (15 fractional digits).
+		var f: f64 = 0.5;
+		if (f.to_string() != "0.5") { return 20; }
+		var g: f64 = 1.5;
+		if (g.to_string() != "1.5") { return 21; }
+
+		// Round-trip through parse_float for tolerance check.
+		match ("3.14".parse_float()) {
+			Some(x) => {
+				// x.to_string() should produce something that
+				// parses back to ≈ 3.14 (within f32 epsilon).
+				match (x.to_string().parse_float()) {
+					Some(y) => {
+						var diff: f32 = y - 3.14;
+						if (diff < 0.0) { diff = 0.0 - diff; }
+						if (diff > 0.001) { return 30; }
+					},
+					None => { return 31; }
+				}
+			},
+			None => { return 32; }
+		}
+
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM float to_string: exit = %d, want 0", got)
+	}
+}

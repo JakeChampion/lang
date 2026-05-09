@@ -784,6 +784,22 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerNumberMethod("i64", "to_string", ast.NumberType{Width: 64, Signed: true}, nil, ast.StringType{})
 	registerNumberMethod("u64", "to_string", ast.NumberType{Width: 64, Signed: false}, nil, ast.StringType{})
 
+	// Float `to_string()`. Receiver type is FloatType keyed by
+	// width. The helpers do plain decimal formatting with up to
+	// 7 significant digits for f32 and 15 for f64 (matching
+	// IEEE 754 single / double precision); special values
+	// (NaN, Inf) get their canonical names. Not bit-exact
+	// Steele/White / Ryu yet — close-enough-for-handler-output
+	// semantics, same trade-off as parse_float.
+	registerFloatMethod := func(typeName string, methodName string, recv ast.FloatType, params []ast.Type, result ast.Type) {
+		mangled := "__method_" + typeName + "_" + methodName
+		c.info.Methods[typeName+"."+methodName] = mangled
+		fullParams := append([]ast.Type{recv}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	registerFloatMethod("f32", "to_string", ast.FloatType{}, nil, ast.StringType{})
+	registerFloatMethod("f64", "to_string", ast.FloatType{Width: 64}, nil, ast.StringType{})
+
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
 	// top-level names (`__method_<Type>_<Name>`) with the receiver
@@ -2228,6 +2244,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					typeName = "u32"
 				default:
 					typeName = "i32"
+				}
+			case ast.FloatType:
+				// f32 / f64 split same way.
+				if t.NormalWidth() == 64 {
+					typeName = "f64"
+				} else {
+					typeName = "f32"
 				}
 			}
 			if typeName != "" {
