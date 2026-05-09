@@ -742,20 +742,9 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.StringType{},
 	}
 
-	// base64_encode(s): standard-alphabet RFC 4648 base64
-	// encoding of the input bytes (the string is treated as a
-	// raw byte array). base64_decode(s): inverse; non-base64
-	// characters terminate decoding without error so partial
-	// inputs round-trip cleanly. For strict / fallible decode
-	// semantics, callers can compare lengths.
-	c.info.FuncSigs["base64_encode"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}},
-		Result: ast.StringType{},
-	}
-	c.info.FuncSigs["base64_decode"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}},
-		Result: ast.StringType{},
-	}
+	// `base64_encode` / `base64_decode` migrated to the
+	// lang prelude (internal/prelude/prelude.lang); their
+	// signatures are registered via the prelude's FuncDecls.
 
 	// hex_encode(s): lowercase hex of the input bytes (1 byte
 	// → 2 chars `0-9a-f`). hex_decode(s): inverse; decoding
