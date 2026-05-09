@@ -727,16 +727,8 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.StringType{},
 	}
 
-	// url_parse(s): split an absolute or relative URL into its
-	// component pieces. Returns Option[Url]; None on completely
-	// empty input only — best-effort parse otherwise (missing
-	// scheme / host / path all just get empty strings rather
-	// than refusing). Port is 0 when unspecified or
-	// unparseable. No %-decoding; query and fragment are raw.
-	c.info.FuncSigs["url_parse"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}},
-		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StructType{Name: "Url"}}},
-	}
+	// `url_parse(s)` lives in the lang prelude
+	// (internal/prelude/prelude.lang).
 
 	// `url_encode(s)` / `url_decode(s)` live in the lang
 	// prelude (internal/prelude/prelude.lang).
