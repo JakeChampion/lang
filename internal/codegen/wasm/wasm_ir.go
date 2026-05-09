@@ -587,13 +587,13 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpFGe:
 		g.linef("%s.ge", floatPrefix())
 	case ir.OpLoad:
-		g.line("i32.load")
+		g.linef("%s.load", intPrefix())
 	case ir.OpStore:
-		g.line("i32.store")
+		g.linef("%s.store", intPrefix())
 	case ir.OpFLoad:
-		g.line("f32.load")
+		g.linef("%s.load", floatPrefix())
 	case ir.OpFStore:
-		g.line("f32.store")
+		g.linef("%s.store", floatPrefix())
 	case ir.OpLoadByte:
 		g.line("i32.load8_u")
 	case ir.OpStoreI8:

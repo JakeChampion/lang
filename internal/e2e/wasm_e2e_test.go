@@ -961,6 +961,54 @@ func TestWASMSubI32ArrayWrites(t *testing.T) {
 	}
 }
 
+// Owned i64 / u64 arrays. 8-byte stride via __arr_idx_8;
+// loads / stores use i64.load / i64.store. Verifies that a
+// value with the high bit set round-trips through indexed
+// read.
+func TestWASMI64Array(t *testing.T) {
+	src := `function i64Sum(xs: i64[], n: i32): i64 {
+    var i: i32 = 0;
+    var s: i64 = 0;
+    while (i < n) {
+        s = s + xs[i];
+        i = i + 1;
+    }
+    return s;
+}
+function main(): i32 {
+    var xs: i64[] = [1, 2, 3, 4];
+    xs[1] = (1 << 62) + 1;
+    var s: i64 = i64Sum(xs, 4);
+    // 1 + ((1 << 62) + 1) + 3 + 4 == (1 << 62) + 9
+    if (s != (1 << 62) + 9) { return 1; }
+    if (xs[0] != 1) { return 2; }
+    if (xs[3] != 4) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (i64 array)", got)
+	}
+}
+
+// Owned f64 arrays. 8-byte stride; loads / stores use
+// f64.load / f64.store. Verifies a literal of three f64
+// values round-trips through indexing.
+func TestWASMF64Array(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: f64[] = [1.5, 2.5, 3.5];
+    xs[1] = 99.25;
+    if (xs[0] != 1.5) { return 1; }
+    if (xs[1] != 99.25) { return 2; }
+    if (xs[2] != 3.5) { return 3; }
+    var sum: f64 = xs[0] + xs[1] + xs[2];
+    if (sum != 104.25) { return 4; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (f64 array)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64
