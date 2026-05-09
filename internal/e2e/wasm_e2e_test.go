@@ -3045,3 +3045,38 @@ func TestWASMOpenAppender(t *testing.T) {
 		t.Errorf("stdout should contain `first-second`; got %q", stdout)
 	}
 }
+
+// TestWASMHex covers the round-trip plus some edge cases:
+// empty string, ASCII text, every nibble exercised. Decode
+// of an odd-length input or a non-hex char terminates
+// mid-way; the prefix length reflects what was actually
+// decoded so `len()` on the result gives the right answer.
+func TestWASMHex(t *testing.T) {
+	src := `function main(): i32 {
+		// empty round-trips to empty
+		if (len(hex_encode("")) != 0) { return 1; }
+		if (len(hex_decode("")) != 0) { return 2; }
+
+		// "hi" -> "6869"
+		if (hex_encode("hi") != "6869") { return 3; }
+		if (hex_decode("6869") != "hi") { return 4; }
+
+		// every nibble: byte 0xab -> "ab"
+		if (hex_encode("hello world") != "68656c6c6f20776f726c64") { return 5; }
+		if (hex_decode("68656c6c6f20776f726c64") != "hello world") { return 6; }
+
+		// uppercase hex digits decode the same
+		if (hex_decode("48454C4C4F") != "HELLO") { return 7; }
+
+		// odd-length tail and non-hex char both halt the decoder.
+		// "414" -> "A" (the trailing "4" is incomplete and dropped).
+		if (hex_decode("414") != "A") { return 8; }
+		// "41xx" -> "A" (decoder bails at the first non-hex byte).
+		if (hex_decode("41xx") != "A") { return 9; }
+
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM hex: exit = %d, want 0", got)
+	}
+}

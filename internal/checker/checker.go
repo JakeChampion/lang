@@ -598,6 +598,20 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.StringType{},
 	}
 
+	// hex_encode(s): lowercase hex of the input bytes (1 byte
+	// → 2 chars `0-9a-f`). hex_decode(s): inverse; decoding
+	// terminates at the first non-hex character (and at an
+	// odd-length tail) without raising — partial inputs round-
+	// trip cleanly. Companion to base64_* with no `=` padding.
+	c.info.FuncSigs["hex_encode"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.StringType{},
+	}
+	c.info.FuncSigs["hex_decode"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.StringType{},
+	}
+
 	// Built-in numeric methods. The receiver type is `NumberType`
 	// keyed by width + signedness; the dispatch path above maps
 	// `i32` / `u32` / `i64` / `u64` value types to the
