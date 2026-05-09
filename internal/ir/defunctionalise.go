@@ -45,31 +45,148 @@ package ir
 // walk time (the per-function pass returns immediately when no
 // MakeClosure ops are present).
 //
+// Two flavours of "monomorphic flow source" are recognised:
+//
+//   1. Direct MakeClosure: `var f = MakeClosure(T, [...])`. The
+//      slot's writer is an OpStoreLocal directly preceded by
+//      an OpMakeClosure with target T.
+//
+//   2. Closure-factory return: `var f = makeAdder(7)` where
+//      makeAdder is a function that always returns a closure
+//      with the same target T (analysed in a phase-0 pre-pass
+//      below). Covers Roc's "closure factory" pattern.
+//
 // Order in the production pipeline: Lower → Inline → Fold → DCE
 // → Defunctionalise → emit. Running after Inline lets the
 // defunctionalised direct call ALSO get inlined if the hoisted
 // target qualifies; running before Fold/DCE would leave the
 // scratch arithmetic in a less foldable shape.
 func Defunctionalise(prog *Program) {
+	returns := analyseReturnTargets(prog)
 	for _, fn := range prog.Funcs {
-		defunctionaliseFunc(fn)
+		defunctionaliseFunc(fn, returns)
 	}
 }
 
-func defunctionaliseFunc(fn *Func) {
+// analyseReturnTargets scans each function in the program and
+// records which closure target it returns, when there's exactly
+// one. Result keys are function names; values are the
+// MakeClosure target name. Functions with multiple return
+// targets, no return, or return a non-closure value are absent
+// from the map.
+//
+// Per-function analysis: walk the body and find every OpReturn
+// (or fall-through end). For each, look at the value source.
+// Two recognised shapes:
+//   - OpLoadLocal slot, where slot is locally monomorphic
+//     (writer was OpMakeClosure target=T). The function returns
+//     target T.
+//   - OpMakeClosure target=T directly (no intermediate slot).
+//     Same conclusion.
+//
+// If all return value sources resolve to the same target T, the
+// function is "monomorphic-returning T". Mismatched or
+// unrecognised sources disqualify the function.
+func analyseReturnTargets(prog *Program) map[string]string {
+	out := map[string]string{}
+	for _, fn := range prog.Funcs {
+		if t, ok := returnTargetFor(fn); ok {
+			out[fn.Name] = t
+		}
+	}
+	return out
+}
+
+func returnTargetFor(fn *Func) (string, bool) {
+	// Local monomorphic slots in fn (subset of what
+	// defunctionaliseFunc's phase-1 computes — kept minimal
+	// here since we only need single-target uniqueness, not
+	// per-call-site rewrite info).
+	monoSlot := map[int32]string{}
+	polySlot := map[int32]bool{}
+	for i, op := range fn.Ops {
+		if op.Kind != OpStoreLocal && op.Kind != OpTeeLocal {
+			continue
+		}
+		slot := op.I32
+		if polySlot[slot] {
+			continue
+		}
+		if i > 0 && fn.Ops[i-1].Kind == OpMakeClosure {
+			t := fn.Ops[i-1].Str
+			if existing, seen := monoSlot[slot]; seen && existing != t {
+				polySlot[slot] = true
+				delete(monoSlot, slot)
+				continue
+			}
+			monoSlot[slot] = t
+			continue
+		}
+		polySlot[slot] = true
+		delete(monoSlot, slot)
+	}
+
+	target := ""
+	for i, op := range fn.Ops {
+		if op.Kind != OpReturn {
+			continue
+		}
+		// Value source for this return — the op directly
+		// preceding it. Recognised shapes:
+		//   OpMakeClosure T → target=T
+		//   OpLoadLocal slot, slot ∈ monoSlot → target=monoSlot[slot]
+		if i == 0 {
+			return "", false
+		}
+		prev := fn.Ops[i-1]
+		var t string
+		switch prev.Kind {
+		case OpMakeClosure:
+			t = prev.Str
+		case OpLoadLocal:
+			tt, ok := monoSlot[prev.I32]
+			if !ok {
+				return "", false
+			}
+			t = tt
+		default:
+			return "", false
+		}
+		if target == "" {
+			target = t
+		} else if target != t {
+			return "", false
+		}
+	}
+	if target == "" {
+		return "", false
+	}
+	return target, true
+}
+
+func defunctionaliseFunc(fn *Func, returns map[string]string) {
 	// Phase 1: identify monomorphic closure slots.
 	//
 	// monoSlot[slot] = target name when the slot is written
-	// exactly once by an OpStoreLocal preceded by OpMakeClosure
-	// with that target. Slots in `polySlot` are disqualified
-	// (multiple writers, or writers from non-MakeClosure
-	// sources) and kept out of monoSlot.
+	// exactly once by either:
+	//   (a) OpStoreLocal directly preceded by OpMakeClosure T
+	//   (b) OpStoreLocal directly preceded by OpCallDirect F
+	//       where F is in `returns` with target T (closure
+	//       factory pattern).
+	// Slots in `polySlot` are disqualified (multiple writers,
+	// writers from non-recognised sources, or writers
+	// resolving to inconsistent targets).
 	monoSlot := map[int32]string{}
 	polySlot := map[int32]bool{}
-	hasMakeClosure := false
+	hasFlowSource := false
 	for i, op := range fn.Ops {
 		if op.Kind == OpMakeClosure {
-			hasMakeClosure = true
+			hasFlowSource = true
+		}
+		if op.Kind == OpCallDirect {
+			if _, ok := returns[op.Str]; ok {
+				hasFlowSource = true
+			}
 		}
 		if op.Kind != OpStoreLocal && op.Kind != OpTeeLocal {
 			continue
@@ -78,16 +195,25 @@ func defunctionaliseFunc(fn *Func) {
 		if polySlot[slot] {
 			continue
 		}
-		// OpTeeLocal leaves the value on the stack AND writes
-		// the slot — same write-side semantics as OpStoreLocal
-		// for the purposes of flow analysis.
-		isMakeClosureSource := i > 0 && fn.Ops[i-1].Kind == OpMakeClosure
-		if !isMakeClosureSource {
+		var target string
+		var resolved bool
+		if i > 0 {
+			switch prev := fn.Ops[i-1]; prev.Kind {
+			case OpMakeClosure:
+				target = prev.Str
+				resolved = true
+			case OpCallDirect:
+				if t, ok := returns[prev.Str]; ok {
+					target = t
+					resolved = true
+				}
+			}
+		}
+		if !resolved {
 			polySlot[slot] = true
 			delete(monoSlot, slot)
 			continue
 		}
-		target := fn.Ops[i-1].Str
 		if existing, seen := monoSlot[slot]; seen && existing != target {
 			polySlot[slot] = true
 			delete(monoSlot, slot)
@@ -95,7 +221,7 @@ func defunctionaliseFunc(fn *Func) {
 		}
 		monoSlot[slot] = target
 	}
-	if !hasMakeClosure || len(monoSlot) == 0 {
+	if !hasFlowSource || len(monoSlot) == 0 {
 		return
 	}
 

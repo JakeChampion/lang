@@ -599,22 +599,28 @@ Deferred to a follow-up:
   monomorphic-flow case — exactly one MakeClosure flow
   source per slot, by far the dominant pattern in
   closureconv'd output for handler / nested-function code
-  — now defunctionalises at IR time. The
-  `internal/ir/defunctionalise.go` pass walks each
-  function, identifies slots written exactly once by an
-  OpStoreLocal directly preceded by OpMakeClosure, and
-  rewrites every `OpLoadLocal slot; OpCallIndirect` pair
-  to load env_ptr inline + dispatch via a new
-  `OpCallClosureDirect` op (a plain `call $name` at the
-  wasm layer). Saves the function-table indirection +
-  the wasm `call_indirect` runtime type check on every
-  closure invocation that fits the pattern. Cross-
-  function closure returns (the `makeAdder` factory
-  shape) keep going through `call_indirect` — the
-  conservative analysis disqualifies any slot whose
-  flow source isn't an immediate MakeClosure. Future
-  follow-up: extend to the multi-flow case (tagged-union
-  dispatch over 2..N lambdas).
+  — now defunctionalises at IR time, including the
+  cross-function closure-factory pattern (`var f =
+  makeAdder(7); f(35)`). Two flavours of monomorphic flow
+  source recognised:
+    1. Direct: `OpStoreLocal slot` directly preceded by
+       `OpMakeClosure target=T`.
+    2. Factory return: `OpStoreLocal slot` directly preceded
+       by `OpCallDirect F`, where the phase-0
+       `analyseReturnTargets` pre-pass found F always
+       returns the same closure target T. The phase-0
+       analysis walks each function's OpReturn ops and
+       tracks the value-source kind: an `OpMakeClosure T`
+       or an `OpLoadLocal slot` of a locally-monomorphic
+       slot. Multi-target functions disqualify themselves.
+  Both flavours rewrite to `OpLoadLocal slot;
+  OpCallClosureDirect target` after env-load synthesis.
+  Saves the function-table indirection + the wasm
+  `call_indirect` runtime type check on every closure
+  invocation that fits the pattern. Future follow-up: the
+  multi-flow case (tagged-union dispatch over 2..N
+  lambdas) for sites where multiple distinct closures can
+  flow into the same slot.
 - **Compile-time uniqueness analysis** for in-place mutation
   (Morphic-style). Real performance win for programs that build
   up + transform big structures. Needs the IR to track ownership
