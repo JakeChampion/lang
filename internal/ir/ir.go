@@ -1423,8 +1423,9 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpITruncF32, Width: dw, Unsigned: !dstInt.IsSigned()})
 			}
 		default:
-			// Any owned array / slice / string → i32: surface
-			// the data pointer for the bulk-memory primitives.
+			// Any owned array / slice / string / struct → i32:
+			// surface the data / wrapper pointer for the bulk-
+			// memory primitives.
 			if _, ok := n.Target.(ast.NumberType); ok {
 				switch n.InnerType.(type) {
 				case ast.SliceType:
@@ -1433,22 +1434,22 @@ func (b *builder) expr(e ast.Expr) error {
 					// data_ptr at offset 0.
 					b.emit(Op{Kind: OpLoad})
 					return nil
-				case ast.ArrayType, ast.StringType:
-					// owned-array / string values ARE the
-					// data pointer; the length prefix lives
-					// at data - 4. No ops needed.
+				case ast.ArrayType, ast.StringType, ast.StructType:
+					// owned-array / string / struct values ARE
+					// the data / wrapper pointer; the length
+					// prefix (arrays/strings) or fields
+					// (structs) live at known offsets. No ops
+					// needed.
 					return nil
 				}
 			}
-			// Reverse direction: i32 → T[] / string. Pure
-			// type-level reinterpret; the runtime value is
-			// the same i32 pointer, just exposed under a
+			// Reverse direction: i32 → T[] / string / struct.
+			// Pure type-level reinterpret; the runtime value
+			// is the same i32 pointer, just exposed under a
 			// typed handle.
 			if nt, ok := n.InnerType.(ast.NumberType); ok && nt.NormalWidth() == 32 {
-				if _, ok := n.Target.(ast.ArrayType); ok {
-					return nil
-				}
-				if _, ok := n.Target.(ast.StringType); ok {
+				switch n.Target.(type) {
+				case ast.ArrayType, ast.StringType, ast.StructType:
 					return nil
 				}
 			}

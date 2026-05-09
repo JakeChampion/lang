@@ -701,15 +701,50 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		if g.needsClosures && isUser && g.inTable[op.Str] {
 			g.line("i32.const 0")
 		}
-		// Alias map for shared-implementation wat helpers.
-		// `__array_append_jsonvalue` (lang sig) shares its
-		// body with `__array_append_string` since both are
-		// 4-byte-pointer-stride; emit a call to the shared
-		// wat function rather than a duplicate.
+		// Alias map for prelude functions whose lang-side
+		// signatures need types the language doesn't yet
+		// have (generic methods on Map[K,V]) or that share a
+		// body across multiple checker-side type-views
+		// (`__array_append_jsonvalue` and
+		// `__array_append_string` both lower to one
+		// 4-byte-pointer-stride append). The checker keeps
+		// the type-rich registration; the IR rewrites the
+		// call name at emit time so wasm dispatches to the
+		// concrete `_impl` body.
 		name := op.Str
 		switch name {
 		case "__array_append_jsonvalue":
 			name = "__array_append_string"
+		case "map_new":
+			name = "map_new_impl"
+		case "__method_Map_len":
+			name = "__map_len_impl"
+		case "__method_Map_has":
+			name = "__map_has_impl"
+		case "__method_Map_get":
+			name = "__map_get_impl"
+		case "__method_Map_get_or":
+			name = "__map_get_or_impl"
+		case "__method_Map_set":
+			name = "__map_set_impl"
+		case "__method_Map_delete":
+			name = "__map_delete_impl"
+		case "__method_Map_clear":
+			name = "__map_clear_impl"
+		case "__method_Map_keys":
+			name = "__map_keys_impl"
+		case "__method_Map_values":
+			name = "__map_values_impl"
+		case "__method_Map_iter":
+			name = "__map_iter_impl"
+		case "__method_MapIter_has_next":
+			name = "__mapiter_has_next_impl"
+		case "__method_MapIter_key":
+			name = "__mapiter_key_impl"
+		case "__method_MapIter_value":
+			name = "__mapiter_value_impl"
+		case "__method_MapIter_advance":
+			name = "__mapiter_advance_impl"
 		}
 		g.linef("call $%s", name)
 	case ir.OpCallIndirect:
