@@ -161,6 +161,16 @@ const (
 	OpCallDirect   // (args...)        → result | ()
 	OpCallIndirect // (args..., idx)   → result | ()
 
+	// OpCallClosureDirect is the defunctionalised form of an
+	// OpCallIndirect whose receiver slot was provably mono-
+	// morphic (single `MakeClosure` flow source). The caller
+	// has already pushed (args..., env_ptr) onto the stack;
+	// emit issues a direct `call $name` to the hoisted target
+	// without the function-table indirection or the
+	// `i32.const 0` env-stub that OpCallDirect adds when the
+	// callee is in the closure table.
+	OpCallClosureDirect // (args..., env_ptr) → result | ()
+
 	OpDrop       // (T)               → ()
 	OpReturn     // (T)               → unwinds the function
 	OpReturnVoid // ()                → unwinds the function
@@ -344,6 +354,8 @@ func (k OpKind) String() string {
 		return "call"
 	case OpCallIndirect:
 		return "call_indirect"
+	case OpCallClosureDirect:
+		return "call_closure_direct"
 	case OpDrop:
 		return "drop"
 	case OpReturn:
@@ -463,7 +475,7 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %s", op.Kind, blockTypeName(op.I32))
 	case OpBr, OpBrIf:
 		return fmt.Sprintf("%s %d", op.Kind, op.I32)
-	case OpCallDirect:
+	case OpCallDirect, OpCallClosureDirect:
 		return fmt.Sprintf("%s %s argc=%d", op.Kind, op.Str, op.I32)
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)

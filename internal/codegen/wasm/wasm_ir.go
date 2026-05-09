@@ -769,6 +769,15 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 			g.line("i32.load")
 		}
 		g.linef("call_indirect (type $t%d)", tIdx)
+	case ir.OpCallClosureDirect:
+		// Defunctionalised closure call: caller already
+		// pushed (args..., env_ptr) onto the stack — just
+		// dispatch directly to the hoisted target. No
+		// `i32.const 0` env stub like OpCallDirect's
+		// table-callee path emits, since the env_ptr is
+		// already in place from the inlined closure-pair
+		// load the defunctionalise pass synthesised.
+		g.linef("call $%s", op.Str)
 	case ir.OpMakeClosure:
 		return g.emitMakeClosureFromIR(op)
 	default:
