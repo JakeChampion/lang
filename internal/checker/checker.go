@@ -804,21 +804,8 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerNumberMethod("i64", "to_string", ast.NumberType{Width: 64, Signed: true}, nil, ast.StringType{})
 	registerNumberMethod("u64", "to_string", ast.NumberType{Width: 64, Signed: false}, nil, ast.StringType{})
 
-	// Float `to_string()`. Receiver type is FloatType keyed by
-	// width. The helpers do plain decimal formatting with up to
-	// 7 significant digits for f32 and 15 for f64 (matching
-	// IEEE 754 single / double precision); special values
-	// (NaN, Inf) get their canonical names. Not bit-exact
-	// Steele/White / Ryu yet — close-enough-for-handler-output
-	// semantics, same trade-off as parse_float.
-	registerFloatMethod := func(typeName string, methodName string, recv ast.FloatType, params []ast.Type, result ast.Type) {
-		mangled := "__method_" + typeName + "_" + methodName
-		c.info.Methods[typeName+"."+methodName] = mangled
-		fullParams := append([]ast.Type{recv}, params...)
-		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
-	}
-	registerFloatMethod("f32", "to_string", ast.FloatType{}, nil, ast.StringType{})
-	registerFloatMethod("f64", "to_string", ast.FloatType{Width: 64}, nil, ast.StringType{})
+	// `f32.to_string()` / `f64.to_string()` migrated to the
+	// lang prelude (internal/prelude/prelude.lang).
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
@@ -2932,6 +2919,16 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 	case *ast.Binary:
 		switch x.Op {
 		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
+			// Don't stomp a float-typed binary's resolved
+			// FloatWidth with an int width — happens when an
+			// int-cast surrounds a float multiply, e.g.
+			// `(frac * mult) as i64`. settleInt is fed the
+			// cast's int target type as the hint; we must
+			// leave the inner float binary alone so the cast
+			// lowers to a float→int trunc op.
+			if x.FloatWidth != 0 {
+				return
+			}
 			if x.IntWidth == 0 {
 				c.settleInt(x.Left, hn)
 				c.settleInt(x.Right, hn)
