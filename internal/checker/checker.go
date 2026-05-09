@@ -487,6 +487,7 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerMethod("Map", "set", []ast.Type{ast.NumberType{}, ast.NumberType{}}, ast.VoidType{})
 	registerMethod("Map", "keys", nil, ast.ArrayType{Elem: ast.NumberType{}})
 	registerMethod("Map", "values", nil, ast.ArrayType{Elem: ast.NumberType{}})
+	registerMethod("Map", "delete", []ast.Type{ast.NumberType{}}, ast.BoolType{})
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled

@@ -3504,6 +3504,76 @@ func (g *generator) emitMapHelpers() {
 	}
 	emitMapColumn("$__method_Map_keys", 0)
 	emitMapColumn("$__method_Map_values", 4)
+
+	// $__method_Map_delete: linear search for k. If found,
+	// swap the last entry into the matched slot (O(1)) and
+	// decrement len; return true. Else return false. Trades
+	// insertion order for speed — callers that need stable
+	// ordering can rebuild via keys() / values() snapshots.
+	g.line(`(func $__method_Map_delete (param $m i32) (param $k i32) (result i32)`)
+	g.indent++
+	g.line(`(local $idx i32) (local $buf i32) (local $last i32)`)
+	g.line(`local.get $m`)
+	g.line(`local.get $k`)
+	g.line(`call $__map_find`)
+	g.line(`local.tee $idx`)
+	g.line(`i32.const -1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load offset=4`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.set $last`)
+	// If idx != last, copy buf[last] over buf[idx].
+	g.line(`local.get $idx`)
+	g.line(`local.get $last`)
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	// buf + 8 + idx*8 = buf + 8 + last*8 (key)
+	g.line(`local.get $buf`)
+	g.line(`local.get $idx`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $last`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=8`)
+	g.line(`i32.store offset=8`)
+	// And value at +12
+	g.line(`local.get $buf`)
+	g.line(`local.get $idx`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $last`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=12`)
+	g.line(`i32.store offset=12`)
+	g.indent--
+	g.line(`end`)
+	// buf[4] = last (i.e. len - 1)
+	g.line(`local.get $buf`)
+	g.line(`local.get $last`)
+	g.line(`i32.store offset=4`)
+	g.line(`i32.const 1`)
+	g.indent--
+	g.line(`)`)
 }
 
 // emitRandomBytesHelper writes `$random_bytes(n)`, allocating
