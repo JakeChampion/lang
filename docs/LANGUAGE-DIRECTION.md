@@ -776,12 +776,14 @@ the lang's abstraction layers.
    methods: `starts_with`, `ends_with`, `contains`,
    `index_of`, `trim` (slice-based, no allocation), then
    `to_lower`, `to_upper`, `bytes` (allocation-based,
-   built on the new `__alloc_u8` primitive). The
-   supporting `__is_ascii_ws` wat helper retired with
-   `trim`; `__bytes_eq` stays for `split` / `replace`
-   which haven't migrated yet (their variable-length
-   array growth still needs a primitive — likely an
-   `__array_grow_u8` companion or similar).
+   built on the new `__alloc_u8` primitive), then `split`
+   and `replace` (variable-length result, built on
+   `__array_append_string` + concat). The supporting
+   `__is_ascii_ws` and `__bytes_eq` wat helpers retired
+   together with the migrations — every string method
+   that has a wat helper has now moved, except
+   `as_bytes` (which still needs slice-header alloc the
+   prelude doesn't yet expose).
 3. **Bridge functions for wasm intrinsics shipped.**
    `__memcpy(dst, src, n)`, `__memset(dst, b, n)`, and
    `__alloc_u8(n): u8[]` are thin wat-shim wrappers around

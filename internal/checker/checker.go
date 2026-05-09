@@ -715,12 +715,10 @@ func Check(prog *ast.Program) (*Info, error) {
 		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
 	}
 	// `starts_with` / `ends_with` / `contains` / `index_of`
-	// / `trim` / `to_lower` / `to_upper` / `bytes` migrated
-	// to the lang prelude (internal/prelude/prelude.lang);
-	// their signatures are registered via the prelude's
-	// FuncDecls.
-	registerStringMethod("split", []ast.Type{ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}})
-	registerStringMethod("replace", []ast.Type{ast.StringType{}, ast.StringType{}}, ast.StringType{})
+	// / `trim` / `to_lower` / `to_upper` / `bytes` / `split`
+	// / `replace` migrated to the lang prelude
+	// (internal/prelude/prelude.lang); their signatures are
+	// registered via the prelude's FuncDecls.
 	// `s.is_empty()` lives in the lang prelude
 	// (internal/prelude/prelude.lang); the receiver-hoisting
 	// machinery + builtin-receivers extension wires it
