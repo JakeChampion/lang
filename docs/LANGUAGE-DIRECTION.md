@@ -568,6 +568,24 @@ Deferred to a follow-up:
     Steele/White / Ryu yet; close-enough-for-handler-config
     semantics. Hex / scientific formats with explicit base
     will get separate methods.
+  - **`url_parse(s)` shipped.** Decomposes an absolute or
+    relative URL into a `Url` struct (auto-injected, six
+    fields: `scheme`, `host`, `port`, `path`, `query`,
+    `fragment`). Returns `Option[Url]`; `None` only on
+    completely empty input — best-effort parse otherwise
+    with empty strings for missing sections and `port = 0`
+    when unspecified or unparseable. No %-decoding; `query`
+    and `fragment` are returned raw (callers do their own
+    decode). The single-pass implementation scans for the
+    boundary characters (`:` + `//`, `?`, `#`), derives
+    section indices, and slices the input via
+    `__str_slice` — sub-strings share the parent's lifetime
+    via the bump allocator's "everything alive at scope
+    exit" semantics. Drive-by IR fix: `fieldOwner` /
+    `exprType` / `targetTupleType` now consult
+    `b.scratchType` via the slot map, so match-arm-bound
+    struct values (`Some(u) => u.scheme`) work — first time
+    we exercised that path. JSON is the next stdlib piece.
 
 ## Open questions to settle as we go
 

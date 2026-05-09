@@ -1955,6 +1955,11 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 				return p.Type
 			}
 		}
+		if slot, ok := b.locals[x.Name]; ok {
+			if t, ok := b.scratchType[slot]; ok {
+				return t
+			}
+		}
 	case *ast.SliceExpr:
 		// Slice expressions always produce a SliceType — the
 		// element type is the same as the source.
@@ -1989,6 +1994,13 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 				}
 			}
 		}
+		if slot, ok := b.locals[x.Name]; ok {
+			if t, ok := b.scratchType[slot]; ok {
+				if tt, ok := t.(ast.TupleType); ok {
+					return tt, true
+				}
+			}
+		}
 	case *ast.TupleLit:
 		elems := make([]ast.Type, 0, len(x.Elems))
 		// The checker has already type-checked inner exprs, but
@@ -2019,7 +2031,9 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 	switch x := e.(type) {
 	case *ast.Ident:
 		// Look up via locals: vars carry a Var.Type; params live in
-		// fn.Params. We cross-reference the checker's info.
+		// fn.Params. We cross-reference the checker's info. Match-
+		// arm bindings (and other IR-introduced locals) only show
+		// up in b.scratchType, so consult that as a third source.
 		for _, v := range b.info.Locals[b.fn] {
 			if v.Name == x.Name {
 				if st, ok := v.Type.(ast.StructType); ok {
@@ -2030,6 +2044,13 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 		for _, p := range b.fn.Params {
 			if p.Name == x.Name {
 				if st, ok := p.Type.(ast.StructType); ok {
+					return st.Name
+				}
+			}
+		}
+		if slot, ok := b.locals[x.Name]; ok {
+			if t, ok := b.scratchType[slot]; ok {
+				if st, ok := t.(ast.StructType); ok {
 					return st.Name
 				}
 			}

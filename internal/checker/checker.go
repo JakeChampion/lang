@@ -205,6 +205,24 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "i", Type: ast.NumberType{}},
 			},
 		},
+		// Url — return type of `url_parse(s)`. Holds the
+		// component pieces of an absolute or relative URL.
+		// `port = 0` means unspecified (parser defaults
+		// follow-up). Empty strings indicate missing
+		// sections rather than allocating Option types
+		// per-field — keeps the struct flat and the wasm
+		// emitter simple.
+		{
+			Name: "Url",
+			Fields: []ast.Param{
+				{Name: "scheme", Type: ast.StringType{}},
+				{Name: "host", Type: ast.StringType{}},
+				{Name: "port", Type: ast.NumberType{}},
+				{Name: "path", Type: ast.StringType{}},
+				{Name: "query", Type: ast.StringType{}},
+				{Name: "fragment", Type: ast.StringType{}},
+			},
+		},
 	}
 }
 
@@ -632,6 +650,17 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["hex_decode"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.StringType{},
+	}
+
+	// url_parse(s): split an absolute or relative URL into its
+	// component pieces. Returns Option[Url]; None on completely
+	// empty input only — best-effort parse otherwise (missing
+	// scheme / host / path all just get empty strings rather
+	// than refusing). Port is 0 when unspecified or
+	// unparseable. No %-decoding; query and fragment are raw.
+	c.info.FuncSigs["url_parse"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StructType{Name: "Url"}}},
 	}
 
 	// Built-in numeric methods. The receiver type is `NumberType`
