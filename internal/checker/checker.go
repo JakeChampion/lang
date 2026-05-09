@@ -508,6 +508,8 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerStringMethod("trim", nil, ast.StringType{})
 	registerStringMethod("to_lower", nil, ast.StringType{})
 	registerStringMethod("to_upper", nil, ast.StringType{})
+	registerStringMethod("split", []ast.Type{ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}})
+	registerStringMethod("replace", []ast.Type{ast.StringType{}, ast.StringType{}}, ast.StringType{})
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled

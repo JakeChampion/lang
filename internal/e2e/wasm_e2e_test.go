@@ -1163,6 +1163,68 @@ func TestWASMStringMethodsExtra(t *testing.T) {
 	}
 }
 
+// String split: returns string[] of substrings between
+// occurrences of the separator. Empty separator splits into
+// single-char strings (matches JS String.split("")).
+func TestWASMStringSplit(t *testing.T) {
+	src := `function main(): i32 {
+    var s: string = "a,b,c,d";
+    var parts: string[] = s.split(",");
+    if (len(parts) != 4) { return 1; }
+    if (parts[0] != "a") { return 2; }
+    if (parts[1] != "b") { return 3; }
+    if (parts[2] != "c") { return 4; }
+    if (parts[3] != "d") { return 5; }
+
+    // No occurrence: single-element array holding the whole input.
+    var none: string[] = "hello".split(",");
+    if (len(none) != 1) { return 6; }
+    if (none[0] != "hello") { return 7; }
+
+    // Multi-byte separator.
+    var s2: string = "alpha::beta::gamma";
+    var p2: string[] = s2.split("::");
+    if (len(p2) != 3) { return 8; }
+    if (p2[0] != "alpha") { return 9; }
+    if (p2[1] != "beta") { return 10; }
+    if (p2[2] != "gamma") { return 11; }
+
+    // Empty separator splits into chars.
+    var chars: string[] = "abc".split("");
+    if (len(chars) != 3) { return 12; }
+    if (chars[0] != "a") { return 13; }
+    if (chars[1] != "b") { return 14; }
+    if (chars[2] != "c") { return 15; }
+
+    // Empty pieces around separators are preserved.
+    var trailing: string[] = ",a,b,".split(",");
+    if (len(trailing) != 4) { return 16; }
+    if (trailing[0] != "") { return 17; }
+    if (trailing[3] != "") { return 18; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (string split)", got)
+	}
+}
+
+// String replace: substitutes every non-overlapping occurrence
+// of the old pattern with the new value.
+func TestWASMStringReplace(t *testing.T) {
+	src := `function main(): i32 {
+    if ("hello world".replace("world", "Earth") != "hello Earth") { return 1; }
+    if ("aaa".replace("a", "bb") != "bbbbbb") { return 2; }
+    if ("xyz".replace("z", "") != "xy") { return 3; }
+    if ("hello".replace("xyz", "abc") != "hello") { return 4; }
+    if ("hello".replace("", "x") != "hello") { return 5; }
+    if ("aXbXc".replace("X", "::") != "a::b::c") { return 6; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (string replace)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64
