@@ -975,6 +975,12 @@ type FuncDecl struct {
 	// callee's signature to infer the missing parameter type.
 	// Nil otherwise.
 	UseInferSource *Call
+	// IsPrelude is true for declarations sourced from the
+	// auto-injected lang prelude (internal/prelude/prelude.lang).
+	// The flag is set at injection time so tests / dump tools
+	// can filter prelude noise out of "user code" listings; it
+	// has no semantic effect on type-checking, IR, or codegen.
+	IsPrelude bool
 }
 
 // StructDecl is a top-level `struct` declaration. Fields are stored in

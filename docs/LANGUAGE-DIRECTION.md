@@ -650,18 +650,33 @@ Deferred to a follow-up:
 
 ## Stdlib implementation strategy: hand-written wat vs IR-routed
 
-Today every stdlib helper (`map_new`, `__method_string_*`,
-`json_encode`, `json_parse`, `url_parse`, `query_parse`,
-`base64_*`, `hex_*`, `parse_int`, `parse_float`, `arena_save`,
-etc.) is hand-written wat emitted directly in `internal/codegen/
-wasm/wasm.go`. The IR sees only the call sites
-(`OpCallDirect "name"`); the helper bodies bypass the IR
-entirely.
+Two flavours of stdlib helper coexist:
 
-The alternative would be writing the helpers in lang itself,
-prepended to the user's program via a `prelude.lang` module
-parsed at checker startup, and compiled through the normal IR
-+ codegen pipeline like any user code.
+1. **Runtime core (hand-written wat).** `__lang_alloc`,
+   `__str_eq`, `__str_slice`, `__slice_idx_*`, the Map's hash
+   mix + open-addressing core, `arena_save` / `arena_restore`,
+   the int formatter, and the wasi imports. Hand-written wat
+   in `internal/codegen/wasm/wasm.go`. The IR sees only the
+   call sites (`OpCallDirect "name"`); helper bodies bypass
+   the IR entirely.
+
+2. **Lang prelude (IR-routed).** `internal/prelude/prelude.lang`
+   — a small embedded source file parsed at checker startup
+   and prepended to the user's program. Goes through the
+   regular parser → checker → IR → codegen pipeline like any
+   user code, so it picks up IR-level optimisations (peephole,
+   dce, future inlining) and works on any backend without
+   backend-specific shims. Method receivers in the prelude
+   can be built-in scalar types (`function (s: string)
+   is_empty(): boolean { return len(s) == 0; }`) and the
+   receiver-hoisting + dispatch path treats them the same
+   way as struct/enum methods.
+
+Migration is incremental: each high-level helper moves from
+wat to prelude on its own; the runtime core stays in wat
+because the operations needed (memory.copy, memory.grow, raw
+loads/stores, hash mixing) aren't expressible at the lang
+level today.
 
 **Performance comparison** (rough, based on the existing
 helpers):
@@ -682,57 +697,48 @@ hash mixing, the bump allocator) hand-written wat is meaningfully
 faster because we control the exact ops without going through
 the lang's abstraction layers.
 
-**Recommendation** (if/when this migration happens):
+**Migration path** (split into per-helper PRs):
 
-1. **Keep hand-written wat for the runtime core.** `__lang_alloc`,
-   `__str_eq`, `__str_slice`, `__slice_idx_*`, the Map's hash mix
-   + open-addressing core, the arena cursor save/restore. These
-   are perf-critical, target-specific, and use wasm intrinsics
-   (`memory.copy`, `memory.fill`, `memory.size`, etc.) that lang
-   doesn't expose.
-2. **Migrate higher-level stdlib to lang prelude.** `parse_int`,
-   `parse_float`, `s.repeat`, `url_parse`, `query_parse`,
-   `json_encode`, `json_parse` — all expressible in terms of
-   string indexing, slicing, Map operations, and recursion. The
-   prelude file would be a couple hundred lines of clear lang
-   code instead of thousands of lines of wat.
-3. **Inject the prelude during `checker.Check`.** Parse the
-   embedded `prelude.lang` source, prepend its decls to
-   `prog.Funcs` / `prog.Structs` / `prog.Enums` (similar to the
-   existing auto-injected `Option`, `Result`, `Reader`, `Writer`,
-   `Map`, `JsonValue` declarations), then run the rest of the
-   pipeline. This keeps the IR + codegen unaware of the
-   prelude's special status.
-4. **Bridge functions for wasm intrinsics.** A handful of
-   wasm-only primitives (`memory.copy`, atomic ops) would still
-   need wat shims; those become tiny named helpers callable from
-   lang as `__memcpy(dst, src, n)` etc.
+1. ✅ **Phase A: prelude infrastructure + first migration.**
+   `internal/prelude/prelude.go` embeds the `prelude.lang`
+   source via `//go:embed`; `injectPrelude` parses it on
+   each `checker.Check` call and appends the decls to
+   `prog.Funcs` (with `IsPrelude=true` for filtering in
+   tests / dump tools). Method-receiver type-checking
+   extended to accept `string`, `i8/i16/i32/i64/u8/u16/u32/u64`,
+   and `f32/f64` receivers — built-in scalar receivers go
+   through the same hoisting + dispatch as struct / enum
+   methods. First migration: `s.is_empty()` — was 11 lines
+   of hand-written wat, now 3 lines of lang.
+2. **Phase B: migrate higher-level stdlib.** `parse_int`,
+   `parse_float`, `s.repeat`, `url_encode`, `url_decode`,
+   `query_parse`, `url_parse`, `json_encode`, `json_parse`,
+   `f32.to_string`, `f64.to_string` — each move from wat to
+   prelude on its own per-PR cadence. Order: simplest
+   first (`s.repeat`, `parse_int`); deferred until last:
+   the recursive ones (`json_*`) and anything that needs a
+   primitive still missing from lang (e.g., raw byte
+   pokes for the JSON encoder's growable buffer).
+3. **Bridge functions for wasm intrinsics.** Some lang
+   prelude code wants direct access to `memory.copy` /
+   `memory.fill`. Add tiny wat-shim builtins (`__memcpy`,
+   `__memset`) that the prelude calls explicitly.
 
-**Why not yet:**
+**Why not migrate everything at once:**
 
-- Lang is missing some primitives the prelude would want:
-  `i32` ↔ `f32` bit-cast (for f32 manipulation), low-level byte
-  manipulation that doesn't go through bounds checks.
-- The IR doesn't aggressively inline cross-function — the
-  `s.is_empty()`-style one-liners would carry call overhead
-  until the IR gets a small-function inliner.
-- Cross-target stdlib only matters when arm32 reaches the
-  baseline currently set by wasm. Today wasm is the primary
-  target; arm32 is on the roadmap but trails on stdlib coverage.
-- Migrating one helper at a time is fine; no big-bang needed.
-
-**Concrete first migration candidates** (small wins to validate
-the approach):
-
-- `s.is_empty()` — one-line lang body, immediate readability win.
-- `s.repeat(n)` — straightforward loop, bounds-checked indices.
-- `parse_int(s)` — already mostly mechanical; lang version would
-  use `match`-on-byte-class instead of nested wasm `if`s.
-
-Treat this as a "consider if compiler complexity becomes a
-maintenance issue" item, not a "must do" item. The hand-written
-wat is working; the trade-off is favourable today because
-each helper is a one-time cost and the perf is good.
+- Lang is missing some primitives the prelude would want
+  for the most aggressive helpers: `i32 ↔ f32` bit-cast (for
+  the float formatter's exponent bit pattern), `memory.copy`
+  shim (for the json buffer). Add these incrementally.
+- The IR doesn't aggressively inline cross-function yet — a
+  one-line method like `s.is_empty()` carries a call cost
+  until the IR gets a small-function inliner. Acceptable
+  for now; revisit when profiling shows it.
+- Each migration removes per-PR risk: the migrated helper is
+  validated against the existing test suite (no behavior
+  change), so the wat → lang transition is observable only
+  in the wasm size + readability of the source, not in the
+  user-visible behavior.
 
 ## Open questions to settle as we go
 

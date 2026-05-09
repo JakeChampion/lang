@@ -4839,17 +4839,11 @@ func (g *generator) emitStringMethodHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// $__method_string_is_empty(s): bool — returns 1 if
-	// the string's length prefix is 0, else 0.
-	g.line(`(func $__method_string_is_empty (param $s i32) (result i32)`)
-	g.indent++
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`i32.eqz`)
-	g.indent--
-	g.line(`)`)
+	// `$__method_string_is_empty` migrated to the lang
+	// prelude (internal/prelude/prelude.lang). Removed the
+	// hand-written wat — the prelude version compiles to
+	// roughly the same i32.eqz-on-len shape via the IR's
+	// len-fold path.
 
 	// $__method_string_repeat(s, n): string — `n` copies of
 	// s concatenated. `n <= 0` returns empty; `n == 1`
