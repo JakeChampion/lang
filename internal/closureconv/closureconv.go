@@ -193,6 +193,13 @@ func (c *converter) rewriteStmt(s ast.Stmt, ctx *captureCtx) (ast.Stmt, error) {
 		}
 		n.Init = nv
 		return n, nil
+	case *ast.Destructure:
+		nv, err := c.rewriteExpr(n.Init, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Init = nv
+		return n, nil
 	case *ast.ExprStmt:
 		ne, err := c.rewriteExpr(n.Expr, ctx)
 		if err != nil {

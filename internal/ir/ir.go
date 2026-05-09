@@ -1060,6 +1060,48 @@ func (b *builder) stmt(s ast.Stmt) error {
 			return fmt.Errorf("ir: var %q has no slot (compiler bug)", n.Name)
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
+	case *ast.Destructure:
+		// Evaluate Init once into the synthesised temp slot,
+		// then per-name: load temp + i*4 + load (or fload for
+		// f32 elements) and store into the name's slot.
+		tempIdx, ok := b.locals[n.TempName]
+		if !ok {
+			return fmt.Errorf("ir: destructure temp %q has no slot (compiler bug)", n.TempName)
+		}
+		if err := b.expr(n.Init); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
+		// Recover the tuple element types from the synthetic
+		// temp so we know which load opcode (Load vs FLoad)
+		// applies to each name.
+		var tup ast.TupleType
+		for _, v := range b.info.Locals[b.fn] {
+			if v.Name == n.TempName {
+				if t, ok := v.Type.(ast.TupleType); ok {
+					tup = t
+				}
+				break
+			}
+		}
+		if len(tup.Elems) != len(n.Names) {
+			return fmt.Errorf("ir: destructure arity mismatch (compiler bug)")
+		}
+		for i, name := range n.Names {
+			nameIdx, ok := b.locals[name]
+			if !ok {
+				return fmt.Errorf("ir: destructure name %q has no slot (compiler bug)", name)
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: tempIdx})
+			b.emit(Op{Kind: OpConstI32, I32: int32(i * 4)})
+			b.emit(Op{Kind: OpAdd})
+			if isFloat(tup.Elems[i]) {
+				b.emit(Op{Kind: OpFLoad})
+			} else {
+				b.emit(Op{Kind: OpLoad})
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: nameIdx})
+		}
 	case *ast.ExprStmt:
 		if err := b.expr(n.Expr); err != nil {
 			return err

@@ -1076,6 +1076,22 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		}
 		e.declare(x.Name, v)
 		return result{flow: flowNormal}, nil
+	case *ast.Destructure:
+		v, err := i.evalExpr(x.Init, e)
+		if err != nil {
+			return result{}, err
+		}
+		arr, ok := v.(Array)
+		if !ok {
+			return result{}, fmt.Errorf("destructure requires a tuple, got %T", v)
+		}
+		if len(arr) != len(x.Names) {
+			return result{}, fmt.Errorf("tuple has %d elements, but %d names given", len(arr), len(x.Names))
+		}
+		for i2, name := range x.Names {
+			e.declare(name, arr[i2])
+		}
+		return result{flow: flowNormal}, nil
 	case *ast.ExprStmt:
 		if _, err := i.evalExpr(x.Expr, e); err != nil {
 			return result{}, err

@@ -327,6 +327,8 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 		}
 	case *ast.Var:
 		s.walkExpr(&x.Init)
+	case *ast.Destructure:
+		s.walkExpr(&x.Init)
 	case *ast.ExprStmt:
 		s.walkExpr(&x.Expr)
 	case *ast.Switch:

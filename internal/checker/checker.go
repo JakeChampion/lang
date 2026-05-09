@@ -1470,6 +1470,46 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		s.names[n.Name] = n.Type
 		c.info.VarTypes[n] = n.Type
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
+	case *ast.Destructure:
+		// `let (a, b, …) = expr;` — Init must produce a
+		// tuple of arity len(Names). Each name is registered
+		// as a local in the enclosing scope, plus a hidden
+		// temp local that holds the tuple pointer so the IR
+		// can do one evaluation followed by per-name field
+		// loads.
+		got := c.checkExpr(n.Init, s)
+		tup, ok := got.(ast.TupleType)
+		if !ok {
+			if got != nil {
+				c.errf(n.P, "tuple destructure needs a tuple expression, got %s", got)
+			}
+			return
+		}
+		if len(tup.Elems) != len(n.Names) {
+			c.errf(n.P, "tuple has %d elements, but %d names given", len(tup.Elems), len(n.Names))
+			return
+		}
+		// Hidden temp holds the tuple pointer between the
+		// init's evaluation and the per-name loads. Name is
+		// uniqued by source position so multiple destructures
+		// in the same function don't collide.
+		tempName := fmt.Sprintf("__destruct_%d_%d", n.P.Line, n.P.Col)
+		n.TempName = tempName
+		tempVar := &ast.Var{P: n.P, Name: tempName, Type: tup}
+		s.names[tempName] = tup
+		c.info.VarTypes[tempVar] = tup
+		c.info.Locals[c.current] = append(c.info.Locals[c.current], tempVar)
+		for i, name := range n.Names {
+			if _, dup := s.names[name]; dup {
+				c.errf(n.P, "variable %q already declared in this scope", name)
+				continue
+			}
+			elemT := tup.Elems[i]
+			v := &ast.Var{P: n.P, Name: name, Type: elemT}
+			s.names[name] = elemT
+			c.info.VarTypes[v] = elemT
+			c.info.Locals[c.current] = append(c.info.Locals[c.current], v)
+		}
 	case *ast.ExprStmt:
 		c.checkExpr(n.Expr, s)
 	case *ast.Switch:

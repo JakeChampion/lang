@@ -274,3 +274,26 @@ func TestInterpTcpSocketEcho(t *testing.T) {
 		t.Errorf("tcp_listen + tcp_close: got %v, want 0", v)
 	}
 }
+
+// `let (a, b) = expr;` binds each name to the corresponding
+// tuple element. Covers a tuple literal, a function returning
+// a tuple, and a 3-element destructure for arity > 2.
+func TestInterpTupleDestructure(t *testing.T) {
+	src := `function divmod(a: i32, b: i32): (i32, i32) {
+		return (a / b, a % b);
+	}
+	function main(): i32 {
+		let (a, b) = (10, 32);
+		if (a != 10) { return 1; }
+		if (b != 32) { return 2; }
+		let (q, r) = divmod(17, 5);
+		if (q != 3) { return 3; }
+		if (r != 2) { return 4; }
+		let (x, y, z) = (1, 2, 3);
+		return x + y + z;
+	}`
+	v, _ := evalProgram(t, src)
+	if n, ok := v.(Number); !ok || n != 6 {
+		t.Errorf("destructure: got %v, want 6", v)
+	}
+}

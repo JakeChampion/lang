@@ -354,6 +354,8 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 	case *ast.Var:
 		x.Type = substituteType(x.Type, sub)
 		substituteExpr(x.Init, sub)
+	case *ast.Destructure:
+		substituteExpr(x.Init, sub)
 	case *ast.Block:
 		substituteBlock(x, sub)
 	case *ast.If:
@@ -490,6 +492,11 @@ func cloneStmt(s ast.Stmt) ast.Stmt {
 	switch x := s.(type) {
 	case *ast.Var:
 		c := *x
+		c.Init = cloneExpr(x.Init)
+		return &c
+	case *ast.Destructure:
+		c := *x
+		c.Names = append([]string(nil), x.Names...)
 		c.Init = cloneExpr(x.Init)
 		return &c
 	case *ast.ExprStmt:
@@ -688,6 +695,8 @@ func walkBlockStructLits(b *ast.Block, fn func(*ast.StructLit)) {
 func walkStmtStructLits(s ast.Stmt, fn func(*ast.StructLit)) {
 	switch x := s.(type) {
 	case *ast.Var:
+		walkExprStructLits(x.Init, fn)
+	case *ast.Destructure:
 		walkExprStructLits(x.Init, fn)
 	case *ast.ExprStmt:
 		walkExprStructLits(x.Expr, fn)
@@ -899,6 +908,10 @@ func rewriteStmtTypes(s ast.Stmt, info *checker.Info, into map[instKey][]ast.Typ
 		if x.Type != nil {
 			x.Type = rewriteType(x.Type, info, into)
 		}
+	case *ast.Destructure:
+		// No types stored on the node itself — element types
+		// flow from the synthesised temp `*ast.Var` in
+		// info.Locals, which the existing Var case handles.
 	case *ast.Block:
 		rewriteBlockTypes(x, info, into)
 	case *ast.If:
@@ -950,6 +963,8 @@ func walkBlock(b *ast.Block, fn func(*ast.Call)) {
 func walkStmt(s ast.Stmt, fn func(*ast.Call)) {
 	switch x := s.(type) {
 	case *ast.Var:
+		walkExpr(x.Init, fn)
+	case *ast.Destructure:
 		walkExpr(x.Init, fn)
 	case *ast.ExprStmt:
 		walkExpr(x.Expr, fn)
