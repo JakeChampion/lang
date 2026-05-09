@@ -1379,6 +1379,82 @@ func TestWASMParseInt(t *testing.T) {
 	}
 }
 
+// `s.parse_float(): Option[f32]` — accepts integer-only,
+// integer.fraction, .fraction, and exponent forms. The
+// helper bumps a saturating mantissa accumulator to avoid
+// overflow on very-long inputs while keeping the magnitude
+// right via exp_adj. Compares each parsed value against an
+// expected literal with a generous epsilon — float-from-
+// decimal isn't bit-exact and we don't claim Steele/White
+// guarantees yet.
+func TestWASMParseFloat(t *testing.T) {
+	src := `function near(actual: f32, expected: f32, eps: f32): boolean {
+		var diff: f32 = actual - expected;
+		if (diff < 0.0) { diff = 0.0 - diff; }
+		var bound: f32 = expected;
+		if (bound < 0.0) { bound = 0.0 - bound; }
+		var rel: f32 = bound * eps;
+		if (rel < eps) { rel = eps; }
+		return diff < rel;
+	}
+	function main(): i32 {
+		// Successes — integer / fraction / exponent shapes.
+		match ("3.14".parse_float()) {
+			Some(v) => { if (!near(v, 3.14, 0.001)) { return 1; } },
+			None => { return 2; }
+		}
+		match ("0".parse_float()) {
+			Some(v) => { if (v != 0.0) { return 3; } },
+			None => { return 4; }
+		}
+		match ("-2.5".parse_float()) {
+			Some(v) => { if (!near(v, -2.5, 0.001)) { return 5; } },
+			None => { return 6; }
+		}
+		match (".5".parse_float()) {
+			Some(v) => { if (!near(v, 0.5, 0.001)) { return 7; } },
+			None => { return 8; }
+		}
+		match ("42.".parse_float()) {
+			Some(v) => { if (!near(v, 42.0, 0.001)) { return 9; } },
+			None => { return 10; }
+		}
+		match ("1e3".parse_float()) {
+			Some(v) => { if (!near(v, 1000.0, 0.001)) { return 11; } },
+			None => { return 12; }
+		}
+		match ("1.5e2".parse_float()) {
+			Some(v) => { if (!near(v, 150.0, 0.001)) { return 13; } },
+			None => { return 14; }
+		}
+		match ("2.5E-2".parse_float()) {
+			Some(v) => { if (!near(v, 0.025, 0.0001)) { return 15; } },
+			None => { return 16; }
+		}
+		match ("1e+5".parse_float()) {
+			Some(v) => { if (!near(v, 100000.0, 0.001)) { return 17; } },
+			None => { return 18; }
+		}
+
+		// Failures — bad shapes must come back None.
+		match ("".parse_float()) { Some(_) => { return 30; }, None => {} }
+		match ("-".parse_float()) { Some(_) => { return 31; }, None => {} }
+		match (".".parse_float()) { Some(_) => { return 32; }, None => {} }
+		match ("abc".parse_float()) { Some(_) => { return 33; }, None => {} }
+		match ("1.2.3".parse_float()) { Some(_) => { return 34; }, None => {} }
+		match ("1e".parse_float()) { Some(_) => { return 35; }, None => {} }
+		match ("1ex".parse_float()) { Some(_) => { return 36; }, None => {} }
+		match ("1e-".parse_float()) { Some(_) => { return 37; }, None => {} }
+		match ("1.5x".parse_float()) { Some(_) => { return 38; }, None => {} }
+		match ("+1".parse_float()) { Some(_) => { return 39; }, None => {} }
+
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (parse_float)", got)
+	}
+}
+
 // String-keyed Map[string, i32]. Same API as Map[i32, i32];
 // equality at the runtime layer dispatches to byte-level
 // strcmp via the buffer's keyKind tag.

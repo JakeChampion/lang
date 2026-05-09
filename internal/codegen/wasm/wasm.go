@@ -4936,6 +4936,444 @@ func (g *generator) emitStringMethodHelpers() {
 	g.line(`local.get $opt`)
 	g.indent--
 	g.line(`)`)
+
+	// $__method_string_parse_float(s): Option[f32] — decimal
+	// f32 parser. Accepts:
+	//   [-]<digits>[.<digits>][(e|E)[+-]?<digits>]
+	// at least one of integer or fraction digits is required;
+	// trailing garbage rejected. Mantissa accumulates into an
+	// i64 with a 2^53-ish saturation point — beyond that we
+	// stop adding digits but track the magnitude in `exp_adj`
+	// so the final scale remains correct (modulo precision).
+	// Final value = (f32) mantissa * 10^exp_adj, sign applied
+	// via `f32.neg` at the end.
+	g.line(`(func $__method_string_parse_float (param $s i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $i i32) (local $b i32)`)
+	g.line(`(local $mantissa i64) (local $exp_adj i32)`)
+	g.line(`(local $exp i32) (local $exp_neg i32)`)
+	g.line(`(local $saw_int i32) (local $saw_frac i32) (local $saw_exp i32)`)
+	g.line(`(local $neg i32) (local $opt i32) (local $v f32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	// Empty -> None.
+	g.line(`local.get $sLen`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $opt`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $opt`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Optional leading '-'. Lone '-' is None.
+	g.line(`local.get $s`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.const 45`) // '-'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 1`)
+	g.line(`local.set $neg`)
+	g.line(`i32.const 1`)
+	g.line(`local.set $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.const 1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $opt`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $opt`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// $done jumps past $bad on a clean parse; $bad falls through
+	// to the inline None emit at the end of $bad.
+	g.line(`block $done`)
+	g.indent++
+	g.line(`block $bad`)
+	g.indent++
+	// === Integer digits ===
+	g.line(`block $end_int`)
+	g.indent++
+	g.line(`loop $int_loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end_int`)
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.set $b`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 48`) // '0'
+	g.line(`i32.lt_u`)
+	g.line(`br_if $end_int`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 57`) // '9'
+	g.line(`i32.gt_u`)
+	g.line(`br_if $end_int`)
+	// Saturating accumulate: while mantissa < 1e15, add digit;
+	// past that, just bump exp_adj per digit consumed so the
+	// magnitude stays right.
+	g.line(`local.get $mantissa`)
+	g.line(`i64.const 1000000000000000`)
+	g.line(`i64.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $mantissa`)
+	g.line(`i64.const 10`)
+	g.line(`i64.mul`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.sub`)
+	g.line(`i64.extend_i32_u`)
+	g.line(`i64.add`)
+	g.line(`local.set $mantissa`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $exp_adj`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $exp_adj`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 1`)
+	g.line(`local.set $saw_int`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $int_loop`)
+	g.indent--
+	g.line(`end`) // int_loop
+	g.indent--
+	g.line(`end`) // $end_int
+	// === Fraction part: optional `.<digits>` ===
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.const 46`) // '.'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`block $end_frac`)
+	g.indent++
+	g.line(`loop $frac_loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end_frac`)
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.set $b`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.lt_u`)
+	g.line(`br_if $end_frac`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 57`)
+	g.line(`i32.gt_u`)
+	g.line(`br_if $end_frac`)
+	// Same saturation rule as the integer branch, but
+	// each digit also moves exp_adj down by 1 (we're past
+	// the decimal point).
+	g.line(`local.get $mantissa`)
+	g.line(`i64.const 1000000000000000`)
+	g.line(`i64.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $mantissa`)
+	g.line(`i64.const 10`)
+	g.line(`i64.mul`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.sub`)
+	g.line(`i64.extend_i32_u`)
+	g.line(`i64.add`)
+	g.line(`local.set $mantissa`)
+	g.line(`local.get $exp_adj`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.set $exp_adj`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 1`)
+	g.line(`local.set $saw_frac`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $frac_loop`)
+	g.indent--
+	g.line(`end`) // frac_loop
+	g.indent--
+	g.line(`end`) // $end_frac
+	g.indent--
+	g.line(`end`) // matched '.'
+	g.indent--
+	g.line(`end`) // i < sLen
+	// At least one of integer or fraction digits required.
+	g.line(`local.get $saw_int`)
+	g.line(`local.get $saw_frac`)
+	g.line(`i32.or`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $bad`)
+	// === Exponent part: optional [eE][+-]?<digits> ===
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.tee $b`)
+	g.line(`i32.const 101`) // 'e'
+	g.line(`i32.eq`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 69`) // 'E'
+	g.line(`i32.eq`)
+	g.line(`i32.or`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	// Optional sign on exponent.
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.set $b`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 43`) // '+'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $b`)
+	g.line(`i32.const 45`) // '-'
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 1`)
+	g.line(`local.set $exp_neg`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Exponent digits — at least one required.
+	g.line(`block $end_exp`)
+	g.indent++
+	g.line(`loop $exp_loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end_exp`)
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.set $b`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.lt_u`)
+	g.line(`br_if $end_exp`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 57`)
+	g.line(`i32.gt_u`)
+	g.line(`br_if $end_exp`)
+	// exp = min(exp*10 + digit, 1000) — caps so the post-loop
+	// scale loop terminates even on `1e9999999`.
+	g.line(`local.get $exp`)
+	g.line(`i32.const 1000`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $exp`)
+	g.line(`i32.const 10`)
+	g.line(`i32.mul`)
+	g.line(`local.get $b`)
+	g.line(`i32.const 48`)
+	g.line(`i32.sub`)
+	g.line(`i32.add`)
+	g.line(`local.set $exp`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 1`)
+	g.line(`local.set $saw_exp`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $exp_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`) // $end_exp
+	g.line(`local.get $saw_exp`)
+	g.line(`i32.eqz`)
+	g.line(`br_if $bad`)
+	// Apply exponent sign to exp_adj.
+	g.line(`local.get $exp_neg`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $exp_adj`)
+	g.line(`local.get $exp`)
+	g.line(`i32.sub`)
+	g.line(`local.set $exp_adj`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $exp_adj`)
+	g.line(`local.get $exp`)
+	g.line(`i32.add`)
+	g.line(`local.set $exp_adj`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`) // matched 'e'/'E'
+	g.indent--
+	g.line(`end`) // i < sLen for exponent check
+	// Trailing garbage -> bad.
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.lt_u`)
+	g.line(`br_if $bad`)
+	g.line(`br $done`)
+	g.indent--
+	g.line(`end`) // $bad — falls through to None emit
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $opt`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $opt`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`) // $done
+	// === Compute value ===
+	// v = (f32) mantissa
+	g.line(`local.get $mantissa`)
+	g.line(`f32.convert_i64_u`)
+	g.line(`local.set $v`)
+	// while exp_adj > 0: v *= 10; exp_adj--
+	g.line(`block $end_pos`)
+	g.indent++
+	g.line(`loop $pos_loop`)
+	g.indent++
+	g.line(`local.get $exp_adj`)
+	g.line(`i32.const 0`)
+	g.line(`i32.le_s`)
+	g.line(`br_if $end_pos`)
+	g.line(`local.get $v`)
+	g.line(`f32.const 10`)
+	g.line(`f32.mul`)
+	g.line(`local.set $v`)
+	g.line(`local.get $exp_adj`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.set $exp_adj`)
+	g.line(`br $pos_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// while exp_adj < 0: v /= 10; exp_adj++
+	g.line(`block $end_neg`)
+	g.indent++
+	g.line(`loop $neg_loop`)
+	g.indent++
+	g.line(`local.get $exp_adj`)
+	g.line(`i32.const 0`)
+	g.line(`i32.ge_s`)
+	g.line(`br_if $end_neg`)
+	g.line(`local.get $v`)
+	g.line(`f32.const 10`)
+	g.line(`f32.div`)
+	g.line(`local.set $v`)
+	g.line(`local.get $exp_adj`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $exp_adj`)
+	g.line(`br $neg_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Apply sign.
+	g.line(`local.get $neg`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $v`)
+	g.line(`f32.neg`)
+	g.line(`local.set $v`)
+	g.indent--
+	g.line(`end`)
+	// Some(v): alloc 8, tag=0 at +0, f32 at +4.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $opt`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`local.get $opt`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $v`)
+	g.line(`f32.store`)
+	g.line(`local.get $opt`)
+	g.indent--
+	g.line(`)`)
 }
 
 // emitMapHelpers writes the runtime functions backing the

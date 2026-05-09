@@ -554,9 +554,20 @@ Deferred to a follow-up:
     embedded whitespace, and out-of-range values
     (overflow, `+`-prefixed). Internal accumulator is i64
     so the bound check against the signed-i32 range
-    (`-2^31..=2^31-1`) is exact. Float / hex / scientific
-    syntaxes get their own methods later, each with
-    their own error semantics.
+    (`-2^31..=2^31-1`) is exact.
+  - **`s.parse_float()` shipped.** `string` method returning
+    `Option[f32]`. Grammar: `[-]<digits>[.<digits>]
+    [(e|E)[+-]?<digits>]`, with at least one of integer or
+    fraction digits required. Mantissa accumulates into an
+    i64 with a saturation cap at ~2^50 (1e15) — beyond that,
+    extra digits are skipped while `exp_adj` keeps the
+    magnitude correct, so very long inputs degrade gracefully
+    rather than overflowing. Final value =
+    `(f32) mantissa × 10^exp_adj`, sign applied via
+    `f32.neg`. The float-from-decimal path is NOT bit-exact
+    Steele/White / Ryu yet; close-enough-for-handler-config
+    semantics. Hex / scientific formats with explicit base
+    will get separate methods.
 
 ## Open questions to settle as we go
 
