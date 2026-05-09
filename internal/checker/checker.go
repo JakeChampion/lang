@@ -755,6 +755,19 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.EnumType{Name: "JsonValue"}},
 		Result: ast.StringType{},
 	}
+	// json_parse(s): inverse of json_encode. Returns
+	// Option[JsonValue]; None on any malformed input. The
+	// grammar is RFC 8259; numbers are stored verbatim as
+	// JNumber's string payload (no validation beyond the
+	// digit/`.`/`e[+-]`/digit shape). String escapes are
+	// decoded — `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`,
+	// `\t`, `\uXXXX` for BMP code points (surrogate pairs
+	// not yet handled — emit them as-is). Whitespace
+	// between tokens follows the spec.
+	c.info.FuncSigs["json_parse"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.EnumType{Name: "JsonValue"}}},
+	}
 
 	// Built-in numeric methods. The receiver type is `NumberType`
 	// keyed by width + signedness; the dispatch path above maps
