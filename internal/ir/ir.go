@@ -2414,14 +2414,32 @@ func (b *builder) assign(n *ast.Assign) error {
 				}
 			}
 		}
-		helper := "__arr_idx"
-		switch stride {
-		case 1:
-			helper = "__str_idx"
-		case 2:
-			helper = "__arr_idx_2"
-		case 8:
-			helper = "__arr_idx_8"
+		var helper string
+		if t.IsSlice {
+			// Writing through a slice — bounds-check + offset
+			// against the parent's storage. Per-stride
+			// __slice_idx_N variants mirror the read path.
+			switch stride {
+			case 1:
+				helper = "__slice_idx_1"
+			case 2:
+				helper = "__slice_idx_2"
+			case 8:
+				helper = "__slice_idx_8"
+			default:
+				helper = "__slice_idx"
+			}
+		} else {
+			switch stride {
+			case 1:
+				helper = "__str_idx"
+			case 2:
+				helper = "__arr_idx_2"
+			case 8:
+				helper = "__arr_idx_8"
+			default:
+				helper = "__arr_idx"
+			}
 		}
 		if err := b.expr(t.Array); err != nil {
 			return err

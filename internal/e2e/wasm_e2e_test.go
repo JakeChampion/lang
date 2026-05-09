@@ -1039,6 +1039,37 @@ func TestWASMSubI32Slices(t *testing.T) {
 	}
 }
 
+// Slice writes mutate the underlying array's storage. The
+// IR's slice-index assignment path picks the per-stride
+// __slice_idx_N helper (same as the read path) and the
+// width-aware store op. Verifies that mutations through a
+// slice show up when reading back from the parent.
+func TestWASMSliceWrites(t *testing.T) {
+	src := `function main(): i32 {
+    var bytes: u8[] = [1, 2, 3, 4, 5];
+    var view: [u8] = bytes[1:4];
+    view[0] = 99;
+    view[2] = 100;
+    if (bytes[1] != 99) { return 1; }
+    if (bytes[2] != 3) { return 2; }
+    if (bytes[3] != 100) { return 3; }
+    if (bytes[0] != 1) { return 4; }
+    if (bytes[4] != 5) { return 5; }
+
+    // Wide-element slice writes too.
+    var wide: i64[] = [10, 20, 30, 40];
+    var w: [i64] = wide[1:3];
+    w[0] = (1 << 40);
+    if (wide[1] != (1 << 40)) { return 6; }
+    if (wide[0] != 10) { return 7; }
+    if (wide[2] != 30) { return 8; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (slice writes)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64
