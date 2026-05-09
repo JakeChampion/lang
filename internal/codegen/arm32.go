@@ -34,6 +34,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/treeshake"
 )
 
 // regArgs is the number of arguments that AAPCS passes in registers
@@ -62,6 +63,14 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 // stack-machine lowering + tail-call optimisation, all in one
 // shared pipeline with the WASM backend.
 func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (string, error) {
+	// Tree-shake unreferenced functions before lowering so the
+	// auto-injected lang prelude (internal/prelude) only pays
+	// for what user code actually calls. Crucial for arm32 in
+	// particular since prelude helpers may use ops not yet
+	// supported on arm32 (e.g. i64 arithmetic) — those funcs
+	// stay out of the lowered program when the user code
+	// doesn't call them.
+	treeshake.Run(prog)
 	return EmitFromIR(prog, info, opts)
 }
 

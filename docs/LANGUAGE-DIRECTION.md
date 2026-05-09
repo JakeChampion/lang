@@ -554,7 +554,10 @@ Deferred to a follow-up:
     embedded whitespace, and out-of-range values
     (overflow, `+`-prefixed). Internal accumulator is i64
     so the bound check against the signed-i32 range
-    (`-2^31..=2^31-1`) is exact.
+    (`-2^31..=2^31-1`) is exact. **Migrated to the lang
+    prelude** in PR 174 — was ~190 lines of hand-written
+    wat, now ~25 lines of lang code in
+    `internal/prelude/prelude.lang`.
   - **`s.parse_float()` shipped.** `string` method returning
     `Option[f32]`. Grammar: `[-]<digits>[.<digits>]
     [(e|E)[+-]?<digits>]`, with at least one of integer or

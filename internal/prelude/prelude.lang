@@ -15,3 +15,43 @@
 function (s: string) is_empty(): boolean {
     return len(s) == 0;
 }
+
+// `s.parse_int()` — decimal i32 parser. Optional leading `-`;
+// rejects empty input, lone `-`, any non-digit character,
+// embedded whitespace, and out-of-range values
+// (`-2^31..=2^31-1`). Internal accumulator is i64 so the
+// bound check is exact. Returns `None` on failure, `Some(v)`
+// on success.
+//
+// Replaced the ~190-line wat helper that previously lived in
+// `wasm.go`; the lang version compiles to roughly the same
+// code via the IR.
+function (s: string) parse_int(): Option[i32] {
+    var n: i32 = len(s);
+    if (n == 0) { return None; }
+
+    var i: i32 = 0;
+    var neg: boolean = false;
+    if (s[0] == 45) {            // '-'
+        if (n == 1) { return None; }
+        neg = true;
+        i = 1;
+    }
+
+    var acc: i64 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return None; }   // not 0..9
+        acc = acc * 10 + ((b - 48) as i64);
+        if (acc >= 4294967296) { return None; }   // > u32 max — never fits i32
+        i = i + 1;
+    }
+
+    if (neg) {
+        if (acc > 2147483648) { return None; }    // < i32 min
+        var v: i64 = 0 - acc;
+        return Some(v as i32);
+    }
+    if (acc > 2147483647) { return None; }        // > i32 max
+    return Some(acc as i32);
+}
