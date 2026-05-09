@@ -540,6 +540,15 @@ Deferred to a follow-up:
     decoded so `len()` lets callers detect truncation.
     Same byte-array semantics as base64 (round-trip is
     content-preserving).
+  - **`s.parse_int()` shipped.** `string` method returning
+    `Option[i32]`. Accepts an optional leading `-`; rejects
+    empty input, lone `-`, any non-digit character,
+    embedded whitespace, and out-of-range values
+    (overflow, `+`-prefixed). Internal accumulator is i64
+    so the bound check against the signed-i32 range
+    (`-2^31..=2^31-1`) is exact. Float / hex / scientific
+    syntaxes get their own methods later, each with
+    their own error semantics.
 
 ## Open questions to settle as we go
 
