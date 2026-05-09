@@ -9,6 +9,7 @@ package checker
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
@@ -169,14 +170,21 @@ func builtinStructDecls() []*ast.StructDecl {
 		// capacity at construction. The struct is opaque-by-
 		// convention; user code constructs via `Map.new(cap)`
 		// and reads through methods.
+		// Map[K, V] — generic IndexMap-shaped associative
+		// container. Linear search internals for now; the
+		// IndexMap fingerprint metadata table + Wyhash
+		// generalisation is the follow-up. K is restricted to
+		// i32-sized scalars or `string`; V is restricted to
+		// pointer-sized values (any 4-byte storage type — i32,
+		// string, struct / enum / array / slice ptr). i64 / u64
+		// / f64 keys + values are deferred. The runtime stores
+		// a `keyKind` tag in the buffer header so the linear
+		// scan can branch i32-eq vs strcmp without per-
+		// instantiation monomorphisation of helper code.
 		{
-			Name: "Map",
+			Name:       "Map",
+			TypeParams: []string{"K", "V"},
 			Fields: []ast.Param{
-				// `data` is a heap pointer to a flat buffer
-				// `[cap, len, key0, val0, key1, val1, ...]`.
-				// Length and capacity live with the buffer
-				// rather than on the struct so the struct
-				// itself stays a single-word value.
 				{Name: "data", Type: ast.NumberType{}},
 			},
 		},
@@ -229,10 +237,16 @@ func Check(prog *ast.Program) (*Info, error) {
 			seen[f.Name] = true
 		}
 		c.info.Structs[sd.Name] = sd
-		if len(sd.TypeParams) > 0 {
+		if len(sd.TypeParams) > 0 && !isRuntimeGenericStruct(sd.Name) {
 			// Track generic struct decls so the monomorph pass
 			// knows which ones to clone, and post-monomorph
-			// callers can tell "we used to be generic".
+			// callers can tell "we used to be generic". The
+			// auto-injected `Map[K, V]` is excluded — its
+			// runtime is parameterised by an in-buffer
+			// `keyKind` tag, so a single shared struct + helper
+			// set handles every (K, V) instantiation. Cloning
+			// it would split the methods across mangled names
+			// the dispatch path doesn't know about.
 			c.info.GenericStructs[sd.Name] = sd
 		}
 	}
@@ -470,24 +484,39 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	registerMethod("Writer", "close", nil, optionIoErr)
 
-	// Map[i32, i32] — first cut of the IndexMap from PR 4.
-	// Concrete-typed for now; future PRs generalise to
-	// generic Map[K, V] and switch the runtime to the
-	// IndexMap fingerprint-table layout from
-	// docs/LANGUAGE-DIRECTION.md. Linear search internally.
-	mapType := ast.StructType{Name: "Map"}
-	optionInt := ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}
+	// Map[K, V] — generic IndexMap-shaped associative
+	// container per PR 4 of docs/LANGUAGE-DIRECTION.md. The
+	// runtime stores a `keyKind` tag in the buffer header
+	// alongside cap / len so the linear-search core can
+	// dispatch i32.eq vs strcmp for the comparison without
+	// per-instantiation monomorphisation.
+	keyParam := ast.ParamType{Name: "K"}
+	valueParam := ast.ParamType{Name: "V"}
+	mapKV := ast.StructType{Name: "Map", Args: []ast.Type{keyParam, valueParam}}
+	optionV := ast.EnumType{Name: "Option", Args: []ast.Type{valueParam}}
+	// `map_new(cap)` returns a Map with no Args — the call
+	// site's destination type (e.g. `var m: Map[i32, string]
+	// = map_new(8)`) drives K and V via assignable's "empty-
+	// Args generic" relaxation. The IR lowering reads
+	// `n.TypeArgs` (stamped by the Var case from the
+	// destination's Args) to inject the runtime keyKind tag.
 	c.info.FuncSigs["map_new"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}}, // capacity
-		Result: mapType,
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.StructType{Name: "Map"},
 	}
-	registerMethod("Map", "len", nil, ast.NumberType{})
-	registerMethod("Map", "has", []ast.Type{ast.NumberType{}}, ast.BoolType{})
-	registerMethod("Map", "get", []ast.Type{ast.NumberType{}}, optionInt)
-	registerMethod("Map", "set", []ast.Type{ast.NumberType{}, ast.NumberType{}}, ast.VoidType{})
-	registerMethod("Map", "keys", nil, ast.ArrayType{Elem: ast.NumberType{}})
-	registerMethod("Map", "values", nil, ast.ArrayType{Elem: ast.NumberType{}})
-	registerMethod("Map", "delete", []ast.Type{ast.NumberType{}}, ast.BoolType{})
+	registerMapMethod := func(methodName string, params []ast.Type, result ast.Type) {
+		mangled := "__method_Map_" + methodName
+		c.info.Methods["Map."+methodName] = mangled
+		fullParams := append([]ast.Type{mapKV}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	registerMapMethod("len", nil, ast.NumberType{})
+	registerMapMethod("has", []ast.Type{keyParam}, ast.BoolType{})
+	registerMapMethod("get", []ast.Type{keyParam}, optionV)
+	registerMapMethod("set", []ast.Type{keyParam, valueParam}, ast.VoidType{})
+	registerMapMethod("keys", nil, ast.ArrayType{Elem: keyParam})
+	registerMapMethod("values", nil, ast.ArrayType{Elem: valueParam})
+	registerMapMethod("delete", []ast.Type{keyParam}, ast.BoolType{})
 
 	// Built-in string methods. The receiver type is
 	// StringType (not StructType), so we can't use
@@ -1024,6 +1053,18 @@ func assignable(dst, src ast.Type) bool {
 	if dok && sok && d.Name == s.Name && len(s.Args) == 0 && len(d.Args) > 0 {
 		return true
 	}
+	// Same relaxation for generic struct values: a builtin like
+	// `map_new(cap)` returns `StructType{Name: "Map"}` with no
+	// Args; the destination context (e.g. `var m: Map[i32,
+	// string] = map_new(8);`) names the concrete K + V. The
+	// Var / argument-checking sites stamp the resolved args
+	// back onto the source expression so the IR lowering can
+	// see them.
+	ds, dsok := dst.(ast.StructType)
+	ss, ssok := src.(ast.StructType)
+	if dsok && ssok && ds.Name == ss.Name && len(ss.Args) == 0 && len(ds.Args) > 0 {
+		return true
+	}
 	// Polymorphic numeric literal: NumberType{Polymorphic:true}
 	// flows into any concrete integer type. The checker is
 	// expected to have stamped the resolved width onto the
@@ -1339,6 +1380,12 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if n.Type != nil {
 			c.settleNumeric(n.Init, n.Type)
 			got = postSettleType(n.Init, got)
+			// Generic-struct destination inference: a builtin
+			// like `map_new(cap)` returns `Map` with no Args;
+			// the destination's `Map[K, V]` Args propagate
+			// back so the IR lowering can stamp the runtime
+			// keyKind tag.
+			c.stampStructTypeArgs(n.Init, n.Type)
 		}
 		if n.Type == nil {
 			if got == nil {
@@ -1912,6 +1959,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if mangled, ok := c.info.Methods[key]; ok {
 					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
+					// Carry the receiver's TypeArgs (if any) so
+					// the call-checking path below can substitute
+					// ParamType-typed entries in the method's
+					// registered signature against the
+					// instantiation's concrete arguments. This
+					// is what makes `(m: Map[string, i32]).set(k,
+					// v)` type-check `k` as string and `v` as
+					// i32 when the registered sig uses
+					// ParamType("K") / ParamType("V").
+					if st, ok := tt.(ast.StructType); ok && len(st.Args) > 0 {
+						n.TypeArgs = st.Args
+					}
 				}
 			}
 		}
@@ -1923,6 +1982,46 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return nil
 		}
+		// Method calls on a generic struct's instantiation: the
+		// dispatch path stamped n.TypeArgs from the receiver's
+		// concrete Args. Substitute those into the registered
+		// method signature so per-instantiation argument types
+		// (`Map[string, i32].set` taking string + i32 instead
+		// of the registered `K` + `V`) flow through the regular
+		// argument-checking + return-type path below.
+		methodSubResult := ft.Result
+		if id, ok := n.Callee.(*ast.Ident); ok && len(n.TypeArgs) > 0 &&
+			strings.HasPrefix(id.Name, "__method_") {
+			// Recover the type-param list from the owning struct
+			// (or enum) decl whose name appears between
+			// `__method_` and the trailing `_<MethodName>`.
+			rest := id.Name[len("__method_"):]
+			if idx := strings.LastIndex(rest, "_"); idx > 0 {
+				typeName := rest[:idx]
+				var typeParams []string
+				if sd := c.info.Structs[typeName]; sd != nil {
+					typeParams = sd.TypeParams
+				} else if ed := c.info.Enums[typeName]; ed != nil {
+					typeParams = ed.TypeParams
+				}
+				if len(typeParams) == len(n.TypeArgs) {
+					sub := make(map[string]ast.Type, len(typeParams))
+					for i, tp := range typeParams {
+						sub[tp] = n.TypeArgs[i]
+					}
+					substitutedParams := make([]ast.Type, len(ft.Params))
+					for i, p := range ft.Params {
+						substitutedParams[i] = substituteType(p, sub)
+					}
+					ft = &ast.FuncType{
+						Params: substitutedParams,
+						Result: substituteType(ft.Result, sub),
+					}
+					methodSubResult = ft.Result
+				}
+			}
+		}
+		_ = methodSubResult
 		if len(n.Args) != len(ft.Params) {
 			c.errf(n.P, "function expects %d arguments, got %d", len(ft.Params), len(n.Args))
 		}
@@ -2264,26 +2363,58 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.TupleType{Elems: elems}
 	case *ast.MapLit:
-		// Each key + value must be i32 (the Map[i32, i32]
-		// foundation; future generic Map[K, V] PR generalises
-		// this). Polymorphic numeric literals settle to i32 on
-		// the way through.
-		i32Type := ast.NumberType{}
-		for _, ent := range n.Entries {
-			kt := c.checkExpr(ent.Key, s)
-			c.settleNumeric(ent.Key, i32Type)
-			kt = postSettleType(ent.Key, kt)
-			if kt != nil && !ast.Equal(kt, i32Type) {
-				c.errf(ent.Key.Pos(), "map key must be i32, got %s", kt)
+		// Pick K and V from the first entry's key / value
+		// types, then check the rest against those. Empty
+		// literals fall back to `Map[i32, i32]` so that a
+		// trailing `var m: Map[i32, i32] = Map {}` (or any
+		// destination-typed empty map) keeps working without
+		// the destination-driven inference machinery.
+		var keyType ast.Type = ast.NumberType{}
+		var valueType ast.Type = ast.NumberType{}
+		if len(n.Entries) > 0 {
+			kt := c.checkExpr(n.Entries[0].Key, s)
+			vt := c.checkExpr(n.Entries[0].Value, s)
+			kt = postSettleType(n.Entries[0].Key, kt)
+			vt = postSettleType(n.Entries[0].Value, vt)
+			if kt != nil {
+				keyType = kt
 			}
-			vt := c.checkExpr(ent.Value, s)
-			c.settleNumeric(ent.Value, i32Type)
-			vt = postSettleType(ent.Value, vt)
-			if vt != nil && !ast.Equal(vt, i32Type) {
-				c.errf(ent.Value.Pos(), "map value must be i32, got %s", vt)
+			if vt != nil {
+				valueType = vt
+			}
+			// Reject keys we can't compare yet (i64 / float /
+			// struct / enum / array / slice). String + i32-
+			// sized scalar are allowed.
+			switch keyType.(type) {
+			case ast.NumberType, ast.StringType:
+				// fine
+			default:
+				c.errf(n.Entries[0].Key.Pos(), "map key type %s is not yet supported (use i32 or string)", keyType)
 			}
 		}
-		return ast.StructType{Name: "Map"}
+		// Re-check entries with the inferred K / V as the
+		// expected type so polymorphic numeric literals settle
+		// to the right width and same-type-must-be-same is
+		// enforced.
+		for i, ent := range n.Entries {
+			if i > 0 {
+				c.checkExpr(ent.Key, s)
+				c.checkExpr(ent.Value, s)
+			}
+			c.settleNumeric(ent.Key, keyType)
+			c.settleNumeric(ent.Value, valueType)
+			kt := postSettleType(ent.Key, keyType)
+			vt := postSettleType(ent.Value, valueType)
+			if kt != nil && !ast.Equal(kt, keyType) {
+				c.errf(ent.Key.Pos(), "map key type %s, expected %s", kt, keyType)
+			}
+			if vt != nil && !ast.Equal(vt, valueType) {
+				c.errf(ent.Value.Pos(), "map value type %s, expected %s", vt, valueType)
+			}
+		}
+		n.KeyType = keyType
+		n.ValueType = valueType
+		return ast.StructType{Name: "Map", Args: []ast.Type{keyType, valueType}}
 	case *ast.FieldAccess:
 		tt := c.checkExpr(n.Target, s)
 		// Tuple field access: `pair.0`, `pair.1`. The Field name
@@ -2370,6 +2501,42 @@ func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
 // / bitwise binary ops where the IntWidth isn't already set.
 // Function calls, casts, struct-lit fields, etc. set their own
 // types and shouldn't have hints leak into them.
+// isRuntimeGenericStruct names the auto-injected struct types
+// whose generic args are resolved at the type-system layer but
+// share a single concrete struct + helper set at the wasm
+// runtime. The monomorpher skips these so the helper-method
+// dispatch keeps working unchanged.
+func isRuntimeGenericStruct(name string) bool {
+	return name == "Map"
+}
+
+// stampStructTypeArgs flows TypeArgs from a destination struct
+// type into a source Call expression that returned the same
+// struct without args. Only the auto-injected `map_new` builtin
+// uses this today — its return type is `Map` (no Args), and the
+// destination context (Var Type / Assign target) names the
+// concrete K + V. The IR lowering reads `Call.TypeArgs` to bake
+// in runtime tags (keyKind) at construction.
+func (c *checker) stampStructTypeArgs(e ast.Expr, dst ast.Type) {
+	dStruct, ok := dst.(ast.StructType)
+	if !ok || len(dStruct.Args) == 0 {
+		return
+	}
+	call, ok := e.(*ast.Call)
+	if !ok || len(call.TypeArgs) > 0 {
+		return
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return
+	}
+	if sig, ok := c.info.FuncSigs[id.Name]; ok {
+		if rs, ok := sig.Result.(ast.StructType); ok && rs.Name == dStruct.Name && len(rs.Args) == 0 {
+			call.TypeArgs = dStruct.Args
+		}
+	}
+}
+
 func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 	switch hn := hint.(type) {
 	case ast.NumberType:

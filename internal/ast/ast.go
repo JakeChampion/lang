@@ -597,11 +597,15 @@ type TupleLit struct {
 // MapLit is `Map { k: v, k2: v2, ... }`. Distinct from StructLit
 // because the keys are arbitrary expressions, not field names.
 // Lowers to a `map_new(len(entries))` followed by per-entry
-// `m.set(k, v)` calls. For now keys + values are both i32; the
-// concrete-typed surface mirrors the auto-injected `Map` struct.
+// `m.set(k, v)` calls. The checker fills in `KeyType` /
+// `ValueType` from the entries (and reconciles them against the
+// destination's `Map[K, V]` Args when one is present); the IR
+// uses `KeyType` to inject the runtime `keyKind` tag.
 type MapLit struct {
-	P       Position
-	Entries []MapEntry
+	P         Position
+	Entries   []MapEntry
+	KeyType   Type
+	ValueType Type
 }
 
 // MapEntry is a single `key: value` pair inside a MapLit.

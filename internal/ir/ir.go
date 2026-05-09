@@ -1577,16 +1577,19 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpAdd})
 	case *ast.MapLit:
 		// Lower `Map { k1: v1, k2: v2, ... }` to:
-		//   var __m = map_new(N);
+		//   var __m = map_new(N, keyKind);
 		//   __m.set(k1, v1);
 		//   __m.set(k2, v2);
 		//   ...
 		//   __m
 		// where N is the entry count (so no resize on the
-		// initial fill). Stash the constructed Map handle in a
-		// fresh local so each `set` call can reload it.
+		// initial fill) and `keyKind` is the runtime tag for the
+		// inferred key type (0 = i32-sized scalar, 1 = string).
+		// Stash the constructed Map handle in a fresh local so
+		// each `set` call can reload it.
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
-		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 1})
+		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType)})
+		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 2})
 		mapSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
@@ -2293,6 +2296,22 @@ func floatOp(s string) (OpKind, bool) {
 	return 0, false
 }
 
+// mapKeyKindTag returns the runtime tag for the Map[K, V]
+// instantiation's key type. 0 = i32-sized scalar (i32, u32,
+// sub-i32 widths), 1 = string. The runtime's __map_find
+// helper branches on this to pick i32.eq vs strcmp for the
+// in-buffer key comparison. Other key types (i64 / u64 / float
+// / struct / enum) are deferred — they'd need either an
+// 8-byte-stride buffer layout or a different equality
+// strategy.
+func mapKeyKindTag(t ast.Type) int32 {
+	switch t.(type) {
+	case ast.StringType:
+		return 1
+	}
+	return 0
+}
+
 func (b *builder) call(n *ast.Call) error {
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
@@ -2351,11 +2370,26 @@ func (b *builder) call(n *ast.Call) error {
 			return err
 		}
 	}
+	argCount := int32(len(n.Args))
+	// `map_new(cap)` is a generic builtin: the runtime helper
+	// takes an extra `keyKind` argument so the linear-search
+	// helpers can branch i32-eq vs strcmp without per-K
+	// monomorphisation. The Var-case destination inference
+	// stamped Call.TypeArgs[0] = K; translate to the runtime
+	// tag here.
+	if id.Name == "map_new" {
+		var keyKind int32
+		if len(n.TypeArgs) >= 1 {
+			keyKind = mapKeyKindTag(n.TypeArgs[0])
+		}
+		b.emit(Op{Kind: OpConstI32, I32: keyKind})
+		argCount++
+	}
 	// Direct call if the name is a top-level / builtin function and not
 	// shadowed by a local of the same name.
 	if _, isFunc := b.info.FuncSigs[id.Name]; isFunc {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: int32(len(n.Args))})
+			b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: argCount})
 			return nil
 		}
 	}
