@@ -1,0 +1,17 @@
+// Auto-injected standard library. See internal/prelude/prelude.go
+// for the rationale; in short, helpers here go through the IR like
+// any user code, so they get peephole / dce / inline optimisation
+// and drop into every backend without backend-specific shims.
+//
+// User code can shadow / override anything in this file by
+// declaring a same-named function — useful for testing or for
+// callers that need different semantics (eg a stricter
+// `s.parse_int()` that errors on whitespace).
+
+// `s.is_empty()` is a length-zero shorthand. The IR's len fold
+// resolves `len(s)` to a single i32.load at compile time when
+// `s` is statically known to be a string, so this typically
+// folds to one i32.eqz at the call site.
+function (s: string) is_empty(): boolean {
+    return len(s) == 0;
+}

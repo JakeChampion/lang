@@ -443,9 +443,13 @@ func TestMethodTypechecksAndRewritesCall(t *testing.T) {
 }
 
 func TestMethodRejectsNonStructReceiver(t *testing.T) {
-	src := `function (n: i32) double(): i32 { return n + n; }`
+	// `i32` (a built-in numeric receiver) is now permitted —
+	// it's how the prelude declares `i32.to_string()` etc.
+	// What's rejected is receivers that aren't a struct,
+	// enum, or built-in scalar — eg an array type.
+	src := `function (xs: i32[]) sum(): i32 { return 0; }`
 	if err := checkSource(t, src); err == nil {
-		t.Error("expected error for non-struct receiver")
+		t.Error("expected error for array receiver")
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/prelude"
 )
 
 type Error struct {
@@ -257,6 +259,46 @@ func builtinStructDecls() []*ast.StructDecl {
 	}
 }
 
+// injectPrelude parses the embedded prelude source (from
+// internal/prelude/prelude.lang) and appends its top-level
+// declarations to `prog`. Idempotent — re-running on a program
+// whose Funcs already contain a prelude marker is a no-op.
+//
+// The prelude lang code goes through the same parser /
+// checker / IR / codegen pipeline as user code, so it
+// participates in IR-level optimisations (peephole, dce,
+// inlining) and works on every backend without backend-
+// specific shims. See docs/LANGUAGE-DIRECTION.md "Stdlib
+// implementation strategy" for the rationale.
+//
+// The prelude is re-parsed on each `Check` call rather than
+// cached + cloned. The source is small (a couple hundred
+// lines of lang code at most) and parsing it twice is cheap
+// next to type-checking; caching would require deep-cloning
+// the FuncDecl AST per-call to avoid mutation aliasing
+// (receiver-hoisting rewrites the FuncDecl in place).
+func injectPrelude(prog *ast.Program) error {
+	// Idempotency: if any function in prog.Funcs is already
+	// flagged IsPrelude, assume the prelude is injected and
+	// skip. Lets `Check` be re-entrant on the same AST —
+	// monomorph re-checks the program after rewriting,
+	// which would otherwise duplicate the prelude.
+	for _, f := range prog.Funcs {
+		if f.IsPrelude {
+			return nil
+		}
+	}
+	pre, err := parser.Parse(prelude.Source)
+	if err != nil {
+		return fmt.Errorf("prelude: %w", err)
+	}
+	for _, fn := range pre.Funcs {
+		fn.IsPrelude = true
+		prog.Funcs = append(prog.Funcs, fn)
+	}
+	return nil
+}
+
 // Check type-checks the program. It returns an aggregated error if any
 // problems were found.
 func Check(prog *ast.Program) (*Info, error) {
@@ -271,6 +313,13 @@ func Check(prog *ast.Program) (*Info, error) {
 	// Same shape for the auto-injected Reader / Writer structs.
 	if len(prog.Structs) == 0 || prog.Structs[0].Name != "Reader" {
 		prog.Structs = append(builtinStructDecls(), prog.Structs...)
+	}
+	// Inject the lang-source prelude (small stdlib helpers
+	// expressed in lang itself; see internal/prelude). Runs
+	// after enums/structs since prelude functions may reference
+	// the auto-injected types.
+	if err := injectPrelude(prog); err != nil {
+		return nil, err
 	}
 	c := &checker{
 		info: &Info{
@@ -626,10 +675,10 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerStringMethod("split", []ast.Type{ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}})
 	registerStringMethod("replace", []ast.Type{ast.StringType{}, ast.StringType{}}, ast.StringType{})
 	registerStringMethod("bytes", nil, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}})
-	// `s.is_empty()` — boolean shorthand for `len(s) == 0`,
-	// emitted as a single i32.eqz on the underlying length
-	// load. No allocation, no string compare against `""`.
-	registerStringMethod("is_empty", nil, ast.BoolType{})
+	// `s.is_empty()` lives in the lang prelude
+	// (internal/prelude/prelude.lang); the receiver-hoisting
+	// machinery + builtin-receivers extension wires it
+	// through automatically.
 	// `s.repeat(n)` — `n` copies of s concatenated. `n <= 0`
 	// returns an empty string; `n == 1` returns the input
 	// unchanged; otherwise allocates `len(s) * n` bytes and
@@ -821,8 +870,30 @@ func Check(prog *ast.Program) (*Info, error) {
 					continue
 				}
 				typeName = rt.Name
+			case ast.StringType:
+				typeName = "string"
+			case ast.NumberType:
+				// Same width/sign mapping the dispatch path uses
+				// for numeric method calls — keeps receiver and
+				// call-site naming in lockstep.
+				switch {
+				case rt.NormalWidth() == 64 && rt.IsSigned():
+					typeName = "i64"
+				case rt.NormalWidth() == 64 && !rt.IsSigned():
+					typeName = "u64"
+				case !rt.IsSigned():
+					typeName = "u32"
+				default:
+					typeName = "i32"
+				}
+			case ast.FloatType:
+				if rt.NormalWidth() == 64 {
+					typeName = "f64"
+				} else {
+					typeName = "f32"
+				}
 			default:
-				c.errf(fn.P, "method receiver type must be a struct or enum, got %s", fn.Receiver.Type)
+				c.errf(fn.P, "method receiver type must be a struct, enum, or built-in type, got %s", fn.Receiver.Type)
 				continue
 			}
 			methodKey := typeName + "." + fn.Name
