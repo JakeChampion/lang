@@ -595,6 +595,15 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerStringMethod("split", []ast.Type{ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}})
 	registerStringMethod("replace", []ast.Type{ast.StringType{}, ast.StringType{}}, ast.StringType{})
 	registerStringMethod("bytes", nil, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}})
+	// `s.is_empty()` — boolean shorthand for `len(s) == 0`,
+	// emitted as a single i32.eqz on the underlying length
+	// load. No allocation, no string compare against `""`.
+	registerStringMethod("is_empty", nil, ast.BoolType{})
+	// `s.repeat(n)` — `n` copies of s concatenated. `n <= 0`
+	// returns an empty string; `n == 1` returns the input
+	// unchanged; otherwise allocates `len(s) * n` bytes and
+	// memcpy's the source into each slot.
+	registerStringMethod("repeat", []ast.Type{ast.NumberType{}}, ast.StringType{})
 	// `s.as_bytes()` — non-copying companion to `s.bytes()`. Returns
 	// a `[u8]` slice header whose data_ptr aliases the string's
 	// payload and whose len is `len(s)`. Sharing the parent's
