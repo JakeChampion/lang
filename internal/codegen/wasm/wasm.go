@@ -5308,6 +5308,47 @@ func (g *generator) emitMapHelpers() {
 	g.indent--
 	g.line(`)`)
 
+	// $__method_Map_get_or(m, k, default): V — returns the
+	// value for k if present, otherwise `default`. Saves
+	// callers from the `if let Some(v) = m.get(k) { v } else
+	// { default }` ceremony for the common-case lookup.
+	g.line(`(func $__method_Map_get_or (param $m i32) (param $k i32) (param $default i32) (result i32)`)
+	g.indent++
+	g.line(`(local $idx i32) (local $buf i32) (local $cap i32) (local $entriesBase i32)`)
+	g.line(`local.get $m`)
+	g.line(`local.get $k`)
+	g.line(`call $__map_lookup`)
+	g.line(`local.tee $idx`)
+	g.line(`i32.const -1`)
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $default`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.tee $buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $cap`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $entriesBase`)
+	g.line(`local.get $entriesBase`)
+	g.line(`local.get $idx`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=4`)
+	g.indent--
+	g.line(`)`)
+
 	// $__method_Map_clear(m): void — drop every live entry by
 	// resetting `len` to 0 and refilling the bucket array with
 	// all-empty (-1, written as 0xFF byte fills). The entries

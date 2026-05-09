@@ -1541,6 +1541,27 @@ func TestWASMMapIterStringKeys(t *testing.T) {
 	}
 }
 
+// `m.get_or(k, default)` returns the existing value or the
+// supplied default. Saves the `if let Some(v) = m.get(k) {
+// v } else { d }` ceremony for the common-case lookup.
+func TestWASMMapGetOr(t *testing.T) {
+	src := `function main(): i32 {
+    var counts: Map[string, i32] = Map { "apple": 3, "banana": 5 };
+    if (counts.get_or("apple", 0) != 3) { return 1; }
+    if (counts.get_or("banana", 0) != 5) { return 2; }
+    if (counts.get_or("missing", -1) != -1) { return 3; }
+    if (counts.get_or("missing", 100) != 100) { return 4; }
+
+    var ints: Map[i32, i32] = Map { 1: 10, 2: 20 };
+    if (ints.get_or(1, 999) != 10) { return 5; }
+    if (ints.get_or(99, 999) != 999) { return 6; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map.get_or)", got)
+	}
+}
+
 // `m.clear()` resets the map back to empty without freeing
 // the kv buffer. Subsequent inserts reuse the existing
 // allocation and re-grow if needed.
