@@ -1257,6 +1257,36 @@ func TestWASMNumberToString(t *testing.T) {
 	}
 }
 
+// `s.bytes(): u8[]` and the inverse `string_from_bytes(bs)`.
+// Round-trip should preserve content and length.
+func TestWASMStringBytes(t *testing.T) {
+	src := `function main(): i32 {
+    var s: string = "hello";
+    var bs: u8[] = s.bytes();
+    if (len(bs) != 5) { return 1; }
+    if (bs[0] != 104) { return 2; }   // 'h'
+    if (bs[1] != 101) { return 3; }   // 'e'
+    if (bs[2] != 108) { return 4; }   // 'l'
+    if (bs[3] != 108) { return 5; }   // 'l'
+    if (bs[4] != 111) { return 6; }   // 'o'
+    // Mutating the bytes shouldn't affect the source string.
+    bs[0] = 72; // 'H'
+    if (s != "hello") { return 7; }
+    var s2: string = string_from_bytes(bs);
+    if (s2 != "Hello") { return 8; }
+    if (len(s2) != 5) { return 9; }
+    // Empty string round-trip.
+    var es: string = "";
+    var ebs: u8[] = es.bytes();
+    if (len(ebs) != 0) { return 10; }
+    if (string_from_bytes(ebs) != "") { return 11; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (string <-> bytes round-trip)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

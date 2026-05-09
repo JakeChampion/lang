@@ -108,6 +108,7 @@ type generator struct {
 	needsStrConcat   bool // any String + String concatenation
 	needsStrSlice    bool // any `s[a:b]` on a string — emits $__str_slice
 	needsStrMethods  bool // any `s.starts_with` / `.ends_with` / `.contains` call
+	needsStrFromBytes bool // any `string_from_bytes(bs)` call
 	needsStructs     bool
 	needsBoundsCheck bool // any array or string Index expression appears
 	needsClosures    bool // any FuncDecl was hoisted by closure conversion
@@ -333,6 +334,9 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsRuntime = true
 				case "map_new":
 					g.needsMap = true
+					g.needsRuntime = true
+				case "string_from_bytes":
+					g.needsStrFromBytes = true
 					g.needsRuntime = true
 				case "read_file", "write_file":
 					g.needsFileIO = true
@@ -2005,6 +2009,37 @@ func (g *generator) emitRuntimePreamble() {
 
 	if g.needsStrMethods {
 		g.emitStringMethodHelpers()
+	}
+	if g.needsStrFromBytes {
+		// $string_from_bytes(bs: u8[]): string — copies the
+		// byte-array's payload into a fresh length-prefixed
+		// string. Round-trip companion to s.bytes().
+		g.line(`(func $string_from_bytes (param $bs i32) (result i32)`)
+		g.indent++
+		g.line(`(local $bLen i32) (local $out i32)`)
+		g.line(`local.get $bs`)
+		g.line(`i32.const 4`)
+		g.line(`i32.sub`)
+		g.line(`i32.load`)
+		g.line(`local.set $bLen`)
+		g.line(`local.get $bLen`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.tee $out`)
+		g.line(`local.get $bLen`)
+		g.line(`i32.store`)
+		g.line(`local.get $out`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`local.get $bs`)
+		g.line(`local.get $bLen`)
+		g.line(`memory.copy`)
+		g.line(`local.get $out`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
 	}
 
 	g.emitStreamsStdioHelpers()
@@ -4070,6 +4105,40 @@ func (g *generator) emitStringMethodHelpers() {
 	g.line(`i32.sub`)
 	g.line(`memory.copy`)
 	g.line(`local.get $out`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_string_bytes(s): u8[] — copies the string's
+	// bytes into a fresh u8[] (1-byte stride). The result is
+	// independently owned; mutations don't affect the source
+	// string.
+	g.line(`(func $__method_string_bytes (param $s i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $arr i32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	// arr = alloc(4 + sLen); arr[0] = sLen
+	g.line(`local.get $sLen`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $arr`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.store`)
+	// memory.copy(arr + 4, s, sLen)
+	g.line(`local.get $arr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $s`)
+	g.line(`local.get $sLen`)
+	g.line(`memory.copy`)
+	// Return content ptr.
+	g.line(`local.get $arr`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.indent--
