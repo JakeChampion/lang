@@ -113,6 +113,7 @@ type generator struct {
 	needsHex          bool // any `hex_encode(s)` / `hex_decode(s)` call
 	needsUrlParse     bool // any `url_parse(s)` call — emits the Url builder + parser helpers
 	needsUrlCoder     bool // any `url_encode(s)` / `url_decode(s)` call
+	needsQueryParse   bool // any `query_parse(s)` call
 	needsStructs     bool
 	needsBoundsCheck bool // any array or string Index expression appears
 	needsClosures    bool // any FuncDecl was hoisted by closure conversion
@@ -370,6 +371,17 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsBoundsCheck = true
 				case "url_encode", "url_decode":
 					g.needsUrlCoder = true
+					g.needsRuntime = true
+				case "query_parse":
+					// Builds a Map[string, string] internally
+					// and decodes pairs via url_decode. Trip
+					// every supporting flag.
+					g.needsQueryParse = true
+					g.needsUrlCoder = true
+					g.needsMap = true
+					g.needsStrEq = true
+					g.needsStrSlice = true
+					g.needsBoundsCheck = true
 					g.needsRuntime = true
 				case "read_file", "write_file":
 					g.needsFileIO = true
@@ -2156,6 +2168,9 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsUrlCoder {
 		g.emitUrlCoderHelpers()
+	}
+	if g.needsQueryParse {
+		g.emitQueryParseHelper()
 	}
 
 	g.emitStreamsStdioHelpers()
@@ -6342,6 +6357,186 @@ func (g *generator) emitUrlCoderHelpers() {
 	g.line(`end`)
 	g.indent--
 	g.line(`end`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitQueryParseHelper writes `$query_parse(s)` — split a
+// URL-encoded query string into a Map[string, string]. Pairs
+// are separated by `&`; within a pair, `=` separates key from
+// value. Keys and values are url_decode'd before storage. A
+// pair without `=` records its whole contents as the key with
+// an empty-string value. Empty input yields an empty map.
+// `+` is left alone — callers handling form-encoded data
+// should pre-process before calling.
+func (g *generator) emitQueryParseHelper() {
+	g.line(`(func $query_parse (param $s i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $i i32)`)
+	g.line(`(local $pair_start i32) (local $pair_len i32)`)
+	g.line(`(local $eq i32) (local $j i32)`)
+	g.line(`(local $key i32) (local $val i32) (local $m i32)`)
+	g.line(`(local $sep i32)`)
+	// m = map_new(8, 1)  ;; keyKind=1=string
+	g.line(`i32.const 8`)
+	g.line(`i32.const 1`)
+	g.line(`call $map_new`)
+	g.line(`local.set $m`)
+	// sLen
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	// Empty input: return the empty map.
+	g.line(`local.get $sLen`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $m`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`block $end`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	// sep = (i >= sLen) || s[i] == '&'
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.ge_u`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`i32.const 1`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.const 38`) // '&'
+	g.line(`i32.eq`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.set $sep`)
+	g.line(`local.get $sep`)
+	g.line(`if`)
+	g.indent++
+	// pair_len = i - pair_start
+	g.line(`local.get $i`)
+	g.line(`local.get $pair_start`)
+	g.line(`i32.sub`)
+	g.line(`local.tee $pair_len`)
+	g.line(`i32.const 0`)
+	g.line(`i32.gt_u`)
+	g.line(`if`)
+	g.indent++
+	// Find '=' in [pair_start, i)
+	g.line(`i32.const -1`)
+	g.line(`local.set $eq`)
+	g.line(`local.get $pair_start`)
+	g.line(`local.set $j`)
+	g.line(`block $end_eq`)
+	g.indent++
+	g.line(`loop $eq_loop`)
+	g.indent++
+	g.line(`local.get $j`)
+	g.line(`local.get $i`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end_eq`)
+	g.line(`local.get $s`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.const 61`) // '='
+	g.line(`i32.eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $j`)
+	g.line(`local.set $eq`)
+	g.line(`br $end_eq`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $j`)
+	g.line(`br $eq_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Slice + decode key/val based on whether '=' was found.
+	g.line(`local.get $eq`)
+	g.line(`i32.const 0`)
+	g.line(`i32.ge_s`)
+	g.line(`if`)
+	g.indent++
+	// key = url_decode(s[pair_start:eq])
+	g.line(`local.get $s`)
+	g.line(`local.get $pair_start`)
+	g.line(`local.get $eq`)
+	g.line(`call $__str_slice`)
+	g.line(`call $url_decode`)
+	g.line(`local.set $key`)
+	// val = url_decode(s[eq+1:i])
+	g.line(`local.get $s`)
+	g.line(`local.get $eq`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.get $i`)
+	g.line(`call $__str_slice`)
+	g.line(`call $url_decode`)
+	g.line(`local.set $val`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// key = url_decode(s[pair_start:i])
+	g.line(`local.get $s`)
+	g.line(`local.get $pair_start`)
+	g.line(`local.get $i`)
+	g.line(`call $__str_slice`)
+	g.line(`call $url_decode`)
+	g.line(`local.set $key`)
+	// val = ""
+	g.line(`local.get $s`)
+	g.line(`i32.const 0`)
+	g.line(`i32.const 0`)
+	g.line(`call $__str_slice`)
+	g.line(`local.set $val`)
+	g.indent--
+	g.line(`end`)
+	// m.set(key, val)
+	g.line(`local.get $m`)
+	g.line(`local.get $key`)
+	g.line(`local.get $val`)
+	g.line(`call $__method_Map_set`)
+	g.indent--
+	g.line(`end`) // pair_len > 0
+	// pair_start = i + 1
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $pair_start`)
+	g.indent--
+	g.line(`end`) // sep
+	// If we just hit sLen, we're done.
+	g.line(`local.get $i`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end`)
+	// i++
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`) // $end
+	g.line(`local.get $m`)
 	g.indent--
 	g.line(`)`)
 }

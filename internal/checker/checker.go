@@ -681,6 +681,22 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.StringType{},
 	}
 
+	// query_parse(s): split a URL-encoded query string (the
+	// part after `?`, no leading `?`) into a Map[string,
+	// string]. Keys and values are url_decode'd. Pairs are
+	// separated by `&`; within a pair, `=` separates key
+	// from value. A pair with no `=` records the key with
+	// an empty-string value. Empty input yields an empty
+	// map. `+` is left alone — callers wanting form-encoded
+	// semantics should pre-process.
+	c.info.FuncSigs["query_parse"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.StructType{
+			Name: "Map",
+			Args: []ast.Type{ast.StringType{}, ast.StringType{}},
+		},
+	}
+
 	// Built-in numeric methods. The receiver type is `NumberType`
 	// keyed by width + signedness; the dispatch path above maps
 	// `i32` / `u32` / `i64` / `u64` value types to the
