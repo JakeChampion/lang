@@ -120,7 +120,8 @@ type generator struct {
 	// `hex_encode` / `hex_decode` migrated to lang prelude;
 	// no flag needed.
 	needsBulkMemory         bool // any `__memcpy(dst, src, n)` / `__memset(dst, b, n)` call — emits bulk-memory wat shims
-	needsArrayAppendString  bool // any `__array_append_string(arr, v)` call
+	// `__array_append_string` migrated to lang prelude;
+	// no flag needed.
 	// `url_parse(s)` migrated to lang prelude; no flag.
 	// `url_encode` / `url_decode` migrated to the lang prelude
 	// (PR 176); no flag needed.
@@ -370,22 +371,28 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 				case "hex_encode", "hex_decode":
 					// Now lives in the lang prelude
 					// (internal/prelude/prelude.lang).
-				case "__memcpy", "__memset", "__alloc_u8":
+				case "__memcpy", "__memset", "__alloc_u8",
+					"__alloc", "__load_i32", "__store_i32":
 					// Wat shims that wrap wasm's bulk-memory
 					// `memory.copy` / `memory.fill` plus a tiny
-					// allocator that lays out a u8[] header for
-					// the lang side. Exposed to the lang prelude
-					// so high-level helpers (map runtime
-					// migration, json buffer family, the
-					// remaining string-method migrations) can
-					// build growable buffers without dropping
-					// out of the language.
+					// allocator + raw i32-poke set. Exposed to
+					// the lang prelude so high-level helpers
+					// (map runtime migration, json buffer
+					// family, the remaining wat array helpers)
+					// can build growable buffers and typed
+					// pointer arrays without dropping out of
+					// the language.
 					g.needsBulkMemory = true
 					g.needsRuntime = true
 				case "__array_append_string", "__array_append_jsonvalue":
-					// Both are 4-byte-pointer-stride append; one
-					// shared wat helper backs both.
-					g.needsArrayAppendString = true
+					// `__array_append_string` lives in the lang
+					// prelude; `__array_append_jsonvalue` aliases
+					// it via the codegen routing in
+					// internal/codegen/wasm/wasm_ir.go (both are
+					// 4-byte-pointer-stride at the wasm layer).
+					// No wat-side gating needed — but the alias
+					// path still wants the runtime preamble for
+					// the underlying alloc.
 					g.needsRuntime = true
 				case "url_parse":
 					// Now lives in the lang prelude
@@ -2181,9 +2188,8 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsBulkMemory {
 		g.emitBulkMemoryHelpers()
 	}
-	if g.needsArrayAppendString {
-		g.emitArrayAppendStringHelper()
-	}
+	// `__array_append_string` migrated to lang prelude;
+	// no wat helper.
 	// `url_parse`, `url_encode`, `url_decode`, `query_parse`,
 	// `json_encode`, and `json_parse` all migrated to the lang
 	// prelude (internal/prelude/prelude.lang); no wat-side
@@ -4757,66 +4763,43 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
-}
 
-// emitArrayAppendStringHelper writes
-// `$__array_append_string(arr, v)` — return a fresh
-// length-prefixed `string[]` of length `len(arr) + 1`,
-// copying the existing entries and appending `v` at the end.
-// Used by the lang prelude's `query_parse` to accumulate
-// per-key value lists. Generic per-element-stride versions
-// (for arbitrary `T[]` where T is pointer-sized) are a
-// follow-up; today the only call site is `string[] +
-// string`.
-func (g *generator) emitArrayAppendStringHelper() {
-	g.line(`(func $__array_append_string (param $arr i32) (param $v i32) (result i32)`)
+	// $__alloc(n): i32 — raw allocation of n bytes,
+	// no length prefix. Returns the base pointer. Lower-
+	// level than `__alloc_u8` — use this when the caller
+	// owns the memory layout entirely (eg the Map
+	// runtime's mixed bucket-index + entries buffer).
+	g.line(`(func $__alloc (param $n i32) (result i32)`)
 	g.indent++
-	g.line(`(local $oldLen i32) (local $newPtr i32)`)
-	g.line(`local.get $arr`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
-	g.line(`local.set $oldLen`)
-	// alloc((oldLen+1)*4 + 4)
-	g.line(`local.get $oldLen`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`i32.const 4`)
-	g.line(`i32.mul`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
+	g.line(`local.get $n`)
 	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $newPtr`)
-	g.line(`local.get $oldLen`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`i32.store`)
-	// memcpy(newPtr+4, arr, oldLen*4)
-	g.line(`local.get $newPtr`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $arr`)
-	g.line(`local.get $oldLen`)
-	g.line(`i32.const 4`)
-	g.line(`i32.mul`)
-	g.line(`memory.copy`)
-	// Append v at index oldLen.
-	g.line(`local.get $newPtr`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $oldLen`)
-	g.line(`i32.const 4`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+
+	// $__load_i32(addr): i32 — read a 4-byte word from
+	// linear memory. Pairs with `__store_i32`. Both are
+	// raw-memory escape hatches the prelude uses to
+	// build typed-array structures (the `string[]` /
+	// `JsonValue[]` pointer-stride append, the Map
+	// runtime's bucket / entry pokes). Out-of-bounds
+	// addresses produce wasm traps; the prelude is
+	// expected to bounds-check at the lang level.
+	g.line(`(func $__load_i32 (param $addr i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $addr`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`)`)
+
+	g.line(`(func $__store_i32 (param $addr i32) (param $v i32)`)
+	g.indent++
+	g.line(`local.get $addr`)
 	g.line(`local.get $v`)
 	g.line(`i32.store`)
-	// Return content ptr.
-	g.line(`local.get $newPtr`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
 }
+
 
 // emitRandomBytesHelper writes `$random_bytes(n)`, allocating
 // a fresh length-prefixed lang string of n bytes and filling

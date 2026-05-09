@@ -753,21 +753,9 @@ func Check(prog *ast.Program) (*Info, error) {
 	// `url_parse(s)` lives in the lang prelude
 	// (internal/prelude/prelude.lang).
 
-	// `__array_append_string(arr, v)` — return a fresh
-	// `string[]` of length `len(arr) + 1`. Identifier prefixed
-	// `__` because it's a primitive-shaped helper rather than
-	// a public stdlib piece — the prelude uses it internally
-	// (`query_parse` accumulates value lists per key) and
-	// individual handler code can call it too. Generic
-	// per-element arrays would be cleaner; today specific
-	// `string[]` is the single use case.
-	c.info.FuncSigs["__array_append_string"] = &ast.FuncType{
-		Params: []ast.Type{
-			ast.ArrayType{Elem: ast.StringType{}},
-			ast.StringType{},
-		},
-		Result: ast.ArrayType{Elem: ast.StringType{}},
-	}
+	// `__array_append_string(arr, v)` migrated to the lang
+	// prelude (internal/prelude/prelude.lang); its
+	// signature is registered via the prelude's FuncDecl.
 
 	// `__array_append_jsonvalue(arr, v)` — same shape as
 	// `__array_append_string` but for `JsonValue[]`.
@@ -805,12 +793,30 @@ func Check(prog *ast.Program) (*Info, error) {
 	// `__alloc_u8(n)` returns a fresh `u8[]` of length n,
 	// zero-initialised. Pairs with `__memcpy` / `__memset` /
 	// the `[u8] → i32` data-pointer cast so prelude code can
-	// build a single-pass byte buffer (next migration: the
-	// remaining wat string methods that allocate result
-	// strings — to_lower, to_upper, bytes, split, replace).
+	// build a single-pass byte buffer.
 	c.info.FuncSigs["__alloc_u8"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+	}
+	// Raw-memory escape hatches for prelude code that
+	// builds typed-pointer arrays (`__array_append_string`)
+	// or runtime structures (the Map runtime migration).
+	// `__alloc(n)` returns a raw n-byte block, no length
+	// prefix; `__load_i32` / `__store_i32` peek and poke a
+	// 4-byte word at any address. Out-of-bounds traps at
+	// the wasm level — the prelude is expected to bounds-
+	// check at the lang level.
+	c.info.FuncSigs["__alloc"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["__load_i32"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["__store_i32"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
 	}
 
 	// `url_encode(s)` / `url_decode(s)` live in the lang
@@ -2108,25 +2114,36 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if (innerIsNum || innerIsFloat) && (targetIsNum || targetIsFloat) {
 			return n.Target
 		}
-		// Slice / array of u8 → i32 (data pointer).
+		// Any owned array, slice, or string → i32 — recover
+		// the data pointer for the bulk-memory primitives.
+		// All three lower to a single i32 at runtime; the
+		// cast is the source-level escape hatch the prelude
+		// uses to call __memcpy / __store_i32 against the
+		// underlying bytes.
 		if nt, ok := n.Target.(ast.NumberType); ok && nt.NormalWidth() == 32 {
-			isU8Slice := false
-			if sl, ok := inner.(ast.SliceType); ok {
-				if e, ok := sl.Elem.(ast.NumberType); ok && e.Width == 8 && !e.Signed {
-					isU8Slice = true
-				}
-			}
-			isU8Array := false
-			if ar, ok := inner.(ast.ArrayType); ok {
-				if e, ok := ar.Elem.(ast.NumberType); ok && e.Width == 8 && !e.Signed {
-					isU8Array = true
-				}
-			}
-			if isU8Slice || isU8Array {
+			switch inner.(type) {
+			case ast.ArrayType, ast.SliceType, ast.StringType:
 				return n.Target
 			}
 		}
-		c.errf(n.P, "cannot cast %s to %s; only numeric casts (and [u8]/u8[] → i32 data-pointer) are supported", inner, n.Target)
+		// Reverse direction: `i32 → T[]` and `i32 → string`
+		// promote a raw pointer back to a typed handle. The
+		// runtime layout is identical (lang ABI for both is
+		// "value = data pointer, length prefix at base-4");
+		// only the type-level view changes. Used by the
+		// prelude when a builtin returns a freshly allocated
+		// raw block that the caller wants to expose as a
+		// typed collection — e.g. `__array_append_string`'s
+		// rebuild loop.
+		if nt, ok := inner.(ast.NumberType); ok && nt.NormalWidth() == 32 {
+			if _, ok := n.Target.(ast.ArrayType); ok {
+				return n.Target
+			}
+			if _, ok := n.Target.(ast.StringType); ok {
+				return n.Target
+			}
+		}
+		c.errf(n.P, "cannot cast %s to %s; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", inner, n.Target)
 		return n.Target
 	case *ast.BoolLit:
 		return ast.BoolType{}

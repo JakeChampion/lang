@@ -235,6 +235,39 @@ function (s: string) replace(old: string, new: string): string {
     return out + s[start:n];
 }
 
+// === Pointer-stride array append ===
+//
+// `__array_append_string(arr, v)` — return a fresh
+// `string[]` of length `len(arr) + 1`, copying the
+// existing entries and appending `v` at the end. Used by
+// the lang prelude's `query_parse` to accumulate per-key
+// value lists, and by `string.split` for piece accumulation.
+//
+// Since `string[]` and `JsonValue[]` (and any other
+// pointer-stride owned array) share the same wasm-level
+// shape — 4-byte length prefix + 4-byte ptrs — the
+// codegen aliases `__array_append_jsonvalue` to this same
+// function (see internal/codegen/wasm/wasm_ir.go). The
+// type-level signature here is `string[]`; the alias makes
+// the call type-erased at the wasm layer.
+function __array_append_string(arr: string[], v: string): string[] {
+    var oldLen: i32 = len(arr);
+    var newLen: i32 = oldLen + 1;
+    // Raw-memory layout: 4-byte length prefix at +0,
+    // then `newLen` 4-byte pointers. Use the raw __alloc
+    // primitive so we own the layout (the typed __alloc_u8
+    // would be wrong here because we're storing pointers,
+    // not bytes).
+    var hdr: i32 = __alloc(4 + newLen * 4);
+    __store_i32(hdr, newLen);
+    var data: i32 = hdr + 4;
+    if (oldLen > 0) {
+        __memcpy(data, arr as i32, oldLen * 4);
+    }
+    __store_i32(data + oldLen * 4, v as i32);
+    return data as string[];
+}
+
 // === Base64 (RFC 4648, standard alphabet) ===
 //
 // `base64_encode(s)` / `base64_decode(s)` — round-trip

@@ -24,19 +24,22 @@ import (
 )
 
 // watHelperDeps lists the prelude functions a still-in-wat
-// helper depends on. The wat helpers don't go through the
-// AST walker, so tree-shake needs this hint to know that
+// helper depends on, plus aliases the codegen layer
+// rewrites at emit-time. The AST walker doesn't see those
+// rewrites, so tree-shake needs this hint to know that
 // e.g. some still-in-wat helper calls a lang-prelude
 // function and shouldn't drop the latter when only the
 // former is referenced.
-//
-// Each entry stays around only until that wat helper is
-// itself migrated to lang; once the dependency lives in a
-// lang body, the AST walker picks it up automatically and
-// the entry can be removed. Empty today — `query_parse`
-// migrated to the prelude in PR 181, removing the only
-// previous entry.
-var watHelperDeps = map[string][]string{}
+var watHelperDeps = map[string][]string{
+	// `__array_append_jsonvalue(arr, v)` is a checker-side
+	// alias for `__array_append_string` — same wasm-level
+	// shape (4-byte-pointer-stride append), routed at the
+	// codegen layer (see internal/codegen/wasm/wasm_ir.go).
+	// Tree-shake walks the AST, which only sees the
+	// jsonvalue identifier, so explicitly pull the shared
+	// lang body in when only the jsonvalue alias is used.
+	"__array_append_jsonvalue": {"__array_append_string"},
+}
 
 // Run mutates `prog.Funcs` to retain only functions reachable
 // from the program's entry points. Function-typed values
