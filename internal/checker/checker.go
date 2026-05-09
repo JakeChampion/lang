@@ -489,6 +489,22 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerMethod("Map", "values", nil, ast.ArrayType{Elem: ast.NumberType{}})
 	registerMethod("Map", "delete", []ast.Type{ast.NumberType{}}, ast.BoolType{})
 
+	// Built-in string methods. The receiver type is
+	// StringType (not StructType), so we can't use
+	// `registerMethod` directly — that helper hardcodes
+	// `StructType{Name: structName}` as the first param.
+	// Use the same `__method_string_<name>` mangling so the
+	// dispatch path picks them up uniformly.
+	registerStringMethod := func(methodName string, params []ast.Type, result ast.Type) {
+		mangled := "__method_string_" + methodName
+		c.info.Methods["string."+methodName] = mangled
+		fullParams := append([]ast.Type{ast.StringType{}}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	registerStringMethod("starts_with", []ast.Type{ast.StringType{}}, ast.BoolType{})
+	registerStringMethod("ends_with", []ast.Type{ast.StringType{}}, ast.BoolType{})
+	registerStringMethod("contains", []ast.Type{ast.StringType{}}, ast.BoolType{})
+
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
 	// top-level names (`__method_<Type>_<Name>`) with the receiver
@@ -1845,6 +1861,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				typeName = t.Name
 			case ast.EnumType:
 				typeName = t.Name
+			case ast.StringType:
+				_ = t
+				typeName = "string"
 			}
 			if typeName != "" {
 				key := typeName + "." + fa.Field
