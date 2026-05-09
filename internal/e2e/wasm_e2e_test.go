@@ -3406,3 +3406,48 @@ func TestWASMUrlParse(t *testing.T) {
 		t.Errorf("WASM url_parse: exit = %d, want 0", got)
 	}
 }
+
+// `url_encode(s)` / `url_decode(s)` — RFC 3986 percent
+// encoding. Unreserved set passes through unchanged; the
+// rest gets `%HH` (uppercase). Decoder is forgiving:
+// malformed `%` sequences pass through verbatim.
+func TestWASMUrlCoder(t *testing.T) {
+	src := `function main(): i32 {
+		// All-unreserved input round-trips byte-for-byte.
+		if (url_encode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 1; }
+		if (url_decode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 2; }
+
+		// Spaces become %20.
+		if (url_encode("hello world") != "hello%20world") { return 3; }
+		if (url_decode("hello%20world") != "hello world") { return 4; }
+
+		// Round-trip a query-style payload.
+		if (url_encode("k=v&x=1") != "k%3Dv%26x%3D1") { return 5; }
+		if (url_decode("k%3Dv%26x%3D1") != "k=v&x=1") { return 6; }
+
+		// Lowercase hex decodes too.
+		if (url_decode("a%2bb") != "a+b") { return 7; }
+
+		// Malformed percent sequences pass through verbatim
+		// (the decoder is forgiving rather than fatal).
+		if (url_decode("100%") != "100%") { return 8; }
+		if (url_decode("%xy") != "%xy") { return 9; }
+		if (url_decode("%2") != "%2") { return 10; }
+
+		// Empty round-trips to empty.
+		if (url_encode("") != "") { return 11; }
+		if (url_decode("") != "") { return 12; }
+
+		// Reserved-set chars (RFC 3986 gen-delims +
+		// sub-delims) all need encoding.
+		if (url_encode("/") != "%2F") { return 13; }
+		if (url_encode("?") != "%3F") { return 14; }
+		if (url_encode("#") != "%23") { return 15; }
+		if (url_decode("%2F%3F%23") != "/?#") { return 16; }
+
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM url_encode/decode: exit = %d, want 0", got)
+	}
+}

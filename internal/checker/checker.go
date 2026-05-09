@@ -663,6 +663,24 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StructType{Name: "Url"}}},
 	}
 
+	// url_encode / url_decode: RFC 3986 percent-encoding. The
+	// "unreserved" set (`A-Za-z0-9-_.~`) passes through
+	// unchanged; every other byte is emitted as `%HH`
+	// (uppercase hex). url_decode is forgiving — malformed
+	// `%` sequences (non-hex following, truncated tail) are
+	// passed through verbatim rather than raising. `+` is NOT
+	// translated to space; callers handling
+	// application/x-www-form-urlencoded data should swap `+`
+	// → ` ` before decoding.
+	c.info.FuncSigs["url_encode"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.StringType{},
+	}
+	c.info.FuncSigs["url_decode"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.StringType{},
+	}
+
 	// Built-in numeric methods. The receiver type is `NumberType`
 	// keyed by width + signedness; the dispatch path above maps
 	// `i32` / `u32` / `i64` / `u64` value types to the
