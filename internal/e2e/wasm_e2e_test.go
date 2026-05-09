@@ -822,6 +822,42 @@ func TestWASMMapResize(t *testing.T) {
 	}
 }
 
+// Map.keys() / Map.values() snapshot the entries into i32[]
+// arrays in insertion order. The returned arrays are normal
+// length-prefixed `i32[]` values — `len()`, indexing, and
+// `for` work the way they do on any other array.
+func TestWASMMapKeysValues(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map = map_new(4);
+    m.set(10, 100);
+    m.set(20, 200);
+    m.set(30, 300);
+    var ks: i32[] = m.keys();
+    var vs: i32[] = m.values();
+    if (len(ks) != 3) { return 1; }
+    if (len(vs) != 3) { return 2; }
+    // Insertion order: ks == [10, 20, 30], vs == [100, 200, 300].
+    if (ks[0] != 10) { return 3; }
+    if (ks[1] != 20) { return 4; }
+    if (ks[2] != 30) { return 5; }
+    if (vs[0] != 100) { return 6; }
+    if (vs[1] != 200) { return 7; }
+    if (vs[2] != 300) { return 8; }
+    // Sum the values via a normal indexed loop.
+    var i: i32 = 0;
+    var sum: i32 = 0;
+    while (i < len(vs)) {
+        sum = sum + vs[i];
+        i = i + 1;
+    }
+    if (sum != 600) { return 9; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (map keys/values)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

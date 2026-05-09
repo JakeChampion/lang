@@ -3432,6 +3432,78 @@ func (g *generator) emitMapHelpers() {
 	g.line(`i32.store offset=4`)
 	g.indent--
 	g.line(`)`)
+
+	// $__method_Map_keys / $__method_Map_values: allocate a
+	// length-prefixed i32 array of size len, copy the
+	// corresponding column out of the kv buffer in insertion
+	// order, return the content pointer (caller sees the
+	// array's data area, not the length prefix). The result is
+	// a snapshot — mutating the map afterwards doesn't affect
+	// the returned array. Same shape as a regular `i32[]`
+	// literal so `len()` / indexing / `for…in` patterns work
+	// unchanged.
+	emitMapColumn := func(funcName string, kvOffset int) {
+		g.linef(`(func %s (param $m i32) (result i32)`, funcName)
+		g.indent++
+		g.line(`(local $buf i32) (local $len i32) (local $arr i32) (local $i i32)`)
+		g.line(`local.get $m`)
+		g.line(`i32.load`)
+		g.line(`local.tee $buf`)
+		g.line(`i32.load offset=4`)
+		g.line(`local.set $len`)
+		// arr = alloc(4 + len*4); arr[0] = len
+		g.line(`local.get $len`)
+		g.line(`i32.const 4`)
+		g.line(`i32.mul`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.line(`call $__lang_alloc`)
+		g.line(`local.tee $arr`)
+		g.line(`local.get $len`)
+		g.line(`i32.store`)
+		// for i in 0..len: arr[4 + i*4] = buf[8 + i*8 + kvOffset]
+		g.line(`i32.const 0`)
+		g.line(`local.set $i`)
+		g.line(`block $break`)
+		g.indent++
+		g.line(`loop $loop`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`local.get $len`)
+		g.line(`i32.ge_s`)
+		g.line(`br_if $break`)
+		// arr + 4 + i*4
+		g.line(`local.get $arr`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 4`)
+		g.line(`i32.mul`)
+		g.line(`i32.add`)
+		// buf + 8 + i*8 (load offset=kvOffset+8)
+		g.line(`local.get $buf`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 8`)
+		g.line(`i32.mul`)
+		g.line(`i32.add`)
+		g.linef(`i32.load offset=%d`, 8+kvOffset)
+		g.line(`i32.store offset=4`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 1`)
+		g.line(`i32.add`)
+		g.line(`local.set $i`)
+		g.line(`br $loop`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
+		// Return content ptr (skip the length prefix).
+		g.line(`local.get $arr`)
+		g.line(`i32.const 4`)
+		g.line(`i32.add`)
+		g.indent--
+		g.line(`)`)
+	}
+	emitMapColumn("$__method_Map_keys", 0)
+	emitMapColumn("$__method_Map_values", 4)
 }
 
 // emitRandomBytesHelper writes `$random_bytes(n)`, allocating

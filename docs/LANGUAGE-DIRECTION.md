@@ -340,6 +340,13 @@ Deferred to a follow-up:
     copies the existing entries over. The bump allocator
     can't reclaim the old buffer; that pays back when the
     arena resets at scope exit (PR 5).
+  - **Iteration shipped (snapshot APIs).** `m.keys()` and
+    `m.values()` return fresh `i32[]` arrays containing the
+    map's keys / values in insertion order. Both are
+    snapshots — mutating the map afterwards doesn't affect
+    the returned arrays. A non-allocating iterator
+    (`m.iter()` returning a stateful cursor) is a future
+    follow-up.
   - Future PRs generalise to `Map[K, V]`, swap the linear
     search for the IndexMap fingerprint table, add Wyhash,
     and ship the map-literal syntax.
