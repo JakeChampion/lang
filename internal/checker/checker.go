@@ -2215,6 +2215,23 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				ed := c.info.Enums[vr.enumName]
 				sub := map[string]ast.Type{}
+				// Pre-settle polymorphic numerics against the
+				// declared payload type so a non-generic variant
+				// like `enum Wide { W(i64, i32) }` accepts a bare
+				// literal — `W(8589934592, 7)` settles its first
+				// arg to i64 before checkExpr runs. Generic
+				// payloads (ParamType) skip this pass and rely on
+				// the destination annotation (Option[i64]) to flow
+				// in via monomorph; pre-settle is a no-op for
+				// non-numeric literal positions.
+				for i, a := range n.Args {
+					if i >= len(vr.payloads) {
+						break
+					}
+					if _, isParam := vr.payloads[i].(ast.ParamType); !isParam {
+						c.settleNumeric(a, vr.payloads[i])
+					}
+				}
 				for i, a := range n.Args {
 					at := c.checkExpr(a, s)
 					if i >= len(vr.payloads) || at == nil {

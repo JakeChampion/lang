@@ -730,16 +730,6 @@ func (b *builder) lookupVariant(name string) (enumName string, varIdx int, paylo
 // variant's declared payload was a type parameter (e.g.
 // `Some(3.14)` on `Option[T]` with `T = float`).
 func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
-	size := int32(4 + payloadCount*4)
-	b.emit(Op{Kind: OpConstI32, I32: size})
-	b.emit(Op{Kind: OpAlloc})
-	baseSlot := b.allocSlot()
-	b.locals[fmt.Sprintf("__enum_%d", baseSlot)] = baseSlot
-	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
-	// Store tag at offset 0.
-	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
-	b.emit(Op{Kind: OpStore})
 	// Resolve the payload's concrete type for op selection.
 	// Prefer the checker-supplied substituted types so a generic
 	// enum's `T = float` instantiation gets OpFStore; fall back
@@ -757,18 +747,28 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 			payloadTypes = ed.Variants[varIdx].Payloads
 		}
 	}
+	offsets, size := payloadLayout(payloadTypes, payloadCount)
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpAlloc})
+	baseSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__enum_%d", baseSlot)] = baseSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+	// Store tag at offset 0.
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+	b.emit(Op{Kind: OpStore})
 	for i, a := range args {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-		b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
+		b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 		b.emit(Op{Kind: OpAdd})
 		if err := b.expr(a); err != nil {
 			return err
 		}
-		if i < len(payloadTypes) && isFloat(payloadTypes[i]) {
-			b.emit(Op{Kind: OpFStore})
-		} else {
-			b.emit(Op{Kind: OpStore})
+		var pt ast.Type
+		if i < len(payloadTypes) {
+			pt = payloadTypes[i]
 		}
+		b.emit(payloadStoreOp(pt))
 	}
 	// Push the result pointer.
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
@@ -886,19 +886,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.openIf(BlockTypeVoid)
 		// Match: load each payload field into its pre-allocated
 		// outer-scope slot.
+		offsets, _ := payloadLayout(n.BindingTypes, len(bindingSlots))
 		for i, slot := range bindingSlots {
 			bt := ast.Type(ast.NumberType{})
 			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
 				bt = n.BindingTypes[i]
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-			b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
+			b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 			b.emit(Op{Kind: OpAdd})
-			if isFloat(bt) {
-				b.emit(Op{Kind: OpFLoad})
-			} else {
-				b.emit(Op{Kind: OpLoad})
-			}
+			b.emit(payloadLoadOp(bt))
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
 		}
 		b.elseBranch()
@@ -931,6 +928,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.emit(Op{Kind: OpEq})
 		b.openIf(BlockTypeVoid)
 		// Match: bind payloads, run Then.
+		offsets, _ := payloadLayout(n.BindingTypes, len(n.Bindings))
 		for i, name := range n.Bindings {
 			slot := b.allocSlot()
 			b.locals[name] = slot
@@ -940,13 +938,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			b.scratchType[slot] = bt
 			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-			b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
+			b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 			b.emit(Op{Kind: OpAdd})
-			if isFloat(bt) {
-				b.emit(Op{Kind: OpFLoad})
-			} else {
-				b.emit(Op{Kind: OpLoad})
-			}
+			b.emit(payloadLoadOp(bt))
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
 		}
 		if err := b.stmt(n.Then); err != nil {
@@ -1264,6 +1258,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// declared type — recorded via b.scratchType so
 			// the wasm backend declares it as f32 instead of
 			// the default i32.
+			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings))
 			for i, name := range arm.Bindings {
 				slot := b.allocSlot()
 				b.locals[name] = slot
@@ -1273,13 +1268,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 				}
 				b.scratchType[slot] = bt
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-				b.emit(Op{Kind: OpConstI32, I32: int32(4 + i*4)})
+				b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 				b.emit(Op{Kind: OpAdd})
-				if isFloat(bt) {
-					b.emit(Op{Kind: OpFLoad})
-				} else {
-					b.emit(Op{Kind: OpLoad})
-				}
+				b.emit(payloadLoadOp(bt))
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
 			// Optional guard: with bindings now in locals, run
@@ -2844,6 +2835,82 @@ func isVoid(t ast.Type) bool {
 func isFloat(t ast.Type) bool {
 	_, ok := t.(ast.FloatType)
 	return ok
+}
+
+// payloadSlotSize returns how many bytes a variant payload of
+// the given type consumes inside an enum's heap object. Wide
+// scalars (i64 / u64 / f64) take 8 bytes; everything else
+// takes 4 (pointer-sized — structs / enums / arrays / strings
+// / sub-i32 ints all canonicalise to a 4-byte slot).
+func payloadSlotSize(t ast.Type) int32 {
+	if t == nil {
+		return 4
+	}
+	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
+		return 8
+	}
+	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+		return 8
+	}
+	return 4
+}
+
+// payloadLayout computes the per-slot byte offsets and the
+// total enum heap size for a variant whose payloads have the
+// given types. The tag occupies the first 4 bytes (offset 0);
+// payload slots follow in order. Wide (8-byte) slots are
+// aligned to a multiple of 8 from the object base, which on
+// wasm matches the 8-byte natural alignment of i64 / f64
+// stores. Returned offsets are addresses relative to the
+// variant pointer (i.e. payload[0] starts at offset 4 for a
+// 4-byte payload, or 8 if the first payload is wide).
+func payloadLayout(types []ast.Type, count int) ([]int32, int32) {
+	offsets := make([]int32, count)
+	pos := int32(4)
+	for i := 0; i < count; i++ {
+		var t ast.Type
+		if i < len(types) {
+			t = types[i]
+		}
+		size := payloadSlotSize(t)
+		if size == 8 && pos%8 != 0 {
+			pos += 4
+		}
+		offsets[i] = pos
+		pos += size
+	}
+	return offsets, pos
+}
+
+// payloadStoreOp returns the IR Op that stores a value of the
+// given payload type to a heap slot — paired with payloadLoadOp
+// for the symmetric load.
+func payloadStoreOp(t ast.Type) Op {
+	if isFloat(t) {
+		w := 0
+		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+			w = 64
+		}
+		return Op{Kind: OpFStore, Width: w}
+	}
+	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
+		return Op{Kind: OpStore, Width: 64}
+	}
+	return Op{Kind: OpStore}
+}
+
+func payloadLoadOp(t ast.Type) Op {
+	if isFloat(t) {
+		w := 0
+		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+			w = 64
+		}
+		return Op{Kind: OpFLoad, Width: w}
+	}
+	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
+		return Op{Kind: OpLoad, Width: 64}
+	}
+	return Op{Kind: OpLoad}
 }
 
 // fieldType returns the declared type of `name` in fields, or nil
