@@ -792,6 +792,36 @@ func TestWASMMapBasics(t *testing.T) {
 	}
 }
 
+// Map dynamic resize: insert past the initial capacity and
+// verify all entries remain reachable. Without resize this
+// would trap on `unreachable`; with resize the buffer doubles
+// (2 → 4 → 8 → 16) and the wrapper's data pointer follows
+// along.
+func TestWASMMapResize(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map = map_new(2);
+    var i: i32 = 0;
+    while (i < 12) {
+        m.set(i, i * 10);
+        i = i + 1;
+    }
+    if (m.len() != 12) { return 1; }
+    var j: i32 = 0;
+    while (j < 12) {
+        if let Some(v) = m.get(j) {
+            if (v != j * 10) { return j + 100; }
+        } else {
+            return j + 200;
+        }
+        j = j + 1;
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (map resize)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

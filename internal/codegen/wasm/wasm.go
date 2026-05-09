@@ -3254,9 +3254,114 @@ func (g *generator) emitMapHelpers() {
 	g.indent--
 	g.line(`)`)
 
+	// $__map_grow: allocate a new buffer with 2× capacity (or
+	// 4 if the current cap is 0), copy the existing k/v pairs
+	// over, rewrite the Map wrapper's data pointer to point at
+	// the new buffer, and return the new buffer's address. The
+	// caller is responsible for re-reading cap / buf locals
+	// after the call — the bump allocator can't reclaim the
+	// old buffer, but no other state references it once the
+	// wrapper has been updated.
+	g.line(`(func $__map_grow (param $m i32) (result i32)`)
+	g.indent++
+	g.line(`(local $old_buf i32) (local $old_cap i32) (local $old_len i32)`)
+	g.line(`(local $new_buf i32) (local $new_cap i32) (local $i i32)`)
+	g.line(`local.get $m`)
+	g.line(`i32.load`)
+	g.line(`local.tee $old_buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $old_cap`)
+	g.line(`local.get $old_buf`)
+	g.line(`i32.load offset=4`)
+	g.line(`local.set $old_len`)
+	// new_cap = old_cap == 0 ? 4 : old_cap * 2
+	g.line(`local.get $old_cap`)
+	g.line(`i32.eqz`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.line(`i32.const 4`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $old_cap`)
+	g.line(`i32.const 1`)
+	g.line(`i32.shl`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.set $new_cap`)
+	// new_buf = alloc(8 + new_cap*8); new_buf[0] = new_cap;
+	// new_buf[4] = old_len.
+	g.line(`local.get $new_cap`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $new_buf`)
+	g.line(`local.get $new_buf`)
+	g.line(`local.get $new_cap`)
+	g.line(`i32.store`)
+	g.line(`local.get $new_buf`)
+	g.line(`local.get $old_len`)
+	g.line(`i32.store offset=4`)
+	// Copy each entry: new[8+i*8 .. +16] = old[8+i*8 .. +16].
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $old_len`)
+	g.line(`i32.ge_s`)
+	g.line(`br_if $break`)
+	// new_buf + 8 + i*8: store key
+	g.line(`local.get $new_buf`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $old_buf`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=8`)
+	g.line(`i32.store offset=8`)
+	// new_buf + 8 + i*8 + 4: store value
+	g.line(`local.get $new_buf`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $old_buf`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load offset=12`)
+	g.line(`i32.store offset=12`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// m[0] = new_buf
+	g.line(`local.get $m`)
+	g.line(`local.get $new_buf`)
+	g.line(`i32.store`)
+	g.line(`local.get $new_buf`)
+	g.indent--
+	g.line(`)`)
+
 	// $__method_Map_set: find → idx; if -1, append; else
 	// update buf[8+idx*8+4] = v. On overflow (len == cap),
-	// trap (resize is the next PR). No return value.
+	// $__map_grow doubles the buffer and rewrites m[0] before
+	// the insert continues. No return value.
 	g.line(`(func $__method_Map_set (param $m i32) (param $k i32) (param $v i32)`)
 	g.indent++
 	g.line(`(local $idx i32) (local $buf i32) (local $len i32) (local $cap i32) (local $entry i32)`)
@@ -3283,7 +3388,7 @@ func (g *generator) emitMapHelpers() {
 	g.line(`return`)
 	g.indent--
 	g.line(`end`)
-	// Insert: check capacity, then write k+v, bump len.
+	// Insert: check capacity, grow if full, then write k+v.
 	g.line(`local.get $buf`)
 	g.line(`i32.load`) // cap
 	g.line(`local.set $cap`)
@@ -3295,7 +3400,16 @@ func (g *generator) emitMapHelpers() {
 	g.line(`i32.ge_s`)
 	g.line(`if`)
 	g.indent++
-	g.line(`unreachable`) // overflow — resize comes in a follow-up PR
+	// $__map_grow returns the new buffer (also rewrites m[0])
+	// and copies the existing entries. Refresh `buf` and `cap`
+	// from the new buffer so the insertion below targets the
+	// right memory.
+	g.line(`local.get $m`)
+	g.line(`call $__map_grow`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $buf`)
+	g.line(`i32.load`)
+	g.line(`local.set $cap`)
 	g.indent--
 	g.line(`end`)
 	// entry_addr = buf + 8 + len*8
