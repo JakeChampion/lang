@@ -33,6 +33,83 @@ function (s: string) repeat(n: i32): string {
     return out;
 }
 
+// === URL percent-encoding (RFC 3986) ===
+//
+// `url_encode(s)` / `url_decode(s)` — public stdlib pair.
+// `+` is left alone for both directions; callers handling
+// `application/x-www-form-urlencoded` pre-process.
+
+function __url_unreserved(b: i32): boolean {
+    if (b >= 65 && b <= 90)  { return true; }   // A-Z
+    if (b >= 97 && b <= 122) { return true; }   // a-z
+    if (b >= 48 && b <= 57)  { return true; }   // 0-9
+    if (b == 45 || b == 46 || b == 95 || b == 126) { return true; }
+    return false;
+}
+
+function __url_hex_char(d: i32): i32 {
+    if (d < 10) { return d + 48; }   // '0' + d
+    return d + 55;                    // 'A' - 10 + d
+}
+
+function __url_hex_val(c: i32): i32 {
+    if (c >= 48 && c <= 57)  { return c - 48; }   // 0-9
+    if (c >= 97 && c <= 102) { return c - 87; }   // a-f -> 10..15
+    if (c >= 65 && c <= 70)  { return c - 55; }   // A-F -> 10..15
+    return -1;
+}
+
+function url_encode(s: string): string {
+    var n: i32 = len(s);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (__url_unreserved(b)) {
+            out = out + s[i:i+1];
+        } else {
+            var hi: i32 = (b >> 4) & 15;
+            var lo: i32 = b & 15;
+            // Explicit `as u8` keeps the array literal's
+            // element type uniform across re-checks (the
+            // monomorph pass re-runs the checker, which
+            // doesn't re-apply the destination-context
+            // coercion to function-call results).
+            var trip: u8[] = [
+                37 as u8,
+                __url_hex_char(hi) as u8,
+                __url_hex_char(lo) as u8
+            ];
+            out = out + string_from_bytes(trip);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function url_decode(s: string): string {
+    var n: i32 = len(s);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var emit: string = s[i:i+1];
+        var consumed: i32 = 1;
+        if (b == 37 && i + 2 < n) {           // '%'
+            var h1: i32 = __url_hex_val(s[i+1]);
+            var h2: i32 = __url_hex_val(s[i+2]);
+            if (h1 >= 0 && h2 >= 0) {
+                var byte: u8[] = [((h1 << 4) | h2) as u8];
+                emit = string_from_bytes(byte);
+                consumed = 3;
+            }
+        }
+        out = out + emit;
+        i = i + consumed;
+    }
+    return out;
+}
+
 // `s.parse_int()` — decimal i32 parser. Optional leading `-`;
 // rejects empty input, lone `-`, any non-digit character,
 // embedded whitespace, and out-of-range values

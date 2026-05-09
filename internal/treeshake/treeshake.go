@@ -23,6 +23,21 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
+// watHelperDeps lists the prelude functions a still-in-wat
+// helper depends on. The wat helpers don't go through the
+// AST walker, so tree-shake needs this hint to know that
+// e.g. `query_parse` (wat) calls `url_decode` (lang
+// prelude) and shouldn't drop the latter when only the
+// former is referenced.
+//
+// Each entry stays around only until that wat helper is
+// itself migrated to lang; once the dependency lives in a
+// lang body, the AST walker picks it up automatically and
+// the entry can be removed.
+var watHelperDeps = map[string][]string{
+	"query_parse": {"url_decode"},
+}
+
 // Run mutates `prog.Funcs` to retain only functions reachable
 // from the program's entry points. Function-typed values
 // (e.g. `var f = some_func; ... f();`) keep `some_func` alive
@@ -37,9 +52,32 @@ func Run(prog *ast.Program) {
 		byName[fn.Name] = fn
 	}
 	reachable := map[string]bool{}
+	// `seen` tracks every name we've expanded the wat-helper
+	// dependency map for, INCLUDING names that aren't in
+	// byName (still-in-wat helpers like `query_parse`). This
+	// ensures wat-helper-only references still pull in their
+	// declared lang-prelude dependencies.
+	seen := map[string]bool{}
 	var queue []string
 	enqueue := func(name string) {
-		if name == "" || reachable[name] {
+		if name == "" {
+			return
+		}
+		if !seen[name] {
+			seen[name] = true
+			for _, dep := range watHelperDeps[name] {
+				// Recursive enqueue, single hop is enough
+				// since deps themselves are lang funcs.
+				if !seen[dep] {
+					seen[dep] = true
+					if _, ok := byName[dep]; ok && !reachable[dep] {
+						reachable[dep] = true
+						queue = append(queue, dep)
+					}
+				}
+			}
+		}
+		if reachable[name] {
 			return
 		}
 		if _, ok := byName[name]; !ok {
