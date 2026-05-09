@@ -33,6 +33,106 @@ function (s: string) repeat(n: i32): string {
     return out;
 }
 
+// `s.starts_with(prefix)` / `s.ends_with(suffix)` /
+// `s.contains(needle)` / `s.index_of(needle)` —
+// byte-level prefix / suffix / substring scans. UTF-8
+// agnostic: they walk raw bytes, which means a partial-
+// codepoint search will match its byte sequence wherever
+// it appears (same as Go's `strings.Contains`). Empty
+// needle / prefix / suffix return true / 0 to match the
+// `strstr` / Go conventions.
+
+function (s: string) starts_with(prefix: string): boolean {
+    var sLen: i32 = len(s);
+    var pLen: i32 = len(prefix);
+    if (pLen > sLen) { return false; }
+    var i: i32 = 0;
+    while (i < pLen) {
+        if (s[i] != prefix[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function (s: string) ends_with(suffix: string): boolean {
+    var sLen: i32 = len(s);
+    var sufLen: i32 = len(suffix);
+    if (sufLen > sLen) { return false; }
+    var off: i32 = sLen - sufLen;
+    var i: i32 = 0;
+    while (i < sufLen) {
+        if (s[off + i] != suffix[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// __substr_eq compares len(needle) bytes starting at
+// `offset` in `s` against `needle` byte-by-byte. The
+// caller has already bounds-checked `offset + nLen <=
+// len(s)`, so this just walks until the first mismatch.
+function __substr_eq(s: string, offset: i32, needle: string, nLen: i32): boolean {
+    var i: i32 = 0;
+    while (i < nLen) {
+        if (s[offset + i] != needle[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function (s: string) contains(needle: string): boolean {
+    var nLen: i32 = len(needle);
+    if (nLen == 0) { return true; }
+    var sLen: i32 = len(s);
+    if (nLen > sLen) { return false; }
+    var last: i32 = sLen - nLen;
+    var i: i32 = 0;
+    while (i <= last) {
+        if (__substr_eq(s, i, needle, nLen)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function (s: string) index_of(needle: string): i32 {
+    var nLen: i32 = len(needle);
+    if (nLen == 0) { return 0; }
+    var sLen: i32 = len(s);
+    if (nLen > sLen) { return 0 - 1; }
+    var last: i32 = sLen - nLen;
+    var i: i32 = 0;
+    while (i <= last) {
+        if (__substr_eq(s, i, needle, nLen)) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// `s.trim()` — strip leading + trailing ASCII whitespace
+// (SP, TAB, LF, CR, VT, FF). UTF-8 multibyte sequences
+// pass through unchanged because their leading bytes are
+// all >= 0x80, none of which are whitespace. Returns a
+// fresh slice via the `s[a:b]` lowering.
+
+function __is_ascii_ws(b: i32): boolean {
+    return b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12;
+}
+
+function (s: string) trim(): string {
+    var n: i32 = len(s);
+    var low: i32 = 0;
+    var high: i32 = n;
+    while (low < high) {
+        if (!__is_ascii_ws(s[low])) { break; }
+        low = low + 1;
+    }
+    while (high > low) {
+        if (!__is_ascii_ws(s[high - 1])) { break; }
+        high = high - 1;
+    }
+    return s[low:high];
+}
+
 // === URL percent-encoding (RFC 3986) ===
 //
 // `url_encode(s)` / `url_decode(s)` — public stdlib pair.
