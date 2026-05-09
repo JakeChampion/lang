@@ -1100,6 +1100,38 @@ func TestWASMStringSlice(t *testing.T) {
 	}
 }
 
+// String methods: starts_with / ends_with / contains. Built-in
+// runtime helpers; method-call dispatch on string targets is
+// wired through the same `__method_<TypeName>_<Name>` mangling
+// the rest of the language uses.
+func TestWASMStringMethods(t *testing.T) {
+	src := `function main(): i32 {
+    var s: string = "hello world";
+    if (!s.starts_with("hello")) { return 1; }
+    if (!s.starts_with("h")) { return 2; }
+    if (s.starts_with("world")) { return 3; }
+    if (s.starts_with("hello world!")) { return 4; }
+    if (!s.starts_with("")) { return 5; }
+
+    if (!s.ends_with("world")) { return 6; }
+    if (!s.ends_with("d")) { return 7; }
+    if (s.ends_with("hello")) { return 8; }
+    if (!s.ends_with("")) { return 9; }
+
+    if (!s.contains("hello")) { return 10; }
+    if (!s.contains("world")) { return 11; }
+    if (!s.contains(" ")) { return 12; }
+    if (!s.contains("o w")) { return 13; }
+    if (s.contains("xyz")) { return 14; }
+    if (s.contains("hello world!")) { return 15; }
+    if (!s.contains("")) { return 16; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (string methods)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64

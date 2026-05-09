@@ -107,6 +107,7 @@ type generator struct {
 	needsStrEq       bool // any String == String / != comparison
 	needsStrConcat   bool // any String + String concatenation
 	needsStrSlice    bool // any `s[a:b]` on a string — emits $__str_slice
+	needsStrMethods  bool // any `s.starts_with` / `.ends_with` / `.contains` call
 	needsStructs     bool
 	needsBoundsCheck bool // any array or string Index expression appears
 	needsClosures    bool // any FuncDecl was hoisted by closure conversion
@@ -361,6 +362,10 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 				}
 				if strings.HasPrefix(id.Name, "__method_Map_") {
 					g.needsMap = true
+					g.needsRuntime = true
+				}
+				if strings.HasPrefix(id.Name, "__method_string_") {
+					g.needsStrMethods = true
 					g.needsRuntime = true
 				}
 			}
@@ -1979,6 +1984,10 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`)`)
 	}
 
+	if g.needsStrMethods {
+		g.emitStringMethodHelpers()
+	}
+
 	g.emitStreamsStdioHelpers()
 
 	// putchar(n) — blocking-write-and-flush(stdout, ptr=0, len=1).
@@ -3186,6 +3195,197 @@ func (g *generator) emitArenaHelpers() {
 	g.line(`i32.const 40`)
 	g.line(`local.get $h`)
 	g.line(`i32.store`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitStringMethodHelpers writes the built-in string method
+// runtime helpers: `s.starts_with(prefix)`, `s.ends_with(suffix)`,
+// `s.contains(needle)`. Each takes the receiver string + one
+// argument string (both as content pointers — the lang ABI for
+// `string`) and returns an i32 boolean. Linear-search
+// `contains`; the `*_with` pair is a single bounded
+// `__lang_strcmp` call.
+func (g *generator) emitStringMethodHelpers() {
+	// Shared body: compares `n` bytes at $aBase against $bBase.
+	// Returns 1 if every byte matches, 0 on first mismatch.
+	g.line(`(func $__bytes_eq (param $aBase i32) (param $bBase i32) (param $n i32) (result i32)`)
+	g.indent++
+	g.line(`(local $i i32)`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $n`)
+	g.line(`i32.ge_s`)
+	g.line(`br_if $break`)
+	// if a[i] != b[i] return 0
+	g.line(`local.get $aBase`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.get $bBase`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`i32.ne`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 1`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_string_starts_with(s, prefix): bool
+	g.line(`(func $__method_string_starts_with (param $s i32) (param $prefix i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $pLen i32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`local.get $prefix`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $pLen`)
+	g.line(`local.get $pLen`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.gt_s`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $s`)
+	g.line(`local.get $prefix`)
+	g.line(`local.get $pLen`)
+	g.line(`call $__bytes_eq`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_string_ends_with(s, suffix): bool
+	g.line(`(func $__method_string_ends_with (param $s i32) (param $suffix i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $sufLen i32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`local.get $suffix`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sufLen`)
+	g.line(`local.get $sufLen`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.gt_s`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Compare $s[sLen - sufLen ..] against $suffix.
+	g.line(`local.get $s`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.add`)
+	g.line(`local.get $sufLen`)
+	g.line(`i32.sub`)
+	g.line(`local.get $suffix`)
+	g.line(`local.get $sufLen`)
+	g.line(`call $__bytes_eq`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_string_contains(s, needle): bool — linear scan
+	// over every starting position 0..sLen-needleLen.
+	g.line(`(func $__method_string_contains (param $s i32) (param $needle i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $nLen i32) (local $i i32) (local $last i32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`local.get $needle`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $nLen`)
+	// An empty needle is contained in every string (matches the
+	// strstr / std::string::contains convention).
+	g.line(`local.get $nLen`)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 1`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $nLen`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.gt_s`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $sLen`)
+	g.line(`local.get $nLen`)
+	g.line(`i32.sub`)
+	g.line(`local.set $last`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $last`)
+	g.line(`i32.gt_s`)
+	g.line(`br_if $break`)
+	g.line(`local.get $s`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`local.get $needle`)
+	g.line(`local.get $nLen`)
+	g.line(`call $__bytes_eq`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 1`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`i32.const 0`)
 	g.indent--
 	g.line(`)`)
 }
