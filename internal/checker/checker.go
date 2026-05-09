@@ -510,6 +510,12 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerStringMethod("to_upper", nil, ast.StringType{})
 	registerStringMethod("split", []ast.Type{ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}})
 	registerStringMethod("replace", []ast.Type{ast.StringType{}, ast.StringType{}}, ast.StringType{})
+	registerStringMethod("bytes", nil, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}})
+
+	c.info.FuncSigs["string_from_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.StringType{},
+	}
 
 	// Built-in numeric methods. The receiver type is `NumberType`
 	// keyed by width + signedness; the dispatch path above maps
