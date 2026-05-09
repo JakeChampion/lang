@@ -367,24 +367,43 @@ Deferred to a follow-up:
     widths) or `string`; V is restricted to pointer-sized
     types (any 4-byte storage — i32 / string / struct /
     enum / array / slice ptr). The runtime stores a
-    `keyKind` tag in the buffer header (cap, len, keyKind,
-    entries...) so the linear-search core branches between
-    i32-eq and `__str_eq` without per-instantiation
-    monomorphisation. Method dispatch substitutes K / V
-    from the receiver's TypeArgs into the registered
-    method signatures so `(m: Map[string, i32]).set(k, v)`
-    type-checks `k` as string and `v` as i32. `map_new`
-    return-type inference flows from the destination
-    context (`var m: Map[string, i32] = map_new(8)`) so no
-    explicit type-arg syntax is needed yet. Map literals
-    infer K / V from the first entry's types. Map's struct
-    is excluded from the monomorpher (a single helper set
-    handles every instantiation via the runtime keyKind
-    tag).
-  - Future PRs swap the linear search for the IndexMap
-    fingerprint table + Wyhash, lift the i32-sized-only
-    restriction (i64 / u64 / f64 keys + values), and add
-    map iteration via a non-allocating cursor.
+    `keyKind` tag in the buffer header so the
+    open-addressing core branches between i32-eq and
+    `__str_eq` without per-instantiation monomorphisation.
+    Method dispatch substitutes K / V from the receiver's
+    TypeArgs into the registered method signatures so
+    `(m: Map[string, i32]).set(k, v)` type-checks `k` as
+    string and `v` as i32. `map_new` return-type inference
+    flows from the destination context (`var m:
+    Map[string, i32] = map_new(8)`) so no explicit type-arg
+    syntax is needed yet. Map literals infer K / V from
+    the first entry's types. Map's struct is excluded from
+    the monomorpher (a single helper set handles every
+    instantiation via the runtime keyKind tag).
+  - **IndexMap-shaped open-addressing shipped.** The
+    runtime swapped from O(n) linear-scan to O(1)
+    expected-time hash lookups. Buffer layout: 16-byte
+    header (cap, len, keyKind, _pad), then a `cap`-sized
+    bucket-index array, then a `cap`-sized `(k, v)`
+    entries array stored in **insertion order**. Buckets
+    are i32 entry-indices (or `-1` empty / `-2`
+    tombstone). Probing is linear with tombstone-skip on
+    lookup and tombstone-reuse on insert. Resize triggers
+    at 75% load factor and doubles the capacity (rounded
+    to the next power of 2 in `map_new`). Hash function:
+    Wang's integer mix for scalar keys, FNV-1a 32-bit for
+    string keys — the design supports a Wyhash-flavour
+    upgrade later if better mixing on adversarial inputs
+    is needed. Insertion order survives `set` / `get`;
+    `delete` does swap-with-last in the entries array
+    (and patches the swapped entry's bucket pointer) so
+    insertion order is preserved up to the deleted slot.
+    Stress-tested with 100+ entries through inserts /
+    updates / interleaved deletes / re-inserts on both
+    i32-keyed and string-keyed maps.
+  - Future PRs lift the i32-sized-only restriction (i64 /
+    u64 / f64 keys + values), and add map iteration via a
+    non-allocating cursor (`m.iter() -> MapIter[K, V]`).
 - Map literals: TBD syntax. `{ "k": v }` collides with struct
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally
