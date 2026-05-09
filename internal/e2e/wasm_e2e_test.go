@@ -1323,6 +1323,41 @@ func TestWASMStringAsBytes(t *testing.T) {
 	}
 }
 
+// `s.is_empty()` is a length-zero shorthand; `s.repeat(n)`
+// concatenates n copies of s. Covers the empty-string base
+// case, n <= 0 → empty, n == 1 → identity, and a couple of
+// larger n values.
+func TestWASMStringIsEmptyAndRepeat(t *testing.T) {
+	src := `function main(): i32 {
+		// is_empty
+		if (!"".is_empty()) { return 1; }
+		if ("x".is_empty()) { return 2; }
+		if ("hello".is_empty()) { return 3; }
+
+		// repeat: n <= 0 -> empty
+		if ("x".repeat(0) != "") { return 10; }
+		if ("x".repeat(-3) != "") { return 11; }
+
+		// repeat: n == 1 -> copy of s
+		if ("hi".repeat(1) != "hi") { return 20; }
+
+		// repeat: typical case
+		if ("ab".repeat(3) != "ababab") { return 30; }
+		if ("-".repeat(5) != "-----") { return 31; }
+
+		// repeat on empty source -> empty regardless of n
+		if ("".repeat(7) != "") { return 40; }
+
+		// repeated len matches expectation
+		if (len("xy".repeat(4)) != 8) { return 50; }
+
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM is_empty/repeat: exit = %d, want 0", got)
+	}
+}
+
 // `s.parse_int(): Option[i32]` — decimal parser. Covers
 // success cases (positive, negative, single digit, zero,
 // boundary values 2^31-1 / -2^31), and failure cases
