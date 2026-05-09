@@ -161,6 +161,25 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "body", Type: ast.StringType{}},
 			},
 		},
+		// Map[i32, i32] — first cut of the IndexMap-shaped Map
+		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
+		// (i32 keys, i32 values) for now; generic K / V comes in
+		// a follow-up that replaces the runtime helpers + wires
+		// monomorphisation. Linear-search internals; fixed
+		// capacity at construction. The struct is opaque-by-
+		// convention; user code constructs via `Map.new(cap)`
+		// and reads through methods.
+		{
+			Name: "Map",
+			Fields: []ast.Param{
+				// `data` is a heap pointer to a flat buffer
+				// `[cap, len, key0, val0, key1, val1, ...]`.
+				// Length and capacity live with the buffer
+				// rather than on the struct so the struct
+				// itself stays a single-word value.
+				{Name: "data", Type: ast.NumberType{}},
+			},
+		},
 	}
 }
 
@@ -450,6 +469,22 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerMethod("Reader", "close", nil, optionIoErr)
 	registerMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	registerMethod("Writer", "close", nil, optionIoErr)
+
+	// Map[i32, i32] — first cut of the IndexMap from PR 4.
+	// Concrete-typed for now; future PRs generalise to
+	// generic Map[K, V] and switch the runtime to the
+	// IndexMap fingerprint-table layout from
+	// docs/LANGUAGE-DIRECTION.md. Linear search internally.
+	mapType := ast.StructType{Name: "Map"}
+	optionInt := ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}
+	c.info.FuncSigs["map_new"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}}, // capacity
+		Result: mapType,
+	}
+	registerMethod("Map", "len", nil, ast.NumberType{})
+	registerMethod("Map", "has", []ast.Type{ast.NumberType{}}, ast.BoolType{})
+	registerMethod("Map", "get", []ast.Type{ast.NumberType{}}, optionInt)
+	registerMethod("Map", "set", []ast.Type{ast.NumberType{}, ast.NumberType{}}, ast.VoidType{})
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled

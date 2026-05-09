@@ -747,6 +747,51 @@ function main(): i32 {
 	}
 }
 
+// Map[i32, i32] linear-search smoke test. Auto-injected `Map`
+// struct + `map_new(cap)` constructor; methods are
+// `m.set(k, v)`, `m.get(k)`, `m.has(k)`, `m.len()`. This is
+// the first cut from PR 4 in docs/LANGUAGE-DIRECTION.md;
+// generic K / V and the IndexMap fingerprint-table layout
+// land in follow-ups.
+func TestWASMMapBasics(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map = map_new(8);
+    if (m.len() != 0) { return 1; }
+    if (m.has(7)) { return 2; }
+    m.set(7, 42);
+    m.set(11, 99);
+    if (m.len() != 2) { return 3; }
+    if (!m.has(7)) { return 4; }
+    if (!m.has(11)) { return 5; }
+    if (m.has(13)) { return 6; }
+    if let Some(v) = m.get(7) {
+        if (v != 42) { return 7; }
+    } else {
+        return 8;
+    }
+    if let Some(v) = m.get(11) {
+        if (v != 99) { return 9; }
+    } else {
+        return 10;
+    }
+    if let Some(_) = m.get(13) {
+        return 11;
+    }
+    // Update an existing key — len stays at 2.
+    m.set(7, 100);
+    if (m.len() != 2) { return 12; }
+    if let Some(v) = m.get(7) {
+        if (v != 100) { return 13; }
+    } else {
+        return 14;
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (map basic ops)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64
