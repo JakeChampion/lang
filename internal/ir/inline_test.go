@@ -90,24 +90,34 @@ func TestInlineAppendsFreshSlotsPerCallSite(t *testing.T) {
 	}
 }
 
-// Functions whose body contains a call themselves are NOT
-// candidates — inlining them would duplicate the inner call and
-// could blow recursion. Verify they're left alone.
-func TestInlineSkipsFunctionsContainingCalls(t *testing.T) {
+// Functions whose body contains a direct call ARE inlined under
+// the extended inliner — single-pass substitution means the inner
+// call survives in the spliced body. The single-pass walk + body-
+// snapshot capture together prevent recursive growth.
+func TestInlineKeepsInnerCallsThroughInlinedBody(t *testing.T) {
 	p := loweredAndInlined(t, `function add(a: i32, b: i32): i32 { return a + b; }
 		function compose(x: i32): i32 { return add(x, x); }
 		function main(): i32 { return compose(5); }`)
-	// compose contains a call to add, so compose should NOT be
-	// inlined into main.
+	// compose got inlined into main; the inner add call survived
+	// the splice (single-pass inliner doesn't re-walk substituted
+	// bodies).
 	main := findFunc(p, "main")
-	hasComposeCall := false
+	hasComposeCall, hasAddCall := false, false
 	for _, op := range main.Ops {
-		if op.Kind == OpCallDirect && op.Str == "compose" {
-			hasComposeCall = true
+		if op.Kind == OpCallDirect {
+			switch op.Str {
+			case "compose":
+				hasComposeCall = true
+			case "add":
+				hasAddCall = true
+			}
 		}
 	}
-	if !hasComposeCall {
-		t.Errorf("compose contains a call and should not be inlined:\n%s", p)
+	if hasComposeCall {
+		t.Errorf("expected compose to be inlined into main:\n%s", p)
+	}
+	if !hasAddCall {
+		t.Errorf("expected the inner add call to survive in main after inlining compose:\n%s", p)
 	}
 }
 
@@ -181,5 +191,59 @@ func TestInlineKeepsStructuredCFBalanced(t *testing.T) {
 		if depth != 0 {
 			t.Errorf("%s: ended at depth %d, want 0", fn.Name, depth)
 		}
+	}
+}
+
+// A callee with a single trailing return + internal control flow
+// (an if-else expression) inlines without a wrapper block. Pure
+// straight-line splice: the trailing OpReturn is dropped and the
+// caller's continuation picks up the value off the operand stack.
+func TestInlineControlFlowWithoutEarlyReturn(t *testing.T) {
+	p := loweredAndInlined(t, `function abs(n: i32): i32 {
+		var v: i32 = n;
+		if (v < 0) { v = 0 - v; }
+		return v;
+	}
+function main(): i32 { return abs(0 - 7); }`)
+	main := findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	for _, op := range main.Ops {
+		if op.Kind == OpCallDirect && op.Str == "abs" {
+			t.Fatalf("OpCallDirect abs should have been inlined:\n%s", p)
+		}
+	}
+}
+
+// A callee with an early return wraps in a block; the inner Return
+// becomes an OpBr targeting the wrapper. Verify the wrapper is
+// emitted and the inner call is gone.
+func TestInlineEarlyReturnWrapsInBlock(t *testing.T) {
+	p := loweredAndInlined(t, `function clamp_zero(n: i32): i32 {
+		if (n < 0) { return 0; }
+		return n;
+	}
+function main(): i32 { return clamp_zero(0 - 5); }`)
+	main := findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	for _, op := range main.Ops {
+		if op.Kind == OpCallDirect && op.Str == "clamp_zero" {
+			t.Fatalf("OpCallDirect clamp_zero should have been inlined:\n%s", p)
+		}
+	}
+	// At least one OpBlock must appear in main as the return-target
+	// wrapper — there's no other source of blocks in this program.
+	hasBlock := false
+	for _, op := range main.Ops {
+		if op.Kind == OpBlock {
+			hasBlock = true
+			break
+		}
+	}
+	if !hasBlock {
+		t.Errorf("expected a wrapper block for the early-return inline:\n%s", p)
 	}
 }

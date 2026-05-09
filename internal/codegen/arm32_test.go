@@ -144,11 +144,12 @@ func TestShortCircuitOr(t *testing.T) {
 }
 
 func TestCallEmitsBl(t *testing.T) {
-	// Use a callee with an if-statement so the IR inliner skips it
-	// — otherwise the `bl g` we're looking for gets substituted away.
+	// Use a recursive callee so the IR inliner's self-recursion
+	// check skips it — otherwise the `bl g` we're looking for
+	// gets substituted away.
 	asm := compile(t, `function g(n: i32): i32 {
 		if (n == 0) { return 1; }
-		return n + 1;
+		return g(n - 1) + 1;
 	}
 function f(): i32 { return g(5); }`)
 	mustContain(t, asm, "bl g")
@@ -221,13 +222,13 @@ func TestManyParamsReadsFromCallerStack(t *testing.T) {
 // order, then load r0..r3 from the appropriate offsets and reverse
 // the extras into AAPCS layout (leftmost-stack-arg at sp+0).
 func TestManyArgCallPreallocates(t *testing.T) {
-	// Branchy callee to keep the IR inliner from substituting it
-	// away — we want an actual `bl g` so we can inspect the
+	// Recursive callee to keep the IR inliner from substituting
+	// it away — we want an actual `bl g` so we can inspect the
 	// arg-passing dance.
 	asm := compile(t, `
 		function g(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32): i32 {
 			if (a == 0) { return 0; }
-			return a;
+			return g(a - 1, b, c, d, e, f);
 		}
 		function f(): i32 { return g(1, 2, 3, 4, 5, 6); }`)
 	// Args 0..3 read from their pushed offsets.
@@ -437,11 +438,11 @@ func TestNonTailRecursionKeepsBl(t *testing.T) {
 // Functions that contain a Call expression are NOT leaves — the
 // existing stack-spill prologue still applies.
 func TestNonLeafKeepsStackSpill(t *testing.T) {
-	// Branchy callee resists IR inlining; `f` then keeps the
+	// Recursive callee resists IR inlining; `f` then keeps the
 	// non-leaf shape because it makes a real `bl g` call.
 	asm := compile(t, `function g(n: i32): i32 {
 		if (n == 0) { return 0; }
-		return n;
+		return g(n - 1);
 	}
 function f(n: i32): i32 { return g(n); }`)
 	// `f` calls `g`, so it isn't a leaf — expect the original prologue.

@@ -153,14 +153,24 @@ func tryFlattenIf(ops []Op, ifIdx int, retType ast.Type) ([]Op, int, bool) {
 }
 
 // returnBlockType maps the function's declared return type to the
-// matching block result type. Used both here and by the multi-
-// return inliner; kept as a small helper next to the
-// blocktype-emitting passes.
+// matching block result type. Used by flatten + the multi-return
+// inliner; kept as a small helper next to the blocktype-emitting
+// passes. i64 / f64 / f32 surface their wider block types so the
+// wrapper's signature matches the wat side.
 func returnBlockType(t ast.Type) int32 {
-	switch t.(type) {
-	case ast.VoidType:
+	if t == nil {
 		return BlockTypeVoid
-	case ast.FloatType:
+	}
+	if _, ok := t.(ast.VoidType); ok {
+		return BlockTypeVoid
+	}
+	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
+		return BlockTypeI64
+	}
+	if f, ok := t.(ast.FloatType); ok {
+		if f.Width == 64 {
+			return BlockTypeF64
+		}
 		return BlockTypeF32
 	}
 	return BlockTypeI32

@@ -1,28 +1,21 @@
 // Function inlining at the IR level.
 //
-// Replaces every OpCallDirect to a "small" leaf function with a copy
-// of the callee's op list, with arguments bound to fresh local slots
-// in the caller. The pass runs after Lower / before Fold / DCE so
-// the constants exposed by a substituted body get folded and any
-// unreachable cleanup gets dropped in the same pipeline.
+// Replaces every OpCallDirect to a "small" callee with a copy of
+// the callee's op list, with arguments bound to fresh local slots
+// in the caller. Runs after Lower / before Fold / DCE so the
+// constants exposed by a substituted body get folded in the same
+// pipeline.
 //
-// Eligibility (deliberately conservative — match the AST inliner's
-// restrictions where they still apply, drop the ones the IR's slot
-// model makes safe):
+// Eligibility — deliberately conservative, but extended past the
+// strictly-leaf shape so prelude helpers with simple control flow
+// or sub-calls still inline:
 //
-//   - the callee's body is a linear op sequence ending in OpReturn
-//     (or OpReturnVoid for void functions). No early returns, no
-//     internal block / loop / if scopes, no break / continue.
-//   - no call-emitting op anywhere in the body — direct calls,
-//     indirect calls, allocation, string-runtime helpers, closure
-//     construction. This forbids recursion implicitly and keeps
-//     inlining from duplicating side effects.
-//   - body length ≤ inlineSizeLimit, so we don't bloat the caller.
-//
-// Notably absent vs. the AST inliner: the "args must be simple"
-// constraint. The IR substitution binds each argument once into a
-// fresh local before the body runs, so even arg expressions with
-// side effects evaluate exactly once.
+//   - body length ≤ inlineSizeLimit (skip blow-up cases).
+//   - no OpCallIndirect / OpMakeClosure: closures bring an extra
+//     layer of dispatch + a `__call_scratch` requirement; not
+//     worth the per-callee book-keeping yet.
+//   - no recursive call to the caller itself (inlineOps detects
+//     this by name match against the enclosing function).
 //
 // What gets rewritten at a call site:
 //
@@ -35,36 +28,46 @@
 //   OpStoreLocal <fresh slot for param P-1>  (rightmost arg → rightmost param)
 //   …
 //   OpStoreLocal <fresh slot for param 0>
+//   OpBlock <result-type>                    (return-target wrapper)
 //   <callee's body ops, with every OpLoadLocal / OpStoreLocal index
-//    rewritten to add the offset of the fresh slot range>
-//   <trailing OpReturn / OpReturnVoid dropped>
+//    rewritten to add the offset of the fresh slot range AND every
+//    OpReturn / OpReturnVoid translated to a br targeting the
+//    wrapper>
+//   OpEnd                                    (closes wrapper)
+//
+// The wrapper block lets early returns fall through to the
+// inlined-body's continuation by branching out — same shape an
+// optimising C compiler uses for inlined returns. Falls through to
+// the wrapper end when the trailing terminator runs.
 //
 // The caller's ScratchTypes grows by the callee's full slot list
 // (params + locals + scratches) — each entry's type carries
-// through so codegen declares the right shape (i32 vs f32) for
-// each WAT local. Each inline site gets its own slot range; the
-// simple version doesn't try to coalesce ranges across
-// consecutive inlines.
+// through so codegen declares the right shape (i32 vs f32 vs
+// i64 vs f64) for each WAT local. Each inline site gets its own
+// slot range; the simple version doesn't try to coalesce ranges
+// across consecutive inlines.
 
 package ir
 
 import "github.com/jakechampion/lang/internal/ast"
 
 // inlineSizeLimit caps how many ops a callee can have to remain
-// eligible. Tuned to allow simple arithmetic / accessor wrappers
-// without letting larger helpers explode caller size. Tweak as
-// real workloads emerge.
-const inlineSizeLimit = 30
+// eligible. Tuned to allow the bulk of prelude helpers (e.g.
+// __substr_eq, __map_hash, the small hex / b64 char-classifiers)
+// to inline through their internal control flow. Tweak as real
+// workloads emerge.
+const inlineSizeLimit = 80
 
-// Inline rewrites every OpCallDirect to an eligible callee in prog as
-// the callee's op list with parameters bound to fresh local slots.
-// The pass is conservative — programs without inlineable callees are
-// unchanged in O(N) walk time.
+// Inline rewrites every OpCallDirect to an eligible callee in prog
+// as the callee's op list with parameters bound to fresh local
+// slots. The pass is conservative — programs without inlineable
+// callees are unchanged in O(N) walk time.
 //
 // Order in the production pipeline: Lower → Inline → Fold → DCE →
-// (TCO if arm32) → emit. Inlining first exposes constant arithmetic
-// in substituted bodies (e.g. `dbl(7)` becomes `7 * 2`) for Fold to
-// collapse, then DCE drops anything unreachable that surfaces.
+// (TCO if arm32) → emit. Inlining first exposes constant
+// arithmetic in substituted bodies (e.g. `dbl(7)` becomes `7 * 2`)
+// for Fold to collapse, then DCE drops anything unreachable that
+// surfaces.
 func Inline(prog *Program) {
 	candidates := findInlineCandidates(prog)
 	if len(candidates) == 0 {
@@ -77,21 +80,28 @@ func Inline(prog *Program) {
 
 // inlineCandidate is an eligible callee snapshot taken before any
 // rewriting begins. Storing the body slice keeps the inliner from
-// observing rewrites done to the callee itself when it appears later
-// in the prog.Funcs list.
+// observing rewrites done to the callee itself when it appears
+// later in the prog.Funcs list.
 type inlineCandidate struct {
 	fn   *Func
 	body []Op // body up to and including the trailing OpReturn / OpReturnVoid
 	// slotTypes lists the type of every slot the callee uses, in
 	// slot order: params first, then user locals, then scratches.
-	// Inlining appends these to the caller's ScratchTypes so codegen
-	// declares each new local with the right WAT type.
+	// Inlining appends these to the caller's ScratchTypes so
+	// codegen declares each new local with the right WAT type.
 	slotTypes []ast.Type
+	// returnBlockType describes the wrapper block's result type
+	// matched against the callee's return type. Void functions
+	// open a void wrapper and use plain `br`; value-returning
+	// functions open a typed wrapper so the br carries the
+	// returned value through.
+	returnBlockType int32
 }
 
-// findInlineCandidates scans every function in prog and returns the
-// subset that meets the eligibility rules. The map's key is the
-// function name so Inline can resolve OpCallDirect.Str directly.
+// findInlineCandidates scans every function in prog and returns
+// the subset that meets the eligibility rules. The map's key is
+// the function name so Inline can resolve OpCallDirect.Str
+// directly.
 func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 	out := map[string]inlineCandidate{}
 	for _, fn := range prog.Funcs {
@@ -107,17 +117,19 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 		}
 		slots = append(slots, fn.ScratchTypes...)
 		out[fn.Name] = inlineCandidate{
-			fn:        fn,
-			body:      fn.Ops,
-			slotTypes: slots,
+			fn:              fn,
+			body:            fn.Ops,
+			slotTypes:       slots,
+			returnBlockType: returnBlockType(fn.ReturnType),
 		}
 	}
 	return out
 }
 
 // isInlineable reports whether fn meets every eligibility rule.
-// Returns false for functions that recurse, contain calls of any
-// kind, use control flow, or exceed the size threshold.
+// Internal control flow (block / loop / if / br / brif) and direct
+// calls to other functions are allowed; OpCallIndirect /
+// OpMakeClosure / oversized bodies disqualify.
 func isInlineable(fn *Func) bool {
 	if len(fn.Ops) == 0 || len(fn.Ops) > inlineSizeLimit {
 		return false
@@ -126,23 +138,17 @@ func isInlineable(fn *Func) bool {
 	if last != OpReturn && last != OpReturnVoid {
 		return false
 	}
-	// Walk the body excluding the trailing terminator. Any other
-	// terminator, control-flow op, or call-emitting op disqualifies
-	// the function.
-	for _, op := range fn.Ops[:len(fn.Ops)-1] {
+	for _, op := range fn.Ops {
 		switch op.Kind {
-		case OpBlock, OpLoop, OpIf, OpElse, OpEnd, OpBr, OpBrIf,
-			OpReturn, OpReturnVoid,
-			OpCallDirect, OpCallIndirect,
-			OpAlloc, OpStrConcat, OpStrEq, OpMakeClosure:
+		case OpCallIndirect, OpMakeClosure:
 			return false
 		}
 	}
 	return true
 }
 
-// inlineOps walks ops linearly and substitutes every OpCallDirect to
-// a known candidate. Calls to non-candidate functions are left
+// inlineOps walks ops linearly and substitutes every OpCallDirect
+// to a known candidate. Calls to non-candidate functions are left
 // untouched. The fn argument is the caller, mutated in place: each
 // substitution appends the callee's slot types to fn.ScratchTypes.
 func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
@@ -164,37 +170,88 @@ func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 }
 
 // expandInline produces the op slice that replaces a single
-// OpCallDirect site. It allocates the fresh slot range, emits the
-// arg-binding stores in reverse order (rightmost arg sits on top of
-// the operand stack), splices the callee body with rewritten slot
-// indices, and drops the trailing terminator so control falls into
-// the caller's continuation.
+// OpCallDirect site. Argument bindings, the return-target wrapper,
+// and the body splice with renumbered slots + return-translation
+// all happen here.
 func expandInline(caller *Func, cand inlineCandidate) []Op {
 	base := int32(len(caller.Params)) + int32(len(caller.Locals)) + int32(len(caller.ScratchTypes))
 	caller.ScratchTypes = append(caller.ScratchTypes, cand.slotTypes...)
 
 	// Bind arguments. Caller pushed args left-to-right, so the
-	// rightmost argument is on top of the operand stack — popping
-	// into reverse-order param slots lands each value in the right
-	// place.
-	out := make([]Op, 0, len(cand.body)+len(cand.slotTypes))
+	// rightmost argument is on top of the operand stack —
+	// popping into reverse-order param slots lands each value in
+	// the right place.
+	out := make([]Op, 0, len(cand.body)+len(cand.slotTypes)+2)
 	for p := int32(len(cand.fn.Params)) - 1; p >= 0; p-- {
 		out = append(out, Op{Kind: OpStoreLocal, I32: base + p})
 	}
 
+	// Skip the wrapper block on the easy case: bodies with no
+	// mid-body OpReturn / OpReturnVoid don't need an early-exit
+	// target. Keeps the linear-leaf path bit-identical to the
+	// pre-control-flow inliner so downstream peephole +
+	// tee-folding still see the un-blocked load / store / op
+	// stream they were tuned for.
+	wrap := needsReturnWrapper(cand.body)
+	if wrap {
+		out = append(out, Op{Kind: OpBlock, I32: cand.returnBlockType})
+	}
+
 	// Splice the callee body with slot indices rebased onto the
-	// caller's fresh range. The trailing OpReturn / OpReturnVoid is
-	// skipped — the value (if any) is already on the operand stack
-	// where the caller's continuation expects it.
+	// caller's fresh range, control-flow depth tracked so each
+	// Return translates to a br with the correct relative depth,
+	// and the trailing terminator dropped (control falls through
+	// to the wrapper's End — or to the caller continuation
+	// directly when there's no wrapper).
+	depth := int32(0)
 	for i, op := range cand.body {
-		if i == len(cand.body)-1 && (op.Kind == OpReturn || op.Kind == OpReturnVoid) {
-			continue
+		isTrailing := i == len(cand.body)-1 && (op.Kind == OpReturn || op.Kind == OpReturnVoid)
+		if isTrailing {
+			break
 		}
 		switch op.Kind {
-		case OpLoadLocal, OpStoreLocal:
+		case OpBlock, OpLoop, OpIf:
+			out = append(out, op)
+			depth++
+		case OpEnd:
+			out = append(out, op)
+			depth--
+		case OpLoadLocal, OpStoreLocal, OpTeeLocal:
 			op.I32 += base
+			out = append(out, op)
+		case OpReturn, OpReturnVoid:
+			// Translate to a branch out of the wrapper block.
+			// `depth` is the relative distance from this op to
+			// the wrapper. The OpReturn's value (if any) is
+			// already on the operand stack — wasm's br
+			// semantics carry it through to the wrapper's
+			// continuation.
+			out = append(out, Op{Kind: OpBr, I32: depth})
+		default:
+			out = append(out, op)
 		}
-		out = append(out, op)
+	}
+
+	if wrap {
+		out = append(out, Op{Kind: OpEnd})
 	}
 	return out
+}
+
+// needsReturnWrapper reports whether body contains any OpReturn /
+// OpReturnVoid before its trailing terminator. Mid-body returns
+// require the wrapper; pure straight-line + nested control flow
+// without internal returns can splice cleanly with the trailing
+// terminator just dropped.
+func needsReturnWrapper(body []Op) bool {
+	if len(body) == 0 {
+		return false
+	}
+	for i, op := range body[:len(body)-1] {
+		_ = i
+		if op.Kind == OpReturn || op.Kind == OpReturnVoid {
+			return true
+		}
+	}
+	return false
 }
