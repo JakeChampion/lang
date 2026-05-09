@@ -347,6 +347,11 @@ Deferred to a follow-up:
     the returned arrays. A non-allocating iterator
     (`m.iter()` returning a stateful cursor) is a future
     follow-up.
+  - **`m.delete(k)` shipped.** Returns `true` when the key
+    was present, `false` otherwise. Implementation is
+    swap-with-last (O(1)); insertion order isn't preserved
+    after a delete. Future PRs may add `delete_ordered`
+    alongside the IndexMap layout.
   - Future PRs generalise to `Map[K, V]`, swap the linear
     search for the IndexMap fingerprint table, add Wyhash,
     and ship the map-literal syntax.

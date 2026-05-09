@@ -858,6 +858,50 @@ func TestWASMMapKeysValues(t *testing.T) {
 	}
 }
 
+// Map.delete(k) removes a key, returning true if it was
+// present. Implementation is swap-with-last (O(1), trades
+// insertion order for speed). Verifies the basic
+// present/missing behaviour, that len decrements, and that
+// subsequent lookups return None.
+func TestWASMMapDelete(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map = map_new(4);
+    m.set(1, 10);
+    m.set(2, 20);
+    m.set(3, 30);
+    if (m.len() != 3) { return 1; }
+    if (!m.delete(2)) { return 2; }   // present → true
+    if (m.len() != 2) { return 3; }
+    if (m.has(2)) { return 4; }
+    if let Some(_) = m.get(2) { return 5; }
+    if (m.delete(99)) { return 6; }   // missing → false
+    if (m.len() != 2) { return 7; }
+    // Surviving entries still reachable.
+    if let Some(v) = m.get(1) {
+        if (v != 10) { return 8; }
+    } else {
+        return 9;
+    }
+    if let Some(v) = m.get(3) {
+        if (v != 30) { return 10; }
+    } else {
+        return 11;
+    }
+    // Re-insert the deleted key with a new value.
+    m.set(2, 222);
+    if (m.len() != 3) { return 12; }
+    if let Some(v) = m.get(2) {
+        if (v != 222) { return 13; }
+    } else {
+        return 14;
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (map delete)", got)
+	}
+}
+
 // f64 arithmetic round-trips through addition + comparison. Same
 // shape as the i64 test but for double-precision floats.
 // Verifies the polymorphic float literal `0.5` settles to f64
