@@ -29,6 +29,20 @@ func (e *Error) Position() ast.Position { return e.Pos }
 func (e *Error) Length() int            { return e.Span }
 func (e *Error) Hint() string           { return e.Note }
 
+// isWideMapValueType is the checker-side mirror of the IR's
+// wide-V Map detection — used by the bits of method dispatch
+// that need to reject Map operations not yet covered by the
+// boxing path (currently just `values()`).
+func isWideMapValueType(t ast.Type) bool {
+	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
+		return true
+	}
+	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+		return true
+	}
+	return false
+}
+
 // Info captures everything codegen needs that the checker discovered:
 // the inferred type of every var without an annotation, and a per-function
 // list of locals (so codegen can lay out a frame).
@@ -2351,6 +2365,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// ParamType("K") / ParamType("V").
 					if st, ok := tt.(ast.StructType); ok && len(st.Args) > 0 {
 						n.TypeArgs = st.Args
+					}
+					// Wide-V Map: `m.values()` would return a
+					// `V[]` whose entries are still cell-pointer
+					// boxes (the wat helper sees i32-stride),
+					// which would silently mis-index on the lang
+					// side. Reject explicitly until the helper
+					// learns to unbox-into-a-wide-stride array.
+					if mangled == "__method_Map_values" {
+						if st, ok := tt.(ast.StructType); ok && len(st.Args) >= 2 {
+							v := st.Args[1]
+							if isWideMapValueType(v) {
+								c.errf(fa.P, "Map[K, %s].values() is not yet supported (wide V)", v)
+							}
+						}
 					}
 				}
 			}

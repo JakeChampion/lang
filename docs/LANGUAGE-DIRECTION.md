@@ -427,8 +427,34 @@ Deferred to a follow-up:
     walks entries in insertion order (preserved up to any
     deletes; swap-with-last `delete` reorders past the
     deleted slot).
-  - Future PRs lift the i32-sized-only restriction (i64 /
-    u64 / f64 keys + values).
+  - **Wide V via boxing shipped.** `Map[K, i64]` /
+    `Map[K, f64]` now work end-to-end. The shared wat
+    helpers stay i32-stride; the IR allocates an 8-byte
+    cell per `m.set(k, v)` (and per MapLit entry) and
+    passes the cell pointer through the helper's V slot.
+    `m.get(k)` translates the helper's `Option[i32-cell-ptr]`
+    return into a fresh wide-payload `Option[V]` inline,
+    `m.get_or(k, fallback)` boxes the fallback + unboxes
+    the result, and `MapIter.value()` unboxes the helper's
+    cell pointer. `m.values()` is rejected by the checker
+    for wide V until the helper learns to map cell-pointer
+    → wide-stride array; the more common shape is fine.
+    Trade-off: one extra alloc per insert + one extra
+    indirection per read; acceptable under the bump
+    allocator's per-arena reset and avoids a
+    per-instantiation monomorph of the entire 1200-line
+    map runtime. The longer-term direction is to migrate
+    the map runtime itself to the lang prelude (matching
+    the json / url / parse_int trajectory) so the IR's
+    Width-aware Store / Load picks the right ops without
+    boxing — that requires a few prelude primitives the
+    lang doesn't yet expose (raw byte-buffer alloc, manual
+    byte-stride pokes for the bucket / entries arrays),
+    so the boxing shape ships first.
+  - Wide K (i64 / u64 / f64 keys) is still deferred —
+    needs an 8-byte-stride entry layout (the current
+    helpers hard-code 4-byte K) and a key-comparison path
+    that branches on width, so it's a bigger surgery.
 - Map literals: TBD syntax. `{ "k": v }` collides with struct
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally

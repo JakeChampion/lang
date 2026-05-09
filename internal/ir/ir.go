@@ -1816,13 +1816,32 @@ func (b *builder) expr(e ast.Expr) error {
 		mapSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
+		// Wide-V boxing path: each value gets a fresh 8-byte
+		// cell, the cell pointer goes into the entries array
+		// (matches the emitWideMapSet shape used at user
+		// `m.set(k, v)` call sites).
+		wideV := isWideScalar(n.ValueType)
 		for _, ent := range n.Entries {
 			b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
 			if err := b.expr(ent.Key); err != nil {
 				return err
 			}
-			if err := b.expr(ent.Value); err != nil {
-				return err
+			if wideV {
+				cellSlot := b.allocSlot()
+				b.locals[fmt.Sprintf("__maplit_v_%d", cellSlot)] = cellSlot
+				b.emit(Op{Kind: OpConstI32, I32: 8})
+				b.emit(Op{Kind: OpAlloc})
+				b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
+				b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+				if err := b.expr(ent.Value); err != nil {
+					return err
+				}
+				b.emit(payloadStoreOp(n.ValueType))
+				b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+			} else {
+				if err := b.expr(ent.Value); err != nil {
+					return err
+				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
 		}
@@ -2609,6 +2628,38 @@ func (b *builder) call(n *ast.Call) error {
 			}
 		}
 	}
+	// Wide-V Map shim: when V is i64 / u64 / f64, the wat
+	// helpers (which see all values as i32) can't carry the
+	// full payload. Box on the way in (alloc 8, store wide,
+	// pass cell ptr) and unbox on the way out (load wide from
+	// the returned cell ptr). Methods that return `Option[V]`
+	// or `V[]` need extra work — see emitWideMapGet /
+	// emitWideMapValues — so they're routed before the regular
+	// arg-evaluation loop. `keys()` only touches K (always
+	// i32-sized), `len/has/clear/delete` don't touch V, so they
+	// flow through the normal path unchanged.
+	if len(n.TypeArgs) >= 2 && isWideScalar(n.TypeArgs[1]) {
+		switch id.Name {
+		case "__method_Map_set":
+			return b.emitWideMapSet(n, n.TypeArgs[1])
+		case "__method_Map_get":
+			return b.emitWideMapGet(n, n.TypeArgs[1])
+		case "__method_Map_get_or":
+			return b.emitWideMapGetOr(n, n.TypeArgs[1])
+		case "__method_MapIter_value":
+			// MapIter.value() returns V — when boxed, the wat
+			// helper hands back the cell pointer; unbox to the
+			// real wide value.
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: 1})
+			b.emit(payloadLoadOp(n.TypeArgs[1]))
+			return nil
+		}
+	}
 	for _, a := range n.Args {
 		if err := b.expr(a); err != nil {
 			return err
@@ -2855,6 +2906,19 @@ func payloadSlotSize(t ast.Type) int32 {
 	return 4
 }
 
+// isWideScalar reports whether `t` is a 64-bit numeric or
+// float — the trigger for the wide-payload + boxed-Map-V code
+// paths.
+func isWideScalar(t ast.Type) bool {
+	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
+		return true
+	}
+	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+		return true
+	}
+	return false
+}
+
 // payloadLayout computes the per-slot byte offsets and the
 // total enum heap size for a variant whose payloads have the
 // given types. The tag occupies the first 4 bytes (offset 0);
@@ -2911,6 +2975,121 @@ func payloadLoadOp(t ast.Type) Op {
 		return Op{Kind: OpLoad, Width: 64}
 	}
 	return Op{Kind: OpLoad}
+}
+
+// emitWideMapSet lowers `m.set(k, v)` when V is wide. The
+// shared wat helper (`__method_Map_set`) takes everything as
+// i32, so we allocate an 8-byte cell, store the wide value
+// there, and pass the cell pointer in the v slot — the entries
+// array ends up holding pointers, transparent to the helper.
+// Pairs with emitWideMapGet on the read side.
+func (b *builder) emitWideMapSet(n *ast.Call, vType ast.Type) error {
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	if err := b.expr(n.Args[1]); err != nil {
+		return err
+	}
+	cellSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_v_box_%d", cellSlot)] = cellSlot
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpAlloc})
+	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	if err := b.expr(n.Args[2]); err != nil {
+		return err
+	}
+	b.emit(payloadStoreOp(vType))
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
+	return nil
+}
+
+// emitWideMapGet lowers `m.get(k)` when V is wide. The wat
+// helper returns an `Option<i32>` (4-byte payload = our boxed
+// cell pointer). We translate that to a fresh `Option<wide-V>`
+// — same tag, but the Some payload is the i64 / f64 loaded
+// inline from the cell so the wide-payload-aware enum lowering
+// reads it back uniformly. Variant indices: Some = 0, None = 1
+// (the auto-injected order in checker.builtinEnumDecls).
+func (b *builder) emitWideMapGet(n *ast.Call, vType ast.Type) error {
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	if err := b.expr(n.Args[1]); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get", I32: 2})
+	optPtrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_get_optptr_%d", optPtrSlot)] = optPtrSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: optPtrSlot})
+	resultSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_get_res_%d", resultSlot)] = resultSlot
+	// `if` runs the then-arm when the i32 cond is non-zero.
+	// Some has tag 0, so we'd want eq-zero before the if to
+	// route Some → then-arm; doing the equivalent by routing
+	// Some → else-arm (no extra eqz op) keeps the IR shorter.
+	b.emit(Op{Kind: OpLoadLocal, I32: optPtrSlot})
+	b.emit(Op{Kind: OpLoad}) // tag at +0
+	b.emit(Op{Kind: OpIf, I32: int32(BlockTypeVoid)})
+	// --- tag != 0 (None on this side): 4-byte tag-only Option.
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAlloc})
+	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1}) // tag = None
+	b.emit(Op{Kind: OpStore})
+	b.emit(Op{Kind: OpElse})
+	// --- tag == 0 (Some): build a wide-payload Option<V>.
+	offsets, size := payloadLayout([]ast.Type{vType}, 1)
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpAlloc})
+	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 0}) // tag = Some
+	b.emit(Op{Kind: OpStore})
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	b.emit(Op{Kind: OpConstI32, I32: offsets[0]})
+	b.emit(Op{Kind: OpAdd})
+	// load cell pointer from helper's Option<i32> payload, then
+	// load wide V out of the cell.
+	b.emit(Op{Kind: OpLoadLocal, I32: optPtrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoad}) // cell pointer
+	b.emit(payloadLoadOp(vType))
+	b.emit(payloadStoreOp(vType))
+	b.emit(Op{Kind: OpEnd})
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	return nil
+}
+
+// emitWideMapGetOr lowers `m.get_or(k, fallback)` when V is
+// wide. Box the fallback on the way in (same shape as
+// emitWideMapSet) and unbox the helper's i32 result on the way
+// out — that result is the cell pointer the entries array was
+// holding (or our just-allocated fallback cell on a miss).
+func (b *builder) emitWideMapGetOr(n *ast.Call, vType ast.Type) error {
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	if err := b.expr(n.Args[1]); err != nil {
+		return err
+	}
+	cellSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_or_box_%d", cellSlot)] = cellSlot
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpAlloc})
+	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	if err := b.expr(n.Args[2]); err != nil {
+		return err
+	}
+	b.emit(payloadStoreOp(vType))
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: 3})
+	b.emit(payloadLoadOp(vType))
+	return nil
 }
 
 // fieldType returns the declared type of `name` in fields, or nil
