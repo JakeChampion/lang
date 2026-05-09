@@ -476,3 +476,91 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
         }
     }
 }
+
+// === JSON encoding ===
+//
+// `json_encode(v)` walks the auto-injected `JsonValue` tree
+// and produces the canonical JSON text. Strings are escape-
+// encoded; arrays / objects recurse. Numbers emit their
+// payload string verbatim — the responsibility for valid
+// numeric formatting sits with the caller.
+
+function __json_hex_lower(d: i32): i32 {
+    if (d < 10) { return d + 48; }   // '0' + d
+    return d + 87;                    // 'a' - 10 + d
+}
+
+function __json_escape(s: string): string {
+    var out: string = "";
+    var n: i32 = len(s);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 34) { out = out + "\\\""; }
+        else if (b == 92) { out = out + "\\\\"; }
+        else if (b == 10) { out = out + "\\n"; }
+        else if (b == 13) { out = out + "\\r"; }
+        else if (b == 9) { out = out + "\\t"; }
+        else if (b < 32) {
+            // \u00XX with lowercase hex.
+            var hi: i32 = (b >> 4) & 15;
+            var lo: i32 = b & 15;
+            var trip: u8[] = [
+                92 as u8,
+                117 as u8,
+                48 as u8,
+                48 as u8,
+                __json_hex_lower(hi) as u8,
+                __json_hex_lower(lo) as u8
+            ];
+            out = out + string_from_bytes(trip);
+        } else {
+            out = out + s[i:i+1];
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function json_encode(v: JsonValue): string {
+    // Single shared `out` and `i` across match arms — the
+    // wasm emitter names locals by lang identifier, so
+    // re-declaring `var out` in nested scopes collides
+    // (same footgun parse_float hit).
+    var out: string = "";
+    var i: i32 = 0;
+    match (v) {
+        JNull => { return "null"; },
+        JBool(b) => {
+            if (b) { return "true"; }
+            return "false";
+        },
+        JNumber(s) => { return s; },
+        JString(s) => {
+            return "\"" + __json_escape(s) + "\"";
+        },
+        JArray(arr) => {
+            out = "[";
+            var n: i32 = len(arr);
+            while (i < n) {
+                if (i > 0) { out = out + ","; }
+                out = out + json_encode(arr[i]);
+                i = i + 1;
+            }
+            return out + "]";
+        },
+        JObject(m) => {
+            out = "{";
+            var first: boolean = true;
+            var iter: MapIter[string, JsonValue] = m.iter();
+            while (iter.has_next()) {
+                if (!first) { out = out + ","; }
+                first = false;
+                out = out + "\"" + __json_escape(iter.key()) + "\":";
+                out = out + json_encode(iter.value());
+                iter.advance();
+            }
+            return out + "}";
+        }
+    }
+}
