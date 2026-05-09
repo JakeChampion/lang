@@ -1728,10 +1728,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		if arr, ok := st.(ast.ArrayType); ok {
+			n.ElemType = arr.Elem
 			return ast.SliceType{Elem: arr.Elem}
 		}
 		if sl, ok := st.(ast.SliceType); ok {
 			n.SourceIsSlice = true
+			n.ElemType = sl.Elem
 			return sl
 		}
 		if st != nil {

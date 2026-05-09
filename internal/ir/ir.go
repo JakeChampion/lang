@@ -1364,7 +1364,20 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpCallDirect, Str: "__str_idx", I32: 2})
 			b.emit(Op{Kind: OpLoadByte})
 		} else if n.IsSlice {
-			b.emit(Op{Kind: OpCallDirect, Str: "__slice_idx", I32: 2})
+			// Slice-index variants per stride: __slice_idx_1
+			// for byte slices, __slice_idx_2 for halfwords,
+			// __slice_idx (= 4) for the historical layout,
+			// __slice_idx_8 for i64/f64.
+			sliceHelper := "__slice_idx"
+			switch stride {
+			case 1:
+				sliceHelper = "__slice_idx_1"
+			case 2:
+				sliceHelper = "__slice_idx_2"
+			case 8:
+				sliceHelper = "__slice_idx_8"
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: sliceHelper, I32: 2})
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
 		} else {
 			// Per-stride helper: __str_idx for byte arrays
@@ -1403,13 +1416,23 @@ func (b *builder) expr(e ast.Expr) error {
 			// slice + 0.
 			b.emit(Op{Kind: OpLoad})
 		}
-		// data_ptr += low * 4 (skip when low is 0/missing).
+		// data_ptr += low * stride (skip when low is 0/missing).
+		// Stride defaults to 4 for the historical i32 layout but
+		// drops to 1 / 2 / 8 for byte / halfword / wide-element
+		// slices per ast.ElemSizeBytes. Skip the multiply
+		// entirely when stride == 1 — `low * 1` is just `low`.
+		stride := int32(4)
+		if n.ElemType != nil {
+			stride = int32(ast.ElemSizeBytes(n.ElemType))
+		}
 		if n.Low != nil {
 			if err := b.expr(n.Low); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpConstI32, I32: 4})
-			b.emit(Op{Kind: OpMul})
+			if stride != 1 {
+				b.emit(Op{Kind: OpConstI32, I32: stride})
+				b.emit(Op{Kind: OpMul})
+			}
 			b.emit(Op{Kind: OpAdd})
 		}
 		// Stash the data_ptr for later — we still need to push
