@@ -67,7 +67,16 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// auto-injected lang prelude (internal/prelude) only pays
 	// for what user code actually calls. Idempotent on
 	// already-pruned input.
-	treeshake.Run(prog)
+	//
+	// `_start` (printMainResult test mode) calls
+	// `int_to_string` from a codegen-emitted wat snippet that
+	// the AST walker can't see, so list it as an extra entry
+	// point to keep the prelude version alive.
+	var extras []string
+	if opts.PrintMainResult {
+		extras = append(extras, "int_to_string")
+	}
+	treeshake.Run(prog, extras...)
 	// ir.Lower runs closure conversion as a precondition (hoisting
 	// nested functions, rewriting captures), then produces an
 	// ir.Program. ir.Fold runs constant folding on the lowered ops
@@ -138,8 +147,8 @@ type generator struct {
 	needsArena       bool // any `arena_save` / `arena_restore` call — emits the two heap-cursor helpers
 	needsMap         bool // any `map_new()` or `__method_Map_*` call — emits the Map runtime helpers
 	needsRandomBytes bool // any `random_bytes(n)` call — pulls in WASI random_get
-	needsIntToString bool // any `int_to_string(n)` call — emits a small decimal-formatting helper
-	needsNumToString bool // any `(i32 / u32 / i64 / u64).to_string()` method call — wraps the i64 formatter
+	// `int_to_string` + the .to_string() family migrated
+	// to lang prelude; no flags needed.
 	needsTcp         bool // any tcp_* call — pulls in WASI sock_accept + fd_read/fd_write/fd_close on socket fds
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
@@ -348,7 +357,9 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsArrays = true
 					g.needsRuntime = true
 				case "int_to_string":
-					g.needsIntToString = true
+					// Now lives in the lang prelude
+					// (internal/prelude/prelude.lang).
+					g.needsRuntime = true
 					g.needsArrays = true
 					g.needsRuntime = true
 				case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
@@ -446,22 +457,12 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					g.needsStrSlice = true
 					g.needsBoundsCheck = true
 				}
-				// `n.to_string()` for any integer width pulls in the
-				// existing `int_to_string` decimal formatter — the
-				// method-mangled wrappers route there via the
-				// shared `$__int_to_string_u64` helper.
-				if strings.HasPrefix(id.Name, "__method_i32_to_string") ||
-					strings.HasPrefix(id.Name, "__method_u32_to_string") ||
-					strings.HasPrefix(id.Name, "__method_i64_to_string") ||
-					strings.HasPrefix(id.Name, "__method_u64_to_string") {
-					g.needsNumToString = true
-					g.needsRuntime = true
-				}
-				// `f32.to_string()` / `f64.to_string()` migrated to
-				// the lang prelude; no needsFloatToString flag.
-				// The prelude version calls i64.to_string from
-				// the int formatter, which trips needsNumToString
-				// the normal way through method-call dispatch.
+				// `int_to_string` and the (i32 / u32 / i64 / u64)
+				// `.to_string()` family migrated to the lang
+				// prelude; no flag needed. They share the
+				// `__int_to_string_u64` core, also in the
+				// prelude. `f32.to_string()` / `f64.to_string()`
+				// have lived in the prelude since earlier.
 			}
 			walk(x.Callee)
 			for _, a := range x.Args {
@@ -2260,12 +2261,8 @@ func (g *generator) emitRuntimePreamble() {
 	if g.needsRandomBytes {
 		g.emitRandomBytesHelper()
 	}
-	if g.needsIntToString {
-		g.emitIntToStringHelper()
-	}
-	if g.needsNumToString {
-		g.emitNumberToStringHelpers()
-	}
+	// `int_to_string` and the `.to_string()` family migrated
+	// to lang prelude; no wat helpers.
 	// `f32.to_string()` / `f64.to_string()` are in the lang
 	// prelude; no wat-side helper.
 	// `cabi_realloc` is the canonical-ABI allocator the host
@@ -5846,342 +5843,6 @@ func (g *generator) emitRandomBytesHelper() {
 //	(orig_ptr, orig_size, align, new_size) -> ptr
 //
 // Random-bytes only ever calls it with orig_ptr=0 (fresh
-// emitIntToStringHelper writes `$int_to_string(n) -> string`,
-// formatting `n` as ASCII decimal in lang's standard
-// length-prefixed string layout (`mem[ptr-4]` = length, then
-// content, then a trailing NUL).
-//
-// Implementation:
-//  1. Allocate a 16-byte scratch buffer (max width is
-//     "-2147483648" = 11 chars, comfortably under 16).
-//  2. Walk digits backwards starting from the buffer's far end,
-//     storing `'0' + (n % 10)` and dividing. Unsigned div/rem
-//     handles INT_MIN correctly: `0 - INT_MIN` wraps to
-//     `0x80000000`, whose unsigned interpretation (2147483648) is
-//     the right magnitude.
-//  3. Prepend '-' for negatives.
-//  4. Allocate a fresh string-shaped buffer (4-byte prefix +
-//     content + NUL), memcpy the right-aligned digits in. Two
-//     allocs is wasteful but the common case is single-digit
-//     numbers in tests; the bump allocator can't free either way.
-func (g *generator) emitIntToStringHelper() {
-	g.line(`(func $int_to_string (param $n i32) (result i32)`)
-	g.indent++
-	g.line(`(local $tmp i32) (local $end i32) (local $len i32)`)
-	g.line(`(local $neg i32) (local $buf i32)`)
-	// scratch = __lang_alloc(16); end = scratch + 16
-	g.line(`i32.const 16`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $tmp`)
-	g.line(`local.get $tmp`)
-	g.line(`i32.const 16`)
-	g.line(`i32.add`)
-	g.line(`local.set $end`)
-
-	// neg = n < 0; if neg: n = -n (unsigned-safe for INT_MIN).
-	g.line(`local.get $n`)
-	g.line(`i32.const 0`)
-	g.line(`i32.lt_s`)
-	g.line(`local.tee $neg`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 0`)
-	g.line(`local.get $n`)
-	g.line(`i32.sub`)
-	g.line(`local.set $n`)
-	g.indent--
-	g.line(`end`)
-
-	// Special-case 0: emit '0' once. The loop below skips the
-	// initial iteration on n==0, which would leave the buffer
-	// empty.
-	g.line(`local.get $n`)
-	g.line(`i32.eqz`)
-	g.line(`if`)
-	g.indent++
-	g.line(`local.get $end`)
-	g.line(`i32.const 1`)
-	g.line(`i32.sub`)
-	g.line(`local.tee $end`)
-	g.line(`i32.const 48`) // '0'
-	g.line(`i32.store8`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`block $break`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	g.line(`local.get $n`)
-	g.line(`i32.eqz`)
-	g.line(`br_if $break`)
-	// digit = n % 10 (unsigned)
-	g.line(`local.get $end`)
-	g.line(`i32.const 1`)
-	g.line(`i32.sub`)
-	g.line(`local.tee $end`)
-	g.line(`local.get $n`)
-	g.line(`i32.const 10`)
-	g.line(`i32.rem_u`)
-	g.line(`i32.const 48`) // '0'
-	g.line(`i32.add`)
-	g.line(`i32.store8`)
-	// n /= 10 (unsigned)
-	g.line(`local.get $n`)
-	g.line(`i32.const 10`)
-	g.line(`i32.div_u`)
-	g.line(`local.set $n`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-
-	// Minus sign.
-	g.line(`local.get $neg`)
-	g.line(`if`)
-	g.indent++
-	g.line(`local.get $end`)
-	g.line(`i32.const 1`)
-	g.line(`i32.sub`)
-	g.line(`local.tee $end`)
-	g.line(`i32.const 45`) // '-'
-	g.line(`i32.store8`)
-	g.indent--
-	g.line(`end`)
-
-	// len = (scratch + 16) - end
-	g.line(`local.get $tmp`)
-	g.line(`i32.const 16`)
-	g.line(`i32.add`)
-	g.line(`local.get $end`)
-	g.line(`i32.sub`)
-	g.line(`local.set $len`)
-
-	// Allocate string buffer (len + 5: 4 prefix + content + NUL).
-	g.line(`local.get $len`)
-	g.line(`i32.const 5`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $buf`)
-	g.line(`local.get $len`)
-	g.line(`i32.store`)
-	// memcpy(buf+4, end, len)
-	g.line(`local.get $buf`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $end`)
-	g.line(`local.get $len`)
-	g.line(`memory.copy`)
-	// Trailing NUL at buf+4+len.
-	g.line(`local.get $buf`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $len`)
-	g.line(`i32.add`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store8`)
-	// Return data ptr (buf + 4).
-	g.line(`local.get $buf`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`)`)
-}
-
-// emitNumberToStringHelpers writes the four method-syntax
-// wrappers around the existing decimal formatter:
-// `(i32).to_string()`, `(u32).to_string()`,
-// `(i64).to_string()`, `(u64).to_string()`. They all funnel
-// into a shared `$__int_to_string_u64(magnitude, neg)` core
-// that the family was missing — `int_to_string` only knew
-// signed i32. The wrappers convert to the (i64-magnitude, sign-
-// flag) shape and call through.
-func (g *generator) emitNumberToStringHelpers() {
-	// $__int_to_string_u64(mag: i64, neg: i32): i32 — formats
-	// a non-negative i64 magnitude into a freshly allocated
-	// length-prefixed string, prepending `-` when neg is set.
-	g.line(`(func $__int_to_string_u64 (param $mag i64) (param $neg i32) (result i32)`)
-	g.indent++
-	g.line(`(local $tmp i32) (local $end i32) (local $len i32) (local $buf i32)`)
-	// 24 bytes is enough for max u64 (20 digits) + sign + spare.
-	g.line(`i32.const 24`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $tmp`)
-	g.line(`local.get $tmp`)
-	g.line(`i32.const 24`)
-	g.line(`i32.add`)
-	g.line(`local.set $end`)
-	// Special-case 0.
-	g.line(`local.get $mag`)
-	g.line(`i64.eqz`)
-	g.line(`if`)
-	g.indent++
-	g.line(`local.get $end`)
-	g.line(`i32.const 1`)
-	g.line(`i32.sub`)
-	g.line(`local.tee $end`)
-	g.line(`i32.const 48`) // '0'
-	g.line(`i32.store8`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`block $break`)
-	g.indent++
-	g.line(`loop $loop`)
-	g.indent++
-	g.line(`local.get $mag`)
-	g.line(`i64.eqz`)
-	g.line(`br_if $break`)
-	// digit = mag % 10 (unsigned)
-	g.line(`local.get $end`)
-	g.line(`i32.const 1`)
-	g.line(`i32.sub`)
-	g.line(`local.tee $end`)
-	g.line(`local.get $mag`)
-	g.line(`i64.const 10`)
-	g.line(`i64.rem_u`)
-	g.line(`i32.wrap_i64`)
-	g.line(`i32.const 48`) // '0'
-	g.line(`i32.add`)
-	g.line(`i32.store8`)
-	// mag /= 10 (unsigned)
-	g.line(`local.get $mag`)
-	g.line(`i64.const 10`)
-	g.line(`i64.div_u`)
-	g.line(`local.set $mag`)
-	g.line(`br $loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
-	// Sign.
-	g.line(`local.get $neg`)
-	g.line(`if`)
-	g.indent++
-	g.line(`local.get $end`)
-	g.line(`i32.const 1`)
-	g.line(`i32.sub`)
-	g.line(`local.tee $end`)
-	g.line(`i32.const 45`) // '-'
-	g.line(`i32.store8`)
-	g.indent--
-	g.line(`end`)
-	// len = (tmp + 24) - end
-	g.line(`local.get $tmp`)
-	g.line(`i32.const 24`)
-	g.line(`i32.add`)
-	g.line(`local.get $end`)
-	g.line(`i32.sub`)
-	g.line(`local.set $len`)
-	// out = alloc(4 + len); out[0] = len; memcpy(out+4, end, len)
-	g.line(`local.get $len`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $buf`)
-	g.line(`local.get $buf`)
-	g.line(`local.get $len`)
-	g.line(`i32.store`)
-	g.line(`local.get $buf`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $end`)
-	g.line(`local.get $len`)
-	g.line(`memory.copy`)
-	g.line(`local.get $buf`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.indent--
-	g.line(`)`)
-
-	// $__method_i32_to_string(n: i32): string — sign-aware,
-	// negates negative n into its u32 magnitude (handling
-	// INT_MIN via the unsigned trick: 0 - n in unsigned wraps
-	// correctly for all i32 values).
-	g.line(`(func $__method_i32_to_string (param $n i32) (result i32)`)
-	g.indent++
-	g.line(`(local $neg i32) (local $mag i64)`)
-	g.line(`local.get $n`)
-	g.line(`i32.const 0`)
-	g.line(`i32.lt_s`)
-	g.line(`local.tee $neg`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i32.const 0`)
-	g.line(`local.get $n`)
-	g.line(`i32.sub`)
-	g.line(`i64.extend_i32_u`)
-	g.line(`local.set $mag`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $n`)
-	g.line(`i64.extend_i32_u`)
-	g.line(`local.set $mag`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.get $mag`)
-	g.line(`local.get $neg`)
-	g.line(`call $__int_to_string_u64`)
-	g.indent--
-	g.line(`)`)
-
-	// $__method_u32_to_string(n: i32): string — n is treated
-	// as unsigned; just zero-extend and format.
-	g.line(`(func $__method_u32_to_string (param $n i32) (result i32)`)
-	g.indent++
-	g.line(`local.get $n`)
-	g.line(`i64.extend_i32_u`)
-	g.line(`i32.const 0`)
-	g.line(`call $__int_to_string_u64`)
-	g.indent--
-	g.line(`)`)
-
-	// $__method_i64_to_string(n: i64): string — sign-aware,
-	// same negation trick at i64 width.
-	g.line(`(func $__method_i64_to_string (param $n i64) (result i32)`)
-	g.indent++
-	g.line(`(local $neg i32) (local $mag i64)`)
-	g.line(`local.get $n`)
-	g.line(`i64.const 0`)
-	g.line(`i64.lt_s`)
-	g.line(`local.tee $neg`)
-	g.line(`if`)
-	g.indent++
-	g.line(`i64.const 0`)
-	g.line(`local.get $n`)
-	g.line(`i64.sub`)
-	g.line(`local.set $mag`)
-	g.indent--
-	g.line(`else`)
-	g.indent++
-	g.line(`local.get $n`)
-	g.line(`local.set $mag`)
-	g.indent--
-	g.line(`end`)
-	g.line(`local.get $mag`)
-	g.line(`local.get $neg`)
-	g.line(`call $__int_to_string_u64`)
-	g.indent--
-	g.line(`)`)
-
-	// $__method_u64_to_string(n: i64): string — unsigned,
-	// straight pass-through.
-	g.line(`(func $__method_u64_to_string (param $n i64) (result i32)`)
-	g.indent++
-	g.line(`local.get $n`)
-	g.line(`i32.const 0`)
-	g.line(`call $__int_to_string_u64`)
-	g.indent--
-	g.line(`)`)
-}
-
-
 // allocation) and align=1, so we ignore the realloc-shrink and
 // realloc-grow cases for now. If a future preview-2 import needs
 // real reallocation, the body needs to grow a memcpy from the

@@ -46,7 +46,14 @@ var watHelperDeps = map[string][]string{
 // (e.g. `var f = some_func; ... f();`) keep `some_func` alive
 // since the Ident reference appears in the body of the
 // containing function.
-func Run(prog *ast.Program) {
+//
+// `extras` lists names that should be kept alive even when
+// no AST reference points at them — used by codegen-emitted
+// wrappers (e.g. the test-path `_start` printing main()'s
+// result via `int_to_string`) where the call is generated
+// outside the AST and tree-shake would otherwise drop the
+// callee.
+func Run(prog *ast.Program, extras ...string) {
 	if len(prog.Funcs) == 0 {
 		return
 	}
@@ -96,6 +103,9 @@ func Run(prog *ast.Program) {
 	// `function f(): i32 { return 1; }` without a main.
 	enqueue("main")
 	enqueue("handle")
+	for _, name := range extras {
+		enqueue(name)
+	}
 	hasEntry := reachable["main"] || reachable["handle"]
 	if !hasEntry {
 		for _, fn := range prog.Funcs {

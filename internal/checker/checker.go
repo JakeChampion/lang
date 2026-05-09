@@ -537,15 +537,9 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.StringType{},
 	}
-	// int_to_string(n: number): string — formats n as an ASCII
-	// decimal string ("42", "-1", "0"). Mostly useful in tests
-	// and small CLIs since the language doesn't have a printf
-	// equivalent yet; pairing it with `print` gives "println(n)"
-	// for free.
-	c.info.FuncSigs["int_to_string"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.StringType{},
-	}
+	// `int_to_string(n)` migrated to the lang prelude
+	// (internal/prelude/prelude.lang); its signature is
+	// registered via the prelude's FuncDecl.
 	// TCP socket builtins. C-style API: each returns a raw
 	// fd or a negative errno. A Result-wrapped layer can sit
 	// on top in a follow-up.
@@ -833,16 +827,12 @@ func Check(prog *ast.Program) (*Info, error) {
 	// keyed by width + signedness; the dispatch path above maps
 	// `i32` / `u32` / `i64` / `u64` value types to the
 	// corresponding `__method_<typename>_<method>` mangled name.
-	registerNumberMethod := func(typeName string, methodName string, recv ast.NumberType, params []ast.Type, result ast.Type) {
-		mangled := "__method_" + typeName + "_" + methodName
-		c.info.Methods[typeName+"."+methodName] = mangled
-		fullParams := append([]ast.Type{recv}, params...)
-		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
-	}
-	registerNumberMethod("i32", "to_string", ast.NumberType{}, nil, ast.StringType{})
-	registerNumberMethod("u32", "to_string", ast.NumberType{Width: 32, Signed: false}, nil, ast.StringType{})
-	registerNumberMethod("i64", "to_string", ast.NumberType{Width: 64, Signed: true}, nil, ast.StringType{})
-	registerNumberMethod("u64", "to_string", ast.NumberType{Width: 64, Signed: false}, nil, ast.StringType{})
+	// `i32.to_string()` / `u32.to_string()` /
+	// `i64.to_string()` / `u64.to_string()` migrated to the
+	// lang prelude (internal/prelude/prelude.lang) — its
+	// receiver-method declarations register the
+	// `string.*_to_string` mangled names automatically via
+	// the receiver-hoisting pass below.
 
 	// `f32.to_string()` / `f64.to_string()` migrated to the
 	// lang prelude (internal/prelude/prelude.lang).

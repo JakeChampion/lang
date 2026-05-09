@@ -268,6 +268,118 @@ function __array_append_string(arr: string[], v: string): string[] {
     return data as string[];
 }
 
+// === Decimal int-to-string formatter ===
+//
+// `int_to_string(n)` — signed-i32 → ASCII decimal. Test
+// harness drives it through the `_start` wrapper to print
+// `main()`'s return value; user code calls it directly via
+// the same name. Pairs with `__int_to_string_u64` below
+// for the wider-integer method wrappers.
+//
+// Algorithm: a 16-byte scratch buffer holds digits written
+// backwards from the high end (so the final order comes
+// out left-to-right via a single trailing memcpy). The
+// negation `n = 0 - n` is unsigned-safe for INT_MIN
+// because we then read the result as u32 for the divmod
+// chain, and -INT_MIN's unsigned value is exactly
+// `2^31`.
+function int_to_string(n: i32): string {
+    var scratch: u8[] = __alloc_u8(16);
+    var scratch_ptr: i32 = scratch as i32;
+    var end: i32 = 16;
+    var neg: boolean = false;
+    if (n < 0) {
+        neg = true;
+        n = 0 - n;
+    }
+    var u: u32 = n as u32;
+    if (u == (0 as u32)) {
+        end = end - 1;
+        scratch[end] = 48 as u8;
+    } else {
+        while (u != (0 as u32)) {
+            end = end - 1;
+            scratch[end] = (((u % (10 as u32)) as i32) + 48) as u8;
+            u = u / (10 as u32);
+        }
+    }
+    if (neg) {
+        end = end - 1;
+        scratch[end] = 45 as u8;
+    }
+    var n_bytes: i32 = 16 - end;
+    var buf: u8[] = __alloc_u8(n_bytes);
+    __memcpy(buf as i32, scratch_ptr + end, n_bytes);
+    return string_from_bytes(buf);
+}
+
+// `__int_to_string_u64(mag, neg)` — the i64 / u64 cousin.
+// `mag` carries the absolute value; `neg` is the sign flag
+// (set for the i64-min path where the wrapped subtraction
+// produces a u64 magnitude that's exact). Used by the
+// method-syntax wrappers `(i64).to_string()` /
+// `(u64).to_string()` and their i32 / u32 counterparts that
+// promote first.
+function __int_to_string_u64(mag: i64, neg: i32): string {
+    var scratch: u8[] = __alloc_u8(24);
+    var scratch_ptr: i32 = scratch as i32;
+    var end: i32 = 24;
+    if (mag == (0 as i64)) {
+        end = end - 1;
+        scratch[end] = 48 as u8;
+    } else {
+        while (mag != (0 as i64)) {
+            end = end - 1;
+            scratch[end] = ((((mag as u64) % (10 as u64)) as i32) + 48) as u8;
+            mag = ((mag as u64) / (10 as u64)) as i64;
+        }
+    }
+    if (neg != 0) {
+        end = end - 1;
+        scratch[end] = 45 as u8;
+    }
+    var n_bytes: i32 = 24 - end;
+    var buf: u8[] = __alloc_u8(n_bytes);
+    __memcpy(buf as i32, scratch_ptr + end, n_bytes);
+    return string_from_bytes(buf);
+}
+
+// `(i32).to_string()` / `(u32).to_string()` /
+// `(i64).to_string()` / `(u64).to_string()` — method-syntax
+// wrappers around the formatter. The receiver-method
+// dispatch in the checker maps `n.to_string()` to the
+// appropriate `__method_<type>_to_string` mangled name.
+function (n: i32) to_string(): string {
+    var mag: i64 = 0 as i64;
+    var neg: i32 = 0;
+    if (n < 0) {
+        neg = 1;
+        // Magnitude via i64 to handle INT_MIN cleanly.
+        mag = (0 as i64) - (n as i64);
+    } else {
+        mag = n as i64;
+    }
+    return __int_to_string_u64(mag, neg);
+}
+
+function (n: u32) to_string(): string {
+    return __int_to_string_u64((n as i64) & (4294967295 as i64), 0);
+}
+
+function (n: i64) to_string(): string {
+    var mag: i64 = n;
+    var neg: i32 = 0;
+    if (n < (0 as i64)) {
+        neg = 1;
+        mag = (0 as i64) - n;
+    }
+    return __int_to_string_u64(mag, neg);
+}
+
+function (n: u64) to_string(): string {
+    return __int_to_string_u64(n as i64, 0);
+}
+
 // === Base64 (RFC 4648, standard alphabet) ===
 //
 // `base64_encode(s)` / `base64_decode(s)` — round-trip
