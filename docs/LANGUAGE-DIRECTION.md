@@ -596,14 +596,18 @@ Deferred to a follow-up:
     handling `application/x-www-form-urlencoded` data should
     swap `+` → ` ` before decoding.
   - **`query_parse(s)` shipped.** Splits a URL-encoded
-    query string into a `Map[string, string]`. Pairs are
-    separated by `&`; within a pair, `=` separates key from
-    value. Both halves are url_decode'd before storage. A
-    pair without `=` records its contents as the key with
-    an empty-string value. Empty input yields an empty map.
-    Trailing `&` is ignored. `+` is left alone — callers
-    handling form-encoded data should pre-process. JSON is
-    the next stdlib piece.
+    query string into a `Map[string, string[]]`. Pairs
+    are separated by `&`; within a pair, `=` separates key
+    from value. Both halves are url_decode'd before
+    storage. **Duplicate keys** (`?tag=a&tag=b&tag=c`) all
+    preserved — values for the same key collect into a
+    `string[]` in insertion order, matching Go's
+    `url.Values` and Python's `parse_qs`. A pair without
+    `=` records the key with a single-element empty-string
+    array. Empty input yields an empty map. Trailing `&`
+    is ignored. `+` is left alone — callers handling form-
+    encoded data should pre-process. JSON is the next
+    stdlib piece.
 
 ## Open questions to settle as we go
 

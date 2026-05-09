@@ -3453,56 +3453,87 @@ func TestWASMUrlCoder(t *testing.T) {
 }
 
 // `query_parse(s)` splits a URL-encoded query string into a
-// `Map[string, string]`. Pairs separated by `&`; within each
-// pair, `=` separates key from value. Both halves are
-// url_decode'd. Pair without `=` records empty value.
+// `Map[string, string[]]`. Pairs separated by `&`; within
+// each pair, `=` separates key from value. Both halves are
+// url_decode'd. Duplicate keys all preserved — values for
+// the same key collect into a string[] in insertion order.
+// Pair without `=` records single-element empty-string array.
 func TestWASMQueryParse(t *testing.T) {
 	src := `function main(): i32 {
-		// Standard pairs with %-encoded value.
-		var m: Map[string, string] = query_parse("a=1&b=2&c=hello%20world");
+		// Standard pairs — each unique key has a 1-element
+		// string[] containing the decoded value.
+		var m: Map[string, string[]] = query_parse("a=1&b=2&c=hello%20world");
 		if (m.len() != 3) { return 1; }
 		match (m.get("a")) {
-			Some(v) => { if (v != "1") { return 2; } },
-			None => { return 3; }
-		}
-		match (m.get("b")) {
-			Some(v) => { if (v != "2") { return 4; } },
-			None => { return 5; }
+			Some(arr) => {
+				if (len(arr) != 1) { return 2; }
+				if (arr[0] != "1") { return 3; }
+			},
+			None => { return 4; }
 		}
 		match (m.get("c")) {
-			Some(v) => { if (v != "hello world") { return 6; } },
-			None => { return 7; }
+			Some(arr) => {
+				if (arr[0] != "hello world") { return 5; }
+			},
+			None => { return 6; }
 		}
 
 		// Encoded key.
-		var m2: Map[string, string] = query_parse("k%3D%26=v");
+		var m2: Map[string, string[]] = query_parse("k%3D%26=v");
 		match (m2.get("k=&")) {
-			Some(v) => { if (v != "v") { return 10; } },
+			Some(arr) => { if (arr[0] != "v") { return 10; } },
 			None => { return 11; }
 		}
 
-		// Pair without '=' becomes key + empty-string value.
-		var m3: Map[string, string] = query_parse("flag&x=1");
+		// Pair without '=' -> single-element empty value.
+		var m3: Map[string, string[]] = query_parse("flag&x=1");
 		if (m3.len() != 2) { return 20; }
 		match (m3.get("flag")) {
-			Some(v) => { if (v != "") { return 21; } },
-			None => { return 22; }
+			Some(arr) => {
+				if (len(arr) != 1) { return 21; }
+				if (arr[0] != "") { return 22; }
+			},
+			None => { return 23; }
 		}
 
 		// Empty input -> empty map.
-		var m4: Map[string, string] = query_parse("");
+		var m4: Map[string, string[]] = query_parse("");
 		if (m4.len() != 0) { return 30; }
 
-		// Trailing '&' is ignored (empty pair, no key, no
-		// store).
-		var m5: Map[string, string] = query_parse("a=1&");
+		// Trailing '&' is ignored.
+		var m5: Map[string, string[]] = query_parse("a=1&");
 		if (m5.len() != 1) { return 40; }
 
-		// Empty value with '=': key recorded, value empty.
-		var m6: Map[string, string] = query_parse("k=");
-		match (m6.get("k")) {
-			Some(v) => { if (v != "") { return 50; } },
-			None => { return 51; }
+		// Duplicate keys: all values preserved in order.
+		var m6: Map[string, string[]] = query_parse("tag=a&tag=b&tag=c");
+		if (m6.len() != 1) { return 50; }
+		match (m6.get("tag")) {
+			Some(arr) => {
+				if (len(arr) != 3) { return 51; }
+				if (arr[0] != "a") { return 52; }
+				if (arr[1] != "b") { return 53; }
+				if (arr[2] != "c") { return 54; }
+			},
+			None => { return 55; }
+		}
+
+		// Mixed unique + duplicates.
+		var m7: Map[string, string[]] = query_parse("k=1&j=x&k=2");
+		if (m7.len() != 2) { return 60; }
+		match (m7.get("k")) {
+			Some(arr) => {
+				if (len(arr) != 2) { return 61; }
+				if (arr[0] != "1") { return 62; }
+				if (arr[1] != "2") { return 63; }
+			},
+			None => { return 64; }
+		}
+		match (m7.get("j")) {
+			Some(arr) => {
+				if (len(arr) != 1) { return 65; }
+				if (arr[0] != "x") { return 66; }
+			},
+			None => { return 67; }
 		}
 
 		return 0;

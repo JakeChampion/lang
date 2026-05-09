@@ -6362,13 +6362,15 @@ func (g *generator) emitUrlCoderHelpers() {
 }
 
 // emitQueryParseHelper writes `$query_parse(s)` — split a
-// URL-encoded query string into a Map[string, string]. Pairs
-// are separated by `&`; within a pair, `=` separates key from
-// value. Keys and values are url_decode'd before storage. A
-// pair without `=` records its whole contents as the key with
-// an empty-string value. Empty input yields an empty map.
-// `+` is left alone — callers handling form-encoded data
-// should pre-process before calling.
+// URL-encoded query string into a Map[string, string[]].
+// Pairs are separated by `&`; within a pair, `=` separates
+// key from value. Keys and values are url_decode'd before
+// storage. Duplicate keys (`?tag=a&tag=b`) all preserved —
+// values for the same key collect into a string[] in
+// insertion order. A pair without `=` records the key with a
+// single-element empty-string array. Empty input yields an
+// empty map. `+` is left alone — callers handling form-
+// encoded data should pre-process before calling.
 func (g *generator) emitQueryParseHelper() {
 	g.line(`(func $query_parse (param $s i32) (result i32)`)
 	g.indent++
@@ -6376,7 +6378,8 @@ func (g *generator) emitQueryParseHelper() {
 	g.line(`(local $pair_start i32) (local $pair_len i32)`)
 	g.line(`(local $eq i32) (local $j i32)`)
 	g.line(`(local $key i32) (local $val i32) (local $m i32)`)
-	g.line(`(local $sep i32)`)
+	g.line(`(local $sep i32) (local $existing i32) (local $oldLen i32)`)
+	g.line(`(local $newArr i32) (local $oldArr i32) (local $k2 i32)`)
 	// m = map_new(8, 1)  ;; keyKind=1=string
 	g.line(`i32.const 8`)
 	g.line(`i32.const 1`)
@@ -6507,10 +6510,108 @@ func (g *generator) emitQueryParseHelper() {
 	g.line(`local.set $val`)
 	g.indent--
 	g.line(`end`)
-	// m.set(key, val)
+	// Append-or-create: if key already in map, allocate a
+	// new array of len+1, copy existing values, append the
+	// new one, store back. Else allocate a fresh 1-element
+	// array.
 	g.line(`local.get $m`)
 	g.line(`local.get $key`)
+	g.line(`call $__method_Map_get`)
+	g.line(`local.tee $existing`)
+	g.line(`i32.load`)
+	g.line(`i32.eqz`) // tag == 0 means Some
+	g.line(`if`)
+	g.indent++
+	// Some: read existing array ptr; oldLen = len(arr).
+	g.line(`local.get $existing`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $oldArr`)
+	g.line(`local.get $oldArr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $oldLen`)
+	// alloc(4 + (oldLen+1)*4); newArr = ptr + 4.
+	g.line(`local.get $oldLen`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $newArr`)
+	g.line(`local.get $oldLen`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`i32.store`)
+	g.line(`local.get $newArr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $newArr`)
+	// Copy existing values: for k2 in 0..oldLen.
+	g.line(`i32.const 0`)
+	g.line(`local.set $k2`)
+	g.line(`block $end_copy`)
+	g.indent++
+	g.line(`loop $copy_loop`)
+	g.indent++
+	g.line(`local.get $k2`)
+	g.line(`local.get $oldLen`)
+	g.line(`i32.ge_u`)
+	g.line(`br_if $end_copy`)
+	g.line(`local.get $newArr`)
+	g.line(`local.get $k2`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $oldArr`)
+	g.line(`local.get $k2`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i32.store`)
+	g.line(`local.get $k2`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $k2`)
+	g.line(`br $copy_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Append new value at index oldLen.
+	g.line(`local.get $newArr`)
+	g.line(`local.get $oldLen`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
 	g.line(`local.get $val`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// None: alloc 1-element array.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $newArr`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
+	g.line(`local.get $newArr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.tee $newArr`)
+	g.line(`local.get $val`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`end`)
+	// m.set(key, newArr)
+	g.line(`local.get $m`)
+	g.line(`local.get $key`)
+	g.line(`local.get $newArr`)
 	g.line(`call $__method_Map_set`)
 	g.indent--
 	g.line(`end`) // pair_len > 0

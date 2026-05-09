@@ -683,17 +683,23 @@ func Check(prog *ast.Program) (*Info, error) {
 
 	// query_parse(s): split a URL-encoded query string (the
 	// part after `?`, no leading `?`) into a Map[string,
-	// string]. Keys and values are url_decode'd. Pairs are
+	// string[]]. Keys and values are url_decode'd. Pairs are
 	// separated by `&`; within a pair, `=` separates key
-	// from value. A pair with no `=` records the key with
-	// an empty-string value. Empty input yields an empty
-	// map. `+` is left alone — callers wanting form-encoded
-	// semantics should pre-process.
+	// from value. Duplicate keys (`?tag=a&tag=b`) all
+	// preserved — values for the same key collect into a
+	// string array in insertion order. A pair with no `=`
+	// records the key with a single-element empty-string
+	// array. Empty input yields an empty map. `+` is left
+	// alone — callers wanting form-encoded semantics should
+	// pre-process.
 	c.info.FuncSigs["query_parse"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.StructType{
 			Name: "Map",
-			Args: []ast.Type{ast.StringType{}, ast.StringType{}},
+			Args: []ast.Type{
+				ast.StringType{},
+				ast.ArrayType{Elem: ast.StringType{}},
+			},
 		},
 	}
 
