@@ -237,17 +237,25 @@ ABI: a slice value is a heap pointer to an 8-byte struct —
 storage, so the bump allocator's "everything alive at scope
 exit" semantics make the borrow lifetime trivial.
 
-Element stride is fixed at 4 bytes — works for `[i32]`,
-`[string]`, `[Foo]` (struct ptr), and `[T[]]` (array ptr). A
-slice over `[i64]` or `[f64]` needs a stride argument and is
-deferred to the unsigned-types follow-up.
+Element stride is fixed at 4 bytes for the i32-shaped element
+types (`[i32]`, `[string]`, `[Foo]` struct ptr, `[T[]]` array
+ptr). Per-stride helpers (`__slice_idx_1` for u8/i8,
+`__slice_idx_2` for u16/i16, `__slice_idx_8` for i64/f64) ship
+alongside, so sub-i32 and wide slices route through the right
+load/store width without per-instantiation specialisation.
+
+Shipped follow-ups:
+- **String slicing** (`str[a:b]` → freshly-allocated substring).
+- **Mutating slice writes** (`slice[i] = v`) — bounds-checked
+  via the same `__slice_idx_N` helper as the read path, then a
+  width-aware `i32.store8` / `i32.store16` / `i32.store` /
+  `f32.store` / `i64.store` per element type.
+- **Wide-element slices** (`[i64]` / `[f64]`) ship via the
+  stride-8 helper.
 
 Deferred:
-- String slicing (`str[a:b]` returning a `[u8]` or string view).
-  Splitting bytes from string is its own design pass; not
-  blocking real handler code that just wants array slicing.
-- `[u8]` view of strings.
-- Mutating slice operations (`slice[i] = v`).
+- `[u8]` view of strings as a non-allocating alternative to
+  `str.bytes()` (which copies).
 - Slice arithmetic / concatenation.
 
 ### PR 3 — Generic functions + generic structs (both shipped)

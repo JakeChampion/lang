@@ -4697,6 +4697,38 @@ func (g *generator) emitStringMethodHelpers() {
 	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
+
+	// $__method_string_as_bytes(s): [u8] — non-copying view.
+	// Allocates only the 8-byte slice header `{data_ptr=s,
+	// len=len(s)}`; the data_ptr aliases the string's
+	// payload, sharing its lifetime. Reads/writes through the
+	// view route through `__slice_idx_1` (1-byte stride),
+	// which is the same helper byte-arrays use, so the read
+	// path produces ergonomic-equivalent values to a copying
+	// `bytes()` call without the alloc. Mutations through the
+	// view do propagate to the underlying string memory —
+	// callers that don't want this should use `bytes()`.
+	g.line(`(func $__method_string_as_bytes (param $s i32) (result i32)`)
+	g.indent++
+	g.line(`(local $sLen i32) (local $hdr i32)`)
+	g.line(`local.get $s`)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.load`)
+	g.line(`local.set $sLen`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $hdr`)
+	g.line(`local.get $s`)
+	g.line(`i32.store`) // data_ptr = s
+	g.line(`local.get $hdr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $sLen`)
+	g.line(`i32.store`) // len = sLen
+	g.line(`local.get $hdr`)
+	g.indent--
+	g.line(`)`)
 }
 
 // emitMapHelpers writes the runtime functions backing the

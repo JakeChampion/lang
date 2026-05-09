@@ -577,6 +577,12 @@ func Check(prog *ast.Program) (*Info, error) {
 	registerStringMethod("split", []ast.Type{ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}})
 	registerStringMethod("replace", []ast.Type{ast.StringType{}, ast.StringType{}}, ast.StringType{})
 	registerStringMethod("bytes", nil, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}})
+	// `s.as_bytes()` — non-copying companion to `s.bytes()`. Returns
+	// a `[u8]` slice header whose data_ptr aliases the string's
+	// payload and whose len is `len(s)`. Sharing the parent's
+	// lifetime is fine under the bump allocator (the string's
+	// storage lives until the arena tears down).
+	registerStringMethod("as_bytes", nil, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}})
 
 	c.info.FuncSigs["string_from_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},

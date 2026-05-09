@@ -1287,6 +1287,42 @@ func TestWASMStringBytes(t *testing.T) {
 	}
 }
 
+// `s.as_bytes(): [u8]` — non-copying view companion to
+// `s.bytes()`. The slice's data_ptr aliases the source
+// string's payload, so mutations through the view *do*
+// propagate back. Reads match the equivalent `bytes()`
+// values byte-for-byte.
+func TestWASMStringAsBytes(t *testing.T) {
+	src := `function main(): i32 {
+    var s: string = "hello";
+    var view: [u8] = s.as_bytes();
+    if (len(view) != 5) { return 1; }
+    if (view[0] != 104) { return 2; }   // 'h'
+    if (view[4] != 111) { return 3; }   // 'o'
+    // Sub-slicing the view should still alias the source.
+    var tail: [u8] = view[1:5];
+    if (len(tail) != 4) { return 4; }
+    if (tail[0] != 101) { return 5; }   // 'e'
+
+    // Empty string -> zero-length view, no allocation drama.
+    var es: string = "";
+    var ev: [u8] = es.as_bytes();
+    if (len(ev) != 0) { return 6; }
+
+    // Read parity with the copying bytes() variant.
+    var copied: u8[] = s.bytes();
+    var i: i32 = 0;
+    while (i < len(copied)) {
+        if (copied[i] != view[i]) { return 7; }
+        i = i + 1;
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (string as_bytes view)", got)
+	}
+}
+
 // String-keyed Map[string, i32]. Same API as Map[i32, i32];
 // equality at the runtime layer dispatches to byte-level
 // strcmp via the buffer's keyKind tag.
