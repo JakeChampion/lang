@@ -119,6 +119,7 @@ type generator struct {
 	needsMap         bool // any `map_new()` or `__method_Map_*` call — emits the Map runtime helpers
 	needsRandomBytes bool // any `random_bytes(n)` call — pulls in WASI random_get
 	needsIntToString bool // any `int_to_string(n)` call — emits a small decimal-formatting helper
+	needsNumToString bool // any `(i32 / u32 / i64 / u64).to_string()` method call — wraps the i64 formatter
 	needsTcp         bool // any tcp_* call — pulls in WASI sock_accept + fd_read/fd_write/fd_close on socket fds
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
@@ -374,6 +375,17 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					// is in use.
 					g.needsStrSlice = true
 					g.needsBoundsCheck = true
+				}
+				// `n.to_string()` for any integer width pulls in the
+				// existing `int_to_string` decimal formatter — the
+				// method-mangled wrappers route there via the
+				// shared `$__int_to_string_u64` helper.
+				if strings.HasPrefix(id.Name, "__method_i32_to_string") ||
+					strings.HasPrefix(id.Name, "__method_u32_to_string") ||
+					strings.HasPrefix(id.Name, "__method_i64_to_string") ||
+					strings.HasPrefix(id.Name, "__method_u64_to_string") {
+					g.needsNumToString = true
+					g.needsRuntime = true
 				}
 			}
 			walk(x.Callee)
@@ -2062,6 +2074,9 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsIntToString {
 		g.emitIntToStringHelper()
+	}
+	if g.needsNumToString {
+		g.emitNumberToStringHelpers()
 	}
 	// `cabi_realloc` is the canonical-ABI allocator the host
 	// invokes to materialise dynamically-sized return values
@@ -5738,6 +5753,196 @@ func (g *generator) emitIntToStringHelper() {
 	g.line(`local.get $buf`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitNumberToStringHelpers writes the four method-syntax
+// wrappers around the existing decimal formatter:
+// `(i32).to_string()`, `(u32).to_string()`,
+// `(i64).to_string()`, `(u64).to_string()`. They all funnel
+// into a shared `$__int_to_string_u64(magnitude, neg)` core
+// that the family was missing — `int_to_string` only knew
+// signed i32. The wrappers convert to the (i64-magnitude, sign-
+// flag) shape and call through.
+func (g *generator) emitNumberToStringHelpers() {
+	// $__int_to_string_u64(mag: i64, neg: i32): i32 — formats
+	// a non-negative i64 magnitude into a freshly allocated
+	// length-prefixed string, prepending `-` when neg is set.
+	g.line(`(func $__int_to_string_u64 (param $mag i64) (param $neg i32) (result i32)`)
+	g.indent++
+	g.line(`(local $tmp i32) (local $end i32) (local $len i32) (local $buf i32)`)
+	// 24 bytes is enough for max u64 (20 digits) + sign + spare.
+	g.line(`i32.const 24`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $tmp`)
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 24`)
+	g.line(`i32.add`)
+	g.line(`local.set $end`)
+	// Special-case 0.
+	g.line(`local.get $mag`)
+	g.line(`i64.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $end`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.tee $end`)
+	g.line(`i32.const 48`) // '0'
+	g.line(`i32.store8`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`block $break`)
+	g.indent++
+	g.line(`loop $loop`)
+	g.indent++
+	g.line(`local.get $mag`)
+	g.line(`i64.eqz`)
+	g.line(`br_if $break`)
+	// digit = mag % 10 (unsigned)
+	g.line(`local.get $end`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.tee $end`)
+	g.line(`local.get $mag`)
+	g.line(`i64.const 10`)
+	g.line(`i64.rem_u`)
+	g.line(`i32.wrap_i64`)
+	g.line(`i32.const 48`) // '0'
+	g.line(`i32.add`)
+	g.line(`i32.store8`)
+	// mag /= 10 (unsigned)
+	g.line(`local.get $mag`)
+	g.line(`i64.const 10`)
+	g.line(`i64.div_u`)
+	g.line(`local.set $mag`)
+	g.line(`br $loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Sign.
+	g.line(`local.get $neg`)
+	g.line(`if`)
+	g.indent++
+	g.line(`local.get $end`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`local.tee $end`)
+	g.line(`i32.const 45`) // '-'
+	g.line(`i32.store8`)
+	g.indent--
+	g.line(`end`)
+	// len = (tmp + 24) - end
+	g.line(`local.get $tmp`)
+	g.line(`i32.const 24`)
+	g.line(`i32.add`)
+	g.line(`local.get $end`)
+	g.line(`i32.sub`)
+	g.line(`local.set $len`)
+	// out = alloc(4 + len); out[0] = len; memcpy(out+4, end, len)
+	g.line(`local.get $len`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $len`)
+	g.line(`i32.store`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $end`)
+	g.line(`local.get $len`)
+	g.line(`memory.copy`)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_i32_to_string(n: i32): string — sign-aware,
+	// negates negative n into its u32 magnitude (handling
+	// INT_MIN via the unsigned trick: 0 - n in unsigned wraps
+	// correctly for all i32 values).
+	g.line(`(func $__method_i32_to_string (param $n i32) (result i32)`)
+	g.indent++
+	g.line(`(local $neg i32) (local $mag i64)`)
+	g.line(`local.get $n`)
+	g.line(`i32.const 0`)
+	g.line(`i32.lt_s`)
+	g.line(`local.tee $neg`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0`)
+	g.line(`local.get $n`)
+	g.line(`i32.sub`)
+	g.line(`i64.extend_i32_u`)
+	g.line(`local.set $mag`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $n`)
+	g.line(`i64.extend_i32_u`)
+	g.line(`local.set $mag`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $mag`)
+	g.line(`local.get $neg`)
+	g.line(`call $__int_to_string_u64`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_u32_to_string(n: i32): string — n is treated
+	// as unsigned; just zero-extend and format.
+	g.line(`(func $__method_u32_to_string (param $n i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $n`)
+	g.line(`i64.extend_i32_u`)
+	g.line(`i32.const 0`)
+	g.line(`call $__int_to_string_u64`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_i64_to_string(n: i64): string — sign-aware,
+	// same negation trick at i64 width.
+	g.line(`(func $__method_i64_to_string (param $n i64) (result i32)`)
+	g.indent++
+	g.line(`(local $neg i32) (local $mag i64)`)
+	g.line(`local.get $n`)
+	g.line(`i64.const 0`)
+	g.line(`i64.lt_s`)
+	g.line(`local.tee $neg`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i64.const 0`)
+	g.line(`local.get $n`)
+	g.line(`i64.sub`)
+	g.line(`local.set $mag`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	g.line(`local.get $n`)
+	g.line(`local.set $mag`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $mag`)
+	g.line(`local.get $neg`)
+	g.line(`call $__int_to_string_u64`)
+	g.indent--
+	g.line(`)`)
+
+	// $__method_u64_to_string(n: i64): string — unsigned,
+	// straight pass-through.
+	g.line(`(func $__method_u64_to_string (param $n i64) (result i32)`)
+	g.indent++
+	g.line(`local.get $n`)
+	g.line(`i32.const 0`)
+	g.line(`call $__int_to_string_u64`)
 	g.indent--
 	g.line(`)`)
 }
