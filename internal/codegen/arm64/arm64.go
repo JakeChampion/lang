@@ -239,12 +239,28 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov x0, #0x1000")
 	g.emit("lsl x0, x0, #16")    // x0 = 0x10000000 = 256 MiB
 	g.emit("ldr x1, =%d", heapBytes) // length = 64 MiB
-	g.emit("mov x2, #3")        // PROT_READ | PROT_WRITE
-	g.emit("mov x3, #0x22")     // MAP_PRIVATE | MAP_ANONYMOUS
-	g.emit("mov x4, #-1")
-	g.emit("mov x5, #0")
-	g.emit("mov x8, #222")      // sys_mmap
-	g.emit("svc #0")
+	g.emit("mov x2, #3")        // PROT_READ | PROT_WRITE (same on both)
+	if g.darwin {
+		// Darwin BSD MAP_PRIVATE=0x02 + MAP_ANON=0x1000 = 0x1002.
+		// (Linux uses 0x20 for MAP_ANONYMOUS.) Darwin mmap is
+		// syscall #197 with svc #0x80; Linux is #222 with
+		// svc #0. Same in-register arg shape (x0..x5).
+		g.emit("mov x3, #0x1002") // MAP_PRIVATE | MAP_ANON (Darwin)
+		g.emit("mov x4, #-1")
+		g.emit("mov x5, #0")
+		g.emit("mov x16, #197")   // SYS_mmap (Darwin BSD)
+		g.emit("svc #0x80")
+		// Darwin mmap returns MAP_FAILED == -1 cast to ptr on
+		// error (vs Linux's -errno). The cmn below still
+		// catches both shapes: -errno is negative, and -1 is
+		// also negative when read as signed.
+	} else {
+		g.emit("mov x3, #0x22")     // MAP_PRIVATE | MAP_ANONYMOUS (Linux)
+		g.emit("mov x4, #-1")
+		g.emit("mov x5, #0")
+		g.emit("mov x8, #222")      // sys_mmap (Linux asm-generic)
+		g.emit("svc #0")
+	}
 	// On failure mmap returns -errno (negative). Trap.
 	g.emit("cmn x0, #0")
 	g.emit("blt .Lalloc_oom")
