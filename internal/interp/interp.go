@@ -1376,7 +1376,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			return i.evalExpr(x.Then, env)
 		}
 		return i.evalExpr(x.Else, env)
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		// The interp's expression evaluator can't unwind the
 		// enclosing function early (statement-level flow control
 		// uses a result-flow flag the expression layer doesn't

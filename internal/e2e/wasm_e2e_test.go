@@ -2910,6 +2910,52 @@ function main(): i32 {
 	}
 }
 
+// `?` on Result[T, E] — Ok path yields T and falls through.
+func TestWASMResultTryHappyPath(t *testing.T) {
+	src := `function inner(n: i32): Result[i32, i32] {
+    if (n < 0) { return Err(0 - n); }
+    return Ok(n * 2);
+}
+function outer(n: i32): Result[i32, i32] {
+    var v: i32 = inner(n)?;
+    return Ok(v + 1);
+}
+function main(): i32 {
+    match (outer(5)) {
+        Ok(v)  => { return v; },
+        Err(e) => { return 0 - e; }
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 11 {
+		t.Errorf("got %d, want 11 (5 * 2 + 1)", got)
+	}
+}
+
+// Err path: `?` short-circuits, forwarding the source Err
+// pointer through the enclosing function unchanged.
+func TestWASMResultTryErrPropagates(t *testing.T) {
+	src := `function inner(n: i32): Result[i32, i32] {
+    if (n < 0) { return Err(0 - n); }
+    return Ok(n * 2);
+}
+function outer(n: i32): Result[i32, i32] {
+    var v: i32 = inner(n)?;
+    return Ok(v + 1);
+}
+function main(): i32 {
+    match (outer(0 - 7)) {
+        Ok(v)  => { return v; },
+        Err(e) => { return e; }
+    }
+    return 0;
+}`
+	// inner(-7) -> Err(7); outer forwards it; main reads e=7.
+	if got := runWasm(t, src); got != 7 {
+		t.Errorf("got %d, want 7 (Err(7) propagated)", got)
+	}
+}
+
 func TestWASMCompoundAssign(t *testing.T) {
 	src := `function main(): i32 {
 		var x: i32 = 1;

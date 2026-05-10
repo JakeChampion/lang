@@ -329,7 +329,7 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		}
 		n.Else = ne
 		return n, nil
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		ni, err := c.rewriteExpr(n.Inner, ctx)
 		if err != nil {
 			return nil, err

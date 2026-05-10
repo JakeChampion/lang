@@ -2198,7 +2198,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			// fn returns Option) is enforced by the checker; the
 			// IR does the tag-compare + early-return lowering.
 			tok := p.advance()
-			expr = &ast.OptionTry{P: tok.Pos, Inner: expr}
+			expr = &ast.TryOp{P: tok.Pos, Inner: expr}
 		default:
 			return expr, nil
 		}

@@ -236,7 +236,7 @@ func zeroExpr(e ast.Expr) {
 		zeroExpr(x.Cond)
 		zeroExpr(x.Then)
 		zeroExpr(x.Else)
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		x.P = ast.Position{}
 		zeroExpr(x.Inner)
 	case *ast.StructLit:
