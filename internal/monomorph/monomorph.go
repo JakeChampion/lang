@@ -452,7 +452,9 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 		substituteExpr(x.High, sub)
 	case *ast.FieldAccess:
 		substituteExpr(x.Target, sub)
-	case *ast.Ternary:
+	case *ast.OptionTry:
+		substituteExpr(x.Inner, sub)
+	case *ast.IfExpr:
 		substituteExpr(x.Cond, sub)
 		substituteExpr(x.Then, sub)
 		substituteExpr(x.Else, sub)
@@ -643,7 +645,11 @@ func cloneExpr(e ast.Expr) ast.Expr {
 		c := *x
 		c.Target = cloneExpr(x.Target)
 		return &c
-	case *ast.Ternary:
+	case *ast.OptionTry:
+		c := *x
+		c.Inner = cloneExpr(x.Inner)
+		return &c
+	case *ast.IfExpr:
 		c := *x
 		c.Cond = cloneExpr(x.Cond)
 		c.Then = cloneExpr(x.Then)
@@ -781,7 +787,9 @@ func walkExprStructLits(e ast.Expr, fn func(*ast.StructLit)) {
 		walkExprStructLits(x.High, fn)
 	case *ast.FieldAccess:
 		walkExprStructLits(x.Target, fn)
-	case *ast.Ternary:
+	case *ast.OptionTry:
+		walkExprStructLits(x.Inner, fn)
+	case *ast.IfExpr:
 		walkExprStructLits(x.Cond, fn)
 		walkExprStructLits(x.Then, fn)
 		walkExprStructLits(x.Else, fn)
@@ -1046,7 +1054,9 @@ func walkExpr(e ast.Expr, fn func(*ast.Call)) {
 		walkExpr(x.High, fn)
 	case *ast.FieldAccess:
 		walkExpr(x.Target, fn)
-	case *ast.Ternary:
+	case *ast.OptionTry:
+		walkExpr(x.Inner, fn)
+	case *ast.IfExpr:
 		walkExpr(x.Cond, fn)
 		walkExpr(x.Then, fn)
 		walkExpr(x.Else, fn)

@@ -521,7 +521,7 @@ const (
 	precLowest  = 0
 	precAssign  = 1  // = += -= …
 	precPipe    = 2  // |>  (above assignment, below ternary)
-	precTernary = 3  // ?:
+	precIfExpr  = 3  // if (c) { e } else { e } in expression position
 	precOr      = 4  // ||
 	precAnd     = 5  // &&
 	precEq      = 6  // == !=
@@ -777,19 +777,26 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte(')')
 		}
-	case *ast.Ternary:
-		needsParens := parentPrec > precTernary
+	case *ast.IfExpr:
+		needsParens := parentPrec > precIfExpr
 		if needsParens {
 			f.b.WriteByte('(')
 		}
-		f.formatExpr(x.Cond, precTernary+1)
-		f.b.WriteString(" ? ")
-		f.formatExpr(x.Then, precTernary+1)
-		f.b.WriteString(" : ")
-		f.formatExpr(x.Else, precTernary)
+		f.b.WriteString("if (")
+		f.formatExpr(x.Cond, 0)
+		f.b.WriteString(") { ")
+		f.formatExpr(x.Then, 0)
+		f.b.WriteString(" } else { ")
+		f.formatExpr(x.Else, 0)
+		f.b.WriteString(" }")
 		if needsParens {
 			f.b.WriteByte(')')
 		}
+	case *ast.OptionTry:
+		// Postfix `?` binds tighter than any binary operator —
+		// emit it directly without precedence-based parens.
+		f.formatExpr(x.Inner, precUnary)
+		f.b.WriteByte('?')
 	case *ast.StructLit:
 		f.b.WriteString(x.TypeName)
 		f.b.WriteString(" { ")

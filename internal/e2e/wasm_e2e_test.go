@@ -2860,11 +2860,53 @@ func TestWASMSwitchBreakInLoop(t *testing.T) {
 	}
 }
 
-func TestWASMTernary(t *testing.T) {
-	src := `function abs(n: i32): i32 { return n < 0 ? 0 - n : n; }
+func TestWASMIfExpr(t *testing.T) {
+	src := `function abs(n: i32): i32 { return if (n < 0) { 0 - n } else { n }; }
 		function main(): i32 { return abs(-7); }`
 	if got := runWasm(t, src); got != 7 {
 		t.Errorf("got %d, want 7", got)
+	}
+}
+
+// Postfix `?` — Option-try operator. `m.get(k)?` evaluates to the
+// Some payload on hit; on miss the surrounding function returns
+// None early. Surrounding return type must be Option[_]; enforced
+// by the checker.
+func TestWASMOptionTryHappyPath(t *testing.T) {
+	src := `function chained(m: Map[i32, i32], k: i32): Option[i32] {
+    var v: i32 = m.get(k)?;
+    return Some(v + 1);
+}
+function main(): i32 {
+    var m: Map[i32, i32] = Map { 7: 100 };
+    match (chained(m, 7)) {
+        Some(v) => { return v; },
+        None    => { return 1; }
+    }
+    return 2;
+}`
+	if got := runWasm(t, src); got != 101 {
+		t.Errorf("got %d, want 101 (m.get(7)? + 1)", got)
+	}
+}
+
+// On a None value, `?` skips the rest of the function and returns
+// None. The caller observes the early-return outcome.
+func TestWASMOptionTryNoneEarlyReturn(t *testing.T) {
+	src := `function chained(m: Map[i32, i32], k: i32): Option[i32] {
+    var v: i32 = m.get(k)?;
+    return Some(v + 1);
+}
+function main(): i32 {
+    var m: Map[i32, i32] = Map { 7: 100 };
+    match (chained(m, 99)) {
+        Some(v) => { return 1; },
+        None    => { return 0; }
+    }
+    return 2;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (None early-return)", got)
 	}
 }
 

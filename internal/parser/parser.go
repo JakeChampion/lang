@@ -1026,6 +1026,51 @@ func (p *parser) parseWhile() (ast.Stmt, error) {
 	return &ast.While{P: kw.Pos, Cond: cond, Body: body}, nil
 }
 
+// parseIfExpr parses the expression form `if (cond) { e1 } else
+// { e2 }`. Each arm is a single expression — no semicolon, no
+// statement list. The construct exists so the language can drop
+// the ternary `cond ? e1 : e2` (whose `?` is needed for the
+// postfix Option-try operator). Statement-form `if (cond) {
+// stmts; }` is unaffected: parseStmt dispatches `if` before
+// expression parsing ever sees it.
+func (p *parser) parseIfExpr() (ast.Expr, error) {
+	kw := p.advance() // `if`
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return nil, err
+	}
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	thenE, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Keyword, "else"); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	elseE, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
+}
+
 // parseFor produces a real For node so that `continue` can jump to the
 // step expression, not back to the top of the loop body. There are
 // two recognised shapes:
@@ -1929,13 +1974,13 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 // is written subject-first so the first arg is the most natural
 // pipe target.
 func (p *parser) parsePipe() (ast.Expr, error) {
-	left, err := p.parseTernary()
+	left, err := p.parseLogicOr()
 	if err != nil {
 		return nil, err
 	}
 	for p.match(lexer.Punct, "|>") {
 		pipeTok := p.advance()
-		right, err := p.parseTernary()
+		right, err := p.parseLogicOr()
 		if err != nil {
 			return nil, err
 		}
@@ -1954,32 +1999,6 @@ func (p *parser) parsePipe() (ast.Expr, error) {
 		}
 	}
 	return left, nil
-}
-
-// parseTernary handles `cond ? then : else`. It's right-associative
-// (so `a ? b : c ? d : e` parses as `a ? b : (c ? d : e)`), and sits
-// just above the logical operators in precedence.
-func (p *parser) parseTernary() (ast.Expr, error) {
-	cond, err := p.parseLogicOr()
-	if err != nil {
-		return nil, err
-	}
-	q, ok := p.accept(lexer.Punct, "?")
-	if !ok {
-		return cond, nil
-	}
-	then, err := p.parseAssign()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, ":"); err != nil {
-		return nil, err
-	}
-	els, err := p.parseAssign()
-	if err != nil {
-		return nil, err
-	}
-	return &ast.Ternary{P: q.Pos, Cond: cond, Then: then, Else: els}, nil
 }
 
 func (p *parser) parseBinaryLeft(next func() (ast.Expr, error), ops ...string) (ast.Expr, error) {
@@ -2172,6 +2191,14 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
 			}
 			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text}
+		case p.match(lexer.Punct, "?"):
+			// Postfix `?` — Option-try operator. `expr?` evaluates
+			// to the Some payload and early-returns None when the
+			// source was None. Validity (Inner is Option, enclosing
+			// fn returns Option) is enforced by the checker; the
+			// IR does the tag-compare + early-return lowering.
+			tok := p.advance()
+			expr = &ast.OptionTry{P: tok.Pos, Inner: expr}
 		default:
 			return expr, nil
 		}
@@ -2300,6 +2327,14 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		case "false":
 			p.advance()
 			return &ast.BoolLit{P: t.Pos, Value: false}, nil
+		case "if":
+			// `if (cond) { e1 } else { e2 }` in expression
+			// position — replaces the ternary `cond ? e1 : e2`.
+			// Statement-form `if (cond) { stmts; }` is parsed
+			// from `parseStmt` and uses *ast.If; the two paths
+			// don't overlap because parseStmt dispatches `if`
+			// before this primary parser ever sees it.
+			return p.parseIfExpr()
 		}
 	case lexer.Ident:
 		p.advance()

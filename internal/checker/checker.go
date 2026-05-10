@@ -2764,15 +2764,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		return lt
-	case *ast.Ternary:
+	case *ast.IfExpr:
 		ct := c.checkExpr(n.Cond, s)
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
-			c.errf(n.Cond.Pos(), "ternary condition must be boolean, got %s", ct)
+			c.errf(n.Cond.Pos(), "if-expression condition must be boolean, got %s", ct)
 		}
 		tt := c.checkExpr(n.Then, s)
 		et := c.checkExpr(n.Else, s)
 		if tt != nil && et != nil && !ast.Equal(tt, et) {
-			c.errf(n.P, "ternary branches differ: %s vs %s", tt, et)
+			c.errf(n.P, "if-expression branches differ: %s vs %s", tt, et)
 		}
 		result := tt
 		if result == nil {
@@ -2782,6 +2782,32 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.IsFloat = true
 		}
 		return result
+	case *ast.OptionTry:
+		// Postfix `?`. `expr?` requires `expr : Option[T]` and the
+		// surrounding function's return type to also be Option[_].
+		// On a Some value the construct evaluates to T; on None
+		// the function returns early with None.
+		inner := c.checkExpr(n.Inner, s)
+		if inner == nil {
+			return nil
+		}
+		et, ok := inner.(ast.EnumType)
+		if !ok || et.Name != "Option" || len(et.Args) != 1 {
+			c.errf(n.P, "`?` operator requires an Option value, got %s", inner)
+			return nil
+		}
+		if c.current == nil {
+			c.errf(n.P, "`?` operator can only be used inside a function")
+			return nil
+		}
+		ret := c.current.ReturnType
+		retEnum, retOK := ret.(ast.EnumType)
+		if !retOK || retEnum.Name != "Option" || len(retEnum.Args) != 1 {
+			c.errf(n.P, "`?` operator requires the surrounding function to return Option[_], got %s", ret)
+			return nil
+		}
+		n.Type = et.Args[0]
+		return n.Type
 	case *ast.StructLit:
 		sd, ok := c.info.Structs[n.TypeName]
 		if !ok {

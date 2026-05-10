@@ -294,15 +294,15 @@ func TestSwitchEmitsBlockAndScratch(t *testing.T) {
 	mustContain(t, wat, "br_if")
 }
 
-func TestTernaryEmitsIfResult(t *testing.T) {
-	wat := compileToWAT(t, `function f(b: boolean): i32 { return b ? 1 : 2; }`)
+func TestIfExprEmitsIfResult(t *testing.T) {
+	wat := compileToWAT(t, `function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
 	mustContain(t, wat, "if (result i32)")
 	mustContain(t, wat, "i32.const 1")
 	mustContain(t, wat, "i32.const 2")
 }
 
-func TestTernaryFloatEmitsF32Result(t *testing.T) {
-	wat := compileToWAT(t, `function f(b: boolean): float { return b ? 1.5 : 2.5; }`)
+func TestIfExprFloatEmitsF32Result(t *testing.T) {
+	wat := compileToWAT(t, `function f(b: boolean): float { return if (b) { 1.5 } else { 2.5 }; }`)
 	mustContain(t, wat, "if (result f32)")
 }
 

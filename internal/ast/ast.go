@@ -584,16 +584,34 @@ type Assign struct {
 	Value  Expr
 }
 
-// Ternary models `cond ? then : else`. It's an expression (not a
-// statement) so it composes inside arithmetic and assignment.
-type Ternary struct {
+// OptionTry is the postfix `?` operator: `expr?` evaluates to
+// the Some payload and early-returns None when the source was
+// None. The surrounding function's return type must be Option[_]
+// (Result is a future extension). The checker validates both
+// constraints, fills `Type` with the unwrapped Some-payload
+// type, and the IR lowers the construct using the source's
+// ptr-load + tag-compare + early-return-or-payload-load shape.
+type OptionTry struct {
+	P     Position
+	Inner Expr
+	// Type is the unwrapped Some payload type, set by the
+	// checker. Lets the IR pick `OpLoad` vs `OpFLoad` etc.
+	Type Type
+}
+
+// IfExpr is `if (cond) { then_expr } else { else_expr }` in
+// expression position. Each arm is exactly one expression (not a
+// block of statements) — the construct fills the niche the
+// ternary `cond ? then : else` used to occupy, while freeing up
+// `?` for the postfix Option-try operator. Statement-form `if
+// (cond) { stmts; }` lives on *If and is unrelated.
+type IfExpr struct {
 	P    Position
 	Cond Expr
 	Then Expr
 	Else Expr
-	// IsFloat is set by the checker when the result type is `float`,
-	// so the WASM backend knows to use `if (result f32)` instead of
-	// `if (result i32)`.
+	// IsFloat is set by the checker when the unified arm type is
+	// `f32` so the wasm backend picks `if (result f32)`.
 	IsFloat bool
 }
 
@@ -709,7 +727,8 @@ func (e *Call) Pos() Position      { return e.P }
 func (e *Binary) Pos() Position    { return e.P }
 func (e *Unary) Pos() Position     { return e.P }
 func (e *Assign) Pos() Position      { return e.P }
-func (e *Ternary) Pos() Position     { return e.P }
+func (e *IfExpr) Pos() Position      { return e.P }
+func (e *OptionTry) Pos() Position   { return e.P }
 func (e *StructLit) Pos() Position   { return e.P }
 func (e *TupleLit) Pos() Position    { return e.P }
 func (e *MapLit) Pos() Position      { return e.P }
@@ -732,7 +751,8 @@ func (*Call) isExpr()      {}
 func (*Binary) isExpr()    {}
 func (*Unary) isExpr()     {}
 func (*Assign) isExpr()      {}
-func (*Ternary) isExpr()     {}
+func (*IfExpr) isExpr()      {}
+func (*OptionTry) isExpr()   {}
 func (*StructLit) isExpr()   {}
 func (*TupleLit) isExpr()    {}
 func (*MapLit) isExpr()      {}

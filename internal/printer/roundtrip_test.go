@@ -231,11 +231,14 @@ func zeroExpr(e ast.Expr) {
 		x.P = ast.Position{}
 		zeroExpr(x.Target)
 		zeroExpr(x.Value)
-	case *ast.Ternary:
+	case *ast.IfExpr:
 		x.P = ast.Position{}
 		zeroExpr(x.Cond)
 		zeroExpr(x.Then)
 		zeroExpr(x.Else)
+	case *ast.OptionTry:
+		x.P = ast.Position{}
+		zeroExpr(x.Inner)
 	case *ast.StructLit:
 		x.P = ast.Position{}
 		for _, f := range x.Fields {
@@ -258,8 +261,8 @@ func TestRoundtripSwitch(t *testing.T) {
 	}`)
 }
 
-func TestRoundtripTernary(t *testing.T) {
-	roundTrip(t, `function f(b: boolean): i32 { return b ? 1 : 2; }`)
+func TestRoundtripIfExpr(t *testing.T) {
+	roundTrip(t, `function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
 }
 
 func TestRoundtripCompoundAssign(t *testing.T) {

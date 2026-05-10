@@ -644,6 +644,34 @@ to smallest. Status pending unless marked.
   variant, bind on success. Pure parse-time + checker
   desugar; no codegen change.
 
+  **Shipped (Option only).** `?` is now a postfix operator on
+  any `Option[T]` source. The parser attaches it as part of the
+  `parseCall` postfix loop (alongside `.field`, `[i]`, `(args)`)
+  so it binds tighter than every binary operator — `m.get(k)? +
+  1` parses as `(m.get(k)?) + 1`. The checker validates that the
+  source is `Option[T]` and the enclosing function returns
+  `Option[_]`; `n.Type` carries the unwrapped payload type the
+  IR uses to pick the right load width. The IR lowers the
+  construct directly: stash the source pointer, branch on the
+  None tag, build a fresh None of the function's return type and
+  `return` early on the None path, fall through to the payload
+  load on the Some path. To free `?` from the ternary, the
+  ternary `cond ? then : else` was replaced with a one-line
+  `if (cond) { then } else { else }` expression form (see the
+  `if` expression note below). `Result[_, E]` support is a
+  follow-up.
+
+- **`if (cond) { e1 } else { e2 }` as an expression — shipped.**
+  Each arm holds a single expression (no statements, no
+  semicolons), and the whole construct evaluates to the unified
+  arm type. Lowers identically to the (now-removed) ternary —
+  same typed `if/else` block in the IR, same `if (result T)` at
+  the wasm level, same predicated-load conversion on arm32. The
+  statement form `if (cond) { stmts; } [else { stmts; }]` is
+  unchanged; expression and statement positions are
+  syntactically distinct because parseStmt dispatches `if`
+  before expression parsing ever sees it.
+
 - **`match` as an expression.** Wildcard `_` arms are
   already shipped (PR 4 ergonomics layer); the friction in
   `todo_api.lang`'s `extract_text` came from me not knowing

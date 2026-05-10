@@ -1560,10 +1560,10 @@ func (b *builder) expr(e ast.Expr) error {
 		return b.call(n)
 	case *ast.Assign:
 		return b.assign(n)
-	case *ast.Ternary:
-		// `cond ? a : b` lowers to a typed `if/else` whose arms each
-		// push the result. The block-type tells consumers whether the
-		// produced value is i32 or f32.
+	case *ast.IfExpr:
+		// `if (c) { a } else { b }` lowers to a typed `if/else`
+		// whose arms each push the result. The block-type tells
+		// consumers whether the produced value is i32 or f32.
 		bt := BlockTypeI32
 		if n.IsFloat {
 			bt = BlockTypeF32
@@ -1580,6 +1580,40 @@ func (b *builder) expr(e ast.Expr) error {
 			return err
 		}
 		b.closeScope()
+	case *ast.OptionTry:
+		// Lower `expr?` as: stash the source pointer, branch on
+		// the tag — None (idx=1) builds a fresh None of the
+		// enclosing function's return type and returns early;
+		// Some (idx=0) falls through to a payload load that
+		// produces T. Validity (Inner is Option, surrounding fn
+		// returns Option) is the checker's job; here we trust
+		// the typing.
+		ptrSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__try_p_%d", ptrSlot)] = ptrSlot
+		if err := b.expr(n.Inner); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
+		// tag at ptr+0 == None (1) ?
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpLoad})
+		b.emit(Op{Kind: OpConstI32, I32: 1})
+		b.emit(Op{Kind: OpEq})
+		b.openIf(BlockTypeVoid)
+		// None: build a fresh None of the function's return type
+		// and early-return. emitEnumNew leaves the heap pointer
+		// on the stack; OpReturn consumes it as the return value.
+		if err := b.emitEnumNew(nil, "Option", 1, 0, nil); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpReturn})
+		b.closeScope()
+		// Some: load payload at ptr+4. Width selection follows
+		// the unwrapped type (Type) the checker stamped.
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpConstI32, I32: 4})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(payloadLoadOp(n.Type))
 	case *ast.Index:
 		// Compile-time fold: `"literal"[const_idx]` collapses to
 		// the byte at that index, as a single `OpConstI32`. Skips

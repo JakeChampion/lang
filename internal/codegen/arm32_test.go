@@ -738,13 +738,13 @@ func TestArm32SwitchEmitsBranchChain(t *testing.T) {
 	}
 }
 
-// Ternary is just a typed `if/else` in IR (block-result i32).
+// IfExpr is just a typed `if/else` in IR (block-result i32).
 // When both arms are predicate-able single instructions (e.g.
 // `ldr r0, =1` / `ldr r0, =2`), the if-conversion peep
 // collapses the branch + ELSE/END labels into a pair of
 // predicated loads — `cmp r0, #0 ; ldrne r0, =1 ; ldreq r0, =2`.
-func TestArm32TernaryBranches(t *testing.T) {
-	asm := compile(t, `function f(b: boolean): i32 { return b ? 1 : 2; }`)
+func TestArm32IfExprBranches(t *testing.T) {
+	asm := compile(t, `function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
 	mustContain(t, asm, "cmp r0, #0")
 	// Either the predicated form (ldrne / ldreq) or the
 	// pre-fold branch shape is acceptable.

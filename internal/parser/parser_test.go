@@ -416,32 +416,56 @@ func TestCompoundAssignDesugars(t *testing.T) {
 	}
 }
 
-func TestTernary(t *testing.T) {
-	prog, err := Parse(`function f(b: boolean): i32 { return b ? 1 : 2; }`)
+func TestIfExpr(t *testing.T) {
+	prog, err := Parse(`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ret := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
-	tern, ok := ret.Value.(*ast.Ternary)
+	ie, ok := ret.Value.(*ast.IfExpr)
 	if !ok {
-		t.Fatalf("expected *Ternary, got %T", ret.Value)
+		t.Fatalf("expected *IfExpr, got %T", ret.Value)
 	}
-	if _, ok := tern.Cond.(*ast.Ident); !ok {
-		t.Errorf("cond should be Ident, got %T", tern.Cond)
+	if _, ok := ie.Cond.(*ast.Ident); !ok {
+		t.Errorf("cond should be Ident, got %T", ie.Cond)
 	}
 }
 
-func TestTernaryRightAssociative(t *testing.T) {
-	// `a ? b : c ? d : e` parses as `a ? b : (c ? d : e)`.
-	prog, err := Parse(`function f(a: boolean, c: boolean): i32 {
-		return a ? 1 : c ? 2 : 3;
+// Postfix `?` parses as an OptionTry node attached to the
+// preceding primary. It binds tighter than any binary operator
+// because the parseCall postfix loop runs before the precedence
+// chain — `m.get(k)? + 1` parses as `(m.get(k)?) + 1`.
+func TestOptionTryParses(t *testing.T) {
+	prog, err := Parse(`function f(m: Map[i32, i32]): Option[i32] {
+		var v: i32 = m.get(7)?;
+		return Some(v + 1);
 	}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tern := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.Ternary)
-	if _, ok := tern.Else.(*ast.Ternary); !ok {
-		t.Fatalf("else should be a nested Ternary, got %T", tern.Else)
+	declStmt := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
+	tr, ok := declStmt.Init.(*ast.OptionTry)
+	if !ok {
+		t.Fatalf("expected *OptionTry as Var init, got %T", declStmt.Init)
+	}
+	if _, ok := tr.Inner.(*ast.Call); !ok {
+		t.Errorf("inner of `?` should be the call `m.get(7)`, got %T", tr.Inner)
+	}
+}
+
+func TestIfExprNested(t *testing.T) {
+	// `if (a) { 1 } else { if (c) { 2 } else { 3 } }` — the
+	// nested IfExpr lives in the outer's Else slot. This is the
+	// shape that used to round-trip as `a ? 1 : c ? 2 : 3`.
+	prog, err := Parse(`function f(a: boolean, c: boolean): i32 {
+		return if (a) { 1 } else { if (c) { 2 } else { 3 } };
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ie := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.IfExpr)
+	if _, ok := ie.Else.(*ast.IfExpr); !ok {
+		t.Fatalf("else should be a nested IfExpr, got %T", ie.Else)
 	}
 }
 

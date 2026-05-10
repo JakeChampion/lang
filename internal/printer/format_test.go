@@ -176,7 +176,7 @@ function main(): i32 {
 func TestFormatRoundTripsThroughParser(t *testing.T) {
 	srcs := []string{
 		`function f(): i32 { return 1 + 2 * 3; }`,
-		`function f(a: i32, b: i32): i32 { return a < b ? a : b; }`,
+		`function f(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }`,
 		`function f(s: string): boolean { return s == "x"; }`,
 		`function f(): i32 { var a: i32[] = [1, 2, 3]; return a[1]; }`,
 		`function f(n: i32): i32 {

@@ -239,9 +239,9 @@ func TestLowerSwitch(t *testing.T) {
 	mustContainOp(t, prog, "f", OpBr)
 }
 
-func TestLowerTernary(t *testing.T) {
-	prog := lowerSource(t, `function f(b: boolean): i32 { return b ? 1 : 2; }`)
-	// Ternary lowers to a typed `if i32 ... else ... end`.
+func TestLowerIfExpr(t *testing.T) {
+	prog := lowerSource(t, `function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
+	// IfExpr lowers to a typed `if i32 ... else ... end`.
 	mustContainOp(t, prog, "f", OpIf)
 	mustContainOp(t, prog, "f", OpElse)
 	mustContainOp(t, prog, "f", OpEnd)
@@ -403,7 +403,7 @@ func TestStructuredControlFlowIsBalanced(t *testing.T) {
 		while (sum > 100) {
 			sum = sum - 1;
 		}
-		return sum > 0 ? sum : 0;
+		return if (sum > 0) { sum } else { 0 };
 	}`)
 	for _, fn := range prog.Funcs {
 		depth := 0

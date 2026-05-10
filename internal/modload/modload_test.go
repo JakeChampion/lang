@@ -70,7 +70,7 @@ func callsDirect(fn *ast.FuncDecl, target string) bool {
 			walkExpr(x.Right)
 		case *ast.Unary:
 			walkExpr(x.Operand)
-		case *ast.Ternary:
+		case *ast.IfExpr:
 			walkExpr(x.Cond)
 			walkExpr(x.Then)
 			walkExpr(x.Else)
