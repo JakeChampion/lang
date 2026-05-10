@@ -644,19 +644,24 @@ to smallest. Status pending unless marked.
   variant, bind on success. Pure parse-time + checker
   desugar; no codegen change.
 
-- **`match` as an expression + `_` wildcard.** Every
-  `JsonValue` match enumerates all 6 variants when really
-  one matters. `_ => return None` is ~80% of `extract_text`.
-  Plus `match`-in-let:
+- **`match` as an expression.** Wildcard `_` arms are
+  already shipped (PR 4 ergonomics layer); the friction in
+  `todo_api.lang`'s `extract_text` came from me not knowing
+  that, not from the compiler. Re-checking turned up the
+  remaining gap: `match` works only as a statement, not
+  in expression position. Concrete shape:
 
   ```
   var m = match v { JObject(m) => m, _ => return None };
   ```
 
-  collapses 6-line guards into one. Two changes: (1) parser
-  accepts `match` in expression position, returns the
-  matched-arm value; (2) `_` arm acts as exhaustive
-  wildcard, suppresses the missing-variant error.
+  collapses a 6-line if-let-else guard into one. Parser
+  needs to accept `match` in expression position and the
+  result type comes from unifying every arm body's last
+  expression. The existing arm-body parsing (Block) already
+  produces an Expr-or-Stmt-block; the change is mostly the
+  expression-context entry point + a checker rule that the
+  arms must agree on a single type.
 
 - **String interpolation.** `req.method + " " + req.path +
   " (" + len(req.body).to_string() + " bytes)\n\n" + req.body`

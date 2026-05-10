@@ -50,7 +50,8 @@ function path_id(path: string): Option[i32] {
 
 // Pull `text` field out of a parsed JsonValue request body.
 // Returns None on any structural mismatch (not an object,
-// missing field, wrong field type).
+// missing field, wrong field type). The `_` wildcard arms
+// collapse the other-variant branches each into one line.
 function extract_text(v: JsonValue): Option[string] {
   match (v) {
     JObject(m) => {
@@ -60,19 +61,7 @@ function extract_text(v: JsonValue): Option[string] {
             JString(t) => {
               return Some(t);
             },
-            JNull => {
-              return None;
-            },
-            JBool(_) => {
-              return None;
-            },
-            JNumber(_) => {
-              return None;
-            },
-            JArray(_) => {
-              return None;
-            },
-            JObject(_) => {
+            _ => {
               return None;
             }
           }
@@ -82,19 +71,7 @@ function extract_text(v: JsonValue): Option[string] {
         }
       }
     },
-    JNull => {
-      return None;
-    },
-    JBool(_) => {
-      return None;
-    },
-    JNumber(_) => {
-      return None;
-    },
-    JString(_) => {
-      return None;
-    },
-    JArray(_) => {
+    _ => {
       return None;
     }
   }
