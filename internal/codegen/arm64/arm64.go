@@ -23,6 +23,7 @@ package arm64
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -699,6 +700,44 @@ func (g *generator) binPop() {
 	g.emit("ldr x1, [sp], #16") // lhs (next)
 }
 
+// fbinPop32 pops two raw 32-bit float bit-patterns off the
+// operand stack and loads them into s0 (rhs) and s1 (lhs)
+// via fmov. Mirrors arm32's fbinPop. The bit patterns are
+// stored as i32 on the operand stack to keep the
+// push/pop discipline uniform across i32 / f32 / i64 / f64;
+// the V-register file gets involved only at op time.
+func (g *generator) fbinPop32() {
+	g.emit("ldr x0, [sp], #16") // rhs raw bits
+	g.emit("ldr x1, [sp], #16") // lhs raw bits
+	g.emit("fmov s0, w0")
+	g.emit("fmov s1, w1")
+}
+
+// fbinPop64 is fbinPop32's f64 counterpart — uses the full
+// 64-bit x-regs and double-precision d-regs.
+func (g *generator) fbinPop64() {
+	g.emit("ldr x0, [sp], #16")
+	g.emit("ldr x1, [sp], #16")
+	g.emit("fmov d0, x0")
+	g.emit("fmov d1, x1")
+}
+
+// fcmpPop pops two floats, runs `fcmp` and `cset` to
+// normalise the flag-state to 0 / 1, then pushes the i32
+// result. The condition code chooses between the comparison
+// shapes (eq / ne / mi / ls / gt / ge — same set arm32 uses).
+func (g *generator) fcmpPop(width int, cc string) {
+	if width == 64 {
+		g.fbinPop64()
+		g.emit("fcmp d1, d0")
+	} else {
+		g.fbinPop32()
+		g.emit("fcmp s1, s0")
+	}
+	g.emit("cset w0, %s", cc)
+	g.push()
+}
+
 // irScope tracks one open OpBlock / OpLoop / OpIf scope. The
 // IR's `br` instruction targets a scope by relative depth from
 // the top, and the destination label depends on the scope kind:
@@ -1006,6 +1045,176 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("bl __lang_strcmp")
 		g.emit("cmp x0, #0")
 		g.emit("cset w0, eq")
+		g.push()
+
+	// -------- floats (f32 / f64) --------
+	//
+	// Float values live as raw bit patterns on the operand
+	// stack (same shape as arm32 — i32 / i64 / f32 / f64 all
+	// occupy 16-byte stack slots regardless of underlying
+	// type). For arithmetic + comparison the codegen moves
+	// the bit pattern into the V-register file (s0/s1 for
+	// single-precision, d0/d1 for double-precision), runs the
+	// op, and `fmov`s the result back. AArch64 has direct
+	// `fmov` between x-regs and v-regs so this is a one-cycle
+	// shuffle on most cores.
+
+	case ir.OpConstF32:
+		// Materialise the f32 bit pattern as an i32 literal —
+		// same trick as arm32. The bit pattern bypasses the
+		// V-register file entirely, going straight onto the
+		// operand stack as a 32-bit raw value.
+		bits := math.Float32bits(op.F32)
+		g.emit("mov x0, #%d", int64(bits))
+		g.push()
+	case ir.OpConstF64:
+		bits := math.Float64bits(op.F64)
+		g.emit("ldr x0, =%d", int64(bits))
+		g.push()
+
+	case ir.OpFAdd:
+		if op.Width == 64 {
+			g.fbinPop64()
+			g.emit("fadd d0, d1, d0")
+			g.emit("fmov x0, d0")
+		} else {
+			g.fbinPop32()
+			g.emit("fadd s0, s1, s0")
+			g.emit("fmov w0, s0")
+		}
+		g.push()
+	case ir.OpFSub:
+		if op.Width == 64 {
+			g.fbinPop64()
+			g.emit("fsub d0, d1, d0")
+			g.emit("fmov x0, d0")
+		} else {
+			g.fbinPop32()
+			g.emit("fsub s0, s1, s0")
+			g.emit("fmov w0, s0")
+		}
+		g.push()
+	case ir.OpFMul:
+		if op.Width == 64 {
+			g.fbinPop64()
+			g.emit("fmul d0, d1, d0")
+			g.emit("fmov x0, d0")
+		} else {
+			g.fbinPop32()
+			g.emit("fmul s0, s1, s0")
+			g.emit("fmov w0, s0")
+		}
+		g.push()
+	case ir.OpFDiv:
+		if op.Width == 64 {
+			g.fbinPop64()
+			g.emit("fdiv d0, d1, d0")
+			g.emit("fmov x0, d0")
+		} else {
+			g.fbinPop32()
+			g.emit("fdiv s0, s1, s0")
+			g.emit("fmov w0, s0")
+		}
+		g.push()
+	case ir.OpFNeg:
+		if op.Width == 64 {
+			g.pop()
+			g.emit("fmov d0, x0")
+			g.emit("fneg d0, d0")
+			g.emit("fmov x0, d0")
+		} else {
+			g.pop()
+			g.emit("fmov s0, w0")
+			g.emit("fneg s0, s0")
+			g.emit("fmov w0, s0")
+		}
+		g.push()
+
+	case ir.OpFEq:
+		g.fcmpPop(op.Width, "eq")
+	case ir.OpFNe:
+		g.fcmpPop(op.Width, "ne")
+	case ir.OpFLt:
+		g.fcmpPop(op.Width, "mi")
+	case ir.OpFLe:
+		g.fcmpPop(op.Width, "ls")
+	case ir.OpFGt:
+		g.fcmpPop(op.Width, "gt")
+	case ir.OpFGe:
+		g.fcmpPop(op.Width, "ge")
+
+	case ir.OpFLoad:
+		// Float values live as raw bit patterns; OpFLoad reads
+		// 4 / 8 bytes from memory directly into x0. The V-
+		// register file isn't involved on the read path.
+		g.pop()
+		if op.Width == 64 {
+			g.emit("ldr x0, [x0]")
+		} else {
+			g.emit("ldr w0, [x0]")
+		}
+		g.push()
+	case ir.OpFStore:
+		g.emit("ldr x0, [sp], #16") // value
+		g.emit("ldr x1, [sp], #16") // addr
+		if op.Width == 64 {
+			g.emit("str x0, [x1]")
+		} else {
+			g.emit("str w0, [x1]")
+		}
+
+	case ir.OpFPromoteF32:
+		// f32 → f64. Move into s0, promote, move back as x0.
+		g.pop()
+		g.emit("fmov s0, w0")
+		g.emit("fcvt d0, s0")
+		g.emit("fmov x0, d0")
+		g.push()
+	case ir.OpFDemoteF64:
+		// f64 → f32. Inverse: move into d0, demote, move back.
+		g.pop()
+		g.emit("fmov d0, x0")
+		g.emit("fcvt s0, d0")
+		g.emit("fmov w0, s0")
+		g.push()
+
+	case ir.OpFConvertI32:
+		// i32 → f32 / f64. scvtf signed / ucvtf unsigned.
+		g.pop()
+		if op.Width == 64 {
+			if op.Unsigned {
+				g.emit("ucvtf d0, w0")
+			} else {
+				g.emit("scvtf d0, w0")
+			}
+			g.emit("fmov x0, d0")
+		} else {
+			if op.Unsigned {
+				g.emit("ucvtf s0, w0")
+			} else {
+				g.emit("scvtf s0, w0")
+			}
+			g.emit("fmov w0, s0")
+		}
+		g.push()
+	case ir.OpITruncF32:
+		// f32 → i32 / i64. fcvtzs truncates toward zero.
+		g.pop()
+		g.emit("fmov s0, w0")
+		if op.Width == 64 {
+			g.emit("fcvtzs x0, s0")
+		} else {
+			g.emit("fcvtzs w0, s0")
+		}
+		g.push()
+	case ir.OpITruncF64:
+		g.pop()
+		g.emit("fmov d0, x0")
+		if op.Width == 64 {
+			g.emit("fcvtzs x0, d0")
+		} else {
+			g.emit("fcvtzs w0, d0")
+		}
 		g.push()
 
 	case ir.OpStrConcat:
