@@ -336,6 +336,27 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		}
 		n.Inner = ni
 		return n, nil
+	case *ast.MatchExpr:
+		nt, err := c.rewriteExpr(n.Tag, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Tag = nt
+		for _, arm := range n.Arms {
+			if arm.Guard != nil {
+				ng, err := c.rewriteExpr(arm.Guard, ctx)
+				if err != nil {
+					return nil, err
+				}
+				arm.Guard = ng
+			}
+			nb, err := c.rewriteExpr(arm.Body, ctx)
+			if err != nil {
+				return nil, err
+			}
+			arm.Body = nb
+		}
+		return n, nil
 	case *ast.StructLit:
 		for i, f := range n.Fields {
 			nv, err := c.rewriteExpr(f.Value, ctx)

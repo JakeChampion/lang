@@ -458,6 +458,14 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 		substituteExpr(x.Cond, sub)
 		substituteExpr(x.Then, sub)
 		substituteExpr(x.Else, sub)
+	case *ast.MatchExpr:
+		substituteExpr(x.Tag, sub)
+		for _, arm := range x.Arms {
+			if arm.Guard != nil {
+				substituteExpr(arm.Guard, sub)
+			}
+			substituteExpr(arm.Body, sub)
+		}
 	case *ast.ArrayLit:
 		for _, e := range x.Elems {
 			substituteExpr(e, sub)
@@ -655,6 +663,19 @@ func cloneExpr(e ast.Expr) ast.Expr {
 		c.Then = cloneExpr(x.Then)
 		c.Else = cloneExpr(x.Else)
 		return &c
+	case *ast.MatchExpr:
+		c := *x
+		c.Tag = cloneExpr(x.Tag)
+		c.Arms = make([]*ast.MatchExprArm, len(x.Arms))
+		for i, arm := range x.Arms {
+			a := *arm
+			if arm.Guard != nil {
+				a.Guard = cloneExpr(arm.Guard)
+			}
+			a.Body = cloneExpr(arm.Body)
+			c.Arms[i] = &a
+		}
+		return &c
 	case *ast.ArrayLit:
 		c := *x
 		c.Elems = make([]ast.Expr, len(x.Elems))
@@ -793,6 +814,14 @@ func walkExprStructLits(e ast.Expr, fn func(*ast.StructLit)) {
 		walkExprStructLits(x.Cond, fn)
 		walkExprStructLits(x.Then, fn)
 		walkExprStructLits(x.Else, fn)
+	case *ast.MatchExpr:
+		walkExprStructLits(x.Tag, fn)
+		for _, arm := range x.Arms {
+			if arm.Guard != nil {
+				walkExprStructLits(arm.Guard, fn)
+			}
+			walkExprStructLits(arm.Body, fn)
+		}
 	case *ast.ArrayLit:
 		for _, e := range x.Elems {
 			walkExprStructLits(e, fn)
@@ -1060,6 +1089,14 @@ func walkExpr(e ast.Expr, fn func(*ast.Call)) {
 		walkExpr(x.Cond, fn)
 		walkExpr(x.Then, fn)
 		walkExpr(x.Else, fn)
+	case *ast.MatchExpr:
+		walkExpr(x.Tag, fn)
+		for _, arm := range x.Arms {
+			if arm.Guard != nil {
+				walkExpr(arm.Guard, fn)
+			}
+			walkExpr(arm.Body, fn)
+		}
 	case *ast.ArrayLit:
 		for _, e := range x.Elems {
 			walkExpr(e, fn)

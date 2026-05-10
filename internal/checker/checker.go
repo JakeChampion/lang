@@ -1933,6 +1933,121 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 }
 
+// checkMatchExpr validates an expression-position `match` and
+// returns the unified arm type. Same scrutinee, payload-binding,
+// guard, and exhaustiveness rules as checkMatch — the difference
+// is each arm body is an Expr (not a Block), and every arm body
+// must produce the same type so the construct itself has a
+// single result type.
+func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
+	tagT := c.checkExpr(n.Tag, s)
+	if tagT == nil {
+		return nil
+	}
+	et, ok := tagT.(ast.EnumType)
+	if !ok {
+		c.errf(n.Tag.Pos(), "match scrutinee must be an enum value, got %s", tagT)
+		return nil
+	}
+	ed, ok := c.info.Enums[et.Name]
+	if !ok {
+		c.errf(n.Tag.Pos(), "unknown enum %q", et.Name)
+		return nil
+	}
+	sub := map[string]ast.Type{}
+	if len(ed.TypeParams) == len(et.Args) {
+		for i, p := range ed.TypeParams {
+			sub[p] = et.Args[i]
+		}
+	}
+	covered := map[string]bool{}
+	sawWildcard := false
+	var result ast.Type
+	unify := func(armT ast.Type, p ast.Position) {
+		if armT == nil {
+			return
+		}
+		if result == nil {
+			result = armT
+			return
+		}
+		if !ast.Equal(result, armT) {
+			c.errf(p, "match-expression arms differ: %s vs %s", result, armT)
+		}
+	}
+	for i, arm := range n.Arms {
+		if arm.IsWildcard {
+			if i != len(n.Arms)-1 {
+				c.errf(arm.P, "wildcard `_` arm must be last in the match")
+			}
+			if arm.Guard == nil {
+				sawWildcard = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+				}
+			}
+			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
+			continue
+		}
+		varIdx := -1
+		var variant *ast.EnumVariant
+		for j := range ed.Variants {
+			if ed.Variants[j].Name == arm.VariantName {
+				varIdx = j
+				variant = &ed.Variants[j]
+				break
+			}
+		}
+		if varIdx < 0 {
+			c.errf(arm.P, "variant %q is not part of enum %s", arm.VariantName, ed.Name)
+			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
+			continue
+		}
+		if covered[arm.VariantName] {
+			c.errf(arm.P, "variant %q already covered earlier in this match", arm.VariantName)
+		}
+		if arm.Guard == nil {
+			covered[arm.VariantName] = true
+		}
+		if len(arm.Bindings) != len(variant.Payloads) {
+			c.errf(arm.P, "variant %s has %d payload(s), got %d binding(s)",
+				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
+		}
+		armScope := newScope(s)
+		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
+		for k, name := range arm.Bindings {
+			var bt ast.Type
+			if k < len(variant.Payloads) {
+				bt = substituteType(variant.Payloads[k], sub)
+			}
+			arm.BindingTypes[k] = bt
+			armScope.names[name] = bt
+		}
+		if arm.Guard != nil {
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+			}
+		}
+		unify(c.checkExpr(arm.Body, armScope), arm.Body.Pos())
+	}
+	if !sawWildcard {
+		for _, v := range ed.Variants {
+			if !covered[v.Name] {
+				c.errf(n.P, "match-expression is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
+					v.Name, ed.Name)
+			}
+		}
+	}
+	if isFloat(result) {
+		n.IsFloat = true
+	}
+	return result
+}
+
 // inferUseParam fills in `fn`'s first-parameter type by reading
 // the source-call's signature. The parser left the slot nil
 // when the user wrote `use IDENT <- EXPR;` (no `: TYPE`); this
@@ -2782,6 +2897,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.IsFloat = true
 		}
 		return result
+	case *ast.MatchExpr:
+		return c.checkMatchExpr(n, s)
 	case *ast.TryOp:
 		// Postfix `?` covers two source enums:
 		//   - Option[T]?    yields T; on None,   returns None

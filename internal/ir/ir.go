@@ -1580,6 +1580,100 @@ func (b *builder) expr(e ast.Expr) error {
 			return err
 		}
 		b.closeScope()
+	case *ast.MatchExpr:
+		// Lower expression-form `match`. Same per-arm structure
+		// as stmt-form Match but each arm body is an Expr — we
+		// stash its value in a scratch slot keyed off the unified
+		// arm type, then load that slot after the outer block.
+		// Using a scratch slot avoids the wasm "block (result T)
+		// must fall through with T on stack" trap; exhaustiveness
+		// (the checker's job) guarantees the slot is written
+		// exactly once before the post-block load.
+		resultType := ast.Type(ast.NumberType{})
+		if n.IsFloat {
+			resultType = ast.FloatType{}
+		}
+		resultSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
+		b.scratchType[resultSlot] = resultType
+		ptrSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__matchexpr_p_%d", ptrSlot)] = ptrSlot
+		if err := b.expr(n.Tag); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
+		b.openBlock(BlockTypeVoid)
+		matchEndD := b.depth
+		for _, arm := range n.Arms {
+			if arm.IsWildcard {
+				if arm.Guard != nil {
+					b.openBlock(BlockTypeVoid)
+					armEndD := b.depth
+					if err := b.expr(arm.Guard); err != nil {
+						return err
+					}
+					b.emit(Op{Kind: OpNot})
+					b.brTo(armEndD, true)
+					if err := b.expr(arm.Body); err != nil {
+						return err
+					}
+					b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+					b.brTo(matchEndD, false)
+					b.closeScope()
+					continue
+				}
+				if err := b.expr(arm.Body); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+				b.brTo(matchEndD, false)
+				continue
+			}
+			_, varIdx, _, ok := b.lookupVariant(arm.VariantName)
+			if !ok {
+				return fmt.Errorf("ir: match-expression arm references unknown variant %q", arm.VariantName)
+			}
+			b.openBlock(BlockTypeVoid)
+			outerArmD := b.depth
+			b.openBlock(BlockTypeVoid)
+			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+			b.emit(Op{Kind: OpLoad})
+			b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+			b.emit(Op{Kind: OpEq})
+			b.brTo(b.depth, true)
+			b.brTo(outerArmD, false)
+			b.closeScope() // matched path lands here
+			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings))
+			for i, name := range arm.Bindings {
+				slot := b.allocSlot()
+				b.locals[name] = slot
+				bt := ast.Type(ast.NumberType{})
+				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
+					bt = arm.BindingTypes[i]
+				}
+				b.scratchType[slot] = bt
+				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
+				b.emit(Op{Kind: OpAdd})
+				b.emit(payloadLoadOp(bt))
+				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+			if arm.Guard != nil {
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpNot})
+				b.brTo(outerArmD, true)
+			}
+			if err := b.expr(arm.Body); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.brTo(matchEndD, false)
+			b.closeScope()
+		}
+		b.closeScope()
+		b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	case *ast.TryOp:
 		// Lower `expr?` as: stash the source pointer, branch on
 		// the failure tag, take the success path otherwise. The

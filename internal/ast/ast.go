@@ -751,6 +751,7 @@ func (e *Binary) Pos() Position    { return e.P }
 func (e *Unary) Pos() Position     { return e.P }
 func (e *Assign) Pos() Position      { return e.P }
 func (e *IfExpr) Pos() Position      { return e.P }
+func (e *MatchExpr) Pos() Position   { return e.P }
 func (e *TryOp) Pos() Position       { return e.P }
 func (e *StructLit) Pos() Position   { return e.P }
 func (e *TupleLit) Pos() Position    { return e.P }
@@ -775,6 +776,7 @@ func (*Binary) isExpr()    {}
 func (*Unary) isExpr()     {}
 func (*Assign) isExpr()      {}
 func (*IfExpr) isExpr()      {}
+func (*MatchExpr) isExpr()   {}
 func (*TryOp) isExpr()       {}
 func (*StructLit) isExpr()   {}
 func (*TupleLit) isExpr()    {}
@@ -959,6 +961,37 @@ type MatchArm struct {
 	IsWildcard   bool     // `_ => …`
 	Guard        Expr     // optional `when <expr>`; nil for unconditional arms
 	Body         *Block
+}
+
+// MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
+// in expression position. Each arm body is a single expression
+// (no statement block, no semicolon) and the whole match
+// evaluates to the unified arm type. Mirrors the MatchExpr → IfExpr
+// relationship: same parsing/checking shape as the statement-form
+// Match, but the body of each arm is an Expr and the construct
+// produces a value.
+//
+// Same exhaustiveness, binding, and guard rules as Match. Reuses
+// MatchArm's payload-binding metadata; only Body differs.
+type MatchExpr struct {
+	P    Position
+	Tag  Expr
+	Arms []*MatchExprArm
+	// IsFloat is set by the checker when the unified arm type is
+	// `f32` so the wasm backend picks `block (result f32)`.
+	IsFloat bool
+}
+
+// MatchExprArm is the expression-form arm. Body is an Expr; all
+// other fields mirror MatchArm exactly.
+type MatchExprArm struct {
+	P            Position
+	VariantName  string
+	Bindings     []string
+	BindingTypes []Type
+	IsWildcard   bool
+	Guard        Expr
+	Body         Expr
 }
 
 func (s *Block) Pos() Position    { return s.P }

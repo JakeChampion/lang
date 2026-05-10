@@ -471,6 +471,36 @@ func TestIfExprNested(t *testing.T) {
 	}
 }
 
+// `match` in expression position: each arm body is a single
+// expression (no block). The parser routes to parseMatchExpr from
+// parsePrimary's keyword switch, mirroring how `if` flips between
+// statement and expression forms based on the dispatcher.
+func TestMatchExprParses(t *testing.T) {
+	prog, err := Parse(`function f(o: Option[i32]): i32 {
+		return match (o) {
+			Some(x) => x + 1,
+			None    => 0
+		};
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+	me, ok := ret.Value.(*ast.MatchExpr)
+	if !ok {
+		t.Fatalf("expected *MatchExpr, got %T", ret.Value)
+	}
+	if len(me.Arms) != 2 {
+		t.Fatalf("expected 2 arms, got %d", len(me.Arms))
+	}
+	if me.Arms[0].VariantName != "Some" || len(me.Arms[0].Bindings) != 1 || me.Arms[0].Bindings[0] != "x" {
+		t.Errorf("arm 0: got %+v, want Some(x)", me.Arms[0])
+	}
+	if me.Arms[1].VariantName != "None" || len(me.Arms[1].Bindings) != 0 {
+		t.Errorf("arm 1: got %+v, want None", me.Arms[1])
+	}
+}
+
 func TestStructDecl(t *testing.T) {
 	prog, err := Parse(`struct Point { x: i32, y: i32 }`)
 	if err != nil {

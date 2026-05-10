@@ -1376,6 +1376,43 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			return i.evalExpr(x.Then, env)
 		}
 		return i.evalExpr(x.Else, env)
+	case *ast.MatchExpr:
+		tag, err := i.evalExpr(x.Tag, env)
+		if err != nil {
+			return nil, err
+		}
+		ev, ok := tag.(*Enum)
+		if !ok {
+			return nil, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
+		}
+		for _, arm := range x.Arms {
+			if !arm.IsWildcard && arm.VariantName != ev.VariantName {
+				continue
+			}
+			armEnv := newEnv(env)
+			if !arm.IsWildcard {
+				for j, name := range arm.Bindings {
+					if j < len(ev.Payloads) {
+						armEnv.declare(name, ev.Payloads[j])
+					}
+				}
+			}
+			if arm.Guard != nil {
+				gv, err := i.evalExpr(arm.Guard, armEnv)
+				if err != nil {
+					return nil, err
+				}
+				gb, ok := gv.(Bool)
+				if !ok {
+					return nil, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+				}
+				if !bool(gb) {
+					continue
+				}
+			}
+			return i.evalExpr(arm.Body, armEnv)
+		}
+		return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (variant %q unhandled)", ev.VariantName)
 	case *ast.TryOp:
 		// The interp's expression evaluator can't unwind the
 		// enclosing function early (statement-level flow control

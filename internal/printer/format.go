@@ -797,6 +797,42 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		// emit it directly without precedence-based parens.
 		f.formatExpr(x.Inner, precUnary)
 		f.b.WriteByte('?')
+	case *ast.MatchExpr:
+		// Compact one-line form: arms separated by `,`, each arm
+		// body emitted as an inline expression. The statement-form
+		// match uses block-bodies on separate lines, but in
+		// expression position arms are usually short and the
+		// inline shape composes inside larger expressions.
+		f.b.WriteString("match (")
+		f.formatExpr(x.Tag, precLowest)
+		f.b.WriteString(") { ")
+		for i, arm := range x.Arms {
+			if i > 0 {
+				f.b.WriteString(", ")
+			}
+			if arm.IsWildcard {
+				f.b.WriteByte('_')
+			} else {
+				f.b.WriteString(arm.VariantName)
+				if len(arm.Bindings) > 0 {
+					f.b.WriteByte('(')
+					for j, bind := range arm.Bindings {
+						if j > 0 {
+							f.b.WriteString(", ")
+						}
+						f.b.WriteString(bind)
+					}
+					f.b.WriteByte(')')
+				}
+			}
+			if arm.Guard != nil {
+				f.b.WriteString(" when ")
+				f.formatExpr(arm.Guard, precLowest)
+			}
+			f.b.WriteString(" => ")
+			f.formatExpr(arm.Body, precLowest)
+		}
+		f.b.WriteString(" }")
 	case *ast.StructLit:
 		f.b.WriteString(x.TypeName)
 		f.b.WriteString(" { ")

@@ -383,6 +383,63 @@ function outer(): Result[i32, string] {
 	}
 }
 
+// `match` in expression position: arms must agree on a single
+// type, exhaustiveness still required, payload bindings are in
+// scope inside arm bodies.
+func TestMatchExprTypechecks(t *testing.T) {
+	src := `function f(o: Option[i32]): i32 {
+		return match (o) {
+			Some(x) => x + 1,
+			None    => 0
+		};
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestMatchExprRejectsBranchTypeMismatch(t *testing.T) {
+	src := `function f(o: Option[i32]): i32 {
+		return match (o) {
+			Some(x) => x,
+			None    => true
+		};
+	}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: arm types differ")
+	}
+}
+
+func TestMatchExprRejectsNonExhaustive(t *testing.T) {
+	src := `enum Light { Red, Green, Yellow }
+function pick(): i32 {
+	var l: Light = Green;
+	return match (l) {
+		Red   => 1,
+		Green => 2
+	};
+}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: missing Yellow arm")
+	}
+}
+
+// Wildcard `_` arm covers exhaustiveness for the same shape that
+// would otherwise need every variant listed.
+func TestMatchExprWildcardCoversExhaustiveness(t *testing.T) {
+	src := `enum Light { Red, Green, Yellow }
+function pick(): i32 {
+	var l: Light = Green;
+	return match (l) {
+		Red => 1,
+		_   => 0
+	};
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestCompoundAssignTypechecks(t *testing.T) {
 	src := `function f(): i32 {
 		var x: i32 = 0;

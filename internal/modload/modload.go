@@ -506,6 +506,14 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		r.rewriteExpr(&x.Else)
 	case *ast.TryOp:
 		r.rewriteExpr(&x.Inner)
+	case *ast.MatchExpr:
+		r.rewriteExpr(&x.Tag)
+		for _, arm := range x.Arms {
+			if arm.Guard != nil {
+				r.rewriteExpr(&arm.Guard)
+			}
+			r.rewriteExpr(&arm.Body)
+		}
 	case *ast.StructLit:
 		// Three shapes here:
 		//   - `Foo { … }` where Foo lives in this module → prefix
