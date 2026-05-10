@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -345,79 +346,116 @@ func TestArm64DarwinBuilds(t *testing.T) {
 	if _, err := exec.LookPath("clang"); err != nil {
 		t.Skip("clang not on PATH; skipping arm64-darwin cross-compile e2e")
 	}
-	if _, err := exec.LookPath("ld.lld"); err != nil {
-		t.Skip("lld not on PATH; skipping arm64-darwin cross-compile e2e")
+	// lld is required for Mach-O cross-compilation from Linux,
+	// but on a native macOS arm64 host clang ships with ld64
+	// and we don't need (or want) lld. The macOS CI runner
+	// hits this branch.
+	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
+	if !native {
+		if _, err := exec.LookPath("ld.lld"); err != nil {
+			t.Skip("lld not on PATH; skipping arm64-darwin cross-compile e2e")
+		}
 	}
 
-	for _, src := range []string{
+	cases := []struct {
+		name     string
+		src      string
+		wantExit int
+	}{
 		// Plain return — exercises only SYS_exit.
-		`function main(): i32 { return 42; }`,
+		{"exit_42", `function main(): i32 { return 42; }`, 42},
 		// String concat — exercises SYS_mmap via __lang_alloc.
-		`function main(): i32 {
+		{"strconcat", `function main(): i32 {
     var s: string = "hello, " + "world!";
     return len(s);
-}`,
+}`, 13},
 		// Map runtime — exercises __lang_alloc-heavy paths.
-		`function main(): i32 {
+		{"map", `function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(1, 100);
     m.set(2, 200);
     return m.get_or(2, 0);
-}`,
+}`, 200},
 		// Array push — exercises the two-cursor allocator path
 		// the Map/T[] runtime depends on.
-		`function main(): i32 {
+		{"arrpush", `function main(): i32 {
     var xs: i32[] = [];
     xs.push(7);
     xs.push(35);
     return xs[0] + xs[1];
-}`,
+}`, 42},
 		// TCP listen + close — exercises socket/bind/listen/close
 		// syscalls (Darwin numbers + svc #0x80 path).
-		`function main(): i32 {
+		{"tcp", `function main(): i32 {
     var fd: i32 = tcp_listen(0);
     if (fd < 0) { return 1; }
     tcp_close(fd);
     return 42;
-}`,
-	} {
-		prog, err := parser.Parse(src)
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
-		if err := constfold.Fold(prog); err != nil {
-			t.Fatalf("constfold: %v", err)
-		}
-		info, err := checker.Check(prog)
-		if err != nil {
-			t.Fatalf("check: %v", err)
-		}
-		asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
-		if err != nil {
-			t.Fatalf("emit: %v", err)
-		}
+}`, 42},
+	}
 
-		dir := t.TempDir()
-		asmPath := filepath.Join(dir, "prog.s")
-		binPath := filepath.Join(dir, "prog")
-		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-			t.Fatalf("write asm: %v", err)
-		}
-		args := []string{
-			"--target=arm64-apple-darwin",
-			"-fuse-ld=lld",
-			"-nostdlib",
-			"-Wl,-arch,arm64",
-			asmPath,
-			"-o", binPath,
-		}
-		if out, err := exec.Command("clang", args...).CombinedOutput(); err != nil {
-			t.Fatalf("clang Mach-O cross-compile: %v\n%s\n--- asm ---\n%s", err, out, asm)
-		}
-		out, _ := exec.Command("file", binPath).CombinedOutput()
-		if !strings.Contains(string(out), "Mach-O 64-bit arm64 executable") {
-			t.Errorf("not a Mach-O arm64 executable: %s\n%s", out, asm)
-		}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prog, err := parser.Parse(c.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if err := constfold.Fold(prog); err != nil {
+				t.Fatalf("constfold: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
+			if err != nil {
+				t.Fatalf("emit: %v", err)
+			}
+
+			dir := t.TempDir()
+			asmPath := filepath.Join(dir, "prog.s")
+			binPath := filepath.Join(dir, "prog")
+			if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+				t.Fatalf("write asm: %v", err)
+			}
+			// On macOS arm64 native, the default clang IS the
+			// arm64-apple-darwin clang and ld64 is its default
+			// linker; the cross-compile flags would force an
+			// unnecessary lld dependency. Cross from Linux
+			// requires lld because the host's clang defaults
+			// to ELF.
+			var args []string
+			if native {
+				args = []string{"-nostdlib", asmPath, "-o", binPath}
+			} else {
+				args = []string{
+					"--target=arm64-apple-darwin",
+					"-fuse-ld=lld",
+					"-nostdlib",
+					"-Wl,-arch,arm64",
+					asmPath,
+					"-o", binPath,
+				}
+			}
+			if out, err := exec.Command("clang", args...).CombinedOutput(); err != nil {
+				t.Fatalf("clang Mach-O: %v\n%s\n--- asm ---\n%s", err, out, asm)
+			}
+			out, _ := exec.Command("file", binPath).CombinedOutput()
+			if !strings.Contains(string(out), "Mach-O 64-bit arm64 executable") {
+				t.Errorf("not a Mach-O arm64 executable: %s\n%s", out, asm)
+			}
+			// Cross-compilation hosts can't run the Mach-O —
+			// qemu-aarch64 only speaks the Linux ABI. The
+			// macos-14 CI runner hits this and verifies the
+			// runtime actually behaves correctly.
+			if native {
+				cmd := exec.Command(binPath)
+				_, _ = cmd.CombinedOutput()
+				if got := cmd.ProcessState.ExitCode(); got != c.wantExit {
+					t.Errorf("native exit = %d, want %d\n--- asm ---\n%s", got, c.wantExit, asm)
+				}
+			}
+		})
 	}
 }
 

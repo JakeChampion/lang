@@ -1,0 +1,54 @@
+name: macOS arm64
+
+# Native Apple Silicon verification for the arm64-darwin target.
+# Linux CI cross-compiles Mach-O via clang+lld and only checks
+# the produced binary is well-formed — it can't catch ABI bugs
+# (carry-flag normalisation, x16 vs x8, wrong syscall numbers,
+# stack-alignment quirks). This job runs the same tests on a
+# macos-14 runner, which is Apple Silicon arm64; clang ships
+# with ld64 so we don't need lld.
+#
+# Gated on changes touching the arm64 codegen or its tests so
+# we don't burn macOS minutes on unrelated edits. Plus a
+# workflow_dispatch trigger for manual reruns.
+
+on:
+  pull_request:
+    paths:
+      - "internal/codegen/arm64/**"
+      - "internal/e2e/arm64_test.go"
+      - ".github/workflows/macos.yml"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+jobs:
+  test-arm64-darwin:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Show toolchain
+        run: |
+          uname -a
+          sw_vers
+          clang --version | head -1
+          go version
+
+      - name: go vet
+        run: go vet ./internal/codegen/arm64/... ./internal/e2e/...
+
+      - name: go test (arm64-darwin native execution)
+        # TestArm64DarwinBuilds detects runtime.GOOS=="darwin"
+        # && GOARCH=="arm64" and switches from "verify Mach-O
+        # file format" to "build with native clang+ld64 and
+        # actually run the binary, asserting exit codes". The
+        # other arm64 tests in this file SKIP cleanly when
+        # qemu-aarch64 + aarch64-linux-gnu-gcc aren't present
+        # (which is always the case on macOS).
+        run: go test -v -run TestArm64Darwin ./internal/e2e/
