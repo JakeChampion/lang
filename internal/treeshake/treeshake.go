@@ -306,5 +306,21 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 	case *ast.CaptureRef:
 		// CaptureRef targets a synthesised env variable; no
 		// direct function reference.
+	case *ast.FString:
+		// Walk both the original interpolant Exprs (for any
+		// top-level function references they make) and the
+		// checker-built Desugared chain. The desugared chain
+		// is where the synthesised `<expr>.to_string()` calls
+		// live — by the time treeshake runs, the checker has
+		// already rewritten those into direct calls keyed by
+		// the mangled method name (e.g. `__method_string_to_string`),
+		// which is what keeps the prelude's `(s: string)
+		// to_string()` body alive.
+		for _, p := range x.Parts {
+			if p.Expr != nil {
+				walkExpr(p.Expr, byName, enqueue)
+			}
+		}
+		walkExpr(x.Desugared, byName, enqueue)
 	}
 }
