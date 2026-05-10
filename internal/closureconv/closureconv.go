@@ -111,6 +111,24 @@ type capInfo struct {
 	typ    ast.Type
 }
 
+// captureSlotSize returns the env-block slot footprint for a
+// capture of type `t`. Wide types (i64 / u64 / f64) take 8
+// bytes so their full bit pattern survives; everything else —
+// including pointer-shaped heap refs and sub-i32 ints — uses
+// the 4-byte default. Sub-i32 ints round up because mixing 1-
+// or 2-byte slots into the env block would force the
+// codegen-side store path to track per-slot widths anyway, and
+// captures are usually few; the 1-3 wasted bytes per sub-i32
+// capture aren't worth the bookkeeping. Pointer-shaped types
+// (string, T[], structs, etc.) are 4-byte heap references —
+// `ast.ElemSizeBytes` already returns 4 for them.
+func captureSlotSize(t ast.Type) int32 {
+	if ast.ElemSizeBytes(t) == 8 {
+		return 8
+	}
+	return 4
+}
+
 func (c *converter) rewriteStmt(s ast.Stmt, ctx *captureCtx) (ast.Stmt, error) {
 	switch n := s.(type) {
 	case *ast.FuncDecl:
@@ -265,6 +283,34 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		}
 		n.Operand = nv
 		return n, nil
+	case *ast.CastExpr:
+		ni, err := c.rewriteExpr(n.Inner, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Inner = ni
+		return n, nil
+	case *ast.SliceExpr:
+		ns, err := c.rewriteExpr(n.Source, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Source = ns
+		if n.Low != nil {
+			nl, err := c.rewriteExpr(n.Low, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.Low = nl
+		}
+		if n.High != nil {
+			nh, err := c.rewriteExpr(n.High, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.High = nh
+		}
+		return n, nil
 	case *ast.Call:
 		nc, err := c.rewriteExpr(n.Callee, ctx)
 		if err != nil {
@@ -391,9 +437,19 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 	// values forwarded to the new env, but the body still reads them
 	// through its own env — the offset is just whatever index we
 	// assign here.
+	//
+	// Per-stride offset accumulator: 4-byte slots for most types,
+	// 8-byte slots for i64 / u64 / f64 (so the capture's full
+	// bit-pattern survives). Sub-i32 (u8 / i8 / u16 / i16) round
+	// up to a 4-byte slot to keep alignment trivial — the env
+	// block is written sequentially and aligned-i64 reads after
+	// a sub-i32 capture would otherwise straddle a 4-byte
+	// boundary in the unhelpful direction.
 	ctx := &captureCtx{byName: map[string]capInfo{}, envName: "$__env"}
-	for i, cap := range fn.Captures {
-		ctx.byName[cap.Name] = capInfo{offset: i * 4, typ: cap.Type}
+	off := int32(0)
+	for _, cap := range fn.Captures {
+		ctx.byName[cap.Name] = capInfo{offset: int(off), typ: cap.Type}
+		off += captureSlotSize(cap.Type)
 	}
 
 	// Add the synthetic env parameter as the function's last param.
