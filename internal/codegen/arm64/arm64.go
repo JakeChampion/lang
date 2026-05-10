@@ -268,22 +268,24 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("ldr x1, =%d", heapBytes) // length = 64 MiB
 	g.emit("mov x2, #3")        // PROT_READ | PROT_WRITE (same on both)
 	if g.darwin {
-		// Darwin BSD MAP_PRIVATE=0x02 + MAP_ANON=0x1000 +
-		// MAP_FIXED=0x10 = 0x1012. MAP_FIXED is required
-		// because macOS won't honour an addr hint by default
-		// — the lang prelude inherits wasm32-style 32-bit
-		// pointers and needs the heap below 4 GiB. The link
-		// step pairs this with `-Wl,-pagezero_size,0x4000`
-		// to shrink __PAGEZERO from its 4 GiB default (which
-		// would block our 0x10000000 hint) down to a single
-		// page (just enough to trap NULL derefs).
-		// (Linux uses 0x20 for MAP_ANONYMOUS without
-		// MAP_FIXED — the kernel honours the hint when the
-		// region is free, which it is at process start.)
-		// Darwin mmap is syscall #197 with svc #0x80; Linux
-		// is #222 with svc #0. Same in-register arg shape
-		// (x0..x5).
-		g.emit("mov x3, #0x1012") // MAP_PRIVATE | MAP_ANON | MAP_FIXED (Darwin)
+		// Darwin BSD MAP_PRIVATE=0x02 + MAP_ANON=0x1000 = 0x1002.
+		// (Linux uses 0x20 for MAP_ANONYMOUS.) Darwin mmap is
+		// syscall #197 with svc #0x80; Linux is #222 with
+		// svc #0. Same in-register arg shape (x0..x5).
+		//
+		// macOS ignores our 0x10000000 addr hint and returns
+		// a high address. That's only a problem for programs
+		// that round-trip heap pointers through 32-bit storage
+		// slots (the lang Map runtime via __store_i32 /
+		// __load_i32). Plain string concat / array literals
+		// keep pointers 64-bit on the operand stack and work
+		// regardless. Tried MAP_FIXED + -pagezero_size on
+		// macos-14 ld64 first but the shrunk PAGEZERO
+		// produced a binary the loader rejected even for
+		// non-allocating programs. Proper fix is widening
+		// the prelude's pointer storage to i64; tracked
+		// separately.
+		g.emit("mov x3, #0x1002") // MAP_PRIVATE | MAP_ANON (Darwin)
 		g.emit("mov x4, #-1")
 		g.emit("mov x5, #0")
 		g.emit("mov x16, #197")   // SYS_mmap (Darwin BSD)
