@@ -60,7 +60,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if err != nil {
 		return "", err
 	}
-	g := &generator{info: info}
+	g := &generator{info: info, stringLabel: map[string]string{}}
 	g.line(`.arch armv8-a`)
 	g.line(`.text`)
 	g.emitStartRuntime()
@@ -69,8 +69,257 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 			return "", err
 		}
 	}
+	if g.usesAlloc {
+		g.emitAllocRuntime()
+	}
+	if g.usesMemcpy {
+		g.emitMemcpyRuntime()
+	}
+	if g.usesStrcat {
+		g.emitStrcatRuntime()
+	}
+	g.emitDataSections()
 	g.line(`.section .note.GNU-stack,"",%progbits`)
 	return g.out.String(), nil
+}
+
+// emitDataSections writes `.rodata` (interned string literals)
+// and `.bss` (the bump-allocator cursor + heap-end sentinel).
+// All entries are gated on usage so unused programs pay
+// nothing — `.bss` is omitted entirely when the allocator
+// isn't pulled in.
+func (g *generator) emitDataSections() {
+	g.line("")
+	g.line(`.section .rodata`)
+	for _, s := range g.stringOrder {
+		// 4-byte little-endian length prefix + .asciz data.
+		// Pointers handed to user code address the .asciz base
+		// (.LStr_N); `len()` reads `[ptr - 4]`. Same layout as
+		// arm32; same as wasm at the byte level.
+		g.line(`.align 2`)
+		g.line(fmt.Sprintf("\t.4byte %d", len(s)))
+		g.label(g.stringLabel[s])
+		g.line("\t.asciz " + escapeForGAS(s))
+	}
+	if g.usesAlloc {
+		g.line("")
+		g.line(`.section .bss`)
+		g.line(`.align 3`) // 8-byte alignment for the cursor pair
+		g.label("__lang_heap_ptr")
+		g.line(`	.quad 0`)
+		g.line(`.align 3`)
+		g.label("__lang_heap_end")
+		g.line(`	.quad 0`)
+	}
+}
+
+// emitAllocRuntime emits `__lang_alloc(size: i64) -> i64`
+// using mmap2 — same shape as arm32 but with arm64 syscall
+// numbers (sysMmap = 222) and 64-bit pointer arithmetic.
+// First call lazily reserves the heap arena via mmap; later
+// calls bump the cursor.
+//
+// Bump-only allocator (no free) — matches wasm's semantics
+// and the arm32 backend's choice. The arena is reclaimed
+// by the OS at process exit.
+func (g *generator) emitAllocRuntime() {
+	const heapBytes = 64 * 1024 * 1024 // 64 MiB virtual reservation
+	g.line("")
+	g.line(".global __lang_alloc")
+	g.line(".type __lang_alloc, %function")
+	g.label("__lang_alloc")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	// Round size up to 16-byte alignment so subsequent allocs
+	// stay 16-aligned for `stp` / `ldp`.
+	g.emit("add x0, x0, #15")
+	g.emit("and x0, x0, #-16")
+	// Lazy heap init: if heap_ptr == 0, mmap-reserve a 64 MiB
+	// arena. Linux populates physical pages on first touch, so
+	// the virtual reservation costs essentially nothing.
+	g.emit("adrp x1, __lang_heap_ptr")
+	g.emit("add x1, x1, :lo12:__lang_heap_ptr")
+	g.emit("ldr x2, [x1]")
+	g.emit("cbnz x2, .Lalloc_have_heap")
+	// mmap(NULL, 64 MiB, RW, PRIVATE|ANON, -1, 0)
+	g.emit("mov x9, x0")        // save size across the syscall
+	g.emit("mov x0, #0")        // addr = NULL
+	g.emit("ldr x1, =%d", heapBytes) // length = 64 MiB
+	g.emit("mov x2, #3")        // PROT_READ | PROT_WRITE
+	g.emit("mov x3, #0x22")     // MAP_PRIVATE | MAP_ANONYMOUS
+	g.emit("mov x4, #-1")
+	g.emit("mov x5, #0")
+	g.emit("mov x8, #222")      // sys_mmap
+	g.emit("svc #0")
+	// On failure mmap returns -errno (negative). Trap.
+	g.emit("cmn x0, #0")
+	g.emit("blt .Lalloc_oom")
+	g.emit("mov x10, x0")       // x10 = base
+	g.emit("adrp x1, __lang_heap_ptr")
+	g.emit("add x1, x1, :lo12:__lang_heap_ptr")
+	g.emit("str x10, [x1]")
+	g.emit("adrp x2, __lang_heap_end")
+	g.emit("add x2, x2, :lo12:__lang_heap_end")
+	g.emit("ldr x3, =%d", heapBytes)
+	g.emit("add x3, x10, x3")
+	g.emit("str x3, [x2]")
+	g.emit("mov x0, x9")        // restore size
+	g.label(".Lalloc_have_heap")
+	// Bump the cursor: ptr = heap_ptr; heap_ptr += size; return ptr.
+	g.emit("adrp x1, __lang_heap_ptr")
+	g.emit("add x1, x1, :lo12:__lang_heap_ptr")
+	g.emit("ldr x2, [x1]")      // x2 = current ptr
+	g.emit("add x3, x2, x0")    // x3 = wanted top
+	g.emit("adrp x4, __lang_heap_end")
+	g.emit("add x4, x4, :lo12:__lang_heap_end")
+	g.emit("ldr x4, [x4]")
+	g.emit("cmp x3, x4")
+	g.emit("bhi .Lalloc_oom")
+	g.emit("str x3, [x1]")
+	g.emit("mov x0, x2")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.label(".Lalloc_oom")
+	// SIGABRT-style trap (137 = SIGKILL+128, OOM-killer convention).
+	g.emit("mov x0, #137")
+	g.emit("mov x8, #94")
+	g.emit("svc #0")
+	g.line(".size __lang_alloc, .-__lang_alloc")
+	g.line(".ltorg")
+}
+
+// emitMemcpyRuntime emits `__lang_memcpy(dst, src, n)` —
+// byte-grain copy. Word-grain bulk path runs in 8-byte chunks
+// (vs arm32's 4) since arm64 has 64-bit registers; tail loop
+// handles the residue. Pointers may be unaligned (arm64
+// allows unaligned access by default in user-mode Linux, same
+// as arm32).
+func (g *generator) emitMemcpyRuntime() {
+	g.line("")
+	g.line(".global __lang_memcpy")
+	g.line(".type __lang_memcpy, %function")
+	g.label("__lang_memcpy")
+	// r0 = dst (saved for return), r1 = src, r2 = n.
+	g.emit("mov x3, x0") // x3 = dst saved
+	g.label(".Lmcp_word")
+	g.emit("cmp x2, #8")
+	g.emit("blt .Lmcp_tail")
+	g.emit("ldr x4, [x1], #8")
+	g.emit("str x4, [x0], #8")
+	g.emit("sub x2, x2, #8")
+	g.emit("b .Lmcp_word")
+	g.label(".Lmcp_tail")
+	g.emit("cmp x2, #0")
+	g.emit("beq .Lmcp_done")
+	g.emit("ldrb w4, [x1], #1")
+	g.emit("strb w4, [x0], #1")
+	g.emit("sub x2, x2, #1")
+	g.emit("b .Lmcp_tail")
+	g.label(".Lmcp_done")
+	g.emit("mov x0, x3")
+	g.emit("ret")
+	g.line(".size __lang_memcpy, .-__lang_memcpy")
+	g.line(".ltorg")
+}
+
+// emitStrcatRuntime emits `__lang_strcat(a, b)` — concat two
+// length-prefixed strings into a fresh allocation. Same shape
+// as arm32; both string operands are data pointers (post-
+// prefix) with the 4-byte length at `[ptr - 4]`.
+//
+// Uses callee-save x19..x23 to keep state across the calls
+// to __lang_alloc and __lang_memcpy. AAPCS64 says x19..x28
+// must be preserved by the callee, so the saved-pair pattern
+// at function entry / exit guarantees the values are restored
+// before returning to the strcat caller.
+func (g *generator) emitStrcatRuntime() {
+	g.line("")
+	g.line(".global __lang_strcat")
+	g.line(".type __lang_strcat, %function")
+	g.label("__lang_strcat")
+	// Frame: 64 bytes — saved fp/lr (16) + 6 callee-save
+	// registers (40 used + 8 pad) rounded up to 64 for sp
+	// alignment. x19=a, x20=b, x21=la, x22=lb, x23=new_base.
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("str x23, [sp, #48]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	// Load lengths from [ptr - 4].
+	g.emit("ldur w21, [x19, #-4]")
+	g.emit("ldur w22, [x20, #-4]")
+	// alloc(la + lb + 4) for the new buffer (length prefix + data).
+	g.emit("add x0, x21, x22")
+	g.emit("add x0, x0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov x23, x0") // x23 = new base (callee-save survives bl)
+	// Write length prefix.
+	g.emit("add w5, w21, w22")
+	g.emit("str w5, [x23]")
+	// dst = base + 4; copy a then b.
+	g.emit("add x0, x23, #4")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x21")
+	g.emit("bl __lang_memcpy")
+	g.emit("add x0, x23, #4")
+	g.emit("add x0, x0, x21")
+	g.emit("mov x1, x20")
+	g.emit("mov x2, x22")
+	g.emit("bl __lang_memcpy")
+	// Return data pointer (base + 4).
+	g.emit("add x0, x23, #4")
+	g.emit("ldr x23, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.line(".size __lang_strcat, .-__lang_strcat")
+	g.line(".ltorg")
+}
+
+// internString returns a unique .rodata label for s, allocating
+// a new one the first time we see this exact string and reusing
+// it on repeats.
+func (g *generator) internString(s string) string {
+	if lbl, ok := g.stringLabel[s]; ok {
+		return lbl
+	}
+	lbl := fmt.Sprintf(".LStr_%d", len(g.stringOrder))
+	g.stringLabel[s] = lbl
+	g.stringOrder = append(g.stringOrder, s)
+	return lbl
+}
+
+// escapeForGAS escapes a string for the GAS `.asciz`
+// directive. Only the minimum set of escapes the runtime
+// strings need; the assembler's own escape map handles `\\` /
+// `\n` / `\t` / `\"` etc.
+func escapeForGAS(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"':
+			b.WriteString(`\"`)
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c < 32 || c == 127:
+			fmt.Fprintf(&b, `\%03o`, c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 type generator struct {
@@ -80,6 +329,25 @@ type generator struct {
 	labelN    int
 	current   *ast.FuncDecl
 	currentIR *ir.Func
+
+	// stringLabel / stringOrder mirror the arm32 string-pool
+	// scheme: each unique string literal in the program gets
+	// a single `.LStr_N` .rodata label with a 4-byte little-
+	// endian length prefix followed by `.asciz` data. Programs
+	// that reference the same literal multiple times share
+	// the entry. Maintained in insertion order so the emitted
+	// `.rodata` section is deterministic.
+	stringLabel map[string]string
+	stringOrder []string
+
+	// usesAlloc / usesStrcat / usesMemcpy track whether the
+	// program reaches for the matching runtime helper. Each
+	// helper is gated so programs that don't need it pay
+	// nothing extra in binary size. The arm32 backend uses
+	// the same pattern.
+	usesAlloc   bool
+	usesStrcat  bool
+	usesMemcpy  bool
 }
 
 func (g *generator) line(s string) {
@@ -315,6 +583,18 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		}
 		g.push()
 
+	case ir.OpConstStr:
+		// String literals live in .rodata with a 4-byte length
+		// prefix at `[label - 4]`; the .LStr_N label points at
+		// the .asciz data so the runtime carries data pointers
+		// (post-prefix). Pointer materialised via the
+		// `adrp` + `add :lo12:` pair — the canonical AArch64
+		// PC-relative addressing for absolute symbol values.
+		lbl := g.internString(op.Str)
+		g.emit("adrp x0, %s", lbl)
+		g.emit("add x0, x0, :lo12:%s", lbl)
+		g.push()
+
 	case ir.OpReturn:
 		g.pop()
 		g.emit("b %s", retLabel)
@@ -322,53 +602,69 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpDrop:
 		g.emit("add sp, sp, #16")
 
-	// -------- arithmetic (i32) --------
+	// -------- arithmetic --------
+	//
+	// Use 64-bit register form (x0/x1) for all arithmetic so
+	// pointer-shaped values (full 64-bit on aarch64) survive
+	// `add` / `sub` / etc. unmangled. The IR's `len(s)` for
+	// example does `ptr - 4` via OpSub; with the 32-bit form
+	// (`sub w0, w1, w0`) the result would zero-extend, dropping
+	// the high 32 bits of the pointer and faulting on the
+	// subsequent load.
+	//
+	// i32 wraparound semantics are technically slightly off
+	// (high bits aren't masked between ops), but the language's
+	// integer overflow rules don't require modular semantics —
+	// the wasm backend uses i32 ops directly which already
+	// zero-extend, while consumers that read i32 explicitly
+	// (str w0 / ldr w0 / cbz w0) only see the low 32 bits.
 
 	case ir.OpAdd:
 		g.binPop()
-		g.emit("add w0, w1, w0")
+		g.emit("add x0, x1, x0")
 		g.push()
 	case ir.OpSub:
 		g.binPop()
-		g.emit("sub w0, w1, w0")
+		g.emit("sub x0, x1, x0")
 		g.push()
 	case ir.OpMul:
 		g.binPop()
-		g.emit("mul w0, w1, w0")
+		g.emit("mul x0, x1, x0")
 		g.push()
 	case ir.OpDivS:
 		// Signed division. ARMv8-A includes sdiv as a base-ISA
 		// instruction (no divider extension required like on
-		// armv7-a).
+		// armv7-a). Uses w-form so the result is treated as
+		// 32-bit signed for the divide; downstream consumers
+		// that need 64-bit pointer arithmetic don't go through
+		// OpDivS.
 		g.binPop()
 		g.emit("sdiv w0, w1, w0")
 		g.push()
 	case ir.OpRemS:
-		// rem = lhs - (lhs / rhs) * rhs. arm64 has `msub` for
-		// the multiply-subtract step (Rd = Ra - Rn * Rm).
 		g.binPop()
-		g.emit("sdiv w2, w1, w0") // w2 = lhs / rhs
-		g.emit("msub w0, w2, w0, w1") // w0 = lhs - (q * rhs)
+		g.emit("sdiv w2, w1, w0")
+		g.emit("msub w0, w2, w0, w1")
 		g.push()
 	case ir.OpAnd:
 		g.binPop()
-		g.emit("and w0, w1, w0")
+		g.emit("and x0, x1, x0")
 		g.push()
 	case ir.OpOr:
 		g.binPop()
-		g.emit("orr w0, w1, w0")
+		g.emit("orr x0, x1, x0")
 		g.push()
 	case ir.OpXor:
 		g.binPop()
-		g.emit("eor w0, w1, w0")
+		g.emit("eor x0, x1, x0")
 		g.push()
 	case ir.OpShl:
 		g.binPop()
-		g.emit("lsl w0, w1, w0")
+		g.emit("lsl x0, x1, x0")
 		g.push()
 	case ir.OpShrS:
 		g.binPop()
-		g.emit("asr w0, w1, w0")
+		g.emit("asr x0, x1, x0")
 		g.push()
 
 	// -------- comparison (i32) --------
@@ -453,14 +749,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.label(startL)
 		*scope = append(*scope, irScope{kind: ir.OpLoop, brTarget: startL, endLabel: endL})
 	case ir.OpIf:
-		// `cbz x0, elseL` branches when x0 == 0 — the
+		// `cbz w0, elseL` branches when w0 == 0 — the
 		// arm64 fast-path equivalent of arm32's `cmp / beq`.
-		// CBZ accepts a 19-bit signed offset (~±1 MiB) which
-		// is plenty for any realistic function body.
+		// Tests only the low 32 bits because i32 truthiness
+		// is i32-shaped; using `cbz x0` would also test high
+		// bits which the 64-bit-arithmetic mode (see comments
+		// on OpAdd) deliberately leaves dirty.
 		g.pop()
 		elseL := g.freshLabel("ifElse")
 		endL := g.freshLabel("ifEnd")
-		g.emit("cbz x0, %s", elseL)
+		g.emit("cbz w0, %s", elseL)
 		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
 	case ir.OpElse:
 		top := &(*scope)[len(*scope)-1]
@@ -483,12 +781,88 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpBrIf:
 		g.pop()
 		target := (*scope)[len(*scope)-1-int(op.I32)].brTarget
-		g.emit("cbnz x0, %s", target)
+		// w0 form for the same reason as OpIf — only test the
+		// low 32 bits since i32 truthiness is i32-shaped.
+		g.emit("cbnz w0, %s", target)
+
+	// -------- memory load / store --------
+
+	case ir.OpLoad:
+		// Pop addr; load 4 bytes (i32) or 8 bytes (i64) from
+		// it. The IR distinguishes width via op.Width: 0 / 32
+		// → 4-byte, 64 → 8-byte. The i32 path uses the w0
+		// alias so the high half of x0 zero-extends cleanly.
+		g.pop()
+		if op.Width == 64 {
+			g.emit("ldr x0, [x0]")
+		} else {
+			g.emit("ldr w0, [x0]")
+		}
+		g.push()
+	case ir.OpLoadByte:
+		g.pop()
+		g.emit("ldrb w0, [x0]")
+		g.push()
+	case ir.OpStore:
+		// Stack: [addr, value], top = value.
+		g.emit("ldr x0, [sp], #16") // value
+		g.emit("ldr x1, [sp], #16") // addr
+		if op.Width == 64 {
+			g.emit("str x0, [x1]")
+		} else {
+			g.emit("str w0, [x1]")
+		}
+	case ir.OpStoreI8:
+		g.emit("ldr x0, [sp], #16") // value
+		g.emit("ldr x1, [sp], #16") // addr
+		g.emit("strb w0, [x1]")
+	case ir.OpStoreI16:
+		g.emit("ldr x0, [sp], #16") // value
+		g.emit("ldr x1, [sp], #16") // addr
+		g.emit("strh w0, [x1]")
+
+	case ir.OpAlloc:
+		g.usesAlloc = true
+		g.pop()
+		g.emit("bl __lang_alloc")
+		g.push()
+
+	case ir.OpStrConcat:
+		// The IR's `+` between strings lowers directly to
+		// OpStrConcat (rather than going through OpCallDirect
+		// to "__lang_strcat") so codegen owns the dispatch and
+		// can target-specialise. Stack: [a, b], top = b. Pop
+		// into x1 / x0 to match the `__lang_strcat(a, b)`
+		// signature.
+		g.usesStrcat = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.emit("ldr x1, [sp], #16") // b
+		g.emit("ldr x0, [sp], #16") // a
+		g.emit("bl __lang_strcat")
+		g.push()
 
 	case ir.OpCallDirect:
 		// AAPCS64: load args 0..n-1 from the operand stack into
 		// x0..x{n-1} (rightmost-on-top, so we pop in reverse
 		// order), then `bl target`. Result lands in x0; push it.
+		// Rewrite a small set of names that the lang prelude
+		// uses but arm32 ships under different symbol names —
+		// same approach as arm32_ops.go for `__memcpy` →
+		// `__lang_memcpy` etc.
+		target := op.Str
+		switch target {
+		case "__memcpy":
+			target = "__lang_memcpy"
+			g.usesMemcpy = true
+		case "__lang_strcat":
+			g.usesStrcat = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		case "__alloc":
+			target = "__lang_alloc"
+			g.usesAlloc = true
+		}
 		argc := int(op.I32)
 		if argc > regArgs {
 			return fmt.Errorf("arm64: more than %d call args not yet supported (got %d for %q)", regArgs, argc, op.Str)
@@ -496,7 +870,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		for i := argc - 1; i >= 0; i-- {
 			g.emit("ldr x%d, [sp], #16", i)
 		}
-		g.emit("bl %s", op.Str)
+		g.emit("bl %s", target)
 		g.push()
 
 	default:

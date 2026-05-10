@@ -121,6 +121,51 @@ function main(): i32 { return fib(10); }`, 55},
 	}
 }
 
+// arm64 string literals + len(). String literals live in
+// .rodata with a 4-byte little-endian length prefix; pointers
+// the runtime carries are post-prefix (`.LStr_N` label points
+// at .asciz data). `len(s)` reads `[ptr - 4]`.
+func TestArm64StringLiteralLen(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 { var s: string = "hello"; return len(s); }`, 5},
+		{`function main(): i32 { return len(""); }`, 0},
+		{`function main(): i32 { return len("hi\nthere"); }`, 8},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
+// arm64 string concat. Pulls in __lang_alloc + __lang_memcpy
+// + __lang_strcat — the entire string-runtime stack on the
+// arm64 target.
+func TestArm64StringConcat(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 {
+    var s: string = "hello, " + "world!";
+    return len(s);
+}`, 13},
+		{`function main(): i32 {
+    var greeting: string = "good ";
+    var name: string = "morning";
+    return len(greeting + name);
+}`, 12},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
 // arm64 control flow: while loop, if/else, comparison ops.
 // Verifies OpBlock / OpLoop / OpIf / OpEnd / OpBr / OpBrIf
 // scope tracking + the cbz / cbnz branch idioms.
