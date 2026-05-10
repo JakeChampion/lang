@@ -17,12 +17,16 @@ as a constraint to preserve.
 
 ## Targets
 
-- ARM32 (qemu under test, real hardware as a follow-up)
+- ARM32 (qemu-arm under test; real hardware: Raspberry Pi 2/3
+  in 32-bit mode, embedded Linux)
+- ARM64 / aarch64 (qemu-aarch64 under test; real hardware:
+  Apple Silicon Macs via Linux containers, AWS Graviton,
+  Raspberry Pi 4+ in 64-bit mode)
 - WASI / WebAssembly (currently exercised via wasmtime)
 - x86-64 is on the roadmap
 
 The IR layer is target-agnostic; new optimisations should live in `internal/ir`
-so both backends benefit.
+so all backends benefit.
 
 ## Working with PRs
 
