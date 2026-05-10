@@ -64,6 +64,7 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		info:        info,
 		stringLabel: map[string]string{},
 		srcFile:     opts.SourceFile,
+		stateDecls:  prog.States,
 	}
 	// Detect args() / write() / eprint() usage up-front. `usesArgs`
 	// matters specifically because the prologue insertion in `main`
@@ -254,6 +255,24 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		g.label(".Lioe_msg")
 		g.line(`	.asciz "io error"`)
 	}
+	// state{}-block module-globals. Each `state { var NAME: T = LIT; }`
+	// becomes a `.data` label with the literal pre-baked at link
+	// time — no runtime init code needed (the loader maps the
+	// section into memory with the values already in place).
+	// OpLoadGlobal / OpStoreGlobal use the `state_<name>` label
+	// as a `ldr =` operand, then dereference.
+	if len(g.stateDecls) > 0 {
+		g.line("")
+		g.line(`.section .data`)
+		for _, sd := range g.stateDecls {
+			for _, v := range sd.Vars {
+				g.line(`.align 2`)
+				g.label("state_" + v.Name)
+				g.line("\t" + arm32StateInitDirective(v.Type, v.Init))
+			}
+		}
+	}
+
 	g.line("")
 	g.line(`.section .bss`)
 	// argc / argv / envp are always saved by _start; emitting

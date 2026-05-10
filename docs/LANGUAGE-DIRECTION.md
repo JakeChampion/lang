@@ -833,11 +833,24 @@ to smallest. Status pending unless marked.
   embeddings) DO see persistence; the wasm-level semantics
   are correct.
 
-  **Backend coverage.** wasm + wasi-http: shipped. arm32:
-  rejected at codegen with a clear message — arm32 is
-  CLI-only so the eventual implementation can store state
-  vars in `.bss` / `.data` and initialise from `_start`,
-  but that's a follow-up.
+  **Backend coverage.** wasm + wasi-http + arm32: all
+  shipped. arm32 lowers each state var to a `.data` label
+  pre-baked with the literal initialiser; OpLoadGlobal /
+  OpStoreGlobal emit `ldr =state_<name>` + LDR / STR. The
+  loader maps `.data` into memory with the literal already
+  in place, so no runtime init code is needed for the
+  scalar-only first-PR shape. Tested under qemu-arm via
+  `TestArm32StateScalarCounter` and
+  `TestArm32StateMultipleVars`.
+
+  Arm32 is **not** CLI-only — it's a real native target on
+  the same long-term trajectory as wasm: the next state{}
+  PRs (two-cursor allocator for pointer-shaped state, runtime
+  `__state_init` for non-literal initialisers) ship to arm32
+  alongside wasm. Native HTTP server use cases on arm32
+  (socket / bind / listen / accept syscalls + an accept loop
+  that calls `handle()` per connection) is tracked separately
+  but follows the same backend-parity principle.
 
 - **Numeric literal suffixes — shipped.** `42i64`, `7u8`,
   `0f32`, `1.5f64`, `42f64` (integer text + float suffix

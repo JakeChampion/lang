@@ -130,6 +130,45 @@ func TestExitCode(t *testing.T) {
 	}
 }
 
+// state{} block on arm32: each var lowers to a `.data` label
+// pre-baked with the literal init value, accessed via
+// `ldr =state_<NAME>` + LDR / STR through that pointer. The
+// loader maps `.data` into memory with the literal already in
+// place, so no runtime init code is needed for the simple
+// scalar shapes the first PR ships.
+func TestArm32StateScalarCounter(t *testing.T) {
+	_, code := compileAndRun(t, `state {
+    var counter: i32 = 41;
+}
+
+function main(): i32 {
+    counter = counter + 1;
+    return counter;
+}`)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42 (state counter survives init -> main)", code)
+	}
+}
+
+// Multi-var state on arm32: confirms each var gets its own
+// .data label and the LDR / STR codegen addresses them
+// independently (no aliasing between adjacent state slots).
+func TestArm32StateMultipleVars(t *testing.T) {
+	_, code := compileAndRun(t, `state {
+    var a: i32 = 10;
+    var b: i32 = 30;
+}
+
+function main(): i32 {
+    a = a + 1;
+    b = b + 1;
+    return a + b;
+}`)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42 (a=11, b=31, sum=42)", code)
+	}
+}
+
 // arena_save / arena_restore expose the bump-allocator cursor.
 // After save → alloc → restore, the cursor must come back to
 // the saved value, so a follow-up alloc returns the same
