@@ -3501,6 +3501,61 @@ function main(): i32 { return outer(Some(7)); }`
 	}
 }
 
+// Wide-capture closures: i64 / f64 captures occupy 8-byte slots
+// in the env block (vs the 4-byte default). The previous fix
+// (#217) opened pointer-shaped captures but kept the env-slot
+// width at 4 bytes, which silently truncated wide values. This
+// follow-up uses the per-stride store/load path the array-push
+// PRs (#218–#220) added.
+func TestWASMClosureCapturesI64(t *testing.T) {
+	src := `function outer(seed: i64): i64 {
+    function inner(): i64 { return seed + 1i64; }
+    return inner();
+}
+function main(): i32 {
+    var v: i64 = outer(1000000000000i64);
+    if (v != 1000000000001i64) { return 1; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (wide i64 capture preserves all bits)", got)
+	}
+}
+
+func TestWASMClosureCapturesF64(t *testing.T) {
+	src := `function outer(scale: f64): f64 {
+    function inner(): f64 { return scale * 2.0f64; }
+    return inner();
+}
+function main(): i32 {
+    var r: f64 = outer(3.5f64);
+    if (r != 7.0f64) { return 1; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (f64 capture round-trip)", got)
+	}
+}
+
+// Mixed-stride captures: confirms the running offset accumulator
+// handles a sequence of (4-byte, 8-byte, 4-byte) slots without
+// stepping on neighbours. The closure reads each capture
+// separately to detect any offset-arithmetic mistake.
+func TestWASMClosureCapturesMixedWidths(t *testing.T) {
+	src := `function outer(a: i32, b: i64, c: i32): i64 {
+    function inner(): i64 { return (a as i64) + b + (c as i64); }
+    return inner();
+}
+function main(): i32 {
+    var r: i64 = outer(7, 1000000000000i64, 3);
+    if (r != 1000000000010i64) { return 1; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (mixed-width capture offsets)", got)
+	}
+}
+
 // Multiple pointer captures in one closure — exercises offset
 // arithmetic for non-zero slot indexes.
 func TestWASMClosureCapturesMixedPointers(t *testing.T) {

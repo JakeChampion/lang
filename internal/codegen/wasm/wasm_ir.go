@@ -368,15 +368,29 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		g.linef("(local $__scratch_%d %s)", i, typ)
 	}
 	// Closure-construction helpers, if any OpMakeClosure appears in
-	// the body. The capture-temp count is the max captures across all
-	// MakeClosure ops in the function — they're popped from the stack
-	// into temps before the env block is built.
-	maxCaps := maxClosureCaptures(irFn.Ops)
-	if maxCaps >= 0 {
+	// the body. We pre-scan every MakeClosure / MakeEnv site, look
+	// at the hoisted target's per-capture types, and declare typed
+	// scratch locals — one pool per wat type (i32 / i64 / f32 /
+	// f64) sized to the maximum count of that type at any single
+	// construction site. Per-construction emit then names temps
+	// `__cap_<wat-type>_<idx-within-type>` so type-mismatched stores
+	// can't happen (captured f64 lands in an f64 scratch, captured
+	// i32 in an i32 scratch, etc).
+	capPool := scanCapturePool(irFn.Ops, g)
+	if capPool.any {
 		g.line("(local $__cl_scratch i32)")
 		g.line("(local $__env_scratch i32)")
-		for i := 0; i < maxCaps; i++ {
-			g.linef("(local $__cap_%d i32)", i)
+		for i := 0; i < capPool.i32; i++ {
+			g.linef("(local $__cap_i32_%d i32)", i)
+		}
+		for i := 0; i < capPool.i64; i++ {
+			g.linef("(local $__cap_i64_%d i64)", i)
+		}
+		for i := 0; i < capPool.f32; i++ {
+			g.linef("(local $__cap_f32_%d f32)", i)
+		}
+		for i := 0; i < capPool.f64; i++ {
+			g.linef("(local $__cap_f64_%d f64)", i)
 		}
 	}
 	// Indirect calls under the closure ABI need a scratch to hold the
@@ -772,6 +786,123 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 }
 
 // emitMakeClosureFromIR consumes the N captures from the top of the
+// captureSlotSize returns the env-block slot footprint for a
+// capture of type `t`. Mirrors closureconv.captureSlotSize so
+// the per-capture offsets the IR encodes line up with the
+// stores codegen emits here. 4-byte default; 8 bytes for the
+// wide types (i64 / u64 / f64).
+func captureSlotSize(t ast.Type) int {
+	if ast.ElemSizeBytes(t) == 8 {
+		return 8
+	}
+	return 4
+}
+
+// captureWatTypeKind classifies a capture's lang type into the
+// wat type the temp scratch must be declared as. Pointer-shaped
+// types and sub-i32 ints both lower to i32 at the wat layer;
+// only the four primitive wasm types matter here.
+type captureWatType int
+
+const (
+	capI32 captureWatType = iota
+	capI64
+	capF32
+	capF64
+)
+
+func captureWatKind(t ast.Type) captureWatType {
+	switch x := t.(type) {
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return capF64
+		}
+		return capF32
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return capI64
+		}
+	}
+	return capI32
+}
+
+// capPoolCounts records the per-type max temp count needed
+// across all closure-construction sites in a function. Each
+// site uses a fresh count per type starting from 0, so the
+// pool size is the worst-case sum at any single site.
+type capPoolCounts struct {
+	i32, i64, f32, f64 int
+	any                bool
+}
+
+// scanCapturePool walks the IR ops and computes per-type max
+// scratch needs. For each OpMakeClosure / OpMakeEnv, look up
+// the hoisted target's Captures list (already type-stamped by
+// closureconv) and tally per-wat-type counts at that site,
+// then update the global maxima.
+func scanCapturePool(ops []ir.Op, g *generator) capPoolCounts {
+	var pool capPoolCounts
+	for _, op := range ops {
+		if op.Kind != ir.OpMakeClosure && op.Kind != ir.OpMakeEnv {
+			continue
+		}
+		pool.any = true
+		hoisted := g.lookupFunc(op.Str)
+		if hoisted == nil {
+			continue
+		}
+		var site capPoolCounts
+		for _, capParam := range hoisted.Captures {
+			switch captureWatKind(capParam.Type) {
+			case capI32:
+				site.i32++
+			case capI64:
+				site.i64++
+			case capF32:
+				site.f32++
+			case capF64:
+				site.f64++
+			}
+		}
+		if site.i32 > pool.i32 {
+			pool.i32 = site.i32
+		}
+		if site.i64 > pool.i64 {
+			pool.i64 = site.i64
+		}
+		if site.f32 > pool.f32 {
+			pool.f32 = site.f32
+		}
+		if site.f64 > pool.f64 {
+			pool.f64 = site.f64
+		}
+	}
+	return pool
+}
+
+// captureStoreOpAndSize picks the wat store op + slot byte
+// width for storing a capture's value into the env block. The
+// load side is symmetric and lives in the IR's CaptureRef case
+// (uses payloadLoadOp's per-width dispatch).
+func captureStoreOpAndSize(t ast.Type) (string, int) {
+	switch x := t.(type) {
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return "f64.store", 8
+		}
+		return "f32.store", 4
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return "i64.store", 8
+		}
+	}
+	// 4-byte default — i32 / u32 / sub-i32 / pointers all
+	// fit. Sub-i32 captures get padded up so a later
+	// 8-byte slot stays aligned-enough for wasm's
+	// (alignment-hint-less) i64/f64 ops.
+	return "i32.store", 4
+}
+
 // stack (in reverse, into per-capture temps), allocates an env block
 // and a closure pair `{fn_idx, env_ptr}`, and pushes the closure
 // pointer. Per-capture types come from the hoisted FuncDecl's
@@ -794,31 +925,67 @@ func (g *generator) emitMakeClosureFromIR(op ir.Op) error {
 			op.Str, len(hoisted.Captures), n)
 	}
 
-	// Pop captures into temps so we can rebind them to env offsets in
-	// declaration order. The top of stack is the LAST capture, so we
-	// pop from N-1 down to 0.
+	// Compute typed-temp names per capture slot. We need names
+	// up front because we drain the stack in REVERSE order
+	// (top-of-stack is the last capture) but emit stores in
+	// FORWARD order. Each slot's temp uses the wat-type pool
+	// declared at the function prelude (`__cap_<wat-type>_<n>`),
+	// where <n> is the capture's index within its type at this
+	// site. Two slots of the same wat type at the same site
+	// take consecutive `<n>` values.
+	tempNames := make([]string, n)
+	{
+		var c capPoolCounts
+		for i, capParam := range hoisted.Captures {
+			switch captureWatKind(capParam.Type) {
+			case capI32:
+				tempNames[i] = fmt.Sprintf("$__cap_i32_%d", c.i32)
+				c.i32++
+			case capI64:
+				tempNames[i] = fmt.Sprintf("$__cap_i64_%d", c.i64)
+				c.i64++
+			case capF32:
+				tempNames[i] = fmt.Sprintf("$__cap_f32_%d", c.f32)
+				c.f32++
+			case capF64:
+				tempNames[i] = fmt.Sprintf("$__cap_f64_%d", c.f64)
+				c.f64++
+			}
+		}
+	}
+
+	// Pop captures into typed temps so we can rebind them to env
+	// offsets in declaration order. The top of stack is the LAST
+	// capture, so we pop from N-1 down to 0.
 	for i := n - 1; i >= 0; i-- {
-		g.linef("local.set $__cap_%d", i)
+		g.linef("local.set %s", tempNames[i])
 	}
 
 	// Allocate the env block when there are captures and stash its
-	// pointer in $__env_scratch.
+	// pointer in $__env_scratch. Per-capture slot stride: 4 bytes
+	// default (pointer / sub-i32 / i32 / f32); 8 bytes for i64 /
+	// u64 / f64 so the capture's full bit pattern survives.
+	// Sub-i32 (u8 / i8 / u16 / i16) uses a 4-byte slot — the
+	// corresponding closureconv offset accumulator pads to match.
 	if n > 0 {
-		g.linef("i32.const %d", n*4)
+		envSize := 0
+		for _, capParam := range hoisted.Captures {
+			envSize += captureSlotSize(capParam.Type)
+		}
+		g.linef("i32.const %d", envSize)
 		g.line("call $__lang_alloc")
 		g.line("local.set $__env_scratch")
+		off := 0
 		for i, capParam := range hoisted.Captures {
 			g.line("local.get $__env_scratch")
-			if i > 0 {
-				g.linef("i32.const %d", i*4)
+			if off > 0 {
+				g.linef("i32.const %d", off)
 				g.line("i32.add")
 			}
-			g.linef("local.get $__cap_%d", i)
-			if _, isFloat := capParam.Type.(ast.FloatType); isFloat {
-				g.line("f32.store")
-			} else {
-				g.line("i32.store")
-			}
+			g.linef("local.get %s", tempNames[i])
+			storeOp, slot := captureStoreOpAndSize(capParam.Type)
+			g.line(storeOp)
+			off += slot
 		}
 	}
 

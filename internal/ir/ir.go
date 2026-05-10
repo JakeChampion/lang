@@ -2131,11 +2131,12 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: envIdx})
 		b.emit(Op{Kind: OpConstI32, I32: int32(n.Offset)})
 		b.emit(Op{Kind: OpAdd})
-		if _, isF := n.Type.(ast.FloatType); isF {
-			b.emit(Op{Kind: OpFLoad})
-		} else {
-			b.emit(Op{Kind: OpLoad})
-		}
+		// Reuse the per-payload-type load picker: i32.load for
+		// pointer / 4-byte types, f32.load for f32, i64.load /
+		// f64.load for the wide variants. Without the width
+		// dispatch a captured i64 or f64 would silently
+		// truncate / mis-decode at the load site.
+		b.emit(payloadLoadOp(n.Type))
 	case *ast.MakeClosure:
 		// Evaluate captures in declaration order so each one ends up
 		// on the stack in slot-order. OpMakeClosure consumes them and

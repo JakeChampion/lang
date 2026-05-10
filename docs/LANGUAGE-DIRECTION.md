@@ -618,9 +618,26 @@ to smallest. Status pending unless marked.
   `examples/wasm/word_freq.lang`'s `swap_pairs` is now an
   inline closure inside `sort_pairs` that captures `keys` and
   `counts` directly. `use_chain.lang` and `url_router.lang`
-  unblock too (no longer scalar-only). Wide-stride captures
-  (i64, f64) remain limited to the 4-byte slot and would
-  silently truncate — separate fix.
+  unblock too (no longer scalar-only).
+
+  **Wide captures (i64, u64, f64) — shipped.** The env-block
+  layout switched from "every slot is 4 bytes" to per-stride
+  (8 bytes for i64 / u64 / f64; 4 for everything else, with
+  sub-i32 captures padded up to keep wide neighbours aligned-
+  enough for wasm). The codegen drains captures into typed
+  scratch locals (`$__cap_i32_<n>` / `$__cap_i64_<n>` / etc.)
+  declared from per-type pools sized at function prelude — the
+  prior i32-only pool would have failed wasm validation for any
+  f32/f64/i64 capture. Compounds on the wat `__store_i64` /
+  `__store_f64` shims that #218–#220 already added for the
+  array-push family.
+
+  Drive-by fix: `closureconv.rewriteExpr` was missing
+  `*ast.CastExpr` and `*ast.SliceExpr` cases — `(a as i64)`
+  inside a closure body left `a` as a raw `Ident` instead of
+  rewriting to `CaptureRef`. Surfaced once mixed-width
+  captures landed (the failure was reproducible without the
+  wide-slot work too — pre-existing latent bug).
 
 - **`?` operator for `Option` / `Result`.** `extract_text`
   in `todo_api.lang` is 22 lines of nested match for
