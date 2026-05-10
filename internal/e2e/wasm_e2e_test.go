@@ -513,6 +513,33 @@ func TestWASMWriteBuiltin(t *testing.T) {
 	}
 }
 
+// f-strings desugar at the lexer to `<lit> + (<expr>).to_string() +
+// <lit> + ...`. End-to-end verifies the desugar preserves intent
+// across multiple types (string, i32, computed expression) and
+// that brace escapes (`{{` / `}}`) reach stdout as literal braces.
+func TestWASMFStringInterpolation(t *testing.T) {
+	src := `function main(): i32 {
+		var name: string = "world";
+		var n: i32 = 7;
+		print(f"hi {name}");
+		print(f"n is {n}, n*n is {n * n}");
+		print(f"plain");
+		print(f"with literal braces: {{{n}}}");
+		return 0;
+	}`
+	stdout, _ := invokeWasmtime(t, src)
+	for _, want := range []string{
+		"hi world",
+		"n is 7, n*n is 49",
+		"plain",
+		"with literal braces: {7}",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 // `eprint` lands on stderr (fd=2). wasmtime keeps fds 1 and 2
 // separate, so the test can confirm that `print("hi")` shows up
 // on stdout and `eprint("err")` shows up on stderr — without

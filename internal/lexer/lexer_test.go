@@ -105,6 +105,159 @@ func TestStringLiteralUnknownEscape(t *testing.T) {
 	}
 }
 
+// f-strings desugar at the lexer to the equivalent `+` chain of
+// String literals and `(<expr>).to_string()` method calls. The
+// table below covers: empty f-string, literal-only, single
+// interpolation, mixed, leading and trailing interpolation, brace
+// escapes, escapes in literal segments, and an interpolant that
+// itself contains a string literal (so the boundary scanner has
+// to skip past the inner quotes).
+func TestFStringDesugar(t *testing.T) {
+	cases := []struct {
+		src  string
+		want []struct {
+			k Kind
+			s string
+		}
+	}{
+		// f"" → ""
+		{
+			src: `f""`,
+			want: []struct {
+				k Kind
+				s string
+			}{
+				{String, ""},
+				{EOF, ""},
+			},
+		},
+		// f"plain" → "plain"
+		{
+			src: `f"plain"`,
+			want: []struct {
+				k Kind
+				s string
+			}{
+				{String, "plain"},
+				{EOF, ""},
+			},
+		},
+		// f"{x}" → (x).to_string()
+		{
+			src: `f"{x}"`,
+			want: []struct {
+				k Kind
+				s string
+			}{
+				{Punct, "("}, {Ident, "x"}, {Punct, ")"},
+				{Punct, "."}, {Ident, "to_string"},
+				{Punct, "("}, {Punct, ")"},
+				{EOF, ""},
+			},
+		},
+		// f"a{x}b" → "a" + (x).to_string() + "b"
+		{
+			src: `f"a{x}b"`,
+			want: []struct {
+				k Kind
+				s string
+			}{
+				{String, "a"}, {Punct, "+"},
+				{Punct, "("}, {Ident, "x"}, {Punct, ")"},
+				{Punct, "."}, {Ident, "to_string"},
+				{Punct, "("}, {Punct, ")"},
+				{Punct, "+"}, {String, "b"},
+				{EOF, ""},
+			},
+		},
+		// f"{a}{b}" → (a).to_string() + (b).to_string()
+		{
+			src: `f"{a}{b}"`,
+			want: []struct {
+				k Kind
+				s string
+			}{
+				{Punct, "("}, {Ident, "a"}, {Punct, ")"},
+				{Punct, "."}, {Ident, "to_string"},
+				{Punct, "("}, {Punct, ")"},
+				{Punct, "+"},
+				{Punct, "("}, {Ident, "b"}, {Punct, ")"},
+				{Punct, "."}, {Ident, "to_string"},
+				{Punct, "("}, {Punct, ")"},
+				{EOF, ""},
+			},
+		},
+		// f"{{lit}}" → "{lit}"
+		{
+			src: `f"{{lit}}"`,
+			want: []struct {
+				k Kind
+				s string
+			}{
+				{String, "{lit}"},
+				{EOF, ""},
+			},
+		},
+		// f"hi\nthere" → "hi\nthere" (escapes processed in literals)
+		{
+			src: `f"hi\nthere"`,
+			want: []struct {
+				k Kind
+				s string
+			}{
+				{String, "hi\nthere"},
+				{EOF, ""},
+			},
+		},
+		// f"k={\"x\"}" → "k=" + ("x").to_string()
+		// (interpolant boundary scanner skips a string-literal inside)
+		{
+			src: `f"k={"x"}"`,
+			want: []struct {
+				k Kind
+				s string
+			}{
+				{String, "k="}, {Punct, "+"},
+				{Punct, "("}, {String, "x"}, {Punct, ")"},
+				{Punct, "."}, {Ident, "to_string"},
+				{Punct, "("}, {Punct, ")"},
+				{EOF, ""},
+			},
+		},
+	}
+	for _, c := range cases {
+		toks, _, err := Tokenize(c.src)
+		if err != nil {
+			t.Errorf("%s: lex error: %v", c.src, err)
+			continue
+		}
+		if len(toks) != len(c.want) {
+			t.Errorf("%s: got %d tokens, want %d:\ngot: %v", c.src, len(toks), len(c.want), toks)
+			continue
+		}
+		for i, w := range c.want {
+			if toks[i].Kind != w.k || toks[i].Text != w.s {
+				t.Errorf("%s: tok[%d] = %v, want kind=%v text=%q", c.src, i, toks[i], w.k, w.s)
+			}
+		}
+	}
+}
+
+// f-string error cases: unterminated, newline inside, bare `}`,
+// empty `{}` interpolant.
+func TestFStringErrors(t *testing.T) {
+	for _, src := range []string{
+		`f"unterminated`,
+		"f\"with\nnewline\"",
+		`f"bare}brace"`,
+		`f"empty{}"`,
+	} {
+		if _, _, err := Tokenize(src); err == nil {
+			t.Errorf("expected error for %q, got none", src)
+		}
+	}
+}
+
 func TestFloatLiteral(t *testing.T) {
 	toks, _, err := Tokenize("1.5 0.25 12.0")
 	if err != nil {
