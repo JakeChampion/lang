@@ -1178,6 +1178,15 @@ type Program struct {
 	// stitches the combined program before the checker runs.
 	// Single-file programs leave this empty.
 	Imports []*Import
+	// States lists every top-level `state { var ...; }` block
+	// in source order. State vars are module-globals — their
+	// initializers run once at module instantiation (before
+	// `main()` on the CLI target, before the first `handle()`
+	// on the wasi-http target) and reads / writes from inside
+	// any function reference the same persistent storage. First
+	// PR is scalar-only (the checker rejects pointer-shaped V).
+	// See docs/LANGUAGE-DIRECTION.md PR 6 item 9.
+	States []*StateDecl
 	// Comments lists every `//` line comment the lexer collected,
 	// in source order. Most consumers (checker, IR lowering,
 	// codegen) ignore this field; the formatter walks it alongside
@@ -1199,6 +1208,23 @@ type ConstDecl struct {
 	Type   Type
 	Value  Expr
 	Public bool
+}
+
+// StateDecl is a top-level `state { var ...; var ...; }` block.
+// Each var declares a module-global mutable variable that
+// persists for the lifetime of the wasm module instance.
+// Initializers run once at module instantiation (before any user
+// code); reads / writes from inside `main()` / `handle()` see the
+// same persistent storage across invocations.
+//
+// First-PR scope is scalar V (i32 / u32 / i64 / u64 / f32 / f64 /
+// boolean) — pointer-shaped types (Map, string, T[], structs) are
+// rejected at the checker until the two-cursor allocator (separate
+// persistent / per-request bump cursors) lands. The motivation is
+// covered in docs/LANGUAGE-DIRECTION.md PR 6 item 9.
+type StateDecl struct {
+	P    Position
+	Vars []*Var
 }
 
 // Import is a top-level `import "<path>";` declaration. Path is the

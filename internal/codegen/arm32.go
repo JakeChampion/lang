@@ -71,6 +71,17 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// stay out of the lowered program when the user code
 	// doesn't call them.
 	treeshake.Run(prog)
+	// state{} blocks compile to wasm globals on the wasm
+	// targets but the arm32 backend hasn't been wired up yet.
+	// Reject early with a clear message rather than producing
+	// broken assembly. Arm32 is CLI-only (the OS reclaims at
+	// process exit) so the eventual implementation can store
+	// state vars in `.bss` / `.data` and initialise from
+	// `_start`; tracked under PR 6 item 9 (`state {}` block)
+	// in docs/LANGUAGE-DIRECTION.md.
+	if len(prog.States) > 0 {
+		return "", fmt.Errorf("arm32 backend does not yet support `state {}` blocks; use -target wasm or -target wasi-http for state-bearing programs")
+	}
 	return EmitFromIR(prog, info, opts)
 }
 

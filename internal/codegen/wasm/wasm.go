@@ -192,6 +192,12 @@ type generator struct {
 	// reach by name.
 	origTopLevelCount int
 
+	// stateDecls preserves the state-block declarations from the
+	// source program so the module-emit pipeline can render them
+	// as wasm globals after the memory declaration. Empty for
+	// programs without state blocks.
+	stateDecls []*ast.StateDecl
+
 	// Runtime / strings / arrays.
 	needsRuntime  bool
 	needsArrays   bool
@@ -1227,6 +1233,86 @@ func (g *generator) scanForStringEq(prog *ast.Program) {
 	}
 }
 
+// emitStateGlobals writes one `(global $state_<name> (mut T)
+// (T.const N))` declaration per state-block var. Called from
+// the module-emit pipeline after the memory declaration so
+// the globals are visible to every function that follows.
+//
+// First-PR scope is scalar V (i32 / u32 / i64 / u64 / f32 /
+// f64 / boolean) with literal initialisers — the checker
+// rejects everything else. Each var's init lit was settled
+// (Width / IsFloat / FloatWidth stamps applied) by
+// settleStateInitLiteral, so the const opcode falls out
+// directly from the type without re-deriving it from the
+// literal.
+func (g *generator) emitStateGlobals() {
+	for _, sd := range g.stateDecls {
+		for _, v := range sd.Vars {
+			wasmTy, init := stateGlobalDecl(v.Type, v.Init)
+			g.linef(`(global $state_%s (mut %s) (%s.const %s))`,
+				v.Name, wasmTy, wasmTy, init)
+		}
+	}
+}
+
+// stateGlobalDecl returns the wasm scalar type ("i32" / "i64" /
+// "f32" / "f64") and the const-literal text ("0", "-1", "1.5")
+// for a given state-var declared type and initialiser. The
+// initialiser is one of NumberLit / FloatLit / BoolLit or a
+// Unary{"-", lit}; everything else was rejected by the checker.
+func stateGlobalDecl(t ast.Type, init ast.Expr) (string, string) {
+	wasmTy := "i32"
+	switch typ := t.(type) {
+	case ast.NumberType:
+		if typ.Width == 64 {
+			wasmTy = "i64"
+		}
+	case ast.FloatType:
+		if typ.Width == 64 {
+			wasmTy = "f64"
+		} else {
+			wasmTy = "f32"
+		}
+	}
+	return wasmTy, formatStateInit(init)
+}
+
+// formatStateInit serialises a literal initialiser to the text
+// the wasm `<type>.const` opcode wants. Negation is flattened
+// (the parser produces `Unary{"-", lit}` for `-1`; wat accepts
+// `-1` as the const operand directly).
+func formatStateInit(e ast.Expr) string {
+	switch v := e.(type) {
+	case *ast.NumberLit:
+		return fmt.Sprintf("%d", v.Value)
+	case *ast.FloatLit:
+		return formatFloatBits(v.Value)
+	case *ast.BoolLit:
+		if v.Value {
+			return "1"
+		}
+		return "0"
+	case *ast.Unary:
+		if v.Op == "-" {
+			return "-" + formatStateInit(v.Operand)
+		}
+	}
+	return "0"
+}
+
+// formatFloatBits formats a float literal so wasmtime accepts
+// it. Fractional values use Go's default %g; integers get a
+// trailing `.0` so they parse as floats not ints.
+func formatFloatBits(v float64) string {
+	s := fmt.Sprintf("%g", v)
+	for _, c := range s {
+		if c == '.' || c == 'e' || c == 'E' || c == 'n' || c == 'N' {
+			return s
+		}
+	}
+	return s + ".0"
+}
+
 // scanForStringConcat pre-walks the program and sets needsStrConcat
 // if any `+` between strings appears. The helper allocates a fresh
 // buffer via `__lang_alloc`, so it pulls in needsArrays as well.
@@ -1792,6 +1878,17 @@ func (g *generator) emitRuntimePreamble() {
 		// is what we use; we don't subscribe). Skip.
 	}
 	g.line(`(memory $mem 1)`)
+
+	// state{}-block module-globals. Each `state { var NAME: T = LIT; }`
+	// becomes a mutable wasm global named `$state_<NAME>` whose
+	// init expression is the literal directly. The wasm runtime
+	// initialises globals once at module instantiation, before
+	// any user code runs — so `main()` / `handle()` see the
+	// declared values on first read, and writes persist until
+	// the module is unloaded. First-PR scalar-only scope means
+	// every init expression is a single `<type>.const N`; richer
+	// shapes would need a runtime `__state_init` start function.
+	g.emitStateGlobals()
 
 	{
 		// $__lang_alloc bumps the allocator pointer at memory[40] and

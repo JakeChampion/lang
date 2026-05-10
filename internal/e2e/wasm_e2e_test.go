@@ -3152,6 +3152,68 @@ func TestWASMArrayPushI64EmptyStart(t *testing.T) {
 	}
 }
 
+// state{} block: top-level mutable globals that survive across
+// the module-init → main() boundary. First-PR scope is scalar
+// V (i32 / u32 / i64 / u64 / f32 / f64 / boolean) with literal
+// initialisers — exactly what wasm globals' init expressions
+// natively support, so codegen emits one `(global $state_NAME
+// (mut T) (T.const N))` per declaration without needing a
+// runtime __state_init function.
+func TestWASMStateScalarCounter(t *testing.T) {
+	src := `state {
+    var counter: i32 = 41;
+}
+
+function main(): i32 {
+    counter = counter + 1;
+    return counter;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (state counter survives the init->main boundary)", got)
+	}
+}
+
+// Wide-int state: i64 globals end up as `(mut i64)` with an
+// `i64.const` init expression. Verifies the checker's settle
+// path stamps Width=64 on the literal so the IR's NumberLit
+// lowering emits an i64.const at the read site too — without
+// the settle, the code below would mix i32 and i64 ops.
+func TestWASMStateScalarI64(t *testing.T) {
+	src := `state {
+    var big: i64 = 100i64;
+}
+
+function main(): i32 {
+    big = big + 1i64;
+    return big as i32;
+}`
+	if got := runWasm(t, src); got != 101 {
+		t.Errorf("got %d, want 101 (state i64 increments + reads back)", got)
+	}
+}
+
+// Multi-var state block + cross-function read. State vars are
+// module-scoped so any function can reach them, not just main().
+func TestWASMStateMultipleVars(t *testing.T) {
+	src := `state {
+    var hits: i32 = 0;
+    var threshold: i32 = 3;
+}
+
+function bump(): void {
+    hits = hits + 1;
+}
+
+function main(): i32 {
+    bump(); bump(); bump(); bump();
+    if (hits >= threshold) { return hits; }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 4 {
+		t.Errorf("got %d, want 4 (multi-var state, cross-function reads)", got)
+	}
+}
+
 func TestWASMArrayPushI32(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [1, 2];

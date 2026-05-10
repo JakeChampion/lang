@@ -57,6 +57,73 @@ func TestTypeErrors(t *testing.T) {
 	}
 }
 
+// The state{} block accepts scalar V (i32 / u32 / i64 / u64 / f32 /
+// f64 / boolean) with literal initialisers in the first PR.
+// Pointer-shaped types (Map, string, T[]) and non-literal init
+// expressions both reject with a hint pointing at the two-cursor
+// allocator and the runtime __state_init helper respectively.
+func TestStateBlockAccepts(t *testing.T) {
+	for _, src := range []string{
+		`state { var counter: i32 = 0; }
+function main(): i32 { counter = counter + 1; return counter; }`,
+		`state { var big: i64 = 100i64; }
+function main(): i32 { return big as i32; }`,
+		`state { var ratio: f64 = 1.5f64; }
+function main(): i32 { return ratio as i32; }`,
+		`state { var enabled: boolean = true; }
+function main(): i32 { if (enabled) { return 1; } return 0; }`,
+		`state { var a: i32 = 0; var b: i32 = 0; }
+function main(): i32 { a = a + 1; b = b + 2; return a + b; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
+func TestStateBlockRejects(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		{
+			`state { var todos: Map[i32, string] = map_new(4); }
+function main(): i32 { return 0; }`,
+			"non-scalar type",
+		},
+		{
+			`state { var tags: string[] = []; }
+function main(): i32 { return 0; }`,
+			"non-scalar type",
+		},
+		{
+			`state { var name: string = ""; }
+function main(): i32 { return 0; }`,
+			"non-scalar type",
+		},
+		{
+			`state { var c: i32 = 1 + 2; }
+function main(): i32 { return c; }`,
+			"must be a literal",
+		},
+		{
+			`state { var c: i32 = 0; var c: i32 = 1; }
+function main(): i32 { return c; }`,
+			"already declared",
+		},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: error %q does not contain %q", c.src, err.Error(), c.want)
+		}
+	}
+}
+
 // The checker should accumulate multiple errors and report them all in
 // a single diag.Errors aggregate.
 func TestMultipleErrorsAreReported(t *testing.T) {

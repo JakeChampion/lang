@@ -47,6 +47,7 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		httpHandler:       opts.HttpHandler,
 		printMainResult:   opts.PrintMainResult,
 		origTopLevelCount: countOrigTopLevel(prog),
+		stateDecls:        prog.States,
 		stringPool:        map[string]int{},
 		funcIndex:         map[string]int{},
 		sigIndex:          map[string]int{},
@@ -633,6 +634,10 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.linef("local.set $%s", slotName(g.current, irFn, op.I32))
 	case ir.OpTeeLocal:
 		g.linef("local.tee $%s", slotName(g.current, irFn, op.I32))
+	case ir.OpLoadGlobal:
+		g.linef("global.get $state_%s", op.Str)
+	case ir.OpStoreGlobal:
+		g.linef("global.set $state_%s", op.Str)
 	case ir.OpAdd:
 		g.linef("%s.add", intPrefix())
 	case ir.OpSub:

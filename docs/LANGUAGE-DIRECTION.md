@@ -794,19 +794,50 @@ to smallest. Status pending unless marked.
   `url_router.lang`, `todo_api.lang`) and the prelude itself
   use `.push(v)` instead of the per-T helpers.
 
-- **Module-level `var` with handler-scoped lifetime.**
-  `todo_api.lang` couldn't model cross-request state and
-  ended up "stateless TODO API" which is a contradiction.
-  Concrete shape: `state { var todos: Map[i32, string] = ...;
-  var counter: i32 = 0; }` block at module level whose
-  contents persist across requests in a non-arena heap
-  region (allocated from `__lang_alloc` directly, never
-  reclaimed by `arena_restore`). Reads / writes from inside
-  `handle()` see the persistent values. CLI mode treats
-  `state {}` as ordinary module-init (one-shot before
-  `main()`). The arm32 backend can ignore `state` since
-  it's CLI-only and the OS reclaims everything at process
-  exit.
+- **Module-level `var` with handler-scoped lifetime — first
+  PR shipped (scalars only).** `state { var hits: i32 = 0;
+  var threshold: i64 = 1024i64; }` declares module-global
+  mutable variables. Each lowers to a wasm `(global
+  $state_NAME (mut T) (T.const N))` whose init expression is
+  the literal directly — wasm's runtime initialises globals
+  once at module instantiation, before any user code, so
+  `main()` / `handle()` see the declared values on first
+  read and writes persist for the lifetime of the wasm
+  instance.
+
+  IR-level: `OpLoadGlobal` / `OpStoreGlobal` are emitted at
+  Ident reads / Assign writes whose name resolves to a
+  `state{}` var (Info.StateVars on the checker side). The
+  checker registers the state-var table during the first
+  pass so function bodies in the second pass see them as
+  module-global lookups.
+
+  **First-PR scope is scalar V** — `i32`, `u32`, `i64`,
+  `u64`, `f32`, `f64`, `boolean`. Pointer-shaped types
+  (`Map`, `string`, `T[]`, structs) and non-literal
+  initialisers are rejected with hints. Pointer-shaped
+  state needs the **two-cursor allocator** (separate
+  persistent / per-request bump cursors): without it,
+  mutating a state Map would route the new bucket through
+  the per-request arena and lose it at `arena_restore` on
+  handler exit. That's the next state{} PR.
+
+  **Host-runtime caveat for wasi-http.** State persistence
+  across `handle()` calls depends on the host keeping the
+  wasm instance alive between requests. `wasmtime serve`
+  instantiates a fresh module per request, so each call
+  re-runs the global init — the `TestWasmPreview2HttpStateCompiles`
+  e2e covers compilation + a single request only.
+  Production hosts that reuse instances (Fastly Compute,
+  Netlify Edge Functions, Unikraft Cloud, custom wasmtime
+  embeddings) DO see persistence; the wasm-level semantics
+  are correct.
+
+  **Backend coverage.** wasm + wasi-http: shipped. arm32:
+  rejected at codegen with a clear message — arm32 is
+  CLI-only so the eventual implementation can store state
+  vars in `.bss` / `.data` and initialise from `_start`,
+  but that's a follow-up.
 
 - **Numeric literal suffixes — shipped.** `42i64`, `7u8`,
   `0f32`, `1.5f64`, `42f64` (integer text + float suffix
@@ -880,7 +911,9 @@ example cleanup. Each item lands as its own PR:
    captures + wide (i64 / u64 / f64) captures both live;
    `closureconv.rewriteExpr` CastExpr / SliceExpr cases
    landed alongside.
-9. **Module-level `state { ... }` block** — next.
+9. ~~Module-level `state { ... }` block~~ — **first PR
+   shipped (scalars only).** Pointer-shaped state waits on
+   the two-cursor allocator.
 
 Each landed item gets a follow-up commit that simplifies
 one or more `examples/wasm/` programs, demonstrating the
