@@ -56,7 +56,18 @@ const (
 const regArgs = 8
 
 // Options tunes the emit. Currently empty.
-type Options struct{}
+type Options struct {
+	// Darwin selects Mach-O / Apple-style assembly conventions
+	// (leading-underscore symbol prefix `_<name>`, macOS BSD
+	// syscall numbers, `svc #0x80` with x16 as the syscall
+	// number register). Disabled by default (Linux ELF). The
+	// driver flips this on for `-target arm64-darwin`. Real
+	// Mach-O Object emission happens at the clang+lld step;
+	// the asm we produce is the GAS-flavoured cross-platform
+	// shape both Linux's `as` and macOS's `clang -c -arch
+	// arm64` accept.
+	Darwin bool
+}
 
 // Emit produces the assembly text for prog.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
@@ -71,7 +82,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if err != nil {
 		return "", err
 	}
-	g := &generator{info: info, stringLabel: map[string]string{}}
+	g := &generator{info: info, stringLabel: map[string]string{}, darwin: opts.Darwin}
 	g.line(`.arch armv8-a`)
 	g.line(`.text`)
 	g.emitStartRuntime()
@@ -118,7 +129,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitStringFromBytesRuntime()
 	}
 	g.emitDataSections()
-	g.line(`.section .note.GNU-stack,"",%progbits`)
+	if !g.darwin {
+		// `.note.GNU-stack` is an ELF-only directive — it
+		// marks the program's stack as non-executable. Mach-O
+		// has the equivalent via header flags; the assembler
+		// here rejects the directive on Darwin.
+		g.line(`.section .note.GNU-stack,"",%progbits`)
+	}
 	return g.out.String(), nil
 }
 
@@ -129,7 +146,16 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 // isn't pulled in.
 func (g *generator) emitDataSections() {
 	g.line("")
-	g.line(`.section .rodata`)
+	if g.darwin {
+		// Mach-O cstring section — read-only ASCII strings.
+		// Mach-O's native equivalent of ELF's `.section
+		// .rodata`. The `cstring_literals` attribute lets the
+		// linker dedupe identical NUL-terminated string
+		// constants across object files.
+		g.line(`.section __TEXT,__cstring,cstring_literals`)
+	} else {
+		g.line(`.section .rodata`)
+	}
 	for _, s := range g.stringOrder {
 		// 4-byte little-endian length prefix + .asciz data.
 		// Pointers handed to user code address the .asciz base
@@ -142,7 +168,17 @@ func (g *generator) emitDataSections() {
 	}
 	if g.usesAlloc || g.usesEnv {
 		g.line("")
-		g.line(`.section .bss`)
+		if g.darwin {
+			// Mach-O zero-initialised data lives in
+			// __DATA,__bss. The `zero_fill` directive shape
+			// (`.zerofill SEGMENT,SECTION,SYMBOL,SIZE`) is the
+			// idiomatic way but a `.section` + `.space` pair
+			// also works and keeps the code path uniform with
+			// the ELF emit.
+			g.line(`.section __DATA,__bss`)
+		} else {
+			g.line(`.section .bss`)
+		}
 	}
 	if g.usesAlloc {
 		g.line(`.align 3`) // 8-byte alignment for the cursor pair
@@ -172,7 +208,7 @@ func (g *generator) emitAllocRuntime() {
 	const heapBytes = 64 * 1024 * 1024 // 64 MiB virtual reservation
 	g.line("")
 	g.line(".global __lang_alloc")
-	g.line(".type __lang_alloc, %function")
+	g.typeDirective("__lang_alloc")
 	g.label("__lang_alloc")
 	g.emit("stp x29, x30, [sp, #-16]!")
 	g.emit("mov x29, sp")
@@ -183,8 +219,7 @@ func (g *generator) emitAllocRuntime() {
 	// Lazy heap init: if heap_ptr == 0, mmap-reserve a 64 MiB
 	// arena. Linux populates physical pages on first touch, so
 	// the virtual reservation costs essentially nothing.
-	g.emit("adrp x1, __lang_heap_ptr")
-	g.emit("add x1, x1, :lo12:__lang_heap_ptr")
+	g.adrpAdd("x1", "__lang_heap_ptr")
 	g.emit("ldr x2, [x1]")
 	g.emit("cbnz x2, .Lalloc_have_heap")
 	// mmap(NULL, 64 MiB, RW, PRIVATE|ANON, -1, 0)
@@ -214,23 +249,19 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("cmn x0, #0")
 	g.emit("blt .Lalloc_oom")
 	g.emit("mov x10, x0")       // x10 = base
-	g.emit("adrp x1, __lang_heap_ptr")
-	g.emit("add x1, x1, :lo12:__lang_heap_ptr")
+	g.adrpAdd("x1", "__lang_heap_ptr")
 	g.emit("str x10, [x1]")
-	g.emit("adrp x2, __lang_heap_end")
-	g.emit("add x2, x2, :lo12:__lang_heap_end")
+	g.adrpAdd("x2", "__lang_heap_end")
 	g.emit("ldr x3, =%d", heapBytes)
 	g.emit("add x3, x10, x3")
 	g.emit("str x3, [x2]")
 	g.emit("mov x0, x9")        // restore size
 	g.label(".Lalloc_have_heap")
 	// Bump the cursor: ptr = heap_ptr; heap_ptr += size; return ptr.
-	g.emit("adrp x1, __lang_heap_ptr")
-	g.emit("add x1, x1, :lo12:__lang_heap_ptr")
+	g.adrpAdd("x1", "__lang_heap_ptr")
 	g.emit("ldr x2, [x1]")      // x2 = current ptr
 	g.emit("add x3, x2, x0")    // x3 = wanted top
-	g.emit("adrp x4, __lang_heap_end")
-	g.emit("add x4, x4, :lo12:__lang_heap_end")
+	g.adrpAdd("x4", "__lang_heap_end")
 	g.emit("ldr x4, [x4]")
 	g.emit("cmp x3, x4")
 	g.emit("bhi .Lalloc_oom")
@@ -241,9 +272,8 @@ func (g *generator) emitAllocRuntime() {
 	g.label(".Lalloc_oom")
 	// SIGABRT-style trap (137 = SIGKILL+128, OOM-killer convention).
 	g.emit("mov x0, #137")
-	g.emit("mov x8, #94")
-	g.emit("svc #0")
-	g.line(".size __lang_alloc, .-__lang_alloc")
+	g.syscallExit()
+	g.sizeDirective("__lang_alloc")
 	g.line(".ltorg")
 }
 
@@ -256,7 +286,7 @@ func (g *generator) emitAllocRuntime() {
 func (g *generator) emitMemcpyRuntime() {
 	g.line("")
 	g.line(".global __lang_memcpy")
-	g.line(".type __lang_memcpy, %function")
+	g.typeDirective("__lang_memcpy")
 	g.label("__lang_memcpy")
 	// r0 = dst (saved for return), r1 = src, r2 = n.
 	g.emit("mov x3, x0") // x3 = dst saved
@@ -277,7 +307,7 @@ func (g *generator) emitMemcpyRuntime() {
 	g.label(".Lmcp_done")
 	g.emit("mov x0, x3")
 	g.emit("ret")
-	g.line(".size __lang_memcpy, .-__lang_memcpy")
+	g.sizeDirective("__lang_memcpy")
 	g.line(".ltorg")
 }
 
@@ -294,7 +324,7 @@ func (g *generator) emitMemcpyRuntime() {
 func (g *generator) emitStrcatRuntime() {
 	g.line("")
 	g.line(".global __lang_strcat")
-	g.line(".type __lang_strcat, %function")
+	g.typeDirective("__lang_strcat")
 	g.label("__lang_strcat")
 	// Frame: 64 bytes — saved fp/lr (16) + 6 callee-save
 	// registers (40 used + 8 pad) rounded up to 64 for sp
@@ -334,7 +364,7 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
-	g.line(".size __lang_strcat, .-__lang_strcat")
+	g.sizeDirective("__lang_strcat")
 	g.line(".ltorg")
 }
 
@@ -372,7 +402,7 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 func (g *generator) emitStrcmpRuntime() {
 	g.line("")
 	g.line(".global __lang_strcmp")
-	g.line(".type __lang_strcmp, %function")
+	g.typeDirective("__lang_strcmp")
 	g.label("__lang_strcmp")
 	// 1. Same pointer? Equal.
 	g.emit("cmp x0, x1")
@@ -408,7 +438,7 @@ func (g *generator) emitStrcmpRuntime() {
 	g.label(".Lscmp_neq")
 	g.emit("mov x0, #1")
 	g.emit("ret")
-	g.line(".size __lang_strcmp, .-__lang_strcmp")
+	g.sizeDirective("__lang_strcmp")
 	g.line(".ltorg")
 }
 
@@ -420,19 +450,19 @@ func (g *generator) emitStrcmpRuntime() {
 func (g *generator) emitRawIntPokesRuntime() {
 	g.line("")
 	g.line(".global __load_i32")
-	g.line(".type __load_i32, %function")
+	g.typeDirective("__load_i32")
 	g.label("__load_i32")
 	g.emit("ldr w0, [x0]")
 	g.emit("ret")
-	g.line(".size __load_i32, .-__load_i32")
+	g.sizeDirective("__load_i32")
 
 	g.line("")
 	g.line(".global __store_i32")
-	g.line(".type __store_i32, %function")
+	g.typeDirective("__store_i32")
 	g.label("__store_i32")
 	g.emit("str w1, [x0]")
 	g.emit("ret")
-	g.line(".size __store_i32, .-__store_i32")
+	g.sizeDirective("__store_i32")
 	g.line(".ltorg")
 }
 
@@ -444,7 +474,7 @@ func (g *generator) emitRawIntPokesRuntime() {
 func (g *generator) emitMemsetRuntime() {
 	g.line("")
 	g.line(".global __memset")
-	g.line(".type __memset, %function")
+	g.typeDirective("__memset")
 	g.label("__memset")
 	// x0 = dst, w1 = byte (low 8 bits), x2 = n.
 	g.emit("and w1, w1, #0xff")
@@ -466,7 +496,7 @@ func (g *generator) emitMemsetRuntime() {
 	g.emit("b .Lmset_tail")
 	g.label(".Lmset_done")
 	g.emit("ret")
-	g.line(".size __memset, .-__memset")
+	g.sizeDirective("__memset")
 	g.line(".ltorg")
 }
 
@@ -476,7 +506,7 @@ func (g *generator) emitMemsetRuntime() {
 func (g *generator) emitAllocU8Runtime() {
 	g.line("")
 	g.line(".global __alloc_u8")
-	g.line(".type __alloc_u8, %function")
+	g.typeDirective("__alloc_u8")
 	g.label("__alloc_u8")
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
@@ -489,7 +519,7 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("ldr x19, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
-	g.line(".size __alloc_u8, .-__alloc_u8")
+	g.sizeDirective("__alloc_u8")
 	g.line(".ltorg")
 }
 
@@ -499,7 +529,7 @@ func (g *generator) emitAllocU8Runtime() {
 func (g *generator) emitStringFromBytesRuntime() {
 	g.line("")
 	g.line(".global string_from_bytes")
-	g.line(".type string_from_bytes, %function")
+	g.typeDirective("string_from_bytes")
 	g.label("string_from_bytes")
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
@@ -520,7 +550,7 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
-	g.line(".size string_from_bytes, .-string_from_bytes")
+	g.sizeDirective("string_from_bytes")
 	g.line(".ltorg")
 }
 
@@ -532,7 +562,7 @@ func (g *generator) emitStringFromBytesRuntime() {
 func (g *generator) emitStrSliceRuntime() {
 	g.line("")
 	g.line(".global __str_slice")
-	g.line(".type __str_slice, %function")
+	g.typeDirective("__str_slice")
 	g.label("__str_slice")
 	// Args: x0 = base, x1 = low, x2 = high.
 	g.emit("stp x29, x30, [sp, #-48]!")
@@ -573,9 +603,8 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("ret")
 	g.label(".Lstrslice_trap")
 	g.emit("mov x0, #134")
-	g.emit("mov x8, #%d", sysExitGroup)
-	g.emit("svc #0")
-	g.line(".size __str_slice, .-__str_slice")
+	g.syscallExit()
+	g.sizeDirective("__str_slice")
 	g.line(".ltorg")
 }
 
@@ -594,7 +623,7 @@ func (g *generator) emitStrSliceRuntime() {
 func (g *generator) emitEnvRuntime() {
 	g.line("")
 	g.line(".global __lang_env")
-	g.line(".type __lang_env, %function")
+	g.typeDirective("__lang_env")
 	g.label("__lang_env")
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
@@ -602,8 +631,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("mov x19, x0")  // x19 = name (string data ptr)
 	g.emit("ldur w20, [x19, #-4]") // x20 = name_len
-	g.emit("adrp x21, __lang_envp")
-	g.emit("add x21, x21, :lo12:__lang_envp")
+	g.adrpAdd("x21", "__lang_envp")
 	g.emit("ldr x21, [x21]")       // x21 = envp
 	g.label(".Lenv_loop")
 	g.emit("ldr x22, [x21]")        // x22 = envp[i]
@@ -660,7 +688,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
-	g.line(".size __lang_env, .-__lang_env")
+	g.sizeDirective("__lang_env")
 	g.line(".ltorg")
 
 	// __memcmp_n_env(a, b, n) — returns 0 if first n bytes
@@ -668,7 +696,7 @@ func (g *generator) emitEnvRuntime() {
 	// `b` is a length-prefixed lang string; `a` is a raw
 	// NUL-terminated C string from envp.
 	g.line("")
-	g.line(".type __memcmp_n_env, %function")
+	g.typeDirective("__memcmp_n_env")
 	g.label("__memcmp_n_env")
 	g.label(".Lmcn_loop")
 	g.emit("cbz x2, .Lmcn_eq")
@@ -684,7 +712,7 @@ func (g *generator) emitEnvRuntime() {
 	g.label(".Lmcn_neq")
 	g.emit("mov x0, #1")
 	g.emit("ret")
-	g.line(".size __memcmp_n_env, .-__memcmp_n_env")
+	g.sizeDirective("__memcmp_n_env")
 	g.line(".ltorg")
 }
 
@@ -698,7 +726,7 @@ func (g *generator) emitEnvRuntime() {
 func (g *generator) emitTcpListenRuntime() {
 	g.line("")
 	g.line(".global __lang_tcp_listen")
-	g.line(".type __lang_tcp_listen, %function")
+	g.typeDirective("__lang_tcp_listen")
 	g.label("__lang_tcp_listen")
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
@@ -745,7 +773,7 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
-	g.line(".size __lang_tcp_listen, .-__lang_tcp_listen")
+	g.sizeDirective("__lang_tcp_listen")
 	g.line(".ltorg")
 }
 
@@ -756,7 +784,7 @@ func (g *generator) emitTcpListenRuntime() {
 func (g *generator) emitTcpAcceptRuntime() {
 	g.line("")
 	g.line(".global __lang_tcp_accept")
-	g.line(".type __lang_tcp_accept, %function")
+	g.typeDirective("__lang_tcp_accept")
 	g.label("__lang_tcp_accept")
 	// x0 = listener fd (already in x0 from caller).
 	g.emit("mov x1, #0") // addr = NULL
@@ -764,7 +792,7 @@ func (g *generator) emitTcpAcceptRuntime() {
 	g.emit("mov x8, #%d", sysAccept)
 	g.emit("svc #0")
 	g.emit("ret")
-	g.line(".size __lang_tcp_accept, .-__lang_tcp_accept")
+	g.sizeDirective("__lang_tcp_accept")
 	g.line(".ltorg")
 }
 
@@ -775,7 +803,7 @@ func (g *generator) emitTcpAcceptRuntime() {
 func (g *generator) emitTcpRecvRuntime() {
 	g.line("")
 	g.line(".global __lang_tcp_recv")
-	g.line(".type __lang_tcp_recv, %function")
+	g.typeDirective("__lang_tcp_recv")
 	g.label("__lang_tcp_recv")
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
@@ -804,7 +832,7 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
-	g.line(".size __lang_tcp_recv, .-__lang_tcp_recv")
+	g.sizeDirective("__lang_tcp_recv")
 	g.line(".ltorg")
 }
 
@@ -814,14 +842,14 @@ func (g *generator) emitTcpRecvRuntime() {
 func (g *generator) emitTcpSendRuntime() {
 	g.line("")
 	g.line(".global __lang_tcp_send")
-	g.line(".type __lang_tcp_send, %function")
+	g.typeDirective("__lang_tcp_send")
 	g.label("__lang_tcp_send")
 	// x0 = fd, x1 = data ptr.
 	g.emit("ldur w2, [x1, #-4]") // x2 = len(data)
 	g.emit("mov x8, #%d", sysWrite)
 	g.emit("svc #0")
 	g.emit("ret")
-	g.line(".size __lang_tcp_send, .-__lang_tcp_send")
+	g.sizeDirective("__lang_tcp_send")
 	g.line(".ltorg")
 }
 
@@ -830,12 +858,12 @@ func (g *generator) emitTcpSendRuntime() {
 func (g *generator) emitTcpCloseRuntime() {
 	g.line("")
 	g.line(".global __lang_tcp_close")
-	g.line(".type __lang_tcp_close, %function")
+	g.typeDirective("__lang_tcp_close")
 	g.label("__lang_tcp_close")
 	g.emit("mov x8, #%d", sysClose)
 	g.emit("svc #0")
 	g.emit("ret")
-	g.line(".size __lang_tcp_close, .-__lang_tcp_close")
+	g.sizeDirective("__lang_tcp_close")
 	g.line(".ltorg")
 }
 
@@ -889,6 +917,19 @@ type generator struct {
 	labelN    int
 	current   *ast.FuncDecl
 	currentIR *ir.Func
+	// darwin enables Mach-O / Apple-style conventions.
+	// Currently affects: (1) the program entry point — Apple
+	// links against `_main` rather than `_start`, so we emit
+	// a `_main` wrapper that calls the user's `main`; (2) the
+	// syscall ABI — macOS BSD uses x16 for the syscall number
+	// and traps with `svc #0x80` instead of `svc #0`; (3) the
+	// syscall numbers themselves (different table from Linux);
+	// (4) `.note.GNU-stack` section directive is Linux-only.
+	// Local symbols (user's `main`, runtime helpers like
+	// `__lang_alloc`) stay with their Linux-style names —
+	// they're internal references the assembler resolves
+	// locally before the object format matters.
+	darwin bool
 
 	// stringLabel / stringOrder mirror the arm32 string-pool
 	// scheme: each unique string literal in the program gets
@@ -963,6 +1004,65 @@ func (g *generator) fresh() int {
 	return g.labelN
 }
 
+// typeDirective + sizeDirective emit ELF-only `.type FUNC,
+// %function` and `.size FUNC, .-FUNC` declarations. Mach-O
+// rejects them — the format doesn't carry per-symbol size or
+// type metadata (the linker derives both from section
+// membership). On Darwin both methods are no-ops.
+func (g *generator) typeDirective(name string) {
+	if g.darwin {
+		return
+	}
+	g.line(fmt.Sprintf(".type %s, %%function", name))
+}
+
+func (g *generator) sizeDirective(name string) {
+	if g.darwin {
+		return
+	}
+	g.line(fmt.Sprintf(".size %s, .-%s", name, name))
+}
+
+// syscallExit emits `exit_group(retval)` (Linux) / `exit(retval)`
+// (Darwin). The exit syscall is what every fatal path in the
+// runtime reaches for — OOM, bounds traps, the OS-handoff at
+// the end of `_start` / `_main`. x0 already holds the exit
+// value; the helper just sets the syscall register and traps.
+func (g *generator) syscallExit() {
+	if g.darwin {
+		g.emit("mov x16, #1") // SYS_exit (Darwin BSD)
+		g.emit("svc #0x80")
+	} else {
+		g.emit("mov x8, #%d", sysExitGroup)
+		g.emit("svc #0")
+	}
+}
+
+// adrpAdd emits the canonical AArch64 PC-relative
+// symbol-address pair, paving over the GNU-vs-Apple
+// relocation-syntax split:
+//
+//	ELF (Linux):
+//	  adrp Xd, sym
+//	  add  Xd, Xd, :lo12:sym
+//
+//	Mach-O (Darwin):
+//	  adrp Xd, sym@PAGE
+//	  add  Xd, Xd, sym@PAGEOFF
+//
+// Both pairs produce the same 64-bit symbol address. Apple's
+// integrated assembler rejects the `:lo12:` form; GNU as
+// rejects `@PAGE` / `@PAGEOFF`.
+func (g *generator) adrpAdd(reg, sym string) {
+	if g.darwin {
+		g.emit("adrp %s, %s@PAGE", reg, sym)
+		g.emit("add %s, %s, %s@PAGEOFF", reg, reg, sym)
+	} else {
+		g.emit("adrp %s, %s", reg, sym)
+		g.emit("add %s, %s, :lo12:%s", reg, reg, sym)
+	}
+}
+
 // emitStartRuntime writes `_start`, the binary's entry under
 // `-nostdlib` on Linux arm64. The kernel hands us a 16-aligned
 // sp at process entry; we trust it (no explicit re-alignment
@@ -972,27 +1072,44 @@ func (g *generator) fresh() int {
 // branch to main, then exit_group with main's return value.
 func (g *generator) emitStartRuntime() {
 	g.line("")
-	g.line(".global _start")
-	g.line(".type _start, %function")
-	g.label("_start")
+	// Entry symbol differs by platform. Linux ELF: `_start`
+	// (the kernel jumps here directly). Mach-O on Darwin:
+	// `_main` — the Apple linker (ld64 / lld's Mach-O backend)
+	// defaults to that as the entry. We don't link against
+	// libSystem's `start` stub, so we play the role of the
+	// crt: capture argv / envp from the kernel-delivered
+	// stack, branch to the user's `main`, exit_group.
+	entry := "_start"
+	if g.darwin {
+		entry = "_main"
+	}
+	g.line(fmt.Sprintf(".global %s", entry))
+	if !g.darwin {
+		// `.type x, %function` is GAS-specific (ELF). Mach-O
+		// assemblers reject it; the Mach-O object format
+		// records function-vs-data via the section, not via
+		// the symbol's `.type`.
+		g.typeDirective(entry)
+	}
+	g.label(entry)
 	// Linux delivers the initial stack as: sp[0]=argc, sp[8..]=
-	// argv[0..argc-1], NULL, envp[0..], NULL, auxv. Capture
-	// argc / argv / envp into .bss globals so args() / env()
-	// can find them later.
+	// argv[0..argc-1], NULL, envp[0..], NULL, auxv. Darwin
+	// uses the same layout shape (argc / argv / envp at the
+	// top of the user stack); the envp walk works the same
+	// way on both targets.
 	if g.usesEnv {
 		g.emit("ldr x0, [sp]")            // argc
 		g.emit("add x1, sp, #8")          // argv = &sp[1]
 		g.emit("add x2, x0, #1")          // argc + 1
 		g.emit("add x2, x1, x2, lsl #3")  // envp = argv + (argc+1)*8
-		g.emit("adrp x3, __lang_envp")
-		g.emit("add x3, x3, :lo12:__lang_envp")
+		g.adrpAdd("x3", "__lang_envp")
 		g.emit("str x2, [x3]")
 	}
 	g.emit("bl main")
-	// exit_group(retval). x0 holds main's return value.
-	g.emit("mov x8, #%d", sysExitGroup)
-	g.emit("svc #0")
-	g.line(".size _start, .-_start")
+	g.syscallExit()
+	if !g.darwin {
+		g.sizeDirective(entry)
+	}
 }
 
 // emitFunc lowers one IR function. Stack frame layout
@@ -1058,7 +1175,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 
 	g.line("")
 	g.line(fmt.Sprintf(".global %s", fn.Name))
-	g.line(fmt.Sprintf(".type %s, %%function", fn.Name))
+	g.typeDirective(fn.Name)
 	g.label(fn.Name)
 	// Prologue:
 	//   stp x29, x30, [sp, #-16]!  ; save fp/lr, sp -= 16
@@ -1112,7 +1229,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.emit("mov sp, x29")
 	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("ret")
-	g.line(fmt.Sprintf(".size %s, .-%s", fn.Name, fn.Name))
+	g.sizeDirective(fn.Name)
 	g.line(".ltorg")
 	return nil
 }
@@ -1233,8 +1350,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// `adrp` + `add :lo12:` pair — the canonical AArch64
 		// PC-relative addressing for absolute symbol values.
 		lbl := g.internString(op.Str)
-		g.emit("adrp x0, %s", lbl)
-		g.emit("add x0, x0, :lo12:%s", lbl)
+		g.adrpAdd("x0", lbl)
 		g.push()
 
 	case ir.OpConstFunc:
@@ -1244,8 +1360,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// assembler resolves `=name` into a literal-pool entry
 		// holding the symbol's absolute address. OpCallIndirect
 		// then `blr` to it.
-		g.emit("adrp x0, %s", op.Str)
-		g.emit("add x0, x0, :lo12:%s", op.Str)
+		g.adrpAdd("x0", op.Str)
 		g.push()
 
 	case ir.OpReturn:

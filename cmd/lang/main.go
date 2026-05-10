@@ -55,7 +55,7 @@ func absPath(p string) string {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm32", "code-generation backend: arm32 (default), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
+	target := flag.String("target", "arm32", "code-generation backend: arm32 (default), arm64 (Linux), arm64-darwin (native Apple Silicon macOS), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
 	cc := flag.String("cc", "arm-linux-gnueabihf-gcc", "ARM cross-compiler used to link when -o or --run is set (arm32 only)")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it under qemu-arm (arm32 only)")
 	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
@@ -212,23 +212,28 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 		}
 		return 0, nil
 	}
-	// arm64 (aarch64): Linux ELF binaries for arm64 hosts.
-	// Apple Silicon Macs run these via Docker / OrbStack /
-	// UTM containers; servers (Raspberry Pi 4+ in 64-bit mode,
-	// AWS Graviton, Android) run them natively. Native arm64
-	// macOS (Mach-O binaries) is a separate target waiting on
-	// the syscall ABI + Mach-O emit work.
-	if target == "arm64" {
-		asm, err := arm64codegen.Emit(prog, info)
+	// arm64 (aarch64): Linux ELF for arm64 hosts (Raspberry
+	// Pi 4+, AWS Graviton, Android), or Mach-O for native
+	// Apple Silicon Macs (`-target arm64-darwin`). Macs can
+	// also run Linux arm64 binaries via Docker / OrbStack /
+	// UTM containers.
+	if target == "arm64" || target == "arm64-darwin" {
+		darwin := target == "arm64-darwin"
+		asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin})
 		if err != nil {
 			return 1, err
 		}
-		// Replace arm32-default cc / qemu with arm64 defaults
-		// when the user didn't override them. The flag parser
-		// can't see target before parsing finishes, so we do
-		// the late-bound default-replacement here.
+		// Replace arm32-default cc / qemu with target-aware
+		// defaults when the user didn't override them. arm64
+		// Linux uses aarch64-linux-gnu-gcc + qemu-aarch64;
+		// arm64 Darwin cross-compiles via clang with the
+		// aarch64-apple-darwin triple + lld's Mach-O backend.
 		if cc == "arm-linux-gnueabihf-gcc" {
-			cc = "aarch64-linux-gnu-gcc"
+			if darwin {
+				cc = "clang"
+			} else {
+				cc = "aarch64-linux-gnu-gcc"
+			}
 		}
 		if qemu == "qemu-arm" {
 			qemu = "qemu-aarch64"
@@ -255,16 +260,27 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 				os.Remove(cleanupBin)
 			}
 		}()
-		if err := link(asm, binPath, cc, debug); err != nil {
+		if darwin {
+			if err := linkDarwin(asm, binPath, cc); err != nil {
+				return 1, err
+			}
+		} else if err := link(asm, binPath, cc, debug); err != nil {
 			return 1, err
 		}
 		if !runIt {
 			return 0, nil
 		}
+		if darwin {
+			// arm64 Darwin binaries run natively on Apple
+			// Silicon Macs; qemu-aarch64 emulates Linux
+			// arm64 only and can't load Mach-O. Tell the
+			// user.
+			return 1, fmt.Errorf("--run is not supported for -target arm64-darwin (Mach-O binaries need an Apple Silicon Mac to execute; the output at %q is ready to run there)", binPath)
+		}
 		return execUnderQemu(qemu, binPath, progArgs)
 	}
 	if target != "arm32" {
-		return 1, fmt.Errorf("unknown target %q (want arm32, arm64, wasm, or wasi-http)", target)
+		return 1, fmt.Errorf("unknown target %q (want arm32, arm64, arm64-darwin, wasm, or wasi-http)", target)
 	}
 
 	emitOpts := codegen.Options{}
@@ -309,6 +325,47 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 		return 0, nil
 	}
 	return execUnderQemu(qemu, binPath, progArgs)
+}
+
+// linkDarwin writes asm to a temp .s file and invokes clang with
+// the aarch64-apple-darwin triple + lld's Mach-O backend to
+// produce a native arm64 macOS binary at outPath. Works on both
+// Linux dev hosts (cross-compiling) and Macs natively as long
+// as clang + lld are installed. The output is a full Mach-O
+// executable that runs on Apple Silicon Macs without further
+// processing.
+func linkDarwin(asm, outPath, cc string) error {
+	if _, err := exec.LookPath(cc); err != nil {
+		return fmt.Errorf("compiler %q not found on PATH (override with -cc): %w", cc, err)
+	}
+	tmpDir, err := os.MkdirTemp("", "lang-build-*")
+	if err != nil {
+		return err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			os.RemoveAll(tmpDir)
+		}
+	}()
+	asmPath := filepath.Join(tmpDir, "prog.s")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		return err
+	}
+	args := []string{
+		"--target=arm64-apple-darwin",
+		"-fuse-ld=lld",
+		"-nostdlib",
+		"-Wl,-arch,arm64",
+		asmPath,
+		"-o", outPath,
+	}
+	cmd := exec.Command(cc, args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		keep = true
+		return fmt.Errorf("%s failed: %w\n%s\n(temporary assembly retained at %s)", cc, err, out, asmPath)
+	}
+	return nil
 }
 
 // link writes asm to a temp .s file and invokes the cross-compiler to
