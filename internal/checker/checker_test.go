@@ -424,6 +424,45 @@ function pick(): i32 {
 	}
 }
 
+// Typed numeric literal suffixes resolve to concrete types at
+// parse time. The checker stamps NumberLit/FloatLit Width based
+// on the suffix so binary-op + assignment paths treat them as
+// non-polymorphic, removing the need for `as` casts in
+// expressions like `Circle(r: f32) when r <= 0f32 =>`.
+func TestNumericLiteralSuffixesTypecheck(t *testing.T) {
+	for _, src := range []string{
+		// var-init context confirms suffix-stamped literals carry
+		// the right concrete type without any `as` cast.
+		`function f(): i32 { var x: i64 = 42i64; return 0; }`,
+		`function f(): i32 { var x: u8 = 7u8; return 0; }`,
+		`function f(): i32 { var x: f64 = 1.5f64; return 0; }`,
+		// f32 suffix on integer-shaped text → float literal.
+		`function f(): i32 { var x: f32 = 42f32; return 0; }`,
+		// Compares against suffixed literal — no `as` cast needed.
+		`enum Shape { Circle(f32), Square(f32) }
+function classify(s: Shape): i32 {
+	match (s) {
+		Circle(r) when r <= 0f32 => { return 1; },
+		Circle(_)                => { return 2; },
+		Square(_)                => { return 3;}
+	}
+	return 0;
+}`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("unexpected error in %q: %v", src, err)
+		}
+	}
+}
+
+// Suffix mismatch surfaces as an assignment error, not a silent
+// truncation.
+func TestNumericLiteralSuffixesRejectMismatch(t *testing.T) {
+	if err := checkSource(t, `function f(): i32 { var x: i32 = 42i64; return 0; }`); err == nil {
+		t.Error("expected error: assigning i64 literal to i32 var")
+	}
+}
+
 // `arr.push(v)` is a generic method on T[]. The receiver's Elem
 // flows into the registered ParamType("T") signature, so the
 // argument and return types substitute correctly.

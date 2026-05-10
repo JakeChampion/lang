@@ -2932,6 +2932,43 @@ function main(): i32 {
 	}
 }
 
+// Typed numeric literal suffixes resolve to concrete types at
+// parse time. End-to-end: an `i64` literal value survives the
+// full pipeline without an `as i64` cast, and the wasm output
+// uses `i64.const`.
+func TestWASMNumericLiteralSuffixI64(t *testing.T) {
+	src := `function main(): i32 {
+    var n: i64 = 1000000i64;
+    var m: i64 = n + 23i64;
+    if (m == 1000023i64) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (i64 arithmetic via suffix)", got)
+	}
+}
+
+// f32 suffix on a guard literal removes the `as f32` cast that
+// the doc-roadmap flagged as noise.
+func TestWASMNumericLiteralSuffixGuardF32(t *testing.T) {
+	src := `enum Shape { Circle(f32), Square(f32) }
+function classify(s: Shape): i32 {
+    match (s) {
+        Circle(r) when r <= 0f32 => { return 1; },
+        Circle(_)                => { return 2; },
+        Square(_)                => { return 3; }
+    }
+    return 0;
+}
+function main(): i32 {
+    var c: Shape = Circle(0.5f32);
+    return classify(c);
+}`
+	if got := runWasm(t, src); got != 2 {
+		t.Errorf("got %d, want 2 (positive-radius Circle hits second arm)", got)
+	}
+}
+
 // `arr.push(v)` is a generic method on T[] that lowers to the
 // per-stride append helper. For 4-byte-stride T (i32, f32, all
 // pointer / heap-ref types: string, struct, enum, T[]) it routes

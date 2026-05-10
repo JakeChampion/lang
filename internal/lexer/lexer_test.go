@@ -227,3 +227,44 @@ func TestQuestionMarkPunct(t *testing.T) {
 		t.Errorf("got %v, want Punct %q", toks[0], "?")
 	}
 }
+
+func TestNumericLiteralSuffixes(t *testing.T) {
+	cases := []struct {
+		src    string
+		kind   Kind
+		text   string
+		suffix string
+	}{
+		{"42", Number, "42", ""},
+		{"42i64", Number, "42", "i64"},
+		{"7u8", Number, "7", "u8"},
+		{"0u32", Number, "0", "u32"},
+		{"1.5", Float, "1.5", ""},
+		{"1.5f64", Float, "1.5", "f64"},
+		{"42f32", Float, "42", "f32"},
+	}
+	for _, c := range cases {
+		toks, _, err := Tokenize(c.src)
+		if err != nil {
+			t.Errorf("%s: tokenize error: %v", c.src, err)
+			continue
+		}
+		// First token is the literal; second should be EOF.
+		if toks[0].Kind != c.kind || toks[0].Text != c.text || toks[0].Suffix != c.suffix {
+			t.Errorf("%s: got %v Text=%q Suffix=%q, want %v Text=%q Suffix=%q",
+				c.src, toks[0].Kind, toks[0].Text, toks[0].Suffix, c.kind, c.text, c.suffix)
+		}
+	}
+}
+
+func TestNumericLiteralRejectsBadSuffix(t *testing.T) {
+	for _, src := range []string{
+		"42i33",
+		"42i", // truncated suffix
+		"1.5i32",
+	} {
+		if _, _, err := Tokenize(src); err == nil {
+			t.Errorf("%s: expected lex error", src)
+		}
+	}
+}

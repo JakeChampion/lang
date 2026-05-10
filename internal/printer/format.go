@@ -579,17 +579,29 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte(')')
 		}
 	case *ast.NumberLit:
+		// A non-zero Width on a NumberLit in formatter input means
+		// the parser saw a typed suffix (`42i64`, `7u8`). Preserve
+		// it on round-trip — the format pass runs pre-checker, so
+		// the only source of Width here is user authorship.
+		suffix := ""
+		if x.Width != 0 {
+			if x.IsUnsigned {
+				suffix = fmt.Sprintf("u%d", x.Width)
+			} else {
+				suffix = fmt.Sprintf("i%d", x.Width)
+			}
+		}
 		if x.Value < 0 {
 			needsParens := parentPrec >= precUnary
 			if needsParens {
 				f.b.WriteByte('(')
 			}
-			fmt.Fprintf(&f.b, "-%d", -x.Value)
+			fmt.Fprintf(&f.b, "-%d%s", -x.Value, suffix)
 			if needsParens {
 				f.b.WriteByte(')')
 			}
 		} else {
-			fmt.Fprintf(&f.b, "%d", x.Value)
+			fmt.Fprintf(&f.b, "%d%s", x.Value, suffix)
 		}
 	case *ast.BoolLit:
 		if x.Value {
@@ -607,6 +619,14 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if !strings.ContainsAny(s, ".eE") {
 			s += ".0"
 		}
+		// Preserve typed-suffix authorship the parser stamped:
+		// non-zero Width on input means the user wrote `1.5f64`
+		// (or `42f32` — float-suffixed integer text) and we
+		// should round-trip the suffix.
+		suffix := ""
+		if x.Width != 0 {
+			suffix = fmt.Sprintf("f%d", x.Width)
+		}
 		if neg {
 			needsParens := parentPrec >= precUnary
 			if needsParens {
@@ -614,11 +634,13 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			}
 			f.b.WriteByte('-')
 			f.b.WriteString(s)
+			f.b.WriteString(suffix)
 			if needsParens {
 				f.b.WriteByte(')')
 			}
 		} else {
 			f.b.WriteString(s)
+			f.b.WriteString(suffix)
 		}
 	case *ast.StringLit:
 		f.b.WriteByte('"')
