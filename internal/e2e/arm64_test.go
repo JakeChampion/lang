@@ -424,15 +424,22 @@ func TestArm64DarwinBuilds(t *testing.T) {
 			// unnecessary lld dependency. Cross from Linux
 			// requires lld because the host's clang defaults
 			// to ELF.
+			// Shrink __PAGEZERO from its 4 GiB default to a
+			// single page on both code paths: the lang prelude
+			// stores pointers as i32 so __lang_alloc's mmap
+			// MAP_FIXED hint at 0x10000000 must lie outside
+			// PAGEZERO. cmd/lang/main.go's linkDarwin keeps
+			// the same flag for parity.
 			var args []string
 			if native {
-				args = []string{"-nostdlib", asmPath, "-o", binPath}
+				args = []string{"-nostdlib", "-Wl,-pagezero_size,0x4000", asmPath, "-o", binPath}
 			} else {
 				args = []string{
 					"--target=arm64-apple-darwin",
 					"-fuse-ld=lld",
 					"-nostdlib",
 					"-Wl,-arch,arm64",
+					"-Wl,-pagezero_size,0x4000",
 					asmPath,
 					"-o", binPath,
 				}
