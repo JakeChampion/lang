@@ -33,9 +33,19 @@ import (
 )
 
 // Linux arm64 syscall numbers from the asm-generic table.
-// Only what the runtime needs at this stage.
+// Only what the runtime needs at this stage. arm32 uses the
+// older legacy EABI table with completely different numbers
+// (e.g. write=4 vs arm64's 64); we don't share constants
+// between backends.
 const (
+	sysRead      = 63
+	sysWrite     = 64
+	sysClose     = 57
 	sysExitGroup = 94
+	sysSocket    = 198
+	sysBind      = 200
+	sysListen    = 201
+	sysAccept    = 202
 )
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
@@ -88,6 +98,25 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemset {
 		g.emitMemsetRuntime()
 	}
+	if g.usesTcp {
+		g.emitTcpListenRuntime()
+		g.emitTcpAcceptRuntime()
+		g.emitTcpRecvRuntime()
+		g.emitTcpSendRuntime()
+		g.emitTcpCloseRuntime()
+	}
+	if g.usesStrSlice {
+		g.emitStrSliceRuntime()
+	}
+	if g.usesEnv {
+		g.emitEnvRuntime()
+	}
+	if g.usesAllocU8 {
+		g.emitAllocU8Runtime()
+	}
+	if g.usesStringFromBytes {
+		g.emitStringFromBytesRuntime()
+	}
 	g.emitDataSections()
 	g.line(`.section .note.GNU-stack,"",%progbits`)
 	return g.out.String(), nil
@@ -111,14 +140,21 @@ func (g *generator) emitDataSections() {
 		g.label(g.stringLabel[s])
 		g.line("\t.asciz " + escapeForGAS(s))
 	}
-	if g.usesAlloc {
+	if g.usesAlloc || g.usesEnv {
 		g.line("")
 		g.line(`.section .bss`)
+	}
+	if g.usesAlloc {
 		g.line(`.align 3`) // 8-byte alignment for the cursor pair
 		g.label("__lang_heap_ptr")
 		g.line(`	.quad 0`)
 		g.line(`.align 3`)
 		g.label("__lang_heap_end")
+		g.line(`	.quad 0`)
+	}
+	if g.usesEnv {
+		g.line(`.align 3`)
+		g.label("__lang_envp")
 		g.line(`	.quad 0`)
 	}
 }
@@ -434,6 +470,375 @@ func (g *generator) emitMemsetRuntime() {
 	g.line(".ltorg")
 }
 
+// emitAllocU8Runtime emits `__alloc_u8(n)` — allocates a
+// fresh length-prefixed `u8[]` of n bytes. Returns the data
+// pointer (header + 4); length at `[data - 4]`.
+func (g *generator) emitAllocU8Runtime() {
+	g.line("")
+	g.line(".global __alloc_u8")
+	g.line(".type __alloc_u8, %function")
+	g.label("__alloc_u8")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("mov x19, x0")     // x19 = n (callee-save, survives bl)
+	g.emit("add x0, x0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("str w19, [x0]")   // length prefix
+	g.emit("add x0, x0, #4")  // return data ptr
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.line(".size __alloc_u8, .-__alloc_u8")
+	g.line(".ltorg")
+}
+
+// emitStringFromBytesRuntime emits `string_from_bytes(bs)` —
+// copy a `u8[]` payload into a fresh length-prefixed string.
+// Round-trip companion to `s.bytes()`.
+func (g *generator) emitStringFromBytesRuntime() {
+	g.line("")
+	g.line(".global string_from_bytes")
+	g.line(".type string_from_bytes, %function")
+	g.label("string_from_bytes")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
+	g.emit("mov x19, x0")           // x19 = bs
+	g.emit("ldur w20, [x19, #-4]")  // x20 = length
+	g.emit("add x0, x20, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("str w20, [x0]")
+	g.emit("mov x21, x0")           // x21 = alloc base (callee-save)
+	g.emit("add x0, x0, #4")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __lang_memcpy")
+	g.emit("add x0, x21, #4")       // return data ptr
+	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.line(".size string_from_bytes, .-string_from_bytes")
+	g.line(".ltorg")
+}
+
+// emitStrSliceRuntime emits `__str_slice(base, low, high)` —
+// allocates a fresh length-prefixed string holding
+// `base[low..high]`. Bounds-traps on `low < 0`, `high >
+// src_len`, or `low > high`. Used by every `s[a:b]` slice
+// expression on a string.
+func (g *generator) emitStrSliceRuntime() {
+	g.line("")
+	g.line(".global __str_slice")
+	g.line(".type __str_slice, %function")
+	g.label("__str_slice")
+	// Args: x0 = base, x1 = low, x2 = high.
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("mov x19, x0") // x19 = base
+	g.emit("mov x20, x1") // x20 = low
+	g.emit("mov x21, x2") // x21 = high
+	g.emit("ldur w22, [x19, #-4]") // x22 = src_len
+	// low < 0 → trap
+	g.emit("cmp x20, #0")
+	g.emit("blt .Lstrslice_trap")
+	// high > src_len → trap (unsigned)
+	g.emit("cmp x21, x22")
+	g.emit("bhi .Lstrslice_trap")
+	// low > high → trap
+	g.emit("cmp x20, x21")
+	g.emit("bgt .Lstrslice_trap")
+	// new_len = high - low; alloc(new_len + 4).
+	g.emit("sub x0, x21, x20")
+	g.emit("add x0, x0, #4")
+	g.emit("bl __lang_alloc")
+	// x0 = alloc base. Write length prefix.
+	g.emit("sub w3, w21, w20")     // new_len (i32)
+	g.emit("str w3, [x0]")
+	// memcpy(out + 4, base + low, new_len).
+	g.emit("add x4, x0, #4")       // dst
+	g.emit("add x1, x19, x20")     // src = base + low
+	g.emit("mov x2, x3")           // n
+	g.emit("mov x19, x0")          // stash alloc base in x19 across bl
+	g.emit("mov x0, x4")
+	g.emit("bl __lang_memcpy")
+	g.emit("add x0, x19, #4")      // return data ptr (alloc base + 4)
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.label(".Lstrslice_trap")
+	g.emit("mov x0, #134")
+	g.emit("mov x8, #%d", sysExitGroup)
+	g.emit("svc #0")
+	g.line(".size __str_slice, .-__str_slice")
+	g.line(".ltorg")
+}
+
+// emitEnvRuntime emits `__lang_env(name)` — walks the envp
+// vector for `NAME=VALUE` and returns the value as a fresh
+// lang Option[string]. None is the heap-allocated Option
+// variant (tag=1); Some carries the value pointer in payload+0.
+//
+// First-PR scope returns a raw string pointer (Some(value) as
+// just the value's data ptr) — matches the simpler shape
+// the synthesised `__port_from_env` expects. The full
+// Option enum encoding (tag + payload) on arm64 will fall
+// out from existing enum lowering work; for now we encode
+// Option[string] manually: a 8-byte heap object [tag, ptr],
+// where tag=0 = Some, tag=1 = None.
+func (g *generator) emitEnvRuntime() {
+	g.line("")
+	g.line(".global __lang_env")
+	g.line(".type __lang_env, %function")
+	g.label("__lang_env")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("mov x19, x0")  // x19 = name (string data ptr)
+	g.emit("ldur w20, [x19, #-4]") // x20 = name_len
+	g.emit("adrp x21, __lang_envp")
+	g.emit("add x21, x21, :lo12:__lang_envp")
+	g.emit("ldr x21, [x21]")       // x21 = envp
+	g.label(".Lenv_loop")
+	g.emit("ldr x22, [x21]")        // x22 = envp[i]
+	g.emit("cbz x22, .Lenv_none")   // NULL terminator → return None
+	// Compare first name_len bytes of envp[i] with name, then check '='.
+	g.emit("mov x0, x22")           // candidate envp entry
+	g.emit("mov x1, x19")           // name
+	g.emit("mov x2, x20")           // n
+	g.emit("bl __memcmp_n_env")
+	g.emit("cbnz w0, .Lenv_next")   // not equal
+	// Check that byte at offset name_len is '='.
+	g.emit("ldrb w0, [x22, x20]")
+	g.emit("cmp w0, #61")           // '='
+	g.emit("bne .Lenv_next")
+	// Found. Build a fresh lang string holding the value after '='.
+	g.emit("add x0, x22, x20")
+	g.emit("add x0, x0, #1")        // x0 = start of value (NUL-terminated)
+	g.emit("mov x1, x0")
+	g.label(".Lenv_strlen")
+	g.emit("ldrb w2, [x1]")
+	g.emit("cbz w2, .Lenv_strlen_done")
+	g.emit("add x1, x1, #1")
+	g.emit("b .Lenv_strlen")
+	g.label(".Lenv_strlen_done")
+	g.emit("sub x2, x1, x0")        // x2 = value length
+	g.emit("mov x19, x0")           // stash value src ptr
+	g.emit("mov x20, x2")           // stash value len
+	g.emit("add x0, x2, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("str w20, [x0]")          // length prefix
+	g.emit("mov x22, x0")           // stash alloc base
+	g.emit("add x0, x0, #4")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __lang_memcpy")
+	// Build Option[string]: 8-byte heap [tag=0, value_ptr].
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")          // tag = 0 (Some)
+	g.emit("add x1, x22, #4")        // value data ptr
+	g.emit("str x1, [x0, #4]")
+	g.emit("b .Lenv_done")
+	g.label(".Lenv_next")
+	g.emit("add x21, x21, #8")
+	g.emit("b .Lenv_loop")
+	g.label(".Lenv_none")
+	// None: heap [tag=1].
+	g.emit("mov x0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.label(".Lenv_done")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.line(".size __lang_env, .-__lang_env")
+	g.line(".ltorg")
+
+	// __memcmp_n_env(a, b, n) — returns 0 if first n bytes
+	// of `a` equal first n bytes of `b`, non-zero otherwise.
+	// `b` is a length-prefixed lang string; `a` is a raw
+	// NUL-terminated C string from envp.
+	g.line("")
+	g.line(".type __memcmp_n_env, %function")
+	g.label("__memcmp_n_env")
+	g.label(".Lmcn_loop")
+	g.emit("cbz x2, .Lmcn_eq")
+	g.emit("ldrb w3, [x0], #1")
+	g.emit("ldrb w4, [x1], #1")
+	g.emit("cmp w3, w4")
+	g.emit("bne .Lmcn_neq")
+	g.emit("sub x2, x2, #1")
+	g.emit("b .Lmcn_loop")
+	g.label(".Lmcn_eq")
+	g.emit("mov x0, #0")
+	g.emit("ret")
+	g.label(".Lmcn_neq")
+	g.emit("mov x0, #1")
+	g.emit("ret")
+	g.line(".size __memcmp_n_env, .-__memcmp_n_env")
+	g.line(".ltorg")
+}
+
+// emitTcpListenRuntime emits `__lang_tcp_listen(port)` —
+// opens a TCP listening socket on 0.0.0.0:port. Returns the
+// listener fd on success, or `-errno` on failure. C-style
+// API; callers check `if (fd < 0)`. Mirrors arm32's shape.
+//
+// Steps: socket(AF_INET, SOCK_STREAM, 0); bind to a stack-
+// allocated sockaddr_in; listen with backlog=128.
+func (g *generator) emitTcpListenRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_listen")
+	g.line(".type __lang_tcp_listen, %function")
+	g.label("__lang_tcp_listen")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("mov x19, x0") // x19 = port (callee-save across calls)
+	// socket(AF_INET=2, SOCK_STREAM=1, 0)
+	g.emit("mov x0, #2")
+	g.emit("mov x1, #1")
+	g.emit("mov x2, #0")
+	g.emit("mov x8, #%d", sysSocket)
+	g.emit("svc #0")
+	g.emit("cmp x0, #0")
+	g.emit("blt .Ltcp_lst_err")
+	g.emit("mov x20, x0") // x20 = listener fd
+	// Build sockaddr_in on the stack (16 bytes).
+	g.emit("sub sp, sp, #16")
+	g.emit("mov w0, #2")
+	g.emit("strh w0, [sp]")      // sin_family
+	g.emit("rev16 w0, w19")      // htons(port)
+	g.emit("strh w0, [sp, #2]")
+	g.emit("str wzr, [sp, #4]")  // sin_addr = 0
+	g.emit("str xzr, [sp, #8]")  // sin_zero[0..7]
+	// bind(fd, sa, 16)
+	g.emit("mov x0, x20")
+	g.emit("mov x1, sp")
+	g.emit("mov x2, #16")
+	g.emit("mov x8, #%d", sysBind)
+	g.emit("svc #0")
+	g.emit("add sp, sp, #16")    // pop sockaddr_in
+	g.emit("cmp x0, #0")
+	g.emit("blt .Ltcp_lst_err")
+	// listen(fd, 128)
+	g.emit("mov x0, x20")
+	g.emit("mov x1, #128")
+	g.emit("mov x8, #%d", sysListen)
+	g.emit("svc #0")
+	g.emit("cmp x0, #0")
+	g.emit("blt .Ltcp_lst_err")
+	g.emit("mov x0, x20")        // return fd
+	g.emit("b .Ltcp_lst_done")
+	g.label(".Ltcp_lst_err")
+	// x0 holds -errno from the failed syscall.
+	g.label(".Ltcp_lst_done")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.line(".size __lang_tcp_listen, .-__lang_tcp_listen")
+	g.line(".ltorg")
+}
+
+// emitTcpAcceptRuntime emits `__lang_tcp_accept(fd)` —
+// accepts a connection on the listener fd, returns the new
+// connection fd or `-errno`. Passes NULL addr/addrlen
+// out-params; callers don't need the peer address.
+func (g *generator) emitTcpAcceptRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_accept")
+	g.line(".type __lang_tcp_accept, %function")
+	g.label("__lang_tcp_accept")
+	// x0 = listener fd (already in x0 from caller).
+	g.emit("mov x1, #0") // addr = NULL
+	g.emit("mov x2, #0") // addrlen = NULL
+	g.emit("mov x8, #%d", sysAccept)
+	g.emit("svc #0")
+	g.emit("ret")
+	g.line(".size __lang_tcp_accept, .-__lang_tcp_accept")
+	g.line(".ltorg")
+}
+
+// emitTcpRecvRuntime emits `__lang_tcp_recv(fd, max)` —
+// reads up to `max` bytes from the socket fd, returns a
+// fresh length-prefixed lang string with the bytes read.
+// On error or EOF the returned string has length 0.
+func (g *generator) emitTcpRecvRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_recv")
+	g.line(".type __lang_tcp_recv, %function")
+	g.label("__lang_tcp_recv")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("mov x19, x0") // x19 = fd
+	g.emit("mov x20, x1") // x20 = max
+	// Allocate `max + 5` bytes (4 prefix + max data + 1 NUL).
+	g.emit("add x0, x20, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add x21, x0, #4")
+	g.emit("str x21, [sp]")      // stash data ptr in a scratch slot
+	// read(fd, data, max).
+	g.emit("mov x0, x19")
+	g.emit("mov x1, x21")
+	g.emit("mov x2, x20")
+	g.emit("mov x8, #%d", sysRead)
+	g.emit("svc #0")
+	// Clamp to ≥ 0 — read returns -errno or 0 on EOF.
+	g.emit("cmp x0, #0")
+	g.emit("csel x0, x0, xzr, ge")
+	g.emit("stur w0, [x21, #-4]") // length prefix
+	// Trailing NUL at data + n.
+	g.emit("add x1, x21, x0")
+	g.emit("strb wzr, [x1]")
+	g.emit("mov x0, x21")         // return data ptr
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.line(".size __lang_tcp_recv, .-__lang_tcp_recv")
+	g.line(".ltorg")
+}
+
+// emitTcpSendRuntime emits `__lang_tcp_send(fd, data)` —
+// writes the entire string to the fd via `write(2)`. Returns
+// the syscall result (bytes written or `-errno`).
+func (g *generator) emitTcpSendRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_send")
+	g.line(".type __lang_tcp_send, %function")
+	g.label("__lang_tcp_send")
+	// x0 = fd, x1 = data ptr.
+	g.emit("ldur w2, [x1, #-4]") // x2 = len(data)
+	g.emit("mov x8, #%d", sysWrite)
+	g.emit("svc #0")
+	g.emit("ret")
+	g.line(".size __lang_tcp_send, .-__lang_tcp_send")
+	g.line(".ltorg")
+}
+
+// emitTcpCloseRuntime emits `__lang_tcp_close(fd)` — thin
+// wrapper around `close(2)`. Returns 0 or `-errno`.
+func (g *generator) emitTcpCloseRuntime() {
+	g.line("")
+	g.line(".global __lang_tcp_close")
+	g.line(".type __lang_tcp_close, %function")
+	g.label("__lang_tcp_close")
+	g.emit("mov x8, #%d", sysClose)
+	g.emit("svc #0")
+	g.emit("ret")
+	g.line(".size __lang_tcp_close, .-__lang_tcp_close")
+	g.line(".ltorg")
+}
+
 // internString returns a unique .rodata label for s, allocating
 // a new one the first time we see this exact string and reusing
 // it on repeats.
@@ -504,6 +909,26 @@ type generator struct {
 	usesStrcat  bool
 	usesMemcpy  bool
 	usesStrcmp  bool
+	// usesTcp pulls in the full TCP socket runtime
+	// (__lang_tcp_listen / __lang_tcp_accept / __lang_tcp_recv
+	// / __lang_tcp_send / __lang_tcp_close). Gated on call-
+	// site reachability so non-server programs don't pay for
+	// the socket boilerplate.
+	usesTcp bool
+	// usesStrSlice pulls in `__str_slice(base, low, high)` —
+	// a length-prefix-aware substring extractor that
+	// allocates a fresh string. The IR's `s[a:b]` slice
+	// expression lowers to OpCallDirect{__str_slice}.
+	usesStrSlice bool
+	// usesEnv pulls in `__lang_env(name)` — walks envp for a
+	// NAME=VALUE match. Used by the synthesised auto-main's
+	// `__port_from_env("PORT", 8080)` call.
+	usesEnv bool
+	// usesAllocU8 + usesStringFromBytes mirror the arm32 flags
+	// from PR #230 — string-handling prelude helpers that
+	// allocate length-prefixed u8[] / string buffers.
+	usesAllocU8         bool
+	usesStringFromBytes bool
 	// usesRawIntPokes tracks whether the program calls
 	// __load_i32 / __store_i32 — primitives the lang Map
 	// runtime uses for its mixed bucket-index + entries
@@ -550,6 +975,19 @@ func (g *generator) emitStartRuntime() {
 	g.line(".global _start")
 	g.line(".type _start, %function")
 	g.label("_start")
+	// Linux delivers the initial stack as: sp[0]=argc, sp[8..]=
+	// argv[0..argc-1], NULL, envp[0..], NULL, auxv. Capture
+	// argc / argv / envp into .bss globals so args() / env()
+	// can find them later.
+	if g.usesEnv {
+		g.emit("ldr x0, [sp]")            // argc
+		g.emit("add x1, sp, #8")          // argv = &sp[1]
+		g.emit("add x2, x0, #1")          // argc + 1
+		g.emit("add x2, x1, x2, lsl #3")  // envp = argv + (argc+1)*8
+		g.emit("adrp x3, __lang_envp")
+		g.emit("add x3, x3, :lo12:__lang_envp")
+		g.emit("str x2, [x3]")
+	}
 	g.emit("bl main")
 	// exit_group(retval). x0 holds main's return value.
 	g.emit("mov x8, #%d", sysExitGroup)
@@ -797,6 +1235,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		lbl := g.internString(op.Str)
 		g.emit("adrp x0, %s", lbl)
 		g.emit("add x0, x0, :lo12:%s", lbl)
+		g.push()
+
+	case ir.OpConstFunc:
+		// Function values materialise as the direct code
+		// address of the named function. AArch64 has no
+		// funcref table abstraction (unlike wasm); the
+		// assembler resolves `=name` into a literal-pool entry
+		// holding the symbol's absolute address. OpCallIndirect
+		// then `blr` to it.
+		g.emit("adrp x0, %s", op.Str)
+		g.emit("add x0, x0, :lo12:%s", op.Str)
 		g.push()
 
 	case ir.OpReturn:
@@ -1232,6 +1681,24 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("bl __lang_strcat")
 		g.push()
 
+	case ir.OpCallIndirect:
+		// Function-value call: the IR emitted the function-
+		// pointer immediately before the call op (via
+		// OpLoadLocal / OpConstFunc), so the pointer is on top
+		// of the stack and args are below it in left-to-right
+		// order. arm64 uses `blr x16` (branch-with-link
+		// register) — x16 is a caller-save scratch.
+		argc := int(op.I32)
+		if argc > regArgs {
+			return fmt.Errorf("arm64: more than %d call args not yet supported (got %d for OpCallIndirect)", regArgs, argc)
+		}
+		g.emit("ldr x16, [sp], #16") // x16 = function pointer
+		for i := argc - 1; i >= 0; i-- {
+			g.emit("ldr x%d, [sp], #16", i)
+		}
+		g.emit("blr x16")
+		g.push()
+
 	case ir.OpCallDirect:
 		// AAPCS64: load args 0..n-1 from the operand stack into
 		// x0..x{n-1} (rightmost-on-top, so we pop in reverse
@@ -1256,6 +1723,30 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRawIntPokes = true
 		case "__memset":
 			g.usesMemset = true
+		case "__alloc_u8":
+			g.usesAllocU8 = true
+			g.usesAlloc = true
+		case "string_from_bytes":
+			g.usesStringFromBytes = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		case "tcp_listen":
+			target = "__lang_tcp_listen"
+			g.usesTcp = true
+			g.usesAlloc = true
+		case "tcp_accept":
+			target = "__lang_tcp_accept"
+			g.usesTcp = true
+		case "tcp_recv":
+			target = "__lang_tcp_recv"
+			g.usesTcp = true
+			g.usesAlloc = true
+		case "tcp_send":
+			target = "__lang_tcp_send"
+			g.usesTcp = true
+		case "tcp_close":
+			target = "__lang_tcp_close"
+			g.usesTcp = true
 		// Map / MapIter — same alias rewrites as arm32_ops.go
 		// (see PR #234). The lang Map runtime lives entirely
 		// in the lang prelude under `_impl`-suffixed names;
@@ -1300,6 +1791,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// behaviour for in-range indices. The element-
 			// stride is encoded in the helper name.
 			return g.emitInlineIdxHelper(target)
+		case "__str_slice":
+			// String slice — allocates a fresh substring.
+			// Real runtime helper, not inlined.
+			g.usesStrSlice = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		case "env":
+			target = "__lang_env"
+			g.usesEnv = true
+			g.usesAlloc = true
 		}
 		argc := int(op.I32)
 		if argc > regArgs {
