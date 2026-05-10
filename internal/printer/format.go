@@ -307,7 +307,7 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 // formatter doesn't attach yet.
 func isSingleLineStmt(s ast.Stmt) bool {
 	switch s.(type) {
-	case *ast.Return, *ast.Var, *ast.ExprStmt, *ast.Break, *ast.Continue:
+	case *ast.Return, *ast.Var, *ast.ExprStmt, *ast.Break, *ast.Continue, *ast.Defer:
 		return true
 	}
 	return false
@@ -425,6 +425,10 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.formatExpr(x.Init, precLowest)
 		f.b.WriteByte(';')
 	case *ast.ExprStmt:
+		f.formatExpr(x.Expr, precLowest)
+		f.b.WriteByte(';')
+	case *ast.Defer:
+		f.b.WriteString("defer ")
 		f.formatExpr(x.Expr, precLowest)
 		f.b.WriteByte(';')
 	case *ast.Switch:

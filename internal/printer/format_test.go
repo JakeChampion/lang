@@ -350,6 +350,32 @@ function find(): Option[i32] { return None; }`)
 	}
 }
 
+// `defer` statements round-trip through the formatter — for both
+// bare-call expressions and method-call expressions on a receiver.
+// The method-call shape was previously eaten silently because the
+// statement printer's switch had no `case *ast.Defer` arm; the
+// result was an empty line where `defer r.close();` had stood.
+func TestFormatDeferRoundTrip(t *testing.T) {
+	srcs := []string{
+		`function f(): void { defer cleanup(); }`,
+		`function f(r: Reader): void { defer r.close(); }`,
+		`function f(r: Reader, w: Writer): void {
+defer r.close();
+defer w.close();
+}`,
+	}
+	for _, src := range srcs {
+		got := formatSrc(t, src)
+		if !strings.Contains(got, "defer ") {
+			t.Errorf("`defer` keyword stripped from output for input %q:\n%s", src, got)
+		}
+		again := formatSrc(t, got)
+		if got != again {
+			t.Errorf("format not idempotent for input %q:\nfirst:\n%s\nsecond:\n%s", src, got, again)
+		}
+	}
+}
+
 // `enum` decls and `match` statements round-trip through
 // parse → format → parse stably, including payload-carrying
 // variants and `pub enum`.
