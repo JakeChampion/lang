@@ -377,13 +377,22 @@ func TestArm64DarwinBuilds(t *testing.T) {
     tcp_close(fd);
     return 42;
 }`, 42},
-		// Map + array push are deliberately not exercised here.
-		// Both surface pre-existing codegen bugs uncovered by
-		// native macOS execution (the xs.push() lowering drops
-		// the realloc'd pointer instead of storing it back, and
-		// Map internally round-trips heap pointers through i32
-		// slots which is fragile across all backends). Tracking
-		// in follow-up PRs once the macOS infra is in.
+		// Array push — exercises the IR's emitArrayPush
+		// inline lowering (alloc + memcpy + tail store).
+		// push() returns a new array; lang uses value
+		// semantics so the receiver must be reassigned.
+		{"arrpush", `function main(): i32 {
+    var xs: i32[] = [];
+    xs = xs.push(7);
+    xs = xs.push(35);
+    return xs[0] + xs[1];
+}`, 42},
+		// Map is deliberately not exercised here yet — the
+		// runtime round-trips heap pointers through 32-bit
+		// storage slots (__store_i32 / __load_i32), and
+		// macOS hands out high addresses that don't fit.
+		// Needs the prelude widened to i64 pointer storage;
+		// follow-up PR.
 	}
 
 	for _, c := range cases {
