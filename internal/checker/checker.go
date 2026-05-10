@@ -993,6 +993,23 @@ func Check(prog *ast.Program) (*Info, error) {
 		prog.Funcs = append(prog.Funcs, synthesiseStateInit(prog))
 	}
 
+	// Auto-main from handle: when the user defines
+	// `function handle(req: HttpRequest): HttpResponse` but
+	// no `main()`, synthesise a minimal main that calls
+	// `tcp_serve(port, handle)` after reading PORT from the
+	// environment (default 8080). The same source then
+	// compiles for arm32 (CLI-mode native server), wasm
+	// CLI-mode (`--invoke main`), and wasi-http (the
+	// existing handle()-export wiring is unaffected by main
+	// existing alongside it).
+	//
+	// Skipped silently when both handle() and main() are
+	// user-defined — don't surprise users who want their
+	// own main alongside the wasi-http handler.
+	if hasHandleDecl(prog) && !hasMainDecl(prog) {
+		prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog))
+	}
+
 	// Second pass: check bodies.
 	for _, fn := range prog.Funcs {
 		c.checkFunction(fn)
@@ -3761,6 +3778,77 @@ func synthesiseStateInit(prog *ast.Program) *ast.FuncDecl {
 		Params:     nil,
 		ReturnType: ast.VoidType{},
 		Body:       &ast.Block{Stmts: stmts},
+	}
+}
+
+// hasHandleDecl reports whether the program defines a top-level
+// `function handle(req: HttpRequest): HttpResponse` — the
+// signature shape every wasi-http program targets. The check is
+// purely structural: any top-level FuncDecl named `handle`
+// counts. Mismatched signatures will surface as type errors at
+// the synthesised main() check (or the wasi-http wrapper's
+// signature check on that target).
+func hasHandleDecl(prog *ast.Program) bool {
+	for _, fn := range prog.Funcs {
+		if fn.Name == "handle" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasMainDecl mirrors hasHandleDecl for `main`. Used to gate
+// auto-main synthesis: if the user defined main themselves we
+// keep their version verbatim.
+func hasMainDecl(prog *ast.Program) bool {
+	for _, fn := range prog.Funcs {
+		if fn.Name == "main" {
+			return true
+		}
+	}
+	return false
+}
+
+// synthesiseHandleMain builds:
+//
+//	function main(): i32 {
+//	    return tcp_serve(__port_from_env("PORT", 8080), handle);
+//	}
+//
+// — the canonical entry point for handler-shaped programs on
+// CLI / arm32 targets. The wasi-http target has its own
+// `wasi:http/incoming-handler.handle` export wrapper that
+// invokes the user's `handle` directly; main existing
+// alongside it costs nothing (wasi-http's _start is an empty
+// stub anyway).
+func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
+	pos := ast.Position{}
+	portCall := &ast.Call{
+		P:      pos,
+		Callee: &ast.Ident{P: pos, Name: "__port_from_env"},
+		Args: []ast.Expr{
+			&ast.StringLit{P: pos, Value: "PORT"},
+			&ast.NumberLit{P: pos, Value: 8080},
+		},
+	}
+	tcpServeCall := &ast.Call{
+		P:      pos,
+		Callee: &ast.Ident{P: pos, Name: "tcp_serve"},
+		Args: []ast.Expr{
+			portCall,
+			&ast.Ident{P: pos, Name: "handle"},
+		},
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Return{P: pos, Value: tcpServeCall},
+	}}
+	return &ast.FuncDecl{
+		P:                        pos,
+		Name:                     "main",
+		Params:                   nil,
+		ReturnType:               ast.NumberType{Width: 32, Signed: true},
+		Body:                     body,
+		IsSynthesisedHandlerMain: true,
 	}
 }
 

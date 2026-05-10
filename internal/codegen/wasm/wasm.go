@@ -109,6 +109,23 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	if opts.PrintMainResult {
 		extras = append(extras, "int_to_string")
 	}
+	// Wasi-http target uses the user's `handle()` directly via
+	// the `wasi:http/incoming-handler.handle` export wrapper —
+	// the auto-synthesised `main()` (which calls tcp_serve and
+	// pulls in wasi:sockets imports the wasi-http preview-1
+	// adapter doesn't satisfy) is irrelevant on this target,
+	// so drop it before tree-shake runs. arm32 / wasm-CLI keep
+	// the synth main as their entry point.
+	if opts.HttpHandler {
+		out := prog.Funcs[:0]
+		for _, fn := range prog.Funcs {
+			if fn.IsSynthesisedHandlerMain {
+				continue
+			}
+			out = append(out, fn)
+		}
+		prog.Funcs = out
+	}
 	treeshake.Run(prog, extras...)
 	// ir.Lower runs closure conversion as a precondition (hoisting
 	// nested functions, rewriting captures), then produces an

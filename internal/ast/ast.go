@@ -1078,6 +1078,17 @@ type FuncDecl struct {
 	// hoists these to top-level entries and rewrites captured-var
 	// references to read from a synthetic env argument.
 	IsLocal bool
+	// IsSynthesisedHandlerMain marks the auto-`main()` the
+	// checker emits for handler-shaped programs (a top-level
+	// `handle(req: HttpRequest): HttpResponse` with no
+	// user-defined main). The body is `return tcp_serve(
+	// __port_from_env("PORT", 8080), handle);` — exactly what
+	// arm32 / wasm-CLI need for a CLI HTTP server. The wasi-
+	// http codegen path uses the existing `wasi:http/incoming
+	// -handler.handle` export wrapper instead, so it drops the
+	// synthesised main (and the tcp_serve transitive imports)
+	// before tree-shake runs.
+	IsSynthesisedHandlerMain bool
 	// Captures is filled by the checker for IsLocal functions: each
 	// entry names an outer-scope variable that the body reads, with
 	// the variable's static type. The closure-conversion pass uses
