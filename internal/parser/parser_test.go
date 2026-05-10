@@ -431,11 +431,13 @@ func TestIfExpr(t *testing.T) {
 	}
 }
 
-// Postfix `?` parses as an OptionTry node attached to the
-// preceding primary. It binds tighter than any binary operator
-// because the parseCall postfix loop runs before the precedence
-// chain — `m.get(k)? + 1` parses as `(m.get(k)?) + 1`.
-func TestOptionTryParses(t *testing.T) {
+// Postfix `?` parses as a TryOp node attached to the preceding
+// primary. It binds tighter than any binary operator because the
+// parseCall postfix loop runs before the precedence chain —
+// `m.get(k)? + 1` parses as `(m.get(k)?) + 1`. The same node
+// covers both Option and Result sources; the checker fills in
+// Kind, so at parse time we just verify the shape.
+func TestTryOpParses(t *testing.T) {
 	prog, err := Parse(`function f(m: Map[i32, i32]): Option[i32] {
 		var v: i32 = m.get(7)?;
 		return Some(v + 1);
@@ -444,9 +446,9 @@ func TestOptionTryParses(t *testing.T) {
 		t.Fatal(err)
 	}
 	declStmt := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
-	tr, ok := declStmt.Init.(*ast.OptionTry)
+	tr, ok := declStmt.Init.(*ast.TryOp)
 	if !ok {
-		t.Fatalf("expected *OptionTry as Var init, got %T", declStmt.Init)
+		t.Fatalf("expected *TryOp as Var init, got %T", declStmt.Init)
 	}
 	if _, ok := tr.Inner.(*ast.Call); !ok {
 		t.Errorf("inner of `?` should be the call `m.get(7)`, got %T", tr.Inner)

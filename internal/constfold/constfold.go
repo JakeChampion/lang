@@ -382,7 +382,7 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 		s.walkExpr(&x.Cond)
 		s.walkExpr(&x.Then)
 		s.walkExpr(&x.Else)
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		s.walkExpr(&x.Inner)
 	case *ast.StructLit:
 		for i := range x.Fields {

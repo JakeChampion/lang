@@ -256,7 +256,7 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		walkExpr(x.Cond, byName, enqueue)
 		walkExpr(x.Then, byName, enqueue)
 		walkExpr(x.Else, byName, enqueue)
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		walkExpr(x.Inner, byName, enqueue)
 	case *ast.Assign:
 		walkExpr(x.Target, byName, enqueue)

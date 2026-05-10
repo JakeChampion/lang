@@ -2782,18 +2782,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.IsFloat = true
 		}
 		return result
-	case *ast.OptionTry:
-		// Postfix `?`. `expr?` requires `expr : Option[T]` and the
-		// surrounding function's return type to also be Option[_].
-		// On a Some value the construct evaluates to T; on None
-		// the function returns early with None.
+	case *ast.TryOp:
+		// Postfix `?` covers two source enums:
+		//   - Option[T]?    yields T; on None,   returns None
+		//                                         (encl. fn returns Option[_])
+		//   - Result[T,E]?  yields T; on Err(e), returns Err(e) unchanged
+		//                                         (encl. fn returns Result[_, E])
+		//
+		// E must match exactly between source and enclosing
+		// return — the Err is forwarded as-is, no From-conversion.
 		inner := c.checkExpr(n.Inner, s)
 		if inner == nil {
-			return nil
-		}
-		et, ok := inner.(ast.EnumType)
-		if !ok || et.Name != "Option" || len(et.Args) != 1 {
-			c.errf(n.P, "`?` operator requires an Option value, got %s", inner)
 			return nil
 		}
 		if c.current == nil {
@@ -2802,12 +2801,45 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		ret := c.current.ReturnType
 		retEnum, retOK := ret.(ast.EnumType)
-		if !retOK || retEnum.Name != "Option" || len(retEnum.Args) != 1 {
-			c.errf(n.P, "`?` operator requires the surrounding function to return Option[_], got %s", ret)
+		srcEnum, srcOK := inner.(ast.EnumType)
+		if !srcOK {
+			c.errf(n.P, "`?` operator requires an Option or Result value, got %s", inner)
 			return nil
 		}
-		n.Type = et.Args[0]
-		return n.Type
+		switch srcEnum.Name {
+		case "Option":
+			if len(srcEnum.Args) != 1 {
+				c.errf(n.P, "malformed Option type %s", inner)
+				return nil
+			}
+			if !retOK || retEnum.Name != "Option" || len(retEnum.Args) != 1 {
+				c.errf(n.P, "`?` on Option requires the surrounding function to return Option[_], got %s", ret)
+				return nil
+			}
+			n.Kind = ast.TryKindOption
+			n.Type = srcEnum.Args[0]
+			return n.Type
+		case "Result":
+			if len(srcEnum.Args) != 2 {
+				c.errf(n.P, "malformed Result type %s", inner)
+				return nil
+			}
+			if !retOK || retEnum.Name != "Result" || len(retEnum.Args) != 2 {
+				c.errf(n.P, "`?` on Result requires the surrounding function to return Result[_, E], got %s", ret)
+				return nil
+			}
+			if !ast.Equal(srcEnum.Args[1], retEnum.Args[1]) {
+				c.errf(n.P, "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match",
+					srcEnum.Args[1], retEnum.Args[1])
+				return nil
+			}
+			n.Kind = ast.TryKindResult
+			n.Type = srcEnum.Args[0]
+			return n.Type
+		default:
+			c.errf(n.P, "`?` operator requires an Option or Result value, got %s", inner)
+			return nil
+		}
 	case *ast.StructLit:
 		sd, ok := c.info.Structs[n.TypeName]
 		if !ok {

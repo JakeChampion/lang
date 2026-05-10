@@ -644,22 +644,36 @@ to smallest. Status pending unless marked.
   variant, bind on success. Pure parse-time + checker
   desugar; no codegen change.
 
-  **Shipped (Option only).** `?` is now a postfix operator on
-  any `Option[T]` source. The parser attaches it as part of the
-  `parseCall` postfix loop (alongside `.field`, `[i]`, `(args)`)
-  so it binds tighter than every binary operator — `m.get(k)? +
-  1` parses as `(m.get(k)?) + 1`. The checker validates that the
-  source is `Option[T]` and the enclosing function returns
-  `Option[_]`; `n.Type` carries the unwrapped payload type the
-  IR uses to pick the right load width. The IR lowers the
-  construct directly: stash the source pointer, branch on the
-  None tag, build a fresh None of the function's return type and
-  `return` early on the None path, fall through to the payload
-  load on the Some path. To free `?` from the ternary, the
-  ternary `cond ? then : else` was replaced with a one-line
-  `if (cond) { then } else { else }` expression form (see the
-  `if` expression note below). `Result[_, E]` support is a
-  follow-up.
+  **Shipped (Option + Result).** `?` is a postfix operator on
+  any `Option[T]` or `Result[T, E]` source. The parser attaches
+  it as part of the `parseCall` postfix loop (alongside `.field`,
+  `[i]`, `(args)`) so it binds tighter than every binary
+  operator — `m.get(k)? + 1` parses as `(m.get(k)?) + 1`.
+
+  Checker rules:
+  - `Option[T]?` requires the enclosing function to return
+    `Option[_]`; the construct yields `T`.
+  - `Result[T, E]?` requires the enclosing function to return
+    `Result[_, E]` (the `E` must match exactly — no implicit
+    `From` conversion). The construct yields `T`.
+  The checker stamps a `TryKind` on the AST node so the IR knows
+  which lowering to use.
+
+  IR lowering:
+  - Option `None`: build a fresh `None` of the function's return
+    type and `return` it. None has no payload so the allocation
+    is a single tag word.
+  - Result `Err`: forward the SOURCE pointer through the
+    enclosing return as-is. The source already carries `tag=1`
+    and the `E` payload at `+4`, and the checker has verified
+    `E` matches the enclosing return's `E`, so the same heap
+    object satisfies both types — no reallocation.
+  Both share the success-path payload load at `ptr+4`, with
+  width chosen from the checker-stamped success type.
+
+  To free `?` from the ternary, the ternary `cond ? then : else`
+  was replaced with a one-line `if (cond) { then } else { else }`
+  expression form (see the `if` expression note below).
 
 - **`if (cond) { e1 } else { e2 }` as an expression — shipped.**
   Each arm holds a single expression (no statements, no

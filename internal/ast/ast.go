@@ -584,18 +584,41 @@ type Assign struct {
 	Value  Expr
 }
 
-// OptionTry is the postfix `?` operator: `expr?` evaluates to
-// the Some payload and early-returns None when the source was
-// None. The surrounding function's return type must be Option[_]
-// (Result is a future extension). The checker validates both
-// constraints, fills `Type` with the unwrapped Some-payload
-// type, and the IR lowers the construct using the source's
-// ptr-load + tag-compare + early-return-or-payload-load shape.
-type OptionTry struct {
+// TryKind selects which failure-variant the postfix `?` operator
+// short-circuits on. Option's None and Result's Err have
+// different shapes (no payload vs E payload) and different
+// lowerings, so the checker stamps the kind once it knows the
+// source type.
+type TryKind int
+
+const (
+	TryKindOption TryKind = iota // source is Option[T], failure variant None
+	TryKindResult                // source is Result[T, E], failure variant Err(e)
+)
+
+// TryOp is the postfix `?` operator: `expr?` evaluates to the
+// success payload and early-returns the failure variant when
+// the source was failed.
+//
+//   - Option[T]?  yields T; on None, returns None from the
+//     enclosing function (whose return type must be Option[_]).
+//   - Result[T, E]? yields T; on Err(e), returns the same Err
+//     value through the enclosing function (whose return type
+//     must be Result[_, E] — the E must match the source's E).
+//
+// The checker validates both constraints and fills Kind + Type;
+// the IR picks the lowering off Kind. Result's Err lowering
+// reuses the source heap object (its tag is already 1, its
+// payload at +4 is already the right E) so the early-return is
+// a single pointer move with no reallocation.
+type TryOp struct {
 	P     Position
 	Inner Expr
-	// Type is the unwrapped Some payload type, set by the
-	// checker. Lets the IR pick `OpLoad` vs `OpFLoad` etc.
+	// Kind is set by the checker once the source type is known.
+	Kind TryKind
+	// Type is the unwrapped success payload type (Some(T) → T;
+	// Ok(T) → T). Lets the IR pick `OpLoad` vs `OpFLoad` for
+	// the success-path payload load.
 	Type Type
 }
 
@@ -728,7 +751,7 @@ func (e *Binary) Pos() Position    { return e.P }
 func (e *Unary) Pos() Position     { return e.P }
 func (e *Assign) Pos() Position      { return e.P }
 func (e *IfExpr) Pos() Position      { return e.P }
-func (e *OptionTry) Pos() Position   { return e.P }
+func (e *TryOp) Pos() Position       { return e.P }
 func (e *StructLit) Pos() Position   { return e.P }
 func (e *TupleLit) Pos() Position    { return e.P }
 func (e *MapLit) Pos() Position      { return e.P }
@@ -752,7 +775,7 @@ func (*Binary) isExpr()    {}
 func (*Unary) isExpr()     {}
 func (*Assign) isExpr()      {}
 func (*IfExpr) isExpr()      {}
-func (*OptionTry) isExpr()   {}
+func (*TryOp) isExpr()       {}
 func (*StructLit) isExpr()   {}
 func (*TupleLit) isExpr()    {}
 func (*MapLit) isExpr()      {}

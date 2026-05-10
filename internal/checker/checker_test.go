@@ -345,6 +345,44 @@ func TestOptionTryRejectsNonOptionReturn(t *testing.T) {
 	}
 }
 
+// `?` on a Result[T, E] yields T and requires the enclosing
+// function to return Result[_, E] for some success type.
+func TestResultTryTypechecks(t *testing.T) {
+	src := `function inner(): Result[i32, i32] { return Ok(42); }
+function outer(): Result[i32, i32] {
+	var v: i32 = inner()?;
+	return Ok(v + 1);
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// Surrounding function must also return Result.
+func TestResultTryRejectsNonResultReturn(t *testing.T) {
+	src := `function inner(): Result[i32, i32] { return Ok(42); }
+function outer(): i32 {
+	var v: i32 = inner()?;
+	return v;
+}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: enclosing fn must return Result[_, E]")
+	}
+}
+
+// Source's E must match the enclosing function's E. No
+// auto-conversion (no Rust-style From shim).
+func TestResultTryRejectsErrTypeMismatch(t *testing.T) {
+	src := `function inner(): Result[i32, i32] { return Ok(42); }
+function outer(): Result[i32, string] {
+	var v: i32 = inner()?;
+	return Ok(v);
+}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: source's Err type doesn't match enclosing return")
+	}
+}
+
 func TestCompoundAssignTypechecks(t *testing.T) {
 	src := `function f(): i32 {
 		var x: i32 = 0;

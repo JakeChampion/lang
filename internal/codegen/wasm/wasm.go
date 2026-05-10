@@ -402,7 +402,7 @@ func scanEnumUses(prog *ast.Program) bool {
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
-		case *ast.OptionTry:
+		case *ast.TryOp:
 			walk(x.Inner)
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -645,7 +645,7 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
-		case *ast.OptionTry:
+		case *ast.TryOp:
 			walk(x.Inner)
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -770,7 +770,7 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
-		case *ast.OptionTry:
+		case *ast.TryOp:
 			walk(x.Inner)
 		}
 	}
@@ -981,7 +981,7 @@ func (g *generator) scanIndirectExpr(e ast.Expr, inCalleePos bool) {
 		g.scanIndirectExpr(x.Cond, false)
 		g.scanIndirectExpr(x.Then, false)
 		g.scanIndirectExpr(x.Else, false)
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		g.scanIndirectExpr(x.Inner, false)
 	case *ast.Call:
 		// Walk args first.
@@ -1242,7 +1242,7 @@ func (g *generator) scanForStringConcat(prog *ast.Program) {
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
-		case *ast.OptionTry:
+		case *ast.TryOp:
 			walk(x.Inner)
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -1365,7 +1365,7 @@ func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
-		case *ast.OptionTry:
+		case *ast.TryOp:
 			walk(x.Inner)
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -1526,7 +1526,7 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
-		case *ast.OptionTry:
+		case *ast.TryOp:
 			walk(x.Inner)
 		}
 	}

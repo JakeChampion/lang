@@ -504,7 +504,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		r.rewriteExpr(&x.Cond)
 		r.rewriteExpr(&x.Then)
 		r.rewriteExpr(&x.Else)
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		r.rewriteExpr(&x.Inner)
 	case *ast.StructLit:
 		// Three shapes here:

@@ -792,7 +792,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte(')')
 		}
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		// Postfix `?` binds tighter than any binary operator —
 		// emit it directly without precedence-based parens.
 		f.formatExpr(x.Inner, precUnary)

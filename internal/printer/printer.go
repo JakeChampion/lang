@@ -395,7 +395,7 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteString(" } else { ")
 		printExpr(b, x.Else)
 		b.WriteString(" }")
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		printExpr(b, x.Inner)
 		b.WriteByte('?')
 	case *ast.StructLit:

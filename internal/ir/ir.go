@@ -1580,36 +1580,46 @@ func (b *builder) expr(e ast.Expr) error {
 			return err
 		}
 		b.closeScope()
-	case *ast.OptionTry:
+	case *ast.TryOp:
 		// Lower `expr?` as: stash the source pointer, branch on
-		// the tag — None (idx=1) builds a fresh None of the
-		// enclosing function's return type and returns early;
-		// Some (idx=0) falls through to a payload load that
-		// produces T. Validity (Inner is Option, surrounding fn
-		// returns Option) is the checker's job; here we trust
-		// the typing.
+		// the failure tag, take the success path otherwise. The
+		// failure branch differs by Kind:
+		//
+		//   - Option: build a fresh None of the function's return
+		//     type and OpReturn it. None has no payload so the
+		//     allocation is a single tag word; cheap.
+		//   - Result: forward the SOURCE pointer as the return
+		//     value. The source already carries tag=Err and the E
+		//     payload at +4, and the checker has verified the E
+		//     matches the enclosing return's E, so the same heap
+		//     object satisfies both types — no reallocation.
+		//
+		// Both share the success-path payload load at ptr+4; the
+		// width comes from the checker-stamped Type.
 		ptrSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__try_p_%d", ptrSlot)] = ptrSlot
 		if err := b.expr(n.Inner); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
-		// tag at ptr+0 == None (1) ?
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpLoad})
-		b.emit(Op{Kind: OpConstI32, I32: 1})
+		b.emit(Op{Kind: OpLoad}) // tag at ptr+0
+		b.emit(Op{Kind: OpConstI32, I32: 1}) // failure variant idx is 1 for both Option and Result
 		b.emit(Op{Kind: OpEq})
 		b.openIf(BlockTypeVoid)
-		// None: build a fresh None of the function's return type
-		// and early-return. emitEnumNew leaves the heap pointer
-		// on the stack; OpReturn consumes it as the return value.
-		if err := b.emitEnumNew(nil, "Option", 1, 0, nil); err != nil {
-			return err
+		switch n.Kind {
+		case ast.TryKindOption:
+			if err := b.emitEnumNew(nil, "Option", 1, 0, nil); err != nil {
+				return err
+			}
+		case ast.TryKindResult:
+			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		default:
+			return fmt.Errorf("ir: TryOp with unstamped Kind")
 		}
 		b.emit(Op{Kind: OpReturn})
 		b.closeScope()
-		// Some: load payload at ptr+4. Width selection follows
-		// the unwrapped type (Type) the checker stamped.
+		// Success path: load payload at ptr+4.
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 		b.emit(Op{Kind: OpConstI32, I32: 4})
 		b.emit(Op{Kind: OpAdd})
