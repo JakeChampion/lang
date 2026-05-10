@@ -9,11 +9,15 @@ package e2e
 
 import (
 	"bytes"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen"
@@ -148,6 +152,142 @@ function main(): i32 {
 	if code != 42 {
 		t.Errorf("exit = %d, want 42 (state counter survives init -> main)", code)
 	}
+}
+
+// arm32 HTTP server end-to-end. Compiles a tcp_serve-based
+// program, runs it under qemu-arm (which uses the host's
+// network stack for TCP), and drives it from the test
+// process via Go's net/http client. Verifies the same
+// shape that wasi-http components target — `function
+// handle(req): HttpResponse` semantics — works on a real
+// native target with real kernel sockets.
+//
+// Skips when the cross-compiler or qemu aren't installed.
+// Picks a kernel-assigned ephemeral port to dodge
+// EADDRINUSE under parallel test runs.
+func TestArm32HttpServer(t *testing.T) {
+	gcc, qemu := tooling(t)
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	src := `function handle(req: HttpRequest): HttpResponse {
+    if (req.path == "/hello") {
+        return HttpResponse { status: 200, body: req.method + " hello!" };
+    }
+    if (req.method == "POST") {
+        return HttpResponse { status: 200, body: "echo: " + req.body };
+    }
+    return HttpResponse { status: 404, body: "not found\n" };
+}
+
+function main(): i32 {
+    return tcp_serve(` + itoa(port) + `, handle);
+}`
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "server.s")
+	binPath := filepath.Join(dir, "server")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+
+	// Run the arm32 server under qemu. qemu-arm in user-mode
+	// uses the host's network stack so plain TCP just works.
+	cmd := exec.Command(qemu, binPath)
+	var srvOut bytes.Buffer
+	cmd.Stdout = &srvOut
+	cmd.Stderr = &srvOut
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("qemu start: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		cmd.Wait()
+	})
+
+	// Wait for the server to bind. tcp_listen returns the
+	// listener fd as soon as bind+listen succeed; the first
+	// accept-able socket appears almost immediately, but
+	// qemu translation adds a small startup delay so we poll.
+	addr := "127.0.0.1:" + itoa(port)
+	client := &http.Client{Timeout: 3 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial %s: %v\nserver out:\n%s", addr, err, srvOut.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// GET /hello → 200 "GET hello!"
+	resp, err := client.Get("http://" + addr + "/hello")
+	if err != nil {
+		t.Fatalf("GET /hello: %v\nserver out:\n%s", err, srvOut.String())
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("GET /hello status = %d; want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "GET hello!" {
+		t.Errorf("GET /hello body = %q; want %q", string(body), "GET hello!")
+	}
+
+	// POST /anywhere with body
+	want := "round trip"
+	resp, err = client.Post("http://"+addr+"/echo", "text/plain", strings.NewReader(want))
+	if err != nil {
+		t.Fatalf("POST /echo: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("POST status = %d; want 200", resp.StatusCode)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "echo: "+want {
+		t.Errorf("POST body = %q; want %q", string(body), "echo: "+want)
+	}
+
+	// 404 path
+	resp, err = client.Get("http://" + addr + "/missing")
+	if err != nil {
+		t.Fatalf("GET /missing: %v", err)
+	}
+	if resp.StatusCode != 404 {
+		t.Errorf("GET /missing status = %d; want 404", resp.StatusCode)
+	}
+	resp.Body.Close()
 }
 
 // String slicing on arm32: `s[a:b]` lowers to a __str_slice
