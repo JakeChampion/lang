@@ -1487,6 +1487,18 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpConstI32, I32: v})
 	case *ast.StringLit:
 		b.emit(Op{Kind: OpConstStr, Str: n.Value})
+	case *ast.FString:
+		// f-strings keep an `n.Desugared` expression (built by
+		// the checker, type-checked, method-dispatch-resolved)
+		// which IS the equivalent `+`-chain ready to lower. The
+		// node only stays in the AST so the formatter can
+		// rebuild the f"..." surface syntax on round-trip; the
+		// IR / codegen path looks at Desugared.
+		if n.Desugared == nil {
+			b.emit(Op{Kind: OpConstStr, Str: ""})
+		} else if err := b.expr(n.Desugared); err != nil {
+			return err
+		}
 	case *ast.FloatLit:
 		// The checker stamps `Width` on the literal once a
 		// concrete float type is known; Width=0 means the literal

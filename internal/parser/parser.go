@@ -46,6 +46,30 @@ func Parse(src string) (*ast.Program, error) {
 	return prog, nil
 }
 
+// parseExprFromText runs a one-shot parser over `text` and returns
+// the resulting Expr. Used to sub-parse an f-string interpolant
+// — the lexer hands the raw expression text in for the parser to
+// turn into an AST. Anything beyond a single expression is an
+// error.
+func parseExprFromText(text string, pos ast.Position) (ast.Expr, error) {
+	tokens, _, err := lexer.Tokenize(text)
+	if err != nil {
+		return nil, &Error{Pos: pos, Msg: fmt.Sprintf("f-string interpolation: %v", err)}
+	}
+	p := &parser{tokens: tokens}
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().Kind != lexer.EOF {
+		return nil, p.errorf(p.peek().Pos, "f-string interpolation: unexpected trailing tokens after expression")
+	}
+	if len(p.errors) > 0 {
+		return nil, diag.Errors(p.errors)
+	}
+	return expr, nil
+}
+
 type parser struct {
 	tokens []lexer.Token
 	i      int
@@ -2141,6 +2165,26 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	case lexer.String:
 		p.advance()
 		return &ast.StringLit{P: t.Pos, Value: t.Text}, nil
+	case lexer.FString:
+		p.advance()
+		// Build the AST node by sub-parsing each interpolant Expr
+		// part's raw text. The lexer has already split literal /
+		// interpolant pieces; we just need to parse the Expr text
+		// into an ast.Expr per interpolant. Empty f-strings produce
+		// an FString with no parts — the IR lowers it to "".
+		var parts []ast.FStringPart
+		for _, fp := range t.FParts {
+			if fp.Expr != "" {
+				expr, err := parseExprFromText(fp.Expr, t.Pos)
+				if err != nil {
+					return nil, err
+				}
+				parts = append(parts, ast.FStringPart{Expr: expr})
+			} else {
+				parts = append(parts, ast.FStringPart{Lit: fp.Lit})
+			}
+		}
+		return &ast.FString{P: t.Pos, Parts: parts}, nil
 	case lexer.Keyword:
 		switch t.Text {
 		case "true":

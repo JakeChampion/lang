@@ -2139,6 +2139,46 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return ast.BoolType{}
 	case *ast.StringLit:
 		return ast.StringType{}
+	case *ast.FString:
+		// Build the desugared `+`-chain right here so method-call
+		// dispatch on each `.to_string()` gets resolved via the
+		// regular checker path. The IR then lowers the desugared
+		// expression rather than the FString node itself; the
+		// formatter still reads n.Parts to rebuild the f"..." form.
+		// Empty f-strings desugar to a single empty string literal.
+		if n.Desugared == nil {
+			if len(n.Parts) == 0 {
+				n.Desugared = &ast.StringLit{P: n.P, Value: ""}
+			} else {
+				var built ast.Expr
+				for _, part := range n.Parts {
+					var piece ast.Expr
+					if part.Expr != nil {
+						piece = &ast.Call{
+							P: n.P,
+							Callee: &ast.FieldAccess{
+								P:      n.P,
+								Target: part.Expr,
+								Field:  "to_string",
+							},
+						}
+					} else {
+						piece = &ast.StringLit{P: n.P, Value: part.Lit}
+					}
+					if built == nil {
+						built = piece
+					} else {
+						built = &ast.Binary{P: n.P, Op: "+", Left: built, Right: piece}
+					}
+				}
+				n.Desugared = built
+			}
+		}
+		// Recursively type-check the desugared chain. The Binary
+		// nodes get their IsStringConcat flag set the same way an
+		// ordinary `"a" + b.to_string()` would.
+		_ = c.checkExpr(n.Desugared, s)
+		return ast.StringType{}
 	case *ast.FloatLit:
 		// Float literals are polymorphic, same shape as integer
 		// literals. If a previous settling pass already locked in

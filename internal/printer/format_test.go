@@ -350,6 +350,36 @@ function find(): Option[i32] { return None; }`)
 	}
 }
 
+// f-strings round-trip through parse → format → parse: the
+// surface `f"..."` syntax survives a formatter pass instead of
+// collapsing to its desugared `+`-chain. Covers empty f-string,
+// literal-only, multi-interpolation, brace escapes, escape
+// sequences in literal segments, and an interpolant that
+// contains arithmetic.
+func TestFormatFStringRoundTrip(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string // substring expected in output
+	}{
+		{in: `function f(): string { return f""; }`, want: `f""`},
+		{in: `function f(): string { return f"plain"; }`, want: `f"plain"`},
+		{in: `function f(x: i32): string { return f"v={x}"; }`, want: `f"v={x}"`},
+		{in: `function f(a: i32, b: i32): string { return f"sum {a + b}"; }`, want: `f"sum {a + b}"`},
+		{in: `function f(): string { return f"{{lit}}"; }`, want: `f"{{lit}}"`},
+		{in: `function f(): string { return f"hi\nthere"; }`, want: `f"hi\nthere"`},
+	}
+	for _, c := range cases {
+		got := formatSrc(t, c.in)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("output missing %q for input %q:\n%s", c.want, c.in, got)
+		}
+		again := formatSrc(t, got)
+		if got != again {
+			t.Errorf("not idempotent for input %q:\nfirst:\n%s\nsecond:\n%s", c.in, got, again)
+		}
+	}
+}
+
 // `defer` statements round-trip through the formatter — for both
 // bare-call expressions and method-call expressions on a receiver.
 // The method-call shape was previously eaten silently because the

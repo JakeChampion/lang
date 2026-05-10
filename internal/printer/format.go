@@ -640,6 +640,45 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			}
 		}
 		f.b.WriteByte('"')
+	case *ast.FString:
+		// Reconstruct the f"..." surface syntax. Literal segments
+		// re-escape via the same rules as a regular string literal,
+		// plus `{` / `}` doubled to `{{` / `}}` so the body
+		// re-lexes back into the same parts. Interpolant parts
+		// re-emit as `{<expr>}` via formatExpr at the lowest
+		// precedence (inside the braces, the interpolant is its
+		// own context so no parens needed at the surface).
+		f.b.WriteString(`f"`)
+		for _, part := range x.Parts {
+			if part.Expr != nil {
+				f.b.WriteByte('{')
+				f.formatExpr(part.Expr, precLowest)
+				f.b.WriteByte('}')
+				continue
+			}
+			for i := 0; i < len(part.Lit); i++ {
+				c := part.Lit[i]
+				switch c {
+				case '"':
+					f.b.WriteString(`\"`)
+				case '\\':
+					f.b.WriteString(`\\`)
+				case '\n':
+					f.b.WriteString(`\n`)
+				case '\t':
+					f.b.WriteString(`\t`)
+				case '\r':
+					f.b.WriteString(`\r`)
+				case '{':
+					f.b.WriteString(`{{`)
+				case '}':
+					f.b.WriteString(`}}`)
+				default:
+					f.b.WriteByte(c)
+				}
+			}
+		}
+		f.b.WriteByte('"')
 	case *ast.Ident:
 		f.b.WriteString(x.Name)
 	case *ast.Unary:
