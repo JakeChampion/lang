@@ -334,13 +334,13 @@ func TestArm64TcpListen(t *testing.T) {
 // Linux), so they assert the output is a valid Mach-O 64-bit
 // arm64 executable.
 //
-// Status: assembly + linking work for substantial programs
-// (arithmetic, strings, concat, Map runtime). Runtime
-// behaviour on real Apple Silicon may still trip on Linux-
-// specific syscall numbers in __lang_alloc (mmap=222 is
-// Linux; macOS BSD mmap is 197 with different flags) —
-// tracked as a follow-up. The exit-syscall path is already
-// Darwin-aware (SYS_exit=1, svc #0x80).
+// All three syscall surfaces the runtime needs are now
+// Darwin-aware: SYS_exit (1), SYS_mmap (197) in __lang_alloc,
+// and the TCP/IO family (socket=97, bind=104, listen=106,
+// accept=30, read=3, write=4, close=6). Each emits via
+// `svc #0x80` with x16=number, and TCP/IO normalises Darwin's
+// C-flag error shape into Linux-style -errno in x0 so the
+// existing callers' `cmp x0, #0; blt` checks work unchanged.
 func TestArm64DarwinBuilds(t *testing.T) {
 	if _, err := exec.LookPath("clang"); err != nil {
 		t.Skip("clang not on PATH; skipping arm64-darwin cross-compile e2e")
@@ -350,16 +350,35 @@ func TestArm64DarwinBuilds(t *testing.T) {
 	}
 
 	for _, src := range []string{
+		// Plain return — exercises only SYS_exit.
 		`function main(): i32 { return 42; }`,
+		// String concat — exercises SYS_mmap via __lang_alloc.
 		`function main(): i32 {
     var s: string = "hello, " + "world!";
     return len(s);
 }`,
+		// Map runtime — exercises __lang_alloc-heavy paths.
 		`function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(1, 100);
     m.set(2, 200);
     return m.get_or(2, 0);
+}`,
+		// Array push — exercises the two-cursor allocator path
+		// the Map/T[] runtime depends on.
+		`function main(): i32 {
+    var xs: i32[] = [];
+    xs.push(7);
+    xs.push(35);
+    return xs[0] + xs[1];
+}`,
+		// TCP listen + close — exercises socket/bind/listen/close
+		// syscalls (Darwin numbers + svc #0x80 path).
+		`function main(): i32 {
+    var fd: i32 = tcp_listen(0);
+    if (fd < 0) { return 1; }
+    tcp_close(fd);
+    return 42;
 }`,
 	} {
 		prog, err := parser.Parse(src)
