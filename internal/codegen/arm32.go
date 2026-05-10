@@ -132,6 +132,14 @@ type generator struct {
 	usesStrSlice        bool
 	usesAllocU8         bool
 	usesStringFromBytes bool
+	// usesRawIntPokes / usesMemset pull in the wat-shim
+	// equivalents (__load_i32, __store_i32, __memset) the
+	// lang Map runtime uses for laying out its mixed
+	// bucket-index + entries buffer. Wasm has them as native
+	// `i32.load` / `i32.store` / bulk-memory; arm32 emits
+	// thin runtime helpers (single LDR / STR + bx lr).
+	usesRawIntPokes bool
+	usesMemset      bool
 	usesStreamIO  bool            // true if the program calls open_reader / open_writer / a Reader|Writer method
 	usesStdStreams bool           // true if the program calls stdin / stdout / stderr
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
@@ -191,6 +199,64 @@ func (g *generator) emitAllocRuntime() {
 // libc strlen / strcmp keep working on the same pointer. The buffer
 // is never freed; strings are immutable but not GC'd.
 //
+// emitRawIntPokesRuntime emits `__store_i32` / `__load_i32` —
+// raw 4-byte load/store. The Map runtime in the lang prelude
+// uses these to lay out its mixed bucket-index + entries
+// buffer (where the caller owns the layout, no length prefix).
+// Both are leaf functions: load → ldr / bx lr; store → str /
+// bx lr. Linker-level deduplication folds repeated callers
+// into a single `bl` per use site.
+func (g *generator) emitRawIntPokesRuntime() {
+	g.line("")
+	g.line(".global __load_i32")
+	g.line(".type __load_i32, %function")
+	g.label("__load_i32")
+	g.emit("ldr r0, [r0]")
+	g.emit("bx lr")
+	g.line(".size __load_i32, .-__load_i32")
+
+	g.line("")
+	g.line(".global __store_i32")
+	g.line(".type __store_i32, %function")
+	g.label("__store_i32")
+	g.emit("str r1, [r0]")
+	g.emit("bx lr")
+	g.line(".size __store_i32, .-__store_i32")
+	g.line(".ltorg")
+}
+
+// emitMemsetRuntime emits `__memset(dst, byte, n)` — byte-grain
+// fill matching the wasm wat shim. Map runtime's clear path
+// calls this to zero the bucket-index region after init.
+func (g *generator) emitMemsetRuntime() {
+	g.line("")
+	g.line(".global __memset")
+	g.line(".type __memset, %function")
+	g.label("__memset")
+	// r0 = dst, r1 = byte (zero-extended in low 8 bits),
+	// r2 = n. Word-grain bulk path replicates the byte across
+	// all four lanes; byte-grain tail handles the residue.
+	g.emit("and r1, r1, #0xff")
+	g.emit("orr r3, r1, r1, lsl #8")
+	g.emit("orr r3, r3, r3, lsl #16") // r3 = byte replicated x4
+	g.label(".Lmset_word")
+	g.emit("cmp r2, #4")
+	g.emit("blt .Lmset_tail")
+	g.emit("str r3, [r0], #4")
+	g.emit("sub r2, r2, #4")
+	g.emit("b .Lmset_word")
+	g.label(".Lmset_tail")
+	g.emit("cmp r2, #0")
+	g.emit("beq .Lmset_done")
+	g.emit("strb r1, [r0], #1")
+	g.emit("sub r2, r2, #1")
+	g.emit("b .Lmset_tail")
+	g.label(".Lmset_done")
+	g.emit("bx lr")
+	g.line(".size __memset, .-__memset")
+	g.line(".ltorg")
+}
+
 // emitAllocU8Runtime emits `__alloc_u8(n)` — allocate a fresh
 // length-prefixed `u8[]` of `n` bytes. Returns the data
 // pointer (header + 4); the 4-byte little-endian length sits
