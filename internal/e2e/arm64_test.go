@@ -292,6 +292,39 @@ func TestArm64Floats(t *testing.T) {
 	}
 }
 
+// arm64 indirect calls: OpConstFunc (function value
+// materialisation via adrp + add :lo12:) + OpCallIndirect
+// (blr xN). Lets handlers be passed as function values to
+// generic helpers like tcp_serve. Same shape arm32 uses.
+func TestArm64IndirectCall(t *testing.T) {
+	_, code := compileAndRunArm64(t, `function add(a: i32, b: i32): i32 { return a + b; }
+function main(): i32 {
+    var f: (i32, i32) => i32 = add;
+    return f(20, 22);
+}`)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42 (indirect call through function value)", code)
+	}
+}
+
+// arm64 TCP primitives: tcp_listen / tcp_close round-trip
+// validates the socket / bind / listen / close syscall
+// chain. Port 0 means "kernel-assigned ephemeral" — fast
+// way to confirm the listener works without picking a free
+// port. Full HTTP server e2e (handle() + auto-main +
+// tcp_serve + parser/serializer composed) is a follow-up.
+func TestArm64TcpListen(t *testing.T) {
+	_, code := compileAndRunArm64(t, `function main(): i32 {
+    var fd: i32 = tcp_listen(0);
+    if (fd < 0) { return 1; }
+    tcp_close(fd);
+    return 42;
+}`)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42 (tcp_listen + tcp_close on ephemeral port)", code)
+	}
+}
+
 // arm64 control flow: while loop, if/else, comparison ops.
 // Verifies OpBlock / OpLoop / OpIf / OpEnd / OpBr / OpBrIf
 // scope tracking + the cbz / cbnz branch idioms.
