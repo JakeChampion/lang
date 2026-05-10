@@ -316,6 +316,97 @@ func invokeWasmtimeWithArgs(t *testing.T, src string, extraArgs ...string) (stdo
 
 // args() under wasmtime: argv[0] is the wasm module path that
 // wasmtime injects, plus whatever extra positional args we pass.
+// HTTP/1.1 request parser end-to-end. Drives the lang-prelude
+// `http_parse_request(buf)` against a complete request buffer
+// (request line + headers + body) and asserts the returned
+// HttpRequest's method / path / body. Caller is responsible
+// for read-buffering off the socket; this test exercises the
+// pure-string parse step in isolation.
+func TestWASMHttpParseRequest(t *testing.T) {
+	src := `function main(): i32 {
+    var raw: string = "POST /todos HTTP/1.1\r\nHost: localhost\r\nContent-Length: 13\r\n\r\nhello, world!";
+    match (http_parse_request(raw)) {
+        Some(req) => {
+            if (req.method != "POST") { return 1; }
+            if (req.path != "/todos") { return 2; }
+            if (req.body != "hello, world!") { return 3; }
+            return 42;
+        },
+        None => { return 99; }
+    }
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (POST /todos with 13-byte body parses)", got)
+	}
+}
+
+// Parser handles a no-body GET request (Content-Length absent;
+// HTTP/1.1 §3.3.3 reads "no body" by default for safe methods).
+func TestWASMHttpParseRequestNoBody(t *testing.T) {
+	src := `function main(): i32 {
+    var raw: string = "GET /hello?name=world HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    match (http_parse_request(raw)) {
+        Some(req) => {
+            if (req.method != "GET") { return 1; }
+            if (req.path != "/hello?name=world") { return 2; }
+            if (len(req.body) != 0) { return 3; }
+            return 42;
+        },
+        None => { return 99; }
+    }
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (GET with no body)", got)
+	}
+}
+
+// Parser returns None on a partial buffer (header block not
+// yet terminated by \r\n\r\n) — the caller is expected to
+// keep recv'ing until parse succeeds.
+func TestWASMHttpParseRequestPartial(t *testing.T) {
+	src := `function main(): i32 {
+    var raw: string = "GET /partial HTTP/1.1\r\nHost: loca";
+    match (http_parse_request(raw)) {
+        Some(_) => { return 1; },
+        None => { return 42; }
+    }
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (partial buffer rejects)", got)
+	}
+}
+
+// HTTP/1.1 response serializer. Produces a wire-format
+// response with status line + Content-Length + Connection:
+// close + body. Verifies the byte layout the way a curl
+// client would consume it.
+func TestWASMHttpSerializeResponse(t *testing.T) {
+	src := `function main(): i32 {
+    var resp: HttpResponse = HttpResponse { status: 200, body: "hi" };
+    var wire: string = http_serialize_response(resp);
+    var expected: string = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
+    if (wire != expected) { return 1; }
+    return 42;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (serialised response matches curl-readable shape)", got)
+	}
+}
+
+// 404 status maps to the right reason phrase. Confirms the
+// status-code → reason-phrase table covers the common cases.
+func TestWASMHttpSerializeResponse404(t *testing.T) {
+	src := `function main(): i32 {
+    var resp: HttpResponse = HttpResponse { status: 404, body: "not found" };
+    var wire: string = http_serialize_response(resp);
+    if (!wire.starts_with("HTTP/1.1 404 Not Found\r\n")) { return 1; }
+    return 42;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (404 reason phrase)", got)
+	}
+}
+
 // `wasmtime run --invoke main mod.wat alpha beta` therefore yields
 // argv = [mod.wat, alpha, beta] and `len(args()) == 3`.
 func TestWASMArgsBuiltin(t *testing.T) {
