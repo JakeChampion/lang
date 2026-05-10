@@ -441,7 +441,12 @@ func TestArm64DarwinBuilds(t *testing.T) {
 				t.Fatalf("clang Mach-O: %v\n%s\n--- asm ---\n%s", err, out, asm)
 			}
 			out, _ := exec.Command("file", binPath).CombinedOutput()
-			if !strings.Contains(string(out), "Mach-O 64-bit arm64 executable") {
+			// Linux `file` reports "Mach-O 64-bit arm64 executable";
+			// macOS `file` reports "Mach-O 64-bit executable arm64"
+			// (word order differs). Both are fine — check the three
+			// pieces separately.
+			s := string(out)
+			if !strings.Contains(s, "Mach-O 64-bit") || !strings.Contains(s, "arm64") || !strings.Contains(s, "executable") {
 				t.Errorf("not a Mach-O arm64 executable: %s\n%s", out, asm)
 			}
 			// Cross-compilation hosts can't run the Mach-O —
