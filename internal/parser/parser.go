@@ -1555,6 +1555,102 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 	return arm, nil
 }
 
+// parseMatchExpr is the expression-position form of `match`. Same
+// `match (e) { … }` shell as the statement form but each arm body
+// is a single expression (no block, no statements, no semicolons),
+// and the whole construct evaluates to the unified arm type. Sits
+// alongside parseIfExpr — both are dispatched from parsePrimary's
+// keyword switch, so the parser knows it's in expression context.
+func (p *parser) parseMatchExpr() (ast.Expr, error) {
+	kw := p.advance() // `match`
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return nil, err
+	}
+	tag, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	m := &ast.MatchExpr{P: kw.Pos, Tag: tag}
+	for !p.match(lexer.Punct, "}") {
+		arm, err := p.parseMatchExprArm()
+		if err != nil {
+			return nil, err
+		}
+		m.Arms = append(m.Arms, arm)
+		if _, ok := p.accept(lexer.Punct, ","); ok {
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// parseMatchExprArm parses one expression-form arm: `<pattern>
+// [when <guard>] => <expr>`. The pattern parsing (variant /
+// payload bindings / wildcard) is identical to parseMatchArm; the
+// only difference is body parsing — a single Expr rather than a
+// Block.
+func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
+	t := p.peek()
+	arm := &ast.MatchExprArm{P: t.Pos}
+	if t.Kind == lexer.Ident && t.Text == "_" {
+		p.advance()
+		arm.IsWildcard = true
+	} else if t.Kind == lexer.Ident {
+		p.advance()
+		arm.VariantName = t.Text
+		if _, ok := p.accept(lexer.Punct, "("); ok {
+			if !p.match(lexer.Punct, ")") {
+				for {
+					nameTok, err := p.expect(lexer.Ident, "")
+					if err != nil {
+						return nil, err
+					}
+					arm.Bindings = append(arm.Bindings, nameTok.Text)
+					if _, ok := p.accept(lexer.Punct, ","); ok {
+						if p.match(lexer.Punct, ")") {
+							break
+						}
+						continue
+					}
+					break
+				}
+			}
+			if _, err := p.expect(lexer.Punct, ")"); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		return nil, p.errorf(t.Pos, "expected variant pattern or `_` in match arm, got %s", t.Text)
+	}
+	if p.match(lexer.Keyword, "when") {
+		p.advance()
+		guard, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		arm.Guard = guard
+	}
+	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
+		return nil, err
+	}
+	body, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	arm.Body = body
+	return arm, nil
+}
+
 // parseCaseBody collects statements up to the next `case`, `default`,
 // or closing `}`. The block's position is the position of the first
 // statement (or 0:0 for an empty case).
@@ -2335,6 +2431,13 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			// don't overlap because parseStmt dispatches `if`
 			// before this primary parser ever sees it.
 			return p.parseIfExpr()
+		case "match":
+			// `match (e) { Variant(b) => EXPR, _ => EXPR }` in
+			// expression position. Same dispatch story as `if`:
+			// parseStmt routes `match` to parseMatch (Stmt) before
+			// expression parsing ever sees it, so this branch only
+			// fires from a true expression context.
+			return p.parseMatchExpr()
 		}
 	case lexer.Ident:
 		p.advance()

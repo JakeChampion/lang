@@ -398,6 +398,37 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 	case *ast.TryOp:
 		printExpr(b, x.Inner)
 		b.WriteByte('?')
+	case *ast.MatchExpr:
+		b.WriteString("match (")
+		printExpr(b, x.Tag)
+		b.WriteString(") { ")
+		for i, arm := range x.Arms {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if arm.IsWildcard {
+				b.WriteByte('_')
+			} else {
+				b.WriteString(arm.VariantName)
+				if len(arm.Bindings) > 0 {
+					b.WriteByte('(')
+					for j, bind := range arm.Bindings {
+						if j > 0 {
+							b.WriteString(", ")
+						}
+						b.WriteString(bind)
+					}
+					b.WriteByte(')')
+				}
+			}
+			if arm.Guard != nil {
+				b.WriteString(" when ")
+				printExpr(b, arm.Guard)
+			}
+			b.WriteString(" => ")
+			printExpr(b, arm.Body)
+		}
+		b.WriteString(" }")
 	case *ast.StructLit:
 		b.WriteString(x.TypeName)
 		b.WriteString(" { ")

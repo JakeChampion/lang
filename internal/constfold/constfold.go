@@ -384,6 +384,14 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 		s.walkExpr(&x.Else)
 	case *ast.TryOp:
 		s.walkExpr(&x.Inner)
+	case *ast.MatchExpr:
+		s.walkExpr(&x.Tag)
+		for _, arm := range x.Arms {
+			if arm.Guard != nil {
+				s.walkExpr(&arm.Guard)
+			}
+			s.walkExpr(&arm.Body)
+		}
 	case *ast.StructLit:
 		for i := range x.Fields {
 			s.walkExpr(&x.Fields[i].Value)

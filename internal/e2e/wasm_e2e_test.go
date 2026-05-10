@@ -2932,6 +2932,75 @@ function main(): i32 {
 	}
 }
 
+// `match` in expression position: each arm body is one
+// expression and the construct evaluates to the unified arm type.
+// Replaces a 6-line if-let-else chain with a single line.
+func TestWASMMatchExprUnwrapsOption(t *testing.T) {
+	src := `function unwrap_or(o: Option[i32], dflt: i32): i32 {
+    return match (o) {
+        Some(x) => x + 1,
+        None    => dflt
+    };
+}
+function main(): i32 {
+    return unwrap_or(Some(41), 99);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (Some(41) + 1)", got)
+	}
+}
+
+// None branch yields the alternative without falling through to
+// the Some arm — exhaustiveness on Option[T] is two arms.
+func TestWASMMatchExprNoneFallback(t *testing.T) {
+	src := `function unwrap_or(o: Option[i32], dflt: i32): i32 {
+    return match (o) {
+        Some(x) => x + 1,
+        None    => dflt
+    };
+}
+function main(): i32 {
+    return unwrap_or(None, 99);
+}`
+	if got := runWasm(t, src); got != 99 {
+		t.Errorf("got %d, want 99 (None → dflt)", got)
+	}
+}
+
+// Wildcard `_` arm covers the unmatched variants and the
+// construct still produces a value. Checker-side exhaustiveness
+// has a separate test; this exercises runtime selection.
+func TestWASMMatchExprWildcardArm(t *testing.T) {
+	src := `enum Light { Red, Green, Yellow }
+function score(l: Light): i32 {
+    return match (l) {
+        Red => 1,
+        _   => 0
+    };
+}
+function main(): i32 {
+    return score(Yellow);
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (wildcard arm)", got)
+	}
+}
+
+// `match` expression composes inside other expressions —
+// confirms it slots into a binary op without parse-time fight.
+func TestWASMMatchExprComposesInExpr(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[i32] = Some(10);
+    return 1 + match (o) {
+        Some(x) => x * 2,
+        None    => 0
+    };
+}`
+	if got := runWasm(t, src); got != 21 {
+		t.Errorf("got %d, want 21 (1 + 10*2)", got)
+	}
+}
+
 // Err path: `?` short-circuits, forwarding the source Err
 // pointer through the enclosing function unchanged.
 func TestWASMResultTryErrPropagates(t *testing.T) {

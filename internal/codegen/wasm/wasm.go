@@ -404,6 +404,14 @@ func scanEnumUses(prog *ast.Program) bool {
 			walk(x.Else)
 		case *ast.TryOp:
 			walk(x.Inner)
+		case *ast.MatchExpr:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				if arm.Guard != nil {
+					walk(arm.Guard)
+				}
+				walk(arm.Body)
+			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				walk(f.Value)
@@ -647,6 +655,14 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 			walk(x.Else)
 		case *ast.TryOp:
 			walk(x.Inner)
+		case *ast.MatchExpr:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				if arm.Guard != nil {
+					walk(arm.Guard)
+				}
+				walk(arm.Body)
+			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				walk(f.Value)
@@ -772,6 +788,14 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			walk(x.Else)
 		case *ast.TryOp:
 			walk(x.Inner)
+		case *ast.MatchExpr:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				if arm.Guard != nil {
+					walk(arm.Guard)
+				}
+				walk(arm.Body)
+			}
 		}
 	}
 	for _, fn := range prog.Funcs {
@@ -983,6 +1007,14 @@ func (g *generator) scanIndirectExpr(e ast.Expr, inCalleePos bool) {
 		g.scanIndirectExpr(x.Else, false)
 	case *ast.TryOp:
 		g.scanIndirectExpr(x.Inner, false)
+	case *ast.MatchExpr:
+		g.scanIndirectExpr(x.Tag, false)
+		for _, arm := range x.Arms {
+			if arm.Guard != nil {
+				g.scanIndirectExpr(arm.Guard, false)
+			}
+			g.scanIndirectExpr(arm.Body, false)
+		}
 	case *ast.Call:
 		// Walk args first.
 		for _, a := range x.Args {
@@ -1244,6 +1276,14 @@ func (g *generator) scanForStringConcat(prog *ast.Program) {
 			walk(x.Else)
 		case *ast.TryOp:
 			walk(x.Inner)
+		case *ast.MatchExpr:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				if arm.Guard != nil {
+					walk(arm.Guard)
+				}
+				walk(arm.Body)
+			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				walk(f.Value)
@@ -1367,6 +1407,14 @@ func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 			walk(x.Else)
 		case *ast.TryOp:
 			walk(x.Inner)
+		case *ast.MatchExpr:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				if arm.Guard != nil {
+					walk(arm.Guard)
+				}
+				walk(arm.Body)
+			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				walk(f.Value)
@@ -1528,6 +1576,14 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 			walk(x.Else)
 		case *ast.TryOp:
 			walk(x.Inner)
+		case *ast.MatchExpr:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				if arm.Guard != nil {
+					walk(arm.Guard)
+				}
+				walk(arm.Body)
+			}
 		}
 	}
 	for _, fn := range prog.Funcs {

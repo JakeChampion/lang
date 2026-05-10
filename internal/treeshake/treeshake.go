@@ -258,6 +258,14 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		walkExpr(x.Else, byName, enqueue)
 	case *ast.TryOp:
 		walkExpr(x.Inner, byName, enqueue)
+	case *ast.MatchExpr:
+		walkExpr(x.Tag, byName, enqueue)
+		for _, arm := range x.Arms {
+			if arm.Guard != nil {
+				walkExpr(arm.Guard, byName, enqueue)
+			}
+			walkExpr(arm.Body, byName, enqueue)
+		}
 	case *ast.Assign:
 		walkExpr(x.Target, byName, enqueue)
 		walkExpr(x.Value, byName, enqueue)

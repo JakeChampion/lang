@@ -686,24 +686,35 @@ to smallest. Status pending unless marked.
   syntactically distinct because parseStmt dispatches `if`
   before expression parsing ever sees it.
 
-- **`match` as an expression.** Wildcard `_` arms are
-  already shipped (PR 4 ergonomics layer); the friction in
-  `todo_api.lang`'s `extract_text` came from me not knowing
-  that, not from the compiler. Re-checking turned up the
-  remaining gap: `match` works only as a statement, not
-  in expression position. Concrete shape:
+- **`match` as an expression — shipped.** Concrete shape:
 
   ```
-  var m = match v { JObject(m) => m, _ => return None };
+  var m = match (o) {
+      Some(x) => x + 1,
+      None    => 0
+  };
   ```
 
-  collapses a 6-line if-let-else guard into one. Parser
-  needs to accept `match` in expression position and the
-  result type comes from unifying every arm body's last
-  expression. The existing arm-body parsing (Block) already
-  produces an Expr-or-Stmt-block; the change is mostly the
-  expression-context entry point + a checker rule that the
-  arms must agree on a single type.
+  Mirrors the `if`-expression treatment: a separate AST node
+  (`MatchExpr`) parsed from `parsePrimary`'s keyword switch, so
+  the parser knows it's in expression context. Each arm body is
+  a single expression — no statement block, no semicolon —
+  matching the `if`-expression scope of "no surprise
+  block-as-expression machinery yet". The checker reuses the
+  statement-form's variant / payload / guard / exhaustiveness
+  rules and adds an arm-type unification step on top.
+
+  IR lowering: scratch slot keyed off the unified arm type,
+  populated by whichever arm matched, loaded after the outer
+  block. (A typed `block (result T)` would need `unreachable`
+  on the fallthrough path to satisfy wasm's stack discipline;
+  the slot is simpler and exhaustiveness already guarantees
+  the slot is written exactly once.)
+
+  Arm bodies that need to early-return / break / continue (the
+  `_ => return None` shape from the original example) still
+  need the statement-form match for now. Block-as-expression is
+  a separate, larger language change.
 
 - **String interpolation.** `req.method + " " + req.path +
   " (" + len(req.body).to_string() + " bytes)\n\n" + req.body`
