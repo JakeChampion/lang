@@ -920,13 +920,23 @@ func Check(prog *ast.Program) (*Info, error) {
 	}
 
 	// State blocks: `state { var NAME: T = init; ... }` declares
-	// module-global mutable storage. First-PR scope is scalar V
-	// (i32 / u32 / i64 / u64 / f32 / f64 / boolean) with literal
-	// initialisers — directly usable as a wasm `(global ...)`
-	// init expression, so codegen doesn't need a runtime
-	// __state_init function. Pointer-shaped state (Map, string,
-	// T[]) waits on the two-cursor allocator (separate persistent
-	// / per-request bump cursors); rejected here with a hint.
+	// module-global mutable storage. Scalar V with a literal
+	// init compiles to a wasm `(global ...)` init expression
+	// directly; pointer-shaped V (today: string) and non-literal
+	// init expressions both route through a synthesised
+	// `__state_init` start function that runs before any user
+	// code (`_start` on the CLI target, before the first
+	// `handle()` on wasi-http). State init runs while the bump
+	// cursor is still at its initial position, so its
+	// allocations end up below the per-request `arena_save`
+	// point and are naturally preserved across `arena_restore`.
+	//
+	// Mutable pointer-shaped state (Map / T[] / structs whose
+	// mutation allocates) is still rejected — that needs the
+	// two-cursor allocator (separate persistent / per-request
+	// bump cursors) so mutation-time allocations don't get
+	// reclaimed by `arena_restore` on handler exit. Tracked as
+	// the next state{} PR.
 	for _, sd := range prog.States {
 		for _, v := range sd.Vars {
 			if v.Type == nil {
@@ -934,26 +944,53 @@ func Check(prog *ast.Program) (*Info, error) {
 				continue
 			}
 			if !isStateVarType(v.Type) {
-				c.errf(v.P, "state var %q has non-scalar type %s; first-PR state{} only supports i32/u32/i64/u64/f32/f64/boolean (Map / string / T[] need the two-cursor allocator)", v.Name, v.Type)
-				continue
-			}
-			if !isStateInitLiteral(v.Init) {
-				c.errf(v.P, "state var %q initialiser must be a literal (number / float / boolean) in the first PR; expressions land with the runtime __state_init helper", v.Name)
+				c.errf(v.P, "state var %q has type %s; state{} currently supports scalars (i32/u32/i64/u64/f32/f64/boolean) and string. Map / T[] / structs need the two-cursor allocator (next state{} PR)", v.Name, v.Type)
 				continue
 			}
 			if _, dup := c.info.StateVars[v.Name]; dup {
 				c.errf(v.P, "state var %q already declared", v.Name)
 				continue
 			}
-			// Confirm the literal's scalar shape matches the
-			// declared type. Numeric literals get a width stamp
-			// from the polymorphic-literal settle path; for
-			// state-block literals we settle here directly so
-			// codegen can emit the right wasm const opcode.
-			c.settleStateInitLiteral(v.Type, v.Init)
+			// Type-check the init expression against the
+			// declared type. Reuses the regular expression
+			// checker so all the polymorphic-literal settle
+			// rules (numeric width inference, float promotion)
+			// apply at the state-init site too.
+			initType := c.checkExpr(v.Init, &scope{})
+			if initType != nil {
+				c.settleNumeric(v.Init, v.Type)
+				initType = postSettleType(v.Init, initType)
+				if !ast.Equal(v.Type, initType) && !assignable(v.Type, initType) {
+					c.errf(v.P, "state var %q initialiser type %s does not match declared %s", v.Name, initType, v.Type)
+					continue
+				}
+			}
+			// Settle scalar literals to the declared type so the
+			// IR's NumberLit lowering picks the right wasm const
+			// opcode for the literal-init shortcut.
+			if isStateInitLiteral(v.Init) {
+				c.settleStateInitLiteral(v.Type, v.Init)
+			}
 			c.info.StateVars[v.Name] = v.Type
 			c.info.VarTypes[v] = v.Type
 		}
+	}
+
+	// Synthesise `__state_init`: a void function whose body runs
+	// each non-literal state-init expression as `STATE_VAR =
+	// INIT_EXPR;`. The wasm backend wires this into the module's
+	// `(start ...)` section so it runs once at module
+	// instantiation; the arm32 backend calls it from `_start`
+	// before `main`. Functions with no non-literal inits get an
+	// empty body — the wasm `(start)` machinery still expects
+	// the function to exist if any state vars are declared, so
+	// we always synthesise once when prog.States is non-empty.
+	//
+	// Stamping it as an entry point in treeshake keeps the body
+	// alive through DCE; without that the tree-shaker would drop
+	// the synthesised function (no AST caller).
+	if hasNonLiteralStateInit(prog) {
+		prog.Funcs = append(prog.Funcs, synthesiseStateInit(prog))
 	}
 
 	// Second pass: check bodies.
@@ -3618,15 +3655,20 @@ func isFloat(t ast.Type) bool {
 	return ok
 }
 
-// isStateVarType matches the scalar V types the first-PR state{}
-// block accepts: every NumberType width, every FloatType width,
-// and BoolType. Pointer-shaped types (StringType, ArrayType,
-// SliceType, StructType, EnumType, FuncType, ParamType) need the
-// two-cursor allocator before they can ship as state — see PR 6
-// item 9 in docs/LANGUAGE-DIRECTION.md.
+// isStateVarType matches the V types state{} accepts today.
+// Scalars (every NumberType / FloatType width + BoolType) compile
+// to wasm globals with their literal init expression baked in.
+// Strings are immutable in this language — once allocated, the
+// underlying bytes never change — so a state-string is read-only
+// across requests and doesn't need the two-cursor allocator that
+// mutable pointer types (Map / T[] / structs whose mutation
+// allocates) will need. Strings live as a lang-heap allocation;
+// the storage is preserved across `arena_restore` because state
+// init runs before any `arena_save` (allocations end up below
+// the save point).
 func isStateVarType(t ast.Type) bool {
 	switch t.(type) {
-	case ast.NumberType, ast.FloatType, ast.BoolType:
+	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType:
 		return true
 	}
 	return false
@@ -3648,6 +3690,54 @@ func isStateInitLiteral(e ast.Expr) bool {
 		}
 	}
 	return false
+}
+
+// hasNonLiteralStateInit reports whether any state var in prog
+// needs a runtime init step (everything that isn't a bare
+// scalar literal — string init, computed scalar init like
+// `1 + 2 * 3`, etc.). Used to decide whether to synthesise
+// `__state_init`.
+func hasNonLiteralStateInit(prog *ast.Program) bool {
+	for _, sd := range prog.States {
+		for _, v := range sd.Vars {
+			if !isStateInitLiteral(v.Init) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// synthesiseStateInit builds a void `__state_init` FuncDecl
+// whose body assigns each non-literal state-init expression to
+// its declared global. Wasm codegen exports this via `(start
+// $__state_init)`; arm32 codegen calls it from `_start` before
+// `main`. State assignments lower to OpStoreGlobal naturally —
+// no special-case codegen needed in the body.
+func synthesiseStateInit(prog *ast.Program) *ast.FuncDecl {
+	var stmts []ast.Stmt
+	for _, sd := range prog.States {
+		for _, v := range sd.Vars {
+			if isStateInitLiteral(v.Init) {
+				continue
+			}
+			stmts = append(stmts, &ast.ExprStmt{
+				P: v.P,
+				Expr: &ast.Assign{
+					P:      v.P,
+					Target: &ast.Ident{P: v.P, Name: v.Name},
+					Value:  v.Init,
+				},
+			})
+		}
+	}
+	return &ast.FuncDecl{
+		P:          ast.Position{},
+		Name:       "__state_init",
+		Params:     nil,
+		ReturnType: ast.VoidType{},
+		Body:       &ast.Block{Stmts: stmts},
+	}
 }
 
 // settleStateInitLiteral stamps Width / IsFloat / FloatWidth on

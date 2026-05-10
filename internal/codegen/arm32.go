@@ -87,6 +87,12 @@ type generator struct {
 	// Empty for programs without state blocks; OpLoadGlobal /
 	// OpStoreGlobal is unused in that case.
 	stateDecls []*ast.StateDecl
+	// hasStateInit is true when the synthesised `__state_init`
+	// function exists (state{} declared at least one
+	// non-literal init). emitStartRuntime gates the
+	// `bl __state_init` call on this flag so programs without
+	// runtime state init don't pay an unconditional branch.
+	hasStateInit bool
 	// lineBufferLabel/lineBufferOrder dedupe the
 	// `data + "\n"` buffers used by the `print(literal)` fold.
 	// Same shape as stringLabel/stringOrder but with the
@@ -1121,7 +1127,16 @@ func (g *generator) internLineBuffer(s string) string {
 // little-endian order so the storage exists; arithmetic on
 // those types still errors at the op site since arm32 hasn't
 // shipped i64 codegen yet.
+//
+// Non-literal initialisers (`"hello, " + "world"`, `1 + 2`)
+// can't be evaluated at link time, so they get a zero / null
+// placeholder here and the synthesised `__state_init` start
+// function (called from `_start` before `main`) overwrites
+// the slot with the computed value at runtime.
 func arm32StateInitDirective(t ast.Type, init ast.Expr) string {
+	if !isArm32StateInitLiteral(init) {
+		return arm32StateZeroDirective(t)
+	}
 	v := evalArm32StateInit(init)
 	switch typ := t.(type) {
 	case ast.NumberType:
@@ -1150,6 +1165,49 @@ func arm32StateInitDirective(t ast.Type, init ast.Expr) string {
 	case ast.BoolType:
 		if v != 0 {
 			return ".4byte 1"
+		}
+		return ".4byte 0"
+	}
+	return ".4byte 0"
+}
+
+// isArm32StateInitLiteral matches the shapes that
+// arm32StateInitDirective can pre-bake at link time: scalar
+// literal AST nodes plus the `Unary{"-", lit}` shape the
+// parser produces for negative numbers. Anything else (string
+// concat, arithmetic) needs runtime init via `__state_init`.
+func isArm32StateInitLiteral(e ast.Expr) bool {
+	switch v := e.(type) {
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit:
+		return true
+	case *ast.Unary:
+		if v.Op == "-" {
+			return isArm32StateInitLiteral(v.Operand)
+		}
+	}
+	return false
+}
+
+// arm32StateZeroDirective returns the width-correct zero /
+// null placeholder for a state var whose runtime-init expr
+// will overwrite it before user code runs. Strings go to
+// `.4byte 0` (null pointer); the runtime init's __lang_alloc
+// + str_concat pipeline writes the real pointer.
+func arm32StateZeroDirective(t ast.Type) string {
+	switch typ := t.(type) {
+	case ast.NumberType:
+		switch typ.NormalWidth() {
+		case 8:
+			return ".byte 0"
+		case 16:
+			return ".2byte 0"
+		case 64:
+			return ".4byte 0\n\t.4byte 0"
+		}
+		return ".4byte 0"
+	case ast.FloatType:
+		if typ.Width == 64 {
+			return ".4byte 0\n\t.4byte 0"
 		}
 		return ".4byte 0"
 	}

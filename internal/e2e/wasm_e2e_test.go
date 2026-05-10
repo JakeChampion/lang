@@ -3192,6 +3192,62 @@ function main(): i32 {
 	}
 }
 
+// State string: immutable pointer-shaped state. The init runs
+// at module instantiation via the synthesised `__state_init`
+// start function, before any user code; the resulting string
+// allocation lives below the per-request `arena_save` point so
+// it's preserved across `arena_restore`. Non-literal init shape
+// also tested here — `"hello, " + "world"` is a string-concat
+// allocation, not a const.
+func TestWASMStateStringConcat(t *testing.T) {
+	src := `state {
+    var greeting: string = "hello, " + "world";
+}
+
+function main(): i32 {
+    return len(greeting);
+}`
+	if got := runWasm(t, src); got != 12 {
+		t.Errorf("got %d, want 12 (state string init runs `+` concat at module instantiation)", got)
+	}
+}
+
+// State scalar with a non-literal init expression. Computed
+// init runs in the synthesised `__state_init` start function
+// rather than baking into the wasm global init expression
+// (which only accepts a single `<type>.const N`).
+func TestWASMStateComputedScalarInit(t *testing.T) {
+	src := `state {
+    var precomputed: i32 = 1 + 2 * 3;
+}
+
+function main(): i32 {
+    return precomputed;
+}`
+	if got := runWasm(t, src); got != 7 {
+		t.Errorf("got %d, want 7 (computed init 1 + 2*3 = 7)", got)
+	}
+}
+
+// Mixed init: one literal scalar (baked into the global) and
+// one string requiring runtime init. Confirms the wasm globals
+// keep their literal init while the string global is set by
+// `__state_init`.
+func TestWASMStateMixedInit(t *testing.T) {
+	src := `state {
+    var counter: i32 = 0;
+    var prefix: string = "req-" + "v1";
+}
+
+function main(): i32 {
+    counter = counter + 1;
+    return counter + len(prefix);
+}`
+	if got := runWasm(t, src); got != 7 {
+		t.Errorf("got %d, want 7 (counter=1 + len('req-v1')=6)", got)
+	}
+}
+
 // Multi-var state block + cross-function read. State vars are
 // module-scoped so any function can reach them, not just main().
 func TestWASMStateMultipleVars(t *testing.T) {

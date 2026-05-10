@@ -120,6 +120,13 @@ func Run(prog *ast.Program, extras ...string) {
 	// `function f(): i32 { return 1; }` without a main.
 	enqueue("main")
 	enqueue("handle")
+	// `__state_init` is the synthesised start function that
+	// runs state-block init expressions at module instantiation
+	// time. Codegen wires it up through the wasm `(start ...)`
+	// section / arm32's `_start` prologue, neither of which the
+	// AST walker sees — pin it as an entry point so its body
+	// (and anything it calls) survives tree-shaking.
+	enqueue("__state_init")
 	for _, name := range extras {
 		enqueue(name)
 	}
