@@ -16,6 +16,15 @@ function (s: string) is_empty(): boolean {
     return len(s) == 0;
 }
 
+// `(s: string) to_string()` — identity on strings. Lets the
+// f-string lexer's blanket `(<expr>).to_string()` desugar work
+// uniformly on every interpolant, regardless of whether the
+// interpolant is already a string. Has no runtime cost: the IR's
+// inliner collapses the call to its operand.
+function (s: string) to_string(): string {
+    return s;
+}
+
 // `s.repeat(n)` — `n` copies of s concatenated. `n <= 0`
 // returns empty; `n == 1` returns a fresh independent copy
 // of s (the `+` lowering allocates). Quadratic on large n

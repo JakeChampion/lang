@@ -149,6 +149,13 @@ type lexer struct {
 	// order. Populated by skipTrivia; exposed via the second
 	// Tokenize return value.
 	comments []ast.Comment
+	// pending is a FIFO queue of tokens the scanner has prepared
+	// but not yet returned. f-strings populate it: when next() sees
+	// `f"..."` it scans the body, expands it into the equivalent
+	// `<lit> + (<expr>).to_string() + <lit> + …` token sequence,
+	// stashes every token here, and returns the head. Subsequent
+	// next() calls drain pending before reading more source.
+	pending []Token
 }
 
 func (l *lexer) peek() (rune, bool) {
@@ -201,6 +208,11 @@ func (l *lexer) skipTrivia() {
 }
 
 func (l *lexer) next() (Token, error) {
+	if len(l.pending) > 0 {
+		tok := l.pending[0]
+		l.pending = l.pending[1:]
+		return tok, nil
+	}
 	l.skipTrivia()
 	if l.i >= len(l.src) {
 		return Token{Kind: EOF, Pos: l.pos()}, nil
@@ -208,6 +220,24 @@ func (l *lexer) next() (Token, error) {
 
 	start := l.pos()
 	r, _ := l.peek()
+
+	// f-string: `f"..."` desugars at lex time into the equivalent
+	// `+`-chain of string literals + `(expr).to_string()` calls.
+	// `{{` and `}}` escape literal braces. Detected before the
+	// generic identifier path so the `f` doesn't get scooped up
+	// as an identifier.
+	if r == 'f' && l.i+1 < len(l.src) && l.src[l.i+1] == '"' {
+		l.advance() // consume `f`
+		if err := l.scanFString(start); err != nil {
+			return Token{}, err
+		}
+		// scanFString queues at least one token (an empty literal
+		// for `f""`, a single literal for `f"abc"`, or a chain for
+		// any interpolation form). Drain the head now.
+		tok := l.pending[0]
+		l.pending = l.pending[1:]
+		return tok, nil
+	}
 
 	// Identifier or keyword.
 	if r == '_' || unicode.IsLetter(r) {
@@ -308,4 +338,182 @@ func (l *lexer) next() (Token, error) {
 	}
 
 	return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unexpected character %q", r)}
+}
+
+// scanFString consumes the body of an f-string starting at the
+// current `"`, including the closing `"`. It expands the body into
+// the equivalent token sequence:
+//
+//	f"hello {x + 1} world" → "hello " + (x + 1).to_string() + " world"
+//	f"{count}"             → (count).to_string()
+//	f"plain"               → "plain"
+//	f""                    → ""
+//
+// `{{` and `}}` escape literal braces. Standard string escapes
+// (`\n`, `\t`, `\"`, `\\`, `\r`, `\0`) are honoured in the literal
+// portions; inside `{...}` the bytes are passed verbatim to a
+// fresh sub-lexer that re-tokenises the interpolant expression.
+//
+// Tokens are appended to l.pending; next() drains them.
+func (l *lexer) scanFString(start ast.Position) error {
+	if l.i >= len(l.src) || l.src[l.i] != '"' {
+		return &Error{Pos: start, Msg: "expected `\"` after `f`"}
+	}
+	l.advance() // opening "
+	var lit strings.Builder
+	emittedAny := false
+	// addPlus emits a `+` joiner before a new piece when one is
+	// already on the queue.
+	addPlus := func() {
+		if emittedAny {
+			l.pending = append(l.pending, Token{Kind: Punct, Text: "+", Pos: start})
+		}
+	}
+	// flushLit emits the accumulated literal piece if non-empty.
+	flushLit := func() {
+		if lit.Len() == 0 {
+			return
+		}
+		addPlus()
+		l.pending = append(l.pending, Token{Kind: String, Text: lit.String(), Pos: start})
+		lit.Reset()
+		emittedAny = true
+	}
+	for l.i < len(l.src) {
+		c := rune(l.src[l.i])
+		if c == '"' {
+			l.advance()
+			flushLit()
+			if !emittedAny {
+				// Whole f-string was empty (`f""`) — produce a
+				// single empty-string token so the parser sees a
+				// well-formed expression.
+				l.pending = append(l.pending, Token{Kind: String, Text: "", Pos: start})
+			}
+			return nil
+		}
+		if c == '\n' {
+			return &Error{Pos: start, Msg: "newline inside f-string literal"}
+		}
+		if c == '\\' {
+			l.advance()
+			if l.i >= len(l.src) {
+				return &Error{Pos: start, Msg: "unterminated f-string literal"}
+			}
+			esc := rune(l.src[l.i])
+			l.advance()
+			switch esc {
+			case 'n':
+				lit.WriteByte('\n')
+			case 't':
+				lit.WriteByte('\t')
+			case 'r':
+				lit.WriteByte('\r')
+			case '0':
+				lit.WriteByte(0)
+			case '"':
+				lit.WriteByte('"')
+			case '\\':
+				lit.WriteByte('\\')
+			default:
+				return &Error{Pos: start, Msg: fmt.Sprintf("unknown escape \\%c", esc)}
+			}
+			continue
+		}
+		if c == '{' {
+			// `{{` → literal `{`.
+			if l.i+1 < len(l.src) && l.src[l.i+1] == '{' {
+				lit.WriteByte('{')
+				l.advance()
+				l.advance()
+				continue
+			}
+			l.advance() // opening {
+			flushLit()
+			addPlus()
+			// Find the matching `}` at brace-depth 0 — supports
+			// nested braces inside the interpolant (e.g. struct
+			// literals) without losing the outer boundary.
+			exprStart := l.i
+			depth := 1
+			for l.i < len(l.src) && depth > 0 {
+				switch l.src[l.i] {
+				case '{':
+					depth++
+				case '}':
+					depth--
+					if depth == 0 {
+						break
+					}
+				case '\n':
+					return &Error{Pos: start, Msg: "newline inside f-string interpolation"}
+				case '"':
+					// Skip a string literal inside the interpolant
+					// so its braces / quotes don't confuse the
+					// boundary scan.
+					l.advance() // opening "
+					for l.i < len(l.src) && l.src[l.i] != '"' {
+						if l.src[l.i] == '\\' && l.i+1 < len(l.src) {
+							l.advance()
+						}
+						l.advance()
+					}
+					if l.i >= len(l.src) {
+						return &Error{Pos: start, Msg: "unterminated string inside f-string interpolation"}
+					}
+					// fall through to the closing quote advance below
+				}
+				if depth > 0 {
+					l.advance()
+				}
+			}
+			if depth != 0 {
+				return &Error{Pos: start, Msg: "unterminated `{` in f-string"}
+			}
+			exprText := l.src[exprStart:l.i]
+			l.advance() // closing }
+			if strings.TrimSpace(exprText) == "" {
+				return &Error{Pos: start, Msg: "empty `{}` in f-string"}
+			}
+			// Sub-lex the interpolant expression and wrap as
+			// `(<expr>).to_string()`. The sub-lexer is fed JUST
+			// the interpolant text so its EOF terminates the
+			// expression cleanly.
+			l.pending = append(l.pending, Token{Kind: Punct, Text: "(", Pos: start})
+			sub := &lexer{src: exprText, line: start.Line, col: start.Col}
+			for {
+				tok, err := sub.next()
+				if err != nil {
+					return err
+				}
+				if tok.Kind == EOF {
+					break
+				}
+				l.pending = append(l.pending, tok)
+			}
+			l.pending = append(l.pending,
+				Token{Kind: Punct, Text: ")", Pos: start},
+				Token{Kind: Punct, Text: ".", Pos: start},
+				Token{Kind: Ident, Text: "to_string", Pos: start},
+				Token{Kind: Punct, Text: "(", Pos: start},
+				Token{Kind: Punct, Text: ")", Pos: start},
+			)
+			emittedAny = true
+			continue
+		}
+		if c == '}' {
+			// `}}` → literal `}`. A bare `}` is an error (matches
+			// Python's f-string rule).
+			if l.i+1 < len(l.src) && l.src[l.i+1] == '}' {
+				lit.WriteByte('}')
+				l.advance()
+				l.advance()
+				continue
+			}
+			return &Error{Pos: start, Msg: "unmatched `}` in f-string (use `}}` for a literal `}`)"}
+		}
+		lit.WriteRune(c)
+		l.advance()
+	}
+	return &Error{Pos: start, Msg: "unterminated f-string literal"}
 }
