@@ -154,6 +154,78 @@ function main(): i32 {
 	}
 }
 
+// arm32 Map runtime end-to-end. The Map runtime lives in
+// the lang prelude (~1200 lines of generic open-addressing
+// Map[K, V] / MapIter machinery); arm32 picks it up through
+// the codegen-alias rewrites added in this PR plus the new
+// __load_i32 / __store_i32 / __memset / __alloc primitive
+// helpers. Verifies set + get + len + iter + delete + grow
+// all compose correctly under qemu.
+func TestArm32Map(t *testing.T) {
+	_, code := compileAndRun(t, `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    var i: i32 = 0;
+    while (i < 8) {
+        m.set(i, i * 10);
+        i = i + 1;
+    }
+    if (m.len() != 8) { return 1; }
+    if (m.get_or(3, -1) != 30) { return 2; }
+    if (m.get_or(7, -1) != 70) { return 3; }
+    if (m.get_or(99, -1) != -1) { return 4; }
+    if (!m.delete(3)) { return 5; }
+    if (m.len() != 7) { return 6; }
+    if (m.get_or(3, -1) != -1) { return 7; }
+    return 42;
+}`)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42 (Map set/get/grow/delete on arm32)", code)
+	}
+}
+
+// Map iteration: walk every entry via MapIter's
+// has_next / key / value / advance shape. Exercises the
+// MapIter codegen aliases in the same path as Map's methods.
+func TestArm32MapIter(t *testing.T) {
+	_, code := compileAndRun(t, `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m.set(1, 10);
+    m.set(2, 20);
+    m.set(3, 30);
+    var sum: i32 = 0;
+    var it = m.iter();
+    while (it.has_next()) {
+        sum = sum + it.value();
+        it.advance();
+    }
+    return sum;
+}`)
+	if code != 60 {
+		t.Errorf("exit = %d, want 60 (sum of all values via MapIter)", code)
+	}
+}
+
+// String-keyed Map: confirms the prelude's __map_hash and
+// key-comparison paths work for string K on arm32. The
+// Map runtime hashes via FNV-1a over the byte payload;
+// hash + entry comparison both walk pointer-shaped strings,
+// so this exercises the more complex code path than the
+// simpler i32-keyed test above.
+func TestArm32MapStringKeys(t *testing.T) {
+	_, code := compileAndRun(t, `function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("alpha", 1);
+    m.set("beta", 2);
+    m.set("gamma", 3);
+    var got: i32 = m.get_or("beta", -1);
+    if (got != 2) { return got; }
+    return m.len() + got;
+}`)
+	if code != 5 {
+		t.Errorf("exit = %d, want 5 (3 keys + value 2)", code)
+	}
+}
+
 // Build the existing `examples/wasm/echo_handler.lang` for
 // arm32 and drive it via curl-equivalent. The example was
 // originally written for wasi-http only (`function handle(req):

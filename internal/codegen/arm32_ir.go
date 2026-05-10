@@ -148,6 +148,10 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			case "__str_slice":
 				g.usesStrSlice = true
 				g.usesAlloc = true
+			case "__store_i32", "__load_i32":
+				g.usesRawIntPokes = true
+			case "__memset":
+				g.usesMemset = true
 			}
 			if strings.HasPrefix(op.Str, "__method_Reader_") ||
 				strings.HasPrefix(op.Str, "__method_Writer_") {
@@ -195,6 +199,12 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	}
 	if g.usesStrSlice {
 		g.emitStrSliceRuntime()
+	}
+	if g.usesRawIntPokes {
+		g.emitRawIntPokesRuntime()
+	}
+	if g.usesMemset {
+		g.emitMemsetRuntime()
 	}
 	if g.usesArgs || g.usesEnv {
 		g.emitStrlenRuntime()

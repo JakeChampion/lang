@@ -645,6 +645,48 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		// `__lang_memcpy` (alongside `__lang_strcat` etc.).
 		// Rewrite at the call site so the linker can resolve.
 		target = "__lang_memcpy"
+	case "__alloc":
+		// Raw allocator (no length prefix) — used by the Map
+		// runtime for the bucket index + entries buffer where
+		// the caller owns the layout. Same shape as
+		// `__lang_alloc` on arm32.
+		target = "__lang_alloc"
+	case "map_new":
+		// User-facing `map_new(cap)` rewrites to the lang
+		// prelude's `map_new_impl(cap, 0)` — the second arg is
+		// the key-kind discriminator (0 = i32, 1 = string).
+		// Wasm has a parallel rewrite via codegenAliasMap.
+		// On arm32 we rewrite at the call site so the prelude
+		// function lookup resolves to map_new_impl.
+		target = "map_new_impl"
+	case "__method_Map_len":
+		target = "__map_len_impl"
+	case "__method_Map_has":
+		target = "__map_has_impl"
+	case "__method_Map_get":
+		target = "__map_get_impl"
+	case "__method_Map_get_or":
+		target = "__map_get_or_impl"
+	case "__method_Map_set":
+		target = "__map_set_impl"
+	case "__method_Map_delete":
+		target = "__map_delete_impl"
+	case "__method_Map_clear":
+		target = "__map_clear_impl"
+	case "__method_Map_keys":
+		target = "__map_keys_impl"
+	case "__method_Map_values":
+		target = "__map_values_impl"
+	case "__method_Map_iter":
+		target = "__map_iter_impl"
+	case "__method_MapIter_has_next":
+		target = "__mapiter_has_next_impl"
+	case "__method_MapIter_key":
+		target = "__mapiter_key_impl"
+	case "__method_MapIter_value":
+		target = "__mapiter_value_impl"
+	case "__method_MapIter_advance":
+		target = "__mapiter_advance_impl"
 	}
 	// Reader / Writer method calls arrive as the post-checker
 	// mangled `__method_Reader_*` / `__method_Writer_*` names.
