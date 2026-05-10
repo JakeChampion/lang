@@ -1363,19 +1363,27 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		return nil, fmt.Errorf("interp: unsupported unary %q", x.Op)
 	case *ast.Assign:
 		return i.evalAssign(x, env)
-	case *ast.Ternary:
+	case *ast.IfExpr:
 		c, err := i.evalExpr(x.Cond, env)
 		if err != nil {
 			return nil, err
 		}
 		b, ok := c.(Bool)
 		if !ok {
-			return nil, fmt.Errorf("interp: ternary condition is not a bool: %T", c)
+			return nil, fmt.Errorf("interp: if-expression condition is not a bool: %T", c)
 		}
 		if bool(b) {
 			return i.evalExpr(x.Then, env)
 		}
 		return i.evalExpr(x.Else, env)
+	case *ast.OptionTry:
+		// The interp's expression evaluator can't unwind the
+		// enclosing function early (statement-level flow control
+		// uses a result-flow flag the expression layer doesn't
+		// thread). The wasm + arm32 backends are what users run;
+		// the interp is a sanity-check sandbox so `?` is simply
+		// not supported here.
+		return nil, fmt.Errorf("interp: postfix `?` operator is not supported in the interpreter; compile to wasm or arm32 instead")
 	case *ast.StructLit:
 		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}}
 		for _, f := range x.Fields {

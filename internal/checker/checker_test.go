@@ -287,10 +287,10 @@ func TestContinueInSwitchOutsideLoopRejected(t *testing.T) {
 	}
 }
 
-func TestTernaryTypechecks(t *testing.T) {
+func TestIfExprTypechecks(t *testing.T) {
 	for _, src := range []string{
-		`function f(b: boolean): i32 { return b ? 1 : 2; }`,
-		`function f(b: boolean): float { return b ? 1.5 : 2.5; }`,
+		`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`,
+		`function f(b: boolean): float { return if (b) { 1.5 } else { 2.5 }; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -298,15 +298,50 @@ func TestTernaryTypechecks(t *testing.T) {
 	}
 }
 
-func TestTernaryRejectsNonBoolCond(t *testing.T) {
-	if err := checkSource(t, `function f(): i32 { return 1 ? 2 : 3; }`); err == nil {
+func TestIfExprRejectsNonBoolCond(t *testing.T) {
+	if err := checkSource(t, `function f(): i32 { return if (1) { 2 } else { 3 }; }`); err == nil {
 		t.Error("expected error for non-bool cond")
 	}
 }
 
-func TestTernaryRejectsBranchTypeMismatch(t *testing.T) {
-	if err := checkSource(t, `function f(b: boolean): i32 { return b ? 1 : true; }`); err == nil {
+func TestIfExprRejectsBranchTypeMismatch(t *testing.T) {
+	if err := checkSource(t, `function f(b: boolean): i32 { return if (b) { 1 } else { true }; }`); err == nil {
 		t.Error("expected error for mismatched branches")
+	}
+}
+
+// Postfix `?` produces the unwrapped Some payload type.
+func TestOptionTryTypechecks(t *testing.T) {
+	src := `function f(m: Map[i32, i32]): Option[i32] {
+		var v: i32 = m.get(1)?;
+		return Some(v);
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// `?` rejected when the receiver type is not Option[_].
+func TestOptionTryRejectsNonOption(t *testing.T) {
+	src := `function f(): Option[i32] {
+		var n: i32 = 5;
+		var v: i32 = n?;
+		return Some(v);
+	}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: `?` on non-Option")
+	}
+}
+
+// `?` rejected when the surrounding function doesn't return
+// Option — the early-return target wouldn't unify.
+func TestOptionTryRejectsNonOptionReturn(t *testing.T) {
+	src := `function f(m: Map[i32, i32]): i32 {
+		var v: i32 = m.get(1)?;
+		return v;
+	}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: enclosing fn must return Option[_]")
 	}
 }
 

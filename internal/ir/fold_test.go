@@ -82,11 +82,12 @@ func TestFoldSkipsDivisionAndRemainder(t *testing.T) {
 }
 
 // Constant-if pruning: `if (true) { return 1; }` should drop the
-// OpIf wrapper entirely so only the surviving arm remains. Same shape
-// surfaces from a ternary `(1 < 2) ? 10 : 20`, which the IR lowers to
-// `OpConstI32 1; OpIf i32; OpConstI32 10; OpElse; OpConstI32 20; OpEnd`.
+// OpIf wrapper entirely so only the surviving arm remains. Same
+// shape surfaces from `if (1 < 2) { 10 } else { 20 }`, which the
+// IR lowers to `OpConstI32 1; OpIf i32; OpConstI32 10; OpElse;
+// OpConstI32 20; OpEnd`.
 func TestFoldConstIfPicksTrueBranch(t *testing.T) {
-	p := loweredAndFolded(t, `function f(): i32 { return (1 < 2) ? 10 : 20; }`)
+	p := loweredAndFolded(t, `function f(): i32 { return if (1 < 2) { 10 } else { 20 }; }`)
 	fn := findFunc(p, "f")
 	for _, op := range fn.Ops {
 		if op.Kind == OpIf || op.Kind == OpElse || op.Kind == OpEnd {
@@ -108,7 +109,7 @@ func TestFoldConstIfPicksTrueBranch(t *testing.T) {
 
 // Constant false condition picks the else branch.
 func TestFoldConstIfPicksFalseBranch(t *testing.T) {
-	p := loweredAndFolded(t, `function f(): i32 { return (1 > 2) ? 10 : 20; }`)
+	p := loweredAndFolded(t, `function f(): i32 { return if (1 > 2) { 10 } else { 20 }; }`)
 	fn := findFunc(p, "f")
 	for _, op := range fn.Ops {
 		if op.Kind == OpConstI32 && op.I32 == 10 {

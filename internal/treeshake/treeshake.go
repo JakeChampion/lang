@@ -252,10 +252,12 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		walkExpr(x.Right, byName, enqueue)
 	case *ast.Unary:
 		walkExpr(x.Operand, byName, enqueue)
-	case *ast.Ternary:
+	case *ast.IfExpr:
 		walkExpr(x.Cond, byName, enqueue)
 		walkExpr(x.Then, byName, enqueue)
 		walkExpr(x.Else, byName, enqueue)
+	case *ast.OptionTry:
+		walkExpr(x.Inner, byName, enqueue)
 	case *ast.Assign:
 		walkExpr(x.Target, byName, enqueue)
 		walkExpr(x.Value, byName, enqueue)

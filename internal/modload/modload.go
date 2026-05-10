@@ -500,10 +500,12 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 	case *ast.Assign:
 		r.rewriteExpr(&x.Target)
 		r.rewriteExpr(&x.Value)
-	case *ast.Ternary:
+	case *ast.IfExpr:
 		r.rewriteExpr(&x.Cond)
 		r.rewriteExpr(&x.Then)
 		r.rewriteExpr(&x.Else)
+	case *ast.OptionTry:
+		r.rewriteExpr(&x.Inner)
 	case *ast.StructLit:
 		// Three shapes here:
 		//   - `Foo { … }` where Foo lives in this module → prefix

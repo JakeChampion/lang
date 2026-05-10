@@ -223,7 +223,7 @@ func countIdents(prog *ast.Program, target string) int {
 			for _, a := range x.Args {
 				walkExpr(a)
 			}
-		case *ast.Ternary:
+		case *ast.IfExpr:
 			walkExpr(x.Cond)
 			walkExpr(x.Then)
 			walkExpr(x.Else)

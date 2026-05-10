@@ -312,7 +312,7 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		}
 		n.Value = nv
 		return n, nil
-	case *ast.Ternary:
+	case *ast.IfExpr:
 		nc, err := c.rewriteExpr(n.Cond, ctx)
 		if err != nil {
 			return nil, err
@@ -328,6 +328,13 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 			return nil, err
 		}
 		n.Else = ne
+		return n, nil
+	case *ast.OptionTry:
+		ni, err := c.rewriteExpr(n.Inner, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Inner = ni
 		return n, nil
 	case *ast.StructLit:
 		for i, f := range n.Fields {

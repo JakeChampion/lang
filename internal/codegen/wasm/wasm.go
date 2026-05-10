@@ -398,10 +398,12 @@ func scanEnumUses(prog *ast.Program) bool {
 		case *ast.Assign:
 			walk(x.Target)
 			walk(x.Value)
-		case *ast.Ternary:
+		case *ast.IfExpr:
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
+		case *ast.OptionTry:
+			walk(x.Inner)
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				walk(f.Value)
@@ -639,10 +641,12 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 		case *ast.Assign:
 			walk(x.Target)
 			walk(x.Value)
-		case *ast.Ternary:
+		case *ast.IfExpr:
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
+		case *ast.OptionTry:
+			walk(x.Inner)
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				walk(f.Value)
@@ -762,10 +766,12 @@ func (g *generator) scanForArrayUses(prog *ast.Program) {
 			for _, arm := range x.Arms {
 				walk(arm.Body)
 			}
-		case *ast.Ternary:
+		case *ast.IfExpr:
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
+		case *ast.OptionTry:
+			walk(x.Inner)
 		}
 	}
 	for _, fn := range prog.Funcs {
@@ -971,10 +977,12 @@ func (g *generator) scanIndirectExpr(e ast.Expr, inCalleePos bool) {
 	case *ast.Assign:
 		g.scanIndirectExpr(x.Target, false)
 		g.scanIndirectExpr(x.Value, false)
-	case *ast.Ternary:
+	case *ast.IfExpr:
 		g.scanIndirectExpr(x.Cond, false)
 		g.scanIndirectExpr(x.Then, false)
 		g.scanIndirectExpr(x.Else, false)
+	case *ast.OptionTry:
+		g.scanIndirectExpr(x.Inner, false)
 	case *ast.Call:
 		// Walk args first.
 		for _, a := range x.Args {
@@ -1230,10 +1238,12 @@ func (g *generator) scanForStringConcat(prog *ast.Program) {
 		case *ast.Assign:
 			walk(x.Target)
 			walk(x.Value)
-		case *ast.Ternary:
+		case *ast.IfExpr:
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
+		case *ast.OptionTry:
+			walk(x.Inner)
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				walk(f.Value)
@@ -1351,10 +1361,12 @@ func (g *generator) scanForBoundsCheck(prog *ast.Program) {
 		case *ast.Assign:
 			walk(x.Target)
 			walk(x.Value)
-		case *ast.Ternary:
+		case *ast.IfExpr:
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
+		case *ast.OptionTry:
+			walk(x.Inner)
 		case *ast.StructLit:
 			for _, f := range x.Fields {
 				walk(f.Value)
@@ -1510,10 +1522,12 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 			for _, arm := range x.Arms {
 				walk(arm.Body)
 			}
-		case *ast.Ternary:
+		case *ast.IfExpr:
 			walk(x.Cond)
 			walk(x.Then)
 			walk(x.Else)
+		case *ast.OptionTry:
+			walk(x.Inner)
 		}
 	}
 	for _, fn := range prog.Funcs {
