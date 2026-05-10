@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -322,6 +323,82 @@ func TestArm64TcpListen(t *testing.T) {
 }`)
 	if code != 42 {
 		t.Errorf("exit = %d, want 42 (tcp_listen + tcp_close on ephemeral port)", code)
+	}
+}
+
+// arm64-darwin baseline: native Apple Silicon macOS Mach-O
+// binaries. Compiles via clang --target=arm64-apple-darwin +
+// lld's Mach-O backend; the resulting binary runs natively on
+// Apple Silicon Macs (no Linux container needed). Tests
+// can't execute the binary here (qemu-aarch64 only emulates
+// Linux), so they assert the output is a valid Mach-O 64-bit
+// arm64 executable.
+//
+// Status: assembly + linking work for substantial programs
+// (arithmetic, strings, concat, Map runtime). Runtime
+// behaviour on real Apple Silicon may still trip on Linux-
+// specific syscall numbers in __lang_alloc (mmap=222 is
+// Linux; macOS BSD mmap is 197 with different flags) —
+// tracked as a follow-up. The exit-syscall path is already
+// Darwin-aware (SYS_exit=1, svc #0x80).
+func TestArm64DarwinBuilds(t *testing.T) {
+	if _, err := exec.LookPath("clang"); err != nil {
+		t.Skip("clang not on PATH; skipping arm64-darwin cross-compile e2e")
+	}
+	if _, err := exec.LookPath("ld.lld"); err != nil {
+		t.Skip("lld not on PATH; skipping arm64-darwin cross-compile e2e")
+	}
+
+	for _, src := range []string{
+		`function main(): i32 { return 42; }`,
+		`function main(): i32 {
+    var s: string = "hello, " + "world!";
+    return len(s);
+}`,
+		`function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m.set(1, 100);
+    m.set(2, 200);
+    return m.get_or(2, 0);
+}`,
+	} {
+		prog, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if err := constfold.Fold(prog); err != nil {
+			t.Fatalf("constfold: %v", err)
+		}
+		info, err := checker.Check(prog)
+		if err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
+		if err != nil {
+			t.Fatalf("emit: %v", err)
+		}
+
+		dir := t.TempDir()
+		asmPath := filepath.Join(dir, "prog.s")
+		binPath := filepath.Join(dir, "prog")
+		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+			t.Fatalf("write asm: %v", err)
+		}
+		args := []string{
+			"--target=arm64-apple-darwin",
+			"-fuse-ld=lld",
+			"-nostdlib",
+			"-Wl,-arch,arm64",
+			asmPath,
+			"-o", binPath,
+		}
+		if out, err := exec.Command("clang", args...).CombinedOutput(); err != nil {
+			t.Fatalf("clang Mach-O cross-compile: %v\n%s\n--- asm ---\n%s", err, out, asm)
+		}
+		out, _ := exec.Command("file", binPath).CombinedOutput()
+		if !strings.Contains(string(out), "Mach-O 64-bit arm64 executable") {
+			t.Errorf("not a Mach-O arm64 executable: %s\n%s", out, asm)
+		}
 	}
 }
 
