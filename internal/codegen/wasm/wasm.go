@@ -1208,6 +1208,11 @@ func (g *generator) scanForStringConcat(prog *ast.Program) {
 			}
 			walk(x.Left)
 			walk(x.Right)
+		case *ast.FString:
+			// f-strings lower to a `+`-chain via Desugared; the
+			// scan walks the original AST so it has to descend
+			// explicitly to see the IsStringConcat=true Binaries.
+			walk(x.Desugared)
 		case *ast.Unary:
 			walk(x.Operand)
 		case *ast.Call:
