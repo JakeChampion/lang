@@ -277,6 +277,33 @@ function __array_append_string(arr: string[], v: string): string[] {
     return data as string[];
 }
 
+// `__array_append_i64(arr, v)` — wide-stride counterpart for
+// `i64[]` / `u64[]`. Same compose-with-primitives pattern as
+// the 4-byte string variant: `__alloc` for the new block,
+// `__memcpy` for the existing elements, and `__store_i64` for
+// the new tail entry. Routed from `arr.push(v)` for 8-byte
+// integer strides via the `__method_Array_push_i64` codegen
+// alias.
+//
+// The length prefix is still a 4-byte i32 (len(arr) reads
+// from arr-4 regardless of element stride). i64 elements end
+// up at byte offsets 4, 12, 20, ... — 4-byte but not 8-byte
+// aligned. Wasm allows unaligned wide loads/stores
+// functionally; the alignment hint is omitted on the shim's
+// `i64.store`.
+function __array_append_i64(arr: i64[], v: i64): i64[] {
+    var oldLen: i32 = len(arr);
+    var newLen: i32 = oldLen + 1;
+    var hdr: i32 = __alloc(4 + newLen * 8);
+    __store_i32(hdr, newLen);
+    var data: i32 = hdr + 4;
+    if (oldLen > 0) {
+        __memcpy(data, arr as i32, oldLen * 8);
+    }
+    __store_i64(data + oldLen * 8, v);
+    return data as i64[];
+}
+
 // === Decimal int-to-string formatter ===
 //
 // `int_to_string(n)` — signed-i32 → ASCII decimal. Test

@@ -46,6 +46,7 @@ import (
 var codegenAliasMap = map[string]string{
 	"__array_append_jsonvalue":  "__array_append_string",
 	"__method_Array_push":       "__array_append_string",
+	"__method_Array_push_i64":   "__array_append_i64",
 	"map_new":                   "map_new_impl",
 	"__method_Map_len":          "__map_len_impl",
 	"__method_Map_has":          "__map_has_impl",
@@ -481,27 +482,31 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					// Now lives in the lang prelude
 					// (internal/prelude/prelude.lang).
 				case "__memcpy", "__memset", "__alloc_u8",
-					"__alloc", "__load_i32", "__store_i32":
+					"__alloc", "__load_i32", "__store_i32",
+					"__load_i64", "__store_i64":
 					// Wat shims that wrap wasm's bulk-memory
 					// `memory.copy` / `memory.fill` plus a tiny
-					// allocator + raw i32-poke set. Exposed to
-					// the lang prelude so high-level helpers
+					// allocator + raw i32/i64-poke set. Exposed
+					// to the lang prelude so high-level helpers
 					// (map runtime migration, json buffer
-					// family, the remaining wat array helpers)
-					// can build growable buffers and typed
-					// pointer arrays without dropping out of
-					// the language.
+					// family, the remaining wat array helpers,
+					// the wide-element append) can build
+					// growable buffers and typed pointer arrays
+					// without dropping out of the language.
 					g.needsBulkMemory = true
 					g.needsRuntime = true
-				case "__array_append_string", "__array_append_jsonvalue":
-					// `__array_append_string` lives in the lang
-					// prelude; `__array_append_jsonvalue` aliases
-					// it via the codegen routing in
-					// internal/codegen/wasm/wasm_ir.go (both are
-					// 4-byte-pointer-stride at the wasm layer).
-					// No wat-side gating needed — but the alias
-					// path still wants the runtime preamble for
-					// the underlying alloc.
+				case "__array_append_string", "__array_append_jsonvalue",
+					"__array_append_i64":
+					// All three live in the lang prelude.
+					// `__array_append_jsonvalue` aliases to
+					// `__array_append_string` at the wat layer
+					// (both 4-byte-pointer-stride). The i64
+					// variant is a parallel 8-byte-element
+					// helper that calls `__store_i64` +
+					// `__memcpy` — same lang-side composition
+					// pattern. No wat-side wrapper to emit; the
+					// runtime preamble (the bump allocator) is
+					// what each one needs.
 					g.needsRuntime = true
 				case "url_parse":
 					// Now lives in the lang prelude
@@ -3731,6 +3736,28 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.line(`local.get $addr`)
 	g.line(`local.get $v`)
 	g.line(`i32.store`)
+	g.indent--
+	g.line(`)`)
+
+	// $__load_i64(addr): i64 — read an 8-byte word from linear
+	// memory. Pair of `__store_i64`. Both are wat shims that
+	// expose wasm's wide-int load/store ops to lang code so the
+	// prelude can build wide-element data structures (today:
+	// `__array_append_i64`; tomorrow: an f64 variant if a
+	// callable demand surfaces). Wasm permits unaligned loads
+	// functionally — no alignment hint set.
+	g.line(`(func $__load_i64 (param $addr i32) (result i64)`)
+	g.indent++
+	g.line(`local.get $addr`)
+	g.line(`i64.load`)
+	g.indent--
+	g.line(`)`)
+
+	g.line(`(func $__store_i64 (param $addr i32) (param $v i64)`)
+	g.indent++
+	g.line(`local.get $addr`)
+	g.line(`local.get $v`)
+	g.line(`i64.store`)
 	g.indent--
 	g.line(`)`)
 }

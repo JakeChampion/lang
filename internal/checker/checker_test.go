@@ -506,14 +506,25 @@ func TestArrayPushTypechecks(t *testing.T) {
 // Wide-stride arrays (i64[], f64[]) have no append helper wired
 // up yet — checker rejects with a clear pointer at the storage
 // class rather than producing broken wat.
-func TestArrayPushRejectsWideStride(t *testing.T) {
+// 8-byte int strides (i64 / u64) now route to a separate
+// `__array_append_i64` wat helper. f64 is still gated — its
+// 8-byte slot needs its own f64.store helper which isn't wired
+// up yet.
+func TestArrayPushI64StridePasses(t *testing.T) {
 	for _, src := range []string{
-		`function f(): i32 { var xs: i64[] = [1, 2]; xs = xs.push(3); return 0; }`,
-		`function f(): i32 { var xs: f64[] = [1.0]; xs = xs.push(2.0); return 0; }`,
+		`function f(): i32 { var xs: i64[] = [1i64, 2i64]; xs = xs.push(3i64); return 0; }`,
+		`function f(): i32 { var xs: u64[] = [1u64]; xs = xs.push(2u64); return 0; }`,
 	} {
-		if err := checkSource(t, src); err == nil {
-			t.Errorf("%q: expected error for wide-stride push", src)
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
 		}
+	}
+}
+
+func TestArrayPushRejectsF64Stride(t *testing.T) {
+	src := `function f(): i32 { var xs: f64[] = [1.0f64]; xs = xs.push(2.0f64); return 0; }`
+	if err := checkSource(t, src); err == nil {
+		t.Errorf("expected error for f64 stride push")
 	}
 }
 

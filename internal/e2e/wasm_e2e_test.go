@@ -3025,6 +3025,41 @@ function main(): i32 {
 // to `__array_append_string` at codegen — identical wat shape as
 // the older `__array_append_*` direct calls, just without users
 // having to know the per-T helper name.
+// 8-byte int stride: arr.push(v) on i64[] / u64[] routes to the
+// wat-side __array_append_i64 helper. The header layout is
+// length-prefix (4 bytes) + 8-byte elements, which means
+// elements are 4-byte-aligned but not 8-byte-aligned — wasm
+// allows unaligned i64.store / i64.load functionally, just with
+// a perf hint penalty we accept here.
+func TestWASMArrayPushI64(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i64[] = [10i64, 20i64];
+    xs = xs.push(30i64);
+    xs = xs.push(40i64);
+    if (xs[0] != 10i64) { return 1; }
+    if (xs[3] != 40i64) { return 2; }
+    if ((len(xs) as i64) != 4i64) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (i64 push round-trip)", got)
+	}
+}
+
+// Empty-array start: confirms the oldLen==0 fast-path of the
+// helper (skips memory.copy).
+func TestWASMArrayPushI64EmptyStart(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i64[] = [];
+    xs = xs.push(7i64);
+    if (xs[0] != 7i64) { return 1; }
+    return len(xs);
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1 (single push from empty i64[])", got)
+	}
+}
+
 func TestWASMArrayPushI32(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [1, 2];
