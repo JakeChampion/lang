@@ -1748,6 +1748,57 @@ func TestWASMMapIter(t *testing.T) {
 	}
 }
 
+// `for (k, v) in m { ... }` desugars at parse time to the
+// MapIter cursor loop — same control flow as the manual
+// `it.has_next()` / `it.key()` / `it.value()` / `it.advance()`
+// shape exercised above, but without the per-call-site
+// boilerplate. Continue inside the body still advances the
+// cursor (the synthesised For carries `it.advance()` on its
+// Step slot, so `continue` jumps to the step before
+// re-checking the cond).
+func TestWASMForTupleInMap(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30, 4: 40 };
+    var sum_keys: i32 = 0;
+    var sum_vals: i32 = 0;
+    var count: i32 = 0;
+    for (k, v) in m {
+        if (k == 3) { continue; }
+        sum_keys = sum_keys + k;
+        sum_vals = sum_vals + v;
+        count = count + 1;
+    }
+    if (count != 3) { return 1; }
+    if (sum_keys != 7) { return 2; }   // 1+2+4
+    if (sum_vals != 70) { return 3; }  // 10+20+40
+
+    // String-keyed map iterates the same way; insertion order
+    // is observable so we check the concatenation directly.
+    var labels: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+    var keys_concat: string = "";
+    var val_sum: i32 = 0;
+    for (k2, v2) in labels {
+        keys_concat = keys_concat + k2;
+        val_sum = val_sum + v2;
+    }
+    if (keys_concat != "abc") { return 4; }
+    if (val_sum != 6) { return 5; }
+
+    // An empty map's foreach is a no-op.
+    var empty: Map[i32, i32] = map_new(4);
+    var ran: i32 = 0;
+    for (ek, ev) in empty {
+        ran = ran + 1;
+        if (ek + ev > 0) { return 6; }
+    }
+    if (ran != 0) { return 7; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (for (k, v) in m desugar)", got)
+	}
+}
+
 // Wide-V Map: Map[K, i64] / Map[K, f64] need a boxing dance
 // since the shared wat helpers see all values as i32. The IR
 // allocates an 8-byte cell on each set / get_or-fallback, stores

@@ -1049,6 +1049,22 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 		}
 	}
 
+	// Map foreach shape: `for (K, V) in expr body`. The opening `(`
+	// is shared with the C-style for, so disambiguate by peeking the
+	// fixed `( IDENT , IDENT ) in` prefix. C-style starts with `var`,
+	// `;`, or an arbitrary expression — none of them match this
+	// pattern, so the lookahead is unambiguous.
+	if p.match(lexer.Punct, "(") && p.i+5 < len(p.tokens) {
+		t1, t2, t3, t4, t5 := p.tokens[p.i+1], p.tokens[p.i+2], p.tokens[p.i+3], p.tokens[p.i+4], p.tokens[p.i+5]
+		if t1.Kind == lexer.Ident &&
+			t2.Kind == lexer.Punct && t2.Text == "," &&
+			t3.Kind == lexer.Ident &&
+			t4.Kind == lexer.Punct && t4.Text == ")" &&
+			t5.Kind == lexer.Ident && t5.Text == "in" {
+			return p.parseForEachMapTuple(kw)
+		}
+	}
+
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
 	}
@@ -1141,7 +1157,13 @@ func (p *parser) nextForeachID() int {
 func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 	nameTok := p.advance() // IDENT
 	p.advance()            // `in`
+	// Suppress trailing struct-literal parsing while reading the
+	// source — the `{` that follows opens the loop body, not a
+	// struct lit.
+	prevNS := p.noStructLit
+	p.noStructLit = true
 	expr, err := p.parseExpr()
+	p.noStructLit = prevNS
 	if err != nil {
 		return nil, err
 	}
@@ -1217,6 +1239,91 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 	return &ast.Block{
 		P:     kw.Pos,
 		Stmts: []ast.Stmt{declIter, declLen, declIdx, forLoop},
+	}, nil
+}
+
+// parseForEachMapTuple desugars `for (K, V) in expr body` — the
+// only form this language supports for iterating a Map. Builds on
+// the MapIter cursor API (`m.iter()` / `it.has_next()` / `it.key()`
+// / `it.value()` / `it.advance()`) so map iteration walks entries
+// in insertion order without per-iteration allocation. The shape
+// after desugaring matches the array foreach as closely as
+// possible — outer Block scopes the iterator slot, the inner For's
+// Step slot calls advance() so `continue` advances before the next
+// has_next() check.
+//
+//	{
+//	  var __foreach_iter_N = expr.iter();
+//	  for (; __foreach_iter_N.has_next(); __foreach_iter_N.advance()) {
+//	    var K = __foreach_iter_N.key();
+//	    var V = __foreach_iter_N.value();
+//	    <body>
+//	  }
+//	}
+//
+// Like the array foreach, K / V are inferred from the iterator's
+// method return types — no annotation needed at the loop site.
+func (p *parser) parseForEachMapTuple(kw lexer.Token) (ast.Stmt, error) {
+	p.advance() // `(`
+	keyTok := p.advance()
+	p.advance() // `,`
+	valTok := p.advance()
+	p.advance() // `)`
+	p.advance() // `in`
+
+	// Same reason as parseForEach: don't let the loop-body `{` get
+	// glued onto the source expression as a struct literal.
+	prevNS := p.noStructLit
+	p.noStructLit = true
+	expr, err := p.parseExpr()
+	p.noStructLit = prevNS
+	if err != nil {
+		return nil, err
+	}
+	body, err := p.parseStmt()
+	if err != nil {
+		return nil, err
+	}
+
+	id := p.nextForeachID()
+	iterName := fmt.Sprintf("__foreach_iter_%d", id)
+
+	iterIdent := func() *ast.Ident { return &ast.Ident{P: kw.Pos, Name: iterName} }
+	callOnIter := func(method string) *ast.Call {
+		return &ast.Call{
+			P:      kw.Pos,
+			Callee: &ast.FieldAccess{P: kw.Pos, Target: iterIdent(), Field: method},
+		}
+	}
+
+	// var __foreach_iter_N = expr.iter();
+	declIter := &ast.Var{P: kw.Pos, Name: iterName, Init: &ast.Call{
+		P:      kw.Pos,
+		Callee: &ast.FieldAccess{P: kw.Pos, Target: expr, Field: "iter"},
+	}}
+
+	bindKey := &ast.Var{P: keyTok.Pos, Name: keyTok.Text, Init: callOnIter("key")}
+	bindVal := &ast.Var{P: valTok.Pos, Name: valTok.Text, Init: callOnIter("value")}
+	stepStmt := &ast.ExprStmt{P: kw.Pos, Expr: callOnIter("advance")}
+
+	innerStmts := []ast.Stmt{bindKey, bindVal}
+	if blk, ok := body.(*ast.Block); ok {
+		innerStmts = append(innerStmts, blk.Stmts...)
+	} else {
+		innerStmts = append(innerStmts, body)
+	}
+	innerBlock := &ast.Block{P: kw.Pos, Stmts: innerStmts}
+
+	forLoop := &ast.For{
+		P:    kw.Pos,
+		Cond: callOnIter("has_next"),
+		Step: stepStmt,
+		Body: innerBlock,
+	}
+
+	return &ast.Block{
+		P:     kw.Pos,
+		Stmts: []ast.Stmt{declIter, forLoop},
 	}, nil
 }
 
