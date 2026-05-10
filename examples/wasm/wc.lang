@@ -49,7 +49,7 @@ function count_reader(r: Reader): Counts {
 }
 
 function format_counts(label: string, c: Counts): string {
-  return c.lines.to_string() + "\t" + c.words.to_string() + "\t" + c.bytes.to_string() + "\t" + label;
+  return f"{c.lines}\t{c.words}\t{c.bytes}\t{label}";
 }
 
 function main(): i32 {

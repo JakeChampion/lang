@@ -77,10 +77,10 @@ function volume(s: Shape): f64 {
 function show_area(label: string, s: Shape): void {
   match (area(s)) {
     Ok(a) => {
-      print(label + " -> area " + a.to_string());
+      print(f"{label} -> area {a}");
     },
     Err(msg) => {
-      print(label + " -> area: " + msg);
+      print(f"{label} -> area: {msg}");
     }
   }
 }
@@ -90,6 +90,6 @@ function main(): i32 {
   show_area("square s=3", Square(3 as f32));
   show_area("triangle b=4 h=2.5", Triangle(4 as f32, 2.5 as f32));
   show_area("degenerate input", Square(0 as f32));
-  print("cuboid 2x3x5 -> volume " + volume(Cuboid(2 as f64, 3 as f64, 5 as f64)).to_string());
+  print(f"cuboid 2x3x5 -> volume {volume(Cuboid(2 as f64, 3 as f64, 5 as f64))}");
   return 0;
 }
