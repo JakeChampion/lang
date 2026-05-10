@@ -1338,7 +1338,18 @@ func (b *builder) expr(e ast.Expr) error {
 		// expected-type context). Width=0 means "default i32" for
 		// literals the checker never settled (e.g. unused-expression
 		// statements, type-erased generic paths).
-		if n.Width == 64 {
+		//
+		// IsFloat takes precedence — set by settleFloat when a
+		// polymorphic literal lands in float context (`var r:
+		// f32 = 0`, `r * 2`, `r <= 0` against an f32 r). Emit
+		// the f-const path with the integer Value cast to float.
+		if n.IsFloat {
+			if n.FloatWidth == 64 {
+				b.emit(Op{Kind: OpConstF64, F64: float64(n.Value)})
+			} else {
+				b.emit(Op{Kind: OpConstF32, F32: float32(n.Value)})
+			}
+		} else if n.Width == 64 {
 			b.emit(Op{Kind: OpConstI64, I64: n.Value})
 		} else {
 			b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})

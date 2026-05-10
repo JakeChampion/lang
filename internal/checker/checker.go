@@ -2210,6 +2210,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// via `c.settleNumeric`. If the literal already has a
 		// resolved Width (set by a previous settling pass — e.g.
 		// from a re-check during monomorphisation), report that.
+		if n.IsFloat {
+			return ast.FloatType{Width: n.FloatWidth}
+		}
 		if n.Width != 0 {
 			return ast.NumberType{Width: n.Width, Signed: !n.IsUnsigned}
 		}
@@ -2742,6 +2745,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.Binary:
 		lt := c.checkExpr(n.Left, s)
 		rt := c.checkExpr(n.Right, s)
+		// If exactly one side is a concrete float and the other
+		// is a polymorphic numeric literal, promote the literal
+		// to that float type before requireFloat fires. Lets
+		// `r * 2` and `r <= 0` work when r is f32/f64. The same
+		// trick the polymorphic-int side does via
+		// commonIntegerWidth, generalised to cross-class
+		// (int-literal → float-context) promotion.
+		if ft, ok := lt.(ast.FloatType); ok && !ft.Polymorphic {
+			if rn, ok := rt.(ast.NumberType); ok && rn.Polymorphic {
+				c.settleNumeric(n.Right, ft)
+				rt = postSettleType(n.Right, rt)
+			}
+		}
+		if ft, ok := rt.(ast.FloatType); ok && !ft.Polymorphic {
+			if ln, ok := lt.(ast.NumberType); ok && ln.Polymorphic {
+				c.settleNumeric(n.Left, ft)
+				lt = postSettleType(n.Left, lt)
+			}
+		}
 		switch n.Op {
 		case "+":
 			// Special case: string + string is concatenation.
@@ -3380,6 +3402,17 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 		if x.Width == 0 {
 			x.Width = width
 		}
+	case *ast.NumberLit:
+		// Polymorphic integer literal in float context: stamp
+		// IsFloat + FloatWidth so checkExpr returns FloatType
+		// and the IR's NumberLit lowering picks the f-const
+		// path. Skip when the literal is already locked to an
+		// integer type (typed-suffix `42i64` or a previous
+		// settle pass).
+		if x.Width == 0 && !x.IsFloat {
+			x.IsFloat = true
+			x.FloatWidth = width
+		}
 	case *ast.Unary:
 		if x.Op == "-" || x.Op == "+" {
 			c.settleFloat(x.Operand, hf)
@@ -3407,6 +3440,9 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	switch x := e.(type) {
 	case *ast.NumberLit:
+		if x.IsFloat {
+			return ast.FloatType{Width: x.FloatWidth}
+		}
 		if x.Width != 0 {
 			return ast.NumberType{Width: x.Width, Signed: !x.IsUnsigned}
 		}

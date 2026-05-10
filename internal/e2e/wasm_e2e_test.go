@@ -2932,6 +2932,56 @@ function main(): i32 {
 	}
 }
 
+// Polymorphic integer literals promote to the float type when
+// one side of an arithmetic op is a concrete float. Verifies the
+// IR's NumberLit lowering picks OpConstF32 / OpConstF64 (instead
+// of OpConstI32) so the runtime computation is float-correct.
+func TestWASMPolyIntPromotesToF32Mul(t *testing.T) {
+	src := `function main(): i32 {
+    var r: f32 = 1.5f32;
+    var s: f32 = r * 2;
+    if (s == 3.0f32) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (1.5 * 2 = 3.0 as f32)", got)
+	}
+}
+
+// Same trick on the comparison side: `r <= 0` where r is f32,
+// without any `as f32` cast or `0f32` suffix.
+func TestWASMPolyIntPromotesToF32Compare(t *testing.T) {
+	src := `enum Shape { Circle(f32), Square(f32) }
+function classify(s: Shape): i32 {
+    match (s) {
+        Circle(r) when r <= 0 => { return 1; },
+        Circle(_)             => { return 2; },
+        Square(_)             => { return 3; }
+    }
+    return 0;
+}
+function main(): i32 {
+    var c: Shape = Circle(0.5f32);
+    return classify(c);
+}`
+	if got := runWasm(t, src); got != 2 {
+		t.Errorf("got %d, want 2 (positive Circle hits non-guarded arm)", got)
+	}
+}
+
+// f64 promotion path — different OpConstF64 lowering.
+func TestWASMPolyIntPromotesToF64(t *testing.T) {
+	src := `function main(): i32 {
+    var x: f64 = 100.5f64;
+    var y: f64 = x - 100;
+    if (y == 0.5f64) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (100.5 - 100 = 0.5 as f64)", got)
+	}
+}
+
 // Typed numeric literal suffixes resolve to concrete types at
 // parse time. End-to-end: an `i64` literal value survives the
 // full pipeline without an `as i64` cast, and the wasm output

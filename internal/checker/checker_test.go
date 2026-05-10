@@ -115,13 +115,39 @@ func TestFloatArithmeticTypechecks(t *testing.T) {
 
 func TestFloatRejectsMixedArithmetic(t *testing.T) {
 	cases := []string{
-		`function f(x: float): float { return x + 1; }`,
+		// Concrete-int variable + float literal still errors —
+		// no implicit widening from i32 to float. The user must
+		// cast: `(x as float) + 1.5`.
 		`function f(x: i32): float { return x + 1.5; }`,
-		`function f(x: float): float { return x % 1.0; }`, // % is integer-only
+		// `%` is integer-only.
+		`function f(x: float): float { return x % 1.0; }`,
 	}
 	for _, src := range cases {
 		if err := checkSource(t, src); err == nil {
 			t.Errorf("%q: expected error", src)
+		}
+	}
+}
+
+// Polymorphic integer literals get promoted to the float type
+// when one side of an arithmetic / comparison op is a concrete
+// float — unlike concrete-int variables, which still need an
+// explicit cast. This is the same trick `commonIntegerWidth`
+// pulls (poly side wins from concrete side), generalised to
+// the cross-class int-literal → float-context promotion.
+func TestPolyIntLiteralPromotesToFloat(t *testing.T) {
+	cases := []string{
+		`function f(x: float): float { return x + 1; }`,
+		`function f(x: f32): f32 { return x * 2; }`,
+		`function f(x: f64): f64 { return x - 100; }`,
+		`function f(x: f32): boolean { return x <= 0; }`,
+		`function f(): i32 { var r: f32 = 0; return 0; }`,
+		`function takesF32(x: f32): i32 { return 0; }
+function f(): i32 { return takesF32(0); }`,
+	}
+	for _, src := range cases {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
 		}
 	}
 }
