@@ -770,11 +770,25 @@ to smallest. Status pending unless marked.
 
   All four examples (`word_freq.lang`, `csv_to_json.lang`,
   `url_router.lang`, `todo_api.lang`) and the prelude itself
-  now use `.push(v)` instead of the per-T helpers. The checker
-  rejects wide-stride pushes (`i64[]`, `f64[]`) with a clear
-  error pointing at the storage class — wide-stride helpers
-  aren't wired up yet and would silently mis-stride at the
-  runtime layer otherwise.
+  now use `.push(v)` instead of the per-T helpers.
+
+  Wide-stride status:
+  - **i64 / u64** — shipped. The checker routes `arr.push(v)`
+    to a separate `__method_Array_push_i64` mangled name when
+    the element stride is 8 and the elem is integer; codegen
+    aliases it to `__array_append_i64`, a lang-prelude
+    function (parallel to `__array_append_string`) that
+    composes `__alloc` + `__memcpy` + `__store_i64`. Two new
+    wat shims `__store_i64` / `__load_i64` expose the wasm
+    wide-int ops to the prelude, completing the 4-byte
+    primitive set's 8-byte twin. Layout matches the 4-byte
+    case (length prefix + raw element data) — i64 elements
+    end up 4-byte but not 8-byte aligned, which wasm allows
+    functionally.
+  - **f64** — still rejected. The same lang-prelude helper
+    pattern would work; needs a `__store_f64` wat shim and a
+    `__array_append_f64` body.
+  - **Sub-i32 (u8/i8/u16/i16)** — still rejected.
 
 - **Module-level `var` with handler-scoped lifetime.**
   `todo_api.lang` couldn't model cross-request state and

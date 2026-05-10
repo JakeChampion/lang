@@ -686,11 +686,29 @@ func Check(prog *ast.Program) (*Info, error) {
 	// use, so `arr.push(v)` on `string[]` type-checks `v` as
 	// string while on `JsonValue[]` it type-checks as JsonValue.
 	// Codegen aliases the mangled name to a per-stride
-	// underlying helper (today only the 4-byte-stride
-	// `__array_append_string` is wired up).
+	// underlying helper:
+	//   - 4-byte stride → __array_append_string (lang prelude).
+	//   - 8-byte int    → __array_append_i64    (wat helper).
+	// The checker's method-dispatch path overrides the mangled
+	// name when the receiver's Elem is 8-byte-int (i64 / u64) so
+	// the substitution path picks up the right signature for arg
+	// type-checking (`arr.push(v)` on i64[] checks `v` as i64).
 	arrayElemParam := ast.ParamType{Name: "T"}
 	c.info.Methods["Array.push"] = "__method_Array_push"
 	c.info.FuncSigs["__method_Array_push"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			arrayElemParam,
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
+	// Wide (8-byte int) push: same shape but parameterised over
+	// a separate type-param so the substitution path computes
+	// the right monomorphic signature (i64 / u64) at the call
+	// site. The checker rewrites the call to this mangled name
+	// when the receiver's Elem stride is 8 and the elem is an
+	// integer type.
+	c.info.FuncSigs["__method_Array_push_i64"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.ArrayType{Elem: arrayElemParam},
 			arrayElemParam,
@@ -828,6 +846,20 @@ func Check(prog *ast.Program) (*Info, error) {
 	}
 	c.info.FuncSigs["__store_i32"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// `__load_i64` / `__store_i64` — wide-int peek/poke
+	// counterparts. Lets the lang prelude build wide-element
+	// data structures (today: `__array_append_i64`) using the
+	// same compose-with-primitives pattern that the 4-byte
+	// path uses, instead of duplicating the helper at the wat
+	// layer. Same out-of-bounds-traps-on-wasm-level contract.
+	c.info.FuncSigs["__load_i64"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	c.info.FuncSigs["__store_i64"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.VoidType{},
 	}
 
@@ -2613,11 +2645,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// path treats it as `[T]` with T = Elem.
 					if at, ok := tt.(ast.ArrayType); ok {
 						n.TypeArgs = []ast.Type{at.Elem}
-						// Reject non-4-byte-stride elements
-						// here for a clear error — codegen only
-						// has the 4-byte-stride helper wired up.
-						if mangled == "__method_Array_push" && ast.ElemSizeBytes(at.Elem) != 4 {
-							c.errf(fa.P, "arr.push() on %s[] is not yet supported (only 4-byte-stride elements are wired up)", at.Elem)
+						// Per-stride dispatch for `arr.push(v)`.
+						// 4-byte (i32 / f32 / pointer) → existing
+						//   __method_Array_push → __array_append_string
+						// 8-byte int (i64 / u64) → __method_Array_push_i64
+						//   → __array_append_i64 (wat helper, see
+						//   wasm.go's emitBulkMemoryHelpers).
+						// Other strides (sub-i32, f64) aren't wired
+						// up — error clearly at the call site.
+						if mangled == "__method_Array_push" {
+							sz := ast.ElemSizeBytes(at.Elem)
+							if sz == 8 {
+								if _, isFloat := at.Elem.(ast.FloatType); isFloat {
+									c.errf(fa.P, "arr.push() on %s[] is not yet supported (f64 stride needs a separate helper)", at.Elem)
+								} else {
+									mangled = "__method_Array_push_i64"
+									n.Callee = &ast.Ident{P: fa.P, Name: mangled}
+								}
+							} else if sz != 4 {
+								c.errf(fa.P, "arr.push() on %s[] is not yet supported (only 4- and 8-byte-stride elements are wired up)", at.Elem)
+							}
 						}
 					}
 					// Wide-V Map: `m.values()` would return a
