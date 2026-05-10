@@ -19,9 +19,19 @@ as a constraint to preserve.
 
 - ARM32 (qemu-arm under test; real hardware: Raspberry Pi 2/3
   in 32-bit mode, embedded Linux)
-- ARM64 / aarch64 (qemu-aarch64 under test; real hardware:
-  Apple Silicon Macs via Linux containers, AWS Graviton,
-  Raspberry Pi 4+ in 64-bit mode)
+- ARM64 / aarch64 Linux (qemu-aarch64 under test; real hardware:
+  AWS Graviton, Raspberry Pi 4+ in 64-bit mode, Android,
+  Apple Silicon Macs via Linux containers)
+- ARM64 / aarch64 Darwin — Mach-O for native Apple Silicon Macs
+  (`-target arm64-darwin`). No Linux container needed; clang +
+  ld64 (native) or clang + lld (cross from Linux) link directly.
+  Verified end-to-end on `macos-14` CI runner. **Known gap**:
+  the Map runtime's `__store_i32` / `__load_i32` truncates heap
+  pointers when macOS returns addresses > 4 GiB. Plain string
+  concat / array push / TCP all work; Map and Map-dependent
+  programs (HTTP routers, etc.) need the prelude widened to i64
+  pointer storage. Excluded from the macos-14 matrix until
+  fixed; tracked separately.
 - WASI / WebAssembly (currently exercised via wasmtime)
 - x86-64 is on the roadmap
 
