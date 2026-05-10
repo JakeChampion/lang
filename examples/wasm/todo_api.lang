@@ -1,27 +1,52 @@
-// todo_api.lang — wasi:http TODO-shaped API. The lang doesn't
-// have module-level `var`s yet, so cross-request state is not
-// modelled; treat this as a routing + JSON request/response
-// demo. A real version would persist via a file (open_writer
-// / open_reader) or an external store.
+// todo_api.lang — wasi:http TODO-shaped API with persistent
+// state. Cross-request state lives in a `state {}` block —
+// the two-cursor allocator (PR #227) routes state-rooted
+// allocations to the persistent heap region so Map.set /
+// Map.delete grows survive the per-request arena_restore at
+// handler exit.
 //
 // Routes:
-//   GET    /todos          — return a fixed seed list
-//   POST   /todos          — echo the parsed body back as a
-//                            todo with id=42
-//   GET    /todos/<id>     — return one fixed todo
+//   GET    /todos          — list every todo, sorted by id
+//   POST   /todos          — create a new todo from JSON;
+//                            assigns the next id and returns
+//                            the created object
+//   GET    /todos/<id>     — return one todo (404 if missing)
+//   DELETE /todos/<id>     — remove one todo (404 if missing)
 //
-// Showcases: nested match over JsonValue (parse a request
-// body and validate its shape), method-tuple dispatch in
-// `handle`, JsonValue-tree construction for responses, the
-// `s.starts_with` / `s.parse_int` string methods, the
-// generic Map[K, V] / MapIter API, the implicit per-request
-// arena (every JsonValue + Map allocation gets reclaimed at
-// handler return — see PR #200).
+// Showcases: state{} with `Map[i32, string]` mutated across
+// requests, `next_id` counter incrementing on POST, nested
+// match over JsonValue, the generic Map[K, V] / MapIter API,
+// the implicit per-request arena (per-request JsonValue
+// allocations get reclaimed at handler return; only state
+// allocations survive — see PR #227).
+//
+// State persistence across `handle()` invocations depends on
+// the host runtime keeping the wasm instance alive between
+// requests. `wasmtime serve` instantiates a fresh module per
+// request, so each call resets state to its initial values
+// (next_id=1, todos empty). Production hosts that reuse
+// instances (Fastly Compute, Netlify Edge Functions, custom
+// wasmtime embeddings) DO see cross-request persistence.
 //
 //   $ lang -target wasi-http -wasi-adapter ... -o todo.wasm todo_api.lang
 //   $ wasmtime serve todo.wasm &
+//   $ curl -X POST -d '{"text":"buy milk"}' http://localhost:8080/todos
+//   {"id":1,"text":"buy milk"}
 //   $ curl http://localhost:8080/todos
-//   [{"id":1,"text":"buy milk"},{"id":2,"text":"feed cat"}]
+//   [{"id":1,"text":"buy milk"}]
+
+state {
+  // Persistent todo store. Keyed by integer id, value is the
+  // todo's text. Survives `arena_save` / `arena_restore` at
+  // each handle() boundary because state-rooted Map.set calls
+  // toggle the persistent allocator mode for the duration of
+  // the call (PR #227).
+  var todos: Map[i32, string] = map_new(8);
+  // Monotonic id counter. POST advances this; nothing else
+  // reads it. Starting at 1 keeps the first id user-friendly.
+  var next_id: i32 = 1;
+}
+
 function ok(body: string): HttpResponse {
   return HttpResponse { status: 200, body: body };
 }
@@ -49,9 +74,7 @@ function path_id(path: string): Option[i32] {
 }
 
 // Pull `text` field out of a parsed JsonValue request body.
-// Returns None on any structural mismatch (not an object,
-// missing field, wrong field type). The `_` wildcard arms
-// collapse the other-variant branches each into one line.
+// Returns None on any structural mismatch.
 function extract_text(v: JsonValue): Option[string] {
   match (v) {
     JObject(m) => {
@@ -78,10 +101,33 @@ function extract_text(v: JsonValue): Option[string] {
   return None;  // unreachable
 }
 
+// Snapshot the persistent store into a JsonValue array
+// sorted by id. The Map's iteration order is insertion-
+// ordered; sorting is a (small) per-request cost paid out of
+// the per-request arena, so it doesn't bloat persistent
+// state.
 function handle_list(): HttpResponse {
+  var ids: i32[] = todos.keys();
+  // Insertion-sort the keys ascending. Per-request arena
+  // alloc; the array goes away at handler exit.
+  var i: i32 = 1;
+  while (i < len(ids)) {
+    var j: i32 = i;
+    while (j > 0 && ids[j - 1] > ids[j]) {
+      var tmp: i32 = ids[j - 1];
+      ids[j - 1] = ids[j];
+      ids[j] = tmp;
+      j = j - 1;
+    }
+    i = i + 1;
+  }
   var arr: JsonValue[] = [];
-  arr = arr.push(todo_json(1, "buy milk"));
-  arr = arr.push(todo_json(2, "feed cat"));
+  var k: i32 = 0;
+  while (k < len(ids)) {
+    var id: i32 = ids[k];
+    arr = arr.push(todo_json(id, todos.get_or(id, "")));
+    k = k + 1;
+  }
   return ok(json_encode(JArray(arr)));
 }
 
@@ -93,7 +139,10 @@ function handle_create(body: string): HttpResponse {
     Some(v) => {
       match (extract_text(v)) {
         Some(text) => {
-          return ok(json_encode(todo_json(42, text)));
+          var id: i32 = next_id;
+          todos.set(id, text);
+          next_id = next_id + 1;
+          return ok(json_encode(todo_json(id, text)));
         },
         None => {
           return err(400, "expected {\"text\": string}");
@@ -105,11 +154,15 @@ function handle_create(body: string): HttpResponse {
 }
 
 function handle_get_one(id: i32): HttpResponse {
-  if (id == 1) {
-    return ok(json_encode(todo_json(1, "buy milk")));
+  if (todos.has(id)) {
+    return ok(json_encode(todo_json(id, todos.get_or(id, ""))));
   }
-  if (id == 2) {
-    return ok(json_encode(todo_json(2, "feed cat")));
+  return err(404, "not found");
+}
+
+function handle_delete(id: i32): HttpResponse {
+  if (todos.delete(id)) {
+    return ok("");
   }
   return err(404, "not found");
 }
@@ -121,10 +174,16 @@ function handle(req: HttpRequest): HttpResponse {
   if (req.method == "POST" && req.path == "/todos") {
     return handle_create(req.body);
   }
-  if (req.method == "GET" && req.path.starts_with("/todos/")) {
+  if (req.path.starts_with("/todos/")) {
     match (path_id(req.path)) {
       Some(id) => {
-        return handle_get_one(id);
+        if (req.method == "GET") {
+          return handle_get_one(id);
+        }
+        if (req.method == "DELETE") {
+          return handle_delete(id);
+        }
+        return err(405, "method not allowed");
       },
       None => {
         return err(400, "bad id");
