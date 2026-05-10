@@ -338,17 +338,18 @@ function __int_to_string_u64(mag: i64, neg: i32): string {
 // wrappers around the formatter. The receiver-method
 // dispatch in the checker maps `n.to_string()` to the
 // appropriate `__method_<type>_to_string` mangled name.
+//
+// Routes through the pure-i32 `int_to_string` so handler-shaped
+// programs (whose codegen pulls in the f-string `.to_string()`
+// desugar via `int_to_string`) compile for arm32, where the
+// backend hasn't lowered i64 ops yet. INT_MIN
+// (-2147483648) is special-cased before the negate-to-magnitude
+// step in int_to_string would overflow i32.
 function (n: i32) to_string(): string {
-    var mag: i64 = 0 as i64;
-    var neg: i32 = 0;
-    if (n < 0) {
-        neg = 1;
-        // Magnitude via i64 to handle INT_MIN cleanly.
-        mag = (0 as i64) - (n as i64);
-    } else {
-        mag = n as i64;
+    if (n == 0 - 2147483647 - 1) {
+        return "-2147483648";
     }
-    return __int_to_string_u64(mag, neg);
+    return int_to_string(n);
 }
 
 function (n: u32) to_string(): string {
