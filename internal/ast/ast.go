@@ -391,6 +391,16 @@ type NumberLit struct {
 	// but `*ast.CastExpr.InnerType` and the checker's record
 	// of the literal's type need to know.
 	IsUnsigned bool
+	// IsFloat is set when a polymorphic integer literal got
+	// settled to a float type via settleFloat (e.g. `var r:
+	// f32 = 0`, `f32_param * 2`, `r <= 0` where r is f32).
+	// FloatWidth records the destination float width; the IR
+	// emits OpConstF32 / OpConstF64 with float64(Value) instead
+	// of the integer-const path. Only set on otherwise-
+	// polymorphic literals — a typed-suffix `42i64` is locked
+	// to its integer type and won't be promoted here.
+	IsFloat    bool
+	FloatWidth int
 }
 
 // CastExpr is `expr as Type`. The checker requires Target to be a

@@ -793,10 +793,27 @@ to smallest. Status pending unless marked.
   hasn't stamped Width yet).
 
   `Circle(r: f32) when r <= 0f32 =>` is now noise-free.
-  The follow-up — promoting an unsuffixed `0` against a float
-  partner via the binary-op type checker — is a separate, more
-  invasive change (touches AST-rewrite of NumberLit→FloatLit on
-  settle) and is deferred. Users today reach for the suffix.
+
+- **Polymorphic-int-literal promotion to float — shipped.**
+  Building on the suffix work above, an unsuffixed `0` against a
+  float partner now settles to that float type instead of
+  erroring. Concretely, `r <= 0` works when `r: f32` — the
+  literal `0` lowers as `f32.const 0.0`, not `i32.const 0`.
+  Same path applies to `var r: f32 = 0`, `f(0)` where `f` takes
+  `f32`, and `r * 2` arithmetic.
+
+  Implementation: `NumberLit` gained `IsFloat` + `FloatWidth`
+  fields. `settleFloat` stamps them on a polymorphic literal in
+  float context; `checkExpr(NumberLit)` returns `FloatType` when
+  IsFloat is set; the IR's NumberLit lowering picks
+  `OpConstF32` / `OpConstF64` with `float32(Value)` /
+  `float64(Value)` instead of the integer-const path. The
+  binary-op handler also pre-settles a polymorphic side against
+  a concrete-float partner before requireFloat fires.
+
+  Concrete-int **variables** (e.g. `var x: i32; x + 1.5f32`)
+  still error — no implicit widening. Only literals get the
+  promotion.
 
 - **Bug: formatter eats `defer r.close();`.** Not a design
   item, but worth flagging — costs three comments and two
