@@ -166,6 +166,84 @@ func TestArm64StringConcat(t *testing.T) {
 	}
 }
 
+// arm64 array literals + indexing. Pulls in __lang_alloc and
+// the inline __arr_idx helper. Verifies the alloc + store
+// + indexed read pipeline composes correctly under qemu.
+func TestArm64ArrayLiteral(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    return xs[1];
+}`, 20},
+		{`function main(): i32 {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    return len(xs);
+}`, 5},
+		{`function sum(xs: i32[]): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < len(xs)) {
+        total = total + xs[i];
+        i = i + 1;
+    }
+    return total;
+}
+function main(): i32 {
+    return sum([1, 2, 3, 4, 5]);
+}`, 15},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
+// arm64 Map runtime — exercises the codegen-alias rewrites
+// (`map_new` → `map_new_impl`, `__method_Map_*` → `_impl`),
+// the new `__store_i32` / `__load_i32` / `__memset` runtime
+// helpers, and the lang prelude's open-addressing core. Same
+// shape as TestArm32Map / TestWASMStateMapAcrossCalls.
+func TestArm64Map(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m.set(1, 100);
+    m.set(2, 200);
+    return m.get_or(2, 0);
+}`, 200},
+		{`function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    var i: i32 = 0;
+    while (i < 8) {
+        m.set(i, i * 10);
+        i = i + 1;
+    }
+    if (m.len() != 8) { return 1; }
+    if (m.get_or(7, -1) != 70) { return 2; }
+    return 42;
+}`, 42},
+		{`function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("alpha", 1);
+    m.set("beta", 2);
+    m.set("gamma", 3);
+    return m.get_or("beta", -1) + m.len();
+}`, 5},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
 // arm64 control flow: while loop, if/else, comparison ops.
 // Verifies OpBlock / OpLoop / OpIf / OpEnd / OpBr / OpBrIf
 // scope tracking + the cbz / cbnz branch idioms.
