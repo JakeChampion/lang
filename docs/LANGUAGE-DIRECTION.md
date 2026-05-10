@@ -358,10 +358,12 @@ Deferred to a follow-up:
     can't reclaim the old buffer; that pays back when the
     arena resets at scope exit (PR 5).
   - **Iteration shipped (snapshot APIs).** `m.keys()` and
-    `m.values()` return fresh `i32[]` arrays containing the
-    map's keys / values in insertion order. Both are
+    `m.values()` return fresh `K[]` / `V[]` arrays containing
+    the map's keys / values in insertion order. Both are
     snapshots — mutating the map afterwards doesn't affect
-    the returned arrays. A non-allocating iterator
+    the returned arrays. Wide V (i64 / u64 / f64) is handled
+    by an IR-level intercept that follows the cell-pointer
+    boxing and copies into a real wide-stride array. A non-allocating iterator
     (`m.iter()` returning a stateful cursor) is a future
     follow-up.
   - **`m.delete(k)` shipped.** Returns `true` when the key
@@ -436,9 +438,12 @@ Deferred to a follow-up:
     return into a fresh wide-payload `Option[V]` inline,
     `m.get_or(k, fallback)` boxes the fallback + unboxes
     the result, and `MapIter.value()` unboxes the helper's
-    cell pointer. `m.values()` is rejected by the checker
-    for wide V until the helper learns to map cell-pointer
-    → wide-stride array; the more common shape is fine.
+    cell pointer. `m.values()` is intercepted at the IR layer
+    (`emitWideMapValues`) — for wide V the IR walks the
+    entries, follows each cell pointer, and `__memcpy`s the
+    8 payload bytes into a real wide-stride `i64[]` / `f64[]`
+    result; narrow V falls through to the existing
+    `__map_values_impl` lang-prelude function.
     Trade-off: one extra alloc per insert + one extra
     indirection per read; acceptable under the bump
     allocator's per-arena reset and avoids a
@@ -775,40 +780,30 @@ to smallest. Status pending unless marked.
   iterator local. Same for arrays: `for x in arr` →
   `for (var i = 0; i < len(arr); i = i + 1) { var x = arr[i]; ... }`.
 
-- **Drop `__array_append_T` from user surface — shipped (4-byte
-  stride only).** `arr.push(v)` is now a generic method on
-  `T[]`. The checker treats `Array` like a one-type-param
-  generic struct: receiver-Args flow into the
-  `__method_<Type>_<name>` substitution path that Map's methods
-  already use, so `string[].push(v)` checks `v` as string while
-  `JsonValue[].push(v)` checks it as JsonValue. Codegen aliases
-  `__method_Array_push` → `__array_append_string` (the
-  4-byte-stride helper).
+- **Drop `__array_append_T` from user surface — shipped.**
+  `arr.push(v)` is a generic method on `T[]`. The checker
+  treats `Array` like a one-type-param generic struct:
+  receiver-Args flow into the `__method_<Type>_<name>`
+  substitution path that Map's methods already use, so
+  `string[].push(v)` checks `v` as string while
+  `JsonValue[].push(v)` checks it as JsonValue.
+
+  Lowering happens inline at the IR layer (`emitArrayPush`
+  in `internal/ir/ir.go`) — one block of code emits the
+  alloc + memcpy + width-correct tail store for every stride
+  class (1 / 2 / 4 / 8 bytes; integer + float). Earlier
+  shape used 5 nearly-identical lang-prelude functions
+  (`__array_append_string` / `_i64` / `_f64` / `_u8` /
+  `_u16`), 5 mangled FuncSigs, 5 codegen aliases, 5
+  treeshake aliases, and a per-stride dispatch switch in the
+  checker — all collapsed into a single inline IR block.
+  Adding the next `T[]` method (`concat`, `reverse`, ...)
+  drops in as one IR helper instead of duplicating the
+  whole stack per stride.
 
   All four examples (`word_freq.lang`, `csv_to_json.lang`,
   `url_router.lang`, `todo_api.lang`) and the prelude itself
-  now use `.push(v)` instead of the per-T helpers.
-
-  Stride coverage — every storage class is wired:
-  - **1-byte (u8 / i8)** → `__method_Array_push_u8` →
-    `__array_append_u8` (lang prelude). Bytes pack
-    back-to-back with no padding.
-  - **2-byte (u16 / i16)** → `__method_Array_push_u16` →
-    `__array_append_u16`.
-  - **4-byte (i32 / f32 / pointer)** → `__method_Array_push`
-    → `__array_append_string` (the original heap-pointer-
-    stride helper, type-erased at the wat layer).
-  - **8-byte int (i64 / u64)** → `__method_Array_push_i64` →
-    `__array_append_i64`.
-  - **8-byte float (f64)** → `__method_Array_push_f64` →
-    `__array_append_f64`.
-
-  Each width has a matching `__store_<kind>` / `__load_<kind>`
-  wat shim exposed to the lang prelude — same compose-with-
-  primitives pattern (`__alloc` + `__memcpy` + the store
-  shim) for every helper. Wide elements (8-byte) end up
-  4-byte but not 8-byte aligned, which wasm allows
-  functionally; sub-i32 elements pack with no padding.
+  use `.push(v)` instead of the per-T helpers.
 
 - **Module-level `var` with handler-scoped lifetime.**
   `todo_api.lang` couldn't model cross-request state and

@@ -31,19 +31,11 @@ import (
 // function and shouldn't drop the latter when only the
 // former is referenced.
 var watHelperDeps = map[string][]string{
-	// `__array_append_jsonvalue(arr, v)` is a checker-side
-	// alias for `__array_append_string` — same wasm-level
-	// shape (4-byte-pointer-stride append), routed at the
-	// codegen layer (see internal/codegen/wasm/wasm_ir.go).
-	// Tree-shake walks the AST, which only sees the
-	// jsonvalue identifier, so explicitly pull the shared
-	// lang body in when only the jsonvalue alias is used.
-	"__array_append_jsonvalue": {"__array_append_string"},
-	"__method_Array_push":      {"__array_append_string"},
-	"__method_Array_push_i64":  {"__array_append_i64"},
-	"__method_Array_push_f64":  {"__array_append_f64"},
-	"__method_Array_push_u8":   {"__array_append_u8"},
-	"__method_Array_push_u16":  {"__array_append_u16"},
+	// arr.push(v) lowers entirely in the IR (emitArrayPush) —
+	// no per-stride lang-prelude function to keep alive. The
+	// wasm-side `__memcpy` shim is gated separately via the
+	// codegen-side wat-helper switch.
+	//
 	// Map runtime: AST-level calls go through the
 	// type-rich `__method_Map_*` / `map_new` /
 	// `__method_MapIter_*` names; the prelude bodies live

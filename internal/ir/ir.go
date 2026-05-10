@@ -2816,6 +2816,38 @@ func (b *builder) call(n *ast.Call) error {
 			return b.emitEnumNew(n, enumName, varIdx, payloads, n.Args)
 		}
 	}
+	// `arr.push(v)` was rewritten by the checker to
+	// `__method_Array_push(arr, v)` with the receiver's element
+	// type stamped on `n.TypeArgs[0]`. Lower inline here — emit
+	// alloc + memcpy + a width-correct tail store — instead of
+	// dispatching through one of N per-stride lang-prelude
+	// functions. The IR already knows the stride from
+	// `ast.ElemSizeBytes(elemType)` and the right store op from
+	// `payloadStoreOp(elemType)`; the previous shape compounded
+	// boilerplate (5 prelude bodies + 5 mangled FuncSigs +
+	// 5 codegen aliases + 5 treeshake aliases) per array
+	// method. Inline lowering scales to one block of code per
+	// method.
+	if id.Name == "__method_Array_push" && len(n.Args) == 2 && len(n.TypeArgs) == 1 {
+		return b.emitArrayPush(n)
+	}
+	// `m.values()` on `Map[K, V]` where V is wide (i64 / u64 /
+	// f64). Narrow V falls through to the normal
+	// `__method_Map_values` call (codegen-aliased to the
+	// `__map_values_impl` lang prelude function). Wide V needs
+	// to follow each entry's cell pointer and copy the 8
+	// payload bytes into a wide-stride result — emitted inline
+	// here for the same reason as emitArrayPush: a single
+	// codepath instead of a per-stride lang-prelude clone.
+	if id.Name == "__method_Map_values" && len(n.Args) == 1 {
+		recvType := b.exprType(n.Args[0])
+		if st, ok := recvType.(ast.StructType); ok && len(st.Args) >= 2 {
+			vType := st.Args[1]
+			if isWideMapValueTypeIR(vType) {
+				return b.emitWideMapValues(n, vType)
+			}
+		}
+	}
 	// `len(x)` on a string or array is inlined: both layouts carry a
 	// 4-byte little-endian length prefix at `ptr - 4`. The checker
 	// doesn't declare `len` as a function signature, so the call falls
@@ -3191,6 +3223,32 @@ func payloadStoreOp(t ast.Type) Op {
 	return Op{Kind: OpStore}
 }
 
+// arrayElemStoreOp picks the right store op for an array
+// element of type `t`, using element stride to dispatch:
+//   - 1-byte (u8 / i8 / bool)         → i32.store8
+//   - 2-byte (u16 / i16)              → i32.store16
+//   - 4-byte (i32 / u32 / f32 / ptr)  → i32.store / f32.store
+//   - 8-byte (i64 / u64 / f64)        → i64.store / f64.store
+// Pairs with `arrayElemLoadOp` for the symmetric read.
+func arrayElemStoreOp(t ast.Type) Op {
+	if isFloat(t) {
+		w := 0
+		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+			w = 64
+		}
+		return Op{Kind: OpFStore, Width: w}
+	}
+	switch ast.ElemSizeBytes(t) {
+	case 1:
+		return Op{Kind: OpStoreI8}
+	case 2:
+		return Op{Kind: OpStoreI16}
+	case 8:
+		return Op{Kind: OpStore, Width: 64}
+	}
+	return Op{Kind: OpStore}
+}
+
 func payloadLoadOp(t ast.Type) Op {
 	if isFloat(t) {
 		w := 0
@@ -3203,6 +3261,258 @@ func payloadLoadOp(t ast.Type) Op {
 		return Op{Kind: OpLoad, Width: 64}
 	}
 	return Op{Kind: OpLoad}
+}
+
+// isWideMapValueTypeIR matches the checker's
+// isWideMapValueType — V types that the Map runtime stores via
+// the cell-pointer boxing path (i64 / u64 / f64). Reproduced
+// here to avoid an IR → checker import cycle.
+func isWideMapValueTypeIR(t ast.Type) bool {
+	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
+		return true
+	}
+	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+		return true
+	}
+	return false
+}
+
+// emitWideMapValues lowers `m.values()` when V is wide (i64 /
+// u64 / f64). Each entry's V slot in the map's entries table
+// holds a 4-byte pointer to a heap-allocated 8-byte cell — the
+// boxing path the get / get_or / set helpers use to keep the
+// wat-side runtime i32-shaped. To produce a real wide-stride
+// V[] we walk the entries, follow each cell pointer, and
+// `__memcpy` the 8 payload bytes into the result.
+//
+// Type-erased: i64 and f64 share an 8-byte memcpy, so one
+// codepath handles both — the result type at the lang layer is
+// `V[]` (substituted at the call site).
+func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
+	_ = vType // bit-identical 8-byte copy regardless of i64 vs f64
+
+	// Stash the map handle: m holds an i32 pointing to the
+	// Map's outer struct (one indirection above buf).
+	mSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_m_%d", mSlot)] = mSlot
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: mSlot})
+
+	// buf = i32.load(m); cap = i32.load(buf); len = i32.load(buf + 4)
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: mSlot})
+	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+
+	capSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_cap_%d", capSlot)] = capSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpStoreLocal, I32: capSlot})
+
+	lenSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_len_%d", lenSlot)] = lenSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
+
+	// entriesBase = buf + 16 + cap * 4
+	entriesSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_entries_%d", entriesSlot)] = entriesSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 16})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: capSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: entriesSlot})
+
+	// arr = __alloc(4 + len * 8); *arr = len; data = arr + 4
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpAlloc})
+	hdrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_hdr_%d", hdrSlot)] = hdrSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: hdrSlot})
+
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+	b.emit(Op{Kind: OpStore})
+
+	dataSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_data_%d", dataSlot)] = dataSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
+
+	// for (i = 0; i < len; i++) {
+	//   cell = i32.load(entriesBase + i * 8 + 4)
+	//   __memcpy(data + i * 8, cell, 8)
+	// }
+	iSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_i_%d", iSlot)] = iSlot
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: iSlot})
+
+	b.openBlock(BlockTypeVoid)
+	loopExitD := b.depth
+	b.openLoop(BlockTypeVoid)
+	loopBodyD := b.depth
+
+	// if (i >= len) br loopExit
+	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+	b.emit(Op{Kind: OpGeS})
+	b.brTo(loopExitD, true)
+
+	// cell = i32.load(entriesBase + i * 8 + 4)
+	b.emit(Op{Kind: OpLoadLocal, I32: entriesSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoad})
+	cellSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_cell_%d", cellSlot)] = cellSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
+
+	// __memcpy(data + i * 8, cell, 8)
+	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpCallDirect, Str: "__memcpy", I32: 3})
+
+	// i++
+	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: iSlot})
+
+	b.brTo(loopBodyD, false)
+	b.closeScope() // loop
+	b.closeScope() // outer block
+
+	// Result: data pointer.
+	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	return nil
+}
+
+// emitArrayPush lowers `arr.push(v)` inline. Shape mirrors the
+// pre-refactor lang-prelude `__array_append_*` family —
+//
+//	hdr  = __alloc(4 + (oldLen+1) * stride)
+//	*hdr = oldLen + 1                     // length prefix
+//	data = hdr + 4
+//	memcpy(data, arr, oldLen * stride)    // copy existing
+//	*(data + oldLen * stride) = v         // append the new tail
+//	return data
+//
+// — but emits the IR ops directly so a single block of code
+// covers every stride class (1 / 2 / 4 / 8 bytes), removing
+// the per-stride prelude duplication. The element type is
+// `n.TypeArgs[0]`, stamped by the checker's array.push
+// dispatch.
+func (b *builder) emitArrayPush(n *ast.Call) error {
+	elemType := n.TypeArgs[0]
+	stride := int32(ast.ElemSizeBytes(elemType))
+	if stride == 0 {
+		stride = 4
+	}
+
+	// Stash v in a typed scratch so the tail store can pick the
+	// right load width (i64 / f64 vs i32). Without this the
+	// `local.get` would have to know whether to push an i64 or
+	// i32 — typed scratches make that automatic.
+	vSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__push_v_%d", vSlot)] = vSlot
+	b.scratchType[vSlot] = elemType
+	if err := b.expr(n.Args[1]); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: vSlot})
+
+	// Stash arr (i32 heap pointer). Used twice — for the
+	// length prefix lookup (arr - 4) and as memcpy source.
+	arrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__push_arr_%d", arrSlot)] = arrSlot
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: arrSlot})
+
+	// oldLen = i32.load(arr - 4)
+	oldLenSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__push_oldLen_%d", oldLenSlot)] = oldLenSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpSub})
+	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpStoreLocal, I32: oldLenSlot})
+
+	// allocSize = 4 + (oldLen + 1) * stride
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpAlloc})
+	hdrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__push_hdr_%d", hdrSlot)] = hdrSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: hdrSlot})
+
+	// *hdr = oldLen + 1   (the length prefix is always i32)
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStore})
+
+	// data = hdr + 4
+	dataSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__push_data_%d", dataSlot)] = dataSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
+
+	// memcpy(data, arr, oldLen * stride)
+	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpCallDirect, Str: "__memcpy", I32: 3})
+
+	// *(data + oldLen * stride) = v   (width-correct store)
+	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: vSlot})
+	b.emit(arrayElemStoreOp(elemType))
+
+	// Result: data pointer (the array value).
+	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	return nil
 }
 
 // emitWideMapSet lowers `m.set(k, v)` when V is wide. The

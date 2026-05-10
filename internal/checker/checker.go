@@ -29,20 +29,6 @@ func (e *Error) Position() ast.Position { return e.Pos }
 func (e *Error) Length() int            { return e.Span }
 func (e *Error) Hint() string           { return e.Note }
 
-// isWideMapValueType is the checker-side mirror of the IR's
-// wide-V Map detection — used by the bits of method dispatch
-// that need to reject Map operations not yet covered by the
-// boxing path (currently just `values()`).
-func isWideMapValueType(t ast.Type) bool {
-	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
-		return true
-	}
-	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
-		return true
-	}
-	return false
-}
-
 // Info captures everything codegen needs that the checker discovered:
 // the inferred type of every var without an annotation, and a per-function
 // list of locals (so codegen can lay out a frame).
@@ -680,60 +666,16 @@ func Check(prog *ast.Program) (*Info, error) {
 	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
 	registerMapMethod("iter", nil, mapIterKV)
 
-	// Generic array methods. Today only `push` is registered.
-	// Routes through the same `__method_<Type>_<name>` mangling
-	// + receiver-TypeArgs substitution path that Map's methods
-	// use, so `arr.push(v)` on `string[]` type-checks `v` as
-	// string while on `JsonValue[]` it type-checks as JsonValue.
-	// Codegen aliases the mangled name to a per-stride
-	// underlying helper:
-	//   - 4-byte stride → __array_append_string (lang prelude).
-	//   - 8-byte int    → __array_append_i64    (wat helper).
-	// The checker's method-dispatch path overrides the mangled
-	// name when the receiver's Elem is 8-byte-int (i64 / u64) so
-	// the substitution path picks up the right signature for arg
-	// type-checking (`arr.push(v)` on i64[] checks `v` as i64).
+	// Generic array methods. `arr.push(v)` is registered here
+	// for method dispatch + type checking; the IR intercepts
+	// the rewritten `__method_Array_push(arr, v)` call and
+	// emits the alloc + memcpy + width-correct tail store
+	// inline (see emitArrayPush in internal/ir/ir.go). One
+	// codepath covers every stride class — no per-stride
+	// mangled names, no per-stride prelude functions.
 	arrayElemParam := ast.ParamType{Name: "T"}
 	c.info.Methods["Array.push"] = "__method_Array_push"
 	c.info.FuncSigs["__method_Array_push"] = &ast.FuncType{
-		Params: []ast.Type{
-			ast.ArrayType{Elem: arrayElemParam},
-			arrayElemParam,
-		},
-		Result: ast.ArrayType{Elem: arrayElemParam},
-	}
-	// Wide (8-byte) pushes: same shape as the 4-byte version
-	// but each routes to its own per-stride lang-prelude
-	// helper. Two mangled names so the codegen alias map can
-	// dispatch: i64/u64 → __array_append_i64, f64 →
-	// __array_append_f64. The substitution path picks up the
-	// right monomorphic signature at the call site (`v` types
-	// as i64 for i64[], as f64 for f64[], etc).
-	c.info.FuncSigs["__method_Array_push_i64"] = &ast.FuncType{
-		Params: []ast.Type{
-			ast.ArrayType{Elem: arrayElemParam},
-			arrayElemParam,
-		},
-		Result: ast.ArrayType{Elem: arrayElemParam},
-	}
-	c.info.FuncSigs["__method_Array_push_f64"] = &ast.FuncType{
-		Params: []ast.Type{
-			ast.ArrayType{Elem: arrayElemParam},
-			arrayElemParam,
-		},
-		Result: ast.ArrayType{Elem: arrayElemParam},
-	}
-	// Sub-i32 strides: u8/i8 → __method_Array_push_u8,
-	// u16/i16 → __method_Array_push_u16. Each maps via the
-	// codegen alias to its lang-prelude impl.
-	c.info.FuncSigs["__method_Array_push_u8"] = &ast.FuncType{
-		Params: []ast.Type{
-			ast.ArrayType{Elem: arrayElemParam},
-			arrayElemParam,
-		},
-		Result: ast.ArrayType{Elem: arrayElemParam},
-	}
-	c.info.FuncSigs["__method_Array_push_u16"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.ArrayType{Elem: arrayElemParam},
 			arrayElemParam,
@@ -812,20 +754,6 @@ func Check(prog *ast.Program) (*Info, error) {
 	// prelude (internal/prelude/prelude.lang); its
 	// signature is registered via the prelude's FuncDecl.
 
-	// `__array_append_jsonvalue(arr, v)` — same shape as
-	// `__array_append_string` but for `JsonValue[]`.
-	// `json_parse` builds JArray payloads incrementally.
-	// Generic per-element-stride append is the right
-	// long-term shape; today both lang signatures lower to
-	// the same wat helper (4-byte-pointer-stride is
-	// type-erased at the wat layer).
-	c.info.FuncSigs["__array_append_jsonvalue"] = &ast.FuncType{
-		Params: []ast.Type{
-			ast.ArrayType{Elem: ast.EnumType{Name: "JsonValue"}},
-			ast.EnumType{Name: "JsonValue"},
-		},
-		Result: ast.ArrayType{Elem: ast.EnumType{Name: "JsonValue"}},
-	}
 
 	// `__memcpy(dst, src, n)` / `__memset(dst, b, n)` —
 	// thin lang-callable wrappers around wasm's bulk-memory
@@ -873,53 +801,13 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
-	// `__load_i64` / `__store_i64` — wide-int peek/poke
-	// counterparts. Lets the lang prelude build wide-element
-	// data structures (today: `__array_append_i64`) using the
-	// same compose-with-primitives pattern that the 4-byte
-	// path uses, instead of duplicating the helper at the wat
-	// layer. Same out-of-bounds-traps-on-wasm-level contract.
-	c.info.FuncSigs["__load_i64"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.NumberType{Width: 64, Signed: true},
-	}
-	c.info.FuncSigs["__store_i64"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{Width: 64, Signed: true}},
-		Result: ast.VoidType{},
-	}
-	// `__load_f64` / `__store_f64` — wide-float counterparts
-	// for the same reason. Pairs with `__array_append_f64` in
-	// the lang prelude.
-	c.info.FuncSigs["__load_f64"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.FloatType{Width: 64},
-	}
-	c.info.FuncSigs["__store_f64"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.FloatType{Width: 64}},
-		Result: ast.VoidType{},
-	}
-	// Sub-i32 byte / halfword shims. The lang prelude's
-	// `__array_append_u8` / `__array_append_u16` use these.
-	// Both store ops accept i32 and truncate to the low N bits
-	// — the sign of the destination type doesn't change the
-	// bit pattern stored, so one shim per width covers both
-	// signed and unsigned receivers.
-	c.info.FuncSigs["__load_u8"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.NumberType{Width: 8, Signed: false},
-	}
-	c.info.FuncSigs["__store_u8"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
-		Result: ast.VoidType{},
-	}
-	c.info.FuncSigs["__load_u16"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.NumberType{Width: 16, Signed: false},
-	}
-	c.info.FuncSigs["__store_u16"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
-		Result: ast.VoidType{},
-	}
+	// Wide / sub-i32 wat shims (`__load_i64` / `__store_i64`,
+	// `__load_f64` / `__store_f64`, `__load_u8` / `__store_u8`,
+	// `__load_u16` / `__store_u16`) were removed when
+	// `arr.push(v)` moved to inline IR lowering — the IR emits
+	// the typed wasm store ops directly, no callable wat shim
+	// needed. Reintroduce here next to `__store_i32` if a
+	// future lang-prelude helper needs them.
 
 	// `url_encode(s)` / `url_decode(s)` live in the lang
 	// prelude (internal/prelude/prelude.lang).
@@ -2701,59 +2589,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// Array's `Args` is just the single Elem
 					// type — wrap it so the same substitution
 					// path treats it as `[T]` with T = Elem.
+					// `arr.push(v)`'s lowering happens inline at
+					// the IR layer (emitArrayPush) — no per-
+					// stride dispatch required here.
 					if at, ok := tt.(ast.ArrayType); ok {
 						n.TypeArgs = []ast.Type{at.Elem}
-						// Per-stride dispatch for `arr.push(v)`.
-						// Each width maps to its own lang-prelude
-						// helper via codegenAliasMap:
-						//   1-byte (u8 / i8)   → __method_Array_push_u8
-						//                         → __array_append_u8
-						//   2-byte (u16 / i16) → __method_Array_push_u16
-						//                         → __array_append_u16
-						//   4-byte (i32 / f32 / pointer) → existing
-						//                         __method_Array_push
-						//                         → __array_append_string
-						//   8-byte int (i64 / u64) → __method_Array_push_i64
-						//                         → __array_append_i64
-						//   8-byte float (f64) → __method_Array_push_f64
-						//                         → __array_append_f64
-						if mangled == "__method_Array_push" {
-							sz := ast.ElemSizeBytes(at.Elem)
-							switch sz {
-							case 1:
-								mangled = "__method_Array_push_u8"
-								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
-							case 2:
-								mangled = "__method_Array_push_u16"
-								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
-							case 4:
-								// already on the default helper
-							case 8:
-								if _, isFloat := at.Elem.(ast.FloatType); isFloat {
-									mangled = "__method_Array_push_f64"
-								} else {
-									mangled = "__method_Array_push_i64"
-								}
-								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
-							default:
-								c.errf(fa.P, "arr.push() on %s[] has an unrecognised stride %d", at.Elem, sz)
-							}
-						}
 					}
-					// Wide-V Map: `m.values()` would return a
-					// `V[]` whose entries are still cell-pointer
-					// boxes (the wat helper sees i32-stride),
-					// which would silently mis-index on the lang
-					// side. Reject explicitly until the helper
-					// learns to unbox-into-a-wide-stride array.
-					if mangled == "__method_Map_values" {
-						if st, ok := tt.(ast.StructType); ok && len(st.Args) >= 2 {
-							v := st.Args[1]
-							if isWideMapValueType(v) {
-								c.errf(fa.P, "Map[K, %s].values() is not yet supported (wide V)", v)
-							}
-						}
-					}
+					// Wide-V Map: `m.values()` is intercepted by
+					// the IR (emitMapValues) which dispatches by
+					// V stride — narrow V routes to the existing
+					// `__map_values_impl` lang prelude function,
+					// wide V (i64 / u64 / f64) follows each entry's
+					// cell pointer + `__memcpy`s the 8 payload
+					// bytes into a real wide-stride result. Both
+					// share the same mangled name; the IR sees
+					// the receiver's V via `b.exprType(args[0])`.
 				}
 			}
 		}
