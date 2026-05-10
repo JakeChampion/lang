@@ -455,6 +455,69 @@ func TestTryOpParses(t *testing.T) {
 	}
 }
 
+// Typed numeric literal suffixes: lexer captures the suffix, the
+// parser stamps Width / IsUnsigned at parse time so the checker
+// sees a non-polymorphic type from the get-go.
+func TestNumericLiteralSuffixes(t *testing.T) {
+	type want struct {
+		isFloat    bool
+		width      int
+		isUnsigned bool
+	}
+	cases := map[string]want{
+		"42i8":   {false, 8, false},
+		"42i16":  {false, 16, false},
+		"42i32":  {false, 32, false},
+		"42i64":  {false, 64, false},
+		"42u8":   {false, 8, true},
+		"42u32":  {false, 32, true},
+		"42u64":  {false, 64, true},
+		"1.5f32": {true, 32, false},
+		"1.5f64": {true, 64, false},
+		// Integer-shaped text + float suffix promotes to float.
+		"42f64": {true, 64, false},
+	}
+	for src, w := range cases {
+		prog, err := Parse(`function f(): i32 { return ` + src + `; }`)
+		if err != nil {
+			t.Errorf("%s: parse: %v", src, err)
+			continue
+		}
+		ret := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+		if w.isFloat {
+			lit, ok := ret.Value.(*ast.FloatLit)
+			if !ok {
+				t.Errorf("%s: expected *FloatLit, got %T", src, ret.Value)
+				continue
+			}
+			if lit.Width != w.width {
+				t.Errorf("%s: Width = %d, want %d", src, lit.Width, w.width)
+			}
+		} else {
+			lit, ok := ret.Value.(*ast.NumberLit)
+			if !ok {
+				t.Errorf("%s: expected *NumberLit, got %T", src, ret.Value)
+				continue
+			}
+			if lit.Width != w.width {
+				t.Errorf("%s: Width = %d, want %d", src, lit.Width, w.width)
+			}
+			if lit.IsUnsigned != w.isUnsigned {
+				t.Errorf("%s: IsUnsigned = %v, want %v", src, lit.IsUnsigned, w.isUnsigned)
+			}
+		}
+	}
+}
+
+func TestNumericLiteralSuffixRejectsUnknown(t *testing.T) {
+	if _, err := Parse(`function f(): i32 { return 42i33; }`); err == nil {
+		t.Error("expected error for unknown numeric suffix")
+	}
+	if _, err := Parse(`function f(): i32 { return 1.5i32; }`); err == nil {
+		t.Error("expected error: integer suffix on float literal")
+	}
+}
+
 func TestIfExprNested(t *testing.T) {
 	// `if (a) { 1 } else { if (c) { 2 } else { 3 } }` — the
 	// nested IfExpr lives in the outer's Else slot. This is the

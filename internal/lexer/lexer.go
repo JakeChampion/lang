@@ -65,6 +65,12 @@ type Token struct {
 	// so the parser can sub-parse each Expr part without re-lexing
 	// the body.
 	FParts []FStringPart
+	// Suffix is the typed-literal suffix when Kind == Number or
+	// Float (e.g. "i64", "u8", "f64"). Empty when the literal is
+	// untyped / polymorphic. The parser uses Suffix to bypass
+	// the polymorphic-numeric flow and stamp the AST node with
+	// a fixed type directly.
+	Suffix string
 }
 
 func (t Token) String() string {
@@ -136,6 +142,19 @@ type Error struct {
 
 func (e *Error) Error() string         { return fmt.Sprintf("lex error at %s: %s", e.Pos, e.Msg) }
 func (e *Error) Position() ast.Position { return e.Pos }
+
+// validNumericSuffix is the closed list of typed-literal suffixes
+// the lexer recognises. The same set is later honoured by the
+// parser when stamping the AST node's concrete type.
+func validNumericSuffix(s string) bool {
+	switch s {
+	case "i8", "i16", "i32", "i64",
+		"u8", "u16", "u32", "u64",
+		"f32", "f64":
+		return true
+	}
+	return false
+}
 
 // Tokenize turns src into a slice of tokens terminated by an EOF
 // token, plus the `//` line comments encountered along the way (in
@@ -268,14 +287,51 @@ func (l *lexer) next() (Token, error) {
 		for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
 			l.advance()
 		}
+		isFloat := false
 		if l.i+1 < len(l.src) && l.src[l.i] == '.' && unicode.IsDigit(rune(l.src[l.i+1])) {
+			isFloat = true
 			l.advance() // '.'
 			for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
 				l.advance()
 			}
-			return Token{Kind: Float, Text: l.src[begin:l.i], Pos: start}, nil
 		}
-		return Token{Kind: Number, Text: l.src[begin:l.i], Pos: start}, nil
+		text := l.src[begin:l.i]
+		// Optional typed suffix: i8/i16/i32/i64/u8/u16/u32/u64/f32/f64.
+		// Recognised greedily — the suffix character set is a
+		// closed list so misspellings like `42i33` fail later
+		// rather than partially consuming. A float-literal text
+		// (`1.5`) with an integer suffix (`i32`) is a parse-time
+		// error; ditto an integer literal with a non-int suffix
+		// like `42x9` — both surface as "unknown numeric suffix".
+		suffix := ""
+		if l.i < len(l.src) {
+			ch := l.src[l.i]
+			if ch == 'i' || ch == 'u' || ch == 'f' {
+				sBegin := l.i
+				l.advance()
+				for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
+					l.advance()
+				}
+				suffix = l.src[sBegin:l.i]
+				if !validNumericSuffix(suffix) {
+					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unknown numeric suffix %q on %q", suffix, text)}
+				}
+				if isFloat && suffix[0] != 'f' {
+					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("integer suffix %q on float literal %q", suffix, text)}
+				}
+			}
+		}
+		// `42f32` / `42f64` — integer text with float suffix
+		// promotes the token to Float so the parser uses the
+		// f-literal construction path.
+		if !isFloat && suffix != "" && suffix[0] == 'f' {
+			isFloat = true
+		}
+		kind := Number
+		if isFloat {
+			kind = Float
+		}
+		return Token{Kind: kind, Text: text, Pos: start, Suffix: suffix}, nil
 	}
 
 	// String literal: "..." with C-style escapes \\, \", \n, \t, \r, \0.

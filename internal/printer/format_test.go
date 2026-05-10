@@ -177,6 +177,10 @@ func TestFormatRoundTripsThroughParser(t *testing.T) {
 	srcs := []string{
 		`function f(): i32 { return 1 + 2 * 3; }`,
 		`function f(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }`,
+		// Typed numeric literal suffixes — formatter must round-trip.
+		`function f(): i64 { return 42i64; }`,
+		`function f(): u8 { return 7u8; }`,
+		`function f(): f64 { return 1.5f64; }`,
 		`function f(s: string): boolean { return s == "x"; }`,
 		`function f(): i32 { var a: i32[] = [1, 2, 3]; return a[1]; }`,
 		`function f(n: i32): i32 {

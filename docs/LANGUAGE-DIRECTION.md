@@ -781,15 +781,22 @@ to smallest. Status pending unless marked.
   it's CLI-only and the OS reclaims everything at process
   exit.
 
-- **Numeric literal suffixes / inference in match arms.**
-  `Circle(r) when r <= 0 as f32 =>` — the `as f32` on every
-  literal is noise when the variant already declared `f32`.
-  Two pieces: (1) literal suffixes — `0f32` / `1.5f64` /
-  `42i64` parse as the suffixed type directly; (2) extend
-  the polymorphic-literal flow into match-guard expressions
-  so `r <= 0` in a `Circle(r: f32)` arm settles `0` to f32
-  via the bound's type, the same way it already settles
-  through assignments and call args.
+- **Numeric literal suffixes — shipped.** `42i64`, `7u8`,
+  `0f32`, `1.5f64`, `42f64` (integer text + float suffix
+  promotes to a float literal) all parse as the suffixed type
+  directly. The lexer captures the suffix on the Number/Float
+  token; the parser stamps Width + IsUnsigned at parse time so
+  the literal carries a concrete type immediately, bypassing
+  the polymorphic-flow machinery. The formatter preserves the
+  suffix on round-trip — Width is the user-authored signal at
+  format time (the format pass runs pre-checker, so settle-flow
+  hasn't stamped Width yet).
+
+  `Circle(r: f32) when r <= 0f32 =>` is now noise-free.
+  The follow-up — promoting an unsuffixed `0` against a float
+  partner via the binary-op type checker — is a separate, more
+  invasive change (touches AST-rewrite of NumberLit→FloatLit on
+  settle) and is deferred. Users today reach for the suffix.
 
 - **Bug: formatter eats `defer r.close();`.** Not a design
   item, but worth flagging — costs three comments and two

@@ -2381,17 +2381,61 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		for _, c := range t.Text {
 			n = n*10 + int64(c-'0')
 		}
-		return &ast.NumberLit{P: t.Pos, Value: n}, nil
+		lit := &ast.NumberLit{P: t.Pos, Value: n}
+		// Typed suffix (`42i64`, `7u8`): stamp Width + IsUnsigned
+		// at parse time so the checker sees a non-polymorphic
+		// type immediately, bypassing settle-from-context flow.
+		switch t.Suffix {
+		case "":
+			// no suffix — polymorphic
+		case "i8":
+			lit.Width = 8
+		case "i16":
+			lit.Width = 16
+		case "i32":
+			lit.Width = 32
+		case "i64":
+			lit.Width = 64
+		case "u8":
+			lit.Width = 8
+			lit.IsUnsigned = true
+		case "u16":
+			lit.Width = 16
+			lit.IsUnsigned = true
+		case "u32":
+			lit.Width = 32
+			lit.IsUnsigned = true
+		case "u64":
+			lit.Width = 64
+			lit.IsUnsigned = true
+		default:
+			return nil, p.errorf(t.Pos, "unexpected numeric suffix %q on integer literal", t.Suffix)
+		}
+		return lit, nil
 	case lexer.Float:
 		p.advance()
-		// strconv.ParseFloat handles `1.5`, `0.0`, etc. We accepted
-		// only `<digits>.<digits>` from the lexer so this won't fail
-		// in practice, but plumb the error through anyway.
+		// `42f32` — integer-shaped text with a float suffix. Use
+		// strconv.ParseFloat which handles both `42` and `1.5`.
 		f, err := strconv.ParseFloat(t.Text, 64)
 		if err != nil {
 			return nil, p.errorf(t.Pos, "invalid float literal %q: %v", t.Text, err)
 		}
-		return &ast.FloatLit{P: t.Pos, Value: f}, nil
+		lit := &ast.FloatLit{P: t.Pos, Value: f}
+		switch t.Suffix {
+		case "", "f32":
+			lit.Width = 32
+		case "f64":
+			lit.Width = 64
+		default:
+			return nil, p.errorf(t.Pos, "unexpected numeric suffix %q on float literal", t.Suffix)
+		}
+		// Empty suffix → leave Width=0 so the checker can still
+		// settle to f64 from context. Non-empty `f32`/`f64` was
+		// stamped above.
+		if t.Suffix == "" {
+			lit.Width = 0
+		}
+		return lit, nil
 	case lexer.String:
 		p.advance()
 		return &ast.StringLit{P: t.Pos, Value: t.Text}, nil
