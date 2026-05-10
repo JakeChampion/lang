@@ -702,13 +702,21 @@ func Check(prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.ArrayType{Elem: arrayElemParam},
 	}
-	// Wide (8-byte int) push: same shape but parameterised over
-	// a separate type-param so the substitution path computes
-	// the right monomorphic signature (i64 / u64) at the call
-	// site. The checker rewrites the call to this mangled name
-	// when the receiver's Elem stride is 8 and the elem is an
-	// integer type.
+	// Wide (8-byte) pushes: same shape as the 4-byte version
+	// but each routes to its own per-stride lang-prelude
+	// helper. Two mangled names so the codegen alias map can
+	// dispatch: i64/u64 → __array_append_i64, f64 →
+	// __array_append_f64. The substitution path picks up the
+	// right monomorphic signature at the call site (`v` types
+	// as i64 for i64[], as f64 for f64[], etc).
 	c.info.FuncSigs["__method_Array_push_i64"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			arrayElemParam,
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
+	c.info.FuncSigs["__method_Array_push_f64"] = &ast.FuncType{
 		Params: []ast.Type{
 			ast.ArrayType{Elem: arrayElemParam},
 			arrayElemParam,
@@ -860,6 +868,17 @@ func Check(prog *ast.Program) (*Info, error) {
 	}
 	c.info.FuncSigs["__store_i64"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
+	// `__load_f64` / `__store_f64` — wide-float counterparts
+	// for the same reason. Pairs with `__array_append_f64` in
+	// the lang prelude.
+	c.info.FuncSigs["__load_f64"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.FloatType{Width: 64},
+	}
+	c.info.FuncSigs["__store_f64"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.FloatType{Width: 64}},
 		Result: ast.VoidType{},
 	}
 
@@ -2649,19 +2668,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						// 4-byte (i32 / f32 / pointer) → existing
 						//   __method_Array_push → __array_append_string
 						// 8-byte int (i64 / u64) → __method_Array_push_i64
-						//   → __array_append_i64 (wat helper, see
-						//   wasm.go's emitBulkMemoryHelpers).
-						// Other strides (sub-i32, f64) aren't wired
+						//   → __array_append_i64 (lang prelude).
+						// 8-byte float (f64) → __method_Array_push_f64
+						//   → __array_append_f64 (lang prelude).
+						// Other strides (sub-i32) aren't wired
 						// up — error clearly at the call site.
 						if mangled == "__method_Array_push" {
 							sz := ast.ElemSizeBytes(at.Elem)
 							if sz == 8 {
 								if _, isFloat := at.Elem.(ast.FloatType); isFloat {
-									c.errf(fa.P, "arr.push() on %s[] is not yet supported (f64 stride needs a separate helper)", at.Elem)
+									mangled = "__method_Array_push_f64"
 								} else {
 									mangled = "__method_Array_push_i64"
-									n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 								}
+								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 							} else if sz != 4 {
 								c.errf(fa.P, "arr.push() on %s[] is not yet supported (only 4- and 8-byte-stride elements are wired up)", at.Elem)
 							}

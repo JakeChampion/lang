@@ -3046,6 +3046,24 @@ func TestWASMArrayPushI64(t *testing.T) {
 	}
 }
 
+// 8-byte float stride: arr.push(v) on f64[] mirrors the i64
+// path, calling __array_append_f64 with f64.store under the
+// hood. Confirms the f64 lang-prelude helper composes the same
+// way the i64 sibling does.
+func TestWASMArrayPushF64(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: f64[] = [1.5f64, 2.5f64];
+    xs = xs.push(3.5f64);
+    xs = xs.push(4.5f64);
+    if (xs[3] != 4.5f64) { return 1; }
+    if (len(xs) != 4) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (f64 push round-trip)", got)
+	}
+}
+
 // Empty-array start: confirms the oldLen==0 fast-path of the
 // helper (skips memory.copy).
 func TestWASMArrayPushI64EmptyStart(t *testing.T) {
