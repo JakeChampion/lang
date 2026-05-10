@@ -244,118 +244,18 @@ function (s: string) replace(old: string, new: string): string {
     return out + s[start:n];
 }
 
-// === Pointer-stride array append ===
+// === Array append ===
 //
-// `__array_append_string(arr, v)` — return a fresh
-// `string[]` of length `len(arr) + 1`, copying the
-// existing entries and appending `v` at the end. Used by
-// the lang prelude's `query_parse` to accumulate per-key
-// value lists, and by `string.split` for piece accumulation.
-//
-// Since `string[]` and `JsonValue[]` (and any other
-// pointer-stride owned array) share the same wasm-level
-// shape — 4-byte length prefix + 4-byte ptrs — the
-// codegen aliases `__array_append_jsonvalue` to this same
-// function (see internal/codegen/wasm/wasm_ir.go). The
-// type-level signature here is `string[]`; the alias makes
-// the call type-erased at the wasm layer.
-function __array_append_string(arr: string[], v: string): string[] {
-    var oldLen: i32 = len(arr);
-    var newLen: i32 = oldLen + 1;
-    // Raw-memory layout: 4-byte length prefix at +0,
-    // then `newLen` 4-byte pointers. Use the raw __alloc
-    // primitive so we own the layout (the typed __alloc_u8
-    // would be wrong here because we're storing pointers,
-    // not bytes).
-    var hdr: i32 = __alloc(4 + newLen * 4);
-    __store_i32(hdr, newLen);
-    var data: i32 = hdr + 4;
-    if (oldLen > 0) {
-        __memcpy(data, arr as i32, oldLen * 4);
-    }
-    __store_i32(data + oldLen * 4, v as i32);
-    return data as string[];
-}
-
-// `__array_append_i64(arr, v)` — wide-stride counterpart for
-// `i64[]` / `u64[]`. Same compose-with-primitives pattern as
-// the 4-byte string variant: `__alloc` for the new block,
-// `__memcpy` for the existing elements, and `__store_i64` for
-// the new tail entry. Routed from `arr.push(v)` for 8-byte
-// integer strides via the `__method_Array_push_i64` codegen
-// alias.
-//
-// The length prefix is still a 4-byte i32 (len(arr) reads
-// from arr-4 regardless of element stride). i64 elements end
-// up at byte offsets 4, 12, 20, ... — 4-byte but not 8-byte
-// aligned. Wasm allows unaligned wide loads/stores
-// functionally; the alignment hint is omitted on the shim's
-// `i64.store`.
-function __array_append_i64(arr: i64[], v: i64): i64[] {
-    var oldLen: i32 = len(arr);
-    var newLen: i32 = oldLen + 1;
-    var hdr: i32 = __alloc(4 + newLen * 8);
-    __store_i32(hdr, newLen);
-    var data: i32 = hdr + 4;
-    if (oldLen > 0) {
-        __memcpy(data, arr as i32, oldLen * 8);
-    }
-    __store_i64(data + oldLen * 8, v);
-    return data as i64[];
-}
-
-// `__array_append_f64(arr, v)` — wide-float counterpart of
-// `__array_append_i64`. Same body modulo the store op
-// (`__store_f64` vs `__store_i64`); routed from
-// `arr.push(v)` for `f64[]` via the
-// `__method_Array_push_f64` codegen alias.
-function __array_append_f64(arr: f64[], v: f64): f64[] {
-    var oldLen: i32 = len(arr);
-    var newLen: i32 = oldLen + 1;
-    var hdr: i32 = __alloc(4 + newLen * 8);
-    __store_i32(hdr, newLen);
-    var data: i32 = hdr + 4;
-    if (oldLen > 0) {
-        __memcpy(data, arr as i32, oldLen * 8);
-    }
-    __store_f64(data + oldLen * 8, v);
-    return data as f64[];
-}
-
-// `__array_append_u8(arr, v)` — 1-byte-stride counterpart.
-// Routed from `arr.push(v)` for both u8[] and i8[] (the
-// store is bit-identical at the wasm layer; sign only
-// matters on the read side, which goes through the array
-// indexer, not this helper). Layout: 4-byte length prefix
-// + raw bytes packed back-to-back.
-function __array_append_u8(arr: u8[], v: u8): u8[] {
-    var oldLen: i32 = len(arr);
-    var newLen: i32 = oldLen + 1;
-    var hdr: i32 = __alloc(4 + newLen);
-    __store_i32(hdr, newLen);
-    var data: i32 = hdr + 4;
-    if (oldLen > 0) {
-        __memcpy(data, arr as i32, oldLen);
-    }
-    __store_u8(data + oldLen, v as i32);
-    return data as u8[];
-}
-
-// `__array_append_u16(arr, v)` — 2-byte-stride counterpart.
-// Routed from `arr.push(v)` for both u16[] and i16[]; same
-// sign-agnostic store reasoning as the u8 helper.
-function __array_append_u16(arr: u16[], v: u16): u16[] {
-    var oldLen: i32 = len(arr);
-    var newLen: i32 = oldLen + 1;
-    var hdr: i32 = __alloc(4 + newLen * 2);
-    __store_i32(hdr, newLen);
-    var data: i32 = hdr + 4;
-    if (oldLen > 0) {
-        __memcpy(data, arr as i32, oldLen * 2);
-    }
-    __store_u16(data + oldLen * 2, v as i32);
-    return data as u16[];
-}
+// `arr.push(v)` is lowered inline by the IR — see
+// `emitArrayPush` in `internal/ir/ir.go`. The previous shape
+// here was 5 nearly-identical lang-prelude functions
+// (`__array_append_string` / `_i64` / `_f64` / `_u8` / `_u16`),
+// one per stride class, each ~12 lines of raw-memory pokes;
+// the IR now emits the same shape directly (alloc + memcpy +
+// width-correct tail store) parameterised over stride. One
+// codepath instead of one-per-stride; new array methods
+// (concat, reverse, ...) drop in as IR helpers without
+// touching the prelude.
 
 // === Decimal int-to-string formatter ===
 //

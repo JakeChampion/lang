@@ -885,6 +885,45 @@ func TestWASMMapKeysValues(t *testing.T) {
 	}
 }
 
+// Wide-V Map.values(): for `Map[K, i64]` / `Map[K, f64]`,
+// values are stored boxed (each entry holds a 4-byte cell
+// pointer to an 8-byte heap cell). The IR's wide-V values()
+// intercept (emitWideMapValues) follows each cell pointer
+// and `__memcpy`s the 8 payload bytes into a real wide-stride
+// `i64[]` / `f64[]` result.
+func TestWASMMapValuesWideI64(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i32, i64] = map_new(4);
+    m.set(1, 1000000000000i64);
+    m.set(2, 2000000000000i64);
+    m.set(3, 3000000000000i64);
+    var vs: i64[] = m.values();
+    if (len(vs) != 3) { return 1; }
+    if (vs[0] != 1000000000000i64) { return 2; }
+    if (vs[2] != 3000000000000i64) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map[i32,i64].values() preserves wide bits)", got)
+	}
+}
+
+func TestWASMMapValuesWideF64(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i32, f64] = map_new(4);
+    m.set(1, 1.5f64);
+    m.set(2, 2.5f64);
+    var vs: f64[] = m.values();
+    if (len(vs) != 2) { return 1; }
+    if (vs[0] != 1.5f64) { return 2; }
+    if (vs[1] != 2.5f64) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map[i32,f64].values() preserves wide bits)", got)
+	}
+}
+
 // Map.delete(k) removes a key, returning true if it was
 // present. Implementation is swap-with-last (O(1), trades
 // insertion order for speed). Verifies the basic

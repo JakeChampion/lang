@@ -44,12 +44,6 @@ import (
 // elimination, which would otherwise drop the impls (their AST
 // callers only reference the source name).
 var codegenAliasMap = map[string]string{
-	"__array_append_jsonvalue":  "__array_append_string",
-	"__method_Array_push":       "__array_append_string",
-	"__method_Array_push_i64":   "__array_append_i64",
-	"__method_Array_push_f64":   "__array_append_f64",
-	"__method_Array_push_u8":    "__array_append_u8",
-	"__method_Array_push_u16":   "__array_append_u16",
 	"map_new":                   "map_new_impl",
 	"__method_Map_len":          "__map_len_impl",
 	"__method_Map_has":          "__map_has_impl",
@@ -485,32 +479,26 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					// Now lives in the lang prelude
 					// (internal/prelude/prelude.lang).
 				case "__memcpy", "__memset", "__alloc_u8",
-					"__alloc", "__load_i32", "__store_i32",
-					"__load_i64", "__store_i64",
-					"__load_f64", "__store_f64",
-					"__load_u8", "__store_u8",
-					"__load_u16", "__store_u16":
+					"__alloc", "__load_i32", "__store_i32":
 					// Wat shims that wrap wasm's bulk-memory
 					// `memory.copy` / `memory.fill` plus a tiny
-					// allocator + raw poke set across every
-					// stride class (1, 2, 4, 8 bytes; integer
-					// + float). Exposed to the lang prelude so
-					// high-level helpers (map runtime
-					// migration, json buffer family, the
-					// per-stride array appends) can build
-					// growable buffers without dropping out of
-					// the language.
+					// allocator + raw 4-byte poke set. Exposed
+					// to the lang prelude (map runtime
+					// migration, json buffer family) so
+					// high-level helpers can build growable
+					// buffers without dropping out of the
+					// language. The wide / sub-i32 store ops
+					// live in the IR directly (emitArrayPush
+					// uses `i64.store` etc. via the typed
+					// store ops); no wat shims needed.
 					g.needsBulkMemory = true
 					g.needsRuntime = true
-				case "__array_append_string", "__array_append_jsonvalue",
-					"__array_append_i64", "__array_append_f64",
-					"__array_append_u8", "__array_append_u16":
-					// All six live in the lang prelude. Each
-					// calls into the matching width's poke
-					// shim + `__memcpy` for the existing
-					// elements. No wat-side wrapper to emit;
-					// the runtime preamble (the bump
-					// allocator) is what each one needs.
+				case "__method_Array_push":
+					// `arr.push(v)` lowers inline at the IR
+					// layer (emitArrayPush). The call calls
+					// `__memcpy` so we still need bulk-memory
+					// + runtime.
+					g.needsBulkMemory = true
 					g.needsRuntime = true
 				case "url_parse":
 					// Now lives in the lang prelude
@@ -3743,88 +3731,13 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// $__load_i64(addr): i64 — read an 8-byte word from linear
-	// memory. Pair of `__store_i64`. Both are wat shims that
-	// expose wasm's wide-int load/store ops to lang code so the
-	// prelude can build wide-element data structures (today:
-	// `__array_append_i64`; tomorrow: an f64 variant if a
-	// callable demand surfaces). Wasm permits unaligned loads
-	// functionally — no alignment hint set.
-	g.line(`(func $__load_i64 (param $addr i32) (result i64)`)
-	g.indent++
-	g.line(`local.get $addr`)
-	g.line(`i64.load`)
-	g.indent--
-	g.line(`)`)
-
-	g.line(`(func $__store_i64 (param $addr i32) (param $v i64)`)
-	g.indent++
-	g.line(`local.get $addr`)
-	g.line(`local.get $v`)
-	g.line(`i64.store`)
-	g.indent--
-	g.line(`)`)
-
-	// $__load_f64 / $__store_f64 — wide-float counterparts.
-	// Same wasm `f64.load` / `f64.store` underneath; separate
-	// from the i64 shims so the lang prelude's f64-stride
-	// helpers don't have to hand-craft a bit reinterpret. Same
-	// out-of-bounds-traps-on-wasm-level contract.
-	g.line(`(func $__load_f64 (param $addr i32) (result f64)`)
-	g.indent++
-	g.line(`local.get $addr`)
-	g.line(`f64.load`)
-	g.indent--
-	g.line(`)`)
-
-	g.line(`(func $__store_f64 (param $addr i32) (param $v f64)`)
-	g.indent++
-	g.line(`local.get $addr`)
-	g.line(`local.get $v`)
-	g.line(`f64.store`)
-	g.indent--
-	g.line(`)`)
-
-	// Sub-i32 byte / halfword shims. Pair with the upcoming
-	// `__array_append_u8` / `__array_append_u16` lang-prelude
-	// helpers. wasm's `i32.store8` / `i32.store16` truncate
-	// the i32 source down to the low 8 / 16 bits — the same
-	// bit pattern u8 / i8 / u16 / i16 share at the value
-	// layer, so a single shim per width covers both signed
-	// and unsigned receivers. The matching loads zero-extend
-	// (load8_u / load16_u) — sign-extending loads aren't
-	// needed here because the append helpers only memcpy
-	// existing elements (bit-preserving) and never read them
-	// back as scalars.
-	g.line(`(func $__load_u8 (param $addr i32) (result i32)`)
-	g.indent++
-	g.line(`local.get $addr`)
-	g.line(`i32.load8_u`)
-	g.indent--
-	g.line(`)`)
-
-	g.line(`(func $__store_u8 (param $addr i32) (param $v i32)`)
-	g.indent++
-	g.line(`local.get $addr`)
-	g.line(`local.get $v`)
-	g.line(`i32.store8`)
-	g.indent--
-	g.line(`)`)
-
-	g.line(`(func $__load_u16 (param $addr i32) (result i32)`)
-	g.indent++
-	g.line(`local.get $addr`)
-	g.line(`i32.load16_u`)
-	g.indent--
-	g.line(`)`)
-
-	g.line(`(func $__store_u16 (param $addr i32) (param $v i32)`)
-	g.indent++
-	g.line(`local.get $addr`)
-	g.line(`local.get $v`)
-	g.line(`i32.store16`)
-	g.indent--
-	g.line(`)`)
+	// Wide / sub-i32 wat shims (`__store_i64`, `__store_f64`,
+	// `__store_u8`, `__store_u16`, plus the matching loads)
+	// were removed when `arr.push(v)` moved to inline IR
+	// lowering — the IR emits the typed wasm store ops
+	// directly, no callable wat shim needed. If a future
+	// lang-prelude helper needs raw wide / sub-i32 pokes,
+	// reintroduce them here next to `__store_i32`.
 }
 
 
