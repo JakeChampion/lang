@@ -87,6 +87,19 @@ const (
 	// prefixes `$state_`.
 	OpLoadGlobal  // ()                → T
 	OpStoreGlobal // (T)               → ()
+	// state{}-block allocator-mode toggle. Used to route
+	// allocations performed during state-rooted operations
+	// (state-init bodies, state-var assignments, state-rooted
+	// method calls) to the persistent heap region instead of
+	// the per-request arena. Nestable via a save/restore
+	// pattern: OpPersistentSet pushes the previous mode then
+	// installs the new one, OpPersistentRestore pops the
+	// stashed previous-mode value back into the active slot.
+	// I32 carries the mode to install for OpPersistentSet
+	// (1 = persistent, 0 = arena); OpPersistentRestore reads
+	// the previous mode from the stack.
+	OpPersistentSet     // ()       → i32 (previous mode)
+	OpPersistentRestore // (i32)    → ()
 
 	// Integer / pointer arithmetic and comparison. All consume two i32
 	// and produce one i32 except OpNeg / OpNot, which consume one.
@@ -274,6 +287,10 @@ func (k OpKind) String() string {
 		return "global.load"
 	case OpStoreGlobal:
 		return "global.store"
+	case OpPersistentSet:
+		return "persistent.set"
+	case OpPersistentRestore:
+		return "persistent.restore"
 	case OpAdd:
 		return "add"
 	case OpSub:
@@ -674,8 +691,29 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
 		b.deferSlots = append(b.deferSlots, slot)
 		b.locals[fmt.Sprintf("__defer_%d_active", i)] = slot
 	}
+	// `__state_init` runs at module instantiation to populate
+	// every state-block var with its computed init value. Wrap
+	// the whole body in a persistent-mode toggle so any
+	// allocations the init expressions perform (string concats,
+	// Map / T[] construction, ...) land in the persistent heap
+	// region rather than the per-request arena. The arena
+	// cursor never moves during init, so subsequent
+	// arena_save() / arena_restore() pairs in handle() bodies
+	// don't disturb state allocations.
+	wrappedStateInit := fn.Name == "__state_init"
+	var stateInitPrev int32
+	if wrappedStateInit {
+		stateInitPrev = b.allocSlot()
+		b.locals[fmt.Sprintf("__pmode_init_%d", stateInitPrev)] = stateInitPrev
+		b.emit(Op{Kind: OpPersistentSet, I32: 1})
+		b.emit(Op{Kind: OpStoreLocal, I32: stateInitPrev})
+	}
 	if err := b.stmt(fn.Body); err != nil {
 		return nil, err
+	}
+	if wrappedStateInit {
+		b.emit(Op{Kind: OpLoadLocal, I32: stateInitPrev})
+		b.emit(Op{Kind: OpPersistentRestore})
 	}
 	// Record the type of every synthetic slot the lowering pass
 	// conjured beyond the user-visible params + locals — ArrayLit
@@ -2827,6 +2865,46 @@ func (b *builder) call(n *ast.Call) error {
 	if !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
+	// State-rooted method calls (e.g. `state.todos.set(k, v)` after
+	// the checker rewrites it to `__method_Map_set(todos, k, v)`)
+	// route their entire body — argument evaluation included —
+	// through the persistent allocator. Any helper-internal
+	// allocations (Map grow, T[] push backing buffer, …) live in
+	// the persistent heap region and survive arena_restore at the
+	// surrounding handler exit. Detection is purely syntactic:
+	// callee is method-mangled and the receiver arg is a bare
+	// state-var Ident. Aliasing through locals (`var m = todos;
+	// m.set(...)`) is intentionally not covered yet — the checker
+	// rejects state vars escaping into locals.
+	if isStateRootedMethodCall(id, n, b.info) {
+		pmodeSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__pmode_call_%d", pmodeSlot)] = pmodeSlot
+		b.emit(Op{Kind: OpPersistentSet, I32: 1})
+		b.emit(Op{Kind: OpStoreLocal, I32: pmodeSlot})
+		// Recurse with a `_already_wrapped` shape: rebuild the same
+		// Call but stash the slot so b.call's tail can emit the
+		// matching restore. Implementing this without recursion or
+		// a flag would mean duplicating the rest of b.call inline,
+		// so use a small helper that strips the state-rooted gate
+		// and runs the regular call path, then we close out here.
+		if err := b.callBody(n); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: pmodeSlot})
+		b.emit(Op{Kind: OpPersistentRestore})
+		return nil
+	}
+	return b.callBody(n)
+}
+
+// callBody is the original b.call body — pulled out as a helper
+// so the state-rooted wrap above can bracket it with persistent
+// mode toggles without duplicating every call-lowering case.
+func (b *builder) callBody(n *ast.Call) error {
+	id, ok := n.Callee.(*ast.Ident)
+	if !ok {
+		return fmt.Errorf("ir: indirect call from non-identifier expression")
+	}
 	// Variant constructor: lower to a heap-allocated tagged-union
 	// object [tag, payload0, payload1, ...]. The checker already
 	// type-checked the args; we just emit the storage.
@@ -3011,19 +3089,32 @@ func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 func (b *builder) assign(n *ast.Assign) error {
 	switch t := n.Target.(type) {
 	case *ast.Ident:
+		// State-block var assignment: route the value-evaluation
+		// through the persistent allocator so any allocations the
+		// RHS performs (string concat, Map / T[] construction,
+		// helper calls) live in the persistent heap region. The
+		// final OpStoreGlobal lands on a wasm global; the
+		// previous mode is restored after the store so the
+		// surrounding code sees its allocator unchanged.
+		if _, isState := b.info.StateVars[t.Name]; isState {
+			pmodeSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__pmode_assign_%d", pmodeSlot)] = pmodeSlot
+			b.emit(Op{Kind: OpPersistentSet, I32: 1})
+			b.emit(Op{Kind: OpStoreLocal, I32: pmodeSlot})
+			if err := b.expr(n.Value); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreGlobal, Str: t.Name})
+			b.emit(Op{Kind: OpLoadLocal, I32: pmodeSlot})
+			b.emit(Op{Kind: OpPersistentRestore})
+			b.emit(Op{Kind: OpLoadGlobal, Str: t.Name})
+			return nil
+		}
 		if err := b.expr(n.Value); err != nil {
 			return err
 		}
 		idx, ok := b.locals[t.Name]
 		if !ok {
-			// State-block var assignment: store to wasm global,
-			// then read it back so the assignment expression's
-			// result is available for callers that use it.
-			if _, isState := b.info.StateVars[t.Name]; isState {
-				b.emit(Op{Kind: OpStoreGlobal, Str: t.Name})
-				b.emit(Op{Kind: OpLoadGlobal, Str: t.Name})
-				return nil
-			}
 			return fmt.Errorf("ir: cannot assign to %q (no slot)", t.Name)
 		}
 		// Tee semantics: leave a copy on the stack for callers that
@@ -3288,6 +3379,35 @@ func payloadLoadOp(t ast.Type) Op {
 		return Op{Kind: OpLoad, Width: 64}
 	}
 	return Op{Kind: OpLoad}
+}
+
+// isStateRootedMethodCall reports whether the call site
+// `<recv>.<method>(args...)` (rewritten to
+// `__method_<Type>_<method>(<recv>, args...)` by the checker)
+// has a bare state-var Ident as its receiver. State-rooted
+// calls bracket their body in a persistent-mode toggle so any
+// allocations the helper performs (Map grow, T[] push backing
+// buffer, ...) land in the persistent heap region. Aliasing
+// through locals (`var m = todos; m.set(...)`) is deliberately
+// not covered — the checker rejects state-var escapes so the
+// receiver is always a direct state-var Ident in the
+// state-rooted shape.
+func isStateRootedMethodCall(callee *ast.Ident, n *ast.Call, info *checker.Info) bool {
+	if info == nil || len(info.StateVars) == 0 {
+		return false
+	}
+	if !strings.HasPrefix(callee.Name, "__method_") {
+		return false
+	}
+	if len(n.Args) == 0 {
+		return false
+	}
+	recv, ok := n.Args[0].(*ast.Ident)
+	if !ok {
+		return false
+	}
+	_, isState := info.StateVars[recv.Name]
+	return isState
 }
 
 // isWideMapValueTypeIR matches the checker's

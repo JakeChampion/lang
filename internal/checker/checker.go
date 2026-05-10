@@ -944,7 +944,7 @@ func Check(prog *ast.Program) (*Info, error) {
 				continue
 			}
 			if !isStateVarType(v.Type) {
-				c.errf(v.P, "state var %q has type %s; state{} currently supports scalars (i32/u32/i64/u64/f32/f64/boolean) and string. Map / T[] / structs need the two-cursor allocator (next state{} PR)", v.Name, v.Type)
+				c.errf(v.P, "state var %q has type %s; state{} supports scalars (i32/u32/i64/u64/f32/f64/boolean), string, T[], and Map[K, V] over those. User structs / enums / function values are still rejected (mutation routing isn't implemented for those shapes)", v.Name, v.Type)
 				continue
 			}
 			if _, dup := c.info.StateVars[v.Name]; dup {
@@ -1090,6 +1090,17 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			for j := range ed.Variants[i].Payloads {
 				c.resolveType(&ed.Variants[i].Payloads[j], params)
 			}
+		}
+	}
+	// state{} blocks declare module-globals whose types appear
+	// in source as bare identifier references (`Map[i32, string]`,
+	// `string[]`, `i32`). Walk them through resolveType so any
+	// EnumType placeholders the parser emitted for capitalised
+	// names land on the right StructType / EnumType resolution
+	// before isStateVarType inspects them.
+	for _, sd := range prog.States {
+		for _, v := range sd.Vars {
+			c.resolveType(&v.Type, nil)
 		}
 	}
 }
@@ -3658,18 +3669,31 @@ func isFloat(t ast.Type) bool {
 // isStateVarType matches the V types state{} accepts today.
 // Scalars (every NumberType / FloatType width + BoolType) compile
 // to wasm globals with their literal init expression baked in.
-// Strings are immutable in this language — once allocated, the
-// underlying bytes never change — so a state-string is read-only
-// across requests and doesn't need the two-cursor allocator that
-// mutable pointer types (Map / T[] / structs whose mutation
-// allocates) will need. Strings live as a lang-heap allocation;
-// the storage is preserved across `arena_restore` because state
-// init runs before any `arena_save` (allocations end up below
-// the save point).
+// Strings are immutable in this language so a state-string is
+// read-only across requests; pointer-shaped containers
+// (Map[K, V], T[]) ride on the two-cursor allocator — state-
+// init bodies and state-rooted call sites toggle the persistent
+// allocator mode so any helper-internal allocations (Map grow,
+// T[] push backing buffer) live in the persistent heap region
+// and survive arena_restore on handler exit.
+//
+// Currently rejected: structs (mutation patterns vary; needs
+// per-method analysis), enums with payloads (same), function
+// values (closure env aliasing).
 func isStateVarType(t ast.Type) bool {
-	switch t.(type) {
+	switch tt := t.(type) {
 	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType:
 		return true
+	case ast.ArrayType:
+		return isStateVarType(tt.Elem)
+	case ast.StructType:
+		// Map / MapIter are runtime structs with type params;
+		// allow the Map case explicitly for state{} usage.
+		// Other user structs are still rejected.
+		if tt.Name == "Map" && len(tt.Args) == 2 {
+			return isStateVarType(tt.Args[0]) && isStateVarType(tt.Args[1])
+		}
+		return false
 	}
 	return false
 }
