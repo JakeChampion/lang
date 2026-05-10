@@ -186,6 +186,56 @@ func TestForEachNestedHasUniqueSlots(t *testing.T) {
 	}
 }
 
+// `for (k, v) in m { ... }` desugars to an iterator-cursor loop:
+// outer Block scopes a synthetic `__foreach_iter_N` bound to
+// `expr.iter()`, the inner For drives `has_next()` / `advance()`
+// and the body opens with `var k = it.key(); var v = it.value();`
+// so the user's tuple names are bound before their stmts run.
+func TestForEachOverMapTupleDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		var m: Map[i32, i32] = map_new(4);
+		var sum: i32 = 0;
+		for (k, v) in m {
+			sum = sum + k + v;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := prog.Funcs[0].Body.Stmts
+	blk, ok := body[2].(*ast.Block)
+	if !ok {
+		t.Fatalf("for (k,v) in m should desugar to Block, got %T", body[2])
+	}
+	if len(blk.Stmts) != 2 {
+		t.Fatalf("expected 2 inner stmts (iter / for), got %d", len(blk.Stmts))
+	}
+	declIter, ok := blk.Stmts[0].(*ast.Var)
+	if !ok || !strings.HasPrefix(declIter.Name, "__foreach_iter_") {
+		t.Fatalf("first stmt should declare __foreach_iter_N, got %T %#v", blk.Stmts[0], blk.Stmts[0])
+	}
+	loop, ok := blk.Stmts[1].(*ast.For)
+	if !ok {
+		t.Fatalf("second stmt should be For, got %T", blk.Stmts[1])
+	}
+	if loop.Step == nil {
+		t.Errorf("desugared For must carry a step (advance) so `continue` advances the cursor")
+	}
+	innerBlk, ok := loop.Body.(*ast.Block)
+	if !ok || len(innerBlk.Stmts) < 3 {
+		t.Fatalf("loop body should open with two Var binds (k,v) before user stmts, got %T %d stmts", loop.Body, len(innerBlk.Stmts))
+	}
+	bindK, ok1 := innerBlk.Stmts[0].(*ast.Var)
+	bindV, ok2 := innerBlk.Stmts[1].(*ast.Var)
+	if !ok1 || bindK.Name != "k" {
+		t.Errorf("first inner stmt should be `var k = ...`, got %#v", innerBlk.Stmts[0])
+	}
+	if !ok2 || bindV.Name != "v" {
+		t.Errorf("second inner stmt should be `var v = ...`, got %#v", innerBlk.Stmts[1])
+	}
+}
+
 // `break` and `continue` inside a foreach body target the desugared
 // while loop — same semantics as a hand-written index loop.
 func TestForEachBreakContinue(t *testing.T) {
