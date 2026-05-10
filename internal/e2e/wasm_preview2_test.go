@@ -694,3 +694,117 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 		t.Errorf("POST body echo = %q; want %q", string(body), want)
 	}
 }
+
+// TestWasmPreview2HttpStateCompiles validates that a wasi-http
+// handler with a `state {}` block compiles + serves a single
+// request correctly. We deliberately don't assert that state
+// persists ACROSS requests — `wasmtime serve` instantiates a
+// fresh module per request, which re-runs the global init
+// expressions. State persistence under wasmtime serve would
+// require wasmtime's pre-initialised-instance pooling (no flag
+// for that on the serve subcommand today). Hosts that reuse
+// instances (Fastly Compute, Netlify Edge Functions, Unikraft
+// Cloud, custom wasmtime embeddings) DO see persistence — the
+// wasm semantics are correct; this is a wasmtime-serve test
+// harness limitation.
+//
+// Within-instance state persistence (across function calls in a
+// single CLI run / single handler invocation) is covered by
+// `TestWASMStateScalarCounter`, `TestWASMStateScalarI64`, and
+// `TestWASMStateMultipleVars` in `wasm_e2e_test.go`.
+func TestWasmPreview2HttpStateCompiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+	}
+	if _, err := os.Stat(adapter); err != nil {
+		t.Skipf("adapter %q not readable: %v", adapter, err)
+	}
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "counter.lang")
+	src := `state {
+    var hits: i32 = 0;
+}
+
+function handle(req: HttpRequest): HttpResponse {
+    hits = hits + 1;
+    return HttpResponse { status: 200, body: hits.to_string() };
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "counter.component.wasm")
+	emit := exec.Command(bin,
+		"-target", "wasi-http",
+		"-wasi-adapter", adapter,
+		"-o", componentPath,
+		srcPath,
+	)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("lang -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	run := exec.Command("wasmtime", "serve", "--addr", addr, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime serve start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	var resp *http.Response
+	for {
+		resp, err = client.Get("http://" + addr + "/")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial /: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d; want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "1" {
+		t.Errorf("body = %q; want %q (hits=0 init + one increment in this instance)", string(body), "1")
+	}
+}

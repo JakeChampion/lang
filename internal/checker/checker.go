@@ -68,6 +68,13 @@ type Info struct {
 	// tracks struct decls with non-empty TypeParams for the
 	// monomorphisation pass.
 	GenericStructs map[string]*ast.StructDecl
+	// StateVars maps a top-level `state { var NAME: T = ...; }`
+	// var name to its declared type. Reads / writes of NAME from
+	// inside any function refer to the persistent module-global
+	// storage; the IR emits OpLoadGlobal / OpStoreGlobal at those
+	// sites instead of the usual local-scoped ops. Empty for
+	// programs without state blocks.
+	StateVars map[string]ast.Type
 }
 
 // builtinEnumDecls returns the synthetic enum declarations the
@@ -367,6 +374,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			VariantCallPayloads: map[*ast.Call][]ast.Type{},
 			GenericFuncs:        map[string]*ast.FuncDecl{},
 			GenericStructs:      map[string]*ast.StructDecl{},
+			StateVars:           map[string]ast.Type{},
 		},
 		variantOf: map[string]variantRef{},
 	}
@@ -908,6 +916,43 @@ func Check(prog *ast.Program) (*Info, error) {
 			// can spot them and the monomorphisation pass knows
 			// which functions to clone.
 			c.info.GenericFuncs[fn.Name] = fn
+		}
+	}
+
+	// State blocks: `state { var NAME: T = init; ... }` declares
+	// module-global mutable storage. First-PR scope is scalar V
+	// (i32 / u32 / i64 / u64 / f32 / f64 / boolean) with literal
+	// initialisers — directly usable as a wasm `(global ...)`
+	// init expression, so codegen doesn't need a runtime
+	// __state_init function. Pointer-shaped state (Map, string,
+	// T[]) waits on the two-cursor allocator (separate persistent
+	// / per-request bump cursors); rejected here with a hint.
+	for _, sd := range prog.States {
+		for _, v := range sd.Vars {
+			if v.Type == nil {
+				c.errf(v.P, "state var %q must have a type annotation", v.Name)
+				continue
+			}
+			if !isStateVarType(v.Type) {
+				c.errf(v.P, "state var %q has non-scalar type %s; first-PR state{} only supports i32/u32/i64/u64/f32/f64/boolean (Map / string / T[] need the two-cursor allocator)", v.Name, v.Type)
+				continue
+			}
+			if !isStateInitLiteral(v.Init) {
+				c.errf(v.P, "state var %q initialiser must be a literal (number / float / boolean) in the first PR; expressions land with the runtime __state_init helper", v.Name)
+				continue
+			}
+			if _, dup := c.info.StateVars[v.Name]; dup {
+				c.errf(v.P, "state var %q already declared", v.Name)
+				continue
+			}
+			// Confirm the literal's scalar shape matches the
+			// declared type. Numeric literals get a width stamp
+			// from the polymorphic-literal settle path; for
+			// state-block literals we settle here directly so
+			// codegen can emit the right wasm const opcode.
+			c.settleStateInitLiteral(v.Type, v.Init)
+			c.info.StateVars[v.Name] = v.Type
+			c.info.VarTypes[v] = v.Type
 		}
 	}
 
@@ -2317,6 +2362,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if t, ok := s.lookup(n.Name); ok {
 			return t
 		}
+		// State-block vars sit in module-global scope, visible
+		// from every function. Local vars / parameters with the
+		// same name shadow as expected (the local lookup above
+		// runs first).
+		if t, ok := c.info.StateVars[n.Name]; ok {
+			return t
+		}
 		if sig, ok := c.info.FuncSigs[n.Name]; ok {
 			return sig
 		}
@@ -3565,6 +3617,69 @@ func isFloat(t ast.Type) bool {
 	_, ok := t.(ast.FloatType)
 	return ok
 }
+
+// isStateVarType matches the scalar V types the first-PR state{}
+// block accepts: every NumberType width, every FloatType width,
+// and BoolType. Pointer-shaped types (StringType, ArrayType,
+// SliceType, StructType, EnumType, FuncType, ParamType) need the
+// two-cursor allocator before they can ship as state — see PR 6
+// item 9 in docs/LANGUAGE-DIRECTION.md.
+func isStateVarType(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType:
+		return true
+	}
+	return false
+}
+
+// isStateInitLiteral matches the initialiser shapes that lower
+// directly to a wasm `(<type>.const N)` global init expression:
+// a bare NumberLit, FloatLit, or BoolLit. Negated number / float
+// literals (`-1`) are also accepted — the parser produces a
+// Unary{Op:"-", Operand:<lit>} that constfold-style evaluation
+// resolves at codegen time.
+func isStateInitLiteral(e ast.Expr) bool {
+	switch v := e.(type) {
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit:
+		return true
+	case *ast.Unary:
+		if v.Op == "-" {
+			return isStateInitLiteral(v.Operand)
+		}
+	}
+	return false
+}
+
+// settleStateInitLiteral stamps Width / IsFloat / FloatWidth on
+// the initialiser's NumberLit so the IR's NumberLit lowering
+// picks the right wasm const opcode (i32.const / i64.const /
+// f32.const / f64.const). Mirrors the polymorphic-literal settle
+// path that runs during expression checking, but applied at the
+// declaration site since state-block initialisers are checked
+// out-of-band from the function bodies.
+func (c *checker) settleStateInitLiteral(t ast.Type, e ast.Expr) {
+	switch lit := e.(type) {
+	case *ast.NumberLit:
+		if n, ok := t.(ast.NumberType); ok {
+			lit.Width = n.Width
+			lit.IsUnsigned = !n.Signed
+			return
+		}
+		if f, ok := t.(ast.FloatType); ok {
+			lit.IsFloat = true
+			lit.FloatWidth = f.Width
+		}
+	case *ast.FloatLit:
+		if f, ok := t.(ast.FloatType); ok {
+			lit.Width = f.Width
+		}
+	case *ast.Unary:
+		if lit.Op == "-" {
+			c.settleStateInitLiteral(t, lit.Operand)
+		}
+	}
+}
+
 func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 	if t != nil && !ast.Equal(t, ast.BoolType{}) {
 		c.errf(p, "operator %q requires boolean, got %s", op, t)

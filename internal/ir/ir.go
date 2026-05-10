@@ -81,6 +81,12 @@ const (
 	OpLoadLocal  // ()                → T
 	OpStoreLocal // (T)               → ()
 	OpTeeLocal   // (T)               → T   (store + leave value on stack)
+	// state{}-block module-globals. Lowers to wasm
+	// `global.get` / `global.set` against `$state_<name>`.
+	// Str carries the unmangled state-var name; codegen
+	// prefixes `$state_`.
+	OpLoadGlobal  // ()                → T
+	OpStoreGlobal // (T)               → ()
 
 	// Integer / pointer arithmetic and comparison. All consume two i32
 	// and produce one i32 except OpNeg / OpNot, which consume one.
@@ -264,6 +270,10 @@ func (k OpKind) String() string {
 		return "local.store"
 	case OpTeeLocal:
 		return "local.tee"
+	case OpLoadGlobal:
+		return "global.load"
+	case OpStoreGlobal:
+		return "global.store"
 	case OpAdd:
 		return "add"
 	case OpSub:
@@ -1538,6 +1548,15 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		idx, ok := b.locals[n.Name]
 		if !ok {
+			// State-block vars: lower to a wasm global read. The
+			// checker stamps every persistent module-level var
+			// into Info.StateVars; if the name is in there and
+			// isn't shadowed by a local, this reference is a
+			// global load.
+			if _, isState := b.info.StateVars[n.Name]; isState {
+				b.emit(Op{Kind: OpLoadGlobal, Str: n.Name})
+				return nil
+			}
 			return fmt.Errorf("ir: unresolved identifier %q (compiler bug)", n.Name)
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
@@ -2997,6 +3016,14 @@ func (b *builder) assign(n *ast.Assign) error {
 		}
 		idx, ok := b.locals[t.Name]
 		if !ok {
+			// State-block var assignment: store to wasm global,
+			// then read it back so the assignment expression's
+			// result is available for callers that use it.
+			if _, isState := b.info.StateVars[t.Name]; isState {
+				b.emit(Op{Kind: OpStoreGlobal, Str: t.Name})
+				b.emit(Op{Kind: OpLoadGlobal, Str: t.Name})
+				return nil
+			}
 			return fmt.Errorf("ir: cannot assign to %q (no slot)", t.Name)
 		}
 		// Tee semantics: leave a copy on the stack for callers that
