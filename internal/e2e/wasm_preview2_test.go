@@ -808,3 +808,140 @@ function handle(req: HttpRequest): HttpResponse {
 		t.Errorf("body = %q; want %q (hits=0 init + one increment in this instance)", string(body), "1")
 	}
 }
+
+// TestWasmPreview2HttpTodoApi compiles `examples/wasm/todo_api.lang`
+// and drives it through the routing matrix (POST creates,
+// GET reads, GET on missing 404s). The example uses `state {
+// var todos: Map[i32, string]; var next_id: i32; }` for cross-
+// request state — under `wasmtime serve`'s instance-per-
+// request model each POST sees a fresh `next_id=1`, so we
+// only assert single-request shape (POST returns id=1 +
+// echoed text; GET on a different request returns 404 because
+// the prior POST's state is gone). The within-instance
+// persistence is covered by the synthetic e2e tests
+// (TestWASMStateMapAcrossCalls etc.); this test exercises the
+// example end-to-end as documentation.
+func TestWasmPreview2HttpTodoApi(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+	}
+	if _, err := os.Stat(adapter); err != nil {
+		t.Skipf("adapter %q not readable: %v", adapter, err)
+	}
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "todo.component.wasm")
+	emit := exec.Command(bin,
+		"-target", "wasi-http",
+		"-wasi-adapter", adapter,
+		"-o", componentPath,
+		"../../examples/wasm/todo_api.lang",
+	)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("lang -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	run := exec.Command("wasmtime", "serve", "--addr", addr, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime serve start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, err := client.Get("http://" + addr + "/todos")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial /todos: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// POST creates a todo and returns the assigned id+text.
+	postResp, err := client.Post("http://"+addr+"/todos", "application/json",
+		strings.NewReader(`{"text":"buy milk"}`))
+	if err != nil {
+		t.Fatalf("POST /todos: %v", err)
+	}
+	if postResp.StatusCode != 200 {
+		t.Errorf("POST status = %d; want 200", postResp.StatusCode)
+	}
+	postBody, _ := io.ReadAll(postResp.Body)
+	postResp.Body.Close()
+	if string(postBody) != `{"id":1,"text":"buy milk"}` {
+		t.Errorf("POST body = %q; want %q", string(postBody), `{"id":1,"text":"buy milk"}`)
+	}
+
+	// GET on a fresh instance: state is empty (instance-per-
+	// request semantics), so /todos returns the empty array.
+	listResp, err := client.Get("http://" + addr + "/todos")
+	if err != nil {
+		t.Fatalf("GET /todos: %v", err)
+	}
+	listBody, _ := io.ReadAll(listResp.Body)
+	listResp.Body.Close()
+	if string(listBody) != "[]" {
+		t.Errorf("GET /todos body = %q; want %q (instance-per-request resets state)", string(listBody), "[]")
+	}
+
+	// Bad-shape POST: missing the `text` field returns 400.
+	badResp, err := client.Post("http://"+addr+"/todos", "application/json",
+		strings.NewReader(`{"foo":"bar"}`))
+	if err != nil {
+		t.Fatalf("bad POST: %v", err)
+	}
+	if badResp.StatusCode != 400 {
+		t.Errorf("bad POST status = %d; want 400", badResp.StatusCode)
+	}
+	badResp.Body.Close()
+
+	// GET on missing id: 404 (state empty under instance-per-
+	// request).
+	missResp, err := client.Get("http://" + addr + "/todos/42")
+	if err != nil {
+		t.Fatalf("GET /todos/42: %v", err)
+	}
+	if missResp.StatusCode != 404 {
+		t.Errorf("missing id status = %d; want 404", missResp.StatusCode)
+	}
+	missResp.Body.Close()
+}
