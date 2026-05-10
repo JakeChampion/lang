@@ -244,6 +244,54 @@ func TestArm64Map(t *testing.T) {
 	}
 }
 
+// arm64 f32 / f64 arithmetic + comparisons. Float values
+// live as raw bit patterns on the operand stack; the codegen
+// fmov's them into the V-register file (s0/s1 for f32,
+// d0/d1 for f64), runs the op, and fmov's the result back.
+func TestArm64Floats(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		// f32 arithmetic
+		{`function main(): i32 {
+    var a: f32 = 3.5;
+    var b: f32 = 1.5;
+    return (a + b) as i32;
+}`, 5},
+		{`function main(): i32 {
+    var a: f32 = 10.0;
+    var b: f32 = 3.0;
+    return (a / b) as i32;
+}`, 3},
+		// f64 arithmetic + comparison
+		{`function main(): i32 {
+    var pi: f64 = 3.14f64;
+    var two: f64 = 2.0f64;
+    if (pi * two > 6.0f64) { return 42; }
+    return 0;
+}`, 42},
+		// Mixed: i32 → f64 → i32 round trip.
+		{`function main(): i32 {
+    var n: i32 = 7;
+    var f: f64 = (n as f64) * 1.5f64;
+    return f as i32;
+}`, 10},
+		// Float negation.
+		{`function main(): i32 {
+    var x: f32 = 5.5;
+    var y: f32 = 0.0 - x;
+    if (y < 0.0) { return 1; }
+    return 0;
+}`, 1},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
 // arm64 control flow: while loop, if/else, comparison ops.
 // Verifies OpBlock / OpLoop / OpIf / OpEnd / OpBr / OpBrIf
 // scope tracking + the cbz / cbnz branch idioms.
