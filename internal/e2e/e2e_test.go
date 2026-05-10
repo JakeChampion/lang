@@ -150,6 +150,42 @@ function main(): i32 {
 	}
 }
 
+// State string on arm32: a non-literal init expression
+// (`"hello, " + "world"`) routes through the synthesised
+// `__state_init` start function called from `_start` before
+// `main`. The string allocation lives in the bump heap below
+// any per-request `arena_save` point — same lifetime story as
+// scalar state.
+func TestArm32StateStringConcat(t *testing.T) {
+	_, code := compileAndRun(t, `state {
+    var greeting: string = "hello, " + "world";
+}
+
+function main(): i32 {
+    return len(greeting);
+}`)
+	if code != 12 {
+		t.Errorf("exit = %d, want 12 (state string init runs `+` concat at _start time)", code)
+	}
+}
+
+// State scalar with computed init: arm32 stores the LITERAL
+// value (zero / null when the init is non-literal) in `.data`,
+// then `__state_init` overwrites it with the computed value at
+// startup. Verifies the result lands and is visible from main.
+func TestArm32StateComputedScalarInit(t *testing.T) {
+	_, code := compileAndRun(t, `state {
+    var precomputed: i32 = 1 + 2 * 3;
+}
+
+function main(): i32 {
+    return precomputed;
+}`)
+	if code != 7 {
+		t.Errorf("exit = %d, want 7 (computed init 1 + 2*3 = 7)", code)
+	}
+}
+
 // Multi-var state on arm32: confirms each var gets its own
 // .data label and the LDR / STR codegen addresses them
 // independently (no aliasing between adjacent state slots).

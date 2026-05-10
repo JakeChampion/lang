@@ -117,6 +117,16 @@ func (g *generator) emitStartRuntime() {
 	g.emit("bic sp, sp, #7")
 	// Init the bump heap.
 	g.emit("bl __lang_heap_init")
+	// state{}-block runtime init: synthesised `__state_init`
+	// runs each non-literal state var's init expression, writing
+	// the resulting value into the state-var label. Mirrors the
+	// wasm `(start $__state_init)` wiring — runs once before any
+	// user code so allocations performed during init end up
+	// below the per-request arena boundary and survive across
+	// `arena_restore`.
+	if g.hasStateInit {
+		g.emit("bl __state_init")
+	}
 	// Hand control to user's main(argc, argv).
 	g.emit("ldr r0, =__lang_argc")
 	g.emit("ldr r0, [r0]")

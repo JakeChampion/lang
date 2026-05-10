@@ -66,6 +66,16 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 		srcFile:     opts.SourceFile,
 		stateDecls:  prog.States,
 	}
+	// Whether the checker synthesised `__state_init` — emitted
+	// in prog.Funcs only when at least one state var has a
+	// non-literal init expression. _start branches into it
+	// before calling main only when this is set.
+	for _, fn := range prog.Funcs {
+		if fn.Name == "__state_init" {
+			g.hasStateInit = true
+			break
+		}
+	}
 	// Detect args() / write() / eprint() usage up-front. `usesArgs`
 	// matters specifically because the prologue insertion in `main`
 	// depends on it, and main is usually emitted first — without

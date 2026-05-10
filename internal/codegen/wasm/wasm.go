@@ -166,6 +166,14 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	if opts.PrintMainResult {
 		deadFuncExtras = append(deadFuncExtras, "int_to_string")
 	}
+	// `__state_init` is wired into the wasm `(start ...)`
+	// section by the codegen layer below — that wiring isn't
+	// visible to the IR-level DCE walker, so pin the function
+	// as a live root manually whenever state{} blocks declared
+	// any non-literal init expressions.
+	if len(prog.States) > 0 {
+		deadFuncExtras = append(deadFuncExtras, "__state_init")
+	}
 	if live := ir.LiveFunctionsWithAliases(ip, codegenAliasMap, deadFuncExtras...); live != nil {
 		out := ip.Funcs[:0]
 		for _, irFn := range ip.Funcs {
@@ -1238,43 +1246,78 @@ func (g *generator) scanForStringEq(prog *ast.Program) {
 // the module-emit pipeline after the memory declaration so
 // the globals are visible to every function that follows.
 //
-// First-PR scope is scalar V (i32 / u32 / i64 / u64 / f32 /
-// f64 / boolean) with literal initialisers — the checker
-// rejects everything else. Each var's init lit was settled
-// (Width / IsFloat / FloatWidth stamps applied) by
-// settleStateInitLiteral, so the const opcode falls out
-// directly from the type without re-deriving it from the
-// literal.
+// Two paths cover the var's init expression:
+//   - Literal scalar init (NumberLit / FloatLit / BoolLit or
+//     `-LIT`) → bake the literal into the wasm global's init
+//     expression directly. Zero runtime cost.
+//   - Anything else (string init, computed scalar init like
+//     `1 + 2 * 3`) → emit the global with a zero placeholder,
+//     and the synthesised `__state_init` start function (see
+//     emitStateInit) computes the real value at module-
+//     instantiation time and `global.set`s it.
+//
+// State init runs while the bump cursor is still at its
+// initial position, so any allocations the init expression
+// performs (e.g. string concat) end up below the per-request
+// `arena_save` point and are preserved across `arena_restore`.
 func (g *generator) emitStateGlobals() {
 	for _, sd := range g.stateDecls {
 		for _, v := range sd.Vars {
-			wasmTy, init := stateGlobalDecl(v.Type, v.Init)
-			g.linef(`(global $state_%s (mut %s) (%s.const %s))`,
-				v.Name, wasmTy, wasmTy, init)
+			wasmTy := stateGlobalWasmType(v.Type)
+			if isStateInitLiteralExpr(v.Init) {
+				g.linef(`(global $state_%s (mut %s) (%s.const %s))`,
+					v.Name, wasmTy, wasmTy, formatStateInit(v.Init))
+			} else {
+				// Zero / null placeholder; __state_init writes
+				// the real value before any user code runs.
+				zero := "0"
+				if wasmTy == "f32" || wasmTy == "f64" {
+					zero = "0.0"
+				}
+				g.linef(`(global $state_%s (mut %s) (%s.const %s))`,
+					v.Name, wasmTy, wasmTy, zero)
+			}
 		}
 	}
 }
 
-// stateGlobalDecl returns the wasm scalar type ("i32" / "i64" /
-// "f32" / "f64") and the const-literal text ("0", "-1", "1.5")
-// for a given state-var declared type and initialiser. The
-// initialiser is one of NumberLit / FloatLit / BoolLit or a
-// Unary{"-", lit}; everything else was rejected by the checker.
-func stateGlobalDecl(t ast.Type, init ast.Expr) (string, string) {
-	wasmTy := "i32"
+// stateGlobalWasmType picks the wasm scalar type for a state
+// var's declared lang-level type. Pointers (today: string) are
+// i32-shaped at the wasm layer; numeric / float types pick
+// i32 / i64 / f32 / f64 by width.
+func stateGlobalWasmType(t ast.Type) string {
 	switch typ := t.(type) {
 	case ast.NumberType:
 		if typ.Width == 64 {
-			wasmTy = "i64"
+			return "i64"
 		}
+		return "i32"
 	case ast.FloatType:
 		if typ.Width == 64 {
-			wasmTy = "f64"
-		} else {
-			wasmTy = "f32"
+			return "f64"
+		}
+		return "f32"
+	case ast.StringType:
+		return "i32"
+	}
+	return "i32"
+}
+
+// isStateInitLiteralExpr matches the scalar literal shapes
+// that compile to a wasm `<type>.const N` global init
+// expression directly — no runtime computation needed. Pairs
+// with the runtime-init path in emitStateInit for everything
+// else.
+func isStateInitLiteralExpr(e ast.Expr) bool {
+	switch v := e.(type) {
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit:
+		return true
+	case *ast.Unary:
+		if v.Op == "-" {
+			return isStateInitLiteralExpr(v.Operand)
 		}
 	}
-	return wasmTy, formatStateInit(init)
+	return false
 }
 
 // formatStateInit serialises a literal initialiser to the text

@@ -794,16 +794,23 @@ to smallest. Status pending unless marked.
   `url_router.lang`, `todo_api.lang`) and the prelude itself
   use `.push(v)` instead of the per-T helpers.
 
-- **Module-level `var` with handler-scoped lifetime — first
-  PR shipped (scalars only).** `state { var hits: i32 = 0;
-  var threshold: i64 = 1024i64; }` declares module-global
-  mutable variables. Each lowers to a wasm `(global
-  $state_NAME (mut T) (T.const N))` whose init expression is
-  the literal directly — wasm's runtime initialises globals
-  once at module instantiation, before any user code, so
-  `main()` / `handle()` see the declared values on first
-  read and writes persist for the lifetime of the wasm
-  instance.
+- **Module-level `var` with handler-scoped lifetime — scalar
+  + immutable string + arbitrary init expressions shipped.**
+  `state { var hits: i32 = 0; var greeting: string = "hi, "
+  + name(); }` declares module-global mutable variables.
+  Literal scalar inits bake into the wasm `(global $state_NAME
+  (mut T) (T.const N))` directly (or arm32's `.data` label).
+  Non-literal inits and `string` allocations route through a
+  synthesised `__state_init` start function.
+
+  Init runtime: wasm wires `(start $__state_init)` so it
+  runs at instantiation, before any host-callable export.
+  arm32 calls `__state_init` from `_start` after
+  `__lang_heap_init` and before `main`. State init runs
+  while the bump cursor is still at its initial position, so
+  any allocations the init expression performs (e.g. string
+  concat) end up below the per-request `arena_save` point
+  and are preserved across `arena_restore`.
 
   IR-level: `OpLoadGlobal` / `OpStoreGlobal` are emitted at
   Ident reads / Assign writes whose name resolves to a
@@ -812,14 +819,15 @@ to smallest. Status pending unless marked.
   pass so function bodies in the second pass see them as
   module-global lookups.
 
-  **First-PR scope is scalar V** — `i32`, `u32`, `i64`,
-  `u64`, `f32`, `f64`, `boolean`. Pointer-shaped types
-  (`Map`, `string`, `T[]`, structs) and non-literal
-  initialisers are rejected with hints. Pointer-shaped
-  state needs the **two-cursor allocator** (separate
-  persistent / per-request bump cursors): without it,
-  mutating a state Map would route the new bucket through
-  the per-request arena and lose it at `arena_restore` on
+  **Type scope today** — `i32`, `u32`, `i64`, `u64`, `f32`,
+  `f64`, `boolean`, and `string` (immutable; no mutation-
+  allocation concern). **Mutable** pointer-shaped types
+  (`Map`, `T[]`, structs whose mutation allocates) still
+  reject — they need the **two-cursor allocator** (separate
+  persistent / per-request bump cursors). Without it, a
+  state-rooted mutation like `state.todos.set(k, v)` that
+  triggers a Map grow would route the new bucket through the
+  per-request arena and lose it at `arena_restore` on
   handler exit. That's the next state{} PR.
 
   **Host-runtime caveat for wasi-http.** State persistence
@@ -835,19 +843,19 @@ to smallest. Status pending unless marked.
 
   **Backend coverage.** wasm + wasi-http + arm32: all
   shipped. arm32 lowers each state var to a `.data` label
-  pre-baked with the literal initialiser; OpLoadGlobal /
-  OpStoreGlobal emit `ldr =state_<name>` + LDR / STR. The
-  loader maps `.data` into memory with the literal already
-  in place, so no runtime init code is needed for the
-  scalar-only first-PR shape. Tested under qemu-arm via
-  `TestArm32StateScalarCounter` and
-  `TestArm32StateMultipleVars`.
+  (literal init pre-baked when possible, zero / null
+  placeholder otherwise); OpLoadGlobal / OpStoreGlobal emit
+  `ldr =state_<name>` + LDR / STR. Tested under qemu-arm via
+  `TestArm32StateScalarCounter`,
+  `TestArm32StateMultipleVars`,
+  `TestArm32StateStringConcat`, and
+  `TestArm32StateComputedScalarInit`.
 
   Arm32 is **not** CLI-only — it's a real native target on
   the same long-term trajectory as wasm: the next state{}
-  PRs (two-cursor allocator for pointer-shaped state, runtime
-  `__state_init` for non-literal initialisers) ship to arm32
-  alongside wasm. Native HTTP server use cases on arm32
+  PR (two-cursor allocator for pointer-shaped state) ships
+  to arm32 alongside wasm. Native HTTP server use cases on
+  arm32
   (socket / bind / listen / accept syscalls + an accept loop
   that calls `handle()` per connection) is tracked separately
   but follows the same backend-parity principle.

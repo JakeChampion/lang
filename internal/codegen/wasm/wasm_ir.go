@@ -246,6 +246,18 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		}
 		g.linef(`(export %q (func $%s))`, fn.Name, fn.Name)
 	}
+	// state{}-block runtime init: the synthesised
+	// `__state_init` runs at module instantiation, before any
+	// host-callable export. wasm's `(start FN)` section is the
+	// canonical wire-up — every conforming runtime invokes it
+	// once when the module is instantiated, ahead of any
+	// caller-driven entry point. Pairs with the global
+	// declarations emitted by `emitStateGlobals` (those carry
+	// zero / null placeholders for non-literal init; the
+	// `(start)` body fills them in).
+	if g.emittedFuncs["__state_init"] {
+		g.line(`(start $__state_init)`)
+	}
 	// WASI command convention (preview-1 and preview-2 alike) wants
 	// `_start` as the entry point — that's what `wasmtime run`
 	// invokes, and what the wasi-preview1-component-adapter needs to
