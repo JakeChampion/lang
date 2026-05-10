@@ -75,8 +75,17 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
+	if g.usesStrcmp {
+		g.emitStrcmpRuntime()
+	}
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
+	}
+	if g.usesRawIntPokes {
+		g.emitRawIntPokesRuntime()
+	}
+	if g.usesMemset {
+		g.emitMemsetRuntime()
 	}
 	g.emitDataSections()
 	g.line(`.section .note.GNU-stack,"",%progbits`)
@@ -143,7 +152,20 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("cbnz x2, .Lalloc_have_heap")
 	// mmap(NULL, 64 MiB, RW, PRIVATE|ANON, -1, 0)
 	g.emit("mov x9, x0")        // save size across the syscall
-	g.emit("mov x0, #0")        // addr = NULL
+	// Hint the mmap to a low (i32-fittable) address. The
+	// lang prelude stores pointers as i32 (designed against
+	// wasm32); on arm64 we need every heap address to fit
+	// in 32 bits so the prelude's __store_i32 / __load_i32
+	// don't truncate when round-tripping pointers. 256 MiB
+	// is well below the 4 GiB i32 ceiling and far enough
+	// from the binary's text/data that collisions are rare.
+	// Linux usually honours the hint when the requested
+	// range is free; if it doesn't, the bump allocator
+	// would silently truncate addresses above 4 GiB, which
+	// is the migration-to-i64-pointers fix tracked
+	// separately.
+	g.emit("mov x0, #0x1000")
+	g.emit("lsl x0, x0, #16")    // x0 = 0x10000000 = 256 MiB
 	g.emit("ldr x1, =%d", heapBytes) // length = 64 MiB
 	g.emit("mov x2, #3")        // PROT_READ | PROT_WRITE
 	g.emit("mov x3, #0x22")     // MAP_PRIVATE | MAP_ANONYMOUS
@@ -279,6 +301,138 @@ func (g *generator) emitStrcatRuntime() {
 	g.line(".ltorg")
 }
 
+// emitInlineIdxHelper inlines a `__str_idx` / `__arr_idx` /
+// `__slice_idx_*` bounds-check call as a plain address compute
+// (`base + index * stride`). The IR walker follows the helper
+// call with an OpLoad / OpLoadByte that reads from x0.
+//
+// arm64-specific: we can use `add x0, x1, x0, lsl #N` where N
+// is the log2 stride. AArch64 supports an LSL shift amount in
+// the operand-2 position — folds the multiply into the add.
+func (g *generator) emitInlineIdxHelper(name string) error {
+	g.emit("ldr x0, [sp], #16") // idx
+	g.emit("ldr x1, [sp], #16") // base
+	switch name {
+	case "__str_idx", "__slice_idx_1":
+		g.emit("add x0, x1, x0")
+	case "__slice_idx_2":
+		g.emit("add x0, x1, x0, lsl #1")
+	case "__arr_idx", "__slice_idx":
+		g.emit("add x0, x1, x0, lsl #2")
+	case "__slice_idx_8":
+		g.emit("add x0, x1, x0, lsl #3")
+	default:
+		return fmt.Errorf("arm64: unknown index helper %q", name)
+	}
+	g.push()
+	return nil
+}
+
+// emitStrcmpRuntime emits `__lang_strcmp(a, b)` — equality
+// comparator returning 0 (equal) / 1 (different). Same shape
+// as arm32 (length-prefix + word-grain bulk + byte-grain
+// tail); pointer args are post-prefix.
+func (g *generator) emitStrcmpRuntime() {
+	g.line("")
+	g.line(".global __lang_strcmp")
+	g.line(".type __lang_strcmp, %function")
+	g.label("__lang_strcmp")
+	// 1. Same pointer? Equal.
+	g.emit("cmp x0, x1")
+	g.emit("beq .Lscmp_eq")
+	// 2. Same length?
+	g.emit("ldur w2, [x0, #-4]")
+	g.emit("ldur w3, [x1, #-4]")
+	g.emit("cmp w2, w3")
+	g.emit("bne .Lscmp_neq")
+	// 3a. Word-grain bulk — w2 holds remaining bytes.
+	g.label(".Lscmp_word")
+	g.emit("cmp w2, #4")
+	g.emit("blt .Lscmp_tail")
+	g.emit("ldr w4, [x0], #4")
+	g.emit("ldr w5, [x1], #4")
+	g.emit("cmp w4, w5")
+	g.emit("bne .Lscmp_neq")
+	g.emit("sub w2, w2, #4")
+	g.emit("b .Lscmp_word")
+	// 3b. Byte-grain tail.
+	g.label(".Lscmp_tail")
+	g.emit("cmp w2, #0")
+	g.emit("beq .Lscmp_eq")
+	g.emit("ldrb w4, [x0], #1")
+	g.emit("ldrb w5, [x1], #1")
+	g.emit("cmp w4, w5")
+	g.emit("bne .Lscmp_neq")
+	g.emit("sub w2, w2, #1")
+	g.emit("b .Lscmp_tail")
+	g.label(".Lscmp_eq")
+	g.emit("mov x0, #0")
+	g.emit("ret")
+	g.label(".Lscmp_neq")
+	g.emit("mov x0, #1")
+	g.emit("ret")
+	g.line(".size __lang_strcmp, .-__lang_strcmp")
+	g.line(".ltorg")
+}
+
+// emitRawIntPokesRuntime emits `__store_i32(addr, val)` and
+// `__load_i32(addr) -> i32`. The lang Map runtime calls these
+// for its mixed bucket-index + entries buffer where the
+// caller owns the layout (no length prefix). Single STR / LDR
+// + ret each — leaf functions.
+func (g *generator) emitRawIntPokesRuntime() {
+	g.line("")
+	g.line(".global __load_i32")
+	g.line(".type __load_i32, %function")
+	g.label("__load_i32")
+	g.emit("ldr w0, [x0]")
+	g.emit("ret")
+	g.line(".size __load_i32, .-__load_i32")
+
+	g.line("")
+	g.line(".global __store_i32")
+	g.line(".type __store_i32, %function")
+	g.label("__store_i32")
+	g.emit("str w1, [x0]")
+	g.emit("ret")
+	g.line(".size __store_i32, .-__store_i32")
+	g.line(".ltorg")
+}
+
+// emitMemsetRuntime emits `__memset(dst, byte, n)` — byte-
+// grain fill matching the wasm bulk-memory shim. Word-grain
+// bulk path replicates the byte across all eight lanes;
+// byte-grain tail handles the residue. Pairs with the Map
+// runtime's clear path.
+func (g *generator) emitMemsetRuntime() {
+	g.line("")
+	g.line(".global __memset")
+	g.line(".type __memset, %function")
+	g.label("__memset")
+	// x0 = dst, w1 = byte (low 8 bits), x2 = n.
+	g.emit("and w1, w1, #0xff")
+	// Replicate the byte across 8 bytes (64 bits).
+	g.emit("orr w3, w1, w1, lsl #8")
+	g.emit("orr w3, w3, w3, lsl #16")
+	g.emit("orr x3, x3, x3, lsl #32")
+	g.label(".Lmset_word")
+	g.emit("cmp x2, #8")
+	g.emit("blt .Lmset_tail")
+	g.emit("str x3, [x0], #8")
+	g.emit("sub x2, x2, #8")
+	g.emit("b .Lmset_word")
+	g.label(".Lmset_tail")
+	g.emit("cmp x2, #0")
+	g.emit("beq .Lmset_done")
+	g.emit("strb w1, [x0], #1")
+	g.emit("sub x2, x2, #1")
+	g.emit("b .Lmset_tail")
+	g.label(".Lmset_done")
+	g.emit("ret")
+	g.line(".size __memset, .-__memset")
+	g.line(".ltorg")
+}
+
 // internString returns a unique .rodata label for s, allocating
 // a new one the first time we see this exact string and reusing
 // it on repeats.
@@ -348,6 +502,15 @@ type generator struct {
 	usesAlloc   bool
 	usesStrcat  bool
 	usesMemcpy  bool
+	usesStrcmp  bool
+	// usesRawIntPokes tracks whether the program calls
+	// __load_i32 / __store_i32 — primitives the lang Map
+	// runtime uses for its mixed bucket-index + entries
+	// buffer. Single LDR / STR + ret each.
+	usesRawIntPokes bool
+	// usesMemset gates emission of the byte-grain
+	// __memset(dst, byte, n) helper the Map clear path uses.
+	usesMemset bool
 }
 
 func (g *generator) line(s string) {
@@ -497,15 +660,17 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// function falls off the end without an explicit return
 	// (e.g. void functions), we land here naturally.
 	//
-	// First restore sp past the locals region, then ldp the
-	// saved fp/lr pair while popping sp by 16 (the
-	// post-increment form mirrors the prologue's `stp ... ,
-	// #-16!`). Splitting the restore lets us keep the locals'
-	// `[x29, #-N]` offsets fixed throughout the body.
+	// `mov sp, x29` restores sp to the saved-pair address
+	// regardless of how the operand stack ended up — robust
+	// to void-call leaks where OpCallDirect always pushes
+	// x0 even when the function returns nothing. Without
+	// the fp-based unwind, leaked operand-stack pushes leave
+	// sp below where the prologue put it, and the `ldp`
+	// loads garbage as fp/lr → ret to a bad address →
+	// SEGV. arm32 uses the equivalent `mov sp, fp` for the
+	// same reason; we mirror it here.
 	g.label(retLabel)
-	if localsSize > 0 {
-		g.emit("add sp, sp, #%d", localsSize)
-	}
+	g.emit("mov sp, x29")
 	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("ret")
 	g.line(fmt.Sprintf(".size %s, .-%s", fn.Name, fn.Name))
@@ -597,6 +762,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 
 	case ir.OpReturn:
 		g.pop()
+		g.emit("b %s", retLabel)
+	case ir.OpReturnVoid:
+		// Void return: no value to pop. The epilogue at
+		// retLabel restores the frame and rets.
 		g.emit("b %s", retLabel)
 
 	case ir.OpDrop:
@@ -827,6 +996,18 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("bl __lang_alloc")
 		g.push()
 
+	case ir.OpStrEq:
+		// Strings carry a trailing NUL alongside the length
+		// prefix; equality returns 0 / 1 from __lang_strcmp.
+		// Same shape as arm32.
+		g.usesStrcmp = true
+		g.emit("ldr x1, [sp], #16")
+		g.emit("ldr x0, [sp], #16")
+		g.emit("bl __lang_strcmp")
+		g.emit("cmp x0, #0")
+		g.emit("cset w0, eq")
+		g.push()
+
 	case ir.OpStrConcat:
 		// The IR's `+` between strings lowers directly to
 		// OpStrConcat (rather than going through OpCallDirect
@@ -862,6 +1043,54 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__alloc":
 			target = "__lang_alloc"
 			g.usesAlloc = true
+		case "__store_i32", "__load_i32":
+			g.usesRawIntPokes = true
+		case "__memset":
+			g.usesMemset = true
+		// Map / MapIter — same alias rewrites as arm32_ops.go
+		// (see PR #234). The lang Map runtime lives entirely
+		// in the lang prelude under `_impl`-suffixed names;
+		// user-facing call sites use the unsuffixed mangled
+		// name and codegen rewrites here.
+		case "map_new":
+			target = "map_new_impl"
+		case "__method_Map_len":
+			target = "__map_len_impl"
+		case "__method_Map_has":
+			target = "__map_has_impl"
+		case "__method_Map_get":
+			target = "__map_get_impl"
+		case "__method_Map_get_or":
+			target = "__map_get_or_impl"
+		case "__method_Map_set":
+			target = "__map_set_impl"
+		case "__method_Map_delete":
+			target = "__map_delete_impl"
+		case "__method_Map_clear":
+			target = "__map_clear_impl"
+		case "__method_Map_keys":
+			target = "__map_keys_impl"
+		case "__method_Map_values":
+			target = "__map_values_impl"
+		case "__method_Map_iter":
+			target = "__map_iter_impl"
+		case "__method_MapIter_has_next":
+			target = "__mapiter_has_next_impl"
+		case "__method_MapIter_key":
+			target = "__mapiter_key_impl"
+		case "__method_MapIter_value":
+			target = "__mapiter_value_impl"
+		case "__method_MapIter_advance":
+			target = "__mapiter_advance_impl"
+		case "__str_idx", "__arr_idx", "__slice_idx",
+			"__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
+			// IR-side bounds-check stubs the lang runtime
+			// would otherwise dispatch to. arm64 doesn't yet
+			// ship the helpers, so inline an unchecked
+			// address compute that matches the wasm
+			// behaviour for in-range indices. The element-
+			// stride is encoded in the helper name.
+			return g.emitInlineIdxHelper(target)
 		}
 		argc := int(op.I32)
 		if argc > regArgs {
