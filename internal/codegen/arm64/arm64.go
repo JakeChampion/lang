@@ -48,6 +48,33 @@ const (
 	sysAccept    = 202
 )
 
+// Darwin BSD syscall numbers (xnu/bsd/kern/syscalls.master).
+// Completely disjoint from the Linux table above. Darwin uses
+// `svc #0x80` with the number in x16, and on error returns
+// +errno in x0 with the C flag set (vs Linux's -errno in x0).
+const (
+	darRead   = 3
+	darWrite  = 4
+	darClose  = 6
+	darExit   = 1
+	darAccept = 30
+	darSocket = 97
+	darBind   = 104
+	darListen = 106
+)
+
+// linuxDarwinSysno maps a logical syscall name to (Linux, Darwin)
+// numbers. Used by syscall() to pick the right immediate.
+var linuxDarwinSysno = map[string][2]int{
+	"read":   {sysRead, darRead},
+	"write":  {sysWrite, darWrite},
+	"close":  {sysClose, darClose},
+	"socket": {sysSocket, darSocket},
+	"bind":   {sysBind, darBind},
+	"listen": {sysListen, darListen},
+	"accept": {sysAccept, darAccept},
+}
+
 // regArgs is the AAPCS64 register-argument count: args 0..7
 // arrive in x0..x7. Anything beyond that goes through the
 // caller's stack frame. arm32 has 4 register-arg slots; arm64
@@ -752,8 +779,7 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("mov x0, #2")
 	g.emit("mov x1, #1")
 	g.emit("mov x2, #0")
-	g.emit("mov x8, #%d", sysSocket)
-	g.emit("svc #0")
+	g.syscall("socket")
 	g.emit("cmp x0, #0")
 	g.emit("blt .Ltcp_lst_err")
 	g.emit("mov x20, x0") // x20 = listener fd
@@ -769,16 +795,14 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("mov x0, x20")
 	g.emit("mov x1, sp")
 	g.emit("mov x2, #16")
-	g.emit("mov x8, #%d", sysBind)
-	g.emit("svc #0")
+	g.syscall("bind")
 	g.emit("add sp, sp, #16")    // pop sockaddr_in
 	g.emit("cmp x0, #0")
 	g.emit("blt .Ltcp_lst_err")
 	// listen(fd, 128)
 	g.emit("mov x0, x20")
 	g.emit("mov x1, #128")
-	g.emit("mov x8, #%d", sysListen)
-	g.emit("svc #0")
+	g.syscall("listen")
 	g.emit("cmp x0, #0")
 	g.emit("blt .Ltcp_lst_err")
 	g.emit("mov x0, x20")        // return fd
@@ -805,8 +829,7 @@ func (g *generator) emitTcpAcceptRuntime() {
 	// x0 = listener fd (already in x0 from caller).
 	g.emit("mov x1, #0") // addr = NULL
 	g.emit("mov x2, #0") // addrlen = NULL
-	g.emit("mov x8, #%d", sysAccept)
-	g.emit("svc #0")
+	g.syscall("accept")
 	g.emit("ret")
 	g.sizeDirective("__lang_tcp_accept")
 	g.line(".ltorg")
@@ -835,8 +858,7 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("mov x0, x19")
 	g.emit("mov x1, x21")
 	g.emit("mov x2, x20")
-	g.emit("mov x8, #%d", sysRead)
-	g.emit("svc #0")
+	g.syscall("read")
 	// Clamp to ≥ 0 — read returns -errno or 0 on EOF.
 	g.emit("cmp x0, #0")
 	g.emit("csel x0, x0, xzr, ge")
@@ -862,8 +884,7 @@ func (g *generator) emitTcpSendRuntime() {
 	g.label("__lang_tcp_send")
 	// x0 = fd, x1 = data ptr.
 	g.emit("ldur w2, [x1, #-4]") // x2 = len(data)
-	g.emit("mov x8, #%d", sysWrite)
-	g.emit("svc #0")
+	g.syscall("write")
 	g.emit("ret")
 	g.sizeDirective("__lang_tcp_send")
 	g.line(".ltorg")
@@ -876,8 +897,7 @@ func (g *generator) emitTcpCloseRuntime() {
 	g.line(".global __lang_tcp_close")
 	g.typeDirective("__lang_tcp_close")
 	g.label("__lang_tcp_close")
-	g.emit("mov x8, #%d", sysClose)
-	g.emit("svc #0")
+	g.syscall("close")
 	g.emit("ret")
 	g.sizeDirective("__lang_tcp_close")
 	g.line(".ltorg")
@@ -1046,10 +1066,42 @@ func (g *generator) sizeDirective(name string) {
 // value; the helper just sets the syscall register and traps.
 func (g *generator) syscallExit() {
 	if g.darwin {
-		g.emit("mov x16, #1") // SYS_exit (Darwin BSD)
+		g.emit("mov x16, #%d", darExit)
 		g.emit("svc #0x80")
 	} else {
 		g.emit("mov x8, #%d", sysExitGroup)
+		g.emit("svc #0")
+	}
+}
+
+// syscall emits the right `mov`/`svc` pair for `name` and
+// normalises the error shape so that callers can rely on
+// `x0 < 0 ⇔ error` regardless of target:
+//
+//   - Linux returns -errno in x0 on error; nothing to do.
+//   - Darwin BSD returns +errno in x0 with the carry flag
+//     set on error. We negate after the trap when C is set
+//     so x0 ends up holding -errno just like Linux.
+//
+// Args must already be in x0..x5 per AAPCS64; the helper
+// only touches x0 (on the Darwin error path) and x8/x16
+// (syscall number).
+func (g *generator) syscall(name string) {
+	nums, ok := linuxDarwinSysno[name]
+	if !ok {
+		panic("arm64 syscall: unknown name " + name)
+	}
+	if g.darwin {
+		g.emit("mov x16, #%d", nums[1])
+		g.emit("svc #0x80")
+		// Carry clear = success. Negate on error so callers'
+		// `cmp x0, #0; blt` checks see Linux-shaped -errno.
+		lbl := g.freshLabel("sysc_ok")
+		g.emit("b.cc %s", lbl)
+		g.emit("neg x0, x0")
+		g.label(lbl)
+	} else {
+		g.emit("mov x8, #%d", nums[0])
 		g.emit("svc #0")
 	}
 }
