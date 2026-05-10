@@ -416,6 +416,34 @@ type StringLit struct {
 	P     Position
 	Value string
 }
+
+// FString is an interpolated string literal — `f"hello {x}"`.
+// Parts alternates literal segments and interpolant expressions
+// in source order. The empty list means an empty f-string `f""`.
+//
+// The checker types FString as `string` and stamps `Desugared`
+// with the equivalent `+`-chain of string operations
+// (`<lit> + (<expr>).to_string() + …`) — that way method-call
+// dispatch info for the synthesised `.to_string()` calls gets
+// resolved alongside everything else, and the IR can lower the
+// chain via the regular Binary-on-strings path. The formatter
+// reads `Parts` directly so it can rebuild the original `f"..."`
+// syntax on round-trip.
+type FString struct {
+	P         Position
+	Parts     []FStringPart
+	Desugared Expr
+}
+
+// FStringPart is one piece of an f-string: either a literal
+// string segment (Expr is nil) or an interpolant expression
+// (Lit is empty). Empty leading / trailing literal segments
+// are not stored; an FString with N interpolants and M literal
+// segments has N+M parts.
+type FStringPart struct {
+	Lit  string
+	Expr Expr
+}
 type FloatLit struct {
 	P     Position
 	Value float64
@@ -671,6 +699,7 @@ func (e *NumberLit) Pos() Position { return e.P }
 func (e *CastExpr) Pos() Position  { return e.P }
 func (e *BoolLit) Pos() Position   { return e.P }
 func (e *StringLit) Pos() Position { return e.P }
+func (e *FString) Pos() Position   { return e.P }
 func (e *FloatLit) Pos() Position  { return e.P }
 func (e *Ident) Pos() Position     { return e.P }
 func (e *ArrayLit) Pos() Position  { return e.P }
@@ -693,6 +722,7 @@ func (*NumberLit) isExpr() {}
 func (*CastExpr) isExpr()  {}
 func (*BoolLit) isExpr()   {}
 func (*StringLit) isExpr() {}
+func (*FString) isExpr()   {}
 func (*FloatLit) isExpr()  {}
 func (*Ident) isExpr()     {}
 func (*ArrayLit) isExpr()  {}

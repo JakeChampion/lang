@@ -105,125 +105,29 @@ func TestStringLiteralUnknownEscape(t *testing.T) {
 	}
 }
 
-// f-strings desugar at the lexer to the equivalent `+` chain of
-// String literals and `(<expr>).to_string()` method calls. The
-// table below covers: empty f-string, literal-only, single
-// interpolation, mixed, leading and trailing interpolation, brace
-// escapes, escapes in literal segments, and an interpolant that
-// itself contains a string literal (so the boundary scanner has
-// to skip past the inner quotes).
-func TestFStringDesugar(t *testing.T) {
+// f-strings produce a single FString token whose FParts hold
+// alternating literal / interpolant pieces. The parser sub-parses
+// each interpolant Expr text into an ast.Expr; the IR (via the
+// checker's desugar) lowers the AST node to a `+`-chain. Cases
+// covered: empty, literal-only, single / multi / leading /
+// trailing interpolation, `{{` and `}}` brace escapes, escape
+// sequences in literal segments, an interpolant containing a
+// string literal (so the boundary scanner has to skip past the
+// inner quotes).
+func TestFStringParts(t *testing.T) {
 	cases := []struct {
 		src  string
-		want []struct {
-			k Kind
-			s string
-		}
+		want []FStringPart
 	}{
-		// f"" → ""
-		{
-			src: `f""`,
-			want: []struct {
-				k Kind
-				s string
-			}{
-				{String, ""},
-				{EOF, ""},
-			},
-		},
-		// f"plain" → "plain"
-		{
-			src: `f"plain"`,
-			want: []struct {
-				k Kind
-				s string
-			}{
-				{String, "plain"},
-				{EOF, ""},
-			},
-		},
-		// f"{x}" → (x).to_string()
-		{
-			src: `f"{x}"`,
-			want: []struct {
-				k Kind
-				s string
-			}{
-				{Punct, "("}, {Ident, "x"}, {Punct, ")"},
-				{Punct, "."}, {Ident, "to_string"},
-				{Punct, "("}, {Punct, ")"},
-				{EOF, ""},
-			},
-		},
-		// f"a{x}b" → "a" + (x).to_string() + "b"
-		{
-			src: `f"a{x}b"`,
-			want: []struct {
-				k Kind
-				s string
-			}{
-				{String, "a"}, {Punct, "+"},
-				{Punct, "("}, {Ident, "x"}, {Punct, ")"},
-				{Punct, "."}, {Ident, "to_string"},
-				{Punct, "("}, {Punct, ")"},
-				{Punct, "+"}, {String, "b"},
-				{EOF, ""},
-			},
-		},
-		// f"{a}{b}" → (a).to_string() + (b).to_string()
-		{
-			src: `f"{a}{b}"`,
-			want: []struct {
-				k Kind
-				s string
-			}{
-				{Punct, "("}, {Ident, "a"}, {Punct, ")"},
-				{Punct, "."}, {Ident, "to_string"},
-				{Punct, "("}, {Punct, ")"},
-				{Punct, "+"},
-				{Punct, "("}, {Ident, "b"}, {Punct, ")"},
-				{Punct, "."}, {Ident, "to_string"},
-				{Punct, "("}, {Punct, ")"},
-				{EOF, ""},
-			},
-		},
-		// f"{{lit}}" → "{lit}"
-		{
-			src: `f"{{lit}}"`,
-			want: []struct {
-				k Kind
-				s string
-			}{
-				{String, "{lit}"},
-				{EOF, ""},
-			},
-		},
-		// f"hi\nthere" → "hi\nthere" (escapes processed in literals)
-		{
-			src: `f"hi\nthere"`,
-			want: []struct {
-				k Kind
-				s string
-			}{
-				{String, "hi\nthere"},
-				{EOF, ""},
-			},
-		},
-		// f"k={\"x\"}" → "k=" + ("x").to_string()
-		// (interpolant boundary scanner skips a string-literal inside)
-		{
-			src: `f"k={"x"}"`,
-			want: []struct {
-				k Kind
-				s string
-			}{
-				{String, "k="}, {Punct, "+"},
-				{Punct, "("}, {String, "x"}, {Punct, ")"},
-				{Punct, "."}, {Ident, "to_string"},
-				{Punct, "("}, {Punct, ")"},
-				{EOF, ""},
-			},
-		},
+		{src: `f""`, want: nil},
+		{src: `f"plain"`, want: []FStringPart{{Lit: "plain"}}},
+		{src: `f"{x}"`, want: []FStringPart{{Expr: "x"}}},
+		{src: `f"a{x}b"`, want: []FStringPart{{Lit: "a"}, {Expr: "x"}, {Lit: "b"}}},
+		{src: `f"{a}{b}"`, want: []FStringPart{{Expr: "a"}, {Expr: "b"}}},
+		{src: `f"{{lit}}"`, want: []FStringPart{{Lit: "{lit}"}}},
+		{src: `f"hi\nthere"`, want: []FStringPart{{Lit: "hi\nthere"}}},
+		{src: `f"k={"x"}"`, want: []FStringPart{{Lit: "k="}, {Expr: `"x"`}}},
+		{src: `f"sum {a + b}"`, want: []FStringPart{{Lit: "sum "}, {Expr: "a + b"}}},
 	}
 	for _, c := range cases {
 		toks, _, err := Tokenize(c.src)
@@ -231,13 +135,22 @@ func TestFStringDesugar(t *testing.T) {
 			t.Errorf("%s: lex error: %v", c.src, err)
 			continue
 		}
-		if len(toks) != len(c.want) {
-			t.Errorf("%s: got %d tokens, want %d:\ngot: %v", c.src, len(toks), len(c.want), toks)
+		if len(toks) != 2 {
+			t.Errorf("%s: got %d tokens, want 2 (FString + EOF):\ngot: %v", c.src, len(toks), toks)
+			continue
+		}
+		if toks[0].Kind != FString {
+			t.Errorf("%s: got first token kind=%v, want FString", c.src, toks[0].Kind)
+			continue
+		}
+		got := toks[0].FParts
+		if len(got) != len(c.want) {
+			t.Errorf("%s: got %d FParts, want %d:\ngot: %v", c.src, len(got), len(c.want), got)
 			continue
 		}
 		for i, w := range c.want {
-			if toks[i].Kind != w.k || toks[i].Text != w.s {
-				t.Errorf("%s: tok[%d] = %v, want kind=%v text=%q", c.src, i, toks[i], w.k, w.s)
+			if got[i] != w {
+				t.Errorf("%s: FParts[%d] = %v, want %v", c.src, i, got[i], w)
 			}
 		}
 	}
