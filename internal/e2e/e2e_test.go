@@ -154,6 +154,97 @@ function main(): i32 {
 	}
 }
 
+// Auto-`main()` from `handle()`: a source file that defines
+// only `function handle(req): HttpResponse` and no main()
+// gets a synthesised main() that calls
+// `tcp_serve(__port_from_env("PORT", 8080), handle)`. Same
+// shape as wasi-http on the source side; the arm32 backend
+// emits a real Linux server. Tests the synthesised main's
+// PORT-env override path by setting `PORT=<picked>` in the
+// qemu environment.
+func TestArm32HttpAutoMain(t *testing.T) {
+	gcc, qemu := tooling(t)
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	src := `function handle(req: HttpRequest): HttpResponse {
+    return HttpResponse { status: 200, body: "ok " + req.path };
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "auto.s")
+	binPath := filepath.Join(dir, "auto")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+
+	cmd := exec.Command(qemu, binPath)
+	cmd.Env = append(os.Environ(), "PORT="+itoa(port))
+	var srvOut bytes.Buffer
+	cmd.Stdout = &srvOut
+	cmd.Stderr = &srvOut
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("qemu start: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		cmd.Wait()
+	})
+
+	addr := "127.0.0.1:" + itoa(port)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial: %v\nserver out:\n%s", err, srvOut.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://" + addr + "/auto-main")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d; want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "ok /auto-main" {
+		t.Errorf("body = %q; want %q (synthesised main routed through handle)", string(body), "ok /auto-main")
+	}
+}
+
 // arm32 HTTP server end-to-end. Compiles a tcp_serve-based
 // program, runs it under qemu-arm (which uses the host's
 // network stack for TCP), and drives it from the test
