@@ -46,7 +46,7 @@ function tokenize(s: string): string[] {
     var is_break: boolean = i == sLen || b == 32 || b == 9 || b == 10 || b == 13;
     if (is_break) {
       if (i > start) {
-        out = __array_append_string(out, lower[start:i]);
+        out = out.push(lower[start:i]);
       }
       start = i + 1;
     }

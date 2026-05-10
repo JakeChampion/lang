@@ -52,7 +52,7 @@ function main(): i32 {
   while (i < len(lines)) {
     if (!lines[i].is_empty()) {
       var fields: string[] = lines[i].split(",");
-      rows = __array_append_jsonvalue(rows, row_to_object(headers, fields));
+      rows = rows.push(row_to_object(headers, fields));
     }
     i = i + 1;
   }

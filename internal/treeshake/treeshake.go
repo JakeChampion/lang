@@ -39,6 +39,7 @@ var watHelperDeps = map[string][]string{
 	// jsonvalue identifier, so explicitly pull the shared
 	// lang body in when only the jsonvalue alias is used.
 	"__array_append_jsonvalue": {"__array_append_string"},
+	"__method_Array_push":      {"__array_append_string"},
 	// Map runtime: AST-level calls go through the
 	// type-rich `__method_Map_*` / `map_new` /
 	// `__method_MapIter_*` names; the prelude bodies live

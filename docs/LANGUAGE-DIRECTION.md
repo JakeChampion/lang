@@ -749,16 +749,23 @@ to smallest. Status pending unless marked.
   iterator local. Same for arrays: `for x in arr` →
   `for (var i = 0; i < len(arr); i = i + 1) { var x = arr[i]; ... }`.
 
-- **Drop `__array_append_T` from user surface.** Every
-  example calls `__array_append_string` /
-  `__array_append_jsonvalue` — these are the monomorphiser's
-  per-element-type clones leaking into source. Make
-  `arr.push(x)` work on `T[]` for any `T`, dispatch at
-  codegen by inflecting the call to the right
-  `__array_append_*` based on T's storage class
-  (i32 / i64 / f32 / f64 / pointer). Same shape as the Map
-  runtime's keyKind tag: a single user-facing API, internal
-  branching by type at codegen.
+- **Drop `__array_append_T` from user surface — shipped (4-byte
+  stride only).** `arr.push(v)` is now a generic method on
+  `T[]`. The checker treats `Array` like a one-type-param
+  generic struct: receiver-Args flow into the
+  `__method_<Type>_<name>` substitution path that Map's methods
+  already use, so `string[].push(v)` checks `v` as string while
+  `JsonValue[].push(v)` checks it as JsonValue. Codegen aliases
+  `__method_Array_push` → `__array_append_string` (the
+  4-byte-stride helper).
+
+  All four examples (`word_freq.lang`, `csv_to_json.lang`,
+  `url_router.lang`, `todo_api.lang`) and the prelude itself
+  now use `.push(v)` instead of the per-T helpers. The checker
+  rejects wide-stride pushes (`i64[]`, `f64[]`) with a clear
+  error pointing at the storage class — wide-stride helpers
+  aren't wired up yet and would silently mis-stride at the
+  runtime layer otherwise.
 
 - **Module-level `var` with handler-scoped lifetime.**
   `todo_api.lang` couldn't model cross-request state and

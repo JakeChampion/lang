@@ -2932,6 +2932,72 @@ function main(): i32 {
 	}
 }
 
+// `arr.push(v)` is a generic method on T[] that lowers to the
+// per-stride append helper. For 4-byte-stride T (i32, f32, all
+// pointer / heap-ref types: string, struct, enum, T[]) it routes
+// to `__array_append_string` at codegen — identical wat shape as
+// the older `__array_append_*` direct calls, just without users
+// having to know the per-T helper name.
+func TestWASMArrayPushI32(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [1, 2];
+    xs = xs.push(3);
+    xs = xs.push(4);
+    if (xs[0] != 1) { return 1; }
+    if (xs[3] != 4) { return 2; }
+    return len(xs);
+}`
+	if got := runWasm(t, src); got != 4 {
+		t.Errorf("got %d, want 4 (i32[] push)", got)
+	}
+}
+
+func TestWASMArrayPushEnum(t *testing.T) {
+	// JsonValue is a pointer-shaped enum, so push routes to the
+	// same 4-byte helper. Confirms enum payloads survive the
+	// push round-trip.
+	src := `function main(): i32 {
+    var xs: JsonValue[] = [];
+    xs = xs.push(JString("a"));
+    xs = xs.push(JString("bb"));
+    return match (xs[1]) {
+        JString(s) => len(s),
+        _          => 0 - 1
+    };
+}`
+	if got := runWasm(t, src); got != 2 {
+		t.Errorf("got %d, want 2 (len(\"bb\") after enum push)", got)
+	}
+}
+
+func TestWASMArrayPushString(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: string[] = ["a", "b"];
+    xs = xs.push("c");
+    xs = xs.push("d");
+    return len(xs);
+}`
+	if got := runWasm(t, src); got != 4 {
+		t.Errorf("got %d, want 4 (4 elements after pushes)", got)
+	}
+}
+
+// Verifies pushed values are actually stored in order — i.e. the
+// alias to __array_append_string preserves the heap layout.
+func TestWASMArrayPushStringValuesPreserved(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: string[] = [];
+    xs = xs.push("hello");
+    xs = xs.push("world");
+    if (xs[0] != "hello") { return 1; }
+    if (xs[1] != "world") { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (push preserves order)", got)
+	}
+}
+
 // `match` in expression position: each arm body is one
 // expression and the construct evaluates to the unified arm type.
 // Replaces a 6-line if-let-else chain with a single line.

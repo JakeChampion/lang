@@ -80,8 +80,8 @@ function extract_text(v: JsonValue): Option[string] {
 
 function handle_list(): HttpResponse {
   var arr: JsonValue[] = [];
-  arr = __array_append_jsonvalue(arr, todo_json(1, "buy milk"));
-  arr = __array_append_jsonvalue(arr, todo_json(2, "feed cat"));
+  arr = arr.push(todo_json(1, "buy milk"));
+  arr = arr.push(todo_json(2, "feed cat"));
   return ok(json_encode(JArray(arr)));
 }
 

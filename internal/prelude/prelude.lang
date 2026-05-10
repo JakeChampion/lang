@@ -200,7 +200,7 @@ function (s: string) split(sep: string): string[] {
     var i: i32 = 0;
     if (sepLen == 0) {
         while (i < n) {
-            out = __array_append_string(out, s[i:i+1]);
+            out = out.push(s[i:i+1]);
             i = i + 1;
         }
         return out;
@@ -208,14 +208,14 @@ function (s: string) split(sep: string): string[] {
     var start: i32 = 0;
     while (i + sepLen <= n) {
         if (__substr_eq(s, i, sep, sepLen)) {
-            out = __array_append_string(out, s[start:i]);
+            out = out.push(s[start:i]);
             i = i + sepLen;
             start = i;
         } else {
             i = i + 1;
         }
     }
-    return __array_append_string(out, s[start:n]);
+    return out.push(s[start:n]);
 }
 
 // `s.replace(old, new)` — substitutes every
@@ -980,7 +980,7 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
     // else create a one-element array.
     match (m.get(key)) {
         Some(existing) => {
-            m.set(key, __array_append_string(existing, val));
+            m.set(key, existing.push(val));
         },
         None => {
             var arr: string[] = [val];
@@ -1288,7 +1288,7 @@ function __json_p_array(p: __JsonParser): JsonValue {
     while (true) {
         var elem: JsonValue = __json_p_value(p);
         if (p.error != 0) { return JNull; }
-        arr = __array_append_jsonvalue(arr, elem);
+        arr = arr.push(elem);
         __json_p_skip_ws(p);
         var b: i32 = __json_p_byte(p);
         if (b == 44) {                                  // ','

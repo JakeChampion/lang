@@ -680,6 +680,24 @@ func Check(prog *ast.Program) (*Info, error) {
 	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
 	registerMapMethod("iter", nil, mapIterKV)
 
+	// Generic array methods. Today only `push` is registered.
+	// Routes through the same `__method_<Type>_<name>` mangling
+	// + receiver-TypeArgs substitution path that Map's methods
+	// use, so `arr.push(v)` on `string[]` type-checks `v` as
+	// string while on `JsonValue[]` it type-checks as JsonValue.
+	// Codegen aliases the mangled name to a per-stride
+	// underlying helper (today only the 4-byte-stride
+	// `__array_append_string` is wired up).
+	arrayElemParam := ast.ParamType{Name: "T"}
+	c.info.Methods["Array.push"] = "__method_Array_push"
+	c.info.FuncSigs["__method_Array_push"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			arrayElemParam,
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
+
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
 	// flow through the same dispatch-path substitution. The
@@ -2550,6 +2568,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				} else {
 					typeName = "f32"
 				}
+			case ast.ArrayType:
+				// Generic array methods (today: `push`). Treated
+				// as if Array were a one-type-param generic
+				// struct so the receiver-TypeArgs substitution
+				// path applies — `string[].push(v)` checks `v`
+				// as string, `JsonValue[].push(v)` as JsonValue.
+				_ = t
+				typeName = "Array"
 			}
 			if typeName != "" {
 				key := typeName + "." + fa.Field
@@ -2567,6 +2593,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// ParamType("K") / ParamType("V").
 					if st, ok := tt.(ast.StructType); ok && len(st.Args) > 0 {
 						n.TypeArgs = st.Args
+					}
+					// Array's `Args` is just the single Elem
+					// type — wrap it so the same substitution
+					// path treats it as `[T]` with T = Elem.
+					if at, ok := tt.(ast.ArrayType); ok {
+						n.TypeArgs = []ast.Type{at.Elem}
+						// Reject non-4-byte-stride elements
+						// here for a clear error — codegen only
+						// has the 4-byte-stride helper wired up.
+						if mangled == "__method_Array_push" && ast.ElemSizeBytes(at.Elem) != 4 {
+							c.errf(fa.P, "arr.push() on %s[] is not yet supported (only 4-byte-stride elements are wired up)", at.Elem)
+						}
 					}
 					// Wide-V Map: `m.values()` would return a
 					// `V[]` whose entries are still cell-pointer
@@ -2618,6 +2656,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					typeParams = sd.TypeParams
 				} else if ed := c.info.Enums[typeName]; ed != nil {
 					typeParams = ed.TypeParams
+				} else if typeName == "Array" {
+					// Array isn't an actual decl — it's the
+					// builtin `T[]` type-constructor. Synthesise
+					// the one-element type-param list so the
+					// substitution path sees `T` and substitutes
+					// against the receiver's Elem type.
+					typeParams = []string{"T"}
 				}
 				if len(typeParams) == len(n.TypeArgs) {
 					sub := make(map[string]ast.Type, len(typeParams))

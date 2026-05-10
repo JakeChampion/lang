@@ -45,6 +45,7 @@ import (
 // callers only reference the source name).
 var codegenAliasMap = map[string]string{
 	"__array_append_jsonvalue":  "__array_append_string",
+	"__method_Array_push":       "__array_append_string",
 	"map_new":                   "map_new_impl",
 	"__method_Map_len":          "__map_len_impl",
 	"__method_Map_has":          "__map_has_impl",
