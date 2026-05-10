@@ -21,7 +21,7 @@ function values_as_jarray(values: string[]): JsonValue {
   var arr: JsonValue[] = [];
   var i: i32 = 0;
   while (i < len(values)) {
-    arr = __array_append_jsonvalue(arr, JString(values[i]));
+    arr = arr.push(JString(values[i]));
     i = i + 1;
   }
   return JArray(arr);

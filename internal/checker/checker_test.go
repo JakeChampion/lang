@@ -424,6 +424,42 @@ function pick(): i32 {
 	}
 }
 
+// `arr.push(v)` is a generic method on T[]. The receiver's Elem
+// flows into the registered ParamType("T") signature, so the
+// argument and return types substitute correctly.
+func TestArrayPushTypechecks(t *testing.T) {
+	for _, src := range []string{
+		`function f(): i32 { var xs: string[] = []; xs = xs.push("a"); return len(xs); }`,
+		`function f(): i32 { var xs: i32[] = [1, 2]; xs = xs.push(3); return xs[2]; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
+// Wide-stride arrays (i64[], f64[]) have no append helper wired
+// up yet — checker rejects with a clear pointer at the storage
+// class rather than producing broken wat.
+func TestArrayPushRejectsWideStride(t *testing.T) {
+	for _, src := range []string{
+		`function f(): i32 { var xs: i64[] = [1, 2]; xs = xs.push(3); return 0; }`,
+		`function f(): i32 { var xs: f64[] = [1.0]; xs = xs.push(2.0); return 0; }`,
+	} {
+		if err := checkSource(t, src); err == nil {
+			t.Errorf("%q: expected error for wide-stride push", src)
+		}
+	}
+}
+
+// Argument type must match the receiver's Elem.
+func TestArrayPushRejectsArgTypeMismatch(t *testing.T) {
+	src := `function f(): i32 { var xs: string[] = []; xs = xs.push(1); return len(xs); }`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: pushing i32 onto string[]")
+	}
+}
+
 // Wildcard `_` arm covers exhaustiveness for the same shape that
 // would otherwise need every variant listed.
 func TestMatchExprWildcardCoversExhaustiveness(t *testing.T) {
