@@ -723,6 +723,23 @@ func Check(prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.ArrayType{Elem: arrayElemParam},
 	}
+	// Sub-i32 strides: u8/i8 → __method_Array_push_u8,
+	// u16/i16 → __method_Array_push_u16. Each maps via the
+	// codegen alias to its lang-prelude impl.
+	c.info.FuncSigs["__method_Array_push_u8"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			arrayElemParam,
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
+	c.info.FuncSigs["__method_Array_push_u16"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			arrayElemParam,
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
 
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
@@ -879,6 +896,28 @@ func Check(prog *ast.Program) (*Info, error) {
 	}
 	c.info.FuncSigs["__store_f64"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.FloatType{Width: 64}},
+		Result: ast.VoidType{},
+	}
+	// Sub-i32 byte / halfword shims. The lang prelude's
+	// `__array_append_u8` / `__array_append_u16` use these.
+	// Both store ops accept i32 and truncate to the low N bits
+	// — the sign of the destination type doesn't change the
+	// bit pattern stored, so one shim per width covers both
+	// signed and unsigned receivers.
+	c.info.FuncSigs["__load_u8"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{Width: 8, Signed: false},
+	}
+	c.info.FuncSigs["__store_u8"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["__load_u16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{Width: 16, Signed: false},
+	}
+	c.info.FuncSigs["__store_u16"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
 
@@ -2665,25 +2704,39 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if at, ok := tt.(ast.ArrayType); ok {
 						n.TypeArgs = []ast.Type{at.Elem}
 						// Per-stride dispatch for `arr.push(v)`.
-						// 4-byte (i32 / f32 / pointer) → existing
-						//   __method_Array_push → __array_append_string
-						// 8-byte int (i64 / u64) → __method_Array_push_i64
-						//   → __array_append_i64 (lang prelude).
-						// 8-byte float (f64) → __method_Array_push_f64
-						//   → __array_append_f64 (lang prelude).
-						// Other strides (sub-i32) aren't wired
-						// up — error clearly at the call site.
+						// Each width maps to its own lang-prelude
+						// helper via codegenAliasMap:
+						//   1-byte (u8 / i8)   → __method_Array_push_u8
+						//                         → __array_append_u8
+						//   2-byte (u16 / i16) → __method_Array_push_u16
+						//                         → __array_append_u16
+						//   4-byte (i32 / f32 / pointer) → existing
+						//                         __method_Array_push
+						//                         → __array_append_string
+						//   8-byte int (i64 / u64) → __method_Array_push_i64
+						//                         → __array_append_i64
+						//   8-byte float (f64) → __method_Array_push_f64
+						//                         → __array_append_f64
 						if mangled == "__method_Array_push" {
 							sz := ast.ElemSizeBytes(at.Elem)
-							if sz == 8 {
+							switch sz {
+							case 1:
+								mangled = "__method_Array_push_u8"
+								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
+							case 2:
+								mangled = "__method_Array_push_u16"
+								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
+							case 4:
+								// already on the default helper
+							case 8:
 								if _, isFloat := at.Elem.(ast.FloatType); isFloat {
 									mangled = "__method_Array_push_f64"
 								} else {
 									mangled = "__method_Array_push_i64"
 								}
 								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
-							} else if sz != 4 {
-								c.errf(fa.P, "arr.push() on %s[] is not yet supported (only 4- and 8-byte-stride elements are wired up)", at.Elem)
+							default:
+								c.errf(fa.P, "arr.push() on %s[] has an unrecognised stride %d", at.Elem, sz)
 							}
 						}
 					}
