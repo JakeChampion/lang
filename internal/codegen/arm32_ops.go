@@ -143,6 +143,21 @@ func (g *generator) emitOpsFromIR(
 				g.emit("ldr r0, [fp, #%d]", slotOffset[op.I32])
 			}
 			g.emit("push {r0}")
+		case ir.OpLoadGlobal:
+			// state{}-block read: load the address of the
+			// `state_<name>` label (a `.data` slot pre-baked
+			// with the literal init), then dereference.
+			g.emit("ldr r0, =state_%s", op.Str)
+			g.emit("ldr r0, [r0]")
+			g.emit("push {r0}")
+		case ir.OpStoreGlobal:
+			// state{}-block write: pop the value, then store
+			// it through the address of `state_<name>`. r1
+			// rather than r0 holds the address so the literal
+			// pool reload doesn't clobber the value.
+			g.emit("pop {r0}")
+			g.emit("ldr r1, =state_%s", op.Str)
+			g.emit("str r0, [r1]")
 		case ir.OpStoreLocal:
 			g.emit("pop {r0}")
 			if reg, ok := paramReg[int(op.I32)]; ok {

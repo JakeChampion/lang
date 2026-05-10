@@ -30,6 +30,7 @@ package codegen
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -71,17 +72,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// stay out of the lowered program when the user code
 	// doesn't call them.
 	treeshake.Run(prog)
-	// state{} blocks compile to wasm globals on the wasm
-	// targets but the arm32 backend hasn't been wired up yet.
-	// Reject early with a clear message rather than producing
-	// broken assembly. Arm32 is CLI-only (the OS reclaims at
-	// process exit) so the eventual implementation can store
-	// state vars in `.bss` / `.data` and initialise from
-	// `_start`; tracked under PR 6 item 9 (`state {}` block)
-	// in docs/LANGUAGE-DIRECTION.md.
-	if len(prog.States) > 0 {
-		return "", fmt.Errorf("arm32 backend does not yet support `state {}` blocks; use -target wasm or -target wasi-http for state-bearing programs")
-	}
 	return EmitFromIR(prog, info, opts)
 }
 
@@ -91,6 +81,12 @@ type generator struct {
 	labelN      int
 	stringLabel map[string]string // value -> label
 	stringOrder []string          // insertion order so output is deterministic
+	// stateDecls preserves the source program's state-block
+	// declarations so the data-section emitter at the end of
+	// EmitFromIR can render `.data` labels for each state var.
+	// Empty for programs without state blocks; OpLoadGlobal /
+	// OpStoreGlobal is unused in that case.
+	stateDecls []*ast.StateDecl
 	// lineBufferLabel/lineBufferOrder dedupe the
 	// `data + "\n"` buffers used by the `print(literal)` fold.
 	// Same shape as stringLabel/stringOrder but with the
@@ -1117,6 +1113,87 @@ func (g *generator) internLineBuffer(s string) string {
 // itself (printable ASCII apart from " and \), as a recognised C-style
 // escape, or as a three-digit octal escape. The result is suitable as
 // the operand of `.asciz`.
+// arm32StateInitDirective renders the GAS data directive for a
+// state-block var's pre-baked initial value. Scalar widths
+// supported on arm32 today: i32 / u32 / f32 / boolean (one
+// `.4byte`), i8 / u8 (one `.byte`), i16 / u16 (one `.2byte`).
+// 8-byte widths (i64 / u64 / f64) emit two `.4byte`s in
+// little-endian order so the storage exists; arithmetic on
+// those types still errors at the op site since arm32 hasn't
+// shipped i64 codegen yet.
+func arm32StateInitDirective(t ast.Type, init ast.Expr) string {
+	v := evalArm32StateInit(init)
+	switch typ := t.(type) {
+	case ast.NumberType:
+		switch typ.NormalWidth() {
+		case 8:
+			return fmt.Sprintf(".byte %d", int8(v))
+		case 16:
+			return fmt.Sprintf(".2byte %d", int16(v))
+		case 64:
+			return fmt.Sprintf(".4byte %d\n\t.4byte %d",
+				uint32(v), uint32(v>>32))
+		}
+		return fmt.Sprintf(".4byte %d", int32(v))
+	case ast.FloatType:
+		// Bit-reinterpret the float as i32 / i64 so the linker
+		// places the right byte pattern. GAS's `.float` /
+		// `.double` directives are equivalent but reinterpreting
+		// keeps the codegen path uniform with the integer case.
+		f := evalArm32StateFloat(init)
+		if typ.Width == 64 {
+			bits := math.Float64bits(f)
+			return fmt.Sprintf(".4byte 0x%08x\n\t.4byte 0x%08x",
+				uint32(bits), uint32(bits>>32))
+		}
+		return fmt.Sprintf(".4byte 0x%08x", math.Float32bits(float32(f)))
+	case ast.BoolType:
+		if v != 0 {
+			return ".4byte 1"
+		}
+		return ".4byte 0"
+	}
+	return ".4byte 0"
+}
+
+// evalArm32StateInit reduces a literal initialiser (NumberLit /
+// BoolLit, plus `Unary{"-", lit}`) to its int64 value. Only the
+// shapes the checker accepts reach this code; FloatLit follows
+// a separate float path.
+func evalArm32StateInit(e ast.Expr) int64 {
+	switch v := e.(type) {
+	case *ast.NumberLit:
+		return v.Value
+	case *ast.BoolLit:
+		if v.Value {
+			return 1
+		}
+		return 0
+	case *ast.Unary:
+		if v.Op == "-" {
+			return -evalArm32StateInit(v.Operand)
+		}
+	}
+	return 0
+}
+
+// evalArm32StateFloat is the FloatLit counterpart of
+// evalArm32StateInit. Handles the leading-`-` shape that the
+// parser produces for `-1.5f64`.
+func evalArm32StateFloat(e ast.Expr) float64 {
+	switch v := e.(type) {
+	case *ast.FloatLit:
+		return v.Value
+	case *ast.NumberLit:
+		return float64(v.Value)
+	case *ast.Unary:
+		if v.Op == "-" {
+			return -evalArm32StateFloat(v.Operand)
+		}
+	}
+	return 0
+}
+
 func escapeForGAS(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
