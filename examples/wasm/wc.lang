@@ -5,8 +5,8 @@
 // totals + a grand total.
 //
 // Showcases: command-line args, stdin/Reader API, file I/O,
-// string methods (split, len), and the `Result` + `match`
-// idiom for fallible operations.
+// string methods (split, len), `defer` for cleanup, and the
+// `Result` + `match` idiom for fallible operations.
 //
 //   $ lang -target wasm -wasi-adapter ... -o wc.wasm wc.lang
 //   $ wasmtime --dir=. wc.wasm README.md docs/LANGUAGE-DIRECTION.md
@@ -31,6 +31,10 @@ function count_chunk(chunk: string, acc: Counts): Counts {
 
 function count_reader(r: Reader): Counts {
   var acc: Counts = Counts { lines: 0, words: 0, bytes: 0 };
+  // `r.close()` is best-effort — its Option[IoError] return
+  // is dropped here. defer fires even when one of the match
+  // arms below short-circuits with `return`.
+  defer r.close();
   while (true) {
     match (r.read_line()) {
       Some(line) => {

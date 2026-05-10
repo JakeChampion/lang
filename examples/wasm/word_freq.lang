@@ -5,10 +5,10 @@
 // table (string keys, i32 values), MapIter via
 // `m.keys()` / `m.values()` for parallel-array snapshots,
 // `s.to_lower` for the case-fold pass, manual whitespace
-// tokenisation via byte-class matching, and the
-// array-mutation idiom (`arr[i] = v`) — arrays are
-// pointer-typed at the wasm layer, so mutations in
-// `swap_pairs` are visible to the caller.
+// tokenisation via byte-class matching, `defer` for the
+// stdin close, and the array-mutation idiom (`arr[i] = v`)
+// — arrays are pointer-typed at the wasm layer, so
+// mutations in `swap_pairs` are visible to the caller.
 //
 //   $ printf 'a b a c b a' | wasmtime word_freq.wasm
 //   3\ta
@@ -85,6 +85,7 @@ function sort_pairs(keys: string[], counts: i32[]): void {
 
 function main(): i32 {
   var r: Reader = stdin();
+  defer r.close();
   var text: string = read_all(r);
   var words: string[] = tokenize(text);
   var counts: Map[string, i32] = map_new(64);
