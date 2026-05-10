@@ -357,14 +357,6 @@ func linkDarwin(asm, outPath, cc string) error {
 		"-fuse-ld=lld",
 		"-nostdlib",
 		"-Wl,-arch,arm64",
-		// Shrink __PAGEZERO from its 4 GiB default to a single
-		// page. The lang prelude (inherited from wasm32) stores
-		// pointers as i32; __lang_alloc's mmap MAP_FIXED hint
-		// (0x10000000) sits inside the default PAGEZERO and the
-		// kernel would refuse to replace it. 0x4000 = 16 KiB,
-		// the minimum on arm64 page-size hosts; still catches
-		// NULL derefs.
-		"-Wl,-pagezero_size,0x4000",
 		asmPath,
 		"-o", outPath,
 	}
