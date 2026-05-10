@@ -150,6 +150,75 @@ function main(): i32 {
 	}
 }
 
+// String slicing on arm32: `s[a:b]` lowers to a __str_slice
+// runtime call. Arm32 didn't ship the helper until the
+// HTTP-prelude work surfaced the gap (slicing inside
+// __http_parse_request_line, __http_content_length, etc).
+func TestArm32StringSlice(t *testing.T) {
+	_, code := compileAndRun(t, `function main(): i32 {
+    var s: string = "hello, world!";
+    var sub: string = s[7:12];
+    return len(sub);
+}`)
+	if code != 5 {
+		t.Errorf("exit = %d, want 5 (len('world') after slice)", code)
+	}
+}
+
+// String slicing trap path: slicing past the end with `high >
+// src_len` traps via the `unreachable` path. Verifies the
+// arm32 trap handler exits with code 134 (matches the wasm
+// `unreachable` SIGILL behaviour).
+func TestArm32StringSliceTraps(t *testing.T) {
+	_, code := compileAndRun(t, `function main(): i32 {
+    var s: string = "abc";
+    var sub: string = s[0:99];
+    return len(sub);
+}`)
+	if code != 134 {
+		t.Errorf("exit = %d, want 134 (out-of-bounds slice traps)", code)
+	}
+}
+
+// HTTP request parser end-to-end on arm32. Drives the lang-
+// prelude `http_parse_request` against a complete request
+// buffer and asserts the parsed method's length. Same
+// behavioural shape as the wasm e2e tests
+// (TestWASMHttpParseRequest etc); confirms the new arm32
+// string-runtime helpers (`__str_slice`, `__alloc_u8`,
+// `string_from_bytes`) compose correctly under qemu.
+func TestArm32HttpParseRequest(t *testing.T) {
+	_, code := compileAndRun(t, `function main(): i32 {
+    var raw: string = "POST /todos HTTP/1.1\r\nHost: localhost\r\nContent-Length: 13\r\n\r\nhello, world!";
+    match (http_parse_request(raw)) {
+        Some(req) => {
+            if (req.method != "POST") { return 1; }
+            if (req.path != "/todos") { return 2; }
+            if (req.body != "hello, world!") { return 3; }
+            return 42;
+        },
+        None => { return 99; }
+    }
+}`)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42 (POST /todos with 13-byte body parses on arm32)", code)
+	}
+}
+
+func TestArm32HttpSerializeResponse(t *testing.T) {
+	_, code := compileAndRun(t, `function main(): i32 {
+    var resp: HttpResponse = HttpResponse { status: 200, body: "hi" };
+    var wire: string = http_serialize_response(resp);
+    if (!wire.starts_with("HTTP/1.1 200 OK\r\n")) { return 1; }
+    if (!wire.contains("Content-Length: 2\r\n")) { return 2; }
+    if (!wire.ends_with("hi")) { return 3; }
+    return 42;
+}`)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42 (serialised response wire shape on arm32)", code)
+	}
+}
+
 // State string on arm32: a non-literal init expression
 // (`"hello, " + "world"`) routes through the synthesised
 // `__state_init` start function called from `_start` before

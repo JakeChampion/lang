@@ -139,6 +139,15 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			case "stdin", "stdout", "stderr":
 				g.usesStdStreams = true
 				g.usesAlloc = true
+			case "__alloc_u8":
+				g.usesAllocU8 = true
+				g.usesAlloc = true
+			case "string_from_bytes":
+				g.usesStringFromBytes = true
+				g.usesAlloc = true
+			case "__str_slice":
+				g.usesStrSlice = true
+				g.usesAlloc = true
 			}
 			if strings.HasPrefix(op.Str, "__method_Reader_") ||
 				strings.HasPrefix(op.Str, "__method_Writer_") {
@@ -177,6 +186,15 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 	g.emitStrcmpRuntime()
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
+	}
+	if g.usesAllocU8 || g.usesStringFromBytes || g.usesStrSlice {
+		g.emitAllocU8Runtime()
+	}
+	if g.usesStringFromBytes {
+		g.emitStringFromBytesRuntime()
+	}
+	if g.usesStrSlice {
+		g.emitStrSliceRuntime()
 	}
 	if g.usesArgs || g.usesEnv {
 		g.emitStrlenRuntime()

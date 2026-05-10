@@ -122,6 +122,16 @@ type generator struct {
 	usesTcp         bool          // true if the program calls any of tcp_* — pulls in the TCP socket helpers
 	usesReadFile  bool            // true if the program calls read_file() — pulls in __lang_read_file + __build_io_error
 	usesWriteFile bool            // true if the program calls write_file() — pulls in __lang_write_file + __build_io_error
+	// usesStrSlice / usesAllocU8 / usesStringFromBytes pull in
+	// the matching runtime helpers when programs reach for the
+	// corresponding lang surface (`s[a:b]`, `__alloc_u8`,
+	// `string_from_bytes(bs)`). The wasm backend gates these
+	// the same way; arm32 wasn't using them until the
+	// HTTP-prelude work surfaced the gap, so a fresh trio of
+	// flags lands here.
+	usesStrSlice        bool
+	usesAllocU8         bool
+	usesStringFromBytes bool
 	usesStreamIO  bool            // true if the program calls open_reader / open_writer / a Reader|Writer method
 	usesStdStreams bool           // true if the program calls stdin / stdout / stderr
 	srcFile     string            // non-empty enables DWARF .file/.loc directives
@@ -181,6 +191,117 @@ func (g *generator) emitAllocRuntime() {
 // libc strlen / strcmp keep working on the same pointer. The buffer
 // is never freed; strings are immutable but not GC'd.
 //
+// emitAllocU8Runtime emits `__alloc_u8(n)` — allocate a fresh
+// length-prefixed `u8[]` of `n` bytes. Returns the data
+// pointer (header + 4); the 4-byte little-endian length sits
+// at `data - 4`. Mirrors the wasm shape so the same lang
+// prelude calls (`s.bytes()`, `string_from_bytes`, etc.) lower
+// identically across backends.
+func (g *generator) emitAllocU8Runtime() {
+	g.line("")
+	g.line(".global __alloc_u8")
+	g.line(".type __alloc_u8, %function")
+	g.label("__alloc_u8")
+	g.emit("push {r4, lr}")
+	g.emit("mov r4, r0") // r4 = n
+	g.emit("add r0, r0, #4")
+	g.emit("bl __lang_alloc")
+	// r0 = base. Store length prefix.
+	g.emit("str r4, [r0]")
+	// Return data pointer (base + 4). __lang_alloc gives zeroed
+	// memory (mmap-anon), so the payload bytes start at 0.
+	g.emit("add r0, r0, #4")
+	g.emit("pop {r4, lr}")
+	g.emit("bx lr")
+	g.line(".size __alloc_u8, .-__alloc_u8")
+	g.line(".ltorg")
+}
+
+// emitStringFromBytesRuntime emits `string_from_bytes(bs)` —
+// copy a `u8[]` payload into a fresh length-prefixed string.
+// Round-trip companion to `s.bytes()`. Preserves the byte
+// pattern exactly (no UTF-8 validation; user code that needs
+// validation runs it explicitly).
+func (g *generator) emitStringFromBytesRuntime() {
+	g.line("")
+	g.line(".global string_from_bytes")
+	g.line(".type string_from_bytes, %function")
+	g.label("string_from_bytes")
+	g.emit("push {r4, r5, lr}")
+	g.emit("sub sp, sp, #4") // 16-byte alignment after r4+r5+lr+pad
+	g.emit("mov r4, r0")     // r4 = bs (data ptr)
+	g.emit("ldr r5, [r0, #-4]") // r5 = length
+	g.emit("add r0, r5, #4")
+	g.emit("bl __lang_alloc")
+	// r0 = base. Store length, copy payload, return data ptr.
+	g.emit("str r5, [r0]")
+	g.emit("add r0, r0, #4") // r0 = data
+	g.emit("mov r1, r4")     // r1 = src
+	g.emit("mov r2, r5")     // r2 = len
+	g.emit("push {r0}")
+	g.emit("bl __lang_memcpy")
+	g.emit("pop {r0}")
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, lr}")
+	g.emit("bx lr")
+	g.line(".size string_from_bytes, .-string_from_bytes")
+	g.line(".ltorg")
+}
+
+// emitStrSliceRuntime emits `__str_slice(base, low, high)` —
+// copy `base[low..high]` into a fresh length-prefixed string,
+// returning the new data pointer. Bounds-traps on `low < 0`,
+// `high > src_len`, or `low > high` (the unreachable instruction
+// — same as the wasm side's `unreachable` trap).
+func (g *generator) emitStrSliceRuntime() {
+	g.line("")
+	g.line(".global __str_slice")
+	g.line(".type __str_slice, %function")
+	g.label("__str_slice")
+	// Args: r0 = base, r1 = low, r2 = high.
+	g.emit("push {r4, r5, r6, r7, lr}")
+	g.emit("sub sp, sp, #4")    // 16-byte alignment after 4 regs + lr + pad
+	g.emit("mov r4, r0")        // r4 = base
+	g.emit("mov r5, r1")        // r5 = low
+	g.emit("mov r6, r2")        // r6 = high
+	g.emit("ldr r7, [r0, #-4]") // r7 = src_len
+	// low < 0 → trap
+	g.emit("cmp r5, #0")
+	g.emit("blt .Lstrslice_trap")
+	// high > src_len → trap (unsigned comparison)
+	g.emit("cmp r6, r7")
+	g.emit("bhi .Lstrslice_trap")
+	// low > high → trap
+	g.emit("cmp r5, r6")
+	g.emit("bgt .Lstrslice_trap")
+	// new_len = high - low
+	g.emit("sub r2, r6, r5")  // r2 = new_len
+	g.emit("add r0, r2, #4")  // alloc(new_len + 4)
+	g.emit("bl __lang_alloc")
+	// r0 = base. Store length prefix.
+	g.emit("sub r3, r6, r5")  // r3 = new_len (regenerate; bl clobbered r0..r3)
+	g.emit("str r3, [r0]")
+	// memcpy(out + 4, base + low, new_len). r0 stays the alloc
+	// base; we save it before the bl __lang_memcpy clobbers
+	// caller-saved regs.
+	g.emit("add r1, r4, r5") // r1 = src = base + low
+	g.emit("mov r2, r3")     // r2 = new_len
+	g.emit("push {r0}")      // save alloc base across memcpy
+	g.emit("add r0, r0, #4") // r0 = dst = base + 4
+	g.emit("bl __lang_memcpy")
+	g.emit("pop {r0}")       // restore alloc base
+	g.emit("add r0, r0, #4") // return data pointer
+	g.emit("add sp, sp, #4")
+	g.emit("pop {r4, r5, r6, r7, lr}")
+	g.emit("bx lr")
+	g.label(".Lstrslice_trap")
+	// SIGABRT-style trap (matches wasm `unreachable`).
+	g.emit("mov r0, #134")
+	g.emitSyscall(sysExitGroup)
+	g.line(".size __str_slice, .-__str_slice")
+	g.line(".ltorg")
+}
+
 // Operands arrive as data pointers (post-prefix), but the lengths
 // live at `ptr - 4`, so the helper grabs them with a single load
 // each rather than walking the buffer with strlen.
