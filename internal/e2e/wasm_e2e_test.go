@@ -3064,6 +3064,41 @@ func TestWASMArrayPushF64(t *testing.T) {
 	}
 }
 
+// 1-byte stride: u8[].push(v) routes to __array_append_u8.
+// Verifies bytes are stored back-to-back (no padding) and read
+// back via the array indexer with the right zero-extension.
+func TestWASMArrayPushU8(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: u8[] = [];
+    xs = xs.push(10u8);
+    xs = xs.push(20u8);
+    xs = xs.push(255u8);
+    if (xs[0] != 10u8) { return 1; }
+    if (xs[2] != 255u8) { return 2; }
+    return len(xs);
+}`
+	if got := runWasm(t, src); got != 3 {
+		t.Errorf("got %d, want 3 (3 u8 pushes)", got)
+	}
+}
+
+// 2-byte stride: u16[].push(v) routes to __array_append_u16.
+// Tests a value that requires more than 8 bits (300) to confirm
+// the 16-bit store path actually preserves the high bits.
+func TestWASMArrayPushU16(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: u16[] = [];
+    xs = xs.push(300u16);
+    xs = xs.push(65535u16);
+    if (xs[0] != 300u16) { return 1; }
+    if (xs[1] != 65535u16) { return 2; }
+    return len(xs);
+}`
+	if got := runWasm(t, src); got != 2 {
+		t.Errorf("got %d, want 2 (2 u16 pushes)", got)
+	}
+}
+
 // Empty-array start: confirms the oldLen==0 fast-path of the
 // helper (skips memory.copy).
 func TestWASMArrayPushI64EmptyStart(t *testing.T) {

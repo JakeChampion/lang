@@ -528,6 +528,21 @@ func TestArrayPushF64StridePasses(t *testing.T) {
 	}
 }
 
+// Sub-i32 strides: 1-byte (u8 / i8) and 2-byte (u16 / i16)
+// each route to their own lang-prelude append helper.
+func TestArrayPushSubI32StridePasses(t *testing.T) {
+	for _, src := range []string{
+		`function f(): i32 { var xs: u8[] = []; xs = xs.push(7u8); return 0; }`,
+		`function f(): i32 { var xs: i8[] = []; xs = xs.push(7i8); return 0; }`,
+		`function f(): i32 { var xs: u16[] = []; xs = xs.push(300u16); return 0; }`,
+		`function f(): i32 { var xs: i16[] = []; xs = xs.push((0i16 - 1i16)); return 0; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
 // Argument type must match the receiver's Elem.
 func TestArrayPushRejectsArgTypeMismatch(t *testing.T) {
 	src := `function f(): i32 { var xs: string[] = []; xs = xs.push(1); return len(xs); }`

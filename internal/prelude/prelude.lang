@@ -322,6 +322,41 @@ function __array_append_f64(arr: f64[], v: f64): f64[] {
     return data as f64[];
 }
 
+// `__array_append_u8(arr, v)` — 1-byte-stride counterpart.
+// Routed from `arr.push(v)` for both u8[] and i8[] (the
+// store is bit-identical at the wasm layer; sign only
+// matters on the read side, which goes through the array
+// indexer, not this helper). Layout: 4-byte length prefix
+// + raw bytes packed back-to-back.
+function __array_append_u8(arr: u8[], v: u8): u8[] {
+    var oldLen: i32 = len(arr);
+    var newLen: i32 = oldLen + 1;
+    var hdr: i32 = __alloc(4 + newLen);
+    __store_i32(hdr, newLen);
+    var data: i32 = hdr + 4;
+    if (oldLen > 0) {
+        __memcpy(data, arr as i32, oldLen);
+    }
+    __store_u8(data + oldLen, v as i32);
+    return data as u8[];
+}
+
+// `__array_append_u16(arr, v)` — 2-byte-stride counterpart.
+// Routed from `arr.push(v)` for both u16[] and i16[]; same
+// sign-agnostic store reasoning as the u8 helper.
+function __array_append_u16(arr: u16[], v: u16): u16[] {
+    var oldLen: i32 = len(arr);
+    var newLen: i32 = oldLen + 1;
+    var hdr: i32 = __alloc(4 + newLen * 2);
+    __store_i32(hdr, newLen);
+    var data: i32 = hdr + 4;
+    if (oldLen > 0) {
+        __memcpy(data, arr as i32, oldLen * 2);
+    }
+    __store_u16(data + oldLen * 2, v as i32);
+    return data as u16[];
+}
+
 // === Decimal int-to-string formatter ===
 //
 // `int_to_string(n)` — signed-i32 → ASCII decimal. Test

@@ -772,20 +772,26 @@ to smallest. Status pending unless marked.
   `url_router.lang`, `todo_api.lang`) and the prelude itself
   now use `.push(v)` instead of the per-T helpers.
 
-  Wide-stride status:
-  - **i64 / u64 / f64** — shipped. The checker routes
-    `arr.push(v)` by stride: 8-byte int → `__method_Array_push_i64`,
-    8-byte float → `__method_Array_push_f64`. Each maps via
-    `codegenAliasMap` to a lang-prelude function
-    (`__array_append_i64`, `__array_append_f64`) that
-    composes `__alloc` + `__memcpy` + the matching store
-    shim. Four new wat shims (`__load_i64` / `__store_i64` /
-    `__load_f64` / `__store_f64`) complete the 4-byte
-    primitive set's 8-byte twin. Layout matches the 4-byte
-    case (length prefix + raw element data) — wide elements
-    end up 4-byte but not 8-byte aligned, which wasm allows
-    functionally.
-  - **Sub-i32 (u8/i8/u16/i16)** — still rejected.
+  Stride coverage — every storage class is wired:
+  - **1-byte (u8 / i8)** → `__method_Array_push_u8` →
+    `__array_append_u8` (lang prelude). Bytes pack
+    back-to-back with no padding.
+  - **2-byte (u16 / i16)** → `__method_Array_push_u16` →
+    `__array_append_u16`.
+  - **4-byte (i32 / f32 / pointer)** → `__method_Array_push`
+    → `__array_append_string` (the original heap-pointer-
+    stride helper, type-erased at the wat layer).
+  - **8-byte int (i64 / u64)** → `__method_Array_push_i64` →
+    `__array_append_i64`.
+  - **8-byte float (f64)** → `__method_Array_push_f64` →
+    `__array_append_f64`.
+
+  Each width has a matching `__store_<kind>` / `__load_<kind>`
+  wat shim exposed to the lang prelude — same compose-with-
+  primitives pattern (`__alloc` + `__memcpy` + the store
+  shim) for every helper. Wide elements (8-byte) end up
+  4-byte but not 8-byte aligned, which wasm allows
+  functionally; sub-i32 elements pack with no padding.
 
 - **Module-level `var` with handler-scoped lifetime.**
   `todo_api.lang` couldn't model cross-request state and
