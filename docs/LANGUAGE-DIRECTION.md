@@ -588,6 +588,176 @@ Deferred to a follow-up:
 - (The `number` deprecation alias has already been dropped
   — see PR 1's status block.)
 
+## PR 6 — Examples-driven ergonomics
+
+Writing the `examples/wasm/` showcase surfaced a clear friction
+hierarchy. Each item below is a concrete change motivated by a
+pain point hit while writing real programs against the current
+language; ordered from biggest-leverage (touches every example)
+to smallest. Status pending unless marked.
+
+- **Heap-capture closures.** Today `closureconv` only allows
+  scalar captures (`i32`, `i64`, `f32`, `f64`, `boolean`). That
+  forced `swap_pairs` in `word_freq.lang` to be a top-level
+  function with arrays passed as params, made `use_chain.lang`
+  thread only `i32` through the chain, and stopped
+  `url_router.lang` from using `use` over `Option[Url]` (the
+  inner callback can't read the parsed query map). Concrete
+  shape: extend the closure-env builder to accept
+  pointer-shaped types (`string`, `T[]`, `[T]`, structs,
+  enums, other closures) — the env block is already heap-
+  allocated, so it just gets one more 4-byte slot per such
+  capture. Lifetime is "captures must outlive the closure",
+  same rule we already have for slices, enforced socially
+  via the bump allocator's per-arena reset. This is THE
+  single biggest unlock; without it `use` chains are a
+  curiosity rather than a primary control-flow tool.
+
+- **`?` operator for `Option` / `Result`.** `extract_text`
+  in `todo_api.lang` is 22 lines of nested match for
+  "match `JObject(m)`; pull `text`; match `JString(t)`; else
+  `None`". With `?` it collapses to:
+
+  ```
+  function extract_text(v: JsonValue): Option[string] {
+    var JObject(m) = v else return None;
+    var Some(text_v) = m.get("text") else return None;
+    var JString(t) = text_v else return None;
+    return Some(t);
+  }
+  ```
+
+  or, with the postfix form (sugar over `let-else { return
+  None; }` when the surrounding return type unifies):
+
+  ```
+  function extract_text(v: JsonValue): Option[string] {
+    var JObject(m) = v?;
+    var JString(t) = m.get("text")??;
+    return Some(t);
+  }
+  ```
+
+  The `?` form requires the surrounding return type to be
+  `Option[_]` / `Result[_, E]` matching the source. Same
+  lowering as Rust's `?` — early-return on the failure
+  variant, bind on success. Pure parse-time + checker
+  desugar; no codegen change.
+
+- **`match` as an expression + `_` wildcard.** Every
+  `JsonValue` match enumerates all 6 variants when really
+  one matters. `_ => return None` is ~80% of `extract_text`.
+  Plus `match`-in-let:
+
+  ```
+  var m = match v { JObject(m) => m, _ => return None };
+  ```
+
+  collapses 6-line guards into one. Two changes: (1) parser
+  accepts `match` in expression position, returns the
+  matched-arm value; (2) `_` arm acts as exhaustive
+  wildcard, suppresses the missing-variant error.
+
+- **String interpolation.** `req.method + " " + req.path +
+  " (" + len(req.body).to_string() + " bytes)\n\n" + req.body`
+  is a wall of `+`. Pure parse-time desugar:
+
+  ```
+  f"{req.method} {req.path} ({len(req.body)} bytes)\n\n{req.body}"
+  ```
+
+  becomes the same `+` chain at parse time, with implicit
+  `.to_string()` on non-string interpolants. Touches every
+  example. The lexer grows an f-string mode that splits on
+  `{...}` boundaries; the parser re-stitches the pieces with
+  `+` and inserts the to_string call where needed.
+
+- **`for x in arr` / `for (k, v) in map`.** Today:
+
+  ```
+  var it = m.iter();
+  while (it.has_next()) {
+    var k = it.key();
+    var v = it.value();
+    ...
+    it.advance();
+  }
+  ```
+
+  three lines of bookkeeping per iteration. `word_freq.lang`,
+  `json_pretty.lang`, and `csv_to_json.lang` all do this.
+  Mechanical desugar: `for (k, v) in m { ... }` rewrites to
+  the iter / has_next / advance shape using a synthesised
+  iterator local. Same for arrays: `for x in arr` →
+  `for (var i = 0; i < len(arr); i = i + 1) { var x = arr[i]; ... }`.
+
+- **Drop `__array_append_T` from user surface.** Every
+  example calls `__array_append_string` /
+  `__array_append_jsonvalue` — these are the monomorphiser's
+  per-element-type clones leaking into source. Make
+  `arr.push(x)` work on `T[]` for any `T`, dispatch at
+  codegen by inflecting the call to the right
+  `__array_append_*` based on T's storage class
+  (i32 / i64 / f32 / f64 / pointer). Same shape as the Map
+  runtime's keyKind tag: a single user-facing API, internal
+  branching by type at codegen.
+
+- **Module-level `var` with handler-scoped lifetime.**
+  `todo_api.lang` couldn't model cross-request state and
+  ended up "stateless TODO API" which is a contradiction.
+  Concrete shape: `state { var todos: Map[i32, string] = ...;
+  var counter: i32 = 0; }` block at module level whose
+  contents persist across requests in a non-arena heap
+  region (allocated from `__lang_alloc` directly, never
+  reclaimed by `arena_restore`). Reads / writes from inside
+  `handle()` see the persistent values. CLI mode treats
+  `state {}` as ordinary module-init (one-shot before
+  `main()`). The arm32 backend can ignore `state` since
+  it's CLI-only and the OS reclaims everything at process
+  exit.
+
+- **Numeric literal suffixes / inference in match arms.**
+  `Circle(r) when r <= 0 as f32 =>` — the `as f32` on every
+  literal is noise when the variant already declared `f32`.
+  Two pieces: (1) literal suffixes — `0f32` / `1.5f64` /
+  `42i64` parse as the suffixed type directly; (2) extend
+  the polymorphic-literal flow into match-guard expressions
+  so `r <= 0` in a `Circle(r: f32)` arm settles `0` to f32
+  via the bound's type, the same way it already settles
+  through assignments and call args.
+
+- **Bug: formatter eats `defer r.close();`.** Not a design
+  item, but worth flagging — costs three comments and two
+  empty-line scars across `wc.lang` / `word_freq.lang`. The
+  formatter's defer-statement printer doesn't handle the
+  case where the deferred expression is a method-call on a
+  bare receiver. Quick fix in `internal/format/format.go`.
+
+### Shipping order
+
+Roughly biggest-leverage-first, but small wins (formatter
+bug, literal suffixes) interleave when they unblock specific
+example cleanup. Each item lands as its own PR:
+
+1. defer-on-method-call formatter fix (smallest, unblocks
+   re-adding `defer r.close()` to the wc / word_freq
+   examples).
+2. String interpolation (parse-time only, biggest UX lift
+   per LOC of compiler change).
+3. `_` wildcard in match (small parser + checker change).
+4. `?` operator + `var Pat = expr else { ... };` form.
+5. `for x in arr` / `for (k, v) in map`.
+6. `arr.push(x)` generic dispatch.
+7. Numeric literal suffixes + match-arm inference.
+8. Heap-capture closures (the biggest, runs on its own
+   train of PRs).
+9. Module-level `state { ... }` block.
+
+Each landed item gets a follow-up commit that simplifies
+one or more `examples/wasm/` programs, demonstrating the
+ergonomic win in real code rather than just synthetic
+tests.
+
 ## Deferred — not in any of the above five PRs
 
 - **Closures via lambda-set defunctionalisation —
