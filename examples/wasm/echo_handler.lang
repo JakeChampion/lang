@@ -1,22 +1,29 @@
-// echo_handler.lang — wasi:http echo handler.
-//
-// Returns a plain-text body summarising the inbound request:
-// method, path, body length, body. Demonstrates the minimal
-// shape every wasi-http handler takes.
-//
-// Showcases: `function handle(req: HttpRequest): HttpResponse`
-// — the wasi:http/incoming-handler entry point. The codegen
-// wraps this in the per-request implicit arena (PR #200): all
-// the strings the handler builds get reclaimed when the
-// handler returns, so multi-request long-running deployments
-// don't leak.
+// echo_handler.lang — minimal HTTP handler. Same source
+// compiles for two targets — wasi-http components and
+// arm32 native binaries — via the auto-`main()` synthesis:
+// programs that define `function handle(req): HttpResponse`
+// without their own `main()` get a synthesised
+// `main(): i32 { return tcp_serve(__port_from_env("PORT",
+// 8080), handle); }`. wasi-http drops the synthesised main at
+// codegen time and uses the `wasi:http/incoming-handler.handle`
+// export wrapper instead.
 //
 //   $ lang -target wasi-http -wasi-adapter ... -o echo.wasm echo_handler.lang
 //   $ wasmtime serve echo.wasm
+//
+//   $ lang -target arm32 -o echo echo_handler.lang
+//   $ PORT=8080 ./echo &
+//
 //   $ curl -X POST -d 'hello' http://localhost:8080/foo/bar
 //   POST /foo/bar (5 bytes)
 //
 //   hello
+//
+// Showcases: `function handle(req: HttpRequest): HttpResponse`
+// — the canonical handler entry point. The codegen wraps each
+// invocation in an implicit arena (PR #200): all the strings
+// the handler builds get reclaimed at handler-return, so
+// multi-request long-running deployments don't leak.
 function handle(req: HttpRequest): HttpResponse {
   var body: string = f"{req.method} {req.path} ({len(req.body)} bytes)\n\n{req.body}";
   return HttpResponse { status: 200, body: body };

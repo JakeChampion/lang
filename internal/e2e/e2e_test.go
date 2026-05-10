@@ -154,6 +154,97 @@ function main(): i32 {
 	}
 }
 
+// Build the existing `examples/wasm/echo_handler.lang` for
+// arm32 and drive it via curl-equivalent. The example was
+// originally written for wasi-http only (`function handle(req):
+// HttpResponse`); it now also compiles for arm32 thanks to the
+// auto-main synthesis (PR #232) + i32.to_string-on-arm32 fix
+// in this PR. Same source, two real targets.
+func TestArm32EchoHandlerExample(t *testing.T) {
+	gcc, qemu := tooling(t)
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	srcBytes, err := os.ReadFile("../../examples/wasm/echo_handler.lang")
+	if err != nil {
+		t.Fatalf("read example: %v", err)
+	}
+	prog, err := parser.Parse(string(srcBytes))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "echo.s")
+	binPath := filepath.Join(dir, "echo")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+
+	cmd := exec.Command(qemu, binPath)
+	cmd.Env = append(os.Environ(), "PORT="+itoa(port))
+	var srvOut bytes.Buffer
+	cmd.Stdout = &srvOut
+	cmd.Stderr = &srvOut
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("qemu: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		cmd.Wait()
+	})
+
+	addr := "127.0.0.1:" + itoa(port)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial: %v\nserver out:\n%s", err, srvOut.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Post("http://"+addr+"/foo/bar", "text/plain", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d; want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	want := "POST /foo/bar (5 bytes)\n\nhello"
+	if string(body) != want {
+		t.Errorf("body = %q; want %q", string(body), want)
+	}
+}
+
 // Auto-`main()` from `handle()`: a source file that defines
 // only `function handle(req): HttpResponse` and no main()
 // gets a synthesised main() that calls
