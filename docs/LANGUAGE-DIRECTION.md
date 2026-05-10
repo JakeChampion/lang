@@ -773,21 +773,18 @@ to smallest. Status pending unless marked.
   now use `.push(v)` instead of the per-T helpers.
 
   Wide-stride status:
-  - **i64 / u64** — shipped. The checker routes `arr.push(v)`
-    to a separate `__method_Array_push_i64` mangled name when
-    the element stride is 8 and the elem is integer; codegen
-    aliases it to `__array_append_i64`, a lang-prelude
-    function (parallel to `__array_append_string`) that
-    composes `__alloc` + `__memcpy` + `__store_i64`. Two new
-    wat shims `__store_i64` / `__load_i64` expose the wasm
-    wide-int ops to the prelude, completing the 4-byte
+  - **i64 / u64 / f64** — shipped. The checker routes
+    `arr.push(v)` by stride: 8-byte int → `__method_Array_push_i64`,
+    8-byte float → `__method_Array_push_f64`. Each maps via
+    `codegenAliasMap` to a lang-prelude function
+    (`__array_append_i64`, `__array_append_f64`) that
+    composes `__alloc` + `__memcpy` + the matching store
+    shim. Four new wat shims (`__load_i64` / `__store_i64` /
+    `__load_f64` / `__store_f64`) complete the 4-byte
     primitive set's 8-byte twin. Layout matches the 4-byte
-    case (length prefix + raw element data) — i64 elements
+    case (length prefix + raw element data) — wide elements
     end up 4-byte but not 8-byte aligned, which wasm allows
     functionally.
-  - **f64** — still rejected. The same lang-prelude helper
-    pattern would work; needs a `__store_f64` wat shim and a
-    `__array_append_f64` body.
   - **Sub-i32 (u8/i8/u16/i16)** — still rejected.
 
 - **Module-level `var` with handler-scoped lifetime.**

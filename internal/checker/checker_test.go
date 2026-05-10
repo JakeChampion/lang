@@ -521,10 +521,10 @@ func TestArrayPushI64StridePasses(t *testing.T) {
 	}
 }
 
-func TestArrayPushRejectsF64Stride(t *testing.T) {
+func TestArrayPushF64StridePasses(t *testing.T) {
 	src := `function f(): i32 { var xs: f64[] = [1.0f64]; xs = xs.push(2.0f64); return 0; }`
-	if err := checkSource(t, src); err == nil {
-		t.Errorf("expected error for f64 stride push")
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
