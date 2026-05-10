@@ -596,22 +596,31 @@ pain point hit while writing real programs against the current
 language; ordered from biggest-leverage (touches every example)
 to smallest. Status pending unless marked.
 
-- **Heap-capture closures.** Today `closureconv` only allows
-  scalar captures (`i32`, `i64`, `f32`, `f64`, `boolean`). That
-  forced `swap_pairs` in `word_freq.lang` to be a top-level
-  function with arrays passed as params, made `use_chain.lang`
-  thread only `i32` through the chain, and stopped
-  `url_router.lang` from using `use` over `Option[Url]` (the
-  inner callback can't read the parsed query map). Concrete
-  shape: extend the closure-env builder to accept
-  pointer-shaped types (`string`, `T[]`, `[T]`, structs,
-  enums, other closures) — the env block is already heap-
-  allocated, so it just gets one more 4-byte slot per such
-  capture. Lifetime is "captures must outlive the closure",
-  same rule we already have for slices, enforced socially
-  via the bump allocator's per-arena reset. This is THE
-  single biggest unlock; without it `use` chains are a
-  curiosity rather than a primary control-flow tool.
+- **Heap-capture closures — shipped.** `closureconv` now accepts
+  any pointer-shaped capture (string, `T[]`, `[T]`, structs,
+  enums, tuples, function values) in addition to the scalar
+  set (i32, i64, f32, f64, boolean). The env-block layout was
+  already 4-byte-slot-per-capture, and pointer-shaped values
+  are uniformly 4-byte heap references, so the change is
+  largely a checker-gate relaxation:
+  - `checker/checker.go` switch only rejects `VoidType` and
+    `ParamType` now; everything else captures.
+  - IR's `CaptureRef` lowering already emits `i32.load` for
+    non-float types, which is correct for heap-ref types.
+  - `exprType` + `fieldOwner` gained `CaptureRef` cases so
+    `p.x` on a captured struct resolves the struct decl
+    correctly.
+
+  Lifetime is "captures must outlive the closure", same rule
+  slices follow — enforced socially via the bump allocator's
+  per-arena reset.
+
+  `examples/wasm/word_freq.lang`'s `swap_pairs` is now an
+  inline closure inside `sort_pairs` that captures `keys` and
+  `counts` directly. `use_chain.lang` and `url_router.lang`
+  unblock too (no longer scalar-only). Wide-stride captures
+  (i64, f64) remain limited to the 4-byte slot and would
+  silently truncate — separate fix.
 
 - **`?` operator for `Option` / `Result`.** `extract_text`
   in `todo_api.lang` is 22 lines of nested match for

@@ -2171,15 +2171,26 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		if name == fn.Name {
 			return
 		}
-		// Only allow capturing scalar types in this PR. References
-		// (string/array/struct/function) would need indirection
-		// through the env that we haven't designed yet.
+		// Capture eligibility. Scalars (i32 / i64 / f32 / f64 /
+		// boolean) live directly in the env block; pointer-
+		// shaped types (string, T[], [T], structs, enums,
+		// tuples, function values) store their 4-byte heap
+		// reference in the same slot — the heap object itself
+		// stays where the outer scope put it. Lifetime is
+		// "captures must outlive the closure", same rule that
+		// applies to slices, enforced socially via the bump
+		// allocator's per-arena reset.
+		//
+		// Reject only the types that genuinely have no runtime
+		// representation: VoidType (no value) and ParamType
+		// (an unresolved generic placeholder — should never
+		// surface here in practice but guard for safety).
 		switch t.(type) {
-		case ast.NumberType, ast.BoolType, ast.FloatType:
+		case ast.VoidType, ast.ParamType:
+			c.errf(fn.P, "captured variable %q has unsupported type %s", name, t)
+		default:
 			captured[name] = t
 			captureOrder = append(captureOrder, name)
-		default:
-			c.errf(fn.P, "captured variable %q has unsupported type %s (only integers, booleans, and floats can be captured)", name, t)
 		}
 	}
 	c.captureOuter = outer

@@ -618,14 +618,42 @@ func TestNestedFunctionRecordsCaptures(t *testing.T) {
 	}
 }
 
-func TestCaptureOfNonScalarRejected(t *testing.T) {
-	// String capture isn't supported in this PR.
-	src := `function outer(s: string): i32 {
-		function inner(): i32 { return len(s); }
-		return inner();
-	}`
-	if err := checkSource(t, src); err == nil {
-		t.Error("expected error for capturing a string")
+// Pointer-shaped captures (string, T[], [T], structs, enums,
+// tuples, function values) all type-check now — their 4-byte
+// heap reference fits in the same env-slot scalars use.
+func TestPointerCapturesTypecheck(t *testing.T) {
+	cases := []string{
+		// string
+		`function outer(s: string): i32 {
+			function inner(): i32 { return len(s); }
+			return inner();
+		}`,
+		// T[] (i32 array)
+		`function outer(xs: i32[]): i32 {
+			function inner(): i32 { return len(xs); }
+			return inner();
+		}`,
+		// struct
+		`struct Pt { x: i32, y: i32 }
+		function outer(p: Pt): i32 {
+			function inner(): i32 { return p.x + p.y; }
+			return inner();
+		}`,
+		// enum
+		`function outer(o: Option[i32]): i32 {
+			function inner(): i32 {
+				return match (o) {
+					Some(x) => x,
+					None    => 0
+				};
+			}
+			return inner();
+		}`,
+	}
+	for _, src := range cases {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
 	}
 }
 
