@@ -29,3 +29,23 @@ so both backends benefit.
 When you open a PR, subscribe to its activity (`subscribe_pr_activity`)
 without being asked. The user prefers to be alerted via the subscription
 flow rather than driving manual CI checks after the fact.
+
+## Engineering bar (non-negotiable)
+
+- **Confirm passing tests before opening a PR.** Run the full relevant
+  suite locally (including the WASM e2e tests — `wasmtime` lives at
+  `/tmp/wt/wasmtime-v34.0.1-x86_64-linux/`, `wasm-tools` at
+  `/tmp/wt/wasm-tools-1.225.0-x86_64-linux/`, adapter at
+  `/tmp/wt/adapter.wasm`; export the binaries onto `PATH` and set
+  `LANG_WASI_ADAPTER` so the e2e tests don't SKIP). If a test SKIPs,
+  treat that as a missing dependency to fix, not a green light.
+- **Every new feature ships with tests.** Parser-time desugar →
+  parser test. Checker rule → checker test. Runtime behaviour →
+  e2e test. No "the next PR will add coverage."
+- **Never regress.** Re-run the full suite after every change, not
+  just the targeted test for the new code.
+- **Fix bugs you find on the way.** If exploring for one feature
+  surfaces a separate bug (e.g. the f-string `__str_concat`
+  helper-emission gap, the `for x in m { ... }` struct-lit clash),
+  fix it in the same PR with its own test rather than leaving it
+  for later.
