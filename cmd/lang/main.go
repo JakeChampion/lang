@@ -31,6 +31,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen"
+	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
@@ -211,8 +212,59 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 		}
 		return 0, nil
 	}
+	// arm64 (aarch64): Linux ELF binaries for arm64 hosts.
+	// Apple Silicon Macs run these via Docker / OrbStack /
+	// UTM containers; servers (Raspberry Pi 4+ in 64-bit mode,
+	// AWS Graviton, Android) run them natively. Native arm64
+	// macOS (Mach-O binaries) is a separate target waiting on
+	// the syscall ABI + Mach-O emit work.
+	if target == "arm64" {
+		asm, err := arm64codegen.Emit(prog, info)
+		if err != nil {
+			return 1, err
+		}
+		// Replace arm32-default cc / qemu with arm64 defaults
+		// when the user didn't override them. The flag parser
+		// can't see target before parsing finishes, so we do
+		// the late-bound default-replacement here.
+		if cc == "arm-linux-gnueabihf-gcc" {
+			cc = "aarch64-linux-gnu-gcc"
+		}
+		if qemu == "qemu-arm" {
+			qemu = "qemu-aarch64"
+		}
+		if !runIt && outPath == "" {
+			if _, err := os.Stdout.WriteString(asm); err != nil {
+				return 1, err
+			}
+			return 0, nil
+		}
+		binPath := outPath
+		var cleanupBin string
+		if binPath == "" {
+			f, err := os.CreateTemp("", "lang-bin-*")
+			if err != nil {
+				return 1, err
+			}
+			f.Close()
+			binPath = f.Name()
+			cleanupBin = binPath
+		}
+		defer func() {
+			if cleanupBin != "" {
+				os.Remove(cleanupBin)
+			}
+		}()
+		if err := link(asm, binPath, cc, debug); err != nil {
+			return 1, err
+		}
+		if !runIt {
+			return 0, nil
+		}
+		return execUnderQemu(qemu, binPath, progArgs)
+	}
 	if target != "arm32" {
-		return 1, fmt.Errorf("unknown target %q (want arm32, wasm, or wasi-http)", target)
+		return 1, fmt.Errorf("unknown target %q (want arm32, arm64, wasm, or wasi-http)", target)
 	}
 
 	emitOpts := codegen.Options{}
