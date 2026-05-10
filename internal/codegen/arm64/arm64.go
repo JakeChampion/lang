@@ -155,6 +155,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesStringFromBytes {
 		g.emitStringFromBytesRuntime()
 	}
+	if g.usesPuts {
+		g.emitPutsRuntime()
+	}
+	if g.usesWrite {
+		g.emitWriteRuntime()
+	}
+	if g.usesPutchar {
+		g.emitPutcharRuntime()
+	}
 	g.emitDataSections()
 	if !g.darwin {
 		// `.note.GNU-stack` is an ELF-only directive — it
@@ -192,6 +201,17 @@ func (g *generator) emitDataSections() {
 		g.line(fmt.Sprintf("\t.4byte %d", len(s)))
 		g.label(g.stringLabel[s])
 		g.line("\t.asciz " + escapeForGAS(s))
+	}
+	if g.usesPuts {
+		// Single newline byte emitted into the same section as
+		// the string literals. __lang_puts writes `s` followed
+		// by a 1-byte write of this label. We use `.asciz`
+		// rather than `.byte 10` so Mach-O's `cstring_literals`
+		// attribute (which requires NUL-terminated strings)
+		// accepts the entry — the trailing NUL is harmless,
+		// the write only reads the first byte.
+		g.label(".LLangNewline")
+		g.line(`	.asciz "\n"`)
 	}
 	if g.usesAlloc || g.usesEnv {
 		g.line("")
@@ -916,6 +936,76 @@ func (g *generator) emitTcpCloseRuntime() {
 	g.line(".ltorg")
 }
 
+// emitWriteRuntime emits `__lang_write(s)` — single write(1, s,
+// len) syscall, no trailing newline. Length lives at `[s - 4]`;
+// no `bl` happens so this stays a leaf function.
+func (g *generator) emitWriteRuntime() {
+	g.line("")
+	g.line(".global __lang_write")
+	g.typeDirective("__lang_write")
+	g.label("__lang_write")
+	g.emit("ldur w2, [x0, #-4]") // x2 = length
+	g.emit("mov x1, x0")          // x1 = buf
+	g.emit("mov x0, #1")          // x0 = fd (stdout)
+	g.syscall("write")
+	g.emit("ret")
+	g.sizeDirective("__lang_write")
+	g.line(".ltorg")
+}
+
+// emitPutsRuntime emits `__lang_puts(s)` — write the string,
+// then a single trailing newline. Two write(2) calls (vs
+// arm32's single writev) keeps the code simple at the cost of
+// one extra kernel transition; per-call cost is dominated by
+// the syscall itself either way. Preserves x19 across the
+// second write so we can return the original data pointer for
+// libc-puts consistency.
+func (g *generator) emitPutsRuntime() {
+	g.line("")
+	g.line(".global __lang_puts")
+	g.typeDirective("__lang_puts")
+	g.label("__lang_puts")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("mov x19, x0")         // x19 = data ptr (saved for return)
+	g.emit("ldur w2, [x0, #-4]") // x2 = length
+	g.emit("mov x1, x0")          // x1 = buf
+	g.emit("mov x0, #1")          // x0 = fd
+	g.syscall("write")
+	g.adrpAdd("x1", ".LLangNewline")
+	g.emit("mov x2, #1")
+	g.emit("mov x0, #1")
+	g.syscall("write")
+	g.emit("mov x0, x19")         // return original ptr
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__lang_puts")
+	g.line(".ltorg")
+}
+
+// emitPutcharRuntime emits `__lang_putchar(c)` — write the
+// low byte of x0 to fd 1. We materialise the byte on the
+// caller's stack frame so the kernel has a real address to
+// read from (the byte itself is a register value).
+func (g *generator) emitPutcharRuntime() {
+	g.line("")
+	g.line(".global __lang_putchar")
+	g.typeDirective("__lang_putchar")
+	g.label("__lang_putchar")
+	g.emit("sub sp, sp, #16")     // 16-byte slot for sp alignment
+	g.emit("strb w0, [sp]")        // store byte on the stack
+	g.emit("mov x1, sp")           // buf
+	g.emit("mov x2, #1")           // len
+	g.emit("mov x0, #1")           // fd
+	g.syscall("write")
+	g.emit("add sp, sp, #16")
+	g.emit("ret")
+	g.sizeDirective("__lang_putchar")
+	g.line(".ltorg")
+}
+
 // internString returns a unique .rodata label for s, allocating
 // a new one the first time we see this exact string and reusing
 // it on repeats.
@@ -1027,6 +1117,16 @@ type generator struct {
 	// usesMemset gates emission of the byte-grain
 	// __memset(dst, byte, n) helper the Map clear path uses.
 	usesMemset bool
+	// usesPuts / usesWrite / usesPutchar pull in the stdout
+	// builtins:
+	//   print(s)   → __lang_puts    (string + newline, two write()s)
+	//   write(s)   → __lang_write   (raw string, no newline)
+	//   putchar(c) → __lang_putchar (1-byte write)
+	// All routed through write(2) — fd 1, syscall numbers from
+	// the linuxDarwinSysno map.
+	usesPuts    bool
+	usesWrite   bool
+	usesPutchar bool
 }
 
 func (g *generator) line(s string) {
@@ -1997,6 +2097,20 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__lang_env"
 			g.usesEnv = true
 			g.usesAlloc = true
+		case "print":
+			// print(s): write string + newline. Same name
+			// rewrite arm32 does; the runtime helper handles
+			// both writes.
+			target = "__lang_puts"
+			g.usesPuts = true
+		case "write":
+			// write(s): write string, no newline.
+			target = "__lang_write"
+			g.usesWrite = true
+		case "putchar":
+			// putchar(c): write the single byte.
+			target = "__lang_putchar"
+			g.usesPutchar = true
 		}
 		argc := int(op.I32)
 		if argc > regArgs {

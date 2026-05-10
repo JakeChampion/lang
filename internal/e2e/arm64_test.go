@@ -309,6 +309,29 @@ function main(): i32 {
 	}
 }
 
+// arm64 print / write / putchar — stdout builtins lowered to
+// direct write(2) syscalls. Verifies the asm wires the right
+// fd, length, and newline behaviour (`print` adds one, `write`
+// does not). Same shape arm32 uses under the hood, modulo the
+// AAPCS64 reg names.
+func TestArm64Print(t *testing.T) {
+	out, code := compileAndRunArm64(t, `function main(): i32 {
+    print("hello arm64");
+    write("no-nl");
+    putchar(10);
+    putchar(65);
+    putchar(10);
+    return 0;
+}`)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	want := "hello arm64\nno-nl\nA\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
 // arm64 TCP primitives: tcp_listen / tcp_close round-trip
 // validates the socket / bind / listen / close syscall
 // chain. Port 0 means "kernel-assigned ephemeral" — fast
@@ -387,6 +410,16 @@ func TestArm64DarwinBuilds(t *testing.T) {
     xs = xs.push(35);
     return xs[0] + xs[1];
 }`, 42},
+		// Stdout builtins — print(s) lowers to two write(2)s
+		// (string + newline), putchar(c) to a single 1-byte
+		// write. Exercises Darwin write syscall + the
+		// .LLangNewline rodata entry on Mach-O.
+		{"print", `function main(): i32 {
+    print("hi");
+    putchar(33);
+    putchar(10);
+    return 0;
+}`, 0},
 		// Map is deliberately not exercised here yet — the
 		// runtime round-trips heap pointers through 32-bit
 		// storage slots (__store_i32 / __load_i32), and
