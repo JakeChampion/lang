@@ -638,6 +638,13 @@ func (g *generator) emitCallDirect(op ir.Op) error {
 		// inline. Fall back to an unchecked address compute that
 		// matches the wasm behaviour for in-range indices.
 		return g.emitInlineIdxHelper(target)
+	case "__memcpy":
+		// The lang prelude calls `__memcpy(dst, src, n)`; the
+		// wasm backend has a wat shim by that name, while
+		// arm32 ships the same byte-grain copy under
+		// `__lang_memcpy` (alongside `__lang_strcat` etc.).
+		// Rewrite at the call site so the linker can resolve.
+		target = "__lang_memcpy"
 	}
 	// Reader / Writer method calls arrive as the post-checker
 	// mangled `__method_Reader_*` / `__method_Writer_*` names.
