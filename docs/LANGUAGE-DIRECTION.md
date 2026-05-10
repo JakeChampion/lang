@@ -747,38 +747,27 @@ to smallest. Status pending unless marked.
   need the statement-form match for now. Block-as-expression is
   a separate, larger language change.
 
-- **String interpolation.** `req.method + " " + req.path +
-  " (" + len(req.body).to_string() + " bytes)\n\n" + req.body`
-  is a wall of `+`. Pure parse-time desugar:
+- **String interpolation — shipped.** `f"{req.method}
+  {req.path} ({len(req.body)} bytes)\n\n{req.body}"`
+  desugars at parse time to the same `+` chain, with
+  implicit `.to_string()` on non-string interpolants. The
+  lexer scans f-strings inline (tracking brace depth so
+  `f"{ {1,2} }"` parses), splits on `{...}` boundaries, and
+  emits a sequence of literal-string tokens + parsed
+  expression sub-trees the parser stitches back together.
+  `echo_handler.lang`, `shape_area.lang`, and `wc.lang` use
+  the form.
 
-  ```
-  f"{req.method} {req.path} ({len(req.body)} bytes)\n\n{req.body}"
-  ```
-
-  becomes the same `+` chain at parse time, with implicit
-  `.to_string()` on non-string interpolants. Touches every
-  example. The lexer grows an f-string mode that splits on
-  `{...}` boundaries; the parser re-stitches the pieces with
-  `+` and inserts the to_string call where needed.
-
-- **`for x in arr` / `for (k, v) in map`.** Today:
-
-  ```
-  var it = m.iter();
-  while (it.has_next()) {
-    var k = it.key();
-    var v = it.value();
-    ...
-    it.advance();
-  }
-  ```
-
-  three lines of bookkeeping per iteration. `word_freq.lang`,
-  `json_pretty.lang`, and `csv_to_json.lang` all do this.
-  Mechanical desugar: `for (k, v) in m { ... }` rewrites to
-  the iter / has_next / advance shape using a synthesised
-  iterator local. Same for arrays: `for x in arr` →
-  `for (var i = 0; i < len(arr); i = i + 1) { var x = arr[i]; ... }`.
+- **`for x in arr` / `for (k, v) in map` — shipped.** Both
+  shapes desugar in the parser. Map form rewrites to
+  `iter() / has_next() / value() / advance()`; array form
+  to a C-style `for (var i = 0; i < len(arr); i = i + 1)`
+  loop with `var x = arr[i]` at the top of the body.
+  Detection happens by lookahead in `parseFor` — a leading
+  `IDENT in` or `( IDENT , IDENT ) in` selects the foreach
+  shape; everything else falls through to the C-style for.
+  `word_freq.lang`, `json_pretty.lang`, `csv_to_json.lang`
+  all use the form.
 
 - **Drop `__array_append_T` from user surface — shipped.**
   `arr.push(v)` is a generic method on `T[]`. The checker
@@ -853,12 +842,12 @@ to smallest. Status pending unless marked.
   still error — no implicit widening. Only literals get the
   promotion.
 
-- **Bug: formatter eats `defer r.close();`.** Not a design
-  item, but worth flagging — costs three comments and two
-  empty-line scars across `wc.lang` / `word_freq.lang`. The
-  formatter's defer-statement printer doesn't handle the
-  case where the deferred expression is a method-call on a
-  bare receiver. Quick fix in `internal/format/format.go`.
+- ~~**Bug: formatter eats `defer r.close();`**~~ — **fixed.**
+  The statement-printer switch has a `case *ast.Defer` arm
+  now (`internal/printer/format.go`); round-trip is covered
+  by `TestFormatDeferRoundTrip`. The earlier comment scars
+  across `wc.lang` / `word_freq.lang` should be cleared in a
+  follow-up examples cleanup pass.
 
 ### Shipping order
 
@@ -866,19 +855,32 @@ Roughly biggest-leverage-first, but small wins (formatter
 bug, literal suffixes) interleave when they unblock specific
 example cleanup. Each item lands as its own PR:
 
-1. defer-on-method-call formatter fix (smallest, unblocks
-   re-adding `defer r.close()` to the wc / word_freq
-   examples).
-2. String interpolation (parse-time only, biggest UX lift
-   per LOC of compiler change).
-3. `_` wildcard in match (small parser + checker change).
-4. `?` operator + `var Pat = expr else { ... };` form.
-5. `for x in arr` / `for (k, v) in map`.
-6. `arr.push(x)` generic dispatch.
-7. Numeric literal suffixes + match-arm inference.
-8. Heap-capture closures (the biggest, runs on its own
-   train of PRs).
-9. Module-level `state { ... }` block.
+1. ~~defer-on-method-call formatter fix~~ — **shipped.**
+   `internal/printer/format_test.go:TestFormatDeferRoundTrip`
+   covers `defer r.close()` survival.
+2. ~~String interpolation~~ — **shipped.** `f"..."` syntax
+   live in the lexer; used by `echo_handler.lang`,
+   `shape_area.lang`, `wc.lang`.
+3. ~~`_` wildcard in match~~ — **shipped.** Both statement
+   and expression form;
+   `TestWASMMatchExprWildcardArm` covers it.
+4. ~~`?` operator + `var Pat = expr else { ... };` form~~ —
+   **shipped (Option + Result).** Postfix `?` on the
+   `parseCall` postfix loop; `let-else` lives in `parseStmt`.
+5. ~~`for x in arr` / `for (k, v) in map`~~ — **shipped.**
+   Both shapes desugar in the parser; covered by
+   `TestWASMForEachOverArray` /
+   `TestWASMForEachBreakContinue`.
+6. ~~`arr.push(x)` generic dispatch~~ — **shipped.**
+   Lowering folded into the IR (`emitArrayPush`) on the
+   refactor PR; one block of code per stride class.
+7. ~~Numeric literal suffixes + match-arm inference~~ —
+   **shipped.** `42i64`, `7u8`, `1.5f64` etc. parse direct.
+8. ~~Heap-capture closures~~ — **shipped.** Pointer-shaped
+   captures + wide (i64 / u64 / f64) captures both live;
+   `closureconv.rewriteExpr` CastExpr / SliceExpr cases
+   landed alongside.
+9. **Module-level `state { ... }` block** — next.
 
 Each landed item gets a follow-up commit that simplifies
 one or more `examples/wasm/` programs, demonstrating the
