@@ -1,7 +1,20 @@
 # lang
 
-A small statically-typed language with two backends — WebAssembly text
-format (WAT) and ARM 32-bit assembly — written in Go.
+A small statically-typed language with several backends, written in Go.
+Targets so far:
+
+- **ARM32** (Linux ELF, Raspberry Pi 2/3, embedded Linux) — the
+  default; default cross-compiler is `arm-linux-gnueabihf-gcc`.
+- **ARM64 / aarch64** Linux ELF — Raspberry Pi 4+, AWS Graviton,
+  Android, qemu-aarch64 under test.
+- **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs
+  (Apple M-series). No Linux container required; `clang` + `ld64`
+  link directly. (For cross-compile from Linux, `lld`'s Mach-O
+  backend is used instead.)
+- **WebAssembly** — emitted as a WASI Preview 2 Component Model
+  component, ready for `wasmtime run` (CLI) or `wasmtime serve`
+  (`wasi:http/incoming-handler`).
+- x86-64 is on the roadmap.
 
 The language is a tiny TypeScript-flavoured subset: functions, methods
 on structs, `var`, `if` / `else`, `while`, `for`, `switch`, ternaries,
@@ -18,9 +31,11 @@ source
   ──► closure conversion (hoists nested functions, rewrites captures)
   ──► IR lowering       (structured stack-machine IR)
   ──► IR optimisation   (see "optimisation" below)
-  ──► WASM emitter   ──► .wat
+  ──► WASM emitter   ──► .wat (preview-2 component via wasm-tools)
       or
-      ARM32 emitter  ──► .s
+      ARM32 emitter  ──► .s   (Linux ELF, `-nostdlib`)
+      or
+      ARM64 emitter  ──► .s   (Linux ELF or Mach-O / Apple Silicon)
 ```
 
 Both backends share the IR layer, so a new language feature usually
@@ -50,9 +65,23 @@ go build ./cmd/lang
 arm-linux-gnueabihf-gcc -static factorial.s -o factorial
 qemu-arm factorial
 
-# WASM
-./lang -target wasm examples/factorial.lang > factorial.wat
-wasmtime run --invoke main factorial.wat
+# ARM64 Linux
+./lang -target arm64 examples/factorial.lang > factorial.s
+aarch64-linux-gnu-gcc -static -nostdlib factorial.s -o factorial
+qemu-aarch64 factorial
+
+# ARM64 macOS (Apple Silicon)
+#   Run natively on a Mac with clang:
+./lang -target arm64-darwin -o factorial examples/factorial.lang
+./factorial
+#   ...or cross-compile from Linux with clang + lld (the binary
+#   ships unchanged; copy to a Mac to run):
+./lang -target arm64-darwin -cc clang -o factorial examples/factorial.lang
+
+# WASM (preview-2 component)
+./lang -target wasm -wasi-adapter $LANG_WASI_ADAPTER \
+    -o factorial.wasm examples/factorial.lang
+wasmtime run factorial.wasm
 
 # Formatter
 ./lang -fmt examples/factorial.lang        # writes idiomatic source to stdout
