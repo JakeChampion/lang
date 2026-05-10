@@ -58,12 +58,13 @@ func TestTypeErrors(t *testing.T) {
 }
 
 // The state{} block accepts scalar V (i32 / u32 / i64 / u64 / f32 /
-// f64 / boolean) and `string`. Init expressions can be arbitrary —
+// f64 / boolean), `string` (immutable), and pointer-shaped
+// containers (`T[]`, `Map[K, V]`) whose mutation routes through
+// the two-cursor allocator. Init expressions can be arbitrary —
 // scalars settle to wasm `<type>.const` global init exprs when
 // possible, anything else routes through the synthesised
-// `__state_init` start function. Mutable pointer-shaped types
-// (Map, T[], allocating structs) still reject with a hint
-// pointing at the two-cursor allocator.
+// `__state_init` start function with persistent allocator mode
+// active so init-time allocations live in the persistent heap.
 func TestStateBlockAccepts(t *testing.T) {
 	for _, src := range []string{
 		`state { var counter: i32 = 0; }
@@ -79,11 +80,16 @@ function main(): i32 { a = a + 1; b = b + 2; return a + b; }`,
 		// String state vars (immutable, no two-cursor needed).
 		`state { var greeting: string = "hello"; }
 function main(): i32 { return len(greeting); }`,
-		// Non-literal init expressions (lifted in this PR).
+		// Non-literal init expressions.
 		`state { var precomputed: i32 = 1 + 2 * 3; }
 function main(): i32 { return precomputed; }`,
 		`state { var concat: string = "hello, " + "world"; }
 function main(): i32 { return len(concat); }`,
+		// Pointer-shaped containers (two-cursor allocator).
+		`state { var tags: i32[] = []; }
+function main(): i32 { return len(tags); }`,
+		`state { var todos: Map[i32, string] = map_new(4); }
+function main(): i32 { return todos.len(); }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -96,16 +102,6 @@ func TestStateBlockRejects(t *testing.T) {
 		src  string
 		want string
 	}{
-		{
-			`state { var todos: Map[i32, string] = map_new(4); }
-function main(): i32 { return 0; }`,
-			"two-cursor allocator",
-		},
-		{
-			`state { var tags: string[] = []; }
-function main(): i32 { return 0; }`,
-			"two-cursor allocator",
-		},
 		{
 			`state { var c: i32 = 0; var c: i32 = 1; }
 function main(): i32 { return c; }`,

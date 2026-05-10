@@ -794,8 +794,8 @@ to smallest. Status pending unless marked.
   `url_router.lang`, `todo_api.lang`) and the prelude itself
   use `.push(v)` instead of the per-T helpers.
 
-- **Module-level `var` with handler-scoped lifetime — scalar
-  + immutable string + arbitrary init expressions shipped.**
+- **Module-level `var` with handler-scoped lifetime — full
+  shape shipped (scalars + string + Map + T[]).**
   `state { var hits: i32 = 0; var greeting: string = "hi, "
   + name(); }` declares module-global mutable variables.
   Literal scalar inits bake into the wasm `(global $state_NAME
@@ -820,15 +820,28 @@ to smallest. Status pending unless marked.
   module-global lookups.
 
   **Type scope today** — `i32`, `u32`, `i64`, `u64`, `f32`,
-  `f64`, `boolean`, and `string` (immutable; no mutation-
-  allocation concern). **Mutable** pointer-shaped types
-  (`Map`, `T[]`, structs whose mutation allocates) still
-  reject — they need the **two-cursor allocator** (separate
-  persistent / per-request bump cursors). Without it, a
-  state-rooted mutation like `state.todos.set(k, v)` that
-  triggers a Map grow would route the new bucket through the
-  per-request arena and lose it at `arena_restore` on
-  handler exit. That's the next state{} PR.
+  `f64`, `boolean`, `string`, `T[]`, and `Map[K, V]` over
+  any of those. The **two-cursor allocator** (one persistent
+  cursor at mem[44] + a per-request arena cursor at mem[40]
+  + an active-mode flag at mem[48]) routes state-rooted
+  allocations to the persistent heap region so Map / T[]
+  mutations survive `arena_restore` at handler exit. State-
+  rooted call sites are detected at IR-lowering time:
+  `__method_<Type>_<method>(<state-var>, args...)` toggles
+  persistent mode for the duration of the call (including
+  arg evaluation), composing through nested state-rooted
+  calls via a save/restore shape. Same machinery wraps
+  state-var assignments so RHS-side allocations (string
+  concat, struct/enum construction) also land in persistent.
+
+  User structs / enums-with-payload state vars still
+  reject — those mutation patterns vary per method and
+  haven't been audited yet.
+
+  **Persistent region is fixed-size 4 MiB** today (reserved
+  upfront in linear memory between the static data segment
+  and the arena heap). Programs without `state{}` keep the
+  original single-cursor layout (no upfront cost).
 
   **Host-runtime caveat for wasi-http.** State persistence
   across `handle()` calls depends on the host keeping the
@@ -841,11 +854,16 @@ to smallest. Status pending unless marked.
   embeddings) DO see persistence; the wasm-level semantics
   are correct.
 
-  **Backend coverage.** wasm + wasi-http + arm32: all
-  shipped. arm32 lowers each state var to a `.data` label
-  (literal init pre-baked when possible, zero / null
-  placeholder otherwise); OpLoadGlobal / OpStoreGlobal emit
-  `ldr =state_<name>` + LDR / STR. Tested under qemu-arm via
+  **Backend coverage.** wasm + wasi-http: full two-cursor
+  allocator with state-rooted call-site wrapping. arm32:
+  state{} declarations + init expressions ship; the
+  persistent cursor is a no-op (OpPersistentSet pushes /
+  OpPersistentRestore pops a placeholder value) since arm32
+  is CLI-only today and there's no `arena_save` /
+  `arena_restore` cycle to reclaim state allocations. Once
+  arm32 grows a handler model (the native HTTP server work)
+  the persistent-cursor wiring lifts straight from the wasm
+  side. Tested under qemu-arm via
   `TestArm32StateScalarCounter`,
   `TestArm32StateMultipleVars`,
   `TestArm32StateStringConcat`, and

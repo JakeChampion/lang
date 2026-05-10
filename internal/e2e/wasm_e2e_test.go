@@ -3192,6 +3192,105 @@ function main(): i32 {
 	}
 }
 
+// State Map mutation across function calls. Verifies the
+// two-cursor allocator: state-rooted method calls toggle the
+// allocator into persistent mode, so any internal allocations
+// (Map grow, entry-array reallocation) live in the persistent
+// heap region and survive the per-request `arena_save` ->
+// `arena_restore` cycle. Without persistent routing, the second
+// `arena_save` would reset the cursor past the post-grow Map
+// buffer and the third lookup would read freed memory.
+//
+// Driven entirely from main() inside a single wasm instance,
+// so this exercises within-instance state persistence — the
+// host doesn't need to keep the instance alive across requests
+// for this assertion.
+func TestWASMStateMapAcrossCalls(t *testing.T) {
+	src := `state {
+    var todos: Map[i32, string] = map_new(4);
+}
+
+function add(id: i32, text: string): void {
+    todos.set(id, text);
+}
+
+function get(id: i32): string {
+    return todos.get_or(id, "?");
+}
+
+function main(): i32 {
+    add(1, "buy milk");
+    add(2, "feed cat");
+    add(3, "walk dog");
+    var got: string = get(2);
+    if (got == "feed cat") { return 42; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (state Map.set+get_or persists across calls)", got)
+	}
+}
+
+// State Map mutation that triggers a grow. The initial Map
+// capacity is 4; inserting 10 entries forces several rehashes
+// + bucket-array reallocations. Without the two-cursor
+// allocator, the grow buffers would land in the per-request
+// arena and arena_restore at handler exit would reclaim them
+// while `todos`'s pointer still references the freed slab.
+// With the wrap, every grow goes to persistent.
+func TestWASMStateMapWithGrow(t *testing.T) {
+	src := `state {
+    var todos: Map[i32, i32] = map_new(4);
+}
+
+function add(k: i32, v: i32): void {
+    todos.set(k, v);
+}
+
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 10) {
+        add(i, i * 2);
+        i = i + 1;
+    }
+    if (todos.len() != 10) { return 1; }
+    if (todos.get_or(7, -1) != 14) { return 2; }
+    if (todos.get_or(99, -1) != -1) { return 3; }
+    return 42;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (state Map across grow)", got)
+	}
+}
+
+// State T[] mutation. arr.push allocates a fresh backing
+// buffer; the persistent-mode wrap ensures the new buffer
+// lives in the persistent heap so subsequent reads still see
+// it after arena_restore. Same shape as the Map test but for
+// the array push path.
+func TestWASMStateArrayPush(t *testing.T) {
+	src := `state {
+    var hits: i32[] = [];
+}
+
+function record(n: i32): void {
+    hits = hits.push(n);
+}
+
+function main(): i32 {
+    record(10);
+    record(20);
+    record(30);
+    if (len(hits) != 3) { return 1; }
+    if (hits[0] != 10) { return 2; }
+    if (hits[2] != 30) { return 3; }
+    return len(hits) * 14;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (state array push persists across calls)", got)
+	}
+}
+
 // State string: immutable pointer-shaped state. The init runs
 // at module instantiation via the synthesised `__state_init`
 // start function, before any user code; the resulting string

@@ -48,6 +48,7 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		printMainResult:   opts.PrintMainResult,
 		origTopLevelCount: countOrigTopLevel(prog),
 		stateDecls:        prog.States,
+		needsPersistent:   len(prog.States) > 0,
 		stringPool:        map[string]int{},
 		funcIndex:         map[string]int{},
 		sigIndex:          map[string]int{},
@@ -650,6 +651,21 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.linef("global.get $state_%s", op.Str)
 	case ir.OpStoreGlobal:
 		g.linef("global.set $state_%s", op.Str)
+	case ir.OpPersistentSet:
+		// Toggle the state-allocator-mode flag. The wat shim
+		// `__lang_set_persistent_mode(flag)` writes the new mode
+		// to mem[48] and returns the previous mode so callers
+		// can restore on exit. I32 carries the new mode (1 =
+		// persistent, 0 = arena).
+		g.linef("i32.const %d", op.I32)
+		g.line("call $__lang_set_persistent_mode")
+	case ir.OpPersistentRestore:
+		// Pop the previously-saved mode off the operand stack
+		// and write it back through the same wat shim. The
+		// shim's return value (the now-replaced mode) is
+		// discarded — restoration happens once per save site.
+		g.line("call $__lang_set_persistent_mode")
+		g.line("drop")
 	case ir.OpAdd:
 		g.linef("%s.add", intPrefix())
 	case ir.OpSub:

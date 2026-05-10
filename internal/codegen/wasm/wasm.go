@@ -205,6 +205,14 @@ type generator struct {
 	// as wasm globals after the memory declaration. Empty for
 	// programs without state blocks.
 	stateDecls []*ast.StateDecl
+	// needsPersistent is true when the program has any state{}
+	// block. Triggers the two-cursor allocator wiring: a
+	// reserved persistent heap region between the strings and
+	// the arena, a separate persistent cursor at mem[44], and
+	// an active-mode flag at mem[48] that __lang_alloc consults
+	// to decide which cursor to bump. Programs without state
+	// keep the single-cursor layout for minimum overhead.
+	needsPersistent bool
 
 	// Runtime / strings / arrays.
 	needsRuntime  bool
@@ -1920,7 +1928,28 @@ func (g *generator) emitRuntimePreamble() {
 		// might need them for the future-trailers (no — future-trailers.drop
 		// is what we use; we don't subscribe). Skip.
 	}
-	g.line(`(memory $mem 1)`)
+	// Memory layout with state{}-block support:
+	//   [0..63]                     reserved scratch
+	//   [64..stringEnd]             string entries + closure cells
+	//   [stringEnd..arenaStart]     persistent heap (state allocations)
+	//   [arenaStart..]              arena heap (per-request)
+	// where `arenaStart = stringEnd + persistentRegionBytes`.
+	//
+	// When the program has any state{} block we reserve
+	// `persistentRegionBytes` (= 4 MiB) up front for state-init
+	// allocations + future state-rooted mutations. Programs
+	// without state keep the original single-cursor layout
+	// (mem[40] starts at stringEnd, mem[44] / mem[48] / mem[52]
+	// are unused). Memory pages are sized accordingly so the
+	// data-segment writes for the cursor globals always land
+	// in addressable memory.
+	if g.needsPersistent {
+		// 64 pages * 64 KiB = 4 MiB persistent + ~1 page for static
+		// + arena startup. memory.grow extends arena as it fills.
+		g.line(`(memory $mem 64)`)
+	} else {
+		g.line(`(memory $mem 1)`)
+	}
 
 	// state{}-block module-globals. Each `state { var NAME: T = LIT; }`
 	// becomes a mutable wasm global named `$state_<NAME>` whose
@@ -1955,11 +1984,51 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(func $__lang_alloc (param $size i32) (result i32)`)
 		g.indent++
 		g.line(`(local $ptr i32) (local $end i32) (local $need i32)`)
-		// ptr = mem[40]
+		if g.needsPersistent {
+			// Two-cursor allocator: mem[48] selects which cursor
+			// to bump. 0 = arena (mem[40]), non-zero = persistent
+			// (mem[44]). Persistent allocations stay below the
+			// per-request `arena_save` boundary even when bumped
+			// during handle() bodies, so state mutations survive
+			// `arena_restore` cleanly. Persistent OOMs trap on
+			// crossing mem[52] (the persistent floor); arena OOMs
+			// extend memory via memory.grow as before.
+			g.line(`i32.const 48`)
+			g.line(`i32.load`)
+			g.line(`if`)
+			g.indent++
+			// Persistent path: ptr = mem[44]; mem[44] = ptr + size;
+			// trap if mem[44] > mem[52] (cap).
+			g.line(`i32.const 44`)
+			g.line(`i32.load`)
+			g.line(`local.set $ptr`)
+			g.line(`local.get $ptr`)
+			g.line(`local.get $size`)
+			g.line(`i32.add`)
+			g.line(`local.set $end`)
+			g.line(`local.get $end`)
+			g.line(`i32.const 52`)
+			g.line(`i32.load`)
+			g.line(`i32.gt_u`)
+			g.line(`if`)
+			g.indent++
+			// Persistent OOM: 4 MiB region exhausted. Trap.
+			g.line(`unreachable`)
+			g.indent--
+			g.line(`end`)
+			g.line(`i32.const 44`)
+			g.line(`local.get $end`)
+			g.line(`i32.store`)
+			g.line(`local.get $ptr`)
+			g.line(`return`)
+			g.indent--
+			g.line(`end`)
+		}
+		// Arena path: ptr = mem[40]; end = ptr + size; grow memory
+		// if end > current pages * 64KB; mem[40] = end; return ptr.
 		g.line(`i32.const 40`)
 		g.line(`i32.load`)
 		g.line(`local.set $ptr`)
-		// end = ptr + size
 		g.line(`local.get $ptr`)
 		g.line(`local.get $size`)
 		g.line(`i32.add`)
@@ -1991,6 +2060,30 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $ptr`)
 		g.indent--
 		g.line(`)`)
+
+		if g.needsPersistent {
+			// $__lang_set_persistent_mode(flag) — save the previous
+			// mode, set the new one, return the old. Codegen wraps
+			// state-init bodies and state-rooted call sites as:
+			//   prev = __lang_set_persistent_mode(1)
+			//   <work>
+			//   __lang_set_persistent_mode(prev)
+			// The save/restore shape composes through nested calls
+			// without the inner reset clobbering an outer "we're
+			// already in persistent mode" frame.
+			g.line(`(func $__lang_set_persistent_mode (param $flag i32) (result i32)`)
+			g.indent++
+			g.line(`(local $prev i32)`)
+			g.line(`i32.const 48`)
+			g.line(`i32.load`)
+			g.line(`local.set $prev`)
+			g.line(`i32.const 48`)
+			g.line(`local.get $flag`)
+			g.line(`i32.store`)
+			g.line(`local.get $prev`)
+			g.indent--
+			g.line(`)`)
+		}
 	}
 
 	if g.needsStrEq {
@@ -5764,7 +5857,14 @@ func (g *generator) emitDataSegments() {
 	}
 	// Bump-allocator initial pointer at offset 40. We seed it past the
 	// end of the strings, rounded up to 4 bytes for i32 access.
-	if g.needsArrays {
+	//
+	// When state{} is in use, mem[40] (arena cursor) starts AFTER
+	// the reserved persistent region; mem[44] (persistent cursor)
+	// starts at the post-strings offset; mem[52] (persistent
+	// floor) caps the persistent region. The two-cursor layout is
+	// described in detail at the (memory $mem ...) declaration in
+	// the same file.
+	if g.needsArrays || g.needsPersistent {
 		start := g.stringOffset
 		if start < 64 {
 			start = 64
@@ -5772,9 +5872,25 @@ func (g *generator) emitDataSegments() {
 		if start%4 != 0 {
 			start += 4 - (start % 4)
 		}
-		g.linef(`(data (i32.const 40) "%s")`, encodeI32(start))
+		if g.needsPersistent {
+			persistentStart := start
+			arenaStart := start + persistentRegionBytes
+			g.linef(`(data (i32.const 40) "%s")`, encodeI32(arenaStart))
+			g.linef(`(data (i32.const 44) "%s")`, encodeI32(persistentStart))
+			g.linef(`(data (i32.const 52) "%s")`, encodeI32(arenaStart))
+		} else {
+			g.linef(`(data (i32.const 40) "%s")`, encodeI32(start))
+		}
 	}
 }
+
+// persistentRegionBytes is the size of the reserved persistent
+// heap region for state{}-block allocations. Sits between the
+// strings and the arena heap. 4 MiB is enough for typical state
+// (counters, small Maps, small T[]); programs that need more
+// will trap on persistent OOM until the region grows
+// dynamically — that's a future PR.
+const persistentRegionBytes = 4 * 1024 * 1024
 
 // encodeI32 returns a four-byte little-endian byte string in WAT data
 // escape form (e.g. 13 → `\0d\00\00\00`).

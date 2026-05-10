@@ -158,6 +158,24 @@ func (g *generator) emitOpsFromIR(
 			g.emit("pop {r0}")
 			g.emit("ldr r1, =state_%s", op.Str)
 			g.emit("str r0, [r1]")
+		case ir.OpPersistentSet:
+			// arm32 today is CLI-only (no handler model, so no
+			// per-request `arena_save` / `arena_restore` to
+			// reclaim state allocations). The two-cursor
+			// allocator is a wasm-only requirement; here we
+			// emit a no-op that pushes a placeholder value
+			// matching the wasm shape (an i32 representing
+			// "previous mode") so the matching
+			// OpPersistentRestore has something to consume.
+			g.emit("mov r0, #0")
+			g.emit("push {r0}")
+		case ir.OpPersistentRestore:
+			// Pop the previously-saved mode placeholder pushed
+			// by OpPersistentSet and discard it. State
+			// persistence on arm32 is a future PR (wires in a
+			// real persistent cursor + mode flag once a
+			// handler model lands here too).
+			g.emit("pop {r0}")
 		case ir.OpStoreLocal:
 			g.emit("pop {r0}")
 			if reg, ok := paramReg[int(op.I32)]; ok {
