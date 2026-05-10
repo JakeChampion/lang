@@ -57,26 +57,23 @@ function tokenize(s: string): string[] {
 
 // Sort by count descending via insertion sort. Operates on
 // parallel keys / counts arrays so the i32-keyed swap is a
-// straight memory shuffle. The lang's current closure
-// capture is scalar-only, so swap is a top-level function
-// with the arrays passed in by reference (arrays are
-// pointer-typed at the wasm layer — mutating arr[i] is
-// observable to the caller).
-function swap_pairs(keys: string[], counts: i32[], i: i32, j: i32): void {
-  var tk: string = keys[i];
-  var tc: i32 = counts[i];
-  keys[i] = keys[j];
-  counts[i] = counts[j];
-  keys[j] = tk;
-  counts[j] = tc;
-}
-
+// straight memory shuffle. With heap-capture closures, swap
+// lives inline as a local function that captures both arrays
+// from the enclosing scope — no parameter threading needed.
 function sort_pairs(keys: string[], counts: i32[]): void {
+  function swap(i: i32, j: i32): void {
+    var tk: string = keys[i];
+    var tc: i32 = counts[i];
+    keys[i] = keys[j];
+    counts[i] = counts[j];
+    keys[j] = tk;
+    counts[j] = tc;
+  }
   var i: i32 = 1;
   while (i < len(counts)) {
     var j: i32 = i;
     while (j > 0 && counts[j] > counts[j - 1]) {
-      swap_pairs(keys, counts, j, j - 1);
+      swap(j, j - 1);
       j = j - 1;
     }
     i = i + 1;

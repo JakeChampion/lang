@@ -2227,6 +2227,12 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 				return t
 			}
 		}
+	case *ast.CaptureRef:
+		// Captured variable references carry their resolved
+		// outer-scope type on the AST node — needed when the
+		// closure body asks "what struct/tuple is this?" for
+		// field-access offset resolution.
+		return x.Type
 	case *ast.SliceExpr:
 		// Slice expressions always produce a SliceType — the
 		// element type is the same as the source.
@@ -2337,6 +2343,12 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 		}
 	case *ast.StructLit:
 		return x.TypeName
+	case *ast.CaptureRef:
+		// A captured struct value: the env loads the heap
+		// pointer; the struct decl is named on x.Type.
+		if st, ok := x.Type.(ast.StructType); ok {
+			return st.Name
+		}
 	}
 	return ""
 }

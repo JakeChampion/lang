@@ -3352,6 +3352,83 @@ func TestWASMClosureCapturesParamAndVar(t *testing.T) {
 	}
 }
 
+// Pointer-shaped captures: string, T[], struct, enum heap refs
+// fit in the same 4-byte env slot scalars use. The hoisted
+// closure body loads them via `i32.load __env+offset` and the
+// type-system tracks the reference correctly through the body.
+
+func TestWASMClosureCapturesString(t *testing.T) {
+	src := `function outer(s: string): i32 {
+    function inner(): i32 { return len(s); }
+    return inner();
+}
+function main(): i32 { return outer("hello"); }`
+	if got := runWasm(t, src); got != 5 {
+		t.Errorf("got %d, want 5 (len(\"hello\") via captured string)", got)
+	}
+}
+
+func TestWASMClosureCapturesArray(t *testing.T) {
+	src := `function outer(xs: i32[]): i32 {
+    function inner(i: i32): i32 { return xs[i]; }
+    return inner(2);
+}
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30, 40];
+    return outer(xs);
+}`
+	if got := runWasm(t, src); got != 30 {
+		t.Errorf("got %d, want 30 (xs[2] via captured array)", got)
+	}
+}
+
+func TestWASMClosureCapturesStruct(t *testing.T) {
+	src := `struct Pt { x: i32, y: i32 }
+function outer(p: Pt): i32 {
+    function inner(): i32 { return p.x + p.y; }
+    return inner();
+}
+function main(): i32 {
+    var p: Pt = Pt { x: 10, y: 32 };
+    return outer(p);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (struct field access via captured struct)", got)
+	}
+}
+
+func TestWASMClosureCapturesEnum(t *testing.T) {
+	src := `function outer(o: Option[i32]): i32 {
+    function inner(): i32 {
+        return match (o) {
+            Some(x) => x * 10,
+            None    => 0
+        };
+    }
+    return inner();
+}
+function main(): i32 { return outer(Some(7)); }`
+	if got := runWasm(t, src); got != 70 {
+		t.Errorf("got %d, want 70 (Some(7).x * 10 via captured enum)", got)
+	}
+}
+
+// Multiple pointer captures in one closure — exercises offset
+// arithmetic for non-zero slot indexes.
+func TestWASMClosureCapturesMixedPointers(t *testing.T) {
+	src := `function outer(s: string, xs: i32[]): i32 {
+    function inner(): i32 { return len(s) + len(xs); }
+    return inner();
+}
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    return outer("hi", xs);
+}`
+	if got := runWasm(t, src); got != 5 {
+		t.Errorf("got %d, want 5 (len(\"hi\")=2 + len([1,2,3])=3)", got)
+	}
+}
+
 func TestWASMMethodOnStruct(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function (p: Point) sum(): i32 { return p.x + p.y; }
