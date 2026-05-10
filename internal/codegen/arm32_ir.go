@@ -468,6 +468,19 @@ func (g *generator) emitFunctionFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.emit("bx lr")
 	g.cfi(".cfi_endproc")
 	g.line(fmt.Sprintf(".size %s, .-%s", fn.Name, fn.Name))
+	// `.ltorg` flushes the literal pool the GAS assembler
+	// accumulates as it sees `ldr rN, =LABEL` operands.
+	// Without an explicit flush, GAS waits until end-of-input
+	// and ends up with `=LABEL` references too far from their
+	// `ldr` (the `pc + offset12` encoding is limited to ±4 KiB).
+	// Emitting once per function caps the unflushed pool at the
+	// function's size, which is well under the 4 KiB cap for
+	// every function we generate today (the biggest user-
+	// authored functions stay around a few hundred ops; the
+	// runtime helpers in arm32_syscall.go already emit `.ltorg`
+	// inline). Idempotent on small functions — the assembler
+	// emits nothing when the pending pool is empty.
+	g.line(".ltorg")
 	return nil
 }
 
