@@ -107,6 +107,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if err != nil {
 		return "", err
 	}
+	// Tail-call optimisation. Rewrites self-tail calls into
+	// a parameter rebind + backward branch to a wrapped
+	// outer loop — self-recursive functions run in O(1)
+	// stack depth. Backported from the x86-64 backend (the
+	// pass's first consumer); shape is target-agnostic so
+	// the wire-up is the same one-liner.
+	ir.TailCallOptimize(ip)
 	g := &generator{info: info, stringLabel: map[string]string{}, darwin: opts.Darwin}
 	// Pre-scan IR functions to set use-flags that emitStartRuntime
 	// reads. emitStartRuntime runs before the per-function walk

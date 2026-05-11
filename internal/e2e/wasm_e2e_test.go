@@ -5111,3 +5111,24 @@ func TestWASMFloatToString(t *testing.T) {
 		t.Errorf("WASM float to_string: exit = %d, want 0", got)
 	}
 }
+
+// Tail-call optimisation. wasm now wires `ir.TailCallOptimize`
+// (backported from PR #274's x86-64 first-consumer wire-up
+// and the arm64 sibling backport). Single assertion: a
+// 100,000-deep self-tail-recursive `sum_to` returns the
+// right value through `wasmtime --invoke main`. Without
+// TCO this would exceed wasmtime's default stack depth long
+// before completing.
+func TestWASMTailCall(t *testing.T) {
+	src := `function sum_to(n: i32, acc: i32): i32 {
+    if (n == 0) { return acc; }
+    return sum_to(n - 1, acc + n);
+}
+function main(): i32 {
+    return sum_to(100000, 0);
+}`
+	// 100,000 * 100,001 / 2 = 5,000,050,000 → i32 (mod 2^32) = 705,082,704.
+	if got := runWasm(t, src); got != 705082704 {
+		t.Errorf("sum_to(100000, 0) → %d, want 705082704", got)
+	}
+}

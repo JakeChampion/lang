@@ -139,6 +139,14 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	if err != nil {
 		return "", err
 	}
+	// Tail-call optimisation — same one-liner backport
+	// from x86-64 PR 6 / arm64 (this PR). Self-tail calls
+	// become a parameter rebind + backward branch, so
+	// self-recursive functions stay O(1) in wasm-side
+	// call-stack depth (helpful when wasmtime's default
+	// stack-limit knob actually matters in a real edge-
+	// handler workload).
+	ir.TailCallOptimize(ip)
 	ir.Inline(ip)
 	// Defunctionalise rewrites monomorphic-flow closure calls
 	// (`var f = MakeClosure(...); ... f(args)`) to direct calls

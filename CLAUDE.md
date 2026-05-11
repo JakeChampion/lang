@@ -46,12 +46,12 @@ as a constraint to preserve.
   Six PR shape (#269–#274) covers everything from exit
   codes through arithmetic, control flow, strings + alloc,
   composite types + floats, TCP + HTTP, and the
-  `ir.TailCallOptimize` pass (parked since arm32 retired;
-  x86-64 is its first consumer — arm64 + wasm don't call
-  it yet). End-to-end parity with arm64 for the edge-
-  handler use case (`function handle(req): resp` →
-  serving HTTP/1.1). No Darwin x86-64; Apple Silicon is
-  the active macOS path.
+  `ir.TailCallOptimize` pass (which is now also wired in
+  arm64 + wasm — same one-line backport, every backend
+  gets O(1) stack depth on self-tail recursion). End-to-
+  end parity with arm64 for the edge-handler use case
+  (`function handle(req): resp` → serving HTTP/1.1). No
+  Darwin x86-64; Apple Silicon is the active macOS path.
 
 The IR layer is target-agnostic; new optimisations should live in `internal/ir`
 so all backends benefit.
