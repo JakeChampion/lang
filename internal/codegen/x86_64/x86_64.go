@@ -174,6 +174,16 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 			return "", err
 		}
 	}
+	// Reader/Writer runtime is emitted as a single bundle: every
+	// helper (open_*, read_line, read_chunk, close, write,
+	// make_handle, stdin/stdout/stderr) ships together. Drag in
+	// the bundle's transitive deps (alloc, memcpy, the IoError
+	// box helper) whenever the bundle itself is pulled in.
+	if g.usesReaderWriter {
+		g.usesIoError = true
+		g.usesMemcpy = true
+		g.usesAlloc = true
+	}
 	// Runtime helpers — gated on use-flags so unused programs
 	// pay nothing extra in binary size.
 	if g.usesAlloc {
@@ -251,6 +261,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
+	}
+	if g.usesReaderWriter {
+		// Bundle: open_reader/writer/appender + stdin/stdout/
+		// stderr handle constructors + Reader.read_line /
+		// read_chunk / close + Writer.write / close +
+		// __lang_make_handle + __lang_close_fd_box. Shares
+		// __lang_read_line_buf with the stdin-only read_line
+		// helper (4 KiB scratch).
+		g.emitReaderWriterRuntime()
 	}
 	g.emitDataSections()
 	// ELF non-executable-stack marker. Without this the
@@ -332,6 +351,12 @@ type generator struct {
 	// interpretation this PR implements.
 	stateDecls    []*ast.StateDecl
 	usesStateInit bool
+
+	// usesReaderWriter pulls in the full Reader / Writer
+	// runtime bundle (stdin/stdout/stderr + open_reader /
+	// open_writer / open_appender + Reader/Writer method
+	// helpers). Mirrors the arm64 generator's flag.
+	usesReaderWriter bool
 }
 
 // recordUse flips the right use-flag for a callee name the
@@ -391,12 +416,18 @@ func (g *generator) recordUse(target string) {
 	case "random_bytes":
 		g.usesRandomBytes = true
 		g.usesAlloc = true
-	case "read_line", "__method_Reader_read_line":
+	case "read_line":
 		g.usesReadLine = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
-	case "stdin":
-		g.usesStdin = true
+	case "__method_Reader_read_line",
+		"__method_Reader_read_chunk",
+		"__method_Reader_close",
+		"__method_Writer_write",
+		"__method_Writer_close",
+		"open_reader", "open_writer", "open_appender",
+		"stdin", "stdout", "stderr":
+		g.usesReaderWriter = true
 	case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr", "__ptr_width":
 		// Map runtime's raw int/pointer pokes — each lowers
 		// to a single mov + ret.
@@ -1262,10 +1293,29 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_write_file"
 		case "random_bytes":
 			target = "__lang_random_bytes"
-		case "read_line", "__method_Reader_read_line":
+		case "read_line":
 			target = "__lang_read_line"
+		case "__method_Reader_read_line":
+			target = "__lang_reader_read_line"
+		case "__method_Reader_read_chunk":
+			target = "__lang_reader_read_chunk"
+		case "__method_Reader_close",
+			"__method_Writer_close":
+			target = "__lang_close_fd_box"
+		case "__method_Writer_write":
+			target = "__lang_writer_write"
+		case "open_reader":
+			target = "__lang_open_reader"
+		case "open_writer":
+			target = "__lang_open_writer"
+		case "open_appender":
+			target = "__lang_open_appender"
 		case "stdin":
 			target = "__lang_stdin"
+		case "stdout":
+			target = "__lang_stdout"
+		case "stderr":
+			target = "__lang_stderr"
 		case "__str_idx", "__arr_idx", "__arr_idx_2", "__arr_idx_8",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
@@ -1642,7 +1692,7 @@ func (g *generator) emitDataSections() {
 			g.line(`	.asciz "\n"`)
 		}
 	}
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter {
 		g.line("")
 		g.line(".section .bss")
 		if g.usesAlloc {
@@ -1669,11 +1719,11 @@ func (g *generator) emitDataSections() {
 			g.label("__lang_args_cache")
 			g.line("\t.quad 0")
 		}
-		if g.usesReadLine {
+		if g.usesReadLine || g.usesReaderWriter {
 			// 4 KiB scratch buffer for the byte-by-byte
-			// read loop. Same fixed cap arm64 uses; if a
-			// real workload ever needs longer lines we
-			// move to a growable read buffer.
+			// read loop. Shared by stdin-only
+			// __lang_read_line and the Reader-receiving
+			// __lang_reader_read_line.
 			g.line(".align 8")
 			g.label("__lang_read_line_buf")
 			g.line("\t.space 4096")
@@ -2992,6 +3042,303 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_write_file, .-__lang_write_file")
+}
+
+// emitReaderWriterRuntime emits the full Reader / Writer
+// runtime bundle on x86-64. Mirrors arm64's helper of the same
+// name — same handle layout (4-byte i32 fd at +0), same wasm-
+// shaped Result/Option boxes, same shared __lang_io_error
+// error path. See the arm64 generator's comment for the
+// design rationale.
+func (g *generator) emitReaderWriterRuntime() {
+	// __lang_make_handle(fd) → ptr to {fd:i32 @0}.
+	g.line("")
+	g.line(".globl __lang_make_handle")
+	g.line(".type __lang_make_handle, @function")
+	g.label("__lang_make_handle")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8")
+	g.emit("mov ebx, edi") // stash fd
+	g.emit("mov edi, 4")
+	g.emit("call __lang_alloc")
+	g.emit("mov [rax], ebx")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_make_handle, .-__lang_make_handle")
+
+	// __lang_stdin / __lang_stdout / __lang_stderr.
+	for _, e := range []struct {
+		sym string
+		fd  int
+	}{
+		{"__lang_stdin", 0},
+		{"__lang_stdout", 1},
+		{"__lang_stderr", 2},
+	} {
+		g.line("")
+		g.line(".globl " + e.sym)
+		g.line(".type " + e.sym + ", @function")
+		g.label(e.sym)
+		g.emit(fmt.Sprintf("mov edi, %d", e.fd))
+		g.emit("jmp __lang_make_handle") // tail-call
+		g.line(".size " + e.sym + ", .-" + e.sym)
+	}
+
+	// open_reader / open_writer / open_appender.
+	for _, e := range []struct {
+		sym       string
+		flags     int
+		mode      int
+	}{
+		{"__lang_open_reader", 0, 0},
+		{"__lang_open_writer", 577, 0644},
+		{"__lang_open_appender", 1089, 0644},
+	} {
+		g.line("")
+		g.line(".globl " + e.sym)
+		g.line(".type " + e.sym + ", @function")
+		g.label(e.sym)
+		g.emit("push rbp")
+		g.emit("mov rbp, rsp")
+		g.emit("push rbx") // path
+		g.emit("push r12") // handle / errno scratch
+		g.emit("mov rbx, rdi") // path
+		// openat(AT_FDCWD, path, flags, mode)
+		g.emit("mov edi, -100")
+		g.emit("mov rsi, rbx")
+		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
+		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
+		g.emit("mov eax, 257") // openat
+		g.emit("syscall")
+		g.emit("test rax, rax")
+		g.emit("js .Lorw_err_" + e.sym)
+		// Success: alloc handle, store fd, wrap in Ok box.
+		g.emit("mov edi, eax")
+		g.emit("call __lang_make_handle")
+		g.emit("mov r12, rax") // handle ptr in callee-save
+		g.emit("mov edi, 16")
+		g.emit("call __lang_alloc")
+		g.emit("mov dword ptr [rax], 0") // tag=0 (Ok)
+		g.emit("mov [rax + 8], r12")
+		g.emit("jmp .Lorw_ret_" + e.sym)
+		g.label(".Lorw_err_" + e.sym)
+		g.emit("neg rax")
+		g.emit("mov edi, eax")    // errno
+		g.emit("mov rsi, rbx")    // path
+		g.emit("call __lang_io_error")
+		g.emit("mov r12, rax")    // IoError ptr
+		g.emit("mov edi, 16")
+		g.emit("call __lang_alloc")
+		g.emit("mov dword ptr [rax], 1") // Err
+		g.emit("mov [rax + 8], r12")
+		g.label(".Lorw_ret_" + e.sym)
+		g.emit("pop r12")
+		g.emit("pop rbx")
+		g.emit("pop rbp")
+		g.emit("ret")
+		g.line(".size " + e.sym + ", .-" + e.sym)
+	}
+
+	// __lang_reader_read_line(reader_ptr) → Option[string].
+	g.line("")
+	g.line(".globl __lang_reader_read_line")
+	g.line(".type __lang_reader_read_line, @function")
+	g.label("__lang_reader_read_line")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // fd
+	g.emit("push r12") // buf base
+	g.emit("push r13") // bytes_read
+	g.emit("push r14") // last byte
+	g.emit("mov ebx, [rdi]") // fd
+	g.emit("lea r12, [rip + __lang_read_line_buf]")
+	g.emit("xor r13, r13")
+	g.label(".Lrrl_loop")
+	g.emit("cmp r13, 4096")
+	g.emit("jge .Lrrl_done")
+	g.emit("mov edi, ebx")
+	g.emit("lea rsi, [r12 + r13]")
+	g.emit("mov edx, 1")
+	g.emit("xor eax, eax")
+	g.emit("syscall")
+	g.emit("cmp rax, 1")
+	g.emit("jl .Lrrl_done")
+	g.emit("movzx r14d, byte ptr [r12 + r13]")
+	g.emit("inc r13")
+	g.emit("cmp r14d, 10")
+	g.emit("je .Lrrl_done")
+	g.emit("jmp .Lrrl_loop")
+	g.label(".Lrrl_done")
+	g.emit("test r13, r13")
+	g.emit("jne .Lrrl_some")
+	// None
+	g.emit("mov edi, 4")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 1")
+	g.emit("jmp .Lrrl_ret")
+	g.label(".Lrrl_some")
+	g.emit("lea rdi, [r13 + 5]")
+	g.emit("call __lang_alloc")
+	g.emit("mov [rax], r13d") // length prefix
+	g.emit("lea r14, [rax + 4]") // data ptr
+	g.emit("mov rdi, r14")
+	g.emit("mov rsi, r12")
+	g.emit("mov rdx, r13")
+	g.emit("call __lang_memcpy")
+	// trailing NUL
+	g.emit("mov byte ptr [r14 + r13], 0")
+	g.emit("mov rbx, r14")    // stash str ptr (rbx no longer needed for fd)
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 0")
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lrrl_ret")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_reader_read_line, .-__lang_reader_read_line")
+
+	// __lang_reader_read_chunk(reader_ptr, n) → Option[string].
+	g.line("")
+	g.line(".globl __lang_reader_read_chunk")
+	g.line(".type __lang_reader_read_chunk, @function")
+	g.label("__lang_reader_read_chunk")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // fd
+	g.emit("push r12") // n
+	g.emit("push r13") // base ptr
+	g.emit("sub rsp, 8")
+	g.emit("mov ebx, [rdi]") // fd
+	g.emit("mov r12, rsi")    // n
+	// alloc n + 4
+	g.emit("lea rdi, [r12 + 4]")
+	g.emit("call __lang_alloc")
+	g.emit("mov r13, rax")
+	// read(fd, base+4, n)
+	g.emit("mov edi, ebx")
+	g.emit("lea rsi, [r13 + 4]")
+	g.emit("mov rdx, r12")
+	g.emit("xor eax, eax")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("jle .Lrrc_none")
+	g.emit("mov [r13], eax")
+	g.emit("mov r12, rax") // r12 = bytes_read
+	g.emit("lea rbx, [r13 + 4]") // data ptr
+	g.emit("mov byte ptr [rbx + r12], 0") // trailing NUL within alloc
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 0")
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lrrc_ret")
+	g.label(".Lrrc_none")
+	g.emit("mov edi, 4")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 1")
+	g.label(".Lrrc_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_reader_read_chunk, .-__lang_reader_read_chunk")
+
+	// __lang_writer_write(writer_ptr, s) → Option[IoError].
+	g.line("")
+	g.line(".globl __lang_writer_write")
+	g.line(".type __lang_writer_write, @function")
+	g.label("__lang_writer_write")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // fd
+	g.emit("push r12") // s data ptr
+	g.emit("push r13") // remaining bytes
+	g.emit("push r14") // bytes_written
+	g.emit("mov ebx, [rdi]") // fd
+	g.emit("mov r12, rsi")
+	g.emit("mov r13d, [r12 - 4]") // len
+	g.emit("xor r14, r14")
+	g.label(".Lww_loop")
+	g.emit("cmp r14, r13")
+	g.emit("jge .Lww_done")
+	g.emit("mov edi, ebx")
+	g.emit("lea rsi, [r12 + r14]")
+	g.emit("mov rdx, r13")
+	g.emit("sub rdx, r14")
+	g.emit("mov eax, 1") // write
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lww_err")
+	g.emit("add r14, rax")
+	g.emit("jmp .Lww_loop")
+	g.label(".Lww_done")
+	g.emit("mov edi, 4")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 1") // None
+	g.emit("jmp .Lww_ret")
+	g.label(".Lww_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __lang_io_error")
+	g.emit("mov r12, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 0") // Some
+	g.emit("mov [rax + 8], r12")
+	g.label(".Lww_ret")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_writer_write, .-__lang_writer_write")
+
+	// __lang_close_fd_box(handle_ptr) → Option[IoError].
+	// Shared by Reader.close + Writer.close.
+	g.line("")
+	g.line(".globl __lang_close_fd_box")
+	g.line(".type __lang_close_fd_box, @function")
+	g.label("__lang_close_fd_box")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8")
+	g.emit("mov edi, [rdi]") // fd
+	g.emit("mov eax, 3") // close
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lcfb_err")
+	g.emit("mov edi, 4")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 1") // None
+	g.emit("jmp .Lcfb_ret")
+	g.label(".Lcfb_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __lang_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 0") // Some
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lcfb_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_close_fd_box, .-__lang_close_fd_box")
 }
 
 // stateWidthBytes returns the storage width (4 or 8 bytes) for

@@ -177,6 +177,20 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 			return "", err
 		}
 	}
+	// The Reader/Writer runtime is emitted as a single bundle:
+	// every helper (open_*, read_line, read_chunk, close,
+	// write, make_handle, stdin/stdout/stderr) ships together.
+	// That means whenever the bundle is pulled in, its
+	// callees must be too — __lang_alloc, __lang_memcpy, and
+	// the IoError box constructor (`.LStr_ioerr_empty` lives
+	// there) all show up indirectly. usesReaderWriter is set
+	// during per-function emit (above), so we propagate here
+	// before the runtime-gate checks below.
+	if g.usesReaderWriter {
+		g.usesIoError = true
+		g.usesMemcpy = true
+		g.usesAlloc = true
+	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 	}
@@ -252,6 +266,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
+	}
+	if g.usesReaderWriter {
+		// Reader / Writer struct constructors (stdin/stdout/
+		// stderr + open_reader/writer/appender) + the method
+		// runtimes (read_line / read_chunk / close / write).
+		// Shares the 4 KiB `__lang_read_line_buf` scratch the
+		// stdin-only read_line used, plus __lang_io_error for
+		// the Some(IoError) / None error path.
+		g.emitReaderWriterRuntime()
 	}
 	g.emitDataSections()
 	if !g.darwin {
@@ -343,11 +366,12 @@ func (g *generator) emitDataSections() {
 		g.label("__lang_args_cache")
 		g.line(`	.quad 0`)
 	}
-	if g.usesReadLine {
+	if g.usesReadLine || g.usesReaderWriter {
 		// 4 KiB scratch buffer for the byte-by-byte read loop.
-		// `.space N` works on both GNU as and Apple's
-		// integrated assembler (Mach-O .section __DATA,__bss
-		// accepts `.space` to reserve zero-filled bytes).
+		// Shared by stdin-only `__lang_read_line` and the new
+		// Reader-receiving `__lang_reader_read_line`. Both
+		// helpers run a single-byte read until '\n' / 4 KiB /
+		// EOF, so they can't trample each other.
 		g.line(`.align 3`)
 		g.label("__lang_read_line_buf")
 		g.line(`	.space 4096`)
@@ -1913,6 +1937,319 @@ func (g *generator) emitWriteFileRuntime() {
 	g.line(".ltorg")
 }
 
+// emitReaderWriterRuntime emits the full set of Reader / Writer
+// runtimes — both the entry points that allocate handle
+// structs (stdin/stdout/stderr/open_reader/open_writer/
+// open_appender) and the method runtimes (read_line /
+// read_chunk / close / write).
+//
+// Handle struct layout: 4-byte i32 `fd` at +0 (alloc rounds up
+// to 16, so each handle costs 16 bytes of heap). The lang-
+// level `Reader` / `Writer` structs are pointer-shaped: a
+// `Reader` value is a pointer to one of these handles, and
+// `r.fd` lowers to `[r+0]`.
+//
+// Error shape: helpers that can fail surface `Option[IoError]`
+// or `Result[T, IoError]` via the shared `__lang_io_error`
+// helper. Reader.read_line / Reader.read_chunk follow the
+// wasm contract and return `Option[string]` (None on EOF or
+// error; no IoError surfacing).
+func (g *generator) emitReaderWriterRuntime() {
+	// __lang_make_handle(fd_in_w0) → ptr to 4-byte struct
+	// {fd:i32 @0}. Used by stdin/stdout/stderr + open_*.
+	g.line("")
+	g.line(".global __lang_make_handle")
+	g.typeDirective("__lang_make_handle")
+	g.label("__lang_make_handle")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("mov w19, w0")   // stash fd
+	g.emit("mov w0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("str w19, [x0]") // fd at +0
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__lang_make_handle")
+
+	// __lang_stdin / __lang_stdout / __lang_stderr — fixed-fd
+	// handle constructors. Each wraps __lang_make_handle.
+	for _, e := range []struct {
+		sym string
+		fd  int
+	}{
+		{"__lang_stdin", 0},
+		{"__lang_stdout", 1},
+		{"__lang_stderr", 2},
+	} {
+		g.line("")
+		g.line(".global " + e.sym)
+		g.typeDirective(e.sym)
+		g.label(e.sym)
+		g.emit("mov w0, #%d", e.fd)
+		g.emit("b __lang_make_handle") // tail-call
+		g.sizeDirective(e.sym)
+	}
+
+	// __lang_open_reader(path) / __lang_open_writer(path) /
+	// __lang_open_appender(path) → Result[Reader|Writer, IoError].
+	// Each is a thin wrapper around `openat` + handle alloc + the
+	// Result-box build. Flags + mode differ per kind.
+	for _, e := range []struct {
+		sym, name string
+		flags     int
+		mode      int
+	}{
+		{"__lang_open_reader", "open_reader", 0, 0},
+		{"__lang_open_writer", "open_writer", 577, 0644},
+		{"__lang_open_appender", "open_appender", 1089, 0644},
+	} {
+		_ = e.name
+		g.line("")
+		g.line(".global " + e.sym)
+		g.typeDirective(e.sym)
+		g.label(e.sym)
+		g.emit("stp x29, x30, [sp, #-32]!")
+		g.emit("mov x29, sp")
+		g.emit("stp x19, x20, [sp, #16]")
+		g.emit("mov x19, x0") // stash path
+		g.emit("mov x0, #-100") // AT_FDCWD
+		g.emit("mov x1, x19")
+		g.emit("mov w2, #%d", e.flags)
+		g.emit("mov w3, #%d", e.mode)
+		g.emit("mov x8, #56") // openat
+		g.emit("svc #0")
+		g.emit("tbnz x0, #63, %s", ".Lorw_err_"+e.sym)
+		// Success: alloc handle struct, store fd, wrap in Ok.
+		g.emit("mov w20, w0") // fd
+		g.emit("mov w0, w20")
+		g.emit("bl __lang_make_handle")
+		g.emit("mov x19, x0") // handle ptr (in callee-save)
+		g.emit("mov x0, #16")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")    // tag=0 (Ok)
+		g.emit("str x19, [x0, #8]") // handle ptr
+		g.emit("b %s", ".Lorw_ret_"+e.sym)
+		g.label(".Lorw_err_" + e.sym)
+		g.emit("neg x20, x0") // x20 = errno
+		g.emit("mov x0, x20")
+		g.emit("mov x1, x19") // path
+		g.emit("bl __lang_io_error")
+		g.emit("mov x19, x0") // stash IoError ptr (callee-save)
+		g.emit("mov x0, #16")
+		g.emit("bl __lang_alloc")
+		g.emit("mov w1, #1")
+		g.emit("str w1, [x0]")
+		g.emit("str x19, [x0, #8]")
+		g.label(".Lorw_ret_" + e.sym)
+		g.emit("ldp x19, x20, [sp, #16]")
+		g.emit("ldp x29, x30, [sp], #32")
+		g.emit("ret")
+		g.sizeDirective(e.sym)
+	}
+
+	// __lang_reader_read_line(reader_ptr) → Option[string].
+	// Loads fd from [reader_ptr+0], reads byte-by-byte into
+	// the shared `__lang_read_line_buf` until '\n' / 4 KiB /
+	// EOF / error. Returns None on first-byte EOF, Some(line)
+	// otherwise (line includes the trailing '\n' if seen).
+	g.line("")
+	g.line(".global __lang_reader_read_line")
+	g.typeDirective("__lang_reader_read_line")
+	g.label("__lang_reader_read_line")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("ldr w22, [x0]") // fd
+	g.adrpAdd("x19", "__lang_read_line_buf")
+	g.emit("mov x20, #0") // bytes_read
+	g.label(".Lrrl_loop")
+	g.emit("cmp x20, #4096")
+	g.emit("bge .Lrrl_done")
+	g.emit("mov w0, w22")
+	g.emit("add x1, x19, x20")
+	g.emit("mov x2, #1")
+	g.syscall("read")
+	g.emit("cmp x0, #1")
+	g.emit("blt .Lrrl_done")
+	g.emit("add x21, x19, x20")
+	g.emit("ldrb w21, [x21]")
+	g.emit("add x20, x20, #1")
+	g.emit("cmp w21, #10") // '\n'
+	g.emit("beq .Lrrl_done")
+	g.emit("b .Lrrl_loop")
+	g.label(".Lrrl_done")
+	g.emit("cbnz x20, .Lrrl_some")
+	// None: tag=1 4-byte box.
+	g.emit("mov x0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.emit("b .Lrrl_ret")
+	g.label(".Lrrl_some")
+	g.emit("add x0, x20, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add x21, x0, #4")
+	g.emit("stur w20, [x21, #-4]")
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __lang_memcpy")
+	g.emit("add x0, x21, x20")
+	g.emit("strb wzr, [x0]")
+	g.emit("mov x19, x21") // stash string data ptr
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")     // Some tag=0
+	g.emit("str x19, [x0, #8]") // payload
+	g.label(".Lrrl_ret")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__lang_reader_read_line")
+	g.line(".ltorg")
+
+	// __lang_reader_read_chunk(reader_ptr, n) →
+	// Option[string]. Single read of up to n bytes; None if
+	// the read returns 0 (EOF). Allocates the n-byte string
+	// buffer first; if the read is short, the length prefix
+	// records the actual byte count.
+	g.line("")
+	g.line(".global __lang_reader_read_chunk")
+	g.typeDirective("__lang_reader_read_chunk")
+	g.label("__lang_reader_read_chunk")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
+	g.emit("ldr w19, [x0]") // fd
+	g.emit("mov x20, x1")    // n
+	// alloc n + 4 (length prefix + bytes). Caller may receive
+	// fewer bytes on a short read.
+	g.emit("add x0, x20, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov x21, x0")     // base
+	g.emit("mov w0, w19")
+	g.emit("add x1, x21, #4")
+	g.emit("mov x2, x20")
+	g.syscall("read")
+	g.emit("cmp x0, #0")
+	g.emit("ble .Lrrc_none")
+	// Success: store actual length, build Some(string).
+	g.emit("stur w0, [x21, #4 - 4]") // length prefix at base+0
+	g.emit("mov x20, x0")    // bytes read
+	g.emit("add x19, x21, #4")
+	g.emit("add x0, x19, x20")
+	g.emit("strb wzr, [x0]") // best-effort trailing NUL (within the alloc)
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")
+	g.emit("str x19, [x0, #8]")
+	g.emit("b .Lrrc_ret")
+	g.label(".Lrrc_none")
+	g.emit("mov x0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.label(".Lrrc_ret")
+	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__lang_reader_read_chunk")
+
+	// __lang_writer_write(writer_ptr, s_data_ptr) →
+	// Option[IoError]. Writes the full string in a loop;
+	// returns None on success or Some(IoError) if any write
+	// errored.
+	g.line("")
+	g.line(".global __lang_writer_write")
+	g.typeDirective("__lang_writer_write")
+	g.label("__lang_writer_write")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("ldr w19, [x0]")      // fd
+	g.emit("mov x20, x1")          // s data ptr
+	g.emit("ldur w22, [x20, #-4]") // len
+	g.emit("mov x21, #0")          // bytes_written
+	g.label(".Lww_loop")
+	g.emit("cmp x21, x22")
+	g.emit("bge .Lww_done")
+	g.emit("mov w0, w19")
+	g.emit("add x1, x20, x21")
+	g.emit("sub x2, x22, x21")
+	g.emit("mov x8, #64") // write
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lww_err")
+	g.emit("add x21, x21, x0")
+	g.emit("b .Lww_loop")
+	g.label(".Lww_done")
+	// None: 4-byte tag=1.
+	g.emit("mov x0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.emit("b .Lww_ret")
+	g.label(".Lww_err")
+	g.emit("neg x22, x0") // errno
+	g.emit("mov x0, x22")
+	// No path string for write errors; pass empty literal addr.
+	g.adrpAdd("x1", ".LStr_ioerr_empty")
+	g.emit("bl __lang_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lww_ret")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__lang_writer_write")
+
+	// __lang_close_fd_box(handle_ptr) → Option[IoError].
+	// Shared by Reader.close + Writer.close.
+	g.line("")
+	g.line(".global __lang_close_fd_box")
+	g.typeDirective("__lang_close_fd_box")
+	g.label("__lang_close_fd_box")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("ldr w0, [x0]") // fd
+	g.emit("mov x8, #57") // close
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lcfb_err")
+	// None.
+	g.emit("mov x0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.emit("b .Lcfb_ret")
+	g.label(".Lcfb_err")
+	g.emit("neg x19, x0") // errno
+	g.emit("mov x0, x19")
+	g.adrpAdd("x1", ".LStr_ioerr_empty")
+	g.emit("bl __lang_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lcfb_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__lang_close_fd_box")
+	g.line(".ltorg")
+}
+
 // stateWidthBytes returns the storage width (4 or 8 bytes) for
 // a state-var of the given lang type. Wide scalars (i64 / f64)
 // take 8 bytes; pointer-shaped types (string, Map, T[],
@@ -2284,8 +2621,17 @@ type generator struct {
 	usesWriteFile bool
 	// usesIoError pulls in `__lang_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
-	// Shared by read_file + write_file.
+	// Shared by read_file + write_file + the Reader / Writer
+	// methods (close, write).
 	usesIoError bool
+
+	// usesReaderWriter pulls in the open_reader / open_writer
+	// / open_appender entry points plus the Reader / Writer
+	// method runtimes (read_line / read_chunk / close /
+	// write). stdin / stdout / stderr also live behind this
+	// flag since they now return real Reader / Writer struct
+	// pointers (fd at +0) rather than scalar sentinels.
+	usesReaderWriter bool
 
 	// stateDecls is `prog.States` — the parsed `state {}`
 	// blocks. emitStateGlobals reads this to emit one .data
@@ -3475,23 +3821,68 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesAlloc = true
 			g.usesMemcpy = true
 		case "__method_Reader_read_line":
-			// `stdin().read_line()` — the checker rewrites this
-			// method call to `__method_Reader_read_line(reader)`.
-			// We ignore the receiver and dispatch straight to
-			// __lang_read_line, which always reads from fd 0.
-			// Extending to per-fd readers needs a Reader struct
-			// + fd extraction; not yet required.
-			target = "__lang_read_line"
-			g.usesReadLine = true
+			// `r.read_line()` — loads fd from the receiver's
+			// first field and reads from THAT fd byte-by-byte
+			// into the shared 4-KiB scratch buffer. Returns
+			// Option[string]: Some(line) when at least one
+			// byte was read, None on first-byte EOF.
+			target = "__lang_reader_read_line"
+			g.usesReaderWriter = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		case "__method_Reader_read_chunk":
+			// `r.read_chunk(n)` — single read of up to n bytes
+			// from receiver.fd. Returns Option[string]: None
+			// on EOF (read returned 0).
+			target = "__lang_reader_read_chunk"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+		case "__method_Reader_close":
+			target = "__lang_close_fd_box"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Writer_write":
+			target = "__lang_writer_write"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Writer_close":
+			target = "__lang_close_fd_box"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "open_reader":
+			target = "__lang_open_reader"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "open_writer":
+			target = "__lang_open_writer"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "open_appender":
+			target = "__lang_open_appender"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "stdin":
-			// stdin() returns a 4-byte Reader struct. We don't
-			// model per-fd Readers; return 0 (a benign sentinel
-			// the method dispatch ignores). Same idea for
-			// stdout/stderr if/when those land.
+			// stdin() / stdout() / stderr() return real Reader /
+			// Writer struct pointers now (fd at +0). Wraps the
+			// standard fds (0 / 1 / 2) in the same alloc shape
+			// open_reader / open_writer produce.
 			target = "__lang_stdin"
-			g.usesStdin = true
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+		case "stdout":
+			target = "__lang_stdout"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+		case "stderr":
+			target = "__lang_stderr"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
 		case "read_file":
 			// read_file(path): Result[string, IoError] —
 			// openat + fstat + read-loop + close on Linux.
