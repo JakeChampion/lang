@@ -1649,20 +1649,28 @@ function __map_column(m: i32, kvOffset: i32, destStride: i32): i32 {
     var len_: i32 = __load_i32(buf + 4);
     var entryStride: i32 = 2 * __ptr_width();
     var entriesBase: i32 = buf + 16 + cap * 4;
-    var arr: i32 = __alloc(4 + len_ * destStride);
-    __store_i32(arr, len_);
+    // Header layout: length prefix lives at `data - 4` so
+    // `len(arr)` works on the returned data pointer. When
+    // destStride > 4 (pointer-stride arrays on arm64) the
+    // first element must be stride-aligned, so the header
+    // grows to destStride bytes with the length packed into
+    // the last 4 of them.
+    var hdr: i32 = 4;
+    if (destStride > 4) { hdr = destStride; }
+    var arr: i32 = __alloc(hdr + len_ * destStride);
+    __store_i32(arr + hdr - 4, len_);
     var i: i32 = 0;
     while (i < len_) {
         if (destStride == 4) {
             var v32: i32 = __load_i32(entriesBase + i * entryStride + kvOffset);
-            __store_i32(arr + 4 + i * 4, v32);
+            __store_i32(arr + hdr + i * 4, v32);
         } else {
             var vp: i32 = __load_ptr(entriesBase + i * entryStride + kvOffset);
-            __store_ptr(arr + 4 + i * destStride, vp);
+            __store_ptr(arr + hdr + i * destStride, vp);
         }
         i = i + 1;
     }
-    return arr + 4;
+    return arr + hdr;
 }
 
 function __map_keys_impl(m: i32): i32 {

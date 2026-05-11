@@ -1174,15 +1174,17 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("ldr x19, [x19]")
 	g.adrpAdd("x20", "__lang_argv")
 	g.emit("ldr x20, [x20]")
-	// Allocate the result string[] container: 4 bytes length
-	// prefix + argc * 8 bytes for entry pointers. arm64 uses
-	// pointer-width entry slots (8 bytes) so heap addresses
-	// survive arm64-darwin's >= 4 GiB heap — matches the IR's
-	// new string[] stride (ast.ElemSizeBytesFor with ptrW=8).
+	// Allocate the result string[] container: 8-byte header
+	// (4 bytes pad + 4 bytes length) + argc * 8 bytes for
+	// entry pointers. The 8-byte header keeps element 0 at an
+	// 8-aligned offset so Apple Silicon's stricter alignment
+	// for 8-byte LDR/STR is satisfied; the length prefix
+	// sits at `data - 4` exactly as the IR's array layout
+	// expects.
 	g.emit("lsl x0, x19, #3")
-	g.emit("add x0, x0, #4")
+	g.emit("add x0, x0, #8")
 	g.emit("bl __lang_alloc")
-	g.emit("add x21, x0, #4")     // x21 = result data pointer
+	g.emit("add x21, x0, #8")     // x21 = result data pointer (8-aligned)
 	g.emit("stur w19, [x21, #-4]") // length prefix = argc
 	// for (i = 0; i < argc; i++)
 	g.emit("mov x22, #0") // x22 = i
