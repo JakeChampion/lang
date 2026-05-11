@@ -289,16 +289,40 @@ get truncated on macOS-latest runners). The probe was removed from
 the test suite to keep CI green; re-add it as a regression test
 alongside the fix.
 
-**Fix plan**: widen the prelude's pointer storage to be target-aware.
-Two options:
+**Fix plan (revised after looking at Nature lang's type
+system)**: introduce a target-aware **`usize` lang type** modelled
+on Nature's `int` (native-width signed) / `uint` (native-width
+unsigned). Concretely:
 
-1. **Introduce a `usize` lang type** that's 4 bytes on wasm32 and
-   8 bytes on native. Update `__alloc` / `__load_ptr` /
-   `__store_ptr` to return / take `usize`. Update all prelude
-   pointer locals (~30 sites in the Map runtime plus the string /
-   slice runtimes) from `i32` to `usize`.
-2. **Widen `__load_ptr` / `__store_ptr` / `__alloc` to `i64`**
-   unconditionally and let wasm32 truncate at the call boundary.
+- 4 bytes on wasm32; 8 bytes on native (arm64, x86-64).
+- The type checker handles `usize` via a dedicated
+  `NumberType{Width: WidthPtr}` marker that backends resolve to
+  their target width. We already have `WidthPtr` for `OpLoad` /
+  `OpStore` — extending it to type-level uses the same machinery.
+- Mixed-width arithmetic policy: `usize + i32` auto-widens the
+  `i32` (via the cast inserter from PR #292). `usize + i64` is a
+  hard error on wasm32 (i64 doesn't fit in the slot) — explicit
+  cast required. On native both are 8 bytes, so the auto-widen
+  collapses to identity.
+- Helper signatures change from `__alloc(n: i32) → usize` and
+  `__load_ptr(addr: usize) → usize` etc. Prelude pointer locals
+  become `var X: usize = __alloc(...)`.
+
+Why this beats the spike's "everything is i64" approach:
+
+- **Wasm32 stays 4-byte-pointer-native.** No `i32.wrap_i64`
+  shims at every memory op; no IR-level cast hack for `i64 →
+  string` on wasm32 (which is the blocker the spike hit).
+- **Same code generates the right width on every target** with no
+  per-target branches in the prelude — the type system carries the
+  intent.
+- **Adds a building block that's useful elsewhere** — array
+  indexing, slice lengths, file sizes, anywhere "size of a thing
+  in memory" appears.
+
+Variant: also add `isize` for signed native-width offsets (Rust /
+Nature have both). Not required for the bug fix but cheap to
+add once `usize` exists.
 
 ### Spike status (post PR #292 attempt)
 
@@ -344,20 +368,181 @@ of `2 * __ptr_width()` — assumes K and V both fit in pointer-width
 slots. Widening requires per-instantiation entry layouts or runtime
 type tags.
 
-**Fix plan**: monomorphise the Map runtime per K/V instantiation,
-with the checker emitting a separate `__map_set_impl_<KH>_<VH>` etc.
-per width combination. Or: introduce a runtime entry-shape descriptor
-(in the buffer header) that the impl branches on. The latter avoids
-binary-size explosion at the cost of branch prediction on the hot
-path.
+**Fix plan (revised after looking at Nature lang's `map<T,U>`
+implementation)**: emit a **compile-time type hash** per instantiation
+and dispatch a single polymorphic runtime function via that hash.
+Nature's `std/builtin/map.n` does this with `@reflect_hash()`; the
+runtime takes `anyptr` for the key/value and switches on the
+per-instantiation hash constant to pick the right load/store width
++ hash function + comparison.
 
-**Shares scope with the arm64-darwin truncation item above** —
-monomorphising the Map runtime would let each instantiation type
-its `entryK` / `k` locals as the actual K type (e.g. `string` for
-string-keyed maps), which incidentally solves the wasm32 "cast i64
-→ string" problem from the truncation-fix spike. Doing both items
-together is probably the right shape.
+Translating to our shape:
 
-Multi-day refactor. Defer until a real workload needs wide-key Maps;
-the current `Map[i32, _]` and `Map[string, _]` cover edge-handler /
-HTTP / config / state-cache use cases adequately.
+- Mangle `K` and `V` into stable u32 hashes at the checker layer
+  (`mapKeyHash(t) → u32`, `mapValHash(t) → u32`).
+- Replace today's `keyKind` / `valKind` runtime fields (i32 enums:
+  0 = i32, 1 = string) with the full hash. Same buffer-header
+  layout otherwise.
+- Per-instantiation `entryStride` computed from
+  `widthOf(K) + widthOf(V)` (no longer hardcoded `2 * __ptr_width()`).
+- The Map impl's `__load_ptr` / `__load_i32` calls become a small
+  switch on the per-entry-half hash — i32 → `__load_i32`, i64 →
+  `__load_i64`, string/array/struct → `__load_ptr`, f64 →
+  `__load_f64`.
+
+**Shares scope with the arm64-darwin truncation item above.** With
+type-hash dispatch, the Map runtime stops carrying `var entryK: i64
+= __load_ptr(...)` locals at the lang level (the value flows as
+`anyptr` + per-call width-tagged load). That side-steps the wasm32
+"cast i64 → string" blocker we hit in the spike — the Map runtime
+no longer needs an `i64 → string` cast at all because string-keyed
+maps would dispatch through `__load_ptr` → `string` directly.
+
+Multi-day refactor. Doing this together with Item 1 (usize) is
+probably the right shape — both touch the prelude's typed-pointer
+locals, and the type-hash dispatch makes the wasm32 blocker
+disappear.
+
+---
+
+## Performance / memory wins
+
+Tracked here because the language targets lightweight CLI tools
+and edge-handler-style HTTP servers — every byte allocated per
+request and every cycle on the hot path matters. Each entry has
+a rough impact estimate (mem / speed), a scope estimate, and a
+sketch of the design. Mostly **breaking** changes — sequence
+them with care.
+
+### 1. Register-based `Result[T, IoError]` / `Option[T]` returns
+
+**Impact:** zero-alloc fallible-call returns; saves 16 B + alloc-
+cursor bump per `read_file` / `write_file` / `open_*` / Reader/Writer
+call. Edge-handler workloads that do file I/O + JSON parse + HTTP
+write are dominated by these allocations today.
+
+**Status:** Today every Result / Option return path allocates a
+16-byte heap box (`{tag:i32 @0, payload @8}`) via `__lang_alloc`
+and returns the pointer. Match dispatches by loading the tag from
+the heap.
+
+**Sketch (cribbed from Nature's `errable<T>`):**
+
+- Type system: add a tagged-union representation that lowers to
+  a multi-value return. `Result[T, E]` becomes
+  `(tag:u8, payload:T_or_E_bytes)` — two registers on native
+  (`rax` + `rdx` on System V; `x0` + `x1` on AAPCS64), wasm's
+  multi-value `(result)` returns the pair.
+- IR: `OpReturnPair` returns two values; `OpMakeOk` / `OpMakeErr`
+  / `OpMakeSome` / `OpMakeNone` produce the pair on the stack
+  without allocation; `OpMatchTag` peeks the tag without going
+  through a load.
+- Match codegen reads the tag from the call's register pair
+  directly — no heap touch.
+- Heap-boxed Option/Result still exists for storing in fields /
+  Map values / state slots (where a stable address is needed) —
+  emit the box only when the value escapes the call stack.
+
+**Scope:** large. Touches IR, both natives, wasm runtime, every
+test that pattern-matches a Result/Option. Plan as a multi-PR
+arc: type system → IR → one backend → other backends → prelude
+migration.
+
+### 2. Inline small strings (SSO)
+
+**Impact:** zero-alloc for strings ≤ N bytes (typical N = 7 or 15);
+significant for short keys, status codes, header names. Today
+every literal-empty `""` or runtime-built short string allocates
+≥ 16 bytes (alloc round-up).
+
+**Sketch:** repurpose the lang string's runtime representation
+from "pointer to (4-byte-length-prefix + data)" to one of:
+
+  - **Niko-style two-word string**: `(data_ptr:usize, len:usize)`
+    on the operand stack. Inline-small variant uses high bit of
+    `len` to flag "data_ptr field holds inline bytes". 7 inline
+    bytes on wasm32 (one pointer-word), 15 on native.
+  - **Pascal-style with tagged length**: keep length-prefix
+    layout, but for length ≤ 15 use a special heap pool with
+    fixed-size cells.
+
+The two-word representation is cleaner and is what most modern
+systems languages (Rust, Swift, Zig std) settled on. Breaking:
+every string operation in the prelude + native runtimes changes
+shape. Pair with the `usize` work — `usize` is the slot type
+for the length field.
+
+**Scope:** very large. Pre-requisite: usize (Item 1).
+
+### 3. Pack the operand-stack into 8-byte slots
+
+**Impact:** halves operand-stack memory; tighter stack frames
+mean smaller working-set; fewer cache misses on deep call chains.
+
+**Status:** today every push uses a 16-byte slot regardless of
+type, on both natives. The 16-byte slot was a 16-byte-alignment
+hedge for `stp` / `ldp` on arm64 and System V's pre-call
+alignment.
+
+**Sketch:** drop to 8-byte slots universally. Use unaligned
+`str x0, [sp, #-8]!` / `ldr x0, [sp], #8` on arm64 (works on all
+ARMv8 targets); use `push rax` / `pop rax` (8-byte native
+encoding) on x86-64. Re-align sp to 16 only at call boundaries
+(already done via the stack-arg overflow pad).
+
+**Scope:** medium. Touches every push/pop on both natives,
+operand-stack offset calculations (closure captures, callee-save
+spills, multi-arg call ABI). Per-test re-verification.
+
+### 4. Per-instantiation Map entry sizing (depends on Item 2)
+
+**Impact:** `Map[i32, i32]` entries drop from 16 B → 8 B (50%
+memory). `Map[i32, u8]` would drop further (4 B + 1 B = 8 B with
+alignment).
+
+Already covered by the wide-K/V item above; reiterated here as
+the immediate memory win the type-hash dispatch unlocks. Build
+on top of the Item 2 work.
+
+### 5. Inline closures with zero captures
+
+**Impact:** the no-capture closure constructor today still
+allocates a 16-byte pair `{fn_ptr, env_ptr=0}` (and the env block
+allocation is elided by `ElideClosurePair`, but the pair itself
+isn't). Common in passing top-level functions as values.
+
+**Sketch:** when `OpMakeClosure` has 0 captures AND the value
+flows to an `OpCallClosureDirect` (already statically known via
+defunctionalisation), elide the pair entirely — push only the
+`env_ptr=0` sentinel for the calling convention's env-slot.
+
+**Scope:** small. Single IR pass extension. Possibly already
+half-done by `ElideClosurePair` — needs a closer look.
+
+### 6. Reduce 4-byte length prefix to varint for short strings
+
+**Impact:** small (saves 0–3 bytes per string), but cumulative
+on JSON / HTTP payloads with many short field names. Probably
+not worth the complexity.
+
+**Status:** mentioned for completeness; would interact with SSO
+(Item 2 in this list).
+
+### Working order
+
+Items 1 + 2 of this list are the highest-impact memory wins; both
+depend on the language-level work (`usize`, type-hash Map
+dispatch). Item 3 is independent and is a pure memory/speed win
+for any program. Item 4 lands as a side effect of the wide-K/V
+fix. Items 5 / 6 are smaller and optional.
+
+Suggested sequencing:
+
+1. **`usize` lang type** (parity Item 1) — building block.
+2. **Type-hash Map dispatch** (parity Item 2) — unlocks Items 4
+   and 5.
+3. **8-byte operand-stack slots** (perf Item 3) — independent;
+   parallelisable with 1 & 2.
+4. **Register-based Result/Option** (perf Item 1) — large, do
+   after 1–3 settle.
+5. **Inline small strings** (perf Item 2) — largest, last.
