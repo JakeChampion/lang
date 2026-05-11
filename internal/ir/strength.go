@@ -5,7 +5,7 @@
 //
 //   - <expr> ; const 2^k ; mul   → <expr> ; const k ; shl
 //     Multiplication by a power of two is a left-shift. Both wasm
-//     and arm32 issue a single shift op instead of a multiply.
+//     and arm64 issue a single shift op instead of a multiply.
 //   - <expr> ; const 1 ; mul     → <expr>
 //   - <expr> ; const 0 ; mul     → <expr> ; drop ; const 0
 //     The drop preserves any side effect <expr> carried out (a call

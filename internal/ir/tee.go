@@ -4,7 +4,7 @@
 // hand-written `var x = ...` followed by an immediate use, the
 // assignment-as-expression lowering — and emitting it as a real
 // tee gives the WASM backend a single `local.tee` (saves a byte and
-// a load over `local.set $X; local.get $X`). The arm32 backend
+// a load over `local.set $X; local.get $X`). The arm64 backend
 // generates equivalent code either way (pop / str / push), so the
 // pass is effectively WASM-only in payoff.
 //

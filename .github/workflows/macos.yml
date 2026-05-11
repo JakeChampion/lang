@@ -55,18 +55,18 @@ jobs:
         run: go test -v -run TestArm64Darwin ./internal/e2e/
 
       - name: Compile + run every example for arm64-darwin
-        # Mirror of ci.yml's arm32 example sweep: build each
-        # examples/*.lang via the driver, then actually
-        # execute the Mach-O. Catches codegen regressions
-        # across the example surface that wouldn't surface
-        # from the targeted go-test alone (new IR ops, new
-        # builtins, prelude changes).
+        # Build each examples/*.lang via the driver, then actually
+        # execute the Mach-O. Catches codegen regressions across
+        # the example surface that wouldn't surface from the
+        # targeted go-test alone (new IR ops, new builtins,
+        # prelude changes). arm64-darwin is the default target,
+        # so no -target flag is needed.
         run: |
           go build -o bin/lang ./cmd/lang
           mkdir -p build
           for f in examples/*.lang; do
             name=$(basename "$f" .lang)
-            ./bin/lang -target arm64-darwin -cc clang -o "build/$name" "$f"
+            ./bin/lang -cc clang -o "build/$name" "$f"
             echo "::group::run $name"
             ./build/$name || echo "(exited $?)"
             echo "::endgroup::"

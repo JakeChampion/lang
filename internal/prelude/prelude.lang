@@ -341,7 +341,7 @@ function __int_to_string_u64(mag: i64, neg: i32): string {
 //
 // Routes through the pure-i32 `int_to_string` so handler-shaped
 // programs (whose codegen pulls in the f-string `.to_string()`
-// desugar via `int_to_string`) compile for arm32, where the
+// desugar via `int_to_string`) compile for arm64, where the
 // backend hasn't lowered i64 ops yet. INT_MIN
 // (-2147483648) is special-cased before the negate-to-magnitude
 // step in int_to_string would overflow i32.
@@ -1457,9 +1457,9 @@ function map_new_impl(cap_hint: i32, keyKind: i32): i32 {
     __store_i32(buf + 12, 0);
     __memset(buf + 16, 255, cap * 4);            // buckets → all -1
     // Map handle is a heap-allocated pointer cell. 8 bytes
-    // accommodates a 64-bit `buf` pointer on arm64; wasm32 /
-    // arm32 only need 4 but the extra padding is cheap and
-    // keeps the handle layout uniform across targets. Using
+    // accommodates a 64-bit `buf` pointer on arm64; wasm32
+    // only needs 4 but the extra padding is cheap and keeps
+    // the handle layout uniform across targets. Using
     // `__store_ptr` / `__load_ptr` (pointer-width helpers)
     // lets backends pick the right STR/LDR width.
     var m: i32 = __alloc(8);
@@ -1704,11 +1704,11 @@ function __map_clear_impl(m: i32) {
 
 // MapIter is a 16-byte heap object: [buf:8][cursor:4][pad:4].
 // The cursor lives at offset +8 (not +4) so the layout is the
-// same on wasm32 / arm32 (where __store_ptr is 4 bytes and
-// the high 4 bytes of the buf slot are wasted padding) and
-// arm64 (where __store_ptr is the full 8-byte STR). Same idea
-// as the Map handle: pick a layout that fits the widest
-// pointer and pad on narrow targets.
+// same on wasm32 (where __store_ptr is 4 bytes and the high 4
+// bytes of the buf slot are wasted padding) and arm64 (where
+// __store_ptr is the full 8-byte STR). Same idea as the Map
+// handle: pick a layout that fits the widest pointer and pad
+// on narrow targets.
 function __map_iter_impl(m: i32): i32 {
     var it: i32 = __alloc(16);
     __store_ptr(it,     __load_ptr(m));     // data ptr
@@ -1749,8 +1749,8 @@ function __mapiter_advance_impl(it: i32) {
 // `tcp_listen / tcp_accept / tcp_recv / tcp_send / tcp_close`
 // socket primitives so user code can write a manual server
 // loop today (a `tcp_serve(port, handler)` convenience wrapper
-// + arm32 string-runtime gaps + auto-`main()`-from-`handle()`
-// synthesis ship in follow-up PRs):
+// + auto-`main()`-from-`handle()` synthesis ship in follow-up
+// PRs):
 //
 //   function main(): i32 {
 //     var listener: i32 = tcp_listen(8080);
@@ -1801,7 +1801,7 @@ function __http_parse_request_line(line: string): Option[HttpRequest] {
 // + Connection: close as "no body", which is what we want.
 //
 // Uses a small i32-only parse so the helper compiles for
-// arm32 (whose backend doesn't yet implement i64 ops). The
+// arm64 (whose backend doesn't yet implement i64 ops). The
 // 1 MiB body cap upstream means values that would overflow
 // i32 are filtered out at the body-read step regardless.
 function __http_content_length(headers: string): i32 {
@@ -1945,7 +1945,7 @@ function http_serialize_response(resp: HttpResponse): string {
 //   3. handler(req) returns the HttpResponse.
 //   4. http_serialize_response → tcp_send → tcp_close.
 //
-// arm32 wires this through real Linux sockets via the
+// arm64 wires this through real Linux sockets via the
 // existing __lang_tcp_* syscall helpers. The wasm side gates
 // tcp_* on wasi:sockets at module instantiation; CLI-mode
 // programs that call tcp_serve need a host-pre-opened socket
@@ -2024,7 +2024,7 @@ function tcp_serve(port: i32, handler: (HttpRequest) => HttpResponse): i32 {
 // without writing a manual main().
 //
 // Inline i32-only digit accumulation — the prelude's
-// `s.parse_int()` uses i64 for overflow safety, which arm32
+// `s.parse_int()` uses i64 for overflow safety, which arm64
 // can't lower yet. Since the result is bounded to a valid
 // TCP port (0..65535), the i32 max is unreachable.
 function __port_from_env(name: string, fallback: i32): i32 {

@@ -1417,10 +1417,10 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		// The interp's expression evaluator can't unwind the
 		// enclosing function early (statement-level flow control
 		// uses a result-flow flag the expression layer doesn't
-		// thread). The wasm + arm32 backends are what users run;
+		// thread). The wasm + arm64 backends are what users run;
 		// the interp is a sanity-check sandbox so `?` is simply
 		// not supported here.
-		return nil, fmt.Errorf("interp: postfix `?` operator is not supported in the interpreter; compile to wasm or arm32 instead")
+		return nil, fmt.Errorf("interp: postfix `?` operator is not supported in the interpreter; compile to wasm or arm64 instead")
 	case *ast.StructLit:
 		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}}
 		for _, f := range x.Fields {

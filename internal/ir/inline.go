@@ -72,7 +72,7 @@ const inlineSizeLimit = 80
 // iteration count to bound code growth on the worst case.
 //
 // Order in the production pipeline: Lower → Inline → Fold → DCE →
-// (TCO if arm32) → emit. Inlining first exposes constant
+// emit. Inlining first exposes constant
 // arithmetic in substituted bodies (e.g. `dbl(7)` becomes `7 * 2`)
 // for Fold to collapse, then DCE drops anything unreachable that
 // surfaces.

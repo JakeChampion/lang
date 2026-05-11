@@ -1,9 +1,8 @@
 // Package ir defines a small linear stack-machine intermediate
 // representation that lives between the type-checked AST and the
 // per-target code generators. It's the long-promised "third stage" —
-// today the WASM and ARM32 backends both walk the AST directly, with
-// a lot of duplicated logic for control flow and expression evaluation.
-// Once they migrate to consuming IR, that logic moves here.
+// today the WASM backend walks the AST directly. Once it migrates
+// to consuming IR, that logic moves here.
 //
 // The IR is an explicit-stack bytecode in the same family as WebAssembly
 // itself: each Op pushes or pops 32-bit slots (the language's number,
@@ -25,9 +24,9 @@
 //     lower to env-relative loads and MakeClosure lowers to OpMakeClosure.
 //
 // What's NOT yet done:
-//   - The WASM and ARM32 backends still walk the AST. Migrating them
-//     is a follow-up; for now the IR is verified by tests rather than
-//     by being on the production code path.
+//   - The WASM backend still walks the AST. Migrating it is a
+//     follow-up; for now the IR is verified by tests rather than
+//     by being on the production code path for that target.
 package ir
 
 import (
@@ -1322,7 +1321,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.closeScope() // end inner — matched path lands here
 			// Bind payload locals from heap[ptr+4+i*4]. Float
 			// payloads need an f32 load to keep stack types
-			// consistent on WASM; arm32 ignores the choice.
+			// consistent on WASM; arm64 ignores the choice.
 			// arm.BindingTypes is filled by the checker with
 			// the substituted concrete type (so generic enums
 			// instantiated at `Option[number]` give `number`).
@@ -2166,7 +2165,7 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 			// Pick i32 vs f32 store based on the declared field
 			// type. WASM rejects `i32.store` of an f32 operand,
-			// and arm32 doesn't care which mnemonic we pick (32-
+			// and arm64 doesn't care which mnemonic we pick (32-
 			// bit register store is untyped at the instruction
 			// level), so this is enforced at the IR level.
 			if isFloat(fieldType(sd.Fields, f.Name)) {
