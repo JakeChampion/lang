@@ -4,19 +4,27 @@ name: macOS arm64
 # Linux CI cross-compiles Mach-O via clang+lld and only checks
 # the produced binary is well-formed — it can't catch ABI bugs
 # (carry-flag normalisation, x16 vs x8, wrong syscall numbers,
-# stack-alignment quirks). This job runs the same tests on a
-# macos-14 runner, which is Apple Silicon arm64; clang ships
-# with ld64 so we don't need lld.
+# stack-alignment quirks). This job runs the same tests on the
+# `macos-latest` runner, which tracks Apple's current macOS
+# release (Sequoia / Tahoe / etc.) on Apple Silicon arm64.
 #
-# Gated on changes touching the arm64 codegen or its tests so
-# we don't burn macOS minutes on unrelated edits. Plus a
-# workflow_dispatch trigger for manual reruns.
+# Policy: we support only the latest macOS. `macos-latest`
+# floats with whatever GitHub considers current; if a future
+# release breaks something, we either fix the codegen for the
+# new version or document the regression in
+# `docs/BACKEND-PARITY.md`. Pinning to an older `macos-N` label
+# is explicitly not supported.
+#
+# Gated on changes touching the arm64 codegen, prelude, or its
+# tests so we don't burn macOS minutes on unrelated edits. Plus
+# a workflow_dispatch trigger for manual reruns.
 
 on:
   pull_request:
     paths:
       - "internal/codegen/arm64/**"
       - "internal/e2e/arm64_test.go"
+      - "internal/prelude/**"
       - ".github/workflows/macos.yml"
       - "examples/**"
       - "go.mod"
@@ -25,7 +33,7 @@ on:
 
 jobs:
   test-arm64-darwin:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

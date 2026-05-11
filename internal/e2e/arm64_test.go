@@ -883,6 +883,33 @@ function main(): i32 {
     }
     return total;
 }`, 11},
+		// Probe for the documented arm64-darwin heap-address
+		// truncation issue (BACKEND-PARITY.md "Known
+		// limitations"). The Map values here are HEAP-
+		// allocated strings (built via concat at runtime),
+		// not .rodata literals. On macOS the mmap address
+		// hint is ignored and the heap lands at a high (>4
+		// GiB) address; storing the heap pointer in the
+		// Map's value slot via `__store_i32` truncates the
+		// high 32 bits and the round-trip read sees a stale
+		// pointer.
+		//
+		// Today the slot is actually `__store_ptr` (8 bytes
+		// on native) — the truncation happens at the lang
+		// variable level (`var buf: i32 = __load_ptr(...)`).
+		// If this case starts failing on macOS-14+ CI it
+		// confirms the bug; the fix is the prelude pointer-
+		// width refactor tracked in BACKEND-PARITY.md.
+		{"map_heap_value_probe", `function main(): i32 {
+    var m: Map[i32, string] = map_new(4);
+    // Build values at runtime via concat → values live on
+    // the heap, NOT in .rodata.
+    var v1: string = "alp" + "ha";
+    var v2: string = "be" + "ta";
+    m.set(1, v1);
+    m.set(2, v2);
+    return len(m.get_or(1, "")) + len(m.get_or(2, ""));
+}`, 9},
 	}
 
 	for _, c := range cases {
