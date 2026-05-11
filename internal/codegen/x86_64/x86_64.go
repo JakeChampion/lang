@@ -94,6 +94,17 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if err != nil {
 		return "", err
 	}
+	// Tail-call optimisation. The pass rewrites
+	// `OpCallDirect <self> ; OpReturn` into a parameter
+	// rebind plus `OpBr` back to the function entry — turns
+	// self-recursive functions into loops, so the deepest
+	// "tail call" doesn't grow the stack. x86-64 is the
+	// first consumer; the IR-level pass has been parked in
+	// `internal/ir/tco.go` since the arm32 retirement
+	// waiting for a native backend that wires it in.
+	// Arm64 + wasm don't call it yet — adding it there is
+	// safe but out of this PR's scope.
+	ir.TailCallOptimize(ip)
 	g := &generator{info: info, stringLabel: map[string]string{}}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the

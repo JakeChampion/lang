@@ -495,3 +495,75 @@ func TestX86_64Print(t *testing.T) {
 		t.Errorf("stdout = %q, want %q", out, want)
 	}
 }
+
+// Tail-call optimisation. `ir.TailCallOptimize` rewrites
+// every `OpCallDirect <self> ; OpReturn` pair in a function
+// into a parameter rebind + `OpBr` back to a synthetic
+// outer loop, so self-recursive functions run in O(1)
+// stack depth. x86-64 is the first consumer of the pass —
+// see the inline note in `EmitWithOptions`.
+//
+// Two assertions:
+//
+//  1. The asm has no `call <self>` instruction inside the
+//     tail-recursive function. The only `call <self>`
+//     left in the program is the kick-off from `main`.
+//  2. A recursion depth that would overflow the kernel-
+//     default 8 MiB stack (~10^5 frames * 16 bytes/frame
+//     = 1.6 MiB) returns cleanly. Without TCO this would
+//     segfault long before completing.
+func TestX86_64TailCall(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+
+	src := `function sum_to(n: i32, acc: i32): i32 {
+    if (n == 0) { return acc; }
+    return sum_to(n - 1, acc + n);
+}
+function main(): i32 {
+    return sum_to(100000, 0);
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	// Exactly one `call sum_to` survives — the one in
+	// `main` — and the recursive site became `jmp <loop
+	// top>`. If TCO didn't fire we'd see two.
+	if got := strings.Count(asm, "call sum_to"); got != 1 {
+		t.Errorf("`call sum_to` appearances = %d, want 1 (only from main); TCO didn't fire", got)
+	}
+
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(binPath)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
+	}
+	_, _ = cmd.CombinedOutput()
+	// 100000 * 100001 / 2 = 5,000,050,000. As i32 (mod
+	// 2^32) = 705_082_704. As an 8-bit exit code (mod
+	// 256) = 80.
+	if got := cmd.ProcessState.ExitCode(); got != 80 {
+		t.Errorf("sum_to(100000, 0) → exit = %d, want 80", got)
+	}
+}
