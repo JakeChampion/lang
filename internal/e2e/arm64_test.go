@@ -991,6 +991,62 @@ function main(): i32 {
 	}
 }
 
+// Tail-call optimisation. arm64 now wires `ir.TailCallOptimize`
+// (backported from PR #274's x86-64 first-consumer wire-up).
+// Two assertions:
+//
+//  1. The asm has exactly one `bl sum_to` (the kick-off from
+//     `main`). Without TCO the recursive site would still
+//     emit `bl <self>`; with TCO that site becomes
+//     `b .Lloop_top`.
+//  2. Recursion that would overflow the qemu-aarch64 default
+//     stack returns cleanly with the right value.
+func TestArm64TailCall(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+
+	src := `function sum_to(n: i32, acc: i32): i32 {
+    if (n == 0) { return acc; }
+    return sum_to(n - 1, acc + n);
+}
+function main(): i32 {
+    return sum_to(100000, 0);
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := arm64codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if got := strings.Count(asm, "bl sum_to"); got != 1 {
+		t.Errorf("`bl sum_to` appearances = %d, want 1 (only from main); TCO didn't fire", got)
+	}
+
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	cmd := exec.Command(qemu, binPath)
+	_, _ = cmd.CombinedOutput()
+	// 5,000,050,000 → i32 (705,082,704) → exit code (mod 256) = 80.
+	if got := cmd.ProcessState.ExitCode(); got != 80 {
+		t.Errorf("sum_to(100000, 0) → exit = %d, want 80", got)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
