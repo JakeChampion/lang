@@ -1440,6 +1440,143 @@ function main(): i32 {
 	}
 }
 
+// `stdin().read_line()` — exercises the .bss buffer + byte
+// loop + Some/None Option wrap. arm64's runtime used to be
+// stdin-only via __lang_read_line; this test now goes through
+// the receiver-aware __lang_reader_read_line (stdin() returns
+// a real Reader{fd:0} struct). Closes the parity-doc gap.
+func TestArm64ReadLine(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+
+	src := `function main(): i32 {
+    match (stdin().read_line()) {
+        Some(_) => { return 1; },
+        None => { return 0; }
+    }
+    return 0 - 1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := arm64codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	runCase := func(stdin string, want int) {
+		t.Helper()
+		cmd := exec.Command(qemu, binPath)
+		cmd.Stdin = strings.NewReader(stdin)
+		_, _ = cmd.CombinedOutput()
+		if got := cmd.ProcessState.ExitCode(); got != want {
+			t.Errorf("stdin=%q: exit = %d, want %d", stdin, got, want)
+		}
+	}
+	runCase("", 0)        // EOF before any byte → None
+	runCase("hello\n", 1) // Some(line)
+}
+
+// Reader / Writer file I/O round-trip. open_writer +
+// Writer.write + Writer.close; open_appender; open_reader +
+// Reader.read_chunk / Reader.read_line / Reader.close. Mirrors
+// TestWASMOpenAppender / TestWASMReaderReadChunk /
+// TestWASMStreamingRoundtrip.
+func TestArm64ReaderWriter(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		src        string
+		wantStdout string
+		wantExit   int
+	}{
+		{"open_writer_then_append_then_read", `function main(): i32 {
+    match (open_writer("ap.txt")) {
+        Ok(w) => {
+            match (w.write("first")) { Some(_) => { return 1; }, None => {} }
+            match (w.close()) { Some(_) => { return 2; }, None => {} }
+        },
+        Err(_) => { return 3; }
+    }
+    match (open_appender("ap.txt")) {
+        Ok(w) => {
+            match (w.write("-second")) { Some(_) => { return 4; }, None => {} }
+            match (w.close()) { Some(_) => { return 5; }, None => {} }
+        },
+        Err(_) => { return 6; }
+    }
+    match (read_file("ap.txt")) {
+        Ok(s) => { write(s); return 0; },
+        Err(_) => { return 7; }
+    }
+    return 0 - 1;
+}`, "first-second", 0},
+		{"reader_read_chunk", `function main(): i32 {
+    match (open_writer("rc.txt")) {
+        Ok(w) => {
+            match (w.write("hello world")) { Some(_) => { return 1; }, None => {} }
+            match (w.close()) { Some(_) => { return 2; }, None => {} }
+        },
+        Err(_) => { return 3; }
+    }
+    match (open_reader("rc.txt")) {
+        Ok(r) => {
+            match (r.read_chunk(5)) { Some(s) => { write(s); write(":"); }, None => { return 4; } }
+            match (r.read_chunk(20)) { Some(s) => { write(s); }, None => { return 5; } }
+            match (r.read_chunk(20)) { Some(_) => { return 6; }, None => { return 0; } }
+        },
+        Err(_) => { return 7; }
+    }
+    return 0 - 1;
+}`, "hello: world", 0},
+		{"streaming_roundtrip_lines", `function main(): i32 {
+    match (open_writer("rt.txt")) {
+        Ok(w) => {
+            match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
+            match (w.write("line 2\n")) { Some(_) => { return 2; }, None => {} }
+            match (w.close()) { Some(_) => { return 3; }, None => {} }
+        },
+        Err(_) => { return 4; }
+    }
+    match (open_reader("rt.txt")) {
+        Ok(r) => {
+            match (r.read_line()) { Some(line) => { write(line); }, None => { return 5; } }
+            match (r.read_line()) { Some(line) => { write(line); }, None => { return 6; } }
+            match (r.read_line()) { Some(_) => { return 7; }, None => {} }
+            match (r.close()) { Some(_) => { return 8; }, None => {} }
+            return 0;
+        },
+        Err(_) => { return 9; }
+    }
+    return 0 - 1;
+}`, "line 1\nline 2\n", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stdout, code, _ := compileArm64InDir(t, c.src, nil)
+			if code != c.wantExit {
+				t.Errorf("exit = %d, want %d (stdout = %q)", code, c.wantExit, stdout)
+			}
+			if !strings.Contains(stdout, c.wantStdout) {
+				t.Errorf("stdout = %q, want to contain %q", stdout, c.wantStdout)
+			}
+		})
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

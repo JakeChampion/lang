@@ -50,12 +50,20 @@ Coverage: `Test{Arm64,X86_64}ReadFileOk` /
 `...ReadFileNotFound` / `...WriteFileOk` /
 `...ReadWriteFileRoundtrip` per backend.
 
-Still missing on natives: `open_reader` / `open_writer` /
-`open_appender` and the `Reader` / `Writer` methods
-(`Reader.read_chunk` / `Reader.read_line` for arbitrary fds,
-`Writer.write`, `Writer.close`). Each one is a small runtime —
-the Result-on-error plumbing reuses the `__lang_io_error`
-helper this PR added.
+Reader / Writer file API ✅ landed: `open_reader` /
+`open_writer` / `open_appender` + `Reader.read_line` /
+`read_chunk` / `close` + `Writer.write` / `close` on both
+natives. Same handle layout (4-byte i32 `fd` at +0; the
+allocator rounds up to 16). `stdin()` / `stdout()` /
+`stderr()` now return real `Reader` / `Writer` struct
+pointers (fd = 0 / 1 / 2) so `stdin().read_line()` flows
+through the same `__lang_reader_read_line` runtime as
+`open_reader("f").read_line()`. Shared
+`__lang_close_fd_box` backs both `Reader.close` and
+`Writer.close`. Coverage: `TestArm64ReadLine` plus
+`Test{Arm64,X86_64}ReaderWriter` (open + append + read
+round-trip, `read_chunk` partial reads, line-by-line
+streaming).
 
 ### ~~`State[T]` persistent storage~~ ✅ done (program-lifetime interpretation)
 
@@ -172,8 +180,8 @@ Adding them is a copy-paste of the wasm test with a different runner.
 
 ### Smaller test gaps (low priority)
 
-- arm64 has an in-line `read_line` case but no `TestArm64ReadLine`
-  test function; x86-64 has the full `TestX86_64ReadLine`.
+- ~~arm64 had no `TestArm64ReadLine` test function~~ ✅ landed
+  alongside the Reader / Writer file API PR.
 
 ---
 
@@ -187,17 +195,13 @@ risk × leverage:
 2. ~~**Map on x86-64**~~ ✅ (PR #282)
 3. ~~**`OpSignExtend8` / `OpSignExtend16` + sub-i32 typed loads
    on both natives**~~ ✅ (PR #283)
-4. **File I/O on both natives** — `read_file` + `write_file` ✅ in
-   this batch; `open_reader` / `open_writer` / `open_appender` /
-   `Reader.*` / `Writer.*` still to do. The hard part (Result-on-
-   error plumbing + `__lang_io_error`) is now in place, so the
-   remaining helpers are mostly more openat/read/write loops. ←
-   *partially done*
-5. **`State[T]` on both natives** — depends on whether we want true
-   persistence or the program-lifetime-only interpretation. Decision
-   first, code second.
-6. **Test-coverage parity** — fold these into whichever PR enables the
-   underlying feature.
+4. ~~**File I/O on both natives**~~ ✅ — `read_file` + `write_file`
+   in PR #284; `open_reader` / `open_writer` / `open_appender` +
+   `Reader.*` / `Writer.*` in this batch (Reader / Writer file API).
+5. ~~**`State[T]` on both natives**~~ ✅ (PR #286, program-lifetime
+   interpretation).
+6. ~~**Test-coverage parity**~~ ✅ folded into the parity-test batch
+   (PR #287) plus each feature PR.
 
 When picking any one of these, the pattern is the same as the closures
 PR (#279): mirror the wasm version, add tests at the level the wasm

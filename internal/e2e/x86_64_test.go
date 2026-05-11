@@ -1190,3 +1190,86 @@ function main(): i32 {
 		})
 	}
 }
+
+// Reader / Writer file I/O round-trip on x86-64. Mirrors
+// TestArm64ReaderWriter and the wasm TestWASMOpenAppender /
+// TestWASMReaderReadChunk / TestWASMStreamingRoundtrip.
+func TestX86_64ReaderWriter(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		src        string
+		wantStdout string
+		wantExit   int
+	}{
+		{"open_writer_then_append_then_read", `function main(): i32 {
+    match (open_writer("ap.txt")) {
+        Ok(w) => {
+            match (w.write("first")) { Some(_) => { return 1; }, None => {} }
+            match (w.close()) { Some(_) => { return 2; }, None => {} }
+        },
+        Err(_) => { return 3; }
+    }
+    match (open_appender("ap.txt")) {
+        Ok(w) => {
+            match (w.write("-second")) { Some(_) => { return 4; }, None => {} }
+            match (w.close()) { Some(_) => { return 5; }, None => {} }
+        },
+        Err(_) => { return 6; }
+    }
+    match (read_file("ap.txt")) {
+        Ok(s) => { write(s); return 0; },
+        Err(_) => { return 7; }
+    }
+    return 0 - 1;
+}`, "first-second", 0},
+		{"reader_read_chunk", `function main(): i32 {
+    match (open_writer("rc.txt")) {
+        Ok(w) => {
+            match (w.write("hello world")) { Some(_) => { return 1; }, None => {} }
+            match (w.close()) { Some(_) => { return 2; }, None => {} }
+        },
+        Err(_) => { return 3; }
+    }
+    match (open_reader("rc.txt")) {
+        Ok(r) => {
+            match (r.read_chunk(5)) { Some(s) => { write(s); write(":"); }, None => { return 4; } }
+            match (r.read_chunk(20)) { Some(s) => { write(s); }, None => { return 5; } }
+            match (r.read_chunk(20)) { Some(_) => { return 6; }, None => { return 0; } }
+        },
+        Err(_) => { return 7; }
+    }
+    return 0 - 1;
+}`, "hello: world", 0},
+		{"streaming_roundtrip_lines", `function main(): i32 {
+    match (open_writer("rt.txt")) {
+        Ok(w) => {
+            match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
+            match (w.write("line 2\n")) { Some(_) => { return 2; }, None => {} }
+            match (w.close()) { Some(_) => { return 3; }, None => {} }
+        },
+        Err(_) => { return 4; }
+    }
+    match (open_reader("rt.txt")) {
+        Ok(r) => {
+            match (r.read_line()) { Some(line) => { write(line); }, None => { return 5; } }
+            match (r.read_line()) { Some(line) => { write(line); }, None => { return 6; } }
+            match (r.read_line()) { Some(_) => { return 7; }, None => {} }
+            match (r.close()) { Some(_) => { return 8; }, None => {} }
+            return 0;
+        },
+        Err(_) => { return 9; }
+    }
+    return 0 - 1;
+}`, "line 1\nline 2\n", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stdout, code, _ := compileX86_64InDir(t, c.src, nil)
+			if code != c.wantExit {
+				t.Errorf("exit = %d, want %d (stdout = %q)", code, c.wantExit, stdout)
+			}
+			if !strings.Contains(stdout, c.wantStdout) {
+				t.Errorf("stdout = %q, want to contain %q", stdout, c.wantStdout)
+			}
+		})
+	}
+}
