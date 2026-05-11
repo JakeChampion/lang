@@ -2447,6 +2447,23 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.pop()
 		g.emit("ldrb w0, [x0]")
 		g.push()
+	// Sub-i32 typed loads. `ldrsb` / `ldrsh` sign-extend into
+	// the destination 32-bit register (`w0`); the 64-bit reg
+	// (`x0`) gets the upper half zeroed implicitly. `ldrh` is
+	// the unsigned 16-bit half-word load. Pairs with wasm's
+	// `i32.load8_s` / `i32.load16_u` / `i32.load16_s`.
+	case ir.OpLoadI8S:
+		g.pop()
+		g.emit("ldrsb w0, [x0]")
+		g.push()
+	case ir.OpLoadI16U:
+		g.pop()
+		g.emit("ldrh w0, [x0]")
+		g.push()
+	case ir.OpLoadI16S:
+		g.pop()
+		g.emit("ldrsh w0, [x0]")
+		g.push()
 	case ir.OpStore:
 		// Stack: [addr, value], top = value.
 		g.emit("ldr x0, [sp], #16") // value
@@ -2637,6 +2654,20 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// zero-extending mov-into-w0.
 		g.pop()
 		g.emit("mov w0, w0")
+		g.push()
+
+	// Sub-i32 sign-extension. AArch64 has dedicated forms
+	// (`sxtb` for byte → 32-bit, `sxth` for halfword → 32-bit);
+	// the 32-bit dest reg `w0` implicitly zero-extends into
+	// x0 so the operand-stack 64-bit slot stays well-formed.
+	// Pairs with wasm's `i32.extend8_s` / `i32.extend16_s`.
+	case ir.OpSignExtend8:
+		g.pop()
+		g.emit("sxtb w0, w0")
+		g.push()
+	case ir.OpSignExtend16:
+		g.pop()
+		g.emit("sxth w0, w0")
 		g.push()
 
 	case ir.OpFConvertI32:

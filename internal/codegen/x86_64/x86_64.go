@@ -828,6 +828,18 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.pop()
 		g.emit("mov eax, eax")
 		g.push()
+	// Sub-i32 sign-extension. The IR emits these after a
+	// narrow store + reload so the value re-enters the i32
+	// world with the correct sign. Pairs with wasm's
+	// `i32.extend8_s` / `i32.extend16_s`.
+	case ir.OpSignExtend8:
+		g.pop()
+		g.emit("movsx eax, al")
+		g.push()
+	case ir.OpSignExtend16:
+		g.pop()
+		g.emit("movsx eax, ax")
+		g.push()
 	case ir.OpFPromoteF32:
 		// f32 → f64.
 		g.pop()
@@ -990,6 +1002,22 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	case ir.OpLoadByte:
 		g.pop()
 		g.emit("movzx eax, byte ptr [rax]")
+		g.push()
+	// Sub-i32 typed loads. Sign-extend variants use `movsx`,
+	// the unsigned 16-bit variant uses `movzx` so the high
+	// bits of rax stay clean. Pairs with wasm's
+	// `i32.load8_s` / `i32.load16_u` / `i32.load16_s`.
+	case ir.OpLoadI8S:
+		g.pop()
+		g.emit("movsx eax, byte ptr [rax]")
+		g.push()
+	case ir.OpLoadI16U:
+		g.pop()
+		g.emit("movzx eax, word ptr [rax]")
+		g.push()
+	case ir.OpLoadI16S:
+		g.pop()
+		g.emit("movsx eax, word ptr [rax]")
 		g.push()
 	case ir.OpStore:
 		// Stack: [addr, value], top = value. Pop value into
