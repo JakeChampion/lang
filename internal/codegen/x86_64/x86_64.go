@@ -53,10 +53,14 @@ import (
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
-// Linux x86-64 syscall numbers — only what PR 1 (the exit
-// path) needs. Each follow-up PR extends as it adds runtime
-// helpers that need a new syscall.
+// Linux x86-64 syscall numbers. Each follow-up PR extends as
+// it adds runtime helpers that need a new syscall. See the
+// asm-generic table for the full set —
+// https://chromium.googlesource.com/chromiumos/docs/+/HEAD/constants/syscalls.md
 const (
+	sysRead      = 0
+	sysWrite     = 1
+	sysMmap      = 9
 	sysExitGroup = 231
 )
 
@@ -86,7 +90,29 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if err != nil {
 		return "", err
 	}
-	g := &generator{info: info}
+	g := &generator{info: info, stringLabel: map[string]string{}}
+	// Pre-scan call sites for runtime-helper use-flags before
+	// touching any code emission, so emitDataSections + the
+	// runtime emitters below know which helpers to include
+	// (and the .bss reservations match the helpers).
+	for _, fn := range ip.Funcs {
+		for _, op := range fn.Ops {
+			if op.Kind == ir.OpCallDirect {
+				g.recordUse(op.Str)
+			}
+			if op.Kind == ir.OpAlloc {
+				g.usesAlloc = true
+			}
+			if op.Kind == ir.OpStrEq {
+				g.usesStrcmp = true
+			}
+			if op.Kind == ir.OpStrConcat {
+				g.usesStrcat = true
+				g.usesAlloc = true
+				g.usesMemcpy = true
+			}
+		}
+	}
 	g.line(".intel_syntax noprefix")
 	g.line(".text")
 	g.emitStartRuntime()
@@ -95,6 +121,30 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 			return "", err
 		}
 	}
+	// Runtime helpers — gated on use-flags so unused programs
+	// pay nothing extra in binary size.
+	if g.usesAlloc {
+		g.emitAllocRuntime()
+	}
+	if g.usesMemcpy {
+		g.emitMemcpyRuntime()
+	}
+	if g.usesStrcat {
+		g.emitStrcatRuntime()
+	}
+	if g.usesStrcmp {
+		g.emitStrcmpRuntime()
+	}
+	if g.usesPuts {
+		g.emitPutsRuntime()
+	}
+	if g.usesWrite {
+		g.emitWriteRuntime()
+	}
+	if g.usesPutchar {
+		g.emitPutcharRuntime()
+	}
+	g.emitDataSections()
 	// ELF non-executable-stack marker. Without this the
 	// linker warns (or refuses, on hardened distros) about
 	// the binary having an implicit executable stack.
@@ -103,10 +153,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 }
 
 // generator carries the running output buffer plus per-
-// program state. PR 1 has very little state; the struct
-// shape exists so later PRs can hang `usesAlloc` /
-// `usesMemcpy` / `stringLabel` etc. off the same place
-// without churning the call surface.
+// program state.
 type generator struct {
 	info *checker.Info
 	out  strings.Builder
@@ -116,6 +163,48 @@ type generator struct {
 	// when multiple functions share a name (which can't
 	// happen today but is cheap insurance).
 	labelCounter int
+	// stringLabel / stringOrder hold the string-pool scheme:
+	// each unique string literal gets a single `.LStr_N`
+	// .rodata label with a 4-byte little-endian length
+	// prefix followed by `.asciz` data. Pointers handed to
+	// user code address the .asciz base; `len(s)` reads
+	// `[ptr - 4]`. Maintained in insertion order so the
+	// emitted `.rodata` section is deterministic.
+	stringLabel map[string]string
+	stringOrder []string
+	// Each `uses<Helper>` flag mirrors arm64's pattern —
+	// only emit the helper if the program references it,
+	// so trivial programs stay small. recordUse() sets
+	// these from a pre-scan of the IR's OpCallDirect ops.
+	usesAlloc   bool
+	usesMemcpy  bool
+	usesStrcat  bool
+	usesStrcmp  bool
+	usesPuts    bool
+	usesWrite   bool
+	usesPutchar bool
+}
+
+// recordUse flips the right use-flag for a callee name the
+// IR mentions. PR 3 covers the print/strings/alloc set;
+// future PRs add tcp_*, args, env, random_bytes, etc.
+func (g *generator) recordUse(target string) {
+	switch target {
+	case "__memcpy":
+		g.usesMemcpy = true
+	case "__alloc":
+		g.usesAlloc = true
+	case "__lang_strcat":
+		g.usesStrcat = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+	case "print":
+		g.usesPuts = true
+	case "write":
+		g.usesWrite = true
+	case "putchar":
+		g.usesPutchar = true
+	}
 }
 
 // emitStartRuntime writes the program entry point. Linux
@@ -235,6 +324,15 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// with N's two's-complement bit pattern (assembler
 		// accepts negative imm32 directly).
 		g.emit(fmt.Sprintf("mov eax, %d", op.I32))
+		g.push()
+	case ir.OpConstStr:
+		// Materialise the .rodata string-literal address
+		// into rax. RIP-relative `lea` works for both PIE
+		// and non-PIE links — the assembler resolves the
+		// label at link time; the binary just dereferences
+		// the right place at run time.
+		lbl := g.internString(op.Str)
+		g.emit(fmt.Sprintf("lea rax, [rip + %s]", lbl))
 		g.push()
 	case ir.OpReturn:
 		g.pop()
@@ -473,14 +571,104 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit("test eax, eax")
 		g.emit(fmt.Sprintf("jnz %s", target))
 
+	// -------- memory load / store --------
+	//
+	// Width=0 → 4-byte (i32 / sub-i32). Width=64 or
+	// WidthPtr → 8-byte (i64 / heap pointer). Same shape
+	// arm64 uses; the IR's `WidthPtr` sentinel resolves
+	// here to 8-byte ops so pointer-typed values survive
+	// the round-trip unmangled.
+
+	case ir.OpLoad:
+		g.pop()
+		if op.Width == 64 || op.Width == ir.WidthPtr {
+			g.emit("mov rax, [rax]")
+		} else {
+			g.emit("mov eax, [rax]") // zero-extends to rax
+		}
+		g.push()
+	case ir.OpLoadByte:
+		g.pop()
+		g.emit("movzx eax, byte ptr [rax]")
+		g.push()
+	case ir.OpStore:
+		// Stack: [addr, value], top = value. Pop value into
+		// rcx then addr into rax (binPop's pattern); store
+		// according to width.
+		g.binPop()
+		if op.Width == 64 || op.Width == ir.WidthPtr {
+			g.emit("mov [rax], rcx")
+		} else {
+			g.emit("mov [rax], ecx")
+		}
+	case ir.OpStoreI8:
+		g.binPop()
+		g.emit("mov byte ptr [rax], cl")
+	case ir.OpStoreI16:
+		g.binPop()
+		g.emit("mov word ptr [rax], cx")
+
+	case ir.OpAlloc:
+		// Single i32 arg (byte count) — translate to a call
+		// to the bump allocator. Recorded use-flag at scan
+		// time so __lang_alloc actually gets emitted.
+		g.pop()
+		g.emit("mov rdi, rax")
+		g.emit("call __lang_alloc")
+		g.push()
+
+	case ir.OpStrConcat:
+		// The IR's `+` between strings lowers directly to
+		// OpStrConcat (rather than going through
+		// OpCallDirect __lang_strcat) so codegen owns the
+		// dispatch. Stack: [a, b], top = b. Pop into rsi /
+		// rdi to match the System V `__lang_strcat(a, b)`
+		// signature, call, push result.
+		g.binPop() // rcx = b, rax = a
+		g.emit("mov rdi, rax")
+		g.emit("mov rsi, rcx")
+		g.emit("call __lang_strcat")
+		g.push()
+
+	case ir.OpStrEq:
+		// String equality reduces to `__lang_strcmp(a, b) == 0`.
+		// Pop both, call, test result for zero, push 0 / 1.
+		g.binPop()
+		g.emit("mov rdi, rax")
+		g.emit("mov rsi, rcx")
+		g.emit("call __lang_strcmp")
+		g.emit("test eax, eax")
+		g.emit("setz al")
+		g.emit("movzx eax, al")
+		g.push()
+
 	// -------- direct calls --------
 	//
 	// System V AMD64: args 0..5 in rdi/rsi/rdx/rcx/r8/r9,
 	// result in rax. Pop args in reverse from the operand
 	// stack so the rightmost-on-top push order matches the
 	// register assignment.
+	//
+	// A small alias table rewrites lang-level builtins to
+	// their runtime symbols (`print → __lang_puts`, etc.),
+	// matching arm64's shape. The use-flag pre-scan already
+	// fired when these names appeared in the IR, so the
+	// runtime emitters above included them.
 
 	case ir.OpCallDirect:
+		target := op.Str
+		switch target {
+		case "__alloc":
+			target = "__lang_alloc"
+		case "__memcpy":
+			target = "__lang_memcpy"
+		case "print":
+			target = "__lang_puts"
+		case "write":
+			target = "__lang_write"
+		case "putchar":
+			target = "__lang_putchar"
+		}
 		argc := int(op.I32)
 		regArgs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 		if argc > len(regArgs) {
@@ -490,7 +678,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			g.emit(fmt.Sprintf("mov %s, [rsp]", regArgs[i]))
 			g.emit("add rsp, 16")
 		}
-		g.emit(fmt.Sprintf("call %s", op.Str))
+		g.emit(fmt.Sprintf("call %s", target))
 		g.push()
 
 	default:
@@ -548,11 +736,357 @@ func (g *generator) emit(s string) {
 	g.out.WriteByte('\n')
 }
 
-// fresh returns the next per-program label suffix. Currently
-// only used for the per-function return label; later PRs
-// will add per-scope branch labels off the same counter.
+// fresh returns the next per-program label suffix.
 func (g *generator) fresh() int {
 	n := g.labelCounter
 	g.labelCounter++
 	return n
+}
+
+// internString returns a unique .rodata label for s, adding
+// to the per-program string pool the first time `s` is seen.
+// Programs that reference the same literal multiple times
+// share one entry.
+func (g *generator) internString(s string) string {
+	if lbl, ok := g.stringLabel[s]; ok {
+		return lbl
+	}
+	lbl := fmt.Sprintf(".LStr_%d", len(g.stringOrder))
+	g.stringLabel[s] = lbl
+	g.stringOrder = append(g.stringOrder, s)
+	return lbl
+}
+
+// emitDataSections writes `.rodata` (interned string
+// literals) and `.bss` (the bump-allocator cursor +
+// heap-end sentinel). All entries are gated on usage so
+// unused programs pay nothing — `.bss` is omitted entirely
+// when the allocator isn't pulled in.
+func (g *generator) emitDataSections() {
+	if len(g.stringOrder) > 0 || g.usesPuts {
+		g.line("")
+		g.line(".section .rodata")
+		for _, s := range g.stringOrder {
+			// 4-byte little-endian length prefix followed by
+			// the .asciz data. Pointers handed to user code
+			// address the .asciz base (.LStr_N); `len()` reads
+			// `[ptr - 4]`. Same byte-level shape as wasm /
+			// arm64 — the rodata layout is portable.
+			g.line(".align 4")
+			g.line(fmt.Sprintf("\t.4byte %d", len(s)))
+			g.label(g.stringLabel[s])
+			g.line("\t.asciz " + escapeForGAS(s))
+		}
+		if g.usesPuts {
+			// Trailing newline byte for __lang_puts. Stored
+			// in the same section as the string literals so
+			// the loader maps it read-only.
+			g.label(".LLangNewline")
+			g.line(`	.asciz "\n"`)
+		}
+	}
+	if g.usesAlloc {
+		g.line("")
+		g.line(".section .bss")
+		g.line(".align 8")
+		g.label("__lang_heap_ptr")
+		g.line("\t.quad 0")
+		g.line(".align 8")
+		g.label("__lang_heap_end")
+		g.line("\t.quad 0")
+	}
+}
+
+// emitAllocRuntime emits `__lang_alloc(size: i64) -> i64`,
+// the mmap-backed bump allocator. Same shape as arm64's:
+// lazy mmap reservation on first call, then a cursor bump
+// per allocation. 64 MiB virtual reservation is plenty for
+// the CLI / edge-handler workloads we target. The arena is
+// reclaimed by the OS at process exit — no `free`.
+//
+// Allocations are rounded up to a 16-byte boundary so
+// subsequent allocs stay 16-aligned for any pointer-pair
+// operations the caller might issue.
+func (g *generator) emitAllocRuntime() {
+	const heapBytes = 64 * 1024 * 1024 // 64 MiB
+	g.line("")
+	g.line(".globl __lang_alloc")
+	g.line(".type __lang_alloc, @function")
+	g.label("__lang_alloc")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	// Round size up to 16-byte alignment: size = (size + 15) & ~15.
+	g.emit("add rdi, 15")
+	g.emit("and rdi, -16")
+	// Lazy heap init: if heap_ptr == 0, mmap-reserve the arena.
+	g.emit("mov rax, [rip + __lang_heap_ptr]")
+	g.emit("test rax, rax")
+	g.emit("jnz .Lalloc_have_heap")
+	// Save size on the stack across the syscall — r12+ are
+	// all callee-save in System V so clobbering them in a
+	// leaf-ish runtime helper would silently destroy caller
+	// state (caught when __lang_strcat passes a / b through
+	// r12 / r13 and the alloc clobbers them). Push rdi
+	// (size) onto the stack, syscall, restore.
+	g.emit("push rdi")
+	g.emit("sub rsp, 8") // align rsp to 16 for the syscall
+	// mmap(NULL, heapBytes, RW, PRIVATE|ANON, -1, 0).
+	g.emit("xor edi, edi")
+	g.emit(fmt.Sprintf("mov esi, %d", heapBytes))
+	g.emit("mov edx, 3")     // PROT_READ | PROT_WRITE
+	g.emit("mov r10d, 0x22") // MAP_PRIVATE | MAP_ANONYMOUS (Linux)
+	g.emit("mov r8d, -1")
+	g.emit("xor r9d, r9d")
+	g.emit(fmt.Sprintf("mov eax, %d", sysMmap))
+	g.emit("syscall")
+	g.emit("add rsp, 8")
+	g.emit("pop rdi") // restore size
+	// On failure mmap returns -errno (negative). Trap by
+	// jumping to an exit_group(137) — analogous to arm64's
+	// hard-OOM path.
+	g.emit("cmp rax, 0")
+	g.emit("jl .Lalloc_oom")
+	g.emit("mov [rip + __lang_heap_ptr], rax")
+	g.emit("lea rcx, [rax + " + fmt.Sprintf("%d", heapBytes) + "]")
+	g.emit("mov [rip + __lang_heap_end], rcx")
+	g.label(".Lalloc_have_heap")
+	// Bump: ptr = heap_ptr; heap_ptr += size; if (heap_ptr > heap_end) OOM.
+	g.emit("mov rax, [rip + __lang_heap_ptr]")
+	g.emit("lea rcx, [rax + rdi]")
+	g.emit("cmp rcx, [rip + __lang_heap_end]")
+	g.emit("ja .Lalloc_oom")
+	g.emit("mov [rip + __lang_heap_ptr], rcx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.label(".Lalloc_oom")
+	g.emit("mov edi, 137")
+	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
+	g.emit("syscall")
+	g.line(".size __lang_alloc, .-__lang_alloc")
+}
+
+// emitMemcpyRuntime emits `__lang_memcpy(dst, src, n)` —
+// AAPCS-style return-the-dst contract (matches arm64). Uses
+// `rep movsb` for the copy. Simple, correct, and on modern
+// x86-64 CPUs the microcoded fast-string path is competitive
+// with hand-rolled 8-byte loops for the buffer sizes the lang
+// runtime sees (HTTP buffers, JSON, map entries).
+func (g *generator) emitMemcpyRuntime() {
+	g.line("")
+	g.line(".globl __lang_memcpy")
+	g.line(".type __lang_memcpy, @function")
+	g.label("__lang_memcpy")
+	g.emit("mov rax, rdi")  // save dst for return
+	g.emit("mov rcx, rdx")  // count → rcx for `rep movsb`
+	g.emit("cld")            // direction-flag = forward
+	g.emit("rep movsb")     // [rdi++] = [rsi++], rcx times
+	g.emit("ret")
+	g.line(".size __lang_memcpy, .-__lang_memcpy")
+}
+
+// emitStrcatRuntime emits `__lang_strcat(a, b)` — concat two
+// length-prefixed strings into a fresh allocation. a / b
+// are data pointers (post-prefix); 4-byte length lives at
+// `[ptr - 4]`. Returns the new data pointer.
+//
+// Uses callee-save r12..r15 to keep state across the calls
+// to __lang_alloc and __lang_memcpy.
+func (g *generator) emitStrcatRuntime() {
+	g.line("")
+	g.line(".globl __lang_strcat")
+	g.line(".type __lang_strcat, @function")
+	g.label("__lang_strcat")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	// rbx + r12..r15 are all System V callee-save — we save
+	// every one we touch, including rbx (latent bug in PR 3
+	// draft: clobbered without saving, broke any multi-
+	// strcat call chain). The extra `push rbx` keeps the
+	// stack 16-byte aligned alongside the four r12+ pushes.
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("push r15")
+	g.emit("sub rsp, 8") // re-align rsp to 16 (5 saved regs + return = 48, +8 = 56 odd; +8 more = 64)
+	g.emit("mov r12, rdi") // r12 = a
+	g.emit("mov r13, rsi") // r13 = b
+	// la = *(a - 4); lb = *(b - 4)
+	g.emit("mov r14d, [r12 - 4]")
+	g.emit("mov r15d, [r13 - 4]")
+	// alloc(la + lb + 5) — 4 prefix + N data + 1 NUL.
+	g.emit("lea rdi, [r14 + r15 + 5]")
+	g.emit("call __lang_alloc")
+	// rax = base; data ptr = base + 4. Stash dst in rbx
+	// (callee-save) so it survives both __lang_memcpy
+	// calls, then return it at the end.
+	g.emit("lea rbx, [rax + 4]")
+	// length prefix at base + 0.
+	g.emit("mov ecx, r14d")
+	g.emit("add ecx, r15d")
+	g.emit("mov [rax], ecx")
+	// memcpy(dst, a, la)
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, r12")
+	g.emit("mov rdx, r14")
+	g.emit("call __lang_memcpy")
+	// memcpy(dst + la, b, lb)
+	g.emit("lea rdi, [rbx + r14]")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, r15")
+	g.emit("call __lang_memcpy")
+	// Trailing NUL at dst + la + lb.
+	g.emit("lea rdi, [rbx + r14]")
+	g.emit("add rdi, r15")
+	g.emit("mov byte ptr [rdi], 0")
+	g.emit("mov rax, rbx")
+	g.emit("add rsp, 8")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_strcat, .-__lang_strcat")
+}
+
+// emitStrcmpRuntime emits `__lang_strcmp(a, b)` — returns 0
+// if a and b have the same length AND the same bytes, else 1.
+// Pure equality comparator (no lex ordering), matching arm64.
+func (g *generator) emitStrcmpRuntime() {
+	g.line("")
+	g.line(".globl __lang_strcmp")
+	g.line(".type __lang_strcmp, @function")
+	g.label("__lang_strcmp")
+	// Same pointer? Equal.
+	g.emit("cmp rdi, rsi")
+	g.emit("je .Lscmp_eq")
+	// Same length?
+	g.emit("mov ecx, [rdi - 4]")
+	g.emit("mov edx, [rsi - 4]")
+	g.emit("cmp ecx, edx")
+	g.emit("jne .Lscmp_neq")
+	// rep cmpsb wants the count in rcx and the pointers in
+	// rsi (source 1) / rdi (source 2). cld → forward.
+	g.emit("cld")
+	g.emit("repe cmpsb")
+	g.emit("jne .Lscmp_neq")
+	g.label(".Lscmp_eq")
+	g.emit("xor eax, eax")
+	g.emit("ret")
+	g.label(".Lscmp_neq")
+	g.emit("mov eax, 1")
+	g.emit("ret")
+	g.line(".size __lang_strcmp, .-__lang_strcmp")
+}
+
+// emitPutsRuntime emits `__lang_puts(s)` — write the string,
+// then a single trailing newline. Two write(2) calls keeps
+// the code simple at the cost of one extra syscall per call;
+// per-call cost is dominated by the syscall itself either
+// way. Preserves r12 across the second write so we can
+// return the original data pointer for libc-puts
+// consistency.
+func (g *generator) emitPutsRuntime() {
+	g.line("")
+	g.line(".globl __lang_puts")
+	g.line(".type __lang_puts, @function")
+	g.label("__lang_puts")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push r12")
+	g.emit("sub rsp, 8") // keep rsp 16-aligned post-prologue
+	g.emit("mov r12, rdi")        // r12 = data ptr (saved for return)
+	// write(1, s, len(s))
+	g.emit("mov edx, [rdi - 4]")  // length
+	g.emit("mov rsi, rdi")        // buf
+	g.emit("mov edi, 1")          // fd = stdout
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	// write(1, "\n", 1)
+	g.emit("lea rsi, [rip + .LLangNewline]")
+	g.emit("mov edx, 1")
+	g.emit("mov edi, 1")
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("mov rax, r12")
+	g.emit("add rsp, 8")
+	g.emit("pop r12")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_puts, .-__lang_puts")
+}
+
+// emitWriteRuntime emits `__lang_write(s)` — write the
+// string with no trailing newline. Single write(2) syscall.
+func (g *generator) emitWriteRuntime() {
+	g.line("")
+	g.line(".globl __lang_write")
+	g.line(".type __lang_write, @function")
+	g.label("__lang_write")
+	g.emit("mov edx, [rdi - 4]")  // length
+	g.emit("mov rsi, rdi")        // buf
+	g.emit("mov rax, rdi")        // save for return
+	g.emit("mov edi, 1")          // fd = stdout
+	g.emit("push rax")
+	g.emit("sub rsp, 8")          // align
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("add rsp, 8")
+	g.emit("pop rax")
+	g.emit("ret")
+	g.line(".size __lang_write, .-__lang_write")
+}
+
+// emitPutcharRuntime emits `__lang_putchar(c)` — write a
+// single byte to stdout. Stash on the stack, write(1, &c, 1).
+func (g *generator) emitPutcharRuntime() {
+	g.line("")
+	g.line(".globl __lang_putchar")
+	g.line(".type __lang_putchar, @function")
+	g.label("__lang_putchar")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")        // 1 byte slot + alignment
+	g.emit("mov [rsp], dil")     // byte value
+	g.emit("mov edi, 1")         // fd = stdout
+	g.emit("mov rsi, rsp")       // buf = &slot
+	g.emit("mov edx, 1")         // count = 1
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("add rsp, 16")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_putchar, .-__lang_putchar")
+}
+
+// escapeForGAS escapes a string for the GAS `.asciz`
+// directive. Same shape as the arm64 backend's helper —
+// only the minimum set of escapes the runtime strings
+// need.
+func escapeForGAS(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"':
+			b.WriteString(`\"`)
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c < 32 || c == 127:
+			fmt.Fprintf(&b, `\%03o`, c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
