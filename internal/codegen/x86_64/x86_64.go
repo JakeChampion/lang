@@ -169,6 +169,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesEnv {
 		g.emitEnvRuntime()
 	}
+	if g.usesArgs {
+		g.emitArgsRuntime()
+	}
 	if g.usesArena {
 		g.emitArenaRuntime()
 	}
@@ -222,6 +225,7 @@ type generator struct {
 	usesPutchar bool
 	usesTcp             bool
 	usesEnv             bool
+	usesArgs            bool
 	usesArena           bool
 	usesAllocU8         bool
 	usesStringFromBytes bool
@@ -256,6 +260,10 @@ func (g *generator) recordUse(target string) {
 		}
 	case "env":
 		g.usesEnv = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+	case "args":
+		g.usesArgs = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
 	case "arena_save", "arena_restore":
@@ -294,9 +302,15 @@ func (g *generator) emitStartRuntime() {
 	g.label("_start")
 	// argc is at [rsp+0]; argv starts at [rsp+8]; envp at
 	// [rsp + 8 + (argc+1)*8] (NULL-terminator after argv).
-	// If usesEnv is set we stash envp into __lang_envp so
-	// `env()` can walk it later. PR 5 only wires envp; argv
-	// capture can land in a follow-up PR alongside `args()`.
+	// Stash whichever of (argc, argv, envp) the program
+	// actually needs — gated so trivial programs don't pay
+	// for the extra mov chain.
+	if g.usesArgs {
+		g.emit("mov rax, [rsp]")
+		g.emit("mov [rip + __lang_argc], rax")
+		g.emit("lea rcx, [rsp + 8]")
+		g.emit("mov [rip + __lang_argv], rcx")
+	}
 	if g.usesEnv {
 		g.emit("mov rax, [rsp]")             // argc
 		g.emit("lea rdi, [rsp + 8]")          // rdi = &argv[0]
@@ -1014,6 +1028,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_tcp_close"
 		case "env":
 			target = "__lang_env"
+		case "args":
+			target = "__lang_args"
 		case "arena_save":
 			target = "__lang_arena_save"
 		case "arena_restore":
@@ -1204,7 +1220,7 @@ func (g *generator) emitDataSections() {
 			g.line(`	.asciz "\n"`)
 		}
 	}
-	if g.usesAlloc || g.usesEnv {
+	if g.usesAlloc || g.usesEnv || g.usesArgs {
 		g.line("")
 		g.line(".section .bss")
 		if g.usesAlloc {
@@ -1218,6 +1234,17 @@ func (g *generator) emitDataSections() {
 		if g.usesEnv {
 			g.line(".align 8")
 			g.label("__lang_envp")
+			g.line("\t.quad 0")
+		}
+		if g.usesArgs {
+			g.line(".align 8")
+			g.label("__lang_argc")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__lang_argv")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__lang_args_cache")
 			g.line("\t.quad 0")
 		}
 	}
@@ -1729,6 +1756,95 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_env, .-__lang_env")
+}
+
+// emitArgsRuntime emits `__lang_args()` — returns a length-
+// prefixed `string[]` materialised from the argc / argv pair
+// captured at `_start`. Each entry is a fresh length-prefixed
+// string with a trailing NUL preserved (for libc-shape
+// consumers like `puts`). Result is cached in
+// `__lang_args_cache` so repeat calls are O(1). Same shape
+// arm64 uses (PR #267 ptr-width-stride layout):
+//
+//   [pad:4 | len:4 | argv0_ptr:8 | argv1_ptr:8 | ...]
+//
+// data ptr = base + 8 (8-aligned). length prefix at
+// `data - 4`. Element stride 8 bytes, one full pointer per
+// argv entry.
+func (g *generator) emitArgsRuntime() {
+	g.line("")
+	g.line(".globl __lang_args")
+	g.line(".type __lang_args, @function")
+	g.label("__lang_args")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")  // argc
+	g.emit("push r12")  // argv (char**)
+	g.emit("push r13")  // i (loop)
+	g.emit("push r14")  // result data ptr
+	g.emit("push r15")  // current argv[i] / strlen
+	g.emit("sub rsp, 8") // align
+	// Fast path: cached?
+	g.emit("mov rax, [rip + __lang_args_cache]")
+	g.emit("test rax, rax")
+	g.emit("jnz .Largs_ret")
+	// argc / argv from globals captured by _start.
+	g.emit("mov rbx, [rip + __lang_argc]")
+	g.emit("mov r12, [rip + __lang_argv]")
+	// alloc(argc * 8 + 8) — 8-byte header keeps element 0
+	// at an 8-aligned offset; length prefix lives at
+	// data-4, padding fills data-8..data-4.
+	g.emit("lea rdi, [rbx * 8 + 8]")
+	g.emit("call __lang_alloc")
+	g.emit("lea r14, [rax + 8]")  // r14 = data ptr (8-aligned)
+	g.emit("mov [r14 - 4], ebx")  // length prefix = argc
+	g.emit("xor r13d, r13d")       // i = 0
+	g.label(".Largs_loop")
+	g.emit("cmp r13, rbx")
+	g.emit("jge .Largs_done")
+	// r15 = argv[i] (C string pointer).
+	g.emit("mov r15, [r12 + r13*8]")
+	// Inline strlen on r15.
+	g.emit("xor ecx, ecx")
+	g.label(".Largs_strlen")
+	g.emit("mov al, [r15 + rcx]")
+	g.emit("test al, al")
+	g.emit("jz .Largs_strlen_done")
+	g.emit("inc rcx")
+	g.emit("jmp .Largs_strlen")
+	g.label(".Largs_strlen_done")
+	// rcx = strlen. alloc(strlen + 5).
+	g.emit("mov rdx, rcx")          // save strlen (r15 is C ptr; need it for memcpy)
+	g.emit("lea edi, [rcx + 5]")
+	g.emit("push rdx")
+	g.emit("call __lang_alloc")
+	g.emit("pop rdx")
+	g.emit("mov [rax], edx")        // length prefix
+	// memcpy(data, argv[i], strlen + 1) — include NUL.
+	g.emit("lea rdi, [rax + 4]")    // dst
+	g.emit("mov rsi, r15")           // src = argv[i]
+	g.emit("lea rdx, [rdx + 1]")
+	g.emit("push rax")
+	g.emit("call __lang_memcpy")
+	g.emit("pop rax")
+	// result[i] = data ptr (full 8 bytes — pointer-stride).
+	g.emit("lea rcx, [rax + 4]")
+	g.emit("mov [r14 + r13*8], rcx")
+	g.emit("inc r13")
+	g.emit("jmp .Largs_loop")
+	g.label(".Largs_done")
+	g.emit("mov [rip + __lang_args_cache], r14")
+	g.emit("mov rax, r14")
+	g.label(".Largs_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_args, .-__lang_args")
 }
 
 // emitArenaRuntime emits the bump-cursor snapshot/rewind pair:

@@ -496,6 +496,67 @@ func TestX86_64Print(t *testing.T) {
 	}
 }
 
+// argv capture. `args()` returns the program's argv as a
+// `string[]` materialised by `__lang_args()`, populated
+// from the argc / argv stashed at `_start`. Same shape as
+// `TestArm64Args`: spawn the binary with three fixed user
+// args, print each, check (a) len(args) reports the right
+// count and (b) the user args show up on stdout. argv[0]
+// is the binary path so we only check the trailing three.
+func TestX86_64Args(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+
+	src := `function main(): i32 {
+    var a: string[] = args();
+    var i: i32 = 0;
+    while (i < len(a)) {
+        print(a[i]);
+        i = i + 1;
+    }
+    return len(a);
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(binPath, "alpha", "beta", "gamma")
+	} else {
+		args := append(append([]string{}, runner[1:]...), binPath, "alpha", "beta", "gamma")
+		cmd = exec.Command(runner[0], args...)
+	}
+	out, _ := cmd.CombinedOutput()
+	if got, want := cmd.ProcessState.ExitCode(), 4; got != want {
+		t.Errorf("exit = %d (argc), want %d\n--- got ---\n%s", got, want, out)
+	}
+	for _, want := range []string{"alpha\n", "beta\n", "gamma\n"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output missing %q\n--- got ---\n%s", want, out)
+		}
+	}
+}
+
 // Tail-call optimisation. `ir.TailCallOptimize` rewrites
 // every `OpCallDirect <self> ; OpReturn` pair in a function
 // into a parameter rebind + `OpBr` back to a synthetic
