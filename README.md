@@ -128,7 +128,7 @@ function factorial(n: number, acc: number): number {
 
 function main(): number {
   var origin: Point = Point { x: 3, y: 4 };
-  print("hello");                         // libc puts on arm32, fd_write on wasm
+  print("hello");                         // libc puts on arm32, write(2) on arm64, fd_write on wasm
   return origin.magnitude() + factorial(5, 1);
 }
 ```
@@ -205,7 +205,7 @@ Supported:
 Built-ins:
 
 - `print(s: string): void` — newline-terminating output (libc `puts`
-  on ARM32, WASI `fd_write` on WASM).
+  on ARM32, direct `write(2)` syscall on ARM64, WASI `fd_write` on WASM).
 - `write(s: string): void` — stdout without a trailing newline.
   Use to compose your own output formatting (status lines, prompts,
   custom delimiters).
@@ -332,7 +332,7 @@ internal/ast/              # AST types + Position
 internal/checker/          # type checker + did-you-mean hints
 internal/closureconv/      # nested-function hoisting
 internal/ir/               # stack-machine IR + lowering + opt passes
-internal/codegen/          # ARM32 emitter (arm32*.go) + WASM (wasm/)
+internal/codegen/          # ARM32 emitter (arm32*.go) + ARM64 (arm64/) + WASM (wasm/)
 internal/diag/             # error formatting with source context
 internal/e2e/              # end-to-end tests for both backends
 internal/interp/           # AST tree-walking interpreter (REPL)
