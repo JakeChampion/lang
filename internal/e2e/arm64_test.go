@@ -509,6 +509,18 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		{"args", `function main(): i32 {
     return len(args());
 }`, 1},
+		// Map[i32, i32] — pointer-width fix exercise. The
+		// Map handle now uses __store_ptr / __load_ptr (8
+		// bytes on arm64) so the buf pointer round-trips
+		// correctly even when macOS hands us heap addresses
+		// above 4 GiB. String-keyed Maps still depend on
+		// 4-byte entry slots; that's a separate follow-up.
+		{"map_i32", `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m.set(1, 100);
+    m.set(2, 200);
+    return m.get_or(2, 0);
+}`, 200},
 		// Map is deliberately not exercised here yet — the
 		// runtime round-trips heap pointers through 32-bit
 		// storage slots (__store_i32 / __load_i32), and
