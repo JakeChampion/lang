@@ -218,6 +218,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesStrSlice {
 		g.emitStrSliceRuntime()
 	}
+	if g.usesRawIntPokes {
+		g.emitRawIntPokesRuntime()
+	}
+	if g.usesMemset {
+		g.emitMemsetRuntime()
+	}
 	g.emitDataSections()
 	// ELF non-executable-stack marker. Without this the
 	// linker warns (or refuses, on hardened distros) about
@@ -274,6 +280,14 @@ type generator struct {
 	usesRandomBytes     bool
 	usesReadLine        bool
 	usesStdin           bool
+	// usesRawIntPokes pulls in `__store_i32` / `__load_i32` /
+	// `__store_ptr` / `__load_ptr` / `__ptr_width` — primitives
+	// the lang Map runtime uses for its mixed bucket-index +
+	// entries buffer. Single mov + ret each.
+	usesRawIntPokes bool
+	// usesMemset gates emission of the byte-grain
+	// `__memset(dst, byte, n)` helper the Map clear path uses.
+	usesMemset bool
 }
 
 // recordUse flips the right use-flag for a callee name the
@@ -335,6 +349,13 @@ func (g *generator) recordUse(target string) {
 		g.usesMemcpy = true
 	case "stdin":
 		g.usesStdin = true
+	case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr", "__ptr_width":
+		// Map runtime's raw int/pointer pokes — each lowers
+		// to a single mov + ret.
+		g.usesRawIntPokes = true
+	case "__memset":
+		// Byte-grain fill used by the Map clear path.
+		g.usesMemset = true
 	}
 }
 
@@ -1126,6 +1147,40 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// forbids static OOB so well-typed programs
 			// don't reach a bad index.
 			return g.emitInlineIdxHelper(target)
+		// Map / MapIter — the lang Map runtime lives entirely
+		// in the lang prelude under `_impl`-suffixed names;
+		// user-facing call sites use the unsuffixed mangled
+		// name and codegen rewrites here. Mirrors arm64.
+		case "map_new":
+			target = "map_new_impl"
+		case "__method_Map_len":
+			target = "__map_len_impl"
+		case "__method_Map_has":
+			target = "__map_has_impl"
+		case "__method_Map_get":
+			target = "__map_get_impl"
+		case "__method_Map_get_or":
+			target = "__map_get_or_impl"
+		case "__method_Map_set":
+			target = "__map_set_impl"
+		case "__method_Map_delete":
+			target = "__map_delete_impl"
+		case "__method_Map_clear":
+			target = "__map_clear_impl"
+		case "__method_Map_keys":
+			target = "__map_keys_impl"
+		case "__method_Map_values":
+			target = "__map_values_impl"
+		case "__method_Map_iter":
+			target = "__map_iter_impl"
+		case "__method_MapIter_has_next":
+			target = "__mapiter_has_next_impl"
+		case "__method_MapIter_key":
+			target = "__mapiter_key_impl"
+		case "__method_MapIter_value":
+			target = "__mapiter_value_impl"
+		case "__method_MapIter_advance":
+			target = "__mapiter_advance_impl"
 		}
 		argc := int(op.I32)
 		regArgs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
@@ -2364,6 +2419,90 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
 	g.line(".size __str_slice, .-__str_slice")
+}
+
+// emitRawIntPokesRuntime emits `__store_i32(addr, val)` /
+// `__load_i32(addr) -> i32` / `__store_ptr(addr, val)` /
+// `__load_ptr(addr) -> i64` / `__ptr_width() -> i32 (=8)`.
+// The lang Map runtime calls these for its mixed bucket-index
+// + entries buffer where the caller owns the layout (no
+// length prefix). Mirrors arm64's `emitRawIntPokesRuntime`;
+// single mov + ret each.
+func (g *generator) emitRawIntPokesRuntime() {
+	g.line("")
+	g.line(".globl __load_i32")
+	g.line(".type __load_i32, @function")
+	g.label("__load_i32")
+	g.emit("mov eax, [rdi]")
+	g.emit("ret")
+	g.line(".size __load_i32, .-__load_i32")
+
+	g.line("")
+	g.line(".globl __store_i32")
+	g.line(".type __store_i32, @function")
+	g.label("__store_i32")
+	g.emit("mov [rdi], esi")
+	g.emit("ret")
+	g.line(".size __store_i32, .-__store_i32")
+
+	g.line("")
+	g.line(".globl __load_ptr")
+	g.line(".type __load_ptr, @function")
+	g.label("__load_ptr")
+	g.emit("mov rax, [rdi]")
+	g.emit("ret")
+	g.line(".size __load_ptr, .-__load_ptr")
+
+	g.line("")
+	g.line(".globl __store_ptr")
+	g.line(".type __store_ptr, @function")
+	g.label("__store_ptr")
+	g.emit("mov [rdi], rsi")
+	g.emit("ret")
+	g.line(".size __store_ptr, .-__store_ptr")
+
+	// `__ptr_width()` returns 8 on x86-64. The Map runtime
+	// uses this to size per-entry key/value slots; pairs with
+	// the wasm backend's `i32.const 4`.
+	g.line("")
+	g.line(".globl __ptr_width")
+	g.line(".type __ptr_width, @function")
+	g.label("__ptr_width")
+	g.emit("mov eax, 8")
+	g.emit("ret")
+	g.line(".size __ptr_width, .-__ptr_width")
+}
+
+// emitMemsetRuntime emits `__memset(dst, byte, n)` — byte-
+// grain fill matching the wasm bulk-memory shim and arm64's
+// helper. 8-byte word loop with the byte replicated across
+// all eight lanes; byte-grain tail for the residue.
+// rdi = dst, sil (low 8 of rsi) = byte value, rdx = n.
+func (g *generator) emitMemsetRuntime() {
+	g.line("")
+	g.line(".globl __memset")
+	g.line(".type __memset, @function")
+	g.label("__memset")
+	g.emit("movzx ecx, sil")          // ecx = byte (zero-extended)
+	g.emit("mov rax, 0x0101010101010101")
+	g.emit("imul rax, rcx")           // rax = byte replicated 8x
+	g.label(".Lmset_word")
+	g.emit("cmp rdx, 8")
+	g.emit("jb .Lmset_tail")
+	g.emit("mov [rdi], rax")
+	g.emit("add rdi, 8")
+	g.emit("sub rdx, 8")
+	g.emit("jmp .Lmset_word")
+	g.label(".Lmset_tail")
+	g.emit("test rdx, rdx")
+	g.emit("je .Lmset_done")
+	g.emit("mov [rdi], al")
+	g.emit("inc rdi")
+	g.emit("dec rdx")
+	g.emit("jmp .Lmset_tail")
+	g.label(".Lmset_done")
+	g.emit("ret")
+	g.line(".size __memset, .-__memset")
 }
 
 // escapeForGAS escapes a string for the GAS `.asciz`

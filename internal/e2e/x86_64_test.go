@@ -824,3 +824,63 @@ function main(): i32 { return outer("hi", 40); }`
 		t.Errorf("got %d, want 42", code)
 	}
 }
+
+// Map runtime — exercises the codegen-alias rewrites (`map_new`
+// → `map_new_impl`, `__method_Map_*` → `_impl`), the new
+// `__store_i32` / `__load_i32` / `__store_ptr` / `__load_ptr` /
+// `__ptr_width` / `__memset` runtime helpers, and the lang
+// prelude's open-addressing core. Mirrors TestArm64Map and the
+// wasm StateMap* tests.
+func TestX86_64Map(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"basic_set_get", `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m.set(1, 100);
+    m.set(2, 200);
+    return m.get_or(2, 0);
+}`, 200},
+		{"grow_past_capacity", `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    var i: i32 = 0;
+    while (i < 8) {
+        m.set(i, i * 10);
+        i = i + 1;
+    }
+    if (m.len() != 8) { return 1; }
+    if (m.get_or(7, 0 - 1) != 70) { return 2; }
+    return 42;
+}`, 42},
+		{"string_keys", `function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("alpha", 1);
+    m.set("beta", 2);
+    m.set("gamma", 3);
+    return m.get_or("beta", 0 - 1) + m.len();
+}`, 5},
+		{"iter_after_delete", `function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("a", 10);
+    m.set("b", 20);
+    m.set("c", 30);
+    m.delete("b");
+    if (m.has("b")) { return 1; }
+    var total: i32 = 0;
+    var it = m.iter();
+    while (it.has_next()) {
+        total = total + it.value();
+        it.advance();
+    }
+    return total;
+}`, 40},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
+				t.Errorf("got %d, want %d", code, c.want)
+			}
+		})
+	}
+}
