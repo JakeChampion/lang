@@ -1125,3 +1125,68 @@ func TestX86_64EprintExit(t *testing.T) {
 		t.Errorf("output = %q, want %q", out, "oops\n")
 	}
 }
+
+// State[T] on natives is the program-lifetime / no-op
+// interpretation. Mirrors TestArm64State; same source on both
+// backends so they stay observably equivalent.
+func TestX86_64State(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"scalar_counter", `state {
+    var counter: i32 = 41;
+}
+function main(): i32 {
+    counter = counter + 1;
+    return counter;
+}`, 42},
+		{"scalar_i64", `state {
+    var big: i64 = 100i64;
+}
+function main(): i32 {
+    big = big + 1i64;
+    return big as i32;
+}`, 101},
+		{"computed_init", `state {
+    var x: i32 = 1 + 2 * 3;
+}
+function main(): i32 { return x; }`, 7},
+		{"f64_and_bool", `state {
+    var pi: f64 = 3.14;
+    var maybe: boolean = true;
+}
+function main(): i32 {
+    if (maybe) { return (pi * 10.0f64) as i32; }
+    return 0;
+}`, 31},
+		{"string_init", `state {
+    var greeting: string = "hello, " + "world!";
+}
+function main(): i32 { return len(greeting); }`, 13},
+		{"map_across_calls", `state {
+    var todos: Map[i32, string] = map_new(4);
+}
+function add(id: i32, text: string): void {
+    todos.set(id, text);
+}
+function get(id: i32): string {
+    return todos.get_or(id, "?");
+}
+function main(): i32 {
+    add(1, "buy milk");
+    add(2, "feed cat");
+    add(3, "walk dog");
+    var got: string = get(2);
+    if (got == "feed cat") { return 42; }
+    return 0;
+}`, 42},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
+				t.Errorf("got %d, want %d", code, c.want)
+			}
+		})
+	}
+}

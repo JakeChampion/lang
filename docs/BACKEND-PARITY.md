@@ -57,30 +57,35 @@ Still missing on natives: `open_reader` / `open_writer` /
 the Result-on-error plumbing reuses the `__lang_io_error`
 helper this PR added.
 
-### `State[T]` persistent storage
+### ~~`State[T]` persistent storage~~ ✅ done (program-lifetime interpretation)
 
-The `state { var counter: i32 = 0 }` syntax that survives across
-edge-handler requests on wasi-http. Backed by:
+Landed on both natives: each `state { var NAME: T = INIT; }` block
+becomes a labelled `.data` (literal init) or `.bss` (runtime init)
+slot. `OpLoadGlobal` / `OpStoreGlobal` lower to rip-relative
+(x86-64) or adrp+ldr/str (arm64) with width chosen by
+`stateWidthBytes(t)` (8 for i64 / f64 / pointer-shaped, 4 for
+everything else). `OpPersistentSet` / `OpPersistentRestore` are
+no-ops (push 0 / drop 16-byte slot) since natives only have one
+heap.
 
-- `OpLoadGlobal` / `OpStoreGlobal` — global-typed slots
-- `OpPersistentSet` / `OpPersistentRestore` — allocator-mode toggle
-  (route allocations either through the per-request arena or the
-  persistent heap)
+For non-literal initialisers the checker synthesises
+`__state_init`; arm64 / x86-64 `_start` calls it before `main`,
+so all init allocations sit safely below any subsequent
+`arena_save`.
 
-**Wasm:** all four ops handled.
-**arm64 + x86-64:** none handled.
+Covered shapes (`TestArm64State` / `TestX86_64State`): scalar i32
+counter, scalar i64, computed scalar init, `f64 + boolean` mix,
+string with concat init, Map[K, V] mutated across function calls.
 
-Open question: do these even make sense on a single-process native
-binary? The "edge handler" use case implies a multi-request lifecycle
-that native binaries don't have. If we want native to compile the same
-source as wasi-http, the simplest mapping is "persistent === program
-lifetime" — `OpLoadGlobal` / `OpStoreGlobal` lower to ELF `.data` /
-`.bss` slots, and `OpPersistentSet` / `OpPersistentRestore` become
-no-ops (everything's "persistent" on a native binary).
-
-- **Risk:** low for the no-op interpretation; medium if we want real
-  process-survival persistence (would need a manifest + file-backed
-  state).
+**Caveat for HTTP-handler programs:** the auto-`main` synthesised
+for `function handle(req): resp` wraps each request body in
+`arena_save` / `arena_restore`. State-rooted mutations that
+internally allocate (e.g. `Map.set` triggering a grow) would land
+in the arena and be reclaimed at request boundary. The wasm
+backend dodges this via the two-cursor allocator that
+`OpPersistentSet(1)` toggles into; native still has only one
+heap. Filed as a follow-up — the workaround is to size state Maps
+generously up-front so grows don't happen inside `handle()`.
 
 ---
 
@@ -117,13 +122,18 @@ native only has `OpLoadByte` (unsigned i8). Affects `i8[]` /
   `movsx eax, word ptr [rax]`
 - **Risk:** low; one case per op.
 
-### `OpLoadGlobal` / `OpStoreGlobal` on both natives
+### ~~`OpLoadGlobal` / `OpStoreGlobal` on both natives~~ ✅ done
 
-See "`State[T]` persistent storage" above.
+Landed alongside `State[T]`. arm64: `adrp x1, .Lstate_<name>; ldr
+w0/x0, [x1, :lo12:.Lstate_<name>]` (width per `stateWidthBytes`).
+x86-64: `mov eax/rax, [rip + .Lstate_<name>]`.
 
-### `OpPersistentSet` / `OpPersistentRestore` on both natives
+### ~~`OpPersistentSet` / `OpPersistentRestore` on both natives~~ ✅ done
 
-See "`State[T]` persistent storage" above.
+Landed as no-ops (push 0 / drop 16-byte slot) — natives only have
+one heap, so the wasm-side allocator-mode toggle has no native
+analog. See the "State[T]" section for the caveat about
+state-rooted Map grow inside `handle()`.
 
 ---
 
@@ -153,8 +163,10 @@ Adding them is a copy-paste of the wasm test with a different runner.
 - `Test*IfLet*` (if-let match)
 - `Test*SubI32*` (u8 / u16 / i8 array writes / slices / widths) —
   blocked on the OpLoadI*/OpSignExtend* gaps above
-- `Test*State*` (StateScalarCounter, StateMapAcrossCalls, etc.) —
-  blocked on `State[T]` gap above
+- ~~`Test*State*` (StateScalarCounter, StateMapAcrossCalls, etc.)~~
+  ✅ landed alongside `State[T]` (TestArm64State / TestX86_64State —
+  6 sub-cases per backend mirroring the wasm shapes a no-op
+  interpretation can express)
 - `Test*ReadFile*` / `Test*WriteFile*` / `Test*OpenAppender` —
   blocked on file I/O gap above
 
