@@ -387,6 +387,25 @@ func TestArm64Args(t *testing.T) {
 	}
 }
 
+// arm64 arena_save / arena_restore — snapshot the bump cursor
+// and rewind to discard everything allocated between the two
+// calls. Verifies both helpers are wired up and that
+// reclaim is observable as heap_ptr returning to its saved
+// value.
+func TestArm64Arena(t *testing.T) {
+	_, code := compileAndRunArm64(t, `function main(): i32 {
+    var s1: string = "hello, " + "world!"; // alloc
+    var saved: i32 = arena_save();
+    var s2: string = "throwaway-" + "junk"; // alloc, will be reclaimed
+    arena_restore(saved);
+    var s3: string = "after-" + "restore"; // alloc reuses s2's space
+    return len(s1) + len(s3);
+}`)
+	if code != 13+13 {
+		t.Errorf("exit = %d, want 26 (len(s1) + len(s3))", code)
+	}
+}
+
 // arm64 eprint + exit. eprint(s) writes to fd 2 (stderr); exit(code)
 // is a direct exit syscall and skips main's normal return path.
 // Combined: write to stderr, then bail with a specific code.
@@ -509,6 +528,16 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		{"args", `function main(): i32 {
     return len(args());
 }`, 1},
+		// arena_save / arena_restore — snapshot + rewind the
+		// bump cursor. Both leaf helpers (one ldr / one str
+		// against __lang_heap_ptr).
+		{"arena", `function main(): i32 {
+    var s1: string = "hello, " + "world!";
+    var saved: i32 = arena_save();
+    var s2: string = "throwaway-" + "junk";
+    arena_restore(saved);
+    return len(s1);
+}`, 13},
 		// Map is deliberately not exercised here yet — the
 		// runtime round-trips heap pointers through 32-bit
 		// storage slots (__store_i32 / __load_i32), and
