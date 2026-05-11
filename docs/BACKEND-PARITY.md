@@ -290,22 +290,46 @@ the test suite to keep CI green; re-add it as a regression test
 alongside the fix.
 
 **Fix plan**: widen the prelude's pointer storage to be target-aware.
-Options:
+Two options:
 
-1. Introduce a `usize` lang type that's 4 bytes on wasm32 and 8 bytes
-   on native. Update `__alloc` / `__load_ptr` / `__store_ptr` to
-   return / take `usize`. Update all prelude pointer locals
-   (~30 sites in the Map runtime plus the string / slice runtimes)
-   from `i32` to `usize`.
-2. Widen `__load_ptr` / `__store_ptr` / `__alloc` unconditionally to
-   `i64`. On wasm32 the value gets truncated to 32 bits on store,
-   which is correct (pointers fit). On native the full 64 bits
-   survive. Less type-system change but more semantically awkward.
+1. **Introduce a `usize` lang type** that's 4 bytes on wasm32 and
+   8 bytes on native. Update `__alloc` / `__load_ptr` /
+   `__store_ptr` to return / take `usize`. Update all prelude
+   pointer locals (~30 sites in the Map runtime plus the string /
+   slice runtimes) from `i32` to `usize`.
+2. **Widen `__load_ptr` / `__store_ptr` / `__alloc` to `i64`**
+   unconditionally and let wasm32 truncate at the call boundary.
 
-Multi-day refactor with cross-target testing required. Holding off
-until either a real workload hits the bug or option (1)'s `usize` is
-useful for other reasons (e.g. native CLI tooling that needs
-`isize`-shaped indexing).
+### Spike status (post PR #292 attempt)
+
+Tried option (2) end-to-end. Got far enough to confirm scope:
+
+- **Checker changes** are tractable — `addrType = NumberType{Width:
+  64}` on the address-taking helpers, plus auto-widening for binops
+  / comparisons / function args (the auto-widening half landed
+  cleanly in PR #292).
+- **Prelude rewrite** is ~140 sites across the Map / string / slice
+  runtimes (pointer-typed `var X: i32 = __alloc(...)` → `i64`,
+  function signatures, return types). Mechanical but laborious.
+- **Native backends** work without code changes — they already
+  treat 8-byte slots and 64-bit registers as the default.
+- **Wasm32 hits a new blocker**: the IR's `i64 → string` cast is a
+  reinterpret no-op everywhere, but on wasm32 the underlying
+  memory access (`i32.load` / `call $__str_eq`) needs an i32
+  pointer, not i64. Currently the IR doesn't have a target-aware
+  "wrap-to-ptr-width" op. Fixing this needs ONE of:
+    - A new target-aware IR op (e.g. `OpWrapToPtr`, no-op on
+      native / `i32.wrap_i64` on wasm32).
+    - Or: widen wasm32's `$__str_eq` and all other helpers that
+      take string-pointer args to accept `i64`, internally
+      `i32.wrap_i64`-ing.
+    - Or: restructure the prelude to type-pun string keys as
+      `string` directly rather than i64 (requires per-K
+      monomorphisation in the Map runtime — touches Item 2 below
+      too).
+
+Estimate: ~2–3 more days of careful work touching IR + wasm
+runtime + prelude, with cross-target testing.
 
 ### Wide-scalar Map keys / values (i64 / u64 / f64)
 
@@ -326,6 +350,13 @@ per width combination. Or: introduce a runtime entry-shape descriptor
 (in the buffer header) that the impl branches on. The latter avoids
 binary-size explosion at the cost of branch prediction on the hot
 path.
+
+**Shares scope with the arm64-darwin truncation item above** —
+monomorphising the Map runtime would let each instantiation type
+its `entryK` / `k` locals as the actual K type (e.g. `string` for
+string-keyed maps), which incidentally solves the wasm32 "cast i64
+→ string" problem from the truncation-fix spike. Doing both items
+together is probably the right shape.
 
 Multi-day refactor. Defer until a real workload needs wide-key Maps;
 the current `Map[i32, _]` and `Map[string, _]` cover edge-handler /
