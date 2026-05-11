@@ -66,6 +66,7 @@ const (
 	sysBind      = 49
 	sysListen    = 50
 	sysExitGroup = 231
+	sysGetrandom = 318
 )
 
 // Options tunes the emit. Currently empty; reserved for the
@@ -175,6 +176,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArena {
 		g.emitArenaRuntime()
 	}
+	if g.usesRandomBytes {
+		g.emitRandomBytesRuntime()
+	}
+	if g.usesReadLine {
+		g.emitReadLineRuntime()
+	}
+	if g.usesStdin {
+		g.emitStdinRuntime()
+	}
 	if g.usesAllocU8 {
 		g.emitAllocU8Runtime()
 	}
@@ -230,6 +240,9 @@ type generator struct {
 	usesAllocU8         bool
 	usesStringFromBytes bool
 	usesStrSlice        bool
+	usesRandomBytes     bool
+	usesReadLine        bool
+	usesStdin           bool
 }
 
 // recordUse flips the right use-flag for a callee name the
@@ -282,6 +295,15 @@ func (g *generator) recordUse(target string) {
 		g.usesStrSlice = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
+	case "random_bytes":
+		g.usesRandomBytes = true
+		g.usesAlloc = true
+	case "read_line", "__method_Reader_read_line":
+		g.usesReadLine = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+	case "stdin":
+		g.usesStdin = true
 	}
 }
 
@@ -1034,6 +1056,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_arena_save"
 		case "arena_restore":
 			target = "__lang_arena_restore"
+		case "random_bytes":
+			target = "__lang_random_bytes"
+		case "read_line", "__method_Reader_read_line":
+			target = "__lang_read_line"
+		case "stdin":
+			target = "__lang_stdin"
 		case "__str_idx", "__arr_idx", "__arr_idx_2", "__arr_idx_8",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
@@ -1220,7 +1248,7 @@ func (g *generator) emitDataSections() {
 			g.line(`	.asciz "\n"`)
 		}
 	}
-	if g.usesAlloc || g.usesEnv || g.usesArgs {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine {
 		g.line("")
 		g.line(".section .bss")
 		if g.usesAlloc {
@@ -1246,6 +1274,15 @@ func (g *generator) emitDataSections() {
 			g.line(".align 8")
 			g.label("__lang_args_cache")
 			g.line("\t.quad 0")
+		}
+		if g.usesReadLine {
+			// 4 KiB scratch buffer for the byte-by-byte
+			// read loop. Same fixed cap arm64 uses; if a
+			// real workload ever needs longer lines we
+			// move to a growable read buffer.
+			g.line(".align 8")
+			g.label("__lang_read_line_buf")
+			g.line("\t.space 4096")
 		}
 	}
 }
@@ -1845,6 +1882,143 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_args, .-__lang_args")
+}
+
+// emitRandomBytesRuntime emits `__lang_random_bytes(n)` —
+// allocates a fresh length-prefixed lang string of n bytes
+// and fills it with kernel CSPRNG output via a single
+// `getrandom(buf, n, 0)` syscall (Linux x86-64 #318;
+// blocks at most very briefly until the urandom pool is
+// initialised; flags=0). Returns the data pointer.
+func (g *generator) emitRandomBytesRuntime() {
+	g.line("")
+	g.line(".globl __lang_random_bytes")
+	g.line(".type __lang_random_bytes, @function")
+	g.label("__lang_random_bytes")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")  // n
+	g.emit("push r12")  // data ptr
+	g.emit("mov ebx, edi")  // rbx = n
+	// Allocate n + 5 (4 prefix + n data + 1 trailing NUL).
+	g.emit("lea edi, [rbx + 5]")
+	g.emit("call __lang_alloc")
+	g.emit("lea r12, [rax + 4]")     // r12 = data ptr
+	g.emit("mov [r12 - 4], ebx")     // length prefix
+	// getrandom(buf=r12, n=rbx, flags=0)
+	g.emit("mov rdi, r12")
+	g.emit("mov rsi, rbx")
+	g.emit("xor edx, edx")
+	g.emit(fmt.Sprintf("mov eax, %d", sysGetrandom))
+	g.emit("syscall")
+	// Trailing NUL at data + n. (getrandom doesn't write
+	// past the requested length.)
+	g.emit("mov byte ptr [r12 + rbx], 0")
+	g.emit("mov rax, r12")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_random_bytes, .-__lang_random_bytes")
+}
+
+// emitReadLineRuntime emits `__lang_read_line()` — reads
+// stdin one byte at a time into the 4 KiB
+// `__lang_read_line_buf` (.bss), stops at '\n' (kept in
+// the result) or 4 KiB or EOF/error. Returns
+// Option[string]: Some(line) when at least one byte was
+// read, None when the very first read returned 0 (EOF
+// before any input).
+//
+// Option payload layout matches the IR's PR #267 shape:
+//
+//	Some: [tag=0:4][pad:4][str_ptr:8]   (16 bytes; payload at +8)
+//	None: [tag=1:4]                      (heap-allocated; tag-only)
+//
+// Callee-save rbx / r12 / r13 hold buf base, bytes-read,
+// and stash slots across the inner read syscall + alloc /
+// memcpy calls.
+func (g *generator) emitReadLineRuntime() {
+	g.line("")
+	g.line(".globl __lang_read_line")
+	g.line(".type __lang_read_line, @function")
+	g.label("__lang_read_line")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")  // buf base
+	g.emit("push r12")  // bytes-read counter
+	g.emit("push r13")  // stash (str ptr across alloc, etc.)
+	g.emit("sub rsp, 8")
+	g.emit("lea rbx, [rip + __lang_read_line_buf]")
+	g.emit("xor r12d, r12d")  // bytes read = 0
+	g.label(".Lrl_loop")
+	g.emit("cmp r12, 4096")
+	g.emit("jge .Lrl_done")
+	// read(0, buf + r12, 1)
+	g.emit("xor edi, edi")
+	g.emit("lea rsi, [rbx + r12]")
+	g.emit("mov edx, 1")
+	g.emit(fmt.Sprintf("mov eax, %d", sysRead))
+	g.emit("syscall")
+	// EOF (0) or error (<0) → finish.
+	g.emit("cmp rax, 1")
+	g.emit("jl .Lrl_done")
+	// Examine the just-read byte. r12 not yet incremented;
+	// access via [rbx + r12].
+	g.emit("mov al, [rbx + r12]")
+	g.emit("inc r12")
+	g.emit("cmp al, 10")  // '\n'
+	g.emit("je .Lrl_done")
+	g.emit("jmp .Lrl_loop")
+	g.label(".Lrl_done")
+	// EOF before any byte → return None.
+	g.emit("test r12, r12")
+	g.emit("jnz .Lrl_some")
+	g.emit("mov edi, 4")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 1")  // tag = 1 (None)
+	g.emit("jmp .Lrl_ret")
+	g.label(".Lrl_some")
+	// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
+	g.emit("lea edi, [r12 + 5]")
+	g.emit("call __lang_alloc")
+	g.emit("mov [rax], r12d")        // length prefix
+	g.emit("lea r13, [rax + 4]")     // r13 = data ptr
+	// memcpy(r13, rbx, r12)
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, rbx")
+	g.emit("mov rdx, r12")
+	g.emit("call __lang_memcpy")
+	// Trailing NUL.
+	g.emit("mov byte ptr [r13 + r12], 0")
+	// Build Option[string]: 16 bytes [tag=0, pad, ptr@+8].
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 0")  // tag = 0 (Some)
+	g.emit("mov [rax + 8], r13")       // payload at +8 (8-byte slot)
+	g.label(".Lrl_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_read_line, .-__lang_read_line")
+}
+
+// emitStdinRuntime emits `__lang_stdin()` — a 1-instruction
+// stub returning 0. The checker requires `stdin()` to be
+// callable but the backend doesn't yet model per-fd
+// Readers, so the receiver value is unused; any sentinel
+// works. Matches arm64's shape.
+func (g *generator) emitStdinRuntime() {
+	g.line("")
+	g.line(".globl __lang_stdin")
+	g.line(".type __lang_stdin, @function")
+	g.label("__lang_stdin")
+	g.emit("xor eax, eax")
+	g.emit("ret")
+	g.line(".size __lang_stdin, .-__lang_stdin")
 }
 
 // emitArenaRuntime emits the bump-cursor snapshot/rewind pair:
