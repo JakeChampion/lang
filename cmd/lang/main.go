@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen"
@@ -352,13 +353,23 @@ func linkDarwin(asm, outPath, cc string) error {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		return err
 	}
-	args := []string{
-		"--target=arm64-apple-darwin",
-		"-fuse-ld=lld",
-		"-nostdlib",
-		"-Wl,-arch,arm64",
-		asmPath,
-		"-o", outPath,
+	// On a native macOS arm64 host, the default clang IS the
+	// arm64-apple-darwin clang and ld64 is its default linker
+	// — `lld` typically isn't installed. From a Linux dev host
+	// or CI we need clang+lld's Mach-O backend to cross-compile.
+	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
+	var args []string
+	if native {
+		args = []string{"-nostdlib", asmPath, "-o", outPath}
+	} else {
+		args = []string{
+			"--target=arm64-apple-darwin",
+			"-fuse-ld=lld",
+			"-nostdlib",
+			"-Wl,-arch,arm64",
+			asmPath,
+			"-o", outPath,
+		}
 	}
 	cmd := exec.Command(cc, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
