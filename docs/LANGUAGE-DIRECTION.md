@@ -1286,3 +1286,235 @@ the lang's abstraction layers.
   formal escape rules when re-lowering for
   defunctionalisation; until then the rule is "captures
   must outlive the closure".
+
+## Outside influences we mined
+
+Periodic survey of design ideas from outside the language-
+research bubble. For each, what we take, what we leave, and
+why — so a future agent can re-derive the call instead of
+guessing.
+
+### TigerBeetle's TigerStyle
+
+Source: https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md
+
+TigerStyle is a tight engineering culture — NASA Power of
+Ten, zero-tech-debt, statically-allocated, assertion-rich.
+Not all of it transplants to a tree-walking Go compiler, but
+the heart of it (proactive design, limits-on-everything,
+named-with-meaning) maps cleanly onto the lang's own
+runtime + the prelude. We're already accidentally Tiger-
+flavoured in several places — codifying the matches makes
+future contributors arrive at the same shape without
+guessing.
+
+**Already aligned (no action — call out so we don't drift):**
+
+- *Limits on everything.* `http_parse_request` caps at 8 KiB
+  headers + 1 MiB body and returns `None` past either;
+  `__map_pow2_ceil` saturates at 2^30 instead of looping
+  forever; `__lang_read_line` is gated on a 4 KiB .bss
+  buffer. All bounded loops are bounded explicitly.
+- *Zero dependencies.* The compiler runs on Go stdlib only;
+  no third-party deps in `go.mod`. Wasm helpers ship in the
+  prelude rather than vendoring runtime libraries.
+- *All errors handled.* Go's `if err != nil` discipline is
+  enforced by `go vet`; checker errors carry source
+  positions; runtime traps abort the process loudly.
+- *Always motivate.* CLAUDE.md's "Engineering bar" already
+  reads as a TigerStyle paragraph (zero regressions, every
+  feature tests, fix bugs you find on the way).
+- *Don't react to external events.* The handler model runs
+  one invocation per request — the program drives, the host
+  schedules. Lines up with TigerStyle's "your program
+  should run at its own pace" — and is the exact reason
+  edge-function targets are the long-term goal.
+
+**Adopting:**
+
+- *Limits-on-everything pushed into user lang.* Add an
+  `assert(cond, "msg")` builtin that traps with a source-
+  positioned message in debug builds (and elides under
+  `-O`). Encourages handler authors to assert preconditions
+  the way the prelude already does — and gives us a natural
+  place to hook future fuzz-testing.
+- *Two assertions per function (target, not hard rule).*
+  For codegen / IR Go code, where state-shape correctness
+  matters most. Linter rule eventually; for now, soft
+  target in code review.
+- *Variable-naming with descending significance.* New IR
+  fields and runtime locals use `latency_ms_max` shape
+  (most-significant → least-significant suffix). Existing
+  Go names stay; new ones follow the rule. Aligns sibling
+  variables in source — `latency_ms_min` + `latency_ms_max`
+  read symmetrically.
+- *`source` / `target` over `src` / `dest`.* Same word
+  length keeps `source_offset` + `target_offset` lined up
+  in calculations. Currently mixed in the codegen — clean
+  up opportunistically.
+- *Centralise control flow.* "Push `if`s up and `for`s
+  down." For the IR builder this means keeping the per-
+  ast-node `case` switch flat in `expr()` / `stmt()` and
+  pushing the imperative emit-this-then-that sequences
+  down into small helpers (already partially done with
+  `emitArrayPush`, `emitWideMapValues`, `structFieldLayout`
+  → keep going).
+- *Negative-space testing.* For every new feature, also
+  test that the malformed / invalid case is rejected with
+  a clean diagnostic, not a crash. Already informal — make
+  it a checklist item in the PR template.
+
+**Considered, left:**
+
+- *Function-length hard cap (70 lines).* Some of the IR
+  lowering cases legitimately need 80–120 lines (e.g.
+  `emitWideMapValues`, the match-arm dispatcher). Forcing
+  splits there fragments a single coherent algorithm into
+  named-but-coupled helpers. Keep 70 as a soft target for
+  *new* helpers; let existing well-factored long
+  functions stay.
+- *Zero dynamic allocation after init.* The compiler is a
+  process that runs once per CLI invocation — Go's GC
+  handles its memory, and dynamic allocation of AST nodes
+  is correct. The *language* enforces static-after-init via
+  the per-request arena; the *compiler* doesn't need to.
+- *Static allocation in the language runtime.* Conflicts
+  with the per-request arena model — handler code allocates
+  freely, the arena resets at request end. Cheaper and
+  simpler than reserving fixed-size buffers up-front.
+- *No recursion.* Lang user code is fine with recursion
+  (matches every modern language). The IR layer avoids
+  recursion in code paths that need bounded execution (the
+  tail-call optimiser exists for that), but the AST walk
+  itself is naturally recursive — and shallow enough
+  (handler bodies, not arbitrary user data) that the
+  recursion bound is implicit in source size.
+
+### Algebraic effects (Kyo, Koka, Eff)
+
+Sources:
+- https://getkyo.io/  
+- https://github.com/getkyo/kyo (`README.md`)
+- prior survey: Roc's `effects`, Koka's effect rows,
+  OCaml's effect handlers.
+
+Kyo's headline idea: every computation has type `A < S`
+where `S` is a *type-level set of pending effects*. Pure
+values widen to `T < Any` automatically — no
+`pure`/`return` ceremony. Effects compose by intersection
+(`Int < (Sync & Abort[E])`), and *handlers* discharge them
+one at a time, transforming the row. The direct-style
+macro lets users write `val s = Sync.defer("hello").now`
+instead of nested `.map`s — looks imperative, compiles to
+monadic composition.
+
+**Why we're looking at it now.** Edge-function handlers are
+exactly the workload that wants explicit effect tracking:
+which handlers do IO, which can fail, which need
+persistent state, which capture per-request scope.
+Right now we encode this with conventions and ad-hoc
+return types (`Result[T, E]`, `Option[T]`, naked types).
+A row of effects could replace several of those, make
+intent visible at signatures, and unlock checker rules
+like "no IO from `state{}` init expressions" or "a
+pure function can't suspend."
+
+**What translates well:**
+
+- *Pending effects as a row.* Already overlap with what
+  Roc and Koka do. For lang, a return type like
+  `function handle(req): HttpResponse <io, throws[Bad
+  Request]>` reads cleanly and the checker can verify
+  call-site effect closure. We already track `void` vs
+  result types; this is the same idea at finer
+  granularity.
+- *Auto-widening pure → effectful.* No need for explicit
+  `pure(x)` wrapping. Already the lang's posture —
+  `i32` values flow through `Option`/`Result` without
+  ceremony, and an effect row should follow the same
+  rule: any `T` is `T <>` (empty row), widens up to any
+  superset.
+- *Direct style by default.* This is what we already
+  have — `var s = http_get(url);` doesn't require `.now`
+  / `.map`. Effect tracking should ride on top of the
+  existing imperative-looking syntax, not introduce a
+  separate `direct { }` block. Gleam's `use` rewrite +
+  Kyo's auto-widen give us the right semantic shape
+  without a parallel surface syntax.
+- *Effects as documented capability, not category-theory.*
+  Kyo explicitly avoids "cryptic operators and unnecessary
+  category theory." Same posture — the user-facing story
+  is "this function may suspend / throw / mutate state,"
+  not "this function returns `IO (Either E A)`."
+
+**What we'd change vs Kyo:**
+
+- *Closed effect set, not user-defined.* Kyo's "open
+  set" framing is overstated in their own docs — they
+  ship a fixed `Sync`, `Async`, `Abort`, `Env`, `Var`,
+  `Emit`, `Choice`, `Memo`. We'd do the same: a small
+  built-in vocabulary (`io`, `throws[E]`, `suspend`,
+  `state`) the checker recognises. Open extensibility
+  is research-grade and not justified by the edge-
+  function use case.
+- *No effect handlers in user code.* Handlers are how
+  Kyo discharges effects (`Abort.run(comp)`,
+  `Env.run(value)(comp)`). For our targets the
+  discharger is the *runtime* — `tcp_serve` discharges
+  `<io>`, `arena_save`/`arena_restore` discharges
+  `<state>`, the `?` operator discharges `<throws>`.
+  User code consumes effects; only the runtime / the
+  prelude installs handlers.
+- *No macros.* Kyo leans on Scala 3 macros for direct
+  style. Our parser already accepts imperative syntax;
+  desugar happens at the AST → IR boundary
+  (`closureconv`, the `?` operator, `use`-style CPS).
+  Effect tracking is a checker-side annotation pass,
+  not a syntactic transformation.
+
+**Sketch — what an effect-annotated signature would
+look like, if/when this lands:**
+
+```
+// Pure helper — no row.
+function double(n: i32): i32 {
+    return n * 2;
+}
+
+// Reads env vars, may suspend on syscall.
+function port(): i32 <io, suspend> {
+    return __port_from_env("PORT", 8080);
+}
+
+// Handler — may throw BadRequest, may IO.
+function handle(req: HttpRequest): HttpResponse <io, throws[BadRequest]> {
+    if (req.method != "POST") {
+        throw BadRequest("method not allowed");
+    }
+    var body = read_body(req);  // <io, suspend> bubbles up
+    return HttpResponse { status: 200, body: body };
+}
+```
+
+The checker checks the effect closure: `port()` calls
+`__port_from_env` which is `<io, suspend>`, so `port`'s
+declared row must include both. `handle` calling `port()`
+needs `<io, suspend>` in its row — and indeed it
+declares `<io, throws[BadRequest]>`; the `suspend`
+isn't there, so the checker rejects.
+
+**Not committing to ship.** This is an open design
+question — adding effect rows is a real surface-syntax
+change, and the value depends on how many bugs the
+checker catches that we wouldn't have caught otherwise.
+Worth a prototype branch when we have a sufficiently
+large body of handler code to measure against.
+
+### When to revisit
+
+When we ship native HTTP servers on arm64 (this PR /
+follow-ups), there'll be real handler code in the test
+suite that exercises `<io>` / `<throws>` / `<state>`
+patterns. That's the right moment to prototype the
+effect-row checker rules and see if they catch
+anything real.

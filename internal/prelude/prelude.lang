@@ -2016,6 +2016,19 @@ function tcp_serve(port: i32, handler: (HttpRequest) => HttpResponse): i32 {
             // the same as success here.
             continue;
         }
+        // Per-request arena scope. Snapshot the bump cursor
+        // before any request-shaped allocation (recv buffers,
+        // parsed HttpRequest, handler-built HttpResponse,
+        // serialized wire bytes) and rewind it after tcp_close
+        // — every byte allocated during this iteration is
+        // reclaimed before the next `tcp_accept`. state{}
+        // allocations sit below this save point (state init
+        // runs before main, so its cursor is in the
+        // pre-arena region) and survive the rewind.
+        // Matches the wasi-http `__http_entry` wrapper shape,
+        // closing the parity gap between native arm64 and
+        // wasm-http handler runtimes.
+        var saved: i32 = arena_save();
         // Drain the connection into a single buffer up to the
         // first parse-success. The parser returns None when
         // the buffer is too short (header block not yet
@@ -2063,6 +2076,7 @@ function tcp_serve(port: i32, handler: (HttpRequest) => HttpResponse): i32 {
             tcp_send(fd, wire);
         }
         tcp_close(fd);
+        arena_restore(saved);
     }
     return 0;
 }
