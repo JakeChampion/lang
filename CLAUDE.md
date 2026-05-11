@@ -17,24 +17,26 @@ as a constraint to preserve.
 
 ## Targets
 
+- ARM64 / aarch64 Linux (the **default** target; qemu-aarch64
+  under test; real hardware: AWS Graviton, Raspberry Pi 4+ in
+  64-bit mode, Android, Apple Silicon Macs via Linux containers)
 - ARM64 / aarch64 Darwin — Mach-O for native Apple Silicon Macs
-  (the default target; explicit form `-target arm64-darwin`). No
-  Linux container needed; clang + ld64 (native) or clang + lld
-  (cross from Linux) link directly. Verified end-to-end on
-  `macos-14` CI runner. Map[i32, i32] works (the `m → buf` handle
-  uses `__store_ptr` / `__load_ptr` — 8 bytes on arm64).
-  **Remaining gap**: `Map[string, _]` and `Map[_, string]` still
-  store string keys/values in 4-byte entry slots (per-entry stride
-  is 8 = 4-byte key + 4-byte value); high bits of macOS heap
-  pointers get truncated when the key or value is a string. Needs
-  a type-aware entry-stride widening (i32 stays 4 bytes; string
-  pointer needs 8 on arm64). Excluded from the macos-14 matrix
-  until fixed; tracked separately.
-- ARM64 / aarch64 Linux (qemu-aarch64 under test; real hardware:
-  AWS Graviton, Raspberry Pi 4+ in 64-bit mode, Android,
-  Apple Silicon Macs via Linux containers)
+  (`-target arm64-darwin`). No Linux container needed; clang +
+  ld64 (native) or clang + lld (cross from Linux) link directly.
+  Verified end-to-end on `macos-14` CI runner. Map[i32, i32]
+  works (the `m → buf` handle uses `__store_ptr` / `__load_ptr`
+  — 8 bytes on arm64). **Remaining gap**: `Map[string, _]` and
+  `Map[_, string]` still store string keys/values in 4-byte
+  entry slots (per-entry stride is 8 = 4-byte key + 4-byte
+  value); high bits of macOS heap pointers get truncated when
+  the key or value is a string. Needs a type-aware entry-stride
+  widening (i32 stays 4 bytes; string pointer needs 8 on arm64).
+  Excluded from the macos-14 matrix until fixed; tracked
+  separately.
 - WASI / WebAssembly (currently exercised via wasmtime)
-- x86-64 is on the roadmap
+- x86-64 is on the roadmap. The `ir.TailCallOptimize` pass lives
+  in `internal/ir/tco.go` waiting on x86-64 codegen; no backend
+  calls it today but the tests still exercise it.
 
 The IR layer is target-agnostic; new optimisations should live in `internal/ir`
 so all backends benefit.
@@ -44,10 +46,10 @@ backend through early 2026 — it was the original target and the
 default — but parity work between backends became untenable and
 the arm32 hardware story (Raspberry Pi 2/3 embedded) was poorly
 matched to the language's stated edge-function focus. The backend,
-its e2e tests, the `TailCallOptimize` IR pass, and the cross-
-compiler / qemu wiring were all removed. **Do not add arm32-
-specific code back.** If a comment in the codebase still says "on
-arm32" or "same as arm32", treat it as a TODO to clean up.
+its e2e tests, and the cross-compiler / qemu wiring were all
+removed. **Do not add arm32-specific code back.** If a comment in
+the codebase still says "on arm32" or "same as arm32", treat it
+as a TODO to clean up.
 
 ## Working with PRs
 

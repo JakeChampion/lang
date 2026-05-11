@@ -59,14 +59,13 @@ jobs:
         # execute the Mach-O. Catches codegen regressions across
         # the example surface that wouldn't surface from the
         # targeted go-test alone (new IR ops, new builtins,
-        # prelude changes). arm64-darwin is the default target,
-        # so no -target flag is needed.
+        # prelude changes).
         run: |
           go build -o bin/lang ./cmd/lang
           mkdir -p build
           for f in examples/*.lang; do
             name=$(basename "$f" .lang)
-            ./bin/lang -cc clang -o "build/$name" "$f"
+            ./bin/lang -target arm64-darwin -cc clang -o "build/$name" "$f"
             echo "::group::run $name"
             ./build/$name || echo "(exited $?)"
             echo "::endgroup::"

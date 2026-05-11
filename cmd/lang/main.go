@@ -2,13 +2,13 @@
 //
 // Usage:
 //
-//	lang FILE.lang                       # write arm64 Mach-O assembly to stdout
-//	lang -o OUTPUT FILE.lang             # link with clang and write a
-//	                                     # native arm64 binary
+//	lang FILE.lang                       # write arm64 Linux assembly to stdout
+//	lang -o OUTPUT FILE.lang             # link with the aarch64 cross-
+//	                                     # compiler and write a static ELF
+//	                                     # binary
 //	lang --run FILE.lang [-- ARGS...]    # link to a temporary binary and
-//	                                     # execute it (arm64 Linux only;
-//	                                     # uses qemu-aarch64 when not on
-//	                                     # an arm64 host)
+//	                                     # execute it under qemu-aarch64
+//	                                     # (forwarding stdio)
 //	lang -fmt FILE.lang                  # write idiomatic, indented source
 //	                                     # to stdout (use -w to overwrite
 //	                                     # the input file in place; use -d
@@ -56,7 +56,7 @@ func absPath(p string) string {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64-darwin", "code-generation backend: arm64-darwin (default, native Apple Silicon macOS), arm64 (Linux ELF), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
+	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
 	cc := flag.String("cc", "", "linker invoked when -o or --run is set; defaults to aarch64-linux-gnu-gcc for arm64 Linux and clang for arm64-darwin")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
@@ -66,7 +66,7 @@ func main() {
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64-darwin|arm64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
+		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64|arm64-darwin|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       lang -fmt [-w | -d] FILE.lang")
 		fmt.Fprintln(os.Stderr, "       lang -repl")
 		flag.PrintDefaults()

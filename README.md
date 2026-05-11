@@ -3,12 +3,13 @@
 A small statically-typed language with several backends, written in Go.
 Targets so far:
 
-- **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs
-  (Apple M-series); the **default** target. No Linux container
-  required on a Mac; `clang` + `ld64` link directly. (For cross-
-  compile from Linux, `lld`'s Mach-O backend is used instead.)
 - **ARM64 / aarch64** Linux ELF — Raspberry Pi 4+, AWS Graviton,
-  Android, qemu-aarch64 under test.
+  Android, qemu-aarch64 under test. The **default** target;
+  default cross-compiler is `aarch64-linux-gnu-gcc`.
+- **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs
+  (Apple M-series). No Linux container required on a Mac; `clang`
+  + `ld64` link directly. (For cross-compile from Linux, `lld`'s
+  Mach-O backend is used instead.)
 - **WebAssembly** — emitted as a WASI Preview 2 Component Model
   component, ready for `wasmtime run` (CLI) or `wasmtime serve`
   (`wasi:http/incoming-handler`).
@@ -29,9 +30,10 @@ source
   ──► closure conversion (hoists nested functions, rewrites captures)
   ──► IR lowering       (structured stack-machine IR)
   ──► IR optimisation   (see "optimisation" below)
-  ──► ARM64 emitter  ──► .s   (Mach-O / Apple Silicon, default;
-      or                       or Linux ELF via `-target arm64`)
-      WASM emitter   ──► .wat (preview-2 component via wasm-tools)
+  ──► ARM64 emitter  ──► .s   (Linux ELF default; or Mach-O via
+      or                       `-target arm64-darwin` for Apple
+      WASM emitter   ──► .wat  Silicon Macs)
+                              (preview-2 component via wasm-tools)
 ```
 
 Both backends share the IR layer, so a new language feature usually
@@ -56,18 +58,18 @@ ideas in Go.
 ```
 go build ./cmd/lang
 
-# ARM64 macOS (default target, Apple Silicon)
+# ARM64 Linux (default target)
+./lang examples/factorial.lang > factorial.s
+aarch64-linux-gnu-gcc -static -nostdlib factorial.s -o factorial
+qemu-aarch64 factorial
+
+# ARM64 macOS (Apple Silicon)
 #   Run natively on a Mac with clang:
-./lang -o factorial examples/factorial.lang
+./lang -target arm64-darwin -o factorial examples/factorial.lang
 ./factorial
 #   ...or cross-compile from Linux with clang + lld (the binary
 #   ships unchanged; copy to a Mac to run):
-./lang -cc clang -o factorial examples/factorial.lang
-
-# ARM64 Linux
-./lang -target arm64 examples/factorial.lang > factorial.s
-aarch64-linux-gnu-gcc -static -nostdlib factorial.s -o factorial
-qemu-aarch64 factorial
+./lang -target arm64-darwin -cc clang -o factorial examples/factorial.lang
 
 # WASM (preview-2 component)
 ./lang -target wasm -wasi-adapter $LANG_WASI_ADAPTER \
@@ -264,6 +266,7 @@ place and benefits both:
 |--------------------|--------------|
 | `Inline`           | Substitutes small leaf-function bodies, including ones with internal control flow / multiple returns. |
 | `FuseTee`          | Collapses adjacent `OpStoreLocal X ; OpLoadLocal X` to a single `OpTeeLocal X` (cleaner WAT, identity on ARM64). |
+| `TailCallOptimize` | Wraps the body in a loop and rewrites `OpCallDirect <self> ; OpReturn` to a parameter rebind plus `OpBr`. Currently unwired (the arm64 backend doesn't call it); kept for the upcoming x86-64 backend. |
 | `FlattenBranches`  | `if (c) { return X; } return Y;` → typed value-returning if + one trailing return. |
 | `OptimizeCleanup`  | Iterates `PropagateCopies` (drop dead tees / stores) + `ConstPropagate` (replace loads of constant-bound slots) + `Fold` (constant arithmetic, constant-if pruning, const+drop) + `ReduceStrength` (`x * 2^k → x << k`, identity ops) to a fixed point. |
 | `EliminateDeadCode`| Drops ops between a terminator (`OpReturn` / `OpReturnVoid` / `OpBr`) and the next control-flow merge. |
