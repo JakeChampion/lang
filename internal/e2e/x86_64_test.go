@@ -1191,6 +1191,38 @@ function main(): i32 {
 	}
 }
 
+// State-rooted Map.set inside an arena cycle (the HTTP-handler
+// shape). Without the two-cursor allocator, Map.set's grow path
+// would allocate the new backing buffer in the per-request
+// arena and arena_restore would reclaim it — leaving the state
+// Map's data pointer dangling on the next call. Mirrors
+// TestArm64StateMapGrowInsideArena.
+func TestX86_64StateMapGrowInsideArena(t *testing.T) {
+	src := `state {
+    var todos: Map[i32, i32] = map_new(2);
+}
+function add(k: i32, v: i32): void {
+    todos.set(k, v);
+}
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 50) {
+        var saved: i32 = arena_save();
+        add(i, i * 2);
+        arena_restore(saved);
+        i = i + 1;
+    }
+    if (todos.len() != 50) { return 1; }
+    if (todos.get_or(7, 0 - 1) != 14) { return 2; }
+    if (todos.get_or(49, 0 - 1) != 98) { return 3; }
+    if (todos.get_or(99, 0 - 1) != 0 - 1) { return 4; }
+    return 42;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 42 {
+		t.Errorf("got %d, want 42 (state Map grow survives arena cycle)", code)
+	}
+}
+
 // Reader / Writer file I/O round-trip on x86-64. Mirrors
 // TestArm64ReaderWriter and the wasm TestWASMOpenAppender /
 // TestWASMReaderReadChunk / TestWASMStreamingRoundtrip.

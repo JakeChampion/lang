@@ -85,15 +85,30 @@ Covered shapes (`TestArm64State` / `TestX86_64State`): scalar i32
 counter, scalar i64, computed scalar init, `f64 + boolean` mix,
 string with concat init, Map[K, V] mutated across function calls.
 
-**Caveat for HTTP-handler programs:** the auto-`main` synthesised
-for `function handle(req): resp` wraps each request body in
-`arena_save` / `arena_restore`. State-rooted mutations that
-internally allocate (e.g. `Map.set` triggering a grow) would land
-in the arena and be reclaimed at request boundary. The wasm
-backend dodges this via the two-cursor allocator that
-`OpPersistentSet(1)` toggles into; native still has only one
-heap. Filed as a follow-up — the workaround is to size state Maps
-generously up-front so grows don't happen inside `handle()`.
+### ~~Two-cursor allocator for state-rooted mutations~~ ✅ done
+
+Landed alongside the State[T] follow-up. Each native backend
+now has two bump-allocator cursors — an arena cursor (mode 0,
+the per-request region `arena_save` / `arena_restore`
+manipulate) and a persistent cursor (mode 1, never reclaimed).
+A 1-byte `__lang_alloc_mode` flag selects which region
+`__lang_alloc` bumps; `OpPersistentSet` / `OpPersistentRestore`
+real-toggle the flag (no longer no-ops). The IR already wraps
+state-rooted method calls in `OpPersistentSet(1)` /
+`OpPersistentRestore`, so e.g. `Map.set`'s grow path inside
+`handle()` now lands in the persistent region and survives the
+request-boundary `arena_restore`.
+
+Coverage: `Test{Arm64,X86_64}StateMapGrowInsideArena` — 50
+inserts into a `cap=2` state Map, each wrapped in a
+fresh `arena_save / arena_restore` window. Triggers multiple
+grows across arena cycles; passes only with the two-cursor
+allocator.
+
+Heap layout: two 64 MiB regions (so 128 MiB total virtual
+reservation), lazy-mmap'd on first use, hinted at
+`0x10000000` and `0x20000000` so both fit in 32 bits (the
+prelude's `__store_i32` / `__load_i32` truncation constraint).
 
 ---
 
