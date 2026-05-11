@@ -164,6 +164,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesPutchar {
 		g.emitPutcharRuntime()
 	}
+	if g.usesEprint {
+		g.emitEprintRuntime()
+	}
+	if g.usesExit {
+		g.emitExitRuntime()
+	}
 	g.emitDataSections()
 	if !g.darwin {
 		// `.note.GNU-stack` is an ELF-only directive — it
@@ -202,14 +208,14 @@ func (g *generator) emitDataSections() {
 		g.label(g.stringLabel[s])
 		g.line("\t.asciz " + escapeForGAS(s))
 	}
-	if g.usesPuts {
+	if g.usesPuts || g.usesEprint {
 		// Single newline byte emitted into the same section as
-		// the string literals. __lang_puts writes `s` followed
-		// by a 1-byte write of this label. We use `.asciz`
-		// rather than `.byte 10` so Mach-O's `cstring_literals`
-		// attribute (which requires NUL-terminated strings)
-		// accepts the entry — the trailing NUL is harmless,
-		// the write only reads the first byte.
+		// the string literals. __lang_puts / __lang_eprint
+		// write `s` followed by a 1-byte write of this label.
+		// We use `.asciz` rather than `.byte 10` so Mach-O's
+		// `cstring_literals` attribute (which requires NUL-
+		// terminated strings) accepts the entry — the trailing
+		// NUL is harmless, the write only reads the first byte.
 		g.label(".LLangNewline")
 		g.line(`	.asciz "\n"`)
 	}
@@ -1006,6 +1012,51 @@ func (g *generator) emitPutcharRuntime() {
 	g.line(".ltorg")
 }
 
+// emitEprintRuntime emits `__lang_eprint(s)` — stderr
+// counterpart to __lang_puts. Two write(2)s to fd 2 (string +
+// newline). Preserves x19 so we can return the input pointer
+// for the consistency `__lang_puts` already offers.
+func (g *generator) emitEprintRuntime() {
+	g.line("")
+	g.line(".global __lang_eprint")
+	g.typeDirective("__lang_eprint")
+	g.label("__lang_eprint")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("mov x19, x0")         // x19 = data ptr (saved)
+	g.emit("ldur w2, [x0, #-4]") // x2 = length
+	g.emit("mov x1, x0")          // x1 = buf
+	g.emit("mov x0, #2")          // x0 = fd (stderr)
+	g.syscall("write")
+	g.adrpAdd("x1", ".LLangNewline")
+	g.emit("mov x2, #1")
+	g.emit("mov x0, #2")
+	g.syscall("write")
+	g.emit("mov x0, x19")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__lang_eprint")
+	g.line(".ltorg")
+}
+
+// emitExitRuntime emits `__lang_exit(code)` — direct exit
+// syscall. x0 already holds the user-supplied exit code from
+// the caller's argument; syscallExit handles the Linux/Darwin
+// ABI split. Never returns, so the trailing `ret` is for
+// assembler-completeness only.
+func (g *generator) emitExitRuntime() {
+	g.line("")
+	g.line(".global __lang_exit")
+	g.typeDirective("__lang_exit")
+	g.label("__lang_exit")
+	g.syscallExit()
+	g.emit("ret")
+	g.sizeDirective("__lang_exit")
+	g.line(".ltorg")
+}
+
 // internString returns a unique .rodata label for s, allocating
 // a new one the first time we see this exact string and reusing
 // it on repeats.
@@ -1127,6 +1178,13 @@ type generator struct {
 	usesPuts    bool
 	usesWrite   bool
 	usesPutchar bool
+	// usesEprint pulls in `__lang_eprint(s)` — stderr counterpart
+	// to print(). Two write(2)s to fd 2.
+	usesEprint bool
+	// usesExit pulls in `__lang_exit(code)` — direct exit syscall.
+	// Doesn't return; the post-call push x0 the caller emits is
+	// harmless because exit() never comes back.
+	usesExit bool
 }
 
 func (g *generator) line(s string) {
@@ -2111,6 +2169,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// putchar(c): write the single byte.
 			target = "__lang_putchar"
 			g.usesPutchar = true
+		case "eprint":
+			// eprint(s): print to stderr (fd 2) + newline.
+			target = "__lang_eprint"
+			g.usesEprint = true
+		case "exit":
+			// exit(code): direct exit syscall. Never returns,
+			// but codegen still emits the post-call stack-
+			// push for stack-discipline; harmless because the
+			// call never comes back.
+			target = "__lang_exit"
+			g.usesExit = true
 		}
 		argc := int(op.I32)
 		if argc > regArgs {

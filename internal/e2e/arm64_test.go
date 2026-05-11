@@ -332,6 +332,25 @@ func TestArm64Print(t *testing.T) {
 	}
 }
 
+// arm64 eprint + exit. eprint(s) writes to fd 2 (stderr); exit(code)
+// is a direct exit syscall and skips main's normal return path.
+// Combined: write to stderr, then bail with a specific code.
+func TestArm64EprintExit(t *testing.T) {
+	out, code := compileAndRunArm64(t, `function main(): i32 {
+    eprint("oops");
+    exit(7);
+    return 99;
+}`)
+	if code != 7 {
+		t.Errorf("exit = %d, want 7 (exit(7) should not fall through to return 99)", code)
+	}
+	// compileAndRunArm64 captures CombinedOutput so stderr is folded in.
+	want := "oops\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
 // arm64 TCP primitives: tcp_listen / tcp_close round-trip
 // validates the socket / bind / listen / close syscall
 // chain. Port 0 means "kernel-assigned ephemeral" — fast
@@ -420,6 +439,14 @@ func TestArm64DarwinBuilds(t *testing.T) {
     putchar(10);
     return 0;
 }`, 0},
+		// exit(code) — direct exit syscall; bypasses main's
+		// normal return path. Verifies the user-supplied code
+		// makes it through Darwin's `mov x16, #1; svc #0x80`
+		// flavour of exit.
+		{"exit", `function main(): i32 {
+    exit(7);
+    return 99;
+}`, 7},
 		// Map is deliberately not exercised here yet — the
 		// runtime round-trips heap pointers through 32-bit
 		// storage slots (__store_i32 / __load_i32), and
