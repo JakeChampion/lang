@@ -1468,25 +1468,48 @@ func (g *generator) emitStartRuntime() {
 		g.typeDirective(entry)
 	}
 	g.label(entry)
-	// Linux delivers the initial stack as: sp[0]=argc, sp[8..]=
-	// argv[0..argc-1], NULL, envp[0..], NULL, auxv. Darwin
-	// uses the same layout shape (argc / argv / envp at the
-	// top of the user stack); the envp walk works the same
-	// way on both targets.
 	if g.usesEnv || g.usesArgs {
-		g.emit("ldr x0, [sp]")            // argc
-		g.emit("add x1, sp, #8")          // argv = &sp[1]
-		if g.usesEnv {
-			g.emit("add x2, x0, #1")          // argc + 1
-			g.emit("add x2, x1, x2, lsl #3")  // envp = argv + (argc+1)*8
-			g.adrpAdd("x3", "__lang_envp")
-			g.emit("str x2, [x3]")
-		}
-		if g.usesArgs {
-			g.adrpAdd("x3", "__lang_argc")
-			g.emit("str x0, [x3]")
-			g.adrpAdd("x3", "__lang_argv")
-			g.emit("str x1, [x3]")
+		// Capture argc / argv (and derive envp on Linux) from
+		// the platform's process-entry convention. The two
+		// targets disagree:
+		//
+		//   Linux: kernel jumps to `_start` with sp pointing
+		//   at [argc, argv[0..], NULL, envp[0..], NULL, auxv].
+		//   We read argc from sp[0], argv = &sp[1], and walk
+		//   past argv + NULL to find envp.
+		//
+		//   Darwin: with the default LC_MAIN load command, dyld
+		//   calls `_main(argc, argv, envp, apple)` per AAPCS64
+		//   — argc in x0, argv in x1, envp in x2. The stack
+		//   doesn't carry the SVR4-shaped argc-then-argv layout
+		//   at all here.
+		if g.darwin {
+			// x0 / x1 / x2 already hold argc / argv / envp.
+			if g.usesEnv {
+				g.adrpAdd("x3", "__lang_envp")
+				g.emit("str x2, [x3]")
+			}
+			if g.usesArgs {
+				g.adrpAdd("x3", "__lang_argc")
+				g.emit("str x0, [x3]")
+				g.adrpAdd("x3", "__lang_argv")
+				g.emit("str x1, [x3]")
+			}
+		} else {
+			g.emit("ldr x0, [sp]")            // argc
+			g.emit("add x1, sp, #8")          // argv = &sp[1]
+			if g.usesEnv {
+				g.emit("add x2, x0, #1")          // argc + 1
+				g.emit("add x2, x1, x2, lsl #3")  // envp = argv + (argc+1)*8
+				g.adrpAdd("x3", "__lang_envp")
+				g.emit("str x2, [x3]")
+			}
+			if g.usesArgs {
+				g.adrpAdd("x3", "__lang_argc")
+				g.emit("str x0, [x3]")
+				g.adrpAdd("x3", "__lang_argv")
+				g.emit("str x1, [x3]")
+			}
 		}
 	}
 	g.emit("bl main")
