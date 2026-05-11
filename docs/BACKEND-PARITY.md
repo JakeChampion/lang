@@ -24,20 +24,14 @@ We can pick any of them next; nothing here is blocking.
 These are language features that *compile on wasm but won't compile or
 will silently misbehave on a native target.* Highest leverage.
 
-### Maps on x86-64
+### ~~Maps on x86-64~~ ✅ done
 
-`Map[K, V]` works on arm64 and wasm. On x86-64, *no* map ops are
-wired — `map_new()` and any `__method_Map_*` call site produces an
-undefined symbol at link time.
-
-- **Where to add it:** `internal/codegen/x86_64/x86_64.go`, mirroring
-  arm64's `case "map_new":` / `case "__method_Map_len":` / … dispatch
-  inside `OpCallDirect`. The lang Map runtime lives entirely in the
-  lang prelude under `_impl`-suffixed names, so the backend just needs
-  the symbol rewrite table.
-- **Test:** clone `TestArm64Map`'s case table as `TestX86_64Map`.
-- **Risk:** low. arm64 has been running the same prelude code path for
-  months; x86-64 just needs the call-site mapping.
+Landed: `map_new` / `__method_Map_*` / `__method_MapIter_*` dispatch
+table mirroring arm64, plus the supporting runtimes (`__store_i32` /
+`__load_i32` / `__store_ptr` / `__load_ptr` / `__ptr_width` /
+`__memset`). The lang Map runtime in `prelude.lang` compiles
+unchanged. `TestX86_64Map` covers set/get, grow-past-capacity,
+string keys, and iter-after-delete.
 
 ### File I/O on both native backends
 
@@ -88,21 +82,13 @@ no-ops (everything's "persistent" on a native binary).
 
 Ranked by how likely user code is to hit them.
 
-### `OpExtendI32S` / `OpExtendI32U` / `OpWrapI64` on arm64
+### ~~`OpExtendI32S` / `OpExtendI32U` / `OpWrapI64` on arm64~~ ✅ done
 
-i32 ↔ i64 conversion. Wasm + x86-64 handle them; **arm64 doesn't.**
-
-```
-var a: i32 = 7;
-var b: i64 = a as i64;     // emits OpExtendI32S — currently traps on arm64
-var c: i32 = b as i32;     // emits OpWrapI64    — currently traps on arm64
-```
-
-- **arm64 lowering:** `sxtw x0, w0` (sign-extend) /
-  `mov w0, w0` (wrap; AArch64 zeroes the high half automatically on
-  32-bit ops) / `uxtw x0, w0` for the U variant. One-liners.
-- **Risk:** low. Probably hasn't surfaced because i64 isn't widely
-  used at the source level yet.
+Landed in PR #281. arm64 now has `sxtw x0, w0` for the signed
+extension, `mov w0, w0` for both the unsigned extension and the
+wrap (32-bit reg form implicitly zero-extends), and a new
+`OpConstI64` lowering via `ldr x0, =N` (literal pool). Linux +
+Darwin share the encoding so arm64-darwin gets parity for free.
 
 ### `OpSignExtend8` / `OpSignExtend16` on both natives
 
@@ -142,7 +128,7 @@ Adding them is a copy-paste of the wasm test with a different runner.
 
 ### x86-64 lacks (vs arm64)
 
-- `TestX86_64Map` (depends on x86-64 Map runtime above)
+- ~~`TestX86_64Map`~~ ✅ landed alongside the x86-64 Map runtime
 - `TestX86_64IndirectCall` (function-value-in-var — codegen exists,
   no smoke test)
 - `TestX86_64Arena` (arena scope reset — codegen exists)
@@ -178,13 +164,12 @@ Adding them is a copy-paste of the wasm test with a different runner.
 The dependency graph is mostly flat. A reasonable greedy order by
 risk × leverage:
 
-1. **`OpExtendI32S` / `OpExtendI32U` / `OpWrapI64` on arm64** — tiny,
-   fixes a silent codegen hole.
-2. **Map on x86-64** — biggest user-visible gap, low risk (arm64 has
-   it; just call-site rewrites + tests).
+1. ~~**`OpExtendI32S` / `OpExtendI32U` / `OpWrapI64` on arm64**~~ ✅
+   (PR #281)
+2. ~~**Map on x86-64**~~ ✅ done — landed in this batch.
 3. **`OpSignExtend8` / `OpSignExtend16` + `OpLoadI8S` / `OpLoadI16U` /
    `OpLoadI16S` on both natives** — unblocks sub-i32 tests + array
-   handling.
+   handling.  ← *next*
 4. **File I/O on both natives** — biggest dollar-amount of code;
    medium risk; high leverage (write a working CLI tool that reads
    stdin / a file is the canonical edge-target story).
