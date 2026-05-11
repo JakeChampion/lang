@@ -120,3 +120,69 @@ func TestX86_64ExitCode(t *testing.T) {
 		})
 	}
 }
+
+// Arithmetic, locals, function calls (direct + recursive).
+// Mirrors TestArm64Arithmetic's case table so the two
+// backends stay observably equivalent — same source, same
+// exit code.
+func TestX86_64Arithmetic(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 { return 2 + 3 * 4; }`, 14},
+		{`function main(): i32 { return 100 - 7 * 8; }`, 44},
+		{`function main(): i32 { return 100 / 7; }`, 14},
+		{`function main(): i32 { return 100 % 7; }`, 2},
+		{`function main(): i32 { var x: i32 = 5; var y: i32 = 7; return x * y; }`, 35},
+		{`function add(a: i32, b: i32): i32 { return a + b; }
+function main(): i32 { return add(20, 22); }`, 42},
+		{`function fib(n: i32): i32 {
+    if (n <= 1) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+function main(): i32 { return fib(10); }`, 55},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
+// Control flow: while loop, if/else chain, comparison ops.
+// Exercises OpBlock / OpLoop / OpIf / OpEnd / OpBr / OpBrIf
+// scope tracking and the test+jz/jnz branch idioms. Mirrors
+// TestArm64ControlFlow's case table.
+func TestX86_64ControlFlow(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 {
+    var sum: i32 = 0;
+    var i: i32 = 1;
+    while (i <= 10) {
+        sum = sum + i;
+        i = i + 1;
+    }
+    return sum;
+}`, 55},
+		{`function classify(n: i32): i32 {
+    if (n < 0) { return 1; }
+    if (n == 0) { return 2; }
+    return 3;
+}
+function main(): i32 {
+    var a: i32 = classify(0 - 5);
+    var b: i32 = classify(0);
+    var c: i32 = classify(7);
+    return a * 100 + b * 10 + c;
+}`, 123},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
