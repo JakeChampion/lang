@@ -17,11 +17,16 @@
 package e2e
 
 import (
+	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
@@ -346,6 +351,125 @@ func TestX86_64Floats(t *testing.T) {
 		_, code := compileAndRunX86_64(t, c.src)
 		if code != c.want {
 			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
+// End-to-end x86-64 HTTP handler. Same shape as
+// `TestArm64HttpHandler` — compiles a tiny `handle` program
+// (no manual main; the checker synthesises one calling
+// `tcp_serve(__port_from_env("PORT", 8080), handle)`),
+// spawns the resulting binary on a Go-picked free port,
+// sends two requests on separate connections, asserts both
+// bodies round-trip. The second request validates the
+// `arena_save` / `arena_restore` cycle inside `tcp_serve` —
+// a leak there would either OOM or scramble state between
+// requests; both pass cleanly.
+//
+// Together with `TestArm64HttpHandler` this brings the two
+// native backends to observable parity for the
+// edge-handler use case the language is targeting.
+func TestX86_64HttpHandler(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no free TCP port: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	src := `function handle(req: HttpRequest): HttpResponse {
+    return HttpResponse {
+        status: 200,
+        body: "method=" + req.method + " path=" + req.path + " body-len=" + len(req.body).to_string()
+    };
+}`
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(binPath)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
+	}
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	deadline := time.Now().Add(10 * time.Second)
+	var ready bool
+	for time.Now().Before(deadline) {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			c.Close()
+			ready = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatalf("server never bound on %s within 10s", addr)
+	}
+
+	cases := []struct {
+		req  string
+		want string
+	}{
+		{"GET /first HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n", "method=GET path=/first body-len=0"},
+		{"POST /second HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello", "method=POST path=/second body-len=5"},
+	}
+	for i, c := range cases {
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			t.Fatalf("request %d dial: %v", i, err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+		if _, err := conn.Write([]byte(c.req)); err != nil {
+			t.Fatalf("request %d write: %v", i, err)
+		}
+		resp, err := io.ReadAll(conn)
+		conn.Close()
+		if err != nil {
+			t.Fatalf("request %d read: %v", i, err)
+		}
+		body := string(resp)
+		if !strings.Contains(body, "HTTP/1.1 200") {
+			t.Errorf("request %d: missing 200 status\n--- got ---\n%s", i, body)
+		}
+		if !strings.Contains(body, c.want) {
+			t.Errorf("request %d: missing %q\n--- got ---\n%s", i, c.want, body)
 		}
 	}
 }

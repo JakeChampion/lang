@@ -54,14 +54,17 @@ import (
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
-// Linux x86-64 syscall numbers. Each follow-up PR extends as
-// it adds runtime helpers that need a new syscall. See the
-// asm-generic table for the full set —
-// https://chromium.googlesource.com/chromiumos/docs/+/HEAD/constants/syscalls.md
+// Linux x86-64 syscall numbers. See the asm-generic table
+// for the full set.
 const (
 	sysRead      = 0
 	sysWrite     = 1
+	sysClose     = 3
 	sysMmap      = 9
+	sysSocket    = 41
+	sysAccept    = 43
+	sysBind      = 49
+	sysListen    = 50
 	sysExitGroup = 231
 )
 
@@ -145,6 +148,28 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesPutchar {
 		g.emitPutcharRuntime()
 	}
+	if g.usesTcp {
+		g.emitTcpListenRuntime()
+		g.emitTcpAcceptRuntime()
+		g.emitTcpRecvRuntime()
+		g.emitTcpSendRuntime()
+		g.emitTcpCloseRuntime()
+	}
+	if g.usesEnv {
+		g.emitEnvRuntime()
+	}
+	if g.usesArena {
+		g.emitArenaRuntime()
+	}
+	if g.usesAllocU8 {
+		g.emitAllocU8Runtime()
+	}
+	if g.usesStringFromBytes {
+		g.emitStringFromBytesRuntime()
+	}
+	if g.usesStrSlice {
+		g.emitStrSliceRuntime()
+	}
 	g.emitDataSections()
 	// ELF non-executable-stack marker. Without this the
 	// linker warns (or refuses, on hardened distros) about
@@ -184,11 +209,18 @@ type generator struct {
 	usesPuts    bool
 	usesWrite   bool
 	usesPutchar bool
+	usesTcp             bool
+	usesEnv             bool
+	usesArena           bool
+	usesAllocU8         bool
+	usesStringFromBytes bool
+	usesStrSlice        bool
 }
 
 // recordUse flips the right use-flag for a callee name the
-// IR mentions. PR 3 covers the print/strings/alloc set;
-// future PRs add tcp_*, args, env, random_bytes, etc.
+// IR mentions. PR 3 covered print/strings/alloc; PR 5 adds
+// the TCP family + env() + the arena helpers used by the
+// auto-`main()`-from-`handle()` synthesis.
 func (g *generator) recordUse(target string) {
 	switch target {
 	case "__memcpy":
@@ -205,6 +237,32 @@ func (g *generator) recordUse(target string) {
 		g.usesWrite = true
 	case "putchar":
 		g.usesPutchar = true
+	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
+		g.usesTcp = true
+		// tcp_recv allocates a string buffer for the read.
+		if target == "tcp_recv" {
+			g.usesAlloc = true
+		}
+	case "env":
+		g.usesEnv = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+	case "arena_save", "arena_restore":
+		g.usesArena = true
+		// arena helpers read/write __lang_heap_ptr; pull
+		// in the allocator's .bss reservations.
+		g.usesAlloc = true
+	case "__alloc_u8":
+		g.usesAllocU8 = true
+		g.usesAlloc = true
+	case "string_from_bytes":
+		g.usesStringFromBytes = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+	case "__str_slice":
+		g.usesStrSlice = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
 	}
 }
 
@@ -223,6 +281,17 @@ func (g *generator) emitStartRuntime() {
 	g.line("")
 	g.line(".globl _start")
 	g.label("_start")
+	// argc is at [rsp+0]; argv starts at [rsp+8]; envp at
+	// [rsp + 8 + (argc+1)*8] (NULL-terminator after argv).
+	// If usesEnv is set we stash envp into __lang_envp so
+	// `env()` can walk it later. PR 5 only wires envp; argv
+	// capture can land in a follow-up PR alongside `args()`.
+	if g.usesEnv {
+		g.emit("mov rax, [rsp]")             // argc
+		g.emit("lea rdi, [rsp + 8]")          // rdi = &argv[0]
+		g.emit("lea rdi, [rdi + rax*8 + 8]")  // skip argv + NULL terminator
+		g.emit("mov [rip + __lang_envp], rdi")
+	}
 	g.emit("call main")
 	g.emit("mov edi, eax")            // exit code = main's return value
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
@@ -334,6 +403,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// the right place at run time.
 		lbl := g.internString(op.Str)
 		g.emit(fmt.Sprintf("lea rax, [rip + %s]", lbl))
+		g.push()
+	case ir.OpConstFunc:
+		// Function values materialise as the direct code
+		// address of the named function. Same RIP-relative
+		// `lea` shape as OpConstStr — there's no funcref
+		// table abstraction at the x86-64 level, just plain
+		// code pointers.
+		g.emit(fmt.Sprintf("lea rax, [rip + %s]", op.Str))
 		g.push()
 	case ir.OpConstI64:
 		// i64 literal: full 64-bit immediate via `movabs`.
@@ -879,6 +956,28 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	// fired when these names appeared in the IR, so the
 	// runtime emitters above included them.
 
+	case ir.OpCallIndirect:
+		// Function-value call: the IR emitted the function-
+		// pointer immediately before the call op (via
+		// OpLoadLocal / OpConstFunc), so the pointer is on
+		// top of the stack and args are below it in
+		// left-to-right order. Pop the ptr into r11 (caller-
+		// save, otherwise unused), pop args into rdi..r9, then
+		// `call r11`.
+		argc := int(op.I32)
+		regArgs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+		if argc > len(regArgs) {
+			return fmt.Errorf("x86_64: more than %d indirect-call args not yet supported (got %d)", len(regArgs), argc)
+		}
+		g.emit("mov r11, [rsp]") // r11 = function pointer
+		g.emit("add rsp, 16")
+		for i := argc - 1; i >= 0; i-- {
+			g.emit(fmt.Sprintf("mov %s, [rsp]", regArgs[i]))
+			g.emit("add rsp, 16")
+		}
+		g.emit("call r11")
+		g.push()
+
 	case ir.OpCallDirect:
 		target := op.Str
 		switch target {
@@ -892,6 +991,22 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_write"
 		case "putchar":
 			target = "__lang_putchar"
+		case "tcp_listen":
+			target = "__lang_tcp_listen"
+		case "tcp_accept":
+			target = "__lang_tcp_accept"
+		case "tcp_recv":
+			target = "__lang_tcp_recv"
+		case "tcp_send":
+			target = "__lang_tcp_send"
+		case "tcp_close":
+			target = "__lang_tcp_close"
+		case "env":
+			target = "__lang_env"
+		case "arena_save":
+			target = "__lang_arena_save"
+		case "arena_restore":
+			target = "__lang_arena_restore"
 		case "__str_idx", "__arr_idx", "__arr_idx_2", "__arr_idx_8",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
@@ -1078,15 +1193,22 @@ func (g *generator) emitDataSections() {
 			g.line(`	.asciz "\n"`)
 		}
 	}
-	if g.usesAlloc {
+	if g.usesAlloc || g.usesEnv {
 		g.line("")
 		g.line(".section .bss")
-		g.line(".align 8")
-		g.label("__lang_heap_ptr")
-		g.line("\t.quad 0")
-		g.line(".align 8")
-		g.label("__lang_heap_end")
-		g.line("\t.quad 0")
+		if g.usesAlloc {
+			g.line(".align 8")
+			g.label("__lang_heap_ptr")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__lang_heap_end")
+			g.line("\t.quad 0")
+		}
+		if g.usesEnv {
+			g.line(".align 8")
+			g.label("__lang_envp")
+			g.line("\t.quad 0")
+		}
 	}
 }
 
@@ -1352,6 +1474,386 @@ func (g *generator) emitPutcharRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_putchar, .-__lang_putchar")
+}
+
+// emitTcpListenRuntime emits `__lang_tcp_listen(port)` —
+// opens a TCP listening socket on 0.0.0.0:port. Returns the
+// listener fd on success, or `-errno` on failure. C-style
+// API; callers check `if (fd < 0)`. Same shape as arm64's
+// helper, just with x86-64 syscall numbers + register
+// conventions.
+//
+// Steps: socket(AF_INET, SOCK_STREAM, 0); bind to a stack-
+// allocated sockaddr_in; listen with backlog=128.
+func (g *generator) emitTcpListenRuntime() {
+	g.line("")
+	g.line(".globl __lang_tcp_listen")
+	g.line(".type __lang_tcp_listen, @function")
+	g.label("__lang_tcp_listen")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // callee-save scratch
+	g.emit("push r12") // callee-save: port
+	g.emit("sub rsp, 16") // sockaddr_in (16 bytes) — also keeps rsp 16-aligned for the syscall
+	g.emit("mov r12d, edi")  // r12 = port
+	// socket(AF_INET=2, SOCK_STREAM=1, 0)
+	g.emit("mov edi, 2")
+	g.emit("mov esi, 1")
+	g.emit("xor edx, edx")
+	g.emit(fmt.Sprintf("mov eax, %d", sysSocket))
+	g.emit("syscall")
+	g.emit("test eax, eax")
+	g.emit("js .Ltcp_lst_err")
+	g.emit("mov ebx, eax") // ebx = listener fd
+	// Build sockaddr_in on the stack (16 bytes, at rsp+0):
+	//   sin_family=AF_INET (2 bytes)
+	//   sin_port=htons(port) (2 bytes)
+	//   sin_addr=INADDR_ANY (4 bytes, zero)
+	//   sin_zero=0 (8 bytes)
+	g.emit("mov word ptr [rsp], 2")
+	g.emit("mov eax, r12d")
+	g.emit("xchg al, ah")         // htons low 16
+	g.emit("mov word ptr [rsp+2], ax")
+	g.emit("mov dword ptr [rsp+4], 0")
+	g.emit("mov qword ptr [rsp+8], 0")
+	// bind(fd, sa, 16)
+	g.emit("mov edi, ebx")
+	g.emit("mov rsi, rsp")
+	g.emit("mov edx, 16")
+	g.emit(fmt.Sprintf("mov eax, %d", sysBind))
+	g.emit("syscall")
+	g.emit("test eax, eax")
+	g.emit("js .Ltcp_lst_err")
+	// listen(fd, 128)
+	g.emit("mov edi, ebx")
+	g.emit("mov esi, 128")
+	g.emit(fmt.Sprintf("mov eax, %d", sysListen))
+	g.emit("syscall")
+	g.emit("test eax, eax")
+	g.emit("js .Ltcp_lst_err")
+	// Return listener fd.
+	g.emit("mov eax, ebx")
+	g.emit("jmp .Ltcp_lst_done")
+	g.label(".Ltcp_lst_err")
+	// On failure rax already holds -errno from the failing syscall.
+	g.label(".Ltcp_lst_done")
+	g.emit("add rsp, 16")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_tcp_listen, .-__lang_tcp_listen")
+}
+
+// emitTcpAcceptRuntime emits `__lang_tcp_accept(listener)` —
+// blocks waiting for a connection. Returns the new client fd
+// or -errno. accept(fd, NULL, NULL) discards peer address.
+func (g *generator) emitTcpAcceptRuntime() {
+	g.line("")
+	g.line(".globl __lang_tcp_accept")
+	g.line(".type __lang_tcp_accept, @function")
+	g.label("__lang_tcp_accept")
+	// fd in rdi; pass NULL/NULL for addr/addrlen.
+	g.emit("xor esi, esi")
+	g.emit("xor edx, edx")
+	g.emit(fmt.Sprintf("mov eax, %d", sysAccept))
+	g.emit("syscall")
+	g.emit("ret")
+	g.line(".size __lang_tcp_accept, .-__lang_tcp_accept")
+}
+
+// emitTcpRecvRuntime emits `__lang_tcp_recv(fd, max)` —
+// reads up to `max` bytes from the socket fd into a fresh
+// length-prefixed lang string. EOF / error → length 0.
+// Saves r12 across the syscall so the data pointer survives.
+func (g *generator) emitTcpRecvRuntime() {
+	g.line("")
+	g.line(".globl __lang_tcp_recv")
+	g.line(".type __lang_tcp_recv, @function")
+	g.label("__lang_tcp_recv")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // fd
+	g.emit("push r12") // max
+	g.emit("push r13") // data ptr
+	g.emit("sub rsp, 8") // align
+	g.emit("mov ebx, edi")    // rbx = fd
+	g.emit("mov r12d, esi")   // r12 = max
+	// Allocate max + 5 bytes (4 prefix + max data + 1 NUL).
+	g.emit("lea edi, [r12 + 5]")
+	g.emit("call __lang_alloc")
+	g.emit("lea r13, [rax + 4]") // r13 = data ptr
+	// read(fd, data, max)
+	g.emit("mov edi, ebx")
+	g.emit("mov rsi, r13")
+	g.emit("mov edx, r12d")
+	g.emit(fmt.Sprintf("mov eax, %d", sysRead))
+	g.emit("syscall")
+	// Clamp to >= 0 (read returns -errno or 0 on EOF).
+	g.emit("test rax, rax")
+	g.emit("jns .Ltcp_recv_ok")
+	g.emit("xor eax, eax")
+	g.label(".Ltcp_recv_ok")
+	g.emit("mov [r13 - 4], eax")  // length prefix
+	g.emit("mov byte ptr [r13 + rax], 0") // trailing NUL
+	g.emit("mov rax, r13")
+	g.emit("add rsp, 8")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_tcp_recv, .-__lang_tcp_recv")
+}
+
+// emitTcpSendRuntime emits `__lang_tcp_send(fd, data)` —
+// writes the full length-prefixed string to the socket.
+// Returns the byte count or -errno on the first write.
+// Single write(2) call — no buffering / partial-write loop;
+// callers needing >page-sized payloads should chunk
+// themselves.
+func (g *generator) emitTcpSendRuntime() {
+	g.line("")
+	g.line(".globl __lang_tcp_send")
+	g.line(".type __lang_tcp_send, @function")
+	g.label("__lang_tcp_send")
+	g.emit("mov edx, [rsi - 4]") // length from data prefix
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("ret")
+	g.line(".size __lang_tcp_send, .-__lang_tcp_send")
+}
+
+// emitTcpCloseRuntime emits `__lang_tcp_close(fd)` —
+// closes the socket via the close syscall. Returns 0 or
+// -errno.
+func (g *generator) emitTcpCloseRuntime() {
+	g.line("")
+	g.line(".globl __lang_tcp_close")
+	g.line(".type __lang_tcp_close, @function")
+	g.label("__lang_tcp_close")
+	g.emit(fmt.Sprintf("mov eax, %d", sysClose))
+	g.emit("syscall")
+	g.emit("ret")
+	g.line(".size __lang_tcp_close, .-__lang_tcp_close")
+}
+
+// emitEnvRuntime emits `__lang_env(name)` — walks the envp
+// vector for NAME=VALUE entries. Returns Option[string]: a
+// 16-byte heap object [tag:i32, _pad:i32, str_ptr:i64].
+// Payload offset 8 matches the IR's PR #267 layout (8-byte-
+// aligned pointer payload).
+func (g *generator) emitEnvRuntime() {
+	g.line("")
+	g.line(".globl __lang_env")
+	g.line(".type __lang_env, @function")
+	g.label("__lang_env")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // envp cursor
+	g.emit("push r12") // name data ptr
+	g.emit("push r13") // name length
+	g.emit("push r14") // value data ptr (post-strcat)
+	g.emit("push r15") // value length
+	g.emit("sub rsp, 8") // align
+	g.emit("mov r12, rdi")            // r12 = name
+	g.emit("mov r13d, [r12 - 4]")     // r13 = name length
+	g.emit("mov rbx, [rip + __lang_envp]")
+	g.label(".Lenv_loop")
+	g.emit("mov rdi, [rbx]")
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lenv_none")
+	// Compare first name_len bytes of envp[i] with name.
+	g.emit("mov rsi, r12")
+	g.emit("mov ecx, r13d")
+	g.emit("cld")
+	g.emit("repe cmpsb")
+	g.emit("jne .Lenv_next")
+	// Check that byte at [rdi] is '=' (the '=' separator).
+	g.emit("cmp byte ptr [rdi], 61")
+	g.emit("jne .Lenv_next")
+	// Found. Compute value start = rdi + 1.
+	g.emit("inc rdi")
+	g.emit("mov r14, rdi")
+	// Inline strlen.
+	g.emit("xor ecx, ecx")
+	g.label(".Lenv_strlen")
+	g.emit("mov al, [rdi + rcx]")
+	g.emit("test al, al")
+	g.emit("jz .Lenv_strlen_done")
+	g.emit("inc rcx")
+	g.emit("jmp .Lenv_strlen")
+	g.label(".Lenv_strlen_done")
+	g.emit("mov r15, rcx")
+	// Allocate len+5 bytes for the value string (4 prefix + N data + 1 NUL).
+	g.emit("lea edi, [r15 + 5]")
+	g.emit("call __lang_alloc")
+	g.emit("mov [rax], r15d") // length prefix
+	g.emit("lea rdi, [rax + 4]")
+	g.emit("mov rsi, r14")
+	g.emit("mov rdx, r15")
+	g.emit("call __lang_memcpy")
+	// rax = data ptr returned from memcpy. Build Option[string]:
+	//   16 bytes [tag=0, pad, ptr]
+	g.emit("mov r14, rax") // stash str ptr
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 0") // tag = 0 (Some)
+	g.emit("mov [rax + 8], r14")     // payload at +8 (8-byte slot)
+	g.emit("jmp .Lenv_done")
+	g.label(".Lenv_next")
+	g.emit("add rbx, 8")
+	g.emit("jmp .Lenv_loop")
+	g.label(".Lenv_none")
+	g.emit("mov edi, 8")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
+	g.label(".Lenv_done")
+	g.emit("add rsp, 8")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_env, .-__lang_env")
+}
+
+// emitArenaRuntime emits the bump-cursor snapshot/rewind pair:
+// `__lang_arena_save()` returns the current heap pointer;
+// `__lang_arena_restore(saved)` resets it. Used by tcp_serve
+// to bracket each request's allocations so they're reclaimed
+// before the next accept.
+func (g *generator) emitArenaRuntime() {
+	g.line("")
+	g.line(".globl __lang_arena_save")
+	g.line(".type __lang_arena_save, @function")
+	g.label("__lang_arena_save")
+	g.emit("mov rax, [rip + __lang_heap_ptr]")
+	g.emit("ret")
+	g.line(".size __lang_arena_save, .-__lang_arena_save")
+	g.line("")
+	g.line(".globl __lang_arena_restore")
+	g.line(".type __lang_arena_restore, @function")
+	g.label("__lang_arena_restore")
+	g.emit("mov [rip + __lang_heap_ptr], rdi")
+	g.emit("ret")
+	g.line(".size __lang_arena_restore, .-__lang_arena_restore")
+}
+
+// emitAllocU8Runtime emits `__alloc_u8(n)` — allocates a
+// fresh length-prefixed `u8[]` of n bytes. Returns the data
+// pointer (header + 4); length lives at `[data - 4]`.
+func (g *generator) emitAllocU8Runtime() {
+	g.line("")
+	g.line(".globl __alloc_u8")
+	g.line(".type __alloc_u8, @function")
+	g.label("__alloc_u8")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8")
+	g.emit("mov ebx, edi")     // rbx = n
+	g.emit("lea edi, [rbx + 4]")
+	g.emit("call __lang_alloc")
+	g.emit("mov [rax], ebx")    // length prefix
+	g.emit("lea rax, [rax + 4]") // data ptr
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __alloc_u8, .-__alloc_u8")
+}
+
+// emitStringFromBytesRuntime emits `string_from_bytes(bs)` —
+// copies a `u8[]` payload into a fresh length-prefixed
+// string. Round-trip companion to `s.bytes()`.
+func (g *generator) emitStringFromBytesRuntime() {
+	g.line("")
+	g.line(".globl string_from_bytes")
+	g.line(".type string_from_bytes, @function")
+	g.label("string_from_bytes")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("mov rbx, rdi")        // bs
+	g.emit("mov r12d, [rbx - 4]") // length
+	g.emit("lea edi, [r12 + 4]")
+	g.emit("call __lang_alloc")
+	g.emit("mov [rax], r12d")     // length prefix
+	g.emit("lea rdi, [rax + 4]")
+	g.emit("mov rsi, rbx")
+	g.emit("mov rdx, r12")
+	g.emit("push rax")
+	g.emit("sub rsp, 8")          // align
+	g.emit("call __lang_memcpy")
+	g.emit("add rsp, 8")
+	g.emit("pop rax")
+	g.emit("lea rax, [rax + 4]")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size string_from_bytes, .-string_from_bytes")
+}
+
+// emitStrSliceRuntime emits `__str_slice(base, low, high)` —
+// returns a fresh string holding `base[low..high]`. Traps on
+// out-of-range indices via exit_group(134) (matches arm64's
+// strslice trap shape).
+func (g *generator) emitStrSliceRuntime() {
+	g.line("")
+	g.line(".globl __str_slice")
+	g.line(".type __str_slice, @function")
+	g.label("__str_slice")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("sub rsp, 8") // align
+	g.emit("mov rbx, rdi")        // base
+	g.emit("mov r12, rsi")        // low
+	g.emit("mov r13, rdx")        // high
+	g.emit("mov r14d, [rbx - 4]") // src_len
+	// Bounds checks: low < 0 OR high > src_len OR low > high → trap.
+	g.emit("test r12, r12")
+	g.emit("js .Lstrslice_trap")
+	g.emit("cmp r13, r14")
+	g.emit("ja .Lstrslice_trap")
+	g.emit("cmp r12, r13")
+	g.emit("jg .Lstrslice_trap")
+	// new_len = high - low.
+	g.emit("mov rax, r13")
+	g.emit("sub rax, r12")
+	g.emit("mov r14, rax") // r14 = new_len
+	g.emit("lea edi, [r14 + 4]")
+	g.emit("call __lang_alloc")
+	g.emit("mov [rax], r14d")     // length prefix
+	g.emit("lea rdi, [rax + 4]")  // dst
+	g.emit("lea rsi, [rbx + r12]") // src = base + low
+	g.emit("mov rdx, r14")
+	g.emit("push rax")
+	g.emit("sub rsp, 8") // align
+	g.emit("call __lang_memcpy")
+	g.emit("add rsp, 8")
+	g.emit("pop rax")
+	g.emit("lea rax, [rax + 4]")
+	g.emit("add rsp, 8")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.label(".Lstrslice_trap")
+	g.emit("mov edi, 134")
+	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
+	g.emit("syscall")
+	g.line(".size __str_slice, .-__str_slice")
 }
 
 // escapeForGAS escapes a string for the GAS `.asciz`
