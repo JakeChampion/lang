@@ -628,3 +628,95 @@ function main(): i32 {
 		t.Errorf("sum_to(100000, 0) → exit = %d, want 80", got)
 	}
 }
+
+// random_bytes(n) — kernel CSPRNG fill via getrandom(2).
+// Verifies length matches and that the output isn't all
+// zeros (extremely unlikely from a working getrandom +
+// actual entropy).
+func TestX86_64RandomBytes(t *testing.T) {
+	out, code := compileAndRunX86_64(t, `function main(): i32 {
+    var s: string = random_bytes(16);
+    write(s);
+    return len(s);
+}`)
+	if code != 16 {
+		t.Errorf("exit = %d, want 16 (length of returned bytes)", code)
+	}
+	if len(out) != 16 {
+		t.Errorf("stdout len = %d, want 16", len(out))
+	}
+	allZero := true
+	for _, b := range []byte(out) {
+		if b != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		t.Errorf("random_bytes returned all zeros — getrandom likely failed silently")
+	}
+}
+
+// stdin().read_line() — exercises the 4 KiB .bss buffer +
+// byte-by-byte read syscall + Option[string] result. Two
+// runs:
+//
+//  1. Empty stdin → read(2) returns 0 before any byte →
+//     None → exit 0.
+//  2. Stdin = "hello\n" → first 6 bytes including the
+//     newline land in the buffer → Some(line) → exit 1.
+//
+// Mirrors `TestArm64DarwinBuilds/read_line` for the same
+// Option[string] payload-at-+8 layout.
+func TestX86_64ReadLine(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+
+	src := `function main(): i32 {
+    match (stdin().read_line()) {
+        Some(_) => { return 1; },
+        None => { return 0; }
+    }
+    return -1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+
+	runCase := func(stdin string, want int) {
+		t.Helper()
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(binPath)
+		} else {
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), binPath)...)
+		}
+		cmd.Stdin = strings.NewReader(stdin)
+		_, _ = cmd.CombinedOutput()
+		if got := cmd.ProcessState.ExitCode(); got != want {
+			t.Errorf("stdin=%q: exit = %d, want %d", stdin, got, want)
+		}
+	}
+	runCase("", 0)            // EOF before any byte → None
+	runCase("hello\n", 1)     // Some(line)
+}
