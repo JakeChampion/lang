@@ -2202,6 +2202,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		}
 		g.push()
 
+	case ir.OpConstI64:
+		// i64 literal. `ldr x0, =N` is the AArch64 assembler's
+		// canonical idiom for a full 64-bit immediate — backed
+		// by a literal pool entry the assembler emits in
+		// `.text` and references via a pc-relative load. The
+		// pool gets flushed by `.ltorg` (we already do this in
+		// the alloc + read-line runtimes) or at end-of-section,
+		// whichever comes first.
+		g.emit("ldr x0, =%d", op.I64)
+		g.push()
+
 	case ir.OpConstStr:
 		// String literals live in .rodata with a 4-byte length
 		// prefix at `[label - 4]`; the .LStr_N label points at
@@ -2600,6 +2611,32 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("fmov d0, x0")
 		g.emit("fcvt s0, d0")
 		g.emit("fmov w0, s0")
+		g.push()
+
+	// i32 ↔ i64 conversion. AArch64's 32-bit reg-operand
+	// instructions implicitly zero the upper half of the
+	// destination 64-bit reg, so wrap is a no-op at the
+	// hardware level — but we still emit `mov w0, w0` to
+	// make the truncation explicit (the assembler folds it
+	// to `uxtw x0, w0` which costs nothing). Sign-extend
+	// uses `sxtw` (the same on Linux + Darwin).
+	case ir.OpExtendI32S:
+		// i32 → i64, sign-extend low 32 bits.
+		g.pop()
+		g.emit("sxtw x0, w0")
+		g.push()
+	case ir.OpExtendI32U:
+		// i32 → i64, zero-extend low 32 bits. `mov w0, w0`
+		// zero-extends to x0 (the AArch64 idiom mirrors
+		// x86-64's `mov eax, eax` trick).
+		g.pop()
+		g.emit("mov w0, w0")
+		g.push()
+	case ir.OpWrapI64:
+		// i64 → i32. Discard the high half via the same
+		// zero-extending mov-into-w0.
+		g.pop()
+		g.emit("mov w0, w0")
 		g.push()
 
 	case ir.OpFConvertI32:

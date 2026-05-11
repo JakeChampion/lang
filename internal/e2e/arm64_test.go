@@ -1147,6 +1147,46 @@ function main(): i32 { return outer("hi", 40); }`
 	}
 }
 
+// i32 ↔ i64 conversion. arm64 lowers OpExtendI32S via `sxtw`,
+// OpExtendI32U + OpWrapI64 via `mov w0, w0` (the 32-bit reg
+// form implicitly zero-extends the high half on AArch64).
+// OpConstI64 uses `ldr x0, =N` with a literal-pool entry.
+func TestArm64I32I64Convert(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"i32_to_i64_roundtrip", `function main(): i32 {
+			var a: i32 = 7;
+			var b: i64 = a as i64;
+			var c: i32 = b as i32;
+			return c + 35;
+		}`, 42},
+		{"wrap_drops_high_half", `function main(): i32 {
+			var big: i64 = 4294967300i64;
+			return (big as i32);
+		}`, 4},
+		{"sxtw_preserves_sign", `function main(): i32 {
+			var neg: i32 = 0 - 1;
+			var ext: i64 = neg as i64;
+			if (ext == 0 - 1i64) { return 7; }
+			return 99;
+		}`, 7},
+		{"i64_arith_roundtrip", `function main(): i32 {
+			var a: i64 = 1000000000000i64;
+			var b: i64 = a + 42i64;
+			return (b - 1000000000000i64) as i32;
+		}`, 42},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
