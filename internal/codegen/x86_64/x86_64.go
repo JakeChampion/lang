@@ -1049,13 +1049,18 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		}
 
 	case ir.OpPersistentSet:
-		// No-op semantically; push 0 to satisfy the IR's
-		// "returns the previous mode" stack discipline.
-		g.emit("xor eax, eax")
-		g.push()
+		// Toggle the allocator mode byte at __lang_alloc_mode
+		// and push the previous mode for the matching Restore.
+		// Op.I32 carries the new mode (0 = arena, 1 = persistent).
+		g.emit("movzx eax, byte ptr [rip + __lang_alloc_mode]")
+		g.emit(fmt.Sprintf("mov byte ptr [rip + __lang_alloc_mode], %d", op.I32&1))
+		g.push() // push old mode
+		g.usesAlloc = true
 	case ir.OpPersistentRestore:
-		// Pop the saved-mode value and discard.
-		g.emit("add rsp, 16")
+		// Pop the saved mode and write it back to the mode byte.
+		g.pop()
+		g.emit("mov [rip + __lang_alloc_mode], al")
+		g.usesAlloc = true
 
 	// -------- control flow --------
 	//
@@ -1696,12 +1701,23 @@ func (g *generator) emitDataSections() {
 		g.line("")
 		g.line(".section .bss")
 		if g.usesAlloc {
+			// Two-cursor bump allocator. See arm64 + the x86-64
+			// emitAllocRuntime comment.
 			g.line(".align 8")
 			g.label("__lang_heap_ptr")
 			g.line("\t.quad 0")
 			g.line(".align 8")
 			g.label("__lang_heap_end")
 			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__lang_persistent_ptr")
+			g.line("\t.quad 0")
+			g.line(".align 8")
+			g.label("__lang_persistent_end")
+			g.line("\t.quad 0")
+			g.line(".align 4")
+			g.label("__lang_alloc_mode")
+			g.line("\t.byte 0")
 		}
 		if g.usesEnv {
 			g.line(".align 8")
@@ -1745,55 +1761,72 @@ func (g *generator) emitDataSections() {
 // Allocations are rounded up to a 16-byte boundary so
 // subsequent allocs stay 16-aligned for any pointer-pair
 // operations the caller might issue.
+//
+// Two-cursor allocator: a 1-byte `__lang_alloc_mode` selects
+// which region to bump. mode 0 → arena (per-request, scoped by
+// arena_save / arena_restore). mode 1 → persistent (lives for
+// the program lifetime). See the arm64 generator's
+// `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 64 * 1024 * 1024 // 64 MiB
+	const heapBytes = 64 * 1024 * 1024 // 64 MiB per region
 	g.line("")
 	g.line(".globl __lang_alloc")
 	g.line(".type __lang_alloc, @function")
 	g.label("__lang_alloc")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	// Round size up to 16-byte alignment: size = (size + 15) & ~15.
+	// rbx, r12, r13 are callee-save in System V — save all
+	// three up-front so we can use them as scratch without
+	// stepping on the caller. r13 in particular holds the
+	// mmap address hint between the label-pick and the
+	// (possibly skipped) mmap call.
+	g.emit("push rbx") // holds &ptr (heap or persistent cursor)
+	g.emit("push r12") // holds &end
+	g.emit("push r13") // holds mmap address hint
 	g.emit("add rdi, 15")
 	g.emit("and rdi, -16")
-	// Lazy heap init: if heap_ptr == 0, mmap-reserve the arena.
-	g.emit("mov rax, [rip + __lang_heap_ptr]")
+	g.emit("movzx eax, byte ptr [rip + __lang_alloc_mode]")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lalloc_pick_persistent")
+	g.emit("lea rbx, [rip + __lang_heap_ptr]")
+	g.emit("lea r12, [rip + __lang_heap_end]")
+	g.emit("mov r13d, 0x10000000") // arena hint (256 MiB)
+	g.emit("jmp .Lalloc_have_labels")
+	g.label(".Lalloc_pick_persistent")
+	g.emit("lea rbx, [rip + __lang_persistent_ptr]")
+	g.emit("lea r12, [rip + __lang_persistent_end]")
+	g.emit("mov r13d, 0x20000000") // persistent hint (512 MiB)
+	g.label(".Lalloc_have_labels")
+	g.emit("mov rax, [rbx]")
 	g.emit("test rax, rax")
 	g.emit("jnz .Lalloc_have_heap")
-	// Save size on the stack across the syscall — r12+ are
-	// all callee-save in System V so clobbering them in a
-	// leaf-ish runtime helper would silently destroy caller
-	// state (caught when __lang_strcat passes a / b through
-	// r12 / r13 and the alloc clobbers them). Push rdi
-	// (size) onto the stack, syscall, restore.
+	// Lazy mmap. Stash size across the syscall.
 	g.emit("push rdi")
-	g.emit("sub rsp, 8") // align rsp to 16 for the syscall
-	// mmap(NULL, heapBytes, RW, PRIVATE|ANON, -1, 0).
-	g.emit("xor edi, edi")
+	g.emit("sub rsp, 8") // 16-byte align with the four pushes above
+	g.emit("mov rdi, r13")
 	g.emit(fmt.Sprintf("mov esi, %d", heapBytes))
-	g.emit("mov edx, 3")     // PROT_READ | PROT_WRITE
-	g.emit("mov r10d, 0x22") // MAP_PRIVATE | MAP_ANONYMOUS (Linux)
+	g.emit("mov edx, 3")
+	g.emit("mov r10d, 0x22")
 	g.emit("mov r8d, -1")
 	g.emit("xor r9d, r9d")
 	g.emit(fmt.Sprintf("mov eax, %d", sysMmap))
 	g.emit("syscall")
 	g.emit("add rsp, 8")
-	g.emit("pop rdi") // restore size
-	// On failure mmap returns -errno (negative). Trap by
-	// jumping to an exit_group(137) — analogous to arm64's
-	// hard-OOM path.
+	g.emit("pop rdi")
 	g.emit("cmp rax, 0")
 	g.emit("jl .Lalloc_oom")
-	g.emit("mov [rip + __lang_heap_ptr], rax")
+	g.emit("mov [rbx], rax")
 	g.emit("lea rcx, [rax + " + fmt.Sprintf("%d", heapBytes) + "]")
-	g.emit("mov [rip + __lang_heap_end], rcx")
+	g.emit("mov [r12], rcx")
 	g.label(".Lalloc_have_heap")
-	// Bump: ptr = heap_ptr; heap_ptr += size; if (heap_ptr > heap_end) OOM.
-	g.emit("mov rax, [rip + __lang_heap_ptr]")
+	g.emit("mov rax, [rbx]")
 	g.emit("lea rcx, [rax + rdi]")
-	g.emit("cmp rcx, [rip + __lang_heap_end]")
+	g.emit("cmp rcx, [r12]")
 	g.emit("ja .Lalloc_oom")
-	g.emit("mov [rip + __lang_heap_ptr], rcx")
+	g.emit("mov [rbx], rcx")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.label(".Lalloc_oom")

@@ -343,12 +343,25 @@ func (g *generator) emitDataSections() {
 		}
 	}
 	if g.usesAlloc {
-		g.line(`.align 3`) // 8-byte alignment for the cursor pair
+		// Two-cursor bump allocator. Mode byte at +0 (0 =
+		// arena, 1 = persistent); each region has its own
+		// `_ptr` / `_end` pair that __lang_alloc bumps. See
+		// emitAllocRuntime for the design rationale.
+		g.line(`.align 3`)
 		g.label("__lang_heap_ptr")
 		g.line(`	.quad 0`)
 		g.line(`.align 3`)
 		g.label("__lang_heap_end")
 		g.line(`	.quad 0`)
+		g.line(`.align 3`)
+		g.label("__lang_persistent_ptr")
+		g.line(`	.quad 0`)
+		g.line(`.align 3`)
+		g.label("__lang_persistent_end")
+		g.line(`	.quad 0`)
+		g.line(`.align 2`)
+		g.label("__lang_alloc_mode")
+		g.line(`	.byte 0`)
 	}
 	if g.usesEnv {
 		g.line(`.align 3`)
@@ -462,104 +475,94 @@ func (g *generator) emitStateGlobals() {
 // First call lazily reserves the heap arena via mmap; later
 // calls bump the cursor.
 //
-// Bump-only allocator (no free) — matches wasm's semantics.
-// The arena is reclaimed by the OS at process exit.
+// Two-cursor allocator: a 1-byte mode flag at
+// `__lang_alloc_mode` selects which region to bump.
+//
+//	mode == 0 → arena cursor (__lang_heap_ptr / _end).
+//	            arena_save / arena_restore manipulate this
+//	            pair, so the region is per-request scoped
+//	            in HTTP-handler programs (auto-main wraps
+//	            each request in save/restore).
+//	mode == 1 → persistent cursor (__lang_persistent_ptr /
+//	            _end). Never reclaimed; lives as long as
+//	            the process. The IR's OpPersistentSet /
+//	            OpPersistentRestore toggle the mode flag
+//	            around state-rooted method calls so any
+//	            internal allocs (e.g. Map.set's grow path)
+//	            land in this region and survive the
+//	            arena_restore at request boundary.
+//
+// Each region gets its own lazy-mmap'd 64 MiB virtual
+// reservation. Linux's address hint differs per region
+// (0x10000000 arena, 0x20000000 persistent) so they don't
+// collide; both fit in 32 bits so the lang prelude's
+// __store_i32 / __load_i32 round-trip pointers without
+// truncation.
+//
+// Bump-only — no free. The OS reclaims everything at process
+// exit.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 64 * 1024 * 1024 // 64 MiB virtual reservation
+	const heapBytes = 64 * 1024 * 1024
 	g.line("")
 	g.line(".global __lang_alloc")
 	g.typeDirective("__lang_alloc")
 	g.label("__lang_alloc")
 	g.emit("stp x29, x30, [sp, #-16]!")
 	g.emit("mov x29, sp")
-	// Round size up to 16-byte alignment so subsequent allocs
-	// stay 16-aligned for `stp` / `ldp`.
 	g.emit("add x0, x0, #15")
 	g.emit("and x0, x0, #-16")
-	// Lazy heap init: if heap_ptr == 0, mmap-reserve a 64 MiB
-	// arena. Linux populates physical pages on first touch, so
-	// the virtual reservation costs essentially nothing.
-	g.adrpAdd("x1", "__lang_heap_ptr")
-	g.emit("ldr x2, [x1]")
+	// Pick cursor + end labels into x11 / x12 based on mode.
+	g.adrpAdd("x6", "__lang_alloc_mode")
+	g.emit("ldrb w7, [x6]")
+	g.emit("cbnz w7, .Lalloc_pick_persistent")
+	g.adrpAdd("x11", "__lang_heap_ptr")
+	g.adrpAdd("x12", "__lang_heap_end")
+	g.emit("mov x13, #1") // hint shift base = 0x1000_0000 (will be lsl-ed)
+	g.emit("b .Lalloc_have_labels")
+	g.label(".Lalloc_pick_persistent")
+	g.adrpAdd("x11", "__lang_persistent_ptr")
+	g.adrpAdd("x12", "__lang_persistent_end")
+	g.emit("mov x13, #2") // hint shift base = 0x2000_0000
+	g.label(".Lalloc_have_labels")
+	g.emit("ldr x2, [x11]")
 	g.emit("cbnz x2, .Lalloc_have_heap")
-	// mmap(NULL, 64 MiB, RW, PRIVATE|ANON, -1, 0)
-	g.emit("mov x9, x0")        // save size across the syscall
-	// Hint the mmap to a low (i32-fittable) address. The
-	// lang prelude stores pointers as i32 (designed against
-	// wasm32); on arm64 we need every heap address to fit
-	// in 32 bits so the prelude's __store_i32 / __load_i32
-	// don't truncate when round-tripping pointers. 256 MiB
-	// is well below the 4 GiB i32 ceiling and far enough
-	// from the binary's text/data that collisions are rare.
-	// Linux usually honours the hint when the requested
-	// range is free; if it doesn't, the bump allocator
-	// would silently truncate addresses above 4 GiB, which
-	// is the migration-to-i64-pointers fix tracked
-	// separately.
-	g.emit("mov x0, #0x1000")
-	g.emit("lsl x0, x0, #16")    // x0 = 0x10000000 = 256 MiB
-	g.emit("ldr x1, =%d", heapBytes) // length = 64 MiB
-	g.emit("mov x2, #3")        // PROT_READ | PROT_WRITE (same on both)
+	// Lazy mmap. x13 carries the address-hint base (1 or 2).
+	g.emit("mov x9, x0")
+	g.emit("lsl x0, x13, #28") // x0 = hint << 28 = 0x1000_0000 or 0x2000_0000
+	g.emit("ldr x1, =%d", heapBytes)
+	g.emit("mov x2, #3")
 	if g.darwin {
-		// Darwin BSD MAP_PRIVATE=0x02 + MAP_ANON=0x1000 = 0x1002.
-		// (Linux uses 0x20 for MAP_ANONYMOUS.) Darwin mmap is
-		// syscall #197 with svc #0x80; Linux is #222 with
-		// svc #0. Same in-register arg shape (x0..x5).
-		//
-		// macOS ignores our 0x10000000 addr hint and returns
-		// a high address. That's only a problem for programs
-		// that round-trip heap pointers through 32-bit storage
-		// slots (the lang Map runtime via __store_i32 /
-		// __load_i32). Plain string concat / array literals
-		// keep pointers 64-bit on the operand stack and work
-		// regardless. Tried MAP_FIXED + -pagezero_size on
-		// macos-14 ld64 first but the shrunk PAGEZERO
-		// produced a binary the loader rejected even for
-		// non-allocating programs. Proper fix is widening
-		// the prelude's pointer storage to i64; tracked
-		// separately.
-		g.emit("mov x3, #0x1002") // MAP_PRIVATE | MAP_ANON (Darwin)
+		g.emit("mov x3, #0x1002")
 		g.emit("mov x4, #-1")
 		g.emit("mov x5, #0")
-		g.emit("mov x16, #197")   // SYS_mmap (Darwin BSD)
+		g.emit("mov x16, #197")
 		g.emit("svc #0x80")
-		// Darwin mmap returns MAP_FAILED == -1 cast to ptr on
-		// error (vs Linux's -errno). The cmn below still
-		// catches both shapes: -errno is negative, and -1 is
-		// also negative when read as signed.
 	} else {
-		g.emit("mov x3, #0x22")     // MAP_PRIVATE | MAP_ANONYMOUS (Linux)
+		g.emit("mov x3, #0x22")
 		g.emit("mov x4, #-1")
 		g.emit("mov x5, #0")
-		g.emit("mov x8, #222")      // sys_mmap (Linux asm-generic)
+		g.emit("mov x8, #222")
 		g.emit("svc #0")
 	}
-	// On failure mmap returns -errno (negative). Trap.
 	g.emit("cmn x0, #0")
 	g.emit("blt .Lalloc_oom")
-	g.emit("mov x10, x0")       // x10 = base
-	g.adrpAdd("x1", "__lang_heap_ptr")
-	g.emit("str x10, [x1]")
-	g.adrpAdd("x2", "__lang_heap_end")
+	g.emit("mov x10, x0")
+	g.emit("str x10, [x11]")
 	g.emit("ldr x3, =%d", heapBytes)
 	g.emit("add x3, x10, x3")
-	g.emit("str x3, [x2]")
-	g.emit("mov x0, x9")        // restore size
+	g.emit("str x3, [x12]")
+	g.emit("mov x0, x9")
 	g.label(".Lalloc_have_heap")
-	// Bump the cursor: ptr = heap_ptr; heap_ptr += size; return ptr.
-	g.adrpAdd("x1", "__lang_heap_ptr")
-	g.emit("ldr x2, [x1]")      // x2 = current ptr
-	g.emit("add x3, x2, x0")    // x3 = wanted top
-	g.adrpAdd("x4", "__lang_heap_end")
-	g.emit("ldr x4, [x4]")
+	g.emit("ldr x2, [x11]")
+	g.emit("add x3, x2, x0")
+	g.emit("ldr x4, [x12]")
 	g.emit("cmp x3, x4")
 	g.emit("bhi .Lalloc_oom")
-	g.emit("str x3, [x1]")
+	g.emit("str x3, [x11]")
 	g.emit("mov x0, x2")
 	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("ret")
 	g.label(".Lalloc_oom")
-	// SIGABRT-style trap (137 = SIGKILL+128, OOM-killer convention).
 	g.emit("mov x0, #137")
 	g.syscallExit()
 	g.sizeDirective("__lang_alloc")
@@ -3277,14 +3280,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		}
 
 	case ir.OpPersistentSet:
-		// No-op semantically; push 0 to satisfy the IR's
-		// "returns the previous mode" stack discipline.
-		g.emit("mov x0, #0")
-		g.push()
+		// Toggle the allocator mode at __lang_alloc_mode and
+		// push the previous mode for the matching Restore.
+		// Op.I32 carries the new mode (0 = arena, 1 = persistent).
+		g.adrpAdd("x1", "__lang_alloc_mode")
+		g.emit("ldrb w0, [x1]") // old mode
+		g.emit("mov w2, #%d", op.I32&1)
+		g.emit("strb w2, [x1]")
+		g.push() // push old mode (in x0)
+		g.usesAlloc = true
 	case ir.OpPersistentRestore:
-		// Pop the saved-mode value and discard. The IR pushes
-		// it as an i32; pop one 16-byte stack slot.
-		g.emit("add sp, sp, #16")
+		// Pop the saved mode and write it back to the mode byte.
+		g.pop()
+		g.adrpAdd("x1", "__lang_alloc_mode")
+		g.emit("strb w0, [x1]")
+		g.usesAlloc = true
 
 	// -------- direct calls --------
 
