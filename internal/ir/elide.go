@@ -52,14 +52,18 @@ package ir
 // produces the OpCallClosureDirect call sites this pass keys
 // off) and before the second Inline pass / Fold / DCE so the
 // streamlined load-then-call sequence flows through the rest
-// of the optimiser without the +4 detour in the way.
-func ElideClosurePair(prog *Program) {
+// of the optimiser without the +ptrW detour in the way.
+//
+// pairEnvOffset must match what was passed to Defunctionalise
+// (4 on wasm, 8 on native) — that's the OpConstI32 value this
+// pass keys off when recognising the reader pattern.
+func ElideClosurePair(prog *Program, pairEnvOffset int32) {
 	for _, fn := range prog.Funcs {
-		elideClosurePairFunc(fn)
+		elideClosurePairFunc(fn, pairEnvOffset)
 	}
 }
 
-func elideClosurePairFunc(fn *Func) {
+func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 	type writer struct {
 		storeIdx       int
 		makeClosureIdx int
@@ -117,7 +121,7 @@ func elideClosurePairFunc(fn *Func) {
 			o2 := fn.Ops[loadIdx+2]
 			o3 := fn.Ops[loadIdx+3]
 			o4 := fn.Ops[loadIdx+4]
-			if o1.Kind != OpConstI32 || o1.I32 != 4 ||
+			if o1.Kind != OpConstI32 || o1.I32 != pairEnvOffset ||
 				o2.Kind != OpAdd ||
 				o3.Kind != OpLoad ||
 				o4.Kind != OpCallClosureDirect {

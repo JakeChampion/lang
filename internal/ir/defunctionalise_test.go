@@ -10,7 +10,7 @@ func loweredAndDefuncd(t *testing.T, src string) *Program {
 	t.Helper()
 	p := lowerSource(t, src)
 	Inline(p)
-	Defunctionalise(p)
+	Defunctionalise(p, 4)
 	return p
 }
 

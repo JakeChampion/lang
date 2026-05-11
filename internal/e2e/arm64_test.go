@@ -1047,6 +1047,106 @@ function main(): i32 {
 	}
 }
 
+// Closure factory pattern: `var f = makeAdder(7); f(35)`. The
+// IR's Defunctionalise pass rewrites `f(35)` into a direct call
+// to the hoisted `add` with env_ptr pulled out of the closure
+// pair at offset +ptrW (=8 on native).
+func TestArm64ClosureFactory(t *testing.T) {
+	src := `function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function main(): i32 {
+    var f = makeAdder(7);
+    return f(35);
+}`
+	if _, code := compileAndRunArm64(t, src); code != 42 {
+		t.Errorf("got %d, want 42", code)
+	}
+}
+
+// Two closures over different captured values must not share
+// state — separate env blocks per MakeClosure.
+func TestArm64ClosureMultipleInstances(t *testing.T) {
+	src := `function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function main(): i32 {
+    var add5 = makeAdder(5);
+    var add10 = makeAdder(10);
+    return add5(1) + add10(1);
+}`
+	// (5+1) + (10+1) = 17
+	if _, code := compileAndRunArm64(t, src); code != 17 {
+		t.Errorf("got %d, want 17", code)
+	}
+}
+
+// Direct nested-function call (the ElideClosurePair case): the
+// slot writer IS OpMakeClosure, so elide fires and the closure
+// pair allocation collapses to just an env_ptr in the slot.
+// Exercises the OpMakeEnv path.
+func TestArm64ClosureCapturesParamAndVar(t *testing.T) {
+	src := `function outer(seed: i32): i32 {
+    var bonus: i32 = 100;
+    function inner(x: i32): i32 { return x + seed + bonus; }
+    return inner(2);
+}
+function main(): i32 { return outer(40); }`
+	// 2 + 40 + 100 = 142
+	if _, code := compileAndRunArm64(t, src); code != 142 {
+		t.Errorf("got %d, want 142", code)
+	}
+}
+
+// String capture — pointer-shaped capture takes a full ptr-width
+// (8-byte) slot in the env block. Verifies arm64CaptureSlotSize
+// routes through `str x1, ...` rather than the 4-byte `str w1`
+// truncation path.
+func TestArm64ClosureCapturesString(t *testing.T) {
+	src := `function outer(s: string): i32 {
+    function inner(): i32 { return len(s); }
+    return inner();
+}
+function main(): i32 { return outer("hello"); }`
+	if _, code := compileAndRunArm64(t, src); code != 5 {
+		t.Errorf("got %d, want 5 (len(\"hello\") via captured string)", code)
+	}
+}
+
+// Multi-capture closure: two i32 captures laid out at offsets 0
+// and 4 in the env block. Verifies the running-offset
+// arithmetic in emitMakeClosureOrEnv.
+func TestArm64ClosureMultiCapture(t *testing.T) {
+	src := `function make2(a: i32, b: i32): (i32) => i32 {
+    function f(x: i32): i32 { return a + b + x; }
+    return f;
+}
+function main(): i32 {
+    var h = make2(10, 20);
+    return h(12);
+}`
+	if _, code := compileAndRunArm64(t, src); code != 42 {
+		t.Errorf("got %d, want 42", code)
+	}
+}
+
+// Pointer + scalar captures mixed in one closure — pointer slot
+// is 8 bytes, scalar slot is 4 bytes. Exercises mixed-width
+// offset arithmetic.
+func TestArm64ClosureCapturesMixedPointers(t *testing.T) {
+	src := `function outer(s: string, n: i32): i32 {
+    function inner(): i32 { return len(s) + n; }
+    return inner();
+}
+function main(): i32 { return outer("hi", 40); }`
+	// len("hi") + 40 = 42
+	if _, code := compileAndRunArm64(t, src); code != 42 {
+		t.Errorf("got %d, want 42", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

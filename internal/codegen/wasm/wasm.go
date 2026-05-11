@@ -157,13 +157,14 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// fits — and before FuseTee / Cleanup so the load+const+add
 	// scratch arithmetic the rewrite synthesises gets folded /
 	// peep-holed alongside the rest.
-	ir.Defunctionalise(ip)
+	// Wasm closure pair: 8 bytes total, env_ptr at offset 4.
+	ir.Defunctionalise(ip, 4)
 	// Drop the 8-byte closure-pair allocation when every reader
 	// of the slot has been rewritten to a defunctionalised
 	// direct call. The pair's fn_idx field is dead in that
 	// case; the slot can hold env_ptr directly. Saves one
 	// __lang_alloc per closure that fully defunctionalises.
-	ir.ElideClosurePair(ip)
+	ir.ElideClosurePair(ip, 4)
 	// Re-run Inline after Defunctionalise so the just-emitted
 	// `OpCallClosureDirect` calls to small hoisted closures
 	// also get substituted (the inliner recognises both

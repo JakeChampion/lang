@@ -106,11 +106,30 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// Arm64 + wasm don't call it yet — adding it there is
 	// safe but out of this PR's scope.
 	ir.TailCallOptimize(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}}
+	// Defunctionalise + ElideClosurePair turn many indirect
+	// closure calls into direct ones (when the closure flow
+	// is monomorphic enough for the pass to prove the
+	// target statically). That collapses the closure-pair
+	// representation to a single env_ptr in the slot,
+	// letting us implement closures with only OpMakeEnv +
+	// OpCallClosureDirect — no closure-pair handling in
+	// OpCallIndirect needed for the cases these passes
+	// can rewrite. Cases that don't defunctionalise still
+	// fall back to the existing top-level fn-pointer
+	// OpConstFunc / OpCallIndirect path (those work today;
+	// see PR #273's TestX86_64IndirectCall).
+	// Native closure pair: 16 bytes total, env_ptr at offset 8
+	// (wasm uses 8 bytes / +4 — see Defunctionalise comment).
+	ir.Defunctionalise(ip, 8)
+	ir.ElideClosurePair(ip, 8)
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the
 	// runtime emitters below know which helpers to include
 	// (and the .bss reservations match the helpers).
+	for _, fn := range prog.Funcs {
+		g.funcs[fn.Name] = fn
+	}
 	for _, fn := range ip.Funcs {
 		for _, op := range fn.Ops {
 			if op.Kind == ir.OpCallDirect {
@@ -126,6 +145,11 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 				g.usesStrcat = true
 				g.usesAlloc = true
 				g.usesMemcpy = true
+			}
+			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
+				// Closure env block + (optional) pair both
+				// come from __lang_alloc.
+				g.usesAlloc = true
 			}
 		}
 	}
@@ -222,6 +246,13 @@ type generator struct {
 	// emitted `.rodata` section is deterministic.
 	stringLabel map[string]string
 	stringOrder []string
+	// funcs maps a top-level function name to its AST
+	// declaration. Populated at Emit time so OpMakeEnv /
+	// OpMakeClosure can look up the hoisted function's
+	// `Captures` list — closureconv stamps it with the
+	// capture parameters' types, which is what drives env-
+	// block layout (slot sizes, offsets).
+	funcs map[string]*ast.FuncDecl
 	// Each `uses<Helper>` flag mirrors arm64's pattern —
 	// only emit the helper if the program references it,
 	// so trivial programs stay small. recordUse() sets
@@ -1003,6 +1034,28 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	// fired when these names appeared in the IR, so the
 	// runtime emitters above included them.
 
+	case ir.OpCallClosureDirect:
+		// The IR's defunctionalise pass rewrites closure
+		// calls into direct calls when the closure target is
+		// statically known. The caller has already pushed
+		// (args..., env_ptr) onto the operand stack — same
+		// shape as OpCallDirect with one extra arg. Reuse the
+		// arg-pop loop with argc+1.
+		argc := int(op.I32)
+		regArgs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+		if argc > len(regArgs) {
+			return fmt.Errorf("x86_64: more than %d closure-call args not yet supported (got %d for %q)", len(regArgs), argc, op.Str)
+		}
+		for i := argc - 1; i >= 0; i-- {
+			g.emit(fmt.Sprintf("mov %s, [rsp]", regArgs[i]))
+			g.emit("add rsp, 16")
+		}
+		g.emit(fmt.Sprintf("call %s", op.Str))
+		g.push()
+
+	case ir.OpMakeClosure, ir.OpMakeEnv:
+		return g.emitMakeClosureOrEnv(op)
+
 	case ir.OpCallIndirect:
 		// Function-value call: the IR emitted the function-
 		// pointer immediately before the call op (via
@@ -1160,6 +1213,162 @@ func (g *generator) emit(s string) {
 	g.out.WriteByte('\t')
 	g.out.WriteString(s)
 	g.out.WriteByte('\n')
+}
+
+// captureSlotSize mirrors closureconv.captureSlotSize for
+// ptrW=8. Wide scalars (i64/f64) take 8 bytes; pointer-shaped
+// captures take 8 bytes (the heap-pointer width); other
+// scalars take 4. Sub-i32 captures round up to 4 bytes for
+// the same alignment reason the wasm + arm64 backends use.
+func captureSlotSize(t ast.Type, ptrW int) int32 {
+	if ast.ElemSizeBytesFor(t, ptrW) == 8 {
+		return 8
+	}
+	if ast.IsPointerType(t) {
+		return int32(ptrW)
+	}
+	return 4
+}
+
+// emitMakeClosureOrEnv handles OpMakeClosure / OpMakeEnv:
+// pops N captures off the operand stack (in reverse, since
+// top-of-stack is the last capture), allocates the env block,
+// stores each capture at its closureconv-computed offset,
+// and pushes the env pointer (OpMakeEnv) or a freshly-built
+// closure pair {fn_ptr, env_ptr} (OpMakeClosure).
+//
+// With the IR's Defunctionalise + ElideClosurePair passes run
+// upstream (see EmitWithOptions), most closure-using programs
+// reduce to OpMakeEnv — the closure-pair slot dies and only
+// env_ptr survives, consumed by OpCallClosureDirect. The
+// OpMakeClosure path is here for the cases that don't elide.
+//
+// Capture slot layout matches closureconv.captureSlotSize:
+// wide scalars (i64 / f64) take 8 bytes; pointer-shaped
+// captures take ptrW (=8 on arm64 / x86-64); other scalars
+// take 4. Stores honour width too — `mov [..], rax` for
+// 8-byte slots, `mov [..], eax` for 4.
+func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
+	envOnly := op.Kind == ir.OpMakeEnv
+	hoisted, ok := g.funcs[op.Str]
+	if !ok {
+		return fmt.Errorf("x86_64: closure target %q not in prog.Funcs", op.Str)
+	}
+	n := int(op.I32)
+	if n != len(hoisted.Captures) {
+		return fmt.Errorf("x86_64: closure %q expects %d captures, got %d", op.Str, len(hoisted.Captures), n)
+	}
+
+	if n == 0 {
+		// No captures: env_ptr = 0 placeholder. OpCallClosure
+		// Direct callers still expect an env arg slot; 0
+		// satisfies it (hoisted body never reads it when
+		// Captures is empty).
+		if envOnly {
+			g.emit("xor eax, eax")
+			g.push()
+			return nil
+		}
+		// MakeClosure with zero captures: closure pair
+		// {fn_ptr, 0}. Still need the pair allocation
+		// because the call site may load both halves.
+		g.emit("mov edi, 16")
+		g.emit("call __lang_alloc")
+		g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
+		g.emit("mov [rax], rcx")
+		g.emit("mov qword ptr [rax + 8], 0")
+		g.push()
+		return nil
+	}
+
+	// Compute env layout. Slot offsets are the running sum
+	// of captureSlotSize(t, ptrW). ptrW=8 on x86-64.
+	type slot struct {
+		off  int32
+		size int32
+		typ  ast.Type
+	}
+	slots := make([]slot, n)
+	envSize := int32(0)
+	for i, cap := range hoisted.Captures {
+		s := captureSlotSize(cap.Type, 8)
+		slots[i] = slot{off: envSize, size: s, typ: cap.Type}
+		envSize += s
+	}
+
+	// Pop the N captures off the operand stack into a
+	// scratch region just below rsp (the operand stack is
+	// already 16-byte-slot-paced, so we can copy values into
+	// callee-private scratch and reorder there).
+	//
+	// Simpler approach: pop each capture into the env block
+	// directly. We pop in REVERSE (last capture is top of
+	// stack) and store at the corresponding offset.
+	//
+	// But __lang_alloc clobbers caller-save regs and we need
+	// the captures alive across the call. Fix: stash the
+	// captures in pushed stack temps, alloc, then store from
+	// the stack into the env in declaration order.
+	//
+	// Actually the operand stack already holds them in
+	// 16-byte slots, ready for restamping. After alloc we
+	// have env_ptr in rax; reorder reads from operand stack
+	// slots (rsp + 16*offset).
+	g.emit(fmt.Sprintf("mov edi, %d", envSize))
+	// Save caller's r12 (env_ptr) + r13 (loop scratch) — we
+	// need them across __lang_alloc.
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("call __lang_alloc")
+	g.emit("mov r12, rax") // r12 = env_ptr
+	// Captures sit on the operand stack just above the
+	// pushed callee-saves: top-of-stack (after the 2 pushes)
+	// is at offset 16 — wait, we pushed twice (8 bytes
+	// each), so the operand-stack values shifted down by 16.
+	// The Nth (last) capture is at [rsp + 16] now, the
+	// (N-1)th at [rsp + 32], and so on; the first capture is
+	// at [rsp + 16 * n].
+	for i, s := range slots {
+		// Capture i is at operand-stack index (n-1-i) from
+		// the bottom; rsp offset = (n - i) * 16 (the +16
+		// accounts for the two pushes above the operand
+		// stack).
+		stkOff := int32(16 + (n-1-i)*16)
+		g.emit(fmt.Sprintf("mov rax, [rsp + %d]", stkOff))
+		// Store into env at slot offset.
+		dst := "[r12]"
+		if s.off > 0 {
+			dst = fmt.Sprintf("[r12 + %d]", s.off)
+		}
+		if s.size == 8 {
+			g.emit(fmt.Sprintf("mov %s, rax", dst))
+		} else {
+			g.emit(fmt.Sprintf("mov %s, eax", dst))
+		}
+	}
+	// Drop the N operand-stack slots we consumed.
+	g.emit(fmt.Sprintf("add rsp, %d", n*16))
+	g.emit("mov rax, r12") // env_ptr in rax
+	g.emit("pop r13")
+	g.emit("pop r12")
+
+	if envOnly {
+		g.push()
+		return nil
+	}
+	// OpMakeClosure: also allocate the closure pair.
+	g.emit("push rax") // save env_ptr (16-byte slot)
+	g.emit("sub rsp, 8")
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	// rax = pair ptr. Load fn ptr and env ptr, store.
+	g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
+	g.emit("mov [rax], rcx")
+	g.emit("mov rcx, [rsp + 8]") // env_ptr from the temp push
+	g.emit("mov [rax + 8], rcx")
+	g.emit("add rsp, 16")
+	g.push()
+	return nil
 }
 
 // emitInlineIdxHelper inlines a `__str_idx` / `__arr_idx` /
