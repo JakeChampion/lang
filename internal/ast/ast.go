@@ -265,13 +265,23 @@ func (f FloatType) NormalWidth() int {
 }
 
 // ElemSizeBytes returns the in-memory footprint, in bytes, of a
-// single element of `t` when stored in an array / slice. The
-// language stores everything on a 4-byte word grid by default;
-// the exception is sub-i32 integers (`u8`/`i8` use 1 byte,
-// `u16`/`i16` use 2 bytes) and i64 / u64 / f64 (8 bytes).
-// Pointer-shaped types (string / Array / struct / enum / tuple
-// / slice) are 4 bytes — they hold a heap pointer.
+// single element of `t` when stored in an array / slice on
+// wasm32 (4-byte pointers). Sub-i32 integers (`u8`/`i8` use 1
+// byte, `u16`/`i16` use 2 bytes) and i64 / u64 / f64 use 8
+// bytes. Pointer-shaped types (string / Array / struct / enum
+// / tuple / slice) return 4 — they hold a heap pointer that
+// fits in i32 on wasm32. For native arm64 (where heap pointers
+// are 8 bytes), use `ElemSizeBytesFor(t, ptrW)` instead.
 func ElemSizeBytes(t Type) int {
+	return ElemSizeBytesFor(t, 4)
+}
+
+// ElemSizeBytesFor is the target-aware variant. `ptrW` is the
+// pointer width in bytes for the current target (4 on wasm32,
+// 8 on arm64). Pointer-shaped types return `ptrW` so their full
+// heap address survives on arm64-darwin (heap >= 4 GiB). Scalar
+// types ignore ptrW.
+func ElemSizeBytesFor(t Type, ptrW int) int {
 	switch x := t.(type) {
 	case NumberType:
 		switch x.NormalWidth() {
@@ -289,7 +299,24 @@ func ElemSizeBytes(t Type) int {
 		}
 		return 4
 	}
-	return 4
+	return ptrW
+}
+
+// IsPointerType reports whether values of `t` are represented
+// as heap pointers in the compiled code — so the slot holding
+// the value must be pointer-width (4 on wasm32, 8 on arm64).
+// Used by IR / codegen to size enum payloads, struct fields,
+// array elements, and closure captures correctly on each
+// target.
+func IsPointerType(t Type) bool {
+	switch t.(type) {
+	case StringType, ArrayType, SliceType, TupleType,
+		StructType, EnumType:
+		return true
+	case *FuncType:
+		return true
+	}
+	return false
 }
 
 // Equal reports whether two types are structurally equal.

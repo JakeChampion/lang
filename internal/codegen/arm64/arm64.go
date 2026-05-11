@@ -103,7 +103,7 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 // each surviving (post-treeshake) function via the IR layer.
 func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (string, error) {
 	treeshake.Run(prog)
-	ip, err := ir.Lower(prog, info)
+	ip, err := ir.LowerWith(prog, info, 8)
 	if err != nil {
 		return "", err
 	}
@@ -513,11 +513,11 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	switch name {
 	case "__str_idx", "__slice_idx_1":
 		g.emit("add x0, x1, x0")
-	case "__slice_idx_2":
+	case "__arr_idx_2", "__slice_idx_2":
 		g.emit("add x0, x1, x0, lsl #1")
 	case "__arr_idx", "__slice_idx":
 		g.emit("add x0, x1, x0, lsl #2")
-	case "__slice_idx_8":
+	case "__arr_idx_8", "__slice_idx_8":
 		g.emit("add x0, x1, x0, lsl #3")
 	default:
 		return fmt.Errorf("arm64: unknown index helper %q", name)
@@ -1175,13 +1175,11 @@ func (g *generator) emitArgsRuntime() {
 	g.adrpAdd("x20", "__lang_argv")
 	g.emit("ldr x20, [x20]")
 	// Allocate the result string[] container: 4 bytes length
-	// prefix + argc * 4 bytes for entry pointers. Slots are 4
-	// bytes wide because the lang prelude treats array-of-T
-	// where T is a pointer as i32-stride; on arm64 this is the
-	// same wasm32-inherited assumption that the Map runtime
-	// makes. Programs that fit in the low 4 GiB of address
-	// space round-trip fine.
-	g.emit("lsl x0, x19, #2")
+	// prefix + argc * 8 bytes for entry pointers. arm64 uses
+	// pointer-width entry slots (8 bytes) so heap addresses
+	// survive arm64-darwin's >= 4 GiB heap — matches the IR's
+	// new string[] stride (ast.ElemSizeBytesFor with ptrW=8).
+	g.emit("lsl x0, x19, #3")
 	g.emit("add x0, x0, #4")
 	g.emit("bl __lang_alloc")
 	g.emit("add x21, x0, #4")     // x21 = result data pointer
@@ -1219,9 +1217,9 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("mov x1, x23")
 	g.emit("add x2, x9, #1")
 	g.emit("bl __lang_memcpy")
-	// result[i] = x10
+	// result[i] = x10 — full 8-byte pointer store.
 	g.emit("ldr x10, [sp, #56]")
-	g.emit("str w10, [x21, x22, lsl #2]")
+	g.emit("str x10, [x21, x22, lsl #3]")
 	g.emit("add x22, x22, #1")
 	g.emit("b .Largs_loop")
 	g.label(".Largs_done")
@@ -2243,10 +2241,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpLoad:
 		// Pop addr; load 4 bytes (i32) or 8 bytes (i64) from
 		// it. The IR distinguishes width via op.Width: 0 / 32
-		// → 4-byte, 64 → 8-byte. The i32 path uses the w0
-		// alias so the high half of x0 zero-extends cleanly.
+		// → 4-byte, 64 → 8-byte, WidthPtr (-1) → 8-byte on
+		// arm64 (the heap pointer width — high bits of arm64-
+		// darwin's >4 GiB heap survive). The i32 path uses the
+		// w0 alias so the high half of x0 zero-extends cleanly.
 		g.pop()
-		if op.Width == 64 {
+		if op.Width == 64 || op.Width == ir.WidthPtr {
 			g.emit("ldr x0, [x0]")
 		} else {
 			g.emit("ldr w0, [x0]")
@@ -2260,7 +2260,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// Stack: [addr, value], top = value.
 		g.emit("ldr x0, [sp], #16") // value
 		g.emit("ldr x1, [sp], #16") // addr
-		if op.Width == 64 {
+		if op.Width == 64 || op.Width == ir.WidthPtr {
 			g.emit("str x0, [x1]")
 		} else {
 			g.emit("str w0, [x1]")
@@ -2576,8 +2576,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__mapiter_value_impl"
 		case "__method_MapIter_advance":
 			target = "__mapiter_advance_impl"
-		case "__str_idx", "__arr_idx", "__slice_idx",
-			"__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
+		case "__str_idx", "__arr_idx", "__arr_idx_2", "__arr_idx_8",
+			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
 			// would otherwise dispatch to. arm64 doesn't yet
 			// ship the helpers, so inline an unchecked

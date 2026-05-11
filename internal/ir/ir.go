@@ -406,6 +406,14 @@ func (k OpKind) String() string {
 	return "<invalid>"
 }
 
+// WidthPtr is the sentinel `Op.Width` value meaning "pointer-
+// width"; each backend resolves it to its native heap-pointer
+// size (4 on wasm32, 8 on arm64). Used to size OpStore /
+// OpLoad of heap-pointer values without forcing the IR layer
+// to know the target. -1 keeps the existing 0 = i32 / 64 =
+// i64 encoding intact.
+const WidthPtr = -1
+
 // Op is one instruction in a function's linear op list. Operands that
 // don't apply to a given op are zero-valued.
 type Op struct {
@@ -429,7 +437,12 @@ type Op struct {
 	// existing emit paths keep producing i32 ops without code
 	// changes; explicit `Width: 64` selects i64. Sub-i32 widths
 	// (8, 16) are reserved — they ship with the unsigned-types
-	// follow-up.
+	// follow-up. `WidthPtr` (-1) is a backend-resolved sentinel
+	// meaning "pointer-width" — wasm interprets it as 4-byte
+	// (i32.store / i32.load); arm64 as 8-byte (str x / ldr x).
+	// Used for OpStore / OpLoad of heap-pointer-typed values
+	// (string / array / struct / enum / closure) so the high
+	// 32 bits of arm64-darwin's >4 GiB heap addresses survive.
 	Width int
 	// Unsigned selects the `_u` variant of div / rem / shr /
 	// comparison ops (OpDivS becomes i32.div_u, etc.) when the
@@ -534,12 +547,20 @@ func formatOp(op Op) string {
 // MakeClosure-bearing Var. This means the per-function lowering only
 // has to deal with a flat program of top-level functions.
 func Lower(prog *ast.Program, info *checker.Info) (*Program, error) {
-	if err := closureconv.Convert(prog, info); err != nil {
+	return LowerWith(prog, info, 4)
+}
+
+// LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
+// wasm32 and 8 on arm64; it sizes pointer-typed enum payloads,
+// struct fields, array elements, and closure captures so heap
+// addresses survive arm64-darwin's >= 4 GiB heap.
+func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error) {
+	if err := closureconv.ConvertWith(prog, info, ptrW); err != nil {
 		return nil, err
 	}
 	out := &Program{}
 	for _, fn := range prog.Funcs {
-		f, err := lowerFunc(fn, info)
+		f, err := lowerFunc(fn, info, ptrW)
 		if err != nil {
 			return nil, err
 		}
@@ -592,6 +613,12 @@ type builder struct {
 	// only when the flag is set.
 	defers     []*ast.Defer
 	deferSlots []int32
+	// ptrW is the target's heap-pointer width in bytes — 4 on
+	// wasm32, 8 on arm64. Sizes enum payload slots, struct
+	// field offsets, array element strides, and closure
+	// captures so pointer-typed values survive arm64-darwin's
+	// >= 4 GiB heap.
+	ptrW int
 }
 
 // collectDefers walks `s` recursively and appends every
@@ -662,14 +689,14 @@ func (b *builder) emitDeferCleanup() error {
 	return nil
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
 		Locals:     info.Locals[fn],
 		ReturnType: fn.ReturnType,
 	}
-	b := &builder{info: info, fn: fn, out: out, locals: map[string]int32{}, scratchType: map[int32]ast.Type{}}
+	b := &builder{info: info, fn: fn, out: out, locals: map[string]int32{}, scratchType: map[int32]ast.Type{}, ptrW: ptrW}
 	for i, p := range fn.Params {
 		b.locals[p.Name] = int32(i)
 	}
@@ -818,7 +845,7 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 			payloadTypes = ed.Variants[varIdx].Payloads
 		}
 	}
-	offsets, size := payloadLayout(payloadTypes, payloadCount)
+	offsets, size := payloadLayout(payloadTypes, payloadCount, b.ptrW)
 	b.emit(Op{Kind: OpConstI32, I32: size})
 	b.emit(Op{Kind: OpAlloc})
 	baseSlot := b.allocSlot()
@@ -957,7 +984,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.openIf(BlockTypeVoid)
 		// Match: load each payload field into its pre-allocated
 		// outer-scope slot.
-		offsets, _ := payloadLayout(n.BindingTypes, len(bindingSlots))
+		offsets, _ := payloadLayout(n.BindingTypes, len(bindingSlots), b.ptrW)
 		for i, slot := range bindingSlots {
 			bt := ast.Type(ast.NumberType{})
 			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
@@ -999,7 +1026,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.emit(Op{Kind: OpEq})
 		b.openIf(BlockTypeVoid)
 		// Match: bind payloads, run Then.
-		offsets, _ := payloadLayout(n.BindingTypes, len(n.Bindings))
+		offsets, _ := payloadLayout(n.BindingTypes, len(n.Bindings), b.ptrW)
 		for i, name := range n.Bindings {
 			slot := b.allocSlot()
 			b.locals[name] = slot
@@ -1329,7 +1356,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// declared type — recorded via b.scratchType so
 			// the wasm backend declares it as f32 instead of
 			// the default i32.
-			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings))
+			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
 			for i, name := range arm.Bindings {
 				slot := b.allocSlot()
 				b.locals[name] = slot
@@ -1710,7 +1737,7 @@ func (b *builder) expr(e ast.Expr) error {
 			b.brTo(b.depth, true)
 			b.brTo(outerArmD, false)
 			b.closeScope() // matched path lands here
-			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings))
+			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
 			for i, name := range arm.Bindings {
 				slot := b.allocSlot()
 				b.locals[name] = slot
@@ -1828,7 +1855,7 @@ func (b *builder) expr(e ast.Expr) error {
 		loadOp := OpLoad
 		loadWidth := 0
 		if elemType != nil {
-			stride = int32(ast.ElemSizeBytes(elemType))
+			stride = int32(ast.ElemSizeBytesFor(elemType, b.ptrW))
 			if nt, ok := elemType.(ast.NumberType); ok {
 				switch nt.NormalWidth() {
 				case 8:
@@ -1852,6 +1879,11 @@ func (b *builder) expr(e ast.Expr) error {
 				if ft.NormalWidth() == 64 {
 					loadWidth = 64
 				}
+			}
+			// Pointer-typed elements: emit a ptr-width load so
+			// arm64's 8-byte heap pointers don't truncate.
+			if ast.IsPointerType(elemType) {
+				loadWidth = WidthPtr
 			}
 		}
 		if n.IsString {
@@ -1950,7 +1982,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// entirely when stride == 1 — `low * 1` is just `low`.
 		stride := int32(4)
 		if n.ElemType != nil {
-			stride = int32(ast.ElemSizeBytes(n.ElemType))
+			stride = int32(ast.ElemSizeBytesFor(n.ElemType, b.ptrW))
 		}
 		if n.Low != nil {
 			if err := b.expr(n.Low); err != nil {
@@ -2019,10 +2051,11 @@ func (b *builder) expr(e ast.Expr) error {
 		nElems := int32(len(n.Elems))
 		stride := int32(4)
 		if n.ElemType != nil {
-			stride = int32(ast.ElemSizeBytes(n.ElemType))
+			stride = int32(ast.ElemSizeBytesFor(n.ElemType, b.ptrW))
 		}
-		// Pick (storeOp, storeWidth) from element type. Width is
-		// non-zero only for the 64-bit case; the wasm codegen's
+		// Pick (storeOp, storeWidth) from element type. WidthPtr
+		// (-1) drives pointer-width stores on arm64 (8-byte STR)
+		// while leaving wasm32 at 4 bytes; the wasm codegen's
 		// `intPrefix` / `floatPrefix` helpers honour it on
 		// OpStore / OpFStore.
 		storeOp := OpStore
@@ -2043,6 +2076,9 @@ func (b *builder) expr(e ast.Expr) error {
 				if ft.NormalWidth() == 64 {
 					storeWidth = 64
 				}
+			}
+			if ast.IsPointerType(n.ElemType) {
+				storeWidth = WidthPtr
 			}
 		}
 		b.emit(Op{Kind: OpConstI32, I32: headerBytes + nElems*stride})
@@ -2071,19 +2107,23 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpAdd})
 	case *ast.MapLit:
 		// Lower `Map { k1: v1, k2: v2, ... }` to:
-		//   var __m = map_new(N, keyKind);
+		//   var __m = map_new(N, keyKind, valKind);
 		//   __m.set(k1, v1);
 		//   __m.set(k2, v2);
 		//   ...
 		//   __m
 		// where N is the entry count (so no resize on the
-		// initial fill) and `keyKind` is the runtime tag for the
-		// inferred key type (0 = i32-sized scalar, 1 = string).
+		// initial fill), `keyKind` tags K (0 = i32-scalar,
+		// 1 = string), and `valKind` tags V (0 = i32-scalar,
+		// 1 = pointer-shaped). The runtime uses keyKind to
+		// pick i32.eq vs strcmp on lookup, and valKind to
+		// size the .values() snapshot array's element stride.
 		// Stash the constructed Map handle in a fresh local so
 		// each `set` call can reload it.
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
 		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType)})
-		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 2})
+		b.emit(Op{Kind: OpConstI32, I32: mapValKindTag(n.ValueType)})
+		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 3})
 		mapSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
@@ -2118,24 +2158,29 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
 	case *ast.TupleLit:
-		// Same shape as StructLit — alloc N words, store each
-		// element at offset i*4. We don't have per-element type
-		// info here, so fall back to integer / pointer stores
-		// for everything; an i64 or f32 element would need
-		// per-position widths (revisit when those land).
-		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Elems) * 4)})
+		// Same shape as StructLit — alloc enough heap for the
+		// elements at their packed offsets, store each at
+		// `offs[i]` with a width that matches the element's
+		// type (so pointer-typed elements get pointer-width
+		// slots on arm64).
+		elemTypes := make([]ast.Type, len(n.Elems))
+		for i, elem := range n.Elems {
+			elemTypes[i] = b.exprType(elem)
+		}
+		offs, size := tupleElemLayout(elemTypes, b.ptrW)
+		b.emit(Op{Kind: OpConstI32, I32: size})
 		b.emit(Op{Kind: OpAlloc})
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_tup_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
 		for i, elem := range n.Elems {
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-			b.emit(Op{Kind: OpConstI32, I32: int32(i * 4)})
+			b.emit(Op{Kind: OpConstI32, I32: offs[i]})
 			b.emit(Op{Kind: OpAdd})
 			if err := b.expr(elem); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpStore})
+			b.emit(payloadStoreOp(elemTypes[i]))
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	case *ast.StructLit:
@@ -2143,36 +2188,31 @@ func (b *builder) expr(e ast.Expr) error {
 		if !ok {
 			return fmt.Errorf("ir: unknown struct %q (compiler bug)", n.TypeName)
 		}
-		// Allocate space for all fields, then store each at its
-		// declared offset (4 bytes per field).
-		b.emit(Op{Kind: OpConstI32, I32: int32(len(sd.Fields) * 4)})
+		// Per-field layout — pointer-typed fields widen to
+		// ptrW bytes on arm64 so heap addresses survive the
+		// store/load round-trip. Wide / pointer fields are
+		// 8-byte-aligned within the heap object.
+		offs, size := structFieldLayout(sd.Fields, b.ptrW)
+		b.emit(Op{Kind: OpConstI32, I32: size})
 		b.emit(Op{Kind: OpAlloc})
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_lit_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
-		// Map each FieldInit to its offset by scanning the decl.
-		offs := map[string]int{}
-		for i, f := range sd.Fields {
-			offs[f.Name] = i * 4
-		}
 		for _, f := range n.Fields {
 			off := offs[f.Name]
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-			b.emit(Op{Kind: OpConstI32, I32: int32(off)})
+			b.emit(Op{Kind: OpConstI32, I32: off})
 			b.emit(Op{Kind: OpAdd})
 			if err := b.expr(f.Value); err != nil {
 				return err
 			}
-			// Pick i32 vs f32 store based on the declared field
-			// type. WASM rejects `i32.store` of an f32 operand,
-			// and arm64 doesn't care which mnemonic we pick (32-
-			// bit register store is untyped at the instruction
-			// level), so this is enforced at the IR level.
-			if isFloat(fieldType(sd.Fields, f.Name)) {
-				b.emit(Op{Kind: OpFStore})
-			} else {
-				b.emit(Op{Kind: OpStore})
-			}
+			// Reuse payloadStoreOp so the store is correctly
+			// sized for the field's declared type: i32 / f32
+			// / sub-i32 → 4 bytes, i64 / f64 → 8 bytes, and
+			// pointer types (string / array / struct / enum
+			// / slice / closure) → WidthPtr (4 on wasm32, 8
+			// on arm64).
+			b.emit(payloadStoreOp(fieldType(sd.Fields, f.Name)))
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	case *ast.CaptureRef:
@@ -2208,12 +2248,15 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures))})
 	case *ast.FieldAccess:
-		// Compute base + offset_of(field), then load the word.
+		// Compute base + offset_of(field), then load the value
+		// at its declared width (4-byte for i32 / f32 / sub-i32,
+		// 8-byte for i64 / f64, ptr-width for pointer types so
+		// arm64-darwin's high heap addresses survive).
 		// Tuple field access uses a numeric selector (`pair.0`);
 		// resolve the offset against the tuple's static element
 		// list, otherwise fall through to the struct path.
 		var ft ast.Type
-		off := -1
+		off := int32(-1)
 		if tup, ok := b.targetTupleType(n.Target); ok {
 			idx, err := strconv.Atoi(n.Field)
 			if err != nil {
@@ -2222,7 +2265,8 @@ func (b *builder) expr(e ast.Expr) error {
 			if idx < 0 || idx >= len(tup.Elems) {
 				return fmt.Errorf("ir: tuple has %d elements; index %d out of range", len(tup.Elems), idx)
 			}
-			off = idx * 4
+			offs, _ := tupleElemLayout(tup.Elems, b.ptrW)
+			off = offs[idx]
 			ft = tup.Elems[idx]
 		} else {
 			st := b.fieldOwner(n.Target)
@@ -2230,9 +2274,10 @@ func (b *builder) expr(e ast.Expr) error {
 			if !ok {
 				return fmt.Errorf("ir: field access on unresolved struct %q", st)
 			}
-			for i, f := range sd.Fields {
+			offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+			for _, f := range sd.Fields {
 				if f.Name == n.Field {
-					off = i * 4
+					off = offs[f.Name]
 					ft = f.Type
 					break
 				}
@@ -2244,13 +2289,9 @@ func (b *builder) expr(e ast.Expr) error {
 		if err := b.expr(n.Target); err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpConstI32, I32: int32(off)})
+		b.emit(Op{Kind: OpConstI32, I32: off})
 		b.emit(Op{Kind: OpAdd})
-		if isFloat(ft) {
-			b.emit(Op{Kind: OpFLoad})
-		} else {
-			b.emit(Op{Kind: OpLoad})
-		}
+		b.emit(payloadLoadOp(ft))
 	default:
 		return fmt.Errorf("ir: unsupported expression %T", e)
 	}
@@ -2859,6 +2900,22 @@ func mapKeyKindTag(t ast.Type) int32 {
 	return 0
 }
 
+// mapValKindTag is mapKeyKindTag's V-side counterpart. 0 =
+// i32-sized scalar (i32 / u32 / sub-i32); 1 = pointer-shaped
+// (string / array / struct / enum / slice / tuple). Stored at
+// buf+12 by map_new so `__map_values_impl` can size its
+// snapshot array's element stride correctly on arm64 (4-byte
+// for i32-V, 8-byte for pointer-V — surviving arm64-darwin's
+// high heap). i64 / f64 V types still use the boxed-cell
+// codepath (emitWideMapSet / emitWideMapGet) and never reach
+// the value-column snapshot directly.
+func mapValKindTag(t ast.Type) int32 {
+	if ast.IsPointerType(t) {
+		return 1
+	}
+	return 0
+}
+
 func (b *builder) call(n *ast.Call) error {
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
@@ -3023,18 +3080,24 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	argCount := int32(len(n.Args))
 	// `map_new(cap)` is a generic builtin: the runtime helper
-	// takes an extra `keyKind` argument so the linear-search
-	// helpers can branch i32-eq vs strcmp without per-K
-	// monomorphisation. The Var-case destination inference
-	// stamped Call.TypeArgs[0] = K; translate to the runtime
-	// tag here.
+	// takes two extra runtime-tag args so the prelude can branch
+	// without per-K/V monomorphisation. `keyKind` (i32-scalar vs
+	// string) picks i32.eq vs strcmp on lookup; `valKind`
+	// (i32-scalar vs pointer-shaped) sizes the .values()
+	// snapshot's element stride correctly on arm64. The
+	// Var-case destination inference stamped Call.TypeArgs[0]=K
+	// and Call.TypeArgs[1]=V; translate both to their tags.
 	if id.Name == "map_new" {
-		var keyKind int32
+		var keyKind, valKind int32
 		if len(n.TypeArgs) >= 1 {
 			keyKind = mapKeyKindTag(n.TypeArgs[0])
 		}
+		if len(n.TypeArgs) >= 2 {
+			valKind = mapValKindTag(n.TypeArgs[1])
+		}
 		b.emit(Op{Kind: OpConstI32, I32: keyKind})
-		argCount++
+		b.emit(Op{Kind: OpConstI32, I32: valKind})
+		argCount += 2
 	}
 	// Direct call if the name is a top-level / builtin function and not
 	// shadowed by a local of the same name.
@@ -3135,7 +3198,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		storeOp := OpStore
 		storeWidth := 0
 		if t.ElemType != nil {
-			stride = int32(ast.ElemSizeBytes(t.ElemType))
+			stride = int32(ast.ElemSizeBytesFor(t.ElemType, b.ptrW))
 			if nt, ok := t.ElemType.(ast.NumberType); ok {
 				switch nt.NormalWidth() {
 				case 8:
@@ -3145,6 +3208,9 @@ func (b *builder) assign(n *ast.Assign) error {
 				case 64:
 					storeWidth = 64
 				}
+			}
+			if ast.IsPointerType(t.ElemType) {
+				storeWidth = WidthPtr
 			}
 			if ft, ok := t.ElemType.(ast.FloatType); ok {
 				storeOp = OpFStore
@@ -3193,19 +3259,22 @@ func (b *builder) assign(n *ast.Assign) error {
 		b.emit(Op{Kind: storeOp, Width: storeWidth})
 		return nil
 	case *ast.FieldAccess:
-		// `p.field = v` lowers to base + offset; value; store. Same
-		// no-result discipline as index assignment. Float-typed
-		// fields require an f32 store; everything else is i32.
+		// `p.field = v` lowers to base + offset; value; store.
+		// Same no-result discipline as index assignment. Field
+		// offsets + store widths come from the ptrW-aware
+		// struct layout so pointer-typed fields land in
+		// pointer-width slots on arm64.
 		st := b.fieldOwner(t.Target)
 		sd, ok := b.info.Structs[st]
 		if !ok {
 			return fmt.Errorf("ir: field assignment on unresolved struct %q", st)
 		}
-		off := -1
+		offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+		off := int32(-1)
 		var ft ast.Type
-		for i, f := range sd.Fields {
+		for _, f := range sd.Fields {
 			if f.Name == t.Field {
-				off = i * 4
+				off = offs[f.Name]
 				ft = f.Type
 				break
 			}
@@ -3217,17 +3286,13 @@ func (b *builder) assign(n *ast.Assign) error {
 			return err
 		}
 		if off > 0 {
-			b.emit(Op{Kind: OpConstI32, I32: int32(off)})
+			b.emit(Op{Kind: OpConstI32, I32: off})
 			b.emit(Op{Kind: OpAdd})
 		}
 		if err := b.expr(n.Value); err != nil {
 			return err
 		}
-		if isFloat(ft) {
-			b.emit(Op{Kind: OpFStore})
-		} else {
-			b.emit(Op{Kind: OpStore})
-		}
+		b.emit(payloadStoreOp(ft))
 		return nil
 	}
 	return fmt.Errorf("ir: assignment target %T not yet lowered", n.Target)
@@ -3267,10 +3332,12 @@ func isFloat(t ast.Type) bool {
 
 // payloadSlotSize returns how many bytes a variant payload of
 // the given type consumes inside an enum's heap object. Wide
-// scalars (i64 / u64 / f64) take 8 bytes; everything else
-// takes 4 (pointer-sized — structs / enums / arrays / strings
-// / sub-i32 ints all canonicalise to a 4-byte slot).
-func payloadSlotSize(t ast.Type) int32 {
+// scalars (i64 / u64 / f64) take 8 bytes. Pointer-shaped
+// payloads (string / array / struct / enum / slice / tuple /
+// closure) take `ptrW` bytes — 4 on wasm32, 8 on arm64 (so
+// arm64-darwin's >= 4 GiB heap addresses survive). Other
+// scalars (i32 / u32 / sub-i32 / f32 / bool) take 4 bytes.
+func payloadSlotSize(t ast.Type, ptrW int) int32 {
 	if t == nil {
 		return 4
 	}
@@ -3279,6 +3346,9 @@ func payloadSlotSize(t ast.Type) int32 {
 	}
 	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
 		return 8
+	}
+	if ast.IsPointerType(t) {
+		return int32(ptrW)
 	}
 	return 4
 }
@@ -3299,13 +3369,51 @@ func isWideScalar(t ast.Type) bool {
 // payloadLayout computes the per-slot byte offsets and the
 // total enum heap size for a variant whose payloads have the
 // given types. The tag occupies the first 4 bytes (offset 0);
-// payload slots follow in order. Wide (8-byte) slots are
-// aligned to a multiple of 8 from the object base, which on
-// wasm matches the 8-byte natural alignment of i64 / f64
-// stores. Returned offsets are addresses relative to the
-// variant pointer (i.e. payload[0] starts at offset 4 for a
-// 4-byte payload, or 8 if the first payload is wide).
-func payloadLayout(types []ast.Type, count int) ([]int32, int32) {
+// payload slots follow in order. Wide (8-byte) slots —
+// including pointer-typed payloads on arm64 (ptrW=8) — are
+// aligned to a multiple of 8 from the object base, which
+// matches the natural alignment of `str x` / `i64.store`.
+// Returned offsets are addresses relative to the variant
+// pointer (i.e. payload[0] starts at offset 4 for a 4-byte
+// payload, or 8 if the first payload is wide).
+// structFieldLayout packs `fields` in declaration order, using
+// `payloadSlotSize` (which is ptrW-aware) per field. Wide
+// fields (i64 / f64 / pointer on arm64) are aligned to a
+// multiple of 8 so str x / ldr x land on aligned addresses.
+// Returned map is field-name → offset; second return is the
+// total struct size.
+func structFieldLayout(fields []ast.Param, ptrW int) (map[string]int32, int32) {
+	offs := make(map[string]int32, len(fields))
+	pos := int32(0)
+	for _, f := range fields {
+		size := payloadSlotSize(f.Type, ptrW)
+		if size == 8 && pos%8 != 0 {
+			pos += 4
+		}
+		offs[f.Name] = pos
+		pos += size
+	}
+	return offs, pos
+}
+
+// tupleElemLayout is the tuple counterpart of structFieldLayout.
+// Anonymous positional layout — element i lives at the returned
+// `offs[i]`. Same packing + alignment rules as structs.
+func tupleElemLayout(elems []ast.Type, ptrW int) ([]int32, int32) {
+	offs := make([]int32, len(elems))
+	pos := int32(0)
+	for i, t := range elems {
+		size := payloadSlotSize(t, ptrW)
+		if size == 8 && pos%8 != 0 {
+			pos += 4
+		}
+		offs[i] = pos
+		pos += size
+	}
+	return offs, pos
+}
+
+func payloadLayout(types []ast.Type, count int, ptrW int) ([]int32, int32) {
 	offsets := make([]int32, count)
 	pos := int32(4)
 	for i := 0; i < count; i++ {
@@ -3313,7 +3421,7 @@ func payloadLayout(types []ast.Type, count int) ([]int32, int32) {
 		if i < len(types) {
 			t = types[i]
 		}
-		size := payloadSlotSize(t)
+		size := payloadSlotSize(t, ptrW)
 		if size == 8 && pos%8 != 0 {
 			pos += 4
 		}
@@ -3325,7 +3433,9 @@ func payloadLayout(types []ast.Type, count int) ([]int32, int32) {
 
 // payloadStoreOp returns the IR Op that stores a value of the
 // given payload type to a heap slot — paired with payloadLoadOp
-// for the symmetric load.
+// for the symmetric load. Pointer-shaped payloads emit
+// `Width: WidthPtr` so the backend picks 4-byte (wasm32) or
+// 8-byte (arm64) stores per its native heap-pointer width.
 func payloadStoreOp(t ast.Type) Op {
 	if isFloat(t) {
 		w := 0
@@ -3337,16 +3447,22 @@ func payloadStoreOp(t ast.Type) Op {
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return Op{Kind: OpStore, Width: 64}
 	}
+	if ast.IsPointerType(t) {
+		return Op{Kind: OpStore, Width: WidthPtr}
+	}
 	return Op{Kind: OpStore}
 }
 
 // arrayElemStoreOp picks the right store op for an array
 // element of type `t`, using element stride to dispatch:
-//   - 1-byte (u8 / i8 / bool)         → i32.store8
-//   - 2-byte (u16 / i16)              → i32.store16
-//   - 4-byte (i32 / u32 / f32 / ptr)  → i32.store / f32.store
-//   - 8-byte (i64 / u64 / f64)        → i64.store / f64.store
-// Pairs with `arrayElemLoadOp` for the symmetric read.
+//   - 1-byte (u8 / i8 / bool)            → i32.store8
+//   - 2-byte (u16 / i16)                 → i32.store16
+//   - 4-byte (i32 / u32 / f32)           → i32.store / f32.store
+//   - 8-byte (i64 / u64 / f64)           → i64.store / f64.store
+//   - pointer (string / array / struct /
+//     enum / slice / tuple / closure)    → OpStore Width:WidthPtr
+//     (4-byte on wasm32, 8-byte on arm64)
+// Pairs with the symmetric read in array-indexing lowering.
 func arrayElemStoreOp(t ast.Type) Op {
 	if isFloat(t) {
 		w := 0
@@ -3355,6 +3471,10 @@ func arrayElemStoreOp(t ast.Type) Op {
 		}
 		return Op{Kind: OpFStore, Width: w}
 	}
+	if ast.IsPointerType(t) {
+		return Op{Kind: OpStore, Width: WidthPtr}
+	}
+	// Scalar-only switch (ptrW-independent; sub-i32 + wide).
 	switch ast.ElemSizeBytes(t) {
 	case 1:
 		return Op{Kind: OpStoreI8}
@@ -3376,6 +3496,9 @@ func payloadLoadOp(t ast.Type) Op {
 	}
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return Op{Kind: OpLoad, Width: 64}
+	}
+	if ast.IsPointerType(t) {
+		return Op{Kind: OpLoad, Width: WidthPtr}
 	}
 	return Op{Kind: OpLoad}
 }
@@ -3595,7 +3718,7 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 // dispatch.
 func (b *builder) emitArrayPush(n *ast.Call) error {
 	elemType := n.TypeArgs[0]
-	stride := int32(ast.ElemSizeBytes(elemType))
+	stride := int32(ast.ElemSizeBytesFor(elemType, b.ptrW))
 	if stride == 0 {
 		stride = 4
 	}
@@ -3744,7 +3867,7 @@ func (b *builder) emitWideMapGet(n *ast.Call, vType ast.Type) error {
 	b.emit(Op{Kind: OpStore})
 	b.emit(Op{Kind: OpElse})
 	// --- tag == 0 (Some): build a wide-payload Option<V>.
-	offsets, size := payloadLayout([]ast.Type{vType}, 1)
+	offsets, size := payloadLayout([]ast.Type{vType}, 1, b.ptrW)
 	b.emit(Op{Kind: OpConstI32, I32: size})
 	b.emit(Op{Kind: OpAlloc})
 	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})

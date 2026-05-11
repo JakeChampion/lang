@@ -27,7 +27,15 @@ import (
 // rewritten as *ast.CaptureRef nodes, and the original statement is
 // replaced with `var <orig-name> = MakeClosure{...}`.
 func Convert(prog *ast.Program, info *checker.Info) error {
-	c := &converter{info: info, hoisted: map[string]int{}, funcIdx: map[string]int{}}
+	return ConvertWith(prog, info, 4)
+}
+
+// ConvertWith is the pointer-width-aware variant. `ptrW` is 4
+// on wasm32 / 8 on arm64; it sizes pointer-typed capture slots
+// in the synthesised env block so heap addresses round-trip on
+// arm64-darwin (>= 4 GiB heap).
+func ConvertWith(prog *ast.Program, info *checker.Info, ptrW int) error {
+	c := &converter{info: info, hoisted: map[string]int{}, funcIdx: map[string]int{}, ptrW: ptrW}
 	// Original top-level functions occupy table indices 0..N-1; track
 	// them so the synthetic env-call signature uses stable indices and
 	// MakeClosure nodes can name them by table position.
@@ -72,6 +80,9 @@ type converter struct {
 	// recorded under it in info.Locals so the codegen pass declares
 	// the right locals.
 	outerFn *ast.FuncDecl
+	// ptrW is the target's heap-pointer width in bytes — sizes
+	// pointer-typed capture slots.
+	ptrW int
 }
 
 func (c *converter) freshName(orig string) string {
@@ -112,19 +123,21 @@ type capInfo struct {
 }
 
 // captureSlotSize returns the env-block slot footprint for a
-// capture of type `t`. Wide types (i64 / u64 / f64) take 8
-// bytes so their full bit pattern survives; everything else —
-// including pointer-shaped heap refs and sub-i32 ints — uses
-// the 4-byte default. Sub-i32 ints round up because mixing 1-
-// or 2-byte slots into the env block would force the
-// codegen-side store path to track per-slot widths anyway, and
-// captures are usually few; the 1-3 wasted bytes per sub-i32
-// capture aren't worth the bookkeeping. Pointer-shaped types
-// (string, T[], structs, etc.) are 4-byte heap references —
-// `ast.ElemSizeBytes` already returns 4 for them.
-func captureSlotSize(t ast.Type) int32 {
-	if ast.ElemSizeBytes(t) == 8 {
+// capture of type `t`. Wide scalar types (i64 / u64 / f64)
+// take 8 bytes so their full bit pattern survives. Pointer-
+// shaped heap refs (string, T[], structs, enums, slices,
+// closures) take `ptrW` bytes — 4 on wasm32 (i32 heap pointer)
+// or 8 on arm64 (full 64-bit pointer; arm64-darwin's heap is
+// >= 4 GiB so the high bits MUST survive). Sub-i32 ints round
+// up to 4 bytes because mixing 1- or 2-byte slots would force
+// the codegen-side store path to track per-slot widths
+// anyway, and captures are usually few.
+func captureSlotSize(t ast.Type, ptrW int) int32 {
+	if ast.ElemSizeBytesFor(t, ptrW) == 8 {
 		return 8
+	}
+	if ast.IsPointerType(t) {
+		return int32(ptrW)
 	}
 	return 4
 }
@@ -449,7 +462,7 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 	off := int32(0)
 	for _, cap := range fn.Captures {
 		ctx.byName[cap.Name] = capInfo{offset: int(off), typ: cap.Type}
-		off += captureSlotSize(cap.Type)
+		off += captureSlotSize(cap.Type, c.ptrW)
 	}
 
 	// Add the synthetic env parameter as the function's last param.
