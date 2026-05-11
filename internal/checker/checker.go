@@ -2921,6 +2921,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			c.settleNumeric(n.Left, common)
 			c.settleNumeric(n.Right, common)
+			// Auto-widen the narrower operand when the two
+			// resolved sides differ in width (same signedness
+			// already enforced by commonIntegerWidth). This
+			// keeps pointer-arithmetic-style code in the
+			// prelude — `buf64 + 16` where `buf64` is i64 and
+			// `16` is the default i32 NumberLit — type-correct
+			// without an explicit `as i64`.
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
 			if !common.Polymorphic {
 				n.IntWidth = common.NormalWidth()
 				n.IsUnsigned = !common.IsSigned()
@@ -2936,6 +2949,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			c.settleNumeric(n.Left, common)
 			c.settleNumeric(n.Right, common)
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
 			if !common.Polymorphic {
 				n.IntWidth = common.NormalWidth()
 				n.IsUnsigned = !common.IsSigned()
@@ -2962,6 +2981,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			c.settleNumeric(n.Left, common)
 			c.settleNumeric(n.Right, common)
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
 			if !common.Polymorphic {
 				n.IntWidth = common.NormalWidth()
 				n.IsUnsigned = !common.IsSigned()
@@ -3676,6 +3701,34 @@ func commonFloatWidth(lt, rt ast.Type) (ast.FloatType, bool) {
 // polymorphic literal's recorded width via c.settleNumeric.
 // Two placeholders return a placeholder, which the caller
 // eventually settles to i32 if no further hint arrives.
+// widenIntOperand wraps `*slot` in an implicit CastExpr when the
+// resolved operand type's width doesn't match `target`'s. Lang
+// requires explicit `as` casts between integer widths in user
+// code, but the checker auto-inserts them for binop operands so
+// `i64 + i32` (mixed-width pointer arithmetic in the prelude,
+// for example) doesn't require sprinkling `as i64` everywhere.
+// Signedness must already match — see commonIntegerWidth.
+func (c *checker) widenIntOperand(slot *ast.Expr, srcT, targetT ast.NumberType) {
+	if srcT.Polymorphic || targetT.Polymorphic {
+		return
+	}
+	if srcT.NormalWidth() == targetT.NormalWidth() {
+		return
+	}
+	// Skip if the operand is already a typed numeric literal
+	// of the right width — settleNumeric handled it.
+	if nl, ok := (*slot).(*ast.NumberLit); ok && nl.Width == targetT.NormalWidth() {
+		return
+	}
+	pos := (*slot).Pos()
+	*slot = &ast.CastExpr{
+		P:         pos,
+		Inner:     *slot,
+		Target:    targetT,
+		InnerType: srcT,
+	}
+}
+
 func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 	ln, lOk := lt.(ast.NumberType)
 	rn, rOk := rt.(ast.NumberType)
@@ -3688,10 +3741,25 @@ func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 	if rn.Polymorphic && !ln.Polymorphic {
 		return ln, true
 	}
-	if ln.NormalWidth() != rn.NormalWidth() || ln.IsSigned() != rn.IsSigned() {
+	if ln.IsSigned() != rn.IsSigned() {
+		// Mixed signedness needs an explicit cast — the
+		// reinterpretation isn't free of edge cases (e.g. a
+		// negative i32 + a small u32 isn't well-defined
+		// without picking a result domain), and getting it
+		// wrong silently is worse than asking the user.
 		return ast.NumberType{}, false
 	}
-	return ln, true
+	if ln.NormalWidth() == rn.NormalWidth() {
+		return ln, true
+	}
+	// Different widths, same signedness: auto-widen the
+	// narrower side to the wider type. Caller is expected to
+	// insert an implicit cast on whichever operand is
+	// narrower so the IR sees a homogeneous-width binop.
+	if ln.NormalWidth() > rn.NormalWidth() {
+		return ln, true
+	}
+	return rn, true
 }
 func (c *checker) requireFloat(p ast.Position, t ast.Type, op string) {
 	if t == nil {
