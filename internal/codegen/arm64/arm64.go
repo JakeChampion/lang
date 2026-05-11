@@ -2760,6 +2760,59 @@ func (g *generator) adrpAdd(reg, sym string) {
 	}
 }
 
+// emitCallArgsLoad places `argc` operand-stack values into the
+// AAPCS64 argument slots. The first `regArgs` (=8) go in
+// x0..x7; the remaining args land on the call stack at
+// [sp+0], [sp+8], ... in source order. The operand stack uses
+// 16-byte slots; the call stack uses 8-byte slots, so overflow
+// args get copied in-place via a packed call-stack overflow
+// area allocated below the operand stack.
+//
+// After this call returns the caller is responsible for
+// issuing the `bl` / `blr`, then calling emitCallArgsCleanup
+// to drop both the call-stack overflow AND the operand-stack
+// arg slots.
+func (g *generator) emitCallArgsLoad(argc int) {
+	if argc <= regArgs {
+		for i := argc - 1; i >= 0; i-- {
+			g.emit("ldr x%d, [sp], #16", i)
+		}
+		return
+	}
+	overflow := argc - regArgs
+	// Round overflow * 8 up to a multiple of 16 to keep sp
+	// 16-aligned across the call.
+	stackSize := ((overflow*8 + 15) / 16) * 16
+	g.emit("sub sp, sp, #%d", stackSize)
+	// Read register args (0..regArgs-1) from operand stack into
+	// x0..x_{regArgs-1}. Args sit at [sp + stackSize +
+	// 16*(argc-1-i)] (operand-stack top after the sub is at
+	// sp + stackSize; arg i is at offset 16*(argc-1-i) from
+	// the top).
+	for i := 0; i < regArgs; i++ {
+		g.emit("ldr x%d, [sp, #%d]", i, stackSize+16*(argc-1-i))
+	}
+	// Copy overflow args (regArgs..argc-1) from operand stack
+	// to the packed call-stack overflow area.
+	for i := regArgs; i < argc; i++ {
+		g.emit("ldr x9, [sp, #%d]", stackSize+16*(argc-1-i))
+		g.emit("str x9, [sp, #%d]", 8*(i-regArgs))
+	}
+}
+
+// emitCallArgsCleanup undoes emitCallArgsLoad's stack
+// allocation. Caller passes the same argc.
+func (g *generator) emitCallArgsCleanup(argc int) {
+	if argc <= regArgs {
+		// Args were already popped via post-increment ldrs.
+		return
+	}
+	overflow := argc - regArgs
+	stackSize := ((overflow*8 + 15) / 16) * 16
+	// Drop call-stack overflow AND the operand-stack args.
+	g.emit("add sp, sp, #%d", stackSize+16*argc)
+}
+
 // emitStartRuntime writes `_start`, the binary's entry under
 // `-nostdlib` on Linux arm64. The kernel hands us a 16-aligned
 // sp at process entry; we trust it (no explicit re-alignment
@@ -2924,17 +2977,19 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	if localsSize > 0 {
 		g.emit("sub sp, sp, #%d", localsSize)
 	}
-	// Spill parameter registers x0..x{n-1} into their slots.
-	// Args beyond regArgs are already on the caller's stack;
-	// we don't yet handle that case. Slot i is anchored at
-	// `[x29, #-(i+1)*8]` — x29 stays fixed across the function
-	// body so operand-stack pushes/pops on sp don't shift the
-	// slot addresses.
+	// Spill parameter registers x0..x{regArgs-1} into their
+	// slots. Args at index >= regArgs come from the caller's
+	// stack at [x29 + 16 + 8*(i-regArgs)] — `+16` skips the
+	// saved fp/lr pair the prologue stored, and the caller's
+	// stack-arg area starts just above. Slot i lives at
+	// `[x29, #-(i+1)*8]` so we copy via a single 8-byte mov.
 	for i := range fn.Params {
-		if i >= regArgs {
-			return fmt.Errorf("arm64: more than %d function parameters not yet supported (got %d)", regArgs, len(fn.Params))
+		if i < regArgs {
+			g.emit("stur x%d, [x29, #%d]", i, -(i+1)*8)
+		} else {
+			g.emit("ldr x9, [x29, #%d]", 16+8*(i-regArgs))
+			g.emit("stur x9, [x29, #%d]", -(i+1)*8)
 		}
-		g.emit("stur x%d, [x29, #%d]", i, -(i+1)*8)
 	}
 	_ = frameSize // reserved for the eventual debug-info / unwind tables
 
@@ -3606,23 +3661,53 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.emit("fmov w0, s0")
 		}
 		g.push()
+	case ir.OpFConvertI64:
+		// i64 → f32 / f64. Same shape as OpFConvertI32 but
+		// from a 64-bit source reg (x0). Unsigned variants
+		// use ucvtf so values >= 2^63 convert correctly.
+		g.pop()
+		if op.Width == 64 {
+			if op.Unsigned {
+				g.emit("ucvtf d0, x0")
+			} else {
+				g.emit("scvtf d0, x0")
+			}
+			g.emit("fmov x0, d0")
+		} else {
+			if op.Unsigned {
+				g.emit("ucvtf s0, x0")
+			} else {
+				g.emit("scvtf s0, x0")
+			}
+			g.emit("fmov w0, s0")
+		}
+		g.push()
 	case ir.OpITruncF32:
-		// f32 → i32 / i64. fcvtzs truncates toward zero.
+		// f32 → i32 / i64. fcvtzs truncates toward zero
+		// (signed); fcvtzu does the unsigned variant.
 		g.pop()
 		g.emit("fmov s0, w0")
+		opName := "fcvtzs"
+		if op.Unsigned {
+			opName = "fcvtzu"
+		}
 		if op.Width == 64 {
-			g.emit("fcvtzs x0, s0")
+			g.emit("%s x0, s0", opName)
 		} else {
-			g.emit("fcvtzs w0, s0")
+			g.emit("%s w0, s0", opName)
 		}
 		g.push()
 	case ir.OpITruncF64:
 		g.pop()
 		g.emit("fmov d0, x0")
+		opName := "fcvtzs"
+		if op.Unsigned {
+			opName = "fcvtzu"
+		}
 		if op.Width == 64 {
-			g.emit("fcvtzs x0, d0")
+			g.emit("%s x0, d0", opName)
 		} else {
-			g.emit("fcvtzs w0, d0")
+			g.emit("%s w0, d0", opName)
 		}
 		g.push()
 
@@ -3649,29 +3734,20 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// order. arm64 uses `blr x16` (branch-with-link
 		// register) — x16 is a caller-save scratch.
 		argc := int(op.I32)
-		if argc > regArgs {
-			return fmt.Errorf("arm64: more than %d call args not yet supported (got %d for OpCallIndirect)", regArgs, argc)
-		}
-		g.emit("ldr x16, [sp], #16") // x16 = function pointer
-		for i := argc - 1; i >= 0; i-- {
-			g.emit("ldr x%d, [sp], #16", i)
-		}
+		g.emit("ldr x16, [sp], #16") // x16 = function pointer (popped first)
+		g.emitCallArgsLoad(argc)
 		g.emit("blr x16")
+		g.emitCallArgsCleanup(argc)
 		g.push()
 
 	case ir.OpCallClosureDirect:
 		// Defunctionalised closure call. Operand stack holds
 		// (args..., env_ptr) — same shape as OpCallDirect with
-		// one extra arg. Reuse the standard pop-into-x0..xN
-		// pattern.
+		// one extra arg. Reuse the standard load/cleanup pair.
 		argc := int(op.I32)
-		if argc > regArgs {
-			return fmt.Errorf("arm64: more than %d closure-call args not yet supported (got %d for %q)", regArgs, argc, op.Str)
-		}
-		for i := argc - 1; i >= 0; i-- {
-			g.emit("ldr x%d, [sp], #16", i)
-		}
+		g.emitCallArgsLoad(argc)
 		g.emit("bl %s", op.Str)
+		g.emitCallArgsCleanup(argc)
 		g.push()
 
 	case ir.OpMakeClosure, ir.OpMakeEnv:
@@ -3918,13 +3994,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesAlloc = true
 		}
 		argc := int(op.I32)
-		if argc > regArgs {
-			return fmt.Errorf("arm64: more than %d call args not yet supported (got %d for %q)", regArgs, argc, op.Str)
-		}
-		for i := argc - 1; i >= 0; i-- {
-			g.emit("ldr x%d, [sp], #16", i)
-		}
+		g.emitCallArgsLoad(argc)
 		g.emit("bl %s", target)
+		g.emitCallArgsCleanup(argc)
 		g.push()
 
 	default:

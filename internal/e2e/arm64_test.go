@@ -1485,6 +1485,74 @@ function main(): i32 {
 // state-rooted allocs through a separate persistent cursor that
 // arena_save / arena_restore never touch.
 //
+// Function calls with more arguments than the register-arg
+// window (8 on AAPCS64). Args 9+ live on the caller's stack
+// at [sp+0..]. The prologue copies them from there into the
+// callee's local slots so subsequent OpLoadLocal references
+// can read them uniformly.
+func TestArm64StackPassedArgs(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"sum_10_args", `function sum10(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32): i32 {
+    return a + b + c + d + e + f + g + h + i + j;
+}
+function main(): i32 {
+    return sum10(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+}`, 55},
+		{"sum_12_args_order_check", `function sum12(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32, k: i32, l: i32): i32 {
+    return (a * 1) + (b * 2) + (c * 3) + (d * 4) + (e * 5) + (f * 6) + (g * 7) + (h * 8) + (i * 9) + (j * 10) + (k * 11) + (l * 12);
+}
+function main(): i32 {
+    // a..l = 1..12, weighted by their position; sum = 1+4+9+16+25+36+49+64+81+100+121+144 = 650
+    return sum12(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) - 600;
+}`, 50},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
+// Unsigned float ↔ int conversions. arm64 has dedicated
+// `ucvtf` / `fcvtzu` opcodes; this test asserts the IR's
+// Unsigned-flagged variants route through them and produce
+// correct results for values above the signed boundary
+// (u32 > 2^31; u64 > 2^63).
+func TestArm64UnsignedFloatConv(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"u32_large_to_f64_back", `function main(): i32 {
+    var u: u32 = 3000000000 as u32;
+    var f: f64 = u as f64;
+    var back: u32 = f as u32;
+    if (back == u) { return 0; }
+    return 1;
+}`, 0},
+		{"u64_max_to_f64_is_huge", `function main(): i32 {
+    var i: i64 = 0 - 1i64;
+    var u: u64 = i as u64;
+    var f: f64 = u as f64;
+    var threshold: f64 = 10000000000000000000.0f64;
+    if (f > threshold) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // 50 inserts into a Map[i32, i32] starting at cap=2 forces
 // multiple grows; each grow happens inside an arena_save /
 // arena_restore window, so the regression is hit if the grow's
@@ -1512,6 +1580,38 @@ function main(): i32 {
 }`
 	if _, code := compileAndRunArm64(t, src); code != 42 {
 		t.Errorf("got %d, want 42 (state Map grow survives arena cycle)", code)
+	}
+}
+
+// State-rooted Array.push inside an arena cycle — same allocator
+// concern as TestArm64StateMapGrowInsideArena, but exercising
+// the IR's persistent-mode wrap on the push-then-assign path
+// (`nums = nums.push(n)`). The push allocates a fresh backing
+// buffer each grow; without the two-cursor allocator the new
+// buffer would land in the arena and be reclaimed by
+// arena_restore.
+func TestArm64StateArrayPushInsideArena(t *testing.T) {
+	src := `state {
+    var nums: i32[] = [];
+}
+function push_one(n: i32): void {
+    nums = nums.push(n);
+}
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 50) {
+        var saved: i32 = arena_save();
+        push_one(i);
+        arena_restore(saved);
+        i = i + 1;
+    }
+    if (len(nums) != 50) { return 1; }
+    if (nums[7] != 7) { return 2; }
+    if (nums[49] != 49) { return 3; }
+    return 42;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 42 {
+		t.Errorf("got %d, want 42 (state array push survives arena cycle)", code)
 	}
 }
 
