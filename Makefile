@@ -1,5 +1,5 @@
-ARM_GCC ?= arm-linux-gnueabihf-gcc
-QEMU    ?= qemu-arm
+AARCH64_GCC ?= aarch64-linux-gnu-gcc
+QEMU        ?= qemu-aarch64
 
 EXAMPLES := $(basename $(notdir $(wildcard examples/*.lang)))
 ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
@@ -22,16 +22,16 @@ test:
 vet:
 	go vet ./...
 
-# Compile every example to assembly and (if a cross-compiler is present)
-# link to a static ARM binary.
+# Compile every example to arm64 Linux assembly and (if the
+# cross-compiler is present) link to a static arm64 binary.
 examples: $(BINS)
 
 build/%.s: examples/%.lang bin/lang
 	@mkdir -p build
-	./bin/lang $< > $@
+	./bin/lang -target arm64 $< > $@
 
 build/%: build/%.s
-	$(ARM_GCC) -static $< -o $@
+	$(AARCH64_GCC) -static -nostdlib $< -o $@
 
 # `make run-factorial`, `make run-fizzbuzz`, etc.
 run-%: build/%

@@ -1,9 +1,9 @@
 // Package wasm emits WebAssembly text format (WAT) for a checked
-// Program. Both this backend and the ARM32 emitter consume the same
-// lowered ir.Program and share the optimisation pipeline (Inline,
-// FuseTee, FlattenBranches, plus the PropagateCopies / ConstPropagate
-// / Fold / ReduceStrength fixed-point cleanup) — new language
-// features land once at the IR layer and both backends pick them up.
+// Program. Shares the optimisation pipeline (Inline, FuseTee,
+// FlattenBranches, plus the PropagateCopies / ConstPropagate /
+// Fold / ReduceStrength fixed-point cleanup) with the arm64
+// backend — new language features land once at the IR layer and
+// both backends pick them up.
 //
 // Run the output with `wasmtime run --invoke main prog.wat` or
 // convert to binary first with `wat2wasm prog.wat`.
@@ -114,7 +114,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// the auto-synthesised `main()` (which calls tcp_serve and
 	// pulls in wasi:sockets imports the wasi-http preview-1
 	// adapter doesn't satisfy) is irrelevant on this target,
-	// so drop it before tree-shake runs. arm32 / wasm-CLI keep
+	// so drop it before tree-shake runs. arm64 / wasm-CLI keep
 	// the synth main as their entry point.
 	if opts.HttpHandler {
 		out := prog.Funcs[:0]
@@ -2914,8 +2914,8 @@ func (g *generator) emitStreamsWriteString(handleAccessor, local string) {
 
 // emitStreamsWriteNewline emits one $__streams_write call against
 // the pre-initialised newline byte at memory[32]. Used by $print
-// / $eprint after the string body to mirror the arm32 puts-based
-// lowering.
+// / $eprint after the string body to give the `\n`-terminated
+// write semantics print() exposes.
 func (g *generator) emitStreamsWriteNewline(handleAccessor string) {
 	g.linef(`call %s`, handleAccessor)
 	g.line(`i32.const 32`) // newline byte
@@ -3804,7 +3804,7 @@ func (g *generator) emitEnvHelper() {
 // for long-running servers. The bump pointer lives at
 // memory[40] (see `$__lang_alloc`); save reads it, restore
 // writes it. No allocation, no syscall — same shape as the
-// arm32 helpers.
+// arm64 helpers.
 func (g *generator) emitArenaHelpers() {
 	g.line(`(func $arena_save (result i32)`)
 	g.indent++

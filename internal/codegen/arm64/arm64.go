@@ -1,6 +1,8 @@
-// Package arm64 emits ARM64 (aarch64) Linux assembly from a
-// checked + monomorphised lang program. Companion to the
-// existing arm32 backend; shares the IR layer but emits its
+// Package arm64 emits ARM64 (aarch64) assembly from a checked
+// + monomorphised lang program. Two flavours, selected by
+// Options.Darwin: Linux ELF for arm64 hosts (Raspberry Pi 4+,
+// AWS Graviton, Android) and Mach-O for native Apple Silicon
+// Macs. Shares the IR layer with the WASM backend; emits its
 // own ISA + syscall wiring.
 //
 // ABI: AAPCS64. Args in x0..x7; return value in x0; frame

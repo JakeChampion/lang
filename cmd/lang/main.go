@@ -2,12 +2,13 @@
 //
 // Usage:
 //
-//	lang FILE.lang                       # write ARM32 assembly to stdout
-//	lang -o OUTPUT FILE.lang             # link with the ARM cross-compiler
-//	                                     # and write a static ELF binary
+//	lang FILE.lang                       # write arm64 Mach-O assembly to stdout
+//	lang -o OUTPUT FILE.lang             # link with clang and write a
+//	                                     # native arm64 binary
 //	lang --run FILE.lang [-- ARGS...]    # link to a temporary binary and
-//	                                     # execute it under qemu-arm,
-//	                                     # forwarding stdio
+//	                                     # execute it (arm64 Linux only;
+//	                                     # uses qemu-aarch64 when not on
+//	                                     # an arm64 host)
 //	lang -fmt FILE.lang                  # write idiomatic, indented source
 //	                                     # to stdout (use -w to overwrite
 //	                                     # the input file in place; use -d
@@ -15,7 +16,7 @@
 //	                                     # the on-disk version and exit
 //	                                     # non-zero when they differ)
 //
-// The -cc and -qemu flags override the cross-compiler and emulator.
+// The -cc and -qemu flags override the linker and emulator.
 // Note: the formatter strips `//` line comments and blank lines
 // because the lexer drops both before they reach the AST.
 package main
@@ -31,7 +32,6 @@ import (
 	"runtime"
 
 	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
 	"github.com/jakechampion/lang/internal/constfold"
@@ -56,18 +56,17 @@ func absPath(p string) string {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm32", "code-generation backend: arm32 (default), arm64 (Linux), arm64-darwin (native Apple Silicon macOS), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
-	cc := flag.String("cc", "arm-linux-gnueabihf-gcc", "ARM cross-compiler used to link when -o or --run is set (arm32 only)")
-	runIt := flag.Bool("run", false, "link to a temporary binary and execute it under qemu-arm (arm32 only)")
-	qemu := flag.String("qemu", "qemu-arm", "user-mode emulator used by --run")
+	target := flag.String("target", "arm64-darwin", "code-generation backend: arm64-darwin (default, native Apple Silicon macOS), arm64 (Linux ELF), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
+	cc := flag.String("cc", "", "linker invoked when -o or --run is set; defaults to aarch64-linux-gnu-gcc for arm64 Linux and clang for arm64-darwin")
+	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
+	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
-	debug := flag.Bool("g", false, "emit DWARF line info + .cfi_* unwind tables (arm32 only); off by default for smaller, faster-startup release binaries")
 	wasiAdapter := flag.String("wasi-adapter", "", "path to the wasi_snapshot_preview1.command.wasm adapter (required for -target wasm; see docs/WASI-PREVIEW2.md)")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lang [-target arm32|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
+		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64-darwin|arm64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       lang -fmt [-w | -d] FILE.lang")
 		fmt.Fprintln(os.Stderr, "       lang -repl")
 		flag.PrintDefaults()
@@ -98,7 +97,7 @@ func main() {
 		os.Exit(code)
 	}
 
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *debug, *wasiAdapter, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *wasiAdapter, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -123,9 +122,6 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 	}
 	formatted := printer.Format(prog)
 	if diffMode {
-		// `-d` is the conventional CI-friendly mode: print the diff
-		// and exit non-zero when the file isn't already formatted.
-		// `gofmt -d` follows the same contract.
 		diff := printer.UnifiedDiff(src, formatted, srcPath, srcPath)
 		if diff == "" {
 			return 0, nil
@@ -134,8 +130,6 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 		return 1, err
 	}
 	if writeBack {
-		// Preserve the file's existing mode so chmod state survives
-		// the rewrite.
 		info, err := os.Stat(srcPath)
 		if err != nil {
 			return 1, err
@@ -149,15 +143,11 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 // run drives the full pipeline. The returned int is the exit code that
 // the lang process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug bool, wasiAdapter string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapter string, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
 		return 1, err
 	}
-	// `srcs` keys diag back to whichever loaded file the error came
-	// from. The checker still reports against the entry file's
-	// source for now — multi-file diag plumbing is a future
-	// follow-up.
 	src := srcs[absPath(srcPath)]
 	if err := constfold.Fold(prog); err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
@@ -166,35 +156,14 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 	if err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
-	// Monomorphise generic functions before any later stage sees
-	// the program — IR / codegen / interp only ever deal with
-	// concrete, name-mangled clones. No-op when the program has
-	// no generic decls.
 	if err := monomorph.Run(prog, info); err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
-	// Tree-shake (removing unreferenced prelude helpers) is
-	// done inside each backend's Emit, so it sees a fully
-	// monomorphised program here without main.go having to
-	// orchestrate it.
-	// Optimisations now run on the IR (Inline / Fold / DCE inside
-	// each backend's Emit), so there's nothing left to do at the
-	// AST level after type checking.
 
-	// WASM target: always emit a WASI Preview 2 Component Model
-	// component. Preview-1 was the historical fallback while the
-	// migration in docs/WASI-PREVIEW2.md was in flight; once every
-	// builtin had a preview-2 path (steps 2-5), the preview-1 emit
-	// was retired in step 6.
 	if target == "wasm" || target == "wasi-http" {
 		opts := wasm.EmitOptions{}
 		world := "lang"
 		if target == "wasi-http" {
-			// Step 5: HTTP handler target. The world EXPORTS
-			// wasi:http/incoming-handler — `wasmtime serve`
-			// dispatches inbound requests into the user's
-			// `handle(req: HttpRequest): HttpResponse`. No
-			// `_start`; no `main()` is required.
 			opts.HttpHandler = true
 			world = "http"
 		}
@@ -213,95 +182,29 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 		}
 		return 0, nil
 	}
-	// arm64 (aarch64): Linux ELF for arm64 hosts (Raspberry
-	// Pi 4+, AWS Graviton, Android), or Mach-O for native
-	// Apple Silicon Macs (`-target arm64-darwin`). Macs can
-	// also run Linux arm64 binaries via Docker / OrbStack /
-	// UTM containers.
-	if target == "arm64" || target == "arm64-darwin" {
-		darwin := target == "arm64-darwin"
-		asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin})
-		if err != nil {
-			return 1, err
-		}
-		// Replace arm32-default cc / qemu with target-aware
-		// defaults when the user didn't override them. arm64
-		// Linux uses aarch64-linux-gnu-gcc + qemu-aarch64;
-		// arm64 Darwin cross-compiles via clang with the
-		// aarch64-apple-darwin triple + lld's Mach-O backend.
-		if cc == "arm-linux-gnueabihf-gcc" {
-			if darwin {
-				cc = "clang"
-			} else {
-				cc = "aarch64-linux-gnu-gcc"
-			}
-		}
-		if qemu == "qemu-arm" {
-			qemu = "qemu-aarch64"
-		}
-		if !runIt && outPath == "" {
-			if _, err := os.Stdout.WriteString(asm); err != nil {
-				return 1, err
-			}
-			return 0, nil
-		}
-		binPath := outPath
-		var cleanupBin string
-		if binPath == "" {
-			f, err := os.CreateTemp("", "lang-bin-*")
-			if err != nil {
-				return 1, err
-			}
-			f.Close()
-			binPath = f.Name()
-			cleanupBin = binPath
-		}
-		defer func() {
-			if cleanupBin != "" {
-				os.Remove(cleanupBin)
-			}
-		}()
-		if darwin {
-			if err := linkDarwin(asm, binPath, cc); err != nil {
-				return 1, err
-			}
-		} else if err := link(asm, binPath, cc, debug); err != nil {
-			return 1, err
-		}
-		if !runIt {
-			return 0, nil
-		}
-		if darwin {
-			// arm64 Darwin binaries run natively on Apple
-			// Silicon Macs; qemu-aarch64 emulates Linux
-			// arm64 only and can't load Mach-O. Tell the
-			// user.
-			return 1, fmt.Errorf("--run is not supported for -target arm64-darwin (Mach-O binaries need an Apple Silicon Mac to execute; the output at %q is ready to run there)", binPath)
-		}
-		return execUnderQemu(qemu, binPath, progArgs)
-	}
-	if target != "arm32" {
-		return 1, fmt.Errorf("unknown target %q (want arm32, arm64, arm64-darwin, wasm, or wasi-http)", target)
+
+	if target != "arm64" && target != "arm64-darwin" {
+		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, wasm, or wasi-http)", target)
 	}
 
-	emitOpts := codegen.Options{}
-	if debug {
-		emitOpts.SourceFile = srcPath
-	}
-	asm, err := codegen.EmitWithOptions(prog, info, emitOpts)
+	darwin := target == "arm64-darwin"
+	asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin})
 	if err != nil {
 		return 1, err
 	}
-
+	if cc == "" {
+		if darwin {
+			cc = "clang"
+		} else {
+			cc = "aarch64-linux-gnu-gcc"
+		}
+	}
 	if !runIt && outPath == "" {
 		if _, err := os.Stdout.WriteString(asm); err != nil {
 			return 1, err
 		}
 		return 0, nil
 	}
-
-	// Decide where the binary lives. With --run and no -o we link to a
-	// temp file we'll throw away after execution.
 	binPath := outPath
 	var cleanupBin string
 	if binPath == "" {
@@ -318,12 +221,21 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, debug boo
 			os.Remove(cleanupBin)
 		}
 	}()
-
-	if err := link(asm, binPath, cc, debug); err != nil {
+	if darwin {
+		if err := linkDarwin(asm, binPath, cc); err != nil {
+			return 1, err
+		}
+	} else if err := link(asm, binPath, cc); err != nil {
 		return 1, err
 	}
 	if !runIt {
 		return 0, nil
+	}
+	if darwin {
+		// arm64 Darwin binaries run natively on Apple
+		// Silicon Macs; qemu-aarch64 emulates Linux
+		// arm64 only and can't load Mach-O.
+		return 1, fmt.Errorf("--run is not supported for -target arm64-darwin (Mach-O binaries need an Apple Silicon Mac to execute; the output at %q is ready to run there)", binPath)
 	}
 	return execUnderQemu(qemu, binPath, progArgs)
 }
@@ -383,16 +295,11 @@ func linkDarwin(asm, outPath, cc string) error {
 // produce a static binary at outPath. The temp file is removed on
 // success; on failure we leave it in place so the user can inspect it.
 //
-// `-nostdlib` drops libc + libgcc + the crt startfiles; we
-// provide our own `_start`, syscall wrappers, allocator, and
-// memcpy / strcmp / strlen, so the resulting binary contains
-// only language code + direct svc 0 syscalls. When `debug` is
-// set, `-g` is added so gcc keeps the .file/.loc + .cfi_*
-// directives in the form of DWARF line-number tables and
-// `.eh_frame`, so gdb / addr2line work on the binary. The
-// release default skips both, shrinking hello-world by ~600
-// bytes.
-func link(asm, outPath, cc string, debug bool) error {
+// `-nostdlib` drops libc + libgcc + the crt startfiles; we provide
+// our own `_start`, syscall wrappers, allocator, and memcpy /
+// strcmp / strlen, so the resulting binary contains only language
+// code + direct svc 0 syscalls.
+func link(asm, outPath, cc string) error {
 	if _, err := exec.LookPath(cc); err != nil {
 		return fmt.Errorf("cross-compiler %q not found on PATH (override with -cc): %w", cc, err)
 	}
@@ -411,17 +318,7 @@ func link(asm, outPath, cc string, debug bool) error {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		return err
 	}
-	args := []string{"-static", "-nostdlib"}
-	if debug {
-		args = append(args, "-g")
-	} else {
-		// `-s` strips the symbol table + .strtab from the
-		// final binary. The runtime doesn't read them; they
-		// only help interactive debugging, and we already
-		// signalled "no debug" by leaving `-g` off.
-		args = append(args, "-s")
-	}
-	args = append(args, asmPath, "-o", outPath)
+	args := []string{"-static", "-nostdlib", "-s", asmPath, "-o", outPath}
 	cmd := exec.Command(cc, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		keep = true
@@ -515,14 +412,6 @@ func extractWIT(dstRoot string) error {
 		}
 		return os.WriteFile(dst, data, 0o644)
 	})
-}
-
-// ifErr collapses a Go error into the exit code lang should return.
-func ifErr(err error) int {
-	if err != nil {
-		return 1
-	}
-	return 0
 }
 
 // execUnderQemu runs binPath through the supplied user-mode emulator

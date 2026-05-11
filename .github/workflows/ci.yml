@@ -16,10 +16,10 @@ jobs:
         with:
           go-version: "1.24"
 
-      - name: Install ARM cross-toolchain and qemu
+      - name: Install aarch64 cross-toolchain and qemu
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabihf qemu-user
+          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user
 
       - name: Install wasmtime (for the WASM e2e tests)
         run: |
@@ -43,6 +43,10 @@ jobs:
             "https://github.com/bytecodealliance/wasmtime/releases/download/${ADAPTER_VERSION}/wasi_snapshot_preview1.command.wasm"
           echo "LANG_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
 
+      - name: Install clang + lld (for cross-compiling arm64-darwin Mach-O)
+        run: |
+          sudo apt-get install -y clang lld
+
       - name: Install gotestsum (compact test output)
         # `gotestsum --format pkgname-and-test-fails` collapses each
         # package to a single line and only spills full output for
@@ -53,8 +57,9 @@ jobs:
       - name: Show toolchain versions
         run: |
           go version
-          arm-linux-gnueabihf-gcc --version | head -1
-          qemu-arm --version | head -1
+          aarch64-linux-gnu-gcc --version | head -1
+          qemu-aarch64 --version | head -1
+          clang --version | head -1
           wasmtime --version
           wasm-tools --version
           gotestsum --version
@@ -65,7 +70,7 @@ jobs:
       - name: go build
         run: go build ./...
 
-      - name: go test (includes ARM end-to-end tests under qemu)
+      - name: go test (includes arm64 end-to-end tests under qemu)
         run: gotestsum --format pkgname-and-test-fails -- ./...
 
       - name: Check examples are formatted
@@ -74,18 +79,18 @@ jobs:
         # formatter's idea of canonical source and what's checked in.
         run: make fmt-check
 
-      - name: Compile every example
+      - name: Compile every example (arm64 Linux)
         run: |
           go build -o bin/lang ./cmd/lang
           mkdir -p build
           for f in examples/*.lang; do
             name=$(basename "$f" .lang)
-            ./bin/lang "$f" > "build/$name.s"
+            ./bin/lang -target arm64 "$f" > "build/$name.s"
             # `-nostdlib`: the emitted assembly provides its own
             # `_start`, syscall wrappers, and bump allocator, so we
             # must NOT link glibc + crt1.o (would clash on _start).
-            arm-linux-gnueabihf-gcc -static -nostdlib "build/$name.s" -o "build/$name"
+            aarch64-linux-gnu-gcc -static -nostdlib "build/$name.s" -o "build/$name"
             echo "::group::run $name"
-            qemu-arm "build/$name" || echo "(exited $?)"
+            qemu-aarch64 "build/$name" || echo "(exited $?)"
             echo "::endgroup::"
           done

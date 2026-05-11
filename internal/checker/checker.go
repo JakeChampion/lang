@@ -542,7 +542,7 @@ func Check(prog *ast.Program) (*Info, error) {
 	// (`wasmtime --tcp-listen=0.0.0.0:PORT prog.wasm`); the
 	// `port` argument is currently ignored and the helper
 	// returns the first preopened socket fd (typically 3).
-	// On Linux/arm32 the helper opens the socket itself.
+	// On Linux/arm64 the helper opens the socket itself.
 	c.info.FuncSigs["tcp_listen"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
@@ -770,9 +770,8 @@ func Check(prog *ast.Program) (*Info, error) {
 	// family + the Map runtime from hand-written wat into
 	// the lang prelude (every growable-byte-buffer pattern
 	// needs them). All three params are i32 byte counts /
-	// pointers; the helpers return void. Backends without
-	// bulk-memory (eg arm32 today) trip an "unsupported"
-	// path during codegen — wat is for now the only consumer.
+	// pointers; the helpers return void. arm64 inlines them
+	// via plain loads/stores; wat uses memory.copy.
 	c.info.FuncSigs["__memcpy"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
@@ -810,7 +809,7 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.VoidType{},
 	}
 	// `__load_ptr` / `__store_ptr` — pointer-width memory pokes.
-	// On wasm32 / arm32 these are aliases of __load_i32 / __store_i32
+	// On wasm32 these are aliases of __load_i32 / __store_i32
 	// (4 bytes); arm64 backends ship 8-byte versions. Same name on
 	// all targets so the prelude can store the Map handle's
 	// data-ptr without the high bits of a 64-bit heap address
@@ -994,7 +993,7 @@ func Check(prog *ast.Program) (*Info, error) {
 	// each non-literal state-init expression as `STATE_VAR =
 	// INIT_EXPR;`. The wasm backend wires this into the module's
 	// `(start ...)` section so it runs once at module
-	// instantiation; the arm32 backend calls it from `_start`
+	// instantiation; the arm64 backend calls it from `_start`
 	// before `main`. Functions with no non-literal inits get an
 	// empty body — the wasm `(start)` machinery still expects
 	// the function to exist if any state vars are declared, so
@@ -1012,7 +1011,7 @@ func Check(prog *ast.Program) (*Info, error) {
 	// no `main()`, synthesise a minimal main that calls
 	// `tcp_serve(port, handle)` after reading PORT from the
 	// environment (default 8080). The same source then
-	// compiles for arm32 (CLI-mode native server), wasm
+	// compiles for arm64 (CLI-mode native server), wasm
 	// CLI-mode (`--invoke main`), and wasi-http (the
 	// existing handle()-export wiring is unaffected by main
 	// existing alongside it).
@@ -3766,7 +3765,7 @@ func hasNonLiteralStateInit(prog *ast.Program) bool {
 // synthesiseStateInit builds a void `__state_init` FuncDecl
 // whose body assigns each non-literal state-init expression to
 // its declared global. Wasm codegen exports this via `(start
-// $__state_init)`; arm32 codegen calls it from `_start` before
+// $__state_init)`; arm64 codegen calls it from `_start` before
 // `main`. State assignments lower to OpStoreGlobal naturally —
 // no special-case codegen needed in the body.
 func synthesiseStateInit(prog *ast.Program) *ast.FuncDecl {
@@ -3830,7 +3829,7 @@ func hasMainDecl(prog *ast.Program) bool {
 //	}
 //
 // — the canonical entry point for handler-shaped programs on
-// CLI / arm32 targets. The wasi-http target has its own
+// CLI / arm64 targets. The wasi-http target has its own
 // `wasi:http/incoming-handler.handle` export wrapper that
 // invokes the user's `handle` directly; main existing
 // alongside it costs nothing (wasi-http's _start is an empty

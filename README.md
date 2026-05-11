@@ -3,14 +3,12 @@
 A small statically-typed language with several backends, written in Go.
 Targets so far:
 
-- **ARM32** (Linux ELF, Raspberry Pi 2/3, embedded Linux) — the
-  default; default cross-compiler is `arm-linux-gnueabihf-gcc`.
+- **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs
+  (Apple M-series); the **default** target. No Linux container
+  required on a Mac; `clang` + `ld64` link directly. (For cross-
+  compile from Linux, `lld`'s Mach-O backend is used instead.)
 - **ARM64 / aarch64** Linux ELF — Raspberry Pi 4+, AWS Graviton,
   Android, qemu-aarch64 under test.
-- **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs
-  (Apple M-series). No Linux container required; `clang` + `ld64`
-  link directly. (For cross-compile from Linux, `lld`'s Mach-O
-  backend is used instead.)
 - **WebAssembly** — emitted as a WASI Preview 2 Component Model
   component, ready for `wasmtime run` (CLI) or `wasmtime serve`
   (`wasi:http/incoming-handler`).
@@ -31,11 +29,9 @@ source
   ──► closure conversion (hoists nested functions, rewrites captures)
   ──► IR lowering       (structured stack-machine IR)
   ──► IR optimisation   (see "optimisation" below)
-  ──► WASM emitter   ──► .wat (preview-2 component via wasm-tools)
-      or
-      ARM32 emitter  ──► .s   (Linux ELF, `-nostdlib`)
-      or
-      ARM64 emitter  ──► .s   (Linux ELF or Mach-O / Apple Silicon)
+  ──► ARM64 emitter  ──► .s   (Mach-O / Apple Silicon, default;
+      or                       or Linux ELF via `-target arm64`)
+      WASM emitter   ──► .wat (preview-2 component via wasm-tools)
 ```
 
 Both backends share the IR layer, so a new language feature usually
@@ -60,23 +56,18 @@ ideas in Go.
 ```
 go build ./cmd/lang
 
-# ARM32 (default target)
-./lang examples/factorial.lang > factorial.s
-arm-linux-gnueabihf-gcc -static factorial.s -o factorial
-qemu-arm factorial
+# ARM64 macOS (default target, Apple Silicon)
+#   Run natively on a Mac with clang:
+./lang -o factorial examples/factorial.lang
+./factorial
+#   ...or cross-compile from Linux with clang + lld (the binary
+#   ships unchanged; copy to a Mac to run):
+./lang -cc clang -o factorial examples/factorial.lang
 
 # ARM64 Linux
 ./lang -target arm64 examples/factorial.lang > factorial.s
 aarch64-linux-gnu-gcc -static -nostdlib factorial.s -o factorial
 qemu-aarch64 factorial
-
-# ARM64 macOS (Apple Silicon)
-#   Run natively on a Mac with clang:
-./lang -target arm64-darwin -o factorial examples/factorial.lang
-./factorial
-#   ...or cross-compile from Linux with clang + lld (the binary
-#   ships unchanged; copy to a Mac to run):
-./lang -target arm64-darwin -cc clang -o factorial examples/factorial.lang
 
 # WASM (preview-2 component)
 ./lang -target wasm -wasi-adapter $LANG_WASI_ADAPTER \
@@ -97,19 +88,20 @@ byte-stable.
 
 `go test ./...` runs the unit tests and the IR-level pass tests. The
 e2e tests in `internal/e2e` exercise the full pipeline on both
-backends — linking ARM32 assembly with `arm-linux-gnueabihf-gcc` and
-running it under `qemu-arm`, and running WAT through `wasmtime`. Both
-suites skip automatically when the toolchains aren't on `PATH`. CI
-installs all of them so the full pipeline is exercised on every
-push.
+backends — linking arm64 assembly with `aarch64-linux-gnu-gcc` and
+running it under `qemu-aarch64`, and running WAT through `wasmtime`.
+Both suites skip automatically when the toolchains aren't on `PATH`.
+CI installs all of them so the full pipeline is exercised on every
+push. A separate macOS job (`.github/workflows/macos.yml`) verifies
+the arm64-darwin Mach-O target natively on Apple Silicon.
 
 The `Makefile` wraps the common flows:
 
 ```
 make build           # go build → bin/lang
 make test            # go test ./...
-make examples        # compile + cross-link every examples/*.lang
-make run-factorial   # compile, link, run under qemu-arm
+make examples        # compile + cross-link every examples/*.lang (arm64 Linux)
+make run-factorial   # compile, link, run under qemu-aarch64
 ```
 
 ## Language at a glance
@@ -128,7 +120,7 @@ function factorial(n: number, acc: number): number {
 
 function main(): number {
   var origin: Point = Point { x: 3, y: 4 };
-  print("hello");                         // libc puts on arm32, write(2) on arm64, fd_write on wasm
+  print("hello");                         // write(2) syscall on arm64, fd_write on wasm
   return origin.magnitude() + factorial(5, 1);
 }
 ```
@@ -184,8 +176,8 @@ Supported:
   time), `switch` (with comma-separated case values, `default`),
   `return`, `break`, `continue`, blocks, expression statements.
 - Types: `number` (32-bit signed), `boolean`, `void`, `float` (32-bit
-  IEEE — VFPv2 on ARM32, `f32` on WASM), `string`, arrays
-  (`number[]`), nominal struct types, and function types
+  IEEE — single-precision FPU on ARM64, `f32` on WASM), `string`,
+  arrays (`number[]`), nominal struct types, and function types
   (`(T, U) => V`).
 - Operators: `+ - * / %`, `== != < > <= >=`, `&& || !`, bitwise
   `& | ^ << >>`, unary `-`. String `+` concatenates, string `==` /
@@ -204,8 +196,8 @@ Supported:
 
 Built-ins:
 
-- `print(s: string): void` — newline-terminating output (libc `puts`
-  on ARM32, direct `write(2)` syscall on ARM64, WASI `fd_write` on WASM).
+- `print(s: string): void` — newline-terminating output (direct
+  `write(2)` syscall on ARM64, WASI `fd_write` on WASM).
 - `write(s: string): void` — stdout without a trailing newline.
   Use to compose your own output formatting (status lines, prompts,
   custom delimiters).
@@ -271,8 +263,7 @@ place and benefits both:
 | Pass               | What it does |
 |--------------------|--------------|
 | `Inline`           | Substitutes small leaf-function bodies, including ones with internal control flow / multiple returns. |
-| `FuseTee`          | Collapses adjacent `OpStoreLocal X ; OpLoadLocal X` to a single `OpTeeLocal X` (cleaner WAT, identity on ARM32). |
-| `TailCallOptimize` | (ARM32 only) Wraps the body in a loop and rewrites `OpCallDirect <self> ; OpReturn` to a parameter rebind plus `OpBr`. |
+| `FuseTee`          | Collapses adjacent `OpStoreLocal X ; OpLoadLocal X` to a single `OpTeeLocal X` (cleaner WAT, identity on ARM64). |
 | `FlattenBranches`  | `if (c) { return X; } return Y;` → typed value-returning if + one trailing return. |
 | `OptimizeCleanup`  | Iterates `PropagateCopies` (drop dead tees / stores) + `ConstPropagate` (replace loads of constant-bound slots) + `Fold` (constant arithmetic, constant-if pruning, const+drop) + `ReduceStrength` (`x * 2^k → x << k`, identity ops) to a fixed point. |
 | `EliminateDeadCode`| Drops ops between a terminator (`OpReturn` / `OpReturnVoid` / `OpBr`) and the next control-flow merge. |
@@ -283,44 +274,39 @@ collapses to a single `const.i32 27 ; return` after the pipeline.
 
 ## Calling conventions
 
-**ARM32**: standard AAPCS, but the binary is libc-free. We link
-with `gcc -static -nostdlib`, emit our own `_start` (captures
-argc / argv / envp from the kernel's initial stack into .bss
-globals, aligns sp, initialises the bump heap, then calls
-`main`), and bottom out every I/O operation in a direct `svc 0`
-syscall (`read` / `write` / `writev` / `open` / `close` /
-`fstat64` / `mmap2` / `exit_group`). Release builds (the default)
-skip `.cfi_*` unwind tables and link with `-s`, dropping a
-"hello world" to ~1.2 KB; `lang -g` re-enables DWARF line info
-+ frame unwinds for `gdb` / `addr2line`. Errno arrives as `-r0` from the kernel —
-no `__errno_location`. The IR's operand stack maps to
-`push / pop {r0}` on the runtime stack; binary operators pop
-right into r0 and left into r1. Args 0..3 in r0..r3; extras from
-the caller's stack at `fp+8`, `fp+12`, … Leaf functions (no calls
-in the body) pin their parameters to callee-saved r4..r7 instead
-of spilling. Heap-backed values (arrays, strings, structs) come
-from `__lang_alloc`, a bump arena over a 64 MiB anonymous mmap
-region reserved at startup. Linux populates physical pages
-lazily on first touch, so the arena's fast path is six
-instructions plus a branch — pure in-process pointer bump,
-no syscall, no per-allocation header, no individual `free`.
-Strings
-carry a 4-byte little-endian length prefix at `ptr - 4` (with a
-trailing NUL preserved so our own `__lang_strcmp` /
-`__lang_memcpy` / `__lang_strlen` keep working on the same data
-pointer). Integer division / modulo lower to inline `sdiv` /
-`mls` from the ARMv7-A idiv extension (no `__aeabi_idiv` from
-libgcc). Float operations use VFPv2 — the emitter declares
-`.fpu vfpv2`, keeps f32 bit patterns flowing through the integer
-operand stack, and `vmov`s them into single-precision
-s-registers just for `vadd.f32` / `vcmp.f32` / etc.
+**ARM64**: standard AAPCS64, but the binary is libc-free. We link
+with `gcc -static -nostdlib` (Linux) or `clang -nostdlib` (Darwin
+Mach-O), emit our own `_start` — on Linux captures argc / argv /
+envp from the kernel's initial stack into .bss globals; on Darwin
+LC_MAIN delivers them in x0 / x1 / x2 — aligns sp, initialises
+the bump heap, then calls `main`. Every I/O operation bottoms out
+in a direct `svc #0` (Linux: number in x8) or `svc #0x80`
+(Darwin: number in x16) syscall (`read` / `write` / `writev` /
+`open` / `close` / `mmap` / `exit_group` / `getentropy` etc.).
+Args 0..7 in x0..x7; extras from the caller's stack at
+`fp+16`, `fp+24`, … The operand stack is simulated on the
+physical sp via paired `str x0, [sp, #-16]!` / `ldr x0, [sp],
+#16` push/pop; binary operators pop right into x0 and left into
+x1. Heap-backed values (arrays, strings, structs) come from
+`__lang_alloc`, a bump arena over a 64 MiB anonymous mmap region
+reserved at startup; the arena's fast path is six instructions
+plus a branch — pure in-process pointer bump, no syscall, no
+per-allocation header, no individual `free`. Strings carry a
+4-byte little-endian length prefix at `ptr - 4` (with a trailing
+NUL preserved so our own `__lang_strcmp` / `__lang_memcpy` /
+`__lang_strlen` keep working on the same data pointer). Integer
+division / modulo lower to inline `sdiv` / `msub`. Float
+operations use the AAPCS64 FP registers — the emitter keeps f32
+bit patterns flowing through the integer operand stack and
+`fmov`s them into single-precision s-registers just for
+`fadd s0, s1, s2` / `fcmp s0, s1` / etc.
 
 **WASM**: standard WASM calling convention. A `funcref` table holds
 every function referenced as a value (or hoisted by closure
 conversion); other functions stay outside the table so wasmtime's
 `--invoke main` keeps working. Closures are `{fn_idx, env_ptr}`
 8-byte heap pairs; arrays / strings / structs share the same
-length-prefixed bump-allocated layout as ARM32.
+length-prefixed bump-allocated layout as ARM64.
 
 ## Repository layout
 
@@ -332,7 +318,7 @@ internal/ast/              # AST types + Position
 internal/checker/          # type checker + did-you-mean hints
 internal/closureconv/      # nested-function hoisting
 internal/ir/               # stack-machine IR + lowering + opt passes
-internal/codegen/          # ARM32 emitter (arm32*.go) + ARM64 (arm64/) + WASM (wasm/)
+internal/codegen/          # ARM64 emitter (arm64/) + WASM emitter (wasm/)
 internal/diag/             # error formatting with source context
 internal/e2e/              # end-to-end tests for both backends
 internal/interp/           # AST tree-walking interpreter (REPL)
