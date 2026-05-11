@@ -148,7 +148,7 @@ func EmitFromIR(prog *ast.Program, info *checker.Info, opts Options) (string, er
 			case "__str_slice":
 				g.usesStrSlice = true
 				g.usesAlloc = true
-			case "__store_i32", "__load_i32":
+			case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr":
 				g.usesRawIntPokes = true
 			case "__memset":
 				g.usesMemset = true

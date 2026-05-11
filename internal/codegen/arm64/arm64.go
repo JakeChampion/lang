@@ -565,6 +565,15 @@ func (g *generator) emitStrcmpRuntime() {
 // for its mixed bucket-index + entries buffer where the
 // caller owns the layout (no length prefix). Single STR / LDR
 // + ret each — leaf functions.
+//
+// Also emits `__store_ptr(addr, val)` / `__load_ptr(addr)`,
+// the pointer-width counterparts. On 64-bit arm64 these
+// store/load 8 bytes so that heap addresses round-trip
+// without truncation. The Map runtime uses these for its
+// data-ptr field (`m → buf` handle indirection); the rest
+// of its mixed buffer stays i32 for compact length / hash /
+// bucket-index storage. Same flag gates both pairs so a
+// Map-using program pulls them in together.
 func (g *generator) emitRawIntPokesRuntime() {
 	g.line("")
 	g.line(".global __load_i32")
@@ -581,6 +590,22 @@ func (g *generator) emitRawIntPokesRuntime() {
 	g.emit("str w1, [x0]")
 	g.emit("ret")
 	g.sizeDirective("__store_i32")
+
+	g.line("")
+	g.line(".global __load_ptr")
+	g.typeDirective("__load_ptr")
+	g.label("__load_ptr")
+	g.emit("ldr x0, [x0]") // 8-byte load
+	g.emit("ret")
+	g.sizeDirective("__load_ptr")
+
+	g.line("")
+	g.line(".global __store_ptr")
+	g.typeDirective("__store_ptr")
+	g.label("__store_ptr")
+	g.emit("str x1, [x0]") // 8-byte store
+	g.emit("ret")
+	g.sizeDirective("__store_ptr")
 	g.line(".ltorg")
 }
 
@@ -2279,7 +2304,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__alloc":
 			target = "__lang_alloc"
 			g.usesAlloc = true
-		case "__store_i32", "__load_i32":
+		case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr":
 			g.usesRawIntPokes = true
 		case "__memset":
 			g.usesMemset = true
