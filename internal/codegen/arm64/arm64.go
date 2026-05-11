@@ -192,6 +192,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArgs {
 		g.emitArgsRuntime()
 	}
+	if g.usesArena {
+		g.emitArenaRuntime()
+	}
 	g.emitDataSections()
 	if !g.darwin {
 		// `.note.GNU-stack` is an ELF-only directive — it
@@ -1188,6 +1191,37 @@ func (g *generator) emitArgsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitArenaRuntime emits the bump-cursor snapshot/rewind pair:
+//
+//   - `__lang_arena_save() -> i64` — returns the current
+//     `__lang_heap_ptr`.
+//   - `__lang_arena_restore(saved)` — writes `saved` back into
+//     `__lang_heap_ptr`, reclaiming everything allocated after
+//     the matching save in a single store. Caller is trusted
+//     not to hold pointers into the reclaimed region.
+//
+// Both leaf functions; one load / one store.
+func (g *generator) emitArenaRuntime() {
+	g.line("")
+	g.line(".global __lang_arena_save")
+	g.typeDirective("__lang_arena_save")
+	g.label("__lang_arena_save")
+	g.adrpAdd("x0", "__lang_heap_ptr")
+	g.emit("ldr x0, [x0]")
+	g.emit("ret")
+	g.sizeDirective("__lang_arena_save")
+
+	g.line("")
+	g.line(".global __lang_arena_restore")
+	g.typeDirective("__lang_arena_restore")
+	g.label("__lang_arena_restore")
+	g.adrpAdd("x1", "__lang_heap_ptr")
+	g.emit("str x0, [x1]")
+	g.emit("ret")
+	g.sizeDirective("__lang_arena_restore")
+	g.line(".ltorg")
+}
+
 // internString returns a unique .rodata label for s, allocating
 // a new one the first time we see this exact string and reusing
 // it on repeats.
@@ -1322,6 +1356,10 @@ type generator struct {
 	// Result cached via `__lang_args_cache` so repeat calls are
 	// O(1).
 	usesArgs bool
+	// usesArena pulls in `__lang_arena_save` / `__lang_arena_restore`
+	// — bump-cursor snapshot/rewind helpers. Two leaf functions,
+	// one ldr / str each. Cheap scope-bounded reclaim.
+	usesArena bool
 }
 
 func (g *generator) line(s string) {
@@ -2355,6 +2393,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesArgs = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		case "arena_save":
+			// arena_save(): snapshot the bump cursor.
+			target = "__lang_arena_save"
+			g.usesArena = true
+			g.usesAlloc = true
+		case "arena_restore":
+			// arena_restore(saved): rewind the bump cursor.
+			target = "__lang_arena_restore"
+			g.usesArena = true
+			g.usesAlloc = true
 		}
 		argc := int(op.I32)
 		if argc > regArgs {
