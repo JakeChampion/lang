@@ -238,6 +238,118 @@ func TestX86_64StringConcat(t *testing.T) {
 	}
 }
 
+// Array literals + indexing. Pulls in __lang_alloc + the
+// inline `lea rax, [base + idx*N]` per-stride index-helper
+// path. Mirrors TestArm64ArrayLiteral so the two backends
+// stay observably equivalent.
+func TestX86_64ArrayLiteral(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    return xs[1];
+}`, 20},
+		{`function main(): i32 {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    return len(xs);
+}`, 5},
+		{`function sum(xs: i32[]): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < len(xs)) {
+        total = total + xs[i];
+        i = i + 1;
+    }
+    return total;
+}
+function main(): i32 {
+    return sum([1, 2, 3, 4, 5]);
+}`, 15},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
+// Struct literals + field access. Verifies the existing
+// `payloadStoreOp` + `structFieldLayout` IR-level lowering
+// composes correctly on x86-64 — most of the work is
+// IR-side; the backend just needs OpStore / OpLoad with the
+// right widths (PR 3 wired both).
+func TestX86_64Struct(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var p: Point = Point { x: 10, y: 32 };
+    return p.x + p.y;
+}`, 42},
+		// Struct with a string field — exercises the
+		// ptr-width slot widening from PR #267.
+		{`struct Person { age: i32, name: string }
+function main(): i32 {
+    var p: Person = Person { age: 25, name: "Claude" };
+    return p.age + len(p.name);
+}`, 31},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
+// f32 / f64 arithmetic, comparison, int <-> float
+// conversions, negation. Mirrors TestArm64Floats's case
+// table. Floats ride the operand stack as raw bit patterns
+// and move into xmm0/xmm1 at op time — same shape as arm64
+// uses for the V register file.
+func TestX86_64Floats(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 {
+    var a: f32 = 3.5;
+    var b: f32 = 1.5;
+    return (a + b) as i32;
+}`, 5},
+		{`function main(): i32 {
+    var a: f32 = 10.0;
+    var b: f32 = 3.0;
+    return (a / b) as i32;
+}`, 3},
+		{`function main(): i32 {
+    var pi: f64 = 3.14f64;
+    var two: f64 = 2.0f64;
+    if (pi * two > 6.0f64) { return 42; }
+    return 0;
+}`, 42},
+		{`function main(): i32 {
+    var n: i32 = 7;
+    var f: f64 = (n as f64) * 1.5f64;
+    return f as i32;
+}`, 10},
+		{`function main(): i32 {
+    var x: f32 = 5.5;
+    var y: f32 = 0.0 - x;
+    if (y < 0.0) { return 1; }
+    return 0;
+}`, 1},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
 // stdout builtins lowered to direct write(2) syscalls.
 // Verifies the asm wires the right fd (1), length, and
 // newline behaviour: `print` adds one, `write` doesn't,
