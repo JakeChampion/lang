@@ -41,6 +41,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24"
+          # Repo has go.mod but no external dependencies, so no
+          # go.sum is generated. setup-go's default caching looks
+          # for one and fails-fast on `macos-latest` runners (the
+          # cache backend got stricter at some point between
+          # macos-14 and macos-latest). Disable caching here —
+          # there's nothing to cache anyway.
+          cache: false
 
       - name: Show toolchain
         run: |
