@@ -11,12 +11,16 @@
 package e2e
 
 import (
+	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
@@ -466,6 +470,134 @@ func TestArm64TcpListen(t *testing.T) {
 }`)
 	if code != 42 {
 		t.Errorf("exit = %d, want 42 (tcp_listen + tcp_close on ephemeral port)", code)
+	}
+}
+
+// End-to-end arm64 HTTP handler. Compiles a program that only
+// defines `function handle(req: HttpRequest): HttpResponse` —
+// the checker synthesises `main()` from it as
+// `tcp_serve(__port_from_env("PORT", 8080), handle)`. The
+// resulting binary listens on the PORT env var, parses an
+// HTTP/1.1 request, calls the user handler, and writes the
+// serialised response back. Then this test sends two
+// back-to-back requests on separate connections and asserts
+// the bodies — the second one round-trips through a freshly
+// reset per-request arena (via `tcp_serve`'s `arena_save` /
+// `arena_restore` wrap), proving the arena reset actually
+// reclaims handler-built allocations rather than leaking.
+//
+// Runs under qemu-aarch64; the binary opens a real TCP socket
+// on the host's kernel (user-mode emulation forwards syscalls
+// 1:1). Picks a port via Go's net.Listen("tcp", ":0") then
+// closes the listener — tiny TOCTOU window before the binary
+// claims it, acceptable for CI.
+func TestArm64HttpHandler(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+
+	// Pick a free port. Close the Go listener immediately so
+	// the lang binary can claim it. Race window is small in
+	// practice.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no free TCP port: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	src := `function handle(req: HttpRequest): HttpResponse {
+    return HttpResponse {
+        status: 200,
+        body: "method=" + req.method + " path=" + req.path + " body-len=" + len(req.body).to_string()
+    };
+}`
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := arm64codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+
+	cmd := exec.Command(qemu, binPath)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	// Poll-connect until the lang binary has actually bound
+	// the port (qemu startup + tcp_listen take a few hundred
+	// ms). 10s deadline is generous for CI.
+	deadline := time.Now().Add(10 * time.Second)
+	var ready bool
+	for time.Now().Before(deadline) {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			c.Close()
+			ready = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatalf("server never bound on %s within 10s", addr)
+	}
+
+	// Two requests, two connections — second one exercises
+	// the arena_save / arena_restore round-trip that
+	// reclaims the first request's allocations.
+	cases := []struct {
+		req  string
+		want string
+	}{
+		{"GET /first HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n", "method=GET path=/first body-len=0"},
+		{"POST /second HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello", "method=POST path=/second body-len=5"},
+	}
+	for i, c := range cases {
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			t.Fatalf("request %d dial: %v", i, err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+		if _, err := conn.Write([]byte(c.req)); err != nil {
+			t.Fatalf("request %d write: %v", i, err)
+		}
+		resp, err := io.ReadAll(conn)
+		conn.Close()
+		if err != nil {
+			t.Fatalf("request %d read: %v", i, err)
+		}
+		// HTTP/1.1 response: status-line + headers + blank line + body.
+		body := string(resp)
+		if !strings.Contains(body, "HTTP/1.1 200") {
+			t.Errorf("request %d: missing 200 status\n--- got ---\n%s", i, body)
+		}
+		if !strings.Contains(body, c.want) {
+			t.Errorf("request %d: missing %q\n--- got ---\n%s", i, c.want, body)
+		}
 	}
 }
 

@@ -837,12 +837,18 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("mov x1, x19")
 	g.emit("mov x2, x20")
 	g.emit("bl __lang_memcpy")
-	// Build Option[string]: 8-byte heap [tag=0, value_ptr].
+	// Build Option[string] with the IR's payload layout:
+	// 16-byte heap object [tag:i32, _pad:i32, str_ptr:i64].
+	// Payload sits at +8 (8-byte-aligned) so the IR's
+	// payloadLoadOp(string) → OpLoad Width:WidthPtr reads
+	// the full 64-bit string pointer. PR #267 widened
+	// pointer-typed enum payloads to ptr-width and 8-byte-
+	// aligned them; this hand-built Option matches.
 	g.emit("mov x0, #16")
 	g.emit("bl __lang_alloc")
-	g.emit("str wzr, [x0]")          // tag = 0 (Some)
+	g.emit("str wzr, [x0]")          // tag = 0 (Some) at +0
 	g.emit("add x1, x22, #4")        // value data ptr
-	g.emit("str x1, [x0, #4]")
+	g.emit("str x1, [x0, #8]")       // payload at +8 (8-byte slot)
 	g.emit("b .Lenv_done")
 	g.label(".Lenv_next")
 	g.emit("add x21, x21, #8")
@@ -966,21 +972,28 @@ func (g *generator) emitTcpAcceptRuntime() {
 // reads up to `max` bytes from the socket fd, returns a
 // fresh length-prefixed lang string with the bytes read.
 // On error or EOF the returned string has length 0.
+//
+// Frame: 48 bytes — fp/lr (16) + callee-save x19/x20 (16) +
+// callee-save x21 (8) + 8 bytes pad for 16-byte sp alignment.
+// x21 holds the data pointer across the `read` syscall; it's
+// AAPCS64-callee-save so the syscall preserves it for us, but
+// we still save the inbound value in the prologue so the
+// caller's x21 round-trips intact.
 func (g *generator) emitTcpRecvRuntime() {
 	g.line("")
 	g.line(".global __lang_tcp_recv")
 	g.typeDirective("__lang_tcp_recv")
 	g.label("__lang_tcp_recv")
-	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
 	g.emit("mov x19, x0") // x19 = fd
 	g.emit("mov x20, x1") // x20 = max
 	// Allocate `max + 5` bytes (4 prefix + max data + 1 NUL).
 	g.emit("add x0, x20, #5")
 	g.emit("bl __lang_alloc")
-	g.emit("add x21, x0, #4")
-	g.emit("str x21, [sp]")      // stash data ptr in a scratch slot
+	g.emit("add x21, x0, #4") // x21 = data ptr (callee-save → survives syscall)
 	// read(fd, data, max).
 	g.emit("mov x0, x19")
 	g.emit("mov x1, x21")
@@ -993,9 +1006,10 @@ func (g *generator) emitTcpRecvRuntime() {
 	// Trailing NUL at data + n.
 	g.emit("add x1, x21, x0")
 	g.emit("strb wzr, [x1]")
-	g.emit("mov x0, x21")         // return data ptr
+	g.emit("mov x0, x21") // return data ptr
+	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__lang_tcp_recv")
 	g.line(".ltorg")
@@ -1337,12 +1351,14 @@ func (g *generator) emitReadLineRuntime() {
 	// Trailing NUL.
 	g.emit("add x0, x21, x20")
 	g.emit("strb wzr, [x0]")
-	// Wrap as Some(x21): alloc 8 bytes, [tag=0, str_ptr].
+	// Wrap as Some(x21) with the IR's ptr-width payload
+	// layout: [tag:i32, _pad:i32, str_ptr:i64]. 16 bytes
+	// total; payload at +8 matches payloadLoadOp(string).
 	g.emit("mov x19, x21")        // stash str ptr in callee-save
-	g.emit("mov x0, #8")
+	g.emit("mov x0, #16")
 	g.emit("bl __lang_alloc")
-	g.emit("str wzr, [x0]")
-	g.emit("str w19, [x0, #4]")
+	g.emit("str wzr, [x0]")         // tag = 0 (Some) at +0
+	g.emit("str x19, [x0, #8]")    // payload at +8 (8-byte slot)
 	g.label(".Lrl_ret")
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
@@ -2600,6 +2616,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__lang_env"
 			g.usesEnv = true
 			g.usesAlloc = true
+			// __lang_env walks envp and `bl __lang_memcpy`s
+			// each candidate value into a fresh lang string,
+			// so we need the memcpy runtime too.
+			g.usesMemcpy = true
 		case "print":
 			// print(s): write string + newline. The runtime
 			// helper handles both writes.
