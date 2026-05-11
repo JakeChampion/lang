@@ -1456,13 +1456,19 @@ function map_new_impl(cap_hint: i32, keyKind: i32): i32 {
     __store_i32(buf + 8,  keyKind);
     __store_i32(buf + 12, 0);
     __memset(buf + 16, 255, cap * 4);            // buckets → all -1
-    var m: i32 = __alloc(4);
-    __store_i32(m, buf);
+    // Map handle is a heap-allocated pointer cell. 8 bytes
+    // accommodates a 64-bit `buf` pointer on arm64; wasm32 /
+    // arm32 only need 4 but the extra padding is cheap and
+    // keeps the handle layout uniform across targets. Using
+    // `__store_ptr` / `__load_ptr` (pointer-width helpers)
+    // lets backends pick the right STR/LDR width.
+    var m: i32 = __alloc(8);
+    __store_ptr(m, buf);
     return m;
 }
 
 function __map_len_impl(m: i32): i32 {
-    var buf: i32 = __load_i32(m);
+    var buf: i32 = __load_ptr(m);
     return __load_i32(buf + 4);
 }
 
@@ -1471,7 +1477,7 @@ function __map_len_impl(m: i32): i32 {
 // skipping tombstones (which keep probing valid past
 // deletions).
 function __map_lookup(m: i32, k: i32): i32 {
-    var buf: i32 = __load_i32(m);
+    var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var keyKind: i32 = __load_i32(buf + 8);
     var mask: i32 = cap - 1;
@@ -1502,7 +1508,7 @@ function __map_has_impl(m: i32, k: i32): boolean {
 function __map_get_impl(m: i32, k: i32): Option[i32] {
     var idx: i32 = __map_lookup(m, k);
     if (idx == 0 - 1) { return None; }
-    var buf: i32 = __load_i32(m);
+    var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var entriesBase: i32 = buf + 16 + cap * 4;
     return Some(__load_i32(entriesBase + idx * 8 + 4));
@@ -1511,7 +1517,7 @@ function __map_get_impl(m: i32, k: i32): Option[i32] {
 function __map_get_or_impl(m: i32, k: i32, fallback: i32): i32 {
     var idx: i32 = __map_lookup(m, k);
     if (idx == 0 - 1) { return fallback; }
-    var buf: i32 = __load_i32(m);
+    var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var entriesBase: i32 = buf + 16 + cap * 4;
     return __load_i32(entriesBase + idx * 8 + 4);
@@ -1524,7 +1530,7 @@ function __map_get_or_impl(m: i32, k: i32, fallback: i32): i32 {
 // the old buffer; that pays back when the arena resets at
 // scope exit.
 function __map_grow(m: i32): i32 {
-    var oldBuf: i32 = __load_i32(m);
+    var oldBuf: i32 = __load_ptr(m);
     var oldCap: i32 = __load_i32(oldBuf);
     var oldLen: i32 = __load_i32(oldBuf + 4);
     var oldKK:  i32 = __load_i32(oldBuf + 8);
@@ -1556,18 +1562,18 @@ function __map_grow(m: i32): i32 {
         }
         i = i + 1;
     }
-    __store_i32(m, newBuf);
+    __store_ptr(m, newBuf);
     return newBuf;
 }
 
 function __map_set_impl(m: i32, k: i32, v: i32) {
-    var buf: i32 = __load_i32(m);
+    var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     // 75% load factor: trigger when (len + 1) * 4 >= cap * 3.
     if ((len_ + 1) * 4 >= cap * 3) {
         __map_grow(m);
-        buf = __load_i32(m);
+        buf = __load_ptr(m);
         cap = __load_i32(buf);
         len_ = __load_i32(buf + 4);
     }
@@ -1614,7 +1620,7 @@ function __map_set_impl(m: i32, k: i32, v: i32) {
 // `K[]` / `V[]` since both lower to a 4-byte-pointer-stride
 // owned array at the wasm level.
 function __map_column(m: i32, kvOffset: i32): i32 {
-    var buf: i32 = __load_i32(m);
+    var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var entriesBase: i32 = buf + 16 + cap * 4;
@@ -1638,7 +1644,7 @@ function __map_values_impl(m: i32): i32 {
 }
 
 function __map_delete_impl(m: i32, k: i32): boolean {
-    var buf: i32 = __load_i32(m);
+    var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var keyKind: i32 = __load_i32(buf + 8);
@@ -1690,30 +1696,37 @@ function __map_delete_impl(m: i32, k: i32): boolean {
 }
 
 function __map_clear_impl(m: i32) {
-    var buf: i32 = __load_i32(m);
+    var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     __store_i32(buf + 4, 0);
     __memset(buf + 16, 255, cap * 4);
 }
 
+// MapIter is a 16-byte heap object: [buf:8][cursor:4][pad:4].
+// The cursor lives at offset +8 (not +4) so the layout is the
+// same on wasm32 / arm32 (where __store_ptr is 4 bytes and
+// the high 4 bytes of the buf slot are wasted padding) and
+// arm64 (where __store_ptr is the full 8-byte STR). Same idea
+// as the Map handle: pick a layout that fits the widest
+// pointer and pad on narrow targets.
 function __map_iter_impl(m: i32): i32 {
-    var it: i32 = __alloc(8);
-    __store_i32(it,     __load_i32(m));     // data ptr
-    __store_i32(it + 4, 0);                  // cursor
+    var it: i32 = __alloc(16);
+    __store_ptr(it,     __load_ptr(m));     // data ptr
+    __store_i32(it + 8, 0);                  // cursor
     return it;
 }
 
 function __mapiter_has_next_impl(it: i32): boolean {
-    var buf: i32 = __load_i32(it);
-    var i: i32 = __load_i32(it + 4);
+    var buf: i32 = __load_ptr(it);
+    var i: i32 = __load_i32(it + 8);
     return i < __load_i32(buf + 4);
 }
 
 // Shared address arithmetic for MapIter.key() / .value().
 function __mapiter_entry_addr(it: i32): i32 {
-    var buf: i32 = __load_i32(it);
+    var buf: i32 = __load_ptr(it);
     var cap: i32 = __load_i32(buf);
-    var i: i32 = __load_i32(it + 4);
+    var i: i32 = __load_i32(it + 8);
     return buf + 16 + cap * 4 + i * 8;
 }
 
@@ -1726,7 +1739,7 @@ function __mapiter_value_impl(it: i32): i32 {
 }
 
 function __mapiter_advance_impl(it: i32) {
-    __store_i32(it + 4, __load_i32(it + 4) + 1);
+    __store_i32(it + 8, __load_i32(it + 8) + 1);
 }
 
 // === HTTP/1.1 parser + serializer ===

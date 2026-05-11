@@ -206,19 +206,29 @@ func (g *generator) emitAllocRuntime() {
 // Both are leaf functions: load → ldr / bx lr; store → str /
 // bx lr. Linker-level deduplication folds repeated callers
 // into a single `bl` per use site.
+//
+// On arm32, pointers are 32-bit, so `__store_ptr` / `__load_ptr`
+// (the pointer-width Map handle helpers) are aliases of the
+// i32 versions. The arm64 backend ships them as 64-bit
+// load/store; the prelude uses the same name on both targets
+// and the codegen picks the right width.
 func (g *generator) emitRawIntPokesRuntime() {
 	g.line("")
 	g.line(".global __load_i32")
+	g.line(".global __load_ptr")
 	g.line(".type __load_i32, %function")
 	g.label("__load_i32")
+	g.label("__load_ptr") // arm32: pointer == i32, same body
 	g.emit("ldr r0, [r0]")
 	g.emit("bx lr")
 	g.line(".size __load_i32, .-__load_i32")
 
 	g.line("")
 	g.line(".global __store_i32")
+	g.line(".global __store_ptr")
 	g.line(".type __store_i32, %function")
 	g.label("__store_i32")
+	g.label("__store_ptr") // arm32: pointer == i32, same body
 	g.emit("str r1, [r0]")
 	g.emit("bx lr")
 	g.line(".size __store_i32, .-__store_i32")
