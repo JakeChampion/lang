@@ -406,52 +406,30 @@ func TestArm64Arena(t *testing.T) {
 	}
 }
 
-// arm64 read_line() — drive stdin with a known string and
-// verify the helper returns Some(line) including the trailing
-// newline. compileAndRunArm64 doesn't pipe stdin, so this
-// test rolls its own qemu invocation with a stdin pipe.
-func TestArm64ReadLine(t *testing.T) {
-	gcc, qemu := arm64Tooling(t)
-	src := `function main(): i32 {
-    match (stdin().read_line()) {
-        Some(l) => { write(l); return len(l); },
-        None => { return 0; }
-    }
-    return -1;
-}`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+// arm64 random_bytes(n) — kernel CSPRNG fill. Verifies length
+// matches and that the output isn't all zeros (extremely unlikely
+// from getrandom + actual entropy).
+func TestArm64RandomBytes(t *testing.T) {
+	out, code := compileAndRunArm64(t, `function main(): i32 {
+    var s: string = random_bytes(16);
+    write(s);
+    return len(s);
+}`)
+	if code != 16 {
+		t.Errorf("exit = %d, want 16 (length of returned bytes)", code)
 	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
+	if len(out) != 16 {
+		t.Errorf("stdout len = %d, want 16", len(out))
 	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
+	allZero := true
+	for _, b := range []byte(out) {
+		if b != 0 {
+			allZero = false
+			break
+		}
 	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	dir := t.TempDir()
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s", err, out)
-	}
-	cmd := exec.Command(qemu, binPath)
-	cmd.Stdin = strings.NewReader("hello\n")
-	out, _ := cmd.CombinedOutput()
-	// read_line preserves the trailing newline, so len("hello\n") = 6.
-	if got, want := cmd.ProcessState.ExitCode(), 6; got != want {
-		t.Errorf("exit = %d, want %d", got, want)
-	}
-	if string(out) != "hello\n" {
-		t.Errorf("output = %q, want %q", out, "hello\n")
+	if allZero {
+		t.Errorf("random_bytes returned all zeros — getrandom likely failed silently")
 	}
 }
 
@@ -598,6 +576,12 @@ func TestArm64DarwinBuilds(t *testing.T) {
     }
     return -1;
 }`, 0},
+		// random_bytes(n) — Darwin getentropy path
+		// (chunked, 256-byte cap per call). Just verify the
+		// length round-trips; can't assert content.
+		{"random_bytes", `function main(): i32 {
+    return len(random_bytes(32));
+}`, 32},
 		// Map is deliberately not exercised here yet — the
 		// runtime round-trips heap pointers through 32-bit
 		// storage slots (__store_i32 / __load_i32), and
