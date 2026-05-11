@@ -1244,6 +1244,132 @@ func TestArm64SubI32(t *testing.T) {
 	}
 }
 
+// compileArm64InDir builds `src` and runs the resulting binary
+// in a fresh temp dir seeded with `seed` files (path → content).
+// Returns stdout, exit code, AND the dir so callers can read
+// back files the program created. Mirrors wasm's runWasmInDir.
+func compileArm64InDir(t *testing.T, src string, seed map[string]string) (stdout string, exitCode int, dir string) {
+	t.Helper()
+	gcc, qemu := arm64Tooling(t)
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := arm64codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir = t.TempDir()
+	for name, content := range seed {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	cmd := exec.Command(qemu, binPath)
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
+	return string(out), cmd.ProcessState.ExitCode(), dir
+}
+
+// read_file returns Ok(content) for a present file. Mirrors
+// TestWASMReadFileOk's shape.
+func TestArm64ReadFileOk(t *testing.T) {
+	src := `function main(): i32 {
+    match (read_file("greeting.txt")) {
+        Ok(s) => { return len(s); },
+        Err(_) => { return 0 - 1; }
+    }
+    return 0 - 2;
+}`
+	_, code, _ := compileArm64InDir(t, src, map[string]string{
+		"greeting.txt": "hello, file\n",
+	})
+	if code != 12 {
+		t.Errorf("got %d, want 12 (len of \"hello, file\\n\"); error path or missing read", code)
+	}
+}
+
+// Missing files surface as `IoError.NotFound(path)`. The path
+// the caller passed must round-trip through the variant payload.
+func TestArm64ReadFileNotFound(t *testing.T) {
+	src := `function main(): i32 {
+    match (read_file("does_not_exist.txt")) {
+        Ok(_) => { return 0; },
+        Err(err) => {
+            match (err) {
+                NotFound(p) => { return len(p); },
+                _ => { return 99; }
+            }
+        }
+    }
+    return 0 - 1;
+}`
+	_, code, _ := compileArm64InDir(t, src, nil)
+	// len("does_not_exist.txt") = 18
+	if code != 18 {
+		t.Errorf("got %d, want 18 (len of missing-file path via NotFound payload)", code)
+	}
+}
+
+// write_file truncates the target and writes `content`. Verify
+// by reading the file back from the host side after the program
+// returns.
+func TestArm64WriteFileOk(t *testing.T) {
+	src := `function main(): i32 {
+    match (write_file("out.txt", "wrote it\n")) {
+        Some(_) => { return 1; },
+        None => { return 0; }
+    }
+    return 0 - 1;
+}`
+	_, code, dir := compileArm64InDir(t, src, nil)
+	if code != 0 {
+		t.Errorf("write_file exit = %d, want 0 (None path)", code)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "wrote it\n" {
+		t.Errorf("got %q, want %q", got, "wrote it\n")
+	}
+}
+
+// Round-trip: write a file then read it back; len reports the
+// expected byte count. Both helpers in one program.
+func TestArm64ReadWriteFileRoundtrip(t *testing.T) {
+	src := `function main(): i32 {
+    match (write_file("rt.txt", "round trip")) {
+        Some(_) => { return 1; },
+        None => {}
+    }
+    match (read_file("rt.txt")) {
+        Ok(s) => { return len(s); },
+        Err(_) => { return 2; }
+    }
+    return 0 - 1;
+}`
+	_, code, _ := compileArm64InDir(t, src, nil)
+	if code != 10 {
+		t.Errorf("got %d, want 10 (len of \"round trip\")", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

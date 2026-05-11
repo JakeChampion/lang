@@ -224,6 +224,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemset {
 		g.emitMemsetRuntime()
 	}
+	if g.usesIoError {
+		g.emitIoErrorRuntime()
+	}
+	if g.usesReadFile {
+		g.emitReadFileRuntime()
+	}
+	if g.usesWriteFile {
+		g.emitWriteFileRuntime()
+	}
 	g.emitDataSections()
 	// ELF non-executable-stack marker. Without this the
 	// linker warns (or refuses, on hardened distros) about
@@ -288,6 +297,12 @@ type generator struct {
 	// usesMemset gates emission of the byte-grain
 	// `__memset(dst, byte, n)` helper the Map clear path uses.
 	usesMemset bool
+	// usesReadFile / usesWriteFile pull in the file-I/O
+	// runtimes; usesIoError pulls in the shared
+	// `__lang_io_error(errno, path) → IoError box` helper.
+	usesReadFile  bool
+	usesWriteFile bool
+	usesIoError   bool
 }
 
 // recordUse flips the right use-flag for a callee name the
@@ -356,6 +371,14 @@ func (g *generator) recordUse(target string) {
 	case "__memset":
 		// Byte-grain fill used by the Map clear path.
 		g.usesMemset = true
+	case "read_file":
+		g.usesReadFile = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "write_file":
+		g.usesWriteFile = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	}
 }
 
@@ -1158,6 +1181,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_arena_save"
 		case "arena_restore":
 			target = "__lang_arena_restore"
+		case "read_file":
+			target = "__lang_read_file"
+		case "write_file":
+			target = "__lang_write_file"
 		case "random_bytes":
 			target = "__lang_random_bytes"
 		case "read_line", "__method_Reader_read_line":
@@ -2531,6 +2558,314 @@ func (g *generator) emitMemsetRuntime() {
 	g.label(".Lmset_done")
 	g.emit("ret")
 	g.line(".size __memset, .-__memset")
+}
+
+// emitIoErrorRuntime emits `__lang_io_error(errno, path) → ptr`
+// — constructs an `IoError` enum box for a Linux errno. Mirrors
+// arm64's emitIoErrorRuntime; same layout (16-byte box with
+// pointer-payload at +8, 8-byte tag-only box for payload-less
+// variants, 24-byte for Other(path, msg)).
+//
+// Tag mapping matches the checker's variant declaration order:
+//
+//	0 NotFound(string)        4 Interrupted
+//	1 PermissionDenied(s)     5 Unsupported
+//	2 AlreadyExists(s)        6 Other(string, string)
+//	3 InvalidUtf8(s)
+//
+// errno → variant:
+//
+//	ENOENT (2)  → NotFound          EACCES (13) → PermissionDenied
+//	EEXIST (17) → AlreadyExists     EINTR  (4)  → Interrupted
+//	default     → Other(path, "")
+//
+// System V: rdi=errno, rsi=path; result in rax.
+func (g *generator) emitIoErrorRuntime() {
+	g.line("")
+	g.line(".globl __lang_io_error")
+	g.line(".type __lang_io_error, @function")
+	g.label("__lang_io_error")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")  // callee-save
+	g.emit("push r12")  // callee-save
+	g.emit("sub rsp, 8") // 16-byte align
+	g.emit("mov ebx, edi") // ebx = errno
+	g.emit("mov r12, rsi") // r12 = path
+
+	g.emit("cmp ebx, 2")
+	g.emit("je .Lioe_notfound")
+	g.emit("cmp ebx, 13")
+	g.emit("je .Lioe_perm")
+	g.emit("cmp ebx, 17")
+	g.emit("je .Lioe_exists")
+	g.emit("cmp ebx, 4")
+	g.emit("je .Lioe_intr")
+
+	// Other(path, ""). 24-byte box: tag, pad, path, "".
+	g.emit("mov edi, 24")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 6")
+	g.emit("mov [rax + 8], r12")
+	g.emit("lea rcx, [rip + .LStr_ioerr_empty]")
+	g.emit("mov [rax + 16], rcx")
+	g.emit("jmp .Lioe_done")
+
+	g.label(".Lioe_notfound")
+	g.emit("xor ebx, ebx")
+	g.emit("jmp .Lioe_with_path")
+	g.label(".Lioe_perm")
+	g.emit("mov ebx, 1")
+	g.emit("jmp .Lioe_with_path")
+	g.label(".Lioe_exists")
+	g.emit("mov ebx, 2")
+	g.emit("jmp .Lioe_with_path")
+	g.label(".Lioe_intr")
+	g.emit("mov edi, 8")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 4")
+	g.emit("jmp .Lioe_done")
+
+	g.label(".Lioe_with_path")
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov [rax], ebx")     // tag
+	g.emit("mov [rax + 8], r12") // path
+
+	g.label(".Lioe_done")
+	g.emit("add rsp, 8")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_io_error, .-__lang_io_error")
+
+	// Compile-time empty-string literal for the Other variant.
+	// Length=0 prefix + NUL — same layout as user-facing string
+	// literals so len("") works and the data is well-formed.
+	g.line(".section .rodata")
+	g.line(".align 4")
+	g.line("\t.4byte 0")
+	g.label(".LStr_ioerr_empty")
+	g.line("\t.byte 0")
+	g.line(".text")
+}
+
+// emitReadFileRuntime emits `__lang_read_file(path) →
+// Result[string, IoError]`. Pipeline: openat(AT_FDCWD, path,
+// O_RDONLY) → fstat → alloc length-prefixed buffer → read-loop
+// → close → Result.Ok(string). Syscall errors short-circuit to
+// Result.Err via __lang_io_error.
+//
+// Result box (matches IR):
+//
+//	tag=0 (Ok)  → payload@+8 = string data ptr
+//	tag=1 (Err) → payload@+8 = IoError box ptr
+//
+// Linux x86-64 syscalls: openat=257, read=0, close=3, fstat=5.
+// struct stat: st_size at offset 48 on both arm64 + x86-64.
+func (g *generator) emitReadFileRuntime() {
+	g.line("")
+	g.line(".globl __lang_read_file")
+	g.line(".type __lang_read_file, @function")
+	g.label("__lang_read_file")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // path (callee-save)
+	g.emit("push r12") // fd
+	g.emit("push r13") // buf base
+	g.emit("push r14") // size
+	g.emit("push r15") // bytes_read
+	g.emit("sub rsp, 152") // 144-byte stat buf + 8-byte align (152 keeps 16-aligned with 5 pushes)
+	g.emit("mov rbx, rdi") // rbx = path
+
+	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("xor edx, edx")
+	g.emit("xor r10d, r10d")
+	g.emit("mov eax, 257")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lrf_err_open")
+	g.emit("mov r12, rax") // fd
+
+	// fstat(fd, [rsp]) — statbuf at top of stack (152 bytes).
+	g.emit("mov edi, r12d")
+	g.emit("mov rsi, rsp")
+	g.emit("mov eax, 5")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lrf_err_close")
+	g.emit("mov r14, [rsp + 48]") // st_size
+
+	// alloc string buf: 4 + size.
+	g.emit("lea rdi, [r14 + 4]")
+	g.emit("call __lang_alloc")
+	g.emit("mov r13, rax")
+	g.emit("mov [r13], r14d") // length prefix (low 32 bits)
+
+	g.emit("xor r15, r15") // bytes_read = 0
+	g.label(".Lrf_loop")
+	g.emit("cmp r15, r14")
+	g.emit("jge .Lrf_done")
+	g.emit("mov edi, r12d")
+	g.emit("lea rsi, [r13 + 4]")
+	g.emit("add rsi, r15")
+	g.emit("mov rdx, r14")
+	g.emit("sub rdx, r15")
+	g.emit("xor eax, eax") // read = 0
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lrf_err_close")
+	g.emit("jz .Lrf_done")  // EOF (file shrunk between fstat and read)
+	g.emit("add r15, rax")
+	g.emit("jmp .Lrf_loop")
+
+	g.label(".Lrf_done")
+	g.emit("mov edi, r12d")
+	g.emit("mov eax, 3") // close
+	g.emit("syscall")
+	// Result.Ok(string): 16-byte box, tag=0 @0, str_ptr @8.
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 0")
+	g.emit("lea rcx, [r13 + 4]")
+	g.emit("mov [rax + 8], rcx")
+	g.emit("jmp .Lrf_return")
+
+	g.label(".Lrf_err_close")
+	// errno = -rax, then close fd.
+	g.emit("neg rax")
+	g.emit("mov r13, rax") // r13 = errno (buf base no longer needed)
+	g.emit("mov edi, r12d")
+	g.emit("mov eax, 3")
+	g.emit("syscall")
+	g.emit("jmp .Lrf_err_dispatch")
+
+	g.label(".Lrf_err_open")
+	g.emit("neg rax")
+	g.emit("mov r13, rax")
+
+	g.label(".Lrf_err_dispatch")
+	// __lang_io_error(errno, path) → rax = IoError box.
+	g.emit("mov edi, r13d")
+	g.emit("mov rsi, rbx")
+	g.emit("call __lang_io_error")
+	g.emit("mov r13, rax") // stash IoError box across the next alloc
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 1") // tag=1 (Err)
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".Lrf_return")
+	g.emit("add rsp, 152")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_read_file, .-__lang_read_file")
+}
+
+// emitWriteFileRuntime emits `__lang_write_file(path, content)
+// → Option[IoError]`. Pipeline: openat(AT_FDCWD, path,
+// O_WRONLY|O_CREAT|O_TRUNC=577, 0644) → write-loop → close →
+// None. Errors → Some(IoError).
+//
+// Option[IoError] layout:
+//
+//	tag=0 (Some) → payload@+8 = IoError box ptr
+//	tag=1 (None) → 8-byte box, no payload
+func (g *generator) emitWriteFileRuntime() {
+	g.line("")
+	g.line(".globl __lang_write_file")
+	g.line(".type __lang_write_file, @function")
+	g.label("__lang_write_file")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // path
+	g.emit("push r12") // content
+	g.emit("push r13") // fd
+	g.emit("push r14") // content_len
+	g.emit("push r15") // bytes_written
+	g.emit("sub rsp, 8") // 16-byte align with 5 pushes + return addr = 6 8-byte regs = 48 bytes, even.
+	g.emit("mov rbx, rdi") // path
+	g.emit("mov r12, rsi") // content
+
+	// content_len = mem[content - 4].
+	g.emit("mov r14d, [r12 - 4]")
+
+	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
+	g.emit("mov edi, -100")
+	g.emit("mov rsi, rbx")
+	g.emit("mov edx, 577")
+	g.emit("mov r10d, 0644")
+	g.emit("mov eax, 257")
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lwf_err_open")
+	g.emit("mov r13, rax") // fd
+
+	g.emit("xor r15, r15")
+	g.label(".Lwf_loop")
+	g.emit("cmp r15, r14")
+	g.emit("jge .Lwf_done")
+	g.emit("mov edi, r13d")
+	g.emit("lea rsi, [r12 + r15]")
+	g.emit("mov rdx, r14")
+	g.emit("sub rdx, r15")
+	g.emit("mov eax, 1") // write
+	g.emit("syscall")
+	g.emit("test rax, rax")
+	g.emit("js .Lwf_err_close")
+	g.emit("add r15, rax")
+	g.emit("jmp .Lwf_loop")
+
+	g.label(".Lwf_done")
+	g.emit("mov edi, r13d")
+	g.emit("mov eax, 3") // close
+	g.emit("syscall")
+	// Option.None: 8-byte box, tag=1.
+	g.emit("mov edi, 8")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 1")
+	g.emit("jmp .Lwf_return")
+
+	g.label(".Lwf_err_close")
+	g.emit("neg rax")
+	g.emit("mov r14, rax") // errno
+	g.emit("mov edi, r13d")
+	g.emit("mov eax, 3")
+	g.emit("syscall")
+	g.emit("jmp .Lwf_err_dispatch")
+
+	g.label(".Lwf_err_open")
+	g.emit("neg rax")
+	g.emit("mov r14, rax")
+
+	g.label(".Lwf_err_dispatch")
+	g.emit("mov edi, r14d")
+	g.emit("mov rsi, rbx")
+	g.emit("call __lang_io_error")
+	g.emit("mov r14, rax") // stash IoError box
+	g.emit("mov edi, 16")
+	g.emit("call __lang_alloc")
+	g.emit("mov dword ptr [rax], 0") // tag=0 (Some)
+	g.emit("mov [rax + 8], r14")
+
+	g.label(".Lwf_return")
+	g.emit("add rsp, 8")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_write_file, .-__lang_write_file")
 }
 
 // escapeForGAS escapes a string for the GAS `.asciz`

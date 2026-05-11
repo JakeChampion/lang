@@ -33,23 +33,29 @@ table mirroring arm64, plus the supporting runtimes (`__store_i32` /
 unchanged. `TestX86_64Map` covers set/get, grow-past-capacity,
 string keys, and iter-after-delete.
 
-### File I/O on both native backends
+### File I/O on both native backends — partial
 
-Wasm has `read_file` / `write_file` / `open_reader` / `open_writer` /
-`open_appender` / `Reader.read_chunk` / `Reader.read_line` (16+ wasm
-tests). **Neither native backend has any of it.**
+`read_file` / `write_file` work on arm64 + x86-64 today. Both
+runtimes wrap `openat(2)` / `read(2)` / `write(2)` / `close(2)`
+/ `fstat(2)` and hand-roll the `Result[string, IoError]` and
+`Option[IoError]` boxes to match the IR enum layout (16-byte
+heap obj with `tag:i32 @0` + pointer payload `@8` on native;
+24-byte for `Other(string, string)`; 8-byte for payload-less
+variants). Shared `__lang_io_error(errno, path)` runtime does
+the errno → variant mapping (ENOENT → NotFound, EACCES →
+PermissionDenied, EEXIST → AlreadyExists, EINTR → Interrupted,
+default → Other(path, "")).
 
-- **Where to add it:** new runtimes in each `codegen/<arch>/<arch>.go`
-  that wrap `open(2)` / `read(2)` / `write(2)` / `close(2)` /
-  `fstat(2)` / `lseek(2)`. Most of the heavy lifting is in the wasm
-  preview2 layer; on a native Linux target the syscalls map directly.
-- **Test:** the `TestWASMReadFileOk` / `TestWASMWriteFileOk` /
-  `TestWASMReadFileNotFound` / `TestWASMReadWriteFileRoundtrip` /
-  `TestWASMOpenAppender` / `TestWASMReaderReadChunk` /
-  `TestWASMStreamingRoundtrip` shapes all transplant directly.
-- **Risk:** medium. Each helper is small but there are ~7 of them;
-  err-translation (`ENOENT` → `FileError.NotFound`) needs care to
-  match the wasm side's tag layout.
+Coverage: `Test{Arm64,X86_64}ReadFileOk` /
+`...ReadFileNotFound` / `...WriteFileOk` /
+`...ReadWriteFileRoundtrip` per backend.
+
+Still missing on natives: `open_reader` / `open_writer` /
+`open_appender` and the `Reader` / `Writer` methods
+(`Reader.read_chunk` / `Reader.read_line` for arbitrary fds,
+`Writer.write`, `Writer.close`). Each one is a small runtime —
+the Result-on-error plumbing reuses the `__lang_io_error`
+helper this PR added.
 
 ### `State[T]` persistent storage
 
@@ -166,13 +172,15 @@ risk × leverage:
 
 1. ~~**`OpExtendI32S` / `OpExtendI32U` / `OpWrapI64` on arm64**~~ ✅
    (PR #281)
-2. ~~**Map on x86-64**~~ ✅ done — landed in this batch.
-3. **`OpSignExtend8` / `OpSignExtend16` + `OpLoadI8S` / `OpLoadI16U` /
-   `OpLoadI16S` on both natives** — unblocks sub-i32 tests + array
-   handling.  ← *next*
-4. **File I/O on both natives** — biggest dollar-amount of code;
-   medium risk; high leverage (write a working CLI tool that reads
-   stdin / a file is the canonical edge-target story).
+2. ~~**Map on x86-64**~~ ✅ (PR #282)
+3. ~~**`OpSignExtend8` / `OpSignExtend16` + sub-i32 typed loads
+   on both natives**~~ ✅ (PR #283)
+4. **File I/O on both natives** — `read_file` + `write_file` ✅ in
+   this batch; `open_reader` / `open_writer` / `open_appender` /
+   `Reader.*` / `Writer.*` still to do. The hard part (Result-on-
+   error plumbing + `__lang_io_error`) is now in place, so the
+   remaining helpers are mostly more openat/read/write loops. ←
+   *partially done*
 5. **`State[T]` on both natives** — depends on whether we want true
    persistence or the program-lifetime-only interpretation. Decision
    first, code second.

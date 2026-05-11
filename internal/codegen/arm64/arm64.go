@@ -224,6 +224,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRandomBytes {
 		g.emitRandomBytesRuntime()
 	}
+	if g.usesIoError {
+		g.emitIoErrorRuntime()
+	}
+	if g.usesReadFile {
+		g.emitReadFileRuntime()
+	}
+	if g.usesWriteFile {
+		g.emitWriteFileRuntime()
+	}
 	g.emitDataSections()
 	if !g.darwin {
 		// `.note.GNU-stack` is an ELF-only directive — it
@@ -1487,6 +1496,324 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.line(".ltorg")
 }
 
+// emitIoErrorRuntime emits `__lang_io_error(errno, path) → ptr`
+// — constructs an `IoError` enum-box for the given Linux errno.
+// Layout matches the IR: 16-byte box `{tag:i32 @0, _:i32 @4,
+// payload:ptr @8}` for variants with payloads, 8 bytes
+// `{tag:i32 @0}` for payload-less variants. Tag values follow
+// the checker's variant declaration order:
+//
+//	0 = NotFound(string)        4 = Interrupted
+//	1 = PermissionDenied(s)     5 = Unsupported
+//	2 = AlreadyExists(s)        6 = Other(string, string)
+//	3 = InvalidUtf8(s)
+//
+// errno → variant mapping:
+//
+//	ENOENT (2)  → NotFound          EACCES (13) → PermissionDenied
+//	EEXIST (17) → AlreadyExists     EINTR  (4)  → Interrupted
+//	all other   → Other(path, "")
+//
+// We don't surface InvalidUtf8 here (the kernel APIs we use
+// don't produce it) or Unsupported (Linux always supports the
+// ops we issue). The Other variant carries (path, "") — the
+// second string is a deliberately empty placeholder rather
+// than e.g. strerror text; tracker note in BACKEND-PARITY.md
+// can promote that later.
+//
+// Args: x0 = errno (positive), x1 = path data ptr.
+// Returns: x0 = IoError box ptr.
+func (g *generator) emitIoErrorRuntime() {
+	g.line("")
+	g.line(".global __lang_io_error")
+	g.typeDirective("__lang_io_error")
+	g.label("__lang_io_error")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("mov x19, x0") // errno
+	g.emit("mov x20, x1") // path
+
+	// Map errno → tag. Default = 6 (Other).
+	g.emit("cmp w19, #2")  // ENOENT
+	g.emit("b.eq .Lioe_notfound")
+	g.emit("cmp w19, #13") // EACCES
+	g.emit("b.eq .Lioe_perm")
+	g.emit("cmp w19, #17") // EEXIST
+	g.emit("b.eq .Lioe_exists")
+	g.emit("cmp w19, #4")  // EINTR
+	g.emit("b.eq .Lioe_intr")
+
+	// Other(path, ""). The "" payload needs the SECOND string
+	// payload at +16 (third 8-byte slot). Box is 24 bytes for
+	// two payloads. The empty-string ptr comes from interning
+	// "" at compile time — but we need a runtime constant.
+	// Use the .LStr_empty label below.
+	g.emit("mov x0, #24")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #6")
+	g.emit("str w1, [x0]")
+	g.emit("str x20, [x0, #8]") // path
+	g.adrpAdd("x1", ".LStr_ioerr_empty")
+	g.emit("str x1, [x0, #16]") // ""
+	g.emit("b .Lioe_done")
+
+	g.label(".Lioe_notfound")
+	g.emit("mov w19, #0")
+	g.emit("b .Lioe_with_path")
+	g.label(".Lioe_perm")
+	g.emit("mov w19, #1")
+	g.emit("b .Lioe_with_path")
+	g.label(".Lioe_exists")
+	g.emit("mov w19, #2")
+	g.emit("b .Lioe_with_path")
+	g.label(".Lioe_intr")
+	// Interrupted has no payload → 8-byte box.
+	g.emit("mov x0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #4")
+	g.emit("str w1, [x0]")
+	g.emit("b .Lioe_done")
+
+	g.label(".Lioe_with_path")
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("str w19, [x0]")   // tag
+	g.emit("str x20, [x0, #8]") // path
+	g.label(".Lioe_done")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__lang_io_error")
+
+	// Compile-time empty-string literal used for the Other
+	// variant's second-string slot. Length=0, NUL-terminated.
+	// We can't easily intern this via the regular string-pool
+	// path because the io-error runtime emits before the
+	// string section; ad-hoc emit here keeps things simple.
+	if g.darwin {
+		g.line(".section __TEXT,__const")
+	} else {
+		g.line(".section .rodata")
+	}
+	g.line(".align 2")
+	g.line("\t.4byte 0")
+	g.label(".LStr_ioerr_empty")
+	g.line("\t.byte 0")
+	g.line(".text")
+	g.line(".ltorg")
+}
+
+// emitReadFileRuntime emits `__lang_read_file(path) →
+// Result[string, IoError]`. Pipeline: openat(AT_FDCWD, path,
+// O_RDONLY) → fstat → alloc length-prefixed buffer → read-loop
+// → close → wrap as Ok(string). Any syscall error short-circuits
+// to Err(IoError) via __lang_io_error.
+//
+// Result box layout (matches IR): 16-byte heap obj
+// `{tag:i32 @0, _:i32 @4, payload:ptr @8}` where:
+//
+//	tag=0 → Ok(string), payload = string data ptr
+//	tag=1 → Err(IoError), payload = IoError box ptr
+func (g *generator) emitReadFileRuntime() {
+	g.line("")
+	g.line(".global __lang_read_file")
+	g.typeDirective("__lang_read_file")
+	g.label("__lang_read_file")
+	// Frame: 64-byte base + 192-byte statbuf scratch = 256.
+	// x19 = path, x20 = fd, x21 = buf base, x22 = size,
+	// x23 = bytes_read.
+	g.emit("stp x29, x30, [sp, #-256]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0") // path
+
+	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
+	g.emit("mov x0, #-100")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, #0")
+	g.emit("mov x3, #0")
+	g.emit("mov x8, #56")
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lrf_err_open")
+	g.emit("mov x20, x0") // fd
+
+	// fstat(fd, statbuf). statbuf scratch at sp+64..sp+256 (192 bytes).
+	g.emit("mov x0, x20")
+	g.emit("add x1, sp, #64")
+	g.emit("mov x8, #80")
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lrf_err_close")
+	g.emit("ldr x22, [sp, #64 + 48]") // st_size
+
+	// alloc string buf: 4 (len prefix) + size. Returns base
+	// ptr; we keep that in x21 and write the prefix.
+	g.emit("add x0, x22, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov x21, x0")
+	g.emit("str w22, [x21]") // length prefix (low 32 bits)
+
+	// Read loop. x23 = bytes_read (cumulative).
+	g.emit("mov x23, #0")
+	g.label(".Lrf_loop")
+	g.emit("cmp x23, x22")
+	g.emit("b.ge .Lrf_done")
+	g.emit("mov x0, x20")
+	g.emit("add x1, x21, #4")
+	g.emit("add x1, x1, x23")
+	g.emit("sub x2, x22, x23")
+	g.emit("mov x8, #63") // read
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lrf_err_close")
+	g.emit("cbz x0, .Lrf_done") // EOF before end (file shrunk)
+	g.emit("add x23, x23, x0")
+	g.emit("b .Lrf_loop")
+
+	g.label(".Lrf_done")
+	// close(fd).
+	g.emit("mov x0, x20")
+	g.emit("mov x8, #57")
+	g.emit("svc #0")
+	// Build Result.Ok(string).
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")     // tag=0 (Ok)
+	g.emit("add x1, x21, #4")   // string data ptr
+	g.emit("str x1, [x0, #8]")  // payload @ +8
+	g.emit("b .Lrf_return")
+
+	g.label(".Lrf_err_close")
+	// errno = -x0, then close(fd), then build Err.
+	g.emit("neg x21, x0")     // x21 = errno (reuse slot)
+	g.emit("mov x0, x20")
+	g.emit("mov x8, #57")
+	g.emit("svc #0")
+	g.emit("b .Lrf_err_dispatch")
+
+	g.label(".Lrf_err_open")
+	g.emit("neg x21, x0") // errno
+
+	g.label(".Lrf_err_dispatch")
+	// __lang_io_error(errno, path) → IoError box in x0.
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x19")
+	g.emit("bl __lang_io_error")
+	// Stash the IoError box in x19 (callee-save; path no longer
+	// needed). x1 would NOT survive the next __lang_alloc call.
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lrf_return")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #256")
+	g.emit("ret")
+	g.sizeDirective("__lang_read_file")
+	g.line(".ltorg")
+}
+
+// emitWriteFileRuntime emits `__lang_write_file(path, content)
+// → Option[IoError]`. Pipeline: openat(AT_FDCWD, path,
+// O_WRONLY|O_CREAT|O_TRUNC, 0644) → write-loop → close → None.
+// Any syscall error short-circuits to Some(IoError).
+//
+// Option[IoError] layout (matches IR):
+//
+//	tag=0 → Some(IoError), payload = IoError box ptr @ +8
+//	tag=1 → None (8-byte box, no payload)
+//
+// O_WRONLY = 1, O_CREAT = 0100 (octal) = 64, O_TRUNC = 01000
+// (octal) = 512. Combined flags = 577.
+func (g *generator) emitWriteFileRuntime() {
+	g.line("")
+	g.line(".global __lang_write_file")
+	g.typeDirective("__lang_write_file")
+	g.label("__lang_write_file")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0") // path
+	g.emit("mov x20, x1") // content data ptr
+
+	// content_len = mem[content - 4]
+	g.emit("ldur w22, [x20, #-4]") // x22 = content_len
+
+	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
+	g.emit("mov x0, #-100")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, #577")
+	g.emit("mov x3, #0644")
+	g.emit("mov x8, #56")
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lwf_err_open")
+	g.emit("mov x21, x0") // fd
+
+	// Write loop. x23 = bytes_written.
+	g.emit("mov x23, #0")
+	g.label(".Lwf_loop")
+	g.emit("cmp x23, x22")
+	g.emit("b.ge .Lwf_done")
+	g.emit("mov x0, x21")
+	g.emit("add x1, x20, x23")
+	g.emit("sub x2, x22, x23")
+	g.emit("mov x8, #64") // write
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lwf_err_close")
+	g.emit("add x23, x23, x0")
+	g.emit("b .Lwf_loop")
+
+	g.label(".Lwf_done")
+	g.emit("mov x0, x21")
+	g.emit("mov x8, #57") // close
+	g.emit("svc #0")
+	// Return None: 8-byte box, tag=1.
+	g.emit("mov x0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.emit("b .Lwf_return")
+
+	g.label(".Lwf_err_close")
+	g.emit("neg x22, x0") // errno
+	g.emit("mov x0, x21")
+	g.emit("mov x8, #57")
+	g.emit("svc #0")
+	g.emit("b .Lwf_err_dispatch")
+
+	g.label(".Lwf_err_open")
+	g.emit("neg x22, x0")
+
+	g.label(".Lwf_err_dispatch")
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("bl __lang_io_error")
+	// Stash IoError box in x19 (callee-save; path / content no
+	// longer needed) — x1 would NOT survive the next alloc call.
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lwf_return")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__lang_write_file")
+	g.line(".ltorg")
+}
+
 // captureSlotSize mirrors closureconv.captureSlotSize for
 // ptrW=8 (arm64). Wide scalars (i64 / f64) take 8 bytes;
 // pointer-shaped captures take 8 bytes (the heap-pointer
@@ -1779,6 +2106,17 @@ type generator struct {
 	// `getentropy(2)` on Darwin. Suitable for session IDs,
 	// tokens, etc.
 	usesRandomBytes bool
+	// usesReadFile / usesWriteFile pull in the file-I/O
+	// runtimes `__lang_read_file(path)` /
+	// `__lang_write_file(path, content)`. Both return enum
+	// boxes — see emitReadFileRuntime / emitWriteFileRuntime
+	// for the IR-matching layout.
+	usesReadFile  bool
+	usesWriteFile bool
+	// usesIoError pulls in `__lang_io_error(errno, path)` —
+	// constructs an `IoError` enum box from a Linux errno.
+	// Shared by read_file + write_file.
+	usesIoError bool
 }
 
 func (g *generator) line(s string) {
@@ -2931,6 +3269,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// stdout/stderr if/when those land.
 			target = "__lang_stdin"
 			g.usesStdin = true
+		case "read_file":
+			// read_file(path): Result[string, IoError] —
+			// openat + fstat + read-loop + close on Linux.
+			target = "__lang_read_file"
+			g.usesReadFile = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "write_file":
+			// write_file(path, content): Option[IoError] —
+			// openat(O_WRONLY|O_CREAT|O_TRUNC) + write-loop +
+			// close on Linux.
+			target = "__lang_write_file"
+			g.usesWriteFile = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "random_bytes":
 			// random_bytes(n): allocates an n-byte string and
 			// fills it with kernel CSPRNG output. Linux uses
