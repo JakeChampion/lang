@@ -8,12 +8,14 @@ name: macOS arm64
 # `macos-latest` runner, which tracks Apple's current macOS
 # release (Sequoia / Tahoe / etc.) on Apple Silicon arm64.
 #
-# Policy: we support only the latest macOS. `macos-latest`
-# floats with whatever GitHub considers current; if a future
-# release breaks something, we either fix the codegen for the
-# new version or document the regression in
-# `docs/BACKEND-PARITY.md`. Pinning to an older `macos-N` label
-# is explicitly not supported.
+# Policy: we support only the latest stable macOS release. The
+# runner label is pinned to a specific version (currently
+# `macos-15` = Sequoia, GA since Sept 2024) rather than the
+# floating `macos-latest` because that label has occasionally
+# pointed at beta or otherwise-broken images. We bump the pin
+# in a deliberate PR after verifying the new version works.
+# Pinning to an OLDER `macos-N` label is explicitly not
+# supported.
 #
 # Gated on changes touching the arm64 codegen, prelude, or its
 # tests so we don't burn macOS minutes on unrelated edits. Plus
@@ -33,7 +35,7 @@ on:
 
 jobs:
   test-arm64-darwin:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
