@@ -184,6 +184,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesPutchar {
 		g.emitPutcharRuntime()
 	}
+	if g.usesEprint {
+		g.emitEprintRuntime()
+	}
+	if g.usesExit {
+		g.emitExitRuntime()
+	}
 	if g.usesTcp {
 		g.emitTcpListenRuntime()
 		g.emitTcpAcceptRuntime()
@@ -279,6 +285,10 @@ type generator struct {
 	usesPuts    bool
 	usesWrite   bool
 	usesPutchar bool
+	// usesEprint / usesExit — eprint(s) → stderr write+newline;
+	// exit(code) → direct exit_group syscall. Both mirror arm64.
+	usesEprint bool
+	usesExit   bool
 	usesTcp             bool
 	usesEnv             bool
 	usesArgs            bool
@@ -325,6 +335,10 @@ func (g *generator) recordUse(target string) {
 		g.usesWrite = true
 	case "putchar":
 		g.usesPutchar = true
+	case "eprint":
+		g.usesEprint = true
+	case "exit":
+		g.usesExit = true
 	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
 		g.usesTcp = true
 		// tcp_recv allocates a string buffer for the read.
@@ -1163,6 +1177,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_write"
 		case "putchar":
 			target = "__lang_putchar"
+		case "eprint":
+			target = "__lang_eprint"
+		case "exit":
+			target = "__lang_exit"
 		case "tcp_listen":
 			target = "__lang_tcp_listen"
 		case "tcp_accept":
@@ -1545,7 +1563,7 @@ func (g *generator) internString(s string) string {
 // unused programs pay nothing — `.bss` is omitted entirely
 // when the allocator isn't pulled in.
 func (g *generator) emitDataSections() {
-	if len(g.stringOrder) > 0 || g.usesPuts {
+	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint {
 		g.line("")
 		g.line(".section .rodata")
 		for _, s := range g.stringOrder {
@@ -1559,10 +1577,10 @@ func (g *generator) emitDataSections() {
 			g.label(g.stringLabel[s])
 			g.line("\t.asciz " + escapeForGAS(s))
 		}
-		if g.usesPuts {
-			// Trailing newline byte for __lang_puts. Stored
-			// in the same section as the string literals so
-			// the loader maps it read-only.
+		if g.usesPuts || g.usesEprint {
+			// Trailing newline byte shared by __lang_puts and
+			// __lang_eprint. Stored in the same section as the
+			// string literals so the loader maps it read-only.
 			g.label(".LLangNewline")
 			g.line(`	.asciz "\n"`)
 		}
@@ -1846,6 +1864,53 @@ func (g *generator) emitWriteRuntime() {
 	g.emit("pop rax")
 	g.emit("ret")
 	g.line(".size __lang_write, .-__lang_write")
+}
+
+// emitEprintRuntime emits `__lang_eprint(s)` — stderr
+// counterpart to print(). Two write(2)s to fd=2: the string,
+// then a newline. Mirrors __lang_puts modulo the fd.
+func (g *generator) emitEprintRuntime() {
+	g.line("")
+	g.line(".globl __lang_eprint")
+	g.line(".type __lang_eprint, @function")
+	g.label("__lang_eprint")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push r12")
+	g.emit("sub rsp, 8")
+	g.emit("mov r12, rdi")        // r12 = data ptr (preserved for return)
+	g.emit("mov edx, [rdi - 4]")
+	g.emit("mov rsi, rdi")
+	g.emit("mov edi, 2")          // fd = stderr
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("lea rsi, [rip + .LLangNewline]")
+	g.emit("mov edx, 1")
+	g.emit("mov edi, 2")
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("mov rax, r12")
+	g.emit("add rsp, 8")
+	g.emit("pop r12")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_eprint, .-__lang_eprint")
+}
+
+// emitExitRuntime emits `__lang_exit(code)` — direct exit
+// syscall. rdi already holds the user-supplied exit code from
+// the System V arg-pop. exit_group never returns; the trailing
+// `ret` is assembler-completeness only.
+func (g *generator) emitExitRuntime() {
+	g.line("")
+	g.line(".globl __lang_exit")
+	g.line(".type __lang_exit, @function")
+	g.label("__lang_exit")
+	// rdi already holds the exit code (System V arg 1).
+	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
+	g.emit("syscall")
+	g.emit("ret")
+	g.line(".size __lang_exit, .-__lang_exit")
 }
 
 // emitPutcharRuntime emits `__lang_putchar(c)` — write a
