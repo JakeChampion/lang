@@ -1191,6 +1191,77 @@ function main(): i32 {
 	}
 }
 
+// Function calls with more arguments than the register-arg
+// window (6 on System V x86-64). Args 7+ live on the caller's
+// stack at [rbp+16+8*(i-6)]; the prologue copies them into the
+// callee's local slots.
+func TestX86_64StackPassedArgs(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"sum_8_args", `function sum8(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32): i32 {
+    return a + b + c + d + e + f + g + h;
+}
+function main(): i32 {
+    return sum8(1, 2, 3, 4, 5, 6, 7, 8);
+}`, 36},
+		{"sum_10_args_order_check", `function sum10(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32): i32 {
+    return (a * 1) + (b * 2) + (c * 3) + (d * 4) + (e * 5) + (f * 6) + (g * 7) + (h * 8) + (i * 9) + (j * 10);
+}
+function main(): i32 {
+    // 1+4+9+16+25+36+49+64+81+100 = 385
+    return sum10(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) - 343;
+}`, 42},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
+				t.Errorf("got %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
+// Unsigned float ↔ int conversions on x86-64. The CPU only has
+// signed cvt(t)sX2si / cvtsi2sX; the unsigned-flagged ops route
+// through:
+//   - u32 → f: zero-extend to rax + signed-convert from rax.
+//   - f → u32: signed-convert to rax, low 32 bits = u32 value.
+//   - u64 → f: 2-step trick for values >= 2^63 (the high-bit
+//     path halves, converts, then doubles).
+//   - f → u64: 2-step trick — if f >= 2^63, subtract 2^63, do a
+//     signed cvtt, then `btc rax, 63` adds 2^63 back.
+func TestX86_64UnsignedFloatConv(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"u32_large_to_f64_back", `function main(): i32 {
+    var u: u32 = 3000000000 as u32;
+    var f: f64 = u as f64;
+    var back: u32 = f as u32;
+    if (back == u) { return 0; }
+    return 1;
+}`, 0},
+		{"u64_max_to_f64_is_huge", `function main(): i32 {
+    var i: i64 = 0 - 1i64;
+    var u: u64 = i as u64;
+    var f: f64 = u as f64;
+    var threshold: f64 = 10000000000000000000.0f64;
+    if (f > threshold) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
+				t.Errorf("got %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // State-rooted Map.set inside an arena cycle (the HTTP-handler
 // shape). Without the two-cursor allocator, Map.set's grow path
 // would allocate the new backing buffer in the per-request
@@ -1220,6 +1291,34 @@ function main(): i32 {
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 42 {
 		t.Errorf("got %d, want 42 (state Map grow survives arena cycle)", code)
+	}
+}
+
+// State-rooted Array.push inside an arena cycle — companion to
+// TestX86_64StateMapGrowInsideArena, exercising the IR's
+// persistent-mode wrap on the push-then-assign path.
+func TestX86_64StateArrayPushInsideArena(t *testing.T) {
+	src := `state {
+    var nums: i32[] = [];
+}
+function push_one(n: i32): void {
+    nums = nums.push(n);
+}
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 50) {
+        var saved: i32 = arena_save();
+        push_one(i);
+        arena_restore(saved);
+        i = i + 1;
+    }
+    if (len(nums) != 50) { return 1; }
+    if (nums[7] != 7) { return 2; }
+    if (nums[49] != 49) { return 3; }
+    return 42;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 42 {
+		t.Errorf("got %d, want 42 (state array push survives arena cycle)", code)
 	}
 }
 

@@ -528,14 +528,18 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		g.emit(fmt.Sprintf("sub rsp, %d", localsSize))
 	}
 	// Param spill into local slots. Args 0..5 arrive in
-	// rdi/rsi/rdx/rcx/r8/r9; args beyond that come on the
-	// stack and aren't yet supported — fail loudly.
+	// rdi/rsi/rdx/rcx/r8/r9; args 6+ come on the caller's
+	// stack at [rbp + 16 + 8*(i-6)] (rbp+0 is saved rbp,
+	// rbp+8 is the return address pushed by `call`, args
+	// follow immediately).
 	regArgs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 	for i := range fn.Params {
-		if i >= len(regArgs) {
-			return fmt.Errorf("x86_64: more than %d function parameters not yet supported (got %d)", len(regArgs), len(fn.Params))
+		if i < len(regArgs) {
+			g.emit(fmt.Sprintf("mov [rbp-%d], %s", (i+1)*8, regArgs[i]))
+		} else {
+			g.emit(fmt.Sprintf("mov rax, [rbp+%d]", 16+8*(i-len(regArgs))))
+			g.emit(fmt.Sprintf("mov [rbp-%d], rax", (i+1)*8))
 		}
-		g.emit(fmt.Sprintf("mov [rbp-%d], %s", (i+1)*8, regArgs[i]))
 	}
 
 	retLabel := fmt.Sprintf(".Lret_%s_%d", fn.Name, g.fresh())
@@ -948,47 +952,124 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit("movd eax, xmm0")
 		g.push()
 	case ir.OpFConvertI32:
-		// i32 → f32 / f64 (signed). Use `cvtsi2sX rax, eax`
-		// — Intel syntax names the source register width
-		// via the explicit operand.
+		// i32 → f32 / f64. x86 only has signed cvtsi2sX;
+		// for u32 we zero-extend to 64 bits first (the value
+		// fits in i64 since it's at most 2^32-1) and then
+		// signed-convert from the 64-bit source.
 		g.pop()
+		src := "eax"
+		if op.Unsigned {
+			g.emit("mov eax, eax") // zero-extend u32 to rax
+			src = "rax"
+		}
 		if op.Width == 64 {
-			g.emit("cvtsi2sd xmm0, eax")
+			g.emit(fmt.Sprintf("cvtsi2sd xmm0, %s", src))
 			g.emit("movq rax, xmm0")
 		} else {
-			g.emit("cvtsi2ss xmm0, eax")
+			g.emit(fmt.Sprintf("cvtsi2ss xmm0, %s", src))
 			g.emit("movd eax, xmm0")
 		}
 		g.push()
 	case ir.OpFConvertI64:
-		// i64 → f32 / f64.
+		// i64 → f32 / f64. Signed is a direct cvtsi2sX;
+		// unsigned uses a 2-step round-half-to-even trick
+		// for values >= 2^63 (where signed conversion would
+		// overflow to the negative range).
 		g.pop()
+		if op.Unsigned {
+			// if rax >= 0: signed convert as usual.
+			// else (msb set, i.e. value >= 2^63):
+			//   y = (rax >> 1) | (rax & 1)
+			//   convert y signed, then 2x.
+			label := fmt.Sprintf(".Lu64f_%d", g.labelCounter)
+			g.labelCounter++
+			g.emit("test rax, rax")
+			g.emit(fmt.Sprintf("js %s_big", label))
+			if op.Width == 64 {
+				g.emit("cvtsi2sd xmm0, rax")
+			} else {
+				g.emit("cvtsi2ss xmm0, rax")
+			}
+			g.emit(fmt.Sprintf("jmp %s_done", label))
+			g.label(label + "_big")
+			g.emit("mov rcx, rax")
+			g.emit("shr rcx, 1")
+			g.emit("and eax, 1")
+			g.emit("or rcx, rax")
+			if op.Width == 64 {
+				g.emit("cvtsi2sd xmm0, rcx")
+				g.emit("addsd xmm0, xmm0")
+			} else {
+				g.emit("cvtsi2ss xmm0, rcx")
+				g.emit("addss xmm0, xmm0")
+			}
+			g.label(label + "_done")
+		} else {
+			if op.Width == 64 {
+				g.emit("cvtsi2sd xmm0, rax")
+			} else {
+				g.emit("cvtsi2ss xmm0, rax")
+			}
+		}
 		if op.Width == 64 {
-			g.emit("cvtsi2sd xmm0, rax")
 			g.emit("movq rax, xmm0")
 		} else {
-			g.emit("cvtsi2ss xmm0, rax")
 			g.emit("movd eax, xmm0")
 		}
 		g.push()
-	case ir.OpITruncF32:
-		// f32 → i32 / i64 (truncate toward zero).
+	case ir.OpITruncF32, ir.OpITruncF64:
+		// f32 / f64 → i32 / i64 (truncate toward zero). x86
+		// only has signed cvttsX2si; we handle unsigned
+		// outputs by:
+		//   u32: convert to i64, the low 32 bits are the u32.
+		//   u64: if value < 2^63, signed conversion is correct.
+		//        Else subtract 2^63 (as a double), convert, then
+		//        set bit 63 to add 2^63 back.
 		g.pop()
-		g.emit("movd xmm0, eax")
-		if op.Width == 64 {
-			g.emit("cvttss2si rax, xmm0")
-		} else {
-			g.emit("cvttss2si eax, xmm0")
+		isF64 := op.Kind == ir.OpITruncF64
+		suf := "ss"
+		if isF64 {
+			suf = "sd"
 		}
-		g.push()
-	case ir.OpITruncF64:
-		// f64 → i32 / i64.
-		g.pop()
-		g.emit("movq xmm0, rax")
-		if op.Width == 64 {
-			g.emit("cvttsd2si rax, xmm0")
+		if isF64 {
+			g.emit("movq xmm0, rax")
 		} else {
-			g.emit("cvttsd2si eax, xmm0")
+			g.emit("movd xmm0, eax")
+		}
+		if op.Unsigned && op.Width == 64 {
+			// f → u64 with 2^63 trick.
+			label := fmt.Sprintf(".Lf2u64_%d", g.labelCounter)
+			g.labelCounter++
+			// Load 2^63 as a double / float into xmm1.
+			if isF64 {
+				g.emit("mov rax, 0x43E0000000000000") // 2^63 as f64
+				g.emit("movq xmm1, rax")
+				g.emit("ucomisd xmm0, xmm1")
+			} else {
+				g.emit("mov eax, 0x5F000000") // 2^63 as f32
+				g.emit("movd xmm1, eax")
+				g.emit("ucomiss xmm0, xmm1")
+			}
+			g.emit(fmt.Sprintf("jae %s_big", label))
+			g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
+			g.emit(fmt.Sprintf("jmp %s_done", label))
+			g.label(label + "_big")
+			if isF64 {
+				g.emit("subsd xmm0, xmm1")
+			} else {
+				g.emit("subss xmm0, xmm1")
+			}
+			g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
+			g.emit("btc rax, 63")
+			g.label(label + "_done")
+		} else if op.Unsigned {
+			// f → u32. Convert to i64 (room for the full
+			// u32 range), then read low 32 bits.
+			g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
+		} else if op.Width == 64 {
+			g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
+		} else {
+			g.emit(fmt.Sprintf("cvtt%s2si eax, xmm0", suf))
 		}
 		g.push()
 
@@ -1218,18 +1299,11 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// calls into direct calls when the closure target is
 		// statically known. The caller has already pushed
 		// (args..., env_ptr) onto the operand stack — same
-		// shape as OpCallDirect with one extra arg. Reuse the
-		// arg-pop loop with argc+1.
+		// shape as OpCallDirect with one extra arg.
 		argc := int(op.I32)
-		regArgs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-		if argc > len(regArgs) {
-			return fmt.Errorf("x86_64: more than %d closure-call args not yet supported (got %d for %q)", len(regArgs), argc, op.Str)
-		}
-		for i := argc - 1; i >= 0; i-- {
-			g.emit(fmt.Sprintf("mov %s, [rsp]", regArgs[i]))
-			g.emit("add rsp, 16")
-		}
+		g.emitCallArgsLoad(argc)
 		g.emit(fmt.Sprintf("call %s", op.Str))
+		g.emitCallArgsCleanup(argc)
 		g.push()
 
 	case ir.OpMakeClosure, ir.OpMakeEnv:
@@ -1241,20 +1315,13 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// OpLoadLocal / OpConstFunc), so the pointer is on
 		// top of the stack and args are below it in
 		// left-to-right order. Pop the ptr into r11 (caller-
-		// save, otherwise unused), pop args into rdi..r9, then
-		// `call r11`.
+		// save, otherwise unused), then load the args.
 		argc := int(op.I32)
-		regArgs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-		if argc > len(regArgs) {
-			return fmt.Errorf("x86_64: more than %d indirect-call args not yet supported (got %d)", len(regArgs), argc)
-		}
 		g.emit("mov r11, [rsp]") // r11 = function pointer
 		g.emit("add rsp, 16")
-		for i := argc - 1; i >= 0; i-- {
-			g.emit(fmt.Sprintf("mov %s, [rsp]", regArgs[i]))
-			g.emit("add rsp, 16")
-		}
+		g.emitCallArgsLoad(argc)
 		g.emit("call r11")
+		g.emitCallArgsCleanup(argc)
 		g.push()
 
 	case ir.OpCallDirect:
@@ -1368,15 +1435,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__mapiter_advance_impl"
 		}
 		argc := int(op.I32)
-		regArgs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-		if argc > len(regArgs) {
-			return fmt.Errorf("x86_64: more than %d call args not yet supported (got %d for %q)", len(regArgs), argc, op.Str)
-		}
-		for i := argc - 1; i >= 0; i-- {
-			g.emit(fmt.Sprintf("mov %s, [rsp]", regArgs[i]))
-			g.emit("add rsp, 16")
-		}
+		g.emitCallArgsLoad(argc)
 		g.emit(fmt.Sprintf("call %s", target))
+		g.emitCallArgsCleanup(argc)
 		g.push()
 
 	default:
@@ -1437,6 +1498,58 @@ func (g *generator) push() {
 func (g *generator) pop() {
 	g.emit("mov rax, [rsp]")
 	g.emit("add rsp, 16")
+}
+
+// emitCallArgsLoad places `argc` operand-stack values into
+// System V argument slots. First 6 args go to rdi/rsi/rdx/rcx/
+// r8/r9; the rest land on the call stack at [rsp+0], [rsp+8],
+// ... in source order. The operand stack uses 16-byte slots;
+// the call stack uses 8-byte slots, so overflow args get
+// compressed via a call-stack overflow area allocated below
+// the operand-stack args.
+//
+// After this call returns, the caller is responsible for the
+// `call` / `call r11` and then `emitCallArgsCleanup` to drop
+// both the call-stack overflow AND the operand-stack args.
+func (g *generator) emitCallArgsLoad(argc int) {
+	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+	if argc <= len(regs) {
+		for i := argc - 1; i >= 0; i-- {
+			g.emit(fmt.Sprintf("mov %s, [rsp]", regs[i]))
+			g.emit("add rsp, 16")
+		}
+		return
+	}
+	overflow := argc - len(regs)
+	// Round overflow*8 to a multiple of 16 to keep rsp
+	// 16-aligned at the call site (System V requirement).
+	stackSize := ((overflow*8 + 15) / 16) * 16
+	g.emit(fmt.Sprintf("sub rsp, %d", stackSize))
+	// Register args: arg i at [rsp + stackSize + 16*(argc-1-i)].
+	for i := 0; i < len(regs); i++ {
+		g.emit(fmt.Sprintf("mov %s, [rsp + %d]", regs[i], stackSize+16*(argc-1-i)))
+	}
+	// Overflow args: compress 16-byte operand slots into 8-byte
+	// call-stack slots. arg i (i >= 6) at operand offset
+	// stackSize + 16*(argc-1-i), goes to call-stack [rsp + 8*(i-6)].
+	for i := len(regs); i < argc; i++ {
+		g.emit(fmt.Sprintf("mov rax, [rsp + %d]", stackSize+16*(argc-1-i)))
+		g.emit(fmt.Sprintf("mov [rsp + %d], rax", 8*(i-len(regs))))
+	}
+}
+
+// emitCallArgsCleanup undoes emitCallArgsLoad's stack
+// allocation. Caller passes the same argc.
+func (g *generator) emitCallArgsCleanup(argc int) {
+	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+	if argc <= len(regs) {
+		// Args were already popped via per-arg `add rsp, 16`.
+		return
+	}
+	overflow := argc - len(regs)
+	stackSize := ((overflow*8 + 15) / 16) * 16
+	// Drop call-stack overflow + operand-stack args.
+	g.emit(fmt.Sprintf("add rsp, %d", stackSize+16*argc))
 }
 
 func (g *generator) line(s string) {
