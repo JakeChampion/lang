@@ -332,6 +332,61 @@ func TestArm64Print(t *testing.T) {
 	}
 }
 
+// arm64 args() — materialises argv as a length-prefixed
+// string[]. compileAndRunArm64 doesn't pass extra args, so
+// we drive qemu-aarch64 directly with a fixed argv list and
+// check len + each entry. argv[0] is implementation-defined
+// (the binary path under emulation, often `/tmp/...`); we
+// just check that it ends with our binary name.
+func TestArm64Args(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+
+	src := `function main(): i32 {
+    var a: string[] = args();
+    var i: i32 = 0;
+    while (i < len(a)) {
+        print(a[i]);
+        i = i + 1;
+    }
+    return len(a);
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := arm64codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	cmd := exec.Command(qemu, binPath, "alpha", "beta", "gamma")
+	out, _ := cmd.CombinedOutput()
+	if got, want := cmd.ProcessState.ExitCode(), 4; got != want {
+		t.Errorf("exit = %d (argc), want %d", got, want)
+	}
+	// argv[0] is the binary path; check just the user args.
+	for _, want := range []string{"alpha\n", "beta\n", "gamma\n"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output missing %q\n--- got ---\n%s", want, out)
+		}
+	}
+}
+
 // arm64 eprint + exit. eprint(s) writes to fd 2 (stderr); exit(code)
 // is a direct exit syscall and skips main's normal return path.
 // Combined: write to stderr, then bail with a specific code.
@@ -447,6 +502,13 @@ func TestArm64DarwinBuilds(t *testing.T) {
     exit(7);
     return 99;
 }`, 7},
+		// args() — argv reader. With no extra args passed by
+		// the harness, argv contains just the binary path, so
+		// argc == 1. Verifies the start-runtime prologue
+		// stashed argc/argv from the kernel-delivered stack.
+		{"args", `function main(): i32 {
+    return len(args());
+}`, 1},
 		// Map is deliberately not exercised here yet — the
 		// runtime round-trips heap pointers through 32-bit
 		// storage slots (__store_i32 / __load_i32), and
