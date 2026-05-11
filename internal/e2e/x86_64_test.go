@@ -884,3 +884,60 @@ func TestX86_64Map(t *testing.T) {
 		})
 	}
 }
+
+// Sub-i32 array reads + casts. Exercises:
+//
+//   - OpLoadI8S  (i8[] read; x86-64 `movsx eax, byte ptr [rax]`)
+//   - OpLoadI16U (u16[] read; x86-64 `movzx eax, word ptr [rax]`)
+//   - OpLoadI16S (i16[] read; x86-64 `movsx eax, word ptr [rax]`)
+//   - OpSignExtend8  (i32 → i8 narrowing cast; x86-64 `movsx eax, al`)
+//   - OpSignExtend16 (i32 → i16 narrowing cast; x86-64 `movsx eax, ax`)
+//
+// Pairs with wasm's TestWASMI8Array / TestWASMU16Array /
+// TestWASMSubI32Widths.
+func TestX86_64SubI32(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"i8_array_signed_sum", `function main(): i32 {
+    var xs: i8[] = [1 as i8, 2 as i8, 3 as i8, 0 - 1 as i8];
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < len(xs)) {
+        sum = sum + (xs[i] as i32);
+        i = i + 1;
+    }
+    return sum;
+}`, 5},
+		{"i16_array_signed_sum", `function main(): i32 {
+    var xs: i16[] = [100 as i16, 200 as i16, 0 - 300 as i16];
+    return (xs[0] as i32) + (xs[1] as i32) + (xs[2] as i32);
+}`, 0},
+		{"u16_array_zero_extends", `function main(): i32 {
+    var xs: u16[] = [40000 as u16, 1 as u16];
+    if ((xs[0] as i32) != 40000) { return 1; }
+    if ((xs[1] as i32) != 1) { return 2; }
+    return 7;
+}`, 7},
+		{"i32_to_i8_sign_preserved", `function main(): i32 {
+    var v: i32 = 200;
+    var b: i8 = v as i8;
+    if ((b as i32) < 0) { return 7; }
+    return 1;
+}`, 7},
+		{"i32_to_i16_sign_preserved", `function main(): i32 {
+    var v: i32 = 40000;
+    var s: i16 = v as i16;
+    if ((s as i32) < 0) { return 7; }
+    return 1;
+}`, 7},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
+				t.Errorf("got %d, want %d", code, c.want)
+			}
+		})
+	}
+}
