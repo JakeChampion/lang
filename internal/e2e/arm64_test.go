@@ -883,10 +883,40 @@ function main(): i32 {
     }
     return total;
 }`, 11},
+		// Probe for the arm64-darwin heap-address truncation
+		// bug (BACKEND-PARITY.md "Known limitations"). Map
+		// values are HEAP-allocated strings (built via concat
+		// at runtime), NOT .rodata literals. On macOS the
+		// mmap address hint is ignored and the heap lands at
+		// a high (>4 GiB) address; the lang prelude declares
+		// pointer locals as `i32`, which truncates the high
+		// 32 bits of the round-tripped pointer.
+		//
+		// This case CURRENTLY FAILS on macOS CI — that's
+		// expected: the bug it probes is unfixed. Skip with
+		// t.Skipf when running natively on Darwin until the
+		// prelude pointer-width refactor lands; on Linux
+		// (under qemu / native arm64) the heap fits in 32
+		// bits so the test passes.
+		{"map_heap_value_probe", `function main(): i32 {
+    var m: Map[i32, string] = map_new(4);
+    var v1: string = "alp" + "ha";
+    var v2: string = "be" + "ta";
+    m.set(1, v1);
+    m.set(2, v2);
+    return len(m.get_or(1, "")) + len(m.get_or(2, ""));
+}`, 9},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			// Probe for the documented heap-address truncation
+			// bug — skip on Darwin native (where the bug
+			// trips) until the prelude pointer-width refactor
+			// lands. See BACKEND-PARITY.md "Known limitations".
+			if c.name == "map_heap_value_probe" && runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+				t.Skip("known limitation: heap-address truncation in Map runtime on arm64-darwin; see docs/BACKEND-PARITY.md")
+			}
 			prog, err := parser.Parse(c.src)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
@@ -917,7 +947,14 @@ function main(): i32 {
 			// to ELF.
 			var args []string
 			if native {
-				args = []string{"-nostdlib", asmPath, "-o", binPath}
+				// Newer ld64 (Xcode 16+ on macOS Sequoia/
+				// Tahoe) refuses dynamic executables without
+				// libSystem.dylib linked. `-nostdlib`
+				// suppresses crt0/libc startup; `-lSystem`
+				// re-adds just the dyld-stub linkage. See
+				// cmd/lang/main.go's linkDarwin for matching
+				// production-driver behaviour.
+				args = []string{"-nostdlib", "-lSystem", asmPath, "-o", binPath}
 			} else {
 				args = []string{
 					"--target=arm64-apple-darwin",

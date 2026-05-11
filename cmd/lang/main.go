@@ -288,7 +288,16 @@ func linkDarwin(asm, outPath, cc string) error {
 	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 	var args []string
 	if native {
-		args = []string{"-nostdlib", asmPath, "-o", outPath}
+		// Newer ld64 (Xcode 16+ on macOS Sequoia/Tahoe) refuses
+		// to link dynamic executables without libSystem.dylib —
+		// `-nostdlib` alone gets rejected with "dynamic
+		// executables or dylibs must link with libSystem.dylib".
+		// Workaround: keep `-nostdlib` to skip crt0/libc start-
+		// files (we provide our own `_main`), but add `-lSystem`
+		// explicitly to satisfy the dyld-stub linkage check.
+		// Our user-program code doesn't call into libSystem;
+		// linking it is purely a load-time formality.
+		args = []string{"-nostdlib", "-lSystem", asmPath, "-o", outPath}
 	} else {
 		args = []string{
 			"--target=arm64-apple-darwin",

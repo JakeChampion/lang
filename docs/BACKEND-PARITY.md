@@ -231,9 +231,14 @@ We support only the **latest** version of each target's host OS or
 runtime. The CI runner labels reflect that policy:
 
 - Linux: `ubuntu-latest` (tracks the current Ubuntu LTS image).
-- macOS: `macos-latest` (tracks Apple's current macOS release —
-  Sequoia / Tahoe / etc. — on Apple Silicon arm64). Pinning to
-  `macos-14` or older is explicitly not supported.
+- macOS: pinned to a specific recent label (currently
+  `macos-15` = Sequoia, on Apple Silicon arm64). We deliberately
+  do NOT use `macos-latest` because that floating label has
+  shipped beta / regressed images in the past. The pin gets
+  bumped in a dedicated PR after verifying the new version
+  works (build + test + examples). Pinning to anything OLDER
+  than what's currently in `.github/workflows/macos.yml` is
+  explicitly not supported.
 - wasm: `wasmtime` pinned to a specific version in
   `.github/workflows/ci.yml`. Bumps land as part of the dep refresh
   cycle.
