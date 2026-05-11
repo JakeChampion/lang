@@ -1072,3 +1072,56 @@ func TestX86_64ReadWriteFileRoundtrip(t *testing.T) {
 		t.Errorf("got %d, want 10 (len of \"round trip\")", code)
 	}
 }
+
+// Function-value-in-var: `var f: (i32, i32) => i32 = add; f(20, 22)`
+// — exercises OpConstFunc + OpCallIndirect on x86-64. Mirrors
+// TestArm64IndirectCall. The codegen has been in place since PR 2;
+// this test closes the no-coverage gap flagged in
+// BACKEND-PARITY.md.
+func TestX86_64IndirectCall(t *testing.T) {
+	_, code := compileAndRunX86_64(t, `function add(a: i32, b: i32): i32 { return a + b; }
+function main(): i32 {
+    var f: (i32, i32) => i32 = add;
+    return f(20, 22);
+}`)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42 (indirect call through function value)", code)
+	}
+}
+
+// Arena scope: arena_save() snapshots the bump cursor and
+// arena_restore(saved) rewinds it. Allocations after the
+// restore reuse the space the freed allocations consumed.
+// Mirrors TestArm64Arena.
+func TestX86_64Arena(t *testing.T) {
+	_, code := compileAndRunX86_64(t, `function main(): i32 {
+    var s1: string = "hello, " + "world!"; // alloc
+    var saved: i32 = arena_save();
+    var s2: string = "throwaway-" + "junk"; // alloc, will be reclaimed
+    arena_restore(saved);
+    var s3: string = "after-" + "restore"; // alloc reuses s2's space
+    return len(s1) + len(s3);
+}`)
+	if code != 13+13 {
+		t.Errorf("exit = %d, want 26 (len(s1) + len(s3))", code)
+	}
+}
+
+// eprint(s) routes a string + newline to stderr (fd 2); exit(N)
+// terminates immediately via the exit_group syscall. Verifies the
+// post-exit `return 99` is unreachable. Mirrors TestArm64EprintExit.
+func TestX86_64EprintExit(t *testing.T) {
+	out, code := compileAndRunX86_64(t, `function main(): i32 {
+    eprint("oops");
+    exit(7);
+    return 99;
+}`)
+	if code != 7 {
+		t.Errorf("exit = %d, want 7 (exit(7) should not fall through to return 99)", code)
+	}
+	// compileAndRunX86_64 captures CombinedOutput so stderr is
+	// folded in.
+	if out != "oops\n" {
+		t.Errorf("output = %q, want %q", out, "oops\n")
+	}
+}
