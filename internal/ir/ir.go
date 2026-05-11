@@ -2047,11 +2047,22 @@ func (b *builder) expr(e ast.Expr) error {
 		// stack. Stride defaults to 4 (the historical i32 / pointer
 		// layout) but drops to 1 / 2 for byte / halfword arrays
 		// per ast.ElemSizeBytes.
-		const headerBytes = 4
+		// Header layout: a 4-byte length prefix lives at
+		// `data - 4`, so `len(arr)` always loads from a fixed
+		// offset. For stride > 4 we still need the FIRST
+		// element to be stride-aligned (Apple Silicon enforces
+		// alignment for some 8-byte LDR/STR sequences); pad
+		// the header up to `stride` so element 0 sits at a
+		// stride-aligned offset from base. For stride <= 4 the
+		// 4-byte header is already aligned.
 		nElems := int32(len(n.Elems))
 		stride := int32(4)
 		if n.ElemType != nil {
 			stride = int32(ast.ElemSizeBytesFor(n.ElemType, b.ptrW))
+		}
+		headerBytes := int32(4)
+		if stride > 4 {
+			headerBytes = stride
 		}
 		// Pick (storeOp, storeWidth) from element type. WidthPtr
 		// (-1) drives pointer-width stores on arm64 (8-byte STR)
@@ -2086,22 +2097,28 @@ func (b *builder) expr(e ast.Expr) error {
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__arr_lit_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
-		// Length prefix at base+0.
+		// Length prefix at base + headerBytes - 4 (so callers
+		// can always reach it via `data - 4`).
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		if headerBytes != 4 {
+			b.emit(Op{Kind: OpConstI32, I32: headerBytes - 4})
+			b.emit(Op{Kind: OpAdd})
+		}
 		b.emit(Op{Kind: OpConstI32, I32: nElems})
 		b.emit(Op{Kind: OpStore})
-		// Each element at base + 4 + i*stride.
+		// Each element at base + headerBytes + i*stride.
 		for i, el := range n.Elems {
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-			b.emit(Op{Kind: OpConstI32, I32: int32(headerBytes) + int32(i)*stride})
+			b.emit(Op{Kind: OpConstI32, I32: headerBytes + int32(i)*stride})
 			b.emit(Op{Kind: OpAdd})
 			if err := b.expr(el); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: storeOp, Width: storeWidth})
 		}
-		// Push the *content* pointer (base + 4) so the value matches
-		// what the rest of the language expects from an ArrayLit.
+		// Push the *content* pointer (base + headerBytes) so the
+		// value matches what the rest of the language expects
+		// from an ArrayLit.
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: headerBytes})
 		b.emit(Op{Kind: OpAdd})
@@ -3722,6 +3739,14 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	if stride == 0 {
 		stride = 4
 	}
+	// Same alignment rule as the array literal lowering:
+	// length prefix is always at `data - 4`, but the FIRST
+	// element must be stride-aligned when stride > 4 so Apple
+	// Silicon's strict 8-byte LDR/STR alignment is satisfied.
+	headerBytes := int32(4)
+	if stride > 4 {
+		headerBytes = stride
+	}
 
 	// Stash v in a typed scratch so the tail store can pick the
 	// right load width (i64 / f64 vs i32). Without this the
@@ -3753,8 +3778,8 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.emit(Op{Kind: OpLoad})
 	b.emit(Op{Kind: OpStoreLocal, I32: oldLenSlot})
 
-	// allocSize = 4 + (oldLen + 1) * stride
-	b.emit(Op{Kind: OpConstI32, I32: 4})
+	// allocSize = headerBytes + (oldLen + 1) * stride
+	b.emit(Op{Kind: OpConstI32, I32: headerBytes})
 	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 1})
 	b.emit(Op{Kind: OpAdd})
@@ -3766,18 +3791,23 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.locals[fmt.Sprintf("__push_hdr_%d", hdrSlot)] = hdrSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: hdrSlot})
 
-	// *hdr = oldLen + 1   (the length prefix is always i32)
+	// *(hdr + headerBytes - 4) = oldLen + 1 — length prefix
+	// always lives at `data - 4` regardless of padding.
 	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	if headerBytes != 4 {
+		b.emit(Op{Kind: OpConstI32, I32: headerBytes - 4})
+		b.emit(Op{Kind: OpAdd})
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 1})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpStore})
 
-	// data = hdr + 4
+	// data = hdr + headerBytes
 	dataSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_data_%d", dataSlot)] = dataSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpConstI32, I32: headerBytes})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
 
