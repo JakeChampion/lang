@@ -1577,6 +1577,107 @@ func TestArm64ReaderWriter(t *testing.T) {
 	}
 }
 
+// Wasm-shaped feature parity for the native arm64 backend.
+// Each case asserts the program returns 0 (the wasm tests
+// returned arbitrary i32 values via runWasm; on native we get
+// the low byte of main's return as the exit code, so the
+// programs internally compare and short-circuit to 0/N to fit
+// the exit-code channel). Same source on x86-64 (see
+// TestX86_64FeatureParity).
+func TestArm64FeatureParity(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+	}{
+		{"defer_basic", `function inner(trace: Map[string, i32]): i32 {
+    trace.set("body-start", 1);
+    defer trace.set("first-defer", 10);
+    defer trace.set("second-defer", 20);
+    trace.set("body-end", 2);
+    return 42;
+}
+function main(): i32 {
+    var trace: Map[string, i32] = map_new(8);
+    var r: i32 = inner(trace);
+    if (r != 42) { return 1; }
+    if (trace.len() != 4) { return 2; }
+    if (trace.get_or("body-start", 0) != 1) { return 3; }
+    if (trace.get_or("body-end", 0) != 2) { return 4; }
+    if (trace.get_or("first-defer", 0) != 10) { return 5; }
+    if (trace.get_or("second-defer", 0) != 20) { return 6; }
+    return 0;
+}`},
+		{"switch_basic", `function classify(n: i32): i32 {
+    switch (n) {
+        case 0: return 100;
+        case 1, 2, 3: return 200;
+        case 7: return 700;
+        default: return 0;
+    }
+    return 0 - 1;
+}
+function main(): i32 {
+    var sum: i32 = classify(0) + classify(2) + classify(7) + classify(99);
+    if (sum == 1000) { return 0; }
+    return 1;
+}`},
+		{"switch_break_in_loop", `function main(): i32 {
+    var sum: i32 = 0;
+    for (var i: i32 = 0; i < 5; i = i + 1) {
+        switch (i) {
+            case 2: break;
+            default: sum = sum + i;
+        }
+    }
+    if (sum == 8) { return 0; }
+    return 1;
+}`},
+		{"fstring_interp", `function main(): i32 {
+    var x: i32 = 42;
+    var s: string = f"x is {x}";
+    if (len(s) == 7) { return 0; }
+    return 1;
+}`},
+		{"for_each_array", `function main(): i32 {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    var sum: i32 = 0;
+    for x in xs { sum = sum + x; }
+    if (sum == 15) { return 0; }
+    return 1;
+}`},
+		{"if_let_match", `function main(): i32 {
+    var o: Option[i32] = Some(42);
+    if let Some(x) = o {
+        if (x == 42) { return 0; }
+        return 1;
+    } else {
+        return 2;
+    }
+}`},
+		{"tuple_multi_return", `function divmod(a: i32, b: i32): (i32, i32) {
+    return (a / b, a - (a / b) * b);
+}
+function main(): i32 {
+    var p = divmod(17, 5);
+    if (p.0 == 3 && p.1 == 2) { return 0; }
+    return 1;
+}`},
+		{"generic_infer_from_arg", `function id[T](x: T): T { return x; }
+function main(): i32 {
+    var a = id(42);
+    var b = id(7);
+    if (a == 42 && b == 7) { return 0; }
+    return 1;
+}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != 0 {
+				t.Errorf("got exit %d, want 0", code)
+			}
+		})
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
