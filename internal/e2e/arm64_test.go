@@ -406,6 +406,33 @@ func TestArm64Arena(t *testing.T) {
 	}
 }
 
+// arm64 random_bytes(n) — kernel CSPRNG fill. Verifies length
+// matches and that the output isn't all zeros (extremely unlikely
+// from getrandom + actual entropy).
+func TestArm64RandomBytes(t *testing.T) {
+	out, code := compileAndRunArm64(t, `function main(): i32 {
+    var s: string = random_bytes(16);
+    write(s);
+    return len(s);
+}`)
+	if code != 16 {
+		t.Errorf("exit = %d, want 16 (length of returned bytes)", code)
+	}
+	if len(out) != 16 {
+		t.Errorf("stdout len = %d, want 16", len(out))
+	}
+	allZero := true
+	for _, b := range []byte(out) {
+		if b != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		t.Errorf("random_bytes returned all zeros — getrandom likely failed silently")
+	}
+}
+
 // arm64 eprint + exit. eprint(s) writes to fd 2 (stderr); exit(code)
 // is a direct exit syscall and skips main's normal return path.
 // Combined: write to stderr, then bail with a specific code.
@@ -538,6 +565,12 @@ func TestArm64DarwinBuilds(t *testing.T) {
     arena_restore(saved);
     return len(s1);
 }`, 13},
+		// random_bytes(n) — Darwin getentropy path
+		// (chunked, 256-byte cap per call). Just verify the
+		// length round-trips; can't assert content.
+		{"random_bytes", `function main(): i32 {
+    return len(random_bytes(32));
+}`, 32},
 		// Map is deliberately not exercised here yet — the
 		// runtime round-trips heap pointers through 32-bit
 		// storage slots (__store_i32 / __load_i32), and
