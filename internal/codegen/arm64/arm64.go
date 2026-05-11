@@ -110,6 +110,25 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		return "", err
 	}
 	g := &generator{info: info, stringLabel: map[string]string{}, darwin: opts.Darwin}
+	// Pre-scan IR functions to set use-flags that emitStartRuntime
+	// reads. emitStartRuntime runs before the per-function walk
+	// so any flag set inside emitOp wouldn't influence the
+	// prologue. For args() / env() the prologue needs to know
+	// in advance so it can stash argc / argv / envp from the
+	// kernel-delivered stack before main runs.
+	for _, fn := range ip.Funcs {
+		for _, op := range fn.Ops {
+			if op.Kind != ir.OpCallDirect {
+				continue
+			}
+			switch op.Str {
+			case "args":
+				g.usesArgs = true
+			case "env":
+				g.usesEnv = true
+			}
+		}
+	}
 	g.line(`.arch armv8-a`)
 	g.line(`.text`)
 	g.emitStartRuntime()
@@ -170,6 +189,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesExit {
 		g.emitExitRuntime()
 	}
+	if g.usesArgs {
+		g.emitArgsRuntime()
+	}
 	g.emitDataSections()
 	if !g.darwin {
 		// `.note.GNU-stack` is an ELF-only directive — it
@@ -219,7 +241,7 @@ func (g *generator) emitDataSections() {
 		g.label(".LLangNewline")
 		g.line(`	.asciz "\n"`)
 	}
-	if g.usesAlloc || g.usesEnv {
+	if g.usesAlloc || g.usesEnv || g.usesArgs {
 		g.line("")
 		if g.darwin {
 			// Mach-O zero-initialised data lives in
@@ -244,6 +266,17 @@ func (g *generator) emitDataSections() {
 	if g.usesEnv {
 		g.line(`.align 3`)
 		g.label("__lang_envp")
+		g.line(`	.quad 0`)
+	}
+	if g.usesArgs {
+		g.line(`.align 3`)
+		g.label("__lang_argc")
+		g.line(`	.quad 0`)
+		g.line(`.align 3`)
+		g.label("__lang_argv")
+		g.line(`	.quad 0`)
+		g.line(`.align 3`)
+		g.label("__lang_args_cache")
 		g.line(`	.quad 0`)
 	}
 }
@@ -1057,6 +1090,104 @@ func (g *generator) emitExitRuntime() {
 	g.line(".ltorg")
 }
 
+// emitArgsRuntime emits `__lang_args()` — returns a length-
+// prefixed `string[]` materialised from the argc/argv pair
+// captured by emitStartRuntime. Each entry is a fresh
+// length-prefixed string with a trailing NUL preserved (for
+// libc-shaped consumers like `puts`). Result is cached in
+// `__lang_args_cache` so repeat calls are O(1).
+//
+// Slot layout uses callee-save x19..x23 across the inner
+// __lang_alloc / __lang_memcpy calls; AAPCS64 mandates
+// preservation, so the saved-pair pattern at function entry
+// keeps them coherent across the bl chain.
+func (g *generator) emitArgsRuntime() {
+	g.line("")
+	g.line(".global __lang_args")
+	g.typeDirective("__lang_args")
+	g.label("__lang_args")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("str x23, [sp, #48]")
+	// Fast path: cached pointer non-zero → return it.
+	g.adrpAdd("x0", "__lang_args_cache")
+	g.emit("ldr x1, [x0]")
+	g.emit("cbz x1, .Largs_build")
+	g.emit("mov x0, x1")
+	g.emit("b .Largs_ret")
+	g.label(".Largs_build")
+	// x19 = argc, x20 = argv (pointer to char**)
+	g.adrpAdd("x19", "__lang_argc")
+	g.emit("ldr x19, [x19]")
+	g.adrpAdd("x20", "__lang_argv")
+	g.emit("ldr x20, [x20]")
+	// Allocate the result string[] container: 4 bytes length
+	// prefix + argc * 4 bytes for entry pointers. Slots are 4
+	// bytes wide because the lang prelude treats array-of-T
+	// where T is a pointer as i32-stride; on arm64 this is the
+	// same wasm32-inherited assumption that the Map runtime
+	// makes. Programs that fit in the low 4 GiB of address
+	// space round-trip fine.
+	g.emit("lsl x0, x19, #2")
+	g.emit("add x0, x0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("add x21, x0, #4")     // x21 = result data pointer
+	g.emit("stur w19, [x21, #-4]") // length prefix = argc
+	// for (i = 0; i < argc; i++)
+	g.emit("mov x22, #0") // x22 = i
+	g.label(".Largs_loop")
+	g.emit("cmp x22, x19")
+	g.emit("bge .Largs_done")
+	// x23 = argv[i] (C string).
+	g.emit("ldr x23, [x20, x22, lsl #3]")
+	// Inline strlen on the C string.
+	g.emit("mov x0, x23")
+	g.label(".Largs_strlen")
+	g.emit("ldrb w1, [x0]")
+	g.emit("cbz w1, .Largs_strlen_done")
+	g.emit("add x0, x0, #1")
+	g.emit("b .Largs_strlen")
+	g.label(".Largs_strlen_done")
+	g.emit("sub x0, x0, x23")     // x0 = strlen
+	g.emit("mov x9, x0")          // x9 = saved strlen (caller-save, not preserved across bl)
+	// Allocate strlen + 5 (4 prefix + N data + 1 trailing NUL).
+	g.emit("add x0, x0, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add x10, x0, #4")     // x10 = string data pointer
+	g.emit("stur w9, [x10, #-4]") // length prefix
+	// Stash data pointer in the reserved scratch slot at
+	// `[sp, #56]` (frame is 64 bytes: 16 fp/lr + 16 x19/x20
+	// + 16 x21/x22 + 8 x23 + 8 scratch). Caller-save x10 won't
+	// survive the bl. Don't use `[sp]` — that overwrites saved
+	// x29.
+	g.emit("str x10, [sp, #56]")
+	// memcpy(x10, x23, strlen + 1) — include NUL.
+	g.emit("mov x0, x10")
+	g.emit("mov x1, x23")
+	g.emit("add x2, x9, #1")
+	g.emit("bl __lang_memcpy")
+	// result[i] = x10
+	g.emit("ldr x10, [sp, #56]")
+	g.emit("str w10, [x21, x22, lsl #2]")
+	g.emit("add x22, x22, #1")
+	g.emit("b .Largs_loop")
+	g.label(".Largs_done")
+	// Cache + return.
+	g.adrpAdd("x0", "__lang_args_cache")
+	g.emit("str x21, [x0]")
+	g.emit("mov x0, x21")
+	g.label(".Largs_ret")
+	g.emit("ldr x23, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__lang_args")
+	g.line(".ltorg")
+}
+
 // internString returns a unique .rodata label for s, allocating
 // a new one the first time we see this exact string and reusing
 // it on repeats.
@@ -1185,6 +1316,12 @@ type generator struct {
 	// Doesn't return; the post-call push x0 the caller emits is
 	// harmless because exit() never comes back.
 	usesExit bool
+	// usesArgs pulls in `__lang_args()` — materialises a fresh
+	// length-prefixed `string[]` from the argc/argv stash the
+	// `_start` / `_main` prologue captures off the kernel stack.
+	// Result cached via `__lang_args_cache` so repeat calls are
+	// O(1).
+	usesArgs bool
 }
 
 func (g *generator) line(s string) {
@@ -1336,13 +1473,21 @@ func (g *generator) emitStartRuntime() {
 	// uses the same layout shape (argc / argv / envp at the
 	// top of the user stack); the envp walk works the same
 	// way on both targets.
-	if g.usesEnv {
+	if g.usesEnv || g.usesArgs {
 		g.emit("ldr x0, [sp]")            // argc
 		g.emit("add x1, sp, #8")          // argv = &sp[1]
-		g.emit("add x2, x0, #1")          // argc + 1
-		g.emit("add x2, x1, x2, lsl #3")  // envp = argv + (argc+1)*8
-		g.adrpAdd("x3", "__lang_envp")
-		g.emit("str x2, [x3]")
+		if g.usesEnv {
+			g.emit("add x2, x0, #1")          // argc + 1
+			g.emit("add x2, x1, x2, lsl #3")  // envp = argv + (argc+1)*8
+			g.adrpAdd("x3", "__lang_envp")
+			g.emit("str x2, [x3]")
+		}
+		if g.usesArgs {
+			g.adrpAdd("x3", "__lang_argc")
+			g.emit("str x0, [x3]")
+			g.adrpAdd("x3", "__lang_argv")
+			g.emit("str x1, [x3]")
+		}
 	}
 	g.emit("bl main")
 	g.syscallExit()
@@ -2180,6 +2325,13 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// call never comes back.
 			target = "__lang_exit"
 			g.usesExit = true
+		case "args":
+			// args(): returns a length-prefixed string[] of
+			// argv. Caches the result so repeat calls are O(1).
+			target = "__lang_args"
+			g.usesArgs = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
 		}
 		argc := int(op.I32)
 		if argc > regArgs {
