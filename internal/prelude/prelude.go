@@ -6,7 +6,7 @@
 // hot path (allocator, hash, str_eq) but is brittle and
 // duplicates code per backend. Higher-level helpers expressed
 // in lang itself benefit from IR-level optimisations, drop into
-// any backend (wasm, arm32) the same way, and ~10x easier to
+// any backend (wasm, arm64) the same way, and ~10x easier to
 // maintain than the equivalent wat.
 //
 // The embedded `prelude.lang` source is parsed once during

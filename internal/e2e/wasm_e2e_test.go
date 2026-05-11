@@ -283,8 +283,7 @@ func runWasmMultiFile(t *testing.T, entry string, files map[string]string) int {
 	return 0
 }
 
-// Cross-module struct types end-to-end on WASM: same shape as the
-// arm32 e2e check, run through wasmtime.
+// Cross-module struct types end-to-end on WASM, run through wasmtime.
 func TestWASMCrossModuleStructType(t *testing.T) {
 	got := runWasmMultiFile(t, "main.lang", map[string]string{
 		"point.lang": `pub struct Point { x: i32, y: i32 }
@@ -4276,8 +4275,8 @@ func TestWASMArenaScope(t *testing.T) {
 }
 
 // random_bytes(n) on WASM goes through `wasi_snapshot_preview1.
-// random_get`. Same length / non-equality assertions as the
-// arm32 version.
+// random_get`. Length / non-equality assertions only — no
+// content checks since it's a CSPRNG.
 func TestWASMRandomBytes(t *testing.T) {
 	src := `function main(): i32 {
 		var a: string = random_bytes(16);

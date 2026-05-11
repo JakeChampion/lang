@@ -35,10 +35,7 @@ import (
 )
 
 // Linux arm64 syscall numbers from the asm-generic table.
-// Only what the runtime needs at this stage. arm32 uses the
-// older legacy EABI table with completely different numbers
-// (e.g. write=4 vs arm64's 64); we don't share constants
-// between backends.
+// Only what the runtime needs at this stage.
 const (
 	sysRead      = 63
 	sysWrite     = 64
@@ -79,9 +76,8 @@ var linuxDarwinSysno = map[string][2]int{
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
 // arrive in x0..x7. Anything beyond that goes through the
-// caller's stack frame. arm32 has 4 register-arg slots; arm64
-// gives us 8 — enough to keep most user functions register-
-// only.
+// caller's stack frame. 8 register-arg slots is enough to
+// keep most user functions register-only.
 const regArgs = 8
 
 // Options tunes the emit. Currently empty.
@@ -237,8 +233,8 @@ func (g *generator) emitDataSections() {
 	for _, s := range g.stringOrder {
 		// 4-byte little-endian length prefix + .asciz data.
 		// Pointers handed to user code address the .asciz base
-		// (.LStr_N); `len()` reads `[ptr - 4]`. Same layout as
-		// arm32; same as wasm at the byte level.
+		// (.LStr_N); `len()` reads `[ptr - 4]`. Same shape at
+		// the byte level as wasm's string-literal segment.
 		g.line(`.align 2`)
 		g.line(fmt.Sprintf("\t.4byte %d", len(s)))
 		g.label(g.stringLabel[s])
@@ -295,10 +291,9 @@ func (g *generator) emitDataSections() {
 	}
 	if g.usesReadLine {
 		// 4 KiB scratch buffer for the byte-by-byte read loop.
-		// Same size arm32 uses. `.space N` works on both
-		// GNU as and Apple's integrated assembler (Mach-O
-		// .section __DATA,__bss accepts `.space` to reserve
-		// zero-filled bytes).
+		// `.space N` works on both GNU as and Apple's
+		// integrated assembler (Mach-O .section __DATA,__bss
+		// accepts `.space` to reserve zero-filled bytes).
 		g.line(`.align 3`)
 		g.label("__lang_read_line_buf")
 		g.line(`	.space 4096`)
@@ -306,14 +301,12 @@ func (g *generator) emitDataSections() {
 }
 
 // emitAllocRuntime emits `__lang_alloc(size: i64) -> i64`
-// using mmap2 — same shape as arm32 but with arm64 syscall
-// numbers (sysMmap = 222) and 64-bit pointer arithmetic.
+// using mmap2 (sysMmap = 222) and 64-bit pointer arithmetic.
 // First call lazily reserves the heap arena via mmap; later
 // calls bump the cursor.
 //
-// Bump-only allocator (no free) — matches wasm's semantics
-// and the arm32 backend's choice. The arena is reclaimed
-// by the OS at process exit.
+// Bump-only allocator (no free) — matches wasm's semantics.
+// The arena is reclaimed by the OS at process exit.
 func (g *generator) emitAllocRuntime() {
 	const heapBytes = 64 * 1024 * 1024 // 64 MiB virtual reservation
 	g.line("")
@@ -418,10 +411,9 @@ func (g *generator) emitAllocRuntime() {
 
 // emitMemcpyRuntime emits `__lang_memcpy(dst, src, n)` —
 // byte-grain copy. Word-grain bulk path runs in 8-byte chunks
-// (vs arm32's 4) since arm64 has 64-bit registers; tail loop
-// handles the residue. Pointers may be unaligned (arm64
-// allows unaligned access by default in user-mode Linux, same
-// as arm32).
+// since arm64 has 64-bit registers; tail loop handles the
+// residue. Pointers may be unaligned (arm64 allows unaligned
+// access by default in user-mode Linux).
 func (g *generator) emitMemcpyRuntime() {
 	g.line("")
 	g.line(".global __lang_memcpy")
@@ -451,9 +443,9 @@ func (g *generator) emitMemcpyRuntime() {
 }
 
 // emitStrcatRuntime emits `__lang_strcat(a, b)` — concat two
-// length-prefixed strings into a fresh allocation. Same shape
-// as arm32; both string operands are data pointers (post-
-// prefix) with the 4-byte length at `[ptr - 4]`.
+// length-prefixed strings into a fresh allocation. Both string
+// operands are data pointers (post-prefix) with the 4-byte
+// length at `[ptr - 4]`.
 //
 // Uses callee-save x19..x23 to keep state across the calls
 // to __lang_alloc and __lang_memcpy. AAPCS64 says x19..x28
@@ -535,9 +527,9 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 }
 
 // emitStrcmpRuntime emits `__lang_strcmp(a, b)` — equality
-// comparator returning 0 (equal) / 1 (different). Same shape
-// as arm32 (length-prefix + word-grain bulk + byte-grain
-// tail); pointer args are post-prefix.
+// comparator returning 0 (equal) / 1 (different). Layout:
+// length-prefix + word-grain bulk + byte-grain tail; pointer
+// args are post-prefix.
 func (g *generator) emitStrcmpRuntime() {
 	g.line("")
 	g.line(".global __lang_strcmp")
@@ -627,6 +619,17 @@ func (g *generator) emitRawIntPokesRuntime() {
 	g.emit("str x1, [x0]") // 8-byte store
 	g.emit("ret")
 	g.sizeDirective("__store_ptr")
+
+	// `__ptr_width()` returns 8 on arm64. The Map runtime uses
+	// this to size per-entry key/value slots; pairs with the
+	// wasm backend's `i32.const 4` constant function.
+	g.line("")
+	g.line(".global __ptr_width")
+	g.typeDirective("__ptr_width")
+	g.label("__ptr_width")
+	g.emit("mov w0, #8")
+	g.emit("ret")
+	g.sizeDirective("__ptr_width")
 	g.line(".ltorg")
 }
 
@@ -883,7 +886,7 @@ func (g *generator) emitEnvRuntime() {
 // emitTcpListenRuntime emits `__lang_tcp_listen(port)` —
 // opens a TCP listening socket on 0.0.0.0:port. Returns the
 // listener fd on success, or `-errno` on failure. C-style
-// API; callers check `if (fd < 0)`. Mirrors arm32's shape.
+// API; callers check `if (fd < 0)`.
 //
 // Steps: socket(AF_INET, SOCK_STREAM, 0); bind to a stack-
 // allocated sockaddr_in; listen with backlog=128.
@@ -1042,12 +1045,11 @@ func (g *generator) emitWriteRuntime() {
 }
 
 // emitPutsRuntime emits `__lang_puts(s)` — write the string,
-// then a single trailing newline. Two write(2) calls (vs
-// arm32's single writev) keeps the code simple at the cost of
-// one extra kernel transition; per-call cost is dominated by
-// the syscall itself either way. Preserves x19 across the
-// second write so we can return the original data pointer for
-// libc-puts consistency.
+// then a single trailing newline. Two write(2) calls keeps the
+// code simple at the cost of one extra kernel transition; per-
+// call cost is dominated by the syscall itself either way.
+// Preserves x19 across the second write so we can return the
+// original data pointer for libc-puts consistency.
 func (g *generator) emitPutsRuntime() {
 	g.line("")
 	g.line(".global __lang_puts")
@@ -1273,7 +1275,7 @@ func (g *generator) emitArenaRuntime() {
 // stops at '\n' (kept in the result) or 4 KiB or EOF/error.
 // Returns Option[string]: Some(line) when at least one byte
 // was read, None when the very first read returned 0 (EOF
-// before any input). Option layout matches arm32 / wasm:
+// before any input). Option layout matches the wasm shape:
 //
 //	Some: [tag=0 : 4][string_ptr : 4]   (8 bytes)
 //	None: [tag=1 : 4]                    (4 bytes)
@@ -1351,8 +1353,7 @@ func (g *generator) emitReadLineRuntime() {
 // stub that returns 0. The checker requires `stdin()` to be
 // callable but the arm64 backend doesn't yet model per-fd
 // Readers, so the receiver value is unused; any sentinel
-// works. Mirrors the same shape arm32 uses for stdin/stdout/
-// stderr (less the per-fd wrapping).
+// works.
 func (g *generator) emitStdinRuntime() {
 	g.line("")
 	g.line(".global __lang_stdin")
@@ -1509,12 +1510,12 @@ type generator struct {
 	// locally before the object format matters.
 	darwin bool
 
-	// stringLabel / stringOrder mirror the arm32 string-pool
-	// scheme: each unique string literal in the program gets
-	// a single `.LStr_N` .rodata label with a 4-byte little-
-	// endian length prefix followed by `.asciz` data. Programs
-	// that reference the same literal multiple times share
-	// the entry. Maintained in insertion order so the emitted
+	// stringLabel / stringOrder hold the string-pool scheme:
+	// each unique string literal in the program gets a single
+	// `.LStr_N` .rodata label with a 4-byte little-endian
+	// length prefix followed by `.asciz` data. Programs that
+	// reference the same literal multiple times share the
+	// entry. Maintained in insertion order so the emitted
 	// `.rodata` section is deterministic.
 	stringLabel map[string]string
 	stringOrder []string
@@ -1522,8 +1523,7 @@ type generator struct {
 	// usesAlloc / usesStrcat / usesMemcpy track whether the
 	// program reaches for the matching runtime helper. Each
 	// helper is gated so programs that don't need it pay
-	// nothing extra in binary size. The arm32 backend uses
-	// the same pattern.
+	// nothing extra in binary size.
 	usesAlloc   bool
 	usesStrcat  bool
 	usesMemcpy  bool
@@ -1543,9 +1543,9 @@ type generator struct {
 	// NAME=VALUE match. Used by the synthesised auto-main's
 	// `__port_from_env("PORT", 8080)` call.
 	usesEnv bool
-	// usesAllocU8 + usesStringFromBytes mirror the arm32 flags
-	// from PR #230 — string-handling prelude helpers that
-	// allocate length-prefixed u8[] / string buffers.
+	// usesAllocU8 + usesStringFromBytes gate the string-
+	// handling prelude helpers that allocate length-prefixed
+	// u8[] / string buffers.
 	usesAllocU8         bool
 	usesStringFromBytes bool
 	// usesRawIntPokes tracks whether the program calls
@@ -1908,9 +1908,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// x0 even when the function returns nothing. Without
 	// the fp-based unwind, leaked operand-stack pushes leave
 	// sp below where the prologue put it, and the `ldp`
-	// loads garbage as fp/lr → ret to a bad address →
-	// SEGV. arm32 uses the equivalent `mov sp, fp` for the
-	// same reason; we mirror it here.
+	// loads garbage as fp/lr → ret to a bad address → SEGV.
 	g.label(retLabel)
 	g.emit("mov sp, x29")
 	g.emit("ldp x29, x30, [sp], #16")
@@ -1933,9 +1931,8 @@ func (g *generator) pop() {
 }
 
 // binPop — pop two values off the operand stack into x1 (lhs)
-// and x0 (rhs). Mirrors arm32's binPop. Produces the
-// natural form for non-commutative ops where the lhs ends up
-// in the second source register.
+// and x0 (rhs). Produces the natural form for non-commutative
+// ops where the lhs ends up in the second source register.
 func (g *generator) binPop() {
 	g.emit("ldr x0, [sp], #16") // rhs (top of stack)
 	g.emit("ldr x1, [sp], #16") // lhs (next)
@@ -1943,10 +1940,10 @@ func (g *generator) binPop() {
 
 // fbinPop32 pops two raw 32-bit float bit-patterns off the
 // operand stack and loads them into s0 (rhs) and s1 (lhs)
-// via fmov. Mirrors arm32's fbinPop. The bit patterns are
-// stored as i32 on the operand stack to keep the
-// push/pop discipline uniform across i32 / f32 / i64 / f64;
-// the V-register file gets involved only at op time.
+// via fmov. The bit patterns are stored as i32 on the operand
+// stack to keep the push/pop discipline uniform across i32 /
+// f32 / i64 / f64; the V-register file gets involved only at
+// op time.
 func (g *generator) fbinPop32() {
 	g.emit("ldr x0, [sp], #16") // rhs raw bits
 	g.emit("ldr x1, [sp], #16") // lhs raw bits
@@ -1966,7 +1963,7 @@ func (g *generator) fbinPop64() {
 // fcmpPop pops two floats, runs `fcmp` and `cset` to
 // normalise the flag-state to 0 / 1, then pushes the i32
 // result. The condition code chooses between the comparison
-// shapes (eq / ne / mi / ls / gt / ge — same set arm32 uses).
+// shapes (eq / ne / mi / ls / gt / ge).
 func (g *generator) fcmpPop(width int, cc string) {
 	if width == 64 {
 		g.fbinPop64()
@@ -2005,8 +2002,7 @@ func (g *generator) freshLabel(prefix string) string {
 // emitOp dispatches a single IR op to its arm64 lowering.
 // Each op consumes / produces operand-stack values via
 // push() / pop(). Unsupported ops surface explicit errors so
-// missing pieces are obvious; the per-op switch grows toward
-// arm32 parity over follow-up PRs.
+// missing pieces are obvious.
 //
 // The `scope` slice tracks open OpBlock / OpLoop / OpIf scopes
 // for `br` / `br_if` / `else` / `end` resolution. We pass it
@@ -2207,8 +2203,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.label(startL)
 		*scope = append(*scope, irScope{kind: ir.OpLoop, brTarget: startL, endLabel: endL})
 	case ir.OpIf:
-		// `cbz w0, elseL` branches when w0 == 0 — the
-		// arm64 fast-path equivalent of arm32's `cmp / beq`.
+		// `cbz w0, elseL` branches when w0 == 0.
 		// Tests only the low 32 bits because i32 truthiness
 		// is i32-shaped; using `cbz x0` would also test high
 		// bits which the 64-bit-arithmetic mode (see comments
@@ -2288,7 +2283,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpStrEq:
 		// Strings carry a trailing NUL alongside the length
 		// prefix; equality returns 0 / 1 from __lang_strcmp.
-		// Same shape as arm32.
 		g.usesStrcmp = true
 		g.emit("ldr x1, [sp], #16")
 		g.emit("ldr x0, [sp], #16")
@@ -2300,9 +2294,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	// -------- floats (f32 / f64) --------
 	//
 	// Float values live as raw bit patterns on the operand
-	// stack (same shape as arm32 — i32 / i64 / f32 / f64 all
-	// occupy 16-byte stack slots regardless of underlying
-	// type). For arithmetic + comparison the codegen moves
+	// stack — i32 / i64 / f32 / f64 all occupy 16-byte stack
+	// slots regardless of underlying type. For arithmetic +
+	// comparison the codegen moves
 	// the bit pattern into the V-register file (s0/s1 for
 	// single-precision, d0/d1 for double-precision), runs the
 	// op, and `fmov`s the result back. AArch64 has direct
@@ -2310,10 +2304,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	// shuffle on most cores.
 
 	case ir.OpConstF32:
-		// Materialise the f32 bit pattern as an i32 literal —
-		// same trick as arm32. The bit pattern bypasses the
-		// V-register file entirely, going straight onto the
-		// operand stack as a 32-bit raw value.
+		// Materialise the f32 bit pattern as an i32 literal.
+		// The bit pattern bypasses the V-register file
+		// entirely, going straight onto the operand stack as
+		// a 32-bit raw value.
 		bits := math.Float32bits(op.F32)
 		g.emit("mov x0, #%d", int64(bits))
 		g.push()
@@ -2504,10 +2498,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// AAPCS64: load args 0..n-1 from the operand stack into
 		// x0..x{n-1} (rightmost-on-top, so we pop in reverse
 		// order), then `bl target`. Result lands in x0; push it.
-		// Rewrite a small set of names that the lang prelude
-		// uses but arm32 ships under different symbol names —
-		// same approach as arm32_ops.go for `__memcpy` →
-		// `__lang_memcpy` etc.
+		// Rewrite a small set of names where the lang prelude's
+		// callable name differs from the emitted symbol (e.g.
+		// `__memcpy` → `__lang_memcpy`, `map_new` →
+		// `map_new_impl`).
 		target := op.Str
 		switch target {
 		case "__memcpy":
@@ -2520,7 +2514,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__alloc":
 			target = "__lang_alloc"
 			g.usesAlloc = true
-		case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr":
+		case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr", "__ptr_width":
 			g.usesRawIntPokes = true
 		case "__memset":
 			g.usesMemset = true
@@ -2548,8 +2542,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "tcp_close":
 			target = "__lang_tcp_close"
 			g.usesTcp = true
-		// Map / MapIter — same alias rewrites as arm32_ops.go
-		// (see PR #234). The lang Map runtime lives entirely
+		// Map / MapIter — the lang Map runtime lives entirely
 		// in the lang prelude under `_impl`-suffixed names;
 		// user-facing call sites use the unsuffixed mangled
 		// name and codegen rewrites here.
@@ -2603,9 +2596,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesEnv = true
 			g.usesAlloc = true
 		case "print":
-			// print(s): write string + newline. Same name
-			// rewrite arm32 does; the runtime helper handles
-			// both writes.
+			// print(s): write string + newline. The runtime
+			// helper handles both writes.
 			target = "__lang_puts"
 			g.usesPuts = true
 		case "write":

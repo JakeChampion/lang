@@ -3479,6 +3479,22 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpStoreLocal, I32: entriesSlot})
 
+	// Per-entry stride + V-slot offset come from __ptr_width()
+	// so the same IR works on wasm32 (4-byte ptr → stride 8,
+	// V-offset 4) and arm64 (8-byte ptr → stride 16, V-offset
+	// 8). Matches the prelude Map runtime's layout exactly.
+	ptrWSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_ptrw_%d", ptrWSlot)] = ptrWSlot
+	b.emit(Op{Kind: OpCallDirect, Str: "__ptr_width", I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: ptrWSlot})
+
+	strideSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mv_stride_%d", strideSlot)] = strideSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrWSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 2})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpStoreLocal, I32: strideSlot})
+
 	// arr = __alloc(4 + len * 8); *arr = len; data = arr + 4
 	b.emit(Op{Kind: OpConstI32, I32: 4})
 	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
@@ -3521,15 +3537,18 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	b.emit(Op{Kind: OpGeS})
 	b.brTo(loopExitD, true)
 
-	// cell = i32.load(entriesBase + i * 8 + 4)
+	// cell = __load_ptr(entriesBase + i * stride + ptrW)
+	// — V slot is pointer-width on arm64 (stores the cell ptr
+	// without truncating); on wasm32 stride=8, ptrW=4 so this
+	// matches the original i32.load.
 	b.emit(Op{Kind: OpLoadLocal, I32: entriesSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpLoadLocal, I32: strideSlot})
 	b.emit(Op{Kind: OpMul})
 	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrWSlot})
 	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpCallDirect, Str: "__load_ptr", I32: 1})
 	cellSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mv_cell_%d", cellSlot)] = cellSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})

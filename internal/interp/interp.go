@@ -1,7 +1,7 @@
 // Package interp is a small tree-walking interpreter for the lang AST.
 //
 // It's used by the REPL (cmd/lang -repl) and by tests; production
-// builds still go through the ARM32 / WASM code generators.
+// builds still go through the ARM64 / WASM code generators.
 //
 // Control flow inside a function uses a flow-tagged result value
 // rather than panics: each statement returns a stmtResult whose Flow
@@ -390,7 +390,7 @@ func builtinIntToString(_ *Interp, args []Value) (Value, error) {
 
 // builtinArenaSave / builtinArenaRestore are no-ops in the
 // tree-walking interpreter — Go's GC handles object lifetime.
-// The signatures match the ARM32 / WASM runtime helpers
+// The signatures match the ARM64 / WASM runtime helpers
 // (`number` opaque handle in/out) so user code that compiles
 // to either backend behaves identically when run through
 // the REPL.
@@ -1218,7 +1218,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		// most numeric casts are no-ops semantically. The exception
 		// is i64 → i32, which truncates the high 32 bits. Float
 		// casts aren't wired here because the interpreter doesn't
-		// currently model float values; the WASM / arm32 backends
+		// currently model float values; the WASM / arm64 backends
 		// own floats end-to-end.
 		v, err := i.evalExpr(x.Inner, env)
 		if err != nil {

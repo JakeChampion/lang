@@ -1,6 +1,6 @@
 // echo_handler.lang — minimal HTTP handler. Same source
 // compiles for two targets — wasi-http components and
-// arm32 native binaries — via the auto-`main()` synthesis:
+// arm64 native binaries — via the auto-`main()` synthesis:
 // programs that define `function handle(req): HttpResponse`
 // without their own `main()` get a synthesised
 // `main(): i32 { return tcp_serve(__port_from_env("PORT",
@@ -11,7 +11,7 @@
 //   $ lang -target wasi-http -wasi-adapter ... -o echo.wasm echo_handler.lang
 //   $ wasmtime serve echo.wasm
 //
-//   $ lang -target arm32 -o echo echo_handler.lang
+//   $ lang -target arm64 -o echo echo_handler.lang
 //   $ PORT=8080 ./echo &
 //
 //   $ curl -X POST -d 'hello' http://localhost:8080/foo/bar

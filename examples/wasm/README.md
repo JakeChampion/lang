@@ -6,11 +6,11 @@ what it does, what features it showcases, and the expected output
 (or curl shape, for the HTTP examples).
 
 These are kept separate from the parent `examples/` directory
-because they exercise features that aren't yet supported on the
-arm32 backend — `i64`, closures, float→int casts, and the
-prelude functions that depend on those (`Map`, `to_string` on
-`i64`, etc.). The arm32 CI step builds every `examples/*.lang`
-non-recursively, so the wasm-only ones live under here.
+because they exercise features that aren't yet supported on
+every native backend — closures, float→int casts, and the
+prelude functions that depend on them. CI builds every
+`examples/*.lang` non-recursively under both arm64 and wasm,
+so the wasm-only ones live under here.
 
 Build a CLI program:
 
@@ -34,7 +34,7 @@ $ wasmtime serve handler.wasm
 
 The parent `examples/` directory holds the cross-target basics
 (`hello.lang`, `factorial.lang`, `fizzbuzz.lang`, `array.lang`,
-`sum_for.lang`) — those compile under both `wasm` and `arm32`.
+`sum_for.lang`) — those compile under both `wasm` and `arm64`.
 
 | File | Target | What it shows |
 |---|---|---|
