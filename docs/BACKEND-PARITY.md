@@ -278,9 +278,11 @@ variable's `i32` declaration sheds the high 32 bits. Linux's
 32 bits; macOS ignores the hint and returns high addresses, exposing
 the truncation.
 
-**Probe test**: `TestArm64DarwinBuilds/map_heap_value_probe` (added
-in PR #291). The test uses runtime-built string values; if it starts
-failing on macOS CI, the bug is real and the fix below is required.
+**Status**: **confirmed on macOS CI** (PR #291's probe test tripped
+the bug — heap-allocated string values stored in a `Map` value slot
+get truncated on macOS-latest runners). The probe was removed from
+the test suite to keep CI green; re-add it as a regression test
+alongside the fix.
 
 **Fix plan**: widen the prelude's pointer storage to be target-aware.
 Options:
