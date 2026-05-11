@@ -34,6 +34,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
+	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
@@ -56,8 +57,8 @@ func absPath(p string) string {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
-	cc := flag.String("cc", "", "linker invoked when -o or --run is set; defaults to aarch64-linux-gnu-gcc for arm64 Linux and clang for arm64-darwin")
+	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-progress; PR 1 supports `return N` only), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
+	cc := flag.String("cc", "", "linker invoked when -o or --run is set; defaults to aarch64-linux-gnu-gcc for arm64 Linux, clang for arm64-darwin, x86_64-linux-gnu-gcc for x86-64")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
@@ -66,7 +67,7 @@ func main() {
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64|arm64-darwin|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
+		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       lang -fmt [-w | -d] FILE.lang")
 		fmt.Fprintln(os.Stderr, "       lang -repl")
 		flag.PrintDefaults()
@@ -183,19 +184,28 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		return 0, nil
 	}
 
-	if target != "arm64" && target != "arm64-darwin" {
-		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, wasm, or wasi-http)", target)
+	if target != "arm64" && target != "arm64-darwin" && target != "x86-64" {
+		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, x86-64, wasm, or wasi-http)", target)
 	}
 
 	darwin := target == "arm64-darwin"
-	asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin})
+	var asm string
+	switch target {
+	case "x86-64":
+		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{})
+	default:
+		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin})
+	}
 	if err != nil {
 		return 1, err
 	}
 	if cc == "" {
-		if darwin {
+		switch target {
+		case "x86-64":
+			cc = "x86_64-linux-gnu-gcc"
+		case "arm64-darwin":
 			cc = "clang"
-		} else {
+		default:
 			cc = "aarch64-linux-gnu-gcc"
 		}
 	}
@@ -236,6 +246,12 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		// Silicon Macs; qemu-aarch64 emulates Linux
 		// arm64 only and can't load Mach-O.
 		return 1, fmt.Errorf("--run is not supported for -target arm64-darwin (Mach-O binaries need an Apple Silicon Mac to execute; the output at %q is ready to run there)", binPath)
+	}
+	// If the user left -qemu at its default but built for
+	// x86-64, swap to qemu-x86_64 so --run picks the right
+	// emulator without manual flag-flipping.
+	if target == "x86-64" && qemu == "qemu-aarch64" {
+		qemu = "qemu-x86_64"
 	}
 	return execUnderQemu(qemu, binPath, progArgs)
 }
