@@ -186,3 +186,76 @@ function main(): i32 {
 		}
 	}
 }
+
+// String literals + len(). Each literal lives in .rodata
+// with a 4-byte little-endian length prefix at `[ptr - 4]`;
+// `len(s)` lowers to `OpConstStr; OpConstI32 4; OpSub;
+// OpLoad`. PR 3 wires the .rodata emission + the load width
+// dispatch, so this is the smallest test that catches a
+// broken length prefix or a broken `.LStr_N` address
+// materialisation.
+func TestX86_64StringLiteralLen(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 { return len("hello"); }`, 5},
+		{`function main(): i32 { return len("hello, world"); }`, 12},
+		{`function main(): i32 { return len(""); }`, 0},
+		{`function main(): i32 { return len("a") + len("bb") + len("ccc"); }`, 6},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
+// String concat via the runtime `__lang_strcat` helper.
+// Exercises the alloc + memcpy + length-prefix path
+// end-to-end: each `+` lowers to `OpCallDirect __lang_strcat`,
+// which mmaps the heap on first call, copies both operands
+// in, and returns a fresh data pointer.
+func TestX86_64StringConcat(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`function main(): i32 { return len("hello, " + "world!"); }`, 13},
+		{`function main(): i32 {
+    var a: string = "foo";
+    var b: string = "barbaz";
+    return len(a + b);
+}`, 9},
+		// Triple-concat — each `+` is left-associative so this
+		// flexes the strcat helper twice on the same arena.
+		{`function main(): i32 { return len("aa" + "bb" + "cc"); }`, 6},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%q: exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
+// stdout builtins lowered to direct write(2) syscalls.
+// Verifies the asm wires the right fd (1), length, and
+// newline behaviour: `print` adds one, `write` doesn't,
+// `putchar` writes a single byte.
+func TestX86_64Print(t *testing.T) {
+	out, code := compileAndRunX86_64(t, `function main(): i32 {
+    print("hello x86-64");
+    write("no-nl");
+    putchar(10);
+    putchar(65);
+    putchar(10);
+    return 0;
+}`)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	want := "hello x86-64\nno-nl\nA\n"
+	if out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
+	}
+}
