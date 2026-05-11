@@ -61,10 +61,17 @@ package ir
 // defunctionalised direct call ALSO get inlined if the hoisted
 // target qualifies; running before Fold/DCE would leave the
 // scratch arithmetic in a less foldable shape.
-func Defunctionalise(prog *Program) {
+//
+// pairEnvOffset is the byte offset of env_ptr within the
+// closure pair. wasm uses an 8-byte pair {fn_idx:i32@0,
+// env_ptr:i32@4} so passes 4; native (arm64 / x86-64) uses a
+// 16-byte pair {fn_ptr:i64@0, env_ptr:i64@8} so passes 8. The
+// loaded value width is `WidthPtr`, which resolves per-target
+// (4 on wasm32, 8 on native).
+func Defunctionalise(prog *Program, pairEnvOffset int32) {
 	returns := analyseReturnTargets(prog)
 	for _, fn := range prog.Funcs {
-		defunctionaliseFunc(fn, returns)
+		defunctionaliseFunc(fn, returns, pairEnvOffset)
 	}
 }
 
@@ -164,7 +171,7 @@ func returnTargetFor(fn *Func) (string, bool) {
 	return target, true
 }
 
-func defunctionaliseFunc(fn *Func, returns map[string]string) {
+func defunctionaliseFunc(fn *Func, returns map[string]string, pairEnvOffset int32) {
 	// Phase 1: identify monomorphic closure slots.
 	//
 	// monoSlot[slot] = target name when the slot is written
@@ -242,9 +249,9 @@ func defunctionaliseFunc(fn *Func, returns map[string]string) {
 				// the function-table sig before).
 				origArgc := fn.Ops[i+1].I32
 				out = append(out, op) // OpLoadLocal slot
-				out = append(out, Op{Kind: OpConstI32, I32: 4})
+				out = append(out, Op{Kind: OpConstI32, I32: pairEnvOffset})
 				out = append(out, Op{Kind: OpAdd})
-				out = append(out, Op{Kind: OpLoad})
+				out = append(out, Op{Kind: OpLoad, Width: WidthPtr})
 				out = append(out, Op{Kind: OpCallClosureDirect, Str: target, I32: origArgc + 1})
 				i++ // skip the original OpCallIndirect
 				continue
