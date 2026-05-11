@@ -809,6 +809,20 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// `__load_ptr` / `__store_ptr` — pointer-width memory pokes.
+	// On wasm32 / arm32 these are aliases of __load_i32 / __store_i32
+	// (4 bytes); arm64 backends ship 8-byte versions. Same name on
+	// all targets so the prelude can store the Map handle's
+	// data-ptr without the high bits of a 64-bit heap address
+	// getting truncated.
+	c.info.FuncSigs["__load_ptr"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["__store_ptr"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
 	// Wide / sub-i32 wat shims (`__load_i64` / `__store_i64`,
 	// `__load_f64` / `__store_f64`, `__load_u8` / `__store_u8`,
 	// `__load_u16` / `__store_u16`) were removed when

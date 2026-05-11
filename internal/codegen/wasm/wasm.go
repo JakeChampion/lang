@@ -518,7 +518,8 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					// Now lives in the lang prelude
 					// (internal/prelude/prelude.lang).
 				case "__memcpy", "__memset", "__alloc_u8",
-					"__alloc", "__load_i32", "__store_i32":
+					"__alloc", "__load_i32", "__store_i32",
+					"__load_ptr", "__store_ptr":
 					// Wat shims that wrap wasm's bulk-memory
 					// `memory.copy` / `memory.fill` plus a tiny
 					// allocator + raw 4-byte poke set. Exposed
@@ -3974,6 +3975,25 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.line(`)`)
 
 	g.line(`(func $__store_i32 (param $addr i32) (param $v i32)`)
+	g.indent++
+	g.line(`local.get $addr`)
+	g.line(`local.get $v`)
+	g.line(`i32.store`)
+	g.indent--
+	g.line(`)`)
+
+	// $__load_ptr / $__store_ptr — pointer-width counterparts.
+	// On wasm32 a pointer IS i32, so these are i32 round-trips.
+	// arm64 backends ship 8-byte versions to avoid heap-pointer
+	// truncation. The Map runtime uses these for its `m → buf`
+	// handle indirection so the same prelude works on both.
+	g.line(`(func $__load_ptr (param $addr i32) (result i32)`)
+	g.indent++
+	g.line(`local.get $addr`)
+	g.line(`i32.load`)
+	g.indent--
+	g.line(`)`)
+	g.line(`(func $__store_ptr (param $addr i32) (param $v i32)`)
 	g.indent++
 	g.line(`local.get $addr`)
 	g.line(`local.get $v`)
