@@ -192,6 +192,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArgs {
 		g.emitArgsRuntime()
 	}
+	if g.usesReadLine {
+		g.emitReadLineRuntime()
+	}
+	if g.usesStdin {
+		g.emitStdinRuntime()
+	}
 	g.emitDataSections()
 	if !g.darwin {
 		// `.note.GNU-stack` is an ELF-only directive — it
@@ -241,7 +247,7 @@ func (g *generator) emitDataSections() {
 		g.label(".LLangNewline")
 		g.line(`	.asciz "\n"`)
 	}
-	if g.usesAlloc || g.usesEnv || g.usesArgs {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine {
 		g.line("")
 		if g.darwin {
 			// Mach-O zero-initialised data lives in
@@ -278,6 +284,16 @@ func (g *generator) emitDataSections() {
 		g.line(`.align 3`)
 		g.label("__lang_args_cache")
 		g.line(`	.quad 0`)
+	}
+	if g.usesReadLine {
+		// 4 KiB scratch buffer for the byte-by-byte read loop.
+		// Same size arm32 uses. `.space N` works on both
+		// GNU as and Apple's integrated assembler (Mach-O
+		// .section __DATA,__bss accepts `.space` to reserve
+		// zero-filled bytes).
+		g.line(`.align 3`)
+		g.label("__lang_read_line_buf")
+		g.line(`	.space 4096`)
 	}
 }
 
@@ -1188,6 +1204,102 @@ func (g *generator) emitArgsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitReadLineRuntime emits `__lang_read_line()` — reads stdin
+// one byte at a time into the 4 KiB `__lang_read_line_buf`,
+// stops at '\n' (kept in the result) or 4 KiB or EOF/error.
+// Returns Option[string]: Some(line) when at least one byte
+// was read, None when the very first read returned 0 (EOF
+// before any input). Option layout matches arm32 / wasm:
+//
+//	Some: [tag=0 : 4][string_ptr : 4]   (8 bytes)
+//	None: [tag=1 : 4]                    (4 bytes)
+//
+// Callee-save x19/x20/x21 hold buf base, bytes-read, and the
+// just-read byte across the inner read syscall + alloc/memcpy
+// calls.
+func (g *generator) emitReadLineRuntime() {
+	g.line("")
+	g.line(".global __lang_read_line")
+	g.typeDirective("__lang_read_line")
+	g.label("__lang_read_line")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
+	g.adrpAdd("x19", "__lang_read_line_buf")
+	g.emit("mov x20, #0") // x20 = bytes read so far
+	g.label(".Lrl_loop")
+	g.emit("cmp x20, #4096")
+	g.emit("bge .Lrl_done")
+	// read(0, buf + x20, 1)
+	g.emit("mov x0, #0")
+	g.emit("add x1, x19, x20")
+	g.emit("mov x2, #1")
+	g.syscall("read")
+	// EOF (0) or error (<0) → finish.
+	g.emit("cmp x0, #1")
+	g.emit("blt .Lrl_done")
+	// Examine the byte just read.
+	g.emit("add x21, x19, x20")
+	g.emit("ldrb w21, [x21]")
+	g.emit("add x20, x20, #1")
+	g.emit("cmp w21, #10") // '\n'
+	g.emit("beq .Lrl_done")
+	g.emit("b .Lrl_loop")
+	g.label(".Lrl_done")
+	// EOF before any byte → return None.
+	g.emit("cbnz x20, .Lrl_some")
+	g.emit("mov x0, #4")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1
+	g.emit("b .Lrl_ret")
+	g.label(".Lrl_some")
+	// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
+	g.emit("add x0, x20, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add x21, x0, #4")     // x21 = data ptr
+	g.emit("stur w20, [x21, #-4]") // length prefix
+	// memcpy(x21, x19, x20)
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __lang_memcpy")
+	// Trailing NUL.
+	g.emit("add x0, x21, x20")
+	g.emit("strb wzr, [x0]")
+	// Wrap as Some(x21): alloc 8 bytes, [tag=0, str_ptr].
+	g.emit("mov x19, x21")        // stash str ptr in callee-save
+	g.emit("mov x0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")
+	g.emit("str w19, [x0, #4]")
+	g.label(".Lrl_ret")
+	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__lang_read_line")
+	g.line(".ltorg")
+}
+
+// emitStdinRuntime emits `__lang_stdin()` — a 1-instruction
+// stub that returns 0. The checker requires `stdin()` to be
+// callable but the arm64 backend doesn't yet model per-fd
+// Readers, so the receiver value is unused; any sentinel
+// works. Mirrors the same shape arm32 uses for stdin/stdout/
+// stderr (less the per-fd wrapping).
+func (g *generator) emitStdinRuntime() {
+	g.line("")
+	g.line(".global __lang_stdin")
+	g.typeDirective("__lang_stdin")
+	g.label("__lang_stdin")
+	g.emit("mov x0, #0")
+	g.emit("ret")
+	g.sizeDirective("__lang_stdin")
+	g.line(".ltorg")
+}
+
 // internString returns a unique .rodata label for s, allocating
 // a new one the first time we see this exact string and reusing
 // it on repeats.
@@ -1322,6 +1434,18 @@ type generator struct {
 	// Result cached via `__lang_args_cache` so repeat calls are
 	// O(1).
 	usesArgs bool
+	// usesReadLine pulls in `__lang_read_line()` — stdin
+	// one-byte reader. Returns Option[string]: Some(line)
+	// when at least one byte was read (line preserves its
+	// trailing newline), None when first read returned 0.
+	// Sized at 4 KiB via a .bss buffer; longer lines are
+	// truncated.
+	usesReadLine bool
+	// usesStdin pulls in a 4-byte `__lang_stdin()` stub that
+	// returns 0. The checker requires `stdin()` to be a
+	// callable; we don't model per-fd Readers, so the helper
+	// just returns a sentinel.
+	usesStdin bool
 }
 
 func (g *generator) line(s string) {
@@ -2355,6 +2479,31 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesArgs = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		case "read_line":
+			// read_line(): byte-by-byte stdin read into a 4 KiB
+			// .bss buffer; returns Option[string].
+			target = "__lang_read_line"
+			g.usesReadLine = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		case "__method_Reader_read_line":
+			// `stdin().read_line()` — the checker rewrites this
+			// method call to `__method_Reader_read_line(reader)`.
+			// We ignore the receiver and dispatch straight to
+			// __lang_read_line, which always reads from fd 0.
+			// Extending to per-fd readers needs a Reader struct
+			// + fd extraction; not yet required.
+			target = "__lang_read_line"
+			g.usesReadLine = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		case "stdin":
+			// stdin() returns a 4-byte Reader struct. We don't
+			// model per-fd Readers; return 0 (a benign sentinel
+			// the method dispatch ignores). Same idea for
+			// stdout/stderr if/when those land.
+			target = "__lang_stdin"
+			g.usesStdin = true
 		}
 		argc := int(op.I32)
 		if argc > regArgs {
