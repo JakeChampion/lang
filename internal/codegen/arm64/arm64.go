@@ -221,12 +221,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 func (g *generator) emitDataSections() {
 	g.line("")
 	if g.darwin {
-		// Mach-O cstring section — read-only ASCII strings.
-		// Mach-O's native equivalent of ELF's `.section
-		// .rodata`. The `cstring_literals` attribute lets the
-		// linker dedupe identical NUL-terminated string
-		// constants across object files.
-		g.line(`.section __TEXT,__cstring,cstring_literals`)
+		// Mach-O read-only data section. We deliberately do NOT
+		// use `__TEXT,__cstring,cstring_literals` here: ld64
+		// atomises that section per NUL-terminated entry and
+		// re-orders atoms across the whole link, which would
+		// detach our 4-byte length-prefix `.4byte N` from its
+		// paired `.LStr_X: .asciz` data. `__TEXT,__const` is
+		// the canonical read-only constants section — bytes
+		// stay in source order, no atomisation, no dedup.
+		g.line(`.section __TEXT,__const`)
 	} else {
 		g.line(`.section .rodata`)
 	}
