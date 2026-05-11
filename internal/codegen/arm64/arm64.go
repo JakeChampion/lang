@@ -192,6 +192,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArgs {
 		g.emitArgsRuntime()
 	}
+	if g.usesRandomBytes {
+		g.emitRandomBytesRuntime()
+	}
 	g.emitDataSections()
 	if !g.darwin {
 		// `.note.GNU-stack` is an ELF-only directive — it
@@ -1188,6 +1191,87 @@ func (g *generator) emitArgsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitRandomBytesRuntime emits `__lang_random_bytes(n)` —
+// allocates a fresh length-prefixed lang string of n bytes
+// and fills it with kernel CSPRNG output. Returns the data
+// pointer.
+//
+// Linux: single getrandom(buf, n, 0) syscall (#278). Blocking
+// /dev/urandom; flags=0.
+//
+// Darwin: getentropy(buf, len) (#500), max 256 bytes per
+// call. We loop in 256-byte chunks for n > 256. getentropy
+// has no flags arg.
+//
+// Both fill the buffer in-place; both append a trailing NUL
+// past the end so libc-shaped consumers don't read garbage.
+//
+// Frame uses callee-save x19 (data ptr base, used for the
+// trailing NUL + return) and x20 (n / write cursor).
+func (g *generator) emitRandomBytesRuntime() {
+	g.line("")
+	g.line(".global __lang_random_bytes")
+	g.typeDirective("__lang_random_bytes")
+	g.label("__lang_random_bytes")
+	// Frame uses callee-save x19..x22 so the Darwin chunked
+	// loop can keep cursor + remaining live across the inner
+	// getentropy syscall without an extra spill slot.
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("mov x20, x0") // x20 = n (saved for trailing NUL + length prefix)
+	// Allocate n + 5 (4 prefix + n data + 1 trailing NUL).
+	g.emit("add x0, x20, #5")
+	g.emit("bl __lang_alloc")
+	g.emit("add x19, x0, #4")     // x19 = data ptr base
+	g.emit("stur w20, [x19, #-4]") // length prefix
+	if g.darwin {
+		// Darwin getentropy(buf, len), syscall 500. Max 256
+		// bytes per call. Walk the buffer in 256-byte chunks
+		// using callee-save x21 (cursor) + x22 (remaining)
+		// so they survive across the syscall. The chunk size
+		// gets recomputed on each iteration; cheaper than
+		// stashing it.
+		g.emit("mov x21, x19") // write cursor
+		g.emit("mov x22, x20") // bytes remaining
+		g.label(".Lrb_loop")
+		g.emit("cbz x22, .Lrb_done")
+		g.emit("mov x0, x21")
+		g.emit("mov x1, #256")
+		g.emit("cmp x22, x1")
+		g.emit("csel x1, x22, x1, lo") // x1 = min(remaining, 256)
+		g.emit("mov x16, #500")        // SYS_getentropy
+		g.emit("svc #0x80")
+		// Recompute chunk size to advance cursor / remaining
+		// (x1 was clobbered by the syscall).
+		g.emit("mov x1, #256")
+		g.emit("cmp x22, x1")
+		g.emit("csel x1, x22, x1, lo")
+		g.emit("add x21, x21, x1")
+		g.emit("sub x22, x22, x1")
+		g.emit("b .Lrb_loop")
+		g.label(".Lrb_done")
+	} else {
+		// Linux getrandom(buf, len, flags=0), syscall 278.
+		g.emit("mov x0, x19")
+		g.emit("mov x1, x20")
+		g.emit("mov x2, #0")
+		g.emit("mov x8, #278")
+		g.emit("svc #0")
+	}
+	// Trailing NUL at data + n.
+	g.emit("add x1, x19, x20")
+	g.emit("strb wzr, [x1]")
+	g.emit("mov x0, x19")          // return data ptr
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__lang_random_bytes")
+	g.line(".ltorg")
+}
+
 // internString returns a unique .rodata label for s, allocating
 // a new one the first time we see this exact string and reusing
 // it on repeats.
@@ -1322,6 +1406,12 @@ type generator struct {
 	// Result cached via `__lang_args_cache` so repeat calls are
 	// O(1).
 	usesArgs bool
+	// usesRandomBytes pulls in `__lang_random_bytes(n)` —
+	// allocates an n-byte string and fills it with kernel
+	// CSPRNG output via `getrandom(2)` on Linux or chunked
+	// `getentropy(2)` on Darwin. Suitable for session IDs,
+	// tokens, etc.
+	usesRandomBytes bool
 }
 
 func (g *generator) line(s string) {
@@ -2355,6 +2445,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesArgs = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		case "random_bytes":
+			// random_bytes(n): allocates an n-byte string and
+			// fills it with kernel CSPRNG output. Linux uses
+			// getrandom (syscall 278); Darwin uses chunked
+			// getentropy (syscall 500, max 256 bytes/call).
+			target = "__lang_random_bytes"
+			g.usesRandomBytes = true
+			g.usesAlloc = true
 		}
 		argc := int(op.I32)
 		if argc > regArgs {
