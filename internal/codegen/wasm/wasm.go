@@ -135,7 +135,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// turns the folded program into WAT, reusing the module-level
 	// scaffolding (runtime helpers, function table, closure cells,
 	// data segments, exports) defined alongside it.
-	ip, err := ir.Lower(prog, info)
+	ip, err := ir.LowerWith(prog, info, 4)
 	if err != nil {
 		return "", err
 	}

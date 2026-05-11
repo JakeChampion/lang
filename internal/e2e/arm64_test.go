@@ -659,6 +659,98 @@ func TestArm64DarwinBuilds(t *testing.T) {
     m.delete("c");
     return m.get_or("a", 0) * 10 + m.len();
 }`, 11},
+		// Option[string] payload — the Some(s) variant now
+		// stores `s` in a pointer-width payload slot (8
+		// bytes on arm64), so the high 32 bits of macOS
+		// heap pointers survive the match's payload-load.
+		// `len(s)` reads s's length prefix at [s_ptr - 4],
+		// which would trap on a truncated pointer.
+		{"option_str", `function get_msg(): Option[string] {
+    return Some("hi there");
+}
+function main(): i32 {
+    match (get_msg()) {
+        Some(s) => { return len(s); },
+        None => { return 0; }
+    }
+    return -1;
+}`, 8},
+		// User-defined enum with a pointer-typed payload —
+		// same widening as Option[string] but exercises the
+		// full payloadLayout / payloadStore / payloadLoad
+		// triple for a non-prelude variant.
+		{"enum_str", `enum Msg {
+    Text(string),
+    Empty
+}
+function build(): Msg {
+    return Text("payload-string");
+}
+function main(): i32 {
+    match (build()) {
+        Text(s) => { return len(s); },
+        Empty => { return 0; }
+    }
+    return -1;
+}`, 14},
+		// Struct with a string field — exercises ptrW-aware
+		// field offsets and stores. `name` lands at offset
+		// 8 (aligned to 8) on arm64, sandwiched between two
+		// i32 fields, and round-trips a real heap pointer.
+		{"struct_str_field", `struct Person {
+    age: i32,
+    name: string,
+    weight: i32
+}
+function main(): i32 {
+    var p: Person = Person { age: 30, name: "Claude", weight: 100 };
+    return len(p.name) + p.age + p.weight;
+}`, 136},
+		// Array of strings — array literal stride + element
+		// store widened to 8 bytes for pointer-typed elems
+		// on arm64; indexing via __arr_idx_8 picks the
+		// matching `lsl #3` address compute.
+		{"string_arr", `function main(): i32 {
+    var xs: string[] = ["alpha", "beta", "gamma"];
+    return len(xs[0]) + len(xs[1]) + len(xs[2]) + len(xs);
+}`, 17},
+		// Map[string, i32].keys() — the snapshot array is
+		// now ptrW-aware (destStride=8 on arm64 for pointer
+		// K), so iterating the keys() result and calling
+		// len() on each returns valid lengths instead of
+		// segfaulting on truncated pointers.
+		{"map_keys_str", `function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("alpha", 1);
+    m.set("beta", 2);
+    m.set("gamma", 3);
+    var ks: string[] = m.keys();
+    var i: i32 = 0;
+    var total: i32 = 0;
+    while (i < len(ks)) {
+        total = total + len(ks[i]);
+        i = i + 1;
+    }
+    return total;
+}`, 14},
+		// Map[i32, string].values() — same shape on the V
+		// side. valKind is now tracked at buf+12 so
+		// __map_values_impl picks destStride correctly per-
+		// instance without per-V monomorphisation.
+		{"map_values_str", `function main(): i32 {
+    var m: Map[i32, string] = map_new(4);
+    m.set(1, "one");
+    m.set(2, "two");
+    m.set(3, "three");
+    var vs: string[] = m.values();
+    var i: i32 = 0;
+    var total: i32 = 0;
+    while (i < len(vs)) {
+        total = total + len(vs[i]);
+        i = i + 1;
+    }
+    return total;
+}`, 11},
 	}
 
 	for _, c := range cases {

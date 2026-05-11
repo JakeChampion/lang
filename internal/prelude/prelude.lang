@@ -1399,7 +1399,7 @@ function json_parse(s: string): Option[JsonValue] {
 //   +0   cap     : i32 — bucket count, power-of-2, ≥ 4
 //   +4   len     : i32 — live entry count
 //   +8   keyKind : i32 — 0 = i32-sized scalar, 1 = string
-//   +12  _pad    : i32 — reserved (future fingerprint metadata)
+//   +12  valKind : i32 — 0 = i32-scalar, 1 = pointer-shaped
 //   +16  buckets : i32[cap]            (-1 empty, -2 tombstone)
 //   +16+cap*4  entries : (k,v)[cap]    per-entry stride = 2 * __ptr_width()
 //                                      (8 on wasm32, 16 on arm64)
@@ -1456,14 +1456,14 @@ function __map_hash(k: i32, keyKind: i32): i32 {
     return h;
 }
 
-function map_new_impl(cap_hint: i32, keyKind: i32): i32 {
+function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): i32 {
     var cap: i32 = __map_pow2_ceil(cap_hint);
     var entryStride: i32 = 2 * __ptr_width();
     var buf: i32 = __alloc(16 + cap * (4 + entryStride));
     __store_i32(buf,      cap);
     __store_i32(buf + 4,  0);
     __store_i32(buf + 8,  keyKind);
-    __store_i32(buf + 12, 0);
+    __store_i32(buf + 12, valKind);
     __memset(buf + 16, 255, cap * 4);            // buckets → all -1
     // Map handle is a heap-allocated pointer cell. 8 bytes
     // accommodates a 64-bit `buf` pointer on arm64; wasm32
@@ -1548,6 +1548,7 @@ function __map_grow(m: i32): i32 {
     var oldCap: i32 = __load_i32(oldBuf);
     var oldLen: i32 = __load_i32(oldBuf + 4);
     var oldKK:  i32 = __load_i32(oldBuf + 8);
+    var oldVK:  i32 = __load_i32(oldBuf + 12);
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
     var oldEntries: i32 = oldBuf + 16 + oldCap * 4;
@@ -1558,7 +1559,7 @@ function __map_grow(m: i32): i32 {
     __store_i32(newBuf,      newCap);
     __store_i32(newBuf + 4,  oldLen);
     __store_i32(newBuf + 8,  oldKK);
-    __store_i32(newBuf + 12, 0);
+    __store_i32(newBuf + 12, oldVK);
     __memset(newBuf + 16, 255, newCap * 4);      // empty buckets
     var newEntries: i32 = newBuf + 16 + newCap * 4;
     var i: i32 = 0;
@@ -1631,41 +1632,54 @@ function __map_set_impl(m: i32, k: i32, v: i32) {
     __store_i32(buf + 4, len_ + 1);
 }
 
-// Snapshot keys / values into a freshly-allocated `i32[]`.
-// Insertion order preserved up to any deletions (which use
-// swap-with-last, reordering past the deleted slot). The
-// returned i32[] reinterprets cleanly as the caller-typed
-// `K[]` / `V[]` *when the column is i32-sized*, since both
-// lower to a 4-byte-pointer-stride owned array at the wasm
-// level. For string K/V the low 32 bits of the entry slot
-// are copied (the slot itself is pointer-width on arm64);
-// good enough on wasm32 and arm64-linux where heap pointers
-// fit in 32 bits, but truncates on arm64-darwin (≥4GiB).
-// Widening string[] to pointer-width stride is tracked
-// separately.
-function __map_column(m: i32, kvOffset: i32): i32 {
+// Snapshot a column (keys or values) into a freshly-allocated
+// length-prefixed array. `kvOffset` selects the column within
+// each entry; `destStride` is the byte stride of the result
+// array's element type (4 for i32-sized, ptr-width for
+// pointer-shaped). Insertion order preserved up to any
+// deletions (swap-with-last reorders past the deleted slot).
+//
+// Two-mode dispatch on destStride: i32-stride uses i32 loads/
+// stores (low 32 bits of the entry slot, which IS the value
+// when K/V is i32); pointer-stride uses __load_ptr / __store_
+// ptr so the full heap address survives on arm64.
+function __map_column(m: i32, kvOffset: i32, destStride: i32): i32 {
     var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var entryStride: i32 = 2 * __ptr_width();
     var entriesBase: i32 = buf + 16 + cap * 4;
-    var arr: i32 = __alloc(4 + len_ * 4);
+    var arr: i32 = __alloc(4 + len_ * destStride);
     __store_i32(arr, len_);
     var i: i32 = 0;
     while (i < len_) {
-        var v: i32 = __load_i32(entriesBase + i * entryStride + kvOffset);
-        __store_i32(arr + 4 + i * 4, v);
+        if (destStride == 4) {
+            var v32: i32 = __load_i32(entriesBase + i * entryStride + kvOffset);
+            __store_i32(arr + 4 + i * 4, v32);
+        } else {
+            var vp: i32 = __load_ptr(entriesBase + i * entryStride + kvOffset);
+            __store_ptr(arr + 4 + i * destStride, vp);
+        }
         i = i + 1;
     }
     return arr + 4;
 }
 
 function __map_keys_impl(m: i32): i32 {
-    return __map_column(m, 0);
+    var buf: i32 = __load_ptr(m);
+    var keyKind: i32 = __load_i32(buf + 8);
+    var destStride: i32 = 4;
+    if (keyKind == 1) { destStride = __ptr_width(); }
+    return __map_column(m, 0, destStride);
 }
 
 function __map_values_impl(m: i32): i32 {
-    return __map_column(m, __ptr_width());
+    var buf: i32 = __load_ptr(m);
+    var valKind: i32 = __load_i32(buf + 12);
+    var ptrW: i32 = __ptr_width();
+    var destStride: i32 = 4;
+    if (valKind == 1) { destStride = ptrW; }
+    return __map_column(m, ptrW, destStride);
 }
 
 function __map_delete_impl(m: i32, k: i32): boolean {

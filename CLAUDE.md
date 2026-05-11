@@ -23,19 +23,23 @@ as a constraint to preserve.
 - ARM64 / aarch64 Darwin — Mach-O for native Apple Silicon Macs
   (`-target arm64-darwin`). No Linux container needed; clang +
   ld64 (native) or clang + lld (cross from Linux) link directly.
-  Verified end-to-end on `macos-14` CI runner. Map operations
-  (`set`/`get_or`/`has`/`delete`/`iter`/`len`) work for
-  `Map[i32, i32]`, `Map[string, _]`, `Map[_, string]`, and
-  `Map[string, string]` — the prelude Map runtime sizes per-
-  entry K/V slots via `__ptr_width()` (4 on wasm32, 8 on
-  arm64) so heap pointers round-trip through 8-byte slots on
-  arm64-darwin's high heap. **Remaining gap**: `.keys()` /
-  `.values()` on string-typed maps still truncate, because
-  the snapshot array is `i32[]` (4-byte stride). Same root
-  cause shows up in `.get()` returning `Option[string]` (the
-  Some payload is a 4-byte slot). Both need `string[]` arrays
-  and pointer-typed enum payloads widened to 8 bytes on arm64
-  — tracked as a follow-up.
+  Verified end-to-end on `macos-14` CI runner. All pointer-
+  shaped values (string / array / struct / enum / slice /
+  tuple) round-trip through 8-byte slots on arm64-darwin's
+  high heap. The IR has a `WidthPtr` sentinel on
+  `Op.Width` that each backend resolves to its heap-pointer
+  width (4 on wasm32, 8 on arm64); `ast.IsPointerType` is
+  the type-side classifier that drives stride / offset /
+  store-width selection in `payloadSlotSize`,
+  `structFieldLayout`, `tupleElemLayout`, `arrayElemStoreOp`,
+  and `ast.ElemSizeBytesFor`. Map operations
+  (`set`/`get_or`/`has`/`delete`/`iter`/`len`/`keys`/`values`)
+  cover all combinations of i32 / string K/V. The remaining
+  arm64 limit is closures with captures (`OpMakeClosure` /
+  `OpMakeEnv` aren't lowered on arm64 yet — wasm only); when
+  that lands the `ptrW`-aware capture layout from
+  `closureconv` will line up with the load side
+  (`payloadLoadOp` on CaptureRef already emits `WidthPtr`).
 - WASI / WebAssembly (currently exercised via wasmtime)
 - x86-64 is on the roadmap. The `ir.TailCallOptimize` pass lives
   in `internal/ir/tco.go` waiting on x86-64 codegen; no backend
