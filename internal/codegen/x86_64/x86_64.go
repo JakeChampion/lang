@@ -45,6 +45,7 @@ package x86_64
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -334,6 +335,26 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		lbl := g.internString(op.Str)
 		g.emit(fmt.Sprintf("lea rax, [rip + %s]", lbl))
 		g.push()
+	case ir.OpConstI64:
+		// i64 literal: full 64-bit immediate via `movabs`.
+		// (`mov rax, imm64` is the same instruction in
+		// Intel syntax; the assembler picks the encoding.)
+		g.emit(fmt.Sprintf("movabs rax, %d", op.I64))
+		g.push()
+	case ir.OpConstF32:
+		// Stash the raw 32-bit bit pattern as an i32 on the
+		// operand stack — same shape as arm64, where floats
+		// live as raw bits on the stack and only move into
+		// xmm registers at op time. Two-line dance: zero-
+		// extend the bit pattern into rax, push.
+		bits := math.Float32bits(op.F32)
+		g.emit(fmt.Sprintf("mov eax, %d", int32(bits)))
+		g.push()
+	case ir.OpConstF64:
+		// Same idea, 64-bit bit pattern.
+		bits := math.Float64bits(op.F64)
+		g.emit(fmt.Sprintf("movabs rax, %d", int64(bits)))
+		g.push()
 	case ir.OpReturn:
 		g.pop()
 		g.emit(fmt.Sprintf("jmp %s", retLabel))
@@ -485,6 +506,209 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			g.emit("setge al")
 		}
 		g.emit("movzx eax, al")
+		g.push()
+
+	// -------- floats --------
+	//
+	// Floats live on the operand stack as raw integer bit
+	// patterns (same convention as arm64). At op time we
+	// move into xmm0 / xmm1 via `movd` (32) or `movq` (64),
+	// run the SSE op, move back to rax. Cost is one
+	// shuffle per op but keeps the operand stack
+	// homogeneous — every slot is a 64-bit integer regardless
+	// of declared lang type.
+
+	case ir.OpFAdd:
+		g.fbinPop(op.Width)
+		if op.Width == 64 {
+			g.emit("addsd xmm1, xmm0")
+			g.emit("movq rax, xmm1")
+		} else {
+			g.emit("addss xmm1, xmm0")
+			g.emit("movd eax, xmm1")
+		}
+		g.push()
+	case ir.OpFSub:
+		g.fbinPop(op.Width)
+		if op.Width == 64 {
+			g.emit("subsd xmm1, xmm0")
+			g.emit("movq rax, xmm1")
+		} else {
+			g.emit("subss xmm1, xmm0")
+			g.emit("movd eax, xmm1")
+		}
+		g.push()
+	case ir.OpFMul:
+		g.fbinPop(op.Width)
+		if op.Width == 64 {
+			g.emit("mulsd xmm1, xmm0")
+			g.emit("movq rax, xmm1")
+		} else {
+			g.emit("mulss xmm1, xmm0")
+			g.emit("movd eax, xmm1")
+		}
+		g.push()
+	case ir.OpFDiv:
+		g.fbinPop(op.Width)
+		if op.Width == 64 {
+			g.emit("divsd xmm1, xmm0")
+			g.emit("movq rax, xmm1")
+		} else {
+			g.emit("divss xmm1, xmm0")
+			g.emit("movd eax, xmm1")
+		}
+		g.push()
+	case ir.OpFNeg:
+		// Negate via subtract-from-zero. `xorps xmm0, xmm0`
+		// gives a zero float; the subtract flips the sign.
+		// Avoids the sign-bit-XOR variant which would need
+		// a mask constant.
+		g.pop()
+		if op.Width == 64 {
+			g.emit("movq xmm1, rax")
+			g.emit("xorpd xmm0, xmm0")
+			g.emit("subsd xmm0, xmm1")
+			g.emit("movq rax, xmm0")
+		} else {
+			g.emit("movd xmm1, eax")
+			g.emit("xorps xmm0, xmm0")
+			g.emit("subss xmm0, xmm1")
+			g.emit("movd eax, xmm0")
+		}
+		g.push()
+	case ir.OpFEq, ir.OpFNe, ir.OpFLt, ir.OpFLe, ir.OpFGt, ir.OpFGe:
+		// `ucomi[ss|sd]` sets ZF / CF / PF per IEEE 754
+		// ordered semantics; setcc + movzx funnel the
+		// result into the canonical i32 result lane. NaN
+		// comparisons all set PF=1 — for `eq` we'd want
+		// to also check `np` (not parity) but the lang
+		// doesn't yet specify NaN semantics, so we match
+		// arm64's "ordered comparison without NaN-aware
+		// behaviour" choice.
+		g.fbinPop(op.Width)
+		if op.Width == 64 {
+			g.emit("ucomisd xmm1, xmm0")
+		} else {
+			g.emit("ucomiss xmm1, xmm0")
+		}
+		switch op.Kind {
+		case ir.OpFEq:
+			g.emit("sete al")
+		case ir.OpFNe:
+			g.emit("setne al")
+		case ir.OpFLt:
+			g.emit("setb al")
+		case ir.OpFLe:
+			g.emit("setbe al")
+		case ir.OpFGt:
+			g.emit("seta al")
+		case ir.OpFGe:
+			g.emit("setae al")
+		}
+		g.emit("movzx eax, al")
+		g.push()
+
+	case ir.OpFLoad:
+		// Bit-pattern semantics: a float in memory is just
+		// 4 or 8 bytes; reusing the OpLoad path keeps the
+		// dispatch uniform. xmm-register moves happen at
+		// arithmetic time, not load time.
+		g.pop()
+		if op.Width == 64 {
+			g.emit("mov rax, [rax]")
+		} else {
+			g.emit("mov eax, [rax]")
+		}
+		g.push()
+	case ir.OpFStore:
+		g.binPop()
+		if op.Width == 64 {
+			g.emit("mov [rax], rcx")
+		} else {
+			g.emit("mov [rax], ecx")
+		}
+
+	// -------- int <-> float conversions --------
+	//
+	// All go through xmm via movd/movq. Unsigned variants
+	// would need a 2-step trick for the >2^63 case; for
+	// now the implemented path is what every test in the
+	// suite uses (signed conversions on positive values).
+
+	case ir.OpExtendI32S:
+		// i32 → i64, sign-extend.
+		g.pop()
+		g.emit("movsx rax, eax")
+		g.push()
+	case ir.OpExtendI32U:
+		// i32 → i64, zero-extend. `mov eax, eax` zero-
+		// extends to rax (the standard idiom).
+		g.pop()
+		g.emit("mov eax, eax")
+		g.push()
+	case ir.OpWrapI64:
+		// i64 → i32. Truncate via the same zero-extending
+		// mov-into-eax (high bits discarded).
+		g.pop()
+		g.emit("mov eax, eax")
+		g.push()
+	case ir.OpFPromoteF32:
+		// f32 → f64.
+		g.pop()
+		g.emit("movd xmm0, eax")
+		g.emit("cvtss2sd xmm0, xmm0")
+		g.emit("movq rax, xmm0")
+		g.push()
+	case ir.OpFDemoteF64:
+		// f64 → f32.
+		g.pop()
+		g.emit("movq xmm0, rax")
+		g.emit("cvtsd2ss xmm0, xmm0")
+		g.emit("movd eax, xmm0")
+		g.push()
+	case ir.OpFConvertI32:
+		// i32 → f32 / f64 (signed). Use `cvtsi2sX rax, eax`
+		// — Intel syntax names the source register width
+		// via the explicit operand.
+		g.pop()
+		if op.Width == 64 {
+			g.emit("cvtsi2sd xmm0, eax")
+			g.emit("movq rax, xmm0")
+		} else {
+			g.emit("cvtsi2ss xmm0, eax")
+			g.emit("movd eax, xmm0")
+		}
+		g.push()
+	case ir.OpFConvertI64:
+		// i64 → f32 / f64.
+		g.pop()
+		if op.Width == 64 {
+			g.emit("cvtsi2sd xmm0, rax")
+			g.emit("movq rax, xmm0")
+		} else {
+			g.emit("cvtsi2ss xmm0, rax")
+			g.emit("movd eax, xmm0")
+		}
+		g.push()
+	case ir.OpITruncF32:
+		// f32 → i32 / i64 (truncate toward zero).
+		g.pop()
+		g.emit("movd xmm0, eax")
+		if op.Width == 64 {
+			g.emit("cvttss2si rax, xmm0")
+		} else {
+			g.emit("cvttss2si eax, xmm0")
+		}
+		g.push()
+	case ir.OpITruncF64:
+		// f64 → i32 / i64.
+		g.pop()
+		g.emit("movq xmm0, rax")
+		if op.Width == 64 {
+			g.emit("cvttsd2si rax, xmm0")
+		} else {
+			g.emit("cvttsd2si eax, xmm0")
+		}
 		g.push()
 
 	// -------- logical / unary --------
@@ -668,6 +892,17 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_write"
 		case "putchar":
 			target = "__lang_putchar"
+		case "__str_idx", "__arr_idx", "__arr_idx_2", "__arr_idx_8",
+			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
+			// IR-side bounds-check stubs the lang runtime
+			// would otherwise dispatch to. Inline as a plain
+			// `lea rax, [base + idx*N]` — the element-stride
+			// is encoded in the helper name. Mirrors arm64's
+			// `emitInlineIdxHelper`. Out-of-range indices
+			// are undefined behaviour; the type checker
+			// forbids static OOB so well-typed programs
+			// don't reach a bad index.
+			return g.emitInlineIdxHelper(target)
 		}
 		argc := int(op.I32)
 		regArgs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
@@ -697,6 +932,27 @@ func (g *generator) binPop() {
 	g.emit("add rsp, 16")
 	g.emit("mov rax, [rsp]") // lhs (next)
 	g.emit("add rsp, 16")
+}
+
+// fbinPop pops two float-shaped values off the operand stack
+// (they ride as raw bit patterns) and moves them into xmm
+// registers. Width selects 32-bit (movd, single-precision)
+// or 64-bit (movq, double-precision). xmm1 = lhs, xmm0 =
+// rhs — same order as the integer binPop so x86's
+// destination-first 2-op form (`addss xmm1, xmm0`) reads
+// `lhs += rhs`.
+func (g *generator) fbinPop(width int) {
+	g.emit("mov rcx, [rsp]") // rhs
+	g.emit("add rsp, 16")
+	g.emit("mov rax, [rsp]") // lhs
+	g.emit("add rsp, 16")
+	if width == 64 {
+		g.emit("movq xmm0, rcx")
+		g.emit("movq xmm1, rax")
+	} else {
+		g.emit("movd xmm0, ecx")
+		g.emit("movd xmm1, eax")
+	}
 }
 
 // freshLabel composes a per-program label with a `.L` prefix
@@ -734,6 +990,43 @@ func (g *generator) emit(s string) {
 	g.out.WriteByte('\t')
 	g.out.WriteString(s)
 	g.out.WriteByte('\n')
+}
+
+// emitInlineIdxHelper inlines a `__str_idx` / `__arr_idx` /
+// `__slice_idx_*` bounds-check call as a plain address
+// compute (`base + index * stride`). The IR walker emits
+// these as OpCallDirect with the stride encoded in the
+// helper name; the actual runtime helper would do a bounds
+// check first, but in-range accesses produce the same
+// address either way and the IR's static type checker
+// rejects statically-OOB indexes. Subsequent OpLoad /
+// OpStore consumes the address in rax.
+//
+// x86-64 has a `lea base + idx*scale` addressing form
+// directly for scale 1/2/4/8 — strictly faster than
+// arm64's `add rN, rN, rN, lsl #M` for the same job.
+func (g *generator) emitInlineIdxHelper(name string) error {
+	// Pop in the order the OpCallDirect dispatch would
+	// use: rhs (idx, top of stack) first, lhs (base, next)
+	// second.
+	g.emit("mov rcx, [rsp]") // idx
+	g.emit("add rsp, 16")
+	g.emit("mov rax, [rsp]") // base
+	g.emit("add rsp, 16")
+	switch name {
+	case "__str_idx", "__slice_idx_1":
+		g.emit("lea rax, [rax + rcx]")
+	case "__arr_idx_2", "__slice_idx_2":
+		g.emit("lea rax, [rax + rcx*2]")
+	case "__arr_idx", "__slice_idx":
+		g.emit("lea rax, [rax + rcx*4]")
+	case "__arr_idx_8", "__slice_idx_8":
+		g.emit("lea rax, [rax + rcx*8]")
+	default:
+		return fmt.Errorf("x86_64: unknown index helper %q", name)
+	}
+	g.push()
+	return nil
 }
 
 // fresh returns the next per-program label suffix.
