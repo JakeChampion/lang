@@ -23,16 +23,19 @@ as a constraint to preserve.
 - ARM64 / aarch64 Darwin — Mach-O for native Apple Silicon Macs
   (`-target arm64-darwin`). No Linux container needed; clang +
   ld64 (native) or clang + lld (cross from Linux) link directly.
-  Verified end-to-end on `macos-14` CI runner. Map[i32, i32]
-  works (the `m → buf` handle uses `__store_ptr` / `__load_ptr`
-  — 8 bytes on arm64). **Remaining gap**: `Map[string, _]` and
-  `Map[_, string]` still store string keys/values in 4-byte
-  entry slots (per-entry stride is 8 = 4-byte key + 4-byte
-  value); high bits of macOS heap pointers get truncated when
-  the key or value is a string. Needs a type-aware entry-stride
-  widening (i32 stays 4 bytes; string pointer needs 8 on arm64).
-  Excluded from the macos-14 matrix until fixed; tracked
-  separately.
+  Verified end-to-end on `macos-14` CI runner. Map operations
+  (`set`/`get_or`/`has`/`delete`/`iter`/`len`) work for
+  `Map[i32, i32]`, `Map[string, _]`, `Map[_, string]`, and
+  `Map[string, string]` — the prelude Map runtime sizes per-
+  entry K/V slots via `__ptr_width()` (4 on wasm32, 8 on
+  arm64) so heap pointers round-trip through 8-byte slots on
+  arm64-darwin's high heap. **Remaining gap**: `.keys()` /
+  `.values()` on string-typed maps still truncate, because
+  the snapshot array is `i32[]` (4-byte stride). Same root
+  cause shows up in `.get()` returning `Option[string]` (the
+  Some payload is a 4-byte slot). Both need `string[]` arrays
+  and pointer-typed enum payloads widened to 8 bytes on arm64
+  — tracked as a follow-up.
 - WASI / WebAssembly (currently exercised via wasmtime)
 - x86-64 is on the roadmap. The `ir.TailCallOptimize` pass lives
   in `internal/ir/tco.go` waiting on x86-64 codegen; no backend

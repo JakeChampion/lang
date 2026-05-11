@@ -1083,7 +1083,7 @@ type FuncDecl struct {
 	// `handle(req: HttpRequest): HttpResponse` with no
 	// user-defined main). The body is `return tcp_serve(
 	// __port_from_env("PORT", 8080), handle);` — exactly what
-	// arm32 / wasm-CLI need for a CLI HTTP server. The wasi-
+	// arm64 / wasm-CLI need for a CLI HTTP server. The wasi-
 	// http codegen path uses the existing `wasi:http/incoming
 	// -handler.handle` export wrapper instead, so it drops the
 	// synthesised main (and the tcp_serve transitive imports)

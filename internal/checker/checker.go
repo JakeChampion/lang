@@ -822,6 +822,16 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// `__ptr_width()` — returns the target's pointer width in
+	// bytes: 4 on wasm32, 8 on arm64. The Map runtime uses it
+	// to size per-entry key/value slots so heap pointers (string
+	// keys/values) round-trip through 8-byte slots on arm64 (and
+	// stay 4-byte on wasm32, no regression in bucket-buffer
+	// size).
+	c.info.FuncSigs["__ptr_width"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
 	// Wide / sub-i32 wat shims (`__load_i64` / `__store_i64`,
 	// `__load_f64` / `__store_f64`, `__load_u8` / `__store_u8`,
 	// `__load_u16` / `__store_u16`) were removed when

@@ -124,7 +124,7 @@ Five PRs, each shippable. Breaking changes are fine — single user.
 
 - Replace `number` with sized integer types: `i8`, `i16`, `i32`,
   `i64`, `u8`, `u16`, `u32`, `u64`. `isize` / `usize` are aliases
-  (`i32` / `u32` on wasm32, `i32` / `u32` on arm32).
+  (`i32` / `u32` on wasm32, `i64` / `u64` on arm64).
 - Default literal type stays `i32`. Literals are polymorphic in
   expected-type context: `let x: i64 = 1` works without a cast.
 - Explicit conversion only (`x as i64`); no implicit widening.
@@ -133,8 +133,8 @@ Five PRs, each shippable. Breaking changes are fine — single user.
 - The historical `number` alias was dropped in PR 1's
   follow-up cleanup; use `i32` / `i64` / `u32` etc. directly.
 - Update WASM codegen: i64 ops via `i64.*` instructions.
-- arm32 codegen: i64 deferred — error out with a clear message if
-  used; everything else routes through existing i32 codegen.
+- arm64 codegen: i64 routes through 64-bit X-regs directly; no
+  separate codepath needed.
 
 Status:
 - `i32` / `i64` shipped (PR 1 main).
@@ -711,7 +711,7 @@ to smallest. Status pending unless marked.
   semicolons), and the whole construct evaluates to the unified
   arm type. Lowers identically to the (now-removed) ternary —
   same typed `if/else` block in the IR, same `if (result T)` at
-  the wasm level, same predicated-load conversion on arm32. The
+  the wasm level, same conditional-branch lowering on arm64. The
   statement form `if (cond) { stmts; } [else { stmts; }]` is
   unchanged; expression and statement positions are
   syntactically distinct because parseStmt dispatches `if`
@@ -799,13 +799,13 @@ to smallest. Status pending unless marked.
   `state { var hits: i32 = 0; var greeting: string = "hi, "
   + name(); }` declares module-global mutable variables.
   Literal scalar inits bake into the wasm `(global $state_NAME
-  (mut T) (T.const N))` directly (or arm32's `.data` label).
+  (mut T) (T.const N))` directly (or arm64's `.data` label).
   Non-literal inits and `string` allocations route through a
   synthesised `__state_init` start function.
 
   Init runtime: wasm wires `(start $__state_init)` so it
   runs at instantiation, before any host-callable export.
-  arm32 calls `__state_init` from `_start` after
+  arm64 calls `__state_init` from `_start` after
   `__lang_heap_init` and before `main`. State init runs
   while the bump cursor is still at its initial position, so
   any allocations the init expression performs (e.g. string
@@ -855,28 +855,16 @@ to smallest. Status pending unless marked.
   are correct.
 
   **Backend coverage.** wasm + wasi-http: full two-cursor
-  allocator with state-rooted call-site wrapping. arm32:
-  state{} declarations + init expressions ship; the
-  persistent cursor is a no-op (OpPersistentSet pushes /
-  OpPersistentRestore pops a placeholder value) since arm32
-  is CLI-only today and there's no `arena_save` /
-  `arena_restore` cycle to reclaim state allocations. Once
-  arm32 grows a handler model (the native HTTP server work)
-  the persistent-cursor wiring lifts straight from the wasm
-  side. Tested under qemu-arm via
-  `TestArm32StateScalarCounter`,
-  `TestArm32StateMultipleVars`,
-  `TestArm32StateStringConcat`, and
-  `TestArm32StateComputedScalarInit`.
-
-  Arm32 is **not** CLI-only — it's a real native target on
-  the same long-term trajectory as wasm: the next state{}
-  PR (two-cursor allocator for pointer-shaped state) ships
-  to arm32 alongside wasm. Native HTTP server use cases on
-  arm32
-  (socket / bind / listen / accept syscalls + an accept loop
-  that calls `handle()` per connection) is tracked separately
-  but follows the same backend-parity principle.
+  allocator with state-rooted call-site wrapping. arm64:
+  state{} declarations + init expressions ride the shared IR;
+  the persistent cursor is a no-op today since arm64 is CLI-
+  focused and there's no `arena_save` / `arena_restore` cycle
+  yet. Native HTTP server use cases on arm64 (socket / bind /
+  listen / accept syscalls + an accept loop that calls
+  `handle()` per connection) are tracked separately but
+  follow the same backend-parity principle — when arm64 grows
+  a handler model the persistent-cursor wiring lifts straight
+  from the wasm side.
 
 - **Numeric literal suffixes — shipped.** `42i64`, `7u8`,
   `0f32`, `1.5f64`, `42f64` (integer text + float suffix
@@ -1173,7 +1161,7 @@ helpers):
 | Tiny helpers (`s.is_empty()`)    | direct one-op     | call overhead     |
 | Recursive walkers (json encoder) | one alloc per buf | match-arm + heap  |
 | IR optimisations (peephole, dce) | invisible         | applied           |
-| Cross-target (wasm + arm32)      | duplicate per backend | one source    |
+| Cross-target (wasm + arm64)      | duplicate per backend | one source    |
 | Maintainability                  | verbose, fiddly   | concise           |
 
 The wins from IR-routing are **maintainability + cross-target
@@ -1229,9 +1217,9 @@ the lang's abstraction layers.
    alias that rewrites each call to its concrete `_impl`
    counterpart in the prelude — same pattern as the
    `__array_append_jsonvalue → __array_append_string`
-   alias. Backends without bulk-memory (eg arm32 today)
-   trip an "unsupported" path during codegen; wat is the
-   only consumer for now.
+   alias. Native backends provide `__memcpy` / `__memset` /
+   `__alloc` directly (arm64 inlines them as small leaf
+   functions; wasm wraps `memory.copy` / `memory.fill`).
 
    Drive-by escape hatch: `[u8]` slice and `u8[]` owned
    array now cast to `i32` to recover the data pointer.

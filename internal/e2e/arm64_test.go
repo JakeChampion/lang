@@ -1,8 +1,8 @@
-// arm64 (aarch64) Linux end-to-end tests. The arm64 backend
-// is a parallel codegen target alongside arm32; the IR layer
-// is shared but the assembly emit + Linux syscall numbers
-// are arm64-specific. Each test SKIPs (rather than fails)
-// when the cross-compiler or qemu-aarch64 isn't installed.
+// arm64 (aarch64) Linux end-to-end tests. The IR layer is
+// shared with the wasm backend, but the assembly emit + Linux
+// syscall numbers are arm64-specific. Each test SKIPs (rather
+// than fails) when the cross-compiler or qemu-aarch64 isn't
+// installed.
 //
 // Tests run the compiled binary under qemu-aarch64, which
 // uses the host's Linux kernel via user-mode emulation. On
@@ -297,7 +297,7 @@ func TestArm64Floats(t *testing.T) {
 // arm64 indirect calls: OpConstFunc (function value
 // materialisation via adrp + add :lo12:) + OpCallIndirect
 // (blr xN). Lets handlers be passed as function values to
-// generic helpers like tcp_serve. Same shape arm32 uses.
+// generic helpers like tcp_serve.
 func TestArm64IndirectCall(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 {
@@ -312,8 +312,7 @@ function main(): i32 {
 // arm64 print / write / putchar — stdout builtins lowered to
 // direct write(2) syscalls. Verifies the asm wires the right
 // fd, length, and newline behaviour (`print` adds one, `write`
-// does not). Same shape arm32 uses under the hood, modulo the
-// AAPCS64 reg names.
+// does not).
 func TestArm64Print(t *testing.T) {
 	out, code := compileAndRunArm64(t, `function main(): i32 {
     print("hello arm64");
@@ -580,8 +579,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// Map handle now uses __store_ptr / __load_ptr (8
 		// bytes on arm64) so the buf pointer round-trips
 		// correctly even when macOS hands us heap addresses
-		// above 4 GiB. String-keyed Maps still depend on
-		// 4-byte entry slots; that's a separate follow-up.
+		// above 4 GiB.
 		{"map_i32", `function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(1, 100);
@@ -594,12 +592,73 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		{"random_bytes", `function main(): i32 {
     return len(random_bytes(32));
 }`, 32},
-		// Map is deliberately not exercised here yet — the
-		// runtime round-trips heap pointers through 32-bit
-		// storage slots (__store_i32 / __load_i32), and
-		// macOS hands out high addresses that don't fit.
-		// Needs the prelude widened to i64 pointer storage;
-		// follow-up PR.
+		// Map[string, i32] — string keys exercise the
+		// pointer-width entry-slot fix. set("world", 99)
+		// writes the string pointer through __store_ptr (8
+		// bytes on arm64), so lookup with the same key
+		// (FNV-1a hash + byte-wise string compare) finds
+		// the entry even when the heap is above 4 GiB. The
+		// returned i32 value rides x0 untruncated.
+		{"map_str_key", `function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("hello", 42);
+    m.set("world", 99);
+    return m.get_or("world", 0);
+}`, 99},
+		// Map[i32, string] — string values. get_or returns
+		// the entry's pointer-width V slot via __load_ptr;
+		// the i32-typed return rides x0 as a full 64-bit
+		// pointer, and len(s) reads s's length prefix at
+		// the correct (high-bit-preserved) address.
+		{"map_str_val", `function main(): i32 {
+    var m: Map[i32, string] = map_new(4);
+    m.set(1, "abc");
+    m.set(2, "abcdef");
+    return len(m.get_or(2, ""));
+}`, 6},
+		// Map[string, string] — both key and value are
+		// pointer-width. End-to-end check that the entry
+		// stride doubled to 2*ptr_width on arm64 (16 bytes)
+		// without breaking the bucket arithmetic.
+		{"map_str_str", `function main(): i32 {
+    var m: Map[string, string] = map_new(4);
+    m.set("k1", "ab");
+    m.set("k2", "abcde");
+    return len(m.get_or("k2", ""));
+}`, 5},
+		// Iteration over Map[string, i32] via has_next /
+		// key / value — accumulates the sum of all values.
+		// Exercises __mapiter_entry_addr's stride math and
+		// the pointer-width key load (even though we don't
+		// inspect keys here, the iterator's address math
+		// must use the same entryStride or it'd walk off).
+		{"map_str_iter", `function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("a", 10);
+    m.set("b", 20);
+    m.set("c", 30);
+    var it: MapIter[string, i32] = m.iter();
+    var sum: i32 = 0;
+    while (it.has_next()) {
+        sum = sum + it.value();
+        it.advance();
+    }
+    return sum;
+}`, 60},
+		// Delete over a string-keyed map — verifies the
+		// swap-with-last path correctly uses __load_ptr /
+		// __store_ptr on the moved entry's K/V slots. After
+		// removing "b" and "c", get_or("a") still finds the
+		// remaining entry.
+		{"map_str_delete", `function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("a", 1);
+    m.set("b", 2);
+    m.set("c", 3);
+    m.delete("b");
+    m.delete("c");
+    return m.get_or("a", 0) * 10 + m.len();
+}`, 11},
 	}
 
 	for _, c := range cases {

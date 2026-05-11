@@ -1401,9 +1401,17 @@ function json_parse(s: string): Option[JsonValue] {
 //   +8   keyKind : i32 — 0 = i32-sized scalar, 1 = string
 //   +12  _pad    : i32 — reserved (future fingerprint metadata)
 //   +16  buckets : i32[cap]            (-1 empty, -2 tombstone)
-//   +16+cap*4  entries : (k,v)[cap]    8-byte (k:i32, v:i32) pairs
+//   +16+cap*4  entries : (k,v)[cap]    per-entry stride = 2 * __ptr_width()
+//                                      (8 on wasm32, 16 on arm64)
 //
-// Total: 16 + 12*cap bytes.
+// Entry slots use `__store_ptr` / `__load_ptr` so heap-address
+// keys/values (string pointers on arm64-darwin's high heap)
+// round-trip without truncation. i32-sized K/V keep working
+// because arm64 LDR Wn zero-extends and STR Xn writes the same
+// low-32 bits; on wasm32 the slot stays 4 bytes (`__store_ptr`
+// is a 4-byte i32.store), no regression in buffer size.
+//
+// Total: 16 + cap * (4 + 2 * __ptr_width()) bytes.
 
 function __map_pow2_ceil(n: i32): i32 {
     if (n <= 4) { return 4; }
@@ -1450,7 +1458,8 @@ function __map_hash(k: i32, keyKind: i32): i32 {
 
 function map_new_impl(cap_hint: i32, keyKind: i32): i32 {
     var cap: i32 = __map_pow2_ceil(cap_hint);
-    var buf: i32 = __alloc(16 + 12 * cap);
+    var entryStride: i32 = 2 * __ptr_width();
+    var buf: i32 = __alloc(16 + cap * (4 + entryStride));
     __store_i32(buf,      cap);
     __store_i32(buf + 4,  0);
     __store_i32(buf + 8,  keyKind);
@@ -1481,13 +1490,14 @@ function __map_lookup(m: i32, k: i32): i32 {
     var cap: i32 = __load_i32(buf);
     var keyKind: i32 = __load_i32(buf + 8);
     var mask: i32 = cap - 1;
+    var entryStride: i32 = 2 * __ptr_width();
     var entriesBase: i32 = buf + 16 + cap * 4;
     var bucket: i32 = __map_hash(k, keyKind) & mask;
     while (true) {
         var b: i32 = __load_i32(buf + 16 + bucket * 4);
         if (b == 0 - 1) { return 0 - 1; }
         if (b != 0 - 2) {
-            var entryK: i32 = __load_i32(entriesBase + b * 8);
+            var entryK: i32 = __load_ptr(entriesBase + b * entryStride);
             var eq: boolean = false;
             if (keyKind == 0) {
                 eq = entryK == k;
@@ -1510,8 +1520,10 @@ function __map_get_impl(m: i32, k: i32): Option[i32] {
     if (idx == 0 - 1) { return None; }
     var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
     var entriesBase: i32 = buf + 16 + cap * 4;
-    return Some(__load_i32(entriesBase + idx * 8 + 4));
+    return Some(__load_ptr(entriesBase + idx * entryStride + ptrW));
 }
 
 function __map_get_or_impl(m: i32, k: i32, fallback: i32): i32 {
@@ -1519,8 +1531,10 @@ function __map_get_or_impl(m: i32, k: i32, fallback: i32): i32 {
     if (idx == 0 - 1) { return fallback; }
     var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
     var entriesBase: i32 = buf + 16 + cap * 4;
-    return __load_i32(entriesBase + idx * 8 + 4);
+    return __load_ptr(entriesBase + idx * entryStride + ptrW);
 }
 
 // __map_grow doubles the kv buffer's capacity and re-hashes
@@ -1534,11 +1548,13 @@ function __map_grow(m: i32): i32 {
     var oldCap: i32 = __load_i32(oldBuf);
     var oldLen: i32 = __load_i32(oldBuf + 4);
     var oldKK:  i32 = __load_i32(oldBuf + 8);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
     var oldEntries: i32 = oldBuf + 16 + oldCap * 4;
     var newCap: i32 = 4;
     if (oldCap != 0) { newCap = oldCap << 1; }
     var newMask: i32 = newCap - 1;
-    var newBuf: i32 = __alloc(16 + 12 * newCap);
+    var newBuf: i32 = __alloc(16 + newCap * (4 + entryStride));
     __store_i32(newBuf,      newCap);
     __store_i32(newBuf + 4,  oldLen);
     __store_i32(newBuf + 8,  oldKK);
@@ -1547,10 +1563,10 @@ function __map_grow(m: i32): i32 {
     var newEntries: i32 = newBuf + 16 + newCap * 4;
     var i: i32 = 0;
     while (i < oldLen) {
-        var key: i32 = __load_i32(oldEntries + i * 8);
-        var val: i32 = __load_i32(oldEntries + i * 8 + 4);
-        __store_i32(newEntries + i * 8,     key);
-        __store_i32(newEntries + i * 8 + 4, val);
+        var key: i32 = __load_ptr(oldEntries + i * entryStride);
+        var val: i32 = __load_ptr(oldEntries + i * entryStride + ptrW);
+        __store_ptr(newEntries + i * entryStride,        key);
+        __store_ptr(newEntries + i * entryStride + ptrW, val);
         var bucket: i32 = __map_hash(key, oldKK) & newMask;
         while (true) {
             var b: i32 = __load_i32(newBuf + 16 + bucket * 4);
@@ -1579,6 +1595,8 @@ function __map_set_impl(m: i32, k: i32, v: i32) {
     }
     var keyKind: i32 = __load_i32(buf + 8);
     var mask: i32 = cap - 1;
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
     var entriesBase: i32 = buf + 16 + cap * 4;
     var bucket: i32 = __map_hash(k, keyKind) & mask;
     var insertSlot: i32 = 0 - 1;
@@ -1592,7 +1610,7 @@ function __map_set_impl(m: i32, k: i32, v: i32) {
             if (insertSlot == 0 - 1) { insertSlot = bucket; }
             bucket = (bucket + 1) & mask;
         } else {
-            var entryK: i32 = __load_i32(entriesBase + b * 8);
+            var entryK: i32 = __load_ptr(entriesBase + b * entryStride);
             var eq: boolean = false;
             if (keyKind == 0) {
                 eq = entryK == k;
@@ -1600,15 +1618,15 @@ function __map_set_impl(m: i32, k: i32, v: i32) {
                 eq = (entryK as string) == (k as string);
             }
             if (eq) {
-                __store_i32(entriesBase + b * 8 + 4, v);
+                __store_ptr(entriesBase + b * entryStride + ptrW, v);
                 return;
             }
             bucket = (bucket + 1) & mask;
         }
     }
     // Append entry at index = len.
-    __store_i32(entriesBase + len_ * 8,     k);
-    __store_i32(entriesBase + len_ * 8 + 4, v);
+    __store_ptr(entriesBase + len_ * entryStride,        k);
+    __store_ptr(entriesBase + len_ * entryStride + ptrW, v);
     __store_i32(buf + 16 + insertSlot * 4, len_);
     __store_i32(buf + 4, len_ + 1);
 }
@@ -1617,18 +1635,25 @@ function __map_set_impl(m: i32, k: i32, v: i32) {
 // Insertion order preserved up to any deletions (which use
 // swap-with-last, reordering past the deleted slot). The
 // returned i32[] reinterprets cleanly as the caller-typed
-// `K[]` / `V[]` since both lower to a 4-byte-pointer-stride
-// owned array at the wasm level.
+// `K[]` / `V[]` *when the column is i32-sized*, since both
+// lower to a 4-byte-pointer-stride owned array at the wasm
+// level. For string K/V the low 32 bits of the entry slot
+// are copied (the slot itself is pointer-width on arm64);
+// good enough on wasm32 and arm64-linux where heap pointers
+// fit in 32 bits, but truncates on arm64-darwin (≥4GiB).
+// Widening string[] to pointer-width stride is tracked
+// separately.
 function __map_column(m: i32, kvOffset: i32): i32 {
     var buf: i32 = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
+    var entryStride: i32 = 2 * __ptr_width();
     var entriesBase: i32 = buf + 16 + cap * 4;
     var arr: i32 = __alloc(4 + len_ * 4);
     __store_i32(arr, len_);
     var i: i32 = 0;
     while (i < len_) {
-        var v: i32 = __load_i32(entriesBase + i * 8 + kvOffset);
+        var v: i32 = __load_i32(entriesBase + i * entryStride + kvOffset);
         __store_i32(arr + 4 + i * 4, v);
         i = i + 1;
     }
@@ -1640,7 +1665,7 @@ function __map_keys_impl(m: i32): i32 {
 }
 
 function __map_values_impl(m: i32): i32 {
-    return __map_column(m, 4);
+    return __map_column(m, __ptr_width());
 }
 
 function __map_delete_impl(m: i32, k: i32): boolean {
@@ -1649,6 +1674,8 @@ function __map_delete_impl(m: i32, k: i32): boolean {
     var len_: i32 = __load_i32(buf + 4);
     var keyKind: i32 = __load_i32(buf + 8);
     var mask: i32 = cap - 1;
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
     var entriesBase: i32 = buf + 16 + cap * 4;
     var bucket: i32 = __map_hash(k, keyKind) & mask;
     var foundBucket: i32 = 0 - 1;
@@ -1657,7 +1684,7 @@ function __map_delete_impl(m: i32, k: i32): boolean {
         var b: i32 = __load_i32(buf + 16 + bucket * 4);
         if (b == 0 - 1) { break; }
         if (b != 0 - 2) {
-            var entryK: i32 = __load_i32(entriesBase + b * 8);
+            var entryK: i32 = __load_ptr(entriesBase + b * entryStride);
             var eq: boolean = false;
             if (keyKind == 0) {
                 eq = entryK == k;
@@ -1681,14 +1708,14 @@ function __map_delete_impl(m: i32, k: i32): boolean {
         // moved entry's bucket pointer to its new index. The
         // last entry is alive (about to be removed) so the
         // probe will hit it.
-        var lastKey: i32 = __load_i32(entriesBase + last * 8);
+        var lastKey: i32 = __load_ptr(entriesBase + last * entryStride);
         var lastBucket: i32 = __map_hash(lastKey, keyKind) & mask;
         while (__load_i32(buf + 16 + lastBucket * 4) != last) {
             lastBucket = (lastBucket + 1) & mask;
         }
-        var lastVal: i32 = __load_i32(entriesBase + last * 8 + 4);
-        __store_i32(entriesBase + idx * 8,     lastKey);
-        __store_i32(entriesBase + idx * 8 + 4, lastVal);
+        var lastVal: i32 = __load_ptr(entriesBase + last * entryStride + ptrW);
+        __store_ptr(entriesBase + idx * entryStride,        lastKey);
+        __store_ptr(entriesBase + idx * entryStride + ptrW, lastVal);
         __store_i32(buf + 16 + lastBucket * 4, idx);
     }
     __store_i32(buf + 4, last);
@@ -1727,15 +1754,16 @@ function __mapiter_entry_addr(it: i32): i32 {
     var buf: i32 = __load_ptr(it);
     var cap: i32 = __load_i32(buf);
     var i: i32 = __load_i32(it + 8);
-    return buf + 16 + cap * 4 + i * 8;
+    var entryStride: i32 = 2 * __ptr_width();
+    return buf + 16 + cap * 4 + i * entryStride;
 }
 
 function __mapiter_key_impl(it: i32): i32 {
-    return __load_i32(__mapiter_entry_addr(it));
+    return __load_ptr(__mapiter_entry_addr(it));
 }
 
 function __mapiter_value_impl(it: i32): i32 {
-    return __load_i32(__mapiter_entry_addr(it) + 4);
+    return __load_ptr(__mapiter_entry_addr(it) + __ptr_width());
 }
 
 function __mapiter_advance_impl(it: i32) {

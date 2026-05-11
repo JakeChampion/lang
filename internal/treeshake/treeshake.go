@@ -3,11 +3,10 @@
 //
 // The lang prelude (internal/prelude) injects helpers into
 // every program, but most programs use only a small subset.
-// Without tree-shaking, codegen would emit (and arm32 would
-// fail to lower) every prelude helper — including ones that
-// rely on i64 ops that the arm32 backend doesn't yet
-// support. Tree-shake makes the prelude effectively
-// pay-for-what-you-use.
+// Without tree-shaking, codegen would emit every prelude
+// helper, blowing up binary size for trivial programs.
+// Tree-shake makes the prelude effectively pay-for-what-you-
+// use.
 //
 // Algorithm: collect entry points (main + handle + anything
 // referenced as a function value or address-taken), then BFS
@@ -123,7 +122,7 @@ func Run(prog *ast.Program, extras ...string) {
 	// `__state_init` is the synthesised start function that
 	// runs state-block init expressions at module instantiation
 	// time. Codegen wires it up through the wasm `(start ...)`
-	// section / arm32's `_start` prologue, neither of which the
+	// section / arm64's `_start` prologue, neither of which the
 	// AST walker sees — pin it as an entry point so its body
 	// (and anything it calls) survives tree-shaking.
 	enqueue("__state_init")

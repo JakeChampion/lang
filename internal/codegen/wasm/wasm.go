@@ -519,7 +519,7 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					// (internal/prelude/prelude.lang).
 				case "__memcpy", "__memset", "__alloc_u8",
 					"__alloc", "__load_i32", "__store_i32",
-					"__load_ptr", "__store_ptr":
+					"__load_ptr", "__store_ptr", "__ptr_width":
 					// Wat shims that wrap wasm's bulk-memory
 					// `memory.copy` / `memory.fill` plus a tiny
 					// allocator + raw 4-byte poke set. Exposed
@@ -3998,6 +3998,15 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.line(`local.get $addr`)
 	g.line(`local.get $v`)
 	g.line(`i32.store`)
+	g.indent--
+	g.line(`)`)
+
+	// $__ptr_width returns the pointer width in bytes: 4 on
+	// wasm32, 8 on arm64. The Map runtime uses this constant
+	// to size per-entry key/value slots.
+	g.line(`(func $__ptr_width (result i32)`)
+	g.indent++
+	g.line(`i32.const 4`)
 	g.indent--
 	g.line(`)`)
 
