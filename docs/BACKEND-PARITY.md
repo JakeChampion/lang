@@ -222,3 +222,104 @@ When picking any one of these, the pattern is the same as the closures
 PR (#279): mirror the wasm version, add tests at the level the wasm
 suite exercises, and re-run the full suite (including wasm e2e) before
 opening the PR.
+
+---
+
+## Supported OS / runtime versions
+
+We support only the **latest** version of each target's host OS or
+runtime. The CI runner labels reflect that policy:
+
+- Linux: `ubuntu-latest` (tracks the current Ubuntu LTS image).
+- macOS: `macos-latest` (tracks Apple's current macOS release —
+  Sequoia / Tahoe / etc. — on Apple Silicon arm64). Pinning to
+  `macos-14` or older is explicitly not supported.
+- wasm: `wasmtime` pinned to a specific version in
+  `.github/workflows/ci.yml`. Bumps land as part of the dep refresh
+  cycle.
+
+If a future macOS release breaks something:
+1. **Preferred**: fix the codegen for the new version.
+2. **Acceptable for short-lived breakages**: document the regression
+   in this file's "Known limitations" section with a tracking PR
+   reference.
+3. **Not supported**: pinning CI to an older `macos-N` label to dodge
+   the breakage.
+
+---
+
+## Known limitations
+
+Items that are known-broken in some configuration but considered too
+costly (or too speculative) to fix right now. Each entry should have a
+concrete fix plan and a rough scope estimate.
+
+### arm64-darwin heap-address truncation in Map runtime
+
+**Scope**: macOS-only.
+
+**Symptom**: `Map[K, V]` values that are HEAP-allocated pointers
+(e.g. runtime-built strings via `+` concat, structs, arrays) get
+truncated when stored in Map value slots. Values that come from
+`.rodata` (string literals) work fine because they live below 4 GiB
+in the binary's address space; the heap on macOS-14+ is typically
+above 4 GiB.
+
+**Root cause**: the prelude declares pointer-holding locals as `i32`:
+
+```
+var buf: i32 = __load_ptr(m);   // truncates a 64-bit heap pointer
+```
+
+On wasm32 this is correct (pointers are 32-bit). On native (Linux +
+Darwin) the runtime stores 8 bytes via `__store_ptr`, but the lang
+variable's `i32` declaration sheds the high 32 bits. Linux's
+`__lang_alloc` hints `0x10000000` so heap pointers happen to fit in
+32 bits; macOS ignores the hint and returns high addresses, exposing
+the truncation.
+
+**Probe test**: `TestArm64DarwinBuilds/map_heap_value_probe` (added
+in PR #291). The test uses runtime-built string values; if it starts
+failing on macOS CI, the bug is real and the fix below is required.
+
+**Fix plan**: widen the prelude's pointer storage to be target-aware.
+Options:
+
+1. Introduce a `usize` lang type that's 4 bytes on wasm32 and 8 bytes
+   on native. Update `__alloc` / `__load_ptr` / `__store_ptr` to
+   return / take `usize`. Update all prelude pointer locals
+   (~30 sites in the Map runtime plus the string / slice runtimes)
+   from `i32` to `usize`.
+2. Widen `__load_ptr` / `__store_ptr` / `__alloc` unconditionally to
+   `i64`. On wasm32 the value gets truncated to 32 bits on store,
+   which is correct (pointers fit). On native the full 64 bits
+   survive. Less type-system change but more semantically awkward.
+
+Multi-day refactor with cross-target testing required. Holding off
+until either a real workload hits the bug or option (1)'s `usize` is
+useful for other reasons (e.g. native CLI tooling that needs
+`isize`-shaped indexing).
+
+### Wide-scalar Map keys / values (i64 / u64 / f64)
+
+**Scope**: all targets (wasm too — the limit is shared).
+
+**Symptom**: `Map[i64, i32]` or `Map[i32, f64]` doesn't type-check.
+The checker constrains K to i32-shaped scalars or string and V to
+pointer-sized values.
+
+**Root cause**: the prelude's Map runtime hardcodes an entry stride
+of `2 * __ptr_width()` — assumes K and V both fit in pointer-width
+slots. Widening requires per-instantiation entry layouts or runtime
+type tags.
+
+**Fix plan**: monomorphise the Map runtime per K/V instantiation,
+with the checker emitting a separate `__map_set_impl_<KH>_<VH>` etc.
+per width combination. Or: introduce a runtime entry-shape descriptor
+(in the buffer header) that the impl branches on. The latter avoids
+binary-size explosion at the cost of branch prediction on the hot
+path.
+
+Multi-day refactor. Defer until a real workload needs wide-key Maps;
+the current `Map[i32, _]` and `Map[string, _]` cover edge-handler /
+HTTP / config / state-cache use cases adequately.
