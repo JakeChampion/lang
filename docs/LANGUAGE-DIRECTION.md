@@ -363,9 +363,10 @@ Deferred to a follow-up:
     snapshots — mutating the map afterwards doesn't affect
     the returned arrays. Wide V (i64 / u64 / f64) is handled
     by an IR-level intercept that follows the cell-pointer
-    boxing and copies into a real wide-stride array. A non-allocating iterator
-    (`m.iter()` returning a stateful cursor) is a future
-    follow-up.
+    boxing and copies into a real wide-stride array. The
+    non-allocating cursor iterator `m.iter()` ships separately —
+    see "Cursor iteration shipped" further down for the
+    `has_next` / `key` / `value` / `advance` API.
   - **`m.delete(k)` shipped.** Returns `true` when the key
     was present, `false` otherwise. Implementation is
     swap-with-last (O(1)); insertion order isn't preserved

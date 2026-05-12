@@ -298,6 +298,26 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 // isn't pulled in.
 func (g *generator) emitDataSections() {
 	g.line("")
+	// Static closure-pair cells for OpConstFunc-referenced
+	// functions. Each cell holds {fn_ptr (8B), env=0 (8B)}.
+	if len(g.constFuncCells) > 0 {
+		if g.darwin {
+			g.line(`.section __TEXT,__const`)
+		} else {
+			g.line(`.section .rodata`)
+		}
+		names := make([]string, 0, len(g.constFuncCells))
+		for n := range g.constFuncCells {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			g.line(".align 3")
+			g.label(fmt.Sprintf("__closure_cell_%s", name))
+			g.line(fmt.Sprintf("\t.quad %s", name))
+			g.line("\t.quad 0")
+		}
+	}
 	if g.darwin {
 		// Mach-O read-only data section. We deliberately do NOT
 		// use `__TEXT,__cstring,cstring_literals` here: ld64
@@ -2859,6 +2879,13 @@ type generator struct {
 	// payloadless-variant constructions. One .rodata symbol per
 	// tag value gets reserved in emitDataSections.
 	enumSentinelTags map[int]bool
+	// constFuncCells tracks function names referenced via
+	// OpConstFunc. Each gets a 16-byte static .rodata cell
+	// `{fn_ptr, 0}` so OpCallIndirect can deref every callee
+	// (top-level fn value or heap-allocated closure) through a
+	// uniform pair shape. Mirrors the x86-64 + wasm closure
+	// shape.
+	constFuncCells map[string]bool
 	// usesArrEmpty gates the `.LArr_Empty` sentinel — a shared
 	// static 4-byte `[length=0]` buffer that __alloc_u8(0)
 	// returns instead of allocating a fresh length-only block.
@@ -3583,13 +3610,19 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpConstFunc:
-		// Function values materialise as the direct code
-		// address of the named function. AArch64 has no
-		// funcref table abstraction (unlike wasm); the
-		// assembler resolves `=name` into a literal-pool entry
-		// holding the symbol's absolute address. OpCallIndirect
-		// then `blr` to it.
-		g.adrpAdd("x0", op.Str)
+		// Function values materialise as static 16-byte
+		// closure-pair cells in .rodata: { fn_ptr (8B),
+		// env_ptr=0 (8B) }. Mirrors the x86-64 + wasm shape so
+		// OpCallIndirect can uniformly deref every callee
+		// pair — top-level fn values (env=0) and runtime-
+		// allocated closures (env points at the captured-slot
+		// block) reach the same dispatch path.
+		cell := fmt.Sprintf("__closure_cell_%s", op.Str)
+		if g.constFuncCells == nil {
+			g.constFuncCells = map[string]bool{}
+		}
+		g.constFuncCells[op.Str] = true
+		g.adrpAdd("x0", cell)
 		g.push()
 
 	case ir.OpReturn:
@@ -4197,17 +4230,32 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpCallIndirect:
-		// Function-value call: the IR emitted the function-
-		// pointer immediately before the call op (via
-		// OpLoadLocal / OpConstFunc), so the pointer is on top
-		// of the stack and args are below it in left-to-right
-		// order. arm64 uses `blr x16` (branch-with-link
-		// register) — x16 is a caller-save scratch.
+		// Function-value call: the IR emitted a closure-pair
+		// pointer immediately before the call op. Every
+		// function value on natives is now a {fn_ptr, env_ptr}
+		// pair — OpConstFunc emits static .rodata cells with
+		// env=0; OpMakeClosure allocates heap pairs whose env
+		// points at the captured slot block. Either way:
+		//   1. Pop pair pointer into x16.
+		//   2. Load fn_ptr from [pair + 0] into x17.
+		//   3. Load env_ptr from [pair + 8] and push onto the
+		//      operand stack so emitCallArgsLoad routes it
+		//      into the (argc+1)th argument register.
+		//   4. blr x17.
+		//
+		// Top-level fns called this way receive env=0 in an
+		// extra register slot they don't read — AAPCS64's
+		// "unused arg registers may hold any value" rule keeps
+		// that harmless. Hoisted closures read env from the
+		// same register.
 		argc := int(op.I32)
-		g.emit("ldr x16, [sp], #16") // x16 = function pointer (popped first)
-		g.emitCallArgsLoad(argc)
-		g.emit("blr x16")
-		g.emitCallArgsCleanup(argc)
+		g.emit("ldr x16, [sp], #16")  // x16 = pair pointer
+		g.emit("ldr x17, [x16]")      // x17 = fn_ptr (= [pair + 0])
+		g.emit("ldr x0, [x16, #8]")   // x0 = env_ptr (= [pair + 8])
+		g.emit("str x0, [sp, #-16]!")
+		g.emitCallArgsLoad(argc + 1)
+		g.emit("blr x17")
+		g.emitCallArgsCleanup(argc + 1)
 		g.push()
 
 	case ir.OpCallClosureDirect:

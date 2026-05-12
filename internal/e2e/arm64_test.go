@@ -1432,6 +1432,52 @@ func TestArm64ClosureChainNoAlloc(t *testing.T) {
 	}
 }
 
+// Mirror of TestX86_64UseCallback: closure-pair ABI uniforming
+// on arm64. `use` + function-value-as-param now works.
+func TestArm64UseCallback(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"use with no captures", `function tryThing(cb: (i32) => i32): i32 {
+    return cb(42);
+}
+function main(): i32 {
+    use n <- tryThing();
+    return n;
+}`, 42},
+		{"use with capture", `function each(items: i32[], cb: (i32) => i32): i32 {
+    return cb(items[0]);
+}
+function main(): i32 {
+    var n: i32 = 10;
+    function addN(x: i32): i32 { return x + n; }
+    return each([5], addN);
+}`, 15},
+		{"top-level fn passed as callback", `function step(x: i32): i32 { return x + 1; }
+function tryThing(cb: (i32) => i32): i32 {
+    return cb(42);
+}
+function main(): i32 {
+    return tryThing(step);
+}`, 43},
+		{"generic callee with use inference", `function each[T](items: T[], cb: (T) => i32): i32 {
+    return cb(items[0]);
+}
+function main(): i32 {
+    var nums: i32[] = [10, 20, 30];
+    use n <- each(nums);
+    return n + 1;
+}`, 11},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestArm64ClosureAliasing(t *testing.T) {
 	for _, c := range []struct {
 		name string

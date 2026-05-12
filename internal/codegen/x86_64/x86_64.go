@@ -350,6 +350,12 @@ type generator struct {
 	// tag value gets reserved. Programs that never construct
 	// payloadless enum variants skip the entire block.
 	enumSentinelTags map[int]bool
+	// constFuncCells tracks function names referenced via
+	// OpConstFunc. Each gets a 16-byte static .rodata cell
+	// `{fn_ptr, 0}` so OpCallIndirect can deref every callee
+	// (top-level fn value, runtime-built closure) through a
+	// uniform pair shape.
+	constFuncCells map[string]bool
 	// usesArrEmpty gates the `.LArr_Empty` sentinel — a shared
 	// static 4-byte `[length=0]` buffer that __alloc_u8(0)
 	// returns instead of allocating a fresh length-only block.
@@ -629,12 +635,26 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit(fmt.Sprintf("lea rax, [rip + %s]", lbl))
 		g.push()
 	case ir.OpConstFunc:
-		// Function values materialise as the direct code
-		// address of the named function. Same RIP-relative
-		// `lea` shape as OpConstStr — there's no funcref
-		// table abstraction at the x86-64 level, just plain
-		// code pointers.
-		g.emit(fmt.Sprintf("lea rax, [rip + %s]", op.Str))
+		// Function values materialise as static 16-byte
+		// closure-pair cells in .rodata: { fn_ptr (8B),
+		// env_ptr=0 (8B) }. This mirrors the wasm closure
+		// shape so OpCallIndirect can uniformly deref the
+		// pair — load fn from [+0] and env from [+8] — for
+		// both top-level fn values (this case, env always 0)
+		// and runtime-built closures (OpMakeClosure, env
+		// points at a heap env block).
+		//
+		// Without the cell, OpCallIndirect couldn't tell a
+		// raw fn pointer apart from a closure-pair pointer
+		// and `call r11` on a pair would jump into the pair's
+		// data bytes — exactly the `use`-callback segfault
+		// we're fixing.
+		cell := fmt.Sprintf("__closure_cell_%s", op.Str)
+		if g.constFuncCells == nil {
+			g.constFuncCells = map[string]bool{}
+		}
+		g.constFuncCells[op.Str] = true
+		g.emit(fmt.Sprintf("lea rax, [rip + %s]", cell))
 		g.push()
 	case ir.OpConstI64:
 		// i64 literal: full 64-bit immediate via `movabs`.
@@ -1369,18 +1389,40 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		return g.emitMakeClosureOrEnv(op)
 
 	case ir.OpCallIndirect:
-		// Function-value call: the IR emitted the function-
-		// pointer immediately before the call op (via
-		// OpLoadLocal / OpConstFunc), so the pointer is on
-		// top of the stack and args are below it in
-		// left-to-right order. Pop the ptr into r11 (caller-
-		// save, otherwise unused), then load the args.
+		// Function-value call: the IR emitted a closure-pair
+		// pointer immediately before the call op. Every
+		// function value on natives is now a {fn_ptr, env_ptr}
+		// pair — OpConstFunc emits static .rodata cells with
+		// env=0; OpMakeClosure allocates heap pairs whose env
+		// points at the captured slot block. Either way, the
+		// indirect call:
+		//   1. Loads fn_ptr from [pair + 0] into r11.
+		//   2. Loads env_ptr from [pair + 8] into a scratch
+		//      slot (since __lang_alloc clobbers caller-save
+		//      registers, we stage env on the operand stack).
+		//   3. Pops user args into rdi / rsi / ... in the
+		//      System-V order, then pops env into the next
+		//      register (one past the user args).
+		//   4. call r11.
+		//
+		// Top-level fns called this way receive env=0 in an
+		// extra register slot they don't read — System V's
+		// "arguments unused by the callee may hold any value"
+		// rule makes that harmless. Hoisted closures (whose
+		// body references the captured env block) read it
+		// from the same register.
 		argc := int(op.I32)
-		g.emit("mov r11, [rsp]") // r11 = function pointer
+		g.emit("mov r10, [rsp]") // r10 = pair pointer (caller-save scratch)
 		g.emit("add rsp, 16")
-		g.emitCallArgsLoad(argc)
+		g.emit("mov r11, [r10]")        // r11 = fn_ptr (= [pair + 0])
+		g.emit("mov rax, [r10 + 8]")   // rax = env_ptr (= [pair + 8])
+		// Push env_ptr onto the operand stack so the args-load
+		// helper picks it up in the (argc+1)th register slot.
+		g.emit("sub rsp, 16")
+		g.emit("mov [rsp], rax")
+		g.emitCallArgsLoad(argc + 1)
 		g.emit("call r11")
-		g.emitCallArgsCleanup(argc)
+		g.emitCallArgsCleanup(argc + 1)
 		g.push()
 
 	case ir.OpCallDirect:
@@ -2088,6 +2130,26 @@ func (g *generator) internString(s string) string {
 // unused programs pay nothing — `.bss` is omitted entirely
 // when the allocator isn't pulled in.
 func (g *generator) emitDataSections() {
+	// Emit static closure-pair cells for every function whose
+	// name appeared in an OpConstFunc reference. Each cell is
+	// 16 bytes: 8 bytes fn_ptr + 8 bytes env=0. OpCallIndirect
+	// derefs these cells to recover (fn, env) just like it does
+	// for heap-allocated OpMakeClosure pairs.
+	if len(g.constFuncCells) > 0 {
+		g.line("")
+		g.line(".section .rodata")
+		names := make([]string, 0, len(g.constFuncCells))
+		for n := range g.constFuncCells {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			g.line(".align 8")
+			g.label(fmt.Sprintf("__closure_cell_%s", name))
+			g.line(fmt.Sprintf("\t.quad %s", name))
+			g.line("\t.quad 0")
+		}
+	}
 	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
 	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty {
