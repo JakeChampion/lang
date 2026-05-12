@@ -3866,8 +3866,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// The bit pattern bypasses the V-register file
 		// entirely, going straight onto the operand stack as
 		// a 32-bit raw value.
+		//
+		// Use `ldr x0, =<imm>` (literal-pool form) rather than
+		// `mov x0, #<imm>`: a plain `mov` is restricted to
+		// 16-bit shifted immediates, so any f32 whose bit
+		// pattern needs >16 bits (every value except 0 and a
+		// handful of sign-bit-only patterns) is rejected by
+		// the assembler. The literal-pool form has no width
+		// limit and matches OpConstF64's existing shape.
 		bits := math.Float32bits(op.F32)
-		g.emit("mov x0, #%d", int64(bits))
+		g.emit("ldr x0, =%d", int64(bits))
 		g.push()
 	case ir.OpConstF64:
 		bits := math.Float64bits(op.F64)
@@ -4060,6 +4068,13 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.emit("fmov w0, s0")
 		}
 		g.push()
+	case ir.OpReinterpretI32F32, ir.OpReinterpretF32I32:
+		// Bit-cast between f32 and i32. The operand stack
+		// already stores both as raw 32-bit values (see
+		// OpConstF32 — f32 bit patterns land on the stack as
+		// raw i32s, no V-register involvement), and the
+		// consuming op picks the right register bank via
+		// `fmov` when needed. Nothing to emit here.
 	case ir.OpITruncF32:
 		// f32 → i32 / i64. fcvtzs truncates toward zero
 		// (signed); fcvtzu does the unsigned variant.
