@@ -424,9 +424,30 @@ function main(): i32 {
 	}
 }
 
-// `match (scrut) { Some(x) => ..., None => ... }` shares the
-// OpMatchTag path with if-let / let-else.
+// `match` on a heap-form scrutinee shares the OpMatchTag
+// path with if-let / let-else. Pair-form match scrutinees
+// take the zero-alloc fast path (see TestLowerMatchOn-
+// PairFormCallSkipsRebox below) and do NOT go through
+// OpMatchTag.
 func TestLowerMatchUsesOpMatchTag(t *testing.T) {
+	prog := lowerSource(t, `enum Color { Red(i32), Green, Blue }
+function main(): i32 {
+    var c: Color = Green;
+    match (c) {
+        Red(v) => { return v; },
+        Green  => { return 1; },
+        Blue   => { return 2; }
+    }
+}`)
+	mustContainOp(t, prog, "main", OpMatchTag)
+}
+
+// `match (pair_form_call()) { ... }` triggers the zero-alloc
+// fast path: scrutinee evaluates to (tag, payload) on the
+// operand stack; both go to scratch locals; per-arm tag
+// comparison reads from the tag local; binding extraction
+// reads from the payload local.
+func TestLowerMatchOnPairFormCallSkipsRebox(t *testing.T) {
 	prog := lowerSource(t, `function pick(): Option[i32] { return Some(7); }
 function main(): i32 {
     match (pick()) {
@@ -434,7 +455,60 @@ function main(): i32 {
         None    => { return 99; }
     }
 }`)
-	mustContainOp(t, prog, "main", OpMatchTag)
+	fn := findFunc(prog, "main")
+	if fn == nil {
+		t.Fatal("main not found")
+	}
+	hasPairCall := false
+	for _, op := range fn.Ops {
+		if op.Kind == OpCallDirectPair {
+			hasPairCall = true
+			break
+		}
+	}
+	if !hasPairCall {
+		t.Fatalf("expected OpCallDirectPair in main:\n%s", prog)
+	}
+	for _, op := range fn.Ops {
+		if op.Kind == OpAlloc {
+			t.Fatalf("pair-form match should skip OpAlloc rebox:\n%s", prog)
+		}
+		if op.Kind == OpMatchTag {
+			t.Fatalf("pair-form match should skip OpMatchTag heap-load:\n%s", prog)
+		}
+	}
+}
+
+// Mirror for LetElse: `let Some(v) = pair_form_call() else
+// { ... };` also takes the zero-alloc fast path.
+func TestLowerLetElseOnPairFormCallSkipsRebox(t *testing.T) {
+	prog := lowerSource(t, `function pick(): Option[i32] { return Some(7); }
+function main(): i32 {
+    let Some(v) = pick() else { return 99; };
+    return v;
+}`)
+	fn := findFunc(prog, "main")
+	if fn == nil {
+		t.Fatal("main not found")
+	}
+	hasPairCall := false
+	for _, op := range fn.Ops {
+		if op.Kind == OpCallDirectPair {
+			hasPairCall = true
+			break
+		}
+	}
+	if !hasPairCall {
+		t.Fatalf("expected OpCallDirectPair in main:\n%s", prog)
+	}
+	for _, op := range fn.Ops {
+		if op.Kind == OpAlloc {
+			t.Fatalf("pair-form let-else should skip OpAlloc rebox:\n%s", prog)
+		}
+		if op.Kind == OpMatchTag {
+			t.Fatalf("pair-form let-else should skip OpMatchTag heap-load:\n%s", prog)
+		}
+	}
 }
 
 func TestLowerOptionPointerPayloadStaysHeapForm(t *testing.T) {

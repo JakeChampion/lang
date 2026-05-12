@@ -1324,14 +1324,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// On match (then-arm): bind payloads into locals declared
 		// at the OUTER scope so they survive past the LetElse.
 		// On mismatch: run the else block — checker has verified
-		// the else diverges, so codegen-wise we don't need to
-		// worry about the bindings being read on that path.
+		// the else diverges.
+		//
+		// Pair-form scrutinee fast path mirrors IfLet's: consume
+		// (tag, payload) from the operand stack into scratch
+		// locals, dispatch on tag local, bind payload from
+		// payload local — zero alloc end-to-end.
 		_, varIdx, _, ok := b.lookupVariant(n.VariantName)
 		if !ok {
 			return fmt.Errorf("ir: let-else references unknown variant %q", n.VariantName)
 		}
-		ptrSlot := b.allocSlot()
-		b.locals[fmt.Sprintf("__letelse_p_%d", ptrSlot)] = ptrSlot
 		// Pre-allocate the binding slots BEFORE the if so the
 		// stores inside the matched branch land in slots the
 		// surrounding scope can read.
@@ -1346,12 +1348,46 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.locals[name] = slot
 			bindingSlots[i] = slot
 		}
+		if b.isPairFormScrutinee(n.Source) {
+			tagSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__letelse_tag_%d", tagSlot)] = tagSlot
+			payloadSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__letelse_pay_%d", payloadSlot)] = payloadSlot
+			prev := b.suppressPairRebox
+			b.suppressPairRebox = true
+			if err := b.expr(n.Source); err != nil {
+				return err
+			}
+			b.suppressPairRebox = prev
+			b.emit(Op{Kind: OpStoreLocal, I32: payloadSlot})
+			b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
+			b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+			b.emit(Op{Kind: OpEq})
+			b.openIf(BlockTypeVoid)
+			// Pair-form is scoped to Option[i32]: 0 or 1
+			// bindings. For 0 (None arm) the bindingSlots
+			// loop is empty; for 1 (Some(v)) bind from
+			// payloadSlot directly.
+			for _, slot := range bindingSlots {
+				b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
+				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+			b.elseBranch()
+			if err := b.stmt(n.Else); err != nil {
+				return err
+			}
+			b.closeScope()
+			break
+		}
+		ptrSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__letelse_p_%d", ptrSlot)] = ptrSlot
 		if err := b.expr(n.Source); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpMatchTag}) // tag (heap-form: [ptr+0]; pair-form: register)
+		b.emit(Op{Kind: OpMatchTag})
 		b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 		b.emit(Op{Kind: OpEq})
 		b.openIf(BlockTypeVoid)
@@ -1740,12 +1776,42 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// fields loaded into freshly-bound locals; we then break
 		// out of the whole match. The structure mirrors `switch`,
 		// extended to bind payload positions.
-		ptrSlot := b.allocSlot()
-		b.locals[fmt.Sprintf("__match_p_%d", ptrSlot)] = ptrSlot
-		if err := b.expr(n.Tag); err != nil {
-			return err
+		//
+		// Pair-form scrutinee fast path mirrors IfLet's / LetElse's:
+		// consume (tag, payload) from the operand stack into two
+		// scratch locals, dispatch on the tag local, bind the
+		// payload from the payload local — zero alloc end-to-end.
+		// Scoped to Option[i32] today (the pair-form set's only
+		// shape); any arm with multiple bindings or pointer-
+		// shaped payload skips through to the heap-form path,
+		// but pair-form-eligibility already excludes those cases
+		// upstream so the fast path always covers Option[i32]
+		// matches end-to-end.
+		pairFormScrutinee := b.isPairFormScrutinee(n.Tag)
+		var (
+			ptrSlot, tagSlot, payloadSlot int32
+		)
+		if pairFormScrutinee {
+			tagSlot = b.allocSlot()
+			b.locals[fmt.Sprintf("__match_tag_%d", tagSlot)] = tagSlot
+			payloadSlot = b.allocSlot()
+			b.locals[fmt.Sprintf("__match_pay_%d", payloadSlot)] = payloadSlot
+			prev := b.suppressPairRebox
+			b.suppressPairRebox = true
+			if err := b.expr(n.Tag); err != nil {
+				return err
+			}
+			b.suppressPairRebox = prev
+			b.emit(Op{Kind: OpStoreLocal, I32: payloadSlot})
+			b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
+		} else {
+			ptrSlot = b.allocSlot()
+			b.locals[fmt.Sprintf("__match_p_%d", ptrSlot)] = ptrSlot
+			if err := b.expr(n.Tag); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
 		}
-		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
 		b.breakStack = append(b.breakStack, matchEndD)
@@ -1787,23 +1853,26 @@ func (b *builder) stmt(s ast.Stmt) error {
 			outerArmD := b.depth
 			// Inner block: matched-path target.
 			b.openBlock(BlockTypeVoid)
-			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-			b.emit(Op{Kind: OpMatchTag}) // tag (see OpMatchTag doc)
+			if pairFormScrutinee {
+				b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
+			} else {
+				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				b.emit(Op{Kind: OpMatchTag}) // tag (see OpMatchTag doc)
+			}
 			b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 			b.emit(Op{Kind: OpEq})
 			b.brTo(b.depth, true) // br 0 = exit inner = match
 			b.brTo(outerArmD, false)
 			b.closeScope() // end inner — matched path lands here
-			// Bind payload locals from heap[ptr+4+i*4]. Float
-			// payloads need an f32 load to keep stack types
-			// consistent on WASM; arm64 ignores the choice.
-			// arm.BindingTypes is filled by the checker with
-			// the substituted concrete type (so generic enums
-			// instantiated at `Option[number]` give `number`).
-			// The binding's local also needs the right
-			// declared type — recorded via b.scratchType so
-			// the wasm backend declares it as f32 instead of
-			// the default i32.
+			// Bind payload locals. arm.BindingTypes is filled by
+			// the checker with the substituted concrete type (so
+			// generic enums instantiated at `Option[number]` give
+			// `number`). The binding's local also needs the right
+			// declared type — recorded via b.scratchType so the
+			// wasm backend declares it as f32 instead of the
+			// default i32. Pair-form scrutinees bind from the
+			// payload local directly (no heap load); heap-form
+			// scrutinees load from `[ptr+offset]`.
 			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
 			for i, name := range arm.Bindings {
 				slot := b.allocSlot()
@@ -1813,10 +1882,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 					bt = arm.BindingTypes[i]
 				}
 				b.scratchType[slot] = bt
-				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-				b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
-				b.emit(Op{Kind: OpAdd})
-				b.emit(payloadLoadOp(bt))
+				if pairFormScrutinee {
+					b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
+				} else {
+					b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+					b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
+					b.emit(Op{Kind: OpAdd})
+					b.emit(payloadLoadOp(bt))
+				}
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
 			// Optional guard: with bindings now in locals, run
