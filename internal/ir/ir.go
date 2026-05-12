@@ -162,15 +162,18 @@ const (
 	// pointer, pushes its i32 length.
 	OpStrLen // (str-ptr) → i32
 
-	// OpOptionNone pushes the address of the static
-	// `__lang_option_none` sentinel. Same shape as a heap-
-	// allocated `[tag=1]` Option.None — the byte at offset 0 is
-	// 1 — so every existing match-on-Option site reads the tag
-	// correctly without any consumer-side changes. First step
-	// toward register-based Option/Result returns; eliminates
-	// the per-None heap allocation that the prelude's parse_int /
-	// url_parse / Map.get / etc. all pay for the None-result path.
-	OpOptionNone // () → i64 (sentinel ptr)
+	// OpEnumSentinel pushes the address of a shared static
+	// 4-byte sentinel containing the i32 tag value carried in
+	// the op's I32 immediate. Emitted by emitEnumNew for any
+	// payloadless variant — the sentinel's byte at offset 0
+	// is the tag, so every existing match / try site reads it
+	// with the same `[ptr + 0]` load it used for a heap-
+	// allocated `[tag=N]` box. Zero-alloc construction for
+	// Option.None (tag=1), IoError.Interrupted / .Unsupported,
+	// JsonValue.JNull, user enums, etc. First step toward
+	// register-based Option/Result returns; future PRs extend
+	// the encoding to payloaded variants.
+	OpEnumSentinel // (I32: tag value) → i64 (sentinel ptr)
 
 	// Structured control flow. Block / loop / if open a new lexical
 	// scope on the validation-time control stack; OpEnd closes the
@@ -391,8 +394,8 @@ func (k OpKind) String() string {
 		return "str.concat"
 	case OpStrLen:
 		return "str.len"
-	case OpOptionNone:
-		return "option.none"
+	case OpEnumSentinel:
+		return "enum.sentinel"
 	case OpBlock:
 		return "block"
 	case OpLoop:
@@ -849,14 +852,18 @@ func (b *builder) lookupVariant(name string) (enumName string, varIdx int, paylo
 // variant's declared payload was a type parameter (e.g.
 // `Some(3.14)` on `Option[T]` with `T = float`).
 func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
-	// Option.None has no payload — return a shared static
-	// `__lang_option_none` sentinel instead of allocating a
-	// fresh 4-byte box per None construction. The sentinel's
-	// byte at offset 0 is 1 (the None tag), so every existing
-	// match-on-Option / try-on-Option site reads the tag
-	// correctly without any consumer-side changes.
-	if enumName == "Option" && varIdx == 1 && payloadCount == 0 {
-		b.emit(Op{Kind: OpOptionNone})
+	// Payloadless variants return a shared static 4-byte
+	// `[tag=varIdx]` sentinel instead of allocating a fresh
+	// box per construction. Match / try sites still read the
+	// tag with the same `[ptr + 0]` load they used for heap-
+	// allocated boxes, so this is a constructor-side rewrite
+	// only. Catches Option.None, IoError.Interrupted /
+	// .Unsupported, JsonValue.JNull, and any user-defined enum
+	// variant with no payload. Sentinels are shared across
+	// distinct enums with the same tag value — only the tag
+	// matters at the match site.
+	if payloadCount == 0 {
+		b.emit(Op{Kind: OpEnumSentinel, I32: int32(varIdx)})
 		return nil
 	}
 	// Resolve the payload's concrete type for op selection.

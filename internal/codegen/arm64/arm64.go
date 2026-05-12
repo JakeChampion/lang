@@ -26,6 +26,7 @@ package arm64
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -327,16 +328,23 @@ func (g *generator) emitDataSections() {
 	g.line(`	.4byte 0`)
 	g.label(".LStr_Empty")
 	g.line(`	.asciz ""`)
-	if g.usesOptionNone {
-		// Option.None sentinel. Every Option.None construction
-		// returns this address rather than allocating a fresh
-		// 4-byte tag-only box. Byte 0 = 1 (the None tag); the
-		// existing match-on-Option codegen reads this with the
-		// same `ldur w?, [ptr, #0]` it does for heap-allocated
-		// Option boxes, so consumers don't need updating.
-		g.line(`.align 2`)
-		g.label(".LOptionNone")
-		g.line(`	.4byte 1`)
+	if len(g.enumSentinelTags) > 0 {
+		// Per-tag enum sentinels. One 4-byte symbol per unique
+		// tag value referenced by any payloadless-variant
+		// construction (Option.None → tag 1, IoError.Interrupted
+		// → tag 4, JsonValue.JNull → tag 0, etc.). Match / try
+		// sites read `[ptr + 0]` and get the tag, the same as
+		// heap-allocated boxes.
+		tags := make([]int, 0, len(g.enumSentinelTags))
+		for t := range g.enumSentinelTags {
+			tags = append(tags, t)
+		}
+		sort.Ints(tags)
+		for _, t := range tags {
+			g.line(`.align 2`)
+			g.label(fmt.Sprintf(".LEnumSentinel_%d", t))
+			g.line(fmt.Sprintf(`	.4byte %d`, t))
+		}
 	}
 	if g.usesPuts || g.usesEprint {
 		// Single newline byte emitted into the same section as
@@ -2769,8 +2777,10 @@ type generator struct {
 	// lazily on first emit in emitInlineIdxHelper; gates the
 	// .bss reservation.
 	usesStrIdx bool
-	// usesOptionNone gates the static `.LOptionNone` sentinel.
-	usesOptionNone bool
+	// enumSentinelTags collects unique tag values referenced by
+	// payloadless-variant constructions. One .rodata symbol per
+	// tag value gets reserved in emitDataSections.
+	enumSentinelTags map[int]bool
 	// usesRawIntPokes tracks whether the program calls
 	// __load_i32 / __store_i32 — primitives the lang Map
 	// runtime uses for its mixed bucket-index + entries
@@ -4074,13 +4084,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emitStrLen("w0", "x0") // w0 = length
 		g.push()
 
-	case ir.OpOptionNone:
-		// Push the address of the shared static Option.None
-		// sentinel. The first 4 bytes of the symbol are 1 (the
-		// None tag), so match / try sites read it correctly
-		// without any consumer-side changes. Zero-alloc None.
-		g.usesOptionNone = true
-		g.adrpAdd("x0", ".LOptionNone")
+	case ir.OpEnumSentinel:
+		// Push the address of a shared static `[tag=N]` sentinel.
+		// One symbol per unique tag value, lazily reserved in
+		// .rodata so programs that never construct payloadless
+		// variants pay nothing extra.
+		tag := int(op.I32)
+		if g.enumSentinelTags == nil {
+			g.enumSentinelTags = map[int]bool{}
+		}
+		g.enumSentinelTags[tag] = true
+		g.adrpAdd("x0", fmt.Sprintf(".LEnumSentinel_%d", tag))
 		g.push()
 
 	case ir.OpCallIndirect:
