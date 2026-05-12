@@ -443,6 +443,48 @@ func TestIfExprRejectsBranchTypeMismatch(t *testing.T) {
 	}
 }
 
+// Bare `None` in an if-expression arm gets its type args
+// from the other arm, so `if (cond) { Some(x) } else { None }`
+// resolves as `Option[i32]` rather than failing the strict
+// equality check the IfExpr handler used to apply. Same for
+// the symmetric position (None in Then) and for Result.
+func TestIfExprUnifiesBareEnumWithSpecifiedArm(t *testing.T) {
+	cases := []string{
+		// None in the Else arm.
+		`function f(b: boolean): Option[i32] {
+			return if (b) { Some(7) } else { None };
+		}`,
+		// None in the Then arm (symmetric position).
+		`function f(b: boolean): Option[i32] {
+			return if (b) { None } else { Some(7) };
+		}`,
+		// Result with bare Err in the Then arm — same shape.
+		`function f(b: boolean): Result[i32, i32] {
+			return if (b) { Err(0) } else { Ok(1) };
+		}`,
+	}
+	for i, src := range cases {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("case %d: %v\n%s", i, err, src)
+		}
+	}
+}
+
+// Genuinely mismatched branches still error — the unification
+// only kicks in for the "one side has no Args" case at a
+// matching enum name.
+func TestIfExprStillRejectsActualBranchMismatch(t *testing.T) {
+	cases := []string{
+		`function f(b: boolean): i32 { return if (b) { 1 } else { true }; }`,
+		`function f(b: boolean): Option[i32] { return if (b) { Some(1) } else { Ok(1) }; }`,
+	}
+	for i, src := range cases {
+		if err := checkSource(t, src); err == nil {
+			t.Errorf("case %d: expected error\n%s", i, src)
+		}
+	}
+}
+
 // Postfix `?` produces the unwrapped Some payload type.
 func TestOptionTryTypechecks(t *testing.T) {
 	src := `function f(m: Map[i32, i32]): Option[i32] {

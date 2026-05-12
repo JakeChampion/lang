@@ -1535,6 +1535,48 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 // enums where the construction site can't infer the type
 // arguments. `None` produces `EnumType{"Option", nil}` which
 // flows into `Option[number]` here without complaint.
+// unifyIfArms returns a single type representing both arms of
+// an if-expression, or nil if the two arm types are
+// incompatible. Used to allow `if (cond) { Some(x) } else
+// { None }` to type-check as `Option[i32]` — the EnumLit
+// machinery produces `EnumType{Name: "Option"}` (no Args) for
+// the bare `None` because there's no payload to infer T from,
+// and we want the specified arm's type args to flow up rather
+// than failing the strict equality check the IfExpr handler
+// was using before.
+//
+// Rules:
+//   - If either side is nil (downstream error), return the
+//     other.
+//   - If `ast.Equal`, return either.
+//   - If one is `EnumType{Name: X, Args: nil}` and the other
+//     is `EnumType{Name: X, Args: [...]}`, return the
+//     specified one (mirrors the `assignable` rule at the
+//     same enum.no-args boundary).
+//   - Otherwise nil (caller errors).
+func unifyIfArms(a, b ast.Type) ast.Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if ast.Equal(a, b) {
+		return a
+	}
+	ae, aok := a.(ast.EnumType)
+	be, bok := b.(ast.EnumType)
+	if aok && bok && ae.Name == be.Name {
+		if len(ae.Args) == 0 && len(be.Args) > 0 {
+			return be
+		}
+		if len(be.Args) == 0 && len(ae.Args) > 0 {
+			return ae
+		}
+	}
+	return nil
+}
+
 func assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
@@ -3307,10 +3349,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		tt := c.checkExpr(n.Then, s)
 		et := c.checkExpr(n.Else, s)
-		if tt != nil && et != nil && !ast.Equal(tt, et) {
+		result := unifyIfArms(tt, et)
+		if tt != nil && et != nil && result == nil {
 			c.errf(n.P, "if-expression branches differ: %s vs %s", tt, et)
+			result = tt
 		}
-		result := tt
+		if result == nil {
+			result = tt
+		}
 		if result == nil {
 			result = et
 		}

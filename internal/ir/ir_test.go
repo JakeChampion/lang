@@ -652,20 +652,18 @@ function main(): i32 {
 }
 
 // A pair-form-eligible function whose only return uses the
-// expression-form `if (cond) { Some(a) } else { Some(b) }` is
+// expression-form `if (cond) { Some(x) } else { None }` is
 // also pair-form. Each arm constructs a heap-box independently;
 // the function-side ABI is unchanged, so the caller can still
-// use `OpCallDirectPair` to skip the rebox.
-//
-// (Bare `None` in an if-expression arm isn't covered here
-// because the checker's branch-unification can't infer
-// `Option[T]` from the return context — separate issue.)
+// use `OpCallDirectPair` to skip the rebox. The checker's
+// `unifyIfArms` flows `Option[i32]` into the bare `None` arm
+// so the source type-checks.
 func TestLowerPairFormThroughIfExpressionReturn(t *testing.T) {
 	prog := lowerSource(t, `function pick(x: i32): Option[i32] {
-    return if (x >= 0) { Some(x) } else { Some(0 - x) };
+    return if (x >= 0) { Some(x) } else { None };
 }
 function main(): i32 {
-    match (pick(0 - 5)) {
+    match (pick(5)) {
         Some(v) => { return v; },
         None => { return -1; }
     }
