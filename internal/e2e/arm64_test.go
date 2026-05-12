@@ -1851,6 +1851,51 @@ func TestArm64IfLet(t *testing.T) {
 	}
 }
 
+// Mirror of TestX86_64Usize. arm64 + arm64-darwin are the
+// targets that actually NEED usize — Linux qemu has a low heap
+// (< 4 GiB) so 32-bit truncation passes by coincidence; macOS's
+// high heap is the real test bed once the prelude pointer
+// locals migrate to usize.
+func TestArm64Usize(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"basic usize round-trip", `function main(): i32 {
+    var x: usize = 42;
+    return x as i32;
+}`, 42},
+		{"usize arithmetic", `function main(): i32 {
+    var a: usize = 10;
+    var b: usize = 32;
+    return (a + b) as i32;
+}`, 42},
+		{"usize as fn param + return", `function dbl(x: usize): usize { return x + x; }
+function main(): i32 {
+    var n: usize = 21;
+    return dbl(n) as i32;
+}`, 42},
+		{"large value survives on native (> 32 bits)", `function main(): i32 {
+    var big: usize = 4294967301 as usize;
+    var rt: i64 = big as i64;
+    if ((rt >> 32) > 0i64) { return 42; }
+    return 1;
+}`, 42},
+		{"string ptr round-trip through usize", `function main(): i32 {
+    var s: string = "hello, " + "world";
+    var ptr: usize = s as usize;
+    var s2: string = ptr as string;
+    return len(s2);
+}`, 12},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
 func TestArm64SubI32(t *testing.T) {
 	for _, c := range []struct {
 		name string

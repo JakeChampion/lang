@@ -53,6 +53,14 @@ type Type interface {
 // always converging on the canonical name. Equality and codegen
 // ignore it; the zero value means "no source spelling captured,
 // use the canonical name on output".
+// WidthPtr is the sentinel value used by `NumberType.Width`
+// to mark the target-aware native-pointer-width integer
+// (`usize`). Backends resolve it to 4 bytes on wasm32 and 8
+// bytes on arm64 / x86-64. Mirrored by `ir.WidthPtr` for the
+// codegen side; kept in the ast package so type-level code
+// doesn't need to import ir.
+const WidthPtr = -1
+
 type NumberType struct {
 	Width    int
 	Signed   bool
@@ -166,6 +174,9 @@ func (StructType) isType()  {}
 func (EnumType) isType()    {}
 func (ParamType) isType()   {}
 func (n NumberType) String() string {
+	if n.IsPointerWidth() {
+		return "usize"
+	}
 	if n.IsSigned() {
 		return fmt.Sprintf("i%d", n.NormalWidth())
 	}
@@ -238,11 +249,22 @@ func (f *FuncType) String() string {
 // Width=0 (the zero value, used by `NumberType{}` for legacy
 // `number` callers) maps to 32 so `NumberType{}` keeps matching
 // the explicit `NumberType{Width: 32, Signed: true}` for `i32`.
+// Width=WidthPtr (-1) is the target-aware usize sentinel — it
+// has no canonical width at the AST layer; backends pick 32 or
+// 64 at codegen time. Returning -1 here lets callers detect the
+// pointer-width case without colliding with a real bit-width.
 func (n NumberType) NormalWidth() int {
 	if n.Width == 0 {
 		return 32
 	}
 	return n.Width
+}
+
+// IsPointerWidth reports whether the type is the target-aware
+// usize. Backends ask this before resolving widths; the IR's
+// equivalent on the operand side is `Op.Width == WidthPtr`.
+func (n NumberType) IsPointerWidth() bool {
+	return n.Width == WidthPtr
 }
 
 // IsSigned reports whether a NumberType is signed. The zero value

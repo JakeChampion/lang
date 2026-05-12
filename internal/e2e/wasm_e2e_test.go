@@ -741,6 +741,21 @@ func TestPolymorphicLiteralI32Overflow(t *testing.T) {
 // the casts: narrowing masks to dw bits, signed widening emits
 // `i32.extend8_s` / `i32.extend16_s`. Arithmetic is at i32
 // precision.
+// On wasm32 `usize` collapses to i32 (ptrW=4), so the
+// target-aware behaviour shouldn't observably differ from i32.
+// Pin that the type compiles, casts work, and arithmetic
+// stays in i32-shaped space.
+func TestWASMUsize(t *testing.T) {
+	src := `function dbl(x: usize): usize { return x + x; }
+function main(): i32 {
+    var n: usize = 21;
+    return dbl(n) as i32;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (usize on wasm32)", got)
+	}
+}
+
 func TestWASMSubI32Widths(t *testing.T) {
 	src := `function main(): i32 {
     var a: u8 = 200;
