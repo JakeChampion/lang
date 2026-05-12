@@ -2196,13 +2196,25 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 // inferUseParam fills in `fn`'s first-parameter type by reading
 // the source-call's signature. The parser left the slot nil
 // when the user wrote `use IDENT <- EXPR;` (no `: TYPE`); this
-// function looks up the call's callee in `c.info.FuncSigs`,
-// finds the trailing function-typed parameter (the callback
-// slot the callback is being passed into), and stamps the
-// callback's first parameter from there. On failure (callee
-// not a bare identifier we can resolve, or the receiving
-// param isn't function-typed) it records an error pointing at
-// the `use` site.
+// function looks up the call's callee, finds the trailing
+// function-typed parameter (the callback slot the callback is
+// being passed into), and stamps the callback's first parameter
+// from there.
+//
+// For a generic callee (e.g. `each[T](items: T[], cb: (T) => U)`)
+// the callback's first param references a type parameter `T`.
+// We unify each non-callback arg's checked type against the
+// corresponding sig param to build a substitution map, then
+// apply the map to the callback's first param. The args get
+// type-checked here AND again when the surrounding call is
+// visited; `checkExpr` is idempotent for the shapes that reach
+// this path (literals settle once, identifiers look up the same
+// scope each time).
+//
+// On failure (callee not a bare identifier we can resolve, the
+// receiving param isn't function-typed, or generic inference
+// couldn't pin every type parameter the callback's first param
+// references) records an error pointing at the `use` site.
 func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 	if len(fn.Params) == 0 || fn.Params[0].Type != nil {
 		return
@@ -2239,7 +2251,77 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 		c.errf(fn.P, "use: callee %q's callback takes no arguments — there's nothing to bind", id.Name)
 		return
 	}
-	fn.Params[0].Type = cbSig.Params[0]
+	bindType := cbSig.Params[0]
+
+	// Generic callee: solve type parameters from the args the
+	// user already wrote. The callback arg is the LAST sig
+	// param (skipped — we're inferring its shape).
+	if _, isGen := c.info.GenericFuncs[id.Name]; isGen {
+		sub := map[string]ast.Type{}
+		for i, arg := range src.Args {
+			if i >= len(sig.Params)-1 {
+				break
+			}
+			argType := c.checkExpr(arg, outer)
+			if argType == nil {
+				continue
+			}
+			c.unifyType(sig.Params[i], argType, sub)
+		}
+		resolved := substituteType(bindType, sub)
+		if containsParamType(resolved) {
+			c.errf(fn.P, "use: could not infer binding type for %q from its arguments — add an explicit `: TYPE` annotation", id.Name)
+			return
+		}
+		bindType = resolved
+	}
+
+	fn.Params[0].Type = bindType
+}
+
+// containsParamType reports whether t (or any of its component
+// types) is a still-unresolved generic ParamType. Used to flag
+// failed `use`-callback inference: a substitution that leaves a
+// ParamType behind means some type-parameter wasn't pinned by
+// the args.
+func containsParamType(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.ParamType:
+		return true
+	case ast.ArrayType:
+		return containsParamType(x.Elem)
+	case ast.SliceType:
+		return containsParamType(x.Elem)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if containsParamType(e) {
+				return true
+			}
+		}
+		return false
+	case ast.EnumType:
+		for _, a := range x.Args {
+			if containsParamType(a) {
+				return true
+			}
+		}
+		return false
+	case ast.StructType:
+		for _, a := range x.Args {
+			if containsParamType(a) {
+				return true
+			}
+		}
+		return false
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			if containsParamType(p) {
+				return true
+			}
+		}
+		return containsParamType(x.Result)
+	}
+	return false
 }
 
 // checkLocalFunc type-checks a nested function and records its

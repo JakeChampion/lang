@@ -2534,6 +2534,43 @@ function main(): i32 {
 	}
 }
 
+// `use n <- generic_fn(args)` infers n's type by solving the
+// callee's type parameters from the actual args. Without this
+// the binding stayed as the unresolved ParamType `T`, and any
+// subsequent use of `n` (e.g. `n + 1`) failed type-checking
+// with "operator + requires an integer type, got T".
+func TestWASMUseInferredTypeFromGenericCallee(t *testing.T) {
+	src := `function each[T](items: T[], cb: (T) => i32): i32 {
+    return cb(items[0]);
+}
+function main(): i32 {
+    var nums: i32[] = [10, 20, 30];
+    use n <- each(nums);
+    return n + 1;
+}`
+	if got := runWasm(t, src); got != 11 {
+		t.Errorf("got %d, want 11 (generic-callee inference)", got)
+	}
+}
+
+// Inference through an Option[T] arg position: the callback's
+// first param is T, and T is bound by the actual Option[i32]
+// argument shape.
+func TestWASMUseInferredTypeThroughEnumPayload(t *testing.T) {
+	src := `function try_opt[T](opt: Option[T], cb: (T) => i32): i32 {
+    if let Some(v) = opt { return cb(v); }
+    return 0;
+}
+function main(): i32 {
+    var x: Option[i32] = Some(7);
+    use n <- try_opt(x);
+    return n + 1;
+}`
+	if got := runWasm(t, src); got != 8 {
+		t.Errorf("got %d, want 8 (Option[T] inference)", got)
+	}
+}
+
 func TestWASMUseSyntax(t *testing.T) {
 	src := `function tryThing(callback: (i32) => Option[i32]): Option[i32] {
     return callback(42);
