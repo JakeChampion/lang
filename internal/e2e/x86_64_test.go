@@ -1056,6 +1056,45 @@ func TestX86_64ClosureChainNoAlloc(t *testing.T) {
 // `{fn_ptr, 0}`, and OpCallIndirect derefs every callee through
 // the same pair shape (loading env from [pair + 8] into the
 // next-arg-register past the user args).
+// Result[T, E] pair-form: `Result[i32, i32]`-returning functions
+// whose body is only `Ok(EXPR)` / `Err(EXPR)` literals lower to
+// the (tag, payload) pair-form ABI just like `Option[i32]`.
+// match on the result skips the heap-box rebox AND the heap-
+// load tag dispatch — zero alloc end-to-end.
+func TestX86_64ResultPairForm(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"Ok path", `function divide(a: i32, b: i32): Result[i32, i32] {
+    if (b == 0) { return Err(1); }
+    return Ok(a / b);
+}
+function main(): i32 {
+    match (divide(10, 2)) {
+        Ok(v)  => { return v; },
+        Err(_) => { return 99; }
+    }
+}`, 5},
+		{"Err path", `function divide(a: i32, b: i32): Result[i32, i32] {
+    if (b == 0) { return Err(7); }
+    return Ok(a / b);
+}
+function main(): i32 {
+    match (divide(10, 0)) {
+        Ok(_)  => { return 99; },
+        Err(e) => { return e; }
+    }
+}`, 7},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestX86_64UseCallback(t *testing.T) {
 	for _, c := range []struct {
 		name string

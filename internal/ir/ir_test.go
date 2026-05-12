@@ -479,6 +479,79 @@ function main(): i32 {
 	}
 }
 
+// `Result[T, E]` with i32-shaped T and E is now pair-form
+// eligible alongside `Option[T]`. Function bodies that only
+// return `Ok(EXPR)` / `Err(EXPR)` literals lower to
+// OpMakeOkI32 / OpMakeErrI32 + OpReturnPair.
+func TestLowerResultEmitsPairForm(t *testing.T) {
+	prog := lowerSource(t, `function divide(a: i32, b: i32): Result[i32, i32] {
+    if (b == 0) { return Err(1); }
+    return Ok(a / b);
+}`)
+	fn := findFunc(prog, "divide")
+	if fn == nil {
+		t.Fatal("divide not found")
+	}
+	hasOk := false
+	hasErr := false
+	hasReturnPair := false
+	for _, op := range fn.Ops {
+		switch op.Kind {
+		case OpMakeOkI32:
+			hasOk = true
+		case OpMakeErrI32:
+			hasErr = true
+		case OpReturnPair:
+			hasReturnPair = true
+		case OpAlloc:
+			t.Fatalf("Result pair-form should not OpAlloc:\n%s", prog)
+		}
+	}
+	if !hasOk || !hasErr || !hasReturnPair {
+		t.Fatalf("expected OpMakeOkI32 + OpMakeErrI32 + OpReturnPair in divide:\n%s", prog)
+	}
+}
+
+// Mixed Result on a heap-form scrutinee still works (no pair-
+// form caller-side; the heap-box function-side path covers it).
+// This pins that the new shape doesn't break the existing
+// Result match path for non-eligible cases like a stored Result
+// var passed back through a match.
+func TestLowerResultMatchOnPairFormCallSkipsRebox(t *testing.T) {
+	prog := lowerSource(t, `function divide(a: i32, b: i32): Result[i32, i32] {
+    if (b == 0) { return Err(1); }
+    return Ok(a / b);
+}
+function main(): i32 {
+    match (divide(10, 2)) {
+        Ok(v)  => { return v; },
+        Err(e) => { return 0 - e; }
+    }
+}`)
+	fn := findFunc(prog, "main")
+	if fn == nil {
+		t.Fatal("main not found")
+	}
+	hasPairCall := false
+	for _, op := range fn.Ops {
+		if op.Kind == OpCallDirectPair {
+			hasPairCall = true
+			break
+		}
+	}
+	if !hasPairCall {
+		t.Fatalf("expected OpCallDirectPair in main:\n%s", prog)
+	}
+	for _, op := range fn.Ops {
+		if op.Kind == OpAlloc {
+			t.Fatalf("pair-form Result match should skip OpAlloc rebox:\n%s", prog)
+		}
+		if op.Kind == OpMatchTag {
+			t.Fatalf("pair-form Result match should skip OpMatchTag heap-load:\n%s", prog)
+		}
+	}
+}
+
 // Mirror for LetElse: `let Some(v) = pair_form_call() else
 // { ... };` also takes the zero-alloc fast path.
 func TestLowerLetElseOnPairFormCallSkipsRebox(t *testing.T) {

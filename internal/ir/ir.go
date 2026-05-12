@@ -706,8 +706,19 @@ func findPairFormFuncs(prog *ast.Program) map[string]bool {
 }
 
 // isPairFormEligible returns true if fn can be lowered with
-// the register-based Option pair-form return ABI. See
-// findPairFormFuncs for the eligibility rules.
+// the register-based pair-form return ABI. See findPairFormFuncs
+// for the eligibility rules.
+//
+// Supported return-type shapes:
+//   - `Option[T]` where T is i32-stack-shaped — body must
+//     produce only `Some(EXPR)` / `None` literals.
+//   - `Result[T, E]` where T and E are both i32-stack-shaped —
+//     body must produce only `Ok(EXPR)` / `Err(EXPR)` literals.
+//
+// Other shapes (pointer-typed payloads, wider numeric
+// payloads, mixed-shape Result) require either the native
+// pair-form lowering to support wider slots or the per-
+// instantiation rebox machinery — both tracked as follow-ups.
 func isPairFormEligible(fn *ast.FuncDecl) bool {
 	if fn.IsLocal {
 		// Hoisted closures take an extra __env i32 param and
@@ -716,20 +727,38 @@ func isPairFormEligible(fn *ast.FuncDecl) bool {
 		return false
 	}
 	enumT, ok := fn.ReturnType.(ast.EnumType)
-	if !ok || enumT.Name != "Option" || len(enumT.Args) != 1 {
+	if !ok {
 		return false
 	}
-	if !isI32StackShape(enumT.Args[0]) {
+	variantNames := pairFormVariantsFor(enumT)
+	if variantNames == nil {
 		return false
 	}
-	// Walk the body. Every return must produce Some(EXPR) /
-	// None directly; otherwise the function may need a heap
-	// box (e.g. for a return value that escapes via a stored
-	// state field).
 	if fn.Body == nil {
 		return false
 	}
-	return allReturnsAreSomeOrNone(fn.Body)
+	return allReturnsAreVariantLiteral(fn.Body, variantNames)
+}
+
+// pairFormVariantsFor returns the set of valid variant
+// constructor names for fn's return type when the type is
+// eligible for pair-form lowering. Returns nil if the type
+// isn't `Option[T]` / `Result[T, E]` or if any payload type
+// isn't i32-stack-shaped.
+func pairFormVariantsFor(t ast.EnumType) map[string]bool {
+	switch t.Name {
+	case "Option":
+		if len(t.Args) != 1 || !isI32StackShape(t.Args[0]) {
+			return nil
+		}
+		return map[string]bool{"Some": true, "None": true}
+	case "Result":
+		if len(t.Args) != 2 || !isI32StackShape(t.Args[0]) || !isI32StackShape(t.Args[1]) {
+			return nil
+		}
+		return map[string]bool{"Ok": true, "Err": true}
+	}
+	return nil
 }
 
 // isI32StackShape returns true if t is one of the narrow
@@ -760,50 +789,51 @@ func isI32StackShape(t ast.Type) bool {
 	return false
 }
 
-// allReturnsAreSomeOrNone walks every Return statement
-// reachable from s and reports whether each one returns a
-// `Some(EXPR)` / `None` literal directly. Stops at the first
-// non-conforming return.
-func allReturnsAreSomeOrNone(s ast.Stmt) bool {
+// allReturnsAreVariantLiteral walks every Return statement
+// reachable from s and reports whether each one returns one
+// of the named variant constructors as a literal — `Some(EXPR)`
+// / `None` for Option, or `Ok(EXPR)` / `Err(EXPR)` for Result.
+// Stops at the first non-conforming return.
+func allReturnsAreVariantLiteral(s ast.Stmt, names map[string]bool) bool {
 	if s == nil {
 		return true
 	}
 	switch x := s.(type) {
 	case *ast.Block:
 		for _, st := range x.Stmts {
-			if !allReturnsAreSomeOrNone(st) {
+			if !allReturnsAreVariantLiteral(st, names) {
 				return false
 			}
 		}
 		return true
 	case *ast.If:
-		return allReturnsAreSomeOrNone(x.Then) && allReturnsAreSomeOrNone(x.Else)
+		return allReturnsAreVariantLiteral(x.Then, names) && allReturnsAreVariantLiteral(x.Else, names)
 	case *ast.IfLet:
-		return allReturnsAreSomeOrNone(x.Then) && allReturnsAreSomeOrNone(x.Else)
+		return allReturnsAreVariantLiteral(x.Then, names) && allReturnsAreVariantLiteral(x.Else, names)
 	case *ast.While:
-		return allReturnsAreSomeOrNone(x.Body)
+		return allReturnsAreVariantLiteral(x.Body, names)
 	case *ast.For:
-		return allReturnsAreSomeOrNone(x.Body)
+		return allReturnsAreVariantLiteral(x.Body, names)
 	case *ast.Switch:
 		for _, c := range x.Cases {
-			if !allReturnsAreSomeOrNone(c.Body) {
+			if !allReturnsAreVariantLiteral(c.Body, names) {
 				return false
 			}
 		}
-		return x.Default == nil || allReturnsAreSomeOrNone(x.Default)
+		return x.Default == nil || allReturnsAreVariantLiteral(x.Default, names)
 	case *ast.Match:
 		for _, arm := range x.Arms {
-			if !allReturnsAreSomeOrNone(arm.Body) {
+			if !allReturnsAreVariantLiteral(arm.Body, names) {
 				return false
 			}
 		}
 		return true
 	case *ast.LetElse:
-		return allReturnsAreSomeOrNone(x.Else)
+		return allReturnsAreVariantLiteral(x.Else, names)
 	case *ast.Arena:
-		return allReturnsAreSomeOrNone(x.Body)
+		return allReturnsAreVariantLiteral(x.Body, names)
 	case *ast.Return:
-		return isSomeOrNoneExpr(x.Value)
+		return isVariantLiteralExpr(x.Value, names)
 	}
 	return true
 }
@@ -829,18 +859,41 @@ func (b *builder) isPairFormScrutinee(e ast.Expr) bool {
 	return b.pairForm[id.Name]
 }
 
-// isSomeOrNoneExpr returns true if e is the AST shape
-// `Some(EXPR)` or `None`. Used by the pair-form eligibility
-// analysis to confirm a return statement constructs an Option
-// variant directly rather than (for example) forwarding the
-// result of another function call.
-func isSomeOrNoneExpr(e ast.Expr) bool {
+// pairFormVariantOf inspects a pair-form-variant literal AST
+// (`Some(EXPR)` / `None` / `Ok(EXPR)` / `Err(EXPR)`) and
+// returns the variant name + payload expression (nil for the
+// payloadless None). Caller is responsible for confirming the
+// literal is a recognised variant shape via
+// isVariantLiteralExpr first.
+func pairFormVariantOf(e ast.Expr) (name string, payload ast.Expr) {
+	if c, ok := e.(*ast.Call); ok {
+		if id, ok := c.Callee.(*ast.Ident); ok {
+			if len(c.Args) >= 1 {
+				return id.Name, c.Args[0]
+			}
+			return id.Name, nil
+		}
+	}
+	if id, ok := e.(*ast.Ident); ok {
+		return id.Name, nil
+	}
+	return "", nil
+}
+
+// isVariantLiteralExpr returns true if e is the AST shape of
+// one of the named variant constructors (`Some(EXPR)`,
+// `None`, `Ok(EXPR)`, `Err(EXPR)`). Used by the pair-form
+// eligibility analysis to confirm a return statement
+// constructs an Option/Result variant directly rather than
+// (for example) forwarding the result of another function
+// call. Payloadless variants (`None`) parse as a bare Ident.
+func isVariantLiteralExpr(e ast.Expr, names map[string]bool) bool {
 	c, ok := e.(*ast.Call)
 	if !ok {
-		// Bare `None` — parsed as an Ident the checker resolves
-		// to the variant constructor.
+		// Bare payloadless variant (`None`) parses as an Ident
+		// the checker resolves to the variant constructor.
 		if id, ok := e.(*ast.Ident); ok {
-			return id.Name == "None"
+			return names[id.Name]
 		}
 		return false
 	}
@@ -848,8 +901,7 @@ func isSomeOrNoneExpr(e ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	return (id.Name == "Some" && len(c.Args) == 1) ||
-		(id.Name == "None" && len(c.Args) == 0)
+	return names[id.Name]
 }
 
 // builder is the per-function lowering state.
@@ -909,8 +961,13 @@ type builder struct {
 	// between OpCallDirect and OpCallDirectPair.
 	pairForm map[string]bool
 	// thisIsPair is `pairForm[fn.Name]` cached on the builder
-	// for the common path in Return / Some / None lowering.
-	thisIsPair bool
+	// for the common path in Return / Some / None / Ok / Err
+	// lowering. `pairVariants` is the variant-name set for the
+	// function's pair-form return type — `{"Some", "None"}` for
+	// `Option[T]`, `{"Ok", "Err"}` for `Result[T, E]`. Empty
+	// when thisIsPair is false.
+	thisIsPair   bool
+	pairVariants map[string]bool
 	// suppressPairRebox tells the Call lowering to skip the
 	// `emitRepackPairAsHeapBox` step after OpCallDirectPair —
 	// the caller (IfLet / Match / LetElse scrutinee path)
@@ -1012,6 +1069,11 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		ptrW:        ptrW,
 		pairForm:    pairForm,
 		thisIsPair:  pairForm[fn.Name],
+	}
+	if b.thisIsPair {
+		if enumT, ok := fn.ReturnType.(ast.EnumType); ok {
+			b.pairVariants = pairFormVariantsFor(enumT)
+		}
 	}
 	for i, p := range fn.Params {
 		b.locals[p.Name] = int32(i)
@@ -1600,24 +1662,34 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		// Pair-form return: this function was marked eligible for
 		// the (tag, payload) ABI by findPairFormFuncs, and the
-		// return value is `Some(EXPR)` / `None` literal. Emit
-		// OpMakeSomeI32 / OpMakeNoneI32 + OpReturnPair instead of
-		// the heap-box construction the generic path would emit.
-		// Defers fall back to the heap-box path — pair-form is
-		// scoped to the no-defer subset for now.
-		if b.thisIsPair && len(b.defers) == 0 && isSomeOrNoneExpr(n.Value) {
-			if call, ok := n.Value.(*ast.Call); ok {
-				if id, ok := call.Callee.(*ast.Ident); ok && id.Name == "Some" {
-					if err := b.expr(call.Args[0]); err != nil {
-						return err
-					}
-					b.emit(Op{Kind: OpMakeSomeI32})
-					b.emit(Op{Kind: OpReturnPair})
-					return nil
+		// return value is one of the pair-form variant literals
+		// (`Some(EXPR)` / `None` for Option, `Ok(EXPR)` /
+		// `Err(EXPR)` for Result). Emit the matching OpMake*I32
+		// + OpReturnPair instead of the heap-box construction
+		// the generic path would emit. Defers fall back to the
+		// heap-box path — pair-form is scoped to the no-defer
+		// subset for now.
+		if b.thisIsPair && len(b.defers) == 0 && isVariantLiteralExpr(n.Value, b.pairVariants) {
+			variantName, payload := pairFormVariantOf(n.Value)
+			switch variantName {
+			case "Some":
+				if err := b.expr(payload); err != nil {
+					return err
 				}
+				b.emit(Op{Kind: OpMakeSomeI32})
+			case "None":
+				b.emit(Op{Kind: OpMakeNoneI32})
+			case "Ok":
+				if err := b.expr(payload); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpMakeOkI32})
+			case "Err":
+				if err := b.expr(payload); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpMakeErrI32})
 			}
-			// Bare `None` (parsed as Ident) or `None()`.
-			b.emit(Op{Kind: OpMakeNoneI32})
 			b.emit(Op{Kind: OpReturnPair})
 			return nil
 		}
