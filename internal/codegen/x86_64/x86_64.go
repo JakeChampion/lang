@@ -193,6 +193,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
+	if g.usesSliceMake {
+		g.emitSliceMakeRuntime()
+	}
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
 	}
@@ -329,6 +332,7 @@ type generator struct {
 	usesAllocU8         bool
 	usesStringFromBytes bool
 	usesStrSlice        bool
+	usesSliceMake       bool
 	usesRandomBytes     bool
 	usesReadLine        bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
@@ -389,6 +393,9 @@ func (g *generator) recordUse(target string) {
 	case "__memcpy":
 		g.usesMemcpy = true
 	case "__alloc":
+		g.usesAlloc = true
+	case "__slice_make":
+		g.usesSliceMake = true
 		g.usesAlloc = true
 	case "__lang_strcat":
 		g.usesStrcat = true
@@ -1383,6 +1390,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_alloc"
 		case "__memcpy":
 			target = "__lang_memcpy"
+		case "__slice_make":
+			target = "__lang_slice_make"
 		case "print":
 			target = "__lang_puts"
 		case "write":
@@ -2022,13 +2031,28 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("add rax, rcx")
 		g.emit("add rax, 1")
 		g.label(fmt.Sprintf(".Lstridx_done_%d", id))
-	case "__slice_idx_1":
-		g.emit("lea rax, [rax + rcx]")
-	case "__arr_idx_2", "__slice_idx_2":
+	case "__arr_idx_2":
 		g.emit("lea rax, [rax + rcx*2]")
-	case "__arr_idx", "__slice_idx":
+	case "__arr_idx":
 		g.emit("lea rax, [rax + rcx*4]")
-	case "__arr_idx_8", "__slice_idx_8":
+	case "__arr_idx_8":
+		g.emit("lea rax, [rax + rcx*8]")
+	// Slice indexing must first dereference the slice header to
+	// recover its data_ptr field (4 bytes at [slice + 0]; len is
+	// at +4 but we trust the IR's bounds-check pass to have
+	// validated `i < len` upstream). After the deref it's the
+	// same stride-add shape as the array helpers.
+	case "__slice_idx_1":
+		g.emit("mov eax, [rax]") // data_ptr (i32)
+		g.emit("add rax, rcx")
+	case "__slice_idx_2":
+		g.emit("mov eax, [rax]")
+		g.emit("lea rax, [rax + rcx*2]")
+	case "__slice_idx":
+		g.emit("mov eax, [rax]")
+		g.emit("lea rax, [rax + rcx*4]")
+	case "__slice_idx_8":
+		g.emit("mov eax, [rax]")
 		g.emit("lea rax, [rax + rcx*8]")
 	default:
 		return fmt.Errorf("x86_64: unknown index helper %q", name)
@@ -2283,6 +2307,46 @@ func (g *generator) emitAllocRuntime() {
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
 	g.line(".size __lang_alloc, .-__lang_alloc")
+}
+
+// emitSliceMakeRuntime emits `__lang_slice_make(data, len)`:
+// allocate an 8-byte slice header [data_ptr, len] on the bump
+// heap and return its address. The IR's slice-construction path
+// (per `*ast.SliceExpr` and `*ast.IndexExpr` write side) calls
+// this helper to materialise the header — element indexing is
+// inlined as a stride-aware `data_ptr + i * N` via the existing
+// __slice_idx_N inline helpers, so there's no per-stride
+// dispatch needed here.
+//
+// Header layout matches the wasm runtime ($__slice_make) so the
+// IR's `len(slice)` shape (`[slice + 4]`) and field-load offsets
+// stay backend-agnostic: 4 bytes data_ptr, 4 bytes len, 8 bytes
+// total. This relies on heap addresses fitting in 32 bits —
+// true today for x86-64 Linux + arm64 Linux qemu; arm64-darwin's
+// >4 GiB heap is a documented limitation tracked in CLAUDE.md.
+//
+// Calling convention: rdi = data_ptr (post-stride-offset),
+// rsi = len. Returns slice header address in rax. Calls
+// __lang_alloc which clobbers rcx / rdx / rsi / rdi (caller-
+// save), so we stash both inputs in r12 / r13 around the alloc
+// — same trick the strcat / env / args helpers use.
+func (g *generator) emitSliceMakeRuntime() {
+	g.line("")
+	g.line(".globl __lang_slice_make")
+	g.line(".type __lang_slice_make, @function")
+	g.label("__lang_slice_make")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("mov r12, rdi") // save data_ptr
+	g.emit("mov r13, rsi") // save len
+	g.emit("mov edi, 8")
+	g.emit("call __lang_alloc")
+	g.emit("mov [rax], r12d")     // [+0..+3] data_ptr (i32)
+	g.emit("mov [rax + 4], r13d") // [+4..+7] len (i32)
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("ret")
+	g.line(".size __lang_slice_make, .-__lang_slice_make")
 }
 
 // emitMemcpyRuntime emits `__lang_memcpy(dst, src, n)` —

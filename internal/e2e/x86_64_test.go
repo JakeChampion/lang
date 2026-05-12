@@ -1447,6 +1447,67 @@ function main(): i32 {
 // arena_restore(saved) rewinds it. Allocations after the
 // restore reuse the space the freed allocations consumed.
 // Mirrors TestArm64Arena.
+// Slice construction + indexing was previously unavailable on
+// natives: `__slice_make` was emitted only on wasm, so any
+// program containing `a[lo:hi]` failed to link with "undefined
+// reference to __slice_make". And the natives' inline
+// `__slice_idx_N` helper was wrong on top of that — it
+// computed `header_ptr + i*N` instead of dereferencing the
+// header's data_ptr field first. This PR adds the runtime
+// helper and fixes the inline so all four strides (u8 / u16 /
+// i32 / i64-shape) work for both reads and writes.
+func TestX86_64SliceMake(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"i32 slice read", `function main(): i32 {
+    var arr: i32[] = [10, 20, 30, 40, 50];
+    var s: [i32] = arr[1:4];
+    return s[1];
+}`, 30},
+		{"i32 slice write propagates", `function main(): i32 {
+    var arr: i32[] = [1, 2, 3, 4, 5];
+    var s: [i32] = arr[1:4];
+    s[0] = 99;
+    return arr[1];
+}`, 99},
+		{"u8 slice read", `function main(): i32 {
+    var arr: u8[] = [10, 20, 30, 40, 50];
+    var s: [u8] = arr[1:4];
+    return s[1] as i32;
+}`, 30},
+		{"u8 slice write propagates", `function main(): i32 {
+    var arr: u8[] = [1, 2, 3, 4, 5];
+    var s: [u8] = arr[1:4];
+    s[0] = 99;
+    return arr[1] as i32;
+}`, 99},
+		{"u16 slice round-trip", `function main(): i32 {
+    var arr: u16[] = [100, 200, 300, 400];
+    var s: [u16] = arr[1:3];
+    s[0] = 50;
+    return arr[1] as i32;
+}`, 50},
+		{"i64 slice read", `function main(): i32 {
+    var arr: i64[] = [(1i64 << 40), (1i64 << 41), (1i64 << 42)];
+    var s: [i64] = arr[1:3];
+    return (s[0] >> 41) as i32;
+}`, 1},
+		{"len(slice)", `function main(): i32 {
+    var arr: i32[] = [1, 2, 3, 4, 5];
+    var s: [i32] = arr[1:4];
+    return len(s);
+}`, 3},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestX86_64Arena(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `function main(): i32 {
     var s1: string = "hello, " + "world!"; // alloc
