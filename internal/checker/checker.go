@@ -81,13 +81,16 @@ type Info struct {
 // checker injects into every program: `Option[T]` and
 // `Result[T, E]`. Variant order matters — runtime helpers
 // (`$read_line`, `$env`) hardcode the tag indices, so `Some` is
-// 0, `None` is 1, `Ok` is 0, `Err` is 1.
-//
-// Users can't shadow these names; trying to declare an `enum
-// Option { … }` in user code triggers the existing redeclared-
-// enum error. The decls live in the AST, not just the checker
-// info, so the formatter / interpreter / IR layers see them
-// just like user-written enums.
+// 0, `None` is 1, `Ok` is 0, `Err` is 1; and the IR's pair-form
+// lowering hard-codes the same `OpMakeSomeI32 → tag=0` /
+// `OpMakeOkI32 → tag=0` mapping. Letting a user redeclare
+// `Option` with the variants swapped silently miscompiles —
+// `Check` rejects any user `enum Option { … }` /
+// `enum Result { … }` (and the other reserved names below)
+// before reaching variant registration. The decls live in the
+// AST, not just the checker info, so the formatter /
+// interpreter / IR layers see them just like user-written
+// enums.
 func builtinEnumDecls() []*ast.EnumDecl {
 	return []*ast.EnumDecl{
 		{
@@ -324,33 +327,65 @@ func Check(prog *ast.Program) (*Info, error) {
 	// heuristic skipped EVERY builtin if the user declared
 	// their own Option, which broke the prelude's json_encode
 	// (uses JsonValue).
+	//
+	// Builtin names are RESERVED: if the user declared one
+	// with the same name, we drop the builtin (so the user's
+	// decl is the only one in the program — avoids a noisy
+	// "redeclared" pile-on) and record the offending decl so
+	// `Check` can flag it once the error sink exists.
+	// Allowing the shadow silently would miscompile, since
+	// runtime helpers + IR pair-form lowering hard-code the
+	// builtin variant order.
+	// `Check` is re-entered by the monomorph pass on the
+	// rewritten program — at that point `prog.Enums` /
+	// `prog.Structs` already contain the builtin decls that
+	// the first pass prepended. We distinguish those from
+	// real user decls by position: parser-produced decls have
+	// non-zero `P` (the lexer numbers from line 1), so the
+	// zero-positioned entries are the previously-injected
+	// builtins and skipping re-injection is the right move
+	// (not a shadow).
+	var shadowedEnums []*ast.EnumDecl
 	{
-		userEnums := map[string]bool{}
+		userEnums := map[string]*ast.EnumDecl{}
 		for _, ed := range prog.Enums {
-			userEnums[ed.Name] = true
+			userEnums[ed.Name] = ed
 		}
 		var inject []*ast.EnumDecl
 		for _, ed := range builtinEnumDecls() {
-			if !userEnums[ed.Name] {
-				inject = append(inject, ed)
+			if existing, dup := userEnums[ed.Name]; dup {
+				if existing.P == (ast.Position{}) {
+					continue
+				}
+				shadowedEnums = append(shadowedEnums, existing)
+				continue
 			}
+			inject = append(inject, ed)
 		}
 		if len(inject) > 0 {
 			prog.Enums = append(inject, prog.Enums...)
 		}
 	}
 	// Same shape for the auto-injected structs (Reader,
-	// Writer, HttpRequest, HttpResponse, Map, MapIter, Url).
+	// Writer, HttpRequest, HttpResponse, Map, MapIter, Url) —
+	// same shadow-is-an-error policy, same monomorph-re-entry
+	// handling.
+	var shadowedStructs []*ast.StructDecl
 	{
-		userStructs := map[string]bool{}
+		userStructs := map[string]*ast.StructDecl{}
 		for _, sd := range prog.Structs {
-			userStructs[sd.Name] = true
+			userStructs[sd.Name] = sd
 		}
 		var inject []*ast.StructDecl
 		for _, sd := range builtinStructDecls() {
-			if !userStructs[sd.Name] {
-				inject = append(inject, sd)
+			if existing, dup := userStructs[sd.Name]; dup {
+				if existing.P == (ast.Position{}) {
+					continue
+				}
+				shadowedStructs = append(shadowedStructs, existing)
+				continue
 			}
+			inject = append(inject, sd)
 		}
 		if len(inject) > 0 {
 			prog.Structs = append(inject, prog.Structs...)
@@ -377,6 +412,17 @@ func Check(prog *ast.Program) (*Info, error) {
 			StateVars:           map[string]ast.Type{},
 		},
 		variantOf: map[string]variantRef{},
+	}
+
+	// Surface shadow-attempts on reserved built-in type names
+	// recorded above. We report on the user's decl position so
+	// the IDE squiggle lands on the offending source, not on
+	// some synthetic builtin we never actually exposed.
+	for _, ed := range shadowedEnums {
+		c.errf(ed.P, "enum %q is a reserved built-in name and cannot be redeclared", ed.Name)
+	}
+	for _, sd := range shadowedStructs {
+		c.errf(sd.P, "struct %q is a reserved built-in name and cannot be redeclared", sd.Name)
 	}
 
 	// Register every struct declaration up front so that types
