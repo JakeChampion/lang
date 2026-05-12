@@ -589,6 +589,17 @@ type Func struct {
 // Program is the lowered form of an entire ast.Program.
 type Program struct {
 	Funcs []*Func
+	// PairForm is the set of function names lowered with the
+	// register-based (tag, payload) return ABI. Populated once
+	// per program by findPairFormFuncs during `LowerWith`.
+	// Backends consult this to decide:
+	//   - what signature to emit for the function (e.g. wasm
+	//     `(result i32 i32)` instead of `(result i32)` once
+	//     the multi-value return ABI is wired), and
+	//   - whether a call site needs to rebox / extract the
+	//     pair (consumer-side scrutinee vs generic context).
+	// Nil/missing entries mean heap-form (default ABI).
+	PairForm map[string]bool
 }
 
 // String prints the program in a textual form useful for tests and
@@ -668,7 +679,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// directly. Captured here so callers know to consume two
 	// stack values from a OpCallDirectPair instead of one.
 	pairForm := findPairFormFuncs(prog)
-	out := &Program{}
+	out := &Program{PairForm: pairForm}
 	for _, fn := range prog.Funcs {
 		f, err := lowerFunc(fn, info, ptrW, pairForm)
 		if err != nil {
@@ -1262,12 +1273,23 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		if err := b.emitDeferCleanup(); err != nil {
 			return nil, err
 		}
-		if isVoid(fn.ReturnType) {
+		switch {
+		case isVoid(fn.ReturnType):
 			b.emit(Op{Kind: OpReturnVoid})
-		} else if isFloat(fn.ReturnType) {
+		case b.thisIsPair:
+			// Pair-form fns return (tag, payload). The
+			// type-checker should reject programs that
+			// actually reach this fallthrough, but the IR
+			// still needs to satisfy the backend's stack
+			// shape — emit zero pair so wasm's typed-stack
+			// validation passes.
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpReturnPair})
+		case isFloat(fn.ReturnType):
 			b.emit(Op{Kind: OpConstF32, F32: 0})
 			b.emit(Op{Kind: OpReturn})
-		} else {
+		default:
 			b.emit(Op{Kind: OpConstI32, I32: 0})
 			b.emit(Op{Kind: OpReturn})
 		}
@@ -1808,6 +1830,26 @@ func (b *builder) stmt(s ast.Stmt) error {
 				// surfaces in tests rather than silently emitting
 				// OpReturnPair with no payload prep.
 				return fmt.Errorf("ir: pair-form return saw unrecognised variant %q (isVariantLiteralExpr / pairFormVariantOf drifted)", variantName)
+			}
+			b.emit(Op{Kind: OpReturnPair})
+			return nil
+		}
+		// Tail-call to a pair-form callee inside a pair-form
+		// fn: forward the (tag, payload) pair through. Without
+		// `suppressPairRebox` the generic call lowering would
+		// rebox into a heap pointer, then OpReturn would return
+		// a single i32 — mismatching the wasm-side
+		// `(result i32 i32)` signature once it gates real
+		// multi-value returns on PairForm. Setting the flag
+		// keeps the pair on the operand stack so OpReturnPair
+		// handles it directly.
+		if b.thisIsPair && len(b.defers) == 0 && isPairFormTailCall(n.Value, b.pairForm) {
+			save := b.suppressPairRebox
+			b.suppressPairRebox = true
+			err := b.expr(n.Value)
+			b.suppressPairRebox = save
+			if err != nil {
+				return err
 			}
 			b.emit(Op{Kind: OpReturnPair})
 			return nil
@@ -2531,17 +2573,40 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpConstI32, I32: 1}) // failure variant idx is 1 for both Option and Result
 		b.emit(Op{Kind: OpEq})
 		b.openIf(BlockTypeVoid)
+		// Failure-path return shape has to match the enclosing
+		// function's ABI: pair-form fns return (tag, payload)
+		// via OpReturnPair, heap-form fns return a single
+		// heap-box pointer via OpReturn.
 		switch n.Kind {
 		case ast.TryKindOption:
-			if err := b.emitEnumNew(nil, "Option", 1, 0, nil); err != nil {
-				return err
+			if b.thisIsPair {
+				b.emit(Op{Kind: OpMakeNoneI32})
+				b.emit(Op{Kind: OpReturnPair})
+			} else {
+				if err := b.emitEnumNew(nil, "Option", 1, 0, nil); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpReturn})
 			}
 		case ast.TryKindResult:
-			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+			if b.thisIsPair {
+				// Forward the source heap-box's (tag,
+				// payload) onto the operand stack so
+				// OpReturnPair has the right shape.
+				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				b.emit(Op{Kind: OpLoad}) // tag at ptr+0
+				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				b.emit(Op{Kind: OpConstI32, I32: 4})
+				b.emit(Op{Kind: OpAdd})
+				b.emit(Op{Kind: OpLoad}) // payload at ptr+4
+				b.emit(Op{Kind: OpReturnPair})
+			} else {
+				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				b.emit(Op{Kind: OpReturn})
+			}
 		default:
 			return fmt.Errorf("ir: TryOp with unstamped Kind")
 		}
-		b.emit(Op{Kind: OpReturn})
 		b.closeScope()
 		// Success path: load payload at ptr+4.
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})

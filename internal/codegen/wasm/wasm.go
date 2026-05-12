@@ -328,6 +328,15 @@ type generator struct {
 	// in `(export ... (func $name))` declarations or any other
 	// place that would dangle without a definition.
 	emittedFuncs map[string]bool
+	// pairForm is the set of functions lowered with the
+	// register-based (tag, payload) return ABI. Wasm signs
+	// these as `(result i32 i32)` instead of `(result i32)`,
+	// pushes (tag, payload) directly on OpMakeSome/None/Ok/Err
+	// without a heap-box alloc, and consumers either consume
+	// the two stack values inline (OpCallDirectPair) or rebox
+	// into a heap pointer (OpCallDirect to a pair-form callee
+	// from a generic-position consumer).
+	pairForm map[string]bool
 }
 
 type stringEntry struct {
