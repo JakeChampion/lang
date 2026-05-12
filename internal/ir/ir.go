@@ -254,6 +254,13 @@ const (
 	OpMakeErrI32  // (i32 payload) → (i32 tag=1, i32 payload)
 	OpReturnPair  // (tag, payload)→ unwinds the function
 
+	// OpCallDirectPair invokes a pair-returning function. Same
+	// Str/I32 conventions as OpCallDirect (target name + arg
+	// count), but the callee returns (tag, payload) — two i32
+	// values pushed onto the operand stack. Used by AST→IR when
+	// the caller knows the callee was lowered with OpReturnPair.
+	OpCallDirectPair // (args...) → (i32 tag, i32 payload)
+
 	// Closure conversion. Hoisted local functions read captured outer
 	// variables through a synthetic `__env` parameter (an i32 pointer
 	// to a heap block where each capture sits at a fixed byte offset).
@@ -477,6 +484,8 @@ func (k OpKind) String() string {
 		return "make_ok.i32"
 	case OpMakeErrI32:
 		return "make_err.i32"
+	case OpCallDirectPair:
+		return "call_direct_pair"
 	case OpMakeClosure:
 		return "make_closure"
 	case OpMakeEnv:
@@ -605,7 +614,7 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %s", op.Kind, blockTypeName(op.I32))
 	case OpBr, OpBrIf:
 		return fmt.Sprintf("%s %d", op.Kind, op.I32)
-	case OpCallDirect, OpCallClosureDirect:
+	case OpCallDirect, OpCallClosureDirect, OpCallDirectPair:
 		return fmt.Sprintf("%s %s argc=%d", op.Kind, op.Str, op.I32)
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)
@@ -637,15 +646,174 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	if err := closureconv.ConvertWith(prog, info, ptrW); err != nil {
 		return nil, err
 	}
+	// Identify pair-form-eligible functions up-front. A function
+	// returns its `Option[i32]` value via the (tag, payload) pair
+	// ABI instead of a heap-allocated `{tag, payload}` box when
+	// every `return` in its body produces `Some(EXPR)` or `None`
+	// directly. Captured here so callers know to consume two
+	// stack values from a OpCallDirectPair instead of one.
+	pairForm := findPairFormFuncs(prog)
 	out := &Program{}
 	for _, fn := range prog.Funcs {
-		f, err := lowerFunc(fn, info, ptrW)
+		f, err := lowerFunc(fn, info, ptrW, pairForm)
 		if err != nil {
 			return nil, err
 		}
 		out.Funcs = append(out.Funcs, f)
 	}
 	return out, nil
+}
+
+// findPairFormFuncs scans every top-level function in prog and
+// returns the names of those eligible for the register-based
+// (tag, payload) return ABI. Eligibility today is conservative:
+//
+//   - Return type is `Option[T]` where T's wasm-stack shape is
+//     i32 (i32 / u32 / boolean / and pointer-shaped values:
+//     string / Map / T[] / [T] / struct).
+//   - Every `return` statement in the body (including those
+//     inside if / for / while / match arms) returns a
+//     `Some(EXPR)` or `None` literal directly — no escape
+//     through call args, no store to state / Map / struct
+//     field that would otherwise outlive the call frame.
+//
+// Tightening the analysis (e.g. to allow recursive helpers,
+// or `Result[T, E]`) is a future step in this arc.
+func findPairFormFuncs(prog *ast.Program) map[string]bool {
+	out := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if !isPairFormEligible(fn) {
+			continue
+		}
+		out[fn.Name] = true
+	}
+	return out
+}
+
+// isPairFormEligible returns true if fn can be lowered with
+// the register-based Option pair-form return ABI. See
+// findPairFormFuncs for the eligibility rules.
+func isPairFormEligible(fn *ast.FuncDecl) bool {
+	if fn.IsLocal {
+		// Hoisted closures take an extra __env i32 param and
+		// have a fixed-shape body; pair-form lowering for them
+		// is a future PR.
+		return false
+	}
+	enumT, ok := fn.ReturnType.(ast.EnumType)
+	if !ok || enumT.Name != "Option" || len(enumT.Args) != 1 {
+		return false
+	}
+	if !isI32StackShape(enumT.Args[0]) {
+		return false
+	}
+	// Walk the body. Every return must produce Some(EXPR) /
+	// None directly; otherwise the function may need a heap
+	// box (e.g. for a return value that escapes via a stored
+	// state field).
+	if fn.Body == nil {
+		return false
+	}
+	return allReturnsAreSomeOrNone(fn.Body)
+}
+
+// isI32StackShape returns true if t is one of the narrow
+// numeric types that fits in a single 4-byte operand-stack
+// slot on EVERY target. Excludes pointer-shaped values
+// (string / struct / T[] / [T] / tuple) because their
+// runtime representation is target-aware (4 bytes on wasm32,
+// 8 bytes on natives), and the OpMakeSomeI32 native fallback
+// stores the payload as a 4-byte i32 today — which would
+// truncate an 8-byte heap pointer.
+//
+// Tightening this to handle pointer-shaped Option[T] needs
+// the native fallback to switch to payload-width-aware
+// stores (or step 4 of the arc to land first, making natives
+// use proper register-form returns). Tracked in the
+// follow-up steps.
+func isI32StackShape(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.NumberType:
+		w := x.NormalWidth()
+		// usize (Width = WidthPtr) is target-aware (8 bytes
+		// on natives) and excluded for the same reason as
+		// pointer-shaped types — see the comment above.
+		return w >= 0 && w <= 32 && !x.IsPointerWidth()
+	case ast.BoolType:
+		return true
+	}
+	return false
+}
+
+// allReturnsAreSomeOrNone walks every Return statement
+// reachable from s and reports whether each one returns a
+// `Some(EXPR)` / `None` literal directly. Stops at the first
+// non-conforming return.
+func allReturnsAreSomeOrNone(s ast.Stmt) bool {
+	if s == nil {
+		return true
+	}
+	switch x := s.(type) {
+	case *ast.Block:
+		for _, st := range x.Stmts {
+			if !allReturnsAreSomeOrNone(st) {
+				return false
+			}
+		}
+		return true
+	case *ast.If:
+		return allReturnsAreSomeOrNone(x.Then) && allReturnsAreSomeOrNone(x.Else)
+	case *ast.IfLet:
+		return allReturnsAreSomeOrNone(x.Then) && allReturnsAreSomeOrNone(x.Else)
+	case *ast.While:
+		return allReturnsAreSomeOrNone(x.Body)
+	case *ast.For:
+		return allReturnsAreSomeOrNone(x.Body)
+	case *ast.Switch:
+		for _, c := range x.Cases {
+			if !allReturnsAreSomeOrNone(c.Body) {
+				return false
+			}
+		}
+		return x.Default == nil || allReturnsAreSomeOrNone(x.Default)
+	case *ast.Match:
+		for _, arm := range x.Arms {
+			if !allReturnsAreSomeOrNone(arm.Body) {
+				return false
+			}
+		}
+		return true
+	case *ast.LetElse:
+		return allReturnsAreSomeOrNone(x.Else)
+	case *ast.Arena:
+		return allReturnsAreSomeOrNone(x.Body)
+	case *ast.Return:
+		return isSomeOrNoneExpr(x.Value)
+	}
+	return true
+}
+
+// isSomeOrNoneExpr returns true if e is the AST shape
+// `Some(EXPR)` or `None`. Used by the pair-form eligibility
+// analysis to confirm a return statement constructs an Option
+// variant directly rather than (for example) forwarding the
+// result of another function call.
+func isSomeOrNoneExpr(e ast.Expr) bool {
+	c, ok := e.(*ast.Call)
+	if !ok {
+		// Bare `None` — parsed as an Ident the checker resolves
+		// to the variant constructor.
+		if id, ok := e.(*ast.Ident); ok {
+			return id.Name == "None"
+		}
+		return false
+	}
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	return (id.Name == "Some" && len(c.Args) == 1) ||
+		(id.Name == "None" && len(c.Args) == 0)
 }
 
 // builder is the per-function lowering state.
@@ -698,6 +866,15 @@ type builder struct {
 	// captures so pointer-typed values survive arm64-darwin's
 	// >= 4 GiB heap.
 	ptrW int
+	// pairForm maps function name → whether that function is
+	// lowered with the pair-form (tag, payload) return ABI.
+	// Populated once per program by findPairFormFuncs, shared
+	// across every builder. Callers consult it to decide
+	// between OpCallDirect and OpCallDirectPair.
+	pairForm map[string]bool
+	// thisIsPair is `pairForm[fn.Name]` cached on the builder
+	// for the common path in Return / Some / None lowering.
+	thisIsPair bool
 }
 
 // collectDefers walks `s` recursively and appends every
@@ -776,14 +953,23 @@ func (b *builder) emitDeferCleanup() error {
 	return nil
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
 		Locals:     info.Locals[fn],
 		ReturnType: fn.ReturnType,
 	}
-	b := &builder{info: info, fn: fn, out: out, locals: map[string]int32{}, scratchType: map[int32]ast.Type{}, ptrW: ptrW}
+	b := &builder{
+		info:        info,
+		fn:          fn,
+		out:         out,
+		locals:      map[string]int32{},
+		scratchType: map[int32]ast.Type{},
+		ptrW:        ptrW,
+		pairForm:    pairForm,
+		thisIsPair:  pairForm[fn.Name],
+	}
 	for i, p := range fn.Params {
 		b.locals[p.Name] = int32(i)
 	}
@@ -1236,6 +1422,29 @@ func (b *builder) stmt(s ast.Stmt) error {
 				return err
 			}
 			b.emit(Op{Kind: OpReturnVoid})
+			return nil
+		}
+		// Pair-form return: this function was marked eligible for
+		// the (tag, payload) ABI by findPairFormFuncs, and the
+		// return value is `Some(EXPR)` / `None` literal. Emit
+		// OpMakeSomeI32 / OpMakeNoneI32 + OpReturnPair instead of
+		// the heap-box construction the generic path would emit.
+		// Defers fall back to the heap-box path — pair-form is
+		// scoped to the no-defer subset for now.
+		if b.thisIsPair && len(b.defers) == 0 && isSomeOrNoneExpr(n.Value) {
+			if call, ok := n.Value.(*ast.Call); ok {
+				if id, ok := call.Callee.(*ast.Ident); ok && id.Name == "Some" {
+					if err := b.expr(call.Args[0]); err != nil {
+						return err
+					}
+					b.emit(Op{Kind: OpMakeSomeI32})
+					b.emit(Op{Kind: OpReturnPair})
+					return nil
+				}
+			}
+			// Bare `None` (parsed as Ident) or `None()`.
+			b.emit(Op{Kind: OpMakeNoneI32})
+			b.emit(Op{Kind: OpReturnPair})
 			return nil
 		}
 		if err := b.expr(n.Value); err != nil {

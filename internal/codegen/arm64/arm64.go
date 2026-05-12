@@ -3632,6 +3632,47 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// Void return: no value to pop. The epilogue at
 		// retLabel restores the frame and rets.
 		g.emit("b %s", retLabel)
+	case ir.OpReturnPair:
+		// Native fallback — see x86_64's matching case. The
+		// pair-form lowering leaves a heap-pointer on the
+		// operand stack (OpMakeSome/None/Ok/Err builds the box
+		// the same way emitEnumNew does), so OpReturnPair is
+		// indistinguishable from OpReturn at the arm64 layer.
+		// Wasm gets the real two-register return.
+		g.pop()
+		g.emit("b %s", retLabel)
+	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
+		// Native fallback: alloc 8 bytes, {tag@0, payload@4}.
+		// Layout matches `payloadLayout` so the existing
+		// match-tag-load code keeps working. x19 is callee-save
+		// so it survives the bl __lang_alloc.
+		g.pop()                       // payload → x0
+		g.emit("mov w19, w0")         // preserve i32 across alloc
+		g.emit("mov x0, #8")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")       // tag = 0 (4 bytes)
+		g.emit("str w19, [x0, #4]")   // payload (i32)
+		g.push()
+		g.usesAlloc = true
+	case ir.OpMakeErrI32:
+		// Same shape as Some/Ok but tag=1.
+		g.pop()
+		g.emit("mov w19, w0")
+		g.emit("mov x0, #8")
+		g.emit("bl __lang_alloc")
+		g.emit("mov w1, #1")
+		g.emit("str w1, [x0]")
+		g.emit("str w19, [x0, #4]")
+		g.push()
+		g.usesAlloc = true
+	case ir.OpMakeNoneI32:
+		// Native fallback: push the shared `[tag=1]` sentinel.
+		if g.enumSentinelTags == nil {
+			g.enumSentinelTags = map[int]bool{}
+		}
+		g.enumSentinelTags[1] = true
+		g.adrpAdd("x0", ".LEnumSentinel_1")
+		g.push()
 
 	case ir.OpDrop:
 		g.emit("add sp, sp, #16")

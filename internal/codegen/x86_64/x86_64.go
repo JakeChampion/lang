@@ -677,6 +677,52 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit(fmt.Sprintf("jmp %s", retLabel))
 	case ir.OpReturnVoid:
 		g.emit(fmt.Sprintf("jmp %s", retLabel))
+	case ir.OpReturnPair:
+		// Native fallback: the IR ops OpMakeSome/None/Ok/Err leave
+		// a heap-pointer Option/Result on the operand stack (see
+		// the same case below). OpReturnPair is therefore
+		// indistinguishable from OpReturn — pop one slot, jump to
+		// the epilogue. Wasm gets the actual two-register return;
+		// native multi-value return is step 4 of the arc.
+		g.pop()
+		g.emit(fmt.Sprintf("jmp %s", retLabel))
+	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
+		// Native fallback — same heap-box shape as emitEnumNew:
+		// alloc 8 bytes, store {tag@0, payload@4}, push the
+		// pointer. Layout matches `payloadLayout` so the existing
+		// match/load code reads it correctly. Wasm uses the
+		// register form.
+		g.pop()                          // payload → rax
+		g.emit("push rax")               // preserve across __lang_alloc
+		g.emit("mov edi, 8")
+		g.emit("call __lang_alloc")
+		g.emit("pop rcx")                // payload back into rcx
+		g.emit("mov dword ptr [rax], 0") // tag = 0 (4 bytes)
+		g.emit("mov [rax + 4], ecx")     // payload (i32)
+		g.push()
+		g.usesAlloc = true
+	case ir.OpMakeErrI32:
+		// Same shape as Some/Ok but tag=1.
+		g.pop()
+		g.emit("push rax")
+		g.emit("mov edi, 8")
+		g.emit("call __lang_alloc")
+		g.emit("pop rcx")
+		g.emit("mov dword ptr [rax], 1")
+		g.emit("mov [rax + 4], ecx")
+		g.push()
+		g.usesAlloc = true
+	case ir.OpMakeNoneI32:
+		// Native fallback — push the shared `[tag=1]` sentinel
+		// pointer. Matches the OpEnumSentinel shape so existing
+		// match-tag-load code keeps working.
+		// Use enum-sentinel infra (lazy-register the tag).
+		if g.enumSentinelTags == nil {
+			g.enumSentinelTags = map[int]bool{}
+		}
+		g.enumSentinelTags[1] = true
+		g.emit("lea rax, [rip + .LEnumSentinel_1]")
+		g.push()
 
 	case ir.OpDrop:
 		// Skip the top 16-byte slot.

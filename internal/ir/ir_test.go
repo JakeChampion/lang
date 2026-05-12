@@ -308,29 +308,54 @@ func TestLowerStringConcatNonLiteralKeepsRuntime(t *testing.T) {
 // consumer changes. Covers Option.None (tag 1), IoError
 // payloadless variants, JsonValue.JNull, and any user-defined
 // payloadless variant.
-func TestLowerNoneEmitsEnumSentinel(t *testing.T) {
+// `function f(): Option[i32] { return None; }` is detected as
+// pair-form-eligible by findPairFormFuncs and lowers to
+// OpMakeNoneI32 + OpReturnPair (zero-alloc on wasm; heap-box
+// fallback on natives). The old sentinel path remains for
+// non-eligible callers (payloadless variants in non-Option
+// enums, or Option[T] where T isn't an i32-stack shape).
+func TestLowerNoneEmitsPairForm(t *testing.T) {
 	prog := lowerSource(t, `function f(): Option[i32] { return None; }`)
-	mustContainOp(t, prog, "f", OpEnumSentinel)
+	mustContainOp(t, prog, "f", OpMakeNoneI32)
+	mustContainOp(t, prog, "f", OpReturnPair)
 	fn := findFunc(prog, "f")
 	for _, op := range fn.Ops {
 		if op.Kind == OpAlloc {
-			t.Fatalf("None lowering still emits OpAlloc; the sentinel rewrite slipped:\n%s", prog)
+			t.Fatalf("None lowering still emits OpAlloc; pair-form rewrite slipped:\n%s", prog)
 		}
-		if op.Kind == OpEnumSentinel && op.I32 != 1 {
-			t.Fatalf("expected sentinel tag=1 for None, got tag=%d", op.I32)
+		if op.Kind == OpEnumSentinel {
+			t.Fatalf("pair-form None should bypass OpEnumSentinel:\n%s", prog)
 		}
 	}
 }
 
-// `Some(x)` still allocates — the sentinel rewrite is scoped to
-// payloadless variants only.
-func TestLowerSomeStillAllocates(t *testing.T) {
+// `Some(x)` in a pair-form-eligible function emits
+// OpMakeSomeI32 + OpReturnPair, NOT OpAlloc.
+func TestLowerSomeEmitsPairForm(t *testing.T) {
 	prog := lowerSource(t, `function f(): Option[i32] { return Some(42); }`)
-	mustContainOp(t, prog, "f", OpAlloc)
+	mustContainOp(t, prog, "f", OpMakeSomeI32)
+	mustContainOp(t, prog, "f", OpReturnPair)
 	fn := findFunc(prog, "f")
 	for _, op := range fn.Ops {
-		if op.Kind == OpEnumSentinel {
-			t.Fatalf("Some lowering picked up the sentinel by mistake:\n%s", prog)
+		if op.Kind == OpAlloc {
+			t.Fatalf("Some in pair-form function should not OpAlloc:\n%s", prog)
+		}
+	}
+}
+
+// Option[<pointer-shaped>] is NOT pair-form-eligible — the
+// native fallback's i32 payload-store would truncate an
+// 8-byte heap pointer on arm64-darwin. Falls through to the
+// old heap-box path (OpEnumSentinel for None; OpAlloc for
+// Some). Uses `Option[string]` to stay clear of any
+// prelude-side struct names.
+func TestLowerOptionPointerPayloadStaysHeapForm(t *testing.T) {
+	prog := lowerSource(t, `function f(): Option[string] { return None; }`)
+	mustContainOp(t, prog, "f", OpEnumSentinel)
+	fn := findFunc(prog, "f")
+	for _, op := range fn.Ops {
+		if op.Kind == OpMakeNoneI32 {
+			t.Fatalf("Option[string] should not get pair-form (pointer payload):\n%s", prog)
 		}
 	}
 }
