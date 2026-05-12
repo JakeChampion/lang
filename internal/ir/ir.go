@@ -690,7 +690,15 @@ func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 		for _, k := range x.Cases {
 			collectDefers(k.Body, out)
 		}
-		collectDefers(x.Default, out)
+		// x.Default is `*ast.Block` (concrete pointer); when
+		// the user wrote no default it's a typed-nil pointer.
+		// Boxing into the Stmt interface makes `s == nil` at
+		// the top of this function FALSE (interface has a
+		// non-nil type-tag), and we'd crash on x.Stmts in the
+		// *ast.Block case below. Guard explicitly.
+		if x.Default != nil {
+			collectDefers(x.Default, out)
+		}
 	case *ast.Match:
 		for _, arm := range x.Arms {
 			collectDefers(arm.Body, out)

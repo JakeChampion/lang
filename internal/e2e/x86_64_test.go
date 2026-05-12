@@ -1303,6 +1303,202 @@ func TestX86_64Map(t *testing.T) {
 //
 // Pairs with wasm's TestWASMI8Array / TestWASMU16Array /
 // TestWASMSubI32Widths.
+// Test families that previously had wasm-only coverage but
+// were also codegen-supported on the native backends. Adding
+// e2e tests pins backend parity per BACKEND-PARITY.md's
+// "Both natives test gaps vs wasm" list. While stitching
+// them in, hit a pre-existing compiler panic on
+// `switch`-without-default: collectDefers walked
+// `x.Default` (concrete `*ast.Block`) and crashed when it
+// was a typed-nil; fixed alongside (guard at the call site).
+func TestX86_64Defer(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"defer fires after return value computed", `function inner(): i32 {
+    var x: i32 = 1;
+    defer x = 99;
+    x = 2;
+    return x;
+}
+function main(): i32 { return inner(); }`, 2},
+		{"multiple defers run LIFO", `function check(arr: i32[]): i32 {
+    arr[0] = 1;
+    defer arr[0] = 10;
+    defer arr[0] = 20;
+    return arr[0];
+}
+function main(): i32 {
+    var a: i32[] = [0];
+    check(a);
+    return a[0];
+}`, 10},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
+func TestX86_64Switch(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"multi-value case match", `function classify(n: i32): i32 {
+    switch (n) {
+        case 0: return 100;
+        case 1, 2, 3: return 200;
+        case 7: return 700;
+    }
+    return 0;
+}
+function main(): i32 { return classify(2); }`, 200},
+		{"falls through to post-switch when no case matches", `function main(): i32 {
+    var x: i32 = 99;
+    switch (x) {
+        case 1: return 1;
+        case 2: return 2;
+    }
+    return 0;
+}`, 0},
+		{"default branch", `function main(): i32 {
+    var x: i32 = 99;
+    switch (x) {
+        case 1: return 1;
+        default: return 42;
+    }
+    return 0;
+}`, 42},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
+func TestX86_64FStringInterpolation(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"interpolated i32", `function main(): i32 {
+    var n: i32 = 42;
+    var s: string = f"n is {n}";
+    return len(s);
+}`, 7},
+		{"interpolated string", `function main(): i32 {
+    var who: string = "world";
+    var s: string = f"hello, {who}!";
+    return len(s);
+}`, 13},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
+func TestX86_64Generic(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"generic identity", `function id[T](x: T): T { return x; }
+function main(): i32 { return id(42); }`, 42},
+		{"generic with two type params", `function pick[A, B](a: A, b: B, take_first: boolean): A {
+    return a;
+}
+function main(): i32 { return pick(7, "hi", true); }`, 7},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
+func TestX86_64Tuple(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"tuple destructure", `function pair(): (i32, i32) { return (10, 20); }
+function main(): i32 {
+    let (a, b) = pair();
+    return a + b;
+}`, 30},
+		{"heterogeneous tuple element access", `function main(): i32 {
+    var t: (i32, string, i32) = (1, "two", 3);
+    return t.0 + t.2;
+}`, 4},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
+func TestX86_64ForEach(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"sum array", `function main(): i32 {
+    var sum: i32 = 0;
+    for n in [1, 2, 3, 4, 5] { sum = sum + n; }
+    return sum;
+}`, 15},
+		{"break exits the loop", `function main(): i32 {
+    var found: i32 = -1;
+    for n in [10, 20, 30, 40] {
+        if (n == 30) { found = n; break; }
+    }
+    return found;
+}`, 30},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
+func TestX86_64IfLet(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"Some matches", `function main(): i32 {
+    var x: Option[i32] = Some(42);
+    if let Some(v) = x { return v; }
+    return 99;
+}`, 42},
+		{"None falls through", `function main(): i32 {
+    var x: Option[i32] = None;
+    if let Some(v) = x { return v; }
+    return 99;
+}`, 99},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
 func TestX86_64SubI32(t *testing.T) {
 	for _, c := range []struct {
 		name string
