@@ -512,11 +512,12 @@ func TestLowerResultEmitsPairForm(t *testing.T) {
 	}
 }
 
-// Mixed Result on a heap-form scrutinee still works (no pair-
-// form caller-side; the heap-box function-side path covers it).
-// This pins that the new shape doesn't break the existing
-// Result match path for non-eligible cases like a stored Result
-// var passed back through a match.
+// Caller-side fast path on a pair-form Result return: a
+// `match divide(...)` where `divide` is pair-form-eligible
+// drops the heap rebox + OpMatchTag — the call goes through
+// OpCallDirectPair, the consumer extracts (tag, payload)
+// directly. Mirrors TestLowerMatchOnPairFormCallSkipsRebox
+// for Option above.
 func TestLowerResultMatchOnPairFormCallSkipsRebox(t *testing.T) {
 	prog := lowerSource(t, `function divide(a: i32, b: i32): Result[i32, i32] {
     if (b == 0) { return Err(1); }
