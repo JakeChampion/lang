@@ -683,17 +683,21 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 // returns the names of those eligible for the register-based
 // (tag, payload) return ABI. Eligibility today is conservative:
 //
-//   - Return type is `Option[T]` where T's wasm-stack shape is
-//     i32 (i32 / u32 / boolean / and pointer-shaped values:
-//     string / Map / T[] / [T] / struct).
+//   - Return type is `Option[T]` or `Result[T, E]` where every
+//     type argument is i32-stack-shaped (i32 / u32 / boolean —
+//     see isI32StackShape; pointer-shaped values like string /
+//     struct / T[] are deliberately excluded today).
 //   - Every `return` statement in the body (including those
 //     inside if / for / while / match arms) returns a
-//     `Some(EXPR)` or `None` literal directly — no escape
+//     `Some(EXPR)` / `None` literal (for Option) or `Ok(EXPR)`
+//     / `Err(EXPR)` literal (for Result) directly — no escape
 //     through call args, no store to state / Map / struct
-//     field that would otherwise outlive the call frame.
+//     field that would otherwise outlive the call frame, no
+//     tail-call return where the callee is itself pair-form.
 //
-// Tightening the analysis (e.g. to allow recursive helpers,
-// or `Result[T, E]`) is a future step in this arc.
+// Tightening the analysis (e.g. to see through tail-call
+// returns or if-/match-expression returns, or to accept
+// pointer-shaped payloads) is tracked as a follow-up.
 func findPairFormFuncs(prog *ast.Program) map[string]bool {
 	out := map[string]bool{}
 	for _, fn := range prog.Funcs {
@@ -745,21 +749,35 @@ func isPairFormEligible(fn *ast.FuncDecl) bool {
 // eligible for pair-form lowering. Returns nil if the type
 // isn't `Option[T]` / `Result[T, E]` or if any payload type
 // isn't i32-stack-shaped.
+//
+// The returned map is shared (read-only) across all callers —
+// the eligibility check runs once per function during
+// `findPairFormFuncs` and once per pair-form builder, so
+// avoiding the per-call allocation matters on Result-heavy
+// programs.
 func pairFormVariantsFor(t ast.EnumType) map[string]bool {
 	switch t.Name {
 	case "Option":
 		if len(t.Args) != 1 || !isI32StackShape(t.Args[0]) {
 			return nil
 		}
-		return map[string]bool{"Some": true, "None": true}
+		return optionVariants
 	case "Result":
 		if len(t.Args) != 2 || !isI32StackShape(t.Args[0]) || !isI32StackShape(t.Args[1]) {
 			return nil
 		}
-		return map[string]bool{"Ok": true, "Err": true}
+		return resultVariants
 	}
 	return nil
 }
+
+// Shared variant-name sets returned by pairFormVariantsFor.
+// Treat as read-only — they're handed out to every pair-form
+// eligibility check.
+var (
+	optionVariants = map[string]bool{"Some": true, "None": true}
+	resultVariants = map[string]bool{"Ok": true, "Err": true}
+)
 
 // isI32StackShape returns true if t is one of the narrow
 // numeric types that fits in a single 4-byte operand-stack
@@ -862,17 +880,17 @@ func (b *builder) isPairFormScrutinee(e ast.Expr) bool {
 // pairFormVariantOf inspects a pair-form-variant literal AST
 // (`Some(EXPR)` / `None` / `Ok(EXPR)` / `Err(EXPR)`) and
 // returns the variant name + payload expression (nil for the
-// payloadless None). Caller is responsible for confirming the
+// payloadless `None`). Caller is responsible for confirming the
 // literal is a recognised variant shape via
-// isVariantLiteralExpr first.
+// `isVariantLiteralExpr` first — the two helpers share the
+// arity expectations (call form ⇒ exactly one arg; ident form
+// ⇒ payloadless variant).
 func pairFormVariantOf(e ast.Expr) (name string, payload ast.Expr) {
 	if c, ok := e.(*ast.Call); ok {
-		if id, ok := c.Callee.(*ast.Ident); ok {
-			if len(c.Args) >= 1 {
-				return id.Name, c.Args[0]
-			}
-			return id.Name, nil
+		if id, ok := c.Callee.(*ast.Ident); ok && len(c.Args) == 1 {
+			return id.Name, c.Args[0]
 		}
+		return "", nil
 	}
 	if id, ok := e.(*ast.Ident); ok {
 		return id.Name, nil
@@ -886,7 +904,11 @@ func pairFormVariantOf(e ast.Expr) (name string, payload ast.Expr) {
 // eligibility analysis to confirm a return statement
 // constructs an Option/Result variant directly rather than
 // (for example) forwarding the result of another function
-// call. Payloadless variants (`None`) parse as a bare Ident.
+// call. Payloadless variants parse as a bare Ident; payload-
+// carrying ones must have exactly one argument (the checker
+// rejects other arities upstream, but the guard is defensive —
+// it pins the invariant that `pairFormVariantOf` can decode
+// whatever this accepts).
 func isVariantLiteralExpr(e ast.Expr, names map[string]bool) bool {
 	c, ok := e.(*ast.Call)
 	if !ok {
@@ -895,6 +917,9 @@ func isVariantLiteralExpr(e ast.Expr, names map[string]bool) bool {
 		if id, ok := e.(*ast.Ident); ok {
 			return names[id.Name]
 		}
+		return false
+	}
+	if len(c.Args) != 1 {
 		return false
 	}
 	id, ok := c.Callee.(*ast.Ident)
@@ -964,8 +989,8 @@ type builder struct {
 	// for the common path in Return / Some / None / Ok / Err
 	// lowering. `pairVariants` is the variant-name set for the
 	// function's pair-form return type — `{"Some", "None"}` for
-	// `Option[T]`, `{"Ok", "Err"}` for `Result[T, E]`. Empty
-	// when thisIsPair is false.
+	// `Option[T]`, `{"Ok", "Err"}` for `Result[T, E]`. nil when
+	// thisIsPair is false.
 	thisIsPair   bool
 	pairVariants map[string]bool
 	// suppressPairRebox tells the Call lowering to skip the
@@ -1689,6 +1714,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 					return err
 				}
 				b.emit(Op{Kind: OpMakeErrI32})
+			default:
+				// isVariantLiteralExpr gated against `pairVariants`
+				// above, so every name reaching here should be one
+				// of the four cases. A miss means the two helpers
+				// have drifted out of sync — panic so the bug
+				// surfaces in tests rather than silently emitting
+				// OpReturnPair with no payload prep.
+				return fmt.Errorf("ir: pair-form return saw unrecognised variant %q (isVariantLiteralExpr / pairFormVariantOf drifted)", variantName)
 			}
 			b.emit(Op{Kind: OpReturnPair})
 			return nil
