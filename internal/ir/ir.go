@@ -808,6 +808,27 @@ func allReturnsAreSomeOrNone(s ast.Stmt) bool {
 	return true
 }
 
+// isPairFormScrutinee reports whether e is a direct Call to
+// a pair-form function (per b.pairForm). The match-style
+// dispatch sites (IfLet / Match / LetElse) check this to
+// decide whether to consume the call result as (tag, payload)
+// directly (zero-alloc) or to fall back to the heap-box rebox
+// path the generic Call lowering uses.
+func (b *builder) isPairFormScrutinee(e ast.Expr) bool {
+	c, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if _, isLocal := b.locals[id.Name]; isLocal {
+		return false
+	}
+	return b.pairForm[id.Name]
+}
+
 // isSomeOrNoneExpr returns true if e is the AST shape
 // `Some(EXPR)` or `None`. Used by the pair-form eligibility
 // analysis to confirm a return statement constructs an Option
@@ -890,6 +911,13 @@ type builder struct {
 	// thisIsPair is `pairForm[fn.Name]` cached on the builder
 	// for the common path in Return / Some / None lowering.
 	thisIsPair bool
+	// suppressPairRebox tells the Call lowering to skip the
+	// `emitRepackPairAsHeapBox` step after OpCallDirectPair —
+	// the caller (IfLet / Match / LetElse scrutinee path)
+	// will consume (tag, payload) directly. Default false
+	// (rebox to heap so existing consumers see the legacy
+	// shape).
+	suppressPairRebox bool
 }
 
 // collectDefers walks `s` recursively and appends every
@@ -1350,13 +1378,65 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.closeScope()
 	case *ast.IfLet:
 		// Lower `if let Variant(b1, b2, ...) = src { Then } [else
-		// { Else }]` as: store the source pointer, compare its tag
-		// to Variant's index, and on match bind payload fields
-		// into Then-scope locals before running Then. On mismatch
-		// run Else.
+		// { Else }]`. Two shapes:
+		//
+		//   - Heap-form scrutinee (legacy default): eval source
+		//     to a heap-box pointer; load tag from `[ptr+0]`;
+		//     dispatch + bind payload fields by offset.
+		//
+		//   - Pair-form scrutinee (Option[i32] match-style
+		//     consumer fast path): the source is a direct call
+		//     to a pair-form function. Suppress the call's
+		//     rebox, consume (tag, payload) from the operand
+		//     stack into two scratch locals, dispatch on the
+		//     tag local, and bind the payload from the payload
+		//     local. ZERO heap alloc end-to-end.
 		_, varIdx, _, ok := b.lookupVariant(n.VariantName)
 		if !ok {
 			return fmt.Errorf("ir: if-let references unknown variant %q", n.VariantName)
+		}
+		if b.isPairFormScrutinee(n.Source) {
+			tagSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__iflet_tag_%d", tagSlot)] = tagSlot
+			payloadSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__iflet_pay_%d", payloadSlot)] = payloadSlot
+			prev := b.suppressPairRebox
+			b.suppressPairRebox = true
+			if err := b.expr(n.Source); err != nil {
+				return err
+			}
+			b.suppressPairRebox = prev
+			// Operand stack: [tag, payload]; top is payload.
+			b.emit(Op{Kind: OpStoreLocal, I32: payloadSlot})
+			b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
+			b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+			b.emit(Op{Kind: OpEq})
+			b.openIf(BlockTypeVoid)
+			// Pair-form is scoped to Option[i32] today; there's
+			// always exactly one binding (the payload).
+			for i, name := range n.Bindings {
+				slot := b.allocSlot()
+				b.locals[name] = slot
+				bt := ast.Type(ast.NumberType{})
+				if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
+					bt = n.BindingTypes[i]
+				}
+				b.scratchType[slot] = bt
+				b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
+				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+			if err := b.stmt(n.Then); err != nil {
+				return err
+			}
+			if n.Else != nil {
+				b.elseBranch()
+				if err := b.stmt(n.Else); err != nil {
+					return err
+				}
+			}
+			b.closeScope()
+			break
 		}
 		ptrSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__iflet_p_%d", ptrSlot)] = ptrSlot
@@ -3597,13 +3677,15 @@ func (b *builder) callBody(n *ast.Call) error {
 				kind = OpCallDirectPair
 			}
 			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount})
-			if kind == OpCallDirectPair {
+			if kind == OpCallDirectPair && !b.suppressPairRebox {
 				// Re-pack the (tag, payload) pair into a heap
-				// box for now so existing callers (var
-				// assignment, struct fields, etc.) keep seeing
-				// the heap-pointer shape. The match-style
-				// scrutinee fast path that skips this rebox is
-				// a follow-up step in the Option/Result arc.
+				// box so existing callers (var assignment,
+				// struct fields, etc.) keep seeing the heap-
+				// pointer shape. The match-style scrutinee
+				// path in IfLet / Match / LetElse sets
+				// `suppressPairRebox` so the pair flows
+				// straight from the call into the dispatch
+				// without an alloc.
 				if err := b.emitRepackPairAsHeapBox(); err != nil {
 					return err
 				}

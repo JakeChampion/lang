@@ -366,20 +366,62 @@ function main(): i32 {
 	mustContainOp(t, prog, "main", OpCallDirectPair)
 }
 
-// `if let Some(v) = scrutinee { ... }` lowers the tag read
-// through OpMatchTag (the step-3 abstraction over "read the
-// variant tag, however the scrutinee is represented") rather
-// than an open-coded OpLoad. Today OpMatchTag lowers to a
-// heap-pointer load on every backend — step 4 swaps it for
-// a register read when the scrutinee was a pair-form call
-// result.
+// `if let Variant(...) = heap-form-scrutinee { ... }` lowers
+// the tag read through OpMatchTag (the step-3 abstraction
+// over "read the variant tag" from a heap-pointer scrutinee).
+// Pair-form scrutinees take the zero-alloc fast path
+// (TestLowerIfLetOnPairFormCallSkipsRebox below) which does
+// NOT go through OpMatchTag.
 func TestLowerIfLetUsesOpMatchTag(t *testing.T) {
+	prog := lowerSource(t, `enum Color { Red(i32), Green, Blue }
+function main(): i32 {
+    var c: Color = Red(7);
+    if let Red(v) = c { return v; }
+    return 0;
+}`)
+	mustContainOp(t, prog, "main", OpMatchTag)
+}
+
+// `if let Some(v) = pair_form_call()` triggers the zero-alloc
+// fast path. The IR emits OpCallDirectPair WITHOUT the
+// emitRepackPairAsHeapBox rebox — the (tag, payload) pair
+// flows directly from the call into two scratch locals, and
+// the tag dispatch reads from the tag local (no OpMatchTag
+// heap-load).
+func TestLowerIfLetOnPairFormCallSkipsRebox(t *testing.T) {
 	prog := lowerSource(t, `function pick(): Option[i32] { return Some(7); }
 function main(): i32 {
     if let Some(v) = pick() { return v; }
     return 0;
 }`)
-	mustContainOp(t, prog, "main", OpMatchTag)
+	fn := findFunc(prog, "main")
+	if fn == nil {
+		t.Fatal("main not found")
+	}
+	// Pair-form call present.
+	hasPairCall := false
+	for _, op := range fn.Ops {
+		if op.Kind == OpCallDirectPair {
+			hasPairCall = true
+			break
+		}
+	}
+	if !hasPairCall {
+		t.Fatalf("expected OpCallDirectPair in main:\n%s", prog)
+	}
+	// The rebox path uses OpAlloc; the pair-form fast path
+	// does not.
+	for _, op := range fn.Ops {
+		if op.Kind == OpAlloc {
+			t.Fatalf("pair-form if-let should skip OpAlloc rebox:\n%s", prog)
+		}
+		// The pair-form path consumes (tag, payload) directly
+		// into locals; it bypasses OpMatchTag (which is the
+		// heap-pointer tag-load abstraction).
+		if op.Kind == OpMatchTag {
+			t.Fatalf("pair-form if-let should skip OpMatchTag heap-load:\n%s", prog)
+		}
+	}
 }
 
 // `match (scrut) { Some(x) => ..., None => ... }` shares the
