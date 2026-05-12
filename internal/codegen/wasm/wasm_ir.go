@@ -772,6 +772,13 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.linef("%s.ge", floatPrefix())
 	case ir.OpLoad:
 		g.linef("%s.load", intPrefix())
+	case ir.OpMatchTag:
+		// Transitional lowering: read the i32 tag from the
+		// heap-box at the address on top of stack. Step 4 of
+		// the Option/Result arc will swap this to consume a
+		// pre-loaded tag register when the scrutinee was the
+		// pair-form result of an OpCallDirectPair.
+		g.line("i32.load")
 	case ir.OpStore:
 		g.linef("%s.store", intPrefix())
 	case ir.OpFLoad:

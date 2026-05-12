@@ -349,6 +349,35 @@ func TestLowerSomeEmitsPairForm(t *testing.T) {
 // old heap-box path (OpEnumSentinel for None; OpAlloc for
 // Some). Uses `Option[string]` to stay clear of any
 // prelude-side struct names.
+// `if let Some(v) = scrutinee { ... }` lowers the tag read
+// through OpMatchTag (the step-3 abstraction over "read the
+// variant tag, however the scrutinee is represented") rather
+// than an open-coded OpLoad. Today OpMatchTag lowers to a
+// heap-pointer load on every backend — step 4 swaps it for
+// a register read when the scrutinee was a pair-form call
+// result.
+func TestLowerIfLetUsesOpMatchTag(t *testing.T) {
+	prog := lowerSource(t, `function pick(): Option[i32] { return Some(7); }
+function main(): i32 {
+    if let Some(v) = pick() { return v; }
+    return 0;
+}`)
+	mustContainOp(t, prog, "main", OpMatchTag)
+}
+
+// `match (scrut) { Some(x) => ..., None => ... }` shares the
+// OpMatchTag path with if-let / let-else.
+func TestLowerMatchUsesOpMatchTag(t *testing.T) {
+	prog := lowerSource(t, `function pick(): Option[i32] { return Some(7); }
+function main(): i32 {
+    match (pick()) {
+        Some(x) => { return x; },
+        None    => { return 99; }
+    }
+}`)
+	mustContainOp(t, prog, "main", OpMatchTag)
+}
+
 func TestLowerOptionPointerPayloadStaysHeapForm(t *testing.T) {
 	prog := lowerSource(t, `function f(): Option[string] { return None; }`)
 	mustContainOp(t, prog, "f", OpEnumSentinel)

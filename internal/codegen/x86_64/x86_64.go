@@ -1309,6 +1309,15 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			g.emit("mov eax, [rax]") // zero-extends to rax
 		}
 		g.push()
+	case ir.OpMatchTag:
+		// Transitional lowering — same as OpLoad of an i32
+		// tag at offset 0. Step 4 of the Option/Result arc
+		// swaps this for a tag-register read when the
+		// scrutinee was the pair-form result of an
+		// OpCallDirectPair.
+		g.pop()
+		g.emit("mov eax, [rax]")
+		g.push()
 	case ir.OpLoadByte:
 		g.pop()
 		g.emit("movzx eax, byte ptr [rax]")

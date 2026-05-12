@@ -261,6 +261,19 @@ const (
 	// the caller knows the callee was lowered with OpReturnPair.
 	OpCallDirectPair // (args...) → (i32 tag, i32 payload)
 
+	// OpMatchTag pops a value-position scrutinee from the
+	// operand stack and pushes its i32 variant tag. Today the
+	// backend handlers lower it to a heap-pointer `[ptr+0]`
+	// load (same byte-for-byte behaviour as an OpLoad at
+	// offset 0), keeping every existing match / if-let /
+	// let-else dispatch site working unchanged. Once the
+	// pair-form caller-side rewrite lands (step 4 of the
+	// Option/Result arc), OpMatchTag will be the abstraction
+	// point that hides the difference between "scrutinee is
+	// a heap pointer, deref tag@0" and "scrutinee is a
+	// (tag, payload) pair, the tag is already in a register".
+	OpMatchTag // (ptr) → i32 tag
+
 	// Closure conversion. Hoisted local functions read captured outer
 	// variables through a synthetic `__env` parameter (an i32 pointer
 	// to a heap block where each capture sits at a fixed byte offset).
@@ -486,6 +499,8 @@ func (k OpKind) String() string {
 		return "make_err.i32"
 	case OpCallDirectPair:
 		return "call_direct_pair"
+	case OpMatchTag:
+		return "match_tag"
 	case OpMakeClosure:
 		return "make_closure"
 	case OpMakeEnv:
@@ -1265,7 +1280,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpLoad}) // tag at ptr+0
+		b.emit(Op{Kind: OpMatchTag}) // tag (heap-form: [ptr+0]; pair-form: register)
 		b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 		b.emit(Op{Kind: OpEq})
 		b.openIf(BlockTypeVoid)
@@ -1308,7 +1323,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
 		// tag at ptr+0; compare to varIdx → i32 0/1.
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpLoad})
+		b.emit(Op{Kind: OpMatchTag})
 		b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 		b.emit(Op{Kind: OpEq})
 		b.openIf(BlockTypeVoid)
@@ -1650,7 +1665,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// Inner block: matched-path target.
 			b.openBlock(BlockTypeVoid)
 			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-			b.emit(Op{Kind: OpLoad}) // tag at ptr+0
+			b.emit(Op{Kind: OpMatchTag}) // tag (see OpMatchTag doc)
 			b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 			b.emit(Op{Kind: OpEq})
 			b.brTo(b.depth, true) // br 0 = exit inner = match

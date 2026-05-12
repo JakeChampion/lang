@@ -3922,6 +3922,15 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.emit("ldr w0, [x0]")
 		}
 		g.push()
+	case ir.OpMatchTag:
+		// Transitional lowering — same as OpLoad of an i32
+		// tag at offset 0. Step 4 of the Option/Result arc
+		// swaps this for a tag-register read when the
+		// scrutinee was the pair-form result of an
+		// OpCallDirectPair.
+		g.pop()
+		g.emit("ldr w0, [x0]")
+		g.push()
 	case ir.OpLoadByte:
 		g.pop()
 		g.emit("ldrb w0, [x0]")
