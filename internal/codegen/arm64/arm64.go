@@ -3726,6 +3726,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("bl __lang_strcat")
 		g.push()
 
+	case ir.OpStrLen:
+		// Load the 4-byte little-endian length prefix at
+		// `ptr - 4`. Centralised here so small-string-
+		// optimisation work has one site to update instead
+		// of every open-coded `ldur w?, [..., #-4]` across
+		// the runtime helpers.
+		g.pop()                      // x0 = str ptr
+		g.emit("ldur w0, [x0, #-4]") // w0 = length
+		g.push()
+
 	case ir.OpCallIndirect:
 		// Function-value call: the IR emitted the function-
 		// pointer immediately before the call op (via

@@ -296,6 +296,55 @@ func TestLowerStringConcatNonLiteralKeepsRuntime(t *testing.T) {
 	mustContainOp(t, prog, "f", OpStrConcat)
 }
 
+// `len(s)` for a non-literal string argument lowers to OpStrLen.
+// String length lives in a single IR seam so future small-string-
+// optimisation work can change the encoding without hunting down
+// every open-coded `[ptr - 4]` load across backend codegen.
+func TestLowerLenOnStringEmitsOpStrLen(t *testing.T) {
+	prog := lowerSource(t, `function f(s: string): i32 { return len(s); }`)
+	mustContainOp(t, prog, "f", OpStrLen)
+	// The old inline shape (const 4; sub; load) must NOT appear
+	// for the string path — if it does, the rewrite slipped and
+	// SSO would have to patch every backend instead of just the
+	// OpStrLen handler.
+	fn := findFunc(prog, "f")
+	for i := 0; i+2 < len(fn.Ops); i++ {
+		if fn.Ops[i].Kind == OpConstI32 && fn.Ops[i].I32 == 4 &&
+			fn.Ops[i+1].Kind == OpSub && fn.Ops[i+2].Kind == OpLoad {
+			t.Fatalf("string len() lowering still emits the open-coded const-4/sub/load shape:\n%s", prog)
+		}
+	}
+}
+
+// `len(<string literal>)` is still folded to a compile-time const
+// — the OpStrLen path is only for non-literal strings.
+func TestLowerLenOnStringLiteralFolds(t *testing.T) {
+	prog := lowerSource(t, `function f(): i32 { return len("hello"); }`)
+	fn := findFunc(prog, "f")
+	for _, op := range fn.Ops {
+		if op.Kind == OpStrLen {
+			t.Errorf("len of a string literal must fold to const, not OpStrLen:\n%s", prog)
+		}
+	}
+	for _, op := range fn.Ops {
+		if op.Kind == OpConstI32 && op.I32 == 5 {
+			return
+		}
+	}
+	t.Errorf("expected const 5 for len(\"hello\"):\n%s", prog)
+}
+
+// `len(arr)` keeps the open-coded shape — arrays may diverge
+// from strings in a future layout change, and routing them
+// through OpStrLen would conflate the two.
+func TestLowerLenOnArrayKeepsInlineShape(t *testing.T) {
+	prog := lowerSource(t, `function f(xs: i32[]): i32 { return len(xs); }`)
+	if hasOp(prog, "f", OpStrLen) {
+		t.Errorf("array len() must not lower to OpStrLen:\n%s", prog)
+	}
+	mustContainOp(t, prog, "f", OpLoad)
+}
+
 // `lit == lit` folds at compile time to a const; the runtime
 // OpStrEq only fires when at least one side is non-literal.
 func TestLowerStringEqualityFoldsLiterals(t *testing.T) {
