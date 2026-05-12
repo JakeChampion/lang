@@ -788,12 +788,13 @@ func Check(prog *ast.Program) (*Info, error) {
 	// needs them). All three params are i32 byte counts /
 	// pointers; the helpers return void. arm64 inlines them
 	// via plain loads/stores; wat uses memory.copy.
+	usizeT := ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
 	c.info.FuncSigs["__memcpy"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{usizeT, usizeT, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["__memset"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{usizeT, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
 	// `__alloc_u8(n)` returns a fresh `u8[]` of length n,
@@ -812,38 +813,31 @@ func Check(prog *ast.Program) (*Info, error) {
 	// 4-byte word at any address. Out-of-bounds traps at
 	// the wasm level — the prelude is expected to bounds-
 	// check at the lang level.
+	// `__alloc(n)` returns a fresh n-byte block on the bump heap.
+	// Returns `usize` so the full address survives on arm64-darwin
+	// where the heap lives above 4 GiB.
 	c.info.FuncSigs["__alloc"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.NumberType{},
+		Result: usizeT,
 	}
 	c.info.FuncSigs["__load_i32"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
+		Params: []ast.Type{usizeT},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["__store_i32"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{usizeT, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
 	// `__load_ptr` / `__store_ptr` — pointer-width memory pokes.
-	// On wasm32 these are aliases of __load_i32 / __store_i32
-	// (4 bytes); arm64 backends ship 8-byte versions. Same name on
-	// all targets so the prelude can store the Map handle's
-	// data-ptr without the high bits of a 64-bit heap address
-	// getting truncated.
-	//
-	// Migration NOTE: docs/BACKEND-PARITY.md tracks the move to
-	// `usize` signatures (`__alloc(n) → usize`, `__load_ptr(addr:
-	// usize) → usize`, etc.). The type-system step is in place
-	// (PR #313 — usize keyword + auto-widen) but the signature
-	// flip is held until the prelude's ~87 pointer-local sites
-	// migrate together; partial migration would mismatch the
-	// codegen aliases (`__method_Map_*` → `__map_*_impl`).
+	// Address AND value are usize so the full 8-byte pointer
+	// shape survives on natives. On wasm32 both collapse to i32
+	// because WidthPtr resolves to 4 there.
 	c.info.FuncSigs["__load_ptr"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.NumberType{},
+		Params: []ast.Type{usizeT},
+		Result: usizeT,
 	}
 	c.info.FuncSigs["__store_ptr"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{usizeT, usizeT},
 		Result: ast.VoidType{},
 	}
 	// `__ptr_width()` — returns the target's pointer width in
@@ -1498,6 +1492,65 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 func assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
+	}
+	// Pointer-shaped values ↔ usize. The prelude's raw-pointer
+	// helpers (__load_ptr / __store_ptr / __alloc) declare their
+	// pointer params + result as usize so the full 8-byte address
+	// survives on arm64-darwin. User-code pointer values (string,
+	// Map, T[], [T], struct) flow into these helpers without an
+	// explicit `as` cast — runtime representation is the same
+	// pointer, only the type-level view changes. Mirrors the
+	// CastExpr machinery that already allows the explicit `as
+	// usize` hop.
+	if dn, ok := dst.(ast.NumberType); ok && dn.IsPointerWidth() {
+		switch src.(type) {
+		case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
+			return true
+		}
+	}
+	if sn, ok := src.(ast.NumberType); ok && sn.IsPointerWidth() {
+		switch dst.(type) {
+		case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
+			return true
+		}
+	}
+	// usize ↔ i32 / i64 at assignment boundaries. The prelude's
+	// internal helpers return usize for pointer-shaped values;
+	// existing user code passing the same value to an i32-typed
+	// param (or storing in an i32 var) needs to type-check
+	// without an explicit `as i32` everywhere. The narrowing
+	// case (usize → i32) is the existing behavior; the bug fix
+	// kicks in at the LOAD/STORE level where usize values stay
+	// wide internally. Bidirectional for the wide case too.
+	if dn, ok := dst.(ast.NumberType); ok && dn.IsPointerWidth() {
+		if _, sok := src.(ast.NumberType); sok {
+			return true
+		}
+	}
+	if sn, ok := src.(ast.NumberType); ok && sn.IsPointerWidth() {
+		if _, dok := dst.(ast.NumberType); dok {
+			return true
+		}
+	}
+	// Option[usize] / Option[V] cross-assign for the codegen
+	// alias boundary. `__method_Map_get(Map[K, V]): Option[V]`
+	// (user-facing) routes to `__map_get_impl(m: usize):
+	// Option[usize]` (prelude). The user-code Option[V] flows
+	// through the prelude's Option[usize] return without an
+	// explicit cast — same pointer, different type-level view.
+	if de, dok := dst.(ast.EnumType); dok {
+		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
+			allOk := true
+			for i := range de.Args {
+				if !assignable(de.Args[i], se.Args[i]) {
+					allOk = false
+					break
+				}
+			}
+			if allOk {
+				return true
+			}
+		}
 	}
 	// Polymorphic empty-array literal (`[]`) — its concrete
 	// element type is filled in from `dst` by settleEmptyArray.
