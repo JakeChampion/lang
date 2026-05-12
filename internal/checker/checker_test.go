@@ -959,6 +959,42 @@ func TestMatchSubstitutesTypeArgs(t *testing.T) {
 // Wrong-arity instantiations (missing or extra type arguments)
 // are rejected at the type position before any value-level
 // checking happens.
+// `usize + i32` (and the reverse) auto-widens the concrete-int
+// side to usize so prelude pointer math stays readable —
+// `base + idx * stride` doesn't need `(idx as usize) * (stride
+// as usize)` boilerplate. Mixed signedness is allowed only
+// when one side is usize; signed/unsigned at other widths
+// still errors out so accidental conversions stay loud.
+func TestUsizeAutowidensWithSignedInt(t *testing.T) {
+	for _, src := range []string{
+		`function f(base: usize, idx: i32): usize {
+    return base + idx;
+}`,
+		`function f(p: usize): usize {
+    return p + 4;
+}`,
+		`function f(idx: i32, stride: i32): usize {
+    var base: usize = 100;
+    return base + idx * stride;
+}`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: expected to type-check, got: %v", src, err)
+		}
+	}
+}
+
+// The auto-widen relaxation is scoped to usize: other
+// signed/unsigned width mismatches must still error out.
+func TestSignednessMismatchStillErrorsAtOtherWidths(t *testing.T) {
+	src := `function f(a: u32, b: i32): u32 {
+    return a + b;
+}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected signedness error: u32 + i32 should not auto-widen")
+	}
+}
+
 func TestGenericEnumArityChecked(t *testing.T) {
 	src := `enum Pair[A, B] { Both(A, B) }
 		function main(): i32 {
