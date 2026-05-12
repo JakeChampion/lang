@@ -1025,6 +1025,27 @@ func TestX86_64ReadLine(t *testing.T) {
 // not into the fn pointer that the pair contained. The fix
 // makes Phase 1 a fixed-point loop that chases OpLoadLocal
 // through known-monomorphic slots.
+// Chained-alias no-capture closures must not heap-allocate.
+// The elide-closure-pair pass rewrites OpMakeClosure → OpMakeEnv
+// even when the closure value flows through an intermediate
+// `var f = nested_fn` slot. Verify at runtime: bracket the
+// closure flow with arena_save() calls; the cursor must not
+// move (no allocation).
+func TestX86_64ClosureChainNoAlloc(t *testing.T) {
+	_, code := compileAndRunX86_64(t, `function main(): i32 {
+    function answer(): i32 { return 7; }
+    var before: i32 = arena_save();
+    var f = answer;
+    var x: i32 = f();
+    var after: i32 = arena_save();
+    if (after != before) { return 99; }
+    return x;
+}`)
+	if code != 7 {
+		t.Errorf("exit = %d, want 7 (no alloc + f() returned 7); 99 means the closure pair was allocated", code)
+	}
+}
+
 func TestX86_64ClosureAliasing(t *testing.T) {
 	for _, c := range []struct {
 		name string

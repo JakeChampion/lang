@@ -11,38 +11,38 @@
 // load the slot value straight onto the stack instead of going
 // through the +4-load detour.
 //
-// Pattern recognised (per slot):
+// Pattern recognised:
 //
-//   writers (must all match):
-//     ... eval captures ...
-//     OpMakeClosure name caps=N
-//     OpStoreLocal slot
+//   writers (per slot, either shape is OK):
+//     root  : ... eval captures ; OpMakeClosure name caps=N ; OpStoreLocal slot
+//     alias : OpLoadLocal X ; OpStoreLocal slot     ; copy from another eligible slot
 //
-//   readers (every one of them must match):
-//     OpLoadLocal slot
-//     OpConstI32 4
-//     OpAdd
-//     OpLoad                            ; env_ptr
-//     OpCallClosureDirect target argc=…
+//   readers (per slot, either shape is OK):
+//     canonical: OpLoadLocal slot ; OpConstI32 pairEnvOffset ;
+//                OpAdd ; OpLoad ; OpCallClosureDirect target argc=…
+//     alias    : OpLoadLocal slot ; OpStoreLocal Y           ; copy into another eligible slot
 //
 // Rewritten as:
 //
-//   writers:
-//     ... eval captures ...
-//     OpMakeEnv name caps=N             ; pushes env_ptr only
-//     OpStoreLocal slot
+//   root writers: OpMakeClosure → OpMakeEnv (pushes env_ptr only,
+//   no pair alloc).
+//   canonical readers: the const+add+load triple is dropped; the
+//   slot's value is consumed directly as env_ptr by the call.
+//   alias writers/readers: unchanged in shape — they now pipe
+//   env_ptr (a plain i32) through the slot chain instead of a
+//   closure-pair pointer.
 //
-//   readers:
-//     OpLoadLocal slot                  ; pushes env_ptr
-//     OpCallClosureDirect target argc=… ; (the const-add-load
-//                                         steps are gone)
+// Eligibility is computed by a fixed-point worklist: a slot
+// fails if any non-root writer or non-canonical reader points
+// at a failed slot, and the failure propagates through alias
+// edges. A surviving slot's equivalence class is required to
+// contain at least one root writer somewhere — otherwise the
+// chain doesn't actually carry a closure-pair value.
 //
-// The slot now stores env_ptr (or 0 when no captures) directly.
-// Pairs that have ANY reader outside this pattern (closure
-// passed to another function, closure stored in a struct field,
-// etc.) keep the original layout — defunctionalisation already
-// fell back to OpCallIndirect for those, so they're not on this
-// pass's radar anyway.
+// Pairs with ANY writer/reader outside these shapes (closure
+// passed to another function, stored in a struct field, etc.)
+// keep the original layout — defunctionalisation already fell
+// back to OpCallIndirect for those.
 
 package ir
 
@@ -64,95 +64,215 @@ func ElideClosurePair(prog *Program, pairEnvOffset int32) {
 }
 
 func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
+	// Two writer shapes contribute to a slot's eligibility:
+	//
+	//   (a) "root": OpStoreLocal preceded by OpMakeClosure.
+	//       Rewriting OpMakeClosure → OpMakeEnv drops the
+	//       pair alloc.
+	//   (b) "alias": OpStoreLocal preceded by OpLoadLocal X.
+	//       The slot just copies X's value. The slot is
+	//       eligible iff X is also eligible (mutual recursion).
+	//
+	// Two reader shapes contribute:
+	//
+	//   (c) "canonical": OpLoadLocal followed by
+	//       [OpConstI32 pairEnvOffset, OpAdd, OpLoad,
+	//        OpCallClosureDirect]. The +pairEnvOffset/+add/+load
+	//       triple is dropped on rewrite; the call now consumes
+	//       the slot's value directly as env_ptr.
+	//   (d) "alias": OpLoadLocal followed by OpStoreLocal Y.
+	//       Eligible iff Y is also eligible.
+	//
+	// Any other writer or reader shape disqualifies the slot.
+	// A disqualified slot also disqualifies every slot reached
+	// via an alias edge — a fixed-point worklist handles that
+	// propagation.
 	type writer struct {
 		storeIdx       int
-		makeClosureIdx int
+		makeClosureIdx int // -1 if not a root writer
+		aliasSrc       int32
+		aliasOk        bool // true when storeIdx is preceded by OpLoadLocal
+	}
+	type reader struct {
+		loadIdx       int
+		canonicalOk   bool
+		canonDropIdxs [3]int  // the const+add+load indices to drop
+		aliasDst      int32   // target slot when followed by OpStoreLocal
+		aliasOk       bool
 	}
 	writers := map[int32][]writer{}
-	readers := map[int32][]int{}
+	readers := map[int32][]reader{}
+	// Slots that fail any non-alias check up front. Aliases that
+	// land on a failed slot are disqualified through the worklist.
+	failed := map[int32]bool{}
+	candidates := map[int32]bool{}
+
+	noteCandidate := func(slot int32) {
+		candidates[slot] = true
+	}
 
 	for i, op := range fn.Ops {
-		if op.Kind == OpStoreLocal || op.Kind == OpTeeLocal {
-			mc := -1
-			if i > 0 && fn.Ops[i-1].Kind == OpMakeClosure {
-				mc = i - 1
+		switch op.Kind {
+		case OpStoreLocal, OpTeeLocal:
+			// OpTeeLocal would leave the closure-pair value on
+			// the operand stack post-store, which can't match
+			// either of the recognised reader shapes (canonical
+			// dance needs an OpLoadLocal to start, alias needs
+			// an OpStoreLocal to land on). Tee = disqualified.
+			if op.Kind == OpTeeLocal {
+				failed[op.I32] = true
+				continue
 			}
-			writers[op.I32] = append(writers[op.I32], writer{i, mc})
-			continue
-		}
-		if op.Kind == OpLoadLocal {
-			readers[op.I32] = append(readers[op.I32], i)
+			w := writer{storeIdx: i, makeClosureIdx: -1}
+			if i > 0 {
+				switch prev := fn.Ops[i-1]; prev.Kind {
+				case OpMakeClosure:
+					w.makeClosureIdx = i - 1
+				case OpLoadLocal:
+					w.aliasOk = true
+					w.aliasSrc = prev.I32
+				default:
+					failed[op.I32] = true
+				}
+			} else {
+				failed[op.I32] = true
+			}
+			writers[op.I32] = append(writers[op.I32], w)
+			noteCandidate(op.I32)
+		case OpLoadLocal:
+			r := reader{loadIdx: i}
+			// Canonical [const + add + load + call_closure_direct].
+			if i+4 < len(fn.Ops) {
+				o1 := fn.Ops[i+1]
+				o2 := fn.Ops[i+2]
+				o3 := fn.Ops[i+3]
+				o4 := fn.Ops[i+4]
+				if o1.Kind == OpConstI32 && o1.I32 == pairEnvOffset &&
+					o2.Kind == OpAdd &&
+					o3.Kind == OpLoad &&
+					o4.Kind == OpCallClosureDirect {
+					r.canonicalOk = true
+					r.canonDropIdxs = [3]int{i + 1, i + 2, i + 3}
+				}
+			}
+			// Alias: OpLoadLocal followed by OpStoreLocal.
+			if !r.canonicalOk && i+1 < len(fn.Ops) && fn.Ops[i+1].Kind == OpStoreLocal {
+				r.aliasOk = true
+				r.aliasDst = fn.Ops[i+1].I32
+			}
+			if !r.canonicalOk && !r.aliasOk {
+				failed[op.I32] = true
+			}
+			readers[op.I32] = append(readers[op.I32], r)
+			noteCandidate(op.I32)
 		}
 	}
 
-	// Eligible slots:
-	//   - every writer's preceding op is OpMakeClosure
-	//   - every reader is followed by the
-	//     [const 4, add, load, call_closure_direct] pattern
-	//
-	// Track the indices to drop per eligible reader; we batch
-	// the removal into a single rebuild at the end.
-	type elide struct {
-		writerMakeClosureIdxs []int
-		dropIdxs              []int
-	}
-	plans := map[int32]*elide{}
-
-	for slot, ws := range writers {
-		ok := true
-		mcIdxs := make([]int, 0, len(ws))
-		for _, w := range ws {
-			if w.makeClosureIdx < 0 {
-				ok = false
-				break
+	// Fixed-point: a slot fails if any of its writers (other than
+	// roots) point to a failed source, or any of its readers
+	// (other than canonical) point to a failed destination.
+	for {
+		changed := false
+		for slot := range candidates {
+			if failed[slot] {
+				continue
 			}
-			mcIdxs = append(mcIdxs, w.makeClosureIdx)
-		}
-		if !ok {
-			continue
-		}
-		dropIdxs := []int(nil)
-		for _, loadIdx := range readers[slot] {
-			if loadIdx+4 >= len(fn.Ops) {
-				ok = false
-				break
+			for _, w := range writers[slot] {
+				if w.makeClosureIdx >= 0 {
+					continue // root
+				}
+				if !w.aliasOk || failed[w.aliasSrc] {
+					failed[slot] = true
+					changed = true
+					break
+				}
 			}
-			o1 := fn.Ops[loadIdx+1]
-			o2 := fn.Ops[loadIdx+2]
-			o3 := fn.Ops[loadIdx+3]
-			o4 := fn.Ops[loadIdx+4]
-			if o1.Kind != OpConstI32 || o1.I32 != pairEnvOffset ||
-				o2.Kind != OpAdd ||
-				o3.Kind != OpLoad ||
-				o4.Kind != OpCallClosureDirect {
-				ok = false
-				break
+			if failed[slot] {
+				continue
 			}
-			dropIdxs = append(dropIdxs, loadIdx+1, loadIdx+2, loadIdx+3)
+			for _, r := range readers[slot] {
+				if r.canonicalOk {
+					continue
+				}
+				if !r.aliasOk || failed[r.aliasDst] {
+					failed[slot] = true
+					changed = true
+					break
+				}
+			}
 		}
-		if !ok {
-			continue
+		if !changed {
+			break
 		}
-		plans[slot] = &elide{writerMakeClosureIdxs: mcIdxs, dropIdxs: dropIdxs}
 	}
 
-	if len(plans) == 0 {
+	// Also require that every slot has at least one root writer
+	// SOMEWHERE in its equivalence class — otherwise the chain
+	// terminates without an OpMakeClosure and isn't actually a
+	// closure-pair flow. Build the union-find rooted at root
+	// writers.
+	hasRootInChain := map[int32]bool{}
+	for slot := range candidates {
+		if failed[slot] {
+			continue
+		}
+		// DFS the alias-source graph; any root writer found
+		// makes this slot (and everything reachable via aliases)
+		// validate.
+		stack := []int32{slot}
+		visited := map[int32]bool{slot: true}
+		found := false
+		for len(stack) > 0 {
+			s := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, w := range writers[s] {
+				if w.makeClosureIdx >= 0 {
+					found = true
+				}
+				if w.aliasOk && !visited[w.aliasSrc] {
+					visited[w.aliasSrc] = true
+					stack = append(stack, w.aliasSrc)
+				}
+			}
+		}
+		if found {
+			hasRootInChain[slot] = true
+		}
+	}
+
+	// Apply rewrites. For each surviving slot:
+	//   - every OpMakeClosure root writer becomes OpMakeEnv.
+	//   - every canonical reader has its [const, add, load]
+	//     triple dropped. The trailing OpCallClosureDirect now
+	//     consumes the loaded slot value directly as env_ptr.
+	//   - alias writers/readers keep their shape — they now
+	//     pipe env_ptr (a plain i32) through the slot chain.
+	dropped := map[int]bool{}
+	mcToEnv := map[int]bool{}
+	for slot := range candidates {
+		if failed[slot] || !hasRootInChain[slot] {
+			continue
+		}
+		for _, w := range writers[slot] {
+			if w.makeClosureIdx >= 0 {
+				mcToEnv[w.makeClosureIdx] = true
+			}
+		}
+		for _, r := range readers[slot] {
+			if r.canonicalOk {
+				dropped[r.canonDropIdxs[0]] = true
+				dropped[r.canonDropIdxs[1]] = true
+				dropped[r.canonDropIdxs[2]] = true
+			}
+		}
+	}
+
+	if len(mcToEnv) == 0 && len(dropped) == 0 {
 		return
 	}
-
-	// Apply the plans. First rewrite OpMakeClosure → OpMakeEnv
-	// in place at the recorded indices; then build a new ops
-	// slice skipping the dropped indices.
-	dropped := map[int]bool{}
-	for _, p := range plans {
-		for _, mcIdx := range p.writerMakeClosureIdxs {
-			fn.Ops[mcIdx].Kind = OpMakeEnv
-		}
-		for _, di := range p.dropIdxs {
-			dropped[di] = true
-		}
+	for idx := range mcToEnv {
+		fn.Ops[idx].Kind = OpMakeEnv
 	}
-
 	out := make([]Op, 0, len(fn.Ops)-len(dropped))
 	for i, op := range fn.Ops {
 		if dropped[i] {
@@ -162,3 +282,4 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 	}
 	fn.Ops = out
 }
+
