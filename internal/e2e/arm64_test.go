@@ -1361,6 +1361,23 @@ function main(): i32 {
 // through intermediate variables get defunctionalized to direct
 // calls instead of crashing on call-of-pair-pointer in the
 // backend's OpCallIndirect.
+// Mirror of TestX86_64ClosureChainNoAlloc: closure-pair elision
+// for chained no-capture aliases must work on arm64 too.
+func TestArm64ClosureChainNoAlloc(t *testing.T) {
+	_, code := compileAndRunArm64(t, `function main(): i32 {
+    function answer(): i32 { return 7; }
+    var before: i32 = arena_save();
+    var f = answer;
+    var x: i32 = f();
+    var after: i32 = arena_save();
+    if (after != before) { return 99; }
+    return x;
+}`)
+	if code != 7 {
+		t.Errorf("exit = %d, want 7 (no alloc + f() returned 7); 99 means the closure pair was allocated", code)
+	}
+}
+
 func TestArm64ClosureAliasing(t *testing.T) {
 	for _, c := range []struct {
 		name string
