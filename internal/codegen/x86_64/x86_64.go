@@ -1524,6 +1524,21 @@ func (g *generator) emitStrLen(dstReg, srcReg string) {
 	g.emit(fmt.Sprintf("mov %s, [%s - 4]", dstReg, srcReg))
 }
 
+// emitStrLenStore writes the i32 length in srcReg to the 4-byte
+// little-endian length prefix at `[dstReg - 4]`, where dstReg is
+// the new string's *data pointer* (one past the prefix). Inverse
+// of emitStrLen and the second half of the SSO encoding seam:
+// string-producing runtime helpers (strcat / str_slice /
+// string_from_bytes / random_bytes / env / tcp_recv / read_line)
+// all flow through this one site so future encoding changes that
+// affect string construction (e.g. tagged-pointer inline-when-
+// short) have a single function to update per backend. Array-
+// length stores (`__alloc_u8`, `__lang_args` outer array) stay
+// open-coded since arrays may diverge.
+func (g *generator) emitStrLenStore(srcReg, dstReg string) {
+	g.emit(fmt.Sprintf("mov [%s - 4], %s", dstReg, srcReg))
+}
+
 // emitCallArgsLoad places `argc` operand-stack values into
 // System V argument slots. First 6 args go to rdi/rsi/rdx/rcx/
 // r8/r9; the rest land on the call stack at [rsp+0], [rsp+8],
@@ -2029,10 +2044,10 @@ func (g *generator) emitStrcatRuntime() {
 	// (callee-save) so it survives both __lang_memcpy
 	// calls, then return it at the end.
 	g.emit("lea rbx, [rax + 4]")
-	// length prefix at base + 0.
+	// Combined length, then route through emitStrLenStore.
 	g.emit("mov ecx, r14d")
 	g.emit("add ecx, r15d")
-	g.emit("mov [rax], ecx")
+	g.emitStrLenStore("ecx", "rbx")
 	// memcpy(dst, a, la)
 	g.emit("mov rdi, rbx")
 	g.emit("mov rsi, r12")
@@ -2334,7 +2349,7 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("jns .Ltcp_recv_ok")
 	g.emit("xor eax, eax")
 	g.label(".Ltcp_recv_ok")
-	g.emit("mov [r13 - 4], eax")  // length prefix
+	g.emitStrLenStore("eax", "r13") // length prefix
 	g.emit("mov byte ptr [r13 + rax], 0") // trailing NUL
 	g.emit("mov rax, r13")
 	g.emit("add rsp, 8")
@@ -2428,8 +2443,8 @@ func (g *generator) emitEnvRuntime() {
 	// Allocate len+5 bytes for the value string (4 prefix + N data + 1 NUL).
 	g.emit("lea edi, [r15 + 5]")
 	g.emit("call __lang_alloc")
-	g.emit("mov [rax], r15d") // length prefix
-	g.emit("lea rdi, [rax + 4]")
+	g.emit("lea rdi, [rax + 4]") // rdi = data ptr (= memcpy dst)
+	g.emitStrLenStore("r15d", "rdi")
 	g.emit("mov rsi, r14")
 	g.emit("mov rdx, r15")
 	g.emit("call __lang_memcpy")
@@ -2499,6 +2514,11 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("lea rdi, [rbx * 8 + 8]")
 	g.emit("call __lang_alloc")
 	g.emit("lea r14, [rax + 8]")  // r14 = data ptr (8-aligned)
+	// Array (string[]) length-prefix store — deliberately NOT
+	// routed through emitStrLenStore. The outer container is a
+	// string[] and arrays may diverge from strings under future
+	// SSO. The per-element string stores below DO go through
+	// the helper.
 	g.emit("mov [r14 - 4], ebx")  // length prefix = argc
 	g.emit("xor r13d, r13d")       // i = 0
 	g.label(".Largs_loop")
@@ -2521,9 +2541,9 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("push rdx")
 	g.emit("call __lang_alloc")
 	g.emit("pop rdx")
-	g.emit("mov [rax], edx")        // length prefix
+	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
+	g.emitStrLenStore("edx", "rdi") // length prefix
 	// memcpy(data, argv[i], strlen + 1) — include NUL.
-	g.emit("lea rdi, [rax + 4]")    // dst
 	g.emit("mov rsi, r15")           // src = argv[i]
 	g.emit("lea rdx, [rdx + 1]")
 	g.emit("push rax")
@@ -2569,7 +2589,7 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("lea edi, [rbx + 5]")
 	g.emit("call __lang_alloc")
 	g.emit("lea r12, [rax + 4]")     // r12 = data ptr
-	g.emit("mov [r12 - 4], ebx")     // length prefix
+	g.emitStrLenStore("ebx", "r12")  // length prefix
 	// getrandom(buf=r12, n=rbx, flags=0)
 	g.emit("mov rdi, r12")
 	g.emit("mov rsi, rbx")
@@ -2647,8 +2667,8 @@ func (g *generator) emitReadLineRuntime() {
 	// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
 	g.emit("lea edi, [r12 + 5]")
 	g.emit("call __lang_alloc")
-	g.emit("mov [rax], r12d")        // length prefix
 	g.emit("lea r13, [rax + 4]")     // r13 = data ptr
+	g.emitStrLenStore("r12d", "r13") // length prefix
 	// memcpy(r13, rbx, r12)
 	g.emit("mov rdi, r13")
 	g.emit("mov rsi, rbx")
@@ -2723,6 +2743,9 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov ebx, edi")     // rbx = n
 	g.emit("lea edi, [rbx + 4]")
 	g.emit("call __lang_alloc")
+	// Array length-prefix store — deliberately NOT routed
+	// through emitStrLenStore. __alloc_u8 returns u8[] and
+	// arrays may diverge from strings under future SSO.
 	g.emit("mov [rax], ebx")    // length prefix
 	g.emit("lea rax, [rax + 4]") // data ptr
 	g.emit("add rsp, 8")
@@ -2752,8 +2775,8 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("mov r12d, [rbx - 4]") // length
 	g.emit("lea edi, [r12 + 4]")
 	g.emit("call __lang_alloc")
-	g.emit("mov [rax], r12d")     // length prefix
-	g.emit("lea rdi, [rax + 4]")
+	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
+	g.emitStrLenStore("r12d", "rdi") // length prefix
 	g.emit("mov rsi, rbx")
 	g.emit("mov rdx, r12")
 	g.emit("push rax")
@@ -2802,8 +2825,8 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("mov r14, rax") // r14 = new_len
 	g.emit("lea edi, [r14 + 4]")
 	g.emit("call __lang_alloc")
-	g.emit("mov [rax], r14d")     // length prefix
-	g.emit("lea rdi, [rax + 4]")  // dst
+	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
+	g.emitStrLenStore("r14d", "rdi") // length prefix
 	g.emit("lea rsi, [rbx + r12]") // src = base + low
 	g.emit("mov rdx, r14")
 	g.emit("push rax")

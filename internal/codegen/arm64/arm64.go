@@ -634,22 +634,20 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("add x0, x21, x22")
 	g.emit("add x0, x0, #4")
 	g.emit("bl __lang_alloc")
-	g.emit("mov x23, x0") // x23 = new base (callee-save survives bl)
-	// Write length prefix.
-	g.emit("add w5, w21, w22")
-	g.emit("str w5, [x23]")
-	// dst = base + 4; copy a then b.
-	g.emit("add x0, x23, #4")
+	g.emit("add x23, x0, #4") // x23 = data ptr (past the 4-byte length prefix)
+	g.emit("add w5, w21, w22") // w5 = combined length
+	g.emitStrLenStore("w5", "x23")
+	// memcpy(data_ptr, a, la); memcpy(data_ptr + la, b, lb)
+	g.emit("mov x0, x23")
 	g.emit("mov x1, x19")
 	g.emit("mov x2, x21")
 	g.emit("bl __lang_memcpy")
-	g.emit("add x0, x23, #4")
-	g.emit("add x0, x0, x21")
+	g.emit("add x0, x23, x21")
 	g.emit("mov x1, x20")
 	g.emit("mov x2, x22")
 	g.emit("bl __lang_memcpy")
-	// Return data pointer (base + 4).
-	g.emit("add x0, x23, #4")
+	// Return the data pointer.
+	g.emit("mov x0, x23")
 	g.emit("ldr x23, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
@@ -841,6 +839,9 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov x19, x0")     // x19 = n (callee-save, survives bl)
 	g.emit("add x0, x0, #4")
 	g.emit("bl __lang_alloc")
+	// Array length-prefix store — deliberately NOT routed through
+	// emitStrLenStore. __alloc_u8 returns a u8[] and arrays may
+	// diverge from strings under future SSO.
 	g.emit("str w19, [x0]")   // length prefix
 	g.emit("add x0, x0, #4")  // return data ptr
 	g.emit("ldr x19, [sp, #16]")
@@ -992,9 +993,9 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("mov x20, x2")           // stash value len
 	g.emit("add x0, x2, #4")
 	g.emit("bl __lang_alloc")
-	g.emit("str w20, [x0]")          // length prefix
-	g.emit("mov x22, x0")           // stash alloc base
-	g.emit("add x0, x0, #4")
+	g.emit("add x22, x0, #4")        // x22 = data ptr (past length prefix)
+	g.emitStrLenStore("w20", "x22")
+	g.emit("mov x0, x22")            // memcpy dst = data ptr
 	g.emit("mov x1, x19")
 	g.emit("mov x2, x20")
 	g.emit("bl __lang_memcpy")
@@ -1008,8 +1009,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("mov x0, #16")
 	g.emit("bl __lang_alloc")
 	g.emit("str wzr, [x0]")          // tag = 0 (Some) at +0
-	g.emit("add x1, x22, #4")        // value data ptr
-	g.emit("str x1, [x0, #8]")       // payload at +8 (8-byte slot)
+	g.emit("str x22, [x0, #8]")      // payload at +8 (8-byte slot) — x22 = value data ptr
 	g.emit("b .Lenv_done")
 	g.label(".Lenv_next")
 	g.emit("add x21, x21, #8")
@@ -1778,12 +1778,13 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("tbnz x0, #63, .Lrf_err_close")
 	g.emit("ldr x22, [sp, #64 + 48]") // st_size
 
-	// alloc string buf: 4 (len prefix) + size. Returns base
-	// ptr; we keep that in x21 and write the prefix.
+	// alloc string buf: 4 (len prefix) + size. x21 holds the
+	// data pointer (one past the prefix) so the read loop and
+	// the Ok-payload build can use it directly.
 	g.emit("add x0, x22, #4")
 	g.emit("bl __lang_alloc")
-	g.emit("mov x21, x0")
-	g.emit("str w22, [x21]") // length prefix (low 32 bits)
+	g.emit("add x21, x0, #4") // x21 = data ptr
+	g.emitStrLenStore("w22", "x21")
 
 	// Read loop. x23 = bytes_read (cumulative).
 	g.emit("mov x23, #0")
@@ -1791,8 +1792,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("cmp x23, x22")
 	g.emit("b.ge .Lrf_done")
 	g.emit("mov x0, x20")
-	g.emit("add x1, x21, #4")
-	g.emit("add x1, x1, x23")
+	g.emit("add x1, x21, x23")
 	g.emit("sub x2, x22, x23")
 	g.emit("mov x8, #63") // read
 	g.emit("svc #0")
@@ -1809,9 +1809,8 @@ func (g *generator) emitReadFileRuntime() {
 	// Build Result.Ok(string).
 	g.emit("mov x0, #16")
 	g.emit("bl __lang_alloc")
-	g.emit("str wzr, [x0]")     // tag=0 (Ok)
-	g.emit("add x1, x21, #4")   // string data ptr
-	g.emit("str x1, [x0, #8]")  // payload @ +8
+	g.emit("str wzr, [x0]")    // tag=0 (Ok)
+	g.emit("str x21, [x0, #8]") // payload @ +8 — x21 is already the string data ptr
 	g.emit("b .Lrf_return")
 
 	g.label(".Lrf_err_close")
@@ -3048,6 +3047,21 @@ func (g *generator) pop() {
 // diverge from strings under future layout changes.
 func (g *generator) emitStrLen(dstW, srcX string) {
 	g.emit("ldur %s, [%s, #-4]", dstW, srcX)
+}
+
+// emitStrLenStore writes the i32 length in srcW to the 4-byte
+// little-endian length prefix at `[dstX - 4]`, where dstX is the
+// new string's *data pointer* (one past the prefix). Inverse of
+// emitStrLen and the second half of the SSO encoding seam:
+// strcat / str_slice / string_from_bytes / random_bytes / env /
+// read_file / tcp_recv / Reader.read_chunk all materialise a
+// fresh string and write its length through this one site, so
+// future encoding changes that affect string construction (e.g.
+// tagged-pointer inline-when-short) have a single function to
+// update per backend. Array-length stores (in `__alloc_u8`,
+// `__lang_args`) stay open-coded since arrays may diverge.
+func (g *generator) emitStrLenStore(srcW, dstX string) {
+	g.emit("stur %s, [%s, #-4]", srcW, dstX)
 }
 
 // binPop — pop two values off the operand stack into x1 (lhs)
