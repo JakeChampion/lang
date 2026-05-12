@@ -186,47 +186,87 @@ func defunctionaliseFunc(fn *Func, returns map[string]string, pairEnvOffset int3
 	monoSlot := map[int32]string{}
 	polySlot := map[int32]bool{}
 	hasFlowSource := false
-	for i, op := range fn.Ops {
-		if op.Kind == OpMakeClosure {
-			hasFlowSource = true
-		}
-		if op.Kind == OpCallDirect {
-			if _, ok := returns[op.Str]; ok {
+	// Phase 1 runs as a fixed-point loop so a chain like
+	// `var a = MakeClosure(T); var b = a; b()` propagates the
+	// monomorphic target from `a` through `b` (and any further
+	// hops). Each iteration either tightens the analysis (new
+	// monoSlot entries) or terminates. Without the loop, only
+	// the directly-OpMakeClosure-preceded slot was caught —
+	// closure values flowing through any intermediate variable
+	// kept the OpCallIndirect path and crashed at the backend
+	// (`call r11` on a closure-pair pointer, since the deref
+	// to fn-pointer-from-pair only happens on the
+	// OpCallClosureDirect rewrite).
+	for {
+		changed := false
+		for i, op := range fn.Ops {
+			if op.Kind == OpMakeClosure {
 				hasFlowSource = true
 			}
-		}
-		if op.Kind != OpStoreLocal && op.Kind != OpTeeLocal {
-			continue
-		}
-		slot := op.I32
-		if polySlot[slot] {
-			continue
-		}
-		var target string
-		var resolved bool
-		if i > 0 {
-			switch prev := fn.Ops[i-1]; prev.Kind {
-			case OpMakeClosure:
-				target = prev.Str
-				resolved = true
-			case OpCallDirect:
-				if t, ok := returns[prev.Str]; ok {
-					target = t
-					resolved = true
+			if op.Kind == OpCallDirect {
+				if _, ok := returns[op.Str]; ok {
+					hasFlowSource = true
 				}
 			}
+			if op.Kind != OpStoreLocal && op.Kind != OpTeeLocal {
+				continue
+			}
+			slot := op.I32
+			if polySlot[slot] {
+				continue
+			}
+			var target string
+			var resolved bool
+			if i > 0 {
+				switch prev := fn.Ops[i-1]; prev.Kind {
+				case OpMakeClosure:
+					target = prev.Str
+					resolved = true
+				case OpCallDirect:
+					if t, ok := returns[prev.Str]; ok {
+						target = t
+						resolved = true
+					}
+				case OpLoadLocal:
+					// Value flowing through another slot. If
+					// the source slot is already known to be
+					// monomorphic, propagate its target; if
+					// it's poly, this slot also becomes poly;
+					// if unknown yet, leave for the next
+					// fixed-point iteration.
+					if t, ok := monoSlot[prev.I32]; ok {
+						target = t
+						resolved = true
+					} else if polySlot[prev.I32] {
+						polySlot[slot] = true
+						delete(monoSlot, slot)
+						changed = true
+						continue
+					}
+				}
+			}
+			if !resolved {
+				if _, already := polySlot[slot]; !already {
+					polySlot[slot] = true
+					delete(monoSlot, slot)
+					changed = true
+				}
+				continue
+			}
+			if existing, seen := monoSlot[slot]; seen && existing != target {
+				polySlot[slot] = true
+				delete(monoSlot, slot)
+				changed = true
+				continue
+			}
+			if existing, seen := monoSlot[slot]; !seen || existing != target {
+				monoSlot[slot] = target
+				changed = true
+			}
 		}
-		if !resolved {
-			polySlot[slot] = true
-			delete(monoSlot, slot)
-			continue
+		if !changed {
+			break
 		}
-		if existing, seen := monoSlot[slot]; seen && existing != target {
-			polySlot[slot] = true
-			delete(monoSlot, slot)
-			continue
-		}
-		monoSlot[slot] = target
 	}
 	if !hasFlowSource || len(monoSlot) == 0 {
 		return

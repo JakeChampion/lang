@@ -1357,6 +1357,46 @@ function main(): i32 {
 // IR's Defunctionalise pass rewrites `f(35)` into a direct call
 // to the hoisted `add` with env_ptr pulled out of the closure
 // pair at offset +ptrW (=8 on native).
+// Mirror of TestX86_64ClosureAliasing — closure values flowing
+// through intermediate variables get defunctionalized to direct
+// calls instead of crashing on call-of-pair-pointer in the
+// backend's OpCallIndirect.
+func TestArm64ClosureAliasing(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"single-alias", `function main(): i32 {
+    function answer(): i32 { return 42; }
+    var f = answer;
+    return f();
+}`, 42},
+		{"single-alias-with-arg", `function main(): i32 {
+    function double(x: i32): i32 { return x * 2; }
+    var f = double;
+    return f(21);
+}`, 42},
+		{"multi-hop-alias", `function main(): i32 {
+    function answer(): i32 { return 17; }
+    var a = answer;
+    var b = a;
+    var c = b;
+    return c();
+}`, 17},
+		{"aliased-and-used-twice", `function main(): i32 {
+    function plus_one(x: i32): i32 { return x + 1; }
+    var f = plus_one;
+    return f(20) + f(20);
+}`, 42},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestArm64ClosureFactory(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }

@@ -1016,6 +1016,51 @@ func TestX86_64ReadLine(t *testing.T) {
 // wasm — see Defunctionalise's pairEnvOffset parameter). The
 // pair allocation itself can't elide here because the slot's
 // writer is OpCallDirect makeAdder, not a direct OpMakeClosure.
+// `var f = nested_fn; f()` previously crashed with SIGSEGV
+// because defunctionalize only detected the directly-preceded
+// OpMakeClosure / OpCallDirect-returning-closure source. Going
+// through an intermediate variable (or a chain of them) kept
+// the OpCallIndirect path, which at the backend would `call r11`
+// where r11 = closure pair pointer — jumping into pair data,
+// not into the fn pointer that the pair contained. The fix
+// makes Phase 1 a fixed-point loop that chases OpLoadLocal
+// through known-monomorphic slots.
+func TestX86_64ClosureAliasing(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"single-alias", `function main(): i32 {
+    function answer(): i32 { return 42; }
+    var f = answer;
+    return f();
+}`, 42},
+		{"single-alias-with-arg", `function main(): i32 {
+    function double(x: i32): i32 { return x * 2; }
+    var f = double;
+    return f(21);
+}`, 42},
+		{"multi-hop-alias", `function main(): i32 {
+    function answer(): i32 { return 17; }
+    var a = answer;
+    var b = a;
+    var c = b;
+    return c();
+}`, 17},
+		{"aliased-and-used-twice", `function main(): i32 {
+    function plus_one(x: i32): i32 { return x + 1; }
+    var f = plus_one;
+    return f(20) + f(20);
+}`, 42},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestX86_64ClosureFactory(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
