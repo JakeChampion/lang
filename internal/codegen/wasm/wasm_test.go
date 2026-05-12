@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -218,6 +220,141 @@ func TestIndexAssignEmitsStore(t *testing.T) {
 // every callable in the table gets an extra `__env` param at
 // the end — pure top-level fns ignore the env slot, hoisted
 // closures read their captured block from it.
+// Register-based Result/Option returns: a function that lowers
+// to OpMakeSomeI32 + OpReturnPair emits a `(result i32 i32)`
+// header and the body uses no `__lang_alloc` — the pair lives
+// purely in wasm's multi-value return registers. First end-to-
+// end test of the new IR ops; the checker doesn't emit them
+// yet, so we build the IR by hand and feed it to EmitFromIR.
+func TestPairFormReturnEmitsMultiValueResult(t *testing.T) {
+	// AST stub: matches the IR's function shape so the emitter
+	// has a name + param list to project. ReturnType points at
+	// Option[i32]; the IR ops decide the actual ABI shape.
+	prog := &ast.Program{
+		Funcs: []*ast.FuncDecl{
+			{
+				Name: "wrap",
+				Params: []ast.Param{
+					{Name: "x", Type: ast.NumberType{}},
+				},
+				ReturnType: ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}},
+				Body:       &ast.Block{},
+			},
+		},
+	}
+	ip := &ir.Program{
+		Funcs: []*ir.Func{
+			{
+				Name:       "wrap",
+				Params:     []ast.Param{{Name: "x", Type: ast.NumberType{}}},
+				ReturnType: ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}},
+				Ops: []ir.Op{
+					{Kind: ir.OpLoadLocal, I32: 0}, // x
+					{Kind: ir.OpMakeSomeI32},        // (tag=0, payload=x)
+					{Kind: ir.OpReturnPair},
+				},
+			},
+		},
+	}
+	wat, err := EmitFromIR(prog, &checker.Info{}, ip)
+	if err != nil {
+		t.Fatalf("EmitFromIR: %v", err)
+	}
+	// Function header declares 2 i32 results.
+	mustContain(t, wat, "(func $wrap (param $x i32) (result i32 i32)")
+	// Pair construction body: store payload in scratch, push tag=0
+	// constant, then re-push payload — leaves (tag, payload) on
+	// the operand stack ready for `return`.
+	mustContain(t, wat, "local.set $__pair_tmp")
+	mustContain(t, wat, "i32.const 0")
+	mustContain(t, wat, "local.get $__pair_tmp")
+	mustContain(t, wat, "return")
+	// No heap allocation IN THE USER FUNCTION: extract the
+	// $wrap body and check. The component-model preamble
+	// (cabi_realloc, etc.) calls __lang_alloc from its own
+	// body — that's not our function's allocation.
+	mustNotContainInFunction(t, wat, "$wrap", "call $__lang_alloc")
+}
+
+// `OpMakeNoneI32` doesn't need the scratch (both fields are
+// constants). Test that the function still declares 2 results
+// and skips heap allocation.
+func TestPairFormReturnNone(t *testing.T) {
+	prog := &ast.Program{
+		Funcs: []*ast.FuncDecl{
+			{
+				Name:       "lookup_miss",
+				Params:     nil,
+				ReturnType: ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}},
+				Body:       &ast.Block{},
+			},
+		},
+	}
+	ip := &ir.Program{
+		Funcs: []*ir.Func{
+			{
+				Name:       "lookup_miss",
+				ReturnType: ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}},
+				Ops: []ir.Op{
+					{Kind: ir.OpMakeNoneI32}, // (tag=1, payload=0)
+					{Kind: ir.OpReturnPair},
+				},
+			},
+		},
+	}
+	wat, err := EmitFromIR(prog, &checker.Info{}, ip)
+	if err != nil {
+		t.Fatalf("EmitFromIR: %v", err)
+	}
+	mustContain(t, wat, "(func $lookup_miss (result i32 i32)")
+	// Two const pushes for the (tag=1, payload=0) pair.
+	mustContain(t, wat, "i32.const 1")
+	mustContain(t, wat, "i32.const 0")
+	mustNotContainInFunction(t, wat, "$lookup_miss", "call $__lang_alloc")
+	// No scratch local needed when the function only emits
+	// OpMakeNoneI32 (which uses constants for both pair fields).
+	mustNotContainInFunction(t, wat, "$lookup_miss", "(local $__pair_tmp i32)")
+}
+
+// mustNotContainInFunction extracts the function body of `fnName`
+// from `wat` (matched on `(func $<fnName>` to the matching close
+// paren depth) and asserts `needle` doesn't appear within it.
+// Lets us inspect a single function's body in isolation without
+// false positives from runtime helpers elsewhere in the module.
+func mustNotContainInFunction(t *testing.T, wat, fnName, needle string) {
+	t.Helper()
+	body := extractFuncBody(wat, fnName)
+	if body == "" {
+		t.Errorf("function %s not found in WAT:\n%s", fnName, wat)
+		return
+	}
+	if strings.Contains(body, needle) {
+		t.Errorf("function %s contains %q (expected absent):\n%s", fnName, needle, body)
+	}
+}
+
+func extractFuncBody(wat, fnName string) string {
+	header := "(func " + fnName
+	i := strings.Index(wat, header)
+	if i < 0 {
+		return ""
+	}
+	// Walk paren depth from i to find the matching close.
+	depth := 0
+	for j := i; j < len(wat); j++ {
+		switch wat[j] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return wat[i : j+1]
+			}
+		}
+	}
+	return wat[i:]
+}
+
 func TestIndirectCallEmitsTable(t *testing.T) {
 	wat := compileToWAT(t, `
 		function add(a: i32, b: i32): i32 { return a + b; }

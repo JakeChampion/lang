@@ -355,11 +355,23 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		header += " (param $__env i32)"
 	}
 	if !ast.Equal(fn.ReturnType, ast.VoidType{}) {
-		typ, err := watType(fn.ReturnType)
-		if err != nil {
-			return fmt.Errorf("function %q: result: %w", fn.Name, err)
+		// Pair-form returns: functions that use OpReturnPair
+		// return two i32 values (tag + payload) instead of an
+		// i32 heap-box pointer. Detect from the IR ops directly
+		// rather than the AST return type so the decision tracks
+		// what the IR actually emits — a function may be typed
+		// `Option[i32]` at the AST level but lower to either
+		// pair-form (zero-alloc) or heap-form (legacy) depending
+		// on whether the IR emits the new ops.
+		if containsReturnPair(irFn.Ops) {
+			header += " (result i32 i32)"
+		} else {
+			typ, err := watType(fn.ReturnType)
+			if err != nil {
+				return fmt.Errorf("function %q: result: %w", fn.Name, err)
+			}
+			header += fmt.Sprintf(" (result %s)", typ)
 		}
-		header += fmt.Sprintf(" (result %s)", typ)
 	}
 	g.line(header)
 	g.indent++
@@ -416,6 +428,14 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	if g.needsClosures && containsIndirectCall(irFn.Ops) {
 		g.line("(local $__call_scratch i32)")
 	}
+	// Register-based Option/Result returns: OpMakeSomeI32 /
+	// OpMakeOkI32 / OpMakeErrI32 swap the payload UNDER a tag
+	// constant via a scratch local. The IR emits the ops only
+	// for pair-returning functions, so the local is gated on
+	// presence.
+	if containsPairMaker(irFn.Ops) {
+		g.line("(local $__pair_tmp i32)")
+	}
 
 	// Walk the IR ops, emitting one (or a small block of) WAT lines
 	// per op.
@@ -464,6 +484,33 @@ func maxClosureCaptures(ops []ir.Op) int {
 func containsIndirectCall(ops []ir.Op) bool {
 	for _, op := range ops {
 		if op.Kind == ir.OpCallIndirect {
+			return true
+		}
+	}
+	return false
+}
+
+// containsPairMaker reports whether any pair-construction op
+// (`OpMakeSomeI32` / `OpMakeOkI32` / `OpMakeErrI32`) appears in
+// ops. Used to gate the `$__pair_tmp` scratch local — needed
+// only when constructing a pair-form return value. OpMakeNoneI32
+// doesn't use the scratch (both pair fields are constants).
+func containsPairMaker(ops []ir.Op) bool {
+	for _, op := range ops {
+		switch op.Kind {
+		case ir.OpMakeSomeI32, ir.OpMakeOkI32, ir.OpMakeErrI32:
+			return true
+		}
+	}
+	return false
+}
+
+// containsReturnPair reports whether any OpReturnPair appears
+// in ops. Drives the `(result i32 i32)` shape on the wasm
+// function header.
+func containsReturnPair(ops []ir.Op) bool {
+	for _, op := range ops {
+		if op.Kind == ir.OpReturnPair {
 			return true
 		}
 	}
@@ -789,8 +836,30 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.linef("br_if %d", op.I32)
 	case ir.OpDrop:
 		g.line("drop")
-	case ir.OpReturn, ir.OpReturnVoid:
+	case ir.OpReturn, ir.OpReturnVoid, ir.OpReturnPair:
+		// Multi-value `OpReturnPair` lowers to the same `return`
+		// op — wasm's typed stack carries however many values the
+		// function's result signature declares, so as long as the
+		// stack has (tag, payload) at return time the runtime
+		// dispatches correctly.
 		g.line("return")
+	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
+		// (i32 payload) on top of stack; push tag=0 BELOW it so
+		// the resulting pair is (tag=0, payload). Wasm doesn't
+		// have a "push under top" op, so swap via two locals.
+		g.line("local.set $__pair_tmp")
+		g.line("i32.const 0")
+		g.line("local.get $__pair_tmp")
+	case ir.OpMakeNoneI32:
+		// () → (tag=1, payload=0). Just push the constants.
+		g.line("i32.const 1")
+		g.line("i32.const 0")
+	case ir.OpMakeErrI32:
+		// (i32 payload) → (tag=1, payload). Same shape as Some/Ok
+		// but with tag=1.
+		g.line("local.set $__pair_tmp")
+		g.line("i32.const 1")
+		g.line("local.get $__pair_tmp")
 	case ir.OpCallDirect:
 		// Top-level user functions in the closure ABI take a
 		// trailing __env i32 — pass 0 since the call is direct.
