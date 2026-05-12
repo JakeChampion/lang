@@ -355,13 +355,17 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		header += " (param $__env i32)"
 	}
 	if !ast.Equal(fn.ReturnType, ast.VoidType{}) {
-		// Pair-form returns currently lower as heap-box on wasm
-		// too — the OpMakeSome/None/Ok/Err handlers allocate
-		// and return a single i32 pointer (see the heap-box
-		// fallback in emitOp). When step 4 of the arc lands
-		// (caller-side rewrite to consume the pair directly),
-		// this single-result decl flips to `(result i32 i32)`
-		// for pair-form functions.
+		// Step 4 keeps the heap-box fallback on the function
+		// side across all backends — switching wasm to the
+		// real `(result i32 i32)` multi-value form requires
+		// every caller to switch to pair-form in lockstep
+		// (call-graph escape analysis + codegen-alias
+		// resolution), and not every caller is in scope yet.
+		// The step-4 wins live at the CALL site instead:
+		// OpCallDirectPair extracts (tag, payload) from the
+		// heap-box pointer the callee returns, so consumers
+		// can dispatch on tag without a heap-load when the
+		// caller IR is pair-aware.
 		typ, err := watType(fn.ReturnType)
 		if err != nil {
 			return fmt.Errorf("function %q: result: %w", fn.Name, err)
@@ -425,13 +429,17 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	}
 	// Register-based Option/Result returns: OpMakeSomeI32 /
 	// OpMakeOkI32 / OpMakeErrI32 use two scratch locals to
-	// build the heap-box fallback: `$__pair_tmp` holds the
-	// payload across the `__lang_alloc` call; `$__pair_alloc`
-	// holds the freshly-allocated box pointer between the
-	// tag-store and the payload-store.
-	if containsPairMaker(irFn.Ops) {
+	// build the heap-box: `$__pair_tmp` holds the payload
+	// across `__lang_alloc`; `$__pair_alloc` holds the box
+	// pointer between the tag-store and the payload-store.
+	// OpCallDirectPair also reuses `$__pair_tmp` to stash
+	// the call's heap-box pointer before extracting tag +
+	// payload.
+	if containsPairMaker(irFn.Ops) || containsPairCall(irFn.Ops) {
 		g.line("(local $__pair_tmp i32)")
-		g.line("(local $__pair_alloc i32)")
+		if containsPairMaker(irFn.Ops) {
+			g.line("(local $__pair_alloc i32)")
+		}
 	}
 
 	// Walk the IR ops, emitting one (or a small block of) WAT lines
@@ -504,10 +512,24 @@ func containsPairMaker(ops []ir.Op) bool {
 
 // containsReturnPair reports whether any OpReturnPair appears
 // in ops. Drives the `(result i32 i32)` shape on the wasm
-// function header.
+// function header (currently held — see emitFuncHeader for
+// rationale).
 func containsReturnPair(ops []ir.Op) bool {
 	for _, op := range ops {
 		if op.Kind == ir.OpReturnPair {
+			return true
+		}
+	}
+	return false
+}
+
+// containsPairCall reports whether any OpCallDirectPair
+// appears in ops. Used to gate the `$__pair_tmp` local
+// declaration on caller functions (which receive a pair-form
+// call result but don't construct one themselves).
+func containsPairCall(ops []ir.Op) bool {
+	for _, op := range ops {
+		if op.Kind == ir.OpCallDirectPair {
 			return true
 		}
 	}
@@ -850,15 +872,10 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		// `(result i32)` not `(result i32 i32)` for now.
 		g.line("return")
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
-		// Heap-box fallback: alloc 8 bytes, store {tag@0,
-		// payload@4}, push pointer. Matches the layout the
-		// existing match/load code paths assume. The native
-		// fallbacks in x86_64 / arm64 do the same shape.
-		// Real register-form returns are step 4 of the arc —
-		// they need a caller-side rewrite to consume the pair
-		// directly without going through the heap. For now
-		// the new IR ops give callers a stable target name
-		// even while the underlying lowering stays heap-form.
+		// Heap-box (consistent with the function-side
+		// fallback — see the (result i32) decision in
+		// emitFuncHeader). alloc 8, store {tag@0, payload@4},
+		// push the pointer.
 		g.line("local.set $__pair_tmp")
 		g.line("i32.const 8")
 		g.line("call $__lang_alloc")
@@ -872,13 +889,11 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.line("i32.store")
 		g.line("local.get $__pair_alloc")
 	case ir.OpMakeNoneI32:
-		// Heap-box fallback for None: the existing
-		// `__enum_sentinel_1` static cell works as-is — same
-		// layout (`[tag=1]`) the existing match-on-Option code
-		// already reads.
+		// None reuses the existing `__enum_sentinel_1` static
+		// cell — same layout the existing match-on-Option
+		// code already reads.
 		g.linef("i32.const %d", g.internEnumSentinel(1))
 	case ir.OpMakeErrI32:
-		// Same shape as Some/Ok but with tag=1.
 		g.line("local.set $__pair_tmp")
 		g.line("i32.const 8")
 		g.line("call $__lang_alloc")
@@ -903,6 +918,36 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 			name = dst
 		}
 		g.linef("call $%s", name)
+	case ir.OpCallDirectPair:
+		// Pair-form call: function returns a heap-box pointer
+		// (step 4's wasm function side still uses heap-form;
+		// the multi-value return is gated on future caller-
+		// side coordination). After the call, extract
+		// (tag, payload) from `[ptr+0]` and `[ptr+4]` onto
+		// the operand stack. The IR's "two values post-call"
+		// contract holds uniformly across all 3 backends —
+		// each does the synthetic extract.
+		_, isUser := g.funcIndex[op.Str]
+		if g.needsClosures && isUser && g.inTable[op.Str] {
+			g.line("i32.const 0")
+		}
+		name := op.Str
+		if dst, ok := codegenAliasMap[name]; ok {
+			name = dst
+		}
+		g.linef("call $%s", name)
+		// Result is a heap-box ptr. Stash in $__pair_tmp
+		// (already declared on this function — see the
+		// containsPairMaker check; OpCallDirectPair callers
+		// always have a maker in their direct callee, so the
+		// local always exists). Then push tag + payload.
+		g.line("local.set $__pair_tmp")
+		g.line("local.get $__pair_tmp")
+		g.line("i32.load") // [ptr+0] = tag
+		g.line("local.get $__pair_tmp")
+		g.line("i32.const 4")
+		g.line("i32.add")
+		g.line("i32.load") // [ptr+4] = payload
 	case ir.OpCallIndirect:
 		if op.Sig == nil {
 			return fmt.Errorf("wasm/ir: OpCallIndirect missing sig")

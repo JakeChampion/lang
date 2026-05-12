@@ -4571,6 +4571,29 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emitCallArgsCleanup(argc)
 		g.push()
 
+	case ir.OpCallDirectPair:
+		// Natives keep the heap-form Option/Result ABI (see
+		// OpMakeSome/Err handlers above — they alloc 8 bytes
+		// and return a heap-box pointer). OpCallDirectPair on
+		// natives is OpCallDirect + immediate pair-extract
+		// from the heap pointer: pop the box ptr, push
+		// [box+0] (tag) and [box+4] (payload). The IR-level
+		// "two values post-call" contract holds across both
+		// wasm (real multi-value return) and natives
+		// (synthetic extract).
+		argc := int(op.I32)
+		g.emitCallArgsLoad(argc)
+		g.emit("bl %s", op.Str)
+		g.emitCallArgsCleanup(argc)
+		// x0 holds the heap-box pointer. Save it in x16
+		// (caller-save scratch) while we read tag + payload
+		// into separate operand-stack slots.
+		g.emit("mov x16, x0")
+		g.emit("ldr w0, [x16]")     // tag (i32)
+		g.push()
+		g.emit("ldr w0, [x16, #4]") // payload (i32)
+		g.push()
+
 	default:
 		return fmt.Errorf("arm64: unsupported IR op %s", op.Kind)
 	}

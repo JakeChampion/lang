@@ -103,7 +103,7 @@ func LiveFunctionsWithAliases(prog *Program, aliases map[string]string, keepAliv
 		}
 		for _, op := range fn.Ops {
 			switch op.Kind {
-			case OpCallDirect, OpCallClosureDirect, OpMakeClosure, OpMakeEnv, OpConstFunc:
+			case OpCallDirect, OpCallDirectPair, OpCallClosureDirect, OpMakeClosure, OpMakeEnv, OpConstFunc:
 				enqueue(op.Str)
 			}
 		}
