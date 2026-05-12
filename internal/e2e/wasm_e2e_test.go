@@ -2845,14 +2845,15 @@ func TestWASMForLoopWithBreakContinue(t *testing.T) {
 	}
 }
 
-// In legacy mode (no closures), function values are bare table
-// indices. If the AST emitter ever pushed funcIndex (position in
-// prog.Funcs) instead of tableIndex (position in the funcref
-// table), call_indirect would either trap or dispatch to the wrong
-// function. This program declares two non-table functions before
-// `target` so funcIndex["target"] = 2 but tableIndex["target"] = 0;
-// dispatching through `apply(target, 4)` must hit `target` (which
-// returns 40), not trap or hit a different entry.
+// Function values materialise as `{fn_idx, env}` pair-cell
+// pointers; the `fn_idx` field stores the function's POSITION
+// IN THE FUNCREF TABLE, not its position in `prog.Funcs`. If
+// the emitter ever pushed funcIndex instead of tableIndex,
+// `call_indirect` would either trap or dispatch to the wrong
+// function. This program declares two non-table functions
+// before `target` so funcIndex["target"] = 2 but
+// tableIndex["target"] = 0; dispatching through
+// `apply(target, 4)` must hit `target` (which returns 40).
 func TestWASMFunctionValueOrderIndependent(t *testing.T) {
 	src := `function unrelated_a(x: i32): i32 { return x + 1; }
 	function unrelated_b(x: i32): i32 { return x + 2; }
