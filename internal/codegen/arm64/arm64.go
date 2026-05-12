@@ -327,6 +327,17 @@ func (g *generator) emitDataSections() {
 	g.line(`	.4byte 0`)
 	g.label(".LStr_Empty")
 	g.line(`	.asciz ""`)
+	if g.usesOptionNone {
+		// Option.None sentinel. Every Option.None construction
+		// returns this address rather than allocating a fresh
+		// 4-byte tag-only box. Byte 0 = 1 (the None tag); the
+		// existing match-on-Option codegen reads this with the
+		// same `ldur w?, [ptr, #0]` it does for heap-allocated
+		// Option boxes, so consumers don't need updating.
+		g.line(`.align 2`)
+		g.label(".LOptionNone")
+		g.line(`	.4byte 1`)
+	}
 	if g.usesPuts || g.usesEprint {
 		// Single newline byte emitted into the same section as
 		// the string literals. __lang_puts / __lang_eprint
@@ -2758,6 +2769,8 @@ type generator struct {
 	// lazily on first emit in emitInlineIdxHelper; gates the
 	// .bss reservation.
 	usesStrIdx bool
+	// usesOptionNone gates the static `.LOptionNone` sentinel.
+	usesOptionNone bool
 	// usesRawIntPokes tracks whether the program calls
 	// __load_i32 / __store_i32 — primitives the lang Map
 	// runtime uses for its mixed bucket-index + entries
@@ -4059,6 +4072,15 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// in sync as SSO follow-ups change the layout.
 		g.pop()                // x0 = str ptr
 		g.emitStrLen("w0", "x0") // w0 = length
+		g.push()
+
+	case ir.OpOptionNone:
+		// Push the address of the shared static Option.None
+		// sentinel. The first 4 bytes of the symbol are 1 (the
+		// None tag), so match / try sites read it correctly
+		// without any consumer-side changes. Zero-alloc None.
+		g.usesOptionNone = true
+		g.adrpAdd("x0", ".LOptionNone")
 		g.push()
 
 	case ir.OpCallIndirect:

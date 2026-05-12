@@ -756,6 +756,13 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.line("i32.const 4")
 		g.line("i32.sub")
 		g.line("i32.load")
+	case ir.OpOptionNone:
+		// Push the linear-memory address of the shared static
+		// Option.None sentinel. Lazily reserved 4 bytes
+		// containing the i32 value 1 (the None tag). Match /
+		// try sites read [ptr + 0] = 1 and dispatch to None
+		// without any consumer-side changes.
+		g.linef("i32.const %d", g.internOptionNone())
 	case ir.OpBlock:
 		g.linef("block%s", blockTypeSuffix(op.I32))
 		g.indent++

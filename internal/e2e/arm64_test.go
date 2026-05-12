@@ -211,6 +211,60 @@ func TestArm64EmptyStringSentinel(t *testing.T) {
 	}
 }
 
+// Option.None sentinel: `None` returns a shared static address
+// rather than allocating a fresh 4-byte tag-only heap box.
+// Mirrors the x86_64 suite of the same shape.
+func TestArm64OptionNoneSentinel(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"match-none", `function f(): Option[i32] { return None; }
+function main(): i32 {
+    match (f()) {
+        Some(x) => { return 99; },
+        None => { return 42; }
+    }
+}`, 42},
+		{"match-some", `function f(): Option[i32] { return Some(7); }
+function main(): i32 {
+    match (f()) {
+        Some(x) => { return x; },
+        None => { return 99; }
+    }
+}`, 7},
+		{"two-nones-share-sentinel", `function f(): Option[i32] { return None; }
+function g(): Option[i32] { return None; }
+function main(): i32 {
+    var _: Option[i32] = f();
+    var __: Option[i32] = g();
+    match (f()) {
+        Some(x) => { return 99; },
+        None => { return 1; }
+    }
+}`, 1},
+		{"none-equal-none", `function main(): i32 {
+    var a: Option[i32] = None;
+    var b: Option[i32] = None;
+    match (a) {
+        Some(_) => { return 99; },
+        None => {
+            match (b) {
+                Some(_) => { return 98; },
+                None => { return 17; }
+            }
+        }
+    }
+}`, 17},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 // arm64 small-string-optimisation (tagged-pointer inline).
 // Strings of length 1..7 produced by __lang_strcat / __str_slice /
 // string_from_bytes ride in a 64-bit register (LSB tag = 1, bits
