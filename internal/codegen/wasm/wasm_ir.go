@@ -748,6 +748,14 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.line("call $__str_eq")
 	case ir.OpStrConcat:
 		g.line("call $__str_concat")
+	case ir.OpStrLen:
+		// `[ptr - 4]` load of the 4-byte little-endian length
+		// prefix. Centralising it here gives a future SSO
+		// pass one place to flip when the encoding moves to
+		// an inline / heap-tagged form.
+		g.line("i32.const 4")
+		g.line("i32.sub")
+		g.line("i32.load")
 	case ir.OpBlock:
 		g.linef("block%s", blockTypeSuffix(op.I32))
 		g.indent++

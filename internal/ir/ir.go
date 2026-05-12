@@ -154,6 +154,13 @@ const (
 	// String runtime calls.
 	OpStrEq     // (a-ptr, b-ptr)   → i32
 	OpStrConcat // (a-ptr, b-ptr)   → i32 (new ptr)
+	// OpStrLen reads the length of a string. Today every backend
+	// emits an `[ptr - 4]` load (4-byte little-endian length prefix);
+	// the dedicated op gives small-string-optimisation work a single
+	// seam to change instead of hunting down ~20 open-coded length
+	// reads scattered across the runtime helpers. Pops a string
+	// pointer, pushes its i32 length.
+	OpStrLen // (str-ptr) → i32
 
 	// Structured control flow. Block / loop / if open a new lexical
 	// scope on the validation-time control stack; OpEnd closes the
@@ -372,6 +379,8 @@ func (k OpKind) String() string {
 		return "str.eq"
 	case OpStrConcat:
 		return "str.concat"
+	case OpStrLen:
+		return "str.len"
 	case OpBlock:
 		return "block"
 	case OpLoop:
@@ -3018,19 +3027,26 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 		}
 	}
-	// `len(x)` on a string or array is inlined: both layouts carry a
-	// 4-byte little-endian length prefix at `ptr - 4`. The checker
-	// doesn't declare `len` as a function signature, so the call falls
-	// here ahead of the FuncSigs / locals path.
+	// `len(x)` on a string, array, or slice is inlined. String and
+	// array layouts carry a 4-byte little-endian length prefix at
+	// `ptr - 4`; slice values carry the length at `slice + 4` after
+	// the data pointer. Strings now route through OpStrLen so a
+	// future small-string-optimisation pass can change the encoding
+	// in one place instead of patching every backend's open-coded
+	// `[ptr - 4]` load. Arrays keep the inline sub-4 / load shape
+	// because their layout may diverge from strings later.
+	//
+	// The checker doesn't declare `len` as a function signature, so
+	// the call falls here ahead of the FuncSigs / locals path.
 	if id.Name == "len" && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			if _, isDeclared := b.info.FuncSigs[id.Name]; !isDeclared {
 				// Compile-time fold: when the arg is a literal whose
 				// length is statically known, collapse the whole
-				// `<ptr>; const 4; sub; load` sequence to a single
-				// const. Saves the runtime alloc + prefix-load that
-				// the unfolded shape would force, and lets the
-				// const propagate into surrounding arithmetic.
+				// runtime-load sequence to a single const. Saves the
+				// runtime alloc + prefix-load that the unfolded shape
+				// would force, and lets the const propagate into
+				// surrounding arithmetic.
 				switch lit := n.Args[0].(type) {
 				case *ast.StringLit:
 					b.emit(Op{Kind: OpConstI32, I32: int32(len(lit.Value))})
@@ -3042,18 +3058,21 @@ func (b *builder) callBody(n *ast.Call) error {
 				if err := b.expr(n.Args[0]); err != nil {
 					return err
 				}
-				// Slice values carry the length at slice+4
-				// (after the data_ptr); arrays / strings carry
-				// it at base-4 (the standard prefix). Pick the
-				// offset based on the static type.
-				if _, isSlice := b.exprType(n.Args[0]).(ast.SliceType); isSlice {
+				argT := b.exprType(n.Args[0])
+				if _, isSlice := argT.(ast.SliceType); isSlice {
 					b.emit(Op{Kind: OpConstI32, I32: 4})
 					b.emit(Op{Kind: OpAdd})
+					b.emit(Op{Kind: OpLoad})
+				} else if _, isStr := argT.(ast.StringType); isStr {
+					b.emit(Op{Kind: OpStrLen})
 				} else {
+					// Arrays (and the unknown / generic case) keep
+					// the open-coded `[ptr - 4]` load — their layout
+					// is decoupled from string SSO work.
 					b.emit(Op{Kind: OpConstI32, I32: 4})
 					b.emit(Op{Kind: OpSub})
+					b.emit(Op{Kind: OpLoad})
 				}
-				b.emit(Op{Kind: OpLoad})
 				return nil
 			}
 		}

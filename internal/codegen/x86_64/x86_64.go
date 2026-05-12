@@ -1281,6 +1281,15 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit("movzx eax, al")
 		g.push()
 
+	case ir.OpStrLen:
+		// Load the 4-byte little-endian length prefix at
+		// `[ptr - 4]`. Centralised here so small-string-
+		// optimisation work has a single seam to flip when
+		// the encoding moves to an inline / heap-tagged form.
+		g.pop() // rax = str ptr
+		g.emit("mov eax, dword ptr [rax - 4]")
+		g.push()
+
 	// -------- direct calls --------
 	//
 	// System V AMD64: args 0..5 in rdi/rsi/rdx/rcx/r8/r9,
