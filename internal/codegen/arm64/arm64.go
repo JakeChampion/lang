@@ -198,6 +198,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
+	if g.usesSliceMake {
+		g.emitSliceMakeRuntime()
+	}
 	if g.usesStrcmp {
 		g.emitStrcmpRuntime()
 	}
@@ -654,6 +657,38 @@ func (g *generator) emitMemcpyRuntime() {
 	g.line(".ltorg")
 }
 
+// emitSliceMakeRuntime emits `__lang_slice_make(data, len)`:
+// allocate an 8-byte slice header [data_ptr, len] on the bump
+// heap and return its address. Header layout matches the wasm
+// runtime so the IR's slice-field offsets stay backend-agnostic:
+// 4 bytes data_ptr, 4 bytes len, 8 bytes total. Heap addresses
+// fitting in 32 bits is fine for arm64 Linux (qemu); arm64-darwin's
+// >4 GiB heap is a documented limitation per CLAUDE.md.
+//
+// Calling convention: x0 = data_ptr, x1 = len. Returns slice
+// header address in x0. Stash inputs in callee-save x19 / x20
+// across __lang_alloc.
+func (g *generator) emitSliceMakeRuntime() {
+	g.line("")
+	g.line(".global __lang_slice_make")
+	g.typeDirective("__lang_slice_make")
+	g.label("__lang_slice_make")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #-16]!")
+	g.emit("mov w19, w0") // data_ptr (low 32 bits)
+	g.emit("mov w20, w1") // len
+	g.emit("mov x0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("str w19, [x0]")    // [+0..+3] data_ptr (i32)
+	g.emit("str w20, [x0, #4]") // [+4..+7] len (i32)
+	g.emit("ldp x19, x20, [sp], #16")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__lang_slice_make")
+	g.line(".ltorg")
+}
+
 // emitStrcatRuntime emits `__lang_strcat(a, b)` — concat two
 // length-prefixed strings into a fresh allocation. Both string
 // operands are data pointers (post-prefix) with the 4-byte
@@ -800,13 +835,28 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("add x0, x2, x0")
 		g.emit("add x0, x0, #1")
 		g.label(doneLbl)
-	case "__slice_idx_1":
-		g.emit("add x0, x1, x0")
-	case "__arr_idx_2", "__slice_idx_2":
+	case "__arr_idx_2":
 		g.emit("add x0, x1, x0, lsl #1")
-	case "__arr_idx", "__slice_idx":
+	case "__arr_idx":
 		g.emit("add x0, x1, x0, lsl #2")
-	case "__arr_idx_8", "__slice_idx_8":
+	case "__arr_idx_8":
+		g.emit("add x0, x1, x0, lsl #3")
+	// Slice indexing first dereferences the slice header to
+	// recover its 32-bit data_ptr field, then does the same
+	// stride-shifted add as the array helpers. The IR's
+	// bounds-check pass has already validated `i < len`
+	// upstream, so we skip the runtime length check inline.
+	case "__slice_idx_1":
+		g.emit("ldr w1, [x1]") // data_ptr (i32)
+		g.emit("add x0, x1, x0")
+	case "__slice_idx_2":
+		g.emit("ldr w1, [x1]")
+		g.emit("add x0, x1, x0, lsl #1")
+	case "__slice_idx":
+		g.emit("ldr w1, [x1]")
+		g.emit("add x0, x1, x0, lsl #2")
+	case "__slice_idx_8":
+		g.emit("ldr w1, [x1]")
 		g.emit("add x0, x1, x0, lsl #3")
 	default:
 		return fmt.Errorf("arm64: unknown index helper %q", name)
@@ -2785,6 +2835,11 @@ type generator struct {
 	// allocates a fresh string. The IR's `s[a:b]` slice
 	// expression lowers to OpCallDirect{__str_slice}.
 	usesStrSlice bool
+	// usesSliceMake pulls in `__lang_slice_make(data, len)` —
+	// allocates an 8-byte slice header { data_ptr, len }. Set
+	// by recordUse() when the IR's slice-construction path
+	// (a[lo:hi]) lowers to OpCallDirect{__slice_make}.
+	usesSliceMake bool
 	// usesEnv pulls in `__lang_env(name)` — walks envp for a
 	// NAME=VALUE match. Used by the synthesised auto-main's
 	// `__port_from_env("PORT", 8080)` call.
@@ -4187,6 +4242,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesMemcpy = true
 		case "__alloc":
 			target = "__lang_alloc"
+			g.usesAlloc = true
+		case "__slice_make":
+			target = "__lang_slice_make"
+			g.usesSliceMake = true
 			g.usesAlloc = true
 		case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr", "__ptr_width":
 			g.usesRawIntPokes = true
