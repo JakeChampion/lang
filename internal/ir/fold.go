@@ -63,17 +63,67 @@ func foldOnce(ops []Op) []Op {
 				continue
 			}
 		}
-		// Binary fold: OpConstI32 a; OpConstI32 b; <binop>.
+		// Binary fold (i32): OpConstI32 a; OpConstI32 b; <binop>.
 		if i+2 < len(ops) &&
 			ops[i].Kind == OpConstI32 && ops[i+1].Kind == OpConstI32 &&
 			isFoldableBinary(ops[i+2].Kind) {
 			a, b := ops[i].I32, ops[i+1].I32
-			res, ok := foldBinary(ops[i+2].Kind, a, b)
+			res, ok := foldBinary(ops[i+2].Kind, ops[i+2].Unsigned, a, b)
 			if ok {
 				out = append(out, Op{Kind: OpConstI32, I32: res, Pos: ops[i+2].Pos})
 				i += 2
 				continue
 			}
+		}
+		// Binary fold (i64): OpConstI64 a; OpConstI64 b; <binop>.
+		// Comparison results stay as i32 (boolean-shaped). Arithmetic
+		// and bitwise results stay as i64.
+		if i+2 < len(ops) &&
+			ops[i].Kind == OpConstI64 && ops[i+1].Kind == OpConstI64 &&
+			isFoldableBinary(ops[i+2].Kind) {
+			a, b := ops[i].I64, ops[i+1].I64
+			if res, isCmp, ok := foldBinary64(ops[i+2].Kind, ops[i+2].Unsigned, a, b); ok {
+				if isCmp {
+					out = append(out, Op{Kind: OpConstI32, I32: int32(res), Pos: ops[i+2].Pos})
+				} else {
+					out = append(out, Op{Kind: OpConstI64, I64: res, Pos: ops[i+2].Pos})
+				}
+				i += 2
+				continue
+			}
+		}
+		// Width-conversion fold over constants:
+		//   OpConstI32 a; OpExtendI32S  → OpConstI64 (int64(int32(a)))
+		//   OpConstI32 a; OpExtendI32U  → OpConstI64 (int64(uint32(a)))
+		//   OpConstI64 a; OpWrapI64     → OpConstI32 (int32(a))
+		if i+1 < len(ops) && ops[i].Kind == OpConstI32 {
+			switch ops[i+1].Kind {
+			case OpExtendI32S:
+				out = append(out, Op{Kind: OpConstI64, I64: int64(ops[i].I32), Pos: ops[i+1].Pos})
+				i++
+				continue
+			case OpExtendI32U:
+				out = append(out, Op{Kind: OpConstI64, I64: int64(uint32(ops[i].I32)), Pos: ops[i+1].Pos})
+				i++
+				continue
+			}
+		}
+		if i+1 < len(ops) && ops[i].Kind == OpConstI64 && ops[i+1].Kind == OpWrapI64 {
+			out = append(out, Op{Kind: OpConstI32, I32: int32(ops[i].I64), Pos: ops[i+1].Pos})
+			i++
+			continue
+		}
+		// Extend-then-wrap identity: any value extended to i64 and
+		// immediately wrapped back to i32 is the original i32. This
+		// shows up after auto-widening promotes one side of a mixed-
+		// width binop only for the surrounding context to narrow
+		// the result. Bridges signedness — extending then wrapping
+		// preserves the low 32 bits regardless of which extend
+		// variant ran.
+		if i+1 < len(ops) && ops[i+1].Kind == OpWrapI64 &&
+			(ops[i].Kind == OpExtendI32S || ops[i].Kind == OpExtendI32U) {
+			i++ // skip both ops — leaves the underlying i32 producer in place
+			continue
 		}
 		// const ; drop pair → remove both. ConstPropagate plus the
 		// dead-store rewrite in PropagateCopies leave behind
@@ -173,26 +223,28 @@ func endOfIfBlock(ops []Op, ifIdx int) int {
 
 // isFoldableConst reports whether a const op carries a value that's
 // safe to drop wholesale — no side effects, no allocator
-// interaction. All four IR const ops qualify.
+// interaction.
 func isFoldableConst(k OpKind) bool {
 	switch k {
-	case OpConstI32, OpConstF32, OpConstStr, OpConstFunc:
+	case OpConstI32, OpConstI64, OpConstF32, OpConstF64, OpConstStr, OpConstFunc:
 		return true
 	}
 	return false
 }
 
 // isFoldableBinary reports whether a binary op produces a deterministic
-// i32 from two i32 inputs. Division and remainder are excluded because
-// folding them would hide compile-time-detectable runtime traps
-// (zero divisor) and silently change the program's observable
-// behaviour.
+// result from two constant inputs of matching width. Division and
+// remainder are excluded because folding them would hide compile-
+// time-detectable runtime traps (zero divisor) and silently change
+// the program's observable behaviour. The Unsigned flag on the op
+// is honoured by foldBinary / foldBinary64.
 func isFoldableBinary(k OpKind) bool {
 	switch k {
 	case OpAdd, OpSub, OpMul,
 		OpAnd, OpOr, OpXor,
 		OpShl, OpShrS,
-		OpEq, OpNe, OpLtS, OpLeS, OpGtS, OpGeS:
+		OpEq, OpNe,
+		OpLtS, OpLeS, OpGtS, OpGeS:
 		return true
 	}
 	return false
@@ -200,10 +252,13 @@ func isFoldableBinary(k OpKind) bool {
 
 // foldBinary computes the result of a fold-eligible binary op on two
 // i32 constants. Shifts mask the count to 0..31 to match the wasm /
-// arm semantics that codegen uses for runtime shifts. The bool result
-// is reserved for ops that might bail out (none currently — DivS /
-// RemS are excluded above).
-func foldBinary(k OpKind, a, b int32) (int32, bool) {
+// arm semantics that codegen uses for runtime shifts. The unsigned
+// flag flips OpShrS to a logical right shift and the order-comparison
+// ops to their unsigned variants; signedness-agnostic ops (add, sub,
+// mul, and/or/xor, eq, ne) ignore it. The bool result is reserved for
+// ops that might bail out (none currently — DivS / RemS are excluded
+// above).
+func foldBinary(k OpKind, unsigned bool, a, b int32) (int32, bool) {
 	switch k {
 	case OpAdd:
 		return a + b, true
@@ -220,6 +275,9 @@ func foldBinary(k OpKind, a, b int32) (int32, bool) {
 	case OpShl:
 		return a << (uint32(b) & 31), true
 	case OpShrS:
+		if unsigned {
+			return int32(uint32(a) >> (uint32(b) & 31)), true
+		}
 		return a >> (uint32(b) & 31), true
 	case OpEq:
 		if a == b {
@@ -232,27 +290,134 @@ func foldBinary(k OpKind, a, b int32) (int32, bool) {
 		}
 		return 0, true
 	case OpLtS:
-		if a < b {
+		var lt bool
+		if unsigned {
+			lt = uint32(a) < uint32(b)
+		} else {
+			lt = a < b
+		}
+		if lt {
 			return 1, true
 		}
 		return 0, true
 	case OpLeS:
-		if a <= b {
+		var le bool
+		if unsigned {
+			le = uint32(a) <= uint32(b)
+		} else {
+			le = a <= b
+		}
+		if le {
 			return 1, true
 		}
 		return 0, true
 	case OpGtS:
-		if a > b {
+		var gt bool
+		if unsigned {
+			gt = uint32(a) > uint32(b)
+		} else {
+			gt = a > b
+		}
+		if gt {
 			return 1, true
 		}
 		return 0, true
 	case OpGeS:
-		if a >= b {
+		var ge bool
+		if unsigned {
+			ge = uint32(a) >= uint32(b)
+		} else {
+			ge = a >= b
+		}
+		if ge {
 			return 1, true
 		}
 		return 0, true
 	}
 	return 0, false
+}
+
+// foldBinary64 is the i64 counterpart to foldBinary. Returns the
+// result, an isCmp flag indicating whether the result is a boolean
+// (i32) rather than an i64, and an ok flag. Shifts mask the count to
+// 0..63 to match wasm / arm i64 semantics.
+func foldBinary64(k OpKind, unsigned bool, a, b int64) (int64, bool, bool) {
+	switch k {
+	case OpAdd:
+		return a + b, false, true
+	case OpSub:
+		return a - b, false, true
+	case OpMul:
+		return a * b, false, true
+	case OpAnd:
+		return a & b, false, true
+	case OpOr:
+		return a | b, false, true
+	case OpXor:
+		return a ^ b, false, true
+	case OpShl:
+		return a << (uint64(b) & 63), false, true
+	case OpShrS:
+		if unsigned {
+			return int64(uint64(a) >> (uint64(b) & 63)), false, true
+		}
+		return a >> (uint64(b) & 63), false, true
+	case OpEq:
+		if a == b {
+			return 1, true, true
+		}
+		return 0, true, true
+	case OpNe:
+		if a != b {
+			return 1, true, true
+		}
+		return 0, true, true
+	case OpLtS:
+		var lt bool
+		if unsigned {
+			lt = uint64(a) < uint64(b)
+		} else {
+			lt = a < b
+		}
+		if lt {
+			return 1, true, true
+		}
+		return 0, true, true
+	case OpLeS:
+		var le bool
+		if unsigned {
+			le = uint64(a) <= uint64(b)
+		} else {
+			le = a <= b
+		}
+		if le {
+			return 1, true, true
+		}
+		return 0, true, true
+	case OpGtS:
+		var gt bool
+		if unsigned {
+			gt = uint64(a) > uint64(b)
+		} else {
+			gt = a > b
+		}
+		if gt {
+			return 1, true, true
+		}
+		return 0, true, true
+	case OpGeS:
+		var ge bool
+		if unsigned {
+			ge = uint64(a) >= uint64(b)
+		} else {
+			ge = a >= b
+		}
+		if ge {
+			return 1, true, true
+		}
+		return 0, true, true
+	}
+	return 0, false, false
 }
 
 // opsEqual is the slice-equality used to detect a fixed point. Compares

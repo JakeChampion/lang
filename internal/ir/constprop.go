@@ -85,12 +85,12 @@ func constPropOps(ops []Op) []Op {
 	return out
 }
 
-// isConstOp reports whether op produces a single i32 / f32 / pointer
+// isConstOp reports whether op produces a single scalar / pointer
 // value with no side effects — the values that are safe to copy
 // across substitution sites.
 func isConstOp(k OpKind) bool {
 	switch k {
-	case OpConstI32, OpConstF32, OpConstStr, OpConstFunc:
+	case OpConstI32, OpConstI64, OpConstF32, OpConstF64, OpConstStr, OpConstFunc:
 		return true
 	}
 	return false

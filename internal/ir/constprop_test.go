@@ -175,6 +175,33 @@ func TestConstPropMultiLoadCollapses(t *testing.T) {
 	}
 }
 
+// i64 constants flow through locals the same way i32 constants
+// do. The fold pipeline collapses `var x: i64 = 7i64; return x +
+// 3i64` to a single OpConstI64 10 via the same tee + propagate +
+// fold dance.
+func TestConstPropTracksI64(t *testing.T) {
+	p := lowerSource(t, `function f(): i64 {
+		var x: i64 = 7i64;
+		return x + 3i64;
+	}`)
+	Inline(p)
+	FuseTee(p)
+	OptimizeCleanup(p)
+	fn := findFunc(p, "f")
+	found := false
+	for _, op := range fn.Ops {
+		if op.Kind == OpConstI64 && op.I64 == 10 {
+			found = true
+		}
+		if op.Kind == OpLoadLocal {
+			t.Errorf("expected i64 load of x to be propagated:\n%s", p)
+		}
+	}
+	if !found {
+		t.Errorf("expected `const.i64 10` after the i64 pipeline:\n%s", p)
+	}
+}
+
 // const + drop pair (left over after dead-store rewriting) gets
 // folded away — the const has no side effects and the drop just
 // cleans up after it.
