@@ -355,6 +355,24 @@ func (g *generator) emitStrLenFromLocal(local string) {
 	g.line("i32.load")
 }
 
+// emitStrLenStoreToLocal writes the i32 length stored in WebAssembly
+// local `lenLocal` to the 4-byte little-endian length prefix at
+// `[dstLocal - 4]`, where dstLocal holds the new string's *data
+// pointer* (one past the prefix). Inverse of emitStrLenFromLocal:
+// string-producing runtime helpers (__str_concat, __str_slice,
+// string_from_bytes, random_bytes, env, tcp_recv, Reader.read_chunk)
+// all flow through this one site so future SSO encoding changes
+// that affect string construction have a single seam. Array-length
+// stores (`__alloc_u8`, `$args` outer array) stay open-coded since
+// arrays may diverge.
+func (g *generator) emitStrLenStoreToLocal(lenLocal, dstLocal string) {
+	g.linef("local.get %s", dstLocal)
+	g.line("i32.const 4")
+	g.line("i32.sub")
+	g.linef("local.get %s", lenLocal)
+	g.line("i32.store")
+}
+
 // envParamPresent reports whether fn already carries the synthetic
 // `__env` parameter that closure conversion appends to hoisted local
 // functions. Top-level functions don't carry it natively; we add the
@@ -2214,31 +2232,27 @@ func (g *generator) emitRuntimePreamble() {
 		// at `ptr - 4`. The bump allocator is shared with arrays.
 		g.line(`(func $__str_concat (param $a i32) (param $b i32) (result i32)`)
 		g.indent++
-		g.line(`(local $la i32) (local $lb i32) (local $base i32) (local $dst i32) (local $i i32)`)
+		g.line(`(local $la i32) (local $lb i32) (local $total i32) (local $dst i32) (local $i i32)`)
 		// la / lb via the centralised string-length helper.
 		g.emitStrLenFromLocal("$a")
 		g.line(`local.set $la`)
 		g.emitStrLenFromLocal("$b")
 		g.line(`local.set $lb`)
-		// base = __lang_alloc(la + lb + 4)
+		// total = la + lb (cached so emitStrLenStoreToLocal can read it).
 		g.line(`local.get $la`)
 		g.line(`local.get $lb`)
 		g.line(`i32.add`)
+		g.line(`local.set $total`)
+		// dst = __lang_alloc(total + 4) + 4
+		g.line(`local.get $total`)
 		g.line(`i32.const 4`)
 		g.line(`i32.add`)
 		g.line(`call $__lang_alloc`)
-		g.line(`local.set $base`)
-		// store length prefix at base
-		g.line(`local.get $base`)
-		g.line(`local.get $la`)
-		g.line(`local.get $lb`)
-		g.line(`i32.add`)
-		g.line(`i32.store`)
-		// dst = base + 4
-		g.line(`local.get $base`)
 		g.line(`i32.const 4`)
 		g.line(`i32.add`)
 		g.line(`local.set $dst`)
+		// Length prefix via the centralised store helper.
+		g.emitStrLenStoreToLocal("$total", "$dst")
 		// Copy a's bytes: for (i=0; i<la; i++) dst[i] = a[i]
 		g.line(`i32.const 0`)
 		g.line(`local.set $i`)
@@ -2551,29 +2565,25 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $low`)
 		g.line(`i32.sub`)
 		g.line(`local.set $new_len`)
-		// out = alloc(4 + new_len)
+		// out = alloc(4 + new_len) + 4   (out is the data ptr)
 		g.line(`local.get $new_len`)
 		g.line(`i32.const 4`)
 		g.line(`i32.add`)
 		g.line(`call $__lang_alloc`)
-		g.line(`local.set $out`)
-		// out[0] = new_len
-		g.line(`local.get $out`)
-		g.line(`local.get $new_len`)
-		g.line(`i32.store`)
-		// memory.copy(out + 4, base + low, new_len)
-		g.line(`local.get $out`)
 		g.line(`i32.const 4`)
 		g.line(`i32.add`)
+		g.line(`local.set $out`)
+		// Length prefix via the centralised store helper.
+		g.emitStrLenStoreToLocal("$new_len", "$out")
+		// memory.copy(out, base + low, new_len)
+		g.line(`local.get $out`)
 		g.line(`local.get $base`)
 		g.line(`local.get $low`)
 		g.line(`i32.add`)
 		g.line(`local.get $new_len`)
 		g.line(`memory.copy`)
-		// Return content pointer (out + 4).
+		// Return content pointer.
 		g.line(`local.get $out`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
 		g.indent--
 		g.line(`)`)
 	}
@@ -2598,22 +2608,22 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.sub`)
 		g.line(`i32.load`)
 		g.line(`local.set $bLen`)
+		// out = __lang_alloc(bLen + 4) + 4   (data ptr)
 		g.line(`local.get $bLen`)
 		g.line(`i32.const 4`)
 		g.line(`i32.add`)
 		g.line(`call $__lang_alloc`)
-		g.line(`local.tee $out`)
-		g.line(`local.get $bLen`)
-		g.line(`i32.store`)
-		g.line(`local.get $out`)
 		g.line(`i32.const 4`)
 		g.line(`i32.add`)
+		g.line(`local.set $out`)
+		// Length prefix via the centralised store helper.
+		g.emitStrLenStoreToLocal("$bLen", "$out")
+		// memory.copy(out, bs, bLen)
+		g.line(`local.get $out`)
 		g.line(`local.get $bs`)
 		g.line(`local.get $bLen`)
 		g.line(`memory.copy`)
 		g.line(`local.get $out`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
 		g.indent--
 		g.line(`)`)
 	}
@@ -3214,6 +3224,11 @@ func (g *generator) emitArgsHelper() {
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $result`)
+	// Array (string[]) length-prefix store — deliberately NOT
+	// routed through emitStrLenStoreToLocal. The outer container
+	// is a string[] and arrays may diverge from strings under
+	// future SSO. The per-entry string stores below DO go through
+	// the helper.
 	g.line(`local.get $result`)
 	g.line(`local.get $argc`)
 	g.line(`i32.store`)
@@ -3275,12 +3290,12 @@ func (g *generator) emitArgsHelper() {
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $strlen`)
-	g.line(`i32.store`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.set $sbase`) // $sbase = data ptr (one past length prefix)
+	g.emitStrLenStoreToLocal("$strlen", "$sbase")
 
-	// Byte-copy cstr[0..strlen) into sbase+4.
+	// Byte-copy cstr[0..strlen) into sbase.
 	g.line(`i32.const 0`)
 	g.line(`local.set $j`)
 	g.line(`block $end_copy`)
@@ -3292,8 +3307,6 @@ func (g *generator) emitArgsHelper() {
 	g.line(`i32.eq`)
 	g.line(`br_if $end_copy`)
 	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.line(`local.get $j`)
 	g.line(`i32.add`)
 	g.line(`local.get $cstr`)
@@ -3311,15 +3324,13 @@ func (g *generator) emitArgsHelper() {
 	g.indent--
 	g.line(`end`)
 
-	// result[i] = sbase + 4 (the data pointer; length lives at -4)
+	// result[i] = sbase (already the data pointer; length lives at -4)
 	g.line(`local.get $result`)
 	g.line(`local.get $i`)
 	g.line(`i32.const 4`)
 	g.line(`i32.mul`)
 	g.line(`i32.add`)
 	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.line(`i32.store`)
 
 	g.line(`local.get $i`)
@@ -3502,19 +3513,16 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.indent--
 	g.line(`end`)
 
-	// Materialise as a length-prefixed string.
+	// Materialise as a length-prefixed string. $sptr is the
+	// data pointer (one past the length prefix).
 	g.line(`local.get $cur_offset`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $cur_offset`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`local.set $sptr`)
+	g.emitStrLenStoreToLocal("$cur_offset", "$sptr")
 
 	// memory.copy(sptr, buf, cur_offset)
 	g.line(`local.get $sptr`)
@@ -3727,14 +3735,10 @@ func (g *generator) emitEnvHelper() {
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $vlen`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
-	g.line(`local.set $sptr`)
+	g.line(`local.set $sptr`) // $sptr = data ptr
+	g.emitStrLenStoreToLocal("$vlen", "$sptr")
 	g.line(`i32.const 0`)
 	g.line(`local.set $j`)
 	g.line(`block $vcopy_end`)
@@ -3936,7 +3940,9 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $base`)
-	// Write the length prefix.
+	// Array length-prefix store — deliberately NOT routed
+	// through emitStrLenStoreToLocal. __alloc_u8 returns u8[]
+	// and arrays may diverge from strings under future SSO.
 	g.line(`local.get $base`)
 	g.line(`local.get $n`)
 	g.line(`i32.store`)
@@ -4387,14 +4393,10 @@ func (g *generator) emitTcpRecvPreview2() {
 	g.line(`i32.const 5`)
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $n`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
-	g.line(`local.set $sptr`)
+	g.line(`local.set $sptr`) // $sptr = data ptr
+	g.emitStrLenStoreToLocal("$n", "$sptr")
 	// memcpy host buffer into our string body.
 	g.line(`local.get $sptr`)
 	g.line(`local.get $list_ptr`)
@@ -4993,27 +4995,22 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`i32.const 5`) // 4 prefix + NUL
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
-	g.line(`local.tee $sbase`)
-	g.line(`local.get $host_len`)
-	g.line(`i32.store`) // length prefix
-	g.line(`local.get $sbase`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
+	g.line(`local.set $sbase`) // $sbase = data ptr
+	g.emitStrLenStoreToLocal("$host_len", "$sbase")
+	g.line(`local.get $sbase`)
 	g.line(`local.get $host_ptr`)
 	g.line(`local.get $host_len`)
 	g.line(`memory.copy`)
 	// Trailing NUL.
 	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.line(`local.get $host_len`)
 	g.line(`i32.add`)
 	g.line(`i32.const 0`)
 	g.line(`i32.store8`)
-	// Return data pointer (sbase + 4).
+	// Return data pointer.
 	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
 }
