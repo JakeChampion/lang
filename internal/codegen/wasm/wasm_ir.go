@@ -111,8 +111,18 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	if g.needsFileIO {
 		g.needsStreamingIO = true
 	}
+	// Always emit the closure-aware shape (static `{fn_idx, env}`
+	// pair cells for OpConstFunc, deref-then-call_indirect for
+	// OpCallIndirect). Pre-unified-ABI codebases had a "legacy"
+	// fast path for programs without nested-fn hoisting that used
+	// bare table indices; with the unified ABI the prelude itself
+	// references function values (closures stored in Map / state /
+	// struct fields), so `needsClosures` was effectively always
+	// true in practice. Removing the branch as part of the
+	// legacy-cleanup pass — saves a code path and keeps the
+	// function-value ABI consistent across all three backends.
+	g.needsClosures = true
 	if len(prog.Funcs) > g.origTopLevelCount {
-		g.needsClosures = true
 		g.needsFuncTable = true
 		g.needsRuntime = true
 		g.needsArrays = true
