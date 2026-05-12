@@ -220,13 +220,14 @@ func TestIndexAssignEmitsStore(t *testing.T) {
 // every callable in the table gets an extra `__env` param at
 // the end — pure top-level fns ignore the env slot, hoisted
 // closures read their captured block from it.
-// Register-based Result/Option returns: a function that lowers
-// to OpMakeSomeI32 + OpReturnPair emits a `(result i32 i32)`
-// header and the body uses no `__lang_alloc` — the pair lives
-// purely in wasm's multi-value return registers. First end-to-
-// end test of the new IR ops; the checker doesn't emit them
-// yet, so we build the IR by hand and feed it to EmitFromIR.
-func TestPairFormReturnEmitsMultiValueResult(t *testing.T) {
+// Register-based Result/Option returns — step 2 transitional
+// shape. The IR ops OpMakeSomeI32 + OpReturnPair currently
+// lower as a heap-box on wasm too (see emitOp's OpMakeSome
+// case): allocate 8 bytes, store {tag@0, payload@4}, return
+// the i32 pointer. Step 4 of the arc swaps this for the real
+// `(result i32 i32)` multi-value form once the caller-side
+// rewrite is in place.
+func TestPairFormReturnEmitsHeapBoxFallback(t *testing.T) {
 	// AST stub: matches the IR's function shape so the emitter
 	// has a name + param list to project. ReturnType points at
 	// Option[i32]; the IR ops decide the actual ABI shape.
@@ -260,26 +261,21 @@ func TestPairFormReturnEmitsMultiValueResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmitFromIR: %v", err)
 	}
-	// Function header declares 2 i32 results.
-	mustContain(t, wat, "(func $wrap (param $x i32) (result i32 i32)")
-	// Pair construction body: store payload in scratch, push tag=0
-	// constant, then re-push payload — leaves (tag, payload) on
-	// the operand stack ready for `return`.
+	// Function header declares ONE i32 result (the heap-box
+	// pointer). Step 4 will flip this to `(result i32 i32)`.
+	mustContain(t, wat, "(func $wrap (param $x i32) (result i32)")
+	// Heap-box construction body: stash payload, alloc 8, store
+	// {tag@0, payload@4}.
 	mustContain(t, wat, "local.set $__pair_tmp")
-	mustContain(t, wat, "i32.const 0")
-	mustContain(t, wat, "local.get $__pair_tmp")
-	mustContain(t, wat, "return")
-	// No heap allocation IN THE USER FUNCTION: extract the
-	// $wrap body and check. The component-model preamble
-	// (cabi_realloc, etc.) calls __lang_alloc from its own
-	// body — that's not our function's allocation.
-	mustNotContainInFunction(t, wat, "$wrap", "call $__lang_alloc")
+	mustContain(t, wat, "i32.const 8")
+	mustContain(t, wat, "call $__lang_alloc")
+	mustContain(t, wat, "local.tee $__pair_alloc")
 }
 
-// `OpMakeNoneI32` doesn't need the scratch (both fields are
-// constants). Test that the function still declares 2 results
-// and skips heap allocation.
-func TestPairFormReturnNone(t *testing.T) {
+// `OpMakeNoneI32` reuses the existing `__enum_sentinel_1`
+// static cell for the None case — zero-alloc since the
+// sentinel is a pre-allocated constant.
+func TestPairFormReturnNoneUsesSentinel(t *testing.T) {
 	prog := &ast.Program{
 		Funcs: []*ast.FuncDecl{
 			{
@@ -306,13 +302,10 @@ func TestPairFormReturnNone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmitFromIR: %v", err)
 	}
-	mustContain(t, wat, "(func $lookup_miss (result i32 i32)")
-	// Two const pushes for the (tag=1, payload=0) pair.
-	mustContain(t, wat, "i32.const 1")
-	mustContain(t, wat, "i32.const 0")
+	mustContain(t, wat, "(func $lookup_miss (result i32)")
+	// No heap alloc — None reuses the existing
+	// `__enum_sentinel_1` static cell.
 	mustNotContainInFunction(t, wat, "$lookup_miss", "call $__lang_alloc")
-	// No scratch local needed when the function only emits
-	// OpMakeNoneI32 (which uses constants for both pair fields).
 	mustNotContainInFunction(t, wat, "$lookup_miss", "(local $__pair_tmp i32)")
 }
 

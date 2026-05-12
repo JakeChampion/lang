@@ -160,7 +160,7 @@ func isInlineable(fn *Func) bool {
 		return false
 	}
 	last := fn.Ops[len(fn.Ops)-1].Kind
-	if last != OpReturn && last != OpReturnVoid {
+	if last != OpReturn && last != OpReturnVoid && last != OpReturnPair {
 		return false
 	}
 	for _, op := range fn.Ops {
@@ -232,7 +232,8 @@ func expandInline(caller *Func, cand inlineCandidate) []Op {
 	// directly when there's no wrapper).
 	depth := int32(0)
 	for i, op := range cand.body {
-		isTrailing := i == len(cand.body)-1 && (op.Kind == OpReturn || op.Kind == OpReturnVoid)
+		isTrailing := i == len(cand.body)-1 &&
+			(op.Kind == OpReturn || op.Kind == OpReturnVoid || op.Kind == OpReturnPair)
 		if isTrailing {
 			break
 		}
@@ -246,7 +247,7 @@ func expandInline(caller *Func, cand inlineCandidate) []Op {
 		case OpLoadLocal, OpStoreLocal, OpTeeLocal:
 			op.I32 += base
 			out = append(out, op)
-		case OpReturn, OpReturnVoid:
+		case OpReturn, OpReturnVoid, OpReturnPair:
 			// Translate to a branch out of the wrapper block.
 			// `depth` is the relative distance from this op to
 			// the wrapper. The OpReturn's value (if any) is
@@ -276,7 +277,7 @@ func needsReturnWrapper(body []Op) bool {
 	}
 	for i, op := range body[:len(body)-1] {
 		_ = i
-		if op.Kind == OpReturn || op.Kind == OpReturnVoid {
+		if op.Kind == OpReturn || op.Kind == OpReturnVoid || op.Kind == OpReturnPair {
 			return true
 		}
 	}

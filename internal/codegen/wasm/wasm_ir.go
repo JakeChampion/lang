@@ -355,23 +355,18 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		header += " (param $__env i32)"
 	}
 	if !ast.Equal(fn.ReturnType, ast.VoidType{}) {
-		// Pair-form returns: functions that use OpReturnPair
-		// return two i32 values (tag + payload) instead of an
-		// i32 heap-box pointer. Detect from the IR ops directly
-		// rather than the AST return type so the decision tracks
-		// what the IR actually emits — a function may be typed
-		// `Option[i32]` at the AST level but lower to either
-		// pair-form (zero-alloc) or heap-form (legacy) depending
-		// on whether the IR emits the new ops.
-		if containsReturnPair(irFn.Ops) {
-			header += " (result i32 i32)"
-		} else {
-			typ, err := watType(fn.ReturnType)
-			if err != nil {
-				return fmt.Errorf("function %q: result: %w", fn.Name, err)
-			}
-			header += fmt.Sprintf(" (result %s)", typ)
+		// Pair-form returns currently lower as heap-box on wasm
+		// too — the OpMakeSome/None/Ok/Err handlers allocate
+		// and return a single i32 pointer (see the heap-box
+		// fallback in emitOp). When step 4 of the arc lands
+		// (caller-side rewrite to consume the pair directly),
+		// this single-result decl flips to `(result i32 i32)`
+		// for pair-form functions.
+		typ, err := watType(fn.ReturnType)
+		if err != nil {
+			return fmt.Errorf("function %q: result: %w", fn.Name, err)
 		}
+		header += fmt.Sprintf(" (result %s)", typ)
 	}
 	g.line(header)
 	g.indent++
@@ -429,12 +424,14 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		g.line("(local $__call_scratch i32)")
 	}
 	// Register-based Option/Result returns: OpMakeSomeI32 /
-	// OpMakeOkI32 / OpMakeErrI32 swap the payload UNDER a tag
-	// constant via a scratch local. The IR emits the ops only
-	// for pair-returning functions, so the local is gated on
-	// presence.
+	// OpMakeOkI32 / OpMakeErrI32 use two scratch locals to
+	// build the heap-box fallback: `$__pair_tmp` holds the
+	// payload across the `__lang_alloc` call; `$__pair_alloc`
+	// holds the freshly-allocated box pointer between the
+	// tag-store and the payload-store.
 	if containsPairMaker(irFn.Ops) {
 		g.line("(local $__pair_tmp i32)")
+		g.line("(local $__pair_alloc i32)")
 	}
 
 	// Walk the IR ops, emitting one (or a small block of) WAT lines
@@ -837,29 +834,56 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpDrop:
 		g.line("drop")
 	case ir.OpReturn, ir.OpReturnVoid, ir.OpReturnPair:
-		// Multi-value `OpReturnPair` lowers to the same `return`
-		// op — wasm's typed stack carries however many values the
-		// function's result signature declares, so as long as the
-		// stack has (tag, payload) at return time the runtime
-		// dispatches correctly.
+		// All return ops collapse to the same `return` keyword;
+		// wasm's typed stack carries however many values the
+		// function's result signature declares. With the heap-
+		// box fallback (see OpMakeSome/None/Ok/Err below) the
+		// pair-form path still leaves a single i32 pointer on
+		// the stack, so OpReturnPair functions sign as
+		// `(result i32)` not `(result i32 i32)` for now.
 		g.line("return")
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
-		// (i32 payload) on top of stack; push tag=0 BELOW it so
-		// the resulting pair is (tag=0, payload). Wasm doesn't
-		// have a "push under top" op, so swap via two locals.
+		// Heap-box fallback: alloc 8 bytes, store {tag@0,
+		// payload@4}, push pointer. Matches the layout the
+		// existing match/load code paths assume. The native
+		// fallbacks in x86_64 / arm64 do the same shape.
+		// Real register-form returns are step 4 of the arc —
+		// they need a caller-side rewrite to consume the pair
+		// directly without going through the heap. For now
+		// the new IR ops give callers a stable target name
+		// even while the underlying lowering stays heap-form.
 		g.line("local.set $__pair_tmp")
+		g.line("i32.const 8")
+		g.line("call $__lang_alloc")
+		g.line("local.tee $__pair_alloc")
 		g.line("i32.const 0")
+		g.line("i32.store")
+		g.line("local.get $__pair_alloc")
+		g.line("i32.const 4")
+		g.line("i32.add")
 		g.line("local.get $__pair_tmp")
+		g.line("i32.store")
+		g.line("local.get $__pair_alloc")
 	case ir.OpMakeNoneI32:
-		// () → (tag=1, payload=0). Just push the constants.
-		g.line("i32.const 1")
-		g.line("i32.const 0")
+		// Heap-box fallback for None: the existing
+		// `__enum_sentinel_1` static cell works as-is — same
+		// layout (`[tag=1]`) the existing match-on-Option code
+		// already reads.
+		g.linef("i32.const %d", g.internEnumSentinel(1))
 	case ir.OpMakeErrI32:
-		// (i32 payload) → (tag=1, payload). Same shape as Some/Ok
-		// but with tag=1.
+		// Same shape as Some/Ok but with tag=1.
 		g.line("local.set $__pair_tmp")
+		g.line("i32.const 8")
+		g.line("call $__lang_alloc")
+		g.line("local.tee $__pair_alloc")
 		g.line("i32.const 1")
+		g.line("i32.store")
+		g.line("local.get $__pair_alloc")
+		g.line("i32.const 4")
+		g.line("i32.add")
 		g.line("local.get $__pair_tmp")
+		g.line("i32.store")
+		g.line("local.get $__pair_alloc")
 	case ir.OpCallDirect:
 		// Top-level user functions in the closure ABI take a
 		// trailing __env i32 — pass 0 since the call is direct.
