@@ -215,6 +215,10 @@ func TestInterpEnumMatchPayload(t *testing.T) {
 // value works for any instantiation. Constructor inference and
 // match-arm payload extraction both route correctly.
 func TestInterpGenericOption(t *testing.T) {
+	// The interp test scaffolding doesn't invoke checker.Check
+	// (parses + interprets directly), so the builtin Option
+	// auto-inject doesn't run — declare it locally so the
+	// interpreter knows about Some/None.
 	src := `enum Option[T] { Some(T), None }
 		function main(): i32 {
 			var o: Option[i32] = Some(42);

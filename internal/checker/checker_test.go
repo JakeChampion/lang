@@ -140,6 +140,50 @@ func TestMultipleErrorsAreReported(t *testing.T) {
 	}
 }
 
+// User code can't redeclare a built-in type. Letting it through
+// silently miscompiles — the IR's pair-form lowering and several
+// runtime helpers hard-code the canonical variant order
+// (Some=0/None=1, Ok=0/Err=1), so a swapped user `enum Option {
+// None, Some(T) }` would diverge between pair-form and heap-form
+// returns.
+func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"Option", `enum Option[T] { None, Some(T) }
+			function main(): i32 { return 0; }`},
+		{"Result", `enum Result[T, E] { Err(E), Ok(T) }
+			function main(): i32 { return 0; }`},
+		{"IoError", `enum IoError { Whatever }
+			function main(): i32 { return 0; }`},
+		{"JsonValue", `enum JsonValue { JNull }
+			function main(): i32 { return 0; }`},
+		{"Reader", `struct Reader { fd: i32 }
+			function main(): i32 { return 0; }`},
+		{"Writer", `struct Writer { fd: i32 }
+			function main(): i32 { return 0; }`},
+		{"HttpRequest", `struct HttpRequest { method: string, path: string, body: string }
+			function main(): i32 { return 0; }`},
+		{"HttpResponse", `struct HttpResponse { status: i32, body: string }
+			function main(): i32 { return 0; }`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil {
+				t.Fatalf("expected reserved-name error for %s", c.name)
+			}
+			if !strings.Contains(err.Error(), "reserved built-in name") {
+				t.Errorf("error %q does not mention reserved built-in", err.Error())
+			}
+			if !strings.Contains(err.Error(), c.name) {
+				t.Errorf("error %q does not name %q", err.Error(), c.name)
+			}
+		})
+	}
+}
+
 func TestBuiltinPutchar(t *testing.T) {
 	if err := checkSource(t, `function f() { putchar(65); }`); err != nil {
 		t.Errorf("putchar(65) should type-check: %v", err)
@@ -903,16 +947,14 @@ func TestMatchPayloadArityChecked(t *testing.T) {
 // resulting type is `Option[i32]`. The right-hand side of an
 // assignment with a wrong concrete type fails at the slot.
 func TestGenericVariantInfersTypeArgs(t *testing.T) {
-	good := `enum Option[T] { Some(T), None }
-		function main(): i32 {
+	good := `function main(): i32 {
 			var o: Option[i32] = Some(42);
 			return 0;
 		}`
 	if err := checkSource(t, good); err != nil {
 		t.Errorf("good: %v", err)
 	}
-	bad := `enum Option[T] { Some(T), None }
-		function main(): i32 {
+	bad := `function main(): i32 {
 			var o: Option[string] = Some(42);
 			return 0;
 		}`
@@ -927,8 +969,7 @@ func TestGenericVariantInfersTypeArgs(t *testing.T) {
 // surrounding context (var annotation, return type, function
 // arg slot) supplies them.
 func TestPayloadlessGenericVariantFlowsIntoContext(t *testing.T) {
-	src := `enum Option[T] { Some(T), None }
-		function find(): Option[i32] { return None; }
+	src := `function find(): Option[i32] { return None; }
 		function main(): i32 {
 			var o: Option[i32] = None;
 			return 0;
@@ -942,8 +983,7 @@ func TestPayloadlessGenericVariantFlowsIntoContext(t *testing.T) {
 // into payload bindings: matching `Option[i32]` types
 // `Some(v)` so that `v` is `i32`, not the abstract `T`.
 func TestMatchSubstitutesTypeArgs(t *testing.T) {
-	src := `enum Option[T] { Some(T), None }
-		function main(): i32 {
+	src := `function main(): i32 {
 			var o: Option[i32] = Some(7);
 			match (o) {
 				Some(v) => { return v + 1; },

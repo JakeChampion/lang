@@ -4306,8 +4306,7 @@ func TestWASMEnumMatchDispatch(t *testing.T) {
 // no per-T monomorphization: the WAT treats every payload as
 // i32 regardless of T.
 func TestWASMGenericOptionSome(t *testing.T) {
-	src := `enum Option[T] { Some(T), None }
-		function find(): Option[i32] { return Some(42); }
+	src := `function find(): Option[i32] { return Some(42); }
 		function main(): i32 {
 			match (find()) {
 				Some(v) => { return v; },
@@ -4325,8 +4324,7 @@ func TestWASMGenericOptionSome(t *testing.T) {
 // unresolved, the var / return slot supplies them, and the match
 // runs the right arm.
 func TestWASMGenericOptionNone(t *testing.T) {
-	src := `enum Option[T] { Some(T), None }
-		function find(): Option[i32] { return None; }
+	src := `function find(): Option[i32] { return None; }
 		function main(): i32 {
 			match (find()) {
 				Some(v) => { return v; },
