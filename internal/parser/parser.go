@@ -772,6 +772,15 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "u16":
 		p.advance()
 		base = ast.NumberType{Width: 16, Signed: false, Spelling: t.Text}
+	case t.Kind == lexer.Keyword && t.Text == "usize":
+		// usize is target-aware native-pointer-width unsigned.
+		// `ast.WidthPtr` (-1) is the sentinel; backends resolve
+		// it to 4 bytes on wasm32 / 8 bytes on natives. Unsigned
+		// matches Rust/Zig conventions and the typical "size of
+		// a thing in memory" semantics — wraparound is the
+		// expected discipline.
+		p.advance()
+		base = ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: t.Text}
 	case t.Kind == lexer.Keyword && t.Text == "f64":
 		p.advance()
 		base = ast.FloatType{Width: 64, Spelling: t.Text}

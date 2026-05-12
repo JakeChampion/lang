@@ -109,6 +109,12 @@ var keywords = map[string]bool{
 	"u16": true,
 	"u32": true,
 	"u64": true,
+	// usize is the target-aware native-pointer-width unsigned
+	// integer: 4 bytes on wasm32, 8 bytes on arm64 / x86-64.
+	// Backed by `ast.NumberType{Width: WidthPtr}` so the
+	// checker and codegen route it through the same machinery
+	// that already sizes OpStore / OpLoad of heap pointer values.
+	"usize": true,
 	"f32": true,
 	"f64": true,
 	"as":  true,

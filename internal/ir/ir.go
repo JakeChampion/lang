@@ -1482,7 +1482,13 @@ func (b *builder) expr(e ast.Expr) error {
 			} else {
 				b.emit(Op{Kind: OpConstF32, F32: float32(n.Value)})
 			}
-		} else if n.Width == 64 {
+		} else if n.Width == 64 || (n.Width == ast.WidthPtr && b.ptrW == 8) {
+			// usize literals on natives (ptrW=8) emit as i64
+			// so the full pointer-width value survives — a
+			// settled usize literal whose value exceeds 32 bits
+			// would otherwise truncate to OpConstI32. On wasm32
+			// (ptrW=4) usize stays i32-sized and the i32 const
+			// path is correct.
 			b.emit(Op{Kind: OpConstI64, I64: n.Value})
 		} else {
 			b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
@@ -1499,6 +1505,18 @@ func (b *builder) expr(e ast.Expr) error {
 		case srcIsInt && dstIsInt:
 			sw := srcInt.NormalWidth()
 			dw := dstInt.NormalWidth()
+			// Resolve the target-aware `usize` (NormalWidth = -1)
+			// to a concrete width here so the int↔int cast table
+			// below can keep its existing 32/64 cases. usize is
+			// 8 bytes on natives (ptrW=8) and 4 bytes on wasm32
+			// (ptrW=4); the matrix collapses to a same-width or
+			// i32↔i64 hop depending on the target.
+			if srcInt.IsPointerWidth() {
+				sw = b.ptrW * 8
+			}
+			if dstInt.IsPointerWidth() {
+				dw = b.ptrW * 8
+			}
 			switch {
 			case sw == dw:
 				// Same-width cast (signed ↔ unsigned). Bit-
@@ -1569,7 +1587,11 @@ func (b *builder) expr(e ast.Expr) error {
 			// destination's float width; Unsigned is the
 			// SOURCE side's signed-ness.
 			dw := dstFloat.NormalWidth()
-			if srcInt.NormalWidth() == 64 {
+			sw := srcInt.NormalWidth()
+			if srcInt.IsPointerWidth() {
+				sw = b.ptrW * 8 // resolve usize to target's ptr width
+			}
+			if sw == 64 {
 				b.emit(Op{Kind: OpFConvertI64, Width: dw, Unsigned: !srcInt.IsSigned()})
 			} else {
 				// Sub-i32 widths already live in i32 storage at
@@ -1611,11 +1633,13 @@ func (b *builder) expr(e ast.Expr) error {
 					return nil
 				}
 			}
-			// Reverse direction: i32 → T[] / string / struct.
+			// Reverse direction: i32 / usize → T[] / string / struct.
 			// Pure type-level reinterpret; the runtime value
-			// is the same i32 pointer, just exposed under a
-			// typed handle.
-			if nt, ok := n.InnerType.(ast.NumberType); ok && nt.NormalWidth() == 32 {
+			// is the same pointer, just exposed under a typed
+			// handle. usize widens the i32 hop to the target's
+			// native pointer width — necessary on arm64-darwin
+			// where heap addresses exceed 32 bits.
+			if nt, ok := n.InnerType.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
 				switch n.Target.(type) {
 				case ast.ArrayType, ast.StringType, ast.StructType:
 					return nil

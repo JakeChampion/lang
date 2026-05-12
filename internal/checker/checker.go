@@ -2460,30 +2460,33 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if (innerIsNum || innerIsFloat) && (targetIsNum || targetIsFloat) {
 			return n.Target
 		}
-		// Any owned array, slice, string, or struct → i32 —
+		// Any owned array, slice, string, or struct → i32 / usize —
 		// recover the data / wrapper pointer for the bulk-
-		// memory primitives. All four lower to a single i32 at
-		// runtime; the cast is the source-level escape hatch
-		// the prelude uses to call __memcpy / __store_i32
-		// against the underlying memory.
-		if nt, ok := n.Target.(ast.NumberType); ok && nt.NormalWidth() == 32 {
+		// memory primitives. All four lower to a single pointer
+		// at runtime; the cast is the source-level escape hatch
+		// the prelude uses to call __memcpy / __store_ptr against
+		// the underlying memory. i32 stays the historical hop
+		// (truncates to 32 bits on natives — fine until heap
+		// > 4 GiB); usize is the target-aware shape that
+		// preserves the full 8-byte address on arm64-darwin.
+		if nt, ok := n.Target.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
 			switch inner.(type) {
 			case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
 				return n.Target
 			}
 		}
-		// Reverse direction: `i32 → T[]`, `i32 → string`,
-		// and `i32 → struct` promote a raw pointer back to a
-		// typed handle. The runtime layout is identical (lang
-		// ABI for arrays/strings is "value = data pointer,
-		// length prefix at base-4"; for structs, "value = base
-		// pointer, fields at constant offsets") — only the
-		// type-level view changes. Used by the prelude when a
-		// builtin returns a freshly allocated raw block that
-		// the caller wants to expose as a typed collection
-		// (`__array_append_string`'s rebuild loop) or as a
-		// wrapper struct (`map_new`'s Map handle).
-		if nt, ok := inner.(ast.NumberType); ok && nt.NormalWidth() == 32 {
+		// Reverse direction: `i32 / usize → T[]`, `→ string`,
+		// and `→ struct` promote a raw pointer back to a typed
+		// handle. The runtime layout is identical (lang ABI for
+		// arrays/strings is "value = data pointer, length prefix
+		// at base-4"; for structs, "value = base pointer, fields
+		// at constant offsets") — only the type-level view
+		// changes. Used by the prelude when a builtin returns a
+		// freshly allocated raw block that the caller wants to
+		// expose as a typed collection (`__array_append_string`'s
+		// rebuild loop) or as a wrapper struct (`map_new`'s
+		// Map handle).
+		if nt, ok := inner.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
 			switch n.Target.(type) {
 			case ast.ArrayType, ast.StringType, ast.StructType:
 				return n.Target
