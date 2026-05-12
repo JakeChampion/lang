@@ -357,16 +357,24 @@ runtime + prelude, with cross-target testing.
 
 ### Wide-scalar Map keys / values (i64 / u64 / f64)
 
-**Scope**: all targets (wasm too — the limit is shared).
+**Scope**: wasm-only. The natives (x86-64 + arm64 Linux qemu) now
+work for `Map[i64, i32]`, `Map[i32, f64]`, `Map[i64, string]`,
+`Map[string, i64]`, `Map[u64, i32]`, etc. — each operand-stack slot
+is 8 bytes on the natives so the prelude's `(m: i32, k: i32, v: i32)`
+signatures coincidentally pass i64 / f64 values through without
+truncation, and `__store_ptr` / `__load_ptr` flow the full 8 bytes
+through.
 
-**Symptom**: `Map[i64, i32]` or `Map[i32, f64]` doesn't type-check.
-The checker constrains K to i32-shaped scalars or string and V to
-pointer-sized values.
+**Symptom (wasm only)**: `wasm-tools component new` rejects
+`Map[i64, *]` with `type mismatch: expected i32, found i64`. The
+typed operand stack on wasm32 enforces strict matching against
+`__map_set_impl(i32, i32, i32)` etc., so the IR's `i64` push for
+the key fails validation.
 
 **Root cause**: the prelude's Map runtime hardcodes an entry stride
-of `2 * __ptr_width()` — assumes K and V both fit in pointer-width
-slots. Widening requires per-instantiation entry layouts or runtime
-type tags.
+of `2 * __ptr_width()` and assumes K / V both fit in pointer-width
+slots. Natives sidestep this via slot-wider-than-declared-type
+coincidence; wasm32 doesn't.
 
 **Fix plan (revised after looking at Nature lang's `map<T,U>`
 implementation)**: emit a **compile-time type hash** per instantiation
