@@ -55,6 +55,7 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		inTable:           map[string]bool{},
 		funcDecls:         map[string]*ast.FuncDecl{},
 		emittedFuncs:      map[string]bool{},
+		pairForm:          ip.PairForm,
 	}
 	for i, fn := range prog.Funcs {
 		g.funcIndex[fn.Name] = i
@@ -355,22 +356,23 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		header += " (param $__env i32)"
 	}
 	if !ast.Equal(fn.ReturnType, ast.VoidType{}) {
-		// Step 4 keeps the heap-box fallback on the function
-		// side across all backends — switching wasm to the
-		// real `(result i32 i32)` multi-value form requires
-		// every caller to switch to pair-form in lockstep
-		// (call-graph escape analysis + codegen-alias
-		// resolution), and not every caller is in scope yet.
-		// The step-4 wins live at the CALL site instead:
-		// OpCallDirectPair extracts (tag, payload) from the
-		// heap-box pointer the callee returns, so consumers
-		// can dispatch on tag without a heap-load when the
-		// caller IR is pair-aware.
-		typ, err := watType(fn.ReturnType)
-		if err != nil {
-			return fmt.Errorf("function %q: result: %w", fn.Name, err)
+		if g.pairForm[fn.Name] {
+			// Pair-form ABI on wasm: function returns
+			// (tag, payload) as two i32 values via multi-
+			// value return — drops the heap-box alloc on the
+			// function side. Callers either consume the two
+			// stack values directly (scrutinee position via
+			// OpCallDirectPair) or rebox into a heap pointer
+			// at the call site (generic position via
+			// OpCallDirect — see the OpCallDirect handler).
+			header += " (result i32 i32)"
+		} else {
+			typ, err := watType(fn.ReturnType)
+			if err != nil {
+				return fmt.Errorf("function %q: result: %w", fn.Name, err)
+			}
+			header += fmt.Sprintf(" (result %s)", typ)
 		}
-		header += fmt.Sprintf(" (result %s)", typ)
 	}
 	g.line(header)
 	g.indent++
@@ -427,18 +429,25 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	if g.needsClosures && containsIndirectCall(irFn.Ops) {
 		g.line("(local $__call_scratch i32)")
 	}
-	// Register-based Option/Result returns: OpMakeSomeI32 /
-	// OpMakeOkI32 / OpMakeErrI32 use two scratch locals to
-	// build the heap-box: `$__pair_tmp` holds the payload
-	// across `__lang_alloc`; `$__pair_alloc` holds the box
-	// pointer between the tag-store and the payload-store.
-	// OpCallDirectPair also reuses `$__pair_tmp` to stash
-	// the call's heap-box pointer before extracting tag +
-	// payload.
-	if containsPairMaker(irFn.Ops) || containsPairCall(irFn.Ops) {
+	// Register-based Option/Result scratch locals.
+	//   - `$__pair_tmp`: holds the payload during
+	//     OpMakeSomeI32/OkI32/ErrI32 lowering, and the
+	//     payload after a generic-position call to a
+	//     pair-form callee (before rebox).
+	//   - `$__pair_alloc`: holds the heap-box pointer
+	//     between the tag-store and the payload-store at
+	//     a rebox site (generic-position call to a
+	//     pair-form fn). Pair-form constructors no longer
+	//     allocate, so the alloc local is only needed when
+	//     a generic-position pair-form call appears.
+	//   - `$__pair_tag`: holds the tag at a rebox site —
+	//     wasm has no swap, so we untangle the
+	//     [tag, payload] post-call stack via two locals.
+	if containsPairMaker(irFn.Ops) || containsPairCall(irFn.Ops) || containsGenericPairCall(irFn.Ops, g.pairForm) {
 		g.line("(local $__pair_tmp i32)")
-		if containsPairMaker(irFn.Ops) {
+		if containsGenericPairCall(irFn.Ops, g.pairForm) {
 			g.line("(local $__pair_alloc i32)")
+			g.line("(local $__pair_tag i32)")
 		}
 	}
 
@@ -530,6 +539,42 @@ func containsReturnPair(ops []ir.Op) bool {
 func containsPairCall(ops []ir.Op) bool {
 	for _, op := range ops {
 		if op.Kind == ir.OpCallDirectPair {
+			return true
+		}
+	}
+	return false
+}
+
+// isPairFormCallee reports whether an OpCallDirect / OpCall
+// DirectPair targeting `irName` resolves to a pair-form
+// function — following the codegen alias map first (e.g.
+// `__method_Map_get` → `__map_get_impl`, the actual pair-form
+// body). The pair-form set is keyed by real function names,
+// not IR-visible aliases.
+func isPairFormCallee(pairForm map[string]bool, irName string) bool {
+	if pairForm == nil {
+		return false
+	}
+	if dst, ok := codegenAliasMap[irName]; ok {
+		if pairForm[dst] {
+			return true
+		}
+	}
+	return pairForm[irName]
+}
+
+// containsGenericPairCall reports whether any OpCallDirect
+// targets a pair-form function. These call sites need the
+// caller-side rebox machinery ($__pair_alloc + $__pair_tag +
+// $__pair_tmp) to turn the callee's (tag, payload) multi-
+// value return back into the single heap-pointer the
+// surrounding IR expects.
+func containsGenericPairCall(ops []ir.Op, pairForm map[string]bool) bool {
+	if pairForm == nil {
+		return false
+	}
+	for _, op := range ops {
+		if op.Kind == ir.OpCallDirect && isPairFormCallee(pairForm, op.Str) {
 			return true
 		}
 	}
@@ -872,40 +917,26 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		// `(result i32)` not `(result i32 i32)` for now.
 		g.line("return")
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
-		// Heap-box (consistent with the function-side
-		// fallback — see the (result i32) decision in
-		// emitFuncHeader). alloc 8, store {tag@0, payload@4},
-		// push the pointer.
+		// Pair-form push: stack on entry is [payload]; replace
+		// with [tag=0, payload] so the function's
+		// multi-value `(result i32 i32)` return sees
+		// (tag, payload) in the right order. Pair-form
+		// constructors only appear inside pair-form fns —
+		// guaranteed by the IR (see ir.go's `b.thisIsPair`
+		// gate around variant-literal Return lowering).
 		g.line("local.set $__pair_tmp")
-		g.line("i32.const 8")
-		g.line("call $__lang_alloc")
-		g.line("local.tee $__pair_alloc")
 		g.line("i32.const 0")
-		g.line("i32.store")
-		g.line("local.get $__pair_alloc")
-		g.line("i32.const 4")
-		g.line("i32.add")
 		g.line("local.get $__pair_tmp")
-		g.line("i32.store")
-		g.line("local.get $__pair_alloc")
 	case ir.OpMakeNoneI32:
-		// None reuses the existing `__enum_sentinel_1` static
-		// cell — same layout the existing match-on-Option
-		// code already reads.
-		g.linef("i32.const %d", g.internEnumSentinel(1))
+		// Push (tag=1, payload=0). The payload slot is
+		// unused for None but the function signature
+		// requires two values.
+		g.line("i32.const 1")
+		g.line("i32.const 0")
 	case ir.OpMakeErrI32:
 		g.line("local.set $__pair_tmp")
-		g.line("i32.const 8")
-		g.line("call $__lang_alloc")
-		g.line("local.tee $__pair_alloc")
 		g.line("i32.const 1")
-		g.line("i32.store")
-		g.line("local.get $__pair_alloc")
-		g.line("i32.const 4")
-		g.line("i32.add")
 		g.line("local.get $__pair_tmp")
-		g.line("i32.store")
-		g.line("local.get $__pair_alloc")
 	case ir.OpCallDirect:
 		// Top-level user functions in the closure ABI take a
 		// trailing __env i32 — pass 0 since the call is direct.
@@ -918,15 +949,40 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 			name = dst
 		}
 		g.linef("call $%s", name)
+		// Pair-form callees return (tag, payload) on wasm
+		// as two values; a generic-position caller expects a
+		// single i32 (heap-box pointer). Rebox at the call
+		// site: alloc 8, store {tag@0, payload@4}, push the
+		// box pointer. Scrutinee-position consumers go
+		// through OpCallDirectPair below and skip this rebox.
+		// We use both pair scratch locals ($__pair_tmp for
+		// payload, $__pair_tag for tag) because i32.store
+		// wants (addr, value) order and the call leaves
+		// stack as [..., tag, payload] — no swap in wasm.
+		// Resolve aliases (`__method_Map_get` →
+		// `__map_get_impl`) before consulting `pairForm`.
+		if isPairFormCallee(g.pairForm, op.Str) {
+			g.line("local.set $__pair_tmp") // payload
+			g.line("local.set $__pair_tag") // tag
+			g.line("i32.const 8")
+			g.line("call $__lang_alloc")
+			g.line("local.tee $__pair_alloc")
+			g.line("local.get $__pair_tag")
+			g.line("i32.store") // [box+0] = tag
+			g.line("local.get $__pair_alloc")
+			g.line("i32.const 4")
+			g.line("i32.add")
+			g.line("local.get $__pair_tmp")
+			g.line("i32.store") // [box+4] = payload
+			g.line("local.get $__pair_alloc")
+		}
 	case ir.OpCallDirectPair:
-		// Pair-form call: function returns a heap-box pointer
-		// (step 4's wasm function side still uses heap-form;
-		// the multi-value return is gated on future caller-
-		// side coordination). After the call, extract
-		// (tag, payload) from `[ptr+0]` and `[ptr+4]` onto
-		// the operand stack. The IR's "two values post-call"
-		// contract holds uniformly across all 3 backends —
-		// each does the synthetic extract.
+		// Pair-form call from a scrutinee-position consumer:
+		// the callee returns (tag, payload) as two i32 values
+		// (wasm multi-value), which is exactly the shape the
+		// IR's "two values post-call" contract specifies. No
+		// extract needed — the stack already holds
+		// [..., tag, payload] after the call.
 		_, isUser := g.funcIndex[op.Str]
 		if g.needsClosures && isUser && g.inTable[op.Str] {
 			g.line("i32.const 0")
@@ -936,18 +992,6 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 			name = dst
 		}
 		g.linef("call $%s", name)
-		// Result is a heap-box ptr. Stash in $__pair_tmp
-		// (already declared on this function — see the
-		// containsPairMaker check; OpCallDirectPair callers
-		// always have a maker in their direct callee, so the
-		// local always exists). Then push tag + payload.
-		g.line("local.set $__pair_tmp")
-		g.line("local.get $__pair_tmp")
-		g.line("i32.load") // [ptr+0] = tag
-		g.line("local.get $__pair_tmp")
-		g.line("i32.const 4")
-		g.line("i32.add")
-		g.line("i32.load") // [ptr+4] = payload
 	case ir.OpCallIndirect:
 		if op.Sig == nil {
 			return fmt.Errorf("wasm/ir: OpCallIndirect missing sig")
