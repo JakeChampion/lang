@@ -317,6 +317,16 @@ func (g *generator) emitDataSections() {
 		g.label(g.stringLabel[s])
 		g.line("\t.asciz " + escapeForGAS(s))
 	}
+	// Empty-string sentinel. String-constructing runtime helpers
+	// (`__lang_strcat`, `__str_slice`, `string_from_bytes`) skip
+	// the alloc + memcpy when the result is zero bytes and return
+	// this static data pointer instead. Layout matches a length-
+	// prefixed string with length=0; the pointer addresses the
+	// data byte (which here is just a single trailing NUL).
+	g.line(`.align 2`)
+	g.line(`	.4byte 0`)
+	g.label(".LStr_Empty")
+	g.line(`	.asciz ""`)
 	if g.usesPuts || g.usesEprint {
 		// Single newline byte emitted into the same section as
 		// the string literals. __lang_puts / __lang_eprint
@@ -630,6 +640,15 @@ func (g *generator) emitStrcatRuntime() {
 	// String lengths via the centralised helper.
 	g.emitStrLen("w21", "x19")
 	g.emitStrLen("w22", "x20")
+	// Short-circuit on combined length == 0: return the shared
+	// empty-string sentinel instead of allocating a fresh 0-byte
+	// buffer. The sentinel round-trips through emitStrLen as 0,
+	// so callers can't tell the difference.
+	g.emit("orr w0, w21, w22")
+	g.emit("cbnz w0, .Lstrcat_alloc")
+	g.emitStrEmpty("x0")
+	g.emit("b .Lstrcat_ret")
+	g.label(".Lstrcat_alloc")
 	// alloc(la + lb + 4) for the new buffer (length prefix + data).
 	g.emit("add x0, x21, x22")
 	g.emit("add x0, x0, #4")
@@ -646,8 +665,8 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("mov x1, x20")
 	g.emit("mov x2, x22")
 	g.emit("bl __lang_memcpy")
-	// Return the data pointer.
-	g.emit("mov x0, x23")
+	g.emit("mov x0, x23") // return the data pointer
+	g.label(".Lstrcat_ret")
 	g.emit("ldr x23, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
@@ -869,15 +888,23 @@ func (g *generator) emitStringFromBytesRuntime() {
 	// from strings under future SSO; conflating them would
 	// re-collapse the seam emitStrLen establishes.
 	g.emit("ldur w20, [x19, #-4]")  // x20 = length
+	// Short-circuit on input length == 0: return the shared
+	// empty-string sentinel rather than allocating a fresh
+	// 0-byte buffer.
+	g.emit("cbnz w20, .Lsfb_alloc")
+	g.emitStrEmpty("x0")
+	g.emit("b .Lsfb_ret")
+	g.label(".Lsfb_alloc")
 	g.emit("add x0, x20, #4")
 	g.emit("bl __lang_alloc")
-	g.emit("str w20, [x0]")
-	g.emit("mov x21, x0")           // x21 = alloc base (callee-save)
-	g.emit("add x0, x0, #4")
+	g.emit("add x21, x0, #4")       // x21 = data ptr (callee-save)
+	g.emitStrLenStore("w20", "x21")
+	g.emit("mov x0, x21")           // memcpy dst
 	g.emit("mov x1, x19")
 	g.emit("mov x2, x20")
 	g.emit("bl __lang_memcpy")
-	g.emit("add x0, x21, #4")       // return data ptr
+	g.emit("mov x0, x21")           // return data ptr
+	g.label(".Lsfb_ret")
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
@@ -897,10 +924,14 @@ func (g *generator) emitStrSliceRuntime() {
 	g.typeDirective("__str_slice")
 	g.label("__str_slice")
 	// Args: x0 = base, x1 = low, x2 = high.
-	g.emit("stp x29, x30, [sp, #-48]!")
+	// Frame: 64 bytes — fp/lr (16) + x19..x23 (40 used + 8 pad)
+	// rounded up for sp alignment. x23 holds the alloc base
+	// across the bl __lang_memcpy.
+	g.emit("stp x29, x30, [sp, #-64]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("str x23, [sp, #48]")
 	g.emit("mov x19, x0") // x19 = base
 	g.emit("mov x20, x1") // x20 = low
 	g.emit("mov x21, x2") // x21 = high
@@ -914,24 +945,31 @@ func (g *generator) emitStrSliceRuntime() {
 	// low > high → trap
 	g.emit("cmp x20, x21")
 	g.emit("bgt .Lstrslice_trap")
-	// new_len = high - low; alloc(new_len + 4).
+	// Short-circuit on new_len == 0 (low == high): return the
+	// shared empty-string sentinel without allocating.
+	g.emit("cmp x20, x21")
+	g.emit("bne .Lstrslice_alloc")
+	g.emitStrEmpty("x0")
+	g.emit("b .Lstrslice_ret")
+	g.label(".Lstrslice_alloc")
+	// new_len = high - low; alloc(new_len + 4) → data ptr in x23.
 	g.emit("sub x0, x21, x20")
 	g.emit("add x0, x0, #4")
 	g.emit("bl __lang_alloc")
-	// x0 = alloc base. Write length prefix.
-	g.emit("sub w3, w21, w20")     // new_len (i32)
-	g.emit("str w3, [x0]")
-	// memcpy(out + 4, base + low, new_len).
-	g.emit("add x4, x0, #4")       // dst
-	g.emit("add x1, x19, x20")     // src = base + low
-	g.emit("mov x2, x3")           // n
-	g.emit("mov x19, x0")          // stash alloc base in x19 across bl
-	g.emit("mov x0, x4")
+	g.emit("add x23, x0, #4")     // x23 = data ptr (callee-save survives bl)
+	g.emit("sub w3, w21, w20")    // w3 = new_len (i32)
+	g.emitStrLenStore("w3", "x23")
+	// memcpy(data_ptr, base + low, new_len).
+	g.emit("add x1, x19, x20")    // src = base + low
+	g.emit("mov x2, x3")          // n
+	g.emit("mov x0, x23")         // dst
 	g.emit("bl __lang_memcpy")
-	g.emit("add x0, x19, #4")      // return data ptr (alloc base + 4)
+	g.emit("mov x0, x23")         // return data ptr
+	g.label(".Lstrslice_ret")
+	g.emit("ldr x23, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
 	g.label(".Lstrslice_trap")
 	g.emit("mov x0, #134")
@@ -3062,6 +3100,20 @@ func (g *generator) emitStrLen(dstW, srcX string) {
 // `__lang_args`) stay open-coded since arrays may diverge.
 func (g *generator) emitStrLenStore(srcW, dstX string) {
 	g.emit("stur %s, [%s, #-4]", srcW, dstX)
+}
+
+// emitStrEmpty materialises the data pointer of the canonical
+// empty-string sentinel into dstX. The sentinel lives in .rodata
+// as a length-prefixed string with length=0, shared across all
+// callers and the entire program lifetime. Used by the string-
+// constructing runtime helpers (strcat / str_slice /
+// string_from_bytes) to short-circuit the alloc + memcpy + length-
+// store sequence when the result is zero bytes — the helpers
+// already round-trip through emitStrLenStore / emitStrLen, so the
+// returned pointer is indistinguishable from a freshly allocated
+// 0-length string. Third member of the SSO helper family.
+func (g *generator) emitStrEmpty(dstX string) {
+	g.adrpAdd(dstX, ".LStr_Empty")
 }
 
 // binPop — pop two values off the operand stack into x1 (lhs)
