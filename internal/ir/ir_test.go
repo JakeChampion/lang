@@ -300,6 +300,40 @@ func TestLowerStringConcatNonLiteralKeepsRuntime(t *testing.T) {
 // String length lives in a single IR seam so future small-string-
 // optimisation work can change the encoding without hunting down
 // every open-coded `[ptr - 4]` load across backend codegen.
+// `None` lowers to OpOptionNone (a static-sentinel push) rather
+// than the standard alloc + tag-store sequence. Saves one
+// __lang_alloc per None construction; the produced address still
+// has `[ptr + 0] = 1` so existing match-on-Option / try-on-Option
+// codegen reads the tag correctly without consumer changes.
+func TestLowerNoneEmitsOptionNoneSentinel(t *testing.T) {
+	prog := lowerSource(t, `function f(): Option[i32] { return None; }`)
+	mustContainOp(t, prog, "f", OpOptionNone)
+	// The standard enum-construction sequence (OpConstI32 size;
+	// OpAlloc; ...; OpStore tag at offset 0) must NOT appear for
+	// the None path — the whole point is to skip the alloc.
+	fn := findFunc(prog, "f")
+	for _, op := range fn.Ops {
+		if op.Kind == OpAlloc {
+			t.Fatalf("None lowering still emits OpAlloc; the sentinel rewrite slipped:\n%s", prog)
+		}
+	}
+}
+
+// `Some(x)` still allocates — the sentinel rewrite is scoped to
+// the payload-less None variant only. Future PRs may extend to
+// other zero-payload variants or to the broader register-based
+// Option/Result migration.
+func TestLowerSomeStillAllocates(t *testing.T) {
+	prog := lowerSource(t, `function f(): Option[i32] { return Some(42); }`)
+	mustContainOp(t, prog, "f", OpAlloc)
+	fn := findFunc(prog, "f")
+	for _, op := range fn.Ops {
+		if op.Kind == OpOptionNone {
+			t.Fatalf("Some lowering picked up the OptionNone sentinel by mistake:\n%s", prog)
+		}
+	}
+}
+
 func TestLowerLenOnStringEmitsOpStrLen(t *testing.T) {
 	prog := lowerSource(t, `function f(s: string): i32 { return len(s); }`)
 	mustContainOp(t, prog, "f", OpStrLen)

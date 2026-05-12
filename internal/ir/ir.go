@@ -162,6 +162,16 @@ const (
 	// pointer, pushes its i32 length.
 	OpStrLen // (str-ptr) → i32
 
+	// OpOptionNone pushes the address of the static
+	// `__lang_option_none` sentinel. Same shape as a heap-
+	// allocated `[tag=1]` Option.None — the byte at offset 0 is
+	// 1 — so every existing match-on-Option site reads the tag
+	// correctly without any consumer-side changes. First step
+	// toward register-based Option/Result returns; eliminates
+	// the per-None heap allocation that the prelude's parse_int /
+	// url_parse / Map.get / etc. all pay for the None-result path.
+	OpOptionNone // () → i64 (sentinel ptr)
+
 	// Structured control flow. Block / loop / if open a new lexical
 	// scope on the validation-time control stack; OpEnd closes the
 	// innermost. Branches address scopes by relative depth (0 =
@@ -381,6 +391,8 @@ func (k OpKind) String() string {
 		return "str.concat"
 	case OpStrLen:
 		return "str.len"
+	case OpOptionNone:
+		return "option.none"
 	case OpBlock:
 		return "block"
 	case OpLoop:
@@ -837,6 +849,16 @@ func (b *builder) lookupVariant(name string) (enumName string, varIdx int, paylo
 // variant's declared payload was a type parameter (e.g.
 // `Some(3.14)` on `Option[T]` with `T = float`).
 func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
+	// Option.None has no payload — return a shared static
+	// `__lang_option_none` sentinel instead of allocating a
+	// fresh 4-byte box per None construction. The sentinel's
+	// byte at offset 0 is 1 (the None tag), so every existing
+	// match-on-Option / try-on-Option site reads the tag
+	// correctly without any consumer-side changes.
+	if enumName == "Option" && varIdx == 1 && payloadCount == 0 {
+		b.emit(Op{Kind: OpOptionNone})
+		return nil
+	}
 	// Resolve the payload's concrete type for op selection.
 	// Prefer the checker-supplied substituted types so a generic
 	// enum's `T = float` instantiation gets OpFStore; fall back
