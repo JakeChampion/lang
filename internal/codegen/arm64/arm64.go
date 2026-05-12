@@ -627,9 +627,9 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("str x23, [sp, #48]")
 	g.emit("mov x19, x0")
 	g.emit("mov x20, x1")
-	// Load lengths from [ptr - 4].
-	g.emit("ldur w21, [x19, #-4]")
-	g.emit("ldur w22, [x20, #-4]")
+	// String lengths via the centralised helper.
+	g.emitStrLen("w21", "x19")
+	g.emitStrLen("w22", "x20")
 	// alloc(la + lb + 4) for the new buffer (length prefix + data).
 	g.emit("add x0, x21, x22")
 	g.emit("add x0, x0, #4")
@@ -699,8 +699,8 @@ func (g *generator) emitStrcmpRuntime() {
 	g.emit("cmp x0, x1")
 	g.emit("beq .Lscmp_eq")
 	// 2. Same length?
-	g.emit("ldur w2, [x0, #-4]")
-	g.emit("ldur w3, [x1, #-4]")
+	g.emitStrLen("w2", "x0")
+	g.emitStrLen("w3", "x1")
 	g.emit("cmp w2, w3")
 	g.emit("bne .Lscmp_neq")
 	// 3a. Word-grain bulk — w2 holds remaining bytes.
@@ -862,7 +862,11 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("str x21, [sp, #32]")
-	g.emit("mov x19, x0")           // x19 = bs
+	g.emit("mov x19, x0")           // x19 = bs (input array)
+	// Array-length read — deliberately NOT routed through
+	// emitStrLen. The input is a u8[] and arrays may diverge
+	// from strings under future SSO; conflating them would
+	// re-collapse the seam emitStrLen establishes.
 	g.emit("ldur w20, [x19, #-4]")  // x20 = length
 	g.emit("add x0, x20, #4")
 	g.emit("bl __lang_alloc")
@@ -899,7 +903,7 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("mov x19, x0") // x19 = base
 	g.emit("mov x20, x1") // x20 = low
 	g.emit("mov x21, x2") // x21 = high
-	g.emit("ldur w22, [x19, #-4]") // x22 = src_len
+	g.emitStrLen("w22", "x19") // x22 = src_len
 	// low < 0 → trap
 	g.emit("cmp x20, #0")
 	g.emit("blt .Lstrslice_trap")
@@ -957,7 +961,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("mov x19, x0")  // x19 = name (string data ptr)
-	g.emit("ldur w20, [x19, #-4]") // x20 = name_len
+	g.emitStrLen("w20", "x19") // x20 = name_len
 	g.adrpAdd("x21", "__lang_envp")
 	g.emit("ldr x21, [x21]")       // x21 = envp
 	g.label(".Lenv_loop")
@@ -1181,7 +1185,7 @@ func (g *generator) emitTcpSendRuntime() {
 	g.typeDirective("__lang_tcp_send")
 	g.label("__lang_tcp_send")
 	// x0 = fd, x1 = data ptr.
-	g.emit("ldur w2, [x1, #-4]") // x2 = len(data)
+	g.emitStrLen("w2", "x1") // x2 = len(data)
 	g.syscall("write")
 	g.emit("ret")
 	g.sizeDirective("__lang_tcp_send")
@@ -1209,7 +1213,7 @@ func (g *generator) emitWriteRuntime() {
 	g.line(".global __lang_write")
 	g.typeDirective("__lang_write")
 	g.label("__lang_write")
-	g.emit("ldur w2, [x0, #-4]") // x2 = length
+	g.emitStrLen("w2", "x0") // x2 = length
 	g.emit("mov x1, x0")          // x1 = buf
 	g.emit("mov x0, #1")          // x0 = fd (stdout)
 	g.syscall("write")
@@ -1233,7 +1237,7 @@ func (g *generator) emitPutsRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
 	g.emit("mov x19, x0")         // x19 = data ptr (saved for return)
-	g.emit("ldur w2, [x0, #-4]") // x2 = length
+	g.emitStrLen("w2", "x0") // x2 = length
 	g.emit("mov x1, x0")          // x1 = buf
 	g.emit("mov x0, #1")          // x0 = fd
 	g.syscall("write")
@@ -1283,7 +1287,7 @@ func (g *generator) emitEprintRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
 	g.emit("mov x19, x0")         // x19 = data ptr (saved)
-	g.emit("ldur w2, [x0, #-4]") // x2 = length
+	g.emitStrLen("w2", "x0") // x2 = length
 	g.emit("mov x1, x0")          // x1 = buf
 	g.emit("mov x0, #2")          // x0 = fd (stderr)
 	g.syscall("write")
@@ -1870,8 +1874,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov x19, x0") // path
 	g.emit("mov x20, x1") // content data ptr
 
-	// content_len = mem[content - 4]
-	g.emit("ldur w22, [x20, #-4]") // x22 = content_len
+	g.emitStrLen("w22", "x20") // x22 = content_len
 
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
 	g.emit("mov x0, #-100")
@@ -2178,7 +2181,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("ldr w19, [x0]")      // fd
 	g.emit("mov x20, x1")          // s data ptr
-	g.emit("ldur w22, [x20, #-4]") // len
+	g.emitStrLen("w22", "x20") // len
 	g.emit("mov x21, #0")          // bytes_written
 	g.label(".Lww_loop")
 	g.emit("cmp x21, x22")
@@ -3033,6 +3036,20 @@ func (g *generator) pop() {
 	g.emit("ldr x0, [sp], #16")
 }
 
+// emitStrLen loads the i32 length of the string whose data pointer
+// lives in srcX into the 32-bit register dstW. Today this is a
+// 4-byte little-endian load from `[srcX - 4]`. Centralised so
+// every string-length read in the runtime helpers (strcat /
+// strcmp / str_slice / print / WASI write boundary / env / tcp_send
+// / write_file) flows through one site — when small-string-
+// optimisation work changes the string encoding, only this function
+// (and its peers in the wasm + x86_64 backends) needs to learn the
+// new shape. Array-length reads stay open-coded because arrays may
+// diverge from strings under future layout changes.
+func (g *generator) emitStrLen(dstW, srcX string) {
+	g.emit("ldur %s, [%s, #-4]", dstW, srcX)
+}
+
 // binPop — pop two values off the operand stack into x1 (lhs)
 // and x0 (rhs). Produces the natural form for non-commutative
 // ops where the lhs ends up in the second source register.
@@ -3727,13 +3744,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpStrLen:
-		// Load the 4-byte little-endian length prefix at
-		// `ptr - 4`. Centralised here so small-string-
-		// optimisation work has one site to update instead
-		// of every open-coded `ldur w?, [..., #-4]` across
-		// the runtime helpers.
-		g.pop()                      // x0 = str ptr
-		g.emit("ldur w0, [x0, #-4]") // w0 = length
+		// IR-level string-length seam. The Go-level helper
+		// emitStrLen owns the actual encoding so this case and
+		// every runtime helper that reads a string's length stay
+		// in sync as SSO follow-ups change the layout.
+		g.pop()                // x0 = str ptr
+		g.emitStrLen("w0", "x0") // w0 = length
 		g.push()
 
 	case ir.OpCallIndirect:

@@ -336,6 +336,25 @@ func (g *generator) linef(format string, args ...any) {
 	g.line(fmt.Sprintf(format, args...))
 }
 
+// emitStrLenFromLocal emits a sequence that loads the i32 length
+// of the string whose data pointer lives in WebAssembly local
+// `local` (the leading `$` is part of the name). Today this is a
+// 4-byte little-endian load from `[local - 4]`. Centralised so
+// every string-length read in the runtime helpers (__str_eq,
+// __str_concat, __str_slice, tcp_send, write_file, ...) flows
+// through one site — when small-string-optimisation work changes
+// the string encoding, only this function (and its peers in the
+// arm64 + x86_64 backends, plus the OpStrLen handler in wasm_ir.go
+// which mirrors the encoding for already-on-stack pointers) needs
+// to learn the new shape. Array-length reads stay open-coded
+// because arrays may diverge from strings.
+func (g *generator) emitStrLenFromLocal(local string) {
+	g.linef("local.get %s", local)
+	g.line("i32.const 4")
+	g.line("i32.sub")
+	g.line("i32.load")
+}
+
 // envParamPresent reports whether fn already carries the synthetic
 // `__env` parameter that closure conversion appends to hoisted local
 // functions. Top-level functions don't carry it natively; we add the
@@ -2130,16 +2149,10 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`else`)
 		g.indent++
-		// la = mem[a-4]; lb = mem[b-4]
-		g.line(`local.get $a`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		// la = len(a); lb = len(b) via the centralised helper.
+		g.emitStrLenFromLocal("$a")
 		g.line(`local.set $la`)
-		g.line(`local.get $b`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		g.emitStrLenFromLocal("$b")
 		g.line(`local.set $lb`)
 		g.line(`local.get $la`)
 		g.line(`local.get $lb`)
@@ -2202,16 +2215,10 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(func $__str_concat (param $a i32) (param $b i32) (result i32)`)
 		g.indent++
 		g.line(`(local $la i32) (local $lb i32) (local $base i32) (local $dst i32) (local $i i32)`)
-		// la / lb
-		g.line(`local.get $a`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		// la / lb via the centralised string-length helper.
+		g.emitStrLenFromLocal("$a")
 		g.line(`local.set $la`)
-		g.line(`local.get $b`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		g.emitStrLenFromLocal("$b")
 		g.line(`local.set $lb`)
 		// base = __lang_alloc(la + lb + 4)
 		g.line(`local.get $la`)
@@ -2303,6 +2310,12 @@ func (g *generator) emitRuntimePreamble() {
 		// prefix). Stride differs (4 for arrays, 1 for strings) so we
 		// emit two specialised helpers rather than threading a stride
 		// argument.
+		//
+		// The length-prefix loads below (`base; const 4; sub; load`)
+		// are deliberately NOT routed through emitStrLenFromLocal.
+		// These read ARRAY lengths, not string lengths — arrays may
+		// diverge from strings under future SSO so the two seams
+		// stay separate.
 		g.line(`(func $__arr_idx (param $base i32) (param $i i32) (result i32)`)
 		g.indent++
 		g.line(`local.get $i`)
@@ -2343,10 +2356,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`end`)
 		g.line(`local.get $i`)
-		g.line(`local.get $base`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		g.emitStrLenFromLocal("$base")
 		g.line(`i32.ge_u`)
 		g.line(`if`)
 		g.indent++
@@ -2507,11 +2517,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(func $__str_slice (param $base i32) (param $low i32) (param $high i32) (result i32)`)
 		g.indent++
 		g.line(`(local $src_len i32) (local $new_len i32) (local $out i32)`)
-		// src_len = base[-4]
-		g.line(`local.get $base`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		g.emitStrLenFromLocal("$base")
 		g.line(`local.set $src_len`)
 		// low < 0 → trap
 		g.line(`local.get $low`)
@@ -2584,6 +2590,9 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(func $string_from_bytes (param $bs i32) (result i32)`)
 		g.indent++
 		g.line(`(local $bLen i32) (local $out i32)`)
+		// Array-length read — deliberately NOT routed through
+		// emitStrLenFromLocal. The input is u8[] and arrays may
+		// diverge from strings under future SSO.
 		g.line(`local.get $bs`)
 		g.line(`i32.const 4`)
 		g.line(`i32.sub`)
@@ -2741,17 +2750,15 @@ func (g *generator) emitStdStream(name, handleAccessor string) {
 
 // emitFdWriteString emits one fd_write call that writes a single
 // length-prefixed string to `fd`. local is the wasm local holding
-// the string's data pointer (e.g. "$s"); the string's length
-// lives at `local - 4`. Reuses iovec[0] at offset 16.
+// the string's data pointer (e.g. "$s"); the string's length is
+// fetched through the central emitStrLenFromLocal helper. Reuses
+// iovec[0] at offset 16.
 func (g *generator) emitFdWriteString(fd int, local string) {
 	g.line(`i32.const 16`)
 	g.linef(`local.get %s`, local)
 	g.line(`i32.store`)
 	g.line(`i32.const 20`)
-	g.linef(`local.get %s`, local)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal(local)
 	g.line(`i32.store`)
 	g.linef(`i32.const %d`, fd)
 	g.line(`i32.const 16`) // iovs ptr
@@ -2914,10 +2921,7 @@ func (g *generator) emitStreamHandleAccessor(name, getterImport string, handleSl
 func (g *generator) emitStreamsWriteString(handleAccessor, local string) {
 	g.linef(`call %s`, handleAccessor)
 	g.linef(`local.get %s`, local)
-	g.linef(`local.get %s`, local)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal(local)
 	g.line(`call $__streams_write`)
 }
 
@@ -3014,10 +3018,7 @@ func (g *generator) emitOpenViaStreamHelper(name string, openFlags, descFlags in
 	g.line(`call $__preopen_dir`)
 	g.line(`i32.const 1`) // path-flags = symlink-follow
 	g.line(`local.get $path`)
-	g.line(`local.get $path`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal("$path")
 	g.linef(`i32.const %d`, openFlags)
 	g.linef(`i32.const %d`, descFlags)
 	g.line(`i32.const 92`)
@@ -3614,11 +3615,7 @@ func (g *generator) emitEnvHelper() {
 	g.line(`i32.load`)
 	g.line(`local.set $env_ptrs`)
 
-	// name length is stored at name-4.
-	g.line(`local.get $name`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal("$name")
 	g.line(`local.set $name_len`)
 
 	// for i in 0..count
@@ -3859,10 +3856,7 @@ func (g *generator) emitStringMethodHelpers() {
 	g.line(`(func $__method_string_as_bytes (param $s i32) (result i32)`)
 	g.indent++
 	g.line(`(local $sLen i32) (local $hdr i32)`)
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal("$s")
 	g.line(`local.set $sLen`)
 	g.line(`i32.const 8`)
 	g.line(`call $__lang_alloc`)
@@ -4427,10 +4421,7 @@ func (g *generator) emitTcpSendPreview2() {
 	g.line(`i32.add`)
 	g.line(`i32.load`)
 	g.line(`local.set $stream`)
-	g.line(`local.get $data`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal("$data")
 	g.line(`local.set $len`)
 	g.line(`local.get $stream`)
 	g.line(`local.get $data`)
@@ -4963,10 +4954,7 @@ func (g *generator) emitHttpHandlerWrapper() {
 	// stream out to the client as we write.
 	g.line(`local.get $out_stream`)
 	g.line(`local.get $body_str`)
-	g.line(`local.get $body_str`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal("$body_str")
 	g.line(`call $__streams_write`)
 
 	// Drop output-stream (child of outgoing-body).
@@ -5311,10 +5299,7 @@ func (g *generator) emitOpenHelper(name string, oflags int, rights int64, fdflag
 	g.line(`i32.const 3`)
 	g.line(`i32.const 1`)
 	g.line(`local.get $path`)
-	g.line(`local.get $path`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal("$path")
 	g.linef(`i32.const %d`, oflags)
 	g.linef(`i64.const %d`, rights)
 	g.line(`i64.const 0`)
@@ -5554,10 +5539,7 @@ func (g *generator) emitWriterWriteMethod() {
 	g.line(`local.get $w`)
 	g.line(`i32.load`)
 	g.line(`local.get $s`)
-	g.line(`local.get $s`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal("$s")
 	g.line(`call $__streams_write`)
 	g.line(`i32.const 4`)
 	g.line(`call $__lang_alloc`)
@@ -5839,11 +5821,7 @@ func (g *generator) emitWriteFileHelperPreview2() {
 	g.line(`i32.load`)
 	g.line(`local.set $stream`)
 
-	// content_len = mem[content - 4].
-	g.line(`local.get $content`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`i32.load`)
+	g.emitStrLenFromLocal("$content")
 	g.line(`local.set $content_len`)
 
 	// $__streams_write loops blocking-write-and-flush in 4 KiB

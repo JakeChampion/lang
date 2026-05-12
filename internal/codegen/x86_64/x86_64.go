@@ -1282,12 +1282,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push()
 
 	case ir.OpStrLen:
-		// Load the 4-byte little-endian length prefix at
-		// `[ptr - 4]`. Centralised here so small-string-
-		// optimisation work has a single seam to flip when
-		// the encoding moves to an inline / heap-tagged form.
+		// IR-level string-length seam. The Go-level helper
+		// emitStrLen owns the actual encoding so this case and
+		// every runtime helper that reads a string's length stay
+		// in sync as SSO follow-ups change the layout.
 		g.pop() // rax = str ptr
-		g.emit("mov eax, dword ptr [rax - 4]")
+		g.emitStrLen("eax", "rax")
 		g.push()
 
 	// -------- direct calls --------
@@ -1507,6 +1507,21 @@ func (g *generator) push() {
 func (g *generator) pop() {
 	g.emit("mov rax, [rsp]")
 	g.emit("add rsp, 16")
+}
+
+// emitStrLen loads the i32 length of the string whose data
+// pointer lives in srcReg into dstReg. Today this is a 4-byte
+// little-endian load from `[srcReg - 4]`. Centralised so every
+// string-length read in the runtime helpers (strcat / strcmp /
+// __lang_write / __lang_puts / __lang_eprint / __lang_env /
+// __lang_tcp_send / __str_slice / __lang_write_file / WASI
+// stream-write boundary) flows through one site — when small-
+// string-optimisation work changes the string encoding, only
+// this function (and its peers in the arm64 + wasm backends)
+// needs to learn the new shape. Array-length reads stay open-
+// coded because arrays may diverge from strings.
+func (g *generator) emitStrLen(dstReg, srcReg string) {
+	g.emit(fmt.Sprintf("mov %s, [%s - 4]", dstReg, srcReg))
 }
 
 // emitCallArgsLoad places `argc` operand-stack values into
@@ -2004,9 +2019,9 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("sub rsp, 8") // re-align rsp to 16 (5 saved regs + return = 48, +8 = 56 odd; +8 more = 64)
 	g.emit("mov r12, rdi") // r12 = a
 	g.emit("mov r13, rsi") // r13 = b
-	// la = *(a - 4); lb = *(b - 4)
-	g.emit("mov r14d, [r12 - 4]")
-	g.emit("mov r15d, [r13 - 4]")
+	// String lengths via the centralised helper.
+	g.emitStrLen("r14d", "r12")
+	g.emitStrLen("r15d", "r13")
 	// alloc(la + lb + 5) — 4 prefix + N data + 1 NUL.
 	g.emit("lea rdi, [r14 + r15 + 5]")
 	g.emit("call __lang_alloc")
@@ -2056,8 +2071,8 @@ func (g *generator) emitStrcmpRuntime() {
 	g.emit("cmp rdi, rsi")
 	g.emit("je .Lscmp_eq")
 	// Same length?
-	g.emit("mov ecx, [rdi - 4]")
-	g.emit("mov edx, [rsi - 4]")
+	g.emitStrLen("ecx", "rdi")
+	g.emitStrLen("edx", "rsi")
 	g.emit("cmp ecx, edx")
 	g.emit("jne .Lscmp_neq")
 	// rep cmpsb wants the count in rcx and the pointers in
@@ -2092,7 +2107,7 @@ func (g *generator) emitPutsRuntime() {
 	g.emit("sub rsp, 8") // keep rsp 16-aligned post-prologue
 	g.emit("mov r12, rdi")        // r12 = data ptr (saved for return)
 	// write(1, s, len(s))
-	g.emit("mov edx, [rdi - 4]")  // length
+	g.emitStrLen("edx", "rdi") // length
 	g.emit("mov rsi, rdi")        // buf
 	g.emit("mov edi, 1")          // fd = stdout
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
@@ -2118,7 +2133,7 @@ func (g *generator) emitWriteRuntime() {
 	g.line(".globl __lang_write")
 	g.line(".type __lang_write, @function")
 	g.label("__lang_write")
-	g.emit("mov edx, [rdi - 4]")  // length
+	g.emitStrLen("edx", "rdi") // length
 	g.emit("mov rsi, rdi")        // buf
 	g.emit("mov rax, rdi")        // save for return
 	g.emit("mov edi, 1")          // fd = stdout
@@ -2145,7 +2160,7 @@ func (g *generator) emitEprintRuntime() {
 	g.emit("push r12")
 	g.emit("sub rsp, 8")
 	g.emit("mov r12, rdi")        // r12 = data ptr (preserved for return)
-	g.emit("mov edx, [rdi - 4]")
+	g.emitStrLen("edx", "rdi")
 	g.emit("mov rsi, rdi")
 	g.emit("mov edi, 2")          // fd = stderr
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
@@ -2342,7 +2357,7 @@ func (g *generator) emitTcpSendRuntime() {
 	g.line(".globl __lang_tcp_send")
 	g.line(".type __lang_tcp_send, @function")
 	g.label("__lang_tcp_send")
-	g.emit("mov edx, [rsi - 4]") // length from data prefix
+	g.emitStrLen("edx", "rsi") // length from data prefix
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
 	g.emit("ret")
@@ -2382,7 +2397,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("push r15") // value length
 	g.emit("sub rsp, 8") // align
 	g.emit("mov r12, rdi")            // r12 = name
-	g.emit("mov r13d, [r12 - 4]")     // r13 = name length
+	g.emitStrLen("r13d", "r12") // r13 = name length
 	g.emit("mov rbx, [rip + __lang_envp]")
 	g.label(".Lenv_loop")
 	g.emit("mov rdi, [rbx]")
@@ -2729,7 +2744,11 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
 	g.emit("push r12")
-	g.emit("mov rbx, rdi")        // bs
+	g.emit("mov rbx, rdi")        // bs (input u8[] array)
+	// Array-length read — NOT routed through emitStrLen.
+	// The input is u8[] and arrays may diverge from strings
+	// under future SSO; conflating them would collapse the
+	// seam emitStrLen establishes.
 	g.emit("mov r12d, [rbx - 4]") // length
 	g.emit("lea edi, [r12 + 4]")
 	g.emit("call __lang_alloc")
@@ -2769,7 +2788,7 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("mov rbx, rdi")        // base
 	g.emit("mov r12, rsi")        // low
 	g.emit("mov r13, rdx")        // high
-	g.emit("mov r14d, [rbx - 4]") // src_len
+	g.emitStrLen("r14d", "rbx") // src_len
 	// Bounds checks: low < 0 OR high > src_len OR low > high → trap.
 	g.emit("test r12, r12")
 	g.emit("js .Lstrslice_trap")
@@ -3126,8 +3145,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov rbx, rdi") // path
 	g.emit("mov r12, rsi") // content
 
-	// content_len = mem[content - 4].
-	g.emit("mov r14d, [r12 - 4]")
+	g.emitStrLen("r14d", "r12") // content_len
 
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
 	g.emit("mov edi, -100")
@@ -3420,7 +3438,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("push r14") // bytes_written
 	g.emit("mov ebx, [rdi]") // fd
 	g.emit("mov r12, rsi")
-	g.emit("mov r13d, [r12 - 4]") // len
+	g.emitStrLen("r13d", "r12") // len
 	g.emit("xor r14, r14")
 	g.label(".Lww_loop")
 	g.emit("cmp r14, r13")
