@@ -1432,6 +1432,41 @@ func TestArm64ClosureChainNoAlloc(t *testing.T) {
 	}
 }
 
+// Mirror of TestX86_64ResultPairForm.
+func TestArm64ResultPairForm(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"Ok path", `function divide(a: i32, b: i32): Result[i32, i32] {
+    if (b == 0) { return Err(1); }
+    return Ok(a / b);
+}
+function main(): i32 {
+    match (divide(10, 2)) {
+        Ok(v)  => { return v; },
+        Err(_) => { return 99; }
+    }
+}`, 5},
+		{"Err path", `function divide(a: i32, b: i32): Result[i32, i32] {
+    if (b == 0) { return Err(7); }
+    return Ok(a / b);
+}
+function main(): i32 {
+    match (divide(10, 0)) {
+        Ok(_)  => { return 99; },
+        Err(e) => { return e; }
+    }
+}`, 7},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 // Mirror of TestX86_64UseCallback: closure-pair ABI uniforming
 // on arm64. `use` + function-value-as-param now works.
 func TestArm64UseCallback(t *testing.T) {
