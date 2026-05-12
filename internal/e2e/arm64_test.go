@@ -178,6 +178,36 @@ func TestArm64StringConcat(t *testing.T) {
 // when the result length is 0. Verified behaviourally: len()
 // returns 0, equality with "" holds, and downstream concat with
 // a non-empty operand still produces the right bytes.
+// Empty u8[] sentinel: `__alloc_u8(0)` returns a shared static
+// `[length=0]` buffer rather than allocating a fresh 4-byte
+// length-only block. Mirrors the x86_64 suite.
+func TestArm64EmptyU8Sentinel(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"len-on-empty-u8", `function main(): i32 {
+    var bs: u8[] = __alloc_u8(0);
+    return len(bs);
+}`, 0},
+		{"string-from-empty-bytes", `function main(): i32 {
+    var bs: u8[] = __alloc_u8(0);
+    var s: string = string_from_bytes(bs);
+    return len(s);
+}`, 0},
+		{"to-lower-empty-string", `function main(): i32 {
+    var s: string = "".to_lower();
+    return len(s);
+}`, 0},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestArm64EmptyStringSentinel(t *testing.T) {
 	for _, c := range []struct {
 		name string

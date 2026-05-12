@@ -3763,6 +3763,22 @@ func TestWASMEmptyStringSentinelSlice(t *testing.T) {
 	}
 }
 
+// Empty u8[] sentinel: `__alloc_u8(0)` returns the shared static
+// empty-buffer sentinel (`[length=0]` at internString("") offset)
+// rather than allocating a fresh 4-byte length-only block. On
+// wasm both empty-string and empty-array share the same backing
+// memory since they're byte-identical; native targets keep
+// distinct symbols.
+func TestWASMEmptyU8Sentinel(t *testing.T) {
+	src := `function main(): i32 {
+        var bs: u8[] = __alloc_u8(0);
+        return len(bs);
+    }`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (len of __alloc_u8(0))", got)
+	}
+}
+
 func TestWASMEmptyStringSentinelFromBytes(t *testing.T) {
 	src := `function main(): i32 {
 		var bs: u8[] = __alloc_u8(0);

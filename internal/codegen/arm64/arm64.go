@@ -328,6 +328,18 @@ func (g *generator) emitDataSections() {
 	g.line(`	.4byte 0`)
 	g.label(".LStr_Empty")
 	g.line(`	.asciz ""`)
+	if g.usesArrEmpty {
+		// Empty u8[] sentinel — __alloc_u8(0) returns this
+		// address instead of allocating a fresh 4-byte length-
+		// only buffer. Same shape as .LStr_Empty (4 bytes of
+		// zero length prefix + a data byte) but kept distinct
+		// so the array seam can evolve independently of the
+		// string seam.
+		g.line(`.align 2`)
+		g.line(`	.4byte 0`)
+		g.label(".LArr_Empty")
+		g.line(`	.byte 0`)
+	}
 	if len(g.enumSentinelTags) > 0 {
 		// Per-tag enum sentinels. One 4-byte symbol per unique
 		// tag value referenced by any payloadless-variant
@@ -971,10 +983,21 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
 	g.emit("mov x19, x0")     // x19 = n (callee-save, survives bl)
-	g.emit("add x0, x0, #4")
+	// Short-circuit on n == 0: return the shared static empty-
+	// array sentinel rather than allocating a fresh 4-byte
+	// length-only buffer. The sentinel's byte at offset -4 is
+	// 0 (length), so emitArrayLen reads the right value via
+	// the same `ldur w?, [ptr, #-4]` it does for heap buffers.
+	g.emit("cbnz w19, .Lallocu8_alloc")
+	g.usesArrEmpty = true
+	g.adrpAdd("x0", ".LArr_Empty")
+	g.emit("b .Lallocu8_ret")
+	g.label(".Lallocu8_alloc")
+	g.emit("add x0, x19, #4")
 	g.emit("bl __lang_alloc")
 	g.emit("add x0, x0, #4")  // x0 = data ptr
 	g.emitArrayLenStore("w19", "x0")
+	g.label(".Lallocu8_ret")
 	g.emit("ldr x19, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
@@ -2781,6 +2804,12 @@ type generator struct {
 	// payloadless-variant constructions. One .rodata symbol per
 	// tag value gets reserved in emitDataSections.
 	enumSentinelTags map[int]bool
+	// usesArrEmpty gates the `.LArr_Empty` sentinel — a shared
+	// static 4-byte `[length=0]` buffer that __alloc_u8(0)
+	// returns instead of allocating a fresh length-only block.
+	// Mirrors the .LStr_Empty pattern from PR #299 for the
+	// array seam.
+	usesArrEmpty bool
 	// usesRawIntPokes tracks whether the program calls
 	// __load_i32 / __store_i32 — primitives the lang Map
 	// runtime uses for its mixed bucket-index + entries

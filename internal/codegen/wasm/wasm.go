@@ -4017,6 +4017,22 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.line(`(func $__alloc_u8 (param $n i32) (result i32)`)
 	g.indent++
 	g.line(`(local $base i32)`)
+	// Short-circuit on n == 0: return the shared static empty-
+	// buffer sentinel (`[length=0]` at internString("") offset)
+	// rather than allocating a fresh 4-byte length-only block.
+	// The empty-string sentinel from PR #299 is byte-identical
+	// (4 bytes of zero followed by an empty data area) so the
+	// two seams share storage on wasm; the native targets keep
+	// distinct `.LStr_Empty` / `.LArr_Empty` symbols to leave
+	// room for future array-only encoding changes.
+	g.line(`local.get $n`)
+	g.line(`i32.eqz`)
+	g.line(`if (result i32)`)
+	g.indent++
+	g.linef("i32.const %d", g.internString(""))
+	g.indent--
+	g.line(`else`)
+	g.indent++
 	// Allocate n + 4 bytes (length prefix + payload). $base is
 	// the data pointer (one past the length prefix).
 	g.line(`local.get $n`)
@@ -4030,8 +4046,9 @@ func (g *generator) emitBulkMemoryHelpers() {
 	// __lang_alloc memory comes from a freshly bumped region
 	// that wasm initialises to zero, so the payload bytes are
 	// already 0; no explicit memset needed.
-	// Return the data pointer (already past the length prefix).
 	g.line(`local.get $base`)
+	g.indent--
+	g.line(`end`)
 	g.indent--
 	g.line(`)`)
 
