@@ -349,6 +349,23 @@ func TestLowerSomeEmitsPairForm(t *testing.T) {
 // old heap-box path (OpEnumSentinel for None; OpAlloc for
 // Some). Uses `Option[string]` to stay clear of any
 // prelude-side struct names.
+// Calls to pair-form functions go through OpCallDirectPair
+// at the IR layer. The op carries the same Str/I32 args as
+// OpCallDirect; backends interpret it target-appropriately
+// (wasm extracts (tag, payload) from the heap-box pointer
+// the function returns; natives do the equivalent
+// `mov rax / ldr w0` + tag/payload load shape).
+func TestLowerCallToPairFormFnEmitsOpCallDirectPair(t *testing.T) {
+	prog := lowerSource(t, `function check(): Option[i32] { return Some(7); }
+function main(): i32 {
+    match (check()) {
+        Some(v) => { return v; },
+        None    => { return 99; }
+    }
+}`)
+	mustContainOp(t, prog, "main", OpCallDirectPair)
+}
+
 // `if let Some(v) = scrutinee { ... }` lowers the tag read
 // through OpMatchTag (the step-3 abstraction over "read the
 // variant tag, however the scrutinee is represented") rather

@@ -1115,6 +1115,49 @@ func (b *builder) lookupVariant(name string) (enumName string, varIdx int, paylo
 // lets us pick OpFStore for an f32 payload even when the
 // variant's declared payload was a type parameter (e.g.
 // `Some(3.14)` on `Option[T]` with `T = float`).
+// emitRepackPairAsHeapBox consumes (tag, payload) from the
+// operand stack and synthesises a heap-allocated 8-byte box
+// matching `payloadLayout(Option[i32])`'s shape: tag at +0,
+// payload at +4. Result is the box pointer on the operand
+// stack. Used at OpCallDirectPair sites where the consumer
+// expects the heap-form Option/Result (the legacy shape that
+// existing match / var-assignment / struct-field code handles).
+//
+// Step 4 keeps this rebox to preserve correctness while the
+// pair-form ABI lands; a future step in the Option/Result arc
+// will detect match-style consumers and skip the rebox so the
+// pair flows straight from the call into the dispatch.
+func (b *builder) emitRepackPairAsHeapBox() error {
+	// Stack: [tag, payload] — top is payload. Stash payload in
+	// a scratch local so we can alloc + store the box without
+	// shuffling values around.
+	payloadSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__pair_repack_payload_%d", payloadSlot)] = payloadSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: payloadSlot})
+	tagSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__pair_repack_tag_%d", tagSlot)] = tagSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
+	// Alloc 8 bytes for the box header (tag@0 + payload@4).
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpAlloc})
+	boxSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__pair_repack_box_%d", boxSlot)] = boxSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
+	// Store tag at box+0.
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
+	b.emit(Op{Kind: OpStore})
+	// Store payload at box+4.
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
+	b.emit(Op{Kind: OpStore})
+	// Push box pointer (= the Option/Result heap-form result).
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	return nil
+}
+
 func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
 	// Payloadless variants return a shared static 4-byte
 	// `[tag=varIdx]` sentinel instead of allocating a fresh
@@ -3536,10 +3579,35 @@ func (b *builder) callBody(n *ast.Call) error {
 		argCount += 2
 	}
 	// Direct call if the name is a top-level / builtin function and not
-	// shadowed by a local of the same name.
+	// shadowed by a local of the same name. Pair-form callees go
+	// through OpCallDirectPair so the IR result is two i32s
+	// (tag, payload) — each backend interprets that target-
+	// appropriately:
+	//   - wasm: function emits multi-value `(result i32 i32)`;
+	//     the pair lands on the operand stack from the call.
+	//   - natives: function emits the heap-box (current step-2
+	//     fallback); OpCallDirectPair unpacks `[ptr+0]` (tag)
+	//     and `[ptr+4]` (payload) onto the operand stack after
+	//     the call, so the IR-level "two values post-call"
+	//     contract holds across both backends.
 	if _, isFunc := b.info.FuncSigs[id.Name]; isFunc {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: argCount})
+			kind := OpCallDirect
+			if b.pairForm[id.Name] {
+				kind = OpCallDirectPair
+			}
+			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount})
+			if kind == OpCallDirectPair {
+				// Re-pack the (tag, payload) pair into a heap
+				// box for now so existing callers (var
+				// assignment, struct fields, etc.) keep seeing
+				// the heap-pointer shape. The match-style
+				// scrutinee fast path that skips this rebox is
+				// a follow-up step in the Option/Result arc.
+				if err := b.emitRepackPairAsHeapBox(); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 	}
