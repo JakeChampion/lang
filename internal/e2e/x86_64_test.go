@@ -1508,6 +1508,30 @@ func TestX86_64IfLet(t *testing.T) {
 // pattern (T[] / [T] / string / struct ↔ usize), and
 // settled-literal lowering picks OpConstI64 on natives so
 // values exceeding 32 bits round-trip without truncating.
+// `usize + i32` arithmetic auto-widens the i32 side to usize.
+// This is the unblock for prelude pointer-arithmetic migration
+// (e.g. `entriesBase + idx * entryStride` where idx + stride
+// are i32) without sprinkling explicit `as usize` everywhere.
+// Pins the pattern across both natives.
+func TestX86_64UsizeAutowiden(t *testing.T) {
+	src := `function offset_compute(base: usize, idx: i32, stride: i32): usize {
+    return base + idx * stride;
+}
+function main(): i32 {
+    // 0x100000000 — exceeds 32 bits so a wrong truncation would
+    // lose the high bit and the low 32 bits would be (base_lo +
+    // 4*8) = (0 + 32). With usize-arithmetic the result is
+    // 0x100000020 and the low 32 bits are 32 — matches.
+    var heap_ptr: usize = 4294967296 as usize;
+    var elem: usize = offset_compute(heap_ptr, 4, 8);
+    return (elem as i32);
+}`
+	_, code := compileAndRunX86_64(t, src)
+	if code != 32 {
+		t.Errorf("got %d, want 32 (low 32 bits of 0x100000020)", code)
+	}
+}
+
 func TestX86_64Usize(t *testing.T) {
 	for _, c := range []struct {
 		name string

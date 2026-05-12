@@ -1856,6 +1856,22 @@ func TestArm64IfLet(t *testing.T) {
 // (< 4 GiB) so 32-bit truncation passes by coincidence; macOS's
 // high heap is the real test bed once the prelude pointer
 // locals migrate to usize.
+// Mirror of TestX86_64UsizeAutowiden.
+func TestArm64UsizeAutowiden(t *testing.T) {
+	src := `function offset_compute(base: usize, idx: i32, stride: i32): usize {
+    return base + idx * stride;
+}
+function main(): i32 {
+    var heap_ptr: usize = 4294967296 as usize;
+    var elem: usize = offset_compute(heap_ptr, 4, 8);
+    return (elem as i32);
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 32 {
+		t.Errorf("got %d, want 32 (low 32 bits of 0x100000020)", code)
+	}
+}
+
 func TestArm64Usize(t *testing.T) {
 	for _, c := range []struct {
 		name string

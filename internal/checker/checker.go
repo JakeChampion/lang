@@ -830,6 +830,14 @@ func Check(prog *ast.Program) (*Info, error) {
 	// all targets so the prelude can store the Map handle's
 	// data-ptr without the high bits of a 64-bit heap address
 	// getting truncated.
+	//
+	// Migration NOTE: docs/BACKEND-PARITY.md tracks the move to
+	// `usize` signatures (`__alloc(n) → usize`, `__load_ptr(addr:
+	// usize) → usize`, etc.). The type-system step is in place
+	// (PR #313 — usize keyword + auto-widen) but the signature
+	// flip is held until the prelude's ~87 pointer-local sites
+	// migrate together; partial migration would mismatch the
+	// codegen aliases (`__method_Map_*` → `__map_*_impl`).
 	c.info.FuncSigs["__load_ptr"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
@@ -3816,6 +3824,11 @@ func (c *checker) widenIntOperand(slot *ast.Expr, srcT, targetT ast.NumberType) 
 	if srcT.NormalWidth() == targetT.NormalWidth() {
 		return
 	}
+	// usize ↔ concrete-int needs a cast too (NormalWidth = -1
+	// is never equal to 32 / 64, so the same-width fast-path
+	// above already falls through). Don't bail when one side
+	// is pointer-width — that's exactly the case where the
+	// implicit cast matters.
 	// Skip if the operand is already a typed numeric literal
 	// of the right width — settleNumeric handled it.
 	if nl, ok := (*slot).(*ast.NumberLit); ok && nl.Width == targetT.NormalWidth() {
@@ -3841,6 +3854,19 @@ func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 	}
 	if rn.Polymorphic && !ln.Polymorphic {
 		return ln, true
+	}
+	// Pointer-width arithmetic: `usize + i32` (or `i32 + usize`)
+	// auto-widens to usize so prelude pointer math stays
+	// readable. usize is unsigned and i32 is signed, so the
+	// signedness check below would otherwise reject. The
+	// 2's-complement representation makes the result identical
+	// to what the prelude computed before via explicit
+	// `as i64 / as usize` casts.
+	if ln.IsPointerWidth() || rn.IsPointerWidth() {
+		if ln.IsPointerWidth() {
+			return ln, true
+		}
+		return rn, true
 	}
 	if ln.IsSigned() != rn.IsSigned() {
 		// Mixed signedness needs an explicit cast — the
