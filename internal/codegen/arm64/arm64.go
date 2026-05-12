@@ -954,11 +954,8 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov x19, x0")     // x19 = n (callee-save, survives bl)
 	g.emit("add x0, x0, #4")
 	g.emit("bl __lang_alloc")
-	// Array length-prefix store — deliberately NOT routed through
-	// emitStrLenStore. __alloc_u8 returns a u8[] and arrays may
-	// diverge from strings under future SSO.
-	g.emit("str w19, [x0]")   // length prefix
-	g.emit("add x0, x0, #4")  // return data ptr
+	g.emit("add x0, x0, #4")  // x0 = data ptr
+	g.emitArrayLenStore("w19", "x0")
 	g.emit("ldr x19, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
@@ -980,12 +977,8 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("str x21, [sp, #32]")
-	g.emit("mov x19, x0")           // x19 = bs (input array)
-	// Array-length read — deliberately NOT routed through
-	// emitStrLen. The input is a u8[] and arrays may diverge
-	// from strings under future SSO; conflating them would
-	// re-collapse the seam emitStrLen establishes.
-	g.emit("ldur w20, [x19, #-4]")  // x20 = length
+	g.emit("mov x19, x0")           // x19 = bs (input u8[] array)
+	g.emitArrayLen("w20", "x19")    // x20 = input array length
 	// Short-circuit on input length == 0: return the shared
 	// empty-string sentinel rather than allocating a fresh
 	// 0-byte buffer.
@@ -3342,6 +3335,28 @@ func (g *generator) emitStrDataPtr(dstX, srcX string, scratchOff int) {
 // 0-length string. Third member of the SSO helper family.
 func (g *generator) emitStrEmpty(dstX string) {
 	g.adrpAdd(dstX, ".LStr_Empty")
+}
+
+// emitArrayLen loads the i32 length of the length-prefixed array
+// whose data pointer lives in srcX into dstW. Today this is a
+// 4-byte little-endian load from `[srcX - 4]`. Centralised seam
+// for arrays: parallels emitStrLen but stays distinct because
+// arrays may diverge from strings under future layout changes
+// (inline u8[], typed-element headers, etc.). Used by
+// __alloc_u8's siblings, the __arr_idx bounds checks (where
+// they exist), and string_from_bytes's input length read.
+func (g *generator) emitArrayLen(dstW, srcX string) {
+	g.emit("ldur %s, [%s, #-4]", dstW, srcX)
+}
+
+// emitArrayLenStore writes the i32 length in srcW to the 4-byte
+// little-endian length prefix at `[dstX - 4]`, where dstX is the
+// new array's *data pointer* (one past the prefix). Inverse of
+// emitArrayLen. Used by __alloc_u8 and __lang_args (outer
+// string[] container). String length stores stay on
+// emitStrLenStore.
+func (g *generator) emitArrayLenStore(srcW, dstX string) {
+	g.emit("stur %s, [%s, #-4]", srcW, dstX)
 }
 
 // binPop — pop two values off the operand stack into x1 (lhs)

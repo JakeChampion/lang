@@ -1698,6 +1698,27 @@ func (g *generator) emitStrEmpty(dstReg string) {
 	g.emit(fmt.Sprintf("lea %s, [rip + .LStr_Empty]", dstReg))
 }
 
+// emitArrayLen loads the i32 length of the length-prefixed array
+// whose data pointer lives in srcReg into dstReg. Today this is a
+// 4-byte little-endian load from `[srcReg - 4]`. Centralised seam
+// for arrays: parallels emitStrLen but stays distinct because
+// arrays may diverge from strings under future layout changes.
+// Used by __alloc_u8's siblings and string_from_bytes's input
+// length read.
+func (g *generator) emitArrayLen(dstReg, srcReg string) {
+	g.emit(fmt.Sprintf("mov %s, [%s - 4]", dstReg, srcReg))
+}
+
+// emitArrayLenStore writes the i32 length in srcReg to the 4-byte
+// little-endian length prefix at `[dstReg - 4]`, where dstReg is
+// the new array's *data pointer* (one past the prefix). Inverse
+// of emitArrayLen. Used by __alloc_u8 and __lang_args (outer
+// string[] container). String length stores stay on
+// emitStrLenStore.
+func (g *generator) emitArrayLenStore(srcReg, dstReg string) {
+	g.emit(fmt.Sprintf("mov [%s - 4], %s", dstReg, srcReg))
+}
+
 // emitCallArgsLoad places `argc` operand-stack values into
 // System V argument slots. First 6 args go to rdi/rsi/rdx/rcx/
 // r8/r9; the rest land on the call stack at [rsp+0], [rsp+8],
@@ -2815,12 +2836,10 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("lea rdi, [rbx * 8 + 8]")
 	g.emit("call __lang_alloc")
 	g.emit("lea r14, [rax + 8]")  // r14 = data ptr (8-aligned)
-	// Array (string[]) length-prefix store — deliberately NOT
-	// routed through emitStrLenStore. The outer container is a
-	// string[] and arrays may diverge from strings under future
-	// SSO. The per-element string stores below DO go through
-	// the helper.
-	g.emit("mov [r14 - 4], ebx")  // length prefix = argc
+	// Outer string[] container length via the array seam (the
+	// per-element string stores in the loop below use
+	// emitStrLenStore).
+	g.emitArrayLenStore("ebx", "r14")
 	g.emit("xor r13d, r13d")       // i = 0
 	g.label(".Largs_loop")
 	g.emit("cmp r13, rbx")
@@ -3044,11 +3063,8 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov ebx, edi")     // rbx = n
 	g.emit("lea edi, [rbx + 4]")
 	g.emit("call __lang_alloc")
-	// Array length-prefix store — deliberately NOT routed
-	// through emitStrLenStore. __alloc_u8 returns u8[] and
-	// arrays may diverge from strings under future SSO.
-	g.emit("mov [rax], ebx")    // length prefix
-	g.emit("lea rax, [rax + 4]") // data ptr
+	g.emit("lea rax, [rax + 4]") // rax = data ptr
+	g.emitArrayLenStore("ebx", "rax")
 	g.emit("add rsp, 8")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
@@ -3071,11 +3087,7 @@ func (g *generator) emitStringFromBytesRuntime() {
 	// 16 bytes scratch: [rbp - 24] inline output buffer + 8 padding.
 	g.emit("sub rsp, 16")
 	g.emit("mov rbx, rdi")        // bs (input u8[] array)
-	// Array-length read — NOT routed through emitStrLen.
-	// The input is u8[] and arrays may diverge from strings
-	// under future SSO; conflating them would collapse the
-	// seam emitStrLen establishes.
-	g.emit("mov r12d, [rbx - 4]") // length
+	g.emitArrayLen("r12d", "rbx") // r12 = input array length
 	// Short-circuit on input length == 0: return the shared
 	// empty-string sentinel without allocating a fresh 0-byte
 	// buffer.
