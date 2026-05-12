@@ -363,6 +363,37 @@ function main(): i32 {
 // the alloc + memcpy and return the shared .LStr_Empty sentinel
 // when the result length is 0. Verified behaviourally — mirrors
 // the arm64 + wasm tests of the same shape.
+// Empty u8[] sentinel: `__alloc_u8(0)` returns a shared static
+// `[length=0]` buffer rather than allocating a fresh 4-byte
+// length-only block. Mirrors the empty-string sentinel pattern
+// from PR #299; uses the array seam from PR #302.
+func TestX86_64EmptyU8Sentinel(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"len-on-empty-u8", `function main(): i32 {
+    var bs: u8[] = __alloc_u8(0);
+    return len(bs);
+}`, 0},
+		{"string-from-empty-bytes", `function main(): i32 {
+    var bs: u8[] = __alloc_u8(0);
+    var s: string = string_from_bytes(bs);
+    return len(s);
+}`, 0},
+		{"to-lower-empty-string", `function main(): i32 {
+    var s: string = "".to_lower();
+    return len(s);
+}`, 0},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestX86_64EmptyStringSentinel(t *testing.T) {
 	for _, c := range []struct {
 		name string

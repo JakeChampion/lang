@@ -346,6 +346,11 @@ type generator struct {
 	// tag value gets reserved. Programs that never construct
 	// payloadless enum variants skip the entire block.
 	enumSentinelTags map[int]bool
+	// usesArrEmpty gates the `.LArr_Empty` sentinel — a shared
+	// static 4-byte `[length=0]` buffer that __alloc_u8(0)
+	// returns instead of allocating a fresh length-only block.
+	// Mirrors the .LStr_Empty pattern for the array seam.
+	usesArrEmpty bool
 	usesStdin           bool
 	// usesRawIntPokes pulls in `__store_i32` / `__load_i32` /
 	// `__store_ptr` / `__load_ptr` / `__ptr_width` — primitives
@@ -2052,7 +2057,7 @@ func (g *generator) internString(s string) string {
 func (g *generator) emitDataSections() {
 	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
-	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels {
+	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty {
 		g.line("")
 		g.line(".section .rodata")
 		for _, s := range g.stringOrder {
@@ -2085,6 +2090,18 @@ func (g *generator) emitDataSections() {
 			g.line("\t.4byte 0")
 			g.label(".LStr_Empty")
 			g.line(`	.asciz ""`)
+		}
+		if g.usesArrEmpty {
+			// Empty u8[] sentinel — __alloc_u8(0) returns this
+			// address instead of allocating a fresh 4-byte
+			// length-only buffer. Same shape as .LStr_Empty
+			// (4-byte length-zero prefix + a single data byte)
+			// but kept distinct so the array seam can evolve
+			// independently of the string seam.
+			g.line(".align 4")
+			g.line("\t.4byte 0")
+			g.label(".LArr_Empty")
+			g.line("\t.byte 0")
 		}
 		if needsEnumSentinels {
 			// Per-tag enum sentinels. One 4-byte symbol per
@@ -3100,10 +3117,20 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("push rbx")
 	g.emit("sub rsp, 8")
 	g.emit("mov ebx, edi")     // rbx = n
+	// Short-circuit on n == 0: return the shared static empty-
+	// array sentinel rather than allocating a fresh 4-byte
+	// length-only buffer.
+	g.emit("test ebx, ebx")
+	g.emit("jnz .Lallocu8_alloc")
+	g.usesArrEmpty = true
+	g.emit("lea rax, [rip + .LArr_Empty]")
+	g.emit("jmp .Lallocu8_ret")
+	g.label(".Lallocu8_alloc")
 	g.emit("lea edi, [rbx + 4]")
 	g.emit("call __lang_alloc")
 	g.emit("lea rax, [rax + 4]") // rax = data ptr
 	g.emitArrayLenStore("ebx", "rax")
+	g.label(".Lallocu8_ret")
 	g.emit("add rsp, 8")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
