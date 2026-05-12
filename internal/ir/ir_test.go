@@ -651,6 +651,95 @@ function main(): i32 {
 	}
 }
 
+// A pair-form-eligible function whose only return uses the
+// expression-form `if (cond) { Some(a) } else { Some(b) }` is
+// also pair-form. Each arm constructs a heap-box independently;
+// the function-side ABI is unchanged, so the caller can still
+// use `OpCallDirectPair` to skip the rebox.
+//
+// (Bare `None` in an if-expression arm isn't covered here
+// because the checker's branch-unification can't infer
+// `Option[T]` from the return context — separate issue.)
+func TestLowerPairFormThroughIfExpressionReturn(t *testing.T) {
+	prog := lowerSource(t, `function pick(x: i32): Option[i32] {
+    return if (x >= 0) { Some(x) } else { Some(0 - x) };
+}
+function main(): i32 {
+    match (pick(0 - 5)) {
+        Some(v) => { return v; },
+        None => { return -1; }
+    }
+}`)
+	mainFn := findFunc(prog, "main")
+	if mainFn == nil {
+		t.Fatal("main not found")
+	}
+	hasPairCall := false
+	for _, op := range mainFn.Ops {
+		if op.Kind == OpCallDirectPair && op.Str == "pick" {
+			hasPairCall = true
+			break
+		}
+	}
+	if !hasPairCall {
+		t.Fatalf("expected OpCallDirectPair to pick in main:\n%s", prog)
+	}
+}
+
+// Nested if-expressions — each leaf must be a pair-form-
+// eligible return shape. Picks Ok(x) / Err(0) / Err(1)
+// depending on the input.
+func TestLowerPairFormThroughNestedIfExpressionReturn(t *testing.T) {
+	prog := lowerSource(t, `function classify(x: i32): Result[i32, i32] {
+    return if (x > 0) { Ok(x) } else { if (x == 0) { Err(0) } else { Err(1) } };
+}
+function main(): i32 {
+    match (classify(7)) {
+        Ok(v)  => { return v; },
+        Err(e) => { return 0 - e; }
+    }
+}`)
+	mainFn := findFunc(prog, "main")
+	if mainFn == nil {
+		t.Fatal("main not found")
+	}
+	hasPairCall := false
+	for _, op := range mainFn.Ops {
+		if op.Kind == OpCallDirectPair && op.Str == "classify" {
+			hasPairCall = true
+			break
+		}
+	}
+	if !hasPairCall {
+		t.Fatalf("expected OpCallDirectPair to classify in main:\n%s", prog)
+	}
+}
+
+// An if-expression whose Else arm doesn't fit the pair-form
+// shape (e.g. forwards a heap-form parameter) blocks pair-form
+// detection — the analysis must reject the whole function.
+func TestLowerIfExpressionWithEscapingArmStaysHeapForm(t *testing.T) {
+	prog := lowerSource(t, `function side_effect(o: Option[i32]): Option[i32] { return o; }
+function pick(x: i32, fallback: Option[i32]): Option[i32] {
+    return if (x < 0) { side_effect(fallback) } else { Some(x) };
+}
+function main(): i32 {
+    match (pick(5, None)) {
+        Some(v) => { return v; },
+        None => { return -1; }
+    }
+}`)
+	mainFn := findFunc(prog, "main")
+	if mainFn == nil {
+		t.Fatal("main not found")
+	}
+	for _, op := range mainFn.Ops {
+		if op.Kind == OpCallDirectPair && op.Str == "pick" {
+			t.Fatalf("pick should NOT be pair-form (ternary arm escapes via non-pair-form side_effect):\n%s", prog)
+		}
+	}
+}
+
 func TestLowerOptionPointerPayloadStaysHeapForm(t *testing.T) {
 	prog := lowerSource(t, `function f(): Option[string] { return None; }`)
 	mustContainOp(t, prog, "f", OpEnumSentinel)

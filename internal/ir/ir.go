@@ -691,20 +691,24 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 //     inside if / for / while / match arms) returns one of:
 //       (a) a `Some(EXPR)` / `None` literal (for Option) or
 //           `Ok(EXPR)` / `Err(EXPR)` literal (for Result)
-//           directly, or
+//           directly,
 //       (b) a direct call `helper()` where `helper` is itself
 //           in the pair-form set — the call's heap-box result
 //           flows out unchanged, and `helper`'s callers got
-//           the pair-form treatment too.
+//           the pair-form treatment too, or
+//       (c) a ternary `cond ? Then : Else` whose Then and Else
+//           are each themselves an (a) / (b) / (c) shape
+//           (recursive). Each arm constructs a heap-box pair
+//           independently; consumers still apply
+//           `OpCallDirectPair` to the join.
 //
 // (b) is determined by fixpoint iteration: each pass adds
-// functions whose returns now resolve under (a) or under (b)
+// functions whose returns now resolve under (a) / (b) / (c)
 // using the previous pass's set. Converges in linear passes
 // over the function graph.
 //
-// Tightening the analysis further (e.g. to see through
-// if-/match-expression returns, or to accept pointer-shaped
-// payloads) is tracked as a follow-up.
+// Tightening the analysis further (e.g. to accept
+// pointer-shaped payloads) is tracked as a follow-up.
 func findPairFormFuncs(prog *ast.Program) map[string]bool {
 	out := map[string]bool{}
 	for {
@@ -734,12 +738,15 @@ func findPairFormFuncs(prog *ast.Program) map[string]bool {
 //
 // Supported return-type shapes:
 //   - `Option[T]` where T is i32-stack-shaped — body must
-//     produce only `Some(EXPR)` / `None` literals or tail
-//     calls to other pair-form `Option[T]` returners.
+//     produce only `Some(EXPR)` / `None` literals, tail calls
+//     to other pair-form `Option[T]` returners, or ternaries
+//     `cond ? A : B` whose arms are themselves one of these
+//     shapes.
 //   - `Result[T, E]` where T and E are both i32-stack-shaped —
-//     body must produce only `Ok(EXPR)` / `Err(EXPR)` literals
-//     or tail calls to other pair-form `Result[T, E]`
-//     returners.
+//     body must produce only `Ok(EXPR)` / `Err(EXPR)` literals,
+//     tail calls to other pair-form `Result[T, E]` returners,
+//     or ternaries `cond ? A : B` whose arms are themselves
+//     one of these shapes.
 //
 // Other shapes (pointer-typed payloads, wider numeric
 // payloads, mixed-shape Result) require either the native
@@ -880,9 +887,39 @@ func allReturnsArePairFormShape(s ast.Stmt, names map[string]bool, pairForm map[
 	case *ast.Arena:
 		return allReturnsArePairFormShape(x.Body, names, pairForm)
 	case *ast.Return:
-		return isVariantLiteralExpr(x.Value, names) || isPairFormTailCall(x.Value, pairForm)
+		return isPairFormReturnExpr(x.Value, names, pairForm)
 	}
 	return true
+}
+
+// isPairFormReturnExpr reports whether e (the right-hand side
+// of a `return` statement) is one of the shapes that lets the
+// surrounding function stay pair-form-eligible. The accepted
+// shapes are:
+//
+//   - A named variant-constructor literal — `Some(EXPR)` /
+//     `None` / `Ok(EXPR)` / `Err(EXPR)` (filtered by `names`).
+//   - A direct call to a function already in `pairForm` —
+//     the callee returns a heap-box pair that the caller flows
+//     through unchanged.
+//   - A ternary `cond ? Then : Else` whose Then and Else are
+//     each themselves pair-form return shapes (recursive).
+//
+// All three shapes leave the caller emitting a heap pointer
+// at the i32 return position, so consumers can still apply the
+// `OpCallDirectPair` optimization at the call site.
+func isPairFormReturnExpr(e ast.Expr, names map[string]bool, pairForm map[string]bool) bool {
+	if isVariantLiteralExpr(e, names) {
+		return true
+	}
+	if isPairFormTailCall(e, pairForm) {
+		return true
+	}
+	if ie, ok := e.(*ast.IfExpr); ok {
+		return isPairFormReturnExpr(ie.Then, names, pairForm) &&
+			isPairFormReturnExpr(ie.Else, names, pairForm)
+	}
+	return false
 }
 
 // isPairFormTailCall reports whether e is a direct Call to a
