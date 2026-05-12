@@ -396,6 +396,52 @@ func TestX86_64EmptyStringSentinel(t *testing.T) {
 	}
 }
 
+// Enum sentinels: any payloadless enum variant returns a shared
+// static `[tag=N]` address rather than allocating a fresh tag-
+// only heap box. Covers Option.None, user enums with payloadless
+// variants, IoError.Interrupted/Unsupported, etc. Match / try
+// sites still read the tag with `[ptr + 0]` the same as heap
+// boxes, so this is a constructor-side rewrite only.
+func TestX86_64EnumPayloadlessSentinel(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"user-enum-payloadless", `enum Color { Red, Green, Blue }
+function pick(): Color { return Green; }
+function main(): i32 {
+    match (pick()) {
+        Red => { return 1; },
+        Green => { return 2; },
+        Blue => { return 3; }
+    }
+}`, 2},
+		{"user-enum-mixed", `enum Light { On, Off, Dim(i32) }
+function f(): Light { return Off; }
+function main(): i32 {
+    match (f()) {
+        On => { return 1; },
+        Off => { return 2; },
+        Dim(level) => { return level; }
+    }
+}`, 2},
+		{"user-enum-payloaded-then-payloadless", `enum Light { Dim(i32), On, Off }
+function main(): i32 {
+    match (Off) {
+        Dim(n) => { return n; },
+        On => { return 99; },
+        Off => { return 42; }
+    }
+}`, 42},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 // Option.None sentinel: `None` returns a shared static address
 // rather than allocating a fresh 4-byte tag-only heap box.
 // Verified behaviourally — match-on-Option / try / equality

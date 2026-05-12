@@ -11,6 +11,7 @@ package wasm
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -281,14 +282,13 @@ type generator struct {
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
 	closuresBase  int            // start of the per-function closure-cell region
-	// optionNoneOffset, if non-zero, is the linear-memory address
-	// of the static 4-byte Option.None sentinel containing the
-	// i32 value 1 (the None tag). Reserved lazily on first
-	// OpOptionNone emit so map / arithmetic programs that never
-	// construct None pay no static-memory cost. Match-on-Option
-	// reads `[ptr + 0]` and gets 1, dispatching to the None arm
-	// without any consumer-side changes.
-	optionNoneOffset int
+	// enumSentinelOffsets maps a tag value to its linear-memory
+	// offset for the shared 4-byte `[tag=N]` sentinel. Lazily
+	// populated on each OpEnumSentinel emit via
+	// internEnumSentinel; one slot per unique tag value gets
+	// reserved. Programs that never construct payloadless enum
+	// variants skip the static-memory cost entirely.
+	enumSentinelOffsets map[int]int
 
 	// Function table / indirect calls. needsFuncTable is set if any
 	// top-level function name appears in non-callee position (taken
@@ -1856,20 +1856,25 @@ func (g *generator) internString(s string) int {
 	return ptr
 }
 
-// internOptionNone reserves and returns the linear-memory offset of
-// the shared static Option.None sentinel. The sentinel is 4 bytes
-// containing the i32 value 1 (the None tag). Lazily allocated on
-// first call so programs that never construct None pay no memory
-// cost. Match-on-Option's `i32.load` at offset 0 reads the tag from
-// this address as if it were a heap-allocated `[tag=1]` box.
-func (g *generator) internOptionNone() int {
-	if g.optionNoneOffset != 0 {
-		return g.optionNoneOffset
+// internEnumSentinel reserves and returns the linear-memory offset
+// of a shared static 4-byte sentinel containing the i32 value
+// `tag` (used as a payloadless enum variant's heap stand-in).
+// Lazily allocated per unique tag value so programs that never
+// construct payloadless variants pay no memory cost. Match / try
+// sites' `i32.load` at offset 0 reads the tag from this address
+// as if it were a heap-allocated `[tag=N]` box.
+func (g *generator) internEnumSentinel(tag int) int {
+	if off, ok := g.enumSentinelOffsets[tag]; ok {
+		return off
 	}
 	g.needsRuntime = true
-	g.optionNoneOffset = g.stringOffset
+	if g.enumSentinelOffsets == nil {
+		g.enumSentinelOffsets = map[int]int{}
+	}
+	off := g.stringOffset
+	g.enumSentinelOffsets[tag] = off
 	g.stringOffset += 4
-	return g.optionNoneOffset
+	return off
 }
 
 // emitRuntimePreamble emits the WASI import, the linear memory, and
@@ -5959,11 +5964,18 @@ func (g *generator) emitDataSegments() {
 	for _, s := range g.stringEntries {
 		g.linef(`(data (i32.const %d) "%s%s")`, s.offset, encodeI32(len(s.text)), wasmEscape(s.text))
 	}
-	// Option.None sentinel — 4 bytes containing i32=1 (None tag).
-	// Reserved lazily by internOptionNone; emit the data segment
-	// only when at least one OpOptionNone was lowered.
-	if g.optionNoneOffset != 0 {
-		g.linef(`(data (i32.const %d) "%s")`, g.optionNoneOffset, encodeI32(1))
+	// Per-tag enum sentinels — 4 bytes each, containing the
+	// i32 tag value. Reserved lazily by internEnumSentinel;
+	// emitted in tag-value order for deterministic output.
+	if len(g.enumSentinelOffsets) > 0 {
+		tags := make([]int, 0, len(g.enumSentinelOffsets))
+		for t := range g.enumSentinelOffsets {
+			tags = append(tags, t)
+		}
+		sort.Ints(tags)
+		for _, t := range tags {
+			g.linef(`(data (i32.const %d) "%s")`, g.enumSentinelOffsets[t], encodeI32(t))
+		}
 	}
 	// Bump-allocator initial pointer at offset 40. We seed it past the
 	// end of the strings, rounded up to 4 bytes for i32 access.

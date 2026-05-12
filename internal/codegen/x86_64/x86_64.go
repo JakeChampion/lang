@@ -46,6 +46,7 @@ package x86_64
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -339,11 +340,12 @@ type generator struct {
 	// their hash routine but don't touch strcat / slice) still
 	// link cleanly.
 	usesStrIdx bool
-	// usesOptionNone gates the static `.LOptionNone` sentinel
-	// in .rodata. Programs that never construct Option.None
-	// (relatively rare — most parse/lookup paths return None
-	// on failure) skip the 4-byte symbol entirely.
-	usesOptionNone bool
+	// enumSentinelTags is the set of tag values for which a
+	// shared `[tag=N]` sentinel is referenced. Populated lazily
+	// when OpEnumSentinel emits; one .rodata symbol per unique
+	// tag value gets reserved. Programs that never construct
+	// payloadless enum variants skip the entire block.
+	enumSentinelTags map[int]bool
 	usesStdin           bool
 	// usesRawIntPokes pulls in `__store_i32` / `__load_i32` /
 	// `__store_ptr` / `__load_ptr` / `__ptr_width` — primitives
@@ -1304,13 +1306,17 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emitStrLen("eax", "rax")
 		g.push()
 
-	case ir.OpOptionNone:
-		// Push the address of the shared static Option.None
-		// sentinel. The first 4 bytes of the symbol are 1 (the
-		// None tag), so match / try sites read it correctly
-		// without any consumer-side changes. Zero-alloc None.
-		g.usesOptionNone = true
-		g.emit("lea rax, [rip + .LOptionNone]")
+	case ir.OpEnumSentinel:
+		// Push the address of a shared static `[tag=N]` sentinel.
+		// One symbol per unique tag value, lazily reserved in
+		// .rodata so programs that never construct payloadless
+		// variants pay nothing extra.
+		tag := int(op.I32)
+		if g.enumSentinelTags == nil {
+			g.enumSentinelTags = map[int]bool{}
+		}
+		g.enumSentinelTags[tag] = true
+		g.emit(fmt.Sprintf("lea rax, [rip + .LEnumSentinel_%d]", tag))
 		g.push()
 
 	// -------- direct calls --------
@@ -2045,8 +2051,8 @@ func (g *generator) internString(s string) string {
 // when the allocator isn't pulled in.
 func (g *generator) emitDataSections() {
 	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes
-	needsOptionNone := g.usesOptionNone
-	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsOptionNone {
+	needsEnumSentinels := len(g.enumSentinelTags) > 0
+	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels {
 		g.line("")
 		g.line(".section .rodata")
 		for _, s := range g.stringOrder {
@@ -2080,16 +2086,23 @@ func (g *generator) emitDataSections() {
 			g.label(".LStr_Empty")
 			g.line(`	.asciz ""`)
 		}
-		if needsOptionNone {
-			// Option.None sentinel. Every Option.None construction
-			// returns this address rather than allocating a fresh
-			// 4-byte tag-only box. Byte 0 = 1 (the None tag); the
-			// existing match-on-Option codegen reads this with the
-			// same `mov eax, [ptr + 0]` it does for heap-allocated
-			// Option boxes, so consumers don't need updating.
-			g.line(".align 4")
-			g.label(".LOptionNone")
-			g.line("\t.4byte 1")
+		if needsEnumSentinels {
+			// Per-tag enum sentinels. One 4-byte symbol per
+			// unique tag value referenced by any payloadless-
+			// variant construction (Option.None → tag 1,
+			// IoError.Interrupted → tag 4, etc.). Match / try
+			// sites read `[ptr + 0]` and get the tag, the same
+			// as heap-allocated boxes.
+			tags := make([]int, 0, len(g.enumSentinelTags))
+			for t := range g.enumSentinelTags {
+				tags = append(tags, t)
+			}
+			sort.Ints(tags)
+			for _, t := range tags {
+				g.line(".align 4")
+				g.line(fmt.Sprintf(".LEnumSentinel_%d:", t))
+				g.line(fmt.Sprintf("\t.4byte %d", t))
+			}
 		}
 	}
 	// SSO inline strings ride in a 64-bit register and don't
