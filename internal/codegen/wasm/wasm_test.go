@@ -220,9 +220,10 @@ func TestIndexAssignEmitsStore(t *testing.T) {
 
 // Function-typed parameters trigger a function table, type
 // declarations for the indirect callee's signature, and a
-// call_indirect at the call site. Only functions that are actually
-// referenced as values (`add`) end up in the table; non-value
-// callers (`apply`, `main`) stay out.
+// call_indirect at the call site. With the unified-closure ABI
+// every callable in the table gets an extra `__env` param at
+// the end — pure top-level fns ignore the env slot, hoisted
+// closures read their captured block from it.
 func TestIndirectCallEmitsTable(t *testing.T) {
 	wat := compileToWAT(t, `
 		function add(a: i32, b: i32): i32 { return a + b; }
@@ -230,16 +231,17 @@ func TestIndirectCallEmitsTable(t *testing.T) {
 			return f(a, b);
 		}
 		function main(): i32 { return apply(add, 40, 2); }`)
-	mustContain(t, wat, "(type $t0 (func (param i32) (param i32) (result i32)))")
+	// Three i32 params: a, b, __env. With pre-unified-ABI shape
+	// this was 2 params (no env).
+	mustContain(t, wat, "(type $t0 (func (param i32) (param i32) (param i32) (result i32)))")
 	mustContain(t, wat, "(table $fns 1 funcref)")
 	mustContain(t, wat, "(elem (i32.const 0) $add)")
 	mustContain(t, wat, "call_indirect (type $t0)")
-	// `apply(add, ...)` pushes add's table index (= 0).
-	mustContain(t, wat, "i32.const 0")
 }
 
-// `var f = name` in source becomes an i32.const for the table index;
-// calling f goes through call_indirect.
+// `var f = name` in source becomes a static closure-pair
+// pointer; calling f derefs the pair (fn_idx + env_ptr) and
+// dispatches via call_indirect.
 func TestFunctionValueLocal(t *testing.T) {
 	wat := compileToWAT(t, `
 		function add(a: i32, b: i32): i32 { return a + b; }
