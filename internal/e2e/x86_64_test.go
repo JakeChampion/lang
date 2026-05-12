@@ -1046,6 +1046,60 @@ func TestX86_64ClosureChainNoAlloc(t *testing.T) {
 	}
 }
 
+// Native `use`-callback ABI: function values flowing through a
+// FUNCTION PARAMETER (rather than through a local slot the
+// defunctionalise pass can analyse) used to segfault — the
+// OpCallIndirect handler emitted `call r11` on a closure-pair
+// pointer, jumping into pair data instead of dereferencing
+// fn_ptr from [pair + 0]. This PR uniforms the function-value
+// ABI: OpConstFunc emits a static .rodata closure-pair cell
+// `{fn_ptr, 0}`, and OpCallIndirect derefs every callee through
+// the same pair shape (loading env from [pair + 8] into the
+// next-arg-register past the user args).
+func TestX86_64UseCallback(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"use with no captures", `function tryThing(cb: (i32) => i32): i32 {
+    return cb(42);
+}
+function main(): i32 {
+    use n <- tryThing();
+    return n;
+}`, 42},
+		{"use with capture", `function each(items: i32[], cb: (i32) => i32): i32 {
+    return cb(items[0]);
+}
+function main(): i32 {
+    var n: i32 = 10;
+    function addN(x: i32): i32 { return x + n; }
+    return each([5], addN);
+}`, 15},
+		{"top-level fn passed as callback", `function step(x: i32): i32 { return x + 1; }
+function tryThing(cb: (i32) => i32): i32 {
+    return cb(42);
+}
+function main(): i32 {
+    return tryThing(step);
+}`, 43},
+		{"generic callee with use inference", `function each[T](items: T[], cb: (T) => i32): i32 {
+    return cb(items[0]);
+}
+function main(): i32 {
+    var nums: i32[] = [10, 20, 30];
+    use n <- each(nums);
+    return n + 1;
+}`, 11},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestX86_64ClosureAliasing(t *testing.T) {
 	for _, c := range []struct {
 		name string
