@@ -2927,7 +2927,7 @@ func TestWASMFloatMultiplyAndDivide(t *testing.T) {
 }
 
 func TestWASMFloatNegate(t *testing.T) {
-	src := `function f(x: float): float { return -x; }
+	src := `function f(x: f32): f32 { return -x; }
 		function main(): i32 {
 			if (f(3.5) == -3.5) { return 1; }
 			return 0;
@@ -4449,7 +4449,7 @@ func TestWASMRandomBytes(t *testing.T) {
 }
 
 func TestWASMOptionFloatPayload(t *testing.T) {
-	src := `function pick(): Option[float] { return Some(3.14); }
+	src := `function pick(): Option[f32] { return Some(3.14); }
 		function main(): i32 {
 			match (pick()) {
 				Some(v) => { if (v > 3.0) { return 1; } return 2; },
@@ -4462,12 +4462,12 @@ func TestWASMOptionFloatPayload(t *testing.T) {
 	}
 }
 
-// Result[float, string] — Ok carries an f32 payload through the
-// heap. Same fix path as Option[float], but with a
+// Result[f32, string] — Ok carries an f32 payload through the
+// heap. Same fix path as Option[f32], but with a
 // non-payload-less variant on each arm so the test covers a
 // realistic two-typed-parameter shape.
 func TestWASMResultFloatOk(t *testing.T) {
-	src := `function check(x: float): Result[float, string] {
+	src := `function check(x: f32): Result[f32, string] {
 			if (x < 0.0) { return Err("negative"); }
 			return Ok(x);
 		}

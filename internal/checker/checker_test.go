@@ -150,7 +150,7 @@ func TestBuiltinPutchar(t *testing.T) {
 }
 
 func TestFloatArithmeticIsFlagged(t *testing.T) {
-	prog, err := parser.Parse(`function f(x: float, y: float): float { return x + y; }`)
+	prog, err := parser.Parse(`function f(x: f32, y: f32): f32 { return x + y; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,10 +165,10 @@ func TestFloatArithmeticIsFlagged(t *testing.T) {
 
 func TestFloatArithmeticTypechecks(t *testing.T) {
 	for _, src := range []string{
-		`function f(x: float): float { return x + 1.5; }`,
-		`function f(x: float): float { return x * 2.0 - 0.5; }`,
-		`function f(x: float, y: float): boolean { return x < y; }`,
-		`function f(x: float): float { return -x; }`,
+		`function f(x: f32): f32 { return x + 1.5; }`,
+		`function f(x: f32): f32 { return x * 2.0 - 0.5; }`,
+		`function f(x: f32, y: f32): boolean { return x < y; }`,
+		`function f(x: f32): f32 { return -x; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -181,9 +181,9 @@ func TestFloatRejectsMixedArithmetic(t *testing.T) {
 		// Concrete-int variable + float literal still errors —
 		// no implicit widening from i32 to float. The user must
 		// cast: `(x as float) + 1.5`.
-		`function f(x: i32): float { return x + 1.5; }`,
+		`function f(x: i32): f32 { return x + 1.5; }`,
 		// `%` is integer-only.
-		`function f(x: float): float { return x % 1.0; }`,
+		`function f(x: f32): f32 { return x % 1.0; }`,
 	}
 	for _, src := range cases {
 		if err := checkSource(t, src); err == nil {
@@ -200,7 +200,7 @@ func TestFloatRejectsMixedArithmetic(t *testing.T) {
 // the cross-class int-literal → float-context promotion.
 func TestPolyIntLiteralPromotesToFloat(t *testing.T) {
 	cases := []string{
-		`function f(x: float): float { return x + 1; }`,
+		`function f(x: f32): f32 { return x + 1; }`,
 		`function f(x: f32): f32 { return x * 2; }`,
 		`function f(x: f64): f64 { return x - 100; }`,
 		`function f(x: f32): boolean { return x <= 0; }`,
@@ -349,7 +349,7 @@ func TestSwitchRejectsTypeMismatchedCase(t *testing.T) {
 }
 
 func TestSwitchRejectsFloatTag(t *testing.T) {
-	src := `function f(x: float): i32 {
+	src := `function f(x: f32): i32 {
 		switch (x) { case 1.0: return 1; default: return 0; }
 	}`
 	if err := checkSource(t, src); err == nil {
@@ -379,7 +379,7 @@ func TestContinueInSwitchOutsideLoopRejected(t *testing.T) {
 func TestIfExprTypechecks(t *testing.T) {
 	for _, src := range []string{
 		`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`,
-		`function f(b: boolean): float { return if (b) { 1.5 } else { 2.5 }; }`,
+		`function f(b: boolean): f32 { return if (b) { 1.5 } else { 2.5 }; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)

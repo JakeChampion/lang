@@ -189,7 +189,7 @@ func TestLowerShortCircuitAnd(t *testing.T) {
 }
 
 func TestLowerFloatArithmetic(t *testing.T) {
-	p := lowerSource(t, `function f(): float { return 1.5 + 2.5; }`)
+	p := lowerSource(t, `function f(): f32 { return 1.5 + 2.5; }`)
 	mustContainOp(t, p, "f", OpFAdd)
 	mustContainOp(t, p, "f", OpConstF32)
 }

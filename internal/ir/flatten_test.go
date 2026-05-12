@@ -32,7 +32,7 @@ func TestFlattenIfReturnAndTrailingReturn(t *testing.T) {
 // validator knows what each arm pushes. Float-returning function
 // gets `if (result f32)`.
 func TestFlattenPreservesReturnType(t *testing.T) {
-	p := lowerSource(t, `function f(n: i32): float {
+	p := lowerSource(t, `function f(n: i32): f32 {
 		if (n == 0) { return 1.5; }
 		return 2.5;
 	}`)

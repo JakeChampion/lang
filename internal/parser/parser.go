@@ -784,7 +784,7 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "f64":
 		p.advance()
 		base = ast.FloatType{Width: 64, Spelling: t.Text}
-	case t.Kind == lexer.Keyword && (t.Text == "float" || t.Text == "f32"):
+	case t.Kind == lexer.Keyword && t.Text == "f32":
 		p.advance()
 		base = ast.FloatType{Spelling: t.Text}
 	case t.Kind == lexer.Keyword && t.Text == "boolean":
