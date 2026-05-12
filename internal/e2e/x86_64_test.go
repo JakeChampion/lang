@@ -1532,6 +1532,67 @@ function main(): i32 {
 	}
 }
 
+// Wide-scalar `Map[K, V]` works on natives even though the
+// prelude's `__map_*_impl` functions declare K + V as `i32`:
+// the native operand stack uses 8-byte slots so i64 / f64
+// values flow through the i32-typed prelude params without
+// truncation, and `__store_ptr` / `__load_ptr` (now usize-
+// typed since PR #315) push 8 bytes through.
+//
+// Wasm32 needs proper per-instantiation dispatch — its typed
+// stack rejects the i32 / i64 mismatch at component-validation
+// time. Tracked in BACKEND-PARITY.md as a wasm-only limitation.
+func TestX86_64WideScalarMap(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"Map[i64, i32]", `function main(): i32 {
+    var m: Map[i64, i32] = map_new(4);
+    m.set(1i64, 100);
+    return m.get_or(1i64, 0);
+}`, 100},
+		{"Map[i32, f64]", `function main(): i32 {
+    var m: Map[i32, f64] = map_new(4);
+    m.set(1, 3.14);
+    return m.get_or(1, 0.0) as i32;
+}`, 3},
+		{"Map[i64, string]", `function main(): i32 {
+    var m: Map[i64, string] = map_new(4);
+    m.set(1i64, "hello");
+    return len(m.get_or(1i64, ""));
+}`, 5},
+		{"Map[string, i64]", `function main(): i32 {
+    var m: Map[string, i64] = map_new(4);
+    m.set("hello", 42i64);
+    return m.get_or("hello", 0i64) as i32;
+}`, 42},
+		{"Map[u64, i32]", `function main(): i32 {
+    var m: Map[u64, i32] = map_new(4);
+    m.set(1u64, 100);
+    return m.get_or(1u64, 0);
+}`, 100},
+		{"distinct high-bit i64 keys", `function main(): i32 {
+    var m: Map[i64, i32] = map_new(8);
+    var k1: i64 = 0i64;
+    var k2: i64 = 1i64 << 33i64;
+    m.set(k1, 1);
+    m.set(k2, 2);
+    var v1: i32 = m.get_or(k1, 99);
+    var v2: i32 = m.get_or(k2, 99);
+    // Sum signals correct separation: v1=1, v2=2 → 3.
+    // Coincident-collision would give v1=v2 → 2 or 4.
+    return v1 + v2;
+}`, 3},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
 func TestX86_64Usize(t *testing.T) {
 	for _, c := range []struct {
 		name string

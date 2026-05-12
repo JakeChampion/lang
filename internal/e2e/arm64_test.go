@@ -1872,6 +1872,60 @@ function main(): i32 {
 	}
 }
 
+// Mirror of TestX86_64WideScalarMap. Native arm64 (Linux qemu)
+// shares the slot-wider-than-declared-type coincidence with
+// x86-64 — i64 / f64 / u64 keys + values flow through the
+// `(m: i32, k: i32, v: i32)` prelude signatures without
+// truncation.
+func TestArm64WideScalarMap(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"Map[i64, i32]", `function main(): i32 {
+    var m: Map[i64, i32] = map_new(4);
+    m.set(1i64, 100);
+    return m.get_or(1i64, 0);
+}`, 100},
+		{"Map[i32, f64]", `function main(): i32 {
+    var m: Map[i32, f64] = map_new(4);
+    m.set(1, 3.14);
+    return m.get_or(1, 0.0) as i32;
+}`, 3},
+		{"Map[i64, string]", `function main(): i32 {
+    var m: Map[i64, string] = map_new(4);
+    m.set(1i64, "hello");
+    return len(m.get_or(1i64, ""));
+}`, 5},
+		{"Map[string, i64]", `function main(): i32 {
+    var m: Map[string, i64] = map_new(4);
+    m.set("hello", 42i64);
+    return m.get_or("hello", 0i64) as i32;
+}`, 42},
+		{"Map[u64, i32]", `function main(): i32 {
+    var m: Map[u64, i32] = map_new(4);
+    m.set(1u64, 100);
+    return m.get_or(1u64, 0);
+}`, 100},
+		{"distinct high-bit i64 keys", `function main(): i32 {
+    var m: Map[i64, i32] = map_new(8);
+    var k1: i64 = 0i64;
+    var k2: i64 = 1i64 << 33i64;
+    m.set(k1, 1);
+    m.set(k2, 2);
+    var v1: i32 = m.get_or(k1, 99);
+    var v2: i32 = m.get_or(k2, 99);
+    return v1 + v2;
+}`, 3},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
 func TestArm64Usize(t *testing.T) {
 	for _, c := range []struct {
 		name string
