@@ -969,3 +969,65 @@ func TestGenericEnumArityChecked(t *testing.T) {
 		t.Error("expected arity error: Pair has 2 type params, 1 supplied")
 	}
 }
+
+// `use n <- generic_fn(args...);` must infer `n`'s type by
+// solving the callee's type parameters from the args, then
+// applying the substitution to the callback's first param.
+// Previously the checker stamped the raw parameter type
+// straight onto `n` — which left it as `T` for generic
+// callees, breaking subsequent uses like `n + 1`.
+func TestUseInfersBindingTypeFromGenericCallee(t *testing.T) {
+	src := `function each[T](items: T[], cb: (T) => i32): i32 {
+    return cb(items[0]);
+}
+function main(): i32 {
+    var nums: i32[] = [10, 20, 30];
+    use n <- each(nums);
+    return n + 1;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("expected generic-callee inference to succeed, got: %v", err)
+	}
+}
+
+// Generic inference works through enum-typed args too — e.g.
+// when the callback takes the unwrapped payload of an
+// `Option[T]` arg, T is resolved by unifying the actual
+// Option[i32] arg against the param `Option[T]`.
+func TestUseInfersFromEnumPayloadGeneric(t *testing.T) {
+	src := `function try_opt[T](opt: Option[T], cb: (T) => i32): i32 {
+    if let Some(v) = opt { return cb(v); }
+    return 0;
+}
+function main(): i32 {
+    var x: Option[i32] = Some(7);
+    use n <- try_opt(x);
+    return n + 1;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("expected Option[T] inference to succeed, got: %v", err)
+	}
+}
+
+// When inference can't pin every relevant type parameter
+// (the callback's first param references a T that doesn't
+// appear in any non-callback parameter position), the
+// checker must reject the `use` rather than silently
+// stamping the unresolved ParamType — which would cascade
+// into confusing type errors at every use of the binding.
+func TestUseRejectsUninferableGenericCallee(t *testing.T) {
+	src := `function mystery[T](cb: (T) => i32): i32 {
+    return 0;
+}
+function main(): i32 {
+    use n <- mystery();
+    return n;
+}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("expected error for uninferable T")
+	}
+	if !strings.Contains(err.Error(), "could not infer") {
+		t.Errorf("expected 'could not infer' error, got: %v", err)
+	}
+}
