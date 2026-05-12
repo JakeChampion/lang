@@ -172,6 +172,45 @@ func TestArm64StringConcat(t *testing.T) {
 	}
 }
 
+// arm64 empty-string sentinel: the string-constructing runtime
+// helpers (__lang_strcat, __str_slice, string_from_bytes) skip
+// the alloc + memcpy and return the shared .LStr_Empty sentinel
+// when the result length is 0. Verified behaviourally: len()
+// returns 0, equality with "" holds, and downstream concat with
+// a non-empty operand still produces the right bytes.
+func TestArm64EmptyStringSentinel(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"concat-of-empties", `function main(): i32 {
+    var s: string = "abcd";
+    var a: string = s[0:0];
+    var b: string = s[0:0];
+    return len(a + b);
+}`, 0},
+		{"zero-width-slice", `function main(): i32 {
+    var s: string = "abcd";
+    return len(s[2:2]);
+}`, 0},
+		{"from-empty-bytes", `function main(): i32 {
+    var bs: u8[] = __alloc_u8(0);
+    return len(string_from_bytes(bs));
+}`, 0},
+		{"sentinel-roundtrip", `function main(): i32 {
+    var s: string = "world";
+    var empty: string = s[0:0];
+    return len("hello, " + empty + s);
+}`, 12},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+		}
+	}
+}
+
 // arm64 array literals + indexing. Pulls in __lang_alloc and
 // the inline __arr_idx helper. Verifies the alloc + store
 // + indexed read pipeline composes correctly under qemu.

@@ -373,6 +373,23 @@ func (g *generator) emitStrLenStoreToLocal(lenLocal, dstLocal string) {
 	g.line("i32.store")
 }
 
+// emitStrEmpty pushes the data pointer of the canonical empty-string
+// sentinel onto the operand stack. The sentinel lives in linear
+// memory's string pool as a length-prefixed string with length=0,
+// shared across all callers and the entire program lifetime.
+// internString("") is reused so we don't duplicate the entry when
+// user code already references an empty literal. Used by the string-
+// constructing runtime helpers ($__str_concat, $__str_slice,
+// $string_from_bytes) to short-circuit the alloc + memory.copy +
+// length-store sequence when the result is zero bytes — the helpers
+// already round-trip through emitStrLenStoreToLocal /
+// emitStrLenFromLocal, so the returned pointer is indistinguishable
+// from a freshly allocated 0-length string. Third member of the SSO
+// helper family.
+func (g *generator) emitStrEmpty() {
+	g.linef("i32.const %d", g.internString(""))
+}
+
 // envParamPresent reports whether fn already carries the synthetic
 // `__env` parameter that closure conversion appends to hoisted local
 // functions. Top-level functions don't carry it natively; we add the
@@ -2243,6 +2260,18 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $lb`)
 		g.line(`i32.add`)
 		g.line(`local.set $total`)
+		// Short-circuit on total == 0: return the shared empty-
+		// string sentinel rather than allocating a 0-byte buffer.
+		// The sentinel round-trips through emitStrLenFromLocal
+		// as 0, so callers can't tell the difference.
+		g.line(`local.get $total`)
+		g.line(`i32.eqz`)
+		g.line(`if`)
+		g.indent++
+		g.emitStrEmpty()
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
 		// dst = __lang_alloc(total + 4) + 4
 		g.line(`local.get $total`)
 		g.line(`i32.const 4`)
@@ -2565,6 +2594,16 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $low`)
 		g.line(`i32.sub`)
 		g.line(`local.set $new_len`)
+		// Short-circuit on new_len == 0: return the shared empty-
+		// string sentinel without allocating.
+		g.line(`local.get $new_len`)
+		g.line(`i32.eqz`)
+		g.line(`if`)
+		g.indent++
+		g.emitStrEmpty()
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
 		// out = alloc(4 + new_len) + 4   (out is the data ptr)
 		g.line(`local.get $new_len`)
 		g.line(`i32.const 4`)
@@ -2608,6 +2647,16 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.sub`)
 		g.line(`i32.load`)
 		g.line(`local.set $bLen`)
+		// Short-circuit on bLen == 0: return the shared empty-
+		// string sentinel rather than allocating.
+		g.line(`local.get $bLen`)
+		g.line(`i32.eqz`)
+		g.line(`if`)
+		g.indent++
+		g.emitStrEmpty()
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
 		// out = __lang_alloc(bLen + 4) + 4   (data ptr)
 		g.line(`local.get $bLen`)
 		g.line(`i32.const 4`)
@@ -5899,8 +5948,16 @@ func (g *generator) emitDataSegments() {
 		if start < 64 {
 			start = 64
 		}
-		if start%4 != 0 {
-			start += 4 - (start % 4)
+		// Round to 8-byte alignment so allocations satisfy the
+		// canonical-ABI `cabi_realloc(..., align=8, ...)` calls the
+		// WASI preview1 adapter makes (it expects 8-aligned regions
+		// for the host→guest string-list materialisation). 4-aligned
+		// happened to work for any program whose string pool ended
+		// at a multiple of 8; once SSO's empty-string sentinel
+		// added 4 bytes to that pool, 4-byte-aligned starts (e.g.
+		// 132) started breaking get-arguments.
+		if start%8 != 0 {
+			start += 8 - (start % 8)
 		}
 		if g.needsPersistent {
 			persistentStart := start

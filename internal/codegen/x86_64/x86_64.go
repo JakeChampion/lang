@@ -1539,6 +1539,21 @@ func (g *generator) emitStrLenStore(srcReg, dstReg string) {
 	g.emit(fmt.Sprintf("mov [%s - 4], %s", dstReg, srcReg))
 }
 
+// emitStrEmpty materialises the data pointer of the canonical
+// empty-string sentinel into dstReg. The sentinel lives in
+// .rodata as a length-prefixed string with length=0, shared
+// across all callers and the program lifetime. Used by the
+// string-constructing runtime helpers (strcat / str_slice /
+// string_from_bytes) to short-circuit the alloc + memcpy +
+// length-store sequence when the result is zero bytes — the
+// helpers already round-trip through emitStrLenStore /
+// emitStrLen, so the returned pointer is indistinguishable from
+// a freshly allocated 0-length string. Third member of the SSO
+// helper family.
+func (g *generator) emitStrEmpty(dstReg string) {
+	g.emit(fmt.Sprintf("lea %s, [rip + .LStr_Empty]", dstReg))
+}
+
 // emitCallArgsLoad places `argc` operand-stack values into
 // System V argument slots. First 6 args go to rdi/rsi/rdx/rcx/
 // r8/r9; the rest land on the call stack at [rsp+0], [rsp+8],
@@ -1827,7 +1842,8 @@ func (g *generator) internString(s string) string {
 // unused programs pay nothing — `.bss` is omitted entirely
 // when the allocator isn't pulled in.
 func (g *generator) emitDataSections() {
-	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint {
+	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes
+	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty {
 		g.line("")
 		g.line(".section .rodata")
 		for _, s := range g.stringOrder {
@@ -1847,6 +1863,19 @@ func (g *generator) emitDataSections() {
 			// string literals so the loader maps it read-only.
 			g.label(".LLangNewline")
 			g.line(`	.asciz "\n"`)
+		}
+		if needsEmpty {
+			// Empty-string sentinel. String-constructing runtime
+			// helpers (__lang_strcat, __str_slice,
+			// string_from_bytes) skip the alloc + memcpy when the
+			// result is zero bytes and return this static data
+			// pointer instead. Layout matches a length-prefixed
+			// string with length=0; the pointer addresses the
+			// data byte (which is just a trailing NUL).
+			g.line(".align 4")
+			g.line("\t.4byte 0")
+			g.label(".LStr_Empty")
+			g.line(`	.asciz ""`)
 		}
 	}
 	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter {
@@ -2037,6 +2066,16 @@ func (g *generator) emitStrcatRuntime() {
 	// String lengths via the centralised helper.
 	g.emitStrLen("r14d", "r12")
 	g.emitStrLen("r15d", "r13")
+	// Short-circuit on combined length == 0: return the shared
+	// empty-string sentinel without allocating a fresh 0-byte
+	// buffer. The sentinel round-trips through emitStrLen as 0,
+	// so callers can't tell the difference.
+	g.emit("mov eax, r14d")
+	g.emit("or eax, r15d")
+	g.emit("jnz .Lstrcat_alloc")
+	g.emitStrEmpty("rax")
+	g.emit("jmp .Lstrcat_ret")
+	g.label(".Lstrcat_alloc")
 	// alloc(la + lb + 5) — 4 prefix + N data + 1 NUL.
 	g.emit("lea rdi, [r14 + r15 + 5]")
 	g.emit("call __lang_alloc")
@@ -2063,6 +2102,7 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("add rdi, r15")
 	g.emit("mov byte ptr [rdi], 0")
 	g.emit("mov rax, rbx")
+	g.label(".Lstrcat_ret")
 	g.emit("add rsp, 8")
 	g.emit("pop r15")
 	g.emit("pop r14")
@@ -2773,18 +2813,26 @@ func (g *generator) emitStringFromBytesRuntime() {
 	// under future SSO; conflating them would collapse the
 	// seam emitStrLen establishes.
 	g.emit("mov r12d, [rbx - 4]") // length
+	// Short-circuit on input length == 0: return the shared
+	// empty-string sentinel without allocating a fresh 0-byte
+	// buffer.
+	g.emit("test r12d, r12d")
+	g.emit("jnz .Lsfb_alloc")
+	g.emitStrEmpty("rax")
+	g.emit("jmp .Lsfb_ret")
+	g.label(".Lsfb_alloc")
 	g.emit("lea edi, [r12 + 4]")
 	g.emit("call __lang_alloc")
 	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r12d", "rdi") // length prefix
 	g.emit("mov rsi, rbx")
 	g.emit("mov rdx, r12")
-	g.emit("push rax")
+	g.emit("push rdi")            // save data ptr across memcpy
 	g.emit("sub rsp, 8")          // align
 	g.emit("call __lang_memcpy")
 	g.emit("add rsp, 8")
-	g.emit("pop rax")
-	g.emit("lea rax, [rax + 4]")
+	g.emit("pop rax")             // rax = data ptr (return value)
+	g.label(".Lsfb_ret")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
@@ -2823,18 +2871,26 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("mov rax, r13")
 	g.emit("sub rax, r12")
 	g.emit("mov r14, rax") // r14 = new_len
+	// Short-circuit on new_len == 0: return the shared empty-
+	// string sentinel rather than allocating a fresh 0-byte
+	// buffer.
+	g.emit("test r14, r14")
+	g.emit("jnz .Lstrslice_alloc")
+	g.emitStrEmpty("rax")
+	g.emit("jmp .Lstrslice_ret")
+	g.label(".Lstrslice_alloc")
 	g.emit("lea edi, [r14 + 4]")
 	g.emit("call __lang_alloc")
 	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r14d", "rdi") // length prefix
 	g.emit("lea rsi, [rbx + r12]") // src = base + low
 	g.emit("mov rdx, r14")
-	g.emit("push rax")
+	g.emit("push rdi")              // save data ptr
 	g.emit("sub rsp, 8") // align
 	g.emit("call __lang_memcpy")
 	g.emit("add rsp, 8")
-	g.emit("pop rax")
-	g.emit("lea rax, [rax + 4]")
+	g.emit("pop rax")               // rax = data ptr
+	g.label(".Lstrslice_ret")
 	g.emit("add rsp, 8")
 	g.emit("pop r14")
 	g.emit("pop r13")
