@@ -390,6 +390,31 @@ func (g *generator) emitStrEmpty() {
 	g.linef("i32.const %d", g.internString(""))
 }
 
+// emitArrayLenFromLocal emits a sequence that loads the i32 length
+// of the length-prefixed array whose data pointer lives in `local`.
+// Today this is a 4-byte little-endian load from `[local - 4]`.
+// Centralised seam for arrays, parallel to emitStrLenFromLocal.
+// Stays distinct because arrays may diverge from strings under
+// future layout changes.
+func (g *generator) emitArrayLenFromLocal(local string) {
+	g.linef("local.get %s", local)
+	g.line("i32.const 4")
+	g.line("i32.sub")
+	g.line("i32.load")
+}
+
+// emitArrayLenStoreToLocal writes the i32 length in `lenLocal` to
+// the 4-byte little-endian length prefix at `[dstLocal - 4]`,
+// where dstLocal holds the new array's *data pointer*. Inverse
+// of emitArrayLenFromLocal.
+func (g *generator) emitArrayLenStoreToLocal(lenLocal, dstLocal string) {
+	g.linef("local.get %s", dstLocal)
+	g.line("i32.const 4")
+	g.line("i32.sub")
+	g.linef("local.get %s", lenLocal)
+	g.line("i32.store")
+}
+
 // envParamPresent reports whether fn already carries the synthetic
 // `__env` parameter that closure conversion appends to hoisted local
 // functions. Top-level functions don't carry it natively; we add the
@@ -2353,12 +2378,11 @@ func (g *generator) emitRuntimePreamble() {
 		// prefix). Stride differs (4 for arrays, 1 for strings) so we
 		// emit two specialised helpers rather than threading a stride
 		// argument.
-		//
-		// The length-prefix loads below (`base; const 4; sub; load`)
-		// are deliberately NOT routed through emitStrLenFromLocal.
-		// These read ARRAY lengths, not string lengths — arrays may
-		// diverge from strings under future SSO so the two seams
-		// stay separate.
+		// Array bounds-check length reads go through
+		// emitArrayLenFromLocal — the array seam parallels the
+		// string seam (emitStrLenFromLocal) but stays distinct
+		// so arrays can diverge from strings under future layout
+		// changes (inline u8[] / typed-element headers / etc).
 		g.line(`(func $__arr_idx (param $base i32) (param $i i32) (result i32)`)
 		g.indent++
 		g.line(`local.get $i`)
@@ -2370,10 +2394,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`end`)
 		g.line(`local.get $i`)
-		g.line(`local.get $base`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		g.emitArrayLenFromLocal("$base")
 		g.line(`i32.ge_u`)
 		g.line(`if`)
 		g.indent++
@@ -2427,10 +2448,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`end`)
 		g.line(`local.get $i`)
-		g.line(`local.get $base`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		g.emitArrayLenFromLocal("$base")
 		g.line(`i32.ge_u`)
 		g.line(`if`)
 		g.indent++
@@ -2456,10 +2474,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`end`)
 		g.line(`local.get $i`)
-		g.line(`local.get $base`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		g.emitArrayLenFromLocal("$base")
 		g.line(`i32.ge_u`)
 		g.line(`if`)
 		g.indent++
@@ -2639,13 +2654,10 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(func $string_from_bytes (param $bs i32) (result i32)`)
 		g.indent++
 		g.line(`(local $bLen i32) (local $out i32)`)
-		// Array-length read — deliberately NOT routed through
-		// emitStrLenFromLocal. The input is u8[] and arrays may
-		// diverge from strings under future SSO.
-		g.line(`local.get $bs`)
-		g.line(`i32.const 4`)
-		g.line(`i32.sub`)
-		g.line(`i32.load`)
+		// Input u8[] length via the array seam — distinct from
+		// the string-side emitStrLenFromLocal so the two layouts
+		// can diverge under future array-only changes.
+		g.emitArrayLenFromLocal("$bs")
 		g.line(`local.set $bLen`)
 		// Short-circuit on bLen == 0: return the shared empty-
 		// string sentinel rather than allocating.
@@ -3272,19 +3284,12 @@ func (g *generator) emitArgsHelper() {
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
-	g.line(`local.set $result`)
-	// Array (string[]) length-prefix store — deliberately NOT
-	// routed through emitStrLenStoreToLocal. The outer container
-	// is a string[] and arrays may diverge from strings under
-	// future SSO. The per-entry string stores below DO go through
-	// the helper.
-	g.line(`local.get $result`)
-	g.line(`local.get $argc`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
-	g.line(`local.set $result`)
+	g.line(`local.set $result`) // $result = data ptr (one past prefix)
+	// Outer string[] container length via the array seam (per-
+	// entry string stores in the loop below use emitStrLenStoreToLocal).
+	g.emitArrayLenStoreToLocal("$argc", "$result")
 
 	// For each argv entry: walk the C string to find its length,
 	// allocate a fresh length-prefixed buffer, copy the bytes, and
@@ -3983,25 +3988,21 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.line(`(func $__alloc_u8 (param $n i32) (result i32)`)
 	g.indent++
 	g.line(`(local $base i32)`)
-	// Allocate n + 4 bytes (length prefix + payload).
+	// Allocate n + 4 bytes (length prefix + payload). $base is
+	// the data pointer (one past the length prefix).
 	g.line(`local.get $n`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
 	g.line(`local.set $base`)
-	// Array length-prefix store — deliberately NOT routed
-	// through emitStrLenStoreToLocal. __alloc_u8 returns u8[]
-	// and arrays may diverge from strings under future SSO.
-	g.line(`local.get $base`)
-	g.line(`local.get $n`)
-	g.line(`i32.store`)
+	g.emitArrayLenStoreToLocal("$n", "$base")
 	// __lang_alloc memory comes from a freshly bumped region
 	// that wasm initialises to zero, so the payload bytes are
 	// already 0; no explicit memset needed.
-	// Return the user-visible pointer (data, not header).
+	// Return the data pointer (already past the length prefix).
 	g.line(`local.get $base`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.indent--
 	g.line(`)`)
 
