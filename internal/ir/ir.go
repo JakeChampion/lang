@@ -76,6 +76,15 @@ const (
 	OpITruncF32   // (f32) → i32 / i64; Width=32 → i32, =64 → i64
 	OpITruncF64   // (f64) → i32 / i64; Width=32 → i32, =64 → i64
 
+	// Bit-level reinterpret between f32 and i32 (no value
+	// conversion). Lowers the `f32_bits` / `f32_from_bits`
+	// builtins. On the native backends the operand stack
+	// stores both as raw 32-bit slots so these emit zero
+	// instructions; wasm distinguishes typed stack slots and
+	// needs `i32.reinterpret_f32` / `f32.reinterpret_i32`.
+	OpReinterpretI32F32 // (f32) → i32 (bits, IEEE-754 layout)
+	OpReinterpretF32I32 // (i32) → f32 (bits, IEEE-754 layout)
+
 	// Locals (parameter or var). Idx is the 0-based slot.
 	OpLoadLocal  // ()                → T
 	OpStoreLocal // (T)               → ()
@@ -292,6 +301,10 @@ func (k OpKind) String() string {
 		return "trunc.f32"
 	case OpITruncF64:
 		return "trunc.f64"
+	case OpReinterpretI32F32:
+		return "i32.reinterpret_f32"
+	case OpReinterpretF32I32:
+		return "f32.reinterpret_i32"
 	case OpConstStr:
 		return "const.str"
 	case OpConstFunc:
@@ -3079,6 +3092,25 @@ func (b *builder) callBody(n *ast.Call) error {
 	// method.
 	if id.Name == "__method_Array_push" && len(n.Args) == 2 && len(n.TypeArgs) == 1 {
 		return b.emitArrayPush(n)
+	}
+	// f32_bits / f32_from_bits: bit-level reinterpret between
+	// i32 and f32. On native backends the bits stay put on the
+	// operand stack so OpReinterpret* compiles to zero
+	// instructions; wasm's typed stack needs a real
+	// `i32.reinterpret_f32` / `f32.reinterpret_i32` op so the
+	// stack-type changes. Either way the call disappears.
+	if (id.Name == "f32_bits" || id.Name == "f32_from_bits") && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			if err := b.expr(n.Args[0]); err != nil {
+				return err
+			}
+			if id.Name == "f32_bits" {
+				b.emit(Op{Kind: OpReinterpretI32F32})
+			} else {
+				b.emit(Op{Kind: OpReinterpretF32I32})
+			}
+			return nil
+		}
 	}
 	// `m.values()` on `Map[K, V]` where V is wide (i64 / u64 /
 	// f64). Narrow V falls through to the normal

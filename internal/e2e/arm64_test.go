@@ -1849,6 +1849,58 @@ function main(): i32 {
 // Unsigned-flagged variants route through them and produce
 // correct results for values above the signed boundary
 // (u32 > 2^31; u64 > 2^63).
+// Mirror of TestX86_64FloatBitCast. Doubles as a regression
+// test for the OpConstF32 emit-form fix in this PR — every
+// non-zero f32 const here had a bit pattern > 16 bits, which
+// the old `mov x0, #<imm>` form rejected (the literal-pool
+// `ldr x0, =<imm>` form now lifts that limit).
+func TestArm64FloatBitCast(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"round-trip 1.0", `function main(): i32 {
+    var x: f32 = 1.0;
+    var b: i32 = f32_bits(x);
+    var y: f32 = f32_from_bits(b);
+    if (y == x) { return 0; }
+    return 1;
+}`, 0},
+		{"round-trip 3.14", `function main(): i32 {
+    var x: f32 = 3.14;
+    var b: i32 = f32_bits(x);
+    var y: f32 = f32_from_bits(b);
+    if (y == x) { return 0; }
+    return 1;
+}`, 0},
+		{"1.0 bits = 0x3F800000", `function main(): i32 {
+    if (f32_bits(1.0) == 1065353216) { return 0; }
+    return 1;
+}`, 0},
+		{"sign-bit preserved through round-trip", `function main(): i32 {
+    var neg: f32 = 0.0 - 1.0;
+    var b: i32 = f32_bits(neg);
+    var back: f32 = f32_from_bits(b);
+    if (back == neg) { return 0; }
+    return 1;
+}`, 0},
+		// arm64's hardware `fneg` already does sign-bit XOR
+		// (preserving -0.0); this pins parity with x86_64's
+		// OpFNeg fix in the same PR.
+		{"-0.0 bits = sign bit", `function main(): i32 {
+    var bits_u: u32 = f32_bits(-0.0) as u32;
+    if (bits_u == 2147483648 as u32) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		_, code := compileAndRunArm64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestArm64UnsignedFloatConv(t *testing.T) {
 	for _, c := range []struct {
 		name string

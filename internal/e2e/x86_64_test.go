@@ -1586,6 +1586,60 @@ function main(): i32 {
 //     path halves, converts, then doubles).
 //   - f → u64: 2-step trick — if f >= 2^63, subtract 2^63, do a
 //     signed cvtt, then `btc rax, 63` adds 2^63 back.
+// f32_bits / f32_from_bits expose IEEE-754 bit patterns
+// without value conversion. Both round-trip (float → bits →
+// float) and exact-bit-pattern (1.0 → 0x3F800000) must agree
+// across all backends. Needed by float formatters that pick
+// apart sign / exponent / mantissa fields.
+func TestX86_64FloatBitCast(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"round-trip 1.0", `function main(): i32 {
+    var x: f32 = 1.0;
+    var b: i32 = f32_bits(x);
+    var y: f32 = f32_from_bits(b);
+    if (y == x) { return 0; }
+    return 1;
+}`, 0},
+		{"round-trip 3.14", `function main(): i32 {
+    var x: f32 = 3.14;
+    var b: i32 = f32_bits(x);
+    var y: f32 = f32_from_bits(b);
+    if (y == x) { return 0; }
+    return 1;
+}`, 0},
+		{"1.0 bits = 0x3F800000", `function main(): i32 {
+    if (f32_bits(1.0) == 1065353216) { return 0; }
+    return 1;
+}`, 0},
+		{"sign-bit preserved through round-trip", `function main(): i32 {
+    var neg: f32 = 0.0 - 1.0;
+    var b: i32 = f32_bits(neg);
+    var back: f32 = f32_from_bits(b);
+    if (back == neg) { return 0; }
+    return 1;
+}`, 0},
+		// Regression pin for the OpFNeg fix. The old shape
+		// emitted `0.0 - x`, which folded `-0.0` to `+0.0`
+		// per IEEE-754. The sign-bit-XOR shape used here
+		// preserves negative zero, so `f32_bits(-0.0)` is
+		// the expected 0x80000000.
+		{"-0.0 bits = sign bit", `function main(): i32 {
+    var bits_u: u32 = f32_bits(-0.0) as u32;
+    if (bits_u == 2147483648 as u32) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 func TestX86_64UnsignedFloatConv(t *testing.T) {
 	for _, c := range []struct {
 		name string

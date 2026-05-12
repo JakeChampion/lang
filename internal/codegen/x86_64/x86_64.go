@@ -853,21 +853,23 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		}
 		g.push()
 	case ir.OpFNeg:
-		// Negate via subtract-from-zero. `xorps xmm0, xmm0`
-		// gives a zero float; the subtract flips the sign.
-		// Avoids the sign-bit-XOR variant which would need
-		// a mask constant.
+		// Flip the sign bit directly. The earlier `0 - x`
+		// shape lost negative zero — `0.0 - 0.0` is `+0.0`
+		// per IEEE-754, not `-0.0`, so `f32_bits(-0.0)` came
+		// out as `0` instead of the expected `0x80000000`.
+		// arm64's hardware `fneg` is sign-bit XOR; matching
+		// that semantics keeps round-trips faithful (and
+		// avoids a redundant `xorps + subss` per negation).
+		//
+		// Operand-stack values are stored as raw bits in GP
+		// registers (no XMM round-trip needed), so XOR the
+		// register directly.
 		g.pop()
 		if op.Width == 64 {
-			g.emit("movq xmm1, rax")
-			g.emit("xorpd xmm0, xmm0")
-			g.emit("subsd xmm0, xmm1")
-			g.emit("movq rax, xmm0")
+			g.emit("movabs rcx, 0x8000000000000000")
+			g.emit("xor rax, rcx")
 		} else {
-			g.emit("movd xmm1, eax")
-			g.emit("xorps xmm0, xmm0")
-			g.emit("subss xmm0, xmm1")
-			g.emit("movd eax, xmm0")
+			g.emit("xor eax, -2147483648") // 0x80000000 as a signed-32 immediate
 		}
 		g.push()
 	case ir.OpFEq, ir.OpFNe, ir.OpFLt, ir.OpFLe, ir.OpFGt, ir.OpFGe:
@@ -1038,6 +1040,13 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			g.emit("movd eax, xmm0")
 		}
 		g.push()
+	case ir.OpReinterpretI32F32, ir.OpReinterpretF32I32:
+		// Bit-cast between f32 and i32. The operand stack
+		// already stores both as raw 32-bit values (see
+		// OpConstF32 — the f32 bit pattern goes onto the
+		// stack via `mov eax, <bits>`), and the consuming
+		// op picks the right register bank (general-purpose
+		// vs XMM) via `movd` when needed. Nothing to emit.
 	case ir.OpITruncF32, ir.OpITruncF64:
 		// f32 / f64 → i32 / i64 (truncate toward zero). x86
 		// only has signed cvttsX2si; we handle unsigned

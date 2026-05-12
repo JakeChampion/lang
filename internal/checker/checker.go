@@ -501,6 +501,22 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
+	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
+	// is needed by float formatting routines (extracting sign /
+	// exponent / mantissa fields) and by lossless encoding of f32
+	// values into byte buffers (JSON / wire formats). No value
+	// conversion happens — the 32 bits on the operand stack carry
+	// through unchanged; the IR lowers both calls to a no-op once
+	// the type checker is happy.
+	c.info.FuncSigs["f32_bits"] = &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 32}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["f32_from_bits"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.FloatType{Width: 32},
+	}
 	// arena_save(): number — snapshots the bump allocator's
 	// current cursor. Pair with arena_restore to free everything
 	// allocated in between in O(1). Designed for long-lived

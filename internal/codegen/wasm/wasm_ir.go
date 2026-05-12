@@ -619,6 +619,10 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		} else {
 			g.line("i32.trunc_sat_f64" + suf)
 		}
+	case ir.OpReinterpretI32F32:
+		g.line("i32.reinterpret_f32")
+	case ir.OpReinterpretF32I32:
+		g.line("f32.reinterpret_i32")
 	case ir.OpConstF32:
 		g.linef("f32.const %g", op.F32)
 	case ir.OpConstF64:
