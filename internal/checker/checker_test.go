@@ -965,6 +965,42 @@ func TestMatchSubstitutesTypeArgs(t *testing.T) {
 // as usize)` boilerplate. Mixed signedness is allowed only
 // when one side is usize; signed/unsigned at other widths
 // still errors out so accidental conversions stay loud.
+// The raw-memory prelude helpers (`__alloc`, `__load_ptr`,
+// `__store_ptr`, `__memcpy`, `__memset`) now declare their
+// pointer params + result as `usize`. User code (and prelude
+// code) that passes pointer-shaped values (string, Map handles,
+// T[], [T], structs) into these helpers must continue to
+// type-check without explicit `as usize` casts — the runtime
+// representation is the same pointer, and the relaxation in
+// `assignable` permits the silent type-level hop.
+//
+// Held together by 3 relaxations:
+//   1. pointer-shape → usize / usize → pointer-shape
+//   2. usize ↔ any concrete int (for `var X: i32 = __alloc(...)`)
+//   3. enum-arg-pairwise assignable (for `Option[V]` ↔ `Option[usize]`)
+func TestUsizePreludeHelperSignaturesAcceptPointerArgs(t *testing.T) {
+	for _, src := range []string{
+		// String passed straight to a usize-typed param.
+		// Without the pointer-shape → usize relaxation, this
+		// would error "argument 1: expected usize, got string".
+		`function f(a: string, b: string, n: i32): i32 {
+    __memcpy(a, b, n);
+    return 0;
+}`,
+		// usize result of __alloc assignable to i32 (legacy
+		// shape). Without relaxation #2 this would error
+		// "cannot assign usize to variable of type i32".
+		`function f(): i32 {
+    var buf: i32 = __alloc(16);
+    return buf;
+}`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: expected to type-check, got: %v", src, err)
+		}
+	}
+}
+
 func TestUsizeAutowidensWithSignedInt(t *testing.T) {
 	for _, src := range []string{
 		`function f(base: usize, idx: i32): usize {
