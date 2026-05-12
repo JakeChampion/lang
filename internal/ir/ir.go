@@ -222,6 +222,38 @@ const (
 	OpReturn     // (T)               → unwinds the function
 	OpReturnVoid // ()                → unwinds the function
 
+	// Register-based Result[T, E] / Option[T] returns. Today
+	// every Option/Result returned from a function lives on the
+	// heap as a `{tag:i32 @0, payload @8}` box; allocating +
+	// loading the tag back at the match site is the bulk of the
+	// per-call overhead for short-lived fallible calls.
+	//
+	// The pair-form lowering returns the (tag, payload) pair on
+	// the operand stack instead — multi-value `(result tag_t
+	// payload_t)` on wasm, rax + rdx on x86-64 SysV, x0 + x1 on
+	// AAPCS64. Heap-boxed Option/Result still exists for storing
+	// in struct fields / Map values / state slots; the optimisation
+	// fires only when the value flows call-return-style.
+	//
+	// First-pass IR ops:
+	//   OpMakeSomeI32 — (i32 payload)  → (tag=0, payload)
+	//   OpMakeNoneI32 — ()             → (tag=1, payload=0)
+	//   OpMakeOkI32   — (i32 payload)  → (tag=0, payload)
+	//   OpMakeErrI32  — (i32 payload)  → (tag=1, payload)
+	//   OpReturnPair  — (tag, payload) → unwinds the function
+	//
+	// Scoped to i32 payloads for the first PR — covers
+	// `Option[i32]` / `Result[i32, i32]` and pointer-typed
+	// payloads (string/Map/T[]/struct) that already live in 4-
+	// or 8-byte slots. Wider payloads (i64 / f64) follow in a
+	// future PR alongside the per-instantiation calling-
+	// convention work.
+	OpMakeSomeI32 // (i32 payload) → (i32 tag=0, i32 payload)
+	OpMakeNoneI32 // ()            → (i32 tag=1, i32 payload=0)
+	OpMakeOkI32   // (i32 payload) → (i32 tag=0, i32 payload)
+	OpMakeErrI32  // (i32 payload) → (i32 tag=1, i32 payload)
+	OpReturnPair  // (tag, payload)→ unwinds the function
+
 	// Closure conversion. Hoisted local functions read captured outer
 	// variables through a synthetic `__env` parameter (an i32 pointer
 	// to a heap block where each capture sits at a fixed byte offset).
@@ -435,6 +467,16 @@ func (k OpKind) String() string {
 		return "return"
 	case OpReturnVoid:
 		return "return_void"
+	case OpReturnPair:
+		return "return_pair"
+	case OpMakeSomeI32:
+		return "make_some.i32"
+	case OpMakeNoneI32:
+		return "make_none.i32"
+	case OpMakeOkI32:
+		return "make_ok.i32"
+	case OpMakeErrI32:
+		return "make_err.i32"
 	case OpMakeClosure:
 		return "make_closure"
 	case OpMakeEnv:
