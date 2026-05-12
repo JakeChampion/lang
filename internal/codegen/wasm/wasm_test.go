@@ -253,7 +253,7 @@ func TestFunctionValueLocal(t *testing.T) {
 }
 
 func TestFloatLiteralAndArithmetic(t *testing.T) {
-	wat := compileToWAT(t, `function main(): float { return 1.5 + 2.5; }`)
+	wat := compileToWAT(t, `function main(): f32 { return 1.5 + 2.5; }`)
 	mustContain(t, wat, "(result f32)")
 	mustContain(t, wat, "f32.const 1.5")
 	mustContain(t, wat, "f32.const 2.5")
@@ -261,17 +261,17 @@ func TestFloatLiteralAndArithmetic(t *testing.T) {
 }
 
 func TestFloatNegate(t *testing.T) {
-	wat := compileToWAT(t, `function f(x: float): float { return -x; }`)
+	wat := compileToWAT(t, `function f(x: f32): f32 { return -x; }`)
 	mustContain(t, wat, "f32.neg")
 }
 
 func TestFloatComparison(t *testing.T) {
-	wat := compileToWAT(t, `function f(x: float, y: float): boolean { return x < y; }`)
+	wat := compileToWAT(t, `function f(x: f32, y: f32): boolean { return x < y; }`)
 	mustContain(t, wat, "f32.lt")
 }
 
 func TestFloatLocalAndParam(t *testing.T) {
-	wat := compileToWAT(t, `function f(x: float): float { var y: float = x; return y; }`)
+	wat := compileToWAT(t, `function f(x: f32): f32 { var y: f32 = x; return y; }`)
 	mustContain(t, wat, "(param $x f32)")
 	mustContain(t, wat, "(local $y f32)")
 }
@@ -302,7 +302,7 @@ func TestIfExprEmitsIfResult(t *testing.T) {
 }
 
 func TestIfExprFloatEmitsF32Result(t *testing.T) {
-	wat := compileToWAT(t, `function f(b: boolean): float { return if (b) { 1.5 } else { 2.5 }; }`)
+	wat := compileToWAT(t, `function f(b: boolean): f32 { return if (b) { 1.5 } else { 2.5 }; }`)
 	mustContain(t, wat, "if (result f32)")
 }
 

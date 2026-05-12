@@ -138,8 +138,8 @@ func TestInlineThenFoldSimplifiesSubstitutedBody(t *testing.T) {
 // with the right type, otherwise the validator rejects an `f32`
 // value being stored into an `i32` slot.
 func TestInlineRecordsFloatScratchTypes(t *testing.T) {
-	p := loweredAndInlined(t, `function neg(x: float): float { return -x; }
-		function main(): float { return neg(3.5); }`)
+	p := loweredAndInlined(t, `function neg(x: f32): f32 { return -x; }
+		function main(): f32 { return neg(3.5); }`)
 	main := findFunc(p, "main")
 	if len(main.ScratchTypes) == 0 {
 		t.Fatalf("expected at least one scratch slot, got 0:\n%s", p)

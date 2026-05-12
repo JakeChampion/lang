@@ -89,7 +89,7 @@ func TestFormatNegativeLiterals(t *testing.T) {
 	if !strings.Contains(got, "return -7;") {
 		t.Errorf("expected `return -7;` in:\n%s", got)
 	}
-	got = formatSrc(t, `function f(): float { return -1.5; }`)
+	got = formatSrc(t, `function f(): f32 { return -1.5; }`)
 	if !strings.Contains(got, "return -1.5;") {
 		t.Errorf("expected `return -1.5;` in:\n%s", got)
 	}
@@ -98,7 +98,7 @@ func TestFormatNegativeLiterals(t *testing.T) {
 // Floats with no fractional part get a `.0` so re-lex still
 // classifies them as Float, not Number.
 func TestFormatFloatLiteralKeepsDecimal(t *testing.T) {
-	got := formatSrc(t, `function f(): float { return 5.0; }`)
+	got := formatSrc(t, `function f(): f32 { return 5.0; }`)
 	if !strings.Contains(got, "5.0") {
 		t.Errorf("expected `5.0` to survive in:\n%s", got)
 	}
@@ -314,12 +314,12 @@ function hidden(): i32 { return 2; }`)
 // decls; the resulting source reparses identically.
 func TestFormatConstDeclRoundTrips(t *testing.T) {
 	got := formatSrc(t, `const N: i32 = 42;
-pub const PI: float = 3.14;
+pub const PI: f32 = 3.14;
 const M = 7;
 function main(): i32 { return N; }`)
 	for _, want := range []string{
 		"const N: i32 = 42;",
-		"pub const PI: float = 3.14;",
+		"pub const PI: f32 = 3.14;",
 		"const M = 7;",
 	} {
 		if !strings.Contains(got, want) {

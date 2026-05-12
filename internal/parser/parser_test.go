@@ -344,7 +344,7 @@ func TestRecoversAtTopLevel(t *testing.T) {
 }
 
 func TestFloatLiteralAndType(t *testing.T) {
-	prog, err := Parse(`function f(x: float): float { return x + 1.5; }`)
+	prog, err := Parse(`function f(x: f32): f32 { return x + 1.5; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -687,7 +687,7 @@ func TestPubBeforeUnsupportedKindIsError(t *testing.T) {
 func TestConstDeclParses(t *testing.T) {
 	prog, err := Parse(`const N: i32 = 42;
 const M = 7;
-pub const PI: float = 3.14;`)
+pub const PI: f32 = 3.14;`)
 	if err != nil {
 		t.Fatal(err)
 	}

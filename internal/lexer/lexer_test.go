@@ -195,13 +195,17 @@ func TestFloatLiteral(t *testing.T) {
 	}
 }
 
-func TestFloatKeyword(t *testing.T) {
+// `float` was a legacy alias for `f32` in pre-i64/usize codebases.
+// Removed in the legacy-cleanup pass — `f32` is the canonical
+// spelling. Regression-pin that the bare identifier `float`
+// tokenises as an Ident (NOT a reserved keyword).
+func TestFloatIsNoLongerAKeyword(t *testing.T) {
 	toks, _, err := Tokenize("float")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if toks[0].Kind != Keyword || toks[0].Text != "float" {
-		t.Errorf("got %v, want Keyword %q", toks[0], "float")
+	if toks[0].Kind != Ident || toks[0].Text != "float" {
+		t.Errorf("got %v, want Ident %q", toks[0], "float")
 	}
 }
 

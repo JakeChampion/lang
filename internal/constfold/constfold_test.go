@@ -89,9 +89,9 @@ function main(): i32 { return N; }`)
 // literal. This is the second-tier ability we promised in the design
 // — references to PI work because PI was declared and folded first.
 func TestFoldArithmeticOverEarlierConst(t *testing.T) {
-	prog := fold(t, `const PI: float = 3.14;
-const TWO_PI: float = PI * 2.0;
-function main(): float { return TWO_PI; }`)
+	prog := fold(t, `const PI: f32 = 3.14;
+const TWO_PI: f32 = PI * 2.0;
+function main(): f32 { return TWO_PI; }`)
 	lit, ok := returnLit(t, prog).(*ast.FloatLit)
 	if !ok {
 		t.Fatalf("return value should be FloatLit, got %T", returnLit(t, prog))
@@ -158,7 +158,7 @@ const X: i32 = helper();`)
 // fold-time errors so the user sees them at the const, not at
 // every downstream usage site.
 func TestFoldRejectsTypeMismatch(t *testing.T) {
-	got := foldErr(t, `const X: float = 5;`)
+	got := foldErr(t, `const X: f32 = 5;`)
 	if !strings.Contains(got, "declared type") {
 		t.Errorf("error should mention declared type; got %v", got)
 	}
