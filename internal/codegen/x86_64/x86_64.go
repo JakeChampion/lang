@@ -330,6 +330,15 @@ type generator struct {
 	usesStrSlice        bool
 	usesRandomBytes     bool
 	usesReadLine        bool
+	// usesStrIdx tracks whether any code emits the SSO-aware
+	// inlined __str_idx helper, which spills inline-tagged
+	// strings to the .bss `__lang_str_idx_scratch` slot before
+	// computing the byte address. Set lazily on first emit
+	// from emitInlineIdxHelper; gates the slot's .bss
+	// reservation so map-only programs (which use str_idx via
+	// their hash routine but don't touch strcat / slice) still
+	// link cleanly.
+	usesStrIdx bool
 	usesStdin           bool
 	// usesRawIntPokes pulls in `__store_i32` / `__load_i32` /
 	// `__store_ptr` / `__load_ptr` / `__ptr_width` — primitives
@@ -1520,8 +1529,143 @@ func (g *generator) pop() {
 // this function (and its peers in the arm64 + wasm backends)
 // needs to learn the new shape. Array-length reads stay open-
 // coded because arrays may diverge from strings.
+// reg32 maps a 64-bit register name to its low-32-bit counterpart.
+// emitStrLen / emitStrInlinePack use the 32-bit form to read /
+// write the small-string-optimisation length-and-tag byte without
+// needing a 64-bit immediate.
+func reg32(r64 string) string {
+	switch r64 {
+	case "rax":
+		return "eax"
+	case "rbx":
+		return "ebx"
+	case "rcx":
+		return "ecx"
+	case "rdx":
+		return "edx"
+	case "rsi":
+		return "esi"
+	case "rdi":
+		return "edi"
+	case "rbp":
+		return "ebp"
+	case "rsp":
+		return "esp"
+	case "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15":
+		return r64 + "d"
+	}
+	// Already 32-bit (or unknown) — pass through. emitStrLen
+	// callers pre-x86_64-SSO passed `eax` / `r14d` directly,
+	// and we still want those to work as the dst register.
+	return r64
+}
+
+// ssoTagBit is bit 0 of the LSB byte of an inline-tagged string
+// value: 1 means inline, 0 means heap pointer. __lang_alloc returns
+// 8-aligned pointers so heap-form values always have LSB clear.
+const ssoTagBit = 0x01
+
+// Inline string layout (8-byte little-endian register value):
+//
+//	byte 0:  (length << 1) | 1   — tag bit (bit 0) + length (bits 1..3, range 1..7)
+//	bytes 1..7: up to 7 bytes of string data
+//
+// Length 0 keeps the .LStr_Empty heap sentinel for now — the inline
+// "byte 0 == 1" value would also encode it, but the sentinel was
+// already on a hot path and the round-trip is identical.
+//
+// To read length: (value >> 1) & 7.
+// To read byte i (0-indexed): (value >> (8 * (i + 1))) & 0xFF.
+// To pack: (data_bytes_le << 8) | ((length << 1) | 1).
+
+// emitStrLen loads the i32 length of the string in srcReg into
+// dstReg. Branches on the LSB tag bit to handle both heap form
+// (4-byte little-endian prefix at `[srcReg - 4]`) and inline form
+// (length stored in bits 1..3 of the value). Centralised as the
+// READ-side seam of the SSO encoding family.
 func (g *generator) emitStrLen(dstReg, srcReg string) {
-	g.emit(fmt.Sprintf("mov %s, [%s - 4]", dstReg, srcReg))
+	dst32 := reg32(dstReg)
+	src32 := reg32(srcReg)
+	id := g.labelCounter
+	g.labelCounter++
+	g.emit(fmt.Sprintf("test %s, 1", src32))
+	g.emit(fmt.Sprintf("jnz .Lstrlen_inline_%d", id))
+	g.emit(fmt.Sprintf("mov %s, [%s - 4]", dst32, srcReg))
+	g.emit(fmt.Sprintf("jmp .Lstrlen_done_%d", id))
+	g.label(fmt.Sprintf(".Lstrlen_inline_%d", id))
+	if dst32 != src32 {
+		g.emit(fmt.Sprintf("mov %s, %s", dst32, src32))
+	}
+	g.emit(fmt.Sprintf("shr %s, 1", dst32))
+	g.emit(fmt.Sprintf("and %s, 7", dst32))
+	g.label(fmt.Sprintf(".Lstrlen_done_%d", id))
+}
+
+// emitStrDataPtr produces a usable byte pointer to the string's
+// data in dstReg. For heap-form inputs (LSB=0), the input IS the
+// data pointer, so this is just a `mov dstReg, srcReg`. For
+// inline inputs (LSB=1), the data bytes live in the register
+// itself; we spill srcReg's 8 bytes to the caller-provided
+// `scratchMem` (e.g. `[rbp - 24]`) and return `&scratchMem[1]`
+// (skipping the leading length-and-tag byte). The scratch buffer
+// must outlive any byte read through dstReg — i.e. the caller
+// reserves the slot in its frame and the dstReg pointer is dead
+// by function return. Used by every runtime helper that reads
+// string bytes directly (strcat memcpy src, strcmp byte loop,
+// str_slice memcpy src, syscall iovec base).
+func (g *generator) emitStrDataPtr(dstReg, srcReg, scratchMem string) {
+	id := g.labelCounter
+	g.labelCounter++
+	g.emit(fmt.Sprintf("test %s, 1", reg32(srcReg)))
+	g.emit(fmt.Sprintf("jnz .Lstrdata_inline_%d", id))
+	if dstReg != srcReg {
+		g.emit(fmt.Sprintf("mov %s, %s", dstReg, srcReg))
+	}
+	g.emit(fmt.Sprintf("jmp .Lstrdata_done_%d", id))
+	g.label(fmt.Sprintf(".Lstrdata_inline_%d", id))
+	g.emit(fmt.Sprintf("mov %s, %s", scratchMem, srcReg))
+	g.emit(fmt.Sprintf("lea %s, %s", dstReg, scratchMem))
+	g.emit(fmt.Sprintf("add %s, 1", dstReg))
+	g.label(fmt.Sprintf(".Lstrdata_done_%d", id))
+}
+
+// emitStrInlinePack builds an inline-tagged string in dstReg from
+// `len` data bytes pointed to by `srcReg` and a 32-bit length in
+// `lenReg32`. Caller guarantees `1 <= length <= 7`; length 0 stays
+// on the heap-sentinel path. Performs an unaligned 8-byte load to
+// scoop up the data bytes at once (over-reads beyond the end of
+// the source if length < 7, but heap allocations are page-padded
+// so the over-read is safe in practice; masks the irrelevant high
+// bytes back to zero).
+//
+// Layout produced (low → high):
+//
+//	byte 0:    (length << 1) | 1
+//	bytes 1..length: data
+//	bytes (length+1)..7: zero
+//
+// Clobbers a temp 64-bit register `tempReg` distinct from dstReg /
+// srcReg / lenReg32's containing 64-bit reg.
+func (g *generator) emitStrInlinePack(dstReg, srcReg, lenReg32, tempReg string) {
+	// dstReg = 8-byte unaligned load from srcReg.
+	g.emit(fmt.Sprintf("mov %s, [%s]", dstReg, srcReg))
+	// Build the byte mask in tempReg = (1 << (lenReg32 * 8)) - 1.
+	// We can't shift by a 64-bit count from a 32-bit reg directly,
+	// so we go through rcx (the x86 shift-by-CL convention).
+	g.emit(fmt.Sprintf("mov ecx, %s", lenReg32))
+	g.emit("shl ecx, 3") // ecx = length * 8 (bits to keep)
+	g.emit(fmt.Sprintf("mov %s, 1", tempReg))
+	g.emit(fmt.Sprintf("shl %s, cl", tempReg))
+	g.emit(fmt.Sprintf("sub %s, 1", tempReg)) // tempReg = (1 << (length*8)) - 1
+	g.emit(fmt.Sprintf("and %s, %s", dstReg, tempReg))
+	// dstReg now holds the `length` data bytes in the low (length*8)
+	// bits; shift up by 8 to make room for the tag-and-length byte.
+	g.emit(fmt.Sprintf("shl %s, 8", dstReg))
+	// tempReg = (length << 1) | 1 — the tag+length byte.
+	g.emit(fmt.Sprintf("mov %s, %s", reg32(tempReg), lenReg32))
+	g.emit(fmt.Sprintf("shl %s, 1", reg32(tempReg)))
+	g.emit(fmt.Sprintf("or %s, 1", reg32(tempReg)))
+	g.emit(fmt.Sprintf("or %s, %s", dstReg, tempReg))
 }
 
 // emitStrLenStore writes the i32 length in srcReg to the 4-byte
@@ -1800,7 +1944,30 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	g.emit("mov rax, [rsp]") // base
 	g.emit("add rsp, 16")
 	switch name {
-	case "__str_idx", "__slice_idx_1":
+	case "__str_idx":
+		// SSO-aware byte indexing. Heap strings: base + idx is
+		// the byte address. Inline strings (LSB=1): spill the
+		// register value to a global scratch slot in .bss; the
+		// data bytes live at scratch+1..scratch+7, so the
+		// byte address is `scratch + 1 + idx`. The scratch
+		// slot is overwritten on every inline __str_idx call,
+		// but the immediate OpLoadByte that follows in the IR
+		// consumes the address before the next call, so there
+		// is no observable race even in `a[i] + b[j]` shapes.
+		g.usesStrIdx = true
+		id := g.labelCounter
+		g.labelCounter++
+		g.emit("test rax, 1")
+		g.emit(fmt.Sprintf("jnz .Lstridx_inline_%d", id))
+		g.emit("lea rax, [rax + rcx]")
+		g.emit(fmt.Sprintf("jmp .Lstridx_done_%d", id))
+		g.label(fmt.Sprintf(".Lstridx_inline_%d", id))
+		g.emit("mov [rip + __lang_str_idx_scratch], rax")
+		g.emit("lea rax, [rip + __lang_str_idx_scratch]")
+		g.emit("add rax, rcx")
+		g.emit("add rax, 1")
+		g.label(fmt.Sprintf(".Lstridx_done_%d", id))
+	case "__slice_idx_1":
 		g.emit("lea rax, [rax + rcx]")
 	case "__arr_idx_2", "__slice_idx_2":
 		g.emit("lea rax, [rax + rcx*2]")
@@ -1878,7 +2045,17 @@ func (g *generator) emitDataSections() {
 			g.line(`	.asciz ""`)
 		}
 	}
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter {
+	// SSO inline strings ride in a 64-bit register and don't
+	// have a usable memory address until materialised. The
+	// __str_idx index helper spills inline values to this
+	// global scratch slot before computing `&scratch[1 + idx]`
+	// so callers (OpLoadByte after OpCallDirect __str_idx)
+	// see a real byte address. Single 8-byte slot, single
+	// writer at a time (lang is single-threaded; the inline-
+	// path spill is overwritten on each call, but the value
+	// is consumed immediately by OpLoadByte before the next
+	// __str_idx fires).
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx {
 		g.line("")
 		g.line(".section .bss")
 		if g.usesAlloc {
@@ -1903,6 +2080,11 @@ func (g *generator) emitDataSections() {
 		if g.usesEnv {
 			g.line(".align 8")
 			g.label("__lang_envp")
+			g.line("\t.quad 0")
+		}
+		if g.usesStrIdx {
+			g.line(".align 8")
+			g.label("__lang_str_idx_scratch")
 			g.line("\t.quad 0")
 		}
 		if g.usesArgs {
@@ -2051,18 +2233,24 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	// rbx + r12..r15 are all System V callee-save — we save
-	// every one we touch, including rbx (latent bug in PR 3
-	// draft: clobbered without saving, broke any multi-
-	// strcat call chain). The extra `push rbx` keeps the
-	// stack 16-byte aligned alongside the four r12+ pushes.
+	// every one we touch. Plus 24 bytes of frame-local scratch
+	// for the SSO encoding family:
+	//   [rbp - 48]: 8-byte spill slot for emitStrDataPtr(a)
+	//   [rbp - 56]: 8-byte spill slot for emitStrDataPtr(b)
+	//   [rbp - 64]: 8-byte buffer where the inline output is
+	//               built byte-by-byte before being loaded into
+	//               rax as the return value.
+	// Frame total: 16 (rbp + return) + 40 (5 callee-saves) +
+	// 24 (scratch) = 80 bytes, which is 16-aligned at the call
+	// sites below.
 	g.emit("push rbx")
 	g.emit("push r12")
 	g.emit("push r13")
 	g.emit("push r14")
 	g.emit("push r15")
-	g.emit("sub rsp, 8") // re-align rsp to 16 (5 saved regs + return = 48, +8 = 56 odd; +8 more = 64)
-	g.emit("mov r12, rdi") // r12 = a
-	g.emit("mov r13, rsi") // r13 = b
+	g.emit("sub rsp, 24")
+	g.emit("mov r12, rdi") // r12 = a (may be inline-tagged)
+	g.emit("mov r13, rsi") // r13 = b (may be inline-tagged)
 	// String lengths via the centralised helper.
 	g.emitStrLen("r14d", "r12")
 	g.emitStrLen("r15d", "r13")
@@ -2072,10 +2260,48 @@ func (g *generator) emitStrcatRuntime() {
 	// so callers can't tell the difference.
 	g.emit("mov eax, r14d")
 	g.emit("or eax, r15d")
-	g.emit("jnz .Lstrcat_alloc")
+	g.emit("jnz .Lstrcat_nonzero")
 	g.emitStrEmpty("rax")
 	g.emit("jmp .Lstrcat_ret")
-	g.label(".Lstrcat_alloc")
+	g.label(".Lstrcat_nonzero")
+	// Total length. If <= 7, build inline output (no alloc);
+	// else fall through to the heap path.
+	g.emit("mov ecx, r14d")
+	g.emit("add ecx, r15d")
+	g.emit("cmp ecx, 7")
+	g.emit("jg .Lstrcat_heap")
+	// --- Inline output path ---
+	// Zero the scratch output buffer (so unused trailing bytes
+	// after b's data read as zero in the final 8-byte load).
+	g.emit("mov qword ptr [rbp - 64], 0")
+	// Length-and-tag byte = (total << 1) | 1 at [rbp - 64].
+	g.emit("mov edx, ecx")
+	g.emit("shl edx, 1")
+	g.emit("or edx, 1")
+	g.emit("mov byte ptr [rbp - 64], dl")
+	// Materialise a / b to byte pointers (heap inputs pass
+	// through; inline inputs spill to the per-operand scratch
+	// slot and the pointer addresses the first data byte).
+	g.emitStrDataPtr("r12", "r12", "[rbp - 48]")
+	g.emitStrDataPtr("r13", "r13", "[rbp - 56]")
+	// memcpy([rbp - 63], a_data, la) — a's bytes after the
+	// length-and-tag byte.
+	g.emit("lea rdi, [rbp - 63]")
+	g.emit("mov rsi, r12")
+	g.emit("mov rdx, r14")
+	g.emit("call __lang_memcpy")
+	// memcpy([rbp - 63 + la], b_data, lb).
+	g.emit("lea rdi, [rbp - 63]")
+	g.emit("add rdi, r14")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, r15")
+	g.emit("call __lang_memcpy")
+	// Load the full 8-byte inline value (length byte + 7 data
+	// bytes + zero padding) into rax.
+	g.emit("mov rax, [rbp - 64]")
+	g.emit("jmp .Lstrcat_ret")
+	g.label(".Lstrcat_heap")
+	// --- Heap output path ---
 	// alloc(la + lb + 5) — 4 prefix + N data + 1 NUL.
 	g.emit("lea rdi, [r14 + r15 + 5]")
 	g.emit("call __lang_alloc")
@@ -2087,6 +2313,9 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("mov ecx, r14d")
 	g.emit("add ecx, r15d")
 	g.emitStrLenStore("ecx", "rbx")
+	// Materialise a / b for the memcpy reads.
+	g.emitStrDataPtr("r12", "r12", "[rbp - 48]")
+	g.emitStrDataPtr("r13", "r13", "[rbp - 56]")
 	// memcpy(dst, a, la)
 	g.emit("mov rdi, rbx")
 	g.emit("mov rsi, r12")
@@ -2103,7 +2332,7 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("mov byte ptr [rdi], 0")
 	g.emit("mov rax, rbx")
 	g.label(".Lstrcat_ret")
-	g.emit("add rsp, 8")
+	g.emit("add rsp, 24")
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")
@@ -2122,7 +2351,16 @@ func (g *generator) emitStrcmpRuntime() {
 	g.line(".globl __lang_strcmp")
 	g.line(".type __lang_strcmp, @function")
 	g.label("__lang_strcmp")
-	// Same pointer? Equal.
+	// Frame: 32 bytes — saved rbp (8) + 16 bytes for two
+	// emitStrDataPtr scratch slots (one per operand) + 8 bytes
+	// padding to keep rsp 16-aligned for `rep cmpsb`. Two slots
+	// are needed because both operands may be inline at the same
+	// time (different inline values of equal length).
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32")
+	// Same value? Equal — covers both same-heap-pointer and
+	// both-inline-same-bits cases.
 	g.emit("cmp rdi, rsi")
 	g.emit("je .Lscmp_eq")
 	// Same length?
@@ -2130,6 +2368,11 @@ func (g *generator) emitStrcmpRuntime() {
 	g.emitStrLen("edx", "rsi")
 	g.emit("cmp ecx, edx")
 	g.emit("jne .Lscmp_neq")
+	// Convert each operand to a byte pointer — heap inputs pass
+	// through; inline inputs spill to a frame scratch slot and
+	// the returned pointer addresses the first data byte.
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	g.emitStrDataPtr("rsi", "rsi", "[rbp - 32]")
 	// rep cmpsb wants the count in rcx and the pointers in
 	// rsi (source 1) / rdi (source 2). cld → forward.
 	g.emit("cld")
@@ -2137,9 +2380,13 @@ func (g *generator) emitStrcmpRuntime() {
 	g.emit("jne .Lscmp_neq")
 	g.label(".Lscmp_eq")
 	g.emit("xor eax, eax")
+	g.emit("add rsp, 32")
+	g.emit("pop rbp")
 	g.emit("ret")
 	g.label(".Lscmp_neq")
 	g.emit("mov eax, 1")
+	g.emit("add rsp, 32")
+	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_strcmp, .-__lang_strcmp")
 }
@@ -2159,11 +2406,11 @@ func (g *generator) emitPutsRuntime() {
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push r12")
-	g.emit("sub rsp, 8") // keep rsp 16-aligned post-prologue
-	g.emit("mov r12, rdi")        // r12 = data ptr (saved for return)
+	g.emit("sub rsp, 16") // 8 bytes scratch for emitStrDataPtr + 8 alignment
+	g.emit("mov r12, rdi")        // r12 = original string value (saved for return)
 	// write(1, s, len(s))
-	g.emitStrLen("edx", "rdi") // length
-	g.emit("mov rsi, rdi")        // buf
+	g.emitStrLen("edx", "rdi")    // length
+	g.emitStrDataPtr("rsi", "rdi", "[rbp - 16]")
 	g.emit("mov edi, 1")          // fd = stdout
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
@@ -2173,8 +2420,8 @@ func (g *generator) emitPutsRuntime() {
 	g.emit("mov edi, 1")
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
-	g.emit("mov rax, r12")
-	g.emit("add rsp, 8")
+	g.emit("mov rax, r12")        // return the original string value (heap or inline)
+	g.emit("add rsp, 16")
 	g.emit("pop r12")
 	g.emit("pop rbp")
 	g.emit("ret")
@@ -2188,16 +2435,21 @@ func (g *generator) emitWriteRuntime() {
 	g.line(".globl __lang_write")
 	g.line(".type __lang_write, @function")
 	g.label("__lang_write")
-	g.emitStrLen("edx", "rdi") // length
-	g.emit("mov rsi, rdi")        // buf
-	g.emit("mov rax, rdi")        // save for return
+	// Frame: 16 bytes — 8 bytes scratch slot for emitStrDataPtr
+	// + 8 bytes for the saved original string value (so we can
+	// return it after the syscall clobbers caller-save regs).
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emit("mov [rbp - 8], rdi")  // save original
+	g.emitStrLen("edx", "rdi")    // length
+	g.emitStrDataPtr("rsi", "rdi", "[rbp - 16]")
 	g.emit("mov edi, 1")          // fd = stdout
-	g.emit("push rax")
-	g.emit("sub rsp, 8")          // align
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
-	g.emit("add rsp, 8")
-	g.emit("pop rax")
+	g.emit("mov rax, [rbp - 8]")  // return original
+	g.emit("add rsp, 16")
+	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_write, .-__lang_write")
 }
@@ -2213,10 +2465,10 @@ func (g *generator) emitEprintRuntime() {
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push r12")
-	g.emit("sub rsp, 8")
-	g.emit("mov r12, rdi")        // r12 = data ptr (preserved for return)
+	g.emit("sub rsp, 16") // 8 bytes scratch for emitStrDataPtr + 8 alignment
+	g.emit("mov r12, rdi")        // r12 = original string value (preserved for return)
 	g.emitStrLen("edx", "rdi")
-	g.emit("mov rsi, rdi")
+	g.emitStrDataPtr("rsi", "rdi", "[rbp - 16]")
 	g.emit("mov edi, 2")          // fd = stderr
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
@@ -2226,7 +2478,7 @@ func (g *generator) emitEprintRuntime() {
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
 	g.emit("mov rax, r12")
-	g.emit("add rsp, 8")
+	g.emit("add rsp, 16")
 	g.emit("pop r12")
 	g.emit("pop rbp")
 	g.emit("ret")
@@ -2412,9 +2664,18 @@ func (g *generator) emitTcpSendRuntime() {
 	g.line(".globl __lang_tcp_send")
 	g.line(".type __lang_tcp_send, @function")
 	g.label("__lang_tcp_send")
-	g.emitStrLen("edx", "rsi") // length from data prefix
+	// Frame: 16 bytes — 8 scratch slot for emitStrDataPtr + 8
+	// alignment. The materialisation lets an inline-tagged
+	// `data` value yield a real byte pointer for the syscall.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("edx", "rsi")                 // length from data
+	g.emitStrDataPtr("rsi", "rsi", "[rbp - 8]") // byte pointer for syscall
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
+	g.emit("add rsp, 16")
+	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_tcp_send, .-__lang_tcp_send")
 }
@@ -2446,13 +2707,13 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // envp cursor
-	g.emit("push r12") // name data ptr
+	g.emit("push r12") // name byte ptr (materialised, see below)
 	g.emit("push r13") // name length
 	g.emit("push r14") // value data ptr (post-strcat)
 	g.emit("push r15") // value length
-	g.emit("sub rsp, 8") // align
-	g.emit("mov r12, rdi")            // r12 = name
-	g.emitStrLen("r13d", "r12") // r13 = name length
+	g.emit("sub rsp, 24") // 8 bytes scratch for emitStrDataPtr + 16 padding
+	g.emitStrLen("r13d", "rdi")              // r13 = name length (rdi = caller's value)
+	g.emitStrDataPtr("r12", "rdi", "[rbp - 48]") // r12 = name byte pointer
 	g.emit("mov rbx, [rip + __lang_envp]")
 	g.label(".Lenv_loop")
 	g.emit("mov rdi, [rbx]")
@@ -2504,7 +2765,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("call __lang_alloc")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
 	g.label(".Lenv_done")
-	g.emit("add rsp, 8")
+	g.emit("add rsp, 24")
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")
@@ -2807,6 +3068,8 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
 	g.emit("push r12")
+	// 16 bytes scratch: [rbp - 24] inline output buffer + 8 padding.
+	g.emit("sub rsp, 16")
 	g.emit("mov rbx, rdi")        // bs (input u8[] array)
 	// Array-length read — NOT routed through emitStrLen.
 	// The input is u8[] and arrays may diverge from strings
@@ -2817,10 +3080,26 @@ func (g *generator) emitStringFromBytesRuntime() {
 	// empty-string sentinel without allocating a fresh 0-byte
 	// buffer.
 	g.emit("test r12d, r12d")
-	g.emit("jnz .Lsfb_alloc")
+	g.emit("jnz .Lsfb_nonempty")
 	g.emitStrEmpty("rax")
 	g.emit("jmp .Lsfb_ret")
-	g.label(".Lsfb_alloc")
+	g.label(".Lsfb_nonempty")
+	// length <= 7? Pack into inline-tagged register value, no alloc.
+	g.emit("cmp r12d, 7")
+	g.emit("jg .Lsfb_heap")
+	// --- Inline output path ---
+	g.emit("mov qword ptr [rbp - 24], 0")
+	g.emit("mov edx, r12d")
+	g.emit("shl edx, 1")
+	g.emit("or edx, 1")
+	g.emit("mov byte ptr [rbp - 24], dl") // length-and-tag byte
+	g.emit("lea rdi, [rbp - 23]")
+	g.emit("mov rsi, rbx")
+	g.emit("mov rdx, r12")
+	g.emit("call __lang_memcpy")
+	g.emit("mov rax, [rbp - 24]")
+	g.emit("jmp .Lsfb_ret")
+	g.label(".Lsfb_heap")
 	g.emit("lea edi, [r12 + 4]")
 	g.emit("call __lang_alloc")
 	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
@@ -2833,6 +3112,7 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("add rsp, 8")
 	g.emit("pop rax")             // rax = data ptr (return value)
 	g.label(".Lsfb_ret")
+	g.emit("add rsp, 16")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
@@ -2855,11 +3135,13 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("push r12")
 	g.emit("push r13")
 	g.emit("push r14")
-	g.emit("sub rsp, 8") // align
-	g.emit("mov rbx, rdi")        // base
+	// 16 bytes scratch: [rbp - 40] for emitStrDataPtr(base) and
+	// [rbp - 48] for the inline output buffer.
+	g.emit("sub rsp, 16")
+	g.emit("mov rbx, rdi")        // base (possibly inline-tagged)
 	g.emit("mov r12, rsi")        // low
 	g.emit("mov r13, rdx")        // high
-	g.emitStrLen("r14d", "rbx") // src_len
+	g.emitStrLen("r14d", "rbx")   // src_len
 	// Bounds checks: low < 0 OR high > src_len OR low > high → trap.
 	g.emit("test r12, r12")
 	g.emit("js .Lstrslice_trap")
@@ -2875,15 +3157,38 @@ func (g *generator) emitStrSliceRuntime() {
 	// string sentinel rather than allocating a fresh 0-byte
 	// buffer.
 	g.emit("test r14, r14")
-	g.emit("jnz .Lstrslice_alloc")
+	g.emit("jnz .Lstrslice_nonempty")
 	g.emitStrEmpty("rax")
 	g.emit("jmp .Lstrslice_ret")
-	g.label(".Lstrslice_alloc")
+	g.label(".Lstrslice_nonempty")
+	// Materialise base → byte ptr (heap inputs pass through; inline
+	// inputs spill to [rbp - 40] and rbx points to the first data byte).
+	g.emitStrDataPtr("rbx", "rbx", "[rbp - 40]")
+	// new_len <= 7? build inline output without allocating.
+	g.emit("cmp r14, 7")
+	g.emit("jg .Lstrslice_heap")
+	// --- Inline output path ---
+	// Zero scratch output buffer so unused trailing bytes are 0.
+	g.emit("mov qword ptr [rbp - 48], 0")
+	// Length-and-tag byte at [rbp - 48].
+	g.emit("mov edx, r14d")
+	g.emit("shl edx, 1")
+	g.emit("or edx, 1")
+	g.emit("mov byte ptr [rbp - 48], dl")
+	// memcpy([rbp - 47], base_byte_ptr + low, new_len).
+	g.emit("lea rdi, [rbp - 47]")
+	g.emit("lea rsi, [rbx + r12]")
+	g.emit("mov rdx, r14")
+	g.emit("call __lang_memcpy")
+	g.emit("mov rax, [rbp - 48]")
+	g.emit("jmp .Lstrslice_ret")
+	g.label(".Lstrslice_heap")
+	// --- Heap output path ---
 	g.emit("lea edi, [r14 + 4]")
 	g.emit("call __lang_alloc")
 	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r14d", "rdi") // length prefix
-	g.emit("lea rsi, [rbx + r12]") // src = base + low
+	g.emit("lea rsi, [rbx + r12]") // src = base_byte_ptr + low
 	g.emit("mov rdx, r14")
 	g.emit("push rdi")              // save data ptr
 	g.emit("sub rsp, 8") // align
@@ -2891,7 +3196,7 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("add rsp, 8")
 	g.emit("pop rax")               // rax = data ptr
 	g.label(".Lstrslice_ret")
-	g.emit("add rsp, 8")
+	g.emit("add rsp, 16")
 	g.emit("pop r14")
 	g.emit("pop r13")
 	g.emit("pop r12")
@@ -3100,13 +3405,18 @@ func (g *generator) emitReadFileRuntime() {
 	g.label("__lang_read_file")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // path (callee-save)
+	g.emit("push rbx") // path byte ptr (materialised below)
 	g.emit("push r12") // fd
 	g.emit("push r13") // buf base
 	g.emit("push r14") // size
 	g.emit("push r15") // bytes_read
-	g.emit("sub rsp, 152") // 144-byte stat buf + 8-byte align (152 keeps 16-aligned with 5 pushes)
-	g.emit("mov rbx, rdi") // rbx = path
+	// Frame: 168 bytes — 144-byte stat buf (at rsp..rsp+143)
+	// + 8 bytes scratch slot for emitStrDataPtr on the path
+	// at [rbp - 48] + 16 bytes padding. Keeps rsp 16-aligned
+	// at all call sites below.
+	g.emit("sub rsp, 168")
+	g.emit("mov [rbp - 56], rdi") // save original path string value for the err path
+	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr for openat
 
 	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
 	g.emit("mov edi, -100")
@@ -3128,19 +3438,18 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("js .Lrf_err_close")
 	g.emit("mov r14, [rsp + 48]") // st_size
 
-	// alloc string buf: 4 + size.
+	// alloc string buf: 4 + size, r13 = data ptr (one past length prefix).
 	g.emit("lea rdi, [r14 + 4]")
 	g.emit("call __lang_alloc")
-	g.emit("mov r13, rax")
-	g.emit("mov [r13], r14d") // length prefix (low 32 bits)
+	g.emit("lea r13, [rax + 4]")
+	g.emitStrLenStore("r14d", "r13")
 
 	g.emit("xor r15, r15") // bytes_read = 0
 	g.label(".Lrf_loop")
 	g.emit("cmp r15, r14")
 	g.emit("jge .Lrf_done")
 	g.emit("mov edi, r12d")
-	g.emit("lea rsi, [r13 + 4]")
-	g.emit("add rsi, r15")
+	g.emit("lea rsi, [r13 + r15]")
 	g.emit("mov rdx, r14")
 	g.emit("sub rdx, r15")
 	g.emit("xor eax, eax") // read = 0
@@ -3159,8 +3468,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov edi, 16")
 	g.emit("call __lang_alloc")
 	g.emit("mov dword ptr [rax], 0")
-	g.emit("lea rcx, [r13 + 4]")
-	g.emit("mov [rax + 8], rcx")
+	g.emit("mov [rax + 8], r13") // r13 is already the data ptr
 	g.emit("jmp .Lrf_return")
 
 	g.label(".Lrf_err_close")
@@ -3179,7 +3487,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.label(".Lrf_err_dispatch")
 	// __lang_io_error(errno, path) → rax = IoError box.
 	g.emit("mov edi, r13d")
-	g.emit("mov rsi, rbx")
+	g.emit("mov rsi, [rbp - 56]") // original path string value (heap or inline)
 	g.emit("call __lang_io_error")
 	g.emit("mov r13, rax") // stash IoError box across the next alloc
 	g.emit("mov edi, 16")
@@ -3188,7 +3496,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov [rax + 8], r13")
 
 	g.label(".Lrf_return")
-	g.emit("add rsp, 152")
+	g.emit("add rsp, 168")
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")
@@ -3215,16 +3523,16 @@ func (g *generator) emitWriteFileRuntime() {
 	g.label("__lang_write_file")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // path
-	g.emit("push r12") // content
+	g.emit("push rbx") // path byte ptr (materialised)
+	g.emit("push r12") // content byte ptr (materialised)
 	g.emit("push r13") // fd
 	g.emit("push r14") // content_len
 	g.emit("push r15") // bytes_written
-	g.emit("sub rsp, 8") // 16-byte align with 5 pushes + return addr = 6 8-byte regs = 48 bytes, even.
-	g.emit("mov rbx, rdi") // path
-	g.emit("mov r12, rsi") // content
-
-	g.emitStrLen("r14d", "r12") // content_len
+	g.emit("sub rsp, 24") // 16 bytes scratch (path + content emitStrDataPtr) + 8 for original path value.
+	g.emit("mov [rbp - 64], rdi") // save original path string value for __lang_io_error
+	g.emitStrLen("r14d", "rsi") // content_len (from caller's rsi before materialise)
+	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr
+	g.emitStrDataPtr("r12", "rsi", "[rbp - 56]") // content byte ptr
 
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
 	g.emit("mov edi, -100")
@@ -3276,7 +3584,7 @@ func (g *generator) emitWriteFileRuntime() {
 
 	g.label(".Lwf_err_dispatch")
 	g.emit("mov edi, r14d")
-	g.emit("mov rsi, rbx")
+	g.emit("mov rsi, [rbp - 64]") // original path string value (heap or inline)
 	g.emit("call __lang_io_error")
 	g.emit("mov r14, rax") // stash IoError box
 	g.emit("mov edi, 16")
@@ -3285,7 +3593,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov [rax + 8], r14")
 
 	g.label(".Lwf_return")
-	g.emit("add rsp, 8")
+	g.emit("add rsp, 24")
 	g.emit("pop r15")
 	g.emit("pop r14")
 	g.emit("pop r13")

@@ -243,6 +243,121 @@ func TestX86_64StringConcat(t *testing.T) {
 	}
 }
 
+// x86-64 small-string-optimisation (tagged-pointer inline).
+// Strings of length 1..7 produced by __lang_strcat / __str_slice /
+// string_from_bytes ride in a 64-bit register (LSB tag = 1, bits
+// 1..3 = length, bytes 1..7 = data) rather than being allocated
+// on the heap. Verified behaviourally: every consumer of the
+// resulting string still sees the correct length and bytes,
+// regardless of whether the string is heap-form or inline.
+// Cases cover length boundaries (1, 7, 8), byte indexing,
+// equality vs heap counterparts, concatenation chains that
+// straddle the inline boundary, and substring slices.
+func TestX86_64SsoInline(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		// __str_slice produces inline at 1..7, heap at 8+.
+		{"slice-len-1-inline", `function main(): i32 {
+    return len("abcdefghij"[0:1]);
+}`, 1},
+		{"slice-len-7-inline", `function main(): i32 {
+    return len("abcdefghij"[0:7]);
+}`, 7},
+		{"slice-len-8-heap", `function main(): i32 {
+    return len("abcdefghij"[0:8]);
+}`, 8},
+		// Inline byte indexing must still match the source bytes.
+		{"inline-index-first-byte", `function main(): i32 {
+    var s: string = "abcdefghij"[0:5]; // inline "abcde"
+    return s[0] as i32;
+}`, 97}, // 'a'
+		{"inline-index-last-byte", `function main(): i32 {
+    var s: string = "abcdefghij"[0:5]; // inline "abcde"
+    return s[4] as i32;
+}`, 101}, // 'e'
+		// Equality: inline-vs-inline (same bytes), inline-vs-heap
+		// (same bytes, different forms — strcmp must compare data,
+		// not pointer).
+		{"inline-eq-same", `function main(): i32 {
+    var a: string = "abcdef"[0:3]; // inline "abc"
+    var b: string = "xabc"[1:4];    // inline "abc"
+    if (a == b) { return 1; }
+    return 0;
+}`, 1},
+		{"inline-eq-heap-same", `function main(): i32 {
+    var a: string = "abcdefghij"[0:3]; // inline "abc"
+    var b: string = "abc";              // heap "abc"
+    if (a == b) { return 1; }
+    return 0;
+}`, 1},
+		{"inline-ne", `function main(): i32 {
+    var a: string = "abcdef"[0:3]; // inline "abc"
+    var b: string = "xyz";          // heap "xyz"
+    if (a != b) { return 1; }
+    return 0;
+}`, 1},
+		// Concat chains: inline + inline → heap when total > 7,
+		// inline + heap → mixed materialisation, etc.
+		{"concat-inline-plus-inline-inline", `function main(): i32 {
+    var a: string = "abcdef"[0:3]; // inline "abc"
+    var b: string = "xyz";          // heap "xyz" — could go inline-or-heap
+    return len(a + b);
+}`, 6},
+		{"concat-inline-plus-inline-heap", `function main(): i32 {
+    var a: string = "abcdef"[0:5];  // inline "abcde"
+    var b: string = "fghij";         // heap, 5 chars
+    return len(a + b);
+}`, 10},
+		{"concat-roundtrip-bytes", `function main(): i32 {
+    var a: string = "abcdef"[0:3]; // inline "abc"
+    var b: string = "DEF";          // heap "DEF"
+    var c: string = a + b;          // heap result (6 bytes <= 7 → actually inline)
+    if (c == "abcDEF") { return 1; }
+    return 0;
+}`, 1},
+		// string_from_bytes: u8[] → string. Inline when ≤ 7.
+		{"sfb-inline", `function main(): i32 {
+    var bs: u8[] = __alloc_u8(3);
+    bs[0] = 65 as u8; // 'A'
+    bs[1] = 66 as u8; // 'B'
+    bs[2] = 67 as u8; // 'C'
+    var s: string = string_from_bytes(bs);
+    if (s == "ABC") { return 1; }
+    return 0;
+}`, 1},
+		// print(inline) — write syscall must materialise inline
+		// before passing the buffer pointer to the kernel.
+		// The exit code is the len of the printed inline string.
+		{"print-inline", `function main(): i32 {
+    var s: string = "abcdefgh"[0:5]; // inline "abcde"
+    print(s);
+    return len(s);
+}`, 5},
+		// Triple concat: each `+` is left-associative. Builds an
+		// inline intermediate, then a heap final.
+		{"triple-concat-via-inline", `function main(): i32 {
+    var s: string = "aa" + "bb" + "ccddee";
+    return len(s);
+}`, 10},
+		// FieldAccess + len: regression test for the IR exprType
+		// fix. `len(struct.field)` must route through OpStrLen
+		// so the inline tag is honoured.
+		{"field-access-len-inline", `struct Box { s: string }
+function main(): i32 {
+    var b: Box = Box { s: "abcdefgh"[0:5] }; // inline "abcde"
+    return len(b.s);
+}`, 5},
+	} {
+		_, code := compileAndRunX86_64(t, c.src)
+		if code != c.want {
+			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
+		}
+	}
+}
+
 // x86-64 empty-string sentinel: the string-constructing runtime
 // helpers (__lang_strcat, __str_slice, string_from_bytes) skip
 // the alloc + memcpy and return the shared .LStr_Empty sentinel

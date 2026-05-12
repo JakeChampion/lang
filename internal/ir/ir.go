@@ -2358,14 +2358,54 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// field-access offset resolution.
 		return x.Type
 	case *ast.SliceExpr:
-		// Slice expressions always produce a SliceType — the
-		// element type is the same as the source.
+		// A slice expression's static type follows the source:
+		// `string[a:b]` is still a string (handled by __str_slice
+		// at runtime), array[a:b] is a SliceType over the element.
 		src := b.exprType(x.Source)
 		switch s := src.(type) {
 		case ast.ArrayType:
 			return ast.SliceType{Elem: s.Elem}
 		case ast.SliceType:
 			return s
+		case ast.StringType:
+			return ast.StringType{}
+		}
+	case *ast.Binary:
+		// `+` between strings produces a string. Returning the
+		// right type here matters for the `len()` lowering: a
+		// `len(a + b)` with a / b both strings must route through
+		// OpStrLen rather than the array-shape `const 4; sub;
+		// load` fallback — otherwise small-string-optimisation
+		// inline-tagged returns from `__lang_strcat` go through
+		// the wrong length-read path and the load tries to read
+		// memory at `inline_value - 4`. Latent bug since the
+		// OpStrLen seam landed; surfaced once strcat started
+		// producing inline outputs.
+		if x.IsStringConcat {
+			return ast.StringType{}
+		}
+		if x.IsStringCmp {
+			return ast.BoolType{}
+		}
+	case *ast.StringLit:
+		return ast.StringType{}
+	case *ast.FieldAccess:
+		// Struct field access. `r.body` on `r: HttpRequest`
+		// needs to resolve to `string` so `len(r.body)` routes
+		// through OpStrLen for the SSO seam. Look up the
+		// struct decl and find the field.
+		owner := b.fieldOwner(x.Target)
+		if owner == "" {
+			return nil
+		}
+		sd, ok := b.info.Structs[owner]
+		if !ok {
+			return nil
+		}
+		for _, f := range sd.Fields {
+			if f.Name == x.Field {
+				return f.Type
+			}
 		}
 	}
 	return nil
@@ -2822,13 +2862,14 @@ func (b *builder) maybeFoldStringEq(n *ast.Binary) (error, bool) {
 	if _, ok := b.locals[ident.Name]; !ok {
 		return nil, false
 	}
-	// Emit: <ident> ; const 4 ; sub ; load  (i.e. len(ident))
+	// Emit: <ident> ; OpStrLen  (i.e. len(ident)). Routed
+	// through the SSO seam so the inline-tag bit is honoured —
+	// the old `const 4; sub; load` shape read from
+	// `inline_value - 4` (garbage) for inline-tagged strings.
 	if err := b.expr(ident); err != nil {
 		return err, true
 	}
-	b.emit(Op{Kind: OpConstI32, I32: 4})
-	b.emit(Op{Kind: OpSub})
-	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpStrLen})
 	b.emit(Op{Kind: OpConstI32, I32: int32(len(lit.Value))})
 	b.emit(Op{Kind: OpEq})
 	b.openIf(BlockTypeI32)
