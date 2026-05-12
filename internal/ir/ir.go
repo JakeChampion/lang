@@ -688,42 +688,64 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 //     see isI32StackShape; pointer-shaped values like string /
 //     struct / T[] are deliberately excluded today).
 //   - Every `return` statement in the body (including those
-//     inside if / for / while / match arms) returns a
-//     `Some(EXPR)` / `None` literal (for Option) or `Ok(EXPR)`
-//     / `Err(EXPR)` literal (for Result) directly — no escape
-//     through call args, no store to state / Map / struct
-//     field that would otherwise outlive the call frame, no
-//     tail-call return where the callee is itself pair-form.
+//     inside if / for / while / match arms) returns one of:
+//       (a) a `Some(EXPR)` / `None` literal (for Option) or
+//           `Ok(EXPR)` / `Err(EXPR)` literal (for Result)
+//           directly, or
+//       (b) a direct call `helper()` where `helper` is itself
+//           in the pair-form set — the call's heap-box result
+//           flows out unchanged, and `helper`'s callers got
+//           the pair-form treatment too.
 //
-// Tightening the analysis (e.g. to see through tail-call
-// returns or if-/match-expression returns, or to accept
-// pointer-shaped payloads) is tracked as a follow-up.
+// (b) is determined by fixpoint iteration: each pass adds
+// functions whose returns now resolve under (a) or under (b)
+// using the previous pass's set. Converges in linear passes
+// over the function graph.
+//
+// Tightening the analysis further (e.g. to see through
+// if-/match-expression returns, or to accept pointer-shaped
+// payloads) is tracked as a follow-up.
 func findPairFormFuncs(prog *ast.Program) map[string]bool {
 	out := map[string]bool{}
-	for _, fn := range prog.Funcs {
-		if !isPairFormEligible(fn) {
-			continue
+	for {
+		grew := false
+		for _, fn := range prog.Funcs {
+			if out[fn.Name] {
+				continue
+			}
+			if !isPairFormEligible(fn, out) {
+				continue
+			}
+			out[fn.Name] = true
+			grew = true
 		}
-		out[fn.Name] = true
+		if !grew {
+			break
+		}
 	}
 	return out
 }
 
 // isPairFormEligible returns true if fn can be lowered with
 // the register-based pair-form return ABI. See findPairFormFuncs
-// for the eligibility rules.
+// for the eligibility rules; `pairForm` is the previous
+// fixpoint pass's known-pair-form set, used to authorise
+// tail-call returns into it.
 //
 // Supported return-type shapes:
 //   - `Option[T]` where T is i32-stack-shaped — body must
-//     produce only `Some(EXPR)` / `None` literals.
+//     produce only `Some(EXPR)` / `None` literals or tail
+//     calls to other pair-form `Option[T]` returners.
 //   - `Result[T, E]` where T and E are both i32-stack-shaped —
-//     body must produce only `Ok(EXPR)` / `Err(EXPR)` literals.
+//     body must produce only `Ok(EXPR)` / `Err(EXPR)` literals
+//     or tail calls to other pair-form `Result[T, E]`
+//     returners.
 //
 // Other shapes (pointer-typed payloads, wider numeric
 // payloads, mixed-shape Result) require either the native
 // pair-form lowering to support wider slots or the per-
 // instantiation rebox machinery — both tracked as follow-ups.
-func isPairFormEligible(fn *ast.FuncDecl) bool {
+func isPairFormEligible(fn *ast.FuncDecl, pairForm map[string]bool) bool {
 	if fn.IsLocal {
 		// Hoisted closures take an extra __env i32 param and
 		// have a fixed-shape body; pair-form lowering for them
@@ -741,7 +763,7 @@ func isPairFormEligible(fn *ast.FuncDecl) bool {
 	if fn.Body == nil {
 		return false
 	}
-	return allReturnsAreVariantLiteral(fn.Body, variantNames)
+	return allReturnsArePairFormShape(fn.Body, variantNames, pairForm)
 }
 
 // pairFormVariantsFor returns the set of valid variant
@@ -807,53 +829,80 @@ func isI32StackShape(t ast.Type) bool {
 	return false
 }
 
-// allReturnsAreVariantLiteral walks every Return statement
-// reachable from s and reports whether each one returns one
-// of the named variant constructors as a literal — `Some(EXPR)`
-// / `None` for Option, or `Ok(EXPR)` / `Err(EXPR)` for Result.
+// allReturnsArePairFormShape walks every Return statement
+// reachable from s and reports whether each one is one of
+// the pair-form-compatible shapes:
+//
+//   - A named variant-constructor literal — `Some(EXPR)` /
+//     `None` / `Ok(EXPR)` / `Err(EXPR)` (filtered by `names`).
+//   - A tail call to a function already in `pairForm` (the
+//     callee returns a heap-box pair the caller can flow
+//     through unchanged, and *its* callers still get the
+//     `OpCallDirectPair` consumer-side optimization).
+//
 // Stops at the first non-conforming return.
-func allReturnsAreVariantLiteral(s ast.Stmt, names map[string]bool) bool {
+func allReturnsArePairFormShape(s ast.Stmt, names map[string]bool, pairForm map[string]bool) bool {
 	if s == nil {
 		return true
 	}
 	switch x := s.(type) {
 	case *ast.Block:
 		for _, st := range x.Stmts {
-			if !allReturnsAreVariantLiteral(st, names) {
+			if !allReturnsArePairFormShape(st, names, pairForm) {
 				return false
 			}
 		}
 		return true
 	case *ast.If:
-		return allReturnsAreVariantLiteral(x.Then, names) && allReturnsAreVariantLiteral(x.Else, names)
+		return allReturnsArePairFormShape(x.Then, names, pairForm) && allReturnsArePairFormShape(x.Else, names, pairForm)
 	case *ast.IfLet:
-		return allReturnsAreVariantLiteral(x.Then, names) && allReturnsAreVariantLiteral(x.Else, names)
+		return allReturnsArePairFormShape(x.Then, names, pairForm) && allReturnsArePairFormShape(x.Else, names, pairForm)
 	case *ast.While:
-		return allReturnsAreVariantLiteral(x.Body, names)
+		return allReturnsArePairFormShape(x.Body, names, pairForm)
 	case *ast.For:
-		return allReturnsAreVariantLiteral(x.Body, names)
+		return allReturnsArePairFormShape(x.Body, names, pairForm)
 	case *ast.Switch:
 		for _, c := range x.Cases {
-			if !allReturnsAreVariantLiteral(c.Body, names) {
+			if !allReturnsArePairFormShape(c.Body, names, pairForm) {
 				return false
 			}
 		}
-		return x.Default == nil || allReturnsAreVariantLiteral(x.Default, names)
+		return x.Default == nil || allReturnsArePairFormShape(x.Default, names, pairForm)
 	case *ast.Match:
 		for _, arm := range x.Arms {
-			if !allReturnsAreVariantLiteral(arm.Body, names) {
+			if !allReturnsArePairFormShape(arm.Body, names, pairForm) {
 				return false
 			}
 		}
 		return true
 	case *ast.LetElse:
-		return allReturnsAreVariantLiteral(x.Else, names)
+		return allReturnsArePairFormShape(x.Else, names, pairForm)
 	case *ast.Arena:
-		return allReturnsAreVariantLiteral(x.Body, names)
+		return allReturnsArePairFormShape(x.Body, names, pairForm)
 	case *ast.Return:
-		return isVariantLiteralExpr(x.Value, names)
+		return isVariantLiteralExpr(x.Value, names) || isPairFormTailCall(x.Value, pairForm)
 	}
 	return true
+}
+
+// isPairFormTailCall reports whether e is a direct Call to a
+// top-level function already known to be pair-form. A pair-
+// form callee returns a heap-box (the function-side ABI stays
+// heap-box today — see the OpReturnPair codegen path), so a
+// caller's `return helper()` just lets that heap pointer flow
+// through to its own caller, which is free to apply the
+// `OpCallDirectPair` consumer-side optimization on the outer
+// call.
+func isPairFormTailCall(e ast.Expr, pairForm map[string]bool) bool {
+	c, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	return pairForm[id.Name]
 }
 
 // isPairFormScrutinee reports whether e is a direct Call to

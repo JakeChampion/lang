@@ -585,6 +585,72 @@ function main(): i32 {
 	}
 }
 
+// A pair-form-eligible function whose only return is a tail
+// call to another pair-form function is also pair-form. The
+// outer function's heap-box result flows through unchanged, so
+// callers can still apply `OpCallDirectPair` consumer-side.
+func TestLowerPairFormPropagatesThroughTailCall(t *testing.T) {
+	prog := lowerSource(t, `function inner(x: i32): Option[i32] {
+    if (x < 0) { return None; }
+    return Some(x + 1);
+}
+function outer(x: i32): Option[i32] { return inner(x); }
+function main(): i32 {
+    match (outer(2)) {
+        Some(v) => { return v; },
+        None => { return -1; }
+    }
+}`)
+	// Caller of outer (main) should use OpCallDirectPair —
+	// proves outer was marked pair-form despite using only
+	// tail calls.
+	mainFn := findFunc(prog, "main")
+	if mainFn == nil {
+		t.Fatal("main not found")
+	}
+	hasPairCall := false
+	for _, op := range mainFn.Ops {
+		if op.Kind == OpCallDirectPair && op.Str == "outer" {
+			hasPairCall = true
+			break
+		}
+	}
+	if !hasPairCall {
+		t.Fatalf("expected OpCallDirectPair to outer in main:\n%s", prog)
+	}
+}
+
+// A tail call to a NON-pair-form function does NOT make the
+// caller pair-form — the heap-box result has the right shape
+// in memory, but the callees we'd want to opt-in have to opt
+// in symmetrically (otherwise the fixpoint never reaches them
+// and consumers see arbitrary heap pointers).
+func TestLowerTailCallToNonPairFormFnStaysHeapForm(t *testing.T) {
+	// `inner` mixes a tail call (the recursion in the false
+	// branch) with a literal — the literal makes it pair-form,
+	// so what we actually want to pin here is that a tail call
+	// to a function whose body escapes the variant (e.g. via a
+	// store) is rejected. Use a function that escapes through
+	// an arg position.
+	prog := lowerSource(t, `function side_effect(o: Option[i32]): Option[i32] { return o; }
+function outer(x: i32): Option[i32] { return side_effect(Some(x)); }
+function main(): i32 {
+    match (outer(2)) {
+        Some(v) => { return v; },
+        None => { return -1; }
+    }
+}`)
+	mainFn := findFunc(prog, "main")
+	if mainFn == nil {
+		t.Fatal("main not found")
+	}
+	for _, op := range mainFn.Ops {
+		if op.Kind == OpCallDirectPair && op.Str == "outer" {
+			t.Fatalf("outer should NOT be pair-form (tail call into non-pair-form side_effect):\n%s", prog)
+		}
+	}
+}
+
 func TestLowerOptionPointerPayloadStaysHeapForm(t *testing.T) {
 	prog := lowerSource(t, `function f(): Option[string] { return None; }`)
 	mustContainOp(t, prog, "f", OpEnumSentinel)
