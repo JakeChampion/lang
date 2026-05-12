@@ -111,16 +111,10 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 	if g.needsFileIO {
 		g.needsStreamingIO = true
 	}
-	// Always emit the closure-aware shape (static `{fn_idx, env}`
-	// pair cells for OpConstFunc, deref-then-call_indirect for
-	// OpCallIndirect). Pre-unified-ABI codebases had a "legacy"
-	// fast path for programs without nested-fn hoisting that used
-	// bare table indices; with the unified ABI the prelude itself
-	// references function values (closures stored in Map / state /
-	// struct fields), so `needsClosures` was effectively always
-	// true in practice. Removing the branch as part of the
-	// legacy-cleanup pass — saves a code path and keeps the
-	// function-value ABI consistent across all three backends.
+	// Always emit the closure-aware shape — see PR #318 for the
+	// rationale. The flag is kept as a marker for the
+	// per-function `$__call_scratch` local decl; future cleanup
+	// can remove the flag entirely.
 	g.needsClosures = true
 	if len(prog.Funcs) > g.origTopLevelCount {
 		g.needsFuncTable = true
@@ -640,21 +634,17 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpConstStr:
 		g.linef("i32.const %d", g.internString(op.Str))
 	case ir.OpConstFunc:
-		// In closure mode, function values are static cell pointers;
-		// in legacy mode they're bare table indices. Both reach into
-		// tableIndex — funcIndex (position in prog.Funcs) is wrong
-		// for legacy mode whenever the table doesn't include every
-		// declared function, since call_indirect dispatches on the
-		// table position, not the source position.
+		// Function values materialise as static `{fn_idx, env}`
+		// pair-cell pointers in the closures-base region. The
+		// pair's `fn_idx` is the function's POSITION IN THE
+		// FUNCREF TABLE (not its position in `prog.Funcs`):
+		// `call_indirect` dispatches on the table slot, and
+		// non-value-referenced functions stay out of the table.
 		ti, ok := g.tableIndex[op.Str]
 		if !ok {
 			return fmt.Errorf("wasm/ir: function %q not in table", op.Str)
 		}
-		if g.needsClosures {
-			g.linef("i32.const %d", g.closuresBase+8*ti)
-		} else {
-			g.linef("i32.const %d", ti)
-		}
+		g.linef("i32.const %d", g.closuresBase+8*ti)
 	case ir.OpLoadLocal:
 		g.linef("local.get $%s", slotName(g.current, irFn, op.I32))
 	case ir.OpStoreLocal:
@@ -818,17 +808,17 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 			return fmt.Errorf("wasm/ir: OpCallIndirect missing sig")
 		}
 		tIdx := g.recordSig(op.Sig)
-		if g.needsClosures {
-			// Stack at this point: [args..., closure_ptr]. We need
-			// [args..., env_ptr, fn_idx] for call_indirect.
-			g.line("local.set $__call_scratch")
-			g.line("local.get $__call_scratch")
-			g.line("i32.const 4")
-			g.line("i32.add")
-			g.line("i32.load")
-			g.line("local.get $__call_scratch")
-			g.line("i32.load")
-		}
+		// Stack at this point: [args..., closure_ptr]. Deref the
+		// closure pair into [args..., env_ptr, fn_idx] for
+		// call_indirect. (env_ptr lives at +4 in the pair cell;
+		// fn_idx at +0.)
+		g.line("local.set $__call_scratch")
+		g.line("local.get $__call_scratch")
+		g.line("i32.const 4")
+		g.line("i32.add")
+		g.line("i32.load")
+		g.line("local.get $__call_scratch")
+		g.line("i32.load")
 		g.linef("call_indirect (type $t%d)", tIdx)
 	case ir.OpCallClosureDirect:
 		// Defunctionalised closure call: caller already

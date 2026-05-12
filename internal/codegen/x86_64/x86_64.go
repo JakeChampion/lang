@@ -100,12 +100,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `OpCallDirect <self> ; OpReturn` into a parameter
 	// rebind plus `OpBr` back to the function entry — turns
 	// self-recursive functions into loops, so the deepest
-	// "tail call" doesn't grow the stack. x86-64 is the
-	// first consumer; the IR-level pass has been parked in
-	// `internal/ir/tco.go` since the arm32 retirement
-	// waiting for a native backend that wires it in.
-	// Arm64 + wasm don't call it yet — adding it there is
-	// safe but out of this PR's scope.
+	// "tail call" doesn't grow the stack. Wired in on all
+	// three backends (x86-64 + arm64 + wasm).
 	ir.TailCallOptimize(ip)
 	// Defunctionalise + ElideClosurePair turn many indirect
 	// closure calls into direct ones (when the closure flow

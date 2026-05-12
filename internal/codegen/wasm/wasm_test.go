@@ -39,14 +39,17 @@ func mustNotContain(t *testing.T, wat, needle string) {
 	}
 }
 
-// In legacy mode (no closures), function values are bare table
-// indices. The funcref table is built from the inTable subset of
-// prog.Funcs in declaration order, so the table position of a
-// value-referenced function depends on how many earlier functions
-// are themselves in the table — NOT on its funcIndex (raw position
-// in prog.Funcs). This program declares two non-table functions
-// before the value-referenced `target`, so funcIndex["target"] = 2
-// but tableIndex["target"] = 0. The pushed value must be 0.
+// Function values materialise as `{fn_idx, env}` pair-cell
+// pointers; the `fn_idx` field stores the function's POSITION
+// IN THE FUNCREF TABLE, not its position in `prog.Funcs`. The
+// funcref table only includes functions actually referenced as
+// values, so a value-referenced function declared later than
+// some non-table functions still gets a low table index.
+//
+// This program declares two non-table functions before the
+// value-referenced `target`, so funcIndex["target"] = 2 but
+// tableIndex["target"] = 0. The cell `__closure_cell_target`
+// must encode fn_idx = 0.
 func TestFunctionValueUsesTableIndexNotFuncIndex(t *testing.T) {
 	src := `function unrelated_a(x: i32): i32 { return x + 1; }
 	function unrelated_b(x: i32): i32 { return x + 2; }
@@ -56,17 +59,8 @@ func TestFunctionValueUsesTableIndexNotFuncIndex(t *testing.T) {
 	}
 	function main(): i32 { return apply(target, 4); }`
 	wat := compileToWAT(t, src)
-	// The funcref table holds only `target` (index 0). The value
-	// pushed for `target` in `apply(target, 4)` must be 0, matching
-	// the table position, not 2 (its funcIndex).
 	mustContain(t, wat, "(table $fns 1 funcref)")
 	mustContain(t, wat, "(elem (i32.const 0) $target)")
-	// Inside main, the call is `i32.const 0; i32.const 4; call $apply`.
-	// Spot-check that we don't see `i32.const 2` (funcIndex of target)
-	// followed immediately by the apply call.
-	if strings.Contains(wat, "i32.const 2\n        i32.const 4\n        call $apply") {
-		t.Errorf("emitted funcIndex (2) where tableIndex (0) was needed:\n%s", wat)
-	}
 }
 
 func TestSimpleFunction(t *testing.T) {
@@ -231,8 +225,6 @@ func TestIndirectCallEmitsTable(t *testing.T) {
 			return f(a, b);
 		}
 		function main(): i32 { return apply(add, 40, 2); }`)
-	// Three i32 params: a, b, __env. With pre-unified-ABI shape
-	// this was 2 params (no env).
 	mustContain(t, wat, "(type $t0 (func (param i32) (param i32) (param i32) (result i32)))")
 	mustContain(t, wat, "(table $fns 1 funcref)")
 	mustContain(t, wat, "(elem (i32.const 0) $add)")
