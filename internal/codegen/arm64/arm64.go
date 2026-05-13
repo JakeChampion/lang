@@ -3100,9 +3100,9 @@ func (g *generator) adrpAdd(reg, sym string) {
 // AAPCS64 argument slots. The first `regArgs` (=8) go in
 // x0..x7; the remaining args land on the call stack at
 // [sp+0], [sp+8], ... in source order. The operand stack uses
-// 16-byte slots; the call stack uses 8-byte slots, so overflow
-// args get copied in-place via a packed call-stack overflow
-// area allocated below the operand stack.
+// `slotBytes`-byte slots; the call stack always uses 8-byte
+// slots, so overflow args get copied to a packed call-stack
+// overflow area allocated below the operand stack.
 //
 // After this call returns the caller is responsible for
 // issuing the `bl` / `blr`, then calling emitCallArgsCleanup
@@ -3111,7 +3111,7 @@ func (g *generator) adrpAdd(reg, sym string) {
 func (g *generator) emitCallArgsLoad(argc int) {
 	if argc <= regArgs {
 		for i := argc - 1; i >= 0; i-- {
-			g.emit("ldr x%d, [sp], #16", i)
+			g.emit("ldr x%d, [sp], #%d", i, slotBytes)
 		}
 		return
 	}
@@ -3122,16 +3122,16 @@ func (g *generator) emitCallArgsLoad(argc int) {
 	g.emit("sub sp, sp, #%d", stackSize)
 	// Read register args (0..regArgs-1) from operand stack into
 	// x0..x_{regArgs-1}. Args sit at [sp + stackSize +
-	// 16*(argc-1-i)] (operand-stack top after the sub is at
-	// sp + stackSize; arg i is at offset 16*(argc-1-i) from
-	// the top).
+	// slotBytes*(argc-1-i)] (operand-stack top after the sub
+	// is at sp + stackSize; arg i is at offset slotBytes*
+	// (argc-1-i) from the top).
 	for i := 0; i < regArgs; i++ {
-		g.emit("ldr x%d, [sp, #%d]", i, stackSize+16*(argc-1-i))
+		g.emit("ldr x%d, [sp, #%d]", i, stackSize+slotBytes*(argc-1-i))
 	}
 	// Copy overflow args (regArgs..argc-1) from operand stack
 	// to the packed call-stack overflow area.
 	for i := regArgs; i < argc; i++ {
-		g.emit("ldr x9, [sp, #%d]", stackSize+16*(argc-1-i))
+		g.emit("ldr x9, [sp, #%d]", stackSize+slotBytes*(argc-1-i))
 		g.emit("str x9, [sp, #%d]", 8*(i-regArgs))
 	}
 }
@@ -3146,7 +3146,7 @@ func (g *generator) emitCallArgsCleanup(argc int) {
 	overflow := argc - regArgs
 	stackSize := ((overflow*8 + 15) / 16) * 16
 	// Drop call-stack overflow AND the operand-stack args.
-	g.emit("add sp, sp, #%d", stackSize+16*argc)
+	g.emit("add sp, sp, #%d", stackSize+slotBytes*argc)
 }
 
 // emitStartRuntime writes `_start`, the binary's entry under
@@ -3533,8 +3533,8 @@ func (g *generator) emitPairFormMaker(width int, tag int) {
 }
 
 func (g *generator) binPop() {
-	g.emit("ldr x0, [sp], #16") // rhs (top of stack)
-	g.emit("ldr x1, [sp], #16") // lhs (next)
+	g.emit("ldr x0, [sp], #%d", slotBytes) // rhs (top of stack)
+	g.emit("ldr x1, [sp], #%d", slotBytes) // lhs (next)
 }
 
 // fbinPop32 pops two raw 32-bit float bit-patterns off the
@@ -3544,8 +3544,8 @@ func (g *generator) binPop() {
 // f32 / i64 / f64; the V-register file gets involved only at
 // op time.
 func (g *generator) fbinPop32() {
-	g.emit("ldr x0, [sp], #16") // rhs raw bits
-	g.emit("ldr x1, [sp], #16") // lhs raw bits
+	g.emit("ldr x0, [sp], #%d", slotBytes) // rhs raw bits
+	g.emit("ldr x1, [sp], #%d", slotBytes) // lhs raw bits
 	g.emit("fmov s0, w0")
 	g.emit("fmov s1, w1")
 }
@@ -3553,8 +3553,8 @@ func (g *generator) fbinPop32() {
 // fbinPop64 is fbinPop32's f64 counterpart — uses the full
 // 64-bit x-regs and double-precision d-regs.
 func (g *generator) fbinPop64() {
-	g.emit("ldr x0, [sp], #16")
-	g.emit("ldr x1, [sp], #16")
+	g.emit("ldr x0, [sp], #%d", slotBytes)
+	g.emit("ldr x1, [sp], #%d", slotBytes)
 	g.emit("fmov d0, x0")
 	g.emit("fmov d1, x1")
 }
