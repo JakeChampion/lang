@@ -150,7 +150,11 @@ func TestRecursionDirectCall(t *testing.T) {
 }
 
 func TestStringsLowerToLinearMemory(t *testing.T) {
-	wat := compileToWAT(t, `function main(): void { print("hi"); }`)
+	// Use a literal longer than the single-i32 inline cap so the
+	// OpConstStr literal-pack short-circuit doesn't apply — heap
+	// form is required to assert the data-segment + base offset
+	// pinning below.
+	wat := compileToWAT(t, `function main(): void { print("hello"); }`)
 	// After step 6 every print goes through wasi:io/streams; the
 	// preview-1 fd_write import is gone.
 	mustContain(t, wat, `(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush"`)
@@ -159,8 +163,8 @@ func TestStringsLowerToLinearMemory(t *testing.T) {
 	mustContain(t, wat, `(func $print`)
 	mustContain(t, wat, `(func $putchar`)
 	mustContain(t, wat, "call $print")
-	// Length-prefixed string entry: 2 bytes "hi" so prefix is \02\00\00\00.
-	mustContain(t, wat, `\02\00\00\00hi`)
+	// Length-prefixed string entry: 5 bytes "hello" so prefix is \05\00\00\00.
+	mustContain(t, wat, `\05\00\00\00hello`)
 	// Preview-2 layout pushes the string base from 64 to 128 (the
 	// canonical-ABI scratch slots reserve memory[92..127]); chars
 	// for the first interned string therefore start at 128+4=132.
@@ -462,6 +466,29 @@ func TestLenOfStringRoutesThroughSSOHelper(t *testing.T) {
 	if strings.Contains(wat, "call $len") {
 		t.Errorf("expected len() to lower through OpStrLen, got call $len in:\n%s", wat)
 	}
+}
+
+// `OpConstStr` literal-packs short literals (≤ 3 bytes) as
+// inline-encoded i32 values instead of allocating a data-segment
+// entry. The packed value matches `langstring.PackTinyWasm` byte
+// layout: top-bit flag (0x80000000) + 3-bit length + up-to-3
+// inline bytes. Saves `len + 4` data-segment bytes per unique
+// short literal; the runtime cost is zero (still a single
+// `i32.const`).
+func TestOpConstStrShortLiteralPacksInline(t *testing.T) {
+	// "ok" is 2 bytes: flag (0x80000000) | length 2 (<<24) |
+	// 'o' (0x6f) | ('k' = 0x6b)<<8 = 0x82006b6f.
+	wat := compileToWAT(t, `function f(): string { return "ok"; }`)
+	mustContain(t, wat, "i32.const 0x82006b6f")
+	mustNotContain(t, wat, `\02\00\00\00ok`)
+}
+
+// Longer literals (> 3 bytes) still emit through the heap-form
+// `internString` path — one data-segment entry per unique
+// literal plus an `i32.const <data-offset>` at each use site.
+func TestOpConstStrLongLiteralStaysHeap(t *testing.T) {
+	wat := compileToWAT(t, `function f(): string { return "longer"; }`)
+	mustContain(t, wat, `\06\00\00\00longer`)
 }
 
 // $__str_concat outputs an inline-encoded i32 when the total
