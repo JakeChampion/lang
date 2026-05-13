@@ -1,0 +1,186 @@
+# Small-String-Optimisation (SSO) migration plan
+
+Captures the multi-PR migration strategy for BACKEND-PARITY
+perf item #2 (inline small strings). The change is breaking
+for **every** string operation in the prelude + native
+runtimes + IR codegens, so this doc is the roadmap a reviewer
+can use to validate slice boundaries before each PR ships.
+
+## Target end-state representation
+
+`string` on the operand stack becomes **two words**:
+
+```
+data_ptr : usize       // points at heap data, OR holds inline bytes
+len      : usize       // low bits = length, top bit = inline flag
+```
+
+- **Heap form** (`len.top_bit == 0`): `data_ptr` points at the
+  string's raw bytes on the heap. Length is `len`. The 4-byte
+  length-prefix header used today is gone — `len` lives on the
+  operand stack instead of inline with the data.
+- **Inline form** (`len.top_bit == 1`): `data_ptr` holds the
+  string's bytes directly, packed as `data_ptr_byte_0 ..
+  data_ptr_byte_7` (8 bytes), plus `len.byte_8 .. len.byte_15`
+  (7 of the bytes from the upper-len word). Inline capacity:
+    - wasm32: 7 bytes (one i32 + one i32 = 8 bytes – 1 flag bit)
+    - native: 15 bytes (one i64 + one i64 = 16 bytes – 1 flag
+      bit)
+
+Stack-slot cost: 16 bytes (was 4-byte ptr + heap header).
+
+## Why two words
+
+- Length lives next to the data pointer, so `len(s)` is a
+  no-op (no heap-load) for heap-form strings AND inline.
+- Inline-flag bit fits in `usize.top_bit`, leaving 63 bits of
+  length on native, 31 on wasm32 — both far more than any
+  realistic string.
+- Convergent: Rust's `String` (Vec + len), Swift's `String`,
+  Zig's std layout, Go's `string` (data, len) all settle on
+  this shape. Edge handler / CLI workloads don't push past the
+  inline cap often, so the alloc-elision win is dominant.
+
+## Migration steps (one PR per slice)
+
+Each PR ships incrementally — `go test ./...` must stay green
+after every merge so the prelude / examples don't break.
+
+### Step 1 — design doc (this PR)
+
+No code change. Validates the plan + reviewer alignment.
+
+### Step 2 — `langstring` Go-side runtime helper
+
+Add a `runtime.LangString` Go struct mirroring the new layout.
+Used by code-generators to compute layout constants + check
+inline-fit at compile time. No backend wired to it yet.
+
+Files: `internal/runtime/langstring.go` (new), unit tests.
+
+### Step 3 — string-literal lowering on wasm
+
+Change wasm's `OpConstStr` to emit the **two-word** form when
+the literal fits in 7 bytes:
+- `≤ 7-byte` literal: data_ptr = `(byte_0 << 0) | (byte_1 << 8)
+  | ...`, len = `inline_flag | length`. Both pushed as two
+  i32s.
+- `> 7-byte` literal: data_ptr = heap pointer (current
+  behaviour), len = length on stack. Heap-side drops the
+  4-byte length prefix.
+
+Every IR / codegen op that consumes a string still expects ONE
+operand-stack slot (the old pointer-shaped value). To keep ABI
+unchanged at this step, the literal is re-packed onto a
+single i32 (heap pointer to a synthetic "two-word view") on
+emit; the rest of the pipeline reads it via existing helpers.
+
+Verification: `TestWASMStringLiteralLen`, `TestWASMStringLiteralIndex`,
+existing prelude tests.
+
+This step is **carrier-only**: no operations yet use the new
+form. Sets up downstream PRs to swap operations in-place.
+
+### Step 4 — `__str_len` runtime helper switch
+
+Replace `__str_len(ptr)` (which reads `*(ptr - 4)`) with
+`langstring_len(data_ptr, len)` (returns `len & ~inline_flag`).
+Every backend's `len(s)` codegen rewrites to consume the two-
+word form.
+
+This is the first step that **drops a heap-load** on the
+`len(s)` happy path.
+
+### Step 5 — `__str_concat`, `__str_slice`, `__str_eq`,
+`__str_idx`
+
+Each native runtime helper changes signature from
+`(i32 ptr, i32 ptr) -> i32 ptr` to `(i64 data1, i64 len1, i64
+data2, i64 len2) -> (i64 data, i64 len)`. The function-side
+ABI break propagates to every caller in the prelude.
+
+This is the largest step. One sub-PR per helper to keep
+review tractable.
+
+### Step 6 — Prelude migration
+
+Walk `internal/prelude/prelude.lang`, update every string-
+typed return / arg / local to the new ABI. Most of the source
+is unaffected (lang-level code references `string` opaquely);
+the prelude's hand-rolled `__str_*` helpers in `wasm.go` /
+`x86_64.go` / `arm64.go` are where the work is.
+
+### Step 7 — `OpStore`/`OpLoad` of string fields
+
+`struct Foo { name: string }` field stores / loads now write
+two words instead of one. Layout constants in `payloadLayout`,
+`structFieldLayout`, etc. change. This is the most fiddly
+step — every offset calculation that assumed pointer-shape =
+ptrW bytes for `string` needs widening.
+
+### Step 8 — `Map[string, V]` / `Map[K, string]` runtime
+
+Map's hash, eq, and value-store paths all special-case the
+string key/value layout. All updated to two-word form.
+
+### Step 9 — Test sweep
+
+Run the full e2e suite under all three backends. Migrate any
+remaining test that hard-coded the old layout (e.g., a test
+that builds a heap layout by hand and casts).
+
+### Step 10 — Cleanup
+
+Remove the carrier-only repack from Step 3. Remove dead
+length-prefix code paths.
+
+## Compatibility / breakage
+
+- Every native runtime helper signature changes.
+- The wasm string-literal data-segment layout changes (no more
+  4-byte length prefix on the heap side).
+- The Go-side AST and IR APIs that compute string layout
+  (`payloadSlotSize`, `structFieldLayout`, etc.) change their
+  return values for `ast.StringType`.
+- `Map[K, V]` runtime helpers (set / get / iter) for string
+  keys/values change ABI.
+
+Programs only-using lang-level code remain source-compatible
+(no syntax / semantic change to `string` itself).
+
+## Estimated PR count
+
+Steps 1–10 above. Practical sub-splits per native runtime
+helper bring this to 12–15 PRs total. Roughly:
+
+- Steps 1, 2, 9, 10: 4 PRs
+- Steps 3–4 (wasm carrier + len): 2 PRs
+- Step 5 (runtime helpers): 4–6 PRs (one per helper × native)
+- Step 6 (prelude): 1 large PR or several thematic ones
+- Step 7 (struct field layout): 1 PR
+- Step 8 (Map runtime): 1 PR
+
+## Why ship now
+
+Edge handlers spend most of their per-request alloc budget on
+short strings (header names like `"Host"`, `"Content-Type"`,
+status codes like `"200 OK"`, JSON field names). SSO turns
+those allocs into pure stack ops. Memory savings compound
+because the freed allocator cursor never bumps, keeping
+arena footprint flat across requests.
+
+## What this doc IS
+
+A migration plan, not a design proposal. The Niko-style
+two-word representation is the settled-on convergent choice
+across Rust / Swift / Zig / Go; we're not redesigning
+strings, we're catching up.
+
+## What this doc IS NOT
+
+- A scope estimate for any single PR — each step has its own.
+- A claim that all 10 steps will land in this session. The
+  pair-form arc (17 PRs) took roughly the same shape; SSO
+  will take more.
+
+https://claude.ai/code/session_01LXybxbbVBbwLFHmbYAobhN
