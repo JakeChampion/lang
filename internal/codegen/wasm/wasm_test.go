@@ -449,15 +449,50 @@ func TestStringEqualityEmitsHelper(t *testing.T) {
 	mustContain(t, wat, "call $__str_eq")
 }
 
-func TestLenOfStringInlinesPrefixLoad(t *testing.T) {
+func TestLenOfStringRoutesThroughSSOHelper(t *testing.T) {
 	wat := compileToWAT(t, `function f(): i32 { return len("hello"); }`)
-	// len is an inline `i32.load (s - 4)`, not a call.
-	mustContain(t, wat, "i32.const 4")
-	mustContain(t, wat, "i32.sub")
-	mustContain(t, wat, "i32.load")
+	// `len(s)` lowers to OpStrLen, which the wasm backend
+	// emits as a call into the SSO seam `$__lang_str_len`.
+	// That helper branches on the top-bit inline flag: inline
+	// form returns the 3-bit length from bits 24..26; heap
+	// form falls back to the legacy `[ptr-4]` load. Both
+	// branches are visible inside `$__lang_str_len`'s body.
+	mustContain(t, wat, "call $__lang_str_len")
+	mustContain(t, wat, "(func $__lang_str_len")
 	if strings.Contains(wat, "call $len") {
-		t.Errorf("expected len to be inlined, got call $len in:\n%s", wat)
+		t.Errorf("expected len() to lower through OpStrLen, got call $len in:\n%s", wat)
 	}
+}
+
+// $__str_concat outputs an inline-encoded i32 when the total
+// length fits the single-i32 tiny SSO cap (≤3 bytes), keeping
+// the alloc + length-prefix path for longer results. The
+// emitted body shows both shapes — the early-exit return for
+// the inline branch + the heap-path `$__lang_alloc` call.
+func TestStrConcatHelperHasInlineOutputFastPath(t *testing.T) {
+	wat := compileToWAT(t, `function f(s: string): string { return s + "b"; }`)
+	mustContain(t, wat, "(func $__str_concat")
+	mustContain(t, wat, "i32.const 0x80000000")
+	mustContain(t, wat, "i32.le_u")
+	mustContain(t, wat, "call $__lang_alloc")
+	mustContain(t, wat, "call $__lang_str_byte")
+}
+
+// String runtime helpers that need a linear-memory address
+// (I/O writes, $__str_idx, $__str_slice) promote inline-form
+// inputs through `$__lang_str_to_heap` at function entry. The
+// helper itself is unconditionally emitted alongside the SSO
+// seam pair; pin its presence here so the entry-promotion
+// pattern stays wired.
+func TestSSOHelpersEmitted(t *testing.T) {
+	wat := compileToWAT(t, `function f(s: string): i32 {
+		print(s);
+		return len(s);
+	}`)
+	mustContain(t, wat, "(func $__lang_str_len")
+	mustContain(t, wat, "(func $__lang_str_byte")
+	mustContain(t, wat, "(func $__lang_str_to_heap")
+	mustContain(t, wat, "call $__lang_str_to_heap")
 }
 
 func TestStructLitAllocatesAndStores(t *testing.T) {

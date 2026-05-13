@@ -871,13 +871,12 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpStrConcat:
 		g.line("call $__str_concat")
 	case ir.OpStrLen:
-		// `[ptr - 4]` load of the 4-byte little-endian length
-		// prefix. Centralising it here gives a future SSO
-		// pass one place to flip when the encoding moves to
-		// an inline / heap-tagged form.
-		g.line("i32.const 4")
-		g.line("i32.sub")
-		g.line("i32.load")
+		// Inline-aware length read via the SSO seam.
+		// `$__lang_str_len` branches on the top-bit flag:
+		// inline form returns the 3-bit length packed into
+		// bits 24..26 of the operand word; heap form falls
+		// back to the legacy `[ptr - 4]` load.
+		g.line("call $__lang_str_len")
 	case ir.OpEnumSentinel:
 		// Push the linear-memory address of a shared static
 		// 4-byte `[tag=op.I32]` sentinel. Lazily reserved one
