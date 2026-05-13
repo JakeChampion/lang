@@ -2774,10 +2774,8 @@ func (g *generator) emitRuntimePreamble() {
 
 		g.line(`(func $__str_idx (param $base i32) (param $i i32) (result i32)`)
 		g.indent++
-		// Inline-form bases don't have a linear-memory address;
-		// promote-to-heap at entry so the byte-address arithmetic
-		// below is always against a heap-form pointer.
-		g.emitPromoteStrParam("$base")
+		// Bounds-check works for both forms — `$__lang_str_len`
+		// is inline-aware.
 		g.line(`local.get $i`)
 		g.line(`i32.const 0`)
 		g.line(`i32.lt_s`)
@@ -2794,9 +2792,42 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`unreachable`)
 		g.indent--
 		g.line(`end`)
+		// Two address shapes:
+		//   - heap (`$base` top bit clear): byte address is
+		//     `$base + $i` — the historical layout, untouched.
+		//   - inline (`$base` top bit set): spill the operand-
+		//     word into the shared scratch slot at mem[0..3]
+		//     (same one-shot slot $__lang_str_data_ptr uses) and
+		//     return `mem[0] + $i` — the inline encoding lays
+		//     content bytes at offsets 0..len-1, length nibble
+		//     + flag in the high byte (byte 3) which the
+		//     trailing OpLoadByte never reads. Avoids the
+		//     per-byte $__lang_alloc + memory.copy + length-
+		//     prefix-store the prior `emitPromoteStrParam` path
+		//     incurred — a real win inside `__map_hash`'s
+		//     `s[i]` byte-by-byte loop on short string keys.
+		//
+		// Single-threaded wasm + the immediate OpLoadByte that
+		// follows make the scratch's one-shot lifetime safe;
+		// the next $__str_idx call clobbers, by which time the
+		// previous load has already consumed the byte.
+		g.line(`local.get $base`)
+		g.line(`i32.const 0x80000000`)
+		g.line(`i32.and`)
+		g.line(`if (result i32)`)
+		g.indent++
+		g.line(`i32.const 0`)
+		g.line(`local.get $base`)
+		g.line(`i32.store`)
+		g.line(`local.get $i`)
+		g.indent--
+		g.line(`else`)
+		g.indent++
 		g.line(`local.get $base`)
 		g.line(`local.get $i`)
 		g.line(`i32.add`)
+		g.indent--
+		g.line(`end`)
 		g.indent--
 		g.line(`)`)
 
