@@ -18,6 +18,16 @@ name: CI
 # Wasmtime + wasm-tools downloads are cached on (host arch,
 # version) so the second-and-onward CI run skips the ~50 MB
 # fetch.
+#
+# `clang + lld` are deliberately NOT installed. They were
+# previously used by `TestArm64DarwinBuilds` to cross-compile
+# arm64-darwin Mach-O on Linux and verify the file is well-
+# formed; that test SKIPs cleanly when they're absent. The
+# arm64-darwin native verification happens in `macos.yml`,
+# which runs on `macos-latest` and exercises the same code
+# path more thoroughly (links + actually runs the binary).
+# Dropping clang+lld here saved a ~10–15 minute apt install
+# on the x86 runner.
 
 on:
   pull_request:
@@ -46,11 +56,6 @@ jobs:
           # No go.sum (no external deps) → setup-go's
           # default cache attempt complains. Disable.
           cache: false
-
-      - name: Install clang + lld (cross-link arm64-darwin Mach-O)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang lld
 
       - name: Cache wasmtime + wasm-tools + adapter
         id: cache-wasm
@@ -90,7 +95,6 @@ jobs:
           uname -m
           go version
           gcc --version | head -1
-          clang --version | head -1
           wasmtime --version
           wasm-tools --version
           gotestsum --version
