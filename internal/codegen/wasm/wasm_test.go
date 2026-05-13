@@ -584,6 +584,28 @@ func TestTcpRecvHelperHasInlineOutputFastPath(t *testing.T) {
 	mustContain(t, wat, "call $__lang_alloc")
 }
 
+// `$__stream_read_line` gains an inline-output fast path for
+// lines whose accumulated length fits the single-i32 tiny cap
+// (≤ 3 bytes, including the trailing newline). Common for
+// interactive-prompt responses like "" / "y\n" / "ok\n". The
+// heap-form path is preserved for longer lines via the same
+// `$__lang_alloc` + `memory.copy` sequence the helper used
+// before; the SSO branch is gated on `i32.le_u`.
+func TestStreamReadLineHelperHasInlineOutputFastPath(t *testing.T) {
+	src := `function main(): void {
+		match (stdin().read_line()) {
+			Some(s) => { print(s); },
+			None => {}
+		}
+	}`
+	wat := compileToWAT(t, src)
+	mustContain(t, wat, "(func $__stream_read_line")
+	mustContain(t, wat, "i32.const 0x80000000")
+	mustContain(t, wat, "i32.le_u")
+	// Heap path still alive for longer lines.
+	mustContain(t, wat, "call $__lang_alloc")
+}
+
 // String runtime helpers that need a linear-memory address
 // (I/O writes, $__str_idx, $__str_slice) promote inline-form
 // inputs through `$__lang_str_to_heap` at function entry. The
