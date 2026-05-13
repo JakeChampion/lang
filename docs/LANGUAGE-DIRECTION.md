@@ -990,10 +990,15 @@ tests.
   trap.
 - **Records (anonymous structural types).** Interesting for
   ergonomics — `({ name: "x", age: 5 })` without a struct decl —
-  but not load-bearing yet. Comes back when we have generics.
+  but not load-bearing yet. Generics shipped (PR 3), so this
+  is no longer blocked on type-system work — pending now on
+  someone hitting the friction in a real example.
 - **Error effects in function signatures** (MoonBit's `raise`).
-  Worth re-examining once `use` is in. May be redundant with
-  `Result` + `use`.
+  `use` shipped + postfix `?` is in (see "use" + "Postfix `?`"
+  notes in PR 6). Combined they cover the ergonomic case
+  effect-rows would address. Effect rows would still be
+  cleaner type-wise (no `Result[T, E]` wrapping noise on the
+  caller), but the practical gap is small. Deprioritised.
 - **`comptime` as a unified generic / const-fold mechanism**
   (Zig). Powerful but a big design swing; defer until we feel the
   pain of separate generic + const systems.
