@@ -124,26 +124,26 @@ wrap (32-bit reg form implicitly zero-extends), and a new
 `OpConstI64` lowering via `ldr x0, =N` (literal pool). Linux +
 Darwin share the encoding so arm64-darwin gets parity for free.
 
-### `OpSignExtend8` / `OpSignExtend16` on both natives
+### ~~`OpSignExtend8` / `OpSignExtend16` on both natives~~ ✅ done
 
 Sub-i32 sign-extension. Used by sub-i32 cast paths
-(`var x: i8 = -1 as i8`).
+(`var x: i8 = -1 as i8`). Landed on both natives; covered by
+`TestArm64SubI32` / `TestX86_64SubI32`'s `i32_to_i8_sign_preserved`
+and `i32_to_i16_sign_preserved` cases.
 
 - **arm64:** `sxtb w0, w0` / `sxth w0, w0`
 - **x86-64:** `movsx eax, al` / `movsx eax, ax`
-- **Risk:** low. Currently masked by the fact that `OpLoadByte` already
-  zero-extends, so `as u8 / as u16` paths happen to work.
 
-### `OpLoadI8S` / `OpLoadI16U` / `OpLoadI16S` on both natives
+### ~~`OpLoadI8S` / `OpLoadI16U` / `OpLoadI16S` on both natives~~ ✅ done
 
-Signed-byte / 16-bit element loads from arrays. Wasm has all three;
-native only has `OpLoadByte` (unsigned i8). Affects `i8[]` /
-`i16[]` / `u16[]` read paths.
+Signed-byte / 16-bit element loads from arrays. Landed on both
+natives alongside the sign-extend ops above; covered by
+`TestArm64SubI32` / `TestX86_64SubI32`'s `i8_array_signed_sum`,
+`i16_array_signed_sum`, and `u16_array_zero_extends` cases.
 
 - **arm64:** `ldrsb w0, [x1]` / `ldrh w0, [x1]` / `ldrsh w0, [x1]`
 - **x86-64:** `movsx eax, byte ptr [rax]` / `movzx eax, word ptr [rax]` /
   `movsx eax, word ptr [rax]`
-- **Risk:** low; one case per op.
 
 ### ~~`OpLoadGlobal` / `OpStoreGlobal` on both natives~~ ✅ done
 
@@ -182,8 +182,10 @@ Adding them is a copy-paste of the wasm test with a different runner.
 - ~~`Test*Tuple*`~~ ✅ both
 - ~~`Test*ForEach*`~~ ✅ both
 - ~~`Test*IfLet*`~~ ✅ both
-- `Test*SubI32*` (u8 / u16 / i8 array writes / slices / widths) —
-  still blocked on the OpLoadI*/OpSignExtend* gaps above
+- ~~`Test*SubI32*`~~ ✅ both natives have a `Test{Arm64,X86_64}SubI32`
+  table-driven test covering `i8[]` / `i16[]` / `u16[]` reads plus
+  signed cast preservation (the OpLoadI*/OpSignExtend* IR ops above
+  landed alongside it).
 - ~~`Test*State*`~~ ✅ landed alongside `State[T]`
 - ~~`Test*ReadFile*` / `Test*WriteFile*` / `Test*OpenAppender`~~
   ✅ both natives have ReadFileOk / ReadFileNotFound / WriteFileOk
