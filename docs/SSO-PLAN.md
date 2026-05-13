@@ -183,4 +183,140 @@ strings, we're catching up.
   pair-form arc (17 PRs) took roughly the same shape; SSO
   will take more.
 
+## Integration touchpoints — wasm-first slice (verified)
+
+Concrete sites the wasm SSO flip needs to touch. Surveyed
+during the session that shipped #341 + #342 so the next
+session opens with a precise map instead of having to
+re-discover the surface.
+
+### Type-system bridge
+
+- `internal/codegen/wasm/wasm.go:6088 watType(t ast.Type)
+  (string, error)` — returns `"i32"` for `ast.StringType`
+  today. Add a sibling `watTypes(t) ([]string, error)` that
+  returns `["i32", "i32"]` for `StringType`. Existing
+  `watType` callers either migrate to `watTypes` (fanning
+  out over the slice) or stay on `watType` for the single-
+  type cases.
+
+### Wasm-side caller sites (each needs the fan-out)
+
+- `internal/codegen/wasm/wasm.go:1257-1266` — function-table
+  signatures (`(param p ...)` / `(result r)`). Two i32s per
+  string param; multi-value `(result i32 i32)` per string
+  return.
+
+- `internal/codegen/wasm/wasm_ir.go:349` — function decl
+  param list. Two `(param $name_data i32) (param $name_len
+  i32)` per string param. Naming convention TBD.
+
+- `internal/codegen/wasm/wasm_ir.go:370` — function decl
+  result. Multi-value if string.
+
+- `internal/codegen/wasm/wasm_ir.go:383` — local decl. Two
+  i32 locals per string local.
+
+- `internal/codegen/wasm/wasm_ir.go:395` — scratch slot
+  decl. Same as above.
+
+### IR-op handlers
+
+- `OpConstStr` at `wasm_ir.go:747` — `g.linef("i32.const
+  %d", g.internString(op.Str))`. For literals ≤7 bytes,
+  pack inline via `langstring.PackInlineWasm` → emit two
+  `i32.const`s. For >7 bytes, push `(heap_ptr,
+  len_with_flag=0)`.
+
+- `OpLoadLocal` / `OpStoreLocal` / `OpTeeLocal` at
+  `wasm_ir.go:759-764` — string-typed slots fan out into
+  two-word load/store.
+
+- `OpCallDirect` and `OpCallClosureDirect` — args are
+  popped off operand stack one slot per arg; string args
+  pop 2 slots. Return-handling: string returns push 2
+  slots.
+
+- `OpLoad` / `OpStore` for string fields — when reading /
+  writing a `struct.string_field`, decide layout (heap +
+  inline). Two 4-byte slots in the struct? Or single inline-
+  flagged slot? Recommendation: two slots (data, len) for
+  uniformity.
+
+- `OpStrLen` / inline `len(s)` (in `ir.go`) — currently
+  `[ptr - 4]` load; now `LengthWasm(len)` = mask top bit
+  off the `len` word, no heap-load. Pure IR change.
+
+### Wasm runtime helpers (in `wasm.go`)
+
+Each currently takes `i32` (string pointer) per string arg.
+Each needs to take `(data, len)` per string arg. Internally
+branches on `IsInlineWasm(len)`:
+
+- `$__str_eq` at `wasm.go:2245` — short-circuit on
+  (data == data && len == len) for the inline case; byte-
+  by-byte for heap case; mixed case needs inline-unpack to
+  a temp.
+
+- `$__str_slice` at `wasm.go:2620` — slice. Always returns
+  a new string; pack inline if `(high - low) ≤ 7`, else
+  alloc + copy.
+
+- `$__str_concat` — concat. Pack inline if total ≤ 7, else
+  alloc + copy.
+
+- `$__str_idx` (`emitInlineIdxHelper` family) — single-byte
+  index. Inline form reads from `data` / `len`'s low bytes
+  via bit-shift; heap reads via `i32.load8_u` at
+  `data_ptr + i`.
+
+- `$__lang_str_len` is removed entirely — replaced by the
+  inline `len(s)` ⇒ `LengthWasm(len)` IR rewrite above.
+
+### Lang prelude
+
+`internal/prelude/prelude.lang` is ~2k lines. Most prelude
+functions have string args / returns and don't change at
+the lang-source level — the compiler-side ABI flip means
+the lowered code calls the new wasm shapes automatically.
+Boundary conversion (e.g., when a string is stored into a
+generic `Map[K, V]` whose V is opaque) needs care.
+
+### Native backends
+
+Out of scope for the wasm-first slice. After wasm lands,
+analogous work on x86_64 (SysV: 2-register pair-return
+already wired via PR #336; same shape for strings) and
+arm64 (AAPCS64 `(x0, x1)`). Native inline cap is 15 bytes
+(`langstring.InlineCap(8)`).
+
+### Test surface
+
+- `internal/codegen/wasm/wasm_test.go` — string-literal /
+  string-len tests assert the old pointer-with-length-prefix
+  shape. Each gets a wasm-flip-aware variant.
+
+- `internal/e2e/wasm_e2e_test.go` — most string-using tests
+  exercise user-visible behaviour, unchanged. Tests that
+  introspect binary layout (rare) need updates.
+
+## Why incremental carriers were rejected
+
+Considered but rejected:
+
+- **Carrier-only steps** that add runtime conversion at
+  ABI boundaries without delivering any win until the
+  cascade completes. The wasm `OpConstStr → two-word →
+  re-pack-to-heap-ptr-for-callers` shape from an earlier
+  draft of this doc is anti-pattern.
+
+- **`watType` returns one new + one old representation
+  per call**: the IR would have to know which call sites
+  accept which, and we'd lose the type system's invariants.
+
+The right shape is **one big atomic flip per backend**, with
+the test suite breaking and being fixed over the same PR
+chain. No carrier shims.
+
+
 https://claude.ai/code/session_01LXybxbbVBbwLFHmbYAobhN
