@@ -1462,9 +1462,22 @@ func (b *builder) emitRepackPairAsHeapBox(payloadWidth int) error {
 	payloadOff := int32(4)
 	storeOp := Op{Kind: OpStore}
 	if payloadWidth == WidthPtr {
-		boxSize = 16
-		payloadOff = 8
-		storeOp = Op{Kind: OpStore, Width: WidthPtr}
+		// Pointer-shape payloads use the target's pointer width:
+		// on natives (ptrW=8), pad to 8-byte alignment → box-size
+		// 16, payload at +8 (matches `payloadLayout`'s emit for
+		// Option[T] / Result[T, …] when T is pointer-shaped). On
+		// wasm32 (ptrW=4), pointer = i32, so the box stays at the
+		// 8-byte / +4 i32 layout. Without this branch the wasm
+		// path would write payload at +8 (the native layout) but
+		// every reader — TryOp's success-path load, Match/IfLet's
+		// scrutinee-dispatch read, OpMatchTag's box-shape callers
+		// — pulls from the +4 layout, so the read returns 0 and
+		// downstream `print(payload)` etc. trap on `[0 - 4]`.
+		if b.ptrW == 8 {
+			boxSize = 16
+			payloadOff = 8
+			storeOp = Op{Kind: OpStore, Width: WidthPtr}
+		}
 	}
 	// Stack: [tag, payload] — top is payload. Stash payload in
 	// a scratch local so we can alloc + store the box without
