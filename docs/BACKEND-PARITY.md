@@ -501,20 +501,26 @@ Already covered by the wide-K/V item above; reiterated here as
 the immediate memory win the type-hash dispatch unlocks. Build
 on top of the Item 2 work.
 
-### 5. Inline closures with zero captures
+### ~~5. Inline closures with zero captures~~ ✅ done
 
-**Impact:** the no-capture closure constructor today still
-allocates a 16-byte pair `{fn_ptr, env_ptr=0}` (and the env block
-allocation is elided by `ElideClosurePair`, but the pair itself
-isn't). Common in passing top-level functions as values.
+**Impact landed:** no more 16-byte heap pair per zero-capture
+closure-value pass. The classic case — `tryThing(my_lambda)`
+where `my_lambda` captures nothing — now materialises as a
+static `.rodata` cell (natives) or `closuresBase + 8*ti` static
+pointer (wasm), zero alloc.
 
-**Sketch:** when `OpMakeClosure` has 0 captures AND the value
-flows to an `OpCallClosureDirect` (already statically known via
-defunctionalisation), elide the pair entirely — push only the
-`env_ptr=0` sentinel for the calling convention's env-slot.
-
-**Scope:** small. Single IR pass extension. Possibly already
-half-done by `ElideClosurePair` — needs a closer look.
+**What shipped:** new `ir.InlineZeroCaptureClosures` pass runs
+after `ElideClosurePair` in every backend's optimisation
+pipeline. Rewrites `OpMakeClosure(target, n=0)` →
+`OpConstFunc(target)`; both ops produce a pair-pointer of the
+same shape (fn_ptr at +0, env_ptr=0 at +ptrW) but OpConstFunc
+materialises it via a static cell. ElideClosurePair already
+covers the direct-call case (`var f = MakeClosure; ... f(args)`)
+by rewriting to OpMakeEnv; this pass closes the orthogonal
+escape case where the value flows past direct-call dispatch
+(arg to a function-typed param, returned, stored in a field).
+Wasm cell init also stopped skipping hoisted entries — every
+in-table function now gets a static cell.
 
 ### 6. Reduce 4-byte length prefix to varint for short strings
 

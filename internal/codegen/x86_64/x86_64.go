@@ -119,6 +119,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// (wasm uses 8 bytes / +4 — see Defunctionalise comment).
 	ir.Defunctionalise(ip, 8)
 	ir.ElideClosurePair(ip, 8)
+	// Zero-capture closures escaping past ElideClosurePair (e.g.
+	// passed as a function-typed argument — `tryThing(my_lambda)`)
+	// rewrite to OpConstFunc so the value materialises as a
+	// `lea rax, [rip + __closure_cell_<name>]` against a static
+	// `.rodata` cell instead of a 16-byte heap-allocated pair.
+	ir.InlineZeroCaptureClosures(ip)
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the
