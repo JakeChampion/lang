@@ -422,39 +422,30 @@ a rough impact estimate (mem / speed), a scope estimate, and a
 sketch of the design. Mostly **breaking** changes — sequence
 them with care.
 
-### 1. Register-based `Result[T, IoError]` / `Option[T]` returns
+### ~~1. Register-based `Result[T, IoError]` / `Option[T]` returns~~ ✅ done
 
-**Impact:** zero-alloc fallible-call returns; saves 16 B + alloc-
-cursor bump per `read_file` / `write_file` / `open_*` / Reader/Writer
-call. Edge-handler workloads that do file I/O + JSON parse + HTTP
-write are dominated by these allocations today.
+**Impact:** zero-alloc fallible-call returns; saves the 8/16 B
+heap-box alloc per `Option[T]` / `Result[T, E]` return for
+every i32-shaped or pointer-shaped payload type. Edge-handler
+workloads that do file I/O + JSON parse + HTTP write no longer
+allocate on the happy path.
 
-**Status:** Today every Result / Option return path allocates a
-16-byte heap box (`{tag:i32 @0, payload @8}`) via `__lang_alloc`
-and returns the pointer. Match dispatches by loading the tag from
-the heap.
+**Status:** Done. The pair-form ABI lowers a function whose
+body returns only variant literals (`Some(x)` / `None` /
+`Ok(x)` / `Err(e)` — and tail calls into other pair-form fns,
+and ternaries thereof) as a `(tag, payload)` register pair:
+- **wasm**: `(result i32 i32)` multi-value return (PR #332,
+  #334);
+- **x86_64**: `(rax, rdx)` per SysV (PR #336);
+- **arm64**: `(x0, x1)` per AAPCS64 (PR #336).
+Match-style consumers (`if let` / `match` / `let else`) skip
+the heap-box rebox and dispatch on the tag register directly.
+User-defined two-variant enums matching the canonical
+"payload-carrying variant + nullary variant" shape opt in
+automatically (PR #333).
 
-**Sketch (cribbed from Nature's `errable<T>`):**
-
-- Type system: add a tagged-union representation that lowers to
-  a multi-value return. `Result[T, E]` becomes
-  `(tag:u8, payload:T_or_E_bytes)` — two registers on native
-  (`rax` + `rdx` on System V; `x0` + `x1` on AAPCS64), wasm's
-  multi-value `(result)` returns the pair.
-- IR: `OpReturnPair` returns two values; `OpMakeOk` / `OpMakeErr`
-  / `OpMakeSome` / `OpMakeNone` produce the pair on the stack
-  without allocation; `OpMatchTag` peeks the tag without going
-  through a load.
-- Match codegen reads the tag from the call's register pair
-  directly — no heap touch.
-- Heap-boxed Option/Result still exists for storing in fields /
-  Map values / state slots (where a stable address is needed) —
-  emit the box only when the value escapes the call stack.
-
-**Scope:** large. Touches IR, both natives, wasm runtime, every
-test that pattern-matches a Result/Option. Plan as a multi-PR
-arc: type system → IR → one backend → other backends → prelude
-migration.
+Landed across 17 PRs (#320–#336). Six-lens review of the
+midpoint shape captured in `docs/PR-326-REVIEW.md`.
 
 ### 2. Inline small strings (SSO)
 
