@@ -2874,7 +2874,7 @@ func (g *generator) emitRuntimePreamble() {
 		// <= source length, low <= high.
 		g.line(`(func $__str_slice (param $base i32) (param $low i32) (param $high i32) (result i32)`)
 		g.indent++
-		g.line(`(local $src_len i32) (local $new_len i32) (local $out i32)`)
+		g.line(`(local $src_len i32) (local $new_len i32) (local $out i32) (local $i i32) (local $inline i32) (local $byte i32)`)
 		// Inline-form bases don't have a linear-memory address;
 		// promote-to-heap at entry so the `memory.copy(base+low,
 		// new_len)` below reads from a real source pointer.
@@ -2923,6 +2923,64 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`return`)
 		g.indent--
 		g.line(`end`)
+		// new_len ≤ 3 → build the single-i32 inline output via
+		// `$base[low..low+new_len]` byte reads (heap-form by now;
+		// the promote-at-entry above guarantees it). Mirrors the
+		// $__str_concat inline-output fast path so any slice
+		// result that fits the SSO tiny cap skips the alloc +
+		// `memory.copy` shape entirely.
+		g.line(`local.get $new_len`)
+		g.line(`i32.const 3`)
+		g.line(`i32.le_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`i32.const 0x80000000`)
+		g.line(`local.get $new_len`)
+		g.line(`i32.const 24`)
+		g.line(`i32.shl`)
+		g.line(`i32.or`)
+		g.line(`local.set $inline`)
+		g.line(`i32.const 0`)
+		g.line(`local.set $i`)
+		g.line(`block $iend`)
+		g.indent++
+		g.line(`loop $iloop`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`local.get $new_len`)
+		g.line(`i32.eq`)
+		g.line(`br_if $iend`)
+		// byte = mem[base + low + i]  (base is heap-form here)
+		g.line(`local.get $base`)
+		g.line(`local.get $low`)
+		g.line(`i32.add`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+		g.line(`local.set $byte`)
+		// inline |= byte << (i * 8)
+		g.line(`local.get $inline`)
+		g.line(`local.get $byte`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 8`)
+		g.line(`i32.mul`)
+		g.line(`i32.shl`)
+		g.line(`i32.or`)
+		g.line(`local.set $inline`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 1`)
+		g.line(`i32.add`)
+		g.line(`local.set $i`)
+		g.line(`br $iloop`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $inline`)
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
+		// Heap-form output path: new_len > 3.
 		// out = alloc(4 + new_len) + 4   (out is the data ptr)
 		g.line(`local.get $new_len`)
 		g.line(`i32.const 4`)

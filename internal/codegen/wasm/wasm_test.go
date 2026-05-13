@@ -478,6 +478,20 @@ func TestStrConcatHelperHasInlineOutputFastPath(t *testing.T) {
 	mustContain(t, wat, "call $__lang_str_byte")
 }
 
+// $__str_slice gains an inline-output fast path for `new_len ≤ 3`
+// that mirrors the $__str_concat shape: build the inline-encoded
+// i32 via byte reads + shift/OR rather than alloc + memory.copy.
+// The body still keeps the heap-form path for longer slices,
+// reachable via the `$__lang_alloc` call below the fast-path
+// branch.
+func TestStrSliceHelperHasInlineOutputFastPath(t *testing.T) {
+	wat := compileToWAT(t, `function f(s: string): string { return s[0:2]; }`)
+	mustContain(t, wat, "(func $__str_slice")
+	mustContain(t, wat, "i32.const 0x80000000")
+	mustContain(t, wat, "i32.le_u")
+	mustContain(t, wat, "call $__lang_alloc")
+}
+
 // String runtime helpers that need a linear-memory address
 // (I/O writes, $__str_idx, $__str_slice) promote inline-form
 // inputs through `$__lang_str_to_heap` at function entry. The
