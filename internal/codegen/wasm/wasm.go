@@ -4920,7 +4920,7 @@ func (g *generator) emitTcpRecvPreview2() {
 	g.line(`(func $tcp_recv (param $conn i32) (param $max i32) (result i32)`)
 	g.indent++
 	g.line(`(local $stream i32) (local $list_ptr i32) (local $n i32)`)
-	g.line(`(local $sbase i32) (local $sptr i32)`)
+	g.line(`(local $sbase i32) (local $sptr i32) (local $j i32)`)
 	// stream = mem[conn + 4]
 	g.line(`local.get $conn`)
 	g.line(`i32.const 4`)
@@ -4950,8 +4950,58 @@ func (g *generator) emitTcpRecvPreview2() {
 	g.line(`i32.const 96`)
 	g.line(`i32.load`)
 	g.line(`local.set $list_ptr`)
-	// Allocate length-prefixed string of size $n + 5 (4 prefix + NUL),
-	// matching the existing string-from-bytes allocation pattern.
+	// SSO inline-output fast path: small protocol tokens like
+	// "OK", "OK\n", "GO" (≤ 3 bytes) fit the single-i32 tiny
+	// cap and skip the alloc + length-prefix + memcpy + NUL
+	// detour.
+	g.line(`local.get $n`)
+	g.line(`i32.const 3`)
+	g.line(`i32.le_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0x80000000`)
+	g.line(`local.get $n`)
+	g.line(`i32.const 24`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $sptr`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $j`)
+	g.line(`block $end_pack`)
+	g.indent++
+	g.line(`loop $pack_loop`)
+	g.indent++
+	g.line(`local.get $j`)
+	g.line(`local.get $n`)
+	g.line(`i32.eq`)
+	g.line(`br_if $end_pack`)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $list_ptr`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $sptr`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $j`)
+	g.line(`br $pack_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $sptr`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Heap-form output: allocate length-prefixed string of size
+	// $n + 5 (4 prefix + NUL), matching the existing string-from-
+	// bytes allocation pattern.
 	g.line(`local.get $n`)
 	g.line(`i32.const 5`)
 	g.line(`i32.add`)
@@ -6033,7 +6083,7 @@ func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`(func $__method_Reader_read_chunk (param $r i32) (param $size i32) (result i32)`)
 	g.indent++
 	g.line(`(local $fd i32) (local $sbase i32) (local $sptr i32)`)
-	g.line(`(local $n i32) (local $result i32) (local $list_ptr i32)`)
+	g.line(`(local $n i32) (local $result i32) (local $list_ptr i32) (local $j i32)`)
 
 	g.line(`local.get $r`)
 	g.line(`i32.load`)
@@ -6080,7 +6130,59 @@ func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`return`)
 	g.indent--
 	g.line(`end`)
-	// Materialise length-prefixed string + memcpy from the host buffer.
+	// SSO inline-output fast path: when the chunk fits the
+	// single-i32 tiny cap (≤ 3 bytes), pack bytes straight out
+	// of the host buffer into a single i32 and bind that as
+	// `$sptr` — no per-chunk alloc + memcpy. Catches very small
+	// reads (e.g. one-byte status probes, two-byte protocol
+	// tokens) that otherwise allocate the same as a 64-byte
+	// chunk.
+	g.line(`local.get $n`)
+	g.line(`i32.const 3`)
+	g.line(`i32.le_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0x80000000`)
+	g.line(`local.get $n`)
+	g.line(`i32.const 24`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $sptr`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $j`)
+	g.line(`block $end_pack`)
+	g.indent++
+	g.line(`loop $pack_loop`)
+	g.indent++
+	g.line(`local.get $j`)
+	g.line(`local.get $n`)
+	g.line(`i32.eq`)
+	g.line(`br_if $end_pack`)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $list_ptr`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $sptr`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $j`)
+	g.line(`br $pack_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// Heap-form output: materialise length-prefixed string +
+	// memcpy from the host buffer.
 	g.line(`local.get $n`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
@@ -6097,6 +6199,8 @@ func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`local.get $list_ptr`)
 	g.line(`local.get $n`)
 	g.line(`memory.copy`)
+	g.indent--
+	g.line(`end`)
 	// Some(sptr).
 	g.line(`i32.const 8`)
 	g.line(`call $__lang_alloc`)

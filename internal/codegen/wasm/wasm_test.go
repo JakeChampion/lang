@@ -559,6 +559,42 @@ func TestBytesToLangStringHelperHasInlineOutputFastPath(t *testing.T) {
 	mustContain(t, wat, "call $__lang_alloc")
 }
 
+// `$__method_Reader_read_chunk` gains an inline-output fast
+// path for short reads (n ≤ 3). Catches one-byte status probes
+// + two-byte protocol tokens that otherwise allocate the same
+// length-prefix + memcpy + Some(box) sequence as a full
+// 64-byte chunk.
+func TestReaderReadChunkHelperHasInlineOutputFastPath(t *testing.T) {
+	src := `function main(): void {
+		match (stdin().read_chunk(8)) {
+			Some(s) => { print(s); },
+			None => {}
+		}
+	}`
+	wat := compileToWAT(t, src)
+	mustContain(t, wat, "(func $__method_Reader_read_chunk")
+	mustContain(t, wat, "i32.const 0x80000000")
+	mustContain(t, wat, "i32.le_u")
+	mustContain(t, wat, "call $__lang_alloc")
+}
+
+// `$tcp_recv` gains the same inline-output fast path for short
+// network responses (≤ 3 bytes). Catches protocol tokens like
+// "OK", "GO", "OK\n", short ACKs.
+func TestTcpRecvHelperHasInlineOutputFastPath(t *testing.T) {
+	src := `function main(): i32 {
+		var listener: i32 = tcp_listen(0);
+		var conn: i32 = tcp_accept(listener);
+		print(tcp_recv(conn, 8));
+		return 0;
+	}`
+	wat := compileToWAT(t, src)
+	mustContain(t, wat, "(func $tcp_recv")
+	mustContain(t, wat, "i32.const 0x80000000")
+	mustContain(t, wat, "i32.le_u")
+	mustContain(t, wat, "call $__lang_alloc")
+}
+
 // String runtime helpers that need a linear-memory address
 // (I/O writes, $__str_idx, $__str_slice) promote inline-form
 // inputs through `$__lang_str_to_heap` at function entry. The
