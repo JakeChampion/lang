@@ -17,6 +17,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/langstring"
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
@@ -1887,6 +1888,28 @@ func (g *generator) internString(s string) int {
 	g.stringPool[s] = ptr
 	g.stringOffset = off + 4 + len(s)
 	return ptr
+}
+
+// internOrPackMethod returns the operand-stack i32 value for an HTTP
+// method name (or other short interned string), picking the same
+// encoding `OpConstStr` would pick for the same source literal:
+//
+//   - len(s) ≤ 3: the single-i32 inline pack (`langstring.PackTinyWasm`).
+//     User code's `"GET" == req.method` compares two inline-encoded
+//     i32s; `$__str_eq`'s pointer-eq short-circuit fires before the
+//     byte loop.
+//   - len(s) >  3: the heap-form `internString` entry, deduped across
+//     the module. User code's `"OPTIONS" == req.method` likewise gets
+//     a heap pointer that matches the dedup-shared offset.
+//
+// Keeping the wrapper-side encoding in lockstep with the
+// user-source-side encoding is what restores the pointer-eq fast
+// path lost when `OpConstStr` started inline-packing short literals.
+func (g *generator) internOrPackMethod(s string) int {
+	if packed, ok := langstring.PackTinyWasm([]byte(s)); ok {
+		return int(packed)
+	}
+	return g.internString(s)
 }
 
 // internEnumSentinel reserves and returns the linear-memory offset
@@ -5219,20 +5242,31 @@ func (g *generator) emitHttpHandlerWrapper() {
 		// for -target wasi-http" once we add the checker hook.
 	}
 
-	// Pre-intern the static method names. ASCII case matches
+	// Pre-pack the static method names. ASCII case matches
 	// what most frameworks want (exposed as the lang string
 	// `req.method`); upper-cased here so the user gets the
 	// HTTP/1.1 canonical form regardless of wire format.
-	methodGet := g.internString("GET")
-	methodHead := g.internString("HEAD")
-	methodPost := g.internString("POST")
-	methodPut := g.internString("PUT")
-	methodDelete := g.internString("DELETE")
-	methodConnect := g.internString("CONNECT")
-	methodOptions := g.internString("OPTIONS")
-	methodTrace := g.internString("TRACE")
-	methodPatch := g.internString("PATCH")
-	emptyStr := g.internString("")
+	//
+	// Short method names ("GET", "PUT") use the same single-i32
+	// SSO inline encoding as `OpConstStr` literal-pack — so a
+	// user's `req.method == "GET"` compare sees identical
+	// inline-encoded i32s on both sides and `$__str_eq`'s
+	// pointer-eq fast path short-circuits instead of running
+	// the byte loop. Longer methods (HEAD, POST, DELETE,
+	// CONNECT, OPTIONS, TRACE, PATCH) keep their heap-form
+	// `internString` entry; the user-side `"HEAD"` etc. also
+	// stay heap-form (>3 bytes), so pointer-eq dedup via the
+	// shared interned offset still works for them.
+	methodGet := g.internOrPackMethod("GET")
+	methodHead := g.internOrPackMethod("HEAD")
+	methodPost := g.internOrPackMethod("POST")
+	methodPut := g.internOrPackMethod("PUT")
+	methodDelete := g.internOrPackMethod("DELETE")
+	methodConnect := g.internOrPackMethod("CONNECT")
+	methodOptions := g.internOrPackMethod("OPTIONS")
+	methodTrace := g.internOrPackMethod("TRACE")
+	methodPatch := g.internOrPackMethod("PATCH")
+	emptyStr := g.internOrPackMethod("")
 
 	g.line(`(func $__http_entry (param $req i32) (param $out i32)`)
 	g.indent++

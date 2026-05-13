@@ -548,6 +548,43 @@ func TestArgsHelperHasInlineOutputFastPath(t *testing.T) {
 	mustContain(t, wat, "call $__lang_alloc")
 }
 
+// The HTTP handler wrapper preinterns the static method names
+// it dispatches on (GET / HEAD / POST / PUT / DELETE / CONNECT
+// / OPTIONS / TRACE / PATCH). Short names (≤ 3 bytes: GET / PUT)
+// pack inline so they match `OpConstStr`'s single-i32 encoding
+// for the user-source-side `"GET"` / `"PUT"` literal —
+// `$__str_eq`'s pointer-eq fast path can short-circuit a
+// `req.method == "GET"` compare without running the byte loop.
+// Longer methods stay as heap-form `internString` entries so
+// the same dedup-shared offset is used by both wrapper and
+// user code.
+func TestHttpWrapperShortMethodPacksInline(t *testing.T) {
+	src := `function handle(req: HttpRequest): HttpResponse {
+		return HttpResponse { status: 200, body: "ok" };
+	}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	wat, err := EmitWithOptions(prog, info, EmitOptions{HttpHandler: true})
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	// Heap-form methods (>3 bytes): one data-segment entry each.
+	mustContain(t, wat, `\04\00\00\00HEAD`)
+	mustContain(t, wat, `\04\00\00\00POST`)
+	mustContain(t, wat, `\06\00\00\00DELETE`)
+	mustContain(t, wat, `\07\00\00\00OPTIONS`)
+	// Short-method (≤3 bytes) heap entries MUST NOT appear — those
+	// pack inline at the wrapper side just like at user-source side.
+	mustNotContain(t, wat, `\03\00\00\00GET`)
+	mustNotContain(t, wat, `\03\00\00\00PUT`)
+}
+
 // `$__method_Reader_read_chunk` gains an inline-output fast
 // path for short reads (n ≤ 3). Catches one-byte status probes
 // + two-byte protocol tokens that otherwise allocate the same
