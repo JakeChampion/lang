@@ -2405,6 +2405,50 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`end`)
 		g.indent--
 		g.line(`)`)
+
+		// $__lang_str_data_ptr(p) → i32 linear-memory pointer to
+		// the string's bytes. Heap-form values pass through; for
+		// inline-form values, the helper spills the operand-word
+		// bytes into a fixed scratch slot at mem[0..3] (shared
+		// with the putchar buffer — safe because the slot is
+		// overwritten on each use and wasm is single-threaded)
+		// and returns mem[0]. Caller is responsible for reading
+		// the bytes synchronously before any other code path
+		// touches mem[0..3]; the helper is only used by stream-
+		// write paths ($print / $write / $eprint / $tcp_send /
+		// $__method_Writer_write / the HTTP body write) whose
+		// $__streams_write call reads synchronously, so the
+		// contract holds.
+		//
+		// Strictly an alloc-saving alternative to $__lang_str_to_heap
+		// for the I/O case. The wasi:io/streams blocking-write call
+		// only reads `len` bytes, so the high byte of the inline
+		// word (length nibble + flag) written into mem[3] is never
+		// observed; the address arithmetic users ($__str_idx,
+		// $__str_slice, $env, etc.) still go through
+		// $__lang_str_to_heap because they need durable storage.
+		g.line(`(func $__lang_str_data_ptr (param $p i32) (result i32)`)
+		g.indent++
+		g.line(`local.get $p`)
+		g.line(`i32.const 0x80000000`)
+		g.line(`i32.and`)
+		g.line(`if (result i32)`)
+		g.indent++
+		// Inline: spill 4 bytes (3 inline + 1 flag/length byte)
+		// at mem[0]; return the scratch address.
+		g.line(`i32.const 0`)
+		g.line(`local.get $p`)
+		g.line(`i32.store`)
+		g.line(`i32.const 0`)
+		g.indent--
+		g.line(`else`)
+		g.indent++
+		// Heap: pass through.
+		g.line(`local.get $p`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`)`)
 	}
 
 	if g.needsStrEq {
@@ -3248,10 +3292,14 @@ func (g *generator) emitStdStream(name, handleAccessor string) {
 // the string's data pointer (e.g. "$s"); the string's length is
 // fetched through the central emitStrLenFromLocal helper. Reuses
 // iovec[0] at offset 16.
+//
+// Stream-write semantics: routes through $__lang_str_data_ptr to
+// stage inline strings into a fixed scratch slot without alloc;
+// length comes from $__lang_str_len.
 func (g *generator) emitFdWriteString(fd int, local string) {
-	g.emitPromoteStrParam(local)
 	g.line(`i32.const 16`)
 	g.linef(`local.get %s`, local)
+	g.line(`call $__lang_str_data_ptr`)
 	g.line(`i32.store`)
 	g.line(`i32.const 20`)
 	g.emitStrLenFromLocal(local)
@@ -3413,17 +3461,19 @@ func (g *generator) emitStreamHandleAccessor(name, getterImport string, handleSl
 // `local`'s value may be either a heap-form pointer (top bit
 // clear, bytes at `local..local+len`) or a single-i32 inline
 // value (top bit set, bytes packed into the operand word — see
-// `langstring.PackTinyWasm`). The host's iovec write needs a
-// real linear-memory address, so we promote-to-heap at entry
-// via `$__lang_str_to_heap`: heap-form pointers pass through
-// unchanged; inline values trigger a small alloc + length
-// prefix store. The promoted pointer is read back from `local`
-// for the length seam.
+// `langstring.PackTinyWasm`). Both forms route through
+// `$__lang_str_data_ptr`, which passes heap pointers through
+// and spills inline bytes into a shared scratch slot — no alloc
+// in either case. The synchronous `blocking-write-and-flush`
+// call reads `len` bytes from the returned pointer before
+// returning, so the scratch slot is safe to clobber on the
+// next use. Pair with `$__lang_str_len` for the length seam.
 func (g *generator) emitStreamsWriteString(handleAccessor, local string) {
-	g.emitPromoteStrParam(local)
 	g.linef(`call %s`, handleAccessor)
 	g.linef(`local.get %s`, local)
-	g.emitStrLenFromLocal(local)
+	g.line(`call $__lang_str_data_ptr`)
+	g.linef(`local.get %s`, local)
+	g.line(`call $__lang_str_len`)
 	g.line(`call $__streams_write`)
 }
 
@@ -4931,10 +4981,11 @@ func (g *generator) emitTcpSendPreview2() {
 	g.line(`(func $tcp_send (param $conn i32) (param $data i32) (result i32)`)
 	g.indent++
 	g.line(`(local $stream i32) (local $len i32)`)
-	// `$data`'s bytes flow through `$__streams_write` as a
-	// linear-memory pointer; promote inline-form payloads
-	// (e.g. a short `$__str_concat` result) before reading.
-	g.emitPromoteStrParam("$data")
+	// `$data` flows through `$__streams_write` synchronously, so
+	// route it via `$__lang_str_data_ptr` — heap pointers pass
+	// through, inline values spill into the shared scratch slot.
+	// Avoids the promote-to-heap alloc on inline payloads (e.g.
+	// short `$__str_concat` results piped straight to a socket).
 	g.line(`local.get $conn`)
 	g.line(`i32.const 8`)
 	g.line(`i32.add`)
@@ -4944,6 +4995,7 @@ func (g *generator) emitTcpSendPreview2() {
 	g.line(`local.set $len`)
 	g.line(`local.get $stream`)
 	g.line(`local.get $data`)
+	g.line(`call $__lang_str_data_ptr`)
 	g.line(`local.get $len`)
 	g.line(`call $__streams_write`)
 	g.line(`local.get $len`)
@@ -5472,11 +5524,12 @@ func (g *generator) emitHttpHandlerWrapper() {
 	// helper. Now that the response is "in flight", body bytes
 	// stream out to the client as we write. `$body_str` may be
 	// in single-i32 inline form (a short response built via
-	// `$__str_concat` whose total fits in <=3 bytes) so we
-	// promote-to-heap before reading bytes through the helper.
-	g.emitPromoteStrParam("$body_str")
+	// `$__str_concat` whose total fits in <=3 bytes) — route
+	// through `$__lang_str_data_ptr` so inline values spill into
+	// the shared scratch slot rather than allocating a heap copy.
 	g.line(`local.get $out_stream`)
 	g.line(`local.get $body_str`)
+	g.line(`call $__lang_str_data_ptr`)
 	g.emitStrLenFromLocal("$body_str")
 	g.line(`call $__streams_write`)
 
@@ -6110,9 +6163,6 @@ func (g *generator) emitWriterWriteMethod() {
 	g.line(`(func $__method_Writer_write (param $w i32) (param $s i32) (result i32)`)
 	g.indent++
 	g.line(`(local $result i32)`)
-	// `$s`'s bytes flow into `$__streams_write` via a real
-	// linear-memory pointer; promote inline-form inputs at entry.
-	g.emitPromoteStrParam("$s")
 	// $__streams_write loops blocking-write-and-flush in 4 KiB
 	// chunks; it silently swallows stream errors (the helper
 	// returns to caller without a discriminant), so Writer.write
@@ -6120,9 +6170,14 @@ func (g *generator) emitWriterWriteMethod() {
 	// unrecoverable for a CLI" posture; a future revision can
 	// switch to a helper that returns the canonical disc and
 	// surface Some(IoError) on partial-write failure.
+	//
+	// `$s` routes through `$__lang_str_data_ptr` so inline-form
+	// values stage into a shared scratch slot rather than
+	// allocating a heap copy.
 	g.line(`local.get $w`)
 	g.line(`i32.load`)
 	g.line(`local.get $s`)
+	g.line(`call $__lang_str_data_ptr`)
 	g.emitStrLenFromLocal("$s")
 	g.line(`call $__streams_write`)
 	g.line(`i32.const 4`)
