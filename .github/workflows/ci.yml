@@ -1,11 +1,41 @@
 name: CI
 
+# Two parallel jobs by host arch:
+#
+#   test-x86_64  — runs x86-64 e2e tests natively; arm64 tests
+#                  SKIP (no cross-toolchain installed); wasm
+#                  tests run via the x86-64 wasmtime binary.
+#   test-arm64   — runs arm64 e2e tests natively (no qemu); x86
+#                  tests SKIP; wasm tests run via the arm64
+#                  wasmtime binary.
+#
+# Each job touches its native target only, so neither path
+# pays the qemu overhead. Wasm runs on both because wasmtime +
+# wasm-tools ship binaries per host arch and the tests are
+# platform-agnostic (= covers the bit-for-bit identical wat
+# emission on each host).
+#
+# Wasmtime + wasm-tools downloads are cached on (host arch,
+# version) so the second-and-onward CI run skips the ~50 MB
+# fetch.
+
 on:
   pull_request:
 
+env:
+  WASM_TOOLS_VERSION: "1.225.0"
+  ADAPTER_VERSION: "v34.0.1"
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64,   wasm_arch: x86_64-linux }
+          - { runner: ubuntu-24.04-arm, host: aarch64,  wasm_arch: aarch64-linux }
+    name: test-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -13,50 +43,53 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24"
+          # No go.sum (no external deps) → setup-go's
+          # default cache attempt complains. Disable.
+          cache: false
 
-      - name: Install aarch64 cross-toolchain and qemu
+      - name: Install clang + lld (cross-link arm64-darwin Mach-O)
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user
+          sudo apt-get install -y clang lld
 
-      - name: Install wasmtime (for the WASM e2e tests)
+      - name: Cache wasmtime + wasm-tools + adapter
+        id: cache-wasm
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.wasmtime
+            ~/wasm-tools-${{ env.WASM_TOOLS_VERSION }}-${{ matrix.wasm_arch }}
+            ~/wasi-adapter
+          key: wasm-${{ matrix.host }}-${{ env.WASM_TOOLS_VERSION }}-${{ env.ADAPTER_VERSION }}
+
+      - name: Install wasmtime + wasm-tools + adapter (cache miss)
+        if: steps.cache-wasm.outputs.cache-hit != 'true'
         run: |
           curl https://wasmtime.dev/install.sh -sSf | bash
-          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
-
-      - name: Install wasm-tools + preview1-component-adapter (for WASI Preview 2 e2e)
-        # `wasm-tools component new --adapt` wraps our preview-1 core
-        # module in a Component Model component. The adapter binary
-        # comes from the same release stream as wasmtime; we pin a
-        # known-good version here and cache the path the test reads.
-        env:
-          WASM_TOOLS_VERSION: "1.225.0"
-          ADAPTER_VERSION: "v34.0.1"
-        run: |
-          curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASM_TOOLS_VERSION}/wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux.tar.gz" \
+          curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASM_TOOLS_VERSION}/wasm-tools-${WASM_TOOLS_VERSION}-${{ matrix.wasm_arch }}.tar.gz" \
             | tar -xz -C "$HOME"
-          echo "$HOME/wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
           mkdir -p "$HOME/wasi-adapter"
           curl -sSfL -o "$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" \
             "https://github.com/bytecodealliance/wasmtime/releases/download/${ADAPTER_VERSION}/wasi_snapshot_preview1.command.wasm"
+
+      - name: Wire PATH + adapter env
+        run: |
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+          echo "$HOME/wasm-tools-${WASM_TOOLS_VERSION}-${{ matrix.wasm_arch }}" >> "$GITHUB_PATH"
           echo "LANG_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
 
-      - name: Install clang + lld (for cross-compiling arm64-darwin Mach-O)
-        run: |
-          sudo apt-get install -y clang lld
-
       - name: Install gotestsum (compact test output)
-        # `gotestsum --format pkgname-and-test-fails` collapses each
-        # package to a single line and only spills full output for
-        # failed tests, then ends with a "Failed tests" recap. Way
-        # easier to scan a CI log than `go test -v ./...`.
+        # `gotestsum --format pkgname-and-test-fails` collapses
+        # each package to a single line and only spills full
+        # output for failed tests, then ends with a "Failed
+        # tests" recap.
         run: go install gotest.tools/gotestsum@v1.13.0
 
-      - name: Show toolchain versions
+      - name: Show toolchain
         run: |
+          uname -m
           go version
-          aarch64-linux-gnu-gcc --version | head -1
-          qemu-aarch64 --version | head -1
+          gcc --version | head -1
           clang --version | head -1
           wasmtime --version
           wasm-tools --version
@@ -68,27 +101,32 @@ jobs:
       - name: go build
         run: go build ./...
 
-      - name: go test (includes arm64 end-to-end tests under qemu)
+      - name: go test
+        # Native arch tests run; cross-arch tests SKIP cleanly
+        # via the per-test toolchain detection in arm64Tooling /
+        # x86_64Tooling.
         run: gotestsum --format pkgname-and-test-fails -- ./...
 
       - name: Check examples are formatted
-        # Runs `lang -fmt -d` on every examples/*.lang and fails if
-        # any file would change. Prevents drift between the
-        # formatter's idea of canonical source and what's checked in.
+        # Runs `lang -fmt -d` on every examples/*.lang and fails
+        # if any file would change.
         run: make fmt-check
 
-      - name: Compile every example (arm64 Linux)
+      - name: Compile every example (arm64 target)
+        # The arm64-Linux ELF target is the default. On the
+        # arm64 runner we build + actually run each example;
+        # on the x86_64 runner we only verify the asm-emit step
+        # (no cross-toolchain installed since we want CI fast).
         run: |
           go build -o bin/lang ./cmd/lang
           mkdir -p build
           for f in examples/*.lang; do
             name=$(basename "$f" .lang)
             ./bin/lang -target arm64 "$f" > "build/$name.s"
-            # `-nostdlib`: the emitted assembly provides its own
-            # `_start`, syscall wrappers, and bump allocator, so we
-            # must NOT link glibc + crt1.o (would clash on _start).
-            aarch64-linux-gnu-gcc -static -nostdlib "build/$name.s" -o "build/$name"
-            echo "::group::run $name"
-            qemu-aarch64 "build/$name" || echo "(exited $?)"
-            echo "::endgroup::"
+            if [ "${{ matrix.host }}" = "aarch64" ]; then
+              gcc -static -nostdlib "build/$name.s" -o "build/$name"
+              echo "::group::run $name"
+              ./build/$name || echo "(exited $?)"
+              echo "::endgroup::"
+            fi
           done
