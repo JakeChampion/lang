@@ -538,15 +538,57 @@ func TestBytesToLangStringHelperHasInlineOutputFastPath(t *testing.T) {
 // helper itself is unconditionally emitted alongside the SSO
 // seam pair; pin its presence here so the entry-promotion
 // pattern stays wired.
+//
+// Stream-write paths (`print`, `write`, `eprint`, `Writer.write`,
+// `$tcp_send`, HTTP body write) no longer promote-to-heap —
+// they route through `$__lang_str_data_ptr` (which spills inline
+// values into a shared scratch slot without alloc). Address-
+// arithmetic paths (`$__str_idx`, `$__str_slice`, `$env`,
+// `$open_*`, etc.) still go through `$__lang_str_to_heap`
+// because they need durable storage.
 func TestSSOHelpersEmitted(t *testing.T) {
 	wat := compileToWAT(t, `function f(s: string): i32 {
 		print(s);
-		return len(s);
+		return s[0];
 	}`)
 	mustContain(t, wat, "(func $__lang_str_len")
 	mustContain(t, wat, "(func $__lang_str_byte")
+	mustContain(t, wat, "(func $__lang_str_data_ptr")
 	mustContain(t, wat, "(func $__lang_str_to_heap")
+	// Stream-write seam: inline-aware data-pointer helper.
+	mustContain(t, wat, "call $__lang_str_data_ptr")
+	// Address-arithmetic seam: $__str_idx promotes inline inputs
+	// to heap-form at entry via $__lang_str_to_heap.
 	mustContain(t, wat, "call $__lang_str_to_heap")
+}
+
+// $print (and the other stream-write helpers) skip the
+// $__lang_str_to_heap promote in favour of $__lang_str_data_ptr.
+// This is the perf win the inline-aware print path delivers:
+// programs that print inline-form strings (e.g. status codes
+// from int_to_string, short header values, $__str_concat outputs)
+// no longer pay the per-call heap-promote alloc.
+func TestPrintHelperUsesInlineDataPtrSeam(t *testing.T) {
+	wat := compileToWAT(t, `function main(): void { print("hi"); }`)
+	// Pin the helper's call sequence — handle, $__lang_str_data_ptr,
+	// $__lang_str_len, $__streams_write.
+	mustContain(t, wat, "call $__lang_str_data_ptr")
+	// The promote-to-heap helper might still be emitted because
+	// it's unconditionally part of the SSO runtime; but `$print`
+	// itself must not call it (would be a regression to the
+	// per-print alloc).
+	idx := strings.Index(wat, "(func $print")
+	if idx < 0 {
+		t.Fatalf("$print helper not emitted:\n%s", wat)
+	}
+	body := wat[idx:]
+	end := strings.Index(body, "\n  (func ")
+	if end < 0 {
+		end = len(body)
+	}
+	if strings.Contains(body[:end], "call $__lang_str_to_heap") {
+		t.Errorf("$print should not call $__lang_str_to_heap (regression to per-call alloc):\n%s", body[:end])
+	}
 }
 
 func TestStructLitAllocatesAndStores(t *testing.T) {
