@@ -318,5 +318,99 @@ The right shape is **one big atomic flip per backend**, with
 the test suite breaking and being fixed over the same PR
 chain. No carrier shims.
 
+## Wasm single-i32 form: shipped (PRs #351–#362)
+
+The wasm-first slice landed as the single-i32 tiny SSO form
+(3-byte inline cap, top-bit flag + 3-bit length + up-to-3
+inline bytes — `langstring.PackTinyWasm`) without widening
+the operand-stack ABI. This is a stepping stone toward the
+target two-word ABI from the section above; the runtime
+machinery + producer flips are in place, so the future flip
+lifts the cap from 3 → 7 bytes by widening the slot, not
+by rewriting the seams.
+
+### Runtime helpers (in `internal/codegen/wasm/wasm.go`)
+
+- `$__lang_str_len(p)` — inline / heap length read (top-bit
+  branch).
+- `$__lang_str_byte(p, i)` — inline / heap byte fetch (shift /
+  mask vs `i32.load8_u`).
+- `$__lang_str_to_heap(p)` — inline → heap promotion (alloc +
+  copy + length prefix). For address-arithmetic consumers.
+- `$__lang_str_data_ptr(p)` — inline → shared scratch slot
+  spill (no alloc). For stream-write consumers that just need
+  a synchronously-read pointer.
+
+### Producer flips (each PR delivers one alloc-free path)
+
+| PR    | Producer                          | Inline cap | Notes                                                  |
+|-------|-----------------------------------|-----------|--------------------------------------------------------|
+| #351  | `$__str_concat`                   | total ≤ 3 | + the SSO seam helpers landed here                     |
+| #352  | `$__str_slice`                    | new_len ≤ 3 | mirror of #351                                       |
+| #353  | `$string_from_bytes`              | bLen ≤ 3  | cascades into `int_to_string` short outputs            |
+| #354  | `$__bytes_to_lang_string`         | host_len ≤ 3 | HTTP method-string marshaling ("GET", "PUT")        |
+| #355  | `$args`                           | strlen ≤ 3 | short CLI flags ("-h", "-v"); + `*ast.Index` exprType fix |
+| #358  | `$__stream_read_line`             | cur_offset ≤ 3 | interactive prompts ("y\n", "ok\n")               |
+| #359  | `$__method_Reader_read_chunk`     | n ≤ 3     | one-byte status probes, two-byte framing tokens        |
+| #359  | `$tcp_recv`                       | n ≤ 3     | short protocol tokens                                  |
+| #361  | `OpConstStr` literal pack         | len ≤ 3   | module-size win: short literals stop using data segment |
+| #362  | HTTP wrapper preinterned methods  | len ≤ 3   | pointer-eq fast path for `req.method == "GET"`         |
+
+### Consumer flips
+
+- `OpStrLen` IR-handler + `emitStrLenFromLocal` seam → `$__lang_str_len`.
+- `$__str_eq` byte fetches → `$__lang_str_byte` (handles inline-vs-heap).
+- `$__str_concat` byte fetches → `$__lang_str_byte`.
+- Stream-write paths (`$print` / `$write` / `$eprint` /
+  `$__method_Writer_write` / `$tcp_send` / HTTP body write
+  / `emitFdWriteString`) route through `$__lang_str_data_ptr`
+  — PR #357. Zero per-call alloc on inline-form strings.
+- Address-arithmetic paths (`$__str_idx`, `$__str_slice`,
+  `emitOpenHelper`, `emitOpenViaStreamHelper`, `$env`,
+  `$__method_string_as_bytes`) promote-to-heap at entry via
+  `$__lang_str_to_heap`.
+
+### Latent-bug fixes surfaced by the flips
+
+The producer flips uncovered a family of pre-existing latent
+bugs where `exprType` in `internal/ir/ir.go` had no dispatch
+for several expression types — the missing-case fallback was
+the array-shape `[ptr - 4]; load`, which traps on inline-form
+strings.
+
+| PR    | Case added                | Manifestation                                  |
+|-------|---------------------------|------------------------------------------------|
+| #355  | `*ast.Index`              | `len(string_array[i])` crashed on inline strings |
+| #356  | `*ast.Call`               | `len(int_to_string(n))` crashed for 1..3-digit n |
+| #360  | `*ast.IfExpr` + `*ast.MatchExpr` | `len(if … else …)` / `len(match …)` crashed when an arm returns inline |
+
+`*ast.IfLet` doesn't need a case (its Then/Else are `Stmt`,
+not `Expr`). One known TryOp-on-`Option[string]` bug remains
+unresolved (filed for follow-up) but reproduces on heap-form
+strings too — not SSO-induced.
+
+## Remaining work
+
+In rough order of payoff:
+
+1. **Two-word ABI flip** (lifts cap from 3 → 7 bytes). Big
+   per-backend change; the runtime helpers already abstract
+   the inline/heap branch so most consumer-side code stays
+   untouched.
+2. **Native backend SSO** (x86_64 + arm64). Each backend needs
+   its own `$__lang_str_*` siblings in raw assembly. PR
+   sequence likely mirrors the wasm shape (#351–#362) per
+   backend.
+3. **`Map[string, V]` runtime in the prelude**. The hash
+   function does `s[i]` byte-by-byte; under SSO, inline keys
+   trigger `$__str_idx`-induced promote-to-heap per call.
+   Needs either a new `string.byte(i)` primitive or a
+   prelude-only fast path for short keys.
+4. **TryOp on Option[string]** — existing bug where the
+   pair-form rebox stores payload at the 8-byte-offset
+   layout (arm64 shape) but the success-path read targets
+   the 4-byte offset (wasm shape). Not SSO-induced;
+   reproduces with heap strings.
+
 
 https://claude.ai/code/session_01LXybxbbVBbwLFHmbYAobhN
