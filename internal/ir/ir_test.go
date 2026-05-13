@@ -11,6 +11,16 @@ import (
 // lowerSource parses, type-checks, and lowers src to IR. The check is
 // expected to pass; failures stop the test.
 func lowerSource(t *testing.T, src string) *Program {
+	return lowerSourceWith(t, src, 4)
+}
+
+// lowerSourceWith is the pointer-width-aware sibling of
+// `lowerSource`. Tests that care about target-aware ABI
+// decisions (e.g. pair-form pointer-payload eligibility, which
+// is wasm-only today) pass `ptrW = 8` to exercise the native
+// path explicitly. The default `lowerSource` keeps ptrW=4 so
+// existing tests don't have to thread the parameter.
+func lowerSourceWith(t *testing.T, src string, ptrW int) *Program {
 	t.Helper()
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -20,10 +30,6 @@ func lowerSource(t *testing.T, src string) *Program {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	// Drop prelude funcs from the AST before lowering — tests
-	// in this package assert on user-code shape (indexing into
-	// prog.Funcs[0], counting funcs, etc.) and shouldn't have
-	// to know about the auto-injected stdlib.
 	user := prog.Funcs[:0]
 	for _, fn := range prog.Funcs {
 		if !fn.IsPrelude {
@@ -31,7 +37,7 @@ func lowerSource(t *testing.T, src string) *Program {
 		}
 	}
 	prog.Funcs = user
-	ir, err := Lower(prog, info)
+	ir, err := LowerWith(prog, info, ptrW)
 	if err != nil {
 		t.Fatalf("lower: %v", err)
 	}
@@ -564,19 +570,47 @@ function main(): i32 {
 	}
 }
 
-// A user enum carrying a pointer-shaped payload (string,
-// struct, array) is NOT pair-form-eligible — same constraint
-// as Option[string] etc.
-func TestLowerUserEnumPointerPayloadStaysHeapForm(t *testing.T) {
+// Pointer-shaped payloads on wasm: a pointer is i32 on wasm32,
+// so `enum Cell { Filled(string), Empty }` lays flat into the
+// `(result i32 i32)` pair-form ABI. The wasm function-side
+// emits OpMakeNoneI32 + OpReturnPair instead of an alloc.
+func TestLowerUserEnumPointerPayloadIsPairFormOnWasm(t *testing.T) {
 	prog := lowerSource(t, `enum Cell { Filled(string), Empty }
 function f(): Cell { return Empty; }`)
 	fn := findFunc(prog, "f")
 	if fn == nil {
 		t.Fatal("f not found")
 	}
+	hasNone := false
+	hasReturnPair := false
+	for _, op := range fn.Ops {
+		if op.Kind == OpMakeNoneI32 {
+			hasNone = true
+		}
+		if op.Kind == OpReturnPair {
+			hasReturnPair = true
+		}
+	}
+	if !hasNone || !hasReturnPair {
+		t.Fatalf("expected OpMakeNoneI32 + OpReturnPair in f on wasm:\n%s", prog)
+	}
+}
+
+// On natives (ptrW=8) the same pointer-shape enum still stays
+// heap-form — the `OpMakeSomeI32` native fallback uses a 4-byte
+// payload store, which would truncate the high half of an
+// 8-byte pointer. Lifting this constraint on natives is the
+// next slice of this arc.
+func TestLowerUserEnumPointerPayloadStaysHeapFormOnNatives(t *testing.T) {
+	prog := lowerSourceWith(t, `enum Cell { Filled(string), Empty }
+function f(): Cell { return Empty; }`, 8)
+	fn := findFunc(prog, "f")
+	if fn == nil {
+		t.Fatal("f not found")
+	}
 	for _, op := range fn.Ops {
 		if op.Kind == OpMakeNoneI32 || op.Kind == OpReturnPair {
-			t.Fatalf("Cell { Filled(string), Empty } should not get pair-form (pointer payload):\n%s", prog)
+			t.Fatalf("pointer-payload enum on natives (ptrW=8) should stay heap-form:\n%s", prog)
 		}
 	}
 }
@@ -840,13 +874,26 @@ function main(): i32 {
 	}
 }
 
-func TestLowerOptionPointerPayloadStaysHeapForm(t *testing.T) {
+// `Option[string]` on wasm is now pair-form-eligible — pointer
+// payloads lay flat into an i32 slot on wasm32, so the
+// function-side emits OpMakeNoneI32 (the canonical tag-1 op)
+// instead of an OpEnumSentinel + heap-box path.
+func TestLowerOptionPointerPayloadIsPairFormOnWasm(t *testing.T) {
 	prog := lowerSource(t, `function f(): Option[string] { return None; }`)
+	mustContainOp(t, prog, "f", OpMakeNoneI32)
+}
+
+// On natives (ptrW=8) `Option[string]` still falls back to
+// the heap-box path — `OpMakeSomeI32`'s 4-byte payload store
+// would truncate an 8-byte pointer. The OpEnumSentinel shape
+// the legacy heap-form match dispatch reads is still emitted.
+func TestLowerOptionPointerPayloadStaysHeapFormOnNatives(t *testing.T) {
+	prog := lowerSourceWith(t, `function f(): Option[string] { return None; }`, 8)
 	mustContainOp(t, prog, "f", OpEnumSentinel)
 	fn := findFunc(prog, "f")
 	for _, op := range fn.Ops {
 		if op.Kind == OpMakeNoneI32 {
-			t.Fatalf("Option[string] should not get pair-form (pointer payload):\n%s", prog)
+			t.Fatalf("Option[string] on natives (ptrW=8) should not get pair-form:\n%s", prog)
 		}
 	}
 }

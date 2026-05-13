@@ -678,7 +678,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// every `return` in its body produces `Some(EXPR)` or `None`
 	// directly. Captured here so callers know to consume two
 	// stack values from a OpCallDirectPair instead of one.
-	pairForm := findPairFormFuncs(prog, info)
+	pairForm := findPairFormFuncs(prog, info, ptrW)
 	out := &Program{PairForm: pairForm}
 	for _, fn := range prog.Funcs {
 		f, err := lowerFunc(fn, info, ptrW, pairForm)
@@ -696,7 +696,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 //
 //   - Return type is `Option[T]` or `Result[T, E]` where every
 //     type argument is i32-stack-shaped (i32 / u32 / boolean —
-//     see isI32StackShape; pointer-shaped values like string /
+//     see isPairFormPayloadShape; pointer-shaped values like string /
 //     struct / T[] are deliberately excluded today).
 //   - Every `return` statement in the body (including those
 //     inside if / for / while / match arms) returns one of:
@@ -720,7 +720,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 //
 // Tightening the analysis further (e.g. to accept
 // pointer-shaped payloads) is tracked as a follow-up.
-func findPairFormFuncs(prog *ast.Program, info *checker.Info) map[string]bool {
+func findPairFormFuncs(prog *ast.Program, info *checker.Info, ptrW int) map[string]bool {
 	out := map[string]bool{}
 	for {
 		grew := false
@@ -728,7 +728,7 @@ func findPairFormFuncs(prog *ast.Program, info *checker.Info) map[string]bool {
 			if out[fn.Name] {
 				continue
 			}
-			if !isPairFormEligible(fn, info, out) {
+			if !isPairFormEligible(fn, info, ptrW, out) {
 				continue
 			}
 			out[fn.Name] = true
@@ -763,7 +763,7 @@ func findPairFormFuncs(prog *ast.Program, info *checker.Info) map[string]bool {
 // payloads, mixed-shape Result) require either the native
 // pair-form lowering to support wider slots or the per-
 // instantiation rebox machinery — both tracked as follow-ups.
-func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, pairForm map[string]bool) bool {
+func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool) bool {
 	if fn.IsLocal {
 		// Hoisted closures take an extra __env i32 param and
 		// have a fixed-shape body; pair-form lowering for them
@@ -774,7 +774,7 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, pairForm map[strin
 	if !ok {
 		return false
 	}
-	variantNames := pairFormVariantsFor(enumT, info)
+	variantNames := pairFormVariantsFor(enumT, info, ptrW)
 	if variantNames == nil {
 		return false
 	}
@@ -788,7 +788,9 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, pairForm map[strin
 // constructor names for fn's return type when the type is
 // eligible for pair-form lowering. Returns nil if the type
 // doesn't match a known shape or if any payload type isn't
-// i32-stack-shaped.
+// pair-form-shaped on this target (see
+// `isPairFormPayloadShape` — i32-fitting on every backend,
+// pointer-shaped values only on wasm32 today).
 //
 // Built-in `Option[T]` and `Result[T, E]` are recognised by
 // name (so the variant names are sourced from the package-
@@ -797,7 +799,7 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, pairForm map[strin
 // canonical shape:
 //   - exactly two variants,
 //   - variant 0 carries exactly one payload that's
-//     i32-stack-shaped (after substituting the enum's
+//     pair-form-shaped (after substituting the enum's
 //     type-parameter bindings, if any), and
 //   - variant 1 is nullary.
 //
@@ -807,15 +809,15 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, pairForm map[strin
 // for the nullary one, and the consumer-side tag dispatch
 // reads the variant's `varIdx` from the enum decl, so the
 // two must agree.
-func pairFormVariantsFor(t ast.EnumType, info *checker.Info) map[string]bool {
+func pairFormVariantsFor(t ast.EnumType, info *checker.Info, ptrW int) map[string]bool {
 	switch t.Name {
 	case "Option":
-		if len(t.Args) != 1 || !isI32StackShape(t.Args[0]) {
+		if len(t.Args) != 1 || !isPairFormPayloadShape(t.Args[0], ptrW) {
 			return nil
 		}
 		return optionVariants
 	case "Result":
-		if len(t.Args) != 2 || !isI32StackShape(t.Args[0]) || !isI32StackShape(t.Args[1]) {
+		if len(t.Args) != 2 || !isPairFormPayloadShape(t.Args[0], ptrW) || !isPairFormPayloadShape(t.Args[1], ptrW) {
 			return nil
 		}
 		return resultVariants
@@ -832,7 +834,7 @@ func pairFormVariantsFor(t ast.EnumType, info *checker.Info) map[string]bool {
 		return nil
 	}
 	payloadType := resolveTypeParam(v0.Payloads[0], ed.TypeParams, t.Args)
-	if !isI32StackShape(payloadType) {
+	if !isPairFormPayloadShape(payloadType, ptrW) {
 		return nil
 	}
 	return map[string]bool{v0.Name: true, v1.Name: true}
@@ -843,7 +845,7 @@ func pairFormVariantsFor(t ast.EnumType, info *checker.Info) map[string]bool {
 // Used when checking a user enum's variant payload shape: a
 // generic enum like `MyOption[T]` declares its payload as
 // `ParamType{Name: "T"}`, and the eligibility check needs the
-// concrete type (e.g. `i32`) to decide `isI32StackShape`.
+// concrete type (e.g. `i32`) to decide `isPairFormPayloadShape`.
 // Non-ParamType inputs and unbound names fall through unchanged.
 func resolveTypeParam(t ast.Type, params []string, args []ast.Type) ast.Type {
 	pt, ok := t.(ast.ParamType)
@@ -869,33 +871,40 @@ var (
 	resultVariants = map[string]bool{"Ok": true, "Err": true}
 )
 
-// isI32StackShape returns true if t is one of the narrow
-// numeric types that fits in a single 4-byte operand-stack
-// slot on EVERY target. Excludes pointer-shaped values
-// (string / struct / T[] / [T] / tuple) because their
-// runtime representation is target-aware (4 bytes on wasm32,
-// 8 bytes on natives), and the OpMakeSomeI32 native fallback
-// stores the payload as a 4-byte i32 today — which would
-// truncate an 8-byte heap pointer.
+// isPairFormPayloadShape reports whether t is a payload type
+// the pair-form ABI can carry today. On wasm32 (`ptrW == 4`)
+// pointer-shaped values (string / struct / T[] / [T] / tuple
+// / usize) lay flat into a single i32 slot, same as the
+// narrow numeric types, so they're accepted. On native targets
+// (`ptrW == 8`) pointer-shaped values are still excluded
+// because the `OpMakeSomeI32` heap-box fallback uses a 4-byte
+// payload store, which would truncate the high half of an
+// 8-byte pointer. Lifting that constraint on natives is a
+// follow-up that needs payload-width-aware OpMakeSome / Ok /
+// Err handlers.
 //
-// Tightening this to handle pointer-shaped Option[T] needs
-// the native fallback to switch to payload-width-aware
-// stores (or step 4 of the arc to land first, making natives
-// use proper register-form returns). Tracked in the
-// follow-up steps.
-func isI32StackShape(t ast.Type) bool {
+// The narrow numeric / boolean shapes that fit in a single
+// 4-byte operand-stack slot on EVERY target are always
+// accepted regardless of `ptrW`.
+func isPairFormPayloadShape(t ast.Type, ptrW int) bool {
 	switch x := t.(type) {
 	case ast.NumberType:
 		w := x.NormalWidth()
-		// usize (Width = WidthPtr) is target-aware (8 bytes
-		// on natives) and excluded for the same reason as
-		// pointer-shaped types — see the comment above.
-		return w >= 0 && w <= 32 && !x.IsPointerWidth()
+		if w >= 0 && w <= 32 && !x.IsPointerWidth() {
+			return true
+		}
+		if x.IsPointerWidth() && ptrW == 4 {
+			return true
+		}
+		return false
 	case ast.BoolType:
 		return true
+	case ast.StringType, ast.ArrayType, ast.SliceType, ast.StructType, ast.TupleType:
+		return ptrW == 4
 	}
 	return false
 }
+
 
 // allReturnsArePairFormShape walks every Return statement
 // reachable from s and reports whether each one is one of
@@ -1244,7 +1253,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	}
 	if b.thisIsPair {
 		if enumT, ok := fn.ReturnType.(ast.EnumType); ok {
-			b.pairVariants = pairFormVariantsFor(enumT, info)
+			b.pairVariants = pairFormVariantsFor(enumT, info, ptrW)
 		}
 	}
 	for i, p := range fn.Params {
