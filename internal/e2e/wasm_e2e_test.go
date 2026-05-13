@@ -1661,6 +1661,84 @@ func TestWASMParseFloat(t *testing.T) {
 	}
 }
 
+// Map[string, V] with single-i32 SSO inline-form keys (≤ 3
+// bytes — "a", "ok", "GET", `int_to_string(42)`, etc.). The
+// prelude's `__map_hash` reads each byte via `s[i]`, which
+// lowers through `$__str_idx`; that helper now uses a one-shot
+// scratch-slot spill on inline-form bases (PR #366) so the
+// hash-loop allocates zero bytes per key. Verify the path
+// round-trips set + get + has + delete + update + miss across
+// a mix of inline-form ASCII keys, integer-formatted keys (the
+// canonical cascade through `int_to_string` →
+// `$string_from_bytes` inline output), and a longer heap-form
+// key for the bucket-collision dispatch path.
+func TestWASMMapStringKeysInlineSSO(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+
+    // Inline-form keys (≤ 3 bytes each).
+    m.set("a", 1);
+    m.set("ok", 2);
+    m.set("GET", 3);
+    m.set("404", 4);
+    m.set(int_to_string(42), 5);   // "42" inline via cascade
+
+    // Heap-form key alongside, same map.
+    m.set("longer", 99);
+
+    if (m.len() != 6) { return 1; }
+
+    // Look up every key, including the literal-vs-int_to_string
+    // mismatched-encoding case.
+    if let Some(v) = m.get("a") {
+        if (v != 1) { return 2; }
+    } else { return 3; }
+    if let Some(v) = m.get("ok") {
+        if (v != 2) { return 4; }
+    } else { return 5; }
+    if let Some(v) = m.get("GET") {
+        if (v != 3) { return 6; }
+    } else { return 7; }
+    if let Some(v) = m.get("404") {
+        if (v != 4) { return 8; }
+    } else { return 9; }
+    if let Some(v) = m.get("42") {
+        if (v != 5) { return 10; }
+    } else { return 11; }
+    if let Some(v) = m.get(int_to_string(42)) {
+        if (v != 5) { return 12; }
+    } else { return 13; }
+    if let Some(v) = m.get("longer") {
+        if (v != 99) { return 14; }
+    } else { return 15; }
+
+    // Misses on inline-form keys.
+    if let Some(_) = m.get("z") { return 16; }
+    if let Some(_) = m.get("xy") { return 17; }
+    if let Some(_) = m.get("PUT") { return 18; }
+
+    // has() over inline-form keys.
+    if (!m.has("a")) { return 19; }
+    if (!m.has("ok")) { return 20; }
+    if (m.has("xy")) { return 21; }
+
+    // Update + delete an inline key.
+    m.set("GET", 30);
+    if let Some(v) = m.get("GET") {
+        if (v != 30) { return 22; }
+    } else { return 23; }
+    if (!m.delete("GET")) { return 24; }
+    if (m.has("GET")) { return 25; }
+    if (m.delete("GET")) { return 26; }
+    if (m.len() != 5) { return 27; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (Map[string, i32] with inline-form keys)", got)
+	}
+}
+
 // String-keyed Map[string, i32]. Same API as Map[i32, i32];
 // equality at the runtime layer dispatches to byte-level
 // strcmp via the buffer's keyKind tag.
