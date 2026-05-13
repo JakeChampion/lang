@@ -657,10 +657,36 @@ func TestStreamReadLineHelperHasInlineOutputFastPath(t *testing.T) {
 // arithmetic paths (`$__str_idx`, `$__str_slice`, `$env`,
 // `$open_*`, etc.) still go through `$__lang_str_to_heap`
 // because they need durable storage.
+// `$__str_idx`'s body no longer routes through
+// `$__lang_str_to_heap` — inline-form bases spill their bytes
+// into the shared mem[0..3] scratch slot and the helper returns
+// `mem[0] + i`. Saves the per-call alloc + length-prefix +
+// memory.copy detour the prior promote-at-entry path incurred,
+// which matters inside `__map_hash`'s `s[i]` byte-by-byte loop
+// on short string keys.
+func TestStrIdxHelperDoesNotPromoteToHeap(t *testing.T) {
+	wat := compileToWAT(t, `function f(s: string): i32 { return s[0]; }`)
+	mustContain(t, wat, "(func $__str_idx")
+	idx := strings.Index(wat, "(func $__str_idx")
+	if idx < 0 {
+		t.Fatalf("$__str_idx not emitted:\n%s", wat)
+	}
+	body := wat[idx:]
+	end := strings.Index(body, "\n  (func ")
+	if end < 0 {
+		end = len(body)
+	}
+	if strings.Contains(body[:end], "call $__lang_str_to_heap") {
+		t.Errorf("$__str_idx should not call $__lang_str_to_heap (regression to per-byte alloc):\n%s", body[:end])
+	}
+	// The inline branch is still gated by the top-bit flag check.
+	mustContain(t, wat, "i32.const 0x80000000")
+}
+
 func TestSSOHelpersEmitted(t *testing.T) {
-	wat := compileToWAT(t, `function f(s: string): i32 {
+	wat := compileToWAT(t, `function f(s: string): string {
 		print(s);
-		return s[0];
+		return s[0:2];
 	}`)
 	mustContain(t, wat, "(func $__lang_str_len")
 	mustContain(t, wat, "(func $__lang_str_byte")
@@ -668,8 +694,11 @@ func TestSSOHelpersEmitted(t *testing.T) {
 	mustContain(t, wat, "(func $__lang_str_to_heap")
 	// Stream-write seam: inline-aware data-pointer helper.
 	mustContain(t, wat, "call $__lang_str_data_ptr")
-	// Address-arithmetic seam: $__str_idx promotes inline inputs
-	// to heap-form at entry via $__lang_str_to_heap.
+	// Durable-storage seam: $__str_slice promotes inline inputs
+	// to heap-form at entry via $__lang_str_to_heap because the
+	// memory.copy source has to outlive the call. $__str_idx no
+	// longer promotes — it spills inline values to a one-shot
+	// scratch slot consumed by the trailing OpLoadByte.
 	mustContain(t, wat, "call $__lang_str_to_heap")
 }
 
