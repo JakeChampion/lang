@@ -3825,6 +3825,74 @@ func (g *generator) emitArgsHelper() {
 	g.line(`i32.sub`)
 	g.line(`local.set $strlen`)
 
+	// SSO inline-output fast path: when strlen ≤ 3 the argv
+	// string fits the single-i32 tiny inline form. Pack bytes
+	// straight out of the host's NUL-terminated buffer into
+	// `$sbase` (reusing it as the inline value holder; the
+	// downstream `result[i] = $sbase` store doesn't care whether
+	// $sbase is a heap data pointer or an inline-encoded value
+	// because both round-trip through the SSO seams). Common
+	// for short CLI flags like "-h", "-v", "go", "rm".
+	g.line(`local.get $strlen`)
+	g.line(`i32.const 3`)
+	g.line(`i32.le_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0x80000000`)
+	g.line(`local.get $strlen`)
+	g.line(`i32.const 24`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $sbase`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $j`)
+	g.line(`block $end_inline_pack`)
+	g.indent++
+	g.line(`loop $inline_pack`)
+	g.indent++
+	g.line(`local.get $j`)
+	g.line(`local.get $strlen`)
+	g.line(`i32.eq`)
+	g.line(`br_if $end_inline_pack`)
+	// $sbase |= mem[$cstr + $j] << ($j * 8)
+	g.line(`local.get $sbase`)
+	g.line(`local.get $cstr`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $sbase`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $j`)
+	g.line(`br $inline_pack`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	// Store inline value at result[i] and advance the outer
+	// loop. Mirrors the heap-path tail at the end of the body.
+	g.line(`local.get $result`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 4`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.get $sbase`)
+	g.line(`i32.store`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $outer`)
+	g.indent--
+	g.line(`end`)
+
+	// Heap-form output path: strlen > 3.
 	// Allocate strlen+4 bytes; write length prefix.
 	g.line(`local.get $strlen`)
 	g.line(`i32.const 4`)

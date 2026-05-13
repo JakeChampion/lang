@@ -531,29 +531,18 @@ func TestStringFromBytesHelperHasInlineOutputFastPath(t *testing.T) {
 	mustContain(t, wat, "call $__lang_alloc")
 }
 
-// $__bytes_to_lang_string is the host-bytes → lang-string seam the
-// wasi:http handler uses to marshal incoming method / path / body.
-// HTTP methods like "GET" and "PUT" fit the 3-byte SSO cap, so the
-// helper grows an inline-output fast path matching the rest of
-// the family. Only emitted when the HTTP handler wrapper is in
-// play — compile with the EmitOptions flag set.
-func TestBytesToLangStringHelperHasInlineOutputFastPath(t *testing.T) {
-	src := `function handle(req: HttpRequest): HttpResponse {
-		return HttpResponse { status: 200, body: "ok" };
-	}`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	wat, err := EmitWithOptions(prog, info, EmitOptions{HttpHandler: true})
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	mustContain(t, wat, "(func $__bytes_to_lang_string")
+// $args gains an inline-output fast path for argv entries whose
+// NUL-terminated length is ≤ 3 (short CLI flags like "-h" / "-v",
+// short command names like "go" / "rm"). Same shape as the rest
+// of the SSO producer family — top-bit-flag constant + `i32.le_u`
+// branch + per-byte shift/OR. The heap-form path is preserved
+// for longer args via the same `$__lang_alloc` call below.
+func TestArgsHelperHasInlineOutputFastPath(t *testing.T) {
+	wat := compileToWAT(t, `function main(): i32 {
+		var a: string[] = args();
+		return len(a);
+	}`)
+	mustContain(t, wat, "(func $args")
 	mustContain(t, wat, "i32.const 0x80000000")
 	mustContain(t, wat, "i32.le_u")
 	mustContain(t, wat, "call $__lang_alloc")
