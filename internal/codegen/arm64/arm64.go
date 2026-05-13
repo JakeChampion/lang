@@ -3500,38 +3500,19 @@ func (g *generator) emitArrayLenStore(srcW, dstX string) {
 // OpMakeSomeI32 / OpMakeOkI32 / OpMakeErrI32 on arm64. `width`
 // is the IR's `Op.Width` operand (`0` for i32 payload,
 // `ir.WidthPtr` for pointer-shape payload); `tag` is the
-// variant index (`0` for Some/Ok, `1` for Err). Layout
-// matches `payloadLayout(Option[T])` /
-// `payloadLayout(Result[T, E])` so the heap-form match
-// readers find the payload at the expected offset.
+// variant index (`0` for Some/Ok, `1` for Err). Multi-value
+// AAPCS64 return ABI: leave (tag, payload) as two operand-
+// stack slots so OpReturnPair / OpCallDirectPair route them
+// through the AAPCS64 `(x0, x1)` return-register pair without
+// ever materialising a heap box.
 func (g *generator) emitPairFormMaker(width int, tag int) {
-	g.pop() // payload → x0
-	if width == ir.WidthPtr {
-		// Pointer payload: preserve full 64-bit x19, alloc 16,
-		// store payload as 8 bytes at +8.
-		g.emit("mov x19, x0")
-		g.emit("mov x0, #16")
-		g.emit("bl __lang_alloc")
-	} else {
-		// i32 payload: preserve narrow w19, alloc 8, store
-		// payload as 4 bytes at +4.
-		g.emit("mov w19, w0")
-		g.emit("mov x0, #8")
-		g.emit("bl __lang_alloc")
-	}
-	if tag == 0 {
-		g.emit("str wzr, [x0]")
-	} else {
-		g.emit("mov w1, #%d", tag)
-		g.emit("str w1, [x0]")
-	}
-	if width == ir.WidthPtr {
-		g.emit("str x19, [x0, #8]")
-	} else {
-		g.emit("str w19, [x0, #4]")
-	}
-	g.push()
-	g.usesAlloc = true
+	_ = width // payload width handled by the in-register move below
+	g.pop()                                   // payload → x0
+	g.emit("mov x1, x0")                      // save payload in x1
+	g.emit("mov x0, #%d", tag)
+	g.push()                                  // push tag
+	g.emit("mov x0, x1")                      // restore payload
+	g.push()                                  // push payload
 }
 
 func (g *generator) binPop() {
@@ -3671,13 +3652,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// retLabel restores the frame and rets.
 		g.emit("b %s", retLabel)
 	case ir.OpReturnPair:
-		// Native fallback — see x86_64's matching case. The
-		// pair-form lowering leaves a heap-pointer on the
-		// operand stack (OpMakeSome/None/Ok/Err builds the box
-		// the same way emitEnumNew does), so OpReturnPair is
-		// indistinguishable from OpReturn at the arm64 layer.
-		// Wasm gets the real two-register return.
-		g.pop()
+		// Multi-value pair-form return: pop the top operand-
+		// stack slot into `x1` (payload, second AAPCS64
+		// return reg), pop the next into `x0` (tag, first
+		// AAPCS64 return reg), then branch to the epilogue.
+		// The function-side ABI is now register-pair — callers
+		// (OpCallDirectPair) consume `(x0, x1)` directly with
+		// no heap-box round trip.
+		g.pop()             // payload → x0
+		g.emit("mov x1, x0")
+		g.pop()             // tag → x0
 		g.emit("b %s", retLabel)
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
 		// Native fallback: heap-box layout matching
@@ -3692,13 +3676,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// Same shape as Some/Ok but tag=1.
 		g.emitPairFormMaker(op.Width, 1)
 	case ir.OpMakeNoneI32:
-		// Native fallback: push the shared `[tag=1]` sentinel.
-		if g.enumSentinelTags == nil {
-			g.enumSentinelTags = map[int]bool{}
-		}
-		g.enumSentinelTags[1] = true
-		g.adrpAdd("x0", ".LEnumSentinel_1")
-		g.push()
+		// Multi-value None: push (tag=1, payload=0) as two
+		// operand-stack slots. No alloc, no heap-box pointer.
+		g.emit("mov x0, #1")
+		g.push() // tag
+		g.emit("mov x0, #0")
+		g.push() // payload (unused for None)
 
 	case ir.OpDrop:
 		g.emit("add sp, sp, #16")
@@ -4598,31 +4581,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpCallDirectPair:
-		// Natives keep the heap-form Option/Result ABI (see
-		// OpMakeSome/Err handlers above — they alloc the box
-		// and return a heap-box pointer). OpCallDirectPair on
-		// natives is OpCallDirect + immediate pair-extract
-		// from the heap pointer: pop the box ptr, push
-		// [box+0] (tag) and [box+payloadOff] (payload).
-		// `op.Width` selects the payload size — 0 (default)
-		// for i32 (read 4 bytes from +4), `ir.WidthPtr` for
-		// pointer-shape (read 8 bytes from +8). The IR-level
-		// "two values post-call" contract holds across both
-		// wasm (real multi-value return) and natives
-		// (synthetic extract).
+		// Multi-value pair-form call: callee returns (tag,
+		// payload) in (x0, x1) per AAPCS64. Push both directly
+		// to the operand stack — no heap-box round trip. The
+		// caller may follow with OpStoreLocal / OpMatchTag
+		// (scrutinee position) or emitRepackPairAsHeapBox
+		// (generic position) — the IR-level "two values post-
+		// call" contract is now register-backed.
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
 		g.emit("bl %s", op.Str)
 		g.emitCallArgsCleanup(argc)
-		g.emit("mov x16, x0")
-		g.emit("ldr w0, [x16]") // tag (4 bytes)
-		g.push()
-		if op.Width == ir.WidthPtr {
-			g.emit("ldr x0, [x16, #8]") // payload (8 bytes)
-		} else {
-			g.emit("ldr w0, [x16, #4]") // payload (4 bytes)
-		}
-		g.push()
+		g.emit("mov x16, x1") // stash payload (x1 may be clobbered)
+		g.push()              // push x0 (tag)
+		g.emit("mov x0, x16")
+		g.push()              // push payload
 
 	default:
 		return fmt.Errorf("arm64: unsupported IR op %s", op.Kind)
