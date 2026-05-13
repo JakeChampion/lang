@@ -3381,6 +3381,23 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 				return f.Type
 			}
 		}
+	case *ast.Call:
+		// `len(f(...))` where `f` returns a string must route
+		// through OpStrLen so the SSO seam handles the inline
+		// vs heap branch. Without this dispatch, the lowering
+		// falls through to the array-shape `[ptr - 4]; load`
+		// fallback, which traps on inline-form strings
+		// produced by string-returning helpers — most
+		// importantly `int_to_string`, whose 1..3-digit / -1..-99
+		// outputs cascade through `$string_from_bytes`'s
+		// inline-output path. The callee's return type comes
+		// off `info.FuncSigs` (populated by the checker for
+		// every user fn + every prelude / builtin signature).
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			if sig, ok := b.info.FuncSigs[id.Name]; ok && sig != nil {
+				return sig.Result
+			}
+		}
 	}
 	return nil
 }

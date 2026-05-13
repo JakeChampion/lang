@@ -914,6 +914,26 @@ func TestLowerLenOnStringEmitsOpStrLen(t *testing.T) {
 	}
 }
 
+// `len(f(...))` where `f` returns a string must route through
+// OpStrLen so the SSO seam handles the inline / heap branch.
+// Without an *ast.Call case in `exprType`, the lowering falls
+// through to the array-shape `[ptr - 4]; load` fallback, which
+// traps on inline-form strings produced by string-returning
+// helpers — most importantly `int_to_string`, whose 1..3-digit
+// outputs cascade through `$string_from_bytes`'s inline path.
+// Pin the lowering here so the regression can't slip back in.
+func TestLowerLenOnStringCallEmitsOpStrLen(t *testing.T) {
+	prog := lowerSource(t, `function f(n: i32): i32 { return len(int_to_string(n)); }`)
+	mustContainOp(t, prog, "f", OpStrLen)
+	fn := findFunc(prog, "f")
+	for i := 0; i+2 < len(fn.Ops); i++ {
+		if fn.Ops[i].Kind == OpConstI32 && fn.Ops[i].I32 == 4 &&
+			fn.Ops[i+1].Kind == OpSub && fn.Ops[i+2].Kind == OpLoad {
+			t.Fatalf("len(call-returning-string) still emits the open-coded const-4/sub/load shape:\n%s", prog)
+		}
+	}
+}
+
 // `len(<string literal>)` is still folded to a compile-time const
 // — the OpStrLen path is only for non-literal strings.
 func TestLowerLenOnStringLiteralFolds(t *testing.T) {
