@@ -1668,18 +1668,28 @@ func (g *generator) freshLabel(prefix string) string {
 	return fmt.Sprintf(".L%s_%d", prefix, g.fresh())
 }
 
-// push rax onto the operand stack — 16-byte slot, value at
-// `[rsp]`, the upper 8 bytes are dead. Matches arm64's `str
-// x0, [sp, #-16]!` discipline.
+// slotBytes is the operand-stack slot size. 16 bytes today
+// (one i64 value + 8 bytes padding); the padding kept rsp
+// 16-byte aligned across every push/pop without a runtime
+// parity check, which the SysV calling convention requires
+// at every `call`. BACKEND-PARITY perf item #3 plans to halve
+// this to 8; the constant centralises the value so the flip
+// is a one-line change.
+const slotBytes = 16
+
+// push rax onto the operand stack — `slotBytes`-byte slot,
+// value at `[rsp]`. The upper bytes are dead today (because
+// `slotBytes == 16` and the value fits in 8); the flip in
+// step 2 of the packed-operand-stack plan will drop them.
 func (g *generator) push() {
-	g.emit("sub rsp, 16")
+	g.emit(fmt.Sprintf("sub rsp, %d", slotBytes))
 	g.emit("mov [rsp], rax")
 }
 
-// pop into rax — 16-byte slot consumed.
+// pop into rax — one `slotBytes`-byte slot consumed.
 func (g *generator) pop() {
 	g.emit("mov rax, [rsp]")
-	g.emit("add rsp, 16")
+	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 }
 
 // emitStrLen loads the i32 length of the string whose data
