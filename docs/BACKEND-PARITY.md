@@ -168,30 +168,26 @@ Adding them is a copy-paste of the wasm test with a different runner.
 ### x86-64 lacks (vs arm64)
 
 - ~~`TestX86_64Map`~~ ✅ landed alongside the x86-64 Map runtime
-- `TestX86_64IndirectCall` (function-value-in-var — codegen exists,
-  no smoke test)
-- `TestX86_64Arena` (arena scope reset — codegen exists)
-- `TestX86_64EprintExit` (stderr + exit() — codegen exists, no test)
+- ~~`TestX86_64IndirectCall`~~ ✅ landed (function-value-in-var smoke test)
+- ~~`TestX86_64Arena`~~ ✅ landed
+- ~~`TestX86_64EprintExit`~~ ✅ landed
 - `TestX86_64DarwinBuilds` — N/A; no Darwin x86-64 target
 
 ### Both natives lack (vs wasm)
 
-- `Test*Defer` (defer with conditional / early-return)
-- `Test*Switch` (switch-with-break-in-loop)
-- `Test*FStringInterpolation`
-- `Test*Generic*` (generic function inference, monomorphisation;
-  IR-level so likely "just works", but worth a guard test)
-- `Test*Tuple*` (destructure / multi-return / heterogeneous)
-- `Test*ForEach*` (over-array / break-continue)
-- `Test*IfLet*` (if-let match)
+- ~~`Test*Defer` (defer with conditional / early-return)~~ ✅ both
+- ~~`Test*Switch` (switch-with-break-in-loop)~~ ✅ both
+- ~~`Test*FStringInterpolation`~~ ✅ both
+- ~~`Test*Generic*`~~ ✅ `TestArm64Generic` / `TestX86_64Generic`
+- ~~`Test*Tuple*`~~ ✅ both
+- ~~`Test*ForEach*`~~ ✅ both
+- ~~`Test*IfLet*`~~ ✅ both
 - `Test*SubI32*` (u8 / u16 / i8 array writes / slices / widths) —
-  blocked on the OpLoadI*/OpSignExtend* gaps above
-- ~~`Test*State*` (StateScalarCounter, StateMapAcrossCalls, etc.)~~
-  ✅ landed alongside `State[T]` (TestArm64State / TestX86_64State —
-  6 sub-cases per backend mirroring the wasm shapes a no-op
-  interpretation can express)
-- `Test*ReadFile*` / `Test*WriteFile*` / `Test*OpenAppender` —
-  blocked on file I/O gap above
+  still blocked on the OpLoadI*/OpSignExtend* gaps above
+- ~~`Test*State*`~~ ✅ landed alongside `State[T]`
+- ~~`Test*ReadFile*` / `Test*WriteFile*` / `Test*OpenAppender`~~
+  ✅ both natives have ReadFileOk / ReadFileNotFound / WriteFileOk
+  / ReadWriteFileRoundtrip + the Reader/Writer suite
 
 ### Smaller test gaps (low priority)
 
