@@ -479,6 +479,108 @@ function main(): i32 {
 	}
 }
 
+// User-defined enums matching the canonical "1 payload-
+// carrying variant at index 0 + 1 nullary variant at index 1"
+// shape opt into pair-form like Option / Result. The IR reuses
+// OpMakeSomeI32 / OpMakeNoneI32 as the generic tag-0 / tag-1
+// constructor ops because the backends treat the four
+// builtin maker ops as one tag-keyed family.
+func TestLowerUserEnumPairFormEligible(t *testing.T) {
+	prog := lowerSource(t, `enum Maybe { Just(i32), Nothing }
+function pick(x: i32): Maybe {
+    if (x < 0) { return Nothing; }
+    return Just(x);
+}
+function main(): i32 {
+    match (pick(5)) {
+        Just(v)  => { return v; },
+        Nothing  => { return -1; }
+    }
+}`)
+	fn := findFunc(prog, "pick")
+	if fn == nil {
+		t.Fatal("pick not found")
+	}
+	hasSome := false // OpMakeSomeI32 used as the generic tag-0 ctor
+	hasNone := false // OpMakeNoneI32 used as the generic tag-1 ctor
+	hasReturnPair := false
+	for _, op := range fn.Ops {
+		switch op.Kind {
+		case OpMakeSomeI32:
+			hasSome = true
+		case OpMakeNoneI32:
+			hasNone = true
+		case OpReturnPair:
+			hasReturnPair = true
+		case OpAlloc:
+			t.Fatalf("user enum pair-form should not OpAlloc:\n%s", prog)
+		}
+	}
+	if !hasSome || !hasNone || !hasReturnPair {
+		t.Fatalf("expected OpMakeSomeI32 + OpMakeNoneI32 + OpReturnPair in pick:\n%s", prog)
+	}
+	// Caller match consumes the pair via OpCallDirectPair.
+	mainFn := findFunc(prog, "main")
+	if mainFn == nil {
+		t.Fatal("main not found")
+	}
+	hasPairCall := false
+	for _, op := range mainFn.Ops {
+		if op.Kind == OpCallDirectPair && op.Str == "pick" {
+			hasPairCall = true
+			break
+		}
+	}
+	if !hasPairCall {
+		t.Fatalf("expected OpCallDirectPair to pick in main:\n%s", prog)
+	}
+}
+
+// A user enum whose payload-carrying variant is at index 1
+// (wrong order) is NOT pair-form-eligible — the IR's tag
+// convention (0 = payload, 1 = nullary) wouldn't agree with
+// the user decl's varIdx assignment, which would silently
+// miscompile match dispatches.
+func TestLowerUserEnumWrongOrderStaysHeapForm(t *testing.T) {
+	prog := lowerSource(t, `enum Maybe { Nothing, Just(i32) }
+function pick(x: i32): Maybe {
+    if (x < 0) { return Nothing; }
+    return Just(x);
+}
+function main(): i32 {
+    match (pick(5)) {
+        Just(v)  => { return v; },
+        Nothing  => { return -1; }
+    }
+}`)
+	fn := findFunc(prog, "pick")
+	if fn == nil {
+		t.Fatal("pick not found")
+	}
+	for _, op := range fn.Ops {
+		if op.Kind == OpReturnPair {
+			t.Fatalf("Maybe { Nothing, Just(i32) } should NOT be pair-form (wrong variant order):\n%s", prog)
+		}
+	}
+}
+
+// A user enum carrying a pointer-shaped payload (string,
+// struct, array) is NOT pair-form-eligible — same constraint
+// as Option[string] etc.
+func TestLowerUserEnumPointerPayloadStaysHeapForm(t *testing.T) {
+	prog := lowerSource(t, `enum Cell { Filled(string), Empty }
+function f(): Cell { return Empty; }`)
+	fn := findFunc(prog, "f")
+	if fn == nil {
+		t.Fatal("f not found")
+	}
+	for _, op := range fn.Ops {
+		if op.Kind == OpMakeNoneI32 || op.Kind == OpReturnPair {
+			t.Fatalf("Cell { Filled(string), Empty } should not get pair-form (pointer payload):\n%s", prog)
+		}
+	}
+}
+
 // `Result[T, E]` with i32-shaped T and E is now pair-form
 // eligible alongside `Option[T]`. Function bodies that only
 // return `Ok(EXPR)` / `Err(EXPR)` literals lower to

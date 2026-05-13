@@ -678,7 +678,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// every `return` in its body produces `Some(EXPR)` or `None`
 	// directly. Captured here so callers know to consume two
 	// stack values from a OpCallDirectPair instead of one.
-	pairForm := findPairFormFuncs(prog)
+	pairForm := findPairFormFuncs(prog, info)
 	out := &Program{PairForm: pairForm}
 	for _, fn := range prog.Funcs {
 		f, err := lowerFunc(fn, info, ptrW, pairForm)
@@ -720,7 +720,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 //
 // Tightening the analysis further (e.g. to accept
 // pointer-shaped payloads) is tracked as a follow-up.
-func findPairFormFuncs(prog *ast.Program) map[string]bool {
+func findPairFormFuncs(prog *ast.Program, info *checker.Info) map[string]bool {
 	out := map[string]bool{}
 	for {
 		grew := false
@@ -728,7 +728,7 @@ func findPairFormFuncs(prog *ast.Program) map[string]bool {
 			if out[fn.Name] {
 				continue
 			}
-			if !isPairFormEligible(fn, out) {
+			if !isPairFormEligible(fn, info, out) {
 				continue
 			}
 			out[fn.Name] = true
@@ -763,7 +763,7 @@ func findPairFormFuncs(prog *ast.Program) map[string]bool {
 // payloads, mixed-shape Result) require either the native
 // pair-form lowering to support wider slots or the per-
 // instantiation rebox machinery — both tracked as follow-ups.
-func isPairFormEligible(fn *ast.FuncDecl, pairForm map[string]bool) bool {
+func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, pairForm map[string]bool) bool {
 	if fn.IsLocal {
 		// Hoisted closures take an extra __env i32 param and
 		// have a fixed-shape body; pair-form lowering for them
@@ -774,7 +774,7 @@ func isPairFormEligible(fn *ast.FuncDecl, pairForm map[string]bool) bool {
 	if !ok {
 		return false
 	}
-	variantNames := pairFormVariantsFor(enumT)
+	variantNames := pairFormVariantsFor(enumT, info)
 	if variantNames == nil {
 		return false
 	}
@@ -787,15 +787,27 @@ func isPairFormEligible(fn *ast.FuncDecl, pairForm map[string]bool) bool {
 // pairFormVariantsFor returns the set of valid variant
 // constructor names for fn's return type when the type is
 // eligible for pair-form lowering. Returns nil if the type
-// isn't `Option[T]` / `Result[T, E]` or if any payload type
-// isn't i32-stack-shaped.
+// doesn't match a known shape or if any payload type isn't
+// i32-stack-shaped.
 //
-// The returned map is shared (read-only) across all callers —
-// the eligibility check runs once per function during
-// `findPairFormFuncs` and once per pair-form builder, so
-// avoiding the per-call allocation matters on Result-heavy
-// programs.
-func pairFormVariantsFor(t ast.EnumType) map[string]bool {
+// Built-in `Option[T]` and `Result[T, E]` are recognised by
+// name (so the variant names are sourced from the package-
+// level `optionVariants` / `resultVariants` constants). Any
+// user-declared enum is also eligible if it matches the
+// canonical shape:
+//   - exactly two variants,
+//   - variant 0 carries exactly one payload that's
+//     i32-stack-shaped (after substituting the enum's
+//     type-parameter bindings, if any), and
+//   - variant 1 is nullary.
+//
+// The canonical-order requirement is load-bearing: the IR's
+// pair-form construction reuses `OpMakeSomeI32` (tag=0) for
+// the payload-carrying variant and `OpMakeNoneI32` (tag=1)
+// for the nullary one, and the consumer-side tag dispatch
+// reads the variant's `varIdx` from the enum decl, so the
+// two must agree.
+func pairFormVariantsFor(t ast.EnumType, info *checker.Info) map[string]bool {
 	switch t.Name {
 	case "Option":
 		if len(t.Args) != 1 || !isI32StackShape(t.Args[0]) {
@@ -808,7 +820,45 @@ func pairFormVariantsFor(t ast.EnumType) map[string]bool {
 		}
 		return resultVariants
 	}
-	return nil
+	if info == nil {
+		return nil
+	}
+	ed := info.Enums[t.Name]
+	if ed == nil || len(ed.Variants) != 2 {
+		return nil
+	}
+	v0, v1 := ed.Variants[0], ed.Variants[1]
+	if len(v0.Payloads) != 1 || len(v1.Payloads) != 0 {
+		return nil
+	}
+	payloadType := resolveTypeParam(v0.Payloads[0], ed.TypeParams, t.Args)
+	if !isI32StackShape(payloadType) {
+		return nil
+	}
+	return map[string]bool{v0.Name: true, v1.Name: true}
+}
+
+// resolveTypeParam substitutes a ParamType reference with its
+// binding from `args`, looking up the index by name in `params`.
+// Used when checking a user enum's variant payload shape: a
+// generic enum like `MyOption[T]` declares its payload as
+// `ParamType{Name: "T"}`, and the eligibility check needs the
+// concrete type (e.g. `i32`) to decide `isI32StackShape`.
+// Non-ParamType inputs and unbound names fall through unchanged.
+func resolveTypeParam(t ast.Type, params []string, args []ast.Type) ast.Type {
+	pt, ok := t.(ast.ParamType)
+	if !ok {
+		return t
+	}
+	if len(params) != len(args) {
+		return t
+	}
+	for i, name := range params {
+		if name == pt.Name {
+			return args[i]
+		}
+	}
+	return t
 }
 
 // Shared variant-name sets returned by pairFormVariantsFor.
@@ -1194,7 +1244,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	}
 	if b.thisIsPair {
 		if enumT, ok := fn.ReturnType.(ast.EnumType); ok {
-			b.pairVariants = pairFormVariantsFor(enumT)
+			b.pairVariants = pairFormVariantsFor(enumT, info)
 		}
 	}
 	for i, p := range fn.Params {
@@ -1804,6 +1854,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// subset for now.
 		if b.thisIsPair && len(b.defers) == 0 && isVariantLiteralExpr(n.Value, b.pairVariants) {
 			variantName, payload := pairFormVariantOf(n.Value)
+			// Built-in Option/Result variants keep their named
+			// ops for readability; user-defined two-variant
+			// enums reuse OpMakeSomeI32 / OpMakeNoneI32 for the
+			// payload-carrying / nullary variants since the
+			// backends treat all four maker ops as a single
+			// "push (tag, payload)" pair (tag=0 for the
+			// payload-carrying ones, tag=1 for nullary).
 			switch variantName {
 			case "Some":
 				if err := b.expr(payload); err != nil {
@@ -1823,13 +1880,19 @@ func (b *builder) stmt(s ast.Stmt) error {
 				}
 				b.emit(Op{Kind: OpMakeErrI32})
 			default:
-				// isVariantLiteralExpr gated against `pairVariants`
-				// above, so every name reaching here should be one
-				// of the four cases. A miss means the two helpers
-				// have drifted out of sync — panic so the bug
-				// surfaces in tests rather than silently emitting
-				// OpReturnPair with no payload prep.
-				return fmt.Errorf("ir: pair-form return saw unrecognised variant %q (isVariantLiteralExpr / pairFormVariantOf drifted)", variantName)
+				// User enum variant: payload-carrying → tag 0
+				// (OpMakeSomeI32), nullary → tag 1
+				// (OpMakeNoneI32). The canonical-order check
+				// in `pairFormVariantsFor` ensures the user's
+				// variant order matches this tag mapping.
+				if payload != nil {
+					if err := b.expr(payload); err != nil {
+						return err
+					}
+					b.emit(Op{Kind: OpMakeSomeI32})
+				} else {
+					b.emit(Op{Kind: OpMakeNoneI32})
+				}
 			}
 			b.emit(Op{Kind: OpReturnPair})
 			return nil
