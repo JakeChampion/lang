@@ -934,6 +934,44 @@ func TestLowerLenOnStringCallEmitsOpStrLen(t *testing.T) {
 	}
 }
 
+// `len(if cond { a } else { b })` where the unified arm type is
+// `string` must route through OpStrLen so the SSO seam handles
+// the inline / heap branch. Without an *ast.IfExpr case in
+// `exprType`, the lowering falls through to the array-shape
+// `[ptr - 4]; load` fallback, which traps when one of the arms
+// produces an inline-form string (e.g.
+// `if cond { int_to_string(n) } else { s }`).
+func TestLowerLenOnStringIfExprEmitsOpStrLen(t *testing.T) {
+	prog := lowerSource(t, `function f(cond: boolean, s: string): i32 {
+		return len(if (cond) { s } else { "fallback" });
+	}`)
+	mustContainOp(t, prog, "f", OpStrLen)
+	fn := findFunc(prog, "f")
+	for i := 0; i+2 < len(fn.Ops); i++ {
+		if fn.Ops[i].Kind == OpConstI32 && fn.Ops[i].I32 == 4 &&
+			fn.Ops[i+1].Kind == OpSub && fn.Ops[i+2].Kind == OpLoad {
+			t.Fatalf("len(IfExpr-returning-string) still emits the open-coded const-4/sub/load shape:\n%s", prog)
+		}
+	}
+}
+
+// `len(match e { ... })` parallels the IfExpr case — every arm
+// body shares a unified type, so recursing on the first arm
+// body that resolves is sufficient.
+func TestLowerLenOnStringMatchExprEmitsOpStrLen(t *testing.T) {
+	src := `enum Color { R, G, B }
+		function pick(c: Color): string {
+			return match (c) {
+				R => "red",
+				G => "grn",
+				B => "blu"
+			};
+		}
+		function f(c: Color): i32 { return len(pick(c)); }`
+	prog := lowerSource(t, src)
+	mustContainOp(t, prog, "f", OpStrLen)
+}
+
 // `len(<string literal>)` is still folded to a compile-time const
 // — the OpStrLen path is only for non-literal strings.
 func TestLowerLenOnStringLiteralFolds(t *testing.T) {

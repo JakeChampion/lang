@@ -3398,6 +3398,32 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 				return sig.Result
 			}
 		}
+	case *ast.IfExpr:
+		// `len(if cond { a } else { b })` where both arms are
+		// strings must route through OpStrLen — same SSO-seam
+		// reason as the *ast.Call / *ast.Index cases above.
+		// Without this dispatch, the lowering falls through to
+		// the array-shape `[ptr - 4]; load` fallback, which
+		// traps when one of the arms produces an inline-form
+		// string (e.g. `if cond { int_to_string(n) } else { s }`).
+		//
+		// The checker has already unified the two arms to a
+		// single type; recursing on `Then` is enough — `Else`
+		// must match.
+		return b.exprType(x.Then)
+	case *ast.MatchExpr:
+		// `len(match e { Variant => a, _ => b })` parallels the
+		// IfExpr case: every arm body shares a unified type so
+		// recursing on the first arm body that resolves is
+		// sufficient.
+		for _, arm := range x.Arms {
+			if arm == nil {
+				continue
+			}
+			if t := b.exprType(arm.Body); t != nil {
+				return t
+			}
+		}
 	}
 	return nil
 }
