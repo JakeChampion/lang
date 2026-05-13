@@ -678,13 +678,16 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	case ir.OpReturnVoid:
 		g.emit(fmt.Sprintf("jmp %s", retLabel))
 	case ir.OpReturnPair:
-		// Native fallback: the IR ops OpMakeSome/None/Ok/Err leave
-		// a heap-pointer Option/Result on the operand stack (see
-		// the same case below). OpReturnPair is therefore
-		// indistinguishable from OpReturn — pop one slot, jump to
-		// the epilogue. Wasm gets the actual two-register return;
-		// native multi-value return is step 4 of the arc.
-		g.pop()
+		// Multi-value pair-form return: pop the top operand-
+		// stack slot into `rdx` (payload, second SysV return
+		// reg), pop the next into `rax` (tag, first SysV
+		// return reg), then jump to the epilogue. The
+		// function-side ABI is now register-pair — callers
+		// (OpCallDirectPair) consume `(rax, rdx)` directly,
+		// no heap-box round trip.
+		g.pop()             // payload → rax
+		g.emit("mov rdx, rax")
+		g.pop()             // tag → rax
 		g.emit(fmt.Sprintf("jmp %s", retLabel))
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
 		// Native fallback — same heap-box shape as emitEnumNew.
@@ -700,16 +703,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// Same shape as Some/Ok but tag=1.
 		g.emitPairFormMaker(op.Width, 1)
 	case ir.OpMakeNoneI32:
-		// Native fallback — push the shared `[tag=1]` sentinel
-		// pointer. Matches the OpEnumSentinel shape so existing
-		// match-tag-load code keeps working.
-		// Use enum-sentinel infra (lazy-register the tag).
-		if g.enumSentinelTags == nil {
-			g.enumSentinelTags = map[int]bool{}
-		}
-		g.enumSentinelTags[1] = true
-		g.emit("lea rax, [rip + .LEnumSentinel_1]")
-		g.push()
+		// Multi-value None: push (tag=1, payload=0) as two
+		// operand-stack slots. No alloc, no heap-box pointer.
+		g.emit("mov rax, 1")
+		g.push() // tag
+		g.emit("xor eax, eax")
+		g.push() // payload (unused for None)
 
 	case ir.OpDrop:
 		// Skip the top 16-byte slot.
@@ -1582,31 +1581,21 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push()
 
 	case ir.OpCallDirectPair:
-		// Natives keep the heap-form Option/Result ABI (see
-		// OpMakeSome/Err handlers above — they alloc the box
-		// and return a heap-box pointer). OpCallDirectPair on
-		// natives is therefore OpCallDirect + immediate pair-
-		// extract from the heap pointer: pop the box ptr,
-		// push [box+0] (tag) and [box+payloadOff] (payload).
-		// `op.Width` selects the payload size — 0 (default)
-		// for i32 (read 4 bytes from +4), `ir.WidthPtr` for
-		// pointer-shape (read 8 bytes from +8). The IR-level
-		// "two values post-call" contract holds across both
-		// wasm (real multi-value return) and natives
-		// (synthetic extract).
+		// Multi-value pair-form call: callee returns (tag,
+		// payload) in (rax, rdx) per SysV. Push both directly
+		// to the operand stack — no heap-box round trip. The
+		// caller may follow with OpStoreLocal / OpMatchTag
+		// (scrutinee position) or emitRepackPairAsHeapBox
+		// (generic position) — the IR-level "two values post-
+		// call" contract is now register-backed.
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
 		g.emit(fmt.Sprintf("call %s", op.Str))
 		g.emitCallArgsCleanup(argc)
-		g.emit("mov r10, rax")
-		g.emit("mov eax, [r10]") // tag (4 bytes)
-		g.push()
-		if op.Width == ir.WidthPtr {
-			g.emit("mov rax, [r10 + 8]") // payload (8 bytes)
-		} else {
-			g.emit("mov eax, [r10 + 4]") // payload (4 bytes)
-		}
-		g.push()
+		g.emit("mov r10, rdx") // stash payload (rdx is volatile)
+		g.push()               // push rax (tag)
+		g.emit("mov rax, r10")
+		g.push()               // push payload
 
 	default:
 		return fmt.Errorf("x86_64: unsupported IR op %s", op.Kind)
@@ -1623,28 +1612,19 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 // OpMakeSomeI32 / OpMakeOkI32 / OpMakeErrI32. `width` is the
 // IR's `Op.Width` operand (`0` for i32 payload, `ir.WidthPtr`
 // for pointer-shape payload); `tag` is the variant index
-// (`0` for Some/Ok, `1` for Err). Layout matches
-// `payloadLayout(Option[T])` / `payloadLayout(Result[T, E])`
-// so the heap-form match-tag readers find the payload at the
-// expected offset.
+// (`0` for Some/Ok, `1` for Err). Multi-value return ABI:
+// leave (tag, payload) as two operand-stack slots so
+// OpReturnPair / OpCallDirectPair can route them through the
+// SysV `(rax, rdx)` return-register pair without ever
+// materialising a heap box.
 func (g *generator) emitPairFormMaker(width int, tag int) {
-	box := 8       // box size (bytes)
-	off := 4       // payload offset
-	storeReg := "ecx"
-	if width == ir.WidthPtr {
-		box = 16
-		off = 8
-		storeReg = "rcx" // 8-byte store
-	}
-	g.pop()
-	g.emit("push rax")
-	g.emit(fmt.Sprintf("mov edi, %d", box))
-	g.emit("call __lang_alloc")
-	g.emit("pop rcx")
-	g.emit(fmt.Sprintf("mov dword ptr [rax], %d", tag))
-	g.emit(fmt.Sprintf("mov [rax + %d], %s", off, storeReg))
-	g.push()
-	g.usesAlloc = true
+	_ = width // payload width handled by the in-register move below
+	g.pop()                                     // payload → rax
+	g.emit("mov rcx, rax")                      // save payload
+	g.emit(fmt.Sprintf("mov rax, %d", tag))
+	g.push()                                    // push tag
+	g.emit("mov rax, rcx")                      // restore payload
+	g.push()                                    // push payload
 }
 
 func (g *generator) binPop() {
