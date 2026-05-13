@@ -28,8 +28,22 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
+// arm64Tooling locates the C linker used to assemble the
+// generated asm and the runner used to execute the resulting
+// binary. On a native arm64 Linux host the system `gcc` is
+// already arm64 and the binary runs without an emulator, so
+// `qemu` comes back empty. On x86 hosts (the historical CI
+// shape) we need the aarch64 cross-toolchain and qemu-aarch64;
+// the test SKIPs cleanly if neither path is available.
 func arm64Tooling(t *testing.T) (gcc, qemu string) {
 	t.Helper()
+	// Native arm64 Linux: plain `gcc` produces arm64 binaries,
+	// no emulator needed.
+	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
+		if p, err := exec.LookPath("gcc"); err == nil {
+			return p, ""
+		}
+	}
 	for _, c := range []string{"aarch64-linux-gnu-gcc", "aarch64-unknown-linux-gnu-gcc"} {
 		if p, err := exec.LookPath(c); err == nil {
 			gcc = p
@@ -46,6 +60,18 @@ func arm64Tooling(t *testing.T) (gcc, qemu string) {
 		t.Skipf("aarch64 cross toolchain not available (gcc=%q qemu=%q)", gcc, qemu)
 	}
 	return gcc, qemu
+}
+
+// runArm64Bin builds the exec.Cmd for running an arm64 Linux
+// binary either natively (when `qemu` is empty — we're already
+// on arm64) or via qemu-aarch64 (cross-host case). Centralises
+// the "qemu prefix or not" dispatch so callers don't sprinkle
+// the same conditional through every test.
+func runArm64Bin(qemu, binPath string, args ...string) *exec.Cmd {
+	if qemu == "" {
+		return exec.Command(binPath, args...)
+	}
+	return exec.Command(qemu, append([]string{binPath}, args...)...)
 }
 
 func compileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) {
@@ -77,7 +103,7 @@ func compileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
-	cmd := exec.Command(qemu, binPath)
+	cmd := runArm64Bin(qemu, binPath)
 	out, _ := cmd.CombinedOutput()
 	return string(out), cmd.ProcessState.ExitCode()
 }
@@ -646,7 +672,7 @@ func TestArm64Args(t *testing.T) {
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
 	}
-	cmd := exec.Command(qemu, binPath, "alpha", "beta", "gamma")
+	cmd := runArm64Bin(qemu, binPath, "alpha", "beta", "gamma")
 	out, _ := cmd.CombinedOutput()
 	if got, want := cmd.ProcessState.ExitCode(), 4; got != want {
 		t.Errorf("exit = %d (argc), want %d", got, want)
@@ -860,7 +886,7 @@ func TestArm64HttpHandler(t *testing.T) {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 
-	cmd := exec.Command(qemu, binPath)
+	cmd := runArm64Bin(qemu, binPath)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
@@ -1399,7 +1425,7 @@ function main(): i32 {
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
 	}
-	cmd := exec.Command(qemu, binPath)
+	cmd := runArm64Bin(qemu, binPath)
 	_, _ = cmd.CombinedOutput()
 	// 5,000,050,000 → i32 (705,082,704) → exit code (mod 256) = 80.
 	if got := cmd.ProcessState.ExitCode(); got != 80 {
@@ -2104,7 +2130,7 @@ func compileArm64InDir(t *testing.T, src string, seed map[string]string) (stdout
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
 	}
-	cmd := exec.Command(qemu, binPath)
+	cmd := runArm64Bin(qemu, binPath)
 	cmd.Dir = dir
 	out, _ := cmd.CombinedOutput()
 	return string(out), cmd.ProcessState.ExitCode(), dir
@@ -2495,7 +2521,7 @@ func TestArm64ReadLine(t *testing.T) {
 	}
 	runCase := func(stdin string, want int) {
 		t.Helper()
-		cmd := exec.Command(qemu, binPath)
+		cmd := runArm64Bin(qemu, binPath)
 		cmd.Stdin = strings.NewReader(stdin)
 		_, _ = cmd.CombinedOutput()
 		if got := cmd.ProcessState.ExitCode(); got != want {
