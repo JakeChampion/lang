@@ -5506,12 +5506,72 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`(export "wasi:http/incoming-handler@0.2.0#handle" (func $__http_entry))`)
 
 	// $__bytes_to_lang_string(host_ptr, host_len) -> lang_string_ptr.
-	// Allocates a length-prefixed + NUL-terminated string buffer
-	// and memcpies the host's bytes in. Used by the method /
-	// path / body marshaling above.
+	// Turns the host's (ptr, len) bytes into a lang string. Used
+	// by the method / path / body marshaling above.
+	//
+	// Two output shapes, chosen by host_len:
+	//   - host_len <= 3:  inline-packed i32 (top-bit flag + 3-bit
+	//                     length + up-to-3 inline bytes), no alloc.
+	//                     Catches the common HTTP "GET" / "PUT"
+	//                     method strings — no per-request heap
+	//                     pressure for them.
+	//   - host_len >  3:  heap-form (alloc length-prefix + copy +
+	//                     trailing NUL, the legacy layout).
 	g.line(`(func $__bytes_to_lang_string (param $host_ptr i32) (param $host_len i32) (result i32)`)
 	g.indent++
-	g.line(`(local $sbase i32)`)
+	g.line(`(local $sbase i32) (local $i i32) (local $inline i32) (local $byte i32)`)
+	// Inline-output fast path. Mirrors the SSO producer shape from
+	// $__str_concat / $__str_slice / $string_from_bytes — read
+	// bytes straight out of the host buffer, pack into a single
+	// i32, return.
+	g.line(`local.get $host_len`)
+	g.line(`i32.const 3`)
+	g.line(`i32.le_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0x80000000`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.const 24`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $inline`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $i`)
+	g.line(`block $iend`)
+	g.indent++
+	g.line(`loop $iloop`)
+	g.indent++
+	g.line(`local.get $i`)
+	g.line(`local.get $host_len`)
+	g.line(`i32.eq`)
+	g.line(`br_if $iend`)
+	g.line(`local.get $host_ptr`)
+	g.line(`local.get $i`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.set $byte`)
+	g.line(`local.get $inline`)
+	g.line(`local.get $byte`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $inline`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $i`)
+	g.line(`br $iloop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.line(`local.get $inline`)
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+	// Heap-form output path: host_len > 3.
 	g.line(`local.get $host_len`)
 	g.line(`i32.const 5`) // 4 prefix + NUL
 	g.line(`i32.add`)
