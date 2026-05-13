@@ -3381,6 +3381,28 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 				return f.Type
 			}
 		}
+	case *ast.Index:
+		// `a[i]` returns the element type. The checker stamps
+		// ElemType on array / slice indexing once the element is
+		// resolved; for string indexing the result is a single
+		// byte (modelled as i32 zero-extended), which means
+		// `len(s[i])` would be a type error in lang — but
+		// `len(arr_of_strings[i])` MUST route through OpStrLen
+		// so the SSO seam handles the inline / heap branch.
+		// Same family of latent bug as the *ast.Binary case
+		// above: without this dispatch, `argT` comes back nil
+		// and the `len()` fallback open-codes a `[ptr - 4]`
+		// load, which traps on inline-form strings produced
+		// by $args / $string_from_bytes / $__str_concat / etc.
+		if x.IsString {
+			// `s[i]` produces a single byte zero-extended into
+			// an i32. Treat as a generic number type — falls
+			// through the `len()` fallback the way arrays do
+			// (and `len(byte)` is rejected by the checker
+			// upstream regardless).
+			return ast.NumberType{}
+		}
+		return x.ElemType
 	case *ast.Call:
 		// `len(f(...))` where `f` returns a string must route
 		// through OpStrLen so the SSO seam handles the inline

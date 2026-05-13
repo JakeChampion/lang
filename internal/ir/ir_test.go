@@ -952,6 +952,25 @@ func TestLowerLenOnStringLiteralFolds(t *testing.T) {
 	t.Errorf("expected const 5 for len(\"hello\"):\n%s", prog)
 }
 
+// `len(a[i])` where `a` is a string array must route through
+// OpStrLen — same SSO seam reason as `len(s)`. Latent bug:
+// before exprType learned about *ast.Index, the dispatch fell
+// to the array-shape `[ptr - 4]; load` fallback, which traps
+// for inline-form strings produced by $args / $string_from_bytes
+// / $__str_concat. Pin the lowering here so the fallback can't
+// silently slip back in.
+func TestLowerLenOnStringArrayIndexEmitsOpStrLen(t *testing.T) {
+	prog := lowerSource(t, `function f(a: string[]): i32 { return len(a[0]); }`)
+	mustContainOp(t, prog, "f", OpStrLen)
+	fn := findFunc(prog, "f")
+	for i := 0; i+2 < len(fn.Ops); i++ {
+		if fn.Ops[i].Kind == OpConstI32 && fn.Ops[i].I32 == 4 &&
+			fn.Ops[i+1].Kind == OpSub && fn.Ops[i+2].Kind == OpLoad {
+			t.Fatalf("len(string-array[i]) still emits the open-coded const-4/sub/load shape:\n%s", prog)
+		}
+	}
+}
+
 // `len(arr)` keeps the open-coded shape — arrays may diverge
 // from strings in a future layout change, and routing them
 // through OpStrLen would conflate the two.
