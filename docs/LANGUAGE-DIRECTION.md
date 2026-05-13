@@ -1256,17 +1256,31 @@ the lang's abstraction layers.
 
 ## Open questions to settle as we go
 
-- **Slice syntax**: `[T]` view + `Array<T>` owned, or keep `T[]`
-  for owned and reuse `[T]` for view? Lean toward visual
-  distinction.
-- **Default int**: `i32` (wasm-native, current) vs `i64` (Go
-  default, larger range). Lean i32 — wasm-native, existing
-  programs assume it.
-- **Map literal syntax**: see PR 4 candidates. Lean `Map { ... }`.
-- **`Bytes` vs `[u8]`**: distinct nominal type or just a slice of
-  u8? Lean `[u8]` for symmetry with other slices.
-- **Closure capture semantics**: by-value at closure-
-  creation time. The closureconv pass evaluates each
+- **~~Slice syntax~~ — settled `T[]` owned + `[T]` view.** The
+  visual-distinction option won. `T[]` declares an owned array
+  (heap-allocated, length prefix); `[T]` is a non-owning slice
+  view of `{data_ptr, len}` into a parent owner. Methods like
+  `.push` are owned-only; slicing (`a[i:j]`) yields a `[T]`
+  view. Source-level disambiguation kept the parser simple and
+  matches what the codegen lays out.
+
+- **~~Default int~~ — settled `i32`.** Wasm-native and existing
+  programs assume it. `i64`, `u64`, `i16`, `u16`, `i8`, `u8`,
+  `usize`, `f32`, `f64` are all available explicitly.
+
+- **~~Map literal syntax~~ — settled `Map { k: v, k: v }`.** Same
+  shape as struct literal syntax. Heterogeneous-typed literals
+  monomorphise through the auto-injected `Map[K, V]` decl.
+
+- **~~`Bytes` vs `[u8]`~~ — settled no nominal type.** Strings
+  are treated as raw byte arrays at the `base64_encode` /
+  `hex_encode` / `random_bytes` boundary (their round-trip
+  semantics are content-preserving without UTF-8 validation),
+  and `u8[]` / `[u8]` handle the literal-bytes case directly.
+  No standalone `Bytes` newtype.
+
+- **~~Closure capture semantics~~ — settled by-value at closure-
+  creation time.** The closureconv pass evaluates each
   captured name once at the `MakeClosure` site and stores
   the value in a freshly-allocated env block; the hoisted
   function reads it via env-relative loads. For pointer-
@@ -1287,6 +1301,11 @@ the lang's abstraction layers.
   formal escape rules when re-lowering for
   defunctionalisation; until then the rule is "captures
   must outlive the closure".
+
+All five questions in this section are now resolved by what
+shipped. New open questions should be appended as they
+arise — the resolved ones are kept (rather than deleted) so
+the trail of decisions is recoverable.
 
 ## Outside influences we mined
 
