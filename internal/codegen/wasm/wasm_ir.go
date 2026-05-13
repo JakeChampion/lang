@@ -17,6 +17,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/langstring"
 )
 
 // EmitFromIR returns the WAT module text for prog using the lowered
@@ -743,7 +744,26 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpConstF64:
 		g.linef("f64.const %g", op.F64)
 	case ir.OpConstStr:
-		g.linef("i32.const %d", g.internString(op.Str))
+		// SSO literal-pack: short literals (≤3 bytes) encode
+		// directly into the operand-stack i32 via
+		// `langstring.PackTinyWasm` — top-bit flag + 3-bit
+		// length + up-to-3 inline bytes — bypassing the data
+		// segment entirely. Heap-form literals still go
+		// through `internString` (one `[length-prefix][bytes]`
+		// entry per unique string in the static data segment).
+		// Downstream consumers route through the SSO seams
+		// either way.
+		//
+		// Module size win: each short literal saves
+		// `len + 4` bytes (the prefix + the content) from the
+		// data segment. The runtime cost is zero: literals
+		// were already a single `i32.const`; the only
+		// difference is which i32 value gets emitted.
+		if packed, ok := langstring.PackTinyWasm([]byte(op.Str)); ok {
+			g.linef("i32.const 0x%x", packed)
+		} else {
+			g.linef("i32.const %d", g.internString(op.Str))
+		}
 	case ir.OpConstFunc:
 		// Function values materialise as static `{fn_idx, env}`
 		// pair-cell pointers in the closures-base region. The
