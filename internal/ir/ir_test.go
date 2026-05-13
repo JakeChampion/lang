@@ -430,6 +430,82 @@ function main(): i32 {
 	}
 }
 
+// `emitRepackPairAsHeapBox` for pointer-shape payloads (string
+// / array / struct / enum / slice / tuple / closure) uses the
+// target's pointer width: 8-byte / +4 layout on wasm32, 16-byte
+// / +8 layout on natives. Without the ptrW gate the wasm path
+// would store payload at +8 (the native shape) but every reader
+// — TryOp's success-path load at +4, `match`'s heap-payload
+// load — pulls from +4, returning 0 and trapping downstream.
+//
+// Pin both layouts: ptrW=4 → rebox alloc is `OpConstI32 8`;
+// ptrW=8 → `OpConstI32 16`.
+func TestLowerRepackPairAsHeapBoxWasmLayout(t *testing.T) {
+	src := `function pick(): Option[string] { return Some("yo"); }
+function main(): i32 {
+    var s: string = match (pick()) {
+        Some(v) => v,
+        None => ""
+    };
+    return len(s);
+}`
+	// ptrW=4 (wasm). Pair-form Option[string] generic-position
+	// call (the var-assign here) reboxes into an 8-byte heap
+	// box — pointer-payload-on-wasm32 is i32, so payload at +4.
+	prog := lowerSourceWith(t, src, 4)
+	fn := findFunc(prog, "main")
+	if fn == nil {
+		t.Fatal("main not found")
+	}
+	if !rebox8BytePresent(fn.Ops) {
+		t.Errorf("ptrW=4 rebox must alloc 8 bytes (Option[string] payload = i32 on wasm32):\n%s", prog)
+	}
+}
+
+func TestLowerRepackPairAsHeapBoxNativeLayout(t *testing.T) {
+	src := `function pick(): Option[string] { return Some("yo"); }
+function main(): i32 {
+    var s: string = match (pick()) {
+        Some(v) => v,
+        None => ""
+    };
+    return len(s);
+}`
+	// ptrW=8 (native). Pair-form Option[string] generic-position
+	// call reboxes into a 16-byte heap box, payload at +8 — the
+	// natural alignment for the 8-byte pointer-payload store.
+	prog := lowerSourceWith(t, src, 8)
+	fn := findFunc(prog, "main")
+	if fn == nil {
+		t.Fatal("main not found")
+	}
+	if !rebox16BytePresent(fn.Ops) {
+		t.Errorf("ptrW=8 rebox must alloc 16 bytes (Option[string] payload = 8-byte pointer on natives):\n%s", prog)
+	}
+}
+
+func rebox8BytePresent(ops []Op) bool {
+	// Find an `OpConstI32 8` immediately followed by `OpAlloc` —
+	// the rebox's `boxSize` const + alloc shape. There are other
+	// 8-byte alloc sites (Some-wrapper, Map V-box, …) so this
+	// is a presence check, not a uniqueness check.
+	for i := 0; i+1 < len(ops); i++ {
+		if ops[i].Kind == OpConstI32 && ops[i].I32 == 8 && ops[i+1].Kind == OpAlloc {
+			return true
+		}
+	}
+	return false
+}
+
+func rebox16BytePresent(ops []Op) bool {
+	for i := 0; i+1 < len(ops); i++ {
+		if ops[i].Kind == OpConstI32 && ops[i].I32 == 16 && ops[i+1].Kind == OpAlloc {
+			return true
+		}
+	}
+	return false
+}
+
 // `match` on a heap-form scrutinee shares the OpMatchTag
 // path with if-let / let-else. Pair-form match scrutinees
 // take the zero-alloc fast path (see TestLowerMatchOn-
