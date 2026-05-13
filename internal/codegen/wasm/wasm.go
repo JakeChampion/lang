@@ -3011,18 +3011,24 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsStrFromBytes {
 		// $string_from_bytes(bs: u8[]): string — copies the
-		// byte-array's payload into a fresh length-prefixed
-		// string. Round-trip companion to s.bytes().
+		// byte-array's payload into a fresh string. Round-trip
+		// companion to s.bytes().
+		//
+		// Two output shapes, chosen by bLen:
+		//   - bLen == 0:  inline empty (0x80000000) via emitStrEmpty
+		//   - bLen <= 3:  inline-packed i32 (top-bit flag + 3-bit
+		//                 length + up-to-3 inline bytes), no alloc
+		//   - bLen >  3:  heap-form (alloc length-prefix + copy)
 		g.line(`(func $string_from_bytes (param $bs i32) (result i32)`)
 		g.indent++
-		g.line(`(local $bLen i32) (local $out i32)`)
+		g.line(`(local $bLen i32) (local $out i32) (local $i i32) (local $inline i32) (local $byte i32)`)
 		// Input u8[] length via the array seam — distinct from
 		// the string-side emitStrLenFromLocal so the two layouts
 		// can diverge under future array-only changes.
 		g.emitArrayLenFromLocal("$bs")
 		g.line(`local.set $bLen`)
-		// Short-circuit on bLen == 0: return the shared empty-
-		// string sentinel rather than allocating.
+		// Short-circuit on bLen == 0: return the inline-encoded
+		// empty value rather than allocating a 0-byte buffer.
 		g.line(`local.get $bLen`)
 		g.line(`i32.eqz`)
 		g.line(`if`)
@@ -3031,6 +3037,62 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`return`)
 		g.indent--
 		g.line(`end`)
+		// bLen ≤ 3 → build the single-i32 inline output by
+		// reading bytes straight out of the u8[] payload. The
+		// array's bytes live at `$bs .. $bs + bLen`; pack them
+		// into bits 0..23, with bits 24..26 carrying the length
+		// and bit 31 the inline flag. Mirrors the
+		// $__str_concat / $__str_slice fast-path shape.
+		g.line(`local.get $bLen`)
+		g.line(`i32.const 3`)
+		g.line(`i32.le_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`i32.const 0x80000000`)
+		g.line(`local.get $bLen`)
+		g.line(`i32.const 24`)
+		g.line(`i32.shl`)
+		g.line(`i32.or`)
+		g.line(`local.set $inline`)
+		g.line(`i32.const 0`)
+		g.line(`local.set $i`)
+		g.line(`block $iend`)
+		g.indent++
+		g.line(`loop $iloop`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`local.get $bLen`)
+		g.line(`i32.eq`)
+		g.line(`br_if $iend`)
+		// byte = mem[bs + i]
+		g.line(`local.get $bs`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+		g.line(`local.set $byte`)
+		// inline |= byte << (i * 8)
+		g.line(`local.get $inline`)
+		g.line(`local.get $byte`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 8`)
+		g.line(`i32.mul`)
+		g.line(`i32.shl`)
+		g.line(`i32.or`)
+		g.line(`local.set $inline`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 1`)
+		g.line(`i32.add`)
+		g.line(`local.set $i`)
+		g.line(`br $iloop`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $inline`)
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
+		// Heap-form output: bLen > 3.
 		// out = __lang_alloc(bLen + 4) + 4   (data ptr)
 		g.line(`local.get $bLen`)
 		g.line(`i32.const 4`)

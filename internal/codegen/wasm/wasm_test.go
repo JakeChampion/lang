@@ -492,6 +492,18 @@ func TestStrSliceHelperHasInlineOutputFastPath(t *testing.T) {
 	mustContain(t, wat, "call $__lang_alloc")
 }
 
+// $string_from_bytes gains the same inline-output fast path for
+// `bLen ≤ 3`: build the inline-encoded i32 by reading bytes
+// straight out of the u8[] payload + shift/OR. Heap-form path
+// is preserved for longer buffers via `$__lang_alloc`.
+func TestStringFromBytesHelperHasInlineOutputFastPath(t *testing.T) {
+	wat := compileToWAT(t, `function f(bs: u8[]): string { return string_from_bytes(bs); }`)
+	mustContain(t, wat, "(func $string_from_bytes")
+	mustContain(t, wat, "i32.const 0x80000000")
+	mustContain(t, wat, "i32.le_u")
+	mustContain(t, wat, "call $__lang_alloc")
+}
+
 // String runtime helpers that need a linear-memory address
 // (I/O writes, $__str_idx, $__str_slice) promote inline-form
 // inputs through `$__lang_str_to_heap` at function entry. The
