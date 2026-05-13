@@ -3358,15 +3358,26 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 }
 
 // push x0 — store r0 to the top of the operand stack and bump
-// sp down by 16 bytes (the 16-byte alignment dance — single-
-// value slots use 16 bytes with the upper 8 wasted).
+// slotBytes is the operand-stack slot size. 16 bytes today
+// (one x-register value + 8 bytes padding); the padding kept
+// sp 16-byte aligned across every push/pop without a runtime
+// parity check, which AAPCS64 requires at every `bl`.
+// BACKEND-PARITY perf item #3 plans to halve this to 8; the
+// constant centralises the value so the flip is a one-line
+// change.
+const slotBytes = 16
+
+// push x0 onto the operand stack — `slotBytes`-byte slot,
+// value at `[sp]`. The upper bytes are dead today (slotBytes
+// == 16, value fits in 8); step 2 of the packed-operand-
+// stack plan drops them.
 func (g *generator) push() {
-	g.emit("str x0, [sp, #-16]!")
+	g.emit("str x0, [sp, #-%d]!", slotBytes)
 }
 
 // pop into x0.
 func (g *generator) pop() {
-	g.emit("ldr x0, [sp], #16")
+	g.emit("ldr x0, [sp], #%d", slotBytes)
 }
 
 // regW maps a 64-bit register name to its 32-bit counterpart.
