@@ -1635,9 +1635,9 @@ func (g *generator) emitPairFormMaker(width int, tag int) {
 
 func (g *generator) binPop() {
 	g.emit("mov rcx, [rsp]") // rhs (top of stack)
-	g.emit("add rsp, 16")
+	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 	g.emit("mov rax, [rsp]") // lhs (next)
-	g.emit("add rsp, 16")
+	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 }
 
 // fbinPop pops two float-shaped values off the operand stack
@@ -1649,9 +1649,9 @@ func (g *generator) binPop() {
 // `lhs += rhs`.
 func (g *generator) fbinPop(width int) {
 	g.emit("mov rcx, [rsp]") // rhs
-	g.emit("add rsp, 16")
+	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 	g.emit("mov rax, [rsp]") // lhs
-	g.emit("add rsp, 16")
+	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 	if width == 64 {
 		g.emit("movq xmm0, rcx")
 		g.emit("movq xmm1, rax")
@@ -1896,10 +1896,11 @@ func (g *generator) emitArrayLenStore(srcReg, dstReg string) {
 // emitCallArgsLoad places `argc` operand-stack values into
 // System V argument slots. First 6 args go to rdi/rsi/rdx/rcx/
 // r8/r9; the rest land on the call stack at [rsp+0], [rsp+8],
-// ... in source order. The operand stack uses 16-byte slots;
-// the call stack uses 8-byte slots, so overflow args get
-// compressed via a call-stack overflow area allocated below
-// the operand-stack args.
+// ... in source order. The operand stack uses `slotBytes`-byte
+// slots; the call stack always uses 8-byte slots, so overflow
+// args get compressed via a call-stack overflow area allocated
+// below the operand-stack args. (Today `slotBytes == 16` so
+// the compress is real; flipping it to 8 makes it a no-op.)
 //
 // After this call returns, the caller is responsible for the
 // `call` / `call r11` and then `emitCallArgsCleanup` to drop
@@ -1909,7 +1910,7 @@ func (g *generator) emitCallArgsLoad(argc int) {
 	if argc <= len(regs) {
 		for i := argc - 1; i >= 0; i-- {
 			g.emit(fmt.Sprintf("mov %s, [rsp]", regs[i]))
-			g.emit("add rsp, 16")
+			g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 		}
 		return
 	}
@@ -1918,15 +1919,16 @@ func (g *generator) emitCallArgsLoad(argc int) {
 	// 16-aligned at the call site (System V requirement).
 	stackSize := ((overflow*8 + 15) / 16) * 16
 	g.emit(fmt.Sprintf("sub rsp, %d", stackSize))
-	// Register args: arg i at [rsp + stackSize + 16*(argc-1-i)].
+	// Register args: arg i at [rsp + stackSize + slotBytes*(argc-1-i)].
 	for i := 0; i < len(regs); i++ {
-		g.emit(fmt.Sprintf("mov %s, [rsp + %d]", regs[i], stackSize+16*(argc-1-i)))
+		g.emit(fmt.Sprintf("mov %s, [rsp + %d]", regs[i], stackSize+slotBytes*(argc-1-i)))
 	}
-	// Overflow args: compress 16-byte operand slots into 8-byte
-	// call-stack slots. arg i (i >= 6) at operand offset
-	// stackSize + 16*(argc-1-i), goes to call-stack [rsp + 8*(i-6)].
+	// Overflow args: copy operand-slot value to call-stack 8-byte
+	// slot. arg i (i >= 6) at operand offset
+	// stackSize + slotBytes*(argc-1-i), goes to call-stack
+	// [rsp + 8*(i-6)].
 	for i := len(regs); i < argc; i++ {
-		g.emit(fmt.Sprintf("mov rax, [rsp + %d]", stackSize+16*(argc-1-i)))
+		g.emit(fmt.Sprintf("mov rax, [rsp + %d]", stackSize+slotBytes*(argc-1-i)))
 		g.emit(fmt.Sprintf("mov [rsp + %d], rax", 8*(i-len(regs))))
 	}
 }
@@ -1936,13 +1938,13 @@ func (g *generator) emitCallArgsLoad(argc int) {
 func (g *generator) emitCallArgsCleanup(argc int) {
 	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 	if argc <= len(regs) {
-		// Args were already popped via per-arg `add rsp, 16`.
+		// Args were already popped via per-arg `add rsp, slotBytes`.
 		return
 	}
 	overflow := argc - len(regs)
 	stackSize := ((overflow*8 + 15) / 16) * 16
 	// Drop call-stack overflow + operand-stack args.
-	g.emit(fmt.Sprintf("add rsp, %d", stackSize+16*argc))
+	g.emit(fmt.Sprintf("add rsp, %d", stackSize+slotBytes*argc))
 }
 
 func (g *generator) line(s string) {
