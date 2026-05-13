@@ -2973,10 +2973,15 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(func $__str_slice (param $base i32) (param $low i32) (param $high i32) (result i32)`)
 		g.indent++
 		g.line(`(local $src_len i32) (local $new_len i32) (local $out i32) (local $i i32) (local $inline i32) (local $byte i32)`)
-		// Inline-form bases don't have a linear-memory address;
-		// promote-to-heap at entry so the `memory.copy(base+low,
-		// new_len)` below reads from a real source pointer.
-		g.emitPromoteStrParam("$base")
+		// No promote-at-entry. The inline-output fast path
+		// (`new_len ≤ 3`) reads source bytes through
+		// `$__lang_str_byte`, which handles inline / heap
+		// natively. The heap-output path (`new_len > 3`) is
+		// only reached when `src_len > 3`, and since inline
+		// strings cap at 3 bytes the source is guaranteed
+		// heap-form there — `memory.copy(base+low, new_len)`
+		// reads from a real linear-memory pointer without any
+		// pre-promotion.
 		g.emitStrLenFromLocal("$base")
 		g.line(`local.set $src_len`)
 		// low < 0 → trap
@@ -3022,8 +3027,9 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`end`)
 		// new_len ≤ 3 → build the single-i32 inline output via
-		// `$base[low..low+new_len]` byte reads (heap-form by now;
-		// the promote-at-entry above guarantees it). Mirrors the
+		// `$base[low..low+new_len]` byte reads through
+		// `$__lang_str_byte` (which branches on the inline /
+		// heap flag, so $base can be either form). Mirrors the
 		// $__str_concat inline-output fast path so any slice
 		// result that fits the SSO tiny cap skips the alloc +
 		// `memory.copy` shape entirely.
@@ -3048,13 +3054,12 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $new_len`)
 		g.line(`i32.eq`)
 		g.line(`br_if $iend`)
-		// byte = mem[base + low + i]  (base is heap-form here)
+		// byte = $__lang_str_byte($base, $low + $i)
 		g.line(`local.get $base`)
 		g.line(`local.get $low`)
-		g.line(`i32.add`)
 		g.line(`local.get $i`)
 		g.line(`i32.add`)
-		g.line(`i32.load8_u`)
+		g.line(`call $__lang_str_byte`)
 		g.line(`local.set $byte`)
 		// inline |= byte << (i * 8)
 		g.line(`local.get $inline`)

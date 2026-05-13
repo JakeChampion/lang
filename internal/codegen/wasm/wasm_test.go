@@ -519,6 +519,34 @@ func TestStrSliceHelperHasInlineOutputFastPath(t *testing.T) {
 	mustContain(t, wat, "call $__lang_alloc")
 }
 
+// `$__str_slice`'s body no longer routes through
+// `$__lang_str_to_heap` — the inline-output fast path reads
+// source bytes through `$__lang_str_byte` (inline-aware,
+// alloc-free), and the heap-output path is only reached when
+// `new_len > 3`, which means `src_len > 3` (bounds check) and
+// the source is guaranteed heap-form (inline cap is 3 bytes).
+func TestStrSliceHelperDoesNotPromoteToHeap(t *testing.T) {
+	wat := compileToWAT(t, `function f(s: string): string { return s[0:2]; }`)
+	mustContain(t, wat, "(func $__str_slice")
+	idx := strings.Index(wat, "(func $__str_slice")
+	if idx < 0 {
+		t.Fatalf("$__str_slice not emitted:\n%s", wat)
+	}
+	body := wat[idx:]
+	end := strings.Index(body, "\n  (func ")
+	if end < 0 {
+		end = len(body)
+	}
+	if strings.Contains(body[:end], "call $__lang_str_to_heap") {
+		t.Errorf("$__str_slice should not call $__lang_str_to_heap (inline source uses $__lang_str_byte, heap-output path only reachable with heap source):\n%s", body[:end])
+	}
+	// Inline-output path still uses $__lang_str_byte for byte
+	// fetches against potentially-inline sources.
+	if !strings.Contains(body[:end], "call $__lang_str_byte") {
+		t.Errorf("$__str_slice should route inline-output byte fetches through $__lang_str_byte:\n%s", body[:end])
+	}
+}
+
 // $string_from_bytes gains the same inline-output fast path for
 // `bLen ≤ 3`: build the inline-encoded i32 by reading bytes
 // straight out of the u8[] payload + shift/OR. Heap-form path
@@ -684,9 +712,16 @@ func TestStrIdxHelperDoesNotPromoteToHeap(t *testing.T) {
 }
 
 func TestSSOHelpersEmitted(t *testing.T) {
-	wat := compileToWAT(t, `function f(s: string): string {
+	// `print(s)` exercises the stream-write seam (data_ptr —
+	// alloc-free); `s.as_bytes()` builds a slice header whose
+	// `data_ptr` field has to outlive the call, so it still
+	// promotes-to-heap via $__lang_str_to_heap. Both seams
+	// stay reachable so the helper presence + call pattern
+	// can be pinned in one test now that $__str_idx +
+	// $__str_slice both skip the promote (PRs #366 / #367).
+	wat := compileToWAT(t, `function f(s: string): [u8] {
 		print(s);
-		return s[0:2];
+		return s.as_bytes();
 	}`)
 	mustContain(t, wat, "(func $__lang_str_len")
 	mustContain(t, wat, "(func $__lang_str_byte")
@@ -694,11 +729,10 @@ func TestSSOHelpersEmitted(t *testing.T) {
 	mustContain(t, wat, "(func $__lang_str_to_heap")
 	// Stream-write seam: inline-aware data-pointer helper.
 	mustContain(t, wat, "call $__lang_str_data_ptr")
-	// Durable-storage seam: $__str_slice promotes inline inputs
-	// to heap-form at entry via $__lang_str_to_heap because the
-	// memory.copy source has to outlive the call. $__str_idx no
-	// longer promotes — it spills inline values to a one-shot
-	// scratch slot consumed by the trailing OpLoadByte.
+	// Durable-storage seam: $__method_string_as_bytes stores
+	// the source string's data_ptr in a slice header that
+	// outlives the call, so the inline-form input must be
+	// materialised in heap memory first.
 	mustContain(t, wat, "call $__lang_str_to_heap")
 }
 
