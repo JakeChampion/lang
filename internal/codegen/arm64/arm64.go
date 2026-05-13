@@ -837,8 +837,8 @@ func (g *generator) emitStrcatRuntime() {
 // is the log2 stride. AArch64 supports an LSL shift amount in
 // the operand-2 position — folds the multiply into the add.
 func (g *generator) emitInlineIdxHelper(name string) error {
-	g.emit("ldr x0, [sp], #16") // idx
-	g.emit("ldr x1, [sp], #16") // base
+	g.emit("ldr x0, [sp], #%d", slotBytes) // idx
+	g.emit("ldr x1, [sp], #%d", slotBytes) // base
 	switch name {
 	case "__str_idx":
 		// SSO-aware byte indexing. Heap strings (LSB=0): byte
@@ -2720,9 +2720,10 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// Captures sit on the operand stack just above the
 	// pushed callee-saves. SP shifted down by 16 (the stp).
 	// The Nth (last) capture is at [sp, #16]; the (N-1)th
-	// at [sp, #32]; first at [sp, #16*n].
+	// at [sp, #16+slotBytes]; first at [sp, #16+slotBytes*(n-1)].
+	const calleeSaveOff = 16 // stp x19, x20 above the operand stack
 	for i, s := range slots {
-		stkOff := int32(16 + (n-1-i)*16)
+		stkOff := int32(calleeSaveOff + int32(n-1-i)*int32(slotBytes))
 		g.emit("ldr x1, [sp, #%d]", stkOff)
 		if s.size == 8 {
 			if s.off == 0 {
@@ -2739,7 +2740,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 		}
 	}
 	// Drop the N operand-stack slots we consumed.
-	g.emit("add sp, sp, #%d", n*16)
+	g.emit("add sp, sp, #%d", n*slotBytes)
 	g.emit("mov x0, x19")
 	if envOnly {
 		g.emit("ldp x19, x20, [sp], #16")
@@ -3701,7 +3702,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push() // payload (unused for None)
 
 	case ir.OpDrop:
-		g.emit("add sp, sp, #16")
+		g.emit("add sp, sp, #%d", slotBytes)
 
 	// -------- arithmetic --------
 	//
@@ -4325,10 +4326,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// that harmless. Hoisted closures read env from the
 		// same register.
 		argc := int(op.I32)
-		g.emit("ldr x16, [sp], #16")  // x16 = pair pointer
-		g.emit("ldr x17, [x16]")      // x17 = fn_ptr (= [pair + 0])
-		g.emit("ldr x0, [x16, #8]")   // x0 = env_ptr (= [pair + 8])
-		g.emit("str x0, [sp, #-16]!")
+		g.emit("ldr x16, [sp], #%d", slotBytes) // x16 = pair pointer
+		g.emit("ldr x17, [x16]")                // x17 = fn_ptr (= [pair + 0])
+		g.emit("ldr x0, [x16, #8]")             // x0 = env_ptr (= [pair + 8])
+		g.emit("str x0, [sp, #-%d]!", slotBytes)
 		g.emitCallArgsLoad(argc + 1)
 		g.emit("blr x17")
 		g.emitCallArgsCleanup(argc + 1)

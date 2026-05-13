@@ -717,8 +717,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push() // payload (unused for None)
 
 	case ir.OpDrop:
-		// Skip the top 16-byte slot.
-		g.emit("add rsp, 16")
+		// Skip the top operand-stack slot.
+		g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 
 	// -------- arithmetic --------
 	//
@@ -1456,12 +1456,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// from the same register.
 		argc := int(op.I32)
 		g.emit("mov r10, [rsp]") // r10 = pair pointer (caller-save scratch)
-		g.emit("add rsp, 16")
+		g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 		g.emit("mov r11, [r10]")        // r11 = fn_ptr (= [pair + 0])
 		g.emit("mov rax, [r10 + 8]")   // rax = env_ptr (= [pair + 8])
 		// Push env_ptr onto the operand stack so the args-load
 		// helper picks it up in the (argc+1)th register slot.
-		g.emit("sub rsp, 16")
+		g.emit(fmt.Sprintf("sub rsp, %d", slotBytes))
 		g.emit("mov [rsp], rax")
 		g.emitCallArgsLoad(argc + 1)
 		g.emit("call r11")
@@ -2070,18 +2070,16 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	g.emit("call __lang_alloc")
 	g.emit("mov r12, rax") // r12 = env_ptr
 	// Captures sit on the operand stack just above the
-	// pushed callee-saves: top-of-stack (after the 2 pushes)
-	// is at offset 16 — wait, we pushed twice (8 bytes
-	// each), so the operand-stack values shifted down by 16.
-	// The Nth (last) capture is at [rsp + 16] now, the
-	// (N-1)th at [rsp + 32], and so on; the first capture is
-	// at [rsp + 16 * n].
+	// pushed callee-saves: we pushed `r12` and `r13` above
+	// (8 bytes each = 16 bytes total), so the operand-stack
+	// values shifted down by `calleeSaveOff = 16`. The Nth
+	// (last) capture is at [rsp + calleeSaveOff], the
+	// (N-1)th at [rsp + calleeSaveOff + slotBytes], and so
+	// on; the first capture is at [rsp + calleeSaveOff +
+	// slotBytes*(n-1)].
+	const calleeSaveOff = 16 // 2 × push (r12, r13) above the operand stack
 	for i, s := range slots {
-		// Capture i is at operand-stack index (n-1-i) from
-		// the bottom; rsp offset = (n - i) * 16 (the +16
-		// accounts for the two pushes above the operand
-		// stack).
-		stkOff := int32(16 + (n-1-i)*16)
+		stkOff := int32(calleeSaveOff + int32(n-1-i)*int32(slotBytes))
 		g.emit(fmt.Sprintf("mov rax, [rsp + %d]", stkOff))
 		// Store into env at slot offset.
 		dst := "[r12]"
@@ -2095,7 +2093,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 		}
 	}
 	// Drop the N operand-stack slots we consumed.
-	g.emit(fmt.Sprintf("add rsp, %d", n*16))
+	g.emit(fmt.Sprintf("add rsp, %d", n*slotBytes))
 	g.emit("mov rax, r12") // env_ptr in rax
 	g.emit("pop r13")
 	g.emit("pop r12")
@@ -2104,18 +2102,22 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 		g.push()
 		return nil
 	}
-	// OpMakeClosure: also allocate the closure pair.
-	g.emit("push rax") // save env_ptr (16-byte slot)
-	g.emit("sub rsp, 8")
+	// OpMakeClosure: also allocate the closure pair. Stash
+	// env_ptr on the operand stack via g.push() so the slot
+	// layout is uniform with everything else (slotBytes-aware).
+	// __lang_alloc preserves callee-saves + rsp per SysV, so
+	// the saved value still sits at [rsp] when the call
+	// returns.
+	g.push() // env_ptr → operand stack
 	g.emit("mov edi, 16")
 	g.emit("call __lang_alloc")
 	// rax = pair ptr. Load fn ptr and env ptr, store.
 	g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
 	g.emit("mov [rax], rcx")
-	g.emit("mov rcx, [rsp + 8]") // env_ptr from the temp push
+	g.emit("mov rcx, [rsp]") // env_ptr from the operand-stack save
 	g.emit("mov [rax + 8], rcx")
-	g.emit("add rsp, 16")
-	g.push()
+	g.emit(fmt.Sprintf("add rsp, %d", slotBytes)) // drop env_ptr save
+	g.push() // pair ptr
 	return nil
 }
 
@@ -2137,9 +2139,9 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	// use: rhs (idx, top of stack) first, lhs (base, next)
 	// second.
 	g.emit("mov rcx, [rsp]") // idx
-	g.emit("add rsp, 16")
+	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 	g.emit("mov rax, [rsp]") // base
-	g.emit("add rsp, 16")
+	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 	switch name {
 	case "__str_idx":
 		// SSO-aware byte indexing. Heap strings: base + idx is
