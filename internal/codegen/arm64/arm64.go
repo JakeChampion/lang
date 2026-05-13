@@ -3496,6 +3496,44 @@ func (g *generator) emitArrayLenStore(srcW, dstX string) {
 // binPop — pop two values off the operand stack into x1 (lhs)
 // and x0 (rhs). Produces the natural form for non-commutative
 // ops where the lhs ends up in the second source register.
+// emitPairFormMaker is the shared lowering for
+// OpMakeSomeI32 / OpMakeOkI32 / OpMakeErrI32 on arm64. `width`
+// is the IR's `Op.Width` operand (`0` for i32 payload,
+// `ir.WidthPtr` for pointer-shape payload); `tag` is the
+// variant index (`0` for Some/Ok, `1` for Err). Layout
+// matches `payloadLayout(Option[T])` /
+// `payloadLayout(Result[T, E])` so the heap-form match
+// readers find the payload at the expected offset.
+func (g *generator) emitPairFormMaker(width int, tag int) {
+	g.pop() // payload → x0
+	if width == ir.WidthPtr {
+		// Pointer payload: preserve full 64-bit x19, alloc 16,
+		// store payload as 8 bytes at +8.
+		g.emit("mov x19, x0")
+		g.emit("mov x0, #16")
+		g.emit("bl __lang_alloc")
+	} else {
+		// i32 payload: preserve narrow w19, alloc 8, store
+		// payload as 4 bytes at +4.
+		g.emit("mov w19, w0")
+		g.emit("mov x0, #8")
+		g.emit("bl __lang_alloc")
+	}
+	if tag == 0 {
+		g.emit("str wzr, [x0]")
+	} else {
+		g.emit("mov w1, #%d", tag)
+		g.emit("str w1, [x0]")
+	}
+	if width == ir.WidthPtr {
+		g.emit("str x19, [x0, #8]")
+	} else {
+		g.emit("str w19, [x0, #4]")
+	}
+	g.push()
+	g.usesAlloc = true
+}
+
 func (g *generator) binPop() {
 	g.emit("ldr x0, [sp], #16") // rhs (top of stack)
 	g.emit("ldr x1, [sp], #16") // lhs (next)
@@ -3642,29 +3680,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.pop()
 		g.emit("b %s", retLabel)
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
-		// Native fallback: alloc 8 bytes, {tag@0, payload@4}.
-		// Layout matches `payloadLayout` so the existing
-		// match-tag-load code keeps working. x19 is callee-save
-		// so it survives the bl __lang_alloc.
-		g.pop()                       // payload → x0
-		g.emit("mov w19, w0")         // preserve i32 across alloc
-		g.emit("mov x0, #8")
-		g.emit("bl __lang_alloc")
-		g.emit("str wzr, [x0]")       // tag = 0 (4 bytes)
-		g.emit("str w19, [x0, #4]")   // payload (i32)
-		g.push()
-		g.usesAlloc = true
+		// Native fallback: heap-box layout matching
+		// `payloadLayout`. `op.Width` selects the payload
+		// store: zero (default) means i32 → alloc 8, payload
+		// at +4 (4 bytes). WidthPtr means pointer-shape on
+		// arm64 → alloc 16 (8-byte alignment for the 8-byte
+		// payload), payload at +8 (8 bytes). x19 is
+		// callee-save so it survives the bl __lang_alloc.
+		g.emitPairFormMaker(op.Width, 0)
 	case ir.OpMakeErrI32:
 		// Same shape as Some/Ok but tag=1.
-		g.pop()
-		g.emit("mov w19, w0")
-		g.emit("mov x0, #8")
-		g.emit("bl __lang_alloc")
-		g.emit("mov w1, #1")
-		g.emit("str w1, [x0]")
-		g.emit("str w19, [x0, #4]")
-		g.push()
-		g.usesAlloc = true
+		g.emitPairFormMaker(op.Width, 1)
 	case ir.OpMakeNoneI32:
 		// Native fallback: push the shared `[tag=1]` sentinel.
 		if g.enumSentinelTags == nil {
@@ -4573,11 +4599,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 
 	case ir.OpCallDirectPair:
 		// Natives keep the heap-form Option/Result ABI (see
-		// OpMakeSome/Err handlers above — they alloc 8 bytes
+		// OpMakeSome/Err handlers above — they alloc the box
 		// and return a heap-box pointer). OpCallDirectPair on
 		// natives is OpCallDirect + immediate pair-extract
 		// from the heap pointer: pop the box ptr, push
-		// [box+0] (tag) and [box+4] (payload). The IR-level
+		// [box+0] (tag) and [box+payloadOff] (payload).
+		// `op.Width` selects the payload size — 0 (default)
+		// for i32 (read 4 bytes from +4), `ir.WidthPtr` for
+		// pointer-shape (read 8 bytes from +8). The IR-level
 		// "two values post-call" contract holds across both
 		// wasm (real multi-value return) and natives
 		// (synthetic extract).
@@ -4585,13 +4614,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emitCallArgsLoad(argc)
 		g.emit("bl %s", op.Str)
 		g.emitCallArgsCleanup(argc)
-		// x0 holds the heap-box pointer. Save it in x16
-		// (caller-save scratch) while we read tag + payload
-		// into separate operand-stack slots.
 		g.emit("mov x16, x0")
-		g.emit("ldr w0, [x16]")     // tag (i32)
+		g.emit("ldr w0, [x16]") // tag (4 bytes)
 		g.push()
-		g.emit("ldr w0, [x16, #4]") // payload (i32)
+		if op.Width == ir.WidthPtr {
+			g.emit("ldr x0, [x16, #8]") // payload (8 bytes)
+		} else {
+			g.emit("ldr w0, [x16, #4]") // payload (4 bytes)
+		}
 		g.push()
 
 	default:

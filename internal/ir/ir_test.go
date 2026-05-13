@@ -596,22 +596,27 @@ function f(): Cell { return Empty; }`)
 	}
 }
 
-// On natives (ptrW=8) the same pointer-shape enum still stays
-// heap-form — the `OpMakeSomeI32` native fallback uses a 4-byte
-// payload store, which would truncate the high half of an
-// 8-byte pointer. Lifting this constraint on natives is the
-// next slice of this arc.
-func TestLowerUserEnumPointerPayloadStaysHeapFormOnNatives(t *testing.T) {
+// On natives (ptrW=8) the same pointer-shape enum is also
+// pair-form-eligible now — the `OpMakeSomeI32` / `OpMakeOkI32`
+// / `OpMakeErrI32` native handlers branch on `Op.Width` to
+// pick the 16-byte alloc + 8-byte payload store at +8 when
+// the payload is pointer-shape. Same nullary `OpMakeNoneI32`
+// for the Empty branch.
+func TestLowerUserEnumPointerPayloadIsPairFormOnNatives(t *testing.T) {
 	prog := lowerSourceWith(t, `enum Cell { Filled(string), Empty }
 function f(): Cell { return Empty; }`, 8)
 	fn := findFunc(prog, "f")
 	if fn == nil {
 		t.Fatal("f not found")
 	}
+	hasNone := false
 	for _, op := range fn.Ops {
-		if op.Kind == OpMakeNoneI32 || op.Kind == OpReturnPair {
-			t.Fatalf("pointer-payload enum on natives (ptrW=8) should stay heap-form:\n%s", prog)
+		if op.Kind == OpMakeNoneI32 {
+			hasNone = true
 		}
+	}
+	if !hasNone {
+		t.Fatalf("expected OpMakeNoneI32 in f on natives (pointer-shape user enum is now pair-form):\n%s", prog)
 	}
 }
 
@@ -883,19 +888,14 @@ func TestLowerOptionPointerPayloadIsPairFormOnWasm(t *testing.T) {
 	mustContainOp(t, prog, "f", OpMakeNoneI32)
 }
 
-// On natives (ptrW=8) `Option[string]` still falls back to
-// the heap-box path — `OpMakeSomeI32`'s 4-byte payload store
-// would truncate an 8-byte pointer. The OpEnumSentinel shape
-// the legacy heap-form match dispatch reads is still emitted.
-func TestLowerOptionPointerPayloadStaysHeapFormOnNatives(t *testing.T) {
+// On natives (ptrW=8) `Option[string]` is now pair-form too:
+// the maker ops carry `Op.Width = WidthPtr` so the heap-box
+// layout (alloc 16, payload at +8 as 8-byte store) matches
+// `payloadLayout(Option[string])` and the existing match-side
+// readers find the payload at the same offset.
+func TestLowerOptionPointerPayloadIsPairFormOnNatives(t *testing.T) {
 	prog := lowerSourceWith(t, `function f(): Option[string] { return None; }`, 8)
-	mustContainOp(t, prog, "f", OpEnumSentinel)
-	fn := findFunc(prog, "f")
-	for _, op := range fn.Ops {
-		if op.Kind == OpMakeNoneI32 {
-			t.Fatalf("Option[string] on natives (ptrW=8) should not get pair-form:\n%s", prog)
-		}
-	}
+	mustContainOp(t, prog, "f", OpMakeNoneI32)
 }
 
 func TestLowerLenOnStringEmitsOpStrLen(t *testing.T) {

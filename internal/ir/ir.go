@@ -872,35 +872,33 @@ var (
 )
 
 // isPairFormPayloadShape reports whether t is a payload type
-// the pair-form ABI can carry today. On wasm32 (`ptrW == 4`)
-// pointer-shaped values (string / struct / T[] / [T] / tuple
-// / usize) lay flat into a single i32 slot, same as the
-// narrow numeric types, so they're accepted. On native targets
-// (`ptrW == 8`) pointer-shaped values are still excluded
-// because the `OpMakeSomeI32` heap-box fallback uses a 4-byte
-// payload store, which would truncate the high half of an
-// 8-byte pointer. Lifting that constraint on natives is a
-// follow-up that needs payload-width-aware OpMakeSome / Ok /
-// Err handlers.
+// the pair-form ABI can carry. Narrow numeric (i32 / u32 /
+// boolean) shapes fit a single 4-byte operand-stack slot on
+// every target; pointer-shaped values (string / struct / T[]
+// / [T] / tuple / usize) also fit because the maker / rebox
+// emit paths size their stores per the payload width
+// (`pairPayloadWidth`) — 4-byte on wasm32, 8-byte on natives.
 //
-// The narrow numeric / boolean shapes that fit in a single
-// 4-byte operand-stack slot on EVERY target are always
-// accepted regardless of `ptrW`.
+// The `ptrW` parameter is unused today but kept on the
+// signature so future tightenings (e.g. f64 / i64 payloads,
+// which still need wider slots even on wasm32) have an
+// obvious place to dispatch.
 func isPairFormPayloadShape(t ast.Type, ptrW int) bool {
+	_ = ptrW
 	switch x := t.(type) {
 	case ast.NumberType:
 		w := x.NormalWidth()
 		if w >= 0 && w <= 32 && !x.IsPointerWidth() {
 			return true
 		}
-		if x.IsPointerWidth() && ptrW == 4 {
+		if x.IsPointerWidth() {
 			return true
 		}
 		return false
 	case ast.BoolType:
 		return true
 	case ast.StringType, ast.ArrayType, ast.SliceType, ast.StructType, ast.TupleType:
-		return ptrW == 4
+		return true
 	}
 	return false
 }
@@ -1018,6 +1016,54 @@ func isPairFormTailCall(e ast.Expr, pairForm map[string]bool) bool {
 // decide whether to consume the call result as (tag, payload)
 // directly (zero-alloc) or to fall back to the heap-box rebox
 // path the generic Call lowering uses.
+// pairFormPayloadType returns the payload type carried by the
+// named variant on this builder's enclosing pair-form function.
+// Used to size `Op.Width` on the maker ops so backends can pick
+// the right alloc / store widths for pointer-shaped payloads.
+// Returns nil for payloadless variants and for the unrecognised
+// case (caller still emits the appropriate maker op; nil maps
+// to Width=0 via `pairPayloadWidth`).
+func (b *builder) pairFormPayloadType(variantName string) ast.Type {
+	if b.fn == nil {
+		return nil
+	}
+	enumT, ok := b.fn.ReturnType.(ast.EnumType)
+	if !ok {
+		return nil
+	}
+	switch enumT.Name {
+	case "Option":
+		if variantName == "Some" && len(enumT.Args) >= 1 {
+			return enumT.Args[0]
+		}
+	case "Result":
+		switch variantName {
+		case "Ok":
+			if len(enumT.Args) >= 1 {
+				return enumT.Args[0]
+			}
+		case "Err":
+			if len(enumT.Args) >= 2 {
+				return enumT.Args[1]
+			}
+		}
+	default:
+		if b.info == nil {
+			return nil
+		}
+		ed := b.info.Enums[enumT.Name]
+		if ed == nil {
+			return nil
+		}
+		for _, v := range ed.Variants {
+			if v.Name == variantName && len(v.Payloads) == 1 {
+				return resolveTypeParam(v.Payloads[0], ed.TypeParams, enumT.Args)
+			}
+		}
+	}
+	return nil
+}
+
 func (b *builder) isPairFormScrutinee(e ast.Expr) bool {
 	c, ok := e.(*ast.Call)
 	if !ok {
@@ -1398,18 +1444,28 @@ func (b *builder) lookupVariant(name string) (enumName string, varIdx int, paylo
 // variant's declared payload was a type parameter (e.g.
 // `Some(3.14)` on `Option[T]` with `T = float`).
 // emitRepackPairAsHeapBox consumes (tag, payload) from the
-// operand stack and synthesises a heap-allocated 8-byte box
-// matching `payloadLayout(Option[i32])`'s shape: tag at +0,
-// payload at +4. Result is the box pointer on the operand
-// stack. Used at OpCallDirectPair sites where the consumer
-// expects the heap-form Option/Result (the legacy shape that
-// existing match / var-assignment / struct-field code handles).
+// operand stack and synthesises a heap-allocated box matching
+// `payloadLayout(Option[T])` / `payloadLayout(Result[T, E])`'s
+// shape: tag at +0, payload at +4 (i32 payload) or +8
+// (pointer-shape payload — `payloadWidth == WidthPtr` —
+// box-size 16 with 8-byte alignment on natives). Result is
+// the box pointer on the operand stack. Used at
+// OpCallDirectPair sites where the consumer expects the
+// heap-form Option/Result (the legacy shape that existing
+// match / var-assignment / struct-field code handles).
 //
-// Step 4 keeps this rebox to preserve correctness while the
-// pair-form ABI lands; a future step in the Option/Result arc
-// will detect match-style consumers and skip the rebox so the
-// pair flows straight from the call into the dispatch.
-func (b *builder) emitRepackPairAsHeapBox() error {
+// The match-style scrutinee path in IfLet / Match / LetElse
+// sets `suppressPairRebox` so the pair flows straight from
+// the call into the dispatch without going through this rebox.
+func (b *builder) emitRepackPairAsHeapBox(payloadWidth int) error {
+	boxSize := int32(8)
+	payloadOff := int32(4)
+	storeOp := Op{Kind: OpStore}
+	if payloadWidth == WidthPtr {
+		boxSize = 16
+		payloadOff = 8
+		storeOp = Op{Kind: OpStore, Width: WidthPtr}
+	}
 	// Stack: [tag, payload] — top is payload. Stash payload in
 	// a scratch local so we can alloc + store the box without
 	// shuffling values around.
@@ -1419,25 +1475,73 @@ func (b *builder) emitRepackPairAsHeapBox() error {
 	tagSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__pair_repack_tag_%d", tagSlot)] = tagSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
-	// Alloc 8 bytes for the box header (tag@0 + payload@4).
-	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpConstI32, I32: boxSize})
 	b.emit(Op{Kind: OpAlloc})
 	boxSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__pair_repack_box_%d", boxSlot)] = boxSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
-	// Store tag at box+0.
+	// Store tag at box+0 (always 4-byte i32).
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
 	b.emit(Op{Kind: OpStore})
-	// Store payload at box+4.
+	// Store payload at the right offset (4 for i32, 8 for
+	// pointer-shape) and width.
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpConstI32, I32: payloadOff})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
-	b.emit(Op{Kind: OpStore})
-	// Push box pointer (= the Option/Result heap-form result).
+	b.emit(storeOp)
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
 	return nil
+}
+
+// payloadWidthForCalleeReturn derives the pair-form payload
+// width for the rebox at an OpCallDirectPair site: read the
+// callee's return type (always `Option[T]` / `Result[T, E]` /
+// a user pair-form enum at this point — verified by
+// `b.pairForm[callee]`), pick which variant carries the
+// payload, return `pairPayloadWidth(payloadType)`.
+//
+// Both variants of `Result[T, E]` may carry different-width
+// payloads (e.g. `Result[i32, string]`); the rebox uses the
+// WIDER one so either branch fits — the consumer's
+// `match`-side payload-load width then handles narrowing per
+// arm via `payloadLoadOp`.
+func (b *builder) payloadWidthForCalleeReturn(retType ast.Type) int {
+	enumT, ok := retType.(ast.EnumType)
+	if !ok {
+		return 0
+	}
+	switch enumT.Name {
+	case "Option":
+		if len(enumT.Args) >= 1 && pairPayloadWidth(enumT.Args[0]) == WidthPtr {
+			return WidthPtr
+		}
+	case "Result":
+		for _, a := range enumT.Args {
+			if pairPayloadWidth(a) == WidthPtr {
+				return WidthPtr
+			}
+		}
+	default:
+		if b.info == nil {
+			return 0
+		}
+		ed := b.info.Enums[enumT.Name]
+		if ed == nil {
+			return 0
+		}
+		for _, v := range ed.Variants {
+			if len(v.Payloads) != 1 {
+				continue
+			}
+			pt := resolveTypeParam(v.Payloads[0], ed.TypeParams, enumT.Args)
+			if pairPayloadWidth(pt) == WidthPtr {
+				return WidthPtr
+			}
+		}
+	}
+	return 0
 }
 
 func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
@@ -1863,31 +1967,37 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// subset for now.
 		if b.thisIsPair && len(b.defers) == 0 && isVariantLiteralExpr(n.Value, b.pairVariants) {
 			variantName, payload := pairFormVariantOf(n.Value)
+			payloadType := b.pairFormPayloadType(variantName)
+			payloadW := pairPayloadWidth(payloadType)
 			// Built-in Option/Result variants keep their named
 			// ops for readability; user-defined two-variant
 			// enums reuse OpMakeSomeI32 / OpMakeNoneI32 for the
 			// payload-carrying / nullary variants since the
 			// backends treat all four maker ops as a single
 			// "push (tag, payload)" pair (tag=0 for the
-			// payload-carrying ones, tag=1 for nullary).
+			// payload-carrying ones, tag=1 for nullary). The
+			// `Width` operand carries the payload width so
+			// native backends pick the right alloc size + store
+			// (4-byte at +4 for i32 payloads, 8-byte at +8 for
+			// pointer-shaped payloads).
 			switch variantName {
 			case "Some":
 				if err := b.expr(payload); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpMakeSomeI32})
+				b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
 			case "None":
 				b.emit(Op{Kind: OpMakeNoneI32})
 			case "Ok":
 				if err := b.expr(payload); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpMakeOkI32})
+				b.emit(Op{Kind: OpMakeOkI32, Width: payloadW})
 			case "Err":
 				if err := b.expr(payload); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpMakeErrI32})
+				b.emit(Op{Kind: OpMakeErrI32, Width: payloadW})
 			default:
 				// User enum variant: payload-carrying → tag 0
 				// (OpMakeSomeI32), nullary → tag 1
@@ -1898,7 +2008,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 					if err := b.expr(payload); err != nil {
 						return err
 					}
-					b.emit(Op{Kind: OpMakeSomeI32})
+					b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
 				} else {
 					b.emit(Op{Kind: OpMakeNoneI32})
 				}
@@ -4071,13 +4181,20 @@ func (b *builder) callBody(n *ast.Call) error {
 	//     and `[ptr+4]` (payload) onto the operand stack after
 	//     the call, so the IR-level "two values post-call"
 	//     contract holds across both backends.
-	if _, isFunc := b.info.FuncSigs[id.Name]; isFunc {
+	if sig, isFunc := b.info.FuncSigs[id.Name]; isFunc {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			kind := OpCallDirect
+			width := 0
 			if b.pairForm[id.Name] {
 				kind = OpCallDirectPair
+				// Carry the payload width on the call so the
+				// consumer (OpCallDirectPair codegen) loads
+				// from the right offset (+4 for i32 payload,
+				// +8 for pointer-shape payload — matching the
+				// maker's heap-box layout).
+				width = b.payloadWidthForCalleeReturn(sig.Result)
 			}
-			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount})
+			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount, Width: width})
 			if kind == OpCallDirectPair && !b.suppressPairRebox {
 				// Re-pack the (tag, payload) pair into a heap
 				// box so existing callers (var assignment,
@@ -4087,7 +4204,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				// `suppressPairRebox` so the pair flows
 				// straight from the call into the dispatch
 				// without an alloc.
-				if err := b.emitRepackPairAsHeapBox(); err != nil {
+				if err := b.emitRepackPairAsHeapBox(width); err != nil {
 					return err
 				}
 			}
@@ -4416,6 +4533,27 @@ func payloadLayout(types []ast.Type, count int, ptrW int) ([]int32, int32) {
 		pos += size
 	}
 	return offsets, pos
+}
+
+// pairPayloadWidth returns the `Op.Width` to set on
+// OpMakeSomeI32 / OpMakeOkI32 / OpMakeErrI32 for a payload of
+// type t. `WidthPtr` for pointer-shaped values (the native
+// maker handler reads this to alloc 16 bytes and emit an
+// 8-byte payload store at offset 8 — matching
+// `payloadLayout(Option[T])` for pointer T); `0` (i32-default)
+// otherwise. Wasm ignores the field — pointer = i32 on
+// wasm32, so 4-byte stores work uniformly.
+func pairPayloadWidth(t ast.Type) int {
+	if t == nil {
+		return 0
+	}
+	if n, ok := t.(ast.NumberType); ok && n.IsPointerWidth() {
+		return WidthPtr
+	}
+	if ast.IsPointerType(t) {
+		return WidthPtr
+	}
+	return 0
 }
 
 // payloadStoreOp returns the IR Op that stores a value of the
