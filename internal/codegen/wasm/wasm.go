@@ -4017,7 +4017,7 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.line(`(local $buf i32) (local $buf_size i32) (local $cur_offset i32)`)
 	g.line(`(local $byte i32) (local $list_ptr i32)`)
 	g.line(`(local $new_buf i32) (local $new_size i32)`)
-	g.line(`(local $sbase i32) (local $sptr i32)`)
+	g.line(`(local $sbase i32) (local $sptr i32) (local $j i32)`)
 
 	// Initial accumulator: 64 bytes. Doubles on overflow.
 	g.line(`i32.const 64`)
@@ -4121,8 +4121,60 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.indent--
 	g.line(`end`)
 
-	// Materialise as a length-prefixed string. $sptr is the
-	// data pointer (one past the length prefix).
+	// SSO inline-output fast path: when the line fits the
+	// single-i32 tiny cap (≤3 bytes including the trailing
+	// newline), pack `buf[0..cur_offset]` into a single i32
+	// and bind it as `$sptr`. Skips the per-line alloc +
+	// length-prefix + memory.copy detour the heap path would
+	// otherwise take. Common for empty / "y\n" / "ok\n"
+	// interactive-prompt responses.
+	g.line(`local.get $cur_offset`)
+	g.line(`i32.const 3`)
+	g.line(`i32.le_u`)
+	g.line(`if`)
+	g.indent++
+	g.line(`i32.const 0x80000000`)
+	g.line(`local.get $cur_offset`)
+	g.line(`i32.const 24`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $sptr`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $j`)
+	g.line(`block $end_pack`)
+	g.indent++
+	g.line(`loop $pack_loop`)
+	g.indent++
+	g.line(`local.get $j`)
+	g.line(`local.get $cur_offset`)
+	g.line(`i32.eq`)
+	g.line(`br_if $end_pack`)
+	// $sptr |= mem[$buf + $j] << ($j * 8)
+	g.line(`local.get $sptr`)
+	g.line(`local.get $buf`)
+	g.line(`local.get $j`)
+	g.line(`i32.add`)
+	g.line(`i32.load8_u`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.line(`local.set $sptr`)
+	g.line(`local.get $j`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $j`)
+	g.line(`br $pack_loop`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// Heap-form output: materialise as a length-prefixed string.
+	// $sptr is the data pointer (one past the length prefix).
 	g.line(`local.get $cur_offset`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
@@ -4137,6 +4189,8 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.line(`local.get $buf`)
 	g.line(`local.get $cur_offset`)
 	g.line(`memory.copy`)
+	g.indent--
+	g.line(`end`)
 
 	// Wrap in Some(sptr): tag=0 + payload.
 	g.line(`i32.const 8`)
