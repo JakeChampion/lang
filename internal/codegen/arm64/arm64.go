@@ -121,6 +121,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// at offset 8 — see Defunctionalise's pairEnvOffset doc.
 	ir.Defunctionalise(ip, 8)
 	ir.ElideClosurePair(ip, 8)
+	// Zero-capture closures escaping past ElideClosurePair (e.g.
+	// passed as a function-typed argument — `tryThing(my_lambda)`)
+	// rewrite to OpConstFunc so the value materialises as an
+	// `adrp + add` of a static `.rodata` cell instead of a
+	// 16-byte heap-allocated pair.
+	ir.InlineZeroCaptureClosures(ip)
 	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn

@@ -166,6 +166,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// case; the slot can hold env_ptr directly. Saves one
 	// __lang_alloc per closure that fully defunctionalises.
 	ir.ElideClosurePair(ip, 4)
+	// Zero-capture closures escaping past ElideClosurePair (e.g.
+	// passed as a function-typed argument — `tryThing(my_lambda)`)
+	// rewrite to OpConstFunc so the value materialises as a
+	// static `(closuresBase + 8*tableIdx)` pointer instead of a
+	// heap-allocated `{fn_idx, env_ptr=0}` pair. Same shape as
+	// any top-level fn reference.
+	ir.InlineZeroCaptureClosures(ip)
 	// Re-run Inline after Defunctionalise so the just-emitted
 	// `OpCallClosureDirect` calls to small hoisted closures
 	// also get substituted (the inliner recognises both
@@ -5970,19 +5977,19 @@ func (g *generator) emitDataSegments() {
 		g.line(`(data (i32.const 56) "\44\00\00\00\01\00\00\00")`)
 	}
 	// Per-function closure cells: 8 bytes each at closuresBase+8*i,
-	// pre-initialised with (table_idx=i, env_ptr=0). Only the
-	// originally top-level functions get cells; hoisted (closure-
-	// converted) entries are reached through fresh closures the
-	// MakeClosure code allocates per construction.
+	// pre-initialised with (table_idx=i, env_ptr=0). Every in-
+	// table function gets a cell — originally top-level fns
+	// reach theirs via `OpConstFunc` (top-level reference), and
+	// hoisted no-capture closures reach theirs via the
+	// `InlineZeroCaptureClosures` rewrite that turns
+	// `OpMakeClosure(hoisted, 0)` into `OpConstFunc(hoisted)`
+	// (drops a `__lang_alloc(8)` per zero-capture closure pass).
+	// Hoisted closures with captures still allocate a fresh pair
+	// per MakeClosure invocation — their static cell is wasted
+	// 8 bytes but cheaper than threading a per-name capture
+	// count back through `closuresBase` arithmetic.
 	if g.needsClosures {
-		// Each in-table top-level (i.e. value-referenced) function
-		// gets a static cell; hoisted closures get fresh cells per
-		// MakeClosure invocation. Cell i contains (table-idx i,
-		// env_ptr=0).
-		for i, name := range g.tableEntries {
-			if g.funcIndex[name] >= g.origTopLevelCount {
-				continue // hoisted entry; no static cell
-			}
+		for i := range g.tableEntries {
 			g.linef(`(data (i32.const %d) "%s%s")`, g.closuresBase+8*i, encodeI32(i), encodeI32(0))
 		}
 	}
