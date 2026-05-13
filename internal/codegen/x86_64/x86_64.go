@@ -687,31 +687,18 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.pop()
 		g.emit(fmt.Sprintf("jmp %s", retLabel))
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
-		// Native fallback — same heap-box shape as emitEnumNew:
-		// alloc 8 bytes, store {tag@0, payload@4}, push the
-		// pointer. Layout matches `payloadLayout` so the existing
-		// match/load code reads it correctly. Wasm uses the
-		// register form.
-		g.pop()                          // payload → rax
-		g.emit("push rax")               // preserve across __lang_alloc
-		g.emit("mov edi, 8")
-		g.emit("call __lang_alloc")
-		g.emit("pop rcx")                // payload back into rcx
-		g.emit("mov dword ptr [rax], 0") // tag = 0 (4 bytes)
-		g.emit("mov [rax + 4], ecx")     // payload (i32)
-		g.push()
-		g.usesAlloc = true
+		// Native fallback — same heap-box shape as emitEnumNew.
+		// `op.Width` selects the payload size: zero (default)
+		// means i32 → alloc 8, store payload at +4 (4 bytes).
+		// WidthPtr means pointer-shape on this target → alloc
+		// 16 (matches `payloadLayout` 8-byte alignment for
+		// 8-byte payloads), store payload at +8 (8 bytes). The
+		// match-side reader uses the same layout so the heap
+		// box round-trips correctly.
+		g.emitPairFormMaker(op.Width, 0)
 	case ir.OpMakeErrI32:
 		// Same shape as Some/Ok but tag=1.
-		g.pop()
-		g.emit("push rax")
-		g.emit("mov edi, 8")
-		g.emit("call __lang_alloc")
-		g.emit("pop rcx")
-		g.emit("mov dword ptr [rax], 1")
-		g.emit("mov [rax + 4], ecx")
-		g.push()
-		g.usesAlloc = true
+		g.emitPairFormMaker(op.Width, 1)
 	case ir.OpMakeNoneI32:
 		// Native fallback — push the shared `[tag=1]` sentinel
 		// pointer. Matches the OpEnumSentinel shape so existing
@@ -1596,25 +1583,29 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 
 	case ir.OpCallDirectPair:
 		// Natives keep the heap-form Option/Result ABI (see
-		// OpMakeSome/Err handlers above — they alloc 8 bytes
+		// OpMakeSome/Err handlers above — they alloc the box
 		// and return a heap-box pointer). OpCallDirectPair on
 		// natives is therefore OpCallDirect + immediate pair-
 		// extract from the heap pointer: pop the box ptr,
-		// push [box+0] (tag) and [box+4] (payload). The IR-
-		// level "two values post-call" contract holds across
-		// both wasm (real multi-value return) and natives
+		// push [box+0] (tag) and [box+payloadOff] (payload).
+		// `op.Width` selects the payload size — 0 (default)
+		// for i32 (read 4 bytes from +4), `ir.WidthPtr` for
+		// pointer-shape (read 8 bytes from +8). The IR-level
+		// "two values post-call" contract holds across both
+		// wasm (real multi-value return) and natives
 		// (synthetic extract).
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
 		g.emit(fmt.Sprintf("call %s", op.Str))
 		g.emitCallArgsCleanup(argc)
-		// rax holds the heap-box pointer. Save it in r10
-		// while we read tag + payload into separate operand-
-		// stack slots.
 		g.emit("mov r10, rax")
-		g.emit("mov eax, [r10]")     // tag (i32)
+		g.emit("mov eax, [r10]") // tag (4 bytes)
 		g.push()
-		g.emit("mov eax, [r10 + 4]") // payload (i32)
+		if op.Width == ir.WidthPtr {
+			g.emit("mov rax, [r10 + 8]") // payload (8 bytes)
+		} else {
+			g.emit("mov eax, [r10 + 4]") // payload (4 bytes)
+		}
 		g.push()
 
 	default:
@@ -1628,6 +1619,34 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 // + lhs in x1 — same operand order, just different register
 // names. Two-op x86 ops then read `op rax, rcx` (`rax = rax
 // op rcx`), where rax holds the lhs and rcx the rhs.
+// emitPairFormMaker is the shared lowering for
+// OpMakeSomeI32 / OpMakeOkI32 / OpMakeErrI32. `width` is the
+// IR's `Op.Width` operand (`0` for i32 payload, `ir.WidthPtr`
+// for pointer-shape payload); `tag` is the variant index
+// (`0` for Some/Ok, `1` for Err). Layout matches
+// `payloadLayout(Option[T])` / `payloadLayout(Result[T, E])`
+// so the heap-form match-tag readers find the payload at the
+// expected offset.
+func (g *generator) emitPairFormMaker(width int, tag int) {
+	box := 8       // box size (bytes)
+	off := 4       // payload offset
+	storeReg := "ecx"
+	if width == ir.WidthPtr {
+		box = 16
+		off = 8
+		storeReg = "rcx" // 8-byte store
+	}
+	g.pop()
+	g.emit("push rax")
+	g.emit(fmt.Sprintf("mov edi, %d", box))
+	g.emit("call __lang_alloc")
+	g.emit("pop rcx")
+	g.emit(fmt.Sprintf("mov dword ptr [rax], %d", tag))
+	g.emit(fmt.Sprintf("mov [rax + %d], %s", off, storeReg))
+	g.push()
+	g.usesAlloc = true
+}
+
 func (g *generator) binPop() {
 	g.emit("mov rcx, [rsp]") // rhs (top of stack)
 	g.emit("add rsp, 16")

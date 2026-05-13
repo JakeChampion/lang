@@ -1467,6 +1467,26 @@ function main(): i32 {
 	}
 }
 
+// Mirror of TestX86_64PointerPayloadPairForm — pointer-shaped
+// payloads through pair-form on arm64. 16-byte heap box,
+// 8-byte payload store at offset 8, 8-byte consumer read.
+func TestArm64PointerPayloadPairForm(t *testing.T) {
+	src := `function pick(b: boolean): Option[string] {
+    if (b) { return Some("hello world"); }
+    return None;
+}
+function main(): i32 {
+    match (pick(true)) {
+        Some(s) => { return len(s); },
+        None    => { return -1; }
+    }
+}`
+	_, exit := compileAndRunArm64(t, src)
+	if exit != 11 {
+		t.Errorf("exit = %d, want 11 (len(\"hello world\"))", exit)
+	}
+}
+
 // Mirror of TestX86_64UseCallback: closure-pair ABI uniforming
 // on arm64. `use` + function-value-as-param now works.
 func TestArm64UseCallback(t *testing.T) {
