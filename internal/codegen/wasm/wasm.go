@@ -362,32 +362,21 @@ func (g *generator) linef(format string, args ...any) {
 }
 
 // emitStrLenFromLocal emits a sequence that loads the i32 length
-// of the string whose pointer-shaped value lives in WebAssembly
-// local `local` (the leading `$` is part of the name).
+// of the string whose two-word `(data, len)` pair lives in the
+// pair of WebAssembly locals `$<base>_data` / `$<base>_len`
+// (caller passes the bare base name, e.g. `"$a"`).
 //
-// Routes through `$__lang_str_len`, which branches on the top-bit
-// inline flag: inline form returns the 3-bit length from bits
-// 24..26 of the operand-stack word; heap form returns the i32 at
-// `[local - 4]` (the legacy length-prefix layout). Centralising
-// every string-length read here means runtime helpers
-// (__str_eq, __str_concat, __str_slice, tcp_send, write_file, …)
-// gain inline-awareness for free as the SSO migration extends
-// the producer side.
+// Routes through `$__lang_str_len(data, len)`, which branches on
+// the top-bit inline flag: inline form returns the 3-bit length
+// from bits 24..26 of `$len`; heap form returns `$len` directly
+// (heap length lives on the operand stack as the second i32 in
+// `(data, len)`). Centralising every string-length read through
+// this helper means runtime helpers (__str_eq, __str_concat,
+// __str_slice, tcp_send, write_file, …) stay flag-aware without
+// each having to open-code the bit dispatch.
 func (g *generator) emitStrLenFromLocal(local string) {
-	// Two-word ABI: `local` is the LEN local (caller threads
-	// `$foo_data` + `$foo_len` everywhere a string used to be
-	// one local). Length lives directly in `$<local>` for
-	// heap form; for inline form, the high byte of `$<local>`
-	// has the inline flag + length nibble. Route through
-	// $__lang_str_len(data, len) so the flag-bit branch
-	// happens in one place. Caller must push `$<base>_data`
-	// first; this helper pushes `$<base>_len` then calls.
-	//
-	// TODO: when fully migrated, replace with a direct
-	// `local.get $<base>_len; i32.const 0x7fffffff; i32.and`
-	// at the consumer site — but during the transition, the
-	// helper centralises the dispatch.
-	g.linef("local.get %s", local)
+	g.linef("local.get %s_data", local)
+	g.linef("local.get %s_len", local)
 	g.line("call $__lang_str_len")
 }
 
@@ -2726,12 +2715,20 @@ func (g *generator) emitRuntimePreamble() {
 		// ($__lang_str_byte) handle the inline/heap branch
 		// internally, so this helper stays agnostic about
 		// either input's encoding.
-		g.line(`(func $__str_eq (param $a i32) (param $b i32) (result i32)`)
+		g.line(`(func $__str_eq (param $a_data i32) (param $a_len i32) (param $b_data i32) (param $b_len i32) (result i32)`)
 		g.indent++
 		g.line(`(local $la i32) (local $lb i32) (local $i i32)`)
-		g.line(`local.get $a`)
-		g.line(`local.get $b`)
+		// Two-word pointer-eq fast path: equal iff (data == data
+		// && len == len). Same content + length packs to the same
+		// `(data, len)` pair, so this covers both heap- and inline-
+		// identical pairs.
+		g.line(`local.get $a_data`)
+		g.line(`local.get $b_data`)
 		g.line(`i32.eq`)
+		g.line(`local.get $a_len`)
+		g.line(`local.get $b_len`)
+		g.line(`i32.eq`)
+		g.line(`i32.and`)
 		g.line(`if (result i32)`)
 		g.indent++
 		g.line(`i32.const 1`)
@@ -2739,15 +2736,13 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`else`)
 		g.indent++
 		// Both-inline fast path: if both `$a` and `$b` carry the
-		// inline flag (top bit set) and the pointer-eq check above
-		// already failed, the two values must differ — same content
-		// + same length packs to the same i32 deterministically, so
-		// distinct inline encodings always represent distinct
-		// strings (whether they differ in length or in content).
-		// Return 0 without the length check or byte loop. Common
-		// path for `int_to_string(x) == int_to_string(y)` etc.
-		g.line(`local.get $a`)
-		g.line(`local.get $b`)
+		// inline flag (top bit set in both `$a_len` and `$b_len`)
+		// and the pair-eq check above already failed, the two values
+		// must differ — same content + same length packs to the
+		// same `(data, len)` pair deterministically, so distinct
+		// inline encodings always represent distinct strings.
+		g.line(`local.get $a_len`)
+		g.line(`local.get $b_len`)
 		g.line(`i32.and`)
 		g.line(`i32.const 0x80000000`)
 		g.line(`i32.and`)
@@ -2782,15 +2777,16 @@ func (g *generator) emitRuntimePreamble() {
 		//   - mixed (one inline, one heap): fall back to
 		//     `$__lang_str_byte` for both operands so the inline
 		//     side gets the shift / mask treatment.
-		g.line(`local.get $a`)
-		g.line(`local.get $b`)
+		g.line(`local.get $a_len`)
+		g.line(`local.get $b_len`)
 		g.line(`i32.or`)
 		g.line(`i32.const 0x80000000`)
 		g.line(`i32.and`)
 		g.line(`i32.eqz`)
 		g.line(`if (result i32)`)
 		g.indent++
-		// Both heap fast loop.
+		// Both heap fast loop. `$a_data` / `$b_data` are direct
+		// byte pointers in the two-word ABI.
 		g.line(`i32.const 0`)
 		g.line(`local.set $i`)
 		g.line(`block $end_heap`)
@@ -2801,11 +2797,11 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $la`)
 		g.line(`i32.eq`)
 		g.line(`br_if $end_heap`)
-		g.line(`local.get $a`)
+		g.line(`local.get $a_data`)
 		g.line(`local.get $i`)
 		g.line(`i32.add`)
 		g.line(`i32.load8_u`)
-		g.line(`local.get $b`)
+		g.line(`local.get $b_data`)
 		g.line(`local.get $i`)
 		g.line(`i32.add`)
 		g.line(`i32.load8_u`)
@@ -2840,10 +2836,12 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $la`)
 		g.line(`i32.eq`)
 		g.line(`br_if $end_mixed`)
-		g.line(`local.get $a`)
+		g.line(`local.get $a_data`)
+		g.line(`local.get $a_len`)
 		g.line(`local.get $i`)
 		g.line(`call $__lang_str_byte`)
-		g.line(`local.get $b`)
+		g.line(`local.get $b_data`)
+		g.line(`local.get $b_len`)
 		g.line(`local.get $i`)
 		g.line(`call $__lang_str_byte`)
 		g.line(`i32.ne`)
@@ -2879,23 +2877,20 @@ func (g *generator) emitRuntimePreamble() {
 		// $__str_concat returns the concatenation of `a` and `b`.
 		//
 		// Two output shapes, chosen by total length:
-		//   - total == 0:  inline empty (0x80000000) via emitStrEmpty
-		//   - total <= 3:  inline-packed value (top-bit flag + 3-bit
-		//                  length + up-to-3 inline bytes), no alloc
-		//   - total >  3:  heap-form (alloc length-prefix + copy)
+		//   - total == 0:  inline empty (data=0, len=0x80000000)
+		//   - total <= 7:  inline-packed value (`(inline_data,
+		//                  inline_len)` — flag bit 31, 3-bit length
+		//                  in bits 24..26, bytes packed into the
+		//                  remaining 7 bytes), no alloc
+		//   - total >  7:  heap-form (alloc bytes + copy)
 		//
 		// Inputs may be either inline or heap-form; all byte reads
 		// route through `$__lang_str_byte`, which branches on the
 		// flag bit. Length reads route through `$__lang_str_len`.
-		// This is the first runtime helper that produces inline
-		// outputs for non-empty strings — downstream consumers
-		// (operand-stack values via OpStrLen, comparisons through
-		// $__str_eq, more concatenation through this same helper)
-		// already understand the inline form by the time they see
-		// the value here.
-		g.line(`(func $__str_concat (param $a i32) (param $b i32) (result i32)`)
+		// Two-word ABI: each string is two i32 slots `(data, len)`.
+		g.line(`(func $__str_concat (param $a_data i32) (param $a_len i32) (param $b_data i32) (param $b_len i32) (result i32 i32)`)
 		g.indent++
-		g.line(`(local $la i32) (local $lb i32) (local $total i32) (local $dst i32) (local $i i32) (local $inline i32)`)
+		g.line(`(local $la i32) (local $lb i32) (local $total i32) (local $dst i32) (local $i i32) (local $inline_data i32) (local $inline_len i32)`)
 		g.emitStrLenFromLocal("$a")
 		g.line(`local.set $la`)
 		g.emitStrLenFromLocal("$b")
@@ -2904,35 +2899,37 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $lb`)
 		g.line(`i32.add`)
 		g.line(`local.set $total`)
-		// total == 0: return the inline-encoded empty value. No
-		// alloc, no data-segment touch.
+		// total == 0: return the inline-encoded empty value
+		// (data=0, len=0x80000000). No alloc.
 		g.emitInlineEmptyShortCircuit("$total")
-		// total <= 3: build the inline encoding via shifts + ORs.
-		// `$inline = InlineFlagWasm | (total << 24)` to start,
-		// then OR in each byte at its `(i*8)`-bit slot, fetched
-		// through `$__lang_str_byte` (which knows whether `$a` /
-		// `$b` are inline or heap). Bytes from `$a` cover indices
-		// `0 .. la-1`; bytes from `$b` cover `la .. total-1`.
+		// total <= 7: build the inline encoding via shifts + ORs.
+		// `emitInlineOutputBuild` writes the (inline_data,
+		// inline_len) pair matching `langstring.PackInlineWasm`.
+		// Bytes from `$a` cover indices `0 .. la-1`; bytes from
+		// `$b` cover `la .. total-1`. byteAt pushes 3 args to
+		// $__lang_str_byte: (data, len, idx).
 		g.line(`local.get $total`)
-		g.line(`i32.const 3`)
+		g.line(`i32.const 7`)
 		g.line(`i32.le_u`)
 		g.line(`if`)
 		g.indent++
 		g.emitInlineOutputBuild("$inline_data", "$inline_len", "$i", "$total", func() {
-			// byte = (i < la) ? $__lang_str_byte($a, i)
-			//                 : $__lang_str_byte($b, i - la)
+			// byte = (i < la) ? $__lang_str_byte($a_data, $a_len, i)
+			//                 : $__lang_str_byte($b_data, $b_len, i - la)
 			g.line(`local.get $i`)
 			g.line(`local.get $la`)
 			g.line(`i32.lt_u`)
 			g.line(`if (result i32)`)
 			g.indent++
-			g.line(`local.get $a`)
+			g.line(`local.get $a_data`)
+			g.line(`local.get $a_len`)
 			g.line(`local.get $i`)
 			g.line(`call $__lang_str_byte`)
 			g.indent--
 			g.line(`else`)
 			g.indent++
-			g.line(`local.get $b`)
+			g.line(`local.get $b_data`)
+			g.line(`local.get $b_len`)
 			g.line(`local.get $i`)
 			g.line(`local.get $la`)
 			g.line(`i32.sub`)
@@ -2940,16 +2937,18 @@ func (g *generator) emitRuntimePreamble() {
 			g.indent--
 			g.line(`end`)
 		})
-		g.line(`local.get $inline`)
+		g.line(`local.get $inline_data`)
+		g.line(`local.get $inline_len`)
 		g.line(`return`)
 		g.indent--
 		g.line(`end`)
-		// Heap-form output path: total > 3.
-		// dst = __lang_alloc(total + 4) + 4
+		// Heap-form output path: total > 7.
+		// dst = __lang_alloc(total); no length prefix in the
+		// two-word ABI.
 		g.emitHeapStrAlloc("$total", "$dst", 0)
 		// Copy a's bytes: for (i=0; i<la; i++) dst[i] = a[i]
 		// Reads route through $__lang_str_byte so an inline `a`
-		// (e.g. a previous $__str_concat output of length 1..3
+		// (e.g. a previous $__str_concat output of length 1..7
 		// concatenated with a longer string) still works.
 		g.line(`i32.const 0`)
 		g.line(`local.set $i`)
@@ -2964,7 +2963,8 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $dst`)
 		g.line(`local.get $i`)
 		g.line(`i32.add`)
-		g.line(`local.get $a`)
+		g.line(`local.get $a_data`)
+		g.line(`local.get $a_len`)
 		g.line(`local.get $i`)
 		g.line(`call $__lang_str_byte`)
 		g.line(`i32.store8`)
@@ -2993,7 +2993,8 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.add`)
 		g.line(`local.get $i`)
 		g.line(`i32.add`)
-		g.line(`local.get $b`)
+		g.line(`local.get $b_data`)
+		g.line(`local.get $b_len`)
 		g.line(`local.get $i`)
 		g.line(`call $__lang_str_byte`)
 		g.line(`i32.store8`)
@@ -3007,6 +3008,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`end`)
 		g.line(`local.get $dst`)
+		g.line(`local.get $total`)
 		g.indent--
 		g.line(`)`)
 	}
@@ -3049,7 +3051,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`)`)
 
-		g.line(`(func $__str_idx (param $base i32) (param $i i32) (result i32)`)
+		g.line(`(func $__str_idx (param $base_data i32) (param $base_len i32) (param $i i32) (result i32)`)
 		g.indent++
 		// Bounds-check works for both forms — `$__lang_str_len`
 		// is inline-aware.
@@ -3070,41 +3072,74 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`end`)
 		// Two address shapes:
-		//   - heap (`$base` top bit clear): byte address is
-		//     `$base + $i` — the historical layout, untouched.
-		//   - inline (`$base` top bit set): spill the operand-
-		//     word into the shared scratch slot at mem[0..3]
-		//     (same one-shot slot $__lang_str_data_ptr uses) and
-		//     return `mem[0] + $i` — the inline encoding lays
-		//     content bytes at offsets 0..len-1, length nibble
-		//     + flag in the high byte (byte 3) which the
-		//     trailing OpLoadByte never reads. Avoids the
-		//     per-byte $__lang_alloc + memory.copy + length-
-		//     prefix-store the prior `emitPromoteStrParam` path
-		//     incurred — a real win inside `__map_hash`'s
-		//     `s[i]` byte-by-byte loop on short string keys.
+		//   - heap (`$base_len` top bit clear): byte address is
+		//     `$base_data + $i` — `$base_data` is the direct byte
+		//     pointer in the two-word ABI.
+		//   - inline (`$base_len` top bit set): spill
+		//     `$base_data` at mem[0..3] and `$base_len` at
+		//     mem[4..7] (the shared scratch region — see
+		//     $__lang_str_data_ptr) and return `$i` — the inline
+		//     encoding lays content bytes 0..3 at mem[0..3] and
+		//     bytes 4..6 at mem[4..6]; the trailing OpLoadByte
+		//     reads mem[$i]. Avoids the per-byte $__lang_alloc +
+		//     memory.copy that `emitPromoteStrParam` would incur
+		//     — a real win inside `__map_hash`'s `s[i]` byte-by-
+		//     byte loop on short string keys.
 		//
 		// Single-threaded wasm + the immediate OpLoadByte that
 		// follows make the scratch's one-shot lifetime safe;
 		// the next $__str_idx call clobbers, by which time the
 		// previous load has already consumed the byte.
-		g.line(`local.get $base`)
+		g.line(`local.get $base_len`)
 		g.line(`i32.const 0x80000000`)
 		g.line(`i32.and`)
 		g.line(`if (result i32)`)
 		g.indent++
 		g.line(`i32.const 0`)
-		g.line(`local.get $base`)
+		g.line(`local.get $base_data`)
+		g.line(`i32.store`)
+		g.line(`i32.const 4`)
+		g.line(`local.get $base_len`)
 		g.line(`i32.store`)
 		g.line(`local.get $i`)
 		g.indent--
 		g.line(`else`)
 		g.indent++
-		g.line(`local.get $base`)
+		g.line(`local.get $base_data`)
 		g.line(`local.get $i`)
 		g.line(`i32.add`)
 		g.indent--
 		g.line(`end`)
+		g.indent--
+		g.line(`)`)
+
+		// $__arr_idx_1 — stride-1 byte-array indexing. Same
+		// bounds-check shape as $__arr_idx; just no *N multiplier
+		// on the index. Split from $__str_idx because the
+		// string-specific helper now takes a two-word `(base_data,
+		// base_len, i)` shape that doesn't fit a byte-array's
+		// single-pointer call site.
+		g.line(`(func $__arr_idx_1 (param $base i32) (param $i i32) (result i32)`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`i32.const 0`)
+		g.line(`i32.lt_s`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $i`)
+		g.emitArrayLenFromLocal("$base")
+		g.line(`i32.ge_u`)
+		g.line(`if`)
+		g.indent++
+		g.line(`unreachable`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $base`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
 		g.indent--
 		g.line(`)`)
 
@@ -3247,16 +3282,16 @@ func (g *generator) emitRuntimePreamble() {
 		// and return the new string's content pointer. Bounds
 		// check matches the rest of the family: low >= 0, high
 		// <= source length, low <= high.
-		g.line(`(func $__str_slice (param $base i32) (param $low i32) (param $high i32) (result i32)`)
+		g.line(`(func $__str_slice (param $base_data i32) (param $base_len i32) (param $low i32) (param $high i32) (result i32 i32)`)
 		g.indent++
-		g.line(`(local $src_len i32) (local $new_len i32) (local $out i32) (local $i i32) (local $inline i32)`)
+		g.line(`(local $src_len i32) (local $new_len i32) (local $out i32) (local $i i32) (local $inline_data i32) (local $inline_len i32)`)
 		// No promote-at-entry. The inline-output fast path
-		// (`new_len ≤ 3`) reads source bytes through
+		// (`new_len ≤ 7`) reads source bytes through
 		// `$__lang_str_byte`, which handles inline / heap
-		// natively. The heap-output path (`new_len > 3`) is
-		// only reached when `src_len > 3`, and since inline
-		// strings cap at 3 bytes the source is guaranteed
-		// heap-form there — `memory.copy(base+low, new_len)`
+		// natively. The heap-output path (`new_len > 7`) is
+		// only reached when `src_len > 7`, and since inline
+		// strings cap at 7 bytes the source is guaranteed
+		// heap-form there — `memory.copy(base_data+low, new_len)`
 		// reads from a real linear-memory pointer without any
 		// pre-promotion.
 		g.emitStrLenFromLocal("$base")
@@ -3296,42 +3331,45 @@ func (g *generator) emitRuntimePreamble() {
 		// Short-circuit on new_len == 0: return the shared empty-
 		// string sentinel without allocating.
 		g.emitInlineEmptyShortCircuit("$new_len")
-		// new_len ≤ 3 → build the single-i32 inline output via
+		// new_len ≤ 7 → build the inline output via
 		// `$base[low..low+new_len]` byte reads through
 		// `$__lang_str_byte` (which branches on the inline /
 		// heap flag, so $base can be either form). Mirrors the
 		// $__str_concat inline-output fast path so any slice
-		// result that fits the SSO tiny cap skips the alloc +
+		// result that fits the SSO cap skips the alloc +
 		// `memory.copy` shape entirely.
 		g.line(`local.get $new_len`)
-		g.line(`i32.const 3`)
+		g.line(`i32.const 7`)
 		g.line(`i32.le_u`)
 		g.line(`if`)
 		g.indent++
 		g.emitInlineOutputBuild("$inline_data", "$inline_len", "$i", "$new_len", func() {
-			// byte = $__lang_str_byte($base, $low + $i)
-			g.line(`local.get $base`)
+			// byte = $__lang_str_byte($base_data, $base_len, $low + $i)
+			g.line(`local.get $base_data`)
+			g.line(`local.get $base_len`)
 			g.line(`local.get $low`)
 			g.line(`local.get $i`)
 			g.line(`i32.add`)
 			g.line(`call $__lang_str_byte`)
 		})
-		g.line(`local.get $inline`)
+		g.line(`local.get $inline_data`)
+		g.line(`local.get $inline_len`)
 		g.line(`return`)
 		g.indent--
 		g.line(`end`)
-		// Heap-form output path: new_len > 3.
-		// out = alloc(4 + new_len) + 4   (out is the data ptr)
+		// Heap-form output path: new_len > 7. No length prefix in
+		// the two-word ABI; `$out` points directly at the bytes.
 		g.emitHeapStrAlloc("$new_len", "$out", 0)
-		// memory.copy(out, base + low, new_len)
+		// memory.copy(out, base_data + low, new_len)
 		g.line(`local.get $out`)
-		g.line(`local.get $base`)
+		g.line(`local.get $base_data`)
 		g.line(`local.get $low`)
 		g.line(`i32.add`)
 		g.line(`local.get $new_len`)
 		g.line(`memory.copy`)
-		// Return content pointer.
+		// Return (data, len) pair.
 		g.line(`local.get $out`)
+		g.line(`local.get $new_len`)
 		g.indent--
 		g.line(`)`)
 	}
@@ -3347,13 +3385,12 @@ func (g *generator) emitRuntimePreamble() {
 		// companion to s.bytes().
 		//
 		// Two output shapes, chosen by bLen:
-		//   - bLen == 0:  inline empty (0x80000000) via emitStrEmpty
-		//   - bLen <= 3:  inline-packed i32 (top-bit flag + 3-bit
-		//                 length + up-to-3 inline bytes), no alloc
-		//   - bLen >  3:  heap-form (alloc length-prefix + copy)
-		g.line(`(func $string_from_bytes (param $bs i32) (result i32)`)
+		//   - bLen == 0:  inline empty (data=0, len=0x80000000)
+		//   - bLen <= 7:  inline-packed (data, len) pair, no alloc
+		//   - bLen >  7:  heap-form (data, len) pair
+		g.line(`(func $string_from_bytes (param $bs i32) (result i32 i32)`)
 		g.indent++
-		g.line(`(local $bLen i32) (local $out i32) (local $i i32) (local $inline i32)`)
+		g.line(`(local $bLen i32) (local $out i32) (local $i i32) (local $inline_data i32) (local $inline_len i32)`)
 		// Input u8[] length via the array seam — distinct from
 		// the string-side emitStrLenFromLocal so the two layouts
 		// can diverge under future array-only changes.
@@ -3362,14 +3399,12 @@ func (g *generator) emitRuntimePreamble() {
 		// Short-circuit on bLen == 0: return the inline-encoded
 		// empty value rather than allocating a 0-byte buffer.
 		g.emitInlineEmptyShortCircuit("$bLen")
-		// bLen ≤ 3 → build the single-i32 inline output by
+		// bLen ≤ 7 → build the inline (data, len) output by
 		// reading bytes straight out of the u8[] payload. The
-		// array's bytes live at `$bs .. $bs + bLen`; pack them
-		// into bits 0..23, with bits 24..26 carrying the length
-		// and bit 31 the inline flag. Mirrors the
+		// array's bytes live at `$bs .. $bs + bLen`. Mirrors the
 		// $__str_concat / $__str_slice fast-path shape.
 		g.line(`local.get $bLen`)
-		g.line(`i32.const 3`)
+		g.line(`i32.const 7`)
 		g.line(`i32.le_u`)
 		g.line(`if`)
 		g.indent++
@@ -3380,12 +3415,13 @@ func (g *generator) emitRuntimePreamble() {
 			g.line(`i32.add`)
 			g.line(`i32.load8_u`)
 		})
-		g.line(`local.get $inline`)
+		g.line(`local.get $inline_data`)
+		g.line(`local.get $inline_len`)
 		g.line(`return`)
 		g.indent--
 		g.line(`end`)
-		// Heap-form output: bLen > 3.
-		// out = __lang_alloc(bLen + 4) + 4   (data ptr)
+		// Heap-form output: bLen > 7. No length prefix in the
+		// two-word ABI; `$out` is the data pointer.
 		g.emitHeapStrAlloc("$bLen", "$out", 0)
 		// memory.copy(out, bs, bLen)
 		g.line(`local.get $out`)
@@ -3393,6 +3429,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $bLen`)
 		g.line(`memory.copy`)
 		g.line(`local.get $out`)
+		g.line(`local.get $bLen`)
 		g.indent--
 		g.line(`)`)
 	}
@@ -3428,7 +3465,7 @@ func (g *generator) emitRuntimePreamble() {
 	// blocking-write-and-flush calls (rather than one with two
 	// iovecs) because some wasmtime versions silently drop all but
 	// the first iovec when iovs_len > 1.
-	g.line(`(func $print (param $s i32)`)
+	g.line(`(func $print (param $s_data i32) (param $s_len i32)`)
 	g.indent++
 	g.emitStreamsWriteString("$__stdout_handle", "$s")
 	g.emitStreamsWriteNewline("$__stdout_handle")
@@ -3438,14 +3475,14 @@ func (g *generator) emitRuntimePreamble() {
 	// write(s) — stdout without a trailing newline. Same shape as
 	// $print's first half; users compose their own newlines / field
 	// separators when they want.
-	g.line(`(func $write (param $s i32)`)
+	g.line(`(func $write (param $s_data i32) (param $s_len i32)`)
 	g.indent++
 	g.emitStreamsWriteString("$__stdout_handle", "$s")
 	g.indent--
 	g.line(`)`)
 
 	// eprint(s) — `print` shape but routed to stderr.
-	g.line(`(func $eprint (param $s i32)`)
+	g.line(`(func $eprint (param $s_data i32) (param $s_len i32)`)
 	g.indent++
 	g.emitStreamsWriteString("$__stderr_handle", "$s")
 	g.emitStreamsWriteNewline("$__stderr_handle")
@@ -3660,21 +3697,21 @@ func (g *generator) emitStreamHandleAccessor(name, getterImport string, handleSl
 // string's bytes through the preview-2 streams API: load the
 // cached handle, push (data_ptr, len), call $__streams_write.
 //
-// `local`'s value may be either a heap-form pointer (top bit
-// clear, bytes at `local..local+len`) or a single-i32 inline
-// value (top bit set, bytes packed into the operand word — see
-// `langstring.PackTinyWasm`). Both forms route through
-// `$__lang_str_data_ptr`, which passes heap pointers through
-// and spills inline bytes into a shared scratch slot — no alloc
-// in either case. The synchronous `blocking-write-and-flush`
-// call reads `len` bytes from the returned pointer before
-// returning, so the scratch slot is safe to clobber on the
-// next use. Pair with `$__lang_str_len` for the length seam.
+// `local` is the bare base name of a string-typed local pair
+// (`$<base>_data` / `$<base>_len`). Caller passes e.g. `"$s"`.
+// Heap-form values pass `$<base>_data` through as the byte
+// pointer; inline-form values spill into the shared scratch
+// slot at mem[0..6] (handled inside $__lang_str_data_ptr —
+// safe to clobber on the next use since the synchronous
+// blocking-write-and-flush call reads all `len` bytes before
+// returning). Pair with `$__lang_str_len` for the length seam.
 func (g *generator) emitStreamsWriteString(handleAccessor, local string) {
 	g.linef(`call %s`, handleAccessor)
-	g.linef(`local.get %s`, local)
+	g.linef(`local.get %s_data`, local)
+	g.linef(`local.get %s_len`, local)
 	g.line(`call $__lang_str_data_ptr`)
-	g.linef(`local.get %s`, local)
+	g.linef(`local.get %s_data`, local)
+	g.linef(`local.get %s_len`, local)
 	g.line(`call $__lang_str_len`)
 	g.line(`call $__streams_write`)
 }
@@ -4646,7 +4683,7 @@ func (g *generator) emitStringMethodHelpers() {
 	// `bytes()` call without the alloc. Mutations through the
 	// view do propagate to the underlying string memory —
 	// callers that don't want this should use `bytes()`.
-	g.line(`(func $__method_string_as_bytes (param $s i32) (result i32)`)
+	g.line(`(func $__method_string_as_bytes (param $s_data i32) (param $s_len i32) (result i32)`)
 	g.indent++
 	g.line(`(local $sLen i32) (local $hdr i32)`)
 	// The returned slice header records the source string's
@@ -4658,8 +4695,8 @@ func (g *generator) emitStringMethodHelpers() {
 	g.line(`i32.const 8`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $hdr`)
-	g.line(`local.get $s`)
-	g.line(`i32.store`) // data_ptr = s
+	g.line(`local.get $s_data`)
+	g.line(`i32.store`) // data_ptr = s_data (heap byte address after promote)
 	g.line(`local.get $hdr`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)

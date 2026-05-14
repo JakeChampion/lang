@@ -2902,14 +2902,17 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpCallDirect, Str: sliceHelper, I32: 2})
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
 		} else {
-			// Per-stride helper: __str_idx for byte arrays
-			// (stride=1, also reused for raw strings),
+			// Per-stride helper: __arr_idx_1 for byte arrays
+			// (stride=1, address arithmetic identical to
+			// __arr_idx but without the *4 multiplier),
 			// __arr_idx for the historical i32-stride layout,
 			// __arr_idx_2 for u16/i16, __arr_idx_8 for i64/f64.
+			// String indexing routes through __str_idx (above);
+			// the byte-array case is plain `base + i`.
 			helper := "__arr_idx"
 			switch stride {
 			case 1:
-				helper = "__str_idx"
+				helper = "__arr_idx_1"
 			case 2:
 				helper = "__arr_idx_2"
 			case 8:
@@ -4419,7 +4422,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		} else {
 			switch stride {
 			case 1:
-				helper = "__str_idx"
+				helper = "__arr_idx_1"
 			case 2:
 				helper = "__arr_idx_2"
 			case 8:
