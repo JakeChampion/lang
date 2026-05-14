@@ -396,6 +396,38 @@ func (g *generator) emitStrLenStoreToLocal(lenLocal, dstLocal string) {
 	g.line("i32.store")
 }
 
+// emitHeapStrAlloc emits the canonical allocation sequence
+// for a heap-form lang string given a known byte length in
+// `lenLocal`. After this returns:
+//
+//   - `$dstLocal` points one past the 4-byte length prefix
+//     (i.e., at the string's data bytes)
+//   - mem[$dstLocal - 4] holds the byte length (written via
+//     `emitStrLenStoreToLocal`)
+//
+// `tailBytes` is added to the alloc size beyond the prefix +
+// payload. Typical values: 0 (no padding), 1 (reserve a
+// trailing NUL byte for C-string-style readers — the caller
+// is responsible for writing the NUL afterward).
+//
+// Shared by every helper that constructs a heap-form string
+// from a known length: $__str_concat / $__str_slice /
+// $string_from_bytes / $args / $tcp_recv / $env /
+// $__bytes_to_lang_string / $__stream_read_line. The atomic
+// two-word ABI flip drops the length-prefix on heap form;
+// at that point this helper collapses to just the alloc +
+// offset, and the length-store call goes away.
+func (g *generator) emitHeapStrAlloc(lenLocal, dstLocal string, tailBytes int32) {
+	g.linef("local.get %s", lenLocal)
+	g.linef("i32.const %d", 4+tailBytes)
+	g.line("i32.add")
+	g.line("call $__lang_alloc")
+	g.line("i32.const 4")
+	g.line("i32.add")
+	g.linef("local.set %s", dstLocal)
+	g.emitStrLenStoreToLocal(lenLocal, dstLocal)
+}
+
 // emitPromoteStrParam emits a three-line preamble at the head of
 // a runtime helper that uses a string-typed parameter as a
 // linear-memory address (I/O writes, byte-by-byte compares,
@@ -2782,14 +2814,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`end`)
 		// Heap-form output path: total > 3.
 		// dst = __lang_alloc(total + 4) + 4
-		g.line(`local.get $total`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`call $__lang_alloc`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`local.set $dst`)
-		g.emitStrLenStoreToLocal("$total", "$dst")
+		g.emitHeapStrAlloc("$total", "$dst", 0)
 		// Copy a's bytes: for (i=0; i<la; i++) dst[i] = a[i]
 		// Reads route through $__lang_str_byte so an inline `a`
 		// (e.g. a previous $__str_concat output of length 1..3
@@ -3172,15 +3197,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`end`)
 		// Heap-form output path: new_len > 3.
 		// out = alloc(4 + new_len) + 4   (out is the data ptr)
-		g.line(`local.get $new_len`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`call $__lang_alloc`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`local.set $out`)
-		// Length prefix via the centralised store helper.
-		g.emitStrLenStoreToLocal("$new_len", "$out")
+		g.emitHeapStrAlloc("$new_len", "$out", 0)
 		// memory.copy(out, base + low, new_len)
 		g.line(`local.get $out`)
 		g.line(`local.get $base`)
@@ -3251,15 +3268,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`end`)
 		// Heap-form output: bLen > 3.
 		// out = __lang_alloc(bLen + 4) + 4   (data ptr)
-		g.line(`local.get $bLen`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`call $__lang_alloc`)
-		g.line(`i32.const 4`)
-		g.line(`i32.add`)
-		g.line(`local.set $out`)
-		// Length prefix via the centralised store helper.
-		g.emitStrLenStoreToLocal("$bLen", "$out")
+		g.emitHeapStrAlloc("$bLen", "$out", 0)
 		// memory.copy(out, bs, bLen)
 		g.line(`local.get $out`)
 		g.line(`local.get $bs`)
@@ -3939,14 +3948,7 @@ func (g *generator) emitArgsHelper() {
 
 	// Heap-form output path: strlen > 3.
 	// Allocate strlen+4 bytes; write length prefix.
-	g.line(`local.get $strlen`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sbase`) // $sbase = data ptr (one past length prefix)
-	g.emitStrLenStoreToLocal("$strlen", "$sbase")
+	g.emitHeapStrAlloc("$strlen", "$sbase", 0)
 
 	// Byte-copy cstr[0..strlen) into sbase.
 	g.line(`i32.const 0`)
@@ -4190,14 +4192,7 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.indent++
 	// Heap-form output: materialise as a length-prefixed string.
 	// $sptr is the data pointer (one past the length prefix).
-	g.line(`local.get $cur_offset`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sptr`)
-	g.emitStrLenStoreToLocal("$cur_offset", "$sptr")
+	g.emitHeapStrAlloc("$cur_offset", "$sptr", 0)
 
 	// memory.copy(sptr, buf, cur_offset)
 	g.line(`local.get $sptr`)
@@ -4414,14 +4409,7 @@ func (g *generator) emitEnvHelper() {
 	g.line(`local.set $vlen`)
 
 	// Allocate result and copy.
-	g.line(`local.get $vlen`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sptr`) // $sptr = data ptr
-	g.emitStrLenStoreToLocal("$vlen", "$sptr")
+	g.emitHeapStrAlloc("$vlen", "$sptr", 0)
 	g.line(`i32.const 0`)
 	g.line(`local.set $j`)
 	g.line(`block $vcopy_end`)
@@ -5110,14 +5098,7 @@ func (g *generator) emitTcpRecvPreview2() {
 	// Heap-form output: allocate length-prefixed string of size
 	// $n + 5 (4 prefix + NUL), matching the existing string-from-
 	// bytes allocation pattern.
-	g.line(`local.get $n`)
-	g.line(`i32.const 5`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sptr`) // $sptr = data ptr
-	g.emitStrLenStoreToLocal("$n", "$sptr")
+	g.emitHeapStrAlloc("$n", "$sptr", 1)
 	// memcpy host buffer into our string body.
 	g.line(`local.get $sptr`)
 	g.line(`local.get $list_ptr`)
@@ -5763,14 +5744,7 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.indent--
 	g.line(`end`)
 	// Heap-form output path: host_len > 3.
-	g.line(`local.get $host_len`)
-	g.line(`i32.const 5`) // 4 prefix + NUL
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sbase`) // $sbase = data ptr
-	g.emitStrLenStoreToLocal("$host_len", "$sbase")
+	g.emitHeapStrAlloc("$host_len", "$sbase", 1)
 	g.line(`local.get $sbase`)
 	g.line(`local.get $host_ptr`)
 	g.line(`local.get $host_len`)
