@@ -2496,6 +2496,25 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`else`)
 		g.indent++
+		// Both-inline fast path: if both `$a` and `$b` carry the
+		// inline flag (top bit set) and the pointer-eq check above
+		// already failed, the two values must differ — same content
+		// + same length packs to the same i32 deterministically, so
+		// distinct inline encodings always represent distinct
+		// strings (whether they differ in length or in content).
+		// Return 0 without the length check or byte loop. Common
+		// path for `int_to_string(x) == int_to_string(y)` etc.
+		g.line(`local.get $a`)
+		g.line(`local.get $b`)
+		g.line(`i32.and`)
+		g.line(`i32.const 0x80000000`)
+		g.line(`i32.and`)
+		g.line(`if (result i32)`)
+		g.indent++
+		g.line(`i32.const 0`)
+		g.indent--
+		g.line(`else`)
+		g.indent++
 		// la = len(a); lb = len(b) via the centralised helper.
 		g.emitStrLenFromLocal("$a")
 		g.line(`local.set $la`)
@@ -2510,17 +2529,75 @@ func (g *generator) emitRuntimePreamble() {
 		g.indent--
 		g.line(`else`)
 		g.indent++
-		// for (i=0; i<la; i++) if (a[i] != b[i]) return 0
+		// At this point at least one operand is heap-form (the
+		// both-inline branch above already returned). Two byte-
+		// loop shapes:
+		//   - both heap: direct `i32.load8_u` reads, no per-byte
+		//     `$__lang_str_byte` call (saves the inline-branch
+		//     check + function-call overhead — ~6 wasm ops per
+		//     byte iteration). Common path for Map[string, V]
+		//     bucket compares against heap-form keys.
+		//   - mixed (one inline, one heap): fall back to
+		//     `$__lang_str_byte` for both operands so the inline
+		//     side gets the shift / mask treatment.
+		g.line(`local.get $a`)
+		g.line(`local.get $b`)
+		g.line(`i32.or`)
+		g.line(`i32.const 0x80000000`)
+		g.line(`i32.and`)
+		g.line(`i32.eqz`)
+		g.line(`if (result i32)`)
+		g.indent++
+		// Both heap fast loop.
 		g.line(`i32.const 0`)
 		g.line(`local.set $i`)
-		g.line(`block $end`)
+		g.line(`block $end_heap`)
 		g.indent++
-		g.line(`loop $loop`)
+		g.line(`loop $loop_heap`)
 		g.indent++
 		g.line(`local.get $i`)
 		g.line(`local.get $la`)
 		g.line(`i32.eq`)
-		g.line(`br_if $end`)
+		g.line(`br_if $end_heap`)
+		g.line(`local.get $a`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+		g.line(`local.get $b`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+		g.line(`i32.ne`)
+		g.line(`if`)
+		g.indent++
+		g.line(`i32.const 0`)
+		g.line(`return`)
+		g.indent--
+		g.line(`end`)
+		g.line(`local.get $i`)
+		g.line(`i32.const 1`)
+		g.line(`i32.add`)
+		g.line(`local.set $i`)
+		g.line(`br $loop_heap`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
+		g.line(`i32.const 1`)
+		g.indent--
+		g.line(`else`)
+		g.indent++
+		// Mixed (one inline, one heap) byte loop.
+		g.line(`i32.const 0`)
+		g.line(`local.set $i`)
+		g.line(`block $end_mixed`)
+		g.indent++
+		g.line(`loop $loop_mixed`)
+		g.indent++
+		g.line(`local.get $i`)
+		g.line(`local.get $la`)
+		g.line(`i32.eq`)
+		g.line(`br_if $end_mixed`)
 		g.line(`local.get $a`)
 		g.line(`local.get $i`)
 		g.line(`call $__lang_str_byte`)
@@ -2538,12 +2615,16 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.const 1`)
 		g.line(`i32.add`)
 		g.line(`local.set $i`)
-		g.line(`br $loop`)
+		g.line(`br $loop_mixed`)
 		g.indent--
 		g.line(`end`)
 		g.indent--
 		g.line(`end`)
 		g.line(`i32.const 1`)
+		g.indent--
+		g.line(`end`)
+		g.indent--
+		g.line(`end`)
 		g.indent--
 		g.line(`end`)
 		g.indent--
