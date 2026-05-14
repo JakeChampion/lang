@@ -453,6 +453,47 @@ func TestStringEqualityEmitsHelper(t *testing.T) {
 	mustContain(t, wat, "call $__str_eq")
 }
 
+// $__str_eq's body carries three fast paths beyond the
+// pointer-eq short-circuit:
+//   - both-inline + ptr-not-eq → return 0 (saves the byte
+//     loop for `int_to_string(x) == int_to_string(y)`-shaped
+//     comparisons where the inline encoding differs)
+//   - both-heap → direct `i32.load8_u` byte loop (saves the
+//     per-byte $__lang_str_byte call's inline-branch check —
+//     the common Map[string, V] bucket-collision compare path)
+//   - mixed (one inline, one heap) → $__lang_str_byte loop
+//     so the inline side gets the shift / mask treatment
+//
+// Pin both fast-path-presence markers (top-bit constant +
+// `i32.eqz` of the OR-mask) so a future refactor that
+// collapses the branches has to update the test deliberately.
+func TestStrEqHelperHasInlineHeapFastPaths(t *testing.T) {
+	wat := compileToWAT(t, `function f(s: string): boolean { return s == "longer"; }`)
+	mustContain(t, wat, "(func $__str_eq")
+	idx := strings.Index(wat, "(func $__str_eq")
+	if idx < 0 {
+		t.Fatalf("$__str_eq not emitted:\n%s", wat)
+	}
+	body := wat[idx:]
+	end := strings.Index(body, "\n  (func ")
+	if end < 0 {
+		end = len(body)
+	}
+	bodyText := body[:end]
+	// Both-inline / both-heap discriminants.
+	if !strings.Contains(bodyText, "i32.const 0x80000000") {
+		t.Errorf("$__str_eq missing inline-flag discriminant constant:\n%s", bodyText)
+	}
+	// Both-heap fast loop uses direct load8_u, not $__lang_str_byte.
+	if !strings.Contains(bodyText, "i32.load8_u") {
+		t.Errorf("$__str_eq missing direct i32.load8_u for both-heap fast loop:\n%s", bodyText)
+	}
+	// Mixed-form fallback still calls $__lang_str_byte.
+	if !strings.Contains(bodyText, "call $__lang_str_byte") {
+		t.Errorf("$__str_eq missing $__lang_str_byte call for mixed-form fallback:\n%s", bodyText)
+	}
+}
+
 func TestLenOfStringRoutesThroughSSOHelper(t *testing.T) {
 	wat := compileToWAT(t, `function f(): i32 { return len("hello"); }`)
 	// `len(s)` lowers to OpStrLen, which the wasm backend
