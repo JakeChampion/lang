@@ -3975,7 +3975,7 @@ func (g *generator) emitArgsHelper() {
 	g.line(`(local $cstr i32)`)
 	g.line(`(local $end i32)`)
 	g.line(`(local $strlen i32)`)
-	g.line(`(local $sbase i32)`)
+	g.line(`(local $sbase_data i32) (local $sbase_len i32)`)
 	g.line(`(local $j i32)`)
 
 	// Fast path: cached.
@@ -4018,25 +4018,25 @@ func (g *generator) emitArgsHelper() {
 	g.line(`drop`)
 
 	// Allocate the result string[]: length prefix (4 bytes) +
-	// argc * 4 entry pointers. $result lands on the entries (the
+	// argc * 8 (each entry is an 8-byte (data, len) pair under
+	// the two-word ABI). $result lands at the entry area (the
 	// language's `string[]` convention is that the value is the
-	// data pointer, with the length at value-4).
+	// data pointer, with the length prefix at value-4).
 	g.line(`local.get $argc`)
-	g.line(`i32.const 4`)
+	g.line(`i32.const 8`)
 	g.line(`i32.mul`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
-	g.line(`local.set $result`) // $result = data ptr (one past prefix)
-	// Outer string[] container length via the array seam (per-
-	// entry string stores in the loop below use emitStrLenStoreToLocal).
+	g.line(`local.set $result`) // $result = entry-area ptr (one past prefix)
+	// Outer string[] container length prefix at $result - 4.
 	g.emitArrayLenStoreToLocal("$argc", "$result")
 
 	// For each argv entry: walk the C string to find its length,
-	// allocate a fresh length-prefixed buffer, copy the bytes, and
-	// stash the resulting string pointer at result[i].
+	// alloc + copy if heap-form (or pack inline), and stash the
+	// resulting (data, len) pair at result[i*8] / result[i*8 + 4].
 	g.line(`i32.const 0`)
 	g.line(`local.set $i`)
 	g.line(`block $end_outer`)
@@ -4048,7 +4048,7 @@ func (g *generator) emitArgsHelper() {
 	g.line(`i32.eq`)
 	g.line(`br_if $end_outer`)
 
-	// cstr = argv_ptrs[i] (each entry is an i32)
+	// cstr = argv_ptrs[i] (each entry is an i32 pointer)
 	g.line(`local.get $argv_ptrs`)
 	g.line(`local.get $i`)
 	g.line(`i32.const 4`)
@@ -4082,16 +4082,13 @@ func (g *generator) emitArgsHelper() {
 	g.line(`i32.sub`)
 	g.line(`local.set $strlen`)
 
-	// SSO inline-output fast path: when strlen ≤ 3 the argv
-	// string fits the single-i32 tiny inline form. Pack bytes
+	// SSO inline-output fast path: when strlen ≤ 7 the argv
+	// string fits the inline (data, len) pair. Pack bytes
 	// straight out of the host's NUL-terminated buffer into
-	// `$sbase` (reusing it as the inline value holder; the
-	// downstream `result[i] = $sbase` store doesn't care whether
-	// $sbase is a heap data pointer or an inline-encoded value
-	// because both round-trip through the SSO seams). Common
-	// for short CLI flags like "-h", "-v", "go", "rm".
+	// `$sbase_data` / `$sbase_len`. Common for short CLI
+	// flags like "-h", "-v", "go", "rm", "build".
 	g.line(`local.get $strlen`)
-	g.line(`i32.const 3`)
+	g.line(`i32.const 7`)
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
@@ -4102,28 +4099,16 @@ func (g *generator) emitArgsHelper() {
 		g.line(`i32.add`)
 		g.line(`i32.load8_u`)
 	})
-	// Store inline value at result[i] and advance the outer
-	// loop. Mirrors the heap-path tail at the end of the body.
-	g.line(`local.get $result`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 4`)
-	g.line(`i32.mul`)
-	g.line(`i32.add`)
-	g.line(`local.get $sbase`)
-	g.line(`i32.store`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $outer`)
 	g.indent--
-	g.line(`end`)
+	g.line(`else`)
+	g.indent++
+	// Heap-form output path: strlen > 7. Alloc bytes (no
+	// length prefix in the two-word ABI) and copy.
+	g.emitHeapStrAlloc("$strlen", "$sbase_data", 0)
+	g.line(`local.get $strlen`)
+	g.line(`local.set $sbase_len`)
 
-	// Heap-form output path: strlen > 3.
-	// Allocate strlen+4 bytes; write length prefix.
-	g.emitHeapStrAlloc("$strlen", "$sbase", 0)
-
-	// Byte-copy cstr[0..strlen) into sbase.
+	// Byte-copy cstr[0..strlen) into $sbase_data.
 	g.line(`i32.const 0`)
 	g.line(`local.set $j`)
 	g.line(`block $end_copy`)
@@ -4134,7 +4119,7 @@ func (g *generator) emitArgsHelper() {
 	g.line(`local.get $strlen`)
 	g.line(`i32.eq`)
 	g.line(`br_if $end_copy`)
-	g.line(`local.get $sbase`)
+	g.line(`local.get $sbase_data`)
 	g.line(`local.get $j`)
 	g.line(`i32.add`)
 	g.line(`local.get $cstr`)
@@ -4151,14 +4136,26 @@ func (g *generator) emitArgsHelper() {
 	g.line(`end`)
 	g.indent--
 	g.line(`end`)
+	g.indent--
+	g.line(`end`)
 
-	// result[i] = sbase (already the data pointer; length lives at -4)
+	// result[i] = (sbase_data, sbase_len). Each entry is 8 bytes:
+	// data @ result + i*8 + 0; len @ result + i*8 + 4.
 	g.line(`local.get $result`)
 	g.line(`local.get $i`)
-	g.line(`i32.const 4`)
+	g.line(`i32.const 8`)
 	g.line(`i32.mul`)
 	g.line(`i32.add`)
-	g.line(`local.get $sbase`)
+	g.line(`local.get $sbase_data`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`local.get $i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $sbase_len`)
 	g.line(`i32.store`)
 
 	g.line(`local.get $i`)
