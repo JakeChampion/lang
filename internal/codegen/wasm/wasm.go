@@ -348,7 +348,7 @@ type generator struct {
 }
 
 type stringEntry struct {
-	offset int    // address of the 4-byte length prefix
+	offset int    // byte offset of the bytes in linear memory
 	text   string
 }
 
@@ -380,52 +380,24 @@ func (g *generator) emitStrLenFromLocal(local string) {
 	g.line("call $__lang_str_len")
 }
 
-// emitStrLenStoreToLocal writes the i32 length stored in WebAssembly
-// local `lenLocal` to the 4-byte little-endian length prefix at
-// `[dstLocal - 4]`, where dstLocal holds the new string's *data
-// pointer* (one past the prefix). Inverse of emitStrLenFromLocal:
-// string-producing runtime helpers (__str_concat, __str_slice,
-// string_from_bytes, random_bytes, env, tcp_recv, Reader.read_chunk)
-// all flow through this one site so future SSO encoding changes
-// that affect string construction have a single seam. Array-length
-// stores (`__alloc_u8`, `$args` outer array) stay open-coded since
-// arrays may diverge.
-func (g *generator) emitStrLenStoreToLocal(lenLocal, dstLocal string) {
-	g.linef("local.get %s", dstLocal)
-	g.line("i32.const 4")
-	g.line("i32.sub")
-	g.linef("local.get %s", lenLocal)
-	g.line("i32.store")
-}
-
 // emitHeapStrAlloc emits the canonical allocation sequence
 // for a heap-form lang string given a known byte length in
 // `lenLocal`. After this returns:
 //
-//   - `$dstLocal` points one past the 4-byte length prefix
-//     (i.e., at the string's data bytes)
-//   - mem[$dstLocal - 4] holds the byte length (written via
-//     `emitStrLenStoreToLocal`)
+//   - `$dstLocal` points at the string's data bytes
 //
-// `tailBytes` is added to the alloc size beyond the prefix +
-// payload. Typical values: 0 (no padding), 1 (reserve a
-// trailing NUL byte for C-string-style readers — the caller
-// is responsible for writing the NUL afterward).
+// `tailBytes` is added to the alloc size beyond the payload.
+// Typical values: 0 (no padding), 1 (reserve a trailing NUL
+// byte for C-string-style readers — the caller is responsible
+// for writing the NUL afterward).
 //
 // Shared by every helper that constructs a heap-form string
 // from a known length: $__str_concat / $__str_slice /
 // $string_from_bytes / $args / $tcp_recv / $env /
-// $__bytes_to_lang_string / $__stream_read_line. The atomic
-// two-word ABI flip drops the length-prefix on heap form;
-// at that point this helper collapses to just the alloc +
-// offset, and the length-store call goes away.
+// $__bytes_to_lang_string / $__stream_read_line. Two-word ABI:
+// the caller pushes `(local.get $dstLocal, local.get $lenLocal)`
+// at return to satisfy the multi-value `(i32 i32)` shape.
 func (g *generator) emitHeapStrAlloc(lenLocal, dstLocal string, tailBytes int32) {
-	// Two-word ABI: heap form has no 4-byte length prefix
-	// anymore (length lives on the operand stack as the second
-	// i32 in `(data, len)`). Alloc just `byteLen + tailBytes`;
-	// `$dstLocal` points at the bytes directly. Caller pushes
-	// `(local.get $dstLocal, local.get $lenLocal)` at the
-	// return to satisfy the new multi-value return shape.
 	g.linef("local.get %s", lenLocal)
 	if tailBytes != 0 {
 		g.linef("i32.const %d", tailBytes)

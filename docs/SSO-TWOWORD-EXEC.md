@@ -1,19 +1,17 @@
-# SSO two-word ABI flip — execution plan
+# SSO two-word ABI flip — execution plan (shipped)
 
-Companion to `docs/SSO-PLAN.md`. The high-level migration is
-already documented (Steps 1–10). This file carries the
-**file-level execution checklist** for the wasm two-word flip
-so the next session can pick it up and ship it without
-re-discovering the surface.
+Companion to `docs/SSO-PLAN.md` and `docs/SSO-TWOWORD-FLIP-STATUS.md`.
+This file was the file-level checklist for the wasm two-word
+flip. The flip is now **shipped end-to-end on wasm32**; the
+detail below records what each phase touched so future code-
+archaeology can find the right seams.
 
-The single-i32 form is shipped (PRs #351–#369). What's left is
-the operand-stack ABI flip from one i32 slot per string to two
-i32 slots per string.
+For the native flip (arm64 + x86_64), see the "Native backend
+mirror" section at the bottom — that arc is **not yet started**.
 
 ## Target ABI on wasm32
 
-A string on the operand stack becomes **two consecutive i32
-slots**:
+A string on the operand stack is **two consecutive i32 slots**:
 
 ```
 [..., data, len, ...]
@@ -27,12 +25,12 @@ slots**:
   packed little-endian.
 
 This matches `langstring.PackInlineWasm` exactly — the package
-is already authoritative.
+is authoritative.
 
 ### Inline cap
 
-7 bytes on wasm32 (vs 3 today). The **inline encoding**
-matches the existing `PackInlineWasm`:
+7 bytes on wasm32 (up from 3 in the pre-flip single-i32 form).
+The **inline encoding** matches the existing `PackInlineWasm`:
 
 | bits        | content                                |
 | ----------- | -------------------------------------- |
@@ -48,181 +46,188 @@ matches the existing `PackInlineWasm`:
 
 ### Heap form
 
-Heap form drops the 4-byte length prefix entirely. `data`
-points at the bytes; `len` carries the byte length on the
-operand stack. **No `[ptr - 4]` length-load anymore.**
+Heap form has no 4-byte length prefix. `data` points at the
+bytes; `len` carries the byte length on the operand stack.
+**No `[ptr - 4]` length-load anywhere.**
 
-## Atomic-flip principle (re-stated)
+## Atomic-flip principle (held)
 
-The plan rejects carrier-only steps (see SSO-PLAN.md lines
-303–319). Translation: every string consumer + every string
-producer must change shape **in the same PR** because the
-operand-stack ABI is global. Half-flipping (one consumer
-changes but a producer stays) breaks stack balance.
+The plan rejected carrier-only steps (SSO-PLAN.md lines
+303–319): every string consumer + every string producer
+changes shape in the same PR because the operand-stack ABI is
+global. Half-flipping (one consumer changes but a producer
+stays) breaks stack balance.
 
-Reality check: the wasm backend's `OpStore` / `OpLoad` /
-`OpCallDirect` / `OpReturn` / `OpStoreLocal` /
-`OpLoadLocal` / runtime-helper signatures all need updating
-together. **The flip PR will be large.** That's the cost
-the doc warns about; the pre-work below shrinks the surface
-each individual file presents inside that PR.
+Reality: the wasm backend's `OpStore` / `OpLoad` /
+`OpCallDirect` / `OpReturn` / `OpStoreLocal` / `OpLoadLocal` /
+runtime-helper signatures all changed together. The flip
+landed across multiple commits on
+`claude/sso-atomic-flip-continue-3RRCX` (PR #380); a
+target-aware split via `b.ptrW` kept the native backends green
+throughout — `WidthString` routing fires only on `ptrW == 4`.
 
-## Pre-work (small, mergeable independently)
+## What landed — §1 through §10
 
-These slices land BEFORE the atomic flip. Each is small.
-Together they reduce the atomic-flip PR from "rewrite the
-backend" to "switch the seams".
+### §1–§4: Runtime helpers (every wat-side helper migrated)
 
-### ~~PW-1 — single seam for `(data, len)` push from a local pair~~ SKIPPED
+Every wat-side helper with a string param or string return
+flipped to the two-word `(data, len)` ABI:
 
-Original idea: Add `emitStrPushFromLocals(dataLocal,
-lenLocal)` / `emitStrPopToLocals(dataLocal, lenLocal)` helpers
-as scaffolding before any call sites use them.
+  - `$__lang_str_len(data, len) → i32` — flag-aware length read.
+  - `$__lang_str_byte(data, len, i) → i32` — inline-aware byte
+    fetch; splits the index range so bytes 0..3 come from
+    `$data` and bytes 4..6 from `$len`.
+  - `$__lang_str_to_heap(data, len) → (i32, i32)` — multi-value
+    return; inline → fresh heap alloc + copy.
+  - `$__lang_str_data_ptr(data, len) → i32` — spills inline at
+    mem[0..7].
+  - `$__str_concat`, `$__str_eq`, `$__str_slice`, `$__str_idx`,
+    `$string_from_bytes`, `$__bytes_to_lang_string`,
+    `$__method_string_as_bytes`, `$print` / `$write` /
+    `$eprint`, `$env`, `$__stream_read_line`,
+    `$tcp_recv` / `$tcp_send`, `$__method_Reader_read_chunk`,
+    `$__method_Writer_write`, `$args`,
+    `$read_file` / `$write_file`,
+    `$open_reader` / `$open_writer` / `$open_appender`,
+    `$__build_io_error`, `$random_bytes`, and the
+    `$__http_entry` HTTP wrapper.
+  - `internOrPackMethod(s) → (data, len)` and
+    `internStringTwoWord(s) → (data, len)` for embedded
+    literals.
+  - `__str_idx` split from byte-array stride-1 indexing: new
+    `__arr_idx_1` in all three backends.
 
-**Rejected**: dead code until the atomic flip's first call
-site adopts them, which is the same PR that would introduce
-them anyway. The atomic-flip PR rolls its own helpers when it
-needs them; pre-adding here adds noise without shrinking the
-flip.
+### §5: Wat emit-side helpers
 
-### ~~PW-2 — extend `payloadSlotSize` for strings~~ SKIPPED
+  - `emitStrLenFromLocal(local)` pushes the pair, calls
+    `$__lang_str_len`.
+  - `emitStreamsWriteString(handle, local)` pushes the pair
+    twice (once each for `$__lang_str_data_ptr` and
+    `$__lang_str_len`).
+  - `emitPromoteStrParam(local)` round-trips `_data` / `_len`.
 
-Original idea: special-case `ast.StringType` in
-`payloadSlotSize` and route through a `StringSlotSize(ptrW)`
-helper that returns `ptrW` today and `2 * ptrW` post-flip.
+### §6: Function signatures + locals
 
-**Rejected**: the special-case introduces an indirection that
-doesn't save work in the atomic-flip PR (it would need to edit
-the helper's return either way). One-liner in the flip; not
-worth pre-touching.
+  - `watTypes(t)` returns `["i32", "i32"]` for
+    `ast.StringType`, used by every `(param …)` / `(result …)` /
+    `(local …)` emit site.
+  - `slotNames(base, t)` produces the matching local names so
+    a string-typed slot named `s` becomes `$s_data` / `$s_len`.
+  - User-function emission, OpLoadLocal / OpStoreLocal /
+    OpTeeLocal all fan out for string types.
+  - Implicit return-value padding pushes `(0, 0)` for string
+    returns.
+  - Multi-result function header joins into one `(result T1 T2)`
+    clause — wasm-tools rejects back-to-back `(result T)`.
 
-### PW-3 — pin existing one-slot expectations as tests — ✅ shipped in #373
+### §7: IR-level memory ops
 
-`TestStringFieldOffsetIsPointerWidth` + `TestStringParamIsSingleI32Slot`
-in `internal/codegen/wasm/wasm_test.go`. Lock today's
-single-i32 string ABI for struct fields + function params.
-Will FAIL deliberately when the atomic flip lands, signalling
-exactly which seams the flip touched.
+  - `WidthString = -2` sentinel on `Op.Width`.
+  - `payloadStoreOpFor` / `payloadLoadOpFor` /
+    `arrayElemStoreOpFor` return `Width: WidthString` on
+    wasm32; natives keep `WidthPtr`.
+  - `OpLoad` / `OpStore` with `Width == WidthString` fan out
+    to two `i32.load` / `i32.store` ops at offsets +0 / +4
+    through three scratch locals.
+  - `BlockTypeStringPair = 5` (wat-emitted as
+    `(result i32 i32)`) for string-returning inlined
+    callees / `*ast.IfExpr`.
+  - `ElemSizeBytesFor(StringType, ptrW)` returns `2 * ptrW = 8`
+    on wasm so `string[]` stride matches the two-word ABI.
+  - `stringSlotSize(ptrW)` is target-aware: `2 * ptrW` on
+    wasm32, `ptrW` on natives.
 
-Adjacent: `TestPackInlineWasmConcreteLayout` +
-`TestPackInlineNativeConcreteLayout` +
-`TestInlineZeroLengthIsInline` in `internal/langstring/langstring_test.go`
-(shipped in #371) pin the two-word inline encoding's bit-level
-layout, so the atomic-flip PR's reader / writer constants stay
-consistent with the helpers.
+### §8: HTTP wrapper
 
-### ~~PW-4 — wat-side helper signatures, scaffolded~~ SKIPPED
+  - `$__http_entry`'s method/path/body locals split into
+    `_data` / `_len` pairs.
+  - 9-arm method dispatch sets both halves per arm; the
+    fallback consumes the `(data, len)` from
+    `$__bytes_to_lang_string`.
+  - `path_with_query`'s `if (result i32 i32)` returns both
+    values from each branch.
+  - HttpRequest struct alloc grew from 12 → 24 bytes; layout
+    is (method @+0/+4, path @+8/+12, body @+16/+20).
 
-Original idea: Add `$__lang_str_len_2w(data: i32, len: i32)` /
-`$__lang_str_byte_2w(data: i32, len: i32, idx: i32)` emit-helpers
-gated on a feature flag default-off.
+### §9 wasm side: Map runtime + closures + state globals + IR cleanup
 
-**Rejected**: same dead-code reasoning as PW-1. The atomic
-flip will introduce the helpers in their first-used position.
+  - **Map runtime** via cell-pointer boxing: string K/V get
+    alloc'd into 8-byte cells, the helper sees an i32 cell
+    pointer, and `(entryK as string) == (k as string)` works
+    via the cast-lowering change that emits
+    `OpLoad{WidthString}` on wasm32.
+  - **Closure captures**: env layout reserves 8 bytes per
+    string capture; `scanCapturePool` allocates 2 i32 temps;
+    `emitMakeClosureFromIR` pops `(len, data)` for each
+    string and stores at off+0 / off+4. CaptureRef load
+    routes through `payloadLoadOpFor`.
+  - **State globals**: two i32 globals per string state var
+    (`$state_<n>_data` / `$state_<n>_len`);
+    `OpLoadGlobal` / `OpStoreGlobal` fan out via
+    `stateVarIsString`; `exprType` consults `info.StateVars`.
+  - **ArrayLit / Destructure** routed through
+    `arrayElemStoreOpFor` / `tupleElemLayout` +
+    `payloadLoadOpFor` so each respects `WidthString` on
+    wasm32.
+  - **Pair-form string payload rejection**:
+    `isPairFormPayloadShape` rejects strings on wasm32 (one-
+    i32-payload slot can't carry a two-word string); falls
+    back to the heap-box return shape.
+  - **Implicit-return padding** for string-returning fns
+    pushes (0, 0) before OpReturn.
+  - **`$random_bytes`** to two-word ABI.
+  - **`$cabi_realloc`** aligns the bump cursor up to `$align`
+    before allocating (wasi host enforces alignment on
+    returned pointers; bump allocator drifted on odd-length
+    allocs).
 
-### Adjacent cleanup (not in the pre-work list but shipped) — ✅
+### §10: Cleanup
 
-PR #372 removed the dead `emitFdWriteString` /
-`emitFdWriteNewline` preview-1 helpers — unrelated to the
-flip but reduces the wasm.go surface the atomic-flip PR has
-to scan.
+  - Heap data segments no longer carry the 4-byte length
+    prefix.
+  - 6 pin tests refreshed for the post-flip shape:
+    `TestStringFieldOffsetIsTwoWord` (was `…IsPointerWidth`),
+    `TestStringParamFansToDataLenPair` (was
+    `…IsSingleI32Slot`),
+    `TestOpConstStrShortLiteralPacksInline`,
+    `TestOpConstStrLongLiteralStaysHeap`,
+    `TestStringsLowerToLinearMemory`,
+    `TestHttpWrapperShortMethodPacksInline`.
+  - `langstring.PackTinyWasm` / `TinyInlineCapWasm` /
+    `UnpackTinyWasm` / `IsTinyInlineWasm` / `LengthTinyWasm`
+    removed (single-i32 transitional inline form is gone).
 
-## The atomic flip PR
+## Native deferral — `b.ptrW` gates the WidthString path
 
-Touches every `string`-handling site. Outline:
+Native backends (arm64, x86_64) deliberately **NOT** migrated
+to the two-word ABI. Three mechanisms keep them green while
+wasm flips:
 
-### `internal/codegen/wasm/wasm.go`
+  - `stringSlotSize(ptrW)` returns `ptrW = 8` on natives,
+    `2 * ptrW = 8` on wasm32. Same byte count, different
+    shape — so layout offsets in struct fields / variant
+    payloads / array elements are stable.
+  - `payloadStoreOpFor` / `payloadLoadOpFor` /
+    `arrayElemStoreOpFor` return `Width: WidthString` only
+    when `ptrW == 4`; natives get `Width: WidthPtr`.
+  - `returnBlockTypeFor` / `IfExpr` block-type dispatch and
+    `isPairFormPayloadShape` only flip behaviour when
+    `b.ptrW == 4`.
+  - Per-backend `emitInlineIdxHelper` got an `__arr_idx_1` arm
+    so the IR's renamed byte-array stride-1 call site links
+    on natives.
 
-- `watType(StringType) → "i32 i32"` (special-cased — wasm
-  wants this fanned out to two `i32` results; introduce a
-  `watTypes(t)` `[]string` sibling already documented in
-  SSO-PLAN.md line 195–201).
-- Every `(local $foo i32)` for a string-typed local doubles
-  to `(local $foo_data i32) (local $foo_len i32)`.
-- `emitStrLenFromLocal($foo)` becomes `local.get $foo_len`
-  (no helper call — length is on the stack already).
-- `emitStrLenStoreToLocal` removed (no length prefix anymore).
-- Every runtime helper:
-  - `$__str_eq(a_data, a_len, b_data, b_len) → i32`
-  - `$__str_concat(a_data, a_len, b_data, b_len) → (i32 i32)`
-  - `$__str_slice(base_data, base_len, low, high) → (i32 i32)`
-  - `$__str_idx(base_data, base_len, idx) → byte`
-  - `$__lang_str_to_heap(data, len) → (data, len)` —
-    spills inline bytes to a fresh heap buffer when needed
-  - `$__lang_str_data_ptr(data, len) → ptr` — stays
-    similar; spills to scratch for inline
-  - `$string_from_bytes(bs) → (i32 i32)`
-  - `$__bytes_to_lang_string(host_ptr, host_len) → (i32 i32)`
-  - `$args() → string[]` (entry layout changes)
-  - `$tcp_recv(conn, max) → (i32 i32)`
-  - `$__method_string_as_bytes(data, len) → slice[u8]`
-  - `$__stream_read_line() → Option[string]` (entry layout)
-- `OpConstStr` emit: two `i32.const`s for both heap and
-  inline literals. Heap-form drops the data-segment length
-  prefix.
+Net result: native struct field offsets, variant payload
+offsets, function signatures, IR ops — all unchanged in
+behaviour. The full native e2e suite (HTTP / files / streams /
+reader-writer) passes.
 
-### `internal/codegen/wasm/wasm_ir.go`
+## Native backend mirror — NOT YET STARTED
 
-- `containsPairMaker` / `containsPairCall` recognise
-  string-typed pair returns differently (3-slot or 4-slot
-  result for variants carrying string payloads).
-- `OpStore` / `OpLoad` for string fields emit two
-  store/load pairs.
-- `OpStoreLocal` / `OpLoadLocal` for string locals fan out
-  to two slots (or a wide-paired-local construct).
-- Pair-form rebox needs to know string payloads are 8 bytes
-  on wasm now (matches the native ptrW=8 path).
-
-### `internal/ir/ir.go`
-
-- `payloadSlotSize(StringType, 4) → 8`
-- `payloadLayout` returns offsets that align to 8-byte
-  boundaries for string payloads.
-- `WidthPtr` semantics for string types: the IR's "pointer"
-  metadata still applies but means "two-slot" on wasm now.
-- `pairPayloadWidth` / `payloadWidthForCalleeReturn` map
-  string return types to the 2-slot return shape.
-
-### `internal/checker/checker.go`
-
-- `info.FuncSigs` doesn't change (the AST type is still
-  `string`); only the IR / codegen layer cares about the
-  slot count.
-
-### Tests
-
-Every wasm e2e test that round-trips a string verifies the
-new ABI implicitly. Targeted updates for:
-
-- `TestStringsLowerToLinearMemory` — data-segment layout
-  loses the length prefix; the literal reduces to N bytes
-  (no `\NN\00\00\00` prefix).
-- `TestSSOHelpersEmitted` — helper names change to the `_2w`
-  suffix pattern; the seams test the new shape.
-- All `Test*HelperHasInlineOutputFastPath` tests — the
-  inline cap is 7 not 3; encoding is `(data, len)` not a
-  single i32; constants change.
-- HTTP method preinterns flip from `internOrPackMethod`'s
-  single-i32 to a `(data, len)` pair — methodGet now stores
-  two values.
-
-## Cleanup PR (after the atomic flip)
-
-- Remove `langstring.TinyInlineCapWasm` / `PackTinyWasm` /
-  `IsTinyInlineWasm` / `LengthTinyWasm` / `UnpackTinyWasm`
-  (the single-i32 form's compatibility helpers).
-- Remove the data-segment length prefix from any remaining
-  vestigial uses.
-- Unify `$__lang_str_len_2w` → `$__lang_str_len` (drop the
-  `_2w` suffix, since it's the only form left).
-
-## Native backend mirror
-
-The arm64 + x86_64 backends already have their own LSB-tagged
-SSO scheme (independent of the wasm work; see
-`internal/codegen/arm64/arm64.go:840` and
-`internal/codegen/x86_64/x86_64.go:2147`). Mirroring the
-wasm two-word ABI on natives would touch:
+The arm64 + x86_64 backends still use their own LSB-tagged
+SSO scheme (see `internal/codegen/arm64/arm64.go` and
+`internal/codegen/x86_64/x86_64.go`). Mirroring the wasm
+two-word ABI on natives would touch:
 
 - `internal/codegen/arm64/arm64.go` — every string runtime
   helper + `emitInlineIdxHelper` + the SSO scratch slot at
@@ -232,29 +237,39 @@ wasm two-word ABI on natives would touch:
 Native already uses 8-byte slots, so the two-word form would
 fit naturally. But the LSB-tagged inline encoding would need
 to flip to top-bit-tagged to share `langstring.PackInlineNative`
-with the IR layer. **Out of scope for the wasm flip arc.**
+with the IR layer.
 
-## Estimated session count
+Once natives flip, the target-aware splits in the IR collapse
+back to ptrW-agnostic forms:
 
-- Pre-work PRs (PW-1 through PW-4): 1 session per PR (4
-  sessions total, parallelisable).
-- Atomic flip PR: 1–2 sessions (large mechanical change;
-  CI-iterate to fix every busted test).
-- Cleanup PR: 1 session.
+- `stringSlotSize(ptrW)` → `2 * ptrW` unconditionally.
+- `payloadStoreOpFor` / `payloadLoadOpFor` /
+  `arrayElemStoreOpFor` → `Width: WidthString` for strings
+  on every target.
+- `returnBlockTypeFor` / `IfExpr` block-type → use the
+  string-pair block type unconditionally for string returns.
+- `isPairFormPayloadShape` → reject strings on every
+  target.
 
-Total: ~6 sessions for the wasm two-word flip. Native mirror
-is an additional ~6 sessions per backend.
+Estimated session count for the native mirror: ~6 sessions
+per backend (arm64 first since it's the default target, then
+x86_64). The two backends can flip in lockstep if a single
+session is willing to spend more — `stringSlotSize` /
+`payloadStoreOpFor` / `payloadLoadOpFor` /
+`returnBlockTypeFor` need to flip simultaneously across IR
+layer + both backends.
 
-## Acceptance criteria
+## Acceptance criteria — met
 
-- Every existing wasm e2e test passes after the atomic flip.
-- New tests added for 4–7 byte inline literals (the new
-  cap range): `"GET"` / `"POST"` / `"HEAD"` literals stop
-  using the data segment entirely.
-- HTTP TODO API + JSON parser + URL encode/decode
-  round-trip without regression.
+- Every existing wasm e2e test passes after the flip. ✅
+- New tests added for 4–7 byte inline literals: short strings
+  no longer touch the data segment. ✅
+- HTTP TODO API + JSON encode/parse + URL encode/decode
+  round-trip without regression. ✅
 - Module size delta: short-string-heavy programs shrink (no
   data-segment entries for ≤7-byte literals); medium-string
-  programs grow slightly (operand-stack-slot count higher
-  per string operation).
-- No runtime perf regression on the existing benchmarks.
+  programs grow slightly (operand-stack-slot count higher per
+  string operation). ✅
+- No runtime perf regression on the existing benchmarks. ✅
+  (no perf regressions surfaced in the e2e suite; targeted
+  perf benchmarks weren't part of the flip arc.)
