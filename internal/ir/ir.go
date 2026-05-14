@@ -2903,6 +2903,13 @@ func (b *builder) expr(e ast.Expr) error {
 			if ast.IsPointerType(elemType) {
 				loadWidth = WidthPtr
 			}
+			// String elements (two-word ABI): the wasm OpLoad
+			// handler fans out a WidthString load to two i32.load
+			// calls (data @ +0, len @ +4). On natives this stays
+			// as a single ptr-width load via the LSB-tagged form.
+			if _, isString := elemType.(ast.StringType); isString && b.ptrW == 4 {
+				loadWidth = WidthString
+			}
 		}
 		if n.IsString {
 			b.emit(Op{Kind: OpCallDirect, Str: "__str_idx", I32: 2})
@@ -2966,15 +2973,18 @@ func (b *builder) expr(e ast.Expr) error {
 				}
 			} else {
 				// Fall back to source length: re-evaluate
-				// Source then read its length prefix.
+				// Source then route through OpStrLen for the
+				// SSO-aware length read (inline / heap branch).
+				// The two-word ABI's length lives on the operand
+				// stack as the second i32 of `(data, len)` — the
+				// legacy `[ptr - 4]` array-shape prefix-load no
+				// longer applies.
 				if err := b.expr(n.Source); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpConstI32, I32: 4})
-				b.emit(Op{Kind: OpSub})
-				b.emit(Op{Kind: OpLoad})
+				b.emit(Op{Kind: OpStrLen})
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3})
+			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 4})
 			break
 		}
 		// Lower `arr[low:high]` to:
@@ -4424,6 +4434,12 @@ func (b *builder) assign(n *ast.Assign) error {
 				if ft.NormalWidth() == 64 {
 					storeWidth = 64
 				}
+			}
+			// String elements: fan store out to two i32.store
+			// calls on wasm via WidthString. Natives stay on
+			// WidthPtr (single ptr-slot store).
+			if _, isString := t.ElemType.(ast.StringType); isString && b.ptrW == 4 {
+				storeWidth = WidthString
 			}
 		}
 		var helper string
