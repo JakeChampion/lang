@@ -432,6 +432,77 @@ func (g *generator) emitStrEmpty() {
 	g.line("i32.const 0x80000000")
 }
 
+// emitInlineOutputBuild emits the SSO inline-output
+// construction loop shared across every string-producing
+// runtime helper that has a `≤ 3 bytes ⇒ inline-encoded i32`
+// fast path. After this returns, `$outLocal` holds:
+//
+//	bit  31     inline flag (1)
+//	bits 24..26 length (read from `$lenLocal`)
+//	bits 0..23  bytes 0..2 packed little-endian
+//
+// Matches `langstring.PackTinyWasm`'s layout exactly. The
+// caller is responsible for:
+//
+//   - declaring `$outLocal` (i32 — receives the packed value)
+//     and `$idxLocal` (i32 — loop counter, clobbered)
+//   - already having `$lenLocal` in a position where the helper
+//     can read it via `local.get %s` (the helper does NOT
+//     mutate `$lenLocal`)
+//   - guarding the call with `$lenLocal ≤ 3` — the helper
+//     assumes its caller has already bounds-checked
+//
+// `byteAt` is invoked once per loop iteration; it must emit a
+// wasm sequence that leaves the byte at index `$idxLocal` on
+// top of the operand stack (consuming nothing from it). Typical
+// implementations:
+//
+//   - direct heap load: `local.get $base; local.get $idxLocal;
+//     i32.add; i32.load8_u`
+//   - inline-aware via SSO seam: `local.get $base; local.get
+//     $idxLocal; call $__lang_str_byte` (when the source string
+//     itself may be inline-form)
+//
+// Uses fixed block labels (`$end_inline_pack` / `$inline_pack`)
+// — the caller must not have an enclosing block with the same
+// label. None of today's producers do.
+func (g *generator) emitInlineOutputBuild(outLocal, idxLocal, lenLocal string, byteAt func()) {
+	g.line(`i32.const 0x80000000`)
+	g.linef(`local.get %s`, lenLocal)
+	g.line(`i32.const 24`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.linef(`local.set %s`, outLocal)
+	g.line(`i32.const 0`)
+	g.linef(`local.set %s`, idxLocal)
+	g.line(`block $end_inline_pack`)
+	g.indent++
+	g.line(`loop $inline_pack`)
+	g.indent++
+	g.linef(`local.get %s`, idxLocal)
+	g.linef(`local.get %s`, lenLocal)
+	g.line(`i32.eq`)
+	g.line(`br_if $end_inline_pack`)
+	// out |= byteAt(idx) << (idx * 8)
+	g.linef(`local.get %s`, outLocal)
+	byteAt()
+	g.linef(`local.get %s`, idxLocal)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.linef(`local.set %s`, outLocal)
+	g.linef(`local.get %s`, idxLocal)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.linef(`local.set %s`, idxLocal)
+	g.line(`br $inline_pack`)
+	g.indent--
+	g.line(`end`)
+	g.indent--
+	g.line(`end`)
+}
+
 // emitArrayLenFromLocal emits a sequence that loads the i32 length
 // of the length-prefixed array whose data pointer lives in `local`.
 // Today this is a 4-byte little-endian load from `[local - 4]`.
@@ -2683,60 +2754,28 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.le_u`)
 		g.line(`if`)
 		g.indent++
-		g.line(`i32.const 0x80000000`)
-		g.line(`local.get $total`)
-		g.line(`i32.const 24`)
-		g.line(`i32.shl`)
-		g.line(`i32.or`)
-		g.line(`local.set $inline`)
-		g.line(`i32.const 0`)
-		g.line(`local.set $i`)
-		g.line(`block $iend`)
-		g.indent++
-		g.line(`loop $iloop`)
-		g.indent++
-		g.line(`local.get $i`)
-		g.line(`local.get $total`)
-		g.line(`i32.eq`)
-		g.line(`br_if $iend`)
-		// byte = (i < la) ? $__lang_str_byte($a, i) : $__lang_str_byte($b, i - la)
-		g.line(`local.get $i`)
-		g.line(`local.get $la`)
-		g.line(`i32.lt_u`)
-		g.line(`if (result i32)`)
-		g.indent++
-		g.line(`local.get $a`)
-		g.line(`local.get $i`)
-		g.line(`call $__lang_str_byte`)
-		g.indent--
-		g.line(`else`)
-		g.indent++
-		g.line(`local.get $b`)
-		g.line(`local.get $i`)
-		g.line(`local.get $la`)
-		g.line(`i32.sub`)
-		g.line(`call $__lang_str_byte`)
-		g.indent--
-		g.line(`end`)
-		g.line(`local.set $byte`)
-		// $inline |= byte << (i * 8)
-		g.line(`local.get $inline`)
-		g.line(`local.get $byte`)
-		g.line(`local.get $i`)
-		g.line(`i32.const 8`)
-		g.line(`i32.mul`)
-		g.line(`i32.shl`)
-		g.line(`i32.or`)
-		g.line(`local.set $inline`)
-		g.line(`local.get $i`)
-		g.line(`i32.const 1`)
-		g.line(`i32.add`)
-		g.line(`local.set $i`)
-		g.line(`br $iloop`)
-		g.indent--
-		g.line(`end`)
-		g.indent--
-		g.line(`end`)
+		g.emitInlineOutputBuild("$inline", "$i", "$total", func() {
+			// byte = (i < la) ? $__lang_str_byte($a, i)
+			//                 : $__lang_str_byte($b, i - la)
+			g.line(`local.get $i`)
+			g.line(`local.get $la`)
+			g.line(`i32.lt_u`)
+			g.line(`if (result i32)`)
+			g.indent++
+			g.line(`local.get $a`)
+			g.line(`local.get $i`)
+			g.line(`call $__lang_str_byte`)
+			g.indent--
+			g.line(`else`)
+			g.indent++
+			g.line(`local.get $b`)
+			g.line(`local.get $i`)
+			g.line(`local.get $la`)
+			g.line(`i32.sub`)
+			g.line(`call $__lang_str_byte`)
+			g.indent--
+			g.line(`end`)
+		})
 		g.line(`local.get $inline`)
 		g.line(`return`)
 		g.indent--
@@ -3119,47 +3158,14 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.le_u`)
 		g.line(`if`)
 		g.indent++
-		g.line(`i32.const 0x80000000`)
-		g.line(`local.get $new_len`)
-		g.line(`i32.const 24`)
-		g.line(`i32.shl`)
-		g.line(`i32.or`)
-		g.line(`local.set $inline`)
-		g.line(`i32.const 0`)
-		g.line(`local.set $i`)
-		g.line(`block $iend`)
-		g.indent++
-		g.line(`loop $iloop`)
-		g.indent++
-		g.line(`local.get $i`)
-		g.line(`local.get $new_len`)
-		g.line(`i32.eq`)
-		g.line(`br_if $iend`)
-		// byte = $__lang_str_byte($base, $low + $i)
-		g.line(`local.get $base`)
-		g.line(`local.get $low`)
-		g.line(`local.get $i`)
-		g.line(`i32.add`)
-		g.line(`call $__lang_str_byte`)
-		g.line(`local.set $byte`)
-		// inline |= byte << (i * 8)
-		g.line(`local.get $inline`)
-		g.line(`local.get $byte`)
-		g.line(`local.get $i`)
-		g.line(`i32.const 8`)
-		g.line(`i32.mul`)
-		g.line(`i32.shl`)
-		g.line(`i32.or`)
-		g.line(`local.set $inline`)
-		g.line(`local.get $i`)
-		g.line(`i32.const 1`)
-		g.line(`i32.add`)
-		g.line(`local.set $i`)
-		g.line(`br $iloop`)
-		g.indent--
-		g.line(`end`)
-		g.indent--
-		g.line(`end`)
+		g.emitInlineOutputBuild("$inline", "$i", "$new_len", func() {
+			// byte = $__lang_str_byte($base, $low + $i)
+			g.line(`local.get $base`)
+			g.line(`local.get $low`)
+			g.line(`local.get $i`)
+			g.line(`i32.add`)
+			g.line(`call $__lang_str_byte`)
+		})
 		g.line(`local.get $inline`)
 		g.line(`return`)
 		g.indent--
@@ -3232,46 +3238,13 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.le_u`)
 		g.line(`if`)
 		g.indent++
-		g.line(`i32.const 0x80000000`)
-		g.line(`local.get $bLen`)
-		g.line(`i32.const 24`)
-		g.line(`i32.shl`)
-		g.line(`i32.or`)
-		g.line(`local.set $inline`)
-		g.line(`i32.const 0`)
-		g.line(`local.set $i`)
-		g.line(`block $iend`)
-		g.indent++
-		g.line(`loop $iloop`)
-		g.indent++
-		g.line(`local.get $i`)
-		g.line(`local.get $bLen`)
-		g.line(`i32.eq`)
-		g.line(`br_if $iend`)
-		// byte = mem[bs + i]
-		g.line(`local.get $bs`)
-		g.line(`local.get $i`)
-		g.line(`i32.add`)
-		g.line(`i32.load8_u`)
-		g.line(`local.set $byte`)
-		// inline |= byte << (i * 8)
-		g.line(`local.get $inline`)
-		g.line(`local.get $byte`)
-		g.line(`local.get $i`)
-		g.line(`i32.const 8`)
-		g.line(`i32.mul`)
-		g.line(`i32.shl`)
-		g.line(`i32.or`)
-		g.line(`local.set $inline`)
-		g.line(`local.get $i`)
-		g.line(`i32.const 1`)
-		g.line(`i32.add`)
-		g.line(`local.set $i`)
-		g.line(`br $iloop`)
-		g.indent--
-		g.line(`end`)
-		g.indent--
-		g.line(`end`)
+		g.emitInlineOutputBuild("$inline", "$i", "$bLen", func() {
+			// byte = mem[bs + i]
+			g.line(`local.get $bs`)
+			g.line(`local.get $i`)
+			g.line(`i32.add`)
+			g.line(`i32.load8_u`)
+		})
 		g.line(`local.get $inline`)
 		g.line(`return`)
 		g.indent--
@@ -3940,43 +3913,13 @@ func (g *generator) emitArgsHelper() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.line(`i32.const 0x80000000`)
-	g.line(`local.get $strlen`)
-	g.line(`i32.const 24`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $sbase`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $j`)
-	g.line(`block $end_inline_pack`)
-	g.indent++
-	g.line(`loop $inline_pack`)
-	g.indent++
-	g.line(`local.get $j`)
-	g.line(`local.get $strlen`)
-	g.line(`i32.eq`)
-	g.line(`br_if $end_inline_pack`)
-	// $sbase |= mem[$cstr + $j] << ($j * 8)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $cstr`)
-	g.line(`local.get $j`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`local.get $j`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $j`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $j`)
-	g.line(`br $inline_pack`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
+	g.emitInlineOutputBuild("$sbase", "$j", "$strlen", func() {
+		// byte = mem[$cstr + $j]
+		g.line(`local.get $cstr`)
+		g.line(`local.get $j`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+	})
 	// Store inline value at result[i] and advance the outer
 	// loop. Mirrors the heap-path tail at the end of the body.
 	g.line(`local.get $result`)
@@ -4235,43 +4178,13 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.line(`i32.const 0x80000000`)
-	g.line(`local.get $cur_offset`)
-	g.line(`i32.const 24`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $sptr`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $j`)
-	g.line(`block $end_pack`)
-	g.indent++
-	g.line(`loop $pack_loop`)
-	g.indent++
-	g.line(`local.get $j`)
-	g.line(`local.get $cur_offset`)
-	g.line(`i32.eq`)
-	g.line(`br_if $end_pack`)
-	// $sptr |= mem[$buf + $j] << ($j * 8)
-	g.line(`local.get $sptr`)
-	g.line(`local.get $buf`)
-	g.line(`local.get $j`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`local.get $j`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $sptr`)
-	g.line(`local.get $j`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $j`)
-	g.line(`br $pack_loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
+	g.emitInlineOutputBuild("$sptr", "$j", "$cur_offset", func() {
+		// byte = mem[$buf + $j]
+		g.line(`local.get $buf`)
+		g.line(`local.get $j`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+	})
 	g.indent--
 	g.line(`else`)
 	g.indent++
@@ -5183,42 +5096,13 @@ func (g *generator) emitTcpRecvPreview2() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.line(`i32.const 0x80000000`)
-	g.line(`local.get $n`)
-	g.line(`i32.const 24`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $sptr`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $j`)
-	g.line(`block $end_pack`)
-	g.indent++
-	g.line(`loop $pack_loop`)
-	g.indent++
-	g.line(`local.get $j`)
-	g.line(`local.get $n`)
-	g.line(`i32.eq`)
-	g.line(`br_if $end_pack`)
-	g.line(`local.get $sptr`)
-	g.line(`local.get $list_ptr`)
-	g.line(`local.get $j`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`local.get $j`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $sptr`)
-	g.line(`local.get $j`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $j`)
-	g.line(`br $pack_loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
+	g.emitInlineOutputBuild("$sptr", "$j", "$n", func() {
+		// byte = mem[$list_ptr + $j]
+		g.line(`local.get $list_ptr`)
+		g.line(`local.get $j`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+	})
 	g.line(`local.get $sptr`)
 	g.line(`return`)
 	g.indent--
@@ -5867,44 +5751,13 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.line(`i32.const 0x80000000`)
-	g.line(`local.get $host_len`)
-	g.line(`i32.const 24`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $inline`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $i`)
-	g.line(`block $iend`)
-	g.indent++
-	g.line(`loop $iloop`)
-	g.indent++
-	g.line(`local.get $i`)
-	g.line(`local.get $host_len`)
-	g.line(`i32.eq`)
-	g.line(`br_if $iend`)
-	g.line(`local.get $host_ptr`)
-	g.line(`local.get $i`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`local.set $byte`)
-	g.line(`local.get $inline`)
-	g.line(`local.get $byte`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $inline`)
-	g.line(`local.get $i`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $i`)
-	g.line(`br $iloop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
+	g.emitInlineOutputBuild("$inline", "$i", "$host_len", func() {
+		// byte = mem[$host_ptr + $i]
+		g.line(`local.get $host_ptr`)
+		g.line(`local.get $i`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+	})
 	g.line(`local.get $inline`)
 	g.line(`return`)
 	g.indent--
@@ -6377,42 +6230,13 @@ func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.line(`i32.const 0x80000000`)
-	g.line(`local.get $n`)
-	g.line(`i32.const 24`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $sptr`)
-	g.line(`i32.const 0`)
-	g.line(`local.set $j`)
-	g.line(`block $end_pack`)
-	g.indent++
-	g.line(`loop $pack_loop`)
-	g.indent++
-	g.line(`local.get $j`)
-	g.line(`local.get $n`)
-	g.line(`i32.eq`)
-	g.line(`br_if $end_pack`)
-	g.line(`local.get $sptr`)
-	g.line(`local.get $list_ptr`)
-	g.line(`local.get $j`)
-	g.line(`i32.add`)
-	g.line(`i32.load8_u`)
-	g.line(`local.get $j`)
-	g.line(`i32.const 8`)
-	g.line(`i32.mul`)
-	g.line(`i32.shl`)
-	g.line(`i32.or`)
-	g.line(`local.set $sptr`)
-	g.line(`local.get $j`)
-	g.line(`i32.const 1`)
-	g.line(`i32.add`)
-	g.line(`local.set $j`)
-	g.line(`br $pack_loop`)
-	g.indent--
-	g.line(`end`)
-	g.indent--
-	g.line(`end`)
+	g.emitInlineOutputBuild("$sptr", "$j", "$n", func() {
+		// byte = mem[$list_ptr + $j]
+		g.line(`local.get $list_ptr`)
+		g.line(`local.get $j`)
+		g.line(`i32.add`)
+		g.line(`i32.load8_u`)
+	})
 	g.indent--
 	g.line(`else`)
 	g.indent++
