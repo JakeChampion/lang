@@ -902,7 +902,6 @@ var (
 // which still need wider slots even on wasm32) have an
 // obvious place to dispatch.
 func isPairFormPayloadShape(t ast.Type, ptrW int) bool {
-	_ = ptrW
 	switch x := t.(type) {
 	case ast.NumberType:
 		w := x.NormalWidth()
@@ -915,7 +914,17 @@ func isPairFormPayloadShape(t ast.Type, ptrW int) bool {
 		return false
 	case ast.BoolType:
 		return true
-	case ast.StringType, ast.ArrayType, ast.SliceType, ast.StructType, ast.TupleType:
+	case ast.StringType:
+		// Two-word ABI on wasm32: strings are `(data, len)` —
+		// two operand-stack slots, not one. The pair-form
+		// return shape carries only ONE i32 payload slot per
+		// variant, so a string payload can't fit. Reject so
+		// the heap-box fallback (single i32 return holding a
+		// `(tag, payload)` cell pointer) handles it. Natives
+		// still use the LSB-tagged single-pointer slot — keep
+		// them eligible.
+		return ptrW != 4
+	case ast.ArrayType, ast.SliceType, ast.StructType, ast.TupleType:
 		return true
 	}
 	return false
@@ -1413,8 +1422,19 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 			b.emit(Op{Kind: OpConstF32, F32: 0})
 			b.emit(Op{Kind: OpReturn})
 		default:
-			b.emit(Op{Kind: OpConstI32, I32: 0})
-			b.emit(Op{Kind: OpReturn})
+			// String-typed return on wasm32 fans to two i32
+			// slots `(data, len)`; emit zeros for both so the
+			// trailing OpReturn pops the right shape. Natives
+			// stay on the single-pointer-slot LSB-tagged ABI
+			// for now.
+			if _, isString := fn.ReturnType.(ast.StringType); isString && b.ptrW == 4 {
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+				b.emit(Op{Kind: OpReturn})
+			} else {
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+				b.emit(Op{Kind: OpReturn})
+			}
 		}
 	}
 	return out, nil
@@ -2124,8 +2144,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	case *ast.Destructure:
 		// Evaluate Init once into the synthesised temp slot,
-		// then per-name: load temp + i*4 + load (or fload for
-		// f32 elements) and store into the name's slot.
+		// then per-name: load temp + offs[i] + load (with the
+		// right width — `payloadLoadOpFor` covers i32 / f32 /
+		// i64 / f64 / pointer-width / two-word string) and
+		// store into the name's slot.
 		tempIdx, ok := b.locals[n.TempName]
 		if !ok {
 			return fmt.Errorf("ir: destructure temp %q has no slot (compiler bug)", n.TempName)
@@ -2135,8 +2157,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
 		// Recover the tuple element types from the synthetic
-		// temp so we know which load opcode (Load vs FLoad)
-		// applies to each name.
+		// temp so we can pick the right per-element load op +
+		// offset.
 		var tup ast.TupleType
 		for _, v := range b.info.Locals[b.fn] {
 			if v.Name == n.TempName {
@@ -2149,19 +2171,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if len(tup.Elems) != len(n.Names) {
 			return fmt.Errorf("ir: destructure arity mismatch (compiler bug)")
 		}
+		offs, _ := tupleElemLayout(tup.Elems, b.ptrW)
 		for i, name := range n.Names {
 			nameIdx, ok := b.locals[name]
 			if !ok {
 				return fmt.Errorf("ir: destructure name %q has no slot (compiler bug)", name)
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: tempIdx})
-			b.emit(Op{Kind: OpConstI32, I32: int32(i * 4)})
+			b.emit(Op{Kind: OpConstI32, I32: offs[i]})
 			b.emit(Op{Kind: OpAdd})
-			if isFloat(tup.Elems[i]) {
-				b.emit(Op{Kind: OpFLoad})
-			} else {
-				b.emit(Op{Kind: OpLoad})
-			}
+			b.emit(payloadLoadOpFor(tup.Elems[i], b.ptrW))
 			b.emit(Op{Kind: OpStoreLocal, I32: nameIdx})
 		}
 	case *ast.ExprStmt:
@@ -3119,34 +3138,12 @@ func (b *builder) expr(e ast.Expr) error {
 		if stride > 4 {
 			headerBytes = stride
 		}
-		// Pick (storeOp, storeWidth) from element type. WidthPtr
-		// (-1) drives pointer-width stores on arm64 (8-byte STR)
-		// while leaving wasm32 at 4 bytes; the wasm codegen's
-		// `intPrefix` / `floatPrefix` helpers honour it on
-		// OpStore / OpFStore.
-		storeOp := OpStore
-		storeWidth := 0
-		if n.ElemType != nil {
-			if nt, ok := n.ElemType.(ast.NumberType); ok {
-				switch nt.NormalWidth() {
-				case 8:
-					storeOp = OpStoreI8
-				case 16:
-					storeOp = OpStoreI16
-				case 64:
-					storeWidth = 64
-				}
-			}
-			if ft, ok := n.ElemType.(ast.FloatType); ok {
-				storeOp = OpFStore
-				if ft.NormalWidth() == 64 {
-					storeWidth = 64
-				}
-			}
-			if ast.IsPointerType(n.ElemType) {
-				storeWidth = WidthPtr
-			}
-		}
+		// Pick the element-store op via `arrayElemStoreOpFor`,
+		// which is the central place that knows about WidthString
+		// (two-word strings on wasm32), WidthPtr (pointer-width
+		// stores on arm64), the i8 / i16 / i64 / f32 / f64 lanes,
+		// and the default i32 fallback.
+		storeOpAndWidth := arrayElemStoreOpFor(n.ElemType, b.ptrW)
 		b.emit(Op{Kind: OpConstI32, I32: headerBytes + nElems*stride})
 		b.emit(Op{Kind: OpAlloc})
 		baseSlot := b.allocSlot()
@@ -3169,7 +3166,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(el); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: storeOp, Width: storeWidth})
+			b.emit(storeOpAndWidth)
 		}
 		// Push the *content* pointer (base + headerBytes) so the
 		// value matches what the rest of the language expects
@@ -3385,6 +3382,14 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 			if t, ok := b.scratchType[slot]; ok {
 				return t
 			}
+		}
+		// State-block vars: the checker records each one in
+		// info.StateVars with its declared type. Without this
+		// branch `len(state_string)` falls through to the
+		// array-shape `[ptr - 4]` load path because exprType
+		// returns nil.
+		if t, ok := b.info.StateVars[x.Name]; ok {
+			return t
 		}
 	case *ast.CaptureRef:
 		// Captured variable references carry their resolved

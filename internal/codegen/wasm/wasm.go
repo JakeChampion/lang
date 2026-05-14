@@ -1443,9 +1443,14 @@ func (g *generator) watFuncType(ft *ast.FuncType) string {
 	}
 	if !ast.Equal(ft.Result, ast.VoidType{}) {
 		ts, _ := watTypes(ft.Result)
-		for _, t := range ts {
-			b.WriteString(" (result ")
-			b.WriteString(t)
+		// Multi-value results need to share one `(result ...)`
+		// clause (wasm-tools rejects back-to-back declarations).
+		if len(ts) > 0 {
+			b.WriteString(" (result")
+			for _, t := range ts {
+				b.WriteByte(' ')
+				b.WriteString(t)
+			}
 			b.WriteByte(')')
 		}
 	}
@@ -1582,6 +1587,17 @@ func (g *generator) scanForStringEq(prog *ast.Program) {
 func (g *generator) emitStateGlobals() {
 	for _, sd := range g.stateDecls {
 		for _, v := range sd.Vars {
+			if _, isStr := v.Type.(ast.StringType); isStr {
+				// Two-word string ABI on wasm32: a string state
+				// var occupies two i32 globals `$state_<name>_data`
+				// + `$state_<name>_len`. Both start at 0; the
+				// synthesised `__state_init` runs the init
+				// expression and writes both halves before any
+				// user code runs.
+				g.linef(`(global $state_%s_data (mut i32) (i32.const 0))`, v.Name)
+				g.linef(`(global $state_%s_len (mut i32) (i32.const 0))`, v.Name)
+				continue
+			}
 			wasmTy := stateGlobalWasmType(v.Type)
 			if isStateInitLiteralExpr(v.Init) {
 				g.linef(`(global $state_%s (mut %s) (%s.const %s))`,
@@ -6029,7 +6045,7 @@ func (g *generator) emitHttpHandlerWrapper() {
 // Memory[92..99] is the static return-area slot — see the runtime
 // memory layout comment near `emitRuntimePreamble`.
 func (g *generator) emitRandomBytesHelper() {
-	g.line(`(func $random_bytes (param $n i32) (result i32)`)
+	g.line(`(func $random_bytes (param $n i32) (result i32 i32)`)
 	g.indent++
 	g.line(`(local $data i32) (local $host_ptr i32) (local $host_len i32)`)
 	// get-random-bytes(len: u64, retptr) — host writes (ptr, len) at retptr.
@@ -6044,20 +6060,12 @@ func (g *generator) emitRandomBytesHelper() {
 	g.line(`i32.const 96`)
 	g.line(`i32.load`)
 	g.line(`local.set $host_len`)
-	// Allocate string-shape buffer: 4-byte length prefix + bytes + NUL.
+	// Allocate the byte buffer. Two-word ABI: length lives on the
+	// operand stack as the second result word, so the data segment
+	// holds only the bytes — no leading 4-byte length prefix.
 	g.line(`local.get $host_len`)
-	g.line(`i32.const 5`)
-	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.line(`local.set $data`)
-	// Length prefix at data - 4.
-	g.line(`local.get $data`)
-	g.line(`i32.const 4`)
-	g.line(`i32.sub`)
-	g.line(`local.get $host_len`)
-	g.line(`i32.store`)
 	// memory.copy(dest=data, src=host_ptr, n=host_len). The host
 	// allocated host_ptr via cabi_realloc, so it lives in our
 	// linear memory and memory.copy can move it freely.
@@ -6065,13 +6073,9 @@ func (g *generator) emitRandomBytesHelper() {
 	g.line(`local.get $host_ptr`)
 	g.line(`local.get $host_len`)
 	g.line(`memory.copy`)
-	// Trailing NUL at data + host_len.
+	// Return (data, host_len).
 	g.line(`local.get $data`)
 	g.line(`local.get $host_len`)
-	g.line(`i32.add`)
-	g.line(`i32.const 0`)
-	g.line(`i32.store8`)
-	g.line(`local.get $data`)
 	g.indent--
 	g.line(`)`)
 }
@@ -6091,6 +6095,25 @@ func (g *generator) emitRandomBytesHelper() {
 func (g *generator) emitCabiRealloc() {
 	g.line(`(func $cabi_realloc (param $orig_ptr i32) (param $orig_size i32) (param $align i32) (param $new_size i32) (result i32)`)
 	g.indent++
+	// Align the bump cursor (mem[40]) up to $align before
+	// allocating. The host enforces alignment on the returned
+	// pointer and the bump allocator drifts whenever a previous
+	// alloc was a non-multiple of the requested alignment
+	// (e.g. heap-spilled 5-byte path strings under the two-word
+	// ABI). align is a power of two; (ptr + align - 1) & ~(align - 1)
+	// rounds up.
+	g.line(`i32.const 40`)
+	g.line(`i32.const 40`)
+	g.line(`i32.load`)
+	g.line(`local.get $align`)
+	g.line(`i32.const 1`)
+	g.line(`i32.sub`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`local.get $align`)
+	g.line(`i32.sub`)
+	g.line(`i32.and`)
+	g.line(`i32.store`)
 	g.line(`local.get $new_size`)
 	g.line(`call $__lang_alloc`)
 	g.indent--
