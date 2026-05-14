@@ -464,6 +464,32 @@ func (g *generator) emitStrEmpty() {
 	g.line("i32.const 0x80000000")
 }
 
+// emitInlineEmptyShortCircuit emits the canonical empty-output
+// short-circuit at the head of a string-producing helper:
+//
+//	if $lenLocal == 0 {
+//	    return inline-encoded empty (`0x80000000`)
+//	}
+//
+// Shared by every helper that has an "if the input is empty,
+// skip the alloc / loop entirely" fast path —
+// $__str_concat / $__str_slice / $string_from_bytes today.
+// The atomic two-word ABI flip changes `emitStrEmpty`'s
+// output shape from one i32 const to two i32 consts (data=0,
+// len=flag); collecting the caller pattern here means the
+// flip's edit is "rewrite emitStrEmpty + propagate `return`'s
+// arity" rather than "patch three call sites".
+func (g *generator) emitInlineEmptyShortCircuit(lenLocal string) {
+	g.linef(`local.get %s`, lenLocal)
+	g.line(`i32.eqz`)
+	g.line(`if`)
+	g.indent++
+	g.emitStrEmpty()
+	g.line(`return`)
+	g.indent--
+	g.line(`end`)
+}
+
 // emitInlineOutputBuild emits the SSO inline-output
 // construction loop shared across every string-producing
 // runtime helper that has a `≤ 3 bytes ⇒ inline-encoded i32`
@@ -2767,14 +2793,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.set $total`)
 		// total == 0: return the inline-encoded empty value. No
 		// alloc, no data-segment touch.
-		g.line(`local.get $total`)
-		g.line(`i32.eqz`)
-		g.line(`if`)
-		g.indent++
-		g.emitStrEmpty()
-		g.line(`return`)
-		g.indent--
-		g.line(`end`)
+		g.emitInlineEmptyShortCircuit("$total")
 		// total <= 3: build the inline encoding via shifts + ORs.
 		// `$inline = InlineFlagWasm | (total << 24)` to start,
 		// then OR in each byte at its `(i*8)`-bit slot, fetched
@@ -3163,14 +3182,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.set $new_len`)
 		// Short-circuit on new_len == 0: return the shared empty-
 		// string sentinel without allocating.
-		g.line(`local.get $new_len`)
-		g.line(`i32.eqz`)
-		g.line(`if`)
-		g.indent++
-		g.emitStrEmpty()
-		g.line(`return`)
-		g.indent--
-		g.line(`end`)
+		g.emitInlineEmptyShortCircuit("$new_len")
 		// new_len ≤ 3 → build the single-i32 inline output via
 		// `$base[low..low+new_len]` byte reads through
 		// `$__lang_str_byte` (which branches on the inline /
@@ -3236,14 +3248,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.set $bLen`)
 		// Short-circuit on bLen == 0: return the inline-encoded
 		// empty value rather than allocating a 0-byte buffer.
-		g.line(`local.get $bLen`)
-		g.line(`i32.eqz`)
-		g.line(`if`)
-		g.indent++
-		g.emitStrEmpty()
-		g.line(`return`)
-		g.indent--
-		g.line(`end`)
+		g.emitInlineEmptyShortCircuit("$bLen")
 		// bLen ≤ 3 → build the single-i32 inline output by
 		// reading bytes straight out of the u8[] payload. The
 		// array's bytes live at `$bs .. $bs + bLen`; pack them
