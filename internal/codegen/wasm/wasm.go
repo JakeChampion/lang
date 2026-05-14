@@ -460,9 +460,18 @@ func (g *generator) emitHeapStrAlloc(lenLocal, dstLocal string, tailBytes int32)
 // helper that handles user-supplied strings as memory should
 // call this at entry to stay correct under inline-form inputs.
 func (g *generator) emitPromoteStrParam(local string) {
-	g.linef("local.get %s", local)
+	// Two-word ABI: $__lang_str_to_heap is now multi-arg /
+	// multi-result `(data, len) → (data, len)`. The caller's
+	// convention is to pass the single base name (e.g. "$s")
+	// and we read `$s_data` / `$s_len` per the producer
+	// naming convention. Post-flip producers store the
+	// promoted (data, len) pair back into the same `_data` /
+	// `_len` locals.
+	g.linef("local.get %s_data", local)
+	g.linef("local.get %s_len", local)
 	g.line("call $__lang_str_to_heap")
-	g.linef("local.set %s", local)
+	g.linef("local.set %s_len", local)
+	g.linef("local.set %s_data", local)
 }
 
 // emitStrEmpty pushes the canonical empty-string value onto the
