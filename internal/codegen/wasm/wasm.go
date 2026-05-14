@@ -2065,26 +2065,27 @@ func (g *generator) internStringTwoWord(s string) (int, int) {
 	return g.internString(s), len(s)
 }
 
-// internOrPackMethod returns the operand-stack i32 value for an HTTP
-// method name (or other short interned string), picking the same
-// encoding `OpConstStr` would pick for the same source literal:
+// internOrPackMethod returns the operand-stack `(data, len)` pair
+// for an HTTP method name (or other short interned string),
+// picking the same encoding `OpConstStr` would pick for the same
+// source literal:
 //
-//   - len(s) ≤ 3: the single-i32 inline pack (`langstring.PackTinyWasm`).
-//     User code's `"GET" == req.method` compares two inline-encoded
-//     i32s; `$__str_eq`'s pointer-eq short-circuit fires before the
-//     byte loop.
-//   - len(s) >  3: the heap-form `internString` entry, deduped across
-//     the module. User code's `"OPTIONS" == req.method` likewise gets
-//     a heap pointer that matches the dedup-shared offset.
+//   - len(s) ≤ 7: the inline-pack `langstring.PackInlineWasm`
+//     pair. User code's `"GET" == req.method` compares two
+//     identical (data, len) pairs; `$__str_eq`'s pair-eq fast
+//     path short-circuits before the byte loop.
+//   - len(s) >  7: the heap-form (`internString` data offset,
+//     `len(s)`). User code's `"CONNECT" == req.method` likewise
+//     gets a heap pointer that matches the dedup-shared offset.
 //
 // Keeping the wrapper-side encoding in lockstep with the
-// user-source-side encoding is what restores the pointer-eq fast
+// user-source-side encoding is what restores the pair-eq fast
 // path lost when `OpConstStr` started inline-packing short literals.
-func (g *generator) internOrPackMethod(s string) int {
-	if packed, ok := langstring.PackTinyWasm([]byte(s)); ok {
-		return int(packed)
+func (g *generator) internOrPackMethod(s string) (data uint32, length uint32) {
+	if langstring.FitsInlineWasm(len(s)) {
+		return langstring.PackInlineWasm([]byte(s))
 	}
-	return g.internString(s)
+	return uint32(g.internString(s)), uint32(len(s))
 }
 
 // internEnumSentinel reserves and returns the linear-memory offset
@@ -5444,21 +5445,23 @@ func (g *generator) emitHttpHandlerWrapper() {
 	// `internString` entry; the user-side `"HEAD"` etc. also
 	// stay heap-form (>3 bytes), so pointer-eq dedup via the
 	// shared interned offset still works for them.
-	methodGet := g.internOrPackMethod("GET")
-	methodHead := g.internOrPackMethod("HEAD")
-	methodPost := g.internOrPackMethod("POST")
-	methodPut := g.internOrPackMethod("PUT")
-	methodDelete := g.internOrPackMethod("DELETE")
-	methodConnect := g.internOrPackMethod("CONNECT")
-	methodOptions := g.internOrPackMethod("OPTIONS")
-	methodTrace := g.internOrPackMethod("TRACE")
-	methodPatch := g.internOrPackMethod("PATCH")
-	emptyStr := g.internOrPackMethod("")
+	methodGetData, methodGetLen := g.internOrPackMethod("GET")
+	methodHeadData, methodHeadLen := g.internOrPackMethod("HEAD")
+	methodPostData, methodPostLen := g.internOrPackMethod("POST")
+	methodPutData, methodPutLen := g.internOrPackMethod("PUT")
+	methodDeleteData, methodDeleteLen := g.internOrPackMethod("DELETE")
+	methodConnectData, methodConnectLen := g.internOrPackMethod("CONNECT")
+	methodOptionsData, methodOptionsLen := g.internOrPackMethod("OPTIONS")
+	methodTraceData, methodTraceLen := g.internOrPackMethod("TRACE")
+	methodPatchData, methodPatchLen := g.internOrPackMethod("PATCH")
+	emptyStrData, emptyStrLen := g.internOrPackMethod("")
 
 	g.line(`(func $__http_entry (param $req i32) (param $out i32)`)
 	g.indent++
 	g.line(`(local $retptr i32)`)
-	g.line(`(local $method_str i32) (local $path_str i32) (local $body_str i32)`)
+	g.line(`(local $method_str_data i32) (local $method_str_len i32)`)
+	g.line(`(local $path_str_data i32) (local $path_str_len i32)`)
+	g.line(`(local $body_str_data i32) (local $body_str_len i32)`)
 	g.line(`(local $body_handle i32) (local $body_stream i32)`)
 	g.line(`(local $host_ptr i32) (local $host_len i32)`)
 	g.line(`(local $body_buf i32) (local $body_size i32) (local $body_cur i32) (local $body_new_buf i32)`)
@@ -5533,52 +5536,72 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`br_table $m_get $m_head $m_post $m_put $m_delete $m_connect $m_options $m_trace $m_patch $m_other $m_other`)
 	g.indent--
 	g.line(`end`) // m_get
-	g.linef(`i32.const %d`, methodGet)
-	g.line(`local.set $method_str`)
+	g.linef(`i32.const 0x%x`, methodGetData)
+	g.line(`local.set $method_str_data`)
+	g.linef(`i32.const 0x%x`, methodGetLen)
+	g.line(`local.set $method_str_len`)
 	g.line(`br $m_done`)
 	g.indent--
 	g.line(`end`) // m_head
-	g.linef(`i32.const %d`, methodHead)
-	g.line(`local.set $method_str`)
+	g.linef(`i32.const 0x%x`, methodHeadData)
+	g.line(`local.set $method_str_data`)
+	g.linef(`i32.const 0x%x`, methodHeadLen)
+	g.line(`local.set $method_str_len`)
 	g.line(`br $m_done`)
 	g.indent--
 	g.line(`end`) // m_post
-	g.linef(`i32.const %d`, methodPost)
-	g.line(`local.set $method_str`)
+	g.linef(`i32.const 0x%x`, methodPostData)
+	g.line(`local.set $method_str_data`)
+	g.linef(`i32.const 0x%x`, methodPostLen)
+	g.line(`local.set $method_str_len`)
 	g.line(`br $m_done`)
 	g.indent--
 	g.line(`end`) // m_put
-	g.linef(`i32.const %d`, methodPut)
-	g.line(`local.set $method_str`)
+	g.linef(`i32.const 0x%x`, methodPutData)
+	g.line(`local.set $method_str_data`)
+	g.linef(`i32.const 0x%x`, methodPutLen)
+	g.line(`local.set $method_str_len`)
 	g.line(`br $m_done`)
 	g.indent--
 	g.line(`end`) // m_delete
-	g.linef(`i32.const %d`, methodDelete)
-	g.line(`local.set $method_str`)
+	g.linef(`i32.const 0x%x`, methodDeleteData)
+	g.line(`local.set $method_str_data`)
+	g.linef(`i32.const 0x%x`, methodDeleteLen)
+	g.line(`local.set $method_str_len`)
 	g.line(`br $m_done`)
 	g.indent--
 	g.line(`end`) // m_connect
-	g.linef(`i32.const %d`, methodConnect)
-	g.line(`local.set $method_str`)
+	g.linef(`i32.const 0x%x`, methodConnectData)
+	g.line(`local.set $method_str_data`)
+	g.linef(`i32.const 0x%x`, methodConnectLen)
+	g.line(`local.set $method_str_len`)
 	g.line(`br $m_done`)
 	g.indent--
 	g.line(`end`) // m_options
-	g.linef(`i32.const %d`, methodOptions)
-	g.line(`local.set $method_str`)
+	g.linef(`i32.const 0x%x`, methodOptionsData)
+	g.line(`local.set $method_str_data`)
+	g.linef(`i32.const 0x%x`, methodOptionsLen)
+	g.line(`local.set $method_str_len`)
 	g.line(`br $m_done`)
 	g.indent--
 	g.line(`end`) // m_trace
-	g.linef(`i32.const %d`, methodTrace)
-	g.line(`local.set $method_str`)
+	g.linef(`i32.const 0x%x`, methodTraceData)
+	g.line(`local.set $method_str_data`)
+	g.linef(`i32.const 0x%x`, methodTraceLen)
+	g.line(`local.set $method_str_len`)
 	g.line(`br $m_done`)
 	g.indent--
 	g.line(`end`) // m_patch
-	g.linef(`i32.const %d`, methodPatch)
-	g.line(`local.set $method_str`)
+	g.linef(`i32.const 0x%x`, methodPatchData)
+	g.line(`local.set $method_str_data`)
+	g.linef(`i32.const 0x%x`, methodPatchLen)
+	g.line(`local.set $method_str_len`)
 	g.line(`br $m_done`)
 	g.indent--
 	g.line(`end`) // m_other
-	// other(s): ptr at retptr+4, len at retptr+8. Materialise.
+	// other(s): host ptr at retptr+4, host len at retptr+8.
+	// `$__bytes_to_lang_string` now returns the two-word
+	// (data, len) pair directly.
 	g.line(`local.get $retptr`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
@@ -5592,7 +5615,8 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`local.get $host_ptr`)
 	g.line(`local.get $host_len`)
 	g.line(`call $__bytes_to_lang_string`)
-	g.line(`local.set $method_str`)
+	g.line(`local.set $method_str_len`)
+	g.line(`local.set $method_str_data`)
 	g.indent--
 	g.line(`end`) // m_done
 
@@ -5604,9 +5628,11 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`call $__wasi_http_request_path_with_query`)
 	g.line(`local.get $retptr`)
 	g.line(`i32.load8_u`)
-	g.line(`if (result i32)`)
+	g.line(`if (result i32 i32)`)
 	g.indent++
 	// Some(string): ptr at retptr+4, len at retptr+8.
+	// `$__bytes_to_lang_string` returns the two-word
+	// (data, len) pair.
 	g.line(`local.get $retptr`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
@@ -5623,10 +5649,12 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.indent--
 	g.line(`else`)
 	g.indent++
-	g.linef(`i32.const %d`, emptyStr)
+	g.linef(`i32.const 0x%x`, emptyStrData)
+	g.linef(`i32.const 0x%x`, emptyStrLen)
 	g.indent--
 	g.line(`end`)
-	g.line(`local.set $path_str`)
+	g.line(`local.set $path_str_len`)
+	g.line(`local.set $path_str_data`)
 
 	// ============================================================
 	// Read body via consume + stream + bulk-read accumulator.
@@ -5639,8 +5667,10 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`if`)
 	g.indent++
 	// Err: empty body, no body resource to drop.
-	g.linef(`i32.const %d`, emptyStr)
-	g.line(`local.set $body_str`)
+	g.linef(`i32.const 0x%x`, emptyStrData)
+	g.line(`local.set $body_str_data`)
+	g.linef(`i32.const 0x%x`, emptyStrLen)
+	g.line(`local.set $body_str_len`)
 	g.indent--
 	g.line(`else`)
 	g.indent++
@@ -5657,8 +5687,10 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`i32.load8_u`)
 	g.line(`if`)
 	g.indent++
-	g.linef(`i32.const %d`, emptyStr)
-	g.line(`local.set $body_str`)
+	g.linef(`i32.const 0x%x`, emptyStrData)
+	g.line(`local.set $body_str_data`)
+	g.linef(`i32.const 0x%x`, emptyStrLen)
+	g.line(`local.set $body_str_len`)
 	g.indent--
 	g.line(`else`)
 	g.indent++
@@ -5743,11 +5775,13 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`end`) // body_loop
 	g.indent--
 	g.line(`end`) // body_end
-	// Materialise lang string from (body_buf, body_cur).
+	// Materialise lang string from (body_buf, body_cur). The
+	// helper returns the two-word (data, len) pair.
 	g.line(`local.get $body_buf`)
 	g.line(`local.get $body_cur`)
 	g.line(`call $__bytes_to_lang_string`)
-	g.line(`local.set $body_str`)
+	g.line(`local.set $body_str_len`)
+	g.line(`local.set $body_str_data`)
 	// Drop input-stream.
 	g.line(`local.get $body_stream`)
 	g.line(`call $__wasi_input_stream_drop`)
@@ -5766,22 +5800,44 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`call $__wasi_http_request_drop`)
 
 	// ============================================================
-	// Build HttpRequest struct (12 bytes: method, path, body).
+	// Build HttpRequest struct. Two-word ABI: each string field
+	// is 8 bytes (data@N, len@N+4). Layout for `{ method: string,
+	// path: string, body: string }` via `structFieldLayout`:
+	//   method @ +0 / len @ +4
+	//   path   @ +8 / len @ +12
+	//   body   @ +16 / len @ +20
+	// Total: 24 bytes (8-byte slots are naturally aligned from
+	// offset 0).
 	// ============================================================
-	g.line(`i32.const 12`)
+	g.line(`i32.const 24`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $req_struct`)
-	g.line(`local.get $method_str`)
+	g.line(`local.get $method_str_data`)
 	g.line(`i32.store`)
 	g.line(`local.get $req_struct`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
-	g.line(`local.get $path_str`)
+	g.line(`local.get $method_str_len`)
 	g.line(`i32.store`)
 	g.line(`local.get $req_struct`)
 	g.line(`i32.const 8`)
 	g.line(`i32.add`)
-	g.line(`local.get $body_str`)
+	g.line(`local.get $path_str_data`)
+	g.line(`i32.store`)
+	g.line(`local.get $req_struct`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`local.get $path_str_len`)
+	g.line(`i32.store`)
+	g.line(`local.get $req_struct`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`local.get $body_str_data`)
+	g.line(`i32.store`)
+	g.line(`local.get $req_struct`)
+	g.line(`i32.const 20`)
+	g.line(`i32.add`)
+	g.line(`local.get $body_str_len`)
 	g.line(`i32.store`)
 
 	// ============================================================
@@ -5791,15 +5847,24 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`call $handle`)
 	g.line(`local.set $resp_struct`)
 
-	// HttpResponse layout: [status:i32][body:i32 (string ptr)] = 8 bytes.
+	// HttpResponse layout (two-word ABI): tag is i32 / string
+	// fits two slots.
+	//   status @ +0 (i32)
+	//   body @ +8 (string slot — data@+8, len@+12)
+	// 8-byte alignment shoulder skips bytes 4..7. Total 16 bytes.
 	g.line(`local.get $resp_struct`)
 	g.line(`i32.load`)
 	g.line(`local.set $status`)
 	g.line(`local.get $resp_struct`)
-	g.line(`i32.const 4`)
+	g.line(`i32.const 8`)
 	g.line(`i32.add`)
 	g.line(`i32.load`)
-	g.line(`local.set $body_str`) // reuse local; now holds response body
+	g.line(`local.set $body_str_data`) // response body data
+	g.line(`local.get $resp_struct`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $body_str_len`) // response body len
 
 	// ============================================================
 	// Build outgoing-response.
@@ -5862,12 +5927,13 @@ func (g *generator) emitHttpHandlerWrapper() {
 	// blocking-write-and-flush via the chunked $__streams_write
 	// helper. Now that the response is "in flight", body bytes
 	// stream out to the client as we write. `$body_str` may be
-	// in single-i32 inline form (a short response built via
-	// `$__str_concat` whose total fits in <=3 bytes) — route
-	// through `$__lang_str_data_ptr` so inline values spill into
-	// the shared scratch slot rather than allocating a heap copy.
+	// inline-form (a short response built via `$__str_concat`
+	// whose total fits in ≤7 bytes) — route through
+	// `$__lang_str_data_ptr` so inline values spill into the
+	// shared scratch slot rather than allocating a heap copy.
 	g.line(`local.get $out_stream`)
-	g.line(`local.get $body_str`)
+	g.line(`local.get $body_str_data`)
+	g.line(`local.get $body_str_len`)
 	g.line(`call $__lang_str_data_ptr`)
 	g.emitStrLenFromLocal("$body_str")
 	g.line(`call $__streams_write`)
