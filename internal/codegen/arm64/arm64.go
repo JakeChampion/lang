@@ -3948,6 +3948,25 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// arm64 (the heap pointer width — high bits of arm64-
 		// darwin's >4 GiB heap survive). The i32 path uses the
 		// w0 alias so the high half of x0 zero-extends cleanly.
+		// WidthString (-2) fans the single addr to a two-word
+		// (data, len) read: data at [addr + 0], len at
+		// [addr + 8]. Both halves push as 8-byte stack slots
+		// so downstream consumers see the (data, len) operand-
+		// stack shape that the two-word ABI expects. Dead today
+		// (no IR site emits WidthString for natives yet); wired
+		// here ahead of the arm64 two-word flip so the gate
+		// flip in the IR layer becomes a one-liner.
+		if op.Width == ir.WidthString {
+			g.pop() // addr → x0
+			g.emit("ldr x1, [x0]")     // data @ +0
+			g.emit("ldr x0, [x0, #8]") // len @ +8
+			g.emit("mov x2, x0")       // save len
+			g.emit("mov x0, x1")       // first push: data
+			g.push()
+			g.emit("mov x0, x2")
+			g.push()
+			break
+		}
 		g.pop()
 		if op.Width == 64 || op.Width == ir.WidthPtr {
 			g.emit("ldr x0, [x0]")
@@ -3986,7 +4005,22 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("ldrsh w0, [x0]")
 		g.push()
 	case ir.OpStore:
-		// Stack: [addr, value], top = value.
+		// Stack: [addr, value], top = value. WidthString
+		// consumes a two-word `(data, len)` value (stack:
+		// [addr, data, len], top = len) and fans the store to
+		// two 8-byte writes: data @ [addr + 0] and len @
+		// [addr + 8]. Dead today (no IR site emits WidthString
+		// for natives yet); wired here ahead of the arm64
+		// two-word flip so the gate flip in the IR layer
+		// becomes a one-liner.
+		if op.Width == ir.WidthString {
+			g.emit("ldr x1, [sp], #16") // len
+			g.emit("ldr x0, [sp], #16") // data
+			g.emit("ldr x2, [sp], #16") // addr
+			g.emit("str x0, [x2]")
+			g.emit("str x1, [x2, #8]")
+			break
+		}
 		g.emit("ldr x0, [sp], #16") // value
 		g.emit("ldr x1, [sp], #16") // addr
 		if op.Width == 64 || op.Width == ir.WidthPtr {
