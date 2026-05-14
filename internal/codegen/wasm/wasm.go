@@ -2038,8 +2038,10 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 }
 
 // internString assigns an address to s the first time we see it and
-// reuses it on repeats. The returned pointer skips the 4-byte length
-// prefix, so callers can do `i32.load (sub ptr 4)` to recover length.
+// reuses it on repeats. The returned pointer skips the (vestigial)
+// 4-byte length prefix; the two-word ABI carries length on the
+// operand stack instead, so the prefix is dead bytes pending §10
+// cleanup.
 func (g *generator) internString(s string) int {
 	if ptr, ok := g.stringPool[s]; ok {
 		return ptr
@@ -2051,6 +2053,16 @@ func (g *generator) internString(s string) int {
 	g.stringPool[s] = ptr
 	g.stringOffset = off + 4 + len(s)
 	return ptr
+}
+
+// internStringTwoWord returns the (data, len) pair for s under the
+// two-word ABI — the data pointer comes from `internString`, the
+// length is `len(s)`. Used by runtime helpers that need to embed a
+// static string literal in their output (e.g. `$__build_io_error`'s
+// "io error" message) without going through `OpConstStr` at the
+// IR level.
+func (g *generator) internStringTwoWord(s string) (int, int) {
+	return g.internString(s), len(s)
 }
 
 // internOrPackMethod returns the operand-stack i32 value for an HTTP
@@ -3804,20 +3816,19 @@ func (g *generator) emitPreopenDirHelper() {
 // a shorter signature `(param i32 i32)` (no offset), so callers
 // pass `appendMode=true` to skip the offset push.
 func (g *generator) emitOpenViaStreamHelper(name string, openFlags, descFlags int, viaStreamImport string, appendMode bool) {
-	g.linef(`(func %s (param $path i32) (result i32)`, name)
+	g.linef(`(func %s (param $path_data i32) (param $path_len i32) (result i32)`, name)
 	g.indent++
 	g.line(`(local $errno i32) (local $desc i32) (local $stream i32) (local $result i32)`)
-	// `$path` may arrive in single-i32 inline form (a short
-	// path built via `$__str_concat`); the host's `open-at`
-	// reads (ptr, len) from linear memory, so promote-to-heap
-	// before passing on.
+	// `$path` may arrive in inline form (a short path built via
+	// `$__str_concat`); the host's `open-at` reads (ptr, len)
+	// from linear memory, so promote-to-heap before passing on.
 	g.emitPromoteStrParam("$path")
 
 	// open-at(preopen, path-flags=1=symlink-follow, path_ptr,
 	// path_len, open-flags, descriptor-flags, retptr=92).
 	g.line(`call $__preopen_dir`)
 	g.line(`i32.const 1`) // path-flags = symlink-follow
-	g.line(`local.get $path`)
+	g.line(`local.get $path_data`)
 	g.emitStrLenFromLocal("$path")
 	g.linef(`i32.const %d`, openFlags)
 	g.linef(`i32.const %d`, descFlags)
@@ -3851,7 +3862,8 @@ func (g *generator) emitOpenViaStreamHelper(name string, openFlags, descFlags in
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`local.get $errno`)
-	g.line(`local.get $path`)
+	g.line(`local.get $path_data`)
+	g.line(`local.get $path_len`)
 	g.line(`call $__build_io_error`)
 	g.line(`i32.store`)
 	g.line(`local.get $result`)
@@ -3899,7 +3911,8 @@ func (g *generator) emitOpenViaStreamHelper(name string, openFlags, descFlags in
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`local.get $errno`)
-	g.line(`local.get $path`)
+	g.line(`local.get $path_data`)
+	g.line(`local.get $path_len`)
 	g.line(`call $__build_io_error`)
 	g.line(`i32.store`)
 	g.line(`local.get $result`)
@@ -4223,7 +4236,7 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.line(`(local $buf i32) (local $buf_size i32) (local $cur_offset i32)`)
 	g.line(`(local $byte i32) (local $list_ptr i32)`)
 	g.line(`(local $new_buf i32) (local $new_size i32)`)
-	g.line(`(local $sbase i32) (local $sptr i32) (local $j i32)`)
+	g.line(`(local $sbase i32) (local $sptr_data i32) (local $sptr_len i32) (local $j i32)`)
 
 	// Initial accumulator: 64 bytes. Doubles on overflow.
 	g.line(`i32.const 64`)
@@ -4328,14 +4341,14 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.line(`end`)
 
 	// SSO inline-output fast path: when the line fits the
-	// single-i32 tiny cap (≤3 bytes including the trailing
-	// newline), pack `buf[0..cur_offset]` into a single i32
-	// and bind it as `$sptr`. Skips the per-line alloc +
-	// length-prefix + memory.copy detour the heap path would
-	// otherwise take. Common for empty / "y\n" / "ok\n"
-	// interactive-prompt responses.
+	// SSO cap (≤7 bytes including the trailing newline), pack
+	// `buf[0..cur_offset]` into the `(sptr_data, sptr_len)`
+	// inline (data, len) pair. Skips the per-line alloc +
+	// memory.copy detour the heap path would otherwise take.
+	// Common for empty / "y\n" / "ok\n" interactive-prompt
+	// responses.
 	g.line(`local.get $cur_offset`)
-	g.line(`i32.const 3`)
+	g.line(`i32.const 7`)
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
@@ -4349,29 +4362,38 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.indent--
 	g.line(`else`)
 	g.indent++
-	// Heap-form output: materialise as a length-prefixed string.
-	// $sptr is the data pointer (one past the length prefix).
-	g.emitHeapStrAlloc("$cur_offset", "$sptr", 0)
+	// Heap-form output: alloc bytes (no length prefix in the
+	// two-word ABI) and copy. `$sptr_data` points at the bytes;
+	// `$sptr_len` carries the byte count.
+	g.emitHeapStrAlloc("$cur_offset", "$sptr_data", 0)
+	g.line(`local.get $cur_offset`)
+	g.line(`local.set $sptr_len`)
 
-	// memory.copy(sptr, buf, cur_offset)
-	g.line(`local.get $sptr`)
+	// memory.copy(sptr_data, buf, cur_offset)
+	g.line(`local.get $sptr_data`)
 	g.line(`local.get $buf`)
 	g.line(`local.get $cur_offset`)
 	g.line(`memory.copy`)
 	g.indent--
 	g.line(`end`)
 
-	// Wrap in Some(sptr): tag=0 + payload.
-	g.line(`i32.const 8`)
+	// Wrap in Some(string). Two-word ABI layout for Option[string]:
+	// tag@0 (4 bytes), padding@4..7, data@8, len@12 — 16 bytes total.
+	g.line(`i32.const 16`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $sbase`)
 	g.line(`i32.const 0`)
-	g.line(`i32.store`)
+	g.line(`i32.store`) // tag = 0 (Some)
 	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
+	g.line(`i32.const 8`)
 	g.line(`i32.add`)
-	g.line(`local.get $sptr`)
-	g.line(`i32.store`)
+	g.line(`local.get $sptr_data`)
+	g.line(`i32.store`) // data @ +8
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`local.get $sptr_len`)
+	g.line(`i32.store`) // len @ +12
 	g.line(`local.get $sbase`)
 	g.indent--
 	g.line(`)`)
@@ -4386,9 +4408,9 @@ func (g *generator) emitStdinStreamsReadLine() {
 // Missing keys return the empty string (data pointer to a
 // pre-built 0-length string entry).
 func (g *generator) emitEnvHelper() {
-	g.line(`(func $env (param $name i32) (result i32)`)
+	g.line(`(func $env (param $name_data i32) (param $name_len i32) (result i32)`)
 	g.indent++
-	g.line(`(local $name_len i32)`)
+	g.line(`(local $name_byte_len i32)`)
 	g.line(`(local $count i32)`)
 	g.line(`(local $bufsize i32)`)
 	g.line(`(local $env_ptrs i32)`)
@@ -4404,7 +4426,7 @@ func (g *generator) emitEnvHelper() {
 	g.line(`(local $k i32)`)
 	// `$name` is compared byte-by-byte against host env entries via
 	// `i32.load8_u`; promote-to-heap so the address arithmetic
-	// against `$name + j` reads real memory. All `(local …)`
+	// against `$name_data + j` reads real memory. All `(local …)`
 	// declarations must precede the first instruction in WAT, so
 	// this preamble lands after the locals block above.
 	g.emitPromoteStrParam("$name")
@@ -4461,7 +4483,7 @@ func (g *generator) emitEnvHelper() {
 	g.line(`local.set $env_ptrs`)
 
 	g.emitStrLenFromLocal("$name")
-	g.line(`local.set $name_len`)
+	g.line(`local.set $name_byte_len`)
 
 	// for i in 0..count
 	g.line(`i32.const 0`)
@@ -4484,8 +4506,8 @@ func (g *generator) emitEnvHelper() {
 	g.line(`i32.load`)
 	g.line(`local.set $entry`)
 
-	// Compare entry[0..name_len] with name[0..name_len], then
-	// require entry[name_len] == '='. matches=1 if all good.
+	// Compare entry[0..name_byte_len] with $name_data[0..name_byte_len], then
+	// require entry[name_byte_len] == '='. matches=1 if all good.
 	g.line(`i32.const 1`)
 	g.line(`local.set $matches`)
 	g.line(`i32.const 0`)
@@ -4495,14 +4517,14 @@ func (g *generator) emitEnvHelper() {
 	g.line(`loop $cmp`)
 	g.indent++
 	g.line(`local.get $j`)
-	g.line(`local.get $name_len`)
+	g.line(`local.get $name_byte_len`)
 	g.line(`i32.eq`)
 	g.line(`br_if $cmp_end`)
 	g.line(`local.get $entry`)
 	g.line(`local.get $j`)
 	g.line(`i32.add`)
 	g.line(`i32.load8_u`)
-	g.line(`local.get $name`)
+	g.line(`local.get $name_data`)
 	g.line(`local.get $j`)
 	g.line(`i32.add`)
 	g.line(`i32.load8_u`)
@@ -4524,21 +4546,21 @@ func (g *generator) emitEnvHelper() {
 	g.indent--
 	g.line(`end`)
 
-	// If matches and entry[name_len]=='=', this is our entry.
+	// If matches and entry[name_byte_len]=='=', this is our entry.
 	g.line(`local.get $matches`)
 	g.line(`if`)
 	g.indent++
 	g.line(`local.get $entry`)
-	g.line(`local.get $name_len`)
+	g.line(`local.get $name_byte_len`)
 	g.line(`i32.add`)
 	g.line(`i32.load8_u`)
 	g.line(`i32.const 61`) // '='
 	g.line(`i32.eq`)
 	g.line(`if`)
 	g.indent++
-	// Found. vstart = entry + name_len + 1; scan for NUL.
+	// Found. vstart = entry + name_byte_len + 1; scan for NUL.
 	g.line(`local.get $entry`)
-	g.line(`local.get $name_len`)
+	g.line(`local.get $name_byte_len`)
 	g.line(`i32.add`)
 	g.line(`i32.const 1`)
 	g.line(`i32.add`)
@@ -4567,7 +4589,7 @@ func (g *generator) emitEnvHelper() {
 	g.line(`i32.sub`)
 	g.line(`local.set $vlen`)
 
-	// Allocate result and copy.
+	// Allocate result and copy. Heap-form output (no length prefix).
 	g.emitHeapStrAlloc("$vlen", "$sptr", 0)
 	g.line(`i32.const 0`)
 	g.line(`local.set $j`)
@@ -4596,20 +4618,27 @@ func (g *generator) emitEnvHelper() {
 	g.line(`end`)
 	g.indent--
 	g.line(`end`)
-	// Found: wrap the materialised string pointer in
-	// `Some(sptr)`. Layout matches read_line: 8 bytes total
-	// with tag at +0 and the string pointer at +4.
-	g.line(`i32.const 8`)
+	// Found: wrap the (data, len) string pair into a Some(string)
+	// heap box. Two-word ABI layout (payloadLayout for
+	// Option[string]): tag@0 (4 bytes), padding@4..7, data@8,
+	// len@12 — 16 bytes total. Alignment shoulder pushes the
+	// 8-byte string slot past mem[4..7].
+	g.line(`i32.const 16`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $sbase`)
 	g.line(`local.get $sbase`)
 	g.line(`i32.const 0`)
-	g.line(`i32.store`)
+	g.line(`i32.store`) // tag = 0 (Some)
 	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
+	g.line(`i32.const 8`)
 	g.line(`i32.add`)
 	g.line(`local.get $sptr`)
-	g.line(`i32.store`)
+	g.line(`i32.store`) // data @ +8
+	g.line(`local.get $sbase`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`local.get $vlen`)
+	g.line(`i32.store`) // len @ +12
 	g.line(`local.get $sbase`)
 	g.line(`return`)
 	g.indent--
@@ -5201,10 +5230,10 @@ func (g *generator) emitTcpAcceptPreview2() {
 // host buffer. On stream errors / EOF we return an empty string
 // — same shape preview-1 tcp_recv produces on fd_read errno.
 func (g *generator) emitTcpRecvPreview2() {
-	g.line(`(func $tcp_recv (param $conn i32) (param $max i32) (result i32)`)
+	g.line(`(func $tcp_recv (param $conn i32) (param $max i32) (result i32 i32)`)
 	g.indent++
 	g.line(`(local $stream i32) (local $list_ptr i32) (local $n i32)`)
-	g.line(`(local $sbase i32) (local $sptr i32) (local $j i32)`)
+	g.line(`(local $sptr_data i32) (local $sptr_len i32) (local $j i32)`)
 	// stream = mem[conn + 4]
 	g.line(`local.get $conn`)
 	g.line(`i32.const 4`)
@@ -5235,11 +5264,10 @@ func (g *generator) emitTcpRecvPreview2() {
 	g.line(`i32.load`)
 	g.line(`local.set $list_ptr`)
 	// SSO inline-output fast path: small protocol tokens like
-	// "OK", "OK\n", "GO" (≤ 3 bytes) fit the single-i32 tiny
-	// cap and skip the alloc + length-prefix + memcpy + NUL
-	// detour.
+	// "OK", "OK\n", "GO" (≤ 7 bytes) fit the inline (data, len)
+	// pair and skip the alloc + memcpy detour.
 	g.line(`local.get $n`)
-	g.line(`i32.const 3`)
+	g.line(`i32.const 7`)
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
@@ -5250,20 +5278,21 @@ func (g *generator) emitTcpRecvPreview2() {
 		g.line(`i32.add`)
 		g.line(`i32.load8_u`)
 	})
-	g.line(`local.get $sptr`)
+	g.line(`local.get $sptr_data`)
+	g.line(`local.get $sptr_len`)
 	g.line(`return`)
 	g.indent--
 	g.line(`end`)
-	// Heap-form output: allocate length-prefixed string of size
-	// $n + 5 (4 prefix + NUL), matching the existing string-from-
-	// bytes allocation pattern.
-	g.emitHeapStrAlloc("$n", "$sptr", 1)
+	// Heap-form output: allocate $n bytes (no length prefix in
+	// the two-word ABI) and copy.
+	g.emitHeapStrAlloc("$n", "$sptr_data", 0)
 	// memcpy host buffer into our string body.
-	g.line(`local.get $sptr`)
+	g.line(`local.get $sptr_data`)
 	g.line(`local.get $list_ptr`)
 	g.line(`local.get $n`)
 	g.line(`memory.copy`)
-	g.line(`local.get $sptr`)
+	g.line(`local.get $sptr_data`)
+	g.line(`local.get $n`)
 	g.indent--
 	g.line(`)`)
 }
@@ -5276,7 +5305,7 @@ func (g *generator) emitTcpRecvPreview2() {
 // since stream errors get translated upstream, so -1 is the best
 // negative sentinel.
 func (g *generator) emitTcpSendPreview2() {
-	g.line(`(func $tcp_send (param $conn i32) (param $data i32) (result i32)`)
+	g.line(`(func $tcp_send (param $conn i32) (param $data_data i32) (param $data_len i32) (result i32)`)
 	g.indent++
 	g.line(`(local $stream i32) (local $len i32)`)
 	// `$data` flows through `$__streams_write` synchronously, so
@@ -5292,7 +5321,8 @@ func (g *generator) emitTcpSendPreview2() {
 	g.emitStrLenFromLocal("$data")
 	g.line(`local.set $len`)
 	g.line(`local.get $stream`)
-	g.line(`local.get $data`)
+	g.line(`local.get $data_data`)
+	g.line(`local.get $data_len`)
 	g.line(`call $__lang_str_data_ptr`)
 	g.line(`local.get $len`)
 	g.line(`call $__streams_write`)
@@ -5879,15 +5909,15 @@ func (g *generator) emitHttpHandlerWrapper() {
 	//                     pressure for them.
 	//   - host_len >  3:  heap-form (alloc length-prefix + copy +
 	//                     trailing NUL, the legacy layout).
-	g.line(`(func $__bytes_to_lang_string (param $host_ptr i32) (param $host_len i32) (result i32)`)
+	g.line(`(func $__bytes_to_lang_string (param $host_ptr i32) (param $host_len i32) (result i32 i32)`)
 	g.indent++
-	g.line(`(local $sbase i32) (local $i i32) (local $inline i32)`)
+	g.line(`(local $sbase i32) (local $i i32) (local $inline_data i32) (local $inline_len i32)`)
 	// Inline-output fast path. Mirrors the SSO producer shape from
 	// $__str_concat / $__str_slice / $string_from_bytes — read
-	// bytes straight out of the host buffer, pack into a single
-	// i32, return.
+	// bytes straight out of the host buffer, pack into the
+	// (inline_data, inline_len) pair, return.
 	g.line(`local.get $host_len`)
-	g.line(`i32.const 3`)
+	g.line(`i32.const 7`)
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
@@ -5898,11 +5928,13 @@ func (g *generator) emitHttpHandlerWrapper() {
 		g.line(`i32.add`)
 		g.line(`i32.load8_u`)
 	})
-	g.line(`local.get $inline`)
+	g.line(`local.get $inline_data`)
+	g.line(`local.get $inline_len`)
 	g.line(`return`)
 	g.indent--
 	g.line(`end`)
-	// Heap-form output path: host_len > 3.
+	// Heap-form output path: host_len > 7. No length prefix; alloc
+	// host_len + 1 (trailing NUL for any C-string-style readers).
 	g.emitHeapStrAlloc("$host_len", "$sbase", 1)
 	g.line(`local.get $sbase`)
 	g.line(`local.get $host_ptr`)
@@ -5914,8 +5946,9 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`i32.add`)
 	g.line(`i32.const 0`)
 	g.line(`i32.store8`)
-	// Return data pointer.
+	// Return (data, len) pair.
 	g.line(`local.get $sbase`)
+	g.line(`local.get $host_len`)
 	g.indent--
 	g.line(`)`)
 }
@@ -6043,8 +6076,8 @@ func (g *generator) emitFileIOHelpers() {
 	// Pre-intern the static "io error" message so $__build_io_error
 	// can reach it via a constant pointer rather than rebuilding
 	// the string on every error path.
-	ioErrMsgPtr := g.internString("io error")
-	g.line(`(func $__build_io_error (param $errno i32) (param $path i32) (result i32)`)
+	ioErrMsgData, ioErrMsgLen := g.internStringTwoWord("io error")
+	g.line(`(func $__build_io_error (param $errno i32) (param $path_data i32) (param $path_len i32) (result i32)`)
 	g.indent++
 	g.line(`(local $result i32)`)
 	// Errno-to-variant table. Common cases get a typed variant;
@@ -6067,23 +6100,35 @@ func (g *generator) emitFileIOHelpers() {
 	g.emitIoErrorCase(27, 4, false) // EINTR  → Interrupted
 	g.emitIoErrorCase(44, 0, true)  // ENOENT → NotFound(path)
 	g.emitIoErrorCase(58, 5, false) // ENOTSUP → Unsupported
-	// Default: Other(path, "io error"). Allocate 12 bytes:
-	// [tag=6, path_ptr, msg_ptr].
-	g.line(`i32.const 12`)
+	// Default: Other(path, "io error"). Two-word ABI: 24 bytes
+	// (tag@0 + padding + path_data@8 + path_len@12 + msg_data@16
+	// + msg_len@20). `payloadLayout([string, string])` packs the
+	// two 8-byte slots back-to-back at offsets 8 and 16.
+	g.line(`i32.const 24`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $result`)
 	g.line(`local.get $result`)
 	g.line(`i32.const 6`)
 	g.line(`i32.store`)
 	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.get $path`)
-	g.line(`i32.store`)
-	g.line(`local.get $result`)
 	g.line(`i32.const 8`)
 	g.line(`i32.add`)
-	g.linef(`i32.const %d`, ioErrMsgPtr)
+	g.line(`local.get $path_data`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`local.get $path_len`)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.linef(`i32.const %d`, ioErrMsgData)
+	g.line(`i32.store`)
+	g.line(`local.get $result`)
+	g.line(`i32.const 20`)
+	g.line(`i32.add`)
+	g.linef(`i32.const %d`, ioErrMsgLen)
 	g.line(`i32.store`)
 	g.line(`local.get $result`)
 	g.indent--
@@ -6186,7 +6231,7 @@ func (g *generator) emitOpenAppenderHelper() {
 // constructors. `name` is the wat function name; `oflags` /
 // `rights` / `fdflags` are the path_open immediates.
 func (g *generator) emitOpenHelper(name string, oflags int, rights int64, fdflags int) {
-	g.linef(`(func %s (param $path i32) (result i32)`, name)
+	g.linef(`(func %s (param $path_data i32) (param $path_len i32) (result i32)`, name)
 	g.indent++
 	g.line(`(local $fd_buf i32)`)
 	g.line(`(local $fd i32)`)
@@ -6203,7 +6248,7 @@ func (g *generator) emitOpenHelper(name string, oflags int, rights int64, fdflag
 
 	g.line(`i32.const 3`)
 	g.line(`i32.const 1`)
-	g.line(`local.get $path`)
+	g.line(`local.get $path_data`)
 	g.emitStrLenFromLocal("$path")
 	g.linef(`i32.const %d`, oflags)
 	g.linef(`i64.const %d`, rights)
@@ -6226,7 +6271,8 @@ func (g *generator) emitOpenHelper(name string, oflags int, rights int64, fdflag
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`local.get $errno`)
-	g.line(`local.get $path`)
+	g.line(`local.get $path_data`)
+	g.line(`local.get $path_len`)
 	g.line(`call $__build_io_error`)
 	g.line(`i32.store`)
 	g.line(`local.get $result`)
@@ -6303,7 +6349,7 @@ func (g *generator) emitReaderReadLineMethod() {
 func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`(func $__method_Reader_read_chunk (param $r i32) (param $size i32) (result i32)`)
 	g.indent++
-	g.line(`(local $fd i32) (local $sbase i32) (local $sptr i32)`)
+	g.line(`(local $fd i32) (local $sbase i32) (local $sptr_data i32) (local $sptr_len i32)`)
 	g.line(`(local $n i32) (local $result i32) (local $list_ptr i32) (local $j i32)`)
 
 	g.line(`local.get $r`)
@@ -6352,14 +6398,13 @@ func (g *generator) emitReaderReadChunkMethod() {
 	g.indent--
 	g.line(`end`)
 	// SSO inline-output fast path: when the chunk fits the
-	// single-i32 tiny cap (≤ 3 bytes), pack bytes straight out
-	// of the host buffer into a single i32 and bind that as
-	// `$sptr` — no per-chunk alloc + memcpy. Catches very small
-	// reads (e.g. one-byte status probes, two-byte protocol
-	// tokens) that otherwise allocate the same as a 64-byte
-	// chunk.
+	// SSO cap (≤ 7 bytes), pack bytes straight out of the host
+	// buffer into the (sptr_data, sptr_len) inline pair — no
+	// per-chunk alloc + memcpy. Catches very small reads
+	// (e.g. one-byte status probes, multi-byte protocol
+	// tokens).
 	g.line(`local.get $n`)
-	g.line(`i32.const 3`)
+	g.line(`i32.const 7`)
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
@@ -6373,38 +6418,34 @@ func (g *generator) emitReaderReadChunkMethod() {
 	g.indent--
 	g.line(`else`)
 	g.indent++
-	// Heap-form output: materialise length-prefixed string +
+	// Heap-form output: alloc $n bytes (no length prefix) +
 	// memcpy from the host buffer.
+	g.emitHeapStrAlloc("$n", "$sptr_data", 0)
 	g.line(`local.get $n`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $n`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
-	g.line(`local.set $sptr`)
-	g.line(`local.get $sptr`)
+	g.line(`local.set $sptr_len`)
+	g.line(`local.get $sptr_data`)
 	g.line(`local.get $list_ptr`)
 	g.line(`local.get $n`)
 	g.line(`memory.copy`)
 	g.indent--
 	g.line(`end`)
-	// Some(sptr).
-	g.line(`i32.const 8`)
+	// Some(string). Layout: tag@0 + padding + data@8 + len@12 = 16 bytes.
+	g.line(`i32.const 16`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $result`)
 	g.line(`local.get $result`)
 	g.line(`i32.const 0`)
-	g.line(`i32.store`)
+	g.line(`i32.store`) // tag = 0 (Some)
 	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
+	g.line(`i32.const 8`)
 	g.line(`i32.add`)
-	g.line(`local.get $sptr`)
-	g.line(`i32.store`)
+	g.line(`local.get $sptr_data`)
+	g.line(`i32.store`) // data @ +8
+	g.line(`local.get $result`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`local.get $sptr_len`)
+	g.line(`i32.store`) // len @ +12
 	g.line(`local.get $result`)
 	g.indent--
 	g.line(`)`)
@@ -6456,7 +6497,7 @@ func (g *generator) emitCloseMethod(name, dropImport string) {
 // so reuse is safe). On the streams path, retptr lives at memory
 // 92 (shared canonical-ABI return area).
 func (g *generator) emitWriterWriteMethod() {
-	g.line(`(func $__method_Writer_write (param $w i32) (param $s i32) (result i32)`)
+	g.line(`(func $__method_Writer_write (param $w i32) (param $s_data i32) (param $s_len i32) (result i32)`)
 	g.indent++
 	g.line(`(local $result i32)`)
 	// $__streams_write loops blocking-write-and-flush in 4 KiB
@@ -6472,7 +6513,8 @@ func (g *generator) emitWriterWriteMethod() {
 	// allocating a heap copy.
 	g.line(`local.get $w`)
 	g.line(`i32.load`)
-	g.line(`local.get $s`)
+	g.line(`local.get $s_data`)
+	g.line(`local.get $s_len`)
 	g.line(`call $__lang_str_data_ptr`)
 	g.emitStrLenFromLocal("$s")
 	g.line(`call $__streams_write`)
@@ -6492,6 +6534,11 @@ func (g *generator) emitWriterWriteMethod() {
 // `withPathPayload` is true for variants that carry the path
 // (NotFound, PermissionDenied, AlreadyExists) and false for
 // the payload-less ones (Interrupted, Unsupported).
+//
+// Two-word ABI: variants with a string payload allocate 16
+// bytes (tag@0 + padding + data@8 + len@12) to match
+// `payloadLayout(StringType)`. Payload-less variants keep
+// the historical 4-byte tag-only layout.
 func (g *generator) emitIoErrorCase(errno, tagIdx int, withPathPayload bool) {
 	g.line(`local.get $errno`)
 	g.linef(`i32.const %d`, errno)
@@ -6499,7 +6546,7 @@ func (g *generator) emitIoErrorCase(errno, tagIdx int, withPathPayload bool) {
 	g.line(`if`)
 	g.indent++
 	if withPathPayload {
-		g.line(`i32.const 8`)
+		g.line(`i32.const 16`)
 	} else {
 		g.line(`i32.const 4`)
 	}
@@ -6510,9 +6557,14 @@ func (g *generator) emitIoErrorCase(errno, tagIdx int, withPathPayload bool) {
 	g.line(`i32.store`)
 	if withPathPayload {
 		g.line(`local.get $result`)
-		g.line(`i32.const 4`)
+		g.line(`i32.const 8`)
 		g.line(`i32.add`)
-		g.line(`local.get $path`)
+		g.line(`local.get $path_data`)
+		g.line(`i32.store`)
+		g.line(`local.get $result`)
+		g.line(`i32.const 12`)
+		g.line(`i32.add`)
+		g.line(`local.get $path_len`)
 		g.line(`i32.store`)
 	}
 	g.line(`local.get $result`)
@@ -6541,7 +6593,7 @@ func (g *generator) emitReadFileHelper() {
 // errors mid-read are treated as EOF (matches what Reader.read_chunk
 // does too).
 func (g *generator) emitReadFileHelperPreview2() {
-	g.line(`(func $read_file (param $path i32) (result i32)`)
+	g.line(`(func $read_file (param $path_data i32) (param $path_len i32) (result i32)`)
 	g.indent++
 	g.line(`(local $open_result i32) (local $reader i32) (local $stream i32)`)
 	g.line(`(local $buf i32) (local $buf_size i32) (local $cur i32)`)
@@ -6550,7 +6602,8 @@ func (g *generator) emitReadFileHelperPreview2() {
 	g.line(`(local $sbase i32) (local $sptr i32) (local $result i32)`)
 
 	// Open. Result.Err shape matches what we want to return.
-	g.line(`local.get $path`)
+	g.line(`local.get $path_data`)
+	g.line(`local.get $path_len`)
 	g.line(`call $open_reader`)
 	g.line(`local.tee $open_result`)
 	g.line(`i32.load`)
@@ -6659,36 +6712,33 @@ func (g *generator) emitReadFileHelperPreview2() {
 	g.line(`local.get $stream`)
 	g.line(`call $__wasi_input_stream_drop`)
 
-	// Materialise as a length-prefixed string.
+	// Materialise as a heap-form string (no length prefix; len
+	// lives on the operand stack / in the variant payload slot).
 	g.line(`local.get $cur`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.line(`call $__lang_alloc`)
-	g.line(`local.set $sbase`)
-	g.line(`local.get $sbase`)
-	g.line(`local.get $cur`)
-	g.line(`i32.store`)
-	g.line(`local.get $sbase`)
-	g.line(`i32.const 4`)
-	g.line(`i32.add`)
 	g.line(`local.set $sptr`)
 	g.line(`local.get $sptr`)
 	g.line(`local.get $buf`)
 	g.line(`local.get $cur`)
 	g.line(`memory.copy`)
 
-	// Build Ok(sptr).
-	g.line(`i32.const 8`)
+	// Build Ok(string) — 16 bytes: tag@0 + padding + data@8 + len@12.
+	g.line(`i32.const 16`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.set $result`)
 	g.line(`local.get $result`)
 	g.line(`i32.const 0`)
-	g.line(`i32.store`)
+	g.line(`i32.store`) // tag = 0 (Ok)
 	g.line(`local.get $result`)
-	g.line(`i32.const 4`)
+	g.line(`i32.const 8`)
 	g.line(`i32.add`)
 	g.line(`local.get $sptr`)
-	g.line(`i32.store`)
+	g.line(`i32.store`) // data @ +8
+	g.line(`local.get $result`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`local.get $cur`)
+	g.line(`i32.store`) // len @ +12
 	g.line(`local.get $result`)
 	g.indent--
 	g.line(`)`)
@@ -6714,14 +6764,15 @@ func (g *generator) emitWriteFileHelper() {
 // returns; mid-write stream errors map to Some(IoError) with
 // errno=29 (EIO).
 func (g *generator) emitWriteFileHelperPreview2() {
-	g.line(`(func $write_file (param $path i32) (param $content i32) (result i32)`)
+	g.line(`(func $write_file (param $path_data i32) (param $path_len i32) (param $content_data i32) (param $content_len i32) (result i32)`)
 	g.indent++
 	g.line(`(local $open_result i32) (local $writer i32) (local $stream i32)`)
-	g.line(`(local $content_len i32) (local $result i32)`)
+	g.line(`(local $content_byte_len i32) (local $result i32)`)
 
 	// Open. Result.Err shape needs to translate from
 	// Result[Writer, IoError] to Option[IoError] = Some(err).
-	g.line(`local.get $path`)
+	g.line(`local.get $path_data`)
+	g.line(`local.get $path_len`)
 	g.line(`call $open_writer`)
 	g.line(`local.tee $open_result`)
 	g.line(`i32.load`)
@@ -6757,16 +6808,22 @@ func (g *generator) emitWriteFileHelperPreview2() {
 	g.line(`local.set $stream`)
 
 	g.emitStrLenFromLocal("$content")
-	g.line(`local.set $content_len`)
+	g.line(`local.set $content_byte_len`)
 
 	// $__streams_write loops blocking-write-and-flush in 4 KiB
 	// chunks (the canonical-ABI per-call cap). It swallows
 	// stream errors silently — same trade-off as Writer.write;
 	// a future revision can plumb success/failure through a
 	// dedicated chunked helper.
+	//
+	// Route $content via $__lang_str_data_ptr so inline-form
+	// values spill into the shared scratch slot before
+	// `blocking-write-and-flush` reads bytes from the address.
 	g.line(`local.get $stream`)
-	g.line(`local.get $content`)
+	g.line(`local.get $content_data`)
 	g.line(`local.get $content_len`)
+	g.line(`call $__lang_str_data_ptr`)
+	g.line(`local.get $content_byte_len`)
 	g.line(`call $__streams_write`)
 
 	// Drop the stream and return None.
