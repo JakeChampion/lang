@@ -105,6 +105,45 @@ to $__lang_str_byte:
   - $print / $write / $eprint
   - $open_reader / $open_writer / $open_appender
 
+### §5 progress: emit-side helpers adopt the convention
+
+- `emitPromoteStrParam(local)` now reads `$<local>_data` /
+  `$<local>_len` and writes back the two-word
+  `$__lang_str_to_heap` result. Callers still pass the bare
+  base name (`"$s"`, `"$path"`, `"$name"`) — works as long as
+  the producer declares `(local $<base>_data i32) (local
+  $<base>_len i32)`. Today's producers don't, so runtime is
+  broken at those producers until they're migrated.
+- `emitStrLenFromLocal` is doc-noted but body unchanged —
+  fastest path is for each caller to switch to passing the
+  `$<base>_len` local directly, eliminating the helper call
+  entirely; doing it across 20 caller sites is bulk work.
+
+### Layer ordering for the next session
+
+Bottom-up cascade keeps each layer self-tests passing once
+the layer is complete:
+
+1. **Helpers, leaf-first** — `$__lang_str_*` SSO seams (DONE),
+   `emitStrEmpty` (DONE), `OpConstStr` (DONE),
+   `emitInlineOutputBuild` / `emitHeapStrAlloc` /
+   `emitPromoteStrParam` (sig flipped — DONE).
+2. **Producer runtime helpers** — rewrite each producer's
+   function signature, locals, return path, and byteAt
+   closure. **THIS IS THE BULK NEXT-SESSION WORK.** Suggested
+   order: `$__str_concat` first (most complex byteAt, sets the
+   pattern), then mechanical conversion of the others.
+3. **wasm IR layer** — OpStore/OpLoad for string fields,
+   `watType` fan-out, `watTypes` introduction.
+4. **HTTP wrapper** — local fan-out, method preinterns.
+5. **e2e iteration** — fix struct field accesses,
+   variant-payload reads, pair-form rebox layout shifts.
+6. **Native backend mirror** — arm64 + x86_64 in lockstep.
+
+Realistic next-session bite: §2 (producer rewrites) for 4–6
+producers, leaving the rest + the IR / HTTP / native work to
+following sessions.
+
 ## What's broken (deliberately) — 22 e2e tests + 3 unit pins
 
 The single-line flip cascades through:
