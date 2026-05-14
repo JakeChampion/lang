@@ -1049,7 +1049,17 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpBrIf:
 		g.linef("br_if %d", op.I32)
 	case ir.OpDrop:
-		g.line("drop")
+		// `Width: WidthString` marks a drop produced by
+		// PropagateCopies's dead-store rewrite on a two-word
+		// string slot — the original store would have popped two
+		// halves, so the replacement needs two `drop`s. Default
+		// width (0) is the single-word case for every other op.
+		if op.Width == ir.WidthString {
+			g.line("drop")
+			g.line("drop")
+		} else {
+			g.line("drop")
+		}
 	case ir.OpReturn, ir.OpReturnVoid, ir.OpReturnPair:
 		// All return ops collapse to the same `return` keyword;
 		// wasm's typed stack carries however many values the

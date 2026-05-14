@@ -33,16 +33,46 @@
 
 package ir
 
+import "github.com/jakechampion/lang/internal/ast"
+
 // PropagateCopies eliminates OpTeeLocal / OpStoreLocal sites whose
 // slot is unused elsewhere in the function. Functions without an
 // eligible site are unchanged.
 func PropagateCopies(prog *Program) {
+	ptrW := prog.PtrW
+	if ptrW == 0 {
+		ptrW = 4
+	}
 	for _, fn := range prog.Funcs {
-		fn.Ops = propagateCopiesOps(fn.Ops)
+		fn.Ops = propagateCopiesOps(fn, fn.Ops, ptrW)
 	}
 }
 
-func propagateCopiesOps(ops []Op) []Op {
+// slotIsTwoWord reports whether slot `idx` in `fn` materialises
+// as two wasm32 operand-stack values — the two-word string ABI.
+// Used by the dead-store rewrite below: a dead OpStoreLocal that
+// targets a two-word slot has to pop both halves, not one, so
+// the replacement is two OpDrops instead of a single one.
+func slotIsTwoWord(fn *Func, idx int32, ptrW int) bool {
+	if ptrW != 4 {
+		return false
+	}
+	var t ast.Type
+	if int(idx) < len(fn.Params) {
+		t = fn.Params[idx].Type
+	} else if int(idx)-len(fn.Params) < len(fn.Locals) {
+		t = fn.Locals[int(idx)-len(fn.Params)].Type
+	} else {
+		i := int(idx) - len(fn.Params) - len(fn.Locals)
+		if i < len(fn.ScratchTypes) {
+			t = fn.ScratchTypes[i]
+		}
+	}
+	_, isString := t.(ast.StringType)
+	return isString
+}
+
+func propagateCopiesOps(fn *Func, ops []Op, ptrW int) []Op {
 	// Pre-walk: count how many times each slot is read (OpLoadLocal),
 	// stored to (OpStoreLocal), or tee'd (OpTeeLocal). The
 	// per-kind split lets us tell apart "slot only ever gets a tee"
@@ -77,8 +107,16 @@ func propagateCopiesOps(ops []Op) []Op {
 			// with OpDrop so the popped operand still leaves the
 			// stack — without that the stack would imbalance after
 			// the next op tries to consume the now-missing input.
+			// Two-word slots (string on wasm32) inherit `Width:
+			// WidthString` so the wasm codegen knows to fan the
+			// drop to two `drop` instructions; natives still emit
+			// one `drop`.
 			if reads[op.I32] == 0 && storeOnly[op.I32] == 1 && teeOnly[op.I32] == 0 {
-				out = append(out, Op{Kind: OpDrop, Pos: op.Pos})
+				w := 0
+				if slotIsTwoWord(fn, op.I32, ptrW) {
+					w = WidthString
+				}
+				out = append(out, Op{Kind: OpDrop, Width: w, Pos: op.Pos})
 				continue
 			}
 		}

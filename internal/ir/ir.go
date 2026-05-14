@@ -2169,9 +2169,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 			return err
 		}
 		// If the expression leaves a value on the stack, drop it so the
-		// stack stays balanced at statement boundaries.
+		// stack stays balanced at statement boundaries. String-typed
+		// expressions on wasm32 produce two stack values under the
+		// two-word ABI; mark the drop with `Width: WidthString` so the
+		// wasm codegen fans it out to two `drop`s.
 		if exprLeavesValue(n.Expr, b.info) {
-			b.emit(Op{Kind: OpDrop})
+			w := 0
+			if _, isString := b.exprType(n.Expr).(ast.StringType); isString && b.ptrW == 4 {
+				w = WidthString
+			}
+			b.emit(Op{Kind: OpDrop, Width: w})
 		}
 	case *ast.Switch:
 		// Lower switch with one outer block (break target / fallthrough
@@ -2547,9 +2554,26 @@ func (b *builder) expr(e ast.Expr) error {
 			// handle. usize widens the i32 hop to the target's
 			// native pointer width — necessary on arm64-darwin
 			// where heap addresses exceed 32 bits.
+			//
+			// On wasm32, string-typed values live as a two-word
+			// `(data, len)` pair on the operand stack. An i32 / usize
+			// cast to `string` therefore can't stay a no-op: the
+			// single stack value gets reinterpreted as a pointer to
+			// an 8-byte `(data, len)` cell and fanned out via
+			// `OpLoad{Width:WidthString}` (two `i32.load`s at +0
+			// and +4). This is the cell-pointer convention the
+			// Map runtime uses for string-typed K/V slots — see
+			// the boxing dispatch at the Map call sites in
+			// `callBody`. On natives strings stay a single pointer,
+			// so the cast remains a no-op.
 			if nt, ok := n.InnerType.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
 				switch n.Target.(type) {
-				case ast.ArrayType, ast.StringType, ast.StructType:
+				case ast.StringType:
+					if b.ptrW == 4 {
+						b.emit(Op{Kind: OpLoad, Width: WidthString})
+					}
+					return nil
+				case ast.ArrayType, ast.StructType:
 					return nil
 				}
 			}
@@ -3175,32 +3199,21 @@ func (b *builder) expr(e ast.Expr) error {
 		mapSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
-		// Wide-V boxing path: each value gets a fresh 8-byte
-		// cell, the cell pointer goes into the entries array
-		// (matches the emitWideMapSet shape used at user
-		// `m.set(k, v)` call sites).
-		wideV := isWideScalar(n.ValueType)
+		// Boxing path: each K and/or V gets a fresh 8-byte cell
+		// whose pointer goes into the entries array — matches the
+		// emitWideMapSet shape used at user `m.set(k, v)` call
+		// sites. Triggers for wide V (i64 / u64 / f64) on every
+		// target, and string K / V on wasm32 (where the two-word
+		// ABI doesn't fit the helper's i32 K/V slot).
+		boxK := isStringForBoxing(n.KeyType, b.ptrW)
+		boxV := isWideScalar(n.ValueType) || isStringForBoxing(n.ValueType, b.ptrW)
 		for _, ent := range n.Entries {
 			b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
-			if err := b.expr(ent.Key); err != nil {
+			if err := b.pushMapMethodArg(ent.Key, n.KeyType, boxK, "__maplit_k"); err != nil {
 				return err
 			}
-			if wideV {
-				cellSlot := b.allocSlot()
-				b.locals[fmt.Sprintf("__maplit_v_%d", cellSlot)] = cellSlot
-				b.emit(Op{Kind: OpConstI32, I32: 8})
-				b.emit(Op{Kind: OpAlloc})
-				b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
-				b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
-				if err := b.expr(ent.Value); err != nil {
-					return err
-				}
-				b.emit(payloadStoreOpFor(n.ValueType, b.ptrW))
-				b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
-			} else {
-				if err := b.expr(ent.Value); err != nil {
-					return err
-				}
+			if err := b.pushMapMethodArg(ent.Value, n.ValueType, boxV, "__maplit_v"); err != nil {
+				return err
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
 		}
@@ -3494,6 +3507,14 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 				return t
 			}
 		}
+	case *ast.Assign:
+		// Assignment-as-expression returns the assigned value's
+		// type — that's the target's type. The IR's `b.assign`
+		// emits a store-then-load pair to leave the value on the
+		// stack for downstream consumers; the surrounding
+		// ExprStmt drops it. Knowing the type here lets the drop
+		// fan correctly for two-word strings on wasm32.
+		return b.exprType(x.Target)
 	}
 	return nil
 }
@@ -4224,36 +4245,73 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 		}
 	}
-	// Wide-V Map shim: when V is i64 / u64 / f64, the wat
-	// helpers (which see all values as i32) can't carry the
-	// full payload. Box on the way in (alloc 8, store wide,
-	// pass cell ptr) and unbox on the way out (load wide from
-	// the returned cell ptr). Methods that return `Option[V]`
-	// or `V[]` need extra work — see emitWideMapGet /
-	// emitWideMapValues — so they're routed before the regular
-	// arg-evaluation loop. `keys()` only touches K (always
-	// i32-sized), `len/has/clear/delete` don't touch V, so they
-	// flow through the normal path unchanged.
-	if len(n.TypeArgs) >= 2 && isWideScalar(n.TypeArgs[1]) {
+	// Map call-site boxing. Two axes:
+	//
+	//   - V needs boxing if it's a wide scalar (i64 / u64 / f64)
+	//     on every target, or string V on wasm32 (`ptrW==4`).
+	//     The wat helper sees all V as a single i32, so wide and
+	//     string V values get alloc-and-stored into an 8-byte
+	//     cell whose pointer is passed in the v slot. Reads
+	//     follow the cell pointer back to the real value.
+	//   - K needs boxing if K is string on wasm32 — same i32-
+	//     slot constraint applies to the helper's k arg.
+	//
+	// Methods that return `Option[V]` or `V[]` need extra work to
+	// translate the helper's i32-cell result into a real V; the
+	// boxing-aware emitWideMap* helpers below do this. Methods
+	// whose return type passes through unchanged (`set` void,
+	// `has` / `delete` boolean, `get` when V is i32-scalar,
+	// `get_or` when V is i32-scalar) flow through
+	// emitStringKMapCall when only K needs boxing.
+	needBoxK := len(n.TypeArgs) >= 1 && isStringForBoxing(n.TypeArgs[0], b.ptrW)
+	needBoxV := len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
+	if needBoxK || needBoxV {
 		switch id.Name {
 		case "__method_Map_set":
-			return b.emitWideMapSet(n, n.TypeArgs[1])
+			return b.emitWideMapSet(n, n.TypeArgs[0], n.TypeArgs[1])
 		case "__method_Map_get":
-			return b.emitWideMapGet(n, n.TypeArgs[1])
-		case "__method_Map_get_or":
-			return b.emitWideMapGetOr(n, n.TypeArgs[1])
-		case "__method_MapIter_value":
-			// MapIter.value() returns V — when boxed, the wat
-			// helper hands back the cell pointer; unbox to the
-			// real wide value.
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
+			if needBoxV {
+				return b.emitWideMapGet(n, n.TypeArgs[0], n.TypeArgs[1])
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: 1})
-			b.emit(payloadLoadOpFor(n.TypeArgs[1], b.ptrW))
-			return nil
+			return b.emitStringKMapCall(n, n.TypeArgs[0], id.Name, 2)
+		case "__method_Map_get_or":
+			if needBoxV {
+				return b.emitWideMapGetOr(n, n.TypeArgs[0], n.TypeArgs[1])
+			}
+			return b.emitStringKMapCall(n, n.TypeArgs[0], id.Name, 3)
+		case "__method_Map_has", "__method_Map_delete":
+			if needBoxK {
+				return b.emitStringKMapCall(n, n.TypeArgs[0], id.Name, 2)
+			}
+			// Wide-V doesn't affect has/delete — fall through.
+		case "__method_MapIter_value":
+			if needBoxV {
+				// MapIter.value() returns V — when boxed, the
+				// wat helper hands back the cell pointer; unbox
+				// via payloadLoadOpFor (wide scalar load on
+				// natives, two-word string load on wasm32).
+				for _, a := range n.Args {
+					if err := b.expr(a); err != nil {
+						return err
+					}
+				}
+				b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: 1})
+				b.emit(payloadLoadOpFor(n.TypeArgs[1], b.ptrW))
+				return nil
+			}
+		case "__method_MapIter_key":
+			if needBoxK {
+				// String K on wasm32: the entries array stores
+				// cell pointers; unbox to (data, len).
+				for _, a := range n.Args {
+					if err := b.expr(a); err != nil {
+						return err
+					}
+				}
+				b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: 1})
+				b.emit(payloadLoadOpFor(n.TypeArgs[0], b.ptrW))
+				return nil
+			}
 		}
 	}
 	for _, a := range n.Args {
@@ -5129,46 +5187,93 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	return nil
 }
 
-// emitWideMapSet lowers `m.set(k, v)` when V is wide. The
-// shared wat helper (`__method_Map_set`) takes everything as
-// i32, so we allocate an 8-byte cell, store the wide value
-// there, and pass the cell pointer in the v slot — the entries
-// array ends up holding pointers, transparent to the helper.
-// Pairs with emitWideMapGet on the read side.
-func (b *builder) emitWideMapSet(n *ast.Call, vType ast.Type) error {
-	if err := b.expr(n.Args[0]); err != nil {
-		return err
+// isStringForBoxing reports whether `t` is a string type that
+// needs cell-pointer boxing across the Map runtime boundary on
+// this target. Triggered only on wasm32 (`ptrW == 4`), where the
+// two-word `(data, len)` string ABI doesn't fit the helper's
+// i32-shaped K / V slots; boxing alloc-and-stores the pair into
+// an 8-byte cell so the helper sees a single i32 cell pointer.
+// Natives keep the single-pointer string layout, so no boxing is
+// needed there.
+func isStringForBoxing(t ast.Type, ptrW int) bool {
+	if ptrW != 4 {
+		return false
 	}
-	if err := b.expr(n.Args[1]); err != nil {
-		return err
-	}
+	_, ok := t.(ast.StringType)
+	return ok
+}
+
+// boxIntoCell allocates an 8-byte cell, evaluates `arg`, stores
+// it into the cell via the type-correct payloadStoreOp, and
+// leaves the cell pointer on the operand stack. Used by the
+// Map-method boxing helpers to widen 2-word strings (and wide
+// scalars) into a single i32 the helper can carry through its
+// entries array.
+func (b *builder) boxIntoCell(arg ast.Expr, t ast.Type, slotLabel string) error {
 	cellSlot := b.allocSlot()
-	b.locals[fmt.Sprintf("__map_v_box_%d", cellSlot)] = cellSlot
+	b.locals[fmt.Sprintf("%s_%d", slotLabel, cellSlot)] = cellSlot
 	b.emit(Op{Kind: OpConstI32, I32: 8})
 	b.emit(Op{Kind: OpAlloc})
 	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
-	if err := b.expr(n.Args[2]); err != nil {
+	if err := b.expr(arg); err != nil {
 		return err
 	}
-	b.emit(payloadStoreOpFor(vType, b.ptrW))
+	b.emit(payloadStoreOpFor(t, b.ptrW))
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	return nil
+}
+
+// pushMapMethodArg evaluates one argument to a Map method,
+// boxing it if its declared type needs cell-pointer indirection
+// across the helper boundary. `shouldBox` is the caller's
+// per-arg decision (string K on wasm32, wide / string V).
+func (b *builder) pushMapMethodArg(arg ast.Expr, t ast.Type, shouldBox bool, slotLabel string) error {
+	if shouldBox {
+		return b.boxIntoCell(arg, t, slotLabel)
+	}
+	return b.expr(arg)
+}
+
+// emitWideMapSet lowers `m.set(k, v)` when K or V needs cell-
+// pointer boxing across the Map helper boundary — wide V
+// (i64 / u64 / f64) on every target, and string K / V on wasm32
+// (the two-word ABI doesn't fit the helper's i32 K/V slots).
+// Each boxed arg is alloc-and-stored into an 8-byte cell whose
+// pointer is passed through; the entries array ends up holding
+// the cell pointers, transparent to the helper. Pairs with
+// emitWideMapGet on the read side.
+func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	boxK := isStringForBoxing(kType, b.ptrW)
+	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_set_kbox"); err != nil {
+		return err
+	}
+	boxV := isWideScalar(vType) || isStringForBoxing(vType, b.ptrW)
+	if err := b.pushMapMethodArg(n.Args[2], vType, boxV, "__map_set_vbox"); err != nil {
+		return err
+	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
 	return nil
 }
 
-// emitWideMapGet lowers `m.get(k)` when V is wide. The wat
-// helper returns an `Option<i32>` (4-byte payload = our boxed
-// cell pointer). We translate that to a fresh `Option<wide-V>`
-// — same tag, but the Some payload is the i64 / f64 loaded
-// inline from the cell so the wide-payload-aware enum lowering
-// reads it back uniformly. Variant indices: Some = 0, None = 1
-// (the auto-injected order in checker.builtinEnumDecls).
-func (b *builder) emitWideMapGet(n *ast.Call, vType ast.Type) error {
+// emitWideMapGet lowers `m.get(k)` when V needs boxing — wide
+// scalar (i64 / u64 / f64) on every target, or string V on
+// wasm32. The wat helper returns an `Option<i32>` (4-byte
+// payload = the boxed cell pointer). We translate that to a
+// fresh `Option<V>` heap-box with the user-expected payload
+// shape so the surrounding match / let-binding sees the
+// substituted V type. Variant indices: Some = 0, None = 1
+// (the auto-injected order in checker.builtinEnumDecls). K is
+// also boxed when it's a string on wasm32.
+func (b *builder) emitWideMapGet(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	if err := b.expr(n.Args[1]); err != nil {
+	boxK := isStringForBoxing(kType, b.ptrW)
+	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_get_kbox"); err != nil {
 		return err
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get", I32: 2})
@@ -5216,29 +5321,48 @@ func (b *builder) emitWideMapGet(n *ast.Call, vType ast.Type) error {
 	return nil
 }
 
-// emitWideMapGetOr lowers `m.get_or(k, fallback)` when V is
-// wide. Box the fallback on the way in (same shape as
-// emitWideMapSet) and unbox the helper's i32 result on the way
-// out — that result is the cell pointer the entries array was
-// holding (or our just-allocated fallback cell on a miss).
-func (b *builder) emitWideMapGetOr(n *ast.Call, vType ast.Type) error {
+// emitStringKMapCall boxes a string K argument and emits a
+// regular call to the Map helper. Used for methods whose return
+// shape passes through unchanged — `set` (void), `has` /
+// `delete` (boolean), `get` when V is i32-scalar (Option[i32]),
+// `get_or` when V is i32-scalar (i32). Args after the boxed K
+// flow through normally — they're scalar in every case this
+// helper handles.
+//
+// `argCount` is the IR-visible argument count (m + k + …).
+func (b *builder) emitStringKMapCall(n *ast.Call, kType ast.Type, methodName string, argCount int32) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	if err := b.expr(n.Args[1]); err != nil {
+	if err := b.boxIntoCell(n.Args[1], kType, "__map_kbox"); err != nil {
 		return err
 	}
-	cellSlot := b.allocSlot()
-	b.locals[fmt.Sprintf("__map_or_box_%d", cellSlot)] = cellSlot
-	b.emit(Op{Kind: OpConstI32, I32: 8})
-	b.emit(Op{Kind: OpAlloc})
-	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
-	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
-	if err := b.expr(n.Args[2]); err != nil {
+	for i := 2; i < len(n.Args); i++ {
+		if err := b.expr(n.Args[i]); err != nil {
+			return err
+		}
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: methodName, I32: argCount})
+	return nil
+}
+
+// emitWideMapGetOr lowers `m.get_or(k, fallback)` when K and/or
+// V needs cell-pointer boxing. The fallback is boxed inline (so
+// the entries array sees a cell ptr the helper can carry), and
+// the helper's i32 result is unboxed back into the user-shaped
+// value — that result is the cell pointer the entries array was
+// holding (or our just-allocated fallback cell on a miss).
+func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
+	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	b.emit(payloadStoreOpFor(vType, b.ptrW))
-	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	boxK := isStringForBoxing(kType, b.ptrW)
+	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_or_kbox"); err != nil {
+		return err
+	}
+	if err := b.boxIntoCell(n.Args[2], vType, "__map_or_box"); err != nil {
+		return err
+	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: 3})
 	b.emit(payloadLoadOpFor(vType, b.ptrW))
 	return nil
