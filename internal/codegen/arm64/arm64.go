@@ -3495,6 +3495,100 @@ func (g *generator) emitStrEmpty(dstX string) {
 	g.adrpAdd(dstX, ".LStr_Empty")
 }
 
+// emitStrLen2W is the two-word-ABI counterpart of emitStrLen
+// — reads the byte length from a `len` register `lenX` under
+// the (data, len) operand-stack convention. Flag-aware:
+//
+//   - heap form (bit 63 of lenX clear): `lenX`'s low 32 bits
+//     hold the byte length verbatim. `mov dstW, wN` puts them
+//     in dstW.
+//   - inline form (bit 63 set): `lenX` bits 56..59 hold the
+//     length nibble (0..15, matching the 15-byte cap for
+//     wasm32-incompatible inline strings on natives). `ubfx`
+//     extracts the nibble.
+//
+// Matches `langstring.LengthNative` exactly. Dead today (no
+// IR site emits two-word strings for natives yet); will become
+// the live helper when the arm64 flip activates.
+//
+// The "2W" suffix marks this as the two-word variant; the
+// legacy single-register `emitStrLen` lives alongside until
+// every caller migrates over.
+func (g *generator) emitStrLen2W(dstW, lenX string) {
+	id := g.labelN
+	g.labelN++
+	inlineLbl := fmt.Sprintf(".Lstrlen2w_inline_%d", id)
+	doneLbl := fmt.Sprintf(".Lstrlen2w_done_%d", id)
+	g.emit("tbnz %s, #63, %s", lenX, inlineLbl)
+	// Heap form: low 32 bits of lenX are the byte length.
+	g.emit("mov %s, %s", dstW, regW(lenX))
+	g.emit("b %s", doneLbl)
+	g.label(inlineLbl)
+	// Inline form: length nibble at bits 56..59 of lenX. Result
+	// fits in 4 bits → 32-bit reg holds it; use w-form ubfx via
+	// the x-source-with-w-dst encoding (`ubfx wD, xN<31:0>, ...`
+	// is invalid — the source must match destination width).
+	// Compute in xtmp first, then alias as wD.
+	g.emit("ubfx %s, %s, #56, #4", lenX, lenX) // overwrites lenX with the nibble
+	g.emit("mov %s, %s", dstW, regW(lenX))
+	g.label(doneLbl)
+}
+
+// emitStrDataPtr2W is the two-word-ABI counterpart of
+// emitStrDataPtr. Takes a `(dataX, lenX)` pair and produces a
+// linear-memory pointer to the bytes in `dstX`. Flag-aware:
+//
+//   - heap form (bit 63 of lenX clear): `dataX` IS the byte
+//     pointer; copy it into dstX.
+//   - inline form (bit 63 set): spill the 16 inline-form
+//     bytes (`dataX` for bytes 0..7, `lenX` for bytes 8..14
+//     with the length nibble in bits 56..59) to a caller-
+//     reserved 16-byte scratch slot at `[x29 + scratchOff]`
+//     and set dstX = x29 + scratchOff.
+//
+// `scratchOff` must point at a 16-byte caller-reserved slot;
+// 16 vs 8 is the only layout difference from the single-
+// register `emitStrDataPtr`.
+//
+// Dead today; live after the arm64 flip.
+func (g *generator) emitStrDataPtr2W(dstX, dataX, lenX string, scratchOff int) {
+	id := g.labelN
+	g.labelN++
+	inlineLbl := fmt.Sprintf(".Lstrdata2w_inline_%d", id)
+	doneLbl := fmt.Sprintf(".Lstrdata2w_done_%d", id)
+	g.emit("tbnz %s, #63, %s", lenX, inlineLbl)
+	// Heap form: data pointer is dataX.
+	if dstX != dataX {
+		g.emit("mov %s, %s", dstX, dataX)
+	}
+	g.emit("b %s", doneLbl)
+	g.label(inlineLbl)
+	// Inline form: spill (dataX, lenX) to mem[x29 + scratchOff
+	// .. x29 + scratchOff + 15] and return that address. The
+	// length-nibble in lenX bits 56..59 sits past the inline
+	// payload, but writing the full 16 bytes is harmless —
+	// callers only read the first `length` bytes via the
+	// bounds-checked `__str_idx` etc.
+	g.emit("str %s, [x29, #%d]", dataX, scratchOff)
+	g.emit("str %s, [x29, #%d]", lenX, scratchOff+8)
+	g.emit("add %s, x29, #%d", dstX, scratchOff)
+	g.label(doneLbl)
+}
+
+// emitStrEmpty2W is the two-word-ABI counterpart of
+// emitStrEmpty. Sets `(dataX, lenX)` to the canonical empty-
+// string pair: dataX = 0 (no inline bytes), lenX = inline-flag
+// bit only (length 0, no inline bytes). This is the
+// same representation `langstring.PackInlineNative([])`
+// produces and matches the wasm32 empty-string pair
+// (with bit 63 instead of bit 31).
+//
+// Dead today; live after the arm64 flip.
+func (g *generator) emitStrEmpty2W(dataX, lenX string) {
+	g.emit("mov %s, xzr", dataX)
+	g.emit("movz %s, #0x8000, lsl #48", lenX)
+}
+
 // emitArrayLen loads the i32 length of the length-prefixed array
 // whose data pointer lives in srcX into dstW. Today this is a
 // 4-byte little-endian load from `[srcX - 4]`. Centralised seam
