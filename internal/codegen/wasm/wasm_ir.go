@@ -744,25 +744,19 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpConstF64:
 		g.linef("f64.const %g", op.F64)
 	case ir.OpConstStr:
-		// SSO literal-pack: short literals (≤3 bytes) encode
-		// directly into the operand-stack i32 via
-		// `langstring.PackTinyWasm` — top-bit flag + 3-bit
-		// length + up-to-3 inline bytes — bypassing the data
-		// segment entirely. Heap-form literals still go
-		// through `internString` (one `[length-prefix][bytes]`
-		// entry per unique string in the static data segment).
-		// Downstream consumers route through the SSO seams
-		// either way.
-		//
-		// Module size win: each short literal saves
-		// `len + 4` bytes (the prefix + the content) from the
-		// data segment. The runtime cost is zero: literals
-		// were already a single `i32.const`; the only
-		// difference is which i32 value gets emitted.
-		if packed, ok := langstring.PackTinyWasm([]byte(op.Str)); ok {
-			g.linef("i32.const 0x%x", packed)
+		// Two-word ABI: every OpConstStr emits two i32.consts —
+		// `(data, len)`. Inline-form (≤7 bytes) uses
+		// `langstring.PackInlineWasm` to compute both words.
+		// Heap-form (>7 bytes) emits `(data_seg_offset, length)`
+		// — note the heap data segment no longer holds a 4-byte
+		// length prefix; length lives on the operand stack.
+		if langstring.FitsInlineWasm(len(op.Str)) {
+			data, length := langstring.PackInlineWasm([]byte(op.Str))
+			g.linef("i32.const 0x%x", data)
+			g.linef("i32.const 0x%x", length)
 		} else {
 			g.linef("i32.const %d", g.internString(op.Str))
+			g.linef("i32.const %d", len(op.Str))
 		}
 	case ir.OpConstFunc:
 		// Function values materialise as static `{fn_idx, env}`
