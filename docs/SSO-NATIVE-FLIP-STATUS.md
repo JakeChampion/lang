@@ -112,6 +112,33 @@ the eventual gate flip in the IR layer (extending
 `twoWordStrings()` to return true on arm64 too) becomes a
 one-liner from the codegen-side perspective.
 
+### §1b. arm64 emit-side helpers (two-word variants) — DONE
+
+Added three Go-level helpers alongside the existing
+single-register `emitStrLen` / `emitStrDataPtr` /
+`emitStrEmpty`, suffixed `2W` to mark the two-word
+variants:
+
+  - `emitStrLen2W(dstW, lenX)` — flag-aware byte-length
+    extraction from a `len` register. Top-bit-tagged:
+    heap → `lenX_w`, inline → bits 56..59.
+  - `emitStrDataPtr2W(dstX, dataX, lenX, scratchOff)` —
+    flag-aware linear-memory pointer. Heap → dataX,
+    inline → spill 16 bytes to `[x29 + scratchOff]`.
+  - `emitStrEmpty2W(dataX, lenX)` — sets the (dataX,
+    lenX) pair to the canonical empty-string two-word
+    value (data = 0, len = `1 << 63`).
+
+`emitStrLenStore` has no two-word counterpart — heap form
+in the two-word ABI carries no length prefix; the helper
+is dead-on-arrival under the new ABI. Existing callers
+keep using the legacy helper for now.
+
+Dead today; live after the arm64 flip activates. The
+`2W` suffix is temporary — once the legacy helpers'
+callers all migrate, the `2W` versions take over the
+unsuffixed names.
+
 ## What's left, in execution order (rough estimate)
 
 1. **§1 IR gate refactor** — rename `ptrW == 4` checks
