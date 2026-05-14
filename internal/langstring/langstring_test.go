@@ -210,3 +210,145 @@ func TestUnpackTinyWasmPanicsOnNonInline(t *testing.T) {
 	}()
 	UnpackTinyWasm(0x12345)
 }
+
+// PackInlineWasm's concrete bit layout for the two-word
+// (data, len) encoding. Pins the encoding the wasm two-word
+// ABI flip will rely on (see docs/SSO-TWOWORD-EXEC.md) so a
+// future drift in either byte boundaries or the flag /
+// length nibble position fails the test deliberately.
+//
+// "AB" — 2 bytes, fits in `data` alone.
+// "ABCD" — 4 bytes, fills `data` exactly, len has no inline
+// bytes.
+// "ABCDEFG" — 7 bytes (the wasm cap), `data` holds 4 bytes,
+// `len`'s low 24 bits hold the remaining 3.
+func TestPackInlineWasmConcreteLayout(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantData uint32
+		wantLen  uint32
+	}{
+		{
+			in:       "",
+			wantData: 0,
+			wantLen:  InlineFlagWasm | (0 << 24),
+		},
+		{
+			// "A" = 0x41, data byte 0 only; len carries length + flag.
+			in:       "A",
+			wantData: 0x41,
+			wantLen:  InlineFlagWasm | (1 << 24),
+		},
+		{
+			// "AB" = 0x41 (byte 0) | 0x42 << 8 (byte 1) = 0x4241.
+			in:       "AB",
+			wantData: 0x4241,
+			wantLen:  InlineFlagWasm | (2 << 24),
+		},
+		{
+			// "ABCD" = bytes 0..3 in data, no spillover to len.
+			in:       "ABCD",
+			wantData: 0x44434241,
+			wantLen:  InlineFlagWasm | (4 << 24),
+		},
+		{
+			// "ABCDE" = data full + 1 byte in len's low 8.
+			in:       "ABCDE",
+			wantData: 0x44434241,
+			wantLen:  InlineFlagWasm | (5 << 24) | 0x45,
+		},
+		{
+			// "ABCDEFG" = 7 bytes, the wasm32 inline cap.
+			// data bytes 0..3 = 0x44434241; len bytes 4..6 = 0x474645.
+			in:       "ABCDEFG",
+			wantData: 0x44434241,
+			wantLen:  InlineFlagWasm | (7 << 24) | 0x474645,
+		},
+	}
+	for _, c := range cases {
+		data, length := PackInlineWasm([]byte(c.in))
+		if data != c.wantData || length != c.wantLen {
+			t.Errorf(`PackInlineWasm(%q) = (data=0x%08x, len=0x%08x); want (data=0x%08x, len=0x%08x)`,
+				c.in, data, length, c.wantData, c.wantLen)
+		}
+	}
+}
+
+// PackInlineNative's concrete bit layout for the two-word
+// (data, len) encoding on natives. Bytes 0..7 in `data`,
+// bytes 8..14 in `len`'s low 56 bits, length nibble in bits
+// 56..59, flag in bit 63.
+func TestPackInlineNativeConcreteLayout(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantData uint64
+		wantLen  uint64
+	}{
+		{
+			in:       "",
+			wantData: 0,
+			wantLen:  InlineFlagNative | (0 << 56),
+		},
+		{
+			// "A" = byte 0 in data only.
+			in:       "A",
+			wantData: 0x41,
+			wantLen:  InlineFlagNative | (1 << 56),
+		},
+		{
+			// "ABCDEFGH" = bytes 0..7 fill data exactly.
+			in:       "ABCDEFGH",
+			wantData: 0x4847464544434241,
+			wantLen:  InlineFlagNative | (8 << 56),
+		},
+		{
+			// "ABCDEFGHI" = data full + 1 byte in len's low 8.
+			in:       "ABCDEFGHI",
+			wantData: 0x4847464544434241,
+			wantLen:  InlineFlagNative | (9 << 56) | 0x49,
+		},
+		{
+			// "ABCDEFGHIJKLMNO" = 15 bytes, the native inline cap.
+			// data = 'A'..'H'; len.bytes 0..6 = 'I'..'O' = 0x4F4E4D4C4B4A49.
+			in:       "ABCDEFGHIJKLMNO",
+			wantData: 0x4847464544434241,
+			wantLen:  InlineFlagNative | (15 << 56) | 0x4F4E4D4C4B4A49,
+		},
+	}
+	for _, c := range cases {
+		data, length := PackInlineNative([]byte(c.in))
+		if data != c.wantData || length != c.wantLen {
+			t.Errorf(`PackInlineNative(%q) = (data=0x%016x, len=0x%016x); want (data=0x%016x, len=0x%016x)`,
+				c.in, data, length, c.wantData, c.wantLen)
+		}
+	}
+}
+
+// Inline-form length zero is still INLINE (flag bit set) —
+// distinguishes it from a heap-form (data, len) pair where
+// both words are zero. The atomic-flip PR's empty-string
+// sentinel will use the inline-zero encoding; readers must
+// see `IsInline*` return true for it.
+func TestInlineZeroLengthIsInline(t *testing.T) {
+	data, length := PackInlineWasm(nil)
+	if data != 0 {
+		t.Errorf("PackInlineWasm(nil) data = 0x%08x, want 0", data)
+	}
+	if !IsInlineWasm(length) {
+		t.Errorf("PackInlineWasm(nil) len = 0x%08x; flag bit must be set even for empty inline", length)
+	}
+	if got := LengthWasm(length); got != 0 {
+		t.Errorf("LengthWasm of inline empty = %d, want 0", got)
+	}
+
+	dataN, lengthN := PackInlineNative(nil)
+	if dataN != 0 {
+		t.Errorf("PackInlineNative(nil) data = 0x%016x, want 0", dataN)
+	}
+	if !IsInlineNative(lengthN) {
+		t.Errorf("PackInlineNative(nil) len = 0x%016x; flag bit must be set even for empty inline", lengthN)
+	}
+	if got := LengthNative(lengthN); got != 0 {
+		t.Errorf("LengthNative of inline empty = %d, want 0", got)
+	}
+}
