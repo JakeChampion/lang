@@ -7,10 +7,13 @@ done, what's broken, and what's left.
 
 ## Progress snapshot
 
-Wasm e2e cascade: 67 → **58 failing** tests, native suite
-**fully green** (`x86_64` files / HTTP / streaming all pass).
-Native parity is held by a target-aware split — see "Native
-deferral" below.
+Wasm e2e cascade: 67 → 58 → **15 failing** tests after the Map
+runtime two-word migration (Option A from the previous session's
+notes). Native suite **fully green** (`x86_64` files / HTTP /
+streaming all pass — pre-existing SSO-inline / empty-sentinel /
+HTTP-handler failures are unrelated to this work and were red
+on the prior baseline too). Native parity is held by a
+target-aware split — see "Native deferral" below.
 
 ## What's done in this branch
 
@@ -149,44 +152,73 @@ offsets, function signatures, IR ops — all unchanged in
 behaviour. The full native e2e suite (HTTP / files / streams /
 reader-writer) passes.
 
-## What's broken — 58 wasm e2e failures, mostly Map / closure-capture
+## What's broken — 15 wasm e2e failures, mostly closure-capture / state / cascades
 
-Two architectural shapes account for the bulk of remaining
-failures. Both are deferred because they need fresh design
-decisions, not mechanical edits.
+The Map runtime migration cleared **43 of the 58** prior
+failures. The remaining 15 are predominantly closure-capture,
+state globals, and downstream cascade. The Map work
+documented in section §11 below describes how it was done.
 
-### 1. Map runtime stores string keys as single ptr-width slots
+### 0. (was §1) Map runtime two-word migration — DONE in this session
 
-`__map_set_impl` / `__map_get_impl` / `__map_delete_impl` /
-`__map_iter_*` in `internal/prelude/prelude.lang` load each
-entry's key with `__load_ptr(entriesBase + b * entryStride)`
-and store with `__store_ptr(...)`. For `Map[string, …]`, the
-single-i32 result is then cast to string: `(entryK as string)
-== (k as string)`.
+Done via "cell-pointer boxing" at the call boundary. Same
+pattern the wide-V (`i64` / `u64` / `f64`) helpers already
+use. The prelude's i32-shaped `(m, k: i32, v: i32)` signatures
+stay; on wasm32 only, the IR boxes a string K or V at the call
+site into a fresh 8-byte cell holding `(data, len)`, then passes
+the cell pointer through. The prelude reads it back via the
+`(entryK as string) == (k as string)` pattern, which now picks
+up an automatic cell-deref via the cast-lowering change below.
 
-The cast is a no-op at the AST level, but the IR for
-`OpStrEq` expects 4 operands on the stack: `(a_data, a_len,
-b_data, b_len)`. Today's prelude pushes 2. The wasm validator
-rejects the module — `expected i32 but nothing on stack`.
+Concrete IR changes:
 
-The proper fix needs the map runtime to know whether keys are
-`string` (2 ptrW slots) or scalar (1 ptrW slot). Options:
+  - **Cast lowering** (`internal/ir/ir.go`, CastExpr handler):
+    `(i32 | usize) as string` on wasm32 (`b.ptrW == 4`) now
+    emits `OpLoad{Width: WidthString}`, fanning the single i32
+    cell pointer into a `(data, len)` pair via two `i32.load`s
+    at offsets +0 / +4. On natives the cast remains a no-op
+    (single ptr-shaped string slot).
+  - **Boxing dispatch** (`callBody`): the existing wide-V
+    dispatch (`isWideScalar`) extends to string K (always boxed
+    on wasm32) and string V (boxed on wasm32). Three helpers
+    cover the matrix: `emitWideMapSet` (K+V box), `emitWideMapGet`
+    (K box + V unbox into Option[string]), `emitWideMapGetOr`
+    (K+V box + V unbox), plus `emitStringKMapCall` for methods
+    whose return shape passes through (has / delete / get when
+    V is scalar).
+  - **MapIter / `MapIter_key` / `MapIter_value`**: cell-pointer
+    return unboxes via `payloadLoadOpFor` (which already returns
+    `OpLoad{WidthString}` on wasm32 for string types).
+  - **`Map { … }` literal lowering**: the per-entry alloc-and-
+    store path now boxes K and V uniformly through
+    `pushMapMethodArg` (renamed from the wide-only path).
+  - **PropagateCopies**: a dead `OpStoreLocal` on a two-word
+    string slot is replaced with `OpDrop{Width: WidthString}`
+    so the wasm codegen fans the drop to two `drop`
+    instructions, balancing the two stack values the original
+    store would have consumed. Without this the dead-store
+    rewrite imbalances every string-typed local that's stored
+    but never read (frequent in the prelude after inlining).
+  - **ExprStmt drop fan-out**: an `Assign` used as an
+    expression-statement leaves the assigned value on the
+    operand stack (the assign-as-tee pattern). For string
+    locals on wasm32 that's two values; the ExprStmt's
+    discard now emits `OpDrop{Width: WidthString}` (and
+    `exprType` recognises `*ast.Assign` so the drop sees the
+    right type).
+  - **Wasm codegen `OpDrop`**: `Width: WidthString` fans out
+    to two `drop`s; default (i32 / scalar) emits one.
 
-  - **Option A**: keyKind-aware entry stride — `entryStride` is
-    already a runtime field; bump it by `ptrW` when keyKind=1.
-    Then `__load_ptr` becomes two loads for string keys; same
-    for store. Touches every key-touching line in the four
-    map ops; doable but a deeper prelude rewrite.
-  - **Option B**: introduce `__load_string(addr) → (data, len)`
-    / `__store_string(addr, data, len)` wat shims and use them
-    in the string-key branches of the map prelude. Pairs with
-    Option A's entry-stride bump.
+The prelude itself stays unchanged — no map-runtime rewrite
+needed because the cast-lowering change makes the existing
+`(entryK as string) == (k as string)` work cleanly under the
+two-word ABI (it now loads `(data, len)` from the entries
+array's cell pointer, then `OpStrEq` consumes the four
+operands it expects).
 
-Either way, the map runtime change is a self-contained
-follow-up (single prelude file + the matching wat helpers).
-**~20 of the 58 failures should clear once Map is migrated.**
+The remaining wasm e2e failures fall into the categories below.
 
-### 2. Closure captures store string values as single ptr-width slots
+### 1. Closure captures store string values as single ptr-width slots
 
 `OpMakeClosure` / `OpMakeEnv` build an env cell that's a
 pointer-aligned record of captured locals. For each string
@@ -224,22 +256,23 @@ settled.
 
 ## What's left, in execution order
 
-1. **Map runtime migration** — single PR; touches
-   `internal/prelude/prelude.lang` (the four `__map_*` helpers)
-   + add `__load_string` / `__store_string` wat shims to
-   `internal/codegen/wasm/wasm.go`. Clears ~20 failures.
-2. **Closure captures + state globals string layout** — second
+1. **Closure captures + state globals string layout** — single
    PR; touches `internal/closureconv` + IR `OpCaptureLoad` /
-   `OpCaptureStore` handlers + the wasm side. Clears another
-   ~10 failures.
-3. **F-string interp investigation** — single focused look,
-   probably a couple of lines. Clears the remaining miscellaneous
-   string-handling failures.
-4. **Pin-test refresh** — update the 6 pin tests to assert the
+   `OpCaptureStore` handlers + the wasm side. Likely clears
+   `TestWASMClosureCapturesString` / `TestWASMClosureCapturesMixedPointers`
+   / `TestWASMStateStringConcat` / `TestWASMStateMixedInit` and
+   probably the streaming / file-I/O tests too (they go through
+   closures internally for the defer-cleanup path).
+2. **Generic function instantiation + tuple destructure** —
+   `TestWASMGenericFunctionMultipleInstantiations`,
+   `TestWASMGenericResult`, `TestWASMTupleDestructure`. Likely
+   missing fan-out at some IR pass that doesn't see the
+   substituted type. Worth a focused investigation.
+3. **Pin-test refresh** — update the 6 pin tests to assert the
    post-flip shape, plus the `LengthWasm` bug fix called out
    in the earlier status doc (the helper masks bits 0..30 when
    it should dispatch on `IsInlineWasm`). §10 cleanup.
-5. **Native flip in lockstep (§9, optional)** — arm64 +
+4. **Native flip in lockstep (§9, optional)** — arm64 +
    x86_64 backends pick up the two-word ABI per
    `docs/SSO-TWOWORD-EXEC.md`. Once natives flip,
    `stringSlotSize` / `payloadStoreOpFor` / `payloadLoadOpFor` /
@@ -250,9 +283,9 @@ settled.
 | Session | Scope                                                     |
 |---------|-----------------------------------------------------------|
 | done    | §1–§8 (helpers + watTypes + WidthString + HTTP wrapper)   |
-| next    | Map runtime two-word migration (Option A or B)            |
-| then    | Closure-capture + state-global string layout              |
-| then    | F-string interp + 6 pin-test refresh + langstring.LengthWasm fix |
+| done    | Map runtime two-word migration via cell-pointer boxing    |
+| next    | Closure-capture + state-global string layout              |
+| then    | Generic instantiation + tuple destructure + pin-test refresh |
 | later   | §9 native flip (arm64 + x86_64 in lockstep, or staged)    |
 | final   | §10 cleanup (drop PackTinyWasm / TinyInlineCapWasm /
             data-segment length-prefix dead bytes)            |
