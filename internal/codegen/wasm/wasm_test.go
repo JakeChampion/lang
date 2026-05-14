@@ -819,6 +819,48 @@ func TestStructLitAllocatesAndStores(t *testing.T) {
 	mustContain(t, wat, "i32.load")
 }
 
+// Single-i32 string ABI pin: a struct field of type `string`
+// today occupies exactly one pointer-width slot (4 bytes on
+// wasm32). A `{i32, string, i32}` struct allocates 12 bytes
+// with offsets {0, 4, 8}.
+//
+// This test exists to FAIL deliberately when the two-word
+// flip lands (docs/SSO-TWOWORD-EXEC.md) — at that point a
+// string field will occupy 2 × ptrW = 8 bytes, alloc size
+// becomes 16, and offsets shift to {0, 4, 12}. The failure
+// is the signal to the atomic-flip author that struct field
+// layout has to be updated in lockstep.
+func TestStringFieldOffsetIsPointerWidth(t *testing.T) {
+	wat := compileToWAT(t, `struct R { a: i32, s: string, b: i32 }
+		function main(): i32 {
+			var r: R = R { a: 1, s: "x", b: 3 };
+			return r.a + r.b;
+		}`)
+	// Total alloc size: 4 + 4 + 4 = 12 bytes (one slot per
+	// field; string still single-i32). Post-flip becomes 16.
+	mustContain(t, wat, "i32.const 12")
+}
+
+// Single-i32 string ABI pin: a function param of type
+// `string` declares exactly one local. `function f(s: string)
+// : i32 { return len(s); }` emits `(param $s i32)` — one i32
+// in, no per-string slot fan-out.
+//
+// FAILS deliberately when the two-word flip lands; the
+// atomic-flip PR has to update the assertion to recognise the
+// `(param $s_data i32) (param $s_len i32)` shape (or whatever
+// fan-out convention it picks).
+func TestStringParamIsSingleI32Slot(t *testing.T) {
+	wat := compileToWAT(t, `function f(s: string): i32 { return len(s); }`)
+	// Today: one i32 param. Post-flip: two i32 params.
+	mustContain(t, wat, `(func $f (param $s i32) (result i32)`)
+	// The post-flip shape would emit `(param $s_data i32)
+	// (param $s_len i32)` (or similar), so this negative
+	// assertion is the explicit pin against that shape
+	// arriving silently.
+	mustNotContain(t, wat, `(param $s_data i32)`)
+}
+
 func TestStringConcatEmitsHelper(t *testing.T) {
 	// Use a parameter to defeat the IR-level `literal+literal`
 	// fold (which would otherwise collapse `"a" + "b"` to a
