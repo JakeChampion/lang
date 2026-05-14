@@ -2054,10 +2054,9 @@ func (g *generator) scanForRuntimeUses(prog *ast.Program) {
 }
 
 // internString assigns an address to s the first time we see it and
-// reuses it on repeats. The returned pointer skips the (vestigial)
-// 4-byte length prefix; the two-word ABI carries length on the
-// operand stack instead, so the prefix is dead bytes pending §10
-// cleanup.
+// reuses it on repeats. Two-word string ABI: length lives on the
+// operand stack as the second i32 word, so the data segment holds
+// only the bytes — no leading 4-byte length prefix.
 func (g *generator) internString(s string) int {
 	if ptr, ok := g.stringPool[s]; ok {
 		return ptr
@@ -2065,10 +2064,9 @@ func (g *generator) internString(s string) int {
 	g.needsRuntime = true
 	off := g.stringOffset
 	g.stringEntries = append(g.stringEntries, stringEntry{offset: off, text: s})
-	ptr := off + 4
-	g.stringPool[s] = ptr
-	g.stringOffset = off + 4 + len(s)
-	return ptr
+	g.stringPool[s] = off
+	g.stringOffset = off + len(s)
+	return off
 }
 
 // internStringTwoWord returns the (data, len) pair for s under the
@@ -2469,17 +2467,22 @@ func (g *generator) emitRuntimePreamble() {
 		}
 
 		// SSO seams. These three helpers are the runtime side of the
-		// small-string-optimisation migration: any string value on
-		// the operand stack can now be either a heap-form pointer
-		// (top bit clear; bytes live at `[p..p+len]` with the i32
-		// length prefix at `[p-4]` — the historical layout) OR a
-		// single-i32 inline form (top bit set; bytes packed into
-		// bits 0..23, 3-bit length in bits 24..26; see
-		// `langstring.PackTinyWasm` for the authoritative encoding).
-		// All length and byte readers route through the helpers
-		// below so callers don't need to branch on the flag bit
-		// open-coded; helpers that need a real linear-memory
-		// address (I/O, $__str_idx, $__str_slice) call
+		// small-string-optimisation migration: every string value
+		// is two operand-stack words `(data, len)`. Either:
+		//   - heap form (top bit of `len` clear): `data` is a
+		//     pointer to the bytes in linear memory at
+		//     `[data..data+len]`; the data segment holds no length
+		//     prefix.
+		//   - inline form (top bit of `len` set): bytes 0..3 live
+		//     in `data`, bytes 4..6 live in the low 24 bits of
+		//     `len`, length 0..7 lives in bits 24..26 of `len`,
+		//     and bit 31 of `len` is the inline flag. See
+		//     `langstring.PackInlineWasm` for the authoritative
+		//     encoding.
+		// Length and byte readers route through the helpers below
+		// so callers don't need to branch on the flag bit open-
+		// coded; helpers that need a real linear-memory address
+		// (I/O, $__str_idx, $__str_slice) call
 		// $__lang_str_to_heap at entry to normalise.
 		//
 		// Today only $__str_concat / $__str_slice / emitStrEmpty
@@ -6964,7 +6967,7 @@ func (g *generator) emitDataSegments() {
 	}
 	// strings
 	for _, s := range g.stringEntries {
-		g.linef(`(data (i32.const %d) "%s%s")`, s.offset, encodeI32(len(s.text)), wasmEscape(s.text))
+		g.linef(`(data (i32.const %d) "%s")`, s.offset, wasmEscape(s.text))
 	}
 	// Per-tag enum sentinels — 4 bytes each, containing the
 	// i32 tag value. Reserved lazily by internEnumSentinel;
