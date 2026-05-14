@@ -1,19 +1,30 @@
 # SSO Two-Word ABI Atomic Flip — In Progress (Draft)
 
 Companion to `docs/SSO-TWOWORD-EXEC.md`. This branch carries
-**incomplete** atomic-flip work. **Tests are red.** The doc
-exists so the next session opens with a precise read of what's
-done, what's broken, and what's left.
+**incomplete** atomic-flip work. The doc exists so the next
+session opens with a precise read of what's done, what's
+broken, and what's left.
 
 ## Progress snapshot
 
-Wasm e2e cascade: 67 → 58 → **15 failing** tests after the Map
-runtime two-word migration (Option A from the previous session's
-notes). Native suite **fully green** (`x86_64` files / HTTP /
-streaming all pass — pre-existing SSO-inline / empty-sentinel /
-HTTP-handler failures are unrelated to this work and were red
-on the prior baseline too). Native parity is held by a
-target-aware split — see "Native deferral" below.
+Wasm e2e cascade: 67 → 58 → 15 → **0 failing** tests after the
+closure-capture / state-global / generic-instantiation / tuple-
+destructure / pair-form-string-rejection / json-encode work in
+this session. Native suite **fully green** (`x86_64` files /
+HTTP / streaming all pass — pre-existing SSO-inline / empty-
+sentinel / HTTP-handler failures are unrelated to this work
+and were red on the prior baseline too). Native parity is held
+by a target-aware split — see "Native deferral" below.
+
+Remaining red unit tests (NOT regressions; all pre-existing
+and called out as §10 cleanup): 6 wasm pin tests asserting
+the OLD single-i32 string shape
+(TestStringFieldOffsetIsPointerWidth /
+TestStringParamIsSingleI32Slot /
+TestOpConstStrShortLiteralPacksInline /
+TestOpConstStrLongLiteralStaysHeap /
+TestStringsLowerToLinearMemory /
+TestHttpWrapperShortMethodPacksInline).
 
 ## What's done in this branch
 
@@ -152,12 +163,116 @@ offsets, function signatures, IR ops — all unchanged in
 behaviour. The full native e2e suite (HTTP / files / streams /
 reader-writer) passes.
 
-## What's broken — 15 wasm e2e failures, mostly closure-capture / state / cascades
+## What landed in this session
+
+The closure-capture + state-globals + generic + tuple-destructure
++ pair-form-string-rejection work cleared the remaining 15 wasm
+e2e failures. The wasm e2e suite is now **fully green**. The
+native suite stays green modulo three pre-existing X86_64
+failures (TestX86_64SsoInline, TestX86_64EmptyStringSentinel,
+TestX86_64HttpHandler) that were red on the prior baseline too
+and are unrelated to this flip.
+
+Concrete IR / codegen changes:
+
+  - **Closure-capture env layout** (`internal/codegen/wasm/wasm_ir.go`):
+    `scanCapturePool` allocates TWO i32 temps per string capture
+    instead of one. `emitMakeClosureFromIR` pops the captures
+    as `(len, data)` (matching the operand-stack push order from
+    `OpLoadLocal` on string slots) and stores them into the env
+    block as `data @ off+0` / `len @ off+4`. The env-block size
+    accumulator advances by 8 for each string capture. Native
+    backends (ptrW=8) are unaffected — they still use a single
+    LSB-tagged pointer slot per capture.
+  - **CaptureRef load**: already routed through
+    `payloadLoadOpFor(t, b.ptrW)`, which returns
+    `OpLoad{WidthString}` for strings on wasm32. The fan-out is
+    handled by the existing two-i32-load shape in
+    `emitOp(OpLoad)`. The closureconv-side `captureSlotSize`
+    was already returning 8 for strings via the
+    `ElemSizeBytesFor` branch.
+  - **State globals** (`internal/codegen/wasm/wasm.go`,
+    `wasm_ir.go`): `emitStateGlobals` emits two `(global …)`
+    declarations per string-typed state var
+    (`$state_<name>_data` + `$state_<name>_len`).
+    `OpLoadGlobal` / `OpStoreGlobal` fan out via a new
+    `g.stateVarIsString(name)` helper that consults
+    `info.StateVars`. Existing `__state_init` flows the init
+    expression's `(data, len)` operand-stack pair through both
+    `global.set`s automatically.
+  - **`exprType` for state idents** (`internal/ir/ir.go`):
+    `b.exprType` consults `b.info.StateVars` after locals and
+    params. Without this `len(state_string)` fell through to
+    the array-shape `[ptr - 4]; load` fallback and produced
+    bogus output.
+  - **ArrayLit element-store routing** (`internal/ir/ir.go`,
+    `ArrayLit` case): the bespoke `(storeOp, storeWidth)`
+    decision now defers to `arrayElemStoreOpFor(elemType, ptrW)`,
+    which knows about `WidthString` for strings on wasm32, the
+    sub-i32 byte / halfword stores, the i64 / f32 / f64 lanes,
+    and `WidthPtr` for non-string pointer types on arm64.
+    `string[]` literals now fan-store both halves per element.
+  - **Tuple destructure** (`internal/ir/ir.go`, `Destructure`
+    case): the read side used naive `i * 4` offsets and a
+    fixed `OpLoad` per element. Now routes through
+    `tupleElemLayout` + `payloadLoadOpFor`, picking
+    `WidthString` for string elements on wasm32 (fans to two
+    i32.loads at +0/+4 of the element address).
+  - **Pair-form string payload rejection**
+    (`internal/ir/ir.go`, `isPairFormPayloadShape`): strings on
+    wasm32 (`ptrW == 4`) are no longer pair-form eligible. The
+    pair-form ABI carries only ONE i32 payload slot per variant,
+    but a two-word string needs two. Functions returning
+    `Option[string]` / `Result[*, string]` / `Result[string, *]`
+    fall back to the heap-box return shape. Natives stay
+    eligible because they still use the LSB-tagged single-
+    pointer slot. Three previously-pinned IR tests
+    (`TestLowerRepackPairAsHeapBoxWasmLayout`,
+    `TestLowerUserEnumPointerPayloadIsPairFormOnWasm`,
+    `TestLowerOptionPointerPayloadIsPairFormOnWasm`) flipped
+    to assert the new shape.
+  - **Implicit-return padding for string-returning fns**
+    (`internal/ir/ir.go`): the default-case implicit return at
+    function-body-fall-off now emits two `OpConstI32 0` followed
+    by `OpReturn` when the return type is `StringType` on
+    wasm32 — matches the `(result i32 i32)` function-header
+    shape. Without this, prelude functions like `__json_escape`
+    (which ends in a match where one arm falls off) emitted
+    `i32.const 0; return` with only ONE i32 on the stack and
+    failed component-build validation.
+  - **Multi-result function header emit**
+    (`internal/codegen/wasm/wasm_ir.go`, `wasm.go`): both
+    `emitFuncFromIR` and `watFuncType` join the per-type list
+    returned by `watTypes` into a single `(result T1 T2)`
+    clause instead of emitting back-to-back `(result T1)
+    (result T2)` declarations. `wasm-tools` rejected the
+    latter as malformed and the `__json_escape` /
+    `json_encode` headers (both string-returning) were the
+    surfacers.
+  - **`$random_bytes` two-word migration**
+    (`internal/codegen/wasm/wasm.go`, `emitRandomBytesHelper`):
+    helper signature flipped to `(result i32 i32)`. The new
+    heap-form layout has no leading 4-byte length prefix and
+    no trailing NUL — the byte buffer is exactly `host_len`
+    bytes and length lives on the operand stack as the second
+    result word.
+  - **`$cabi_realloc` alignment** (`internal/codegen/wasm/wasm.go`,
+    `emitCabiRealloc`): rounds the bump cursor up to the
+    requested `$align` (a power of two) before allocating.
+    The wasi component-model host enforces alignment on the
+    returned pointer, and the bump allocator drifts whenever a
+    previous alloc was a non-multiple of the requested
+    alignment (e.g. heap-spilled 5-byte path strings under
+    the two-word ABI). Without this, `wasi:filesystem`
+    descriptor-open calls trapped with "realloc return: result
+    not aligned" and the file-I/O suite stayed red.
+
+## What's broken (historical) — was 15 wasm e2e failures
 
 The Map runtime migration cleared **43 of the 58** prior
-failures. The remaining 15 are predominantly closure-capture,
-state globals, and downstream cascade. The Map work
-documented in section §11 below describes how it was done.
+failures. The remaining 15 cleared in this session via the
+work documented above. The Map work documented in section §11
+below describes how it was done.
 
 ### 0. (was §1) Map runtime two-word migration — DONE in this session
 
@@ -284,8 +399,11 @@ settled.
 |---------|-----------------------------------------------------------|
 | done    | §1–§8 (helpers + watTypes + WidthString + HTTP wrapper)   |
 | done    | Map runtime two-word migration via cell-pointer boxing    |
-| next    | Closure-capture + state-global string layout              |
-| then    | Generic instantiation + tuple destructure + pin-test refresh |
+| done    | Closure-capture + state-global string layout              |
+| done    | ArrayLit / Destructure / pair-form string + pin-test refresh |
+| done    | $random_bytes + $cabi_realloc alignment + multi-result fn header |
+| done    | Implicit-return padding for string-returning fns on wasm32 |
+| next    | §10 cleanup — refresh 6 wasm pin tests for post-flip shape, |
+|         |   fix `langstring.LengthWasm` masking, drop PackTinyWasm / |
+|         |   TinyInlineCapWasm / data-segment length-prefix dead bytes |
 | later   | §9 native flip (arm64 + x86_64 in lockstep, or staged)    |
-| final   | §10 cleanup (drop PackTinyWasm / TinyInlineCapWasm /
-            data-segment length-prefix dead bytes)            |

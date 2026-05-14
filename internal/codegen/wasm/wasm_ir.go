@@ -375,8 +375,17 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 			if err != nil {
 				return fmt.Errorf("function %q: result: %w", fn.Name, err)
 			}
-			for _, t := range ts {
-				header += fmt.Sprintf(" (result %s)", t)
+			// Multi-value results must share one `(result T1 T2)`
+			// clause — wasm-tools rejects back-to-back `(result T)`
+			// declarations as malformed. Joining covers both the
+			// scalar (one type) and the two-word string `(result
+			// i32 i32)` cases.
+			if len(ts) > 0 {
+				header += " (result"
+				for _, t := range ts {
+					header += " " + t
+				}
+				header += ")"
 			}
 		}
 	}
@@ -681,6 +690,22 @@ func slotIsString(fn *ast.FuncDecl, irFn *ir.Func, idx int32) bool {
 	return ok
 }
 
+// stateVarIsString reports whether the named state var is
+// string-typed — used by OpLoadGlobal / OpStoreGlobal to fan
+// their wat emission out into two `global.get` / `global.set`
+// pairs over `$state_<name>_data` / `$state_<name>_len`.
+func (g *generator) stateVarIsString(name string) bool {
+	if g.info == nil {
+		return false
+	}
+	t, ok := g.info.StateVars[name]
+	if !ok {
+		return false
+	}
+	_, isStr := t.(ast.StringType)
+	return isStr
+}
+
 // blockTypeSuffix returns the `(result T)` clause for a structured
 // block / loop / if op, or "" for a void block.
 func blockTypeSuffix(bt int32) string {
@@ -879,9 +904,25 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 			g.linef("local.tee $%s", name)
 		}
 	case ir.OpLoadGlobal:
-		g.linef("global.get $state_%s", op.Str)
+		if g.stateVarIsString(op.Str) {
+			// Two-word ABI: push `(data, len)` in low-to-high
+			// order so the operand stack mirrors a fresh
+			// OpConstStr / runtime-helper-result shape.
+			g.linef("global.get $state_%s_data", op.Str)
+			g.linef("global.get $state_%s_len", op.Str)
+		} else {
+			g.linef("global.get $state_%s", op.Str)
+		}
 	case ir.OpStoreGlobal:
-		g.linef("global.set $state_%s", op.Str)
+		if g.stateVarIsString(op.Str) {
+			// Stack on entry: [..., data, len]. Pop len first
+			// (most recently pushed), then data — matches the
+			// (data, len) push order in OpLoadGlobal / OpConstStr.
+			g.linef("global.set $state_%s_len", op.Str)
+			g.linef("global.set $state_%s_data", op.Str)
+		} else {
+			g.linef("global.set $state_%s", op.Str)
+		}
 	case ir.OpPersistentSet:
 		// Toggle the state-allocator-mode flag. The wat shim
 		// `__lang_set_persistent_mode(flag)` writes the new mode
@@ -1233,7 +1274,8 @@ type capPoolCounts struct {
 // scratch needs. For each OpMakeClosure / OpMakeEnv, look up
 // the hoisted target's Captures list (already type-stamped by
 // closureconv) and tally per-wat-type counts at that site,
-// then update the global maxima.
+// then update the global maxima. String captures on wasm32 are
+// two-word `(data, len)` pairs that need two i32 temps each.
 func scanCapturePool(ops []ir.Op, g *generator) capPoolCounts {
 	var pool capPoolCounts
 	for _, op := range ops {
@@ -1247,6 +1289,12 @@ func scanCapturePool(ops []ir.Op, g *generator) capPoolCounts {
 		}
 		var site capPoolCounts
 		for _, capParam := range hoisted.Captures {
+			if _, isStr := capParam.Type.(ast.StringType); isStr {
+				// Two-word ABI: each string capture spills
+				// to two i32 temps (data + len).
+				site.i32 += 2
+				continue
+			}
 			switch captureWatKind(capParam.Type) {
 			case capI32:
 				site.i32++
@@ -1327,10 +1375,22 @@ func (g *generator) emitMakeClosureFromIR(op ir.Op) error {
 	// where <n> is the capture's index within its type at this
 	// site. Two slots of the same wat type at the same site
 	// take consecutive `<n>` values.
+	//
+	// String captures on wasm32 are two-word `(data, len)` pairs
+	// and get TWO i32 temps each: `lenTempNames[i]` holds the
+	// len word and `tempNames[i]` holds the data word.
 	tempNames := make([]string, n)
+	lenTempNames := make([]string, n)
 	{
 		var c capPoolCounts
 		for i, capParam := range hoisted.Captures {
+			if _, isStr := capParam.Type.(ast.StringType); isStr {
+				tempNames[i] = fmt.Sprintf("$__cap_i32_%d", c.i32)
+				c.i32++
+				lenTempNames[i] = fmt.Sprintf("$__cap_i32_%d", c.i32)
+				c.i32++
+				continue
+			}
 			switch captureWatKind(capParam.Type) {
 			case capI32:
 				tempNames[i] = fmt.Sprintf("$__cap_i32_%d", c.i32)
@@ -1350,8 +1410,15 @@ func (g *generator) emitMakeClosureFromIR(op ir.Op) error {
 
 	// Pop captures into typed temps so we can rebind them to env
 	// offsets in declaration order. The top of stack is the LAST
-	// capture, so we pop from N-1 down to 0.
+	// capture, so we pop from N-1 down to 0. A string capture
+	// pushed TWO i32s (data then len, low-to-high); pop the len
+	// half first to match.
 	for i := n - 1; i >= 0; i-- {
+		if _, isStr := hoisted.Captures[i].Type.(ast.StringType); isStr {
+			g.linef("local.set %s", lenTempNames[i])
+			g.linef("local.set %s", tempNames[i])
+			continue
+		}
 		g.linef("local.set %s", tempNames[i])
 	}
 
@@ -1361,6 +1428,8 @@ func (g *generator) emitMakeClosureFromIR(op ir.Op) error {
 	// u64 / f64 so the capture's full bit pattern survives.
 	// Sub-i32 (u8 / i8 / u16 / i16) uses a 4-byte slot — the
 	// corresponding closureconv offset accumulator pads to match.
+	// String captures take 8 bytes (two i32 slots: data @+0,
+	// len @+4) so the CaptureRef WidthString load lines up.
 	if n > 0 {
 		envSize := 0
 		for _, capParam := range hoisted.Captures {
@@ -1371,6 +1440,24 @@ func (g *generator) emitMakeClosureFromIR(op ir.Op) error {
 		g.line("local.set $__env_scratch")
 		off := 0
 		for i, capParam := range hoisted.Captures {
+			if _, isStr := capParam.Type.(ast.StringType); isStr {
+				// data half at off+0
+				g.line("local.get $__env_scratch")
+				if off > 0 {
+					g.linef("i32.const %d", off)
+					g.line("i32.add")
+				}
+				g.linef("local.get %s", tempNames[i])
+				g.line("i32.store")
+				// len half at off+4
+				g.line("local.get $__env_scratch")
+				g.linef("i32.const %d", off+4)
+				g.line("i32.add")
+				g.linef("local.get %s", lenTempNames[i])
+				g.line("i32.store")
+				off += 8
+				continue
+			}
 			g.line("local.get $__env_scratch")
 			if off > 0 {
 				g.linef("i32.const %d", off)

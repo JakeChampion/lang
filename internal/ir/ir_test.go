@@ -449,16 +449,14 @@ function main(): i32 {
     };
     return len(s);
 }`
-	// ptrW=4 (wasm). Pair-form Option[string] generic-position
-	// call (the var-assign here) reboxes into an 8-byte heap
-	// box — pointer-payload-on-wasm32 is i32, so payload at +4.
+	// ptrW=4 (wasm). The two-word string ABI excludes string
+	// payloads from pair-form eligibility (only one i32 slot
+	// per payload, but a string needs two). `pick` should NOT
+	// be in PairForm and `main` should not contain a rebox
+	// pattern.
 	prog := lowerSourceWith(t, src, 4)
-	fn := findFunc(prog, "main")
-	if fn == nil {
-		t.Fatal("main not found")
-	}
-	if !rebox8BytePresent(fn.Ops) {
-		t.Errorf("ptrW=4 rebox must alloc 8 bytes (Option[string] payload = i32 on wasm32):\n%s", prog)
+	if prog.PairForm["pick"] {
+		t.Errorf("pick must not be pair-form on wasm32 (string payload needs two-word ABI):\n%s", prog)
 	}
 }
 
@@ -650,25 +648,17 @@ function main(): i32 {
 // so `enum Cell { Filled(string), Empty }` lays flat into the
 // `(result i32 i32)` pair-form ABI. The wasm function-side
 // emits OpMakeNoneI32 + OpReturnPair instead of an alloc.
-func TestLowerUserEnumPointerPayloadIsPairFormOnWasm(t *testing.T) {
+func TestLowerUserEnumPointerPayloadIsNotPairFormOnWasm(t *testing.T) {
+	// Two-word string ABI on wasm32: a user enum whose
+	// payload-carrying variant takes a string is NOT pair-
+	// form eligible because the pair-form ABI carries only
+	// one i32 payload slot but a string needs two. `f` should
+	// stay on the heap-box return shape (OpEnumSentinel for
+	// nullary Empty).
 	prog := lowerSource(t, `enum Cell { Filled(string), Empty }
 function f(): Cell { return Empty; }`)
-	fn := findFunc(prog, "f")
-	if fn == nil {
-		t.Fatal("f not found")
-	}
-	hasNone := false
-	hasReturnPair := false
-	for _, op := range fn.Ops {
-		if op.Kind == OpMakeNoneI32 {
-			hasNone = true
-		}
-		if op.Kind == OpReturnPair {
-			hasReturnPair = true
-		}
-	}
-	if !hasNone || !hasReturnPair {
-		t.Fatalf("expected OpMakeNoneI32 + OpReturnPair in f on wasm:\n%s", prog)
+	if prog.PairForm["f"] {
+		t.Errorf("f must not be pair-form on wasm32 (Cell payload includes string):\n%s", prog)
 	}
 }
 
@@ -959,9 +949,15 @@ function main(): i32 {
 // payloads lay flat into an i32 slot on wasm32, so the
 // function-side emits OpMakeNoneI32 (the canonical tag-1 op)
 // instead of an OpEnumSentinel + heap-box path.
-func TestLowerOptionPointerPayloadIsPairFormOnWasm(t *testing.T) {
+func TestLowerOptionPointerPayloadIsNotPairFormOnWasm(t *testing.T) {
+	// Two-word string ABI on wasm32: `Option[string]` is not
+	// pair-form eligible (the one-i32-payload-slot pair-form
+	// ABI can't carry a two-word string). `f` should fall back
+	// to the heap-box return shape.
 	prog := lowerSource(t, `function f(): Option[string] { return None; }`)
-	mustContainOp(t, prog, "f", OpMakeNoneI32)
+	if prog.PairForm["f"] {
+		t.Errorf("f must not be pair-form on wasm32 (Option[string] payload needs two-word ABI):\n%s", prog)
+	}
 }
 
 // On natives (ptrW=8) `Option[string]` is now pair-form too:
