@@ -517,6 +517,16 @@ func (k OpKind) String() string {
 // i64 encoding intact.
 const WidthPtr = -1
 
+// WidthString is the sentinel `Op.Width` value meaning "two-
+// word string slot" — `(data, len)` packed into two consecutive
+// pointer-width slots. OpStore / OpLoad with this width fan out
+// to two stores / loads at offset +0 and +ptrW. Used for struct
+// fields, variant payloads, tuple elements, and array elements
+// of string type so the heap layout matches the operand-stack
+// shape every other string consumer expects. -2 stays clear of
+// 0 (i32 default), 64 (i64), and -1 (WidthPtr).
+const WidthString = -2
+
 // Op is one instruction in a function's linear op list. Operands that
 // don't apply to a given op are zero-valued.
 type Op struct {
@@ -1610,7 +1620,7 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		if i < len(payloadTypes) {
 			pt = payloadTypes[i]
 		}
-		b.emit(payloadStoreOp(pt))
+		b.emit(payloadStoreOpFor(pt, b.ptrW))
 	}
 	// Push the result pointer.
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
@@ -1773,7 +1783,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 			b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 			b.emit(Op{Kind: OpAdd})
-			b.emit(payloadLoadOp(bt))
+			b.emit(payloadLoadOpFor(bt, b.ptrW))
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
 		}
 		b.elseBranch()
@@ -1870,7 +1880,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 			b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 			b.emit(Op{Kind: OpAdd})
-			b.emit(payloadLoadOp(bt))
+			b.emit(payloadLoadOpFor(bt, b.ptrW))
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
 		}
 		if err := b.stmt(n.Then); err != nil {
@@ -2316,7 +2326,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 					b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 					b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 					b.emit(Op{Kind: OpAdd})
-					b.emit(payloadLoadOp(bt))
+					b.emit(payloadLoadOpFor(bt, b.ptrW))
 				}
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
@@ -2722,7 +2732,7 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 				b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
 				b.emit(Op{Kind: OpAdd})
-				b.emit(payloadLoadOp(bt))
+				b.emit(payloadLoadOpFor(bt, b.ptrW))
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
 			if arm.Guard != nil {
@@ -2807,7 +2817,7 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 		b.emit(Op{Kind: OpConstI32, I32: 4})
 		b.emit(Op{Kind: OpAdd})
-		b.emit(payloadLoadOp(n.Type))
+		b.emit(payloadLoadOpFor(n.Type, b.ptrW))
 	case *ast.Index:
 		// Compile-time fold: `"literal"[const_idx]` collapses to
 		// the byte at that index, as a single `OpConstI32`. Skips
@@ -3163,7 +3173,7 @@ func (b *builder) expr(e ast.Expr) error {
 				if err := b.expr(ent.Value); err != nil {
 					return err
 				}
-				b.emit(payloadStoreOp(n.ValueType))
+				b.emit(payloadStoreOpFor(n.ValueType, b.ptrW))
 				b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 			} else {
 				if err := b.expr(ent.Value); err != nil {
@@ -3196,7 +3206,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(elem); err != nil {
 				return err
 			}
-			b.emit(payloadStoreOp(elemTypes[i]))
+			b.emit(payloadStoreOpFor(elemTypes[i], b.ptrW))
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	case *ast.StructLit:
@@ -3228,7 +3238,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// pointer types (string / array / struct / enum
 			// / slice / closure) → WidthPtr (4 on wasm32, 8
 			// on arm64).
-			b.emit(payloadStoreOp(fieldType(sd.Fields, f.Name)))
+			b.emit(payloadStoreOpFor(fieldType(sd.Fields, f.Name), b.ptrW))
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	case *ast.CaptureRef:
@@ -3248,7 +3258,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// f64.load for the wide variants. Without the width
 		// dispatch a captured i64 or f64 would silently
 		// truncate / mis-decode at the load site.
-		b.emit(payloadLoadOp(n.Type))
+		b.emit(payloadLoadOpFor(n.Type, b.ptrW))
 	case *ast.MakeClosure:
 		// Evaluate captures in declaration order so each one ends up
 		// on the stack in slot-order. OpMakeClosure consumes them and
@@ -3307,7 +3317,7 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.emit(Op{Kind: OpConstI32, I32: off})
 		b.emit(Op{Kind: OpAdd})
-		b.emit(payloadLoadOp(ft))
+		b.emit(payloadLoadOpFor(ft, b.ptrW))
 	default:
 		return fmt.Errorf("ir: unsupported expression %T", e)
 	}
@@ -4220,7 +4230,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: 1})
-			b.emit(payloadLoadOp(n.TypeArgs[1]))
+			b.emit(payloadLoadOpFor(n.TypeArgs[1], b.ptrW))
 			return nil
 		}
 	}
@@ -4477,7 +4487,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		if err := b.expr(n.Value); err != nil {
 			return err
 		}
-		b.emit(payloadStoreOp(ft))
+		b.emit(payloadStoreOpFor(ft, b.ptrW))
 		return nil
 	}
 	return fmt.Errorf("ir: assignment target %T not yet lowered", n.Target)
@@ -4543,23 +4553,27 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 
 // stringSlotSize returns the per-string storage size in bytes
 // for a struct field / variant payload / function-arg slot.
-// Centralises the one-i32-slot-per-string decision so the
-// upcoming two-word ABI flip (see docs/SSO-TWOWORD-EXEC.md)
-// has exactly one place to update.
+// Centralises the slot-size decision so the SSO two-word flip
+// (see docs/SSO-TWOWORD-EXEC.md) can be deferred per target.
 //
-// Today: returns `ptrW` (4 on wasm32, 8 on natives) — string
-// is a pointer-shaped value, one slot.
+// Wasm32 (`ptrW == 4`): returns 8. Two-word ABI is live; a
+// string occupies two i32 slots `(data, len)`.
 //
-// Post-flip: returns `2 * ptrW` (8 on wasm32, 16 on natives) —
-// string is a `(data, len)` pair occupying two slots. The
-// flip's other halves are watType / OpConstStr emission /
-// runtime helper signatures — see SSO-TWOWORD-EXEC.md for the
-// full file-level checklist.
+// Natives (`ptrW == 8`): returns 8. Native backends still use
+// the single-i8-pointer-slot LSB-tagged inline encoding; one
+// 8-byte slot is enough. When the natives flip to the two-word
+// ABI (§9 of SSO-TWOWORD-EXEC.md), this branch returns
+// `2 * ptrW = 16`.
+//
+// Both targets end up at 8 bytes per slot today — wasm via the
+// two-word fan-out, natives via the existing pointer width.
+// Centralising here means each backend can flip independently
+// without disturbing the other.
 func stringSlotSize(ptrW int) int32 {
-	// Two-word ABI: string is (data, len) — two pointer-width
-	// slots. On wasm32 = 8 bytes; on natives = 16 bytes. Matches
-	// langstring.PackInlineWasm / PackInlineNative layout.
-	return int32(2 * ptrW)
+	if ptrW == 4 {
+		return int32(2 * ptrW)
+	}
+	return int32(ptrW)
 }
 
 // isWideScalar reports whether `t` is a 64-bit numeric or
@@ -4667,6 +4681,15 @@ func pairPayloadWidth(t ast.Type) int {
 // `Width: WidthPtr` so the backend picks 4-byte (wasm32) or
 // 8-byte (arm64) stores per its native heap-pointer width.
 func payloadStoreOp(t ast.Type) Op {
+	return payloadStoreOpFor(t, 4)
+}
+
+// payloadStoreOpFor is the ptrW-aware variant. Returns
+// `Width: WidthString` for string types on wasm32 (ptrW=4) so
+// the wasm OpStore handler fans out to two i32.store calls; on
+// natives (ptrW=8) the native backends still use the single-
+// pointer-slot LSB-tagged form, so it returns `Width: WidthPtr`.
+func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 	if isFloat(t) {
 		w := 0
 		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
@@ -4676,6 +4699,12 @@ func payloadStoreOp(t ast.Type) Op {
 	}
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return Op{Kind: OpStore, Width: 64}
+	}
+	if _, isString := t.(ast.StringType); isString {
+		if ptrW == 4 {
+			return Op{Kind: OpStore, Width: WidthString}
+		}
+		return Op{Kind: OpStore, Width: WidthPtr}
 	}
 	if ast.IsPointerType(t) {
 		return Op{Kind: OpStore, Width: WidthPtr}
@@ -4694,12 +4723,25 @@ func payloadStoreOp(t ast.Type) Op {
 //     (4-byte on wasm32, 8-byte on arm64)
 // Pairs with the symmetric read in array-indexing lowering.
 func arrayElemStoreOp(t ast.Type) Op {
+	return arrayElemStoreOpFor(t, 4)
+}
+
+// arrayElemStoreOpFor is the ptrW-aware variant. Strings on
+// wasm32 (ptrW=4) return `Width: WidthString` for two-word
+// element stores; on natives they fall back to WidthPtr.
+func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 	if isFloat(t) {
 		w := 0
 		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
 			w = 64
 		}
 		return Op{Kind: OpFStore, Width: w}
+	}
+	if _, isString := t.(ast.StringType); isString {
+		if ptrW == 4 {
+			return Op{Kind: OpStore, Width: WidthString}
+		}
+		return Op{Kind: OpStore, Width: WidthPtr}
 	}
 	if ast.IsPointerType(t) {
 		return Op{Kind: OpStore, Width: WidthPtr}
@@ -4717,12 +4759,25 @@ func arrayElemStoreOp(t ast.Type) Op {
 }
 
 func payloadLoadOp(t ast.Type) Op {
+	return payloadLoadOpFor(t, 4)
+}
+
+// payloadLoadOpFor is the ptrW-aware variant of payloadLoadOp.
+// String types on wasm32 return `Width: WidthString` (two-load
+// fan-out at offsets +0/+4); on natives they return WidthPtr.
+func payloadLoadOpFor(t ast.Type, ptrW int) Op {
 	if isFloat(t) {
 		w := 0
 		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
 			w = 64
 		}
 		return Op{Kind: OpFLoad, Width: w}
+	}
+	if _, isString := t.(ast.StringType); isString {
+		if ptrW == 4 {
+			return Op{Kind: OpLoad, Width: WidthString}
+		}
+		return Op{Kind: OpLoad, Width: WidthPtr}
 	}
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return Op{Kind: OpLoad, Width: 64}
@@ -5039,7 +5094,7 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.emit(Op{Kind: OpMul})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: vSlot})
-	b.emit(arrayElemStoreOp(elemType))
+	b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
 
 	// Result: data pointer (the array value).
 	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
@@ -5068,7 +5123,7 @@ func (b *builder) emitWideMapSet(n *ast.Call, vType ast.Type) error {
 	if err := b.expr(n.Args[2]); err != nil {
 		return err
 	}
-	b.emit(payloadStoreOp(vType))
+	b.emit(payloadStoreOpFor(vType, b.ptrW))
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
 	return nil
@@ -5126,8 +5181,8 @@ func (b *builder) emitWideMapGet(n *ast.Call, vType ast.Type) error {
 	b.emit(Op{Kind: OpConstI32, I32: 4})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoad}) // cell pointer
-	b.emit(payloadLoadOp(vType))
-	b.emit(payloadStoreOp(vType))
+	b.emit(payloadLoadOpFor(vType, b.ptrW))
+	b.emit(payloadStoreOpFor(vType, b.ptrW))
 	b.emit(Op{Kind: OpEnd})
 	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	return nil
@@ -5154,10 +5209,10 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, vType ast.Type) error {
 	if err := b.expr(n.Args[2]); err != nil {
 		return err
 	}
-	b.emit(payloadStoreOp(vType))
+	b.emit(payloadStoreOpFor(vType, b.ptrW))
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: 3})
-	b.emit(payloadLoadOp(vType))
+	b.emit(payloadLoadOpFor(vType, b.ptrW))
 	return nil
 }
 
