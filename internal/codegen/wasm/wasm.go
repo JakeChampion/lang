@@ -2724,7 +2724,7 @@ func (g *generator) emitRuntimePreamble() {
 		// the value here.
 		g.line(`(func $__str_concat (param $a i32) (param $b i32) (result i32)`)
 		g.indent++
-		g.line(`(local $la i32) (local $lb i32) (local $total i32) (local $dst i32) (local $i i32) (local $inline i32) (local $byte i32)`)
+		g.line(`(local $la i32) (local $lb i32) (local $total i32) (local $dst i32) (local $i i32) (local $inline i32)`)
 		g.emitStrLenFromLocal("$a")
 		g.line(`local.set $la`)
 		g.emitStrLenFromLocal("$b")
@@ -3092,7 +3092,7 @@ func (g *generator) emitRuntimePreamble() {
 		// <= source length, low <= high.
 		g.line(`(func $__str_slice (param $base i32) (param $low i32) (param $high i32) (result i32)`)
 		g.indent++
-		g.line(`(local $src_len i32) (local $new_len i32) (local $out i32) (local $i i32) (local $inline i32) (local $byte i32)`)
+		g.line(`(local $src_len i32) (local $new_len i32) (local $out i32) (local $i i32) (local $inline i32)`)
 		// No promote-at-entry. The inline-output fast path
 		// (`new_len ≤ 3`) reads source bytes through
 		// `$__lang_str_byte`, which handles inline / heap
@@ -3211,7 +3211,7 @@ func (g *generator) emitRuntimePreamble() {
 		//   - bLen >  3:  heap-form (alloc length-prefix + copy)
 		g.line(`(func $string_from_bytes (param $bs i32) (result i32)`)
 		g.indent++
-		g.line(`(local $bLen i32) (local $out i32) (local $i i32) (local $inline i32) (local $byte i32)`)
+		g.line(`(local $bLen i32) (local $out i32) (local $i i32) (local $inline i32)`)
 		// Input u8[] length via the array seam — distinct from
 		// the string-side emitStrLenFromLocal so the two layouts
 		// can diverge under future array-only changes.
@@ -5741,7 +5741,7 @@ func (g *generator) emitHttpHandlerWrapper() {
 	//                     trailing NUL, the legacy layout).
 	g.line(`(func $__bytes_to_lang_string (param $host_ptr i32) (param $host_len i32) (result i32)`)
 	g.indent++
-	g.line(`(local $sbase i32) (local $i i32) (local $inline i32) (local $byte i32)`)
+	g.line(`(local $sbase i32) (local $i i32) (local $inline i32)`)
 	// Inline-output fast path. Mirrors the SSO producer shape from
 	// $__str_concat / $__str_slice / $string_from_bytes — read
 	// bytes straight out of the host buffer, pack into a single
