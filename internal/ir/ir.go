@@ -298,11 +298,12 @@ const (
 // when control falls off its end normally. OpBlock, OpLoop, and OpIf
 // stash the block type in their Op.I32 field.
 const (
-	BlockTypeVoid int32 = 0
-	BlockTypeI32  int32 = 1
-	BlockTypeF32  int32 = 2
-	BlockTypeI64  int32 = 3
-	BlockTypeF64  int32 = 4
+	BlockTypeVoid       int32 = 0
+	BlockTypeI32        int32 = 1
+	BlockTypeF32        int32 = 2
+	BlockTypeI64        int32 = 3
+	BlockTypeF64        int32 = 4
+	BlockTypeStringPair int32 = 5
 )
 
 // blockTypeName returns a short mnemonic for use in formatted output.
@@ -310,6 +311,8 @@ func blockTypeName(bt int32) string {
 	switch bt {
 	case BlockTypeI32:
 		return "i32"
+	case BlockTypeStringPair:
+		return "i32 i32"
 	case BlockTypeF32:
 		return "f32"
 	case BlockTypeI64:
@@ -610,6 +613,11 @@ type Program struct {
 	//     pair (consumer-side scrutinee vs generic context).
 	// Nil/missing entries mean heap-form (default ABI).
 	PairForm map[string]bool
+	// PtrW is the target's pointer width in bytes (4 on wasm32,
+	// 8 on natives). Recorded once by `LowerWith` so post-Lower
+	// passes (Inline / FlattenBranches / codegen) don't have to
+	// re-derive target-awareness from configuration.
+	PtrW int
 }
 
 // String prints the program in a textual form useful for tests and
@@ -689,7 +697,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// directly. Captured here so callers know to consume two
 	// stack values from a OpCallDirectPair instead of one.
 	pairForm := findPairFormFuncs(prog, info, ptrW)
-	out := &Program{PairForm: pairForm}
+	out := &Program{PairForm: pairForm, PtrW: ptrW}
 	for _, fn := range prog.Funcs {
 		f, err := lowerFunc(fn, info, ptrW, pairForm)
 		if err != nil {
@@ -2640,10 +2648,14 @@ func (b *builder) expr(e ast.Expr) error {
 	case *ast.IfExpr:
 		// `if (c) { a } else { b }` lowers to a typed `if/else`
 		// whose arms each push the result. The block-type tells
-		// consumers whether the produced value is i32 or f32.
+		// consumers whether the produced value is i32, f32, or
+		// the two-i32 (data, len) pair for string-typed arms.
 		bt := BlockTypeI32
 		if n.IsFloat {
 			bt = BlockTypeF32
+		}
+		if _, isString := b.exprType(n).(ast.StringType); isString && b.ptrW == 4 {
+			bt = BlockTypeStringPair
 		}
 		if err := b.expr(n.Cond); err != nil {
 			return err
