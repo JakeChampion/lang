@@ -63,12 +63,16 @@ import "github.com/jakechampion/lang/internal/ast"
 // pair in prog as a typed if/else with a single trailing return.
 // Programs without such a pair are unchanged.
 func FlattenBranches(prog *Program) {
+	ptrW := prog.PtrW
+	if ptrW == 0 {
+		ptrW = 4
+	}
 	for _, fn := range prog.Funcs {
-		fn.Ops = flattenOps(fn.Ops, fn.ReturnType)
+		fn.Ops = flattenOps(fn.Ops, fn.ReturnType, ptrW)
 	}
 }
 
-func flattenOps(ops []Op, retType ast.Type) []Op {
+func flattenOps(ops []Op, retType ast.Type, ptrW int) []Op {
 	out := make([]Op, 0, len(ops))
 	depth := int32(0)
 	for i := 0; i < len(ops); i++ {
@@ -76,7 +80,7 @@ func flattenOps(ops []Op, retType ast.Type) []Op {
 		// Only consider OpIf at function-root depth (no surrounding
 		// scope), with no OpElse, and a then-arm that returns.
 		if depth == 0 && op.Kind == OpIf && op.I32 == BlockTypeVoid {
-			if newOps, advance, ok := tryFlattenIf(ops, i, retType); ok {
+			if newOps, advance, ok := tryFlattenIf(ops, i, retType, ptrW); ok {
 				out = append(out, newOps...)
 				i += advance - 1 // outer loop's i++ advances by one more
 				continue
@@ -99,7 +103,7 @@ func flattenOps(ops []Op, retType ast.Type) []Op {
 // caller appends it to the output stream) and the number of input
 // ops to advance past (the original if-block plus its
 // continuation up to and including the trailing return).
-func tryFlattenIf(ops []Op, ifIdx int, retType ast.Type) ([]Op, int, bool) {
+func tryFlattenIf(ops []Op, ifIdx int, retType ast.Type, ptrW int) ([]Op, int, bool) {
 	elseIdx, endIdx := scanIfBlock(ops, ifIdx)
 	if elseIdx >= 0 || endIdx < 0 {
 		// The if has an explicit else, or the IR is malformed.
@@ -133,7 +137,7 @@ func tryFlattenIf(ops []Op, ifIdx int, retType ast.Type) ([]Op, int, bool) {
 		return nil, 0, false
 	}
 
-	bt := returnBlockType(retType)
+	bt := returnBlockTypeFor(retType, ptrW)
 	out := make([]Op, 0, (contRetIdx-ifIdx)+4)
 	out = append(out, Op{Kind: OpIf, I32: bt, Pos: ops[ifIdx].Pos})
 	// Then-arm body: skip the original OpIf header AND the
@@ -158,6 +162,16 @@ func tryFlattenIf(ops []Op, ifIdx int, retType ast.Type) ([]Op, int, bool) {
 // passes. i64 / f64 / f32 surface their wider block types so the
 // wrapper's signature matches the wat side.
 func returnBlockType(t ast.Type) int32 {
+	return returnBlockTypeFor(t, 4)
+}
+
+// returnBlockTypeFor is the ptrW-aware variant. On wasm32
+// (ptrW=4) string-typed returns surface as `BlockTypeStringPair`
+// so the inliner's wrapper block / function-result clause matches
+// the two-word ABI's `(result i32 i32)` shape. Natives stay on
+// `BlockTypeI32` (one pointer slot under their existing LSB-
+// tagged SSO).
+func returnBlockTypeFor(t ast.Type, ptrW int) int32 {
 	if t == nil {
 		return BlockTypeVoid
 	}
@@ -172,6 +186,9 @@ func returnBlockType(t ast.Type) int32 {
 			return BlockTypeF64
 		}
 		return BlockTypeF32
+	}
+	if _, ok := t.(ast.StringType); ok && ptrW == 4 {
+		return BlockTypeStringPair
 	}
 	return BlockTypeI32
 }

@@ -687,6 +687,8 @@ func blockTypeSuffix(bt int32) string {
 	switch bt {
 	case ir.BlockTypeI32:
 		return " (result i32)"
+	case ir.BlockTypeStringPair:
+		return " (result i32 i32)"
 	case ir.BlockTypeF32:
 		return " (result f32)"
 	case ir.BlockTypeI64:

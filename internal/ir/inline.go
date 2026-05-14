@@ -129,6 +129,10 @@ type inlineCandidate struct {
 // directly.
 func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 	out := map[string]inlineCandidate{}
+	ptrW := prog.PtrW
+	if ptrW == 0 {
+		ptrW = 4
+	}
 	for _, fn := range prog.Funcs {
 		if !isInlineable(fn) {
 			continue
@@ -145,7 +149,7 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 			fn:              fn,
 			body:            fn.Ops,
 			slotTypes:       slots,
-			returnBlockType: returnBlockType(fn.ReturnType),
+			returnBlockType: returnBlockTypeFor(fn.ReturnType, ptrW),
 		}
 	}
 	return out
