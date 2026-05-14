@@ -464,6 +464,17 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 			g.line("(local $__pair_tag i32)")
 		}
 	}
+	// Two-word string OpStore / OpLoad scratch locals. Each
+	// fan-out emits two i32.store / i32.load calls at offsets
+	// +0 and +4 around a shared address; the temporaries
+	// untangle the `[addr, data, len]` operand-stack shape
+	// since wasm has no swap. Declared unconditionally — three
+	// i32 locals is cheap relative to the fan-out savings.
+	if containsStringPairMem(irFn.Ops) {
+		g.line("(local $__str_pair_addr i32)")
+		g.line("(local $__str_pair_data i32)")
+		g.line("(local $__str_pair_len i32)")
+	}
 
 	// Walk the IR ops, emitting one (or a small block of) WAT lines
 	// per op.
@@ -517,6 +528,20 @@ func maxClosureCaptures(ops []ir.Op) int {
 func containsIndirectCall(ops []ir.Op) bool {
 	for _, op := range ops {
 		if op.Kind == ir.OpCallIndirect {
+			return true
+		}
+	}
+	return false
+}
+
+// containsStringPairMem reports whether any two-word string
+// load/store appears in ops — `OpStore` / `OpLoad` with `Width
+// == ir.WidthString`. Used to gate the `$__str_pair_addr` /
+// `$__str_pair_data` / `$__str_pair_len` scratch locals so
+// non-string-handling functions don't pay the three-local cost.
+func containsStringPairMem(ops []ir.Op) bool {
+	for _, op := range ops {
+		if (op.Kind == ir.OpLoad || op.Kind == ir.OpStore) && op.Width == ir.WidthString {
 			return true
 		}
 	}
@@ -927,7 +952,19 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpFGe:
 		g.linef("%s.ge", floatPrefix())
 	case ir.OpLoad:
-		g.linef("%s.load", intPrefix())
+		if op.Width == ir.WidthString {
+			// Two-word string load: input stack is `[..., addr]`.
+			// Fan out to two `i32.load`s at offsets +0 (data) and
+			// +4 (len). Output stack: `[..., data, len]`.
+			g.line("local.tee $__str_pair_addr")
+			g.line("i32.load")
+			g.line("local.get $__str_pair_addr")
+			g.line("i32.const 4")
+			g.line("i32.add")
+			g.line("i32.load")
+		} else {
+			g.linef("%s.load", intPrefix())
+		}
 	case ir.OpMatchTag:
 		// Transitional lowering: read the i32 tag from the
 		// heap-box at the address on top of stack. Step 4 of
@@ -936,7 +973,23 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		// pair-form result of an OpCallDirectPair.
 		g.line("i32.load")
 	case ir.OpStore:
-		g.linef("%s.store", intPrefix())
+		if op.Width == ir.WidthString {
+			// Two-word string store: input stack is
+			// `[..., addr, data, len]`. Fan out to two
+			// `i32.store`s at offsets +0 (data) and +4 (len).
+			g.line("local.set $__str_pair_len")
+			g.line("local.set $__str_pair_data")
+			g.line("local.tee $__str_pair_addr")
+			g.line("local.get $__str_pair_data")
+			g.line("i32.store")
+			g.line("local.get $__str_pair_addr")
+			g.line("i32.const 4")
+			g.line("i32.add")
+			g.line("local.get $__str_pair_len")
+			g.line("i32.store")
+		} else {
+			g.linef("%s.store", intPrefix())
+		}
 	case ir.OpFLoad:
 		g.linef("%s.load", floatPrefix())
 	case ir.OpFStore:
