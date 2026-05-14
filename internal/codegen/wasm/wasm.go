@@ -3427,44 +3427,6 @@ func (g *generator) emitStdStream(name, handleAccessor string) {
 	g.line(`)`)
 }
 
-// emitFdWriteString emits one fd_write call that writes a single
-// length-prefixed string to `fd`. local is the wasm local holding
-// the string's data pointer (e.g. "$s"); the string's length is
-// fetched through the central emitStrLenFromLocal helper. Reuses
-// iovec[0] at offset 16.
-//
-// Stream-write semantics: routes through $__lang_str_data_ptr to
-// stage inline strings into a fixed scratch slot without alloc;
-// length comes from $__lang_str_len.
-func (g *generator) emitFdWriteString(fd int, local string) {
-	g.line(`i32.const 16`)
-	g.linef(`local.get %s`, local)
-	g.line(`call $__lang_str_data_ptr`)
-	g.line(`i32.store`)
-	g.line(`i32.const 20`)
-	g.emitStrLenFromLocal(local)
-	g.line(`i32.store`)
-	g.linef(`i32.const %d`, fd)
-	g.line(`i32.const 16`) // iovs ptr
-	g.line(`i32.const 1`)  // iovs_len = 1
-	g.line(`i32.const 36`) // nwritten
-	g.line(`call $__wasi_fd_write`)
-	g.line(`drop`)
-}
-
-// emitFdWriteNewline emits one fd_write call that writes the
-// pre-initialised newline iovec at offset 24 (memory[32]='\n')
-// to `fd`. Used by `$print` and `$eprint` after their string
-// write.
-func (g *generator) emitFdWriteNewline(fd int) {
-	g.linef(`i32.const %d`, fd)
-	g.line(`i32.const 24`) // iovs ptr (newline iovec)
-	g.line(`i32.const 1`)
-	g.line(`i32.const 36`)
-	g.line(`call $__wasi_fd_write`)
-	g.line(`drop`)
-}
-
 // emitStreamsStdioHelpers writes the preview-2 stdio helpers:
 //   - $__stdout_handle / $__stderr_handle: lazily call get-stdout
 //     / get-stderr and cache the resource handle in static memory
