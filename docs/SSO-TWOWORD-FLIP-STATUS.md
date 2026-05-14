@@ -13,8 +13,45 @@ done, what's broken, and what's left.
   wasm32 (16 on natives). Every IR-level offset calculation
   that consults `payloadSlotSize` for `ast.StringType` picks
   this up automatically.
+- `$__lang_str_len(data, len) → i32` rewritten — heap returns
+  `len` as-is; inline extracts bits 24..26.
+- `$__lang_str_byte(data, len, i) → i32` rewritten — heap
+  loads from `mem[data + i]`; inline splits the index range
+  (0..3 → `$data`; 4..6 → `$len`'s low 24 bits).
+- `$__lang_str_to_heap(data, len) → (i32, i32)` rewritten —
+  inline allocates `byteLen` bytes (no length prefix), copies
+  bytes from `$data` + `$len`, returns `(new_ptr, byteLen)`.
+  Heap passes through. **Multi-value return — first user of
+  the `(result i32 i32)` shape in the SSO seam family; every
+  caller will need updating to consume two values.**
+- `$__lang_str_data_ptr(data, len) → i32` rewritten — heap
+  returns `$data`; inline spills `$data` at mem[0..3] and
+  `$len` at mem[4..7], returns `mem[0]`. **Scratch slot grew
+  from 4 → 8 bytes — verify no collision with putchar's iovec
+  at mem[4..11] before the flip ships.** (It DOES collide;
+  needs a different scratch slot or careful sequencing.)
+- `emitStrEmpty()` emits two i32.consts now (`data=0`,
+  `len=InlineFlagWasm`).
+- `OpConstStr` emits two i32.consts now — inline-form via
+  `langstring.PackInlineWasm` (≤7 bytes), heap-form as
+  `(data_seg_offset, length)` where the data segment **no
+  longer has a 4-byte length prefix** (length is on the
+  operand stack).
 
-## What's broken (deliberately) — 22 e2e tests, 1 IR test
+### Outstanding within §1
+
+- `internString` still writes a 4-byte length prefix to the
+  data segment for every heap-form literal. The new
+  OpConstStr doesn't read it (length comes from
+  `i32.const len(op.Str)`). Either drop the prefix from
+  `internString`'s data-segment output (saves 4 bytes per
+  literal) or accept the waste as dead bytes in a follow-up.
+- The `$__lang_str_data_ptr` scratch slot at mem[0..7]
+  overlaps putchar's iovec at mem[4..11]. Need to either move
+  the scratch slot to a fresh region (e.g. shift everything
+  down by 8 bytes) or sequence calls so they can't interleave.
+
+## What's broken (deliberately) — 22 e2e tests + 3 unit pins
 
 The single-line flip cascades through:
 
