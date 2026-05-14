@@ -1231,6 +1231,19 @@ type builder struct {
 	suppressPairRebox bool
 }
 
+// twoWordStrings reports whether the current target carries
+// strings on the operand stack as a `(data, len)` two-word
+// pair (vs the legacy single LSB-tagged pointer slot). Today
+// that's true exactly for wasm32 (`ptrW == 4`). The arm64
+// native flip (in progress; see `docs/SSO-NATIVE-FLIP-STATUS.md`)
+// will extend this to arm64; x86_64 follows in a separate arc.
+// Centralising the decision behind this method names the seam
+// so future commits can flip it without grepping every call
+// site.
+func (b *builder) twoWordStrings() bool {
+	return b.ptrW == 4
+}
+
 // collectDefers walks `s` recursively and appends every
 // `*ast.Defer` it finds (in source-declaration order) to
 // `out`. Function-bodies of nested local FuncDecls are NOT
@@ -1427,7 +1440,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 			// trailing OpReturn pops the right shape. Natives
 			// stay on the single-pointer-slot LSB-tagged ABI
 			// for now.
-			if _, isString := fn.ReturnType.(ast.StringType); isString && b.ptrW == 4 {
+			if _, isString := fn.ReturnType.(ast.StringType); isString && b.twoWordStrings() {
 				b.emit(Op{Kind: OpConstI32, I32: 0})
 				b.emit(Op{Kind: OpConstI32, I32: 0})
 				b.emit(Op{Kind: OpReturn})
@@ -2194,7 +2207,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// wasm codegen fans it out to two `drop`s.
 		if exprLeavesValue(n.Expr, b.info) {
 			w := 0
-			if _, isString := b.exprType(n.Expr).(ast.StringType); isString && b.ptrW == 4 {
+			if _, isString := b.exprType(n.Expr).(ast.StringType); isString && b.twoWordStrings() {
 				w = WidthString
 			}
 			b.emit(Op{Kind: OpDrop, Width: w})
@@ -2588,7 +2601,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if nt, ok := n.InnerType.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
 				switch n.Target.(type) {
 				case ast.StringType:
-					if b.ptrW == 4 {
+					if b.twoWordStrings() {
 						b.emit(Op{Kind: OpLoad, Width: WidthString})
 					}
 					return nil
@@ -2697,7 +2710,7 @@ func (b *builder) expr(e ast.Expr) error {
 		if n.IsFloat {
 			bt = BlockTypeF32
 		}
-		if _, isString := b.exprType(n).(ast.StringType); isString && b.ptrW == 4 {
+		if _, isString := b.exprType(n).(ast.StringType); isString && b.twoWordStrings() {
 			bt = BlockTypeStringPair
 		}
 		if err := b.expr(n.Cond); err != nil {
@@ -2950,7 +2963,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// handler fans out a WidthString load to two i32.load
 			// calls (data @ +0, len @ +4). On natives this stays
 			// as a single ptr-width load via the LSB-tagged form.
-			if _, isString := elemType.(ast.StringType); isString && b.ptrW == 4 {
+			if _, isString := elemType.(ast.StringType); isString && b.twoWordStrings() {
 				loadWidth = WidthString
 			}
 		}
@@ -4508,7 +4521,7 @@ func (b *builder) assign(n *ast.Assign) error {
 			// String elements: fan store out to two i32.store
 			// calls on wasm via WidthString. Natives stay on
 			// WidthPtr (single ptr-slot store).
-			if _, isString := t.ElemType.(ast.StringType); isString && b.ptrW == 4 {
+			if _, isString := t.ElemType.(ast.StringType); isString && b.twoWordStrings() {
 				storeWidth = WidthString
 			}
 		}
