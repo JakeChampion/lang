@@ -150,11 +150,11 @@ func TestRecursionDirectCall(t *testing.T) {
 }
 
 func TestStringsLowerToLinearMemory(t *testing.T) {
-	// Use a literal longer than the single-i32 inline cap so the
+	// Use a literal longer than the inline cap (7 bytes) so the
 	// OpConstStr literal-pack short-circuit doesn't apply — heap
 	// form is required to assert the data-segment + base offset
 	// pinning below.
-	wat := compileToWAT(t, `function main(): void { print("hello"); }`)
+	wat := compileToWAT(t, `function main(): void { print("longerstring"); }`)
 	// After step 6 every print goes through wasi:io/streams; the
 	// preview-1 fd_write import is gone.
 	mustContain(t, wat, `(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush"`)
@@ -163,12 +163,17 @@ func TestStringsLowerToLinearMemory(t *testing.T) {
 	mustContain(t, wat, `(func $print`)
 	mustContain(t, wat, `(func $putchar`)
 	mustContain(t, wat, "call $print")
-	// Length-prefixed string entry: 5 bytes "hello" so prefix is \05\00\00\00.
-	mustContain(t, wat, `\05\00\00\00hello`)
-	// Preview-2 layout pushes the string base from 64 to 128 (the
-	// canonical-ABI scratch slots reserve memory[92..127]); chars
-	// for the first interned string therefore start at 128+4=132.
-	mustContain(t, wat, "i32.const 132")
+	// Two-word string ABI: heap data segment holds only the bytes
+	// (no leading 4-byte length prefix — length lives on the
+	// operand stack as the second i32 word). The data segment
+	// for the first interned heap-form string starts at 128 (the
+	// preview-2 layout reserves memory[64..127] for the canonical-
+	// ABI scratch slots + closures base).
+	mustContain(t, wat, `(data (i32.const 128) "longerstring")`)
+	// User code's OpConstStr emits the data offset directly —
+	// no `+4` skip since there's no prefix to skip.
+	mustContain(t, wat, "i32.const 128")
+	mustContain(t, wat, "i32.const 12")
 }
 
 // Programs that don't touch strings, print or putchar still pull in
@@ -517,19 +522,34 @@ func TestLenOfStringRoutesThroughSSOHelper(t *testing.T) {
 // short literal; the runtime cost is zero (still a single
 // `i32.const`).
 func TestOpConstStrShortLiteralPacksInline(t *testing.T) {
-	// "ok" is 2 bytes: flag (0x80000000) | length 2 (<<24) |
-	// 'o' (0x6f) | ('k' = 0x6b)<<8 = 0x82006b6f.
-	wat := compileToWAT(t, `function f(): string { return "ok"; }`)
-	mustContain(t, wat, "i32.const 0x82006b6f")
+	// Two-word ABI: "ok" (2 bytes) packs inline as
+	// (data, len) = (0x6b6f, 0x82000000).
+	//   - data low byte = 'o' (0x6f); next byte = 'k' (0x6b)
+	//     so data = 0x6b6f.
+	//   - len high bits: flag (0x80000000) | length=2 (<<24)
+	//     = 0x82000000.
+	wat := compileToWAT(t, `function f(): string { return "ok"; }
+function main(): i32 { print(f()); return 0; }`)
+	mustContain(t, wat, "i32.const 0x6b6f")
+	mustContain(t, wat, "i32.const 0x82000000")
+	// Heap-form data segment must NOT appear for an inline-
+	// eligible literal — and the old length-prefix shape
+	// `\02\00\00\00ok` is dead under the no-prefix ABI.
 	mustNotContain(t, wat, `\02\00\00\00ok`)
+	mustNotContain(t, wat, `(data (i32.const 128) "ok"`)
 }
 
-// Longer literals (> 3 bytes) still emit through the heap-form
-// `internString` path — one data-segment entry per unique
-// literal plus an `i32.const <data-offset>` at each use site.
+// Literals > 7 bytes (the inline cap) emit through the heap-
+// form `internString` path. Two-word ABI: the data segment
+// holds only the bytes (no leading length prefix — length is
+// passed as the second i32 word on the operand stack).
 func TestOpConstStrLongLiteralStaysHeap(t *testing.T) {
-	wat := compileToWAT(t, `function f(): string { return "longer"; }`)
-	mustContain(t, wat, `\06\00\00\00longer`)
+	wat := compileToWAT(t, `function f(): string { return "longerstring"; }
+function main(): i32 { print(f()); return 0; }`)
+	// Heap-form entry: just the bytes.
+	mustContain(t, wat, `(data (i32.const 128) "longerstring")`)
+	// The legacy length-prefix shape must NOT appear.
+	mustNotContain(t, wat, `\0c\00\00\00longerstring`)
 }
 
 // $__str_concat outputs an inline-encoded i32 when the total
@@ -643,15 +663,24 @@ func TestHttpWrapperShortMethodPacksInline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	// Heap-form methods (>3 bytes): one data-segment entry each.
-	mustContain(t, wat, `\04\00\00\00HEAD`)
-	mustContain(t, wat, `\04\00\00\00POST`)
-	mustContain(t, wat, `\06\00\00\00DELETE`)
-	mustContain(t, wat, `\07\00\00\00OPTIONS`)
-	// Short-method (≤3 bytes) heap entries MUST NOT appear — those
-	// pack inline at the wrapper side just like at user-source side.
-	mustNotContain(t, wat, `\03\00\00\00GET`)
-	mustNotContain(t, wat, `\03\00\00\00PUT`)
+	// Two-word ABI inline cap is 7 bytes, which covers every HTTP
+	// method name (GET / PUT / HEAD / POST / TRACE / PATCH /
+	// DELETE / CONNECT / OPTIONS — all ≤ 7). None of them spill
+	// to a heap-form data segment.
+	mustNotContain(t, wat, `"GET"`)
+	mustNotContain(t, wat, `"PUT"`)
+	mustNotContain(t, wat, `"HEAD"`)
+	mustNotContain(t, wat, `"POST"`)
+	mustNotContain(t, wat, `"DELETE"`)
+	mustNotContain(t, wat, `"OPTIONS"`)
+	mustNotContain(t, wat, `"PATCH"`)
+	mustNotContain(t, wat, `"TRACE"`)
+	mustNotContain(t, wat, `"CONNECT"`)
+	// Legacy single-i32 length-prefix shape MUST NOT appear.
+	mustNotContain(t, wat, `\04\00\00\00HEAD`)
+	mustNotContain(t, wat, `\06\00\00\00DELETE`)
+	mustNotContain(t, wat, `\07\00\00\00OPTIONS`)
+	mustNotContain(t, wat, `\07\00\00\00CONNECT`)
 }
 
 // `$__method_Reader_read_chunk` gains an inline-output fast
@@ -819,46 +848,36 @@ func TestStructLitAllocatesAndStores(t *testing.T) {
 	mustContain(t, wat, "i32.load")
 }
 
-// Single-i32 string ABI pin: a struct field of type `string`
-// today occupies exactly one pointer-width slot (4 bytes on
-// wasm32). A `{i32, string, i32}` struct allocates 12 bytes
-// with offsets {0, 4, 8}.
-//
-// This test exists to FAIL deliberately when the two-word
-// flip lands (docs/SSO-TWOWORD-EXEC.md) — at that point a
-// string field will occupy 2 × ptrW = 8 bytes, alloc size
-// becomes 16, and offsets shift to {0, 4, 12}. The failure
-// is the signal to the atomic-flip author that struct field
-// layout has to be updated in lockstep.
-func TestStringFieldOffsetIsPointerWidth(t *testing.T) {
+// Two-word string ABI pin: a struct field of type `string`
+// occupies 2 × ptrW = 8 bytes on wasm32 with 8-byte alignment.
+// A `{i32, string, i32}` struct allocates 20 bytes — i32 at
+// +0, 4-byte pad to align the string to +8, string spanning
+// +8..+15 (data @+8, len @+12), i32 at +16.
+func TestStringFieldOffsetIsTwoWord(t *testing.T) {
 	wat := compileToWAT(t, `struct R { a: i32, s: string, b: i32 }
 		function main(): i32 {
 			var r: R = R { a: 1, s: "x", b: 3 };
 			return r.a + r.b;
 		}`)
-	// Total alloc size: 4 + 4 + 4 = 12 bytes (one slot per
-	// field; string still single-i32). Post-flip becomes 16.
-	mustContain(t, wat, "i32.const 12")
+	// Total alloc size: 4 (a) + 4 (pad) + 8 (s) + 4 (b) = 20.
+	mustContain(t, wat, "i32.const 20")
+	// `b`'s offset is +16 — visible as the i32.const 16
+	// preceding the `i32.add; i32.store` pair for the b field.
+	mustContain(t, wat, "i32.const 16")
+	// Single-slot pre-flip alloc size MUST NOT appear.
+	mustNotContain(t, wat, "i32.const 12\n    call $__lang_alloc")
 }
 
-// Single-i32 string ABI pin: a function param of type
-// `string` declares exactly one local. `function f(s: string)
-// : i32 { return len(s); }` emits `(param $s i32)` — one i32
-// in, no per-string slot fan-out.
-//
-// FAILS deliberately when the two-word flip lands; the
-// atomic-flip PR has to update the assertion to recognise the
-// `(param $s_data i32) (param $s_len i32)` shape (or whatever
-// fan-out convention it picks).
-func TestStringParamIsSingleI32Slot(t *testing.T) {
+// Two-word string ABI pin: a function param of type
+// `string` fans out to two i32 locals
+// `$<name>_data` / `$<name>_len`. `function f(s: string):
+// i32 { return len(s); }` emits
+// `(param $s_data i32) (param $s_len i32) (result i32)`.
+func TestStringParamFansToDataLenPair(t *testing.T) {
 	wat := compileToWAT(t, `function f(s: string): i32 { return len(s); }`)
-	// Today: one i32 param. Post-flip: two i32 params.
-	mustContain(t, wat, `(func $f (param $s i32) (result i32)`)
-	// The post-flip shape would emit `(param $s_data i32)
-	// (param $s_len i32)` (or similar), so this negative
-	// assertion is the explicit pin against that shape
-	// arriving silently.
-	mustNotContain(t, wat, `(param $s_data i32)`)
+	mustContain(t, wat, `(func $f (param $s_data i32) (param $s_len i32) (result i32)`)
+	// The pre-flip single-i32 shape MUST NOT appear.
+	mustNotContain(t, wat, `(func $f (param $s i32) (result i32)`)
 }
 
 func TestStringConcatEmitsHelper(t *testing.T) {

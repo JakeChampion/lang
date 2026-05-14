@@ -16,15 +16,16 @@ sentinel / HTTP-handler failures are unrelated to this work
 and were red on the prior baseline too). Native parity is held
 by a target-aware split — see "Native deferral" below.
 
-Remaining red unit tests (NOT regressions; all pre-existing
-and called out as §10 cleanup): 6 wasm pin tests asserting
-the OLD single-i32 string shape
-(TestStringFieldOffsetIsPointerWidth /
-TestStringParamIsSingleI32Slot /
-TestOpConstStrShortLiteralPacksInline /
-TestOpConstStrLongLiteralStaysHeap /
-TestStringsLowerToLinearMemory /
-TestHttpWrapperShortMethodPacksInline).
+All unit tests in the wasm codegen package now also pass —
+the 6 pin tests that previously asserted the OLD single-i32
+string layout were refreshed in this session for the post-
+flip two-word shape (renamed where their meaning changed:
+`…IsPointerWidth` → `…IsTwoWord`,
+`…IsSingleI32Slot` → `…FansToDataLenPair`). Vestigial 4-
+byte length prefix dropped from heap-form data segments;
+obsolete `PackTinyWasm` / `TinyInlineCapWasm` /
+`UnpackTinyWasm` / `IsTinyInlineWasm` / `LengthTinyWasm`
+helpers (plus their tests) removed from `langstring/`.
 
 ## What's done in this branch
 
@@ -403,7 +404,9 @@ settled.
 | done    | ArrayLit / Destructure / pair-form string + pin-test refresh |
 | done    | $random_bytes + $cabi_realloc alignment + multi-result fn header |
 | done    | Implicit-return padding for string-returning fns on wasm32 |
-| next    | §10 cleanup — refresh 6 wasm pin tests for post-flip shape, |
-|         |   fix `langstring.LengthWasm` masking, drop PackTinyWasm / |
-|         |   TinyInlineCapWasm / data-segment length-prefix dead bytes |
+| done    | §10 cleanup — refreshed 6 wasm pin tests for post-flip shape; |
+|         |   dropped data-segment length-prefix dead bytes; removed |
+|         |   PackTinyWasm / TinyInlineCapWasm / UnpackTinyWasm / |
+|         |   IsTinyInlineWasm / LengthTinyWasm helpers + their tests |
+|         |   (LengthWasm masking bug was already fixed in a prior PR) |
 | later   | §9 native flip (arm64 + x86_64 in lockstep, or staged)    |
