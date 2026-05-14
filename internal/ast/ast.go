@@ -303,6 +303,15 @@ func ElemSizeBytes(t Type) int {
 // 8 on arm64). Pointer-shaped types return `ptrW` so their full
 // heap address survives on arm64-darwin (heap >= 4 GiB). Scalar
 // types ignore ptrW.
+//
+// `StringType` is special-cased on wasm32 (ptrW=4): a string
+// element is two i32 slots `(data, len)` under the two-word
+// ABI, so the stride is 8 — not `ptrW=4`. On natives the
+// existing LSB-tagged single-slot form stays one 8-byte
+// pointer slot, so stride is still 8 there too. Both targets
+// converge on 8-byte string-element stride; centralising the
+// decision here keeps it consistent with `payloadSlotSize`
+// in the IR.
 func ElemSizeBytesFor(t Type, ptrW int) int {
 	switch x := t.(type) {
 	case NumberType:
@@ -320,6 +329,11 @@ func ElemSizeBytesFor(t Type, ptrW int) int {
 			return 8
 		}
 		return 4
+	case StringType:
+		if ptrW == 4 {
+			return 2 * ptrW
+		}
+		return ptrW
 	}
 	return ptrW
 }
