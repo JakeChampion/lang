@@ -73,36 +73,59 @@ These slices land BEFORE the atomic flip. Each is small.
 Together they reduce the atomic-flip PR from "rewrite the
 backend" to "switch the seams".
 
-### PW-1 — single seam for `(data, len)` push from a local pair
+### ~~PW-1 — single seam for `(data, len)` push from a local pair~~ SKIPPED
 
-Add `emitStrPushFromLocals(dataLocal, lenLocal)` /
-`emitStrPopToLocals(dataLocal, lenLocal)` helpers in
-`internal/codegen/wasm/wasm.go`. They emit the canonical
-2-slot-push / 2-slot-pop pattern (`local.get data; local.get
-len` and `local.set len; local.set data`). No call sites use
-them yet; they're scaffolding.
+Original idea: Add `emitStrPushFromLocals(dataLocal,
+lenLocal)` / `emitStrPopToLocals(dataLocal, lenLocal)` helpers
+as scaffolding before any call sites use them.
 
-### PW-2 — extend `payloadSlotSize` for strings
+**Rejected**: dead code until the atomic flip's first call
+site adopts them, which is the same PR that would introduce
+them anyway. The atomic-flip PR rolls its own helpers when it
+needs them; pre-adding here adds noise without shrinking the
+flip.
 
-Today `payloadSlotSize(StringType, 4) == 4`. Add a
-constant + comment marking the post-flip value (`8`). Update
-`payloadLayout` to look up via the constant. No behaviour
-change.
+### ~~PW-2 — extend `payloadSlotSize` for strings~~ SKIPPED
 
-### PW-3 — pin existing one-slot expectations as tests
+Original idea: special-case `ast.StringType` in
+`payloadSlotSize` and route through a `StringSlotSize(ptrW)`
+helper that returns `ptrW` today and `2 * ptrW` post-flip.
 
-Add a unit test asserting current `OpStore`/`OpLoad` of a
-string struct field uses 4-byte stride. The test exists to
-catch the ABI flip and force the test author to update it
-(not to lock the behaviour in).
+**Rejected**: the special-case introduces an indirection that
+doesn't save work in the atomic-flip PR (it would need to edit
+the helper's return either way). One-liner in the flip; not
+worth pre-touching.
 
-### PW-4 — wat-side helper signatures, scaffolded
+### PW-3 — pin existing one-slot expectations as tests — ✅ shipped in #373
 
-Add `$__lang_str_len_2w(data: i32, len: i32) → i32` and
-`$__lang_str_byte_2w(data: i32, len: i32, idx: i32) → i32`
-emit-helpers, gated on a feature flag default-off. These are
-the post-flip seam helpers; they coexist with the current
-single-i32 ones until the flip.
+`TestStringFieldOffsetIsPointerWidth` + `TestStringParamIsSingleI32Slot`
+in `internal/codegen/wasm/wasm_test.go`. Lock today's
+single-i32 string ABI for struct fields + function params.
+Will FAIL deliberately when the atomic flip lands, signalling
+exactly which seams the flip touched.
+
+Adjacent: `TestPackInlineWasmConcreteLayout` +
+`TestPackInlineNativeConcreteLayout` +
+`TestInlineZeroLengthIsInline` in `internal/langstring/langstring_test.go`
+(shipped in #371) pin the two-word inline encoding's bit-level
+layout, so the atomic-flip PR's reader / writer constants stay
+consistent with the helpers.
+
+### ~~PW-4 — wat-side helper signatures, scaffolded~~ SKIPPED
+
+Original idea: Add `$__lang_str_len_2w(data: i32, len: i32)` /
+`$__lang_str_byte_2w(data: i32, len: i32, idx: i32)` emit-helpers
+gated on a feature flag default-off.
+
+**Rejected**: same dead-code reasoning as PW-1. The atomic
+flip will introduce the helpers in their first-used position.
+
+### Adjacent cleanup (not in the pre-work list but shipped) — ✅
+
+PR #372 removed the dead `emitFdWriteString` /
+`emitFdWriteNewline` preview-1 helpers — unrelated to the
+flip but reduces the wasm.go surface the atomic-flip PR has
+to scan.
 
 ## The atomic flip PR
 
