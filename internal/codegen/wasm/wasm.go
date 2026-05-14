@@ -374,6 +374,19 @@ func (g *generator) linef(format string, args ...any) {
 // gain inline-awareness for free as the SSO migration extends
 // the producer side.
 func (g *generator) emitStrLenFromLocal(local string) {
+	// Two-word ABI: `local` is the LEN local (caller threads
+	// `$foo_data` + `$foo_len` everywhere a string used to be
+	// one local). Length lives directly in `$<local>` for
+	// heap form; for inline form, the high byte of `$<local>`
+	// has the inline flag + length nibble. Route through
+	// $__lang_str_len(data, len) so the flag-bit branch
+	// happens in one place. Caller must push `$<base>_data`
+	// first; this helper pushes `$<base>_len` then calls.
+	//
+	// TODO: when fully migrated, replace with a direct
+	// `local.get $<base>_len; i32.const 0x7fffffff; i32.and`
+	// at the consumer site — but during the transition, the
+	// helper centralises the dispatch.
 	g.linef("local.get %s", local)
 	g.line("call $__lang_str_len")
 }
