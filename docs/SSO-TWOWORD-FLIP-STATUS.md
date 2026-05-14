@@ -10,11 +10,11 @@ broken, and what's left.
 Wasm e2e cascade: 67 → 58 → 15 → **0 failing** tests after the
 closure-capture / state-global / generic-instantiation / tuple-
 destructure / pair-form-string-rejection / json-encode work in
-this session. Native suite **fully green** (`x86_64` files /
-HTTP / streaming all pass — pre-existing SSO-inline / empty-
-sentinel / HTTP-handler failures are unrelated to this work
-and were red on the prior baseline too). Native parity is held
-by a target-aware split — see "Native deferral" below.
+this session. Native suite **fully green** — the three X86_64
+failures (TestX86_64SsoInline, TestX86_64EmptyStringSentinel,
+TestX86_64HttpHandler) that were attributed to "pre-existing"
+turned out to be a regression introduced by the flip work and
+are now fixed too. Every test in every package passes.
 
 All unit tests in the wasm codegen package now also pass —
 the 6 pin tests that previously asserted the OLD single-i32

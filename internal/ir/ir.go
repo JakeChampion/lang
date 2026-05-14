@@ -3027,7 +3027,14 @@ func (b *builder) expr(e ast.Expr) error {
 				}
 				b.emit(Op{Kind: OpStrLen})
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 4})
+			// I32 is the IR-level operand-stack pop count (one
+			// per source argument), so it stays at 3 on both
+			// targets. On wasm32 the OpLoadLocal-of-string
+			// fans to two wasm-stack i32s automatically, so
+			// the runtime helper's 4-param signature is fed
+			// the right number of wasm-stack slots without the
+			// IR caller knowing about the fan-out.
+			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3})
 			break
 		}
 		// Lower `arr[low:high]` to:
