@@ -4553,7 +4553,10 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 // runtime helper signatures — see SSO-TWOWORD-EXEC.md for the
 // full file-level checklist.
 func stringSlotSize(ptrW int) int32 {
-	return int32(ptrW)
+	// Two-word ABI: string is (data, len) — two pointer-width
+	// slots. On wasm32 = 8 bytes; on natives = 16 bytes. Matches
+	// langstring.PackInlineWasm / PackInlineNative layout.
+	return int32(2 * ptrW)
 }
 
 // isWideScalar reports whether `t` is a 64-bit numeric or
