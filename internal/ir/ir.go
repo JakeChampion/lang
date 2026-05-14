@@ -4529,10 +4529,31 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
 		return 8
 	}
+	if _, isString := t.(ast.StringType); isString {
+		return stringSlotSize(ptrW)
+	}
 	if ast.IsPointerType(t) {
 		return int32(ptrW)
 	}
 	return 4
+}
+
+// stringSlotSize returns the per-string storage size in bytes
+// for a struct field / variant payload / function-arg slot.
+// Centralises the one-i32-slot-per-string decision so the
+// upcoming two-word ABI flip (see docs/SSO-TWOWORD-EXEC.md)
+// has exactly one place to update.
+//
+// Today: returns `ptrW` (4 on wasm32, 8 on natives) — string
+// is a pointer-shaped value, one slot.
+//
+// Post-flip: returns `2 * ptrW` (8 on wasm32, 16 on natives) —
+// string is a `(data, len)` pair occupying two slots. The
+// flip's other halves are watType / OpConstStr emission /
+// runtime helper signatures — see SSO-TWOWORD-EXEC.md for the
+// full file-level checklist.
+func stringSlotSize(ptrW int) int32 {
+	return int32(ptrW)
 }
 
 // isWideScalar reports whether `t` is a 64-bit numeric or
