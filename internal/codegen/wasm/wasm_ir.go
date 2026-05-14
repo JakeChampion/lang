@@ -347,11 +347,14 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		hasEnv = true
 	}
 	for _, p := range fn.Params {
-		typ, err := watType(p.Type)
+		ts, err := watTypes(p.Type)
 		if err != nil {
 			return fmt.Errorf("function %q: param %s: %w", fn.Name, p.Name, err)
 		}
-		header += fmt.Sprintf(" (param $%s %s)", p.Name, typ)
+		names := slotNames(p.Name, p.Type)
+		for i, t := range ts {
+			header += fmt.Sprintf(" (param $%s %s)", names[i], t)
+		}
 	}
 	if hasEnv {
 		header += " (param $__env i32)"
@@ -368,24 +371,30 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 			// OpCallDirect — see the OpCallDirect handler).
 			header += " (result i32 i32)"
 		} else {
-			typ, err := watType(fn.ReturnType)
+			ts, err := watTypes(fn.ReturnType)
 			if err != nil {
 				return fmt.Errorf("function %q: result: %w", fn.Name, err)
 			}
-			header += fmt.Sprintf(" (result %s)", typ)
+			for _, t := range ts {
+				header += fmt.Sprintf(" (result %s)", t)
+			}
 		}
 	}
 	g.line(header)
 	g.indent++
 
 	// User vars: declared by the checker and carried on irFn.Locals
-	// in slot order.
+	// in slot order. String-typed locals fan out to two wasm locals
+	// `$<name>_data` / `$<name>_len` matching the two-word ABI.
 	for _, v := range irFn.Locals {
-		typ, err := watType(v.Type)
+		ts, err := watTypes(v.Type)
 		if err != nil {
 			return fmt.Errorf("function %q: var %s: %w", fn.Name, v.Name, err)
 		}
-		g.linef("(local $%s %s)", v.Name, typ)
+		names := slotNames(v.Name, v.Type)
+		for i, t := range ts {
+			g.linef("(local $%s %s)", names[i], t)
+		}
 	}
 	// Synthetic scratches the IR conjured for ArrayLit / StructLit /
 	// Switch / closure helpers (always i32) and for inlined callees
@@ -393,11 +402,15 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// just like user vars; we name them deterministically so WAT
 	// validation has something to point at.
 	for i, t := range irFn.ScratchTypes {
-		typ, err := watType(t)
+		ts, err := watTypes(t)
 		if err != nil {
 			return fmt.Errorf("function %q: scratch %d: %w", fn.Name, i, err)
 		}
-		g.linef("(local $__scratch_%d %s)", i, typ)
+		base := fmt.Sprintf("__scratch_%d", i)
+		names := slotNames(base, t)
+		for j, wt := range ts {
+			g.linef("(local $%s %s)", names[j], wt)
+		}
 	}
 	// Closure-construction helpers, if any OpMakeClosure appears in
 	// the body. We pre-scan every MakeClosure / MakeEnv site, look
@@ -461,7 +474,9 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	}
 
 	// Implicit return-value padding so the validator stays happy when
-	// the body falls off the end without a final return.
+	// the body falls off the end without a final return. String
+	// returns fan out to two i32 slots — push `(0, 0)` to match the
+	// (data, len) tuple shape.
 	if !ast.Equal(fn.ReturnType, ast.VoidType{}) && !endsWithReturn(irFn.Ops) {
 		if ft, isFloat := fn.ReturnType.(ast.FloatType); isFloat {
 			if ft.NormalWidth() == 64 {
@@ -469,6 +484,9 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 			} else {
 				g.line("f32.const 0")
 			}
+		} else if _, isString := fn.ReturnType.(ast.StringType); isString {
+			g.line("i32.const 0")
+			g.line("i32.const 0")
 		} else {
 			g.line("i32.const 0")
 		}
@@ -608,6 +626,34 @@ func slotName(fn *ast.FuncDecl, irFn *ir.Func, idx int32) string {
 	}
 	idx -= int32(len(irFn.Locals))
 	return fmt.Sprintf("__scratch_%d", idx)
+}
+
+// slotType returns the ast.Type of IR slot idx in irFn, or nil if
+// out of range / type-less (scratch slots may have a nil type when
+// they're plain i32 wash). String-typed slots drive the two-word
+// fan-out in load/store-local emit.
+func slotType(fn *ast.FuncDecl, irFn *ir.Func, idx int32) ast.Type {
+	if int(idx) < len(fn.Params) {
+		return fn.Params[idx].Type
+	}
+	idx -= int32(len(fn.Params))
+	if int(idx) < len(irFn.Locals) {
+		return irFn.Locals[idx].Type
+	}
+	idx -= int32(len(irFn.Locals))
+	if int(idx) < len(irFn.ScratchTypes) {
+		return irFn.ScratchTypes[idx]
+	}
+	return nil
+}
+
+// slotIsString reports whether IR slot idx names a string-typed
+// value — used by OpLoadLocal / OpStoreLocal / OpTeeLocal to
+// fan their wat emission out into two operations over the
+// `$<base>_data` / `$<base>_len` local pair.
+func slotIsString(fn *ast.FuncDecl, irFn *ir.Func, idx int32) bool {
+	_, ok := slotType(fn, irFn, idx).(ast.StringType)
+	return ok
 }
 
 // blockTypeSuffix returns the `(result T)` clause for a structured
@@ -771,11 +817,40 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		}
 		g.linef("i32.const %d", g.closuresBase+8*ti)
 	case ir.OpLoadLocal:
-		g.linef("local.get $%s", slotName(g.current, irFn, op.I32))
+		name := slotName(g.current, irFn, op.I32)
+		if slotIsString(g.current, irFn, op.I32) {
+			// Two-word ABI: push `(data, len)` in low-to-high
+			// order so the operand stack mirrors a fresh
+			// OpConstStr / runtime-helper-result shape.
+			g.linef("local.get $%s_data", name)
+			g.linef("local.get $%s_len", name)
+		} else {
+			g.linef("local.get $%s", name)
+		}
 	case ir.OpStoreLocal:
-		g.linef("local.set $%s", slotName(g.current, irFn, op.I32))
+		name := slotName(g.current, irFn, op.I32)
+		if slotIsString(g.current, irFn, op.I32) {
+			// Stack on entry: [..., data, len]. Pop len first
+			// (most recently pushed), then data — matches the
+			// (data, len) push order in OpLoadLocal / OpConstStr.
+			g.linef("local.set $%s_len", name)
+			g.linef("local.set $%s_data", name)
+		} else {
+			g.linef("local.set $%s", name)
+		}
 	case ir.OpTeeLocal:
-		g.linef("local.tee $%s", slotName(g.current, irFn, op.I32))
+		name := slotName(g.current, irFn, op.I32)
+		if slotIsString(g.current, irFn, op.I32) {
+			// wasm has no `local.tee` for multi-value; pop both
+			// slots, store, then re-push to preserve the (data,
+			// len) operand-stack shape.
+			g.linef("local.set $%s_len", name)
+			g.linef("local.set $%s_data", name)
+			g.linef("local.get $%s_data", name)
+			g.linef("local.get $%s_len", name)
+		} else {
+			g.linef("local.tee $%s", name)
+		}
 	case ir.OpLoadGlobal:
 		g.linef("global.get $state_%s", op.Str)
 	case ir.OpStoreGlobal:

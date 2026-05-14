@@ -1431,19 +1431,23 @@ func (g *generator) watFuncType(ft *ast.FuncType) string {
 	var b strings.Builder
 	b.WriteString("(func")
 	for _, p := range ft.Params {
-		t, _ := watType(p)
-		b.WriteString(" (param ")
-		b.WriteString(t)
-		b.WriteByte(')')
+		ts, _ := watTypes(p)
+		for _, t := range ts {
+			b.WriteString(" (param ")
+			b.WriteString(t)
+			b.WriteByte(')')
+		}
 	}
 	if g.needsClosures {
 		b.WriteString(" (param i32)") // env pointer
 	}
 	if !ast.Equal(ft.Result, ast.VoidType{}) {
-		t, _ := watType(ft.Result)
-		b.WriteString(" (result ")
-		b.WriteString(t)
-		b.WriteByte(')')
+		ts, _ := watTypes(ft.Result)
+		for _, t := range ts {
+			b.WriteString(" (result ")
+			b.WriteString(t)
+			b.WriteByte(')')
+		}
 	}
 	b.WriteByte(')')
 	return b.String()
@@ -6916,8 +6920,14 @@ func watType(t ast.Type) (string, error) {
 			return "i64", nil
 		}
 		return "i32", nil
-	case ast.BoolType, ast.StringType:
-		// Strings are pointers into linear memory, so they're i32.
+	case ast.BoolType:
+		return "i32", nil
+	case ast.StringType:
+		// Strings occupy two i32 slots in the two-word ABI —
+		// `(data, len)`. Callers that need the slot list (params,
+		// results, locals) should use `watTypes` instead; this
+		// scalar accessor reports the data slot so single-slot
+		// users (e.g. array element type) stay correct.
 		return "i32", nil
 	case ast.ArrayType, ast.SliceType:
 		// Arrays and slices are both heap-pointer values at the
@@ -6938,4 +6948,35 @@ func watType(t ast.Type) (string, error) {
 		return "f32", nil
 	}
 	return "", fmt.Errorf("wasm: type %s isn't supported by this backend yet", t)
+}
+
+// watTypes returns the list of wasm-level types used to represent
+// a single language-level value of type t. Most types map to one
+// wasm slot (`watType`'s output); `string` fans out to two i32
+// slots `(data, len)` under the two-word ABI. Callers emitting
+// function-signature `(param …)` / `(result …)` clauses or
+// `(local …)` declarations should use this so string-typed
+// params/locals materialise as two distinct wasm locals named
+// `$<base>_data` / `$<base>_len`.
+func watTypes(t ast.Type) ([]string, error) {
+	if _, isString := t.(ast.StringType); isString {
+		return []string{"i32", "i32"}, nil
+	}
+	one, err := watType(t)
+	if err != nil {
+		return nil, err
+	}
+	return []string{one}, nil
+}
+
+// slotNames returns the wasm local names a single IR slot of
+// the given type fans out to. Strings split into `<base>_data` /
+// `<base>_len`; every other type stays as a single `<base>`.
+// Used in lockstep with `watTypes` so the (param $N_data i32)
+// (param $N_len i32) pair stays consistent across decl + use.
+func slotNames(base string, t ast.Type) []string {
+	if _, isString := t.(ast.StringType); isString {
+		return []string{base + "_data", base + "_len"}
+	}
+	return []string{base}
 }

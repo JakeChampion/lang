@@ -861,6 +861,12 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("add x0, x2, x0")
 		g.emit("add x0, x0, #1")
 		g.label(doneLbl)
+	case "__arr_idx_1":
+		// Stride-1 byte-array indexing: byte address = base +
+		// idx. Split from $__str_idx so the string helper can
+		// own the SSO inline-spill dispatch without forcing
+		// byte arrays through the same `tbnz` check.
+		g.emit("add x0, x1, x0")
 	case "__arr_idx_2":
 		g.emit("add x0, x1, x0, lsl #1")
 	case "__arr_idx":
@@ -4434,7 +4440,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__mapiter_value_impl"
 		case "__method_MapIter_advance":
 			target = "__mapiter_advance_impl"
-		case "__str_idx", "__arr_idx", "__arr_idx_2", "__arr_idx_8",
+		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_2", "__arr_idx_8",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
 			// would otherwise dispatch to. arm64 doesn't yet
