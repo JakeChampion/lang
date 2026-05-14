@@ -418,14 +418,19 @@ func (g *generator) emitStrLenStoreToLocal(lenLocal, dstLocal string) {
 // at that point this helper collapses to just the alloc +
 // offset, and the length-store call goes away.
 func (g *generator) emitHeapStrAlloc(lenLocal, dstLocal string, tailBytes int32) {
+	// Two-word ABI: heap form has no 4-byte length prefix
+	// anymore (length lives on the operand stack as the second
+	// i32 in `(data, len)`). Alloc just `byteLen + tailBytes`;
+	// `$dstLocal` points at the bytes directly. Caller pushes
+	// `(local.get $dstLocal, local.get $lenLocal)` at the
+	// return to satisfy the new multi-value return shape.
 	g.linef("local.get %s", lenLocal)
-	g.linef("i32.const %d", 4+tailBytes)
-	g.line("i32.add")
+	if tailBytes != 0 {
+		g.linef("i32.const %d", tailBytes)
+		g.line("i32.add")
+	}
 	g.line("call $__lang_alloc")
-	g.line("i32.const 4")
-	g.line("i32.add")
 	g.linef("local.set %s", dstLocal)
-	g.emitStrLenStoreToLocal(lenLocal, dstLocal)
 }
 
 // emitPromoteStrParam emits a three-line preamble at the head of
@@ -495,45 +500,34 @@ func (g *generator) emitInlineEmptyShortCircuit(lenLocal string) {
 
 // emitInlineOutputBuild emits the SSO inline-output
 // construction loop shared across every string-producing
-// runtime helper that has a `≤ 3 bytes ⇒ inline-encoded i32`
-// fast path. After this returns, `$outLocal` holds:
+// runtime helper that has a `≤ 7 bytes ⇒ inline-encoded
+// two-word` fast path. After this returns, `$outDataLocal`
+// and `$outLenLocal` hold the (data, len) inline encoding:
 //
-//	bit  31     inline flag (1)
-//	bits 24..26 length (read from `$lenLocal`)
-//	bits 0..23  bytes 0..2 packed little-endian
+//	outData         bytes 0..3 packed little-endian
+//	outLen, bit 31  inline flag (1)
+//	outLen, 24..26  byte length (read from `$lenLocal`)
+//	outLen, 0..23   bytes 4..6 packed little-endian
 //
-// Matches `langstring.PackTinyWasm`'s layout exactly. The
-// caller is responsible for:
+// Matches `langstring.PackInlineWasm`'s layout exactly.
 //
-//   - declaring `$outLocal` (i32 — receives the packed value)
-//     and `$idxLocal` (i32 — loop counter, clobbered)
-//   - already having `$lenLocal` in a position where the helper
-//     can read it via `local.get %s` (the helper does NOT
-//     mutate `$lenLocal`)
-//   - guarding the call with `$lenLocal ≤ 3` — the helper
-//     assumes its caller has already bounds-checked
+// `byteAt` is invoked TWICE per iteration (once in each branch
+// of the idx<4 dispatch); it must emit a wasm sequence that
+// leaves the byte at index `$idxLocal` on top of the stack
+// without consuming anything from it.
 //
-// `byteAt` is invoked once per loop iteration; it must emit a
-// wasm sequence that leaves the byte at index `$idxLocal` on
-// top of the operand stack (consuming nothing from it). Typical
-// implementations:
-//
-//   - direct heap load: `local.get $base; local.get $idxLocal;
-//     i32.add; i32.load8_u`
-//   - inline-aware via SSO seam: `local.get $base; local.get
-//     $idxLocal; call $__lang_str_byte` (when the source string
-//     itself may be inline-form)
-//
-// Uses fixed block labels (`$end_inline_pack` / `$inline_pack`)
-// — the caller must not have an enclosing block with the same
-// label. None of today's producers do.
-func (g *generator) emitInlineOutputBuild(outLocal, idxLocal, lenLocal string, byteAt func()) {
+// Uses fixed block labels (`$end_inline_pack` / `$inline_pack`).
+func (g *generator) emitInlineOutputBuild(outDataLocal, outLenLocal, idxLocal, lenLocal string, byteAt func()) {
+	// outData = 0
+	g.line(`i32.const 0`)
+	g.linef(`local.set %s`, outDataLocal)
+	// outLen = inlineFlag | (lenLocal << 24)
 	g.line(`i32.const 0x80000000`)
 	g.linef(`local.get %s`, lenLocal)
 	g.line(`i32.const 24`)
 	g.line(`i32.shl`)
 	g.line(`i32.or`)
-	g.linef(`local.set %s`, outLocal)
+	g.linef(`local.set %s`, outLenLocal)
 	g.line(`i32.const 0`)
 	g.linef(`local.set %s`, idxLocal)
 	g.line(`block $end_inline_pack`)
@@ -544,15 +538,37 @@ func (g *generator) emitInlineOutputBuild(outLocal, idxLocal, lenLocal string, b
 	g.linef(`local.get %s`, lenLocal)
 	g.line(`i32.eq`)
 	g.line(`br_if $end_inline_pack`)
-	// out |= byteAt(idx) << (idx * 8)
-	g.linef(`local.get %s`, outLocal)
+	// Dispatch byte position: i < 4 → outData, else → outLen.
+	g.linef(`local.get %s`, idxLocal)
+	g.line(`i32.const 4`)
+	g.line(`i32.lt_u`)
+	g.line(`if`)
+	g.indent++
+	// outData |= byte << (idx * 8)
+	g.linef(`local.get %s`, outDataLocal)
 	byteAt()
 	g.linef(`local.get %s`, idxLocal)
 	g.line(`i32.const 8`)
 	g.line(`i32.mul`)
 	g.line(`i32.shl`)
 	g.line(`i32.or`)
-	g.linef(`local.set %s`, outLocal)
+	g.linef(`local.set %s`, outDataLocal)
+	g.indent--
+	g.line(`else`)
+	g.indent++
+	// outLen |= byte << ((idx - 4) * 8)
+	g.linef(`local.get %s`, outLenLocal)
+	byteAt()
+	g.linef(`local.get %s`, idxLocal)
+	g.line(`i32.const 4`)
+	g.line(`i32.sub`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.shl`)
+	g.line(`i32.or`)
+	g.linef(`local.set %s`, outLenLocal)
+	g.indent--
+	g.line(`end`)
 	g.linef(`local.get %s`, idxLocal)
 	g.line(`i32.const 1`)
 	g.line(`i32.add`)
@@ -2880,7 +2896,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.le_u`)
 		g.line(`if`)
 		g.indent++
-		g.emitInlineOutputBuild("$inline", "$i", "$total", func() {
+		g.emitInlineOutputBuild("$inline_data", "$inline_len", "$i", "$total", func() {
 			// byte = (i < la) ? $__lang_str_byte($a, i)
 			//                 : $__lang_str_byte($b, i - la)
 			g.line(`local.get $i`)
@@ -3270,7 +3286,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.le_u`)
 		g.line(`if`)
 		g.indent++
-		g.emitInlineOutputBuild("$inline", "$i", "$new_len", func() {
+		g.emitInlineOutputBuild("$inline_data", "$inline_len", "$i", "$new_len", func() {
 			// byte = $__lang_str_byte($base, $low + $i)
 			g.line(`local.get $base`)
 			g.line(`local.get $low`)
@@ -3335,7 +3351,7 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`i32.le_u`)
 		g.line(`if`)
 		g.indent++
-		g.emitInlineOutputBuild("$inline", "$i", "$bLen", func() {
+		g.emitInlineOutputBuild("$inline_data", "$inline_len", "$i", "$bLen", func() {
 			// byte = mem[bs + i]
 			g.line(`local.get $bs`)
 			g.line(`local.get $i`)
@@ -4002,7 +4018,7 @@ func (g *generator) emitArgsHelper() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.emitInlineOutputBuild("$sbase", "$j", "$strlen", func() {
+	g.emitInlineOutputBuild("$sbase_data", "$sbase_len", "$j", "$strlen", func() {
 		// byte = mem[$cstr + $j]
 		g.line(`local.get $cstr`)
 		g.line(`local.get $j`)
@@ -4260,7 +4276,7 @@ func (g *generator) emitStdinStreamsReadLine() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.emitInlineOutputBuild("$sptr", "$j", "$cur_offset", func() {
+	g.emitInlineOutputBuild("$sptr_data", "$sptr_len", "$j", "$cur_offset", func() {
 		// byte = mem[$buf + $j]
 		g.line(`local.get $buf`)
 		g.line(`local.get $j`)
@@ -5164,7 +5180,7 @@ func (g *generator) emitTcpRecvPreview2() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.emitInlineOutputBuild("$sptr", "$j", "$n", func() {
+	g.emitInlineOutputBuild("$sptr_data", "$sptr_len", "$j", "$n", func() {
 		// byte = mem[$list_ptr + $j]
 		g.line(`local.get $list_ptr`)
 		g.line(`local.get $j`)
@@ -5812,7 +5828,7 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.emitInlineOutputBuild("$inline", "$i", "$host_len", func() {
+	g.emitInlineOutputBuild("$inline_data", "$inline_len", "$i", "$host_len", func() {
 		// byte = mem[$host_ptr + $i]
 		g.line(`local.get $host_ptr`)
 		g.line(`local.get $i`)
@@ -6284,7 +6300,7 @@ func (g *generator) emitReaderReadChunkMethod() {
 	g.line(`i32.le_u`)
 	g.line(`if`)
 	g.indent++
-	g.emitInlineOutputBuild("$sptr", "$j", "$n", func() {
+	g.emitInlineOutputBuild("$sptr_data", "$sptr_len", "$j", "$n", func() {
 		// byte = mem[$list_ptr + $j]
 		g.line(`local.get $list_ptr`)
 		g.line(`local.get $j`)

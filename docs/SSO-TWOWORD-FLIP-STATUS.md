@@ -51,6 +51,60 @@ done, what's broken, and what's left.
   the scratch slot to a fresh region (e.g. shift everything
   down by 8 bytes) or sequence calls so they can't interleave.
 
+### §4 progress: helpers + caller arity updated
+
+- `emitInlineOutputBuild(outDataLocal, outLenLocal, idxLocal,
+  lenLocal, byteAt)` — new signature; emits the inline
+  encoding into two locals `$<out>_data` / `$<out>_len` to
+  match `langstring.PackInlineWasm` layout. byteAt is invoked
+  twice per iteration (once in each branch of `idx < 4`); the
+  caller's byteAt closure typically pushes a byte fetch from
+  `$__lang_str_byte` or `i32.load8_u` — these closures don't
+  yet account for `$__lang_str_byte`'s new 3-arg signature.
+- `emitHeapStrAlloc(lenLocal, dstLocal, tailBytes)` — no
+  longer offsets the alloc by +4 for the length prefix and no
+  longer calls `emitStrLenStoreToLocal`. `$dstLocal` points
+  directly at the byte payload.
+- All 8 producer call sites of `emitInlineOutputBuild` now
+  pass `$<out>_data, $<out>_len` — code compiles but the
+  generated WAT references locals that **do not yet exist** in
+  the producers' `(local …)` declarations. Modules will fail
+  validation at runtime. **Next session:** update each
+  producer's locals + function signature + return path
+  in lockstep (the byteAt closures need updating too since
+  $__lang_str_byte's signature gained a `len` param).
+
+### §4 producers awaiting per-helper migration
+
+Each one needs (1) signature `(param $foo i32)` →
+`(param $foo_data i32) (param $foo_len i32)` for each string
+input, (2) result `(result i32)` → `(result i32 i32)`,
+(3) locals declaration adds `_data` / `_len` pair,
+(4) return path pushes both, (5) byteAt closure pushes 3 args
+to $__lang_str_byte:
+
+  - $__str_concat       (params: 2 strings; lots of internal
+    byte work)
+  - $__str_slice        (params: 1 string + 2 ints)
+  - $__str_idx          (params: 1 string + 1 int → returns
+    byte address; needs careful thought — the address result
+    semantics may change)
+  - $__str_eq           (params: 2 strings; returns bool)
+  - $string_from_bytes  (params: u8[]; returns string)
+  - $__bytes_to_lang_string (params: (host_ptr, host_len);
+    returns string)
+  - $args               (returns string[]; each array slot
+    holds a string pointer today — needs slot-layout flip too)
+  - $env                (param: 1 string; returns string)
+  - $tcp_recv           (param: 2 ints; returns string)
+  - $tcp_send           (param: 1 int + 1 string; returns int)
+  - $__stream_read_line (returns Option[string])
+  - $__method_Reader_read_chunk
+  - $__method_Writer_write
+  - $__method_string_as_bytes
+  - $print / $write / $eprint
+  - $open_reader / $open_writer / $open_appender
+
 ## What's broken (deliberately) — 22 e2e tests + 3 unit pins
 
 The single-line flip cascades through:
