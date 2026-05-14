@@ -63,17 +63,33 @@ func IsInlineNative(len uint64) bool {
 }
 
 // LengthWasm extracts the byte length from a wasm32 `len`
-// word, masking the flag bit off. Caller has already
-// established inline-ness via `IsInlineWasm`; this function
-// works equally well for heap-form strings (the flag bit is
-// zero there, so the mask is a no-op).
-func LengthWasm(len uint32) uint32 {
-	return len &^ InlineFlagWasm
+// word.
+//
+//   - Heap form (flag bit clear): `len` IS the byte length;
+//     the function returns it as-is.
+//   - Inline form (flag bit set): the length lives in bits
+//     24..26 (3 bits, range 0..7) — same position
+//     `PackInlineWasm` / `UnpackInlineWasm` use. Bits 0..23
+//     of `len` hold inline-bytes 4..6, NOT length, so the
+//     naive `len &^ flag` mask returns a mixed-up value
+//     (bytes-OR-length). Dispatch on the flag bit instead.
+func LengthWasm(length uint32) uint32 {
+	if IsInlineWasm(length) {
+		return (length >> 24) & 0x7
+	}
+	return length
 }
 
 // LengthNative is the native sibling of LengthWasm.
-func LengthNative(len uint64) uint64 {
-	return len &^ InlineFlagNative
+//
+//   - Heap form: `len` IS the byte length.
+//   - Inline form: length lives in bits 56..59 (4 bits, range
+//     0..15). Bits 0..55 hold inline-bytes 8..14.
+func LengthNative(length uint64) uint64 {
+	if IsInlineNative(length) {
+		return (length >> 56) & 0xF
+	}
+	return length
 }
 
 // FitsInlineNative reports whether `n` bytes fit in the
