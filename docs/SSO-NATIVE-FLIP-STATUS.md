@@ -75,12 +75,42 @@ Per the previous session's decisions:
     wasm only today. arm64 will flip these to a target-aware
     helper.
 
-### §1. IR-side gate refactor — TBD this session
+### §1. IR-side gate refactor — DONE
 
-Plan: introduce `Program.TwoWordStrings` (bool) +
-`builder.twoWordStrings()` method. Today they return
-`ptrW == 4`; future commits add an arm64 path. This is a
-NO-OP refactor — all tests stay green.
+`(b *builder) twoWordStrings() bool` added; returns
+`b.ptrW == 4` today. The six ad-hoc `b.ptrW == 4` checks
+in `internal/ir/ir.go` for string-ABI gates (OpReturn
+padding, ExprStmt drop fan-out, cast-to-string load,
+*ast.IfExpr block-type, array elem load/store width) all
+route through this method now. NO-OP refactor; full test
+suite green.
+
+The standalone helpers (`stringSlotSize`, `payloadStoreOpFor`,
+`payloadLoadOpFor`, `arrayElemStoreOpFor`,
+`isPairFormPayloadShape`, `isStringForBoxing`,
+`ast.ElemSizeBytesFor`) continue to gate on their `ptrW`
+parameter — they're called from outside the builder
+(closureconv, codegen) and flipping their internal gates
+is a separate slice once arm64's codegen handles
+`WidthString`.
+
+### §1a. arm64 OpLoad / OpStore: WidthString handling — DONE
+
+Added the WidthString case to arm64's `OpLoad` /
+`OpStore` handlers. Behaviour:
+
+  - `OpLoad{Width:WidthString}`: pop addr; emit
+    `ldr x1, [x0]` (data @ +0) and `ldr x0, [x0, #8]`
+    (len @ +8); push both 8-byte slots.
+  - `OpStore{Width:WidthString}`: pop len, data, addr;
+    emit `str x0, [x2]` (data @ +0) and
+    `str x1, [x2, #8]` (len @ +8).
+
+Dead code today — no IR site emits `WidthString` for
+natives. Wired here ahead of the arm64 two-word flip so
+the eventual gate flip in the IR layer (extending
+`twoWordStrings()` to return true on arm64 too) becomes a
+one-liner from the codegen-side perspective.
 
 ## What's left, in execution order (rough estimate)
 
