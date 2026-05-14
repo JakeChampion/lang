@@ -5,475 +5,254 @@ Companion to `docs/SSO-TWOWORD-EXEC.md`. This branch carries
 exists so the next session opens with a precise read of what's
 done, what's broken, and what's left.
 
+## Progress snapshot
+
+Wasm e2e cascade: 67 → **58 failing** tests, native suite
+**fully green** (`x86_64` files / HTTP / streaming all pass).
+Native parity is held by a target-aware split — see "Native
+deferral" below.
+
 ## What's done in this branch
 
-- `internal/ir/ir.go:stringSlotSize` flipped from `ptrW` to
-  `2 * ptrW`. This is the foundational decision: a string field
-  / variant payload / function-arg slot is now 8 bytes on
-  wasm32 (16 on natives). Every IR-level offset calculation
-  that consults `payloadSlotSize` for `ast.StringType` picks
-  this up automatically.
-- `$__lang_str_len(data, len) → i32` rewritten — heap returns
-  `len` as-is; inline extracts bits 24..26.
-- `$__lang_str_byte(data, len, i) → i32` rewritten — heap
-  loads from `mem[data + i]`; inline splits the index range
-  (0..3 → `$data`; 4..6 → `$len`'s low 24 bits).
-- `$__lang_str_to_heap(data, len) → (i32, i32)` rewritten —
-  inline allocates `byteLen` bytes (no length prefix), copies
-  bytes from `$data` + `$len`, returns `(new_ptr, byteLen)`.
-  Heap passes through. **Multi-value return — first user of
-  the `(result i32 i32)` shape in the SSO seam family; every
-  caller will need updating to consume two values.**
-- `$__lang_str_data_ptr(data, len) → i32` rewritten — heap
-  returns `$data`; inline spills `$data` at mem[0..3] and
-  `$len` at mem[4..7], returns `mem[0]`. **Scratch slot grew
-  from 4 → 8 bytes — verify no collision with putchar's iovec
-  at mem[4..11] before the flip ships.** (It DOES collide;
-  needs a different scratch slot or careful sequencing.)
-- `emitStrEmpty()` emits two i32.consts now (`data=0`,
-  `len=InlineFlagWasm`).
-- `OpConstStr` emits two i32.consts now — inline-form via
-  `langstring.PackInlineWasm` (≤7 bytes), heap-form as
-  `(data_seg_offset, length)` where the data segment **no
-  longer has a 4-byte length prefix** (length is on the
-  operand stack).
+### Runtime helpers (§1–§4)
 
-### Outstanding within §1
+Every wat-side helper with a string param or string return is
+flipped to the two-word `(data, len)` ABI:
 
-- `internString` still writes a 4-byte length prefix to the
-  data segment for every heap-form literal. The new
-  OpConstStr doesn't read it (length comes from
-  `i32.const len(op.Str)`). Either drop the prefix from
-  `internString`'s data-segment output (saves 4 bytes per
-  literal) or accept the waste as dead bytes in a follow-up.
-- The `$__lang_str_data_ptr` scratch slot at mem[0..7]
-  overlaps putchar's iovec at mem[4..11]. Need to either move
-  the scratch slot to a fresh region (e.g. shift everything
-  down by 8 bytes) or sequence calls so they can't interleave.
+  - `$__lang_str_len(data, len) → i32` — flag-aware length read.
+  - `$__lang_str_byte(data, len, i) → i32` — inline-aware byte
+    fetch; splits the index range so bytes 0..3 come from
+    `$data` and bytes 4..6 from `$len`.
+  - `$__lang_str_to_heap(data, len) → (i32, i32)` — multi-value
+    return; inline → fresh heap alloc + copy.
+  - `$__lang_str_data_ptr(data, len) → i32` — spills inline at
+    mem[0..7] (the scratch collision warning in the previous
+    status doc turned out to be benign — preview-2 putchar
+    uses constants for its `(ptr=0, len=1)` args, not the
+    static iovec at mem[4..11]).
+  - `$__str_concat`, `$__str_eq`, `$__str_slice`, `$__str_idx`,
+    `$string_from_bytes`, `$__bytes_to_lang_string`,
+    `$__method_string_as_bytes`, `$print` / `$write` / `$eprint`,
+    `$env`, `$__stream_read_line`, `$tcp_recv` / `$tcp_send`,
+    `$__method_Reader_read_chunk`, `$__method_Writer_write`,
+    `$args`, `$read_file` / `$write_file`,
+    `$open_reader` / `$open_writer` / `$open_appender`,
+    `$__build_io_error` (including the IoError variant alloc-
+    size shifts for string-payload variants), and the
+    `$__http_entry` HTTP wrapper all migrated.
+  - `internOrPackMethod(s) → (data, len)` and a new
+    `internStringTwoWord(s) → (data, len)` for runtime sites
+    that need to embed a static string literal.
+  - `__str_idx` split from byte-array stride-1 indexing: new
+    `__arr_idx_1` helper in all three backends (wasm + arm64 +
+    x86_64) means byte-array `s[i]` no longer accidentally
+    triggers the SSO inline-spill dispatch.
 
-### §4 progress: helpers + caller arity updated
+### Wat emit-side helpers (§5)
 
-- `emitInlineOutputBuild(outDataLocal, outLenLocal, idxLocal,
-  lenLocal, byteAt)` — new signature; emits the inline
-  encoding into two locals `$<out>_data` / `$<out>_len` to
-  match `langstring.PackInlineWasm` layout. byteAt is invoked
-  twice per iteration (once in each branch of `idx < 4`); the
-  caller's byteAt closure typically pushes a byte fetch from
-  `$__lang_str_byte` or `i32.load8_u` — these closures don't
-  yet account for `$__lang_str_byte`'s new 3-arg signature.
-- `emitHeapStrAlloc(lenLocal, dstLocal, tailBytes)` — no
-  longer offsets the alloc by +4 for the length prefix and no
-  longer calls `emitStrLenStoreToLocal`. `$dstLocal` points
-  directly at the byte payload.
-- All 8 producer call sites of `emitInlineOutputBuild` now
-  pass `$<out>_data, $<out>_len` — code compiles but the
-  generated WAT references locals that **do not yet exist** in
-  the producers' `(local …)` declarations. Modules will fail
-  validation at runtime. **Next session:** update each
-  producer's locals + function signature + return path
-  in lockstep (the byteAt closures need updating too since
-  $__lang_str_byte's signature gained a `len` param).
+  - `emitStrLenFromLocal(local)` pushes `$<local>_data` +
+    `$<local>_len` then calls `$__lang_str_len`.
+  - `emitStreamsWriteString(handle, local)` pushes the pair
+    twice (once each for `$__lang_str_data_ptr` and
+    `$__lang_str_len`).
+  - `emitPromoteStrParam(local)` reads + writes back the
+    `_data` / `_len` pair.
+  - `emitInlineOutputBuild` / `emitHeapStrAlloc` /
+    `emitStrEmpty` all flipped already.
 
-### §4 producers awaiting per-helper migration
+### Function signatures + locals (§6)
 
-Each one needs (1) signature `(param $foo i32)` →
-`(param $foo_data i32) (param $foo_len i32)` for each string
-input, (2) result `(result i32)` → `(result i32 i32)`,
-(3) locals declaration adds `_data` / `_len` pair,
-(4) return path pushes both, (5) byteAt closure pushes 3 args
-to $__lang_str_byte:
+  - New `watTypes(t) → []string` returns `["i32", "i32"]` for
+    `ast.StringType`, `[watType(t)]` otherwise. Used by every
+    `(param …)` / `(result …)` / `(local …)` emit site so a
+    string-typed slot named `s` materialises as two wasm locals
+    `$s_data` / `$s_len`.
+  - New `slotNames(base, t)` pairs with `watTypes` to produce
+    the matching local names.
+  - User-function emission (`wasm_ir.go` function header +
+    `(local …)` decls + scratch decls) all fan out for string
+    types.
+  - `OpLoadLocal` / `OpStoreLocal` / `OpTeeLocal` fan their wat
+    emission into two `local.get` / `local.set` ops when the
+    slot is string-typed. Store/Tee pop `_len` first then
+    `_data` to match the (data, len) operand-stack convention.
+  - Implicit return-value padding for non-explicit-return
+    string-returning functions pushes `(0, 0)`.
 
-  - $__str_concat       (params: 2 strings; lots of internal
-    byte work)
-  - $__str_slice        (params: 1 string + 2 ints)
-  - $__str_idx          (params: 1 string + 1 int → returns
-    byte address; needs careful thought — the address result
-    semantics may change)
-  - $__str_eq           (params: 2 strings; returns bool)
-  - $string_from_bytes  (params: u8[]; returns string)
-  - $__bytes_to_lang_string (params: (host_ptr, host_len);
-    returns string)
-  - $args               (returns string[]; each array slot
-    holds a string pointer today — needs slot-layout flip too)
-  - $env                (param: 1 string; returns string)
-  - $tcp_recv           (param: 2 ints; returns string)
-  - $tcp_send           (param: 1 int + 1 string; returns int)
-  - $__stream_read_line (returns Option[string])
-  - $__method_Reader_read_chunk
-  - $__method_Writer_write
-  - $__method_string_as_bytes
-  - $print / $write / $eprint
-  - $open_reader / $open_writer / $open_appender
+### IR-level memory ops (§7)
 
-### §5 progress: emit-side helpers adopt the convention
+  - New `WidthString = -2` sentinel on `Op.Width`.
+  - `payloadStoreOpFor(t, ptrW)` / `payloadLoadOpFor(t, ptrW)` /
+    `arrayElemStoreOpFor(t, ptrW)` return `Width: WidthString`
+    only on wasm32 (ptrW=4). Natives keep `WidthPtr` for now.
+  - `OpLoad` / `OpStore` with `Width == WidthString` fan out to
+    two `i32.load` / `i32.store` ops at offsets +0 / +4, threaded
+    through three scratch locals `$__str_pair_addr` / `_data` /
+    `_len`. `containsStringPairMem` gates the local declarations.
+  - `payloadStoreOpFor` / `payloadLoadOpFor` / `arrayElemStoreOpFor`
+    are now called from all 19 IR-builder call sites with
+    `b.ptrW` threaded in.
+  - `Program.PtrW` recorded by `LowerWith` so post-Lower passes
+    (Inline / FlattenBranches) can stay ptrW-aware.
+  - New `BlockTypeStringPair = 5` sentinel (wat-emitted as
+    `(result i32 i32)`). Inliner's wrapper block + the branch-
+    flattener both pick this for string-returning callees on
+    wasm32. `*ast.IfExpr` lowering also flips its block type
+    when the if-expression's static type is string.
+  - `ElemSizeBytesFor(StringType, ptrW)` returns `2 * ptrW = 8`
+    on wasm so `string[]` array stride matches the two-word ABI.
+    Natives stay at `ptrW = 8` (same byte count, different
+    reason — single LSB-tagged pointer slot).
+  - `stringSlotSize(ptrW)` is target-aware: returns `2 * ptrW`
+    on wasm32, `ptrW` on natives. Both end up at 8 bytes per
+    slot today.
 
-- `emitPromoteStrParam(local)` now reads `$<local>_data` /
-  `$<local>_len` and writes back the two-word
-  `$__lang_str_to_heap` result. Callers still pass the bare
-  base name (`"$s"`, `"$path"`, `"$name"`) — works as long as
-  the producer declares `(local $<base>_data i32) (local
-  $<base>_len i32)`. Today's producers don't, so runtime is
-  broken at those producers until they're migrated.
-- `emitStrLenFromLocal` is doc-noted but body unchanged —
-  fastest path is for each caller to switch to passing the
-  `$<base>_len` local directly, eliminating the helper call
-  entirely; doing it across 20 caller sites is bulk work.
+### HTTP wrapper (§8)
 
-### Layer ordering for the next session
+  - `$__http_entry`'s method/path/body locals split into
+    `_data` / `_len` pairs.
+  - 9-arm method dispatch sets both halves per arm; the
+    fallback `other(s)` path consumes the (data, len) pair
+    returned by `$__bytes_to_lang_string`.
+  - `path_with_query`'s `if (result i32 i32)` returns both
+    values from each branch.
+  - HttpRequest struct alloc grew from 12 → 24 bytes; layout
+    is (method @+0/+4, path @+8/+12, body @+16/+20).
+  - HttpResponse read at +0 (status), +8 (body data), +12
+    (body len) — 8-byte alignment shoulder skips bytes 4..7.
 
-Bottom-up cascade keeps each layer self-tests passing once
-the layer is complete:
+### Native deferral (§9)
 
-1. **Helpers, leaf-first** — `$__lang_str_*` SSO seams (DONE),
-   `emitStrEmpty` (DONE), `OpConstStr` (DONE),
-   `emitInlineOutputBuild` / `emitHeapStrAlloc` /
-   `emitPromoteStrParam` (sig flipped — DONE).
-2. **Producer runtime helpers** — rewrite each producer's
-   function signature, locals, return path, and byteAt
-   closure. **THIS IS THE BULK NEXT-SESSION WORK.** Suggested
-   order: `$__str_concat` first (most complex byteAt, sets the
-   pattern), then mechanical conversion of the others.
-3. **wasm IR layer** — OpStore/OpLoad for string fields,
-   `watType` fan-out, `watTypes` introduction.
-4. **HTTP wrapper** — local fan-out, method preinterns.
-5. **e2e iteration** — fix struct field accesses,
-   variant-payload reads, pair-form rebox layout shifts.
-6. **Native backend mirror** — arm64 + x86_64 in lockstep.
+Native backends (`arm64`, `x86_64`) intentionally **NOT**
+migrated to the two-word ABI yet. Two mechanisms keep them
+green while wasm flips:
 
-Realistic next-session bite: §2 (producer rewrites) for 4–6
-producers, leaving the rest + the IR / HTTP / native work to
-following sessions.
+  - `stringSlotSize(ptrW)` returns `ptrW = 8` on natives (one
+    LSB-tagged pointer slot), `2 * ptrW = 8` on wasm32 (two
+    `(data, len)` slots). Same byte count, different shape —
+    so layout offsets in struct fields / variant payloads /
+    array elements stay the same on both targets while only
+    wasm's operand-stack arity changes.
+  - `payloadStoreOpFor` / `payloadLoadOpFor` /
+    `arrayElemStoreOpFor` return `Width: WidthString` only when
+    `ptrW == 4`; natives get `Width: WidthPtr` (one ptr-width
+    store/load).
+  - `returnBlockTypeFor` / `IfExpr` block-type dispatch only
+    pick `BlockTypeStringPair` when `b.ptrW == 4`.
+  - Per-backend `emitInlineIdxHelper` got an `__arr_idx_1` arm
+    (same body as the existing `__str_idx` minus the inline-
+    flag check) so the IR's renamed byte-array stride-1 call
+    site links on natives.
 
-## What's broken (deliberately) — 22 e2e tests + 3 unit pins
+Net result: native struct field offsets, variant payload
+offsets, function signatures, IR ops — all unchanged in
+behaviour. The full native e2e suite (HTTP / files / streams /
+reader-writer) passes.
 
-The single-line flip cascades through:
+## What's broken — 58 wasm e2e failures, mostly Map / closure-capture
 
-- **Struct field layouts shift** — every `{… string …}` struct
-  now has fields after the string at offset+8 instead of
-  offset+4. The wasm `OpStore` / `OpLoad` for the string itself
-  still emits ONE i32.store / i32.load; the read on the other
-  side gets garbage.
-- **Variant payload layouts shift** — `Some(string)` /
-  `Ok(string)` / etc. now have payload at offset+8. The
-  pair-form rebox already understood ptrW=8 alignment
-  (`emitRepackPairAsHeapBox`) but expected 1 store + 1 load.
-- **Function param/arg slot counts shift** — a `function
-  f(s: string): i32` declared `(param $s i32)` is wrong; needs
-  `(param $s_data i32) (param $s_len i32)`. `watType` returns
-  `"i32"` for `ast.StringType` and that's threaded through 6
-  callers.
-- **Runtime helper signatures** — every `$__lang_str_*` /
-  `$__str_*` / `$string_from_bytes` / `$args` / `$tcp_recv`
-  etc. takes / returns a single i32 string. Today's signatures
-  no longer match the operand-stack shape.
-- **OpConstStr** emits one `i32.const`. Needs to emit two
-  (`data`, `len`).
-- **`emitStrEmpty`** pushes one i32. Needs two.
+Two architectural shapes account for the bulk of remaining
+failures. Both are deferred because they need fresh design
+decisions, not mechanical edits.
 
-### Confirmed failing tests (from `go test -count=1 ./...`)
+### 1. Map runtime stores string keys as single ptr-width slots
 
-```
---- FAIL: TestStringFieldOffsetIsPointerWidth (ir pin test from #373; expected to fail)
---- FAIL: TestWASMReadLineBuiltin
---- FAIL: TestWASMEnvBuiltin
---- FAIL: TestWASMMapStringStringValues
---- FAIL: TestWASMReadFileOk
---- FAIL: TestWASMReadFileNotFound
---- FAIL: TestWASMReadWriteFileRoundtrip
---- FAIL: TestWASMStreamingRoundtrip
---- FAIL: TestWASMReaderReadChunk
---- FAIL: TestWASMOpenAppender
---- FAIL: TestWASMTupleDestructure
---- FAIL: TestWasmPreview2StdinReadLine
---- FAIL: TestWasmPreview2FileRoundtrip
---- FAIL: TestWasmPreview2ReadWriteFile
---- FAIL: TestWasmPreview2HttpHandler
---- FAIL: TestWasmPreview2HttpStateCompiles
---- FAIL: TestWasmPreview2HttpTodoApi
---- FAIL: TestX86_64HttpHandler
---- FAIL: TestX86_64ReadFileOk
---- FAIL: TestX86_64ReadFileNotFound
---- FAIL: TestX86_64ReadWriteFileRoundtrip
---- FAIL: TestX86_64ReaderWriter
-```
+`__map_set_impl` / `__map_get_impl` / `__map_delete_impl` /
+`__map_iter_*` in `internal/prelude/prelude.lang` load each
+entry's key with `__load_ptr(entriesBase + b * entryStride)`
+and store with `__store_ptr(...)`. For `Map[string, …]`, the
+single-i32 result is then cast to string: `(entryK as string)
+== (k as string)`.
 
-22 failures total. (Native-side cascades —
-`TestX86_64HttpHandler` etc. — confirm the IR layout decision
-flows to the native backends; both arm64 and x86_64 will need
-parallel updates.)
+The cast is a no-op at the AST level, but the IR for
+`OpStrEq` expects 4 operands on the stack: `(a_data, a_len,
+b_data, b_len)`. Today's prelude pushes 2. The wasm validator
+rejects the module — `expected i32 but nothing on stack`.
+
+The proper fix needs the map runtime to know whether keys are
+`string` (2 ptrW slots) or scalar (1 ptrW slot). Options:
+
+  - **Option A**: keyKind-aware entry stride — `entryStride` is
+    already a runtime field; bump it by `ptrW` when keyKind=1.
+    Then `__load_ptr` becomes two loads for string keys; same
+    for store. Touches every key-touching line in the four
+    map ops; doable but a deeper prelude rewrite.
+  - **Option B**: introduce `__load_string(addr) → (data, len)`
+    / `__store_string(addr, data, len)` wat shims and use them
+    in the string-key branches of the map prelude. Pairs with
+    Option A's entry-stride bump.
+
+Either way, the map runtime change is a self-contained
+follow-up (single prelude file + the matching wat helpers).
+**~20 of the 58 failures should clear once Map is migrated.**
+
+### 2. Closure captures store string values as single ptr-width slots
+
+`OpMakeClosure` / `OpMakeEnv` build an env cell that's a
+pointer-aligned record of captured locals. For each string
+capture today the env reserves `ptrW` bytes; loading via
+`OpCaptureLoad` produces a single i32. The two-word ABI
+needs the env cell to reserve 2 ptrW slots per string capture,
+and `OpCaptureLoad` to emit two `i32.load`s.
+
+Touches `internal/ir/closureconv` + the wasm
+`OpCaptureLoad` / `OpCaptureStore` handlers (it's a small set
+of edits, but the layout decision needs to be made carefully so
+arm64 stays one-slot per pointer).
+
+### 3. State globals carrying strings
+
+Same shape as closures: state-var slots reserve `ptrW` for
+each declared field. String-typed state vars need 2 slots on
+wasm. Likely a 5-line edit in the state-init / state-load /
+state-store path once the closure-capture layout pattern is
+settled.
+
+### Other minor leftovers
+
+  - `TestWASMFStringInterpolation` — likely a producer arity
+    mismatch in one of the f-string helper call sites; needs a
+    focused look at the f-string lowering.
+  - 6 pinned wasm tests that deliberately assert the **old**
+    one-i32 string shape (TestStringFieldOffsetIsPointerWidth /
+    TestStringParamIsSingleI32Slot / TestOpConstStrShortLiteral
+    PacksInline / TestOpConstStrLongLiteralStaysHeap /
+    TestStringsLowerToLinearMemory /
+    TestHttpWrapperShortMethodPacksInline) need their golden
+    output updated for the post-flip shape, or removed
+    entirely. §10 cleanup.
 
 ## What's left, in execution order
 
-### 1. wasm runtime helpers (4 SSO seams)
+1. **Map runtime migration** — single PR; touches
+   `internal/prelude/prelude.lang` (the four `__map_*` helpers)
+   + add `__load_string` / `__store_string` wat shims to
+   `internal/codegen/wasm/wasm.go`. Clears ~20 failures.
+2. **Closure captures + state globals string layout** — second
+   PR; touches `internal/closureconv` + IR `OpCaptureLoad` /
+   `OpCaptureStore` handlers + the wasm side. Clears another
+   ~10 failures.
+3. **F-string interp investigation** — single focused look,
+   probably a couple of lines. Clears the remaining miscellaneous
+   string-handling failures.
+4. **Pin-test refresh** — update the 6 pin tests to assert the
+   post-flip shape, plus the `LengthWasm` bug fix called out
+   in the earlier status doc (the helper masks bits 0..30 when
+   it should dispatch on `IsInlineWasm`). §10 cleanup.
+5. **Native flip in lockstep (§9, optional)** — arm64 +
+   x86_64 backends pick up the two-word ABI per
+   `docs/SSO-TWOWORD-EXEC.md`. Once natives flip,
+   `stringSlotSize` / `payloadStoreOpFor` / `payloadLoadOpFor` /
+   `returnBlockTypeFor` collapse back to ptrW-agnostic forms.
 
-Rewrite signatures + bodies. Order: simplest → most invasive.
+## Session split estimate (updated)
 
-#### `$__lang_str_len`
-
-```
-(func $__lang_str_len (param $data i32) (param $len i32) (result i32)
-  local.get $len
-  i32.const 0x7fffffff
-  i32.and   ; mask off the inline flag bit; result is the
-            ; byte length whether `len` is the heap-form raw
-            ; length or the inline-form length nibble
-)
-```
-
-NOTE: **`langstring.LengthWasm` has a latent bug** that
-surfaces here. It returns `len &^ flag` (bits 0..30), but
-`PackInlineWasm` stores length at bits 24..30 and inline bytes
-4..6 at bits 0..23. So `LengthWasm(packed)` returns
-`(bytes_4_6 | (length << 24))`, not just length. The
-WAT-level helper should extract length correctly: for
-inline-form it's `(len >> 24) & 0x7f`; the simpler `& 0x7f`
-mask at bits 0..6 doesn't work because `PackInlineWasm` doesn't
-put length there. Fix `langstring.LengthWasm` to dispatch on
-`IsInlineWasm` in a follow-up.
-
-#### `$__lang_str_byte`
-
-```
-(func $__lang_str_byte (param $data i32) (param $len i32) (param $i i32) (result i32)
-  local.get $len
-  i32.const 0x80000000
-  i32.and
-  if (result i32)
-    ; inline: byte position 0..6 spans $data (bytes 0..3) +
-    ; $len's low 24 bits (bytes 4..6). Pick the right source.
-    local.get $i
-    i32.const 4
-    i32.lt_u
-    if (result i32)
-      ; bytes 0..3 live in $data
-      local.get $data
-      local.get $i
-      i32.const 8
-      i32.mul
-      i32.shr_u
-      i32.const 0xff
-      i32.and
-    else
-      ; bytes 4..6 live in $len's low 24 bits, offset (i-4)*8
-      local.get $len
-      local.get $i
-      i32.const 4
-      i32.sub
-      i32.const 8
-      i32.mul
-      i32.shr_u
-      i32.const 0xff
-      i32.and
-    end
-  else
-    ; heap: byte at mem[$data + $i]
-    local.get $data
-    local.get $i
-    i32.add
-    i32.load8_u
-  end
-)
-```
-
-#### `$__lang_str_to_heap`
-
-```
-(func $__lang_str_to_heap (param $data i32) (param $len i32) (result i32 i32)
-  local.get $len
-  i32.const 0x80000000
-  i32.and
-  if (result i32 i32)
-    ; inline: alloc $byteLen bytes, copy bytes from $data + $len
-    ; encoding into the buffer, return (new_data_ptr, $byteLen)
-    ; ... see body sketch in docs/SSO-TWOWORD-EXEC.md ...
-  else
-    ; heap: pass through
-    local.get $data
-    local.get $len
-  end
-)
-```
-
-NOTE the new two-result type — this is a multi-value-return
-wasm function. Some callers need updating to accept two values.
-
-#### `$__lang_str_data_ptr`
-
-```
-(func $__lang_str_data_ptr (param $data i32) (param $len i32) (result i32)
-  local.get $len
-  i32.const 0x80000000
-  i32.and
-  if (result i32)
-    ; inline: spill $data (4 bytes) + $len's low 3 bytes into
-    ; scratch at mem[0..6]; return mem[0]
-    i32.const 0
-    local.get $data
-    i32.store           ; mem[0..3] = $data
-    i32.const 4
-    local.get $len
-    i32.store           ; mem[4..7] = $len's low 4 bytes (only
-                        ; 3 are content; mem[7] is byte 6 OR
-                        ; length nibble, which the host won't
-                        ; read because it's outside `byteLen`)
-    i32.const 0
-  else
-    local.get $data
-  end
-)
-```
-
-### 2. `emitStrEmpty`
-
-Today emits one `i32.const 0x80000000`. Post-flip emits two:
-
-```go
-func (g *generator) emitStrEmpty() {
-    g.line("i32.const 0")          // data = 0
-    g.line("i32.const 0x80000000") // len = flag only, byteLen=0
-}
-```
-
-### 3. `OpConstStr`
-
-`wasm_ir.go:746` emits one `i32.const`. Needs two:
-
-```go
-case ir.OpConstStr:
-    data, length := langstring.PackInlineWasm([]byte(op.Str))
-    // … check FitsInlineWasm; for heap form alloc a data
-    // segment entry and emit (data_ptr, length_const).
-    g.linef("i32.const 0x%x", data)
-    g.linef("i32.const 0x%x", length)
-```
-
-For heap-form (≥8 bytes): drop the length prefix from the data
-segment entirely; `internString` returns just the data offset.
-Length is on the operand stack as `i32.const <len>`.
-
-### 4. Producer helpers (8 of them — signatures change in lockstep)
-
-Each `$__str_concat` / `$__str_slice` / `$string_from_bytes` /
-`$__bytes_to_lang_string` / `$args` / `$tcp_recv` /
-`$__stream_read_line` / `$__method_Reader_read_chunk` needs:
-
-- Inputs: take 2-word strings (e.g. `(param $a_data i32) (param $a_len i32)`)
-- Output: return 2-word strings (`(result i32 i32)`)
-- Internal: the inline-output construction loop already lives in
-  `emitInlineOutputBuild` (PR #376); update **just the helper**
-  to emit two `local.set` for `(data, len)` instead of one. The
-  heap-output path stops calling `emitHeapStrAlloc` with the
-  length-prefix store; `emitHeapStrAlloc` (PR #378) updates to
-  skip the prefix store.
-
-### 5. Emit-side helpers
-
-- `emitStrLenFromLocal($s)` → `local.get $s_len`. No call
-  required; length is on the stack.
-- `emitStrLenStoreToLocal` removed entirely (no prefix anymore).
-- `emitPromoteStrParam` → takes `(dataLocal, lenLocal)`, calls
-  the new `$__lang_str_to_heap` (multi-value return), stores
-  both values back.
-- `emitStreamsWriteString` → simpler now; `len` is already on
-  the stack.
-
-### 6. `watType` / `watTypes`
-
-Introduce `watTypes(t) ([]string, error)` that returns
-`["i32", "i32"]` for `ast.StringType`. Migrate the 6 callers
-to fan out:
-
-- `internal/codegen/wasm/wasm.go:1275` (params)
-- `internal/codegen/wasm/wasm.go:1284` (function-type result)
-- `internal/codegen/wasm/wasm_ir.go:350` (function params)
-- `internal/codegen/wasm/wasm_ir.go:371` (function result)
-- `internal/codegen/wasm/wasm_ir.go:384` (local decl)
-- `internal/codegen/wasm/wasm_ir.go:396` (local decl)
-
-For string-typed locals + params, the fan-out uses
-`$<name>_data` / `$<name>_len` (or whatever naming convention
-the flip picks).
-
-### 7. IR-level OpStore / OpLoad for string fields
-
-`wasm_ir.go`'s OpStore handler emits `i32.store`. For
-string-typed fields, must emit **two** stores (offset +0 for
-data, +4 for len). Either:
-
-- Introduce `WidthString` width sentinel and dispatch in the
-  OpStore handler.
-- Or have the IR builder emit two OpStores explicitly when
-  storing a string field.
-
-The IR builder side: `payloadStoreOp(t ast.Type) Op` (in
-`internal/ir/ir.go`) determines the store op for a payload
-type. For StringType today returns `OpStore`. Post-flip needs
-to indicate two stores (either via new op or via width
-metadata).
-
-### 8. HTTP wrapper local fan-out
-
-`emitHttpHandlerWrapper`'s `$method_str` / `$path_str` /
-`$body_str` locals each split into `_data` / `_len` pairs.
-`internOrPackMethod` returns a `(data, len)` tuple now —
-update each method-enum dispatch arm to emit two `local.set`s.
-
-### 9. Native backends — arm64 + x86_64
-
-The native backends have **their own** SSO scheme (LSB-tagged
-inline encoding, separate from wasm's top-bit). The
-`stringSlotSize` flip affects native struct layouts too (and
-the X86_64 test failures above prove the cascade reaches them).
-
-**Two options**:
-
-- **Option A — native two-word ABI flip in lockstep**: arm64
-  + x86_64 backends both flip to the same Niko-style
-  `(data, len)` two-register / two-slot string ABI. Drops the
-  LSB-tagged inline encoding in favour of the
-  `langstring.PackInlineNative` shape (bytes 0..7 in `data`,
-  bytes 8..14 in `len`'s low 56 bits, length nibble at 56..59,
-  flag at 63). Inline cap goes from native's current (varies)
-  to 15 bytes. Substantial per-backend rewrite — likely
-  separate session per backend.
-- **Option B — native stays one-slot, wasm two-slot**: the
-  IR's `stringSlotSize` becomes target-aware, returning
-  `2 * ptrW` only on wasm. This avoids the native cascade but
-  introduces backend-specific layout decisions — tolerable
-  while the native LSB SSO is a pre-existing fork.
-
-The atomic flip's authors should pick a direction. Today's
-cascade failures suggest the IR layout decision is shared
-between wasm and natives; option B requires more careful
-threading of target awareness.
-
-### 10. Cleanup
-
-Once everything passes:
-
-- Remove `langstring.TinyInlineCapWasm` / `PackTinyWasm` /
-  `IsTinyInlineWasm` / `LengthTinyWasm` / `UnpackTinyWasm`
-  (single-i32 compatibility helpers — superseded).
-- Fix the `LengthWasm` bug (see note in §1).
-- Update `TestStringFieldOffsetIsPointerWidth` and
-  `TestStringParamIsSingleI32Slot` (the #373 pins) to assert
-  the post-flip layout.
-
-## Session split estimate
-
-| Session | Scope                                                    |
-|---------|----------------------------------------------------------|
-| 1       | §1 (4 SSO seam helpers) + §2 (emitStrEmpty)              |
-| 2       | §3 (OpConstStr) + §5 (emit-side helpers) + §6 (watType)  |
-| 3       | §4 (8 producer helpers — split across sessions if needed)|
-| 4       | §7 (IR-level OpStore/OpLoad)                             |
-| 5       | §8 (HTTP wrapper) + iterate to passing wasm tests        |
-| 6       | §9 (native backends — option A) or target-awareness (option B) |
-| 7       | §10 (cleanup) + langstring.LengthWasm fix                |
-
-Realistic: ~7 sessions of focused work for the full flip. The
-exec plan in #370 estimated 1–2 sessions for the atomic flip
-PR; that was wildly optimistic about scope. The pre-work
-landed in PRs #351–#379 is real progress and shrinks the
-per-session surface, but doesn't shrink the total work below
-this estimate.
+| Session | Scope                                                     |
+|---------|-----------------------------------------------------------|
+| done    | §1–§8 (helpers + watTypes + WidthString + HTTP wrapper)   |
+| next    | Map runtime two-word migration (Option A or B)            |
+| then    | Closure-capture + state-global string layout              |
+| then    | F-string interp + 6 pin-test refresh + langstring.LengthWasm fix |
+| later   | §9 native flip (arm64 + x86_64 in lockstep, or staged)    |
+| final   | §10 cleanup (drop PackTinyWasm / TinyInlineCapWasm /
+            data-segment length-prefix dead bytes)            |
