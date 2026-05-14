@@ -1534,7 +1534,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_stdout"
 		case "stderr":
 			target = "__lang_stderr"
-		case "__str_idx", "__arr_idx", "__arr_idx_2", "__arr_idx_8",
+		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_2", "__arr_idx_8",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
 			// would otherwise dispatch to. Inline as a plain
@@ -2166,6 +2166,12 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("add rax, rcx")
 		g.emit("add rax, 1")
 		g.label(fmt.Sprintf(".Lstridx_done_%d", id))
+	case "__arr_idx_1":
+		// Stride-1 byte-array indexing: byte address = base +
+		// idx. Split from __str_idx so the string helper can
+		// own the SSO inline-spill dispatch without forcing
+		// byte arrays through the same `test rax, 1` check.
+		g.emit("lea rax, [rax + rcx]")
 	case "__arr_idx_2":
 		g.emit("lea rax, [rax + rcx*2]")
 	case "__arr_idx":
