@@ -99,20 +99,55 @@ func TestIsInline(t *testing.T) {
 	}
 }
 
-// Length* masks the flag bit but leaves heap-form lengths
-// untouched.
+// Length* extracts the byte length: from the high length-nibble
+// for inline-form (matching PackInline*'s encoding) and as-is
+// for heap-form (length lives in low bits, flag clear). The
+// pre-fix implementation masked just the flag bit, which
+// returned a jumbled `(bytes_4_6 | (length << 24))` value
+// for real inline-encoded inputs; this test pins the corrected
+// behaviour against actual PackInline*-shaped values.
 func TestLengthMasksFlag(t *testing.T) {
-	if got := LengthNative(InlineFlagNative | 12); got != 12 {
-		t.Errorf("LengthNative(flag|12) = %d, want 12", got)
+	// Inline-form: length lives in bits 56..59 (native) /
+	// 24..26 (wasm). PackInlineNative for "A".."LMNO" emits
+	// length=4 in bits 56..59 → 4 << 56.
+	if got := LengthNative(InlineFlagNative | (12 << 56)); got != 12 {
+		t.Errorf("LengthNative(inline flag|12<<56) = %d, want 12", got)
 	}
 	if got := LengthNative(0x100); got != 0x100 {
 		t.Errorf("LengthNative(0x100) = %d, want 0x100 (heap-form length untouched)", got)
 	}
-	if got := LengthWasm(InlineFlagWasm | 5); got != 5 {
-		t.Errorf("LengthWasm(flag|5) = %d, want 5", got)
+	if got := LengthWasm(InlineFlagWasm | (5 << 24)); got != 5 {
+		t.Errorf("LengthWasm(inline flag|5<<24) = %d, want 5", got)
 	}
 	if got := LengthWasm(0x100); got != 0x100 {
 		t.Errorf("LengthWasm(0x100) = %d, want 0x100", got)
+	}
+
+	// End-to-end: PackInline* / LengthInline* should round-trip
+	// for every length in range. The pre-fix LengthWasm
+	// silently miscomputed against the byte-carrying inline
+	// values these produce (e.g. "AB" packed as data=0x4241,
+	// length=InlineFlag|(2<<24); LengthWasm returned 2<<24
+	// instead of 2).
+	for n := 0; n <= 7; n++ {
+		in := make([]byte, n)
+		for i := 0; i < n; i++ {
+			in[i] = byte(i + 1)
+		}
+		_, length := PackInlineWasm(in)
+		if got := LengthWasm(length); int(got) != n {
+			t.Errorf("PackInlineWasm/LengthWasm round-trip for n=%d: got %d, want %d", n, got, n)
+		}
+	}
+	for n := 0; n <= 15; n++ {
+		in := make([]byte, n)
+		for i := 0; i < n; i++ {
+			in[i] = byte(i + 1)
+		}
+		_, length := PackInlineNative(in)
+		if got := LengthNative(length); int(got) != n {
+			t.Errorf("PackInlineNative/LengthNative round-trip for n=%d: got %d, want %d", n, got, n)
+		}
 	}
 }
 
