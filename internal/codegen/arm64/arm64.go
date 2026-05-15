@@ -205,6 +205,16 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// prologue. For args() / env() the prologue needs to know
 	// in advance so it can stash argc / argv / envp from the
 	// kernel-delivered stack before main runs.
+	//
+	// We also detect calls to runtime helpers that haven't been
+	// ported to arm64-darwin so the driver can surface a clean
+	// error BEFORE codegen tries to emit a `linuxOnlySysno`
+	// number (fstat, etc.) and panics at `g.syscall(...)`. The
+	// per-call detection lives here because the use-flag setter
+	// in the regular emit walk runs AFTER the prelude / prologue
+	// — too late to fail cleanly.
+	var darwinIncompat []string
+	seenDarwinIncompat := map[string]bool{}
 	for _, fn := range ip.Funcs {
 		for _, op := range fn.Ops {
 			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
@@ -221,8 +231,29 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 				g.usesArgs = true
 			case "env":
 				g.usesEnv = true
+			case "read_file":
+				// `__lang_read_file` uses fstat — Linux-only
+				// (see linuxOnlySysno). The Darwin port would
+				// need an inline `stat64` syscall + struct
+				// layout that diverges from Linux's; until
+				// it ships, reject the call here.
+				if g.darwin && !seenDarwinIncompat["read_file"] {
+					darwinIncompat = append(darwinIncompat, "read_file")
+					seenDarwinIncompat["read_file"] = true
+				}
 			}
 		}
+	}
+	if len(darwinIncompat) > 0 {
+		// Stable order so the error message is reproducible
+		// across runs even when the map's iteration order
+		// shifts (single entry today, but adding more later
+		// shouldn't tank reproducibility).
+		return "", fmt.Errorf(
+			"arm64-darwin: the following runtime helper(s) are not yet ported and would emit a Linux-only syscall: %v\n"+
+				"see docs/BACKEND-PARITY.md for the per-helper Darwin status",
+			darwinIncompat,
+		)
 	}
 	g.line(`.arch armv8-a`)
 	g.line(`.text`)
