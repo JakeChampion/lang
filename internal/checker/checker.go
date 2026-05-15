@@ -1105,6 +1105,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			if initType != nil {
 				c.settleNumeric(v.Init, v.Type)
 				initType = postSettleType(v.Init, initType)
+				initType = c.maybeWrapForUnion(v.Type, &v.Init, initType, &scope{})
 				if !ast.Equal(v.Type, initType) && !assignable(v.Type, initType) {
 					c.errf(v.P, "state var %q initialiser type %s does not match declared %s", v.Name, initType, v.Type)
 					continue
@@ -1635,6 +1636,66 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	return nil
 }
 
+// maybeWrapForUnion is the implicit-wrap sugar for union types
+// declared via `type X = A | B | C;`. When `dst` is a union enum
+// and `srcType` is one of its struct members, we rewrite
+// `*holder` from the bare struct expression `Add { l:1, r:2 }`
+// into the equivalent variant call `Add(Add { l:1, r:2 })` and
+// re-type-check it so the rest of the pipeline (variant call
+// registration, IR lowering of EnumLit, codegen) handles it
+// uniformly with the explicit form.
+//
+// Returns the (possibly rewritten) type; callers should bind
+// the return value before consulting `assignable`. No-op when
+// dst isn't a union, src isn't a struct, or the union has no
+// matching variant — leaves the holder untouched.
+//
+// Pinned to the union-desugar shape: variant name == struct
+// name AND the variant has exactly one positional payload of
+// the matching struct type. Hand-written enums whose variants
+// happen to satisfy this shape will also auto-wrap; this is
+// intentional and matches the natural reading of the variant.
+func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.Type, s *scope) ast.Type {
+	if holder == nil || *holder == nil {
+		return srcType
+	}
+	du, dok := dst.(ast.EnumType)
+	if !dok {
+		return srcType
+	}
+	ss, sok := srcType.(ast.StructType)
+	if !sok {
+		return srcType
+	}
+	ed, edOk := c.info.Enums[du.Name]
+	if !edOk {
+		return srcType
+	}
+	matched := false
+	for _, v := range ed.Variants {
+		if v.Name != ss.Name || len(v.Payloads) != 1 {
+			continue
+		}
+		ps, ok := v.Payloads[0].(ast.StructType)
+		if !ok || ps.Name != ss.Name {
+			continue
+		}
+		matched = true
+		break
+	}
+	if !matched {
+		return srcType
+	}
+	src := *holder
+	wrapped := &ast.Call{
+		P:      src.Pos(),
+		Callee: &ast.Ident{P: src.Pos(), Name: ss.Name},
+		Args:   []ast.Expr{src},
+	}
+	*holder = wrapped
+	return c.checkExpr(wrapped, s)
+}
+
 func assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
@@ -2041,6 +2102,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		got := c.checkExpr(n.Value, s)
 		c.settleNumeric(n.Value, want)
+		got = c.maybeWrapForUnion(want, &n.Value, got, s)
 		if got != nil && !assignable(want, got) {
 			c.errf(n.P, "return type mismatch: function returns %s but expression is %s", want, got)
 		}
@@ -2085,8 +2147,11 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				return
 			}
 			n.Type = got
-		} else if got != nil && !assignable(n.Type, got) {
-			c.errf(n.P, "cannot assign %s to variable of type %s", got, n.Type)
+		} else if got != nil {
+			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
+			if !assignable(n.Type, got) {
+				c.errf(n.P, "cannot assign %s to variable of type %s", got, n.Type)
+			}
 		}
 		s.names[n.Name] = n.Type
 		c.info.VarTypes[n] = n.Type
@@ -3130,8 +3195,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				sub = make(map[string]ast.Type, len(fn.TypeParams))
 			}
 		}
-		for i, a := range n.Args {
-			at := c.checkExpr(a, s)
+		for i := range n.Args {
+			at := c.checkExpr(n.Args[i], s)
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
 				// Polymorphic-literal settling: `f(1)` where f
@@ -3139,14 +3204,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// before assignable / unifyType run, otherwise
 				// the i32-default would mismatch the expected
 				// param type.
-				c.settleNumeric(a, expected)
-				at = postSettleType(a, at)
+				c.settleNumeric(n.Args[i], expected)
+				at = postSettleType(n.Args[i], at)
+				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
 				if sub != nil {
 					if !c.unifyType(expected, at, sub) {
-						c.errf(a.Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
+						c.errf(n.Args[i].Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
 					}
 				} else if !assignable(expected, at) {
-					c.errf(a.Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
+					c.errf(n.Args[i].Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
 				}
 			}
 		}
@@ -3385,6 +3451,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if lt != nil {
 			c.settleNumeric(n.Value, lt)
 			rt = postSettleType(n.Value, rt)
+			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !assignable(lt, rt) {
 			c.errf(n.P, "cannot assign %s to %s", rt, lt)

@@ -241,6 +241,51 @@ function main(): i32 {
 	}
 }
 
+// Implicit struct → union wrap on arm64: a bare member-struct
+// literal flows into a union-typed position without explicit
+// `MemberName(...)` re-wrap. Exercises wrap at var-init, call-
+// arg, return, and assignment sites — the natural shape for
+// AST-style code where the consumer code keeps constructing
+// `Add { l: 1, r: 2 }` and letting the type system route it.
+func TestArm64UnionImplicitWrap(t *testing.T) {
+	src := `struct Add { l: i32, r: i32 }
+struct Mul { l: i32, r: i32 }
+struct Lit { v: i32 }
+
+type Expr = Add | Mul | Lit;
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Add(a) => { return a.l + a.r; },
+        Mul(m) => { return m.l * m.r; },
+        Lit(l) => { return l.v; },
+    }
+}
+
+// Implicit wrap at return site.
+function mk_add(l: i32, r: i32): Expr {
+    return Add { l: l, r: r };
+}
+
+function main(): i32 {
+    // Var init: bare struct literal → union.
+    var a: Expr = Add { l: 2, r: 3 };
+    // Call-arg: bare literal flows into the Expr param.
+    var sum: i32 = eval(Lit { v: 5 });
+    // Assignment: re-bind a different member.
+    a = Mul { l: 2, r: sum };
+    // Return-site shape — value comes back through mk_add's
+    // implicit-wrap path.
+    var built: Expr = mk_add(1, 2);
+    return eval(a) + eval(built) + sum;
+}`
+	_, code := compileAndRunArm64(t, src)
+	// 2 * 5 (Mul) + 1+2 (Add) + 5 (Lit) = 18.
+	if code != 18 {
+		t.Errorf("got %d, want 18 (2*5 + 1+2 + 5)", code)
+	}
+}
+
 // `s.lines()` on arm64 — exercises the prelude function over
 // the two-word ABI: `s[i]` byte indexing, `s[lo:hi]` slicing,
 // `out.push(line)`, and the array-result return path.

@@ -273,6 +273,41 @@ function main(): i32 {
 	}
 }
 
+// Implicit struct → union wrap on x86-64. Third-backend cross-
+// check for the wrap-and-re-check pass. See arm64 + wasm
+// counterparts for the same source.
+func TestX86_64UnionImplicitWrap(t *testing.T) {
+	src := `struct Add { l: i32, r: i32 }
+struct Mul { l: i32, r: i32 }
+struct Lit { v: i32 }
+
+type Expr = Add | Mul | Lit;
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Add(a) => { return a.l + a.r; },
+        Mul(m) => { return m.l * m.r; },
+        Lit(l) => { return l.v; },
+    }
+}
+
+function mk_add(l: i32, r: i32): Expr {
+    return Add { l: l, r: r };
+}
+
+function main(): i32 {
+    var a: Expr = Add { l: 2, r: 3 };
+    var sum: i32 = eval(Lit { v: 5 });
+    a = Mul { l: 2, r: sum };
+    var built: Expr = mk_add(1, 2);
+    return eval(a) + eval(built) + sum;
+}`
+	_, code := compileAndRunX86_64(t, src)
+	if code != 18 {
+		t.Errorf("got %d, want 18", code)
+	}
+}
+
 // `s.lines()` on x86-64 — verifies the prelude function emits
 // identical results on the third backend, picking up the same
 // per-byte index + slice paths as wasm / arm64.
