@@ -103,6 +103,16 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 // EmitWithOptions returns the assembly text for prog. Lowers
 // each surviving (post-treeshake) function via the IR layer.
 func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (string, error) {
+	// arm64 SSO native flip (in progress; see
+	// `docs/SSO-NATIVE-FLIP-STATUS.md`): opt into the two-word
+	// `(data, len)` string ABI in the IR layer. Resets after
+	// emission so the package-level flag doesn't leak to other
+	// codegen calls (e.g. when wasm and arm64 share a test
+	// fixture).
+	prevOverride := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prevOverride }()
+
 	treeshake.Run(prog)
 	ip, err := ir.LowerWith(prog, info, 8)
 	if err != nil {
