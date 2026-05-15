@@ -28,21 +28,20 @@ follow-on perf work.
   locals and helper signatures. Confirmed broken on the
   `macos-15` CI runner per PR #291.
 
-### 2. Closures-with-captures only lower on wasm — feature gap
+### 2. ~~Closures-with-captures only lower on wasm~~ — RESOLVED
 
-- **Where**: `internal/codegen/arm64/arm64.go` has no
-  `OpMakeClosure` / `OpMakeEnv` handlers; `CLAUDE.md:42-46`
-  states this explicitly.
-- **Why**: any closure that captures outer state panics on
-  arm64-linux + arm64-darwin + x86-64. Zero-capture
-  closures work (PR #364 landed `OpConstFunc`); the gap is
-  the capture envelope.
-- **Fix**: mirror the wasm closure pair layout in arm64
-  codegen — alloc capture block, build `(fn_ptr, env_ptr)`
-  pair, indirect call through it. The `ptrW`-aware capture
-  layout from `closureconv` already lines up with the load
-  side. x86-64 then mirrors arm64. Estimated 5-7 days per
-  backend.
+Originally tracked as a feature gap. On a follow-up audit
+the implementation was already in place on every backend:
+
+- `internal/codegen/arm64/arm64.go:emitMakeClosureOrEnv`
+- `internal/codegen/x86_64/x86_64.go:emitMakeClosureOrEnv`
+- `internal/codegen/wasm/wasm_ir.go:emitMakeClosureFromIR`
+
+Test coverage: 8 `TestArm64Closure*` cases plus matching
+counts on x86-64 + wasm, all green. The original audit was
+based on a stale `CLAUDE.md` line that has since been
+updated. Item is closed — leaving the entry in the doc so
+the audit history is preserved.
 
 ### 3. Wide-scalar Map K/V (i64 / u64 / f64) silently
    diverges across backends
@@ -96,13 +95,13 @@ follow-on perf work.
 
 ### Latent bugs (not user-visible yet)
 
-- **`internal/codegen/arm64/arm64.go:4088`** —
-  `panic("arm64 syscall: " + name + " has no portable Darwin
-  form; emitter must branch inline")`. Linux-only syscalls
-  crash at *codegen time* on arm64-darwin (e.g. `fstat`,
-  `getrandom`). Should ideally error at the checker / IR
-  level so users get a build-time message before they wait
-  for the assembler.
+- ~~**`internal/codegen/arm64/arm64.go:4088`** — Linux-only
+  syscalls crash at *codegen time* on arm64-darwin~~ — fixed
+  in PR #391. The pre-scan now detects `read_file` calls on
+  Darwin and surfaces a clean error from `EmitWithOptions`
+  before any asm is written. The codegen panic stays as a
+  defence-in-depth assertion for future helpers that grow
+  Linux-only syscalls without a corresponding pre-scan entry.
 - **`internal/ir/ir.go:2531,2660`** — i64 → string cast
   returns `"not yet supported"`. Dead today (checker rejects
   it pre-IR), but a latent blocker for the wide-scalar +
@@ -130,34 +129,42 @@ The compiler is written in Go (`cmd/lang/main.go` +
 `internal/{lexer,parser,ast,checker,monomorph,closureconv,ir,codegen,interp,treeshake,diag,modload,prelude}`).
 Self-hosting means rewriting it in lang itself and
 bootstrapping from a previous version. Rough estimate:
-**~60% portable today**, gated by one hard blocker.
+**~60% portable today** at the time of this audit. The hard
+blocker (union types) has since landed — see the resolved
+section below. Updated estimate: ~75% portable.
 
-### Hard blocker — no interface / union-of-struct polymorphism
+### ~~Hard blocker — no interface / union-of-struct polymorphism~~ — RESOLVED
 
-The Go compiler's core data structures use interfaces
-pervasively: `Expr`, `Stmt`, `Type` are all
-`interface{}`-typed sums, and every walker is a type-switch:
+Originally the audit's main blocker. Landed in PR #390
+(core) + #392 (implicit struct → union wrap):
 
-```go
-switch x := expr.(type) {
-case *Binary: ...
-case *Unary:  ...
-case *Call:   ...
+```
+struct Add { l: i32, r: i32 }
+struct Lit { v: i32 }
+type Expr = Add | Lit;
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Add(a) => { return a.l + a.r; },
+        Lit(l) => { return l.v; },
+    }
+}
+
+function main(): i32 {
+    var e: Expr = Add { l: 1, r: 2 };  // implicit wrap
+    return eval(e);
 }
 ```
 
-Lang has `enum` variants and `struct` types but no way to
-declare:
+Implementation is sugar over the existing enum machinery —
+the checker desugars `type X = A | B | C` to a synthesised
+`enum X { A(A), B(B), C(C) }` before the rest of the
+pipeline runs. The implicit wrap lets bare struct literals
+flow into union positions without `Member(...)` ceremony.
 
-```
-type Expr = Binary | Unary | Call | ...
-```
-
-…such that a single `match` dispatches across struct
-shapes. A 40+-variant catch-all enum technically works but
-defeats the structural ergonomics (each variant becomes a
-wrapper, fields are accessed through pattern bindings
-rather than direct `expr.Op`).
+Punted to follow-ups (don't block self-hosting in practice):
+- Generic union members (`type Tree[T] = Leaf[T] | Node[T]`)
+- Qualified variant references (`Expr.Add(...)`)
 
 **Minimal fix**: union-of-structs sugar over the existing
 enum machinery. Each `type Expr = A | B | C` lowers to an
@@ -175,11 +182,7 @@ Type-system extension; ~1-2 weeks design + implementation.
    asm / WAT. Standard self-hosting pattern (TinyCC and
    others do this).
 
-2. **Closures on arm64 / x86-64** (overlap with tech-debt
-   item 2). Only matters if the first self-host target is
-   native. Wasm-first sidesteps it entirely.
-
-3. **No sort / no custom comparators**. Compiler sorts
+2. **No sort / no custom comparators**. Compiler sorts
    small lists (field offsets, map sizes). Inline the sort
    bodies or add `(arr: T[]).sort_by(cmp)` to the prelude
    once first-class function args to generic functions
@@ -210,9 +213,12 @@ recursive struct types + pattern matching), then a stub
 checker (~1 week; symbol-table over `Map[string, Symbol]`),
 then IR emission (~3 weeks).
 
-**Full lexer → IR on wasm**: 4-6 weeks once union types
-land. Full compiler self-host on wasm: 6-9 weeks. Native
-self-host adds the closures-on-arm64 dependency.
+**Full lexer → IR on wasm**: 4-6 weeks. Union types (PRs
+#390 + #392) landed the AST visitor pattern; closures on
+every backend (already in place) cover the small visitor-
+callback usage. Full compiler self-host on wasm: 6-9 weeks.
+Native self-host (arm64-linux / x86-64) is now equally
+viable since closures-with-captures lower on every target.
 
 ---
 
