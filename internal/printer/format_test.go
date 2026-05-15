@@ -434,3 +434,28 @@ return 0;
 		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 	}
 }
+
+// Union types (`type X = A | B | C;`) round-trip through the
+// formatter — previously dropped silently because no
+// `formatUnionDecl` path existed. Members preserved in source
+// order so the checker desugar's variant-tag assignment stays
+// stable across `lang -fmt -w` edits.
+func TestFormatUnionDeclRoundTrip(t *testing.T) {
+	got := formatSrc(t, `struct Add { l: i32, r: i32 }
+struct Mul { l: i32, r: i32 }
+pub type Expr = Add | Mul;
+function main(): i32 { return 0; }`)
+	for _, want := range []string{
+		"struct Add { l: i32, r: i32 }",
+		"struct Mul { l: i32, r: i32 }",
+		"pub type Expr = Add | Mul;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output:\n%s", want, got)
+		}
+	}
+	again := formatSrc(t, got)
+	if got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
