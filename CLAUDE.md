@@ -38,12 +38,14 @@ as a constraint to preserve.
   `structFieldLayout`, `tupleElemLayout`, `arrayElemStoreOp`,
   and `ast.ElemSizeBytesFor`. Map operations
   (`set`/`get_or`/`has`/`delete`/`iter`/`len`/`keys`/`values`)
-  cover all combinations of i32 / string K/V. The remaining
-  arm64 limit is closures with captures (`OpMakeClosure` /
-  `OpMakeEnv` aren't lowered on arm64 yet — wasm only); when
-  that lands the `ptrW`-aware capture layout from
-  `closureconv` will line up with the load side
-  (`payloadLoadOp` on CaptureRef already emits `WidthPtr`).
+  cover all combinations of i32 / string K/V. Closures with
+  captures are lowered on every backend
+  (`OpMakeClosure` / `OpMakeEnv` / `OpCallClosureDirect` —
+  see `arm64.go:emitMakeClosureOrEnv` and the x86-64 mirror);
+  the `ptrW`-aware capture layout from `closureconv` lines
+  up with the load side (`payloadLoadOp` on CaptureRef emits
+  `WidthPtr`). Test coverage: 8 `TestArm64Closure*` cases,
+  matching counts on x86-64 + wasm.
 - WASI / WebAssembly (currently exercised via wasmtime)
 - x86-64 / amd64 Linux ELF — System V AMD64 ABI, native
   exec on x86_64 hosts + `qemu-x86_64` on non-x86 hosts.
