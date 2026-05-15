@@ -4299,6 +4299,18 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpReturn:
+		// String-returning fns under the two-word ABI return
+		// `(data, len)` in (x0, x1). The operand stack has 2
+		// values for the return — pop len first (top), data
+		// second.
+		if ast.UseTwoWordStrings(8) && g.current != nil {
+			if _, isStr := g.current.ReturnType.(ast.StringType); isStr {
+				g.emit("ldr x1, [sp], #16") // pop len
+				g.emit("ldr x0, [sp], #16") // pop data
+				g.emit("b %s", retLabel)
+				break
+			}
+		}
 		g.pop()
 		g.emit("b %s", retLabel)
 	case ir.OpReturnVoid:

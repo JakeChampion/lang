@@ -133,6 +133,13 @@ type capInfo struct {
 // the codegen-side store path to track per-slot widths
 // anyway, and captures are usually few.
 func captureSlotSize(t ast.Type, ptrW int) int32 {
+	// Two-word strings: a string capture is `(data, len)` —
+	// two pointer-width slots in the env block. Matches the
+	// codegen-side `arm64CaptureSlotSize` / wasm capture
+	// layout (`docs/SSO-NATIVE-FLIP-STATUS.md`).
+	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
+		return int32(2 * ptrW)
+	}
 	if ast.ElemSizeBytesFor(t, ptrW) == 8 {
 		return 8
 	}
