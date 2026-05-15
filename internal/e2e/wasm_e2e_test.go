@@ -1379,6 +1379,67 @@ func TestWASMStringSplit(t *testing.T) {
 	}
 }
 
+// `s.lines()` — Python `splitlines` / Go `bufio.Scanner` shape.
+// Splits on '\n', strips a trailing '\r' from each line (CRLF
+// → LF), and drops the phantom empty line a final '\n' would
+// otherwise produce.
+func TestWASMStringLines(t *testing.T) {
+	src := `function main(): i32 {
+    // LF-only.
+    var lf: string[] = "a\nb\nc".lines();
+    if (len(lf) != 3) { return 1; }
+    if (lf[0] != "a") { return 2; }
+    if (lf[1] != "b") { return 3; }
+    if (lf[2] != "c") { return 4; }
+
+    // CRLF stripped.
+    var crlf: string[] = "a\r\nb\r\nc".lines();
+    if (len(crlf) != 3) { return 5; }
+    if (crlf[0] != "a") { return 6; }
+    if (crlf[1] != "b") { return 7; }
+    if (crlf[2] != "c") { return 8; }
+
+    // Trailing '\n' drops the phantom empty line.
+    var trail: string[] = "a\nb\n".lines();
+    if (len(trail) != 2) { return 9; }
+    if (trail[1] != "b") { return 10; }
+
+    // Single "\n" → one empty line.
+    var solo: string[] = "\n".lines();
+    if (len(solo) != 1) { return 11; }
+    if (solo[0] != "") { return 12; }
+
+    // Empty input → no lines at all.
+    var empty: string[] = "".lines();
+    if (len(empty) != 0) { return 13; }
+
+    // No trailing newline: partial line still emits.
+    var partial: string[] = "abc".lines();
+    if (len(partial) != 1) { return 14; }
+    if (partial[0] != "abc") { return 15; }
+
+    // Mixed CRLF / LF.
+    var mixed: string[] = "x\r\ny\nz".lines();
+    if (len(mixed) != 3) { return 16; }
+    if (mixed[0] != "x") { return 17; }
+    if (mixed[1] != "y") { return 18; }
+    if (mixed[2] != "z") { return 19; }
+
+    // Bare '\r' is NOT a separator on its own — it stays in
+    // the line. Only the '\r' immediately before '\n' (the
+    // CRLF tail) is stripped.
+    var bareCR: string[] = "a\rb\nc".lines();
+    if (len(bareCR) != 2) { return 20; }
+    if (bareCR[0] != "a\rb") { return 21; }
+    if (bareCR[1] != "c") { return 22; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (string lines)", got)
+	}
+}
+
 // String replace: substitutes every non-overlapping occurrence
 // of the old pattern with the new value.
 func TestWASMStringReplace(t *testing.T) {

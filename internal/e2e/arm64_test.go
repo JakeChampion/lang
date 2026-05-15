@@ -207,6 +207,44 @@ func TestArm64StringConcat(t *testing.T) {
 	}
 }
 
+// `s.lines()` on arm64 — exercises the prelude function over
+// the two-word ABI: `s[i]` byte indexing, `s[lo:hi]` slicing,
+// `out.push(line)`, and the array-result return path.
+func TestArm64StringLines(t *testing.T) {
+	src := `function main(): i32 {
+    var lf: string[] = "a\nb\nc".lines();
+    if (len(lf) != 3) { return 1; }
+    if (lf[0] != "a") { return 2; }
+    if (lf[1] != "b") { return 3; }
+    if (lf[2] != "c") { return 4; }
+
+    var crlf: string[] = "a\r\nb\r\nc".lines();
+    if (len(crlf) != 3) { return 5; }
+    if (crlf[0] != "a") { return 6; }
+    if (crlf[1] != "b") { return 7; }
+    if (crlf[2] != "c") { return 8; }
+
+    var trail: string[] = "a\nb\n".lines();
+    if (len(trail) != 2) { return 9; }
+
+    var solo: string[] = "\n".lines();
+    if (len(solo) != 1) { return 10; }
+    if (solo[0] != "") { return 11; }
+
+    if (len("".lines()) != 0) { return 12; }
+
+    var partial: string[] = "abc".lines();
+    if (len(partial) != 1) { return 13; }
+    if (partial[0] != "abc") { return 14; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (string lines)", code)
+	}
+}
+
 // arm64 empty-string sentinel: the string-constructing runtime
 // helpers (__lang_strcat, __str_slice, string_from_bytes) skip
 // the alloc + memcpy and return the shared .LStr_Empty sentinel

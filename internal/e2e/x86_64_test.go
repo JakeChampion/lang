@@ -243,6 +243,39 @@ func TestX86_64StringConcat(t *testing.T) {
 	}
 }
 
+// `s.lines()` on x86-64 — verifies the prelude function emits
+// identical results on the third backend, picking up the same
+// per-byte index + slice paths as wasm / arm64.
+func TestX86_64StringLines(t *testing.T) {
+	src := `function main(): i32 {
+    var lf: string[] = "a\nb\nc".lines();
+    if (len(lf) != 3) { return 1; }
+    if (lf[0] != "a") { return 2; }
+    if (lf[1] != "b") { return 3; }
+    if (lf[2] != "c") { return 4; }
+
+    var crlf: string[] = "a\r\nb\r\nc".lines();
+    if (len(crlf) != 3) { return 5; }
+    if (crlf[0] != "a") { return 6; }
+    if (crlf[2] != "c") { return 7; }
+
+    var trail: string[] = "a\nb\n".lines();
+    if (len(trail) != 2) { return 8; }
+
+    if (len("".lines()) != 0) { return 9; }
+
+    var solo: string[] = "\n".lines();
+    if (len(solo) != 1) { return 10; }
+    if (solo[0] != "") { return 11; }
+
+    return 0;
+}`
+	_, code := compileAndRunX86_64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (string lines)", code)
+	}
+}
+
 // x86-64 small-string-optimisation (tagged-pointer inline).
 // Strings of length 1..7 produced by __lang_strcat / __str_slice /
 // string_from_bytes ride in a 64-bit register (LSB tag = 1, bits
