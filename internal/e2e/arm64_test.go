@@ -741,6 +741,511 @@ function main(): i32 {
 	}
 }
 
+// Stmt-interp v4 — `else` branches in if-statements. v3 (#426)
+// shipped bare if-then; v4 adds the optional else arm + the
+// `else if` chain pattern via right-associative parsing.
+//
+// Grammar:
+//
+//   if_stmt ::= "if" "(" expr ")" "{" stmt* "}"
+//             | "if" "(" expr ")" "{" stmt* "}" "else" "{" stmt* "}"
+//             | "if" "(" expr ")" "{" stmt* "}" "else" if_stmt
+//
+// The third arm — `else if` — desugars at parse time into a
+// nested IfSt as the else-branch's only statement. That gives
+// us C-style if/else-if/else chains for free.
+//
+// Eval: if cond → run thn body; else → run els body. State
+// threads the same way the if-then version did.
+//
+// Tests:
+//   1. Bare if-then (v3 sanity, unchanged).
+//   2. if/else dispatch — select between two return values.
+//   3. abs(x) via if/else — return -x or x.
+//   4. max(a, b) via if/else (using a comparison in cond).
+//   5. else-if chain — classify a number into three buckets.
+//   6. Nested if/else inside a function — recursive function
+//      that branches.
+func TestArm64StmtInterpElse(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num    { value: i32 }
+struct Var    { name: string }
+struct BinOp  { op: i32, left: Expr, right: Expr }
+struct Call   { name: string, args: Expr[] }
+type Expr = Num | Var | BinOp | Call;
+
+struct VarDecl  { name: string, value: Expr }
+struct Assign   { name: string, value: Expr }
+struct Return   { value: Expr }
+struct WhileSt  { cond: Expr, body: Stmt[] }
+struct IfSt     { cond: Expr, thn: Stmt[], els: Stmt[] }
+struct ExprSt   { value: Expr }
+type Stmt = VarDecl | Assign | Return | WhileSt | IfSt | ExprSt;
+
+struct FnDef { name: string, params: string[], body: Stmt[] }
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1001 });
+            i = i + 2;
+        } else if (b == 33 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1002 });
+            i = i + 2;
+        } else if (b == 60 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1004 });
+            i = i + 2;
+        } else if (b == 62 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1006 });
+            i = i + 2;
+        } else if (b == 60) {
+            toks = toks.push(TokPunct { ch: 1003 });
+            i = i + 1;
+        } else if (b == 62) {
+            toks = toks.push(TokPunct { ch: 1005 });
+            i = i + 1;
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function is_comp_op(op: i32): boolean {
+    return op == 1001 || op == 1002 || op == 1003 ||
+           op == 1004 || op == 1005 || op == 1006;
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        var name: string = tok_ident_name(toks[pos]);
+        cur[0] = pos + 1;
+        if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
+            cur[0] = cur[0] + 1;
+            var args: Expr[] = [];
+            if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 41) {
+                cur[0] = cur[0] + 1;
+                return Call { name: name, args: args };
+            }
+            args = args.push(parse_expr(toks, cur));
+            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
+                cur[0] = cur[0] + 1;
+                args = args.push(parse_expr(toks, cur));
+            }
+            cur[0] = cur[0] + 1;
+            return Call { name: name, args: args };
+        }
+        return Var { name: name };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_arith(toks, cur);
+    var pos: i32 = cur[0];
+    if (tok_kind(toks[pos]) != 2) { return lhs; }
+    var op: i32 = tok_punct_ch(toks[pos]);
+    if (!is_comp_op(op)) { return lhs; }
+    cur[0] = pos + 1;
+    var rhs: Expr = parse_arith(toks, cur);
+    return BinOp { op: op, left: lhs, right: rhs };
+}
+
+function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
+    return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
+}
+
+function parse_stmt(toks: Token[], cur: i32[]): Stmt {
+    var name: string = "";
+    var value: Expr = Num { value: 0 };
+    var cond: Expr = Num { value: 0 };
+    var body: Stmt[] = [];
+    if (expect_kw(toks, cur[0], "var")) {
+        cur[0] = cur[0] + 1;
+        name = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;
+        value = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;
+        return VarDecl { name: name, value: value };
+    }
+    if (expect_kw(toks, cur[0], "return")) {
+        cur[0] = cur[0] + 1;
+        value = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;
+        return Return { value: value };
+    }
+    if (expect_kw(toks, cur[0], "while")) {
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;
+        cond = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;
+        body = [];
+        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+            body = body.push(parse_stmt(toks, cur));
+        }
+        cur[0] = cur[0] + 1;
+        return WhileSt { cond: cond, body: body };
+    }
+    if (expect_kw(toks, cur[0], "if")) {
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // (
+        cond = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // )
+        cur[0] = cur[0] + 1;   // {
+        var thn: Stmt[] = [];
+        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+            thn = thn.push(parse_stmt(toks, cur));
+        }
+        cur[0] = cur[0] + 1;   // }
+        // Optional else / else if.
+        var els: Stmt[] = [];
+        if (expect_kw(toks, cur[0], "else")) {
+            cur[0] = cur[0] + 1;
+            if (expect_kw(toks, cur[0], "if")) {
+                // else if — recursively parse the nested if as
+                // the sole stmt of the else body.
+                els = els.push(parse_stmt(toks, cur));
+            } else {
+                cur[0] = cur[0] + 1;   // {
+                while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+                    els = els.push(parse_stmt(toks, cur));
+                }
+                cur[0] = cur[0] + 1;   // }
+            }
+        }
+        return IfSt { cond: cond, thn: thn, els: els };
+    }
+    if (tok_kind(toks[cur[0]]) == 1 && tok_kind(toks[cur[0] + 1]) == 2 && tok_punct_ch(toks[cur[0] + 1]) == 61) {
+        name = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;
+        value = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;
+        return Assign { name: name, value: value };
+    }
+    value = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;
+    return ExprSt { value: value };
+}
+
+struct Program { fns: FnDef[], main_stmts: Stmt[] }
+
+function parse_program(src: string): Program {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var fns: FnDef[] = [];
+    while (expect_kw(toks, cur[0], "fn")) {
+        cur[0] = cur[0] + 1;
+        var name: string = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;
+        var params: string[] = [];
+        if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
+            params = params.push(tok_ident_name(toks[cur[0]]));
+            cur[0] = cur[0] + 1;
+            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
+                cur[0] = cur[0] + 1;
+                params = params.push(tok_ident_name(toks[cur[0]]));
+                cur[0] = cur[0] + 1;
+            }
+        }
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;
+        var body: Stmt[] = [];
+        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+            body = body.push(parse_stmt(toks, cur));
+        }
+        cur[0] = cur[0] + 1;
+        fns = fns.push(FnDef { name: name, params: params, body: body });
+    }
+    var main_stmts: Stmt[] = [];
+    while (tok_kind(toks[cur[0]]) != 3) {
+        main_stmts = main_stmts.push(parse_stmt(toks, cur));
+    }
+    return Program { fns: fns, main_stmts: main_stmts };
+}
+
+function bool_to_i32(b: boolean): i32 { if (b) { return 1; } return 0; }
+
+function find_fn(fns: FnDef[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < len(fns)) {
+        if (fns[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function env_lookup(names: string[], values: i32[], name: string): i32 {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) { return values[i]; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) {
+            var out: i32[] = [];
+            var j: i32 = 0;
+            while (j < len(values)) {
+                if (j == i) { out = out.push(v); }
+                else { out = out.push(values[j]); }
+                j = j + 1;
+            }
+            return out;
+        }
+        i = i - 1;
+    }
+    return values;
+}
+
+function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => { return env_lookup(names, values, v.name); },
+        BinOp(b) => {
+            var l: i32 = eval_expr(b.left, names, values, fns);
+            var r: i32 = eval_expr(b.right, names, values, fns);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            if (b.op == 47) { return l / r; }
+            if (b.op == 1001) { return bool_to_i32(l == r); }
+            if (b.op == 1002) { return bool_to_i32(l != r); }
+            if (b.op == 1003) { return bool_to_i32(l < r); }
+            if (b.op == 1004) { return bool_to_i32(l <= r); }
+            if (b.op == 1005) { return bool_to_i32(l > r); }
+            return bool_to_i32(l >= r);
+        },
+        Call(c) => {
+            var idx: i32 = find_fn(fns, c.name);
+            var fresh_n: string[] = [];
+            var fresh_v: i32[] = [];
+            var i: i32 = 0;
+            while (i < len(c.args)) {
+                fresh_n = fresh_n.push(fns[idx].params[i]);
+                fresh_v = fresh_v.push(eval_expr(c.args[i], names, values, fns));
+                i = i + 1;
+            }
+            var inner: StepState = run_block(fns[idx].body, fresh_n, fresh_v, fns);
+            return inner.result;
+        },
+    }
+}
+
+struct StepState {
+    names: string[],
+    values: i32[],
+    done: boolean,
+    result: i32,
+}
+
+function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
+    var v: i32 = 0;
+    var i: i32 = 0;
+    match (s) {
+        VarDecl(vd) => {
+            v = eval_expr(vd.value, state.names, state.values, fns);
+            return StepState {
+                names: state.names.push(vd.name),
+                values: state.values.push(v),
+                done: state.done,
+                result: state.result,
+            };
+        },
+        Assign(a) => {
+            v = eval_expr(a.value, state.names, state.values, fns);
+            return StepState {
+                names: state.names,
+                values: env_assign(state.names, state.values, a.name, v),
+                done: state.done,
+                result: state.result,
+            };
+        },
+        Return(r) => {
+            v = eval_expr(r.value, state.names, state.values, fns);
+            return StepState {
+                names: state.names,
+                values: state.values,
+                done: true,
+                result: v,
+            };
+        },
+        WhileSt(w) => {
+            while (!state.done && eval_expr(w.cond, state.names, state.values, fns) != 0) {
+                i = 0;
+                while (i < len(w.body) && !state.done) {
+                    state = eval_stmt(w.body[i], state, fns);
+                    i = i + 1;
+                }
+            }
+            return state;
+        },
+        IfSt(it) => {
+            if (eval_expr(it.cond, state.names, state.values, fns) != 0) {
+                i = 0;
+                while (i < len(it.thn) && !state.done) {
+                    state = eval_stmt(it.thn[i], state, fns);
+                    i = i + 1;
+                }
+            } else {
+                i = 0;
+                while (i < len(it.els) && !state.done) {
+                    state = eval_stmt(it.els[i], state, fns);
+                    i = i + 1;
+                }
+            }
+            return state;
+        },
+        ExprSt(es) => {
+            v = eval_expr(es.value, state.names, state.values, fns);
+            return state;
+        },
+    }
+}
+
+function run_block(stmts: Stmt[], names: string[], values: i32[], fns: FnDef[]): StepState {
+    var state: StepState = StepState {
+        names: names,
+        values: values,
+        done: false,
+        result: 0,
+    };
+    var i: i32 = 0;
+    while (i < len(stmts) && !state.done) {
+        state = eval_stmt(stmts[i], state, fns);
+        i = i + 1;
+    }
+    return state;
+}
+
+function run(src: string): i32 {
+    var p: Program = parse_program(src);
+    var empty_n: string[] = [];
+    var empty_v: i32[] = [];
+    return run_block(p.main_stmts, empty_n, empty_v, p.fns).result;
+}
+
+function main(): i32 {
+    // if/else dispatch — different return per branch.
+    if (run("if (1) { return 10; } else { return 20; }") != 10) { return 1; }
+    if (run("if (0) { return 10; } else { return 20; }") != 20) { return 2; }
+
+    // abs via if/else inside a function.
+    if (run("fn abs(x) { if (x < 0) { return 0 - x; } else { return x; } } return abs(7);") != 7) { return 3; }
+    if (run("fn abs(x) { if (x < 0) { return 0 - x; } else { return x; } } return abs(0 - 7);") != 7) { return 4; }
+
+    // max(a, b) via if/else.
+    if (run("fn max(a, b) { if (a > b) { return a; } else { return b; } } return max(3, 9);") != 9) { return 5; }
+    if (run("fn max(a, b) { if (a > b) { return a; } else { return b; } } return max(15, 4);") != 15) { return 6; }
+
+    // else if chain — bucket a value into {<0, 0, >0}.
+    // Returns -1 / 0 / 1 respectively. Comparison literal
+    // written as 0 - 1 since the toy grammar has no unary minus.
+    if (run("fn sign(x) { if (x < 0) { return 0 - 1; } else if (x == 0) { return 0; } else { return 1; } } return sign(0 - 5);") != 0 - 1) { return 7; }
+    if (run("fn sign(x) { if (x < 0) { return 0 - 1; } else if (x == 0) { return 0; } else { return 1; } } return sign(0);") != 0) { return 8; }
+    if (run("fn sign(x) { if (x < 0) { return 0 - 1; } else if (x == 0) { return 0; } else { return 1; } } return sign(5);") != 1) { return 9; }
+
+    // Nested if/else inside recursion — fib via the textbook
+    // recurrence. fib(0)=0, fib(1)=1, fib(n)=fib(n-1)+fib(n-2).
+    if (run("fn fib(n) { if (n == 0) { return 0; } else if (n == 1) { return 1; } else { return fib(n - 1) + fib(n - 2); } } return fib(10);") != 55) { return 10; }
+
+    // Empty else body — explicitly testing the els = [] path.
+    if (run("var x = 5; if (x > 0) { x = 100; } else { } return x;") != 100) { return 11; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stmt-interp v4 else)", code)
+	}
+}
+
 // Stmt-interp v3 — function declarations + calls. The natural
 // conclusion of the stmt-interp arc. v1 (#424) shipped var /
 // assign / return; v2 (#425) added while + comparisons. v3
