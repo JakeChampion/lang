@@ -241,6 +241,166 @@ function main(): i32 {
 	}
 }
 
+// Parser-in-lang v1: recursive-descent arithmetic-expression
+// parser that consumes a hand-built Token[] and produces an
+// AST in the union shape the Go compiler's `internal/ast`
+// uses for Expr nodes. This is the FIRST validation that
+// the union-types machinery (PRs #390 + #392) handles
+// recursive struct-of-union payloads — `BinOp { left: Expr,
+// right: Expr }` references the union containing it.
+//
+// Operator precedence handled the textbook way: `expr` →
+// `term` → `factor`. `factor` recurses into `expr` for
+// parenthesised subexpressions, exercising the full
+// recursion through the AST.
+//
+// Cursor passed via a single-element `i32[]` for in-place
+// mutation — lang's value semantics + lack of by-reference
+// params mean this is the cheapest "out parameter" shape
+// available. Will get prettier when generic Cell[T] /
+// reference types land.
+//
+// Closes a meaningful self-host milestone: the AST visitor
+// pattern (the main blocker per docs/ROADMAP-AND-SELF-
+// HOSTING.md) works end-to-end in real recursive-descent
+// code. Lexer-in-lang (PRs #394-#395, #399-#401) +
+// parser-in-lang (this) cover lex → parse, the first two
+// stages of the compiler pipeline.
+func TestArm64ParserV1(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+
+type Token = TokInt | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct BinOp { op: i32, left: Expr, right: Expr }
+
+type Expr = Num | BinOp;
+
+function peek(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) {
+        TokInt(_) => { return 0; },
+        TokPunct(_) => { return 1; },
+        TokEof(_) => { return 2; },
+    }
+}
+
+function peek_punct(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) {
+        TokPunct(p) => { return p.ch; },
+        _ => { return 0; },
+    }
+}
+
+function peek_int(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) {
+        TokInt(t) => { return t.value; },
+        _ => { return 0; },
+    }
+}
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        BinOp(b) => {
+            var l: i32 = eval(b.left);
+            var r: i32 = eval(b.right);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+    }
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = peek(toks, pos);
+    if (k == 0) {
+        var v: i32 = peek_int(toks, pos);
+        cur[0] = pos + 1;
+        return Num { value: v };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        var k: i32 = peek(toks, pos);
+        if (k != 1) { return lhs; }
+        var op: i32 = peek_punct(toks, pos);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        var k: i32 = peek(toks, pos);
+        if (k != 1) { return lhs; }
+        var op: i32 = peek_punct(toks, pos);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function main(): i32 {
+    // 1 + 2 * 3 → 7 (precedence)
+    var t1: Token[] = [];
+    t1 = t1.push(TokInt { value: 1 });
+    t1 = t1.push(TokPunct { ch: 43 });
+    t1 = t1.push(TokInt { value: 2 });
+    t1 = t1.push(TokPunct { ch: 42 });
+    t1 = t1.push(TokInt { value: 3 });
+    t1 = t1.push(TokEof { _pad: 0 });
+    var c1: i32[] = [0];
+    if (eval(parse_expr(t1, c1)) != 7) { return 1; }
+
+    // (1 + 2) * 3 → 9 (parens override)
+    var t2: Token[] = [];
+    t2 = t2.push(TokPunct { ch: 40 });
+    t2 = t2.push(TokInt { value: 1 });
+    t2 = t2.push(TokPunct { ch: 43 });
+    t2 = t2.push(TokInt { value: 2 });
+    t2 = t2.push(TokPunct { ch: 41 });
+    t2 = t2.push(TokPunct { ch: 42 });
+    t2 = t2.push(TokInt { value: 3 });
+    t2 = t2.push(TokEof { _pad: 0 });
+    var c2: i32[] = [0];
+    if (eval(parse_expr(t2, c2)) != 9) { return 2; }
+
+    // 10 - 4 - 2 → 4 (left-associativity)
+    var t3: Token[] = [];
+    t3 = t3.push(TokInt { value: 10 });
+    t3 = t3.push(TokPunct { ch: 45 });
+    t3 = t3.push(TokInt { value: 4 });
+    t3 = t3.push(TokPunct { ch: 45 });
+    t3 = t3.push(TokInt { value: 2 });
+    t3 = t3.push(TokEof { _pad: 0 });
+    var c3: i32[] = [0];
+    if (eval(parse_expr(t3, c3)) != 4) { return 3; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (parser v1)", code)
+	}
+}
+
 // Lexer-in-lang v5: hex integer literals (`0x1F`, `0XFF`) +
 // the carry-over numeric type-suffix recognition (`0x10i64`).
 // Recognises `0x` / `0X` prefix, scans hex digits via the
