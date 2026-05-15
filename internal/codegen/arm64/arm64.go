@@ -4481,46 +4481,29 @@ func (g *generator) slotIsString(idx int32) bool {
 	return ok
 }
 
-// lookupArgTypes returns the parameter types of the callee
-// named `name` for an OpCallDirect with `argc` source-level
-// args. Two lookup paths:
+// callArgTypes returns the parameter types of an OpCallDirect /
+// OpCallDirectPair, preferring the IR-stamped `op.ArgTypes`
+// (populated by the lowering pass from FuncSigs at the central
+// emit point and explicitly at synthesised emit sites like
+// `__str_slice`). Falls back to looking up the user FuncDecl
+// in g.funcs by name for IR ops the lowering pass left
+// ArgTypes-empty — that's the path for callees materialised
+// later in the pipeline (monomorphisation, inliner clones)
+// where the central-emit ArgTypes plumbing hasn't run.
 //
-//   - User functions live in g.funcs (the prog.Funcs slice
-//     keyed by name); return their FuncDecl.Params types.
-//   - Built-in runtime helpers (`print` / `write` / `env` /
-//     etc.) are emitted by arm64 code and don't have a
-//     FuncDecl; return a hardcoded type list for the known
-//     string-arg helpers below. Anything not in the table
-//     falls through to nil, signalling "treat as 1-slot per
-//     arg" (the legacy single-register native ABI).
-//
-// Used by the two-word-ABI flip to compute the operand-stack
-// slot count at OpCallDirect emit time.
-func lookupArgTypes(g *generator, name string, argc int) []ast.Type {
-	if callee, ok := g.funcs[name]; ok && callee != nil {
+// Returns nil when neither source has it — the backend's nil
+// path treats every arg as 1 operand-stack slot, which is
+// correct for callees with no string args.
+func callArgTypes(g *generator, op ir.Op, argc int) []ast.Type {
+	if len(op.ArgTypes) > 0 {
+		return op.ArgTypes
+	}
+	if callee, ok := g.funcs[op.Str]; ok && callee != nil {
 		out := make([]ast.Type, 0, argc)
 		for i := 0; i < argc && i < len(callee.Params); i++ {
 			out = append(out, callee.Params[i].Type)
 		}
 		return out
-	}
-	switch name {
-	case "print", "write", "eprint", "env", "read_file",
-		"open_reader", "open_writer", "open_appender":
-		// Single string arg.
-		return []ast.Type{ast.StringType{}}
-	case "write_file":
-		// (path: string, content: string).
-		return []ast.Type{ast.StringType{}, ast.StringType{}}
-	case "tcp_send":
-		// (conn: i32, payload: string).
-		return []ast.Type{ast.NumberType{}, ast.StringType{}}
-	case "__str_slice":
-		// (base: string, low: i32, high: i32) → string.
-		return []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}
-	case "__method_Writer_write":
-		// (w: Writer, s: string).
-		return []ast.Type{ast.NumberType{}, ast.StringType{}}
 	}
 	return nil
 }
@@ -5979,7 +5962,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		argc := int(op.I32)
 		slotCount := argc
 		if ast.UseTwoWordStrings(8) {
-			argTypes := lookupArgTypes(g, op.Str, argc)
+			argTypes := callArgTypes(g, op, argc)
 			if argTypes != nil {
 				slotCount = 0
 				for _, t := range argTypes {
@@ -6022,7 +6005,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		argc := int(op.I32)
 		slotCount := argc
 		if ast.UseTwoWordStrings(8) {
-			argTypes := lookupArgTypes(g, op.Str, argc)
+			argTypes := callArgTypes(g, op, argc)
 			if argTypes != nil {
 				slotCount = 0
 				for _, t := range argTypes {
