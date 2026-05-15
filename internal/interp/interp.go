@@ -218,6 +218,33 @@ func New() *Interp {
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
+	// Low-level prelude primitives the codegen lowers to inline
+	// alloc / memcpy / store-byte sequences. The interpreter
+	// implements them directly so prelude functions that lean
+	// on them (`__string_case_fold` for `to_upper`/`to_lower`,
+	// `s.bytes()`, `string_from_bytes`, etc.) round-trip
+	// through the script-mode + playground path. Map runtime
+	// primitives (`__alloc`, `__load_ptr`, `__store_ptr`,
+	// `__memcpy`, `__memset`, `__store_i32`, `__load_i32`,
+	// `__ptr_width`) are NOT included here — they pretend to
+	// be a flat byte address space the interpreter doesn't
+	// model, so Map operations stay codegen-only for now.
+	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
+	i.Builtins["string_from_bytes"] = &Builtin{Fn: builtinStringFromBytes}
+	// `s.bytes()` and `s.as_bytes()` round-trip bytes through
+	// raw memory in the prelude / wat-emitted helper (the
+	// former does `__memcpy(out as i32, s.as_bytes() as i32, n)`,
+	// the latter aliases the string payload via a slice header).
+	// Both are unrepresentable in the interp's value-tree heap,
+	// so override the mangled entry points with direct
+	// String→Array conversions that copy each byte. The two
+	// methods diverge on aliasing semantics under codegen
+	// (bytes() copies, as_bytes() shares); the interp returns
+	// independent arrays for both, which is observably
+	// equivalent under the value-tree model where Array is
+	// already copy-on-write at the language level.
+	i.Builtins["__method_string_bytes"] = &Builtin{Fn: builtinStringBytes}
+	i.Builtins["__method_string_as_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["stdin"] = &Builtin{Fn: builtinStdin}
 	i.Builtins["stdout"] = &Builtin{Fn: builtinStdout}
 	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
@@ -420,6 +447,77 @@ func builtinArrayPush(_ *Interp, args []Value) (Value, error) {
 	out := make(Array, len(arr)+1)
 	copy(out, arr)
 	out[len(arr)] = args[1]
+	return out, nil
+}
+
+// `__alloc_u8(n: i32): u8[]` — codegen lowers to `__lang_alloc(n)
+// + length-prefix poke`; the interp returns a fresh Array of n
+// Number(0) values. The prelude uses this as the staging buffer
+// for `__string_case_fold`, `string_from_bytes`'s round-trip
+// counterpart, and any user code that wants a zero-initialised
+// byte slab.
+func builtinAllocU8(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__alloc_u8: expected 1 arg (n), got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("__alloc_u8: arg must be number, got %T", args[0])
+	}
+	if n < 0 {
+		return nil, fmt.Errorf("__alloc_u8: negative length %d", int64(n))
+	}
+	out := make(Array, int(n))
+	for i := range out {
+		out[i] = Number(0)
+	}
+	return out, nil
+}
+
+// `string_from_bytes(bs: u8[]): string` — joins the byte
+// values into a fresh String. Codegen path mmap-allocates a
+// length-prefixed string buffer and memcpys; the interp
+// builds the string directly from the Number values in the
+// Array, narrowing each to a single byte (low 8 bits) so a
+// caller-side u8/u16 width mismatch doesn't leak garbage
+// into the result.
+func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("string_from_bytes: expected 1 arg (bs), got %d", len(args))
+	}
+	arr, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("string_from_bytes: arg must be array, got %T", args[0])
+	}
+	buf := make([]byte, len(arr))
+	for i, v := range arr {
+		n, ok := v.(Number)
+		if !ok {
+			return nil, fmt.Errorf("string_from_bytes: element %d not a number (%T)", i, v)
+		}
+		buf[i] = byte(int64(n) & 0xff)
+	}
+	return String(buf), nil
+}
+
+// `__method_string_bytes` / `__method_string_as_bytes` —
+// String → Array<Number> conversion, one Number per UTF-8
+// byte. Sidesteps the prelude's `__memcpy(out as i32,
+// s.as_bytes() as i32, n)` path which can't be modelled
+// without a flat byte address space.
+func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_string_bytes: expected 1 arg (s), got %d", len(args))
+	}
+	s, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("__method_string_bytes: receiver must be string, got %T", args[0])
+	}
+	raw := []byte(s)
+	out := make(Array, len(raw))
+	for i, b := range raw {
+		out[i] = Number(int64(b))
+	}
 	return out, nil
 }
 
