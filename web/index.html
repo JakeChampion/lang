@@ -155,6 +155,7 @@
     <option value="union">union types + match</option>
     <option value="result">Result error handling</option>
     <option value="interp">lex+parse arithmetic</option>
+    <option value="format">format(fmt, args)</option>
   </select>
   <span class="status" id="status">loading runtime…</span>
 </div>
@@ -385,6 +386,46 @@ function main(): i32 {
     var v: i32 = eval(ast);
     print(src + " = " + v.to_string());
     return v;
+}`,
+  format: `// format(fmt, args) — runtime template substitution. Walks
+// fmt and replaces each {} placeholder with args[i].
+// Complements f-strings (which only work on literal templates)
+// — use format() when the template itself comes from a config,
+// locale table, or error catalogue indexed at runtime.
+
+struct Person { name: string, age: i32, city: string }
+
+function describe(p: Person): string {
+    // The args[] vector pre-stringifies non-string values via
+    // .to_string(). A typed-overload story would need trait
+    // dispatch which lang doesn't have yet.
+    return format(
+        "{} (age {}) lives in {}",
+        [p.name, p.age.to_string(), p.city]
+    );
+}
+
+function main(): i32 {
+    var people: Person[] = [
+        Person { name: "alice", age: 30, city: "London" },
+        Person { name: "bob",   age: 45, city: "Sydney" },
+        Person { name: "ciri",  age: 28, city: "Tokyo"  }
+    ];
+
+    var i: i32 = 0;
+    while (i < len(people)) {
+        print(describe(people[i]));
+        i = i + 1;
+    }
+
+    // Underflow — more {}s than args → literal {} survives.
+    // Useful as a runtime indicator that an arg list is short.
+    print(format("missing arg: {} and {}", ["x"]));
+
+    // Overflow — extras silently dropped.
+    print(format("just {}", ["one", "two", "three"]));
+
+    return 0;
 }`,
 };
 
