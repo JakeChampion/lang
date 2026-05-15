@@ -3079,6 +3079,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	// __lang_open_appender(path) → Result[Reader|Writer, IoError].
 	// Each is a thin wrapper around `openat` + handle alloc + the
 	// Result-box build. Flags + mode differ per kind.
+	twoWord := ast.UseTwoWordStrings(8)
 	for _, e := range []struct {
 		sym, name string
 		flags     int
@@ -3093,6 +3094,52 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.line(".global " + e.sym)
 		g.typeDirective(e.sym)
 		g.label(e.sym)
+		if twoWord {
+			// Two-word ABI: (path_data, path_len) in (x0, x1).
+			// Frame: fp/lr (16) + 3 callee-saves (24 + 8 pad) +
+			// 16-byte spill scratch + 16 align = 64.
+			g.emit("stp x29, x30, [sp, #-64]!")
+			g.emit("mov x29, sp")
+			g.emit("stp x19, x20, [sp, #16]")
+			g.emit("str x21, [sp, #32]")
+			g.emit("mov x19, x0") // path_data
+			g.emit("mov x20, x1") // path_len
+			g.emitStrDataPtr2W("x21", "x19", "x20", 48) // x21 = byte ptr; scratch [x29+48]
+			g.emit("mov x0, #-100")
+			g.emit("mov x1, x21")
+			g.emit("mov w2, #%d", e.flags)
+			g.emit("mov w3, #%d", e.mode)
+			g.emit("mov x8, #56")
+			g.emit("svc #0")
+			g.emit("tbnz x0, #63, %s", ".Lorw2w_err_"+e.sym)
+			g.emit("mov w0, w0")
+			g.emit("bl __lang_make_handle")
+			g.emit("mov x21, x0") // handle ptr
+			g.emit("mov x0, #16")
+			g.emit("bl __lang_alloc")
+			g.emit("str wzr, [x0]")
+			g.emit("str x21, [x0, #8]")
+			g.emit("b %s", ".Lorw2w_ret_"+e.sym)
+			g.label(".Lorw2w_err_" + e.sym)
+			g.emit("neg x21, x0") // x21 = errno
+			g.emit("mov x0, x21")
+			g.emit("mov x1, x19")
+			g.emit("mov x2, x20")
+			g.emit("bl __lang_io_error")
+			g.emit("mov x21, x0")
+			g.emit("mov x0, #16")
+			g.emit("bl __lang_alloc")
+			g.emit("mov w1, #1")
+			g.emit("str w1, [x0]")
+			g.emit("str x21, [x0, #8]")
+			g.label(".Lorw2w_ret_" + e.sym)
+			g.emit("ldr x21, [sp, #32]")
+			g.emit("ldp x19, x20, [sp, #16]")
+			g.emit("ldp x29, x30, [sp], #64")
+			g.emit("ret")
+			g.sizeDirective(e.sym)
+			continue
+		}
 		g.emit("stp x29, x30, [sp, #-32]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
@@ -3172,21 +3219,40 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("str w1, [x0]")
 	g.emit("b .Lrrl_ret")
 	g.label(".Lrrl_some")
-	g.emit("add x0, x20, #5")
-	g.emit("bl __lang_alloc")
-	g.emit("add x21, x0, #4")
-	g.emit("stur w20, [x21, #-4]")
-	g.emit("mov x0, x21")
-	g.emit("mov x1, x19")
-	g.emit("mov x2, x20")
-	g.emit("bl __lang_memcpy")
-	g.emit("add x0, x21, x20")
-	g.emit("strb wzr, [x0]")
-	g.emit("mov x19, x21") // stash string data ptr
-	g.emit("mov x0, #16")
-	g.emit("bl __lang_alloc")
-	g.emit("str wzr, [x0]")     // Some tag=0
-	g.emit("str x19, [x0, #8]") // payload
+	if twoWord {
+		// Heap-form alloc: just x20 bytes (no prefix / NUL).
+		g.emit("mov x0, x20")
+		g.emit("bl __lang_alloc")
+		g.emit("mov x21, x0")
+		g.emit("mov x0, x21")
+		g.emit("mov x1, x19")
+		g.emit("mov x2, x20")
+		g.emit("bl __lang_memcpy")
+		// Some(string) box: 24 bytes — {tag@0, data@8, len@16}.
+		g.emit("mov x19, x21")
+		g.emit("mov x0, #24")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")
+		g.emit("str x19, [x0, #8]")
+		g.emit("str x20, [x0, #16]")
+		g.emit("b .Lrrl_ret")
+	} else {
+		g.emit("add x0, x20, #5")
+		g.emit("bl __lang_alloc")
+		g.emit("add x21, x0, #4")
+		g.emit("stur w20, [x21, #-4]")
+		g.emit("mov x0, x21")
+		g.emit("mov x1, x19")
+		g.emit("mov x2, x20")
+		g.emit("bl __lang_memcpy")
+		g.emit("add x0, x21, x20")
+		g.emit("strb wzr, [x0]")
+		g.emit("mov x19, x21")
+		g.emit("mov x0, #16")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")
+		g.emit("str x19, [x0, #8]")
+	}
 	g.label(".Lrrl_ret")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
@@ -3210,34 +3276,62 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("str x21, [sp, #32]")
 	g.emit("ldr w19, [x0]") // fd
 	g.emit("mov x20, x1")    // n
-	// alloc n + 4 (length prefix + bytes). Caller may receive
-	// fewer bytes on a short read.
-	g.emit("add x0, x20, #4")
-	g.emit("bl __lang_alloc")
-	g.emit("mov x21, x0")     // base
-	g.emit("mov w0, w19")
-	g.emit("add x1, x21, #4")
-	g.emit("mov x2, x20")
-	g.syscall("read")
-	g.emit("cmp x0, #0")
-	g.emit("ble .Lrrc_none")
-	// Success: store actual length, build Some(string).
-	g.emit("stur w0, [x21, #4 - 4]") // length prefix at base+0
-	g.emit("mov x20, x0")    // bytes read
-	g.emit("add x19, x21, #4")
-	g.emit("add x0, x19, x20")
-	g.emit("strb wzr, [x0]") // best-effort trailing NUL (within the alloc)
-	g.emit("mov x0, #16")
-	g.emit("bl __lang_alloc")
-	g.emit("str wzr, [x0]")
-	g.emit("str x19, [x0, #8]")
-	g.emit("b .Lrrc_ret")
-	g.label(".Lrrc_none")
-	g.emit("mov x0, #4")
-	g.emit("bl __lang_alloc")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]")
-	g.label(".Lrrc_ret")
+	if twoWord {
+		// Two-word heap form: alloc exactly n bytes (no
+		// prefix). Actual bytes read tracked in the Some
+		// box's len field.
+		g.emit("mov x0, x20")
+		g.emit("bl __lang_alloc")
+		g.emit("mov x21, x0")
+		g.emit("mov w0, w19")
+		g.emit("mov x1, x21")
+		g.emit("mov x2, x20")
+		g.syscall("read")
+		g.emit("cmp x0, #0")
+		g.emit("ble .Lrrc2w_none")
+		g.emit("mov x20, x0") // x20 = bytes read
+		// Some(string) 24-byte box.
+		g.emit("mov x0, #24")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")
+		g.emit("str x21, [x0, #8]")
+		g.emit("str x20, [x0, #16]")
+		g.emit("b .Lrrc2w_ret")
+		g.label(".Lrrc2w_none")
+		g.emit("mov x0, #4")
+		g.emit("bl __lang_alloc")
+		g.emit("mov w1, #1")
+		g.emit("str w1, [x0]")
+		g.label(".Lrrc2w_ret")
+	} else {
+		// alloc n + 4 (length prefix + bytes). Caller may receive
+		// fewer bytes on a short read.
+		g.emit("add x0, x20, #4")
+		g.emit("bl __lang_alloc")
+		g.emit("mov x21, x0")     // base
+		g.emit("mov w0, w19")
+		g.emit("add x1, x21, #4")
+		g.emit("mov x2, x20")
+		g.syscall("read")
+		g.emit("cmp x0, #0")
+		g.emit("ble .Lrrc_none")
+		g.emit("stur w0, [x21, #4 - 4]")
+		g.emit("mov x20, x0")
+		g.emit("add x19, x21, #4")
+		g.emit("add x0, x19, x20")
+		g.emit("strb wzr, [x0]")
+		g.emit("mov x0, #16")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")
+		g.emit("str x19, [x0, #8]")
+		g.emit("b .Lrrc_ret")
+		g.label(".Lrrc_none")
+		g.emit("mov x0, #4")
+		g.emit("bl __lang_alloc")
+		g.emit("mov w1, #1")
+		g.emit("str w1, [x0]")
+		g.label(".Lrrc_ret")
+	}
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
@@ -3252,13 +3346,21 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.line(".global __lang_writer_write")
 	g.typeDirective("__lang_writer_write")
 	g.label("__lang_writer_write")
-	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("stp x29, x30, [sp, #-64]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
-	g.emit("ldr w19, [x0]")      // fd
-	g.emit("mov x20, x1")          // s data ptr
-	g.emitStrLen("w22", "x20") // len
+	g.emit("ldr w19, [x0]") // fd
+	if twoWord {
+		// Two-word ABI: (writer_ptr, s_data, s_len) in
+		// (x0, x1, x2). Extract byte length via emitStrLen2W,
+		// materialise byte ptr via emitStrDataPtr2W.
+		g.emitStrLen2W("w22", "x2")
+		g.emitStrDataPtr2W("x20", "x1", "x2", 48) // x20 = byte ptr; scratch [x29+48]
+	} else {
+		g.emit("mov x20, x1")          // s data ptr
+		g.emitStrLen("w22", "x20") // len
+	}
 	g.emit("mov x21, #0")          // bytes_written
 	g.label(".Lww_loop")
 	g.emit("cmp x21, x22")
@@ -3298,7 +3400,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label(".Lww_ret")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
 	g.sizeDirective("__lang_writer_write")
 
@@ -4331,6 +4433,9 @@ func lookupArgTypes(g *generator, name string, argc int) []ast.Type {
 	case "__str_slice":
 		// (base: string, low: i32, high: i32) → string.
 		return []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}
+	case "__method_Writer_write":
+		// (w: Writer, s: string).
+		return []ast.Type{ast.NumberType{}, ast.StringType{}}
 	}
 	return nil
 }
