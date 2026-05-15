@@ -241,6 +241,160 @@ function main(): i32 {
 	}
 }
 
+// Lexer-in-lang v3: builds on v2 by adding block comments
+// (`/* ... */`), the `\n` / `\t` / `\r` string escapes via a
+// single `unescape(b: i32): i32` helper, AND swaps the inline
+// `is_digit` / `is_alpha` / `is_alnum` / `is_ws` helpers for
+// the prelude's `(b: i32).is_*` methods from PR #397. The
+// classifier swap is the more important change: it's the
+// first real-workload validation that the prelude additions
+// compose into a hand-rolled lexer without re-declaring local
+// helpers.
+//
+// Token surface still ~10% of the real lang lexer but the
+// shape now matches enough that the bigger port can land
+// incrementally without re-deriving the tokenisation skeleton.
+func TestArm64LexerV3(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokKw    { name: string }
+struct TokStr   { value: string }
+struct TokPunct { text: string }
+struct TokEof   { _pad: i32 }
+
+type Token = TokInt | TokIdent | TokKw | TokStr | TokPunct | TokEof;
+
+function is_keyword(name: string): boolean {
+    return name == "function" || name == "var" || name == "if" ||
+           name == "else" || name == "while" || name == "return" ||
+           name == "true" || name == "false" || name == "match" ||
+           name == "type" || name == "struct" || name == "enum";
+}
+
+function unescape(b: i32): i32 {
+    if (b == 110) { return 10; }   // \n
+    if (b == 116) { return 9; }    // \t
+    if (b == 114) { return 13; }   // \r
+    return b;                       // \\ \" or unknown — pass through
+}
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b == 47 && i + 1 < n && src[i + 1] == 47) {
+            i = i + 2;
+            while (i < n && src[i] != 10) { i = i + 1; }
+        } else if (b == 47 && i + 1 < n && src[i + 1] == 42) {
+            i = i + 2;
+            var closed: boolean = false;
+            while (i + 1 < n) {
+                if (src[i] == 42 && src[i + 1] == 47) {
+                    i = i + 2;
+                    closed = true;
+                    break;
+                }
+                i = i + 1;
+            }
+            // Unterminated: eat to EOF rather than letting the
+            // trailing byte (i = n-1 on exit) fall through and
+            // get tokenised as punct.
+            if (!closed) { i = n; }
+        } else if (b == 34) {
+            var out: string = "";
+            i = i + 1;
+            while (i < n && src[i] != 34) {
+                if (src[i] == 92 && i + 1 < n) {
+                    var resolved: i32 = unescape(src[i + 1]);
+                    var buf: u8[] = __alloc_u8(1);
+                    buf[0] = resolved as u8;
+                    out = out + string_from_bytes(buf);
+                    i = i + 2;
+                } else {
+                    out = out + src[i : i + 1];
+                    i = i + 1;
+                }
+            }
+            if (i < n) { i = i + 1; }
+            toks = toks.push(TokStr { value: out });
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha()) {
+            var start: i32 = i;
+            while (i < n && src[i].is_alnum()) { i = i + 1; }
+            var name: string = src[start:i];
+            if (is_keyword(name)) {
+                toks = toks.push(TokKw { name: name });
+            } else {
+                toks = toks.push(TokIdent { name: name });
+            }
+        } else if ((b == 61 || b == 33 || b == 60 || b == 62) &&
+                   i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { text: src[i : i + 2] });
+            i = i + 2;
+        } else if (b == 61 && i + 1 < n && src[i + 1] == 62) {
+            toks = toks.push(TokPunct { text: src[i : i + 2] });
+            i = i + 2;
+        } else {
+            toks = toks.push(TokPunct { text: src[i : i + 1] });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function main(): i32 {
+    var toks: Token[] = tokenize("/* block */ var s = \"a\\nb\";");
+    // var s = "a\nb" ; EOF = 6 tokens
+    if (len(toks) != 6) { return 100 + len(toks); }
+    match (toks[0]) {
+        TokKw(t) => { if (t.name != "var") { return 1; } },
+        _ => { return 2; },
+    }
+    match (toks[3]) {
+        TokStr(t) => {
+            if (len(t.value) != 3) { return 3; }
+            if (t.value[0] != 97) { return 4; }   // 'a'
+            if (t.value[1] != 10) { return 5; }   // resolved '\n'
+            if (t.value[2] != 98) { return 6; }   // 'b'
+        },
+        _ => { return 7; },
+    }
+    // Tab + carriage-return + unknown-escape (\Z passes through).
+    var t2: Token[] = tokenize("\"\\t\\r\\Z\"");
+    match (t2[0]) {
+        TokStr(t) => {
+            if (len(t.value) != 3) { return 8; }
+            if (t.value[0] != 9) { return 9; }    // '\t'
+            if (t.value[1] != 13) { return 10; }  // '\r'
+            if (t.value[2] != 90) { return 11; }  // 'Z' (unknown escape)
+        },
+        _ => { return 12; },
+    }
+    // Block comment with a star inside but no closing
+    // star-slash keeps the lexer alive past EOF without
+    // infinite-looping.
+    var t3: Token[] = tokenize("/* unterminated * comment");
+    // Just EOF — the unterminated comment ate everything.
+    if (len(t3) != 1) { return 13; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (lexer v3)", code)
+	}
+}
+
 // Extended lexer-in-lang: adds string literals (with `\\` /
 // `\"` escapes), multi-character operators (`==`, `!=`, `<=`,
 // `>=`, `=>`), keyword recognition vs identifier, and line
