@@ -471,11 +471,15 @@ func (g *generator) emitDataSections() {
 		// SSO inline strings ride in a 64-bit register and don't
 		// have a usable memory address until materialised. The
 		// __str_idx index helper spills inline values to this
-		// global scratch slot before computing `&scratch[1 + idx]`
+		// global scratch slot before computing `&scratch + idx`
 		// so OpLoadByte can read a byte from a real address.
-		// Single 8-byte slot, single-threaded language.
+		// 16-byte slot under the two-word ABI (room for both
+		// `data` and `len` halves of an inline-form string);
+		// 8 bytes was enough for the legacy single-pointer
+		// shape.
 		g.line(`.align 3`)
 		g.label("__lang_str_idx_scratch")
+		g.line(`	.quad 0`)
 		g.line(`	.quad 0`)
 	}
 	// State[T] globals. Emit literal-initialised vars in
@@ -929,6 +933,35 @@ func (g *generator) emitStrcatRuntime2W() {
 // is the log2 stride. AArch64 supports an LSL shift amount in
 // the operand-2 position — folds the multiply into the add.
 func (g *generator) emitInlineIdxHelper(name string) error {
+	if name == "__str_idx" && ast.UseTwoWordStrings(8) {
+		// Two-word ABI: stack on entry is [data, len, idx],
+		// top = idx. Pop idx → x0, len → x1, data → x2.
+		// Top-bit-tagged inline check on len.
+		g.usesStrIdx = true
+		id := g.labelN
+		g.labelN++
+		inlineLbl := fmt.Sprintf(".Lstridx2w_inline_%d", id)
+		doneLbl := fmt.Sprintf(".Lstridx2w_done_%d", id)
+		g.emit("ldr x0, [sp], #%d", slotBytes) // idx
+		g.emit("ldr x1, [sp], #%d", slotBytes) // len
+		g.emit("ldr x2, [sp], #%d", slotBytes) // data
+		g.emit("tbnz x1, #63, %s", inlineLbl)
+		// Heap form: byte address = data + idx.
+		g.emit("add x0, x2, x0")
+		g.emit("b %s", doneLbl)
+		g.label(inlineLbl)
+		// Inline form: spill (data, len) at the 16-byte
+		// .bss scratch slot. Bytes 0..7 from `data`, bytes
+		// 8..14 from `len`'s low 56 bits. Result address =
+		// scratch + idx.
+		g.adrpAdd("x3", "__lang_str_idx_scratch")
+		g.emit("str x2, [x3]")     // data bytes at scratch[0..7]
+		g.emit("str x1, [x3, #8]") // len bytes at scratch[8..15]
+		g.emit("add x0, x3, x0")
+		g.label(doneLbl)
+		g.push()
+		return nil
+	}
 	g.emit("ldr x0, [sp], #%d", slotBytes) // idx
 	g.emit("ldr x1, [sp], #%d", slotBytes) // base
 	switch name {

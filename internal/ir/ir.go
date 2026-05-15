@@ -5257,7 +5257,11 @@ func isStringForBoxing(t ast.Type, ptrW int) bool {
 func (b *builder) boxIntoCell(arg ast.Expr, t ast.Type, slotLabel string) error {
 	cellSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("%s_%d", slotLabel, cellSlot)] = cellSlot
-	b.emit(Op{Kind: OpConstI32, I32: 8})
+	// Cell size matches the value's slot size: 8 bytes for
+	// wide scalars (i64 / u64 / f64) on every target; 8 bytes
+	// for strings on wasm32 (two i32 slots); 16 bytes for
+	// strings on arm64 under two-word (two i64 slots).
+	b.emit(Op{Kind: OpConstI32, I32: payloadSlotSize(t, b.ptrW)})
 	b.emit(Op{Kind: OpAlloc})
 	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
