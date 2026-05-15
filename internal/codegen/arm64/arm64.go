@@ -965,6 +965,9 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("add x0, x1, x0, lsl #2")
 	case "__arr_idx_8":
 		g.emit("add x0, x1, x0, lsl #3")
+	case "__arr_idx_16":
+		// 16-byte stride — two-word `string[]` element load.
+		g.emit("add x0, x1, x0, lsl #4")
 	// Slice indexing first dereferences the slice header to
 	// recover its 32-bit data_ptr field, then does the same
 	// stride-shifted add as the array helpers. The IR's
@@ -982,6 +985,9 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	case "__slice_idx_8":
 		g.emit("ldr w1, [x1]")
 		g.emit("add x0, x1, x0, lsl #3")
+	case "__slice_idx_16":
+		g.emit("ldr w1, [x1]")
+		g.emit("add x0, x1, x0, lsl #4")
 	default:
 		return fmt.Errorf("arm64: unknown index helper %q", name)
 	}
@@ -1964,6 +1970,10 @@ func (g *generator) emitArgsRuntime() {
 	g.line(".global __lang_args")
 	g.typeDirective("__lang_args")
 	g.label("__lang_args")
+	if ast.UseTwoWordStrings(8) {
+		g.emitArgsRuntime2W()
+		return
+	}
 	g.emit("stp x29, x30, [sp, #-64]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -2041,6 +2051,89 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__lang_args")
+	g.line(".ltorg")
+}
+
+// emitArgsRuntime2W is the two-word-ABI variant of
+// emitArgsRuntime. Each `string[]` entry is now a 16-byte
+// `(data, len)` pair instead of an 8-byte single-pointer.
+// Layout matches the IR's two-word string[] stride:
+//
+//   - header: 16 bytes total, length stored at `[data - 4]`
+//   - element i: at `[data + i * 16]` with data at +0..+7 and
+//     len at +8..+15
+//
+// Cached pointer mechanics unchanged.
+func (g *generator) emitArgsRuntime2W() {
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
+	// Cached?
+	g.adrpAdd("x0", "__lang_args_cache")
+	g.emit("ldr x1, [x0]")
+	g.emit("cbz x1, .Largs2w_build")
+	g.emit("mov x0, x1")
+	g.emit("b .Largs2w_ret")
+	g.label(".Largs2w_build")
+	g.adrpAdd("x19", "__lang_argc")
+	g.emit("ldr x19, [x19]")
+	g.adrpAdd("x20", "__lang_argv")
+	g.emit("ldr x20, [x20]")
+	// Allocate: 16-byte header + argc * 16 (entries are 16-byte
+	// (data, len) pairs). Header is 16 bytes so element 0 sits
+	// at +16 = stride-aligned; length prefix at `[base + 12]`.
+	g.emit("lsl x0, x19, #4")  // argc * 16
+	g.emit("add x0, x0, #16")  // + header
+	g.emit("bl __lang_alloc")
+	g.emit("add x21, x0, #16") // x21 = data pointer (past header)
+	g.emit("stur w19, [x21, #-4]") // length prefix = argc
+	g.emit("mov x22, #0")      // loop counter i
+	g.label(".Largs2w_loop")
+	g.emit("cmp x22, x19")
+	g.emit("bge .Largs2w_done")
+	// argv[i] (C string).
+	g.emit("ldr x23, [x20, x22, lsl #3]")
+	// Inline strlen.
+	g.emit("mov x0, x23")
+	g.label(".Largs2w_strlen")
+	g.emit("ldrb w1, [x0]")
+	g.emit("cbz w1, .Largs2w_strlen_done")
+	g.emit("add x0, x0, #1")
+	g.emit("b .Largs2w_strlen")
+	g.label(".Largs2w_strlen_done")
+	g.emit("sub x0, x0, x23") // x0 = strlen
+	g.emit("mov x24, x0")     // x24 = strlen (callee-save, survives bl)
+	// Allocate strlen bytes (no length prefix; len lives in
+	// the entry's `len` half).
+	g.emit("bl __lang_alloc")
+	g.emit("mov x25, x0")     // x25 = dst (callee-save, survives bl)
+	// memcpy(dst, src, strlen).
+	g.emit("mov x0, x25")
+	g.emit("mov x1, x23")
+	g.emit("mov x2, x24")
+	g.emit("bl __lang_memcpy")
+	// Write entry: data at [x21 + i*16], len at [x21 + i*16 + 8].
+	g.emit("lsl x11, x22, #4")     // x11 = i * 16
+	g.emit("str x25, [x21, x11]")  // data
+	g.emit("add x11, x11, #8")
+	g.emit("str x24, [x21, x11]")  // len (= strlen, heap form, top bit clear)
+	g.emit("add x22, x22, #1")
+	g.emit("b .Largs2w_loop")
+	g.label(".Largs2w_done")
+	g.adrpAdd("x0", "__lang_args_cache")
+	g.emit("str x21, [x0]")
+	g.emit("mov x0, x21")
+	g.label(".Largs2w_ret")
+	g.emit("ldr x25, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
 	g.sizeDirective("__lang_args")
 	g.line(".ltorg")
@@ -5181,8 +5274,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__mapiter_value_impl"
 		case "__method_MapIter_advance":
 			target = "__mapiter_advance_impl"
-		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_2", "__arr_idx_8",
-			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
+		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_2", "__arr_idx_8", "__arr_idx_16",
+			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8", "__slice_idx_16":
 			// IR-side bounds-check stubs the lang runtime
 			// would otherwise dispatch to. arm64 doesn't yet
 			// ship the helpers, so inline an unchecked
