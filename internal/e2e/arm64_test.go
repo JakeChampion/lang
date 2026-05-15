@@ -715,6 +715,355 @@ function main(): i32 {
 	}
 }
 
+// Stack-VM-in-lang: AST → flat bytecode → stack-machine
+// execution. A new SHAPE in the self-host spike series — fold,
+// reduce, and print all walk an AST and produce a transformed
+// AST or string. compile() walks the AST and produces a FLAT
+// LIST OF OPS that a stack VM executes. This is the lowering
+// pattern every real compiler uses (lang's IR does the same:
+// AST → linear Op[] sequence consumed by codegen).
+//
+// Bytecode:
+//   PushConst v   — push integer constant onto the stack
+//   Load name     — push the value of named variable
+//   Bin op        — pop two, apply op (+, -, *, /), push result
+//
+// Compile is a post-order walk: emit child ops then the parent
+// op. The resulting linear sequence runs left-to-right on the
+// VM, building up intermediate values on the stack. Same shape
+// as wasm's stack machine, RPN calculators, and lang's own IR
+// dispatch loop in the codegen backends.
+//
+// Properties tested:
+//   1. Round-trip semantic equivalence — execute(compile(e), env)
+//      == eval(e, env) for the same env, on every shape exercised
+//      by the earlier spikes (literals, vars, all four binary
+//      operators, nesting, parens).
+//   2. Bytecode shape — `1 + 2 * 3` compiles to exactly:
+//      [PushConst 1, PushConst 2, PushConst 3, Bin *, Bin +].
+//      Five ops, post-order, in that order. The shape proves the
+//      compile walk is bottom-up + left-to-right.
+//   3. Stack discipline — after a successful execute(), the stack
+//      has exactly one element (the result). Tested by always
+//      reading the top and asserting on it.
+//   4. fold + compile integration — folding the AST FIRST makes
+//      the bytecode shorter. `compile(fold("1 + 2 * 3"))` is
+//      one op (PushConst 7) instead of five.
+func TestArm64StackVMInLang(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct Var   { name: string }
+struct BinOp { op: i32, left: Expr, right: Expr }
+type Expr = Num | Var | BinOp;
+
+struct PushConst { value: i32 }
+struct Load      { name: string }
+struct Bin       { op: i32 }
+type Op = PushConst | Load | Bin;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        cur[0] = pos + 1;
+        return Var { name: tok_ident_name(toks[pos]) };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_arith(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_src(src: string): Expr {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    return parse_arith(toks, cur);
+}
+
+function is_num(e: Expr): boolean {
+    match (e) { Num(_) => { return true; }, _ => { return false; } }
+}
+function num_value(e: Expr): i32 {
+    match (e) { Num(n) => { return n.value; }, _ => { return 0; } }
+}
+
+function fold(e: Expr): Expr {
+    match (e) {
+        Num(_) => { return e; },
+        Var(_) => { return e; },
+        BinOp(b) => {
+            var l: Expr = fold(b.left);
+            var r: Expr = fold(b.right);
+            if (is_num(l) && is_num(r)) {
+                var lv: i32 = num_value(l);
+                var rv: i32 = num_value(r);
+                if (b.op == 43) { return Num { value: lv + rv }; }
+                if (b.op == 45) { return Num { value: lv - rv }; }
+                if (b.op == 42) { return Num { value: lv * rv }; }
+                if (b.op == 47) { return Num { value: lv / rv }; }
+            }
+            return BinOp { op: b.op, left: l, right: r };
+        },
+    }
+}
+
+// Post-order walk: left subtree → right subtree → parent op.
+// Each call appends to and returns the in-flight Op list, so
+// the assembled bytecode reads left-to-right same as the
+// source expression's evaluation order.
+function compile(e: Expr, ops: Op[]): Op[] {
+    match (e) {
+        Num(n) => {
+            return ops.push(PushConst { value: n.value });
+        },
+        Var(v) => {
+            return ops.push(Load { name: v.name });
+        },
+        BinOp(b) => {
+            var ops1: Op[] = compile(b.left, ops);
+            var ops2: Op[] = compile(b.right, ops1);
+            return ops2.push(Bin { op: b.op });
+        },
+    }
+}
+
+function compile_top(e: Expr): Op[] {
+    var ops: Op[] = [];
+    return compile(e, ops);
+}
+
+function env_lookup(names: string[], values: i32[], name: string): i32 {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) { return values[i]; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+// Execute the bytecode against a value stack. Pop two for Bin,
+// push the result. After a well-formed program runs, the stack
+// has exactly one element — the result.
+function execute(ops: Op[], names: string[], values: i32[]): i32 {
+    var stack: i32[] = [];
+    var i: i32 = 0;
+    while (i < len(ops)) {
+        match (ops[i]) {
+            PushConst(p) => { stack = stack.push(p.value); },
+            Load(l) => { stack = stack.push(env_lookup(names, values, l.name)); },
+            Bin(b) => {
+                var r: i32 = stack[len(stack) - 1];
+                var l: i32 = stack[len(stack) - 2];
+                var out: i32 = 0;
+                if (b.op == 43) { out = l + r; }
+                else if (b.op == 45) { out = l - r; }
+                else if (b.op == 42) { out = l * r; }
+                else { out = l / r; }
+                // Pop two and push one — net stack delta -1.
+                // Lang arrays are functional, so building a
+                // fresh stack of length len-1 by slicing is
+                // O(len) but the test loops stay small.
+                var ns: i32[] = [];
+                var j: i32 = 0;
+                while (j < len(stack) - 2) {
+                    ns = ns.push(stack[j]);
+                    j = j + 1;
+                }
+                stack = ns.push(out);
+            },
+        }
+        i = i + 1;
+    }
+    return stack[0];
+}
+
+// Direct interpreter — the reference oracle for round-trip
+// equivalence. compile + execute must agree with eval on
+// every input.
+function eval(e: Expr, names: string[], values: i32[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => { return env_lookup(names, values, v.name); },
+        BinOp(b) => {
+            var l: i32 = eval(b.left, names, values);
+            var r: i32 = eval(b.right, names, values);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+    }
+}
+
+function roundtrip(src: string, names: string[], values: i32[]): boolean {
+    var e: Expr = parse_src(src);
+    return execute(compile_top(e), names, values) == eval(e, names, values);
+}
+
+function op_kind(o: Op): i32 {
+    match (o) {
+        PushConst(_) => { return 0; },
+        Load(_)      => { return 1; },
+        Bin(_)       => { return 2; },
+    }
+}
+
+function op_pushconst_value(o: Op): i32 {
+    match (o) { PushConst(p) => { return p.value; }, _ => { return -1; } }
+}
+function op_bin_op(o: Op): i32 {
+    match (o) { Bin(b) => { return b.op; }, _ => { return -1; } }
+}
+
+function main(): i32 {
+    var names: string[] = ["x", "y"];
+    var values: i32[] = [10, 20];
+
+    // Bare literal — one PushConst, executes to its value.
+    var c1: Op[] = compile_top(parse_src("42"));
+    if (len(c1) != 1) { return 1; }
+    if (execute(c1, names, values) != 42) { return 2; }
+
+    // Var lookup — one Load op.
+    var c2: Op[] = compile_top(parse_src("x"));
+    if (len(c2) != 1) { return 3; }
+    if (op_kind(c2[0]) != 1) { return 4; }
+    if (execute(c2, names, values) != 10) { return 5; }
+
+    // Simple BinOp — three ops: PushConst, PushConst, Bin.
+    var c3: Op[] = compile_top(parse_src("1 + 2"));
+    if (len(c3) != 3) { return 6; }
+    if (op_kind(c3[0]) != 0 || op_pushconst_value(c3[0]) != 1) { return 7; }
+    if (op_kind(c3[1]) != 0 || op_pushconst_value(c3[1]) != 2) { return 8; }
+    if (op_kind(c3[2]) != 2 || op_bin_op(c3[2]) != 43) { return 9; }
+    if (execute(c3, names, values) != 3) { return 10; }
+
+    // Nested — 1 + 2 * 3 compiles to:
+    //   PushConst 1
+    //   PushConst 2
+    //   PushConst 3
+    //   Bin *           ← pops 2,3 pushes 6
+    //   Bin +           ← pops 1,6 pushes 7
+    var c4: Op[] = compile_top(parse_src("1 + 2 * 3"));
+    if (len(c4) != 5) { return 11; }
+    if (op_kind(c4[3]) != 2 || op_bin_op(c4[3]) != 42) { return 12; }   // *
+    if (op_kind(c4[4]) != 2 || op_bin_op(c4[4]) != 43) { return 13; }   // +
+    if (execute(c4, names, values) != 7) { return 14; }
+
+    // Round-trip equivalence — every shape from the earlier
+    // spikes must agree with the direct interpreter.
+    if (!roundtrip("1 + 2 * 3", names, values)) { return 15; }
+    if (!roundtrip("(1 + 2) * 3", names, values)) { return 16; }
+    if (!roundtrip("x + y", names, values)) { return 17; }
+    if (!roundtrip("x * y - 5", names, values)) { return 18; }
+    if (!roundtrip("100 / 4 / 5", names, values)) { return 19; }
+    if (!roundtrip("(x + 1) * (y - 2)", names, values)) { return 20; }
+
+    // fold + compile integration — folding first produces
+    // shorter bytecode. fold("1 + 2 * 3") → Num(7), which
+    // compiles to a SINGLE PushConst op.
+    var c5: Op[] = compile_top(fold(parse_src("1 + 2 * 3")));
+    if (len(c5) != 1) { return 21; }
+    if (op_pushconst_value(c5[0]) != 7) { return 22; }
+
+    // Partial fold + compile — "x + 2 * 3" folds to "x + 6",
+    // which compiles to three ops (Load + PushConst + Bin)
+    // instead of the five the unfolded form would emit.
+    var c6: Op[] = compile_top(fold(parse_src("x + 2 * 3")));
+    if (len(c6) != 3) { return 23; }
+    if (execute(c6, names, values) != 16) { return 24; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stack-vm-in-lang)", code)
+	}
+}
+
 // Strength-reduce-in-lang: the algebraic-identity complement
 // to constfold (#420). Constfold collapses BinOps with two
 // literal operands; strength reduction simplifies BinOps where
