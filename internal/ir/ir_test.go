@@ -301,6 +301,22 @@ func TestLowerFieldAccessThroughArrayIndex(t *testing.T) {
 	mustContainOp(t, prog, "main", OpLoad)
 }
 
+// Field access on a Call return — `foo().field` where foo
+// returns a struct. The IR's fieldOwner historically only knew
+// about Ident / FieldAccess / Index / StructLit / CaptureRef;
+// a Call target dropped through to "" and surfaced "ir: field
+// access on unresolved struct" at lower time. Now handled via
+// the Call case + callReturnType helper which looks up the
+// callee's return type in info.FuncSigs.
+func TestLowerFieldAccessOnCallReturn(t *testing.T) {
+	prog := lowerSource(t, `struct P { x: i32 }
+		function make(): P { return P { x: 99 }; }
+		function main(): i32 {
+			return make().x;
+		}`)
+	mustContainOp(t, prog, "main", OpLoad)
+}
+
 // `literal + literal` folds at compile time to a single
 // OpConstStr; the runtime OpStrConcat (and the `__lang_strcat`
 // it bottoms out in) only fires on at least one non-literal arg.

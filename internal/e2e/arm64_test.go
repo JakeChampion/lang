@@ -741,6 +741,514 @@ function main(): i32 {
 	}
 }
 
+// Stmt-interp v3 — function declarations + calls. The natural
+// conclusion of the stmt-interp arc. v1 (#424) shipped var /
+// assign / return; v2 (#425) added while + comparisons. v3
+// closes the gap to "real procedural language" — top-level
+// functions, multi-arg calls, recursion, mutual recursion. The
+// in-lang interpreter can now host iterative_factorial,
+// recursive_factorial, fibonacci, gcd, etc. — the same shape
+// every introductory CS textbook ends on.
+//
+// Grammar additions:
+//
+//   program ::= fn_def* stmt*
+//   fn_def  ::= "fn" name "(" param ("," param)* ")" "{" stmt* "}"
+//   expr    ::= ... | name "(" expr ("," expr)* ")"
+//
+// Call disambiguates at parse time on single-token lookahead
+// (matching interp v6/v7's split between Var and Call).
+// Function bodies are full statement lists — they can declare
+// locals, mutate them via assignment, loop with while, and
+// return.
+//
+// Recursion works because the function table is built before
+// main runs. Mutual recursion works for the same reason.
+//
+// Tests:
+//   1. Simple zero-arg function (`fn answer() { return 42; }`).
+//   2. Single-arg function (`fn double(x) { return x * 2; }`).
+//   3. Recursive factorial via if-then return — proves call
+//      machinery handles deep recursion.
+//   4. Iterative factorial — function body with while loop +
+//      local var + return.
+//   5. Multi-arg gcd via Euclidean algorithm — two-arg call,
+//      recursive.
+//   6. Mutual recursion (is_even / is_odd) — confirms the
+//      function table is closed-over.
+//   7. Function compose at top-level — call from main flow.
+func TestArm64StmtInterpFunctions(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num    { value: i32 }
+struct Var    { name: string }
+struct BinOp  { op: i32, left: Expr, right: Expr }
+struct Call   { name: string, args: Expr[] }
+type Expr = Num | Var | BinOp | Call;
+
+struct VarDecl  { name: string, value: Expr }
+struct Assign   { name: string, value: Expr }
+struct Return   { value: Expr }
+struct WhileSt  { cond: Expr, body: Stmt[] }
+struct IfSt     { cond: Expr, body: Stmt[] }
+struct ExprSt   { value: Expr }
+type Stmt = VarDecl | Assign | Return | WhileSt | IfSt | ExprSt;
+
+struct FnDef { name: string, params: string[], body: Stmt[] }
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1001 });   // ==
+            i = i + 2;
+        } else if (b == 33 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1002 });   // !=
+            i = i + 2;
+        } else if (b == 60 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1004 });   // <=
+            i = i + 2;
+        } else if (b == 62 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1006 });   // >=
+            i = i + 2;
+        } else if (b == 60) {
+            toks = toks.push(TokPunct { ch: 1003 });
+            i = i + 1;
+        } else if (b == 62) {
+            toks = toks.push(TokPunct { ch: 1005 });
+            i = i + 1;
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function is_comp_op(op: i32): boolean {
+    return op == 1001 || op == 1002 || op == 1003 ||
+           op == 1004 || op == 1005 || op == 1006;
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        var name: string = tok_ident_name(toks[pos]);
+        cur[0] = pos + 1;
+        // Call vs Var disambiguation on '(' lookahead.
+        if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
+            cur[0] = cur[0] + 1;   // skip '('
+            var args: Expr[] = [];
+            if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 41) {
+                cur[0] = cur[0] + 1;
+                return Call { name: name, args: args };
+            }
+            args = args.push(parse_expr(toks, cur));
+            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
+                cur[0] = cur[0] + 1;   // skip ','
+                args = args.push(parse_expr(toks, cur));
+            }
+            cur[0] = cur[0] + 1;   // skip ')'
+            return Call { name: name, args: args };
+        }
+        return Var { name: name };
+    }
+    cur[0] = pos + 1;   // skip '('
+    var inner: Expr = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;   // skip ')'
+    return inner;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_arith(toks, cur);
+    var pos: i32 = cur[0];
+    if (tok_kind(toks[pos]) != 2) { return lhs; }
+    var op: i32 = tok_punct_ch(toks[pos]);
+    if (!is_comp_op(op)) { return lhs; }
+    cur[0] = pos + 1;
+    var rhs: Expr = parse_arith(toks, cur);
+    return BinOp { op: op, left: lhs, right: rhs };
+}
+
+function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
+    return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
+}
+
+function parse_stmt(toks: Token[], cur: i32[]): Stmt {
+    var name: string = "";
+    var value: Expr = Num { value: 0 };
+    if (expect_kw(toks, cur[0], "var")) {
+        cur[0] = cur[0] + 1;
+        name = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '='
+        value = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ';'
+        return VarDecl { name: name, value: value };
+    }
+    if (expect_kw(toks, cur[0], "return")) {
+        cur[0] = cur[0] + 1;
+        value = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ';'
+        return Return { value: value };
+    }
+    // Hoist cond / body across the while / if arms — wasm
+    // rejects sibling-scope duplicate locals.
+    var cond: Expr = Num { value: 0 };
+    var body: Stmt[] = [];
+    if (expect_kw(toks, cur[0], "while")) {
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '('
+        cond = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ')'
+        cur[0] = cur[0] + 1;   // skip '{'
+        body = [];
+        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+            body = body.push(parse_stmt(toks, cur));
+        }
+        cur[0] = cur[0] + 1;   // skip '}'
+        return WhileSt { cond: cond, body: body };
+    }
+    if (expect_kw(toks, cur[0], "if")) {
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '('
+        cond = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ')'
+        cur[0] = cur[0] + 1;   // skip '{'
+        body = [];
+        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+            body = body.push(parse_stmt(toks, cur));
+        }
+        cur[0] = cur[0] + 1;   // skip '}'
+        return IfSt { cond: cond, body: body };
+    }
+    // Lookahead: ident '=' is assignment; ident '(' is an
+    // expression-statement (call). Anything else here is
+    // bare expression-as-statement (covers stray calls).
+    if (tok_kind(toks[cur[0]]) == 1 && tok_kind(toks[cur[0] + 1]) == 2 && tok_punct_ch(toks[cur[0] + 1]) == 61) {
+        name = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '='
+        value = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ';'
+        return Assign { name: name, value: value };
+    }
+    value = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;   // skip ';'
+    return ExprSt { value: value };
+}
+
+struct Program { fns: FnDef[], main_stmts: Stmt[] }
+
+function parse_program(src: string): Program {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var fns: FnDef[] = [];
+    while (expect_kw(toks, cur[0], "fn")) {
+        cur[0] = cur[0] + 1;
+        var name: string = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '('
+        var params: string[] = [];
+        if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
+            params = params.push(tok_ident_name(toks[cur[0]]));
+            cur[0] = cur[0] + 1;
+            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
+                cur[0] = cur[0] + 1;   // skip ','
+                params = params.push(tok_ident_name(toks[cur[0]]));
+                cur[0] = cur[0] + 1;
+            }
+        }
+        cur[0] = cur[0] + 1;   // skip ')'
+        cur[0] = cur[0] + 1;   // skip '{'
+        var body: Stmt[] = [];
+        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+            body = body.push(parse_stmt(toks, cur));
+        }
+        cur[0] = cur[0] + 1;   // skip '}'
+        fns = fns.push(FnDef { name: name, params: params, body: body });
+    }
+    var main_stmts: Stmt[] = [];
+    while (tok_kind(toks[cur[0]]) != 3) {
+        main_stmts = main_stmts.push(parse_stmt(toks, cur));
+    }
+    return Program { fns: fns, main_stmts: main_stmts };
+}
+
+function bool_to_i32(b: boolean): i32 { if (b) { return 1; } return 0; }
+
+function find_fn(fns: FnDef[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < len(fns)) {
+        if (fns[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function env_lookup(names: string[], values: i32[], name: string): i32 {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) { return values[i]; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) {
+            var out: i32[] = [];
+            var j: i32 = 0;
+            while (j < len(values)) {
+                if (j == i) { out = out.push(v); }
+                else { out = out.push(values[j]); }
+                j = j + 1;
+            }
+            return out;
+        }
+        i = i - 1;
+    }
+    return values;
+}
+
+function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => { return env_lookup(names, values, v.name); },
+        BinOp(b) => {
+            var l: i32 = eval_expr(b.left, names, values, fns);
+            var r: i32 = eval_expr(b.right, names, values, fns);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            if (b.op == 47) { return l / r; }
+            if (b.op == 1001) { return bool_to_i32(l == r); }
+            if (b.op == 1002) { return bool_to_i32(l != r); }
+            if (b.op == 1003) { return bool_to_i32(l < r); }
+            if (b.op == 1004) { return bool_to_i32(l <= r); }
+            if (b.op == 1005) { return bool_to_i32(l > r); }
+            return bool_to_i32(l >= r);
+        },
+        Call(c) => {
+            var idx: i32 = find_fn(fns, c.name);
+            var fresh_n: string[] = [];
+            var fresh_v: i32[] = [];
+            var i: i32 = 0;
+            while (i < len(c.args)) {
+                fresh_n = fresh_n.push(fns[idx].params[i]);
+                fresh_v = fresh_v.push(eval_expr(c.args[i], names, values, fns));
+                i = i + 1;
+            }
+            // Run the function body as a statement block with
+            // the fresh env. The result is whichever Return
+            // fires first; if none fires the function falls off
+            // the end and the result is whatever state.result
+            // started at (0).
+            var inner: StepState = run_block(fns[idx].body, fresh_n, fresh_v, fns);
+            return inner.result;
+        },
+    }
+}
+
+struct StepState {
+    names: string[],
+    values: i32[],
+    done: boolean,
+    result: i32,
+}
+
+function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
+    var v: i32 = 0;
+    var i: i32 = 0;   // hoisted: sibling-scope dups in WhileSt / IfSt
+    match (s) {
+        VarDecl(vd) => {
+            v = eval_expr(vd.value, state.names, state.values, fns);
+            return StepState {
+                names: state.names.push(vd.name),
+                values: state.values.push(v),
+                done: state.done,
+                result: state.result,
+            };
+        },
+        Assign(a) => {
+            v = eval_expr(a.value, state.names, state.values, fns);
+            return StepState {
+                names: state.names,
+                values: env_assign(state.names, state.values, a.name, v),
+                done: state.done,
+                result: state.result,
+            };
+        },
+        Return(r) => {
+            v = eval_expr(r.value, state.names, state.values, fns);
+            return StepState {
+                names: state.names,
+                values: state.values,
+                done: true,
+                result: v,
+            };
+        },
+        WhileSt(w) => {
+            while (!state.done && eval_expr(w.cond, state.names, state.values, fns) != 0) {
+                i = 0;
+                while (i < len(w.body) && !state.done) {
+                    state = eval_stmt(w.body[i], state, fns);
+                    i = i + 1;
+                }
+            }
+            return state;
+        },
+        IfSt(it) => {
+            if (eval_expr(it.cond, state.names, state.values, fns) != 0) {
+                i = 0;
+                while (i < len(it.body) && !state.done) {
+                    state = eval_stmt(it.body[i], state, fns);
+                    i = i + 1;
+                }
+            }
+            return state;
+        },
+        ExprSt(es) => {
+            // Evaluate for side effects (i.e. calls) — discard result.
+            v = eval_expr(es.value, state.names, state.values, fns);
+            return state;
+        },
+    }
+}
+
+function run_block(stmts: Stmt[], names: string[], values: i32[], fns: FnDef[]): StepState {
+    var state: StepState = StepState {
+        names: names,
+        values: values,
+        done: false,
+        result: 0,
+    };
+    var i: i32 = 0;
+    while (i < len(stmts) && !state.done) {
+        state = eval_stmt(stmts[i], state, fns);
+        i = i + 1;
+    }
+    return state;
+}
+
+function run(src: string): i32 {
+    var p: Program = parse_program(src);
+    var empty_n: string[] = [];
+    var empty_v: i32[] = [];
+    return run_block(p.main_stmts, empty_n, empty_v, p.fns).result;
+}
+
+function main(): i32 {
+    // Zero-arg function.
+    if (run("fn answer() { return 42; } return answer();") != 42) { return 1; }
+
+    // Single-arg function.
+    if (run("fn double(x) { return x * 2; } return double(21);") != 42) { return 2; }
+
+    // Multi-arg function.
+    if (run("fn add(a, b) { return a + b; } return add(3, 4);") != 7) { return 3; }
+
+    // Recursive factorial.
+    if (run("fn fact(n) { if (n == 0) { return 1; } return n * fact(n - 1); } return fact(5);") != 120) { return 4; }
+
+    // Iterative factorial — function body uses while + locals.
+    if (run("fn fact(n) { var f = 1; while (n > 0) { f = f * n; n = n - 1; } return f; } return fact(6);") != 720) { return 6; }
+
+    // gcd via Euclidean — two-arg recursion.
+    if (run("fn gcd(a, b) { if (b == 0) { return a; } return gcd(b, a - a / b * b); } return gcd(48, 18);") != 6) { return 7; }
+
+    // Mutual recursion. is_even(0)=1; is_even(n)=is_odd(n-1).
+    // is_odd(0)=0; is_odd(n)=is_even(n-1).
+    if (run("fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); } fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); } return is_even(10);") != 1) { return 8; }
+
+    // Top-level main flow can mix calls with statements.
+    if (run("fn square(x) { return x * x; } var a = 5; var b = square(a); return b + 1;") != 26) { return 9; }
+
+    // Composition — outer call's arg is itself a call.
+    if (run("fn dbl(x) { return x + x; } fn sqr(x) { return x * x; } return dbl(sqr(3));") != 18) { return 10; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stmt-interp v3 functions)", code)
+	}
+}
+
 // Stmt-interp v2 — while loops + comparison operators. v1
 // (#424) shipped var / assign / return / linear flow. v2 adds
 // the missing pieces that make the toy language actually
