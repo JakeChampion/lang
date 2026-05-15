@@ -82,6 +82,38 @@ func TestInterpScriptStdin(t *testing.T) {
 	}
 }
 
+// read_all_stdin() — convenience prelude function that loops
+// Reader.read_chunk(4096) until EOF and returns the concat.
+// Writes the program to a file so `-interp <file>` reads the
+// SOURCE from disk and leaves stdin free for the program to
+// consume via the helper.
+func TestInterpScriptReadAllStdin(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.lang")
+	if err := os.WriteFile(src, []byte(`function main(): i32 {
+    var s: string = read_all_stdin();
+    print("read: " + s);
+    return len(s);
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	cmd.Stdin = strings.NewReader("hello stdin")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	code := cmd.ProcessState.ExitCode()
+	if code != 11 {
+		t.Errorf("exit = %d, want 11 (len of \"hello stdin\")\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "read: hello stdin") {
+		t.Errorf("stdout missing payload: %q", out.String())
+	}
+}
+
 // Union types + match through the script-mode interp. The union
 // desugar lives in the checker (PRs #390 / #392), so the AST
 // the interpreter sees is the synthesised enum form — no

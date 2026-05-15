@@ -151,7 +151,7 @@ and parsers. Result is everywhere already.
 **Notes**: Combinators are ~50 lines each; `?` is a parser
 desugar + checker rule.
 
-### 3. String slice / pad / split_once / trim_matches · small · ☐
+### 3. String slice / pad / split_once / trim_matches · small · ☑
 
 **Surface**: `slice(s, start, end)` (byte indices, half-open),
 `pad_start(s, n, ch)`, `pad_end`, `split_once(s, sep)` →
@@ -162,6 +162,11 @@ desugar + checker rule.
 are required for any formatted output (tables, hex dumps).
 
 **Inspiration**: Go strings, Gleam string.
+
+**Status**: shipped — `pad_start` / `pad_end` / `split_once`
+/ `trim_start_matches` / `trim_end_matches` / `replace_n` /
+`count`. Slicing is already covered by the built-in
+`s[start:end]` syntax — no helper needed.
 
 ### 4. Number format specs · medium · ☐
 
@@ -234,7 +239,7 @@ FS interaction required.
 duplicate `/`) deferred — more complex semantics; punt to a
 follow-up if real demand surfaces.
 
-### 9. stdin + println + io.Copy · small · ☐
+### 9. stdin + println + io.Copy · small · ☑ (partial)
 
 **Surface**: `read_all_stdin() string`, `print(s)` /
 `println(s)`, `eprintln(s)`, `copy(reader, writer) i64`.
@@ -244,6 +249,11 @@ equivalent; `println` is more discoverable than `write` to
 fd 1.
 
 **Inspiration**: Go `io.ReadAll`, Elixir `IO.puts`.
+
+**Status**: `read_all_stdin()` shipped. `print` / `eprint`
+already exist (lang's `print` is the println variant — appends
+a newline). `copy(reader, writer)` deferred — needs a real
+Reader/Writer plumbing decision.
 
 ### 10. Generic `sort_by(cmp)` + `sort_key(fn)` · medium · ☐
 
@@ -319,6 +329,20 @@ repetitive `to_lower` allocations.
 
 **Inspiration**: Go `strings.Fields` / `EqualFold`, Rust
 `strip_prefix`.
+
+## Extras (not in the original 15)
+
+These landed in the chunks above but weren't on the original
+prioritised list — recording them so a future audit doesn't
+think they're free additions to make.
+
+- **i32[] math**: `arr.sum()` / `arr.max()` / `arr.min()`.
+  Constrained-receiver i32-element dispatch. `max` / `min`
+  return `Option[i32]` to handle empty arrays. Inspired by
+  Elixir Enum.sum/min/max and Rust slice methods.
+- **`s.count(sub)`**: non-overlapping match count. Standalone
+  helper that fell out of the `replace_n` work — the inner
+  loop is the same as Rust `str::matches().count()`.
 
 ## Cross-cutting decisions
 
