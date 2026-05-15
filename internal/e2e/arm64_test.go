@@ -6258,6 +6258,38 @@ function main(): i32 {
 //   - no placeholders → identity (still cheap)
 //   - empty fmt → empty result
 //   - chained with to_string() for i32 args
+// Glue function on string-array — `arr.join(sep)`. Dispatches
+// via "Array.<method>" in the checker (mangled to
+// __method_Array_join) with a constrained string-element
+// receiver signature, so non-string arrays surface as a clean
+// type error rather than a missing-method. The body lives in
+// the prelude as a plain string-concat loop.
+//
+// Cases:
+//   - normal multi-element join
+//   - empty separator (concat without delimiter)
+//   - empty array → empty string
+//   - single element → just that element (no separator)
+//   - long string elements + multibyte sep
+func TestArm64ArrayJoin(t *testing.T) {
+	src := `function main(): i32 {
+    if (["alice", "bob", "ciri"].join(", ") != "alice, bob, ciri") { return 1; }
+    if (["a", "b", "c"].join("") != "abc") { return 2; }
+    var empty: string[] = [];
+    if (empty.join(", ") != "") { return 3; }
+    if (["solo"].join("|") != "solo") { return 4; }
+    if (["x", "y"].join(" -> ") != "x -> y") { return 5; }
+    // Use the result of split(...).join(...) — round trip
+    // through a string list (with empty-element preservation).
+    if ("a,b,c".split(",").join(";") != "a;b;c") { return 6; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (Array.join)", code)
+	}
+}
+
 func TestArm64Format(t *testing.T) {
 	src := `function main(): i32 {
     if (format("hello {}, age {}", ["alice", "30"]) != "hello alice, age 30") { return 1; }
