@@ -574,6 +574,17 @@ type Op struct {
 	// function-typed local being dispatched through. Codegen uses it
 	// to resolve the right `(type $tN)` clause in the WAT output.
 	Sig *ast.FuncType
+	// ArgTypes is set on OpCallDirect / OpCallDirectPair to the
+	// static parameter types of the callee, in the same order the
+	// IR pushes them. Backends consume it to compute operand-stack
+	// slot counts under the two-word string ABI (each string arg
+	// occupies 2 slots → 2 registers). The lowering pass populates
+	// it from FuncSigs at the central call-emission site and from
+	// the surrounding code's static knowledge at synthesised emit
+	// sites (e.g. `__str_slice` knows it takes (string, i32, i32)).
+	// Nil is allowed for callees that take no string args — the
+	// backend then treats every arg as 1 slot.
+	ArgTypes []ast.Type
 	// Pos points back at the source position the lowering pass was
 	// processing when this op was emitted. Backends use it to drive
 	// DWARF .loc / WASM debug-line info; the field is zero for ops
@@ -3088,7 +3099,13 @@ func (b *builder) expr(e ast.Expr) error {
 			// the runtime helper's 4-param signature is fed
 			// the right number of wasm-stack slots without the
 			// IR caller knowing about the fan-out.
-			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3})
+			//
+			// ArgTypes stamped explicitly because `__str_slice`
+			// isn't in FuncSigs (it's a synthesised helper, not
+			// a user-callable name) — the arm64 two-word ABI
+			// needs `(string, i32, i32)` to count the string
+			// arg as 2 operand-stack slots.
+			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3, ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}})
 			break
 		}
 		// Lower `arr[low:high]` to:
@@ -4176,6 +4193,28 @@ func mapValKindTag(t ast.Type) int32 {
 	return 0
 }
 
+// callArgTypesFromSig builds the ArgTypes slice for an
+// OpCallDirect / OpCallDirectPair from a callee's parameter
+// list, padding with ast.NumberType{} when the IR pushed more
+// args than the declared signature (e.g. `map_new`'s injected
+// keyKind / valKind tags). Returns nil when sig has no params
+// AND argc == 0 — the backend's nil-fast-path treats every
+// arg as 1 slot, which is correct for the no-args case.
+func callArgTypesFromSig(params []ast.Type, argc int) []ast.Type {
+	if argc <= 0 {
+		return nil
+	}
+	out := make([]ast.Type, argc)
+	for i := 0; i < argc; i++ {
+		if i < len(params) {
+			out[i] = params[i]
+		} else {
+			out[i] = ast.NumberType{}
+		}
+	}
+	return out
+}
+
 func (b *builder) call(n *ast.Call) error {
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
@@ -4450,7 +4489,17 @@ func (b *builder) callBody(n *ast.Call) error {
 				// maker's heap-box layout).
 				width = b.payloadWidthForCalleeReturn(sig.Result)
 			}
-			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount, Width: width})
+			// Stamp the callee's parameter types so the backend
+			// can compute operand-stack slot counts under the
+			// two-word string ABI without re-deriving them from
+			// `Str`. `map_new` injected two trailing keyKind /
+			// valKind i32s above; pad ArgTypes to match argCount
+			// so the consumer can iterate freely. `sig.Params`
+			// from FuncSigs is the source of truth for every
+			// user-facing builtin (print / write_file / tcp_send
+			// / __method_Writer_write / ...).
+			argTypes := callArgTypesFromSig(sig.Params, int(argCount))
+			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount, Width: width, ArgTypes: argTypes})
 			if kind == OpCallDirectPair && !b.suppressPairRebox {
 				// Re-pack the (tag, payload) pair into a heap
 				// box so existing callers (var assignment,

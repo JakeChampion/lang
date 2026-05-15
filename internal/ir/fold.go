@@ -424,14 +424,34 @@ func foldBinary64(k OpKind, unsigned bool, a, b int64) (int64, bool, bool) {
 // every field that participates in folding decisions; positions are
 // included so a no-op rewrite that only moves a Pos is treated as
 // changed (an unlikely edge but it keeps the contract clean).
+//
+// Op contains slice (ArgTypes) and pointer (Sig) fields so it's no
+// longer struct-comparable with `==`; opEqual walks fields explicitly.
 func opsEqual(a, b []Op) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if !opEqual(a[i], b[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+// opEqual reports field-wise equality for two Op values. ArgTypes
+// is compared length-only — the fold pass never rewrites ArgTypes
+// on the same op kind (it threads them through unchanged via
+// shallow copy), so a length match is sufficient to detect a
+// fixed point. Direct value-equality on ast.Type would panic
+// because composite types (StructType, EnumType) contain
+// uncomparable slice / map fields.
+func opEqual(a, b Op) bool {
+	if a.Kind != b.Kind || a.I32 != b.I32 || a.I64 != b.I64 ||
+		a.F32 != b.F32 || a.F64 != b.F64 || a.Width != b.Width ||
+		a.Unsigned != b.Unsigned || a.Str != b.Str ||
+		a.Sig != b.Sig || a.Pos != b.Pos {
+		return false
+	}
+	return len(a.ArgTypes) == len(b.ArgTypes)
 }
