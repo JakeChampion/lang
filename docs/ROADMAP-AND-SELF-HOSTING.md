@@ -13,20 +13,20 @@ it's debt, and the shape of a fix. The first three are on the
 critical path for production parity; items 4 and 5 unblock
 follow-on perf work.
 
-### 1. arm64-darwin Map heap-address truncation — bug risk
+### 1. ~~arm64-darwin Map heap-address truncation~~ — RESOLVED
 
-- **Where**: `internal/prelude/prelude.lang` Map runtime (most
-  pointer-cell locals declared as `i32`); `docs/BACKEND-PARITY.md:260-354`.
-- **Why**: macOS's heap lives above 4 GiB. Linux's
-  `__lang_alloc` hints `0x10000000` so pointers fit in 32 bits
-  by accident; macOS ignores the hint, the high bits get
-  truncated when stored through `__store_i32`, and
-  `Map[K, heap-V]` (strings, structs, arrays) silently
-  corrupts.
-- **Fix**: introduce a `usize` lang type (target-aware width:
-  4 bytes on wasm32, 8 on native). Rewrite prelude pointer
-  locals and helper signatures. Confirmed broken on the
-  `macos-15` CI runner per PR #291.
+Originally the audit's top critical item. `usize` landed as
+a target-aware NumberType width earlier; this PR migrates the
+Map runtime's pointer-typed params + locals
+(`m`, `k`, `v`, `buf`, `entriesBase`, `entryK`, etc.) from
+`i32` to `usize`, preserving the full 8-byte address through
+every helper on arm64-darwin's high heap. `__map_hash` keeps
+its `k: i32` param because wide-scalar K boxing already
+ensures the value fits in 32 bits via the cell-pointer route
+— a future PR can flip it once a dedicated wide-scalar K
+hash entrypoint exists. The `map_heap_value_probe` test's
+Darwin skip has been removed; macOS CI now exercises it
+alongside Linux.
 
 ### 2. ~~Closures-with-captures only lower on wasm~~ — RESOLVED
 
