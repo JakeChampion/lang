@@ -1251,6 +1251,37 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.line(".global string_from_bytes")
 	g.typeDirective("string_from_bytes")
 	g.label("string_from_bytes")
+	if ast.UseTwoWordStrings(8) {
+		// Two-word ABI: take `bs` (u8[] data pointer) in x0,
+		// return `(data, len)` in (x0, x1).
+		// Frame: fp/lr (16) + 2 callee-saves (16) + 16 align.
+		g.emit("stp x29, x30, [sp, #-48]!")
+		g.emit("mov x29, sp")
+		g.emit("stp x19, x20, [sp, #16]")
+		g.emit("mov x19, x0")          // x19 = bs (input u8[])
+		g.emitArrayLen("w20", "x19")   // x20 = byte length
+		// Empty input → empty pair.
+		g.emit("cbnz w20, .Lsfb2w_alloc")
+		g.emit("mov x0, xzr")
+		g.emit("movz x1, #0x8000, lsl #48")
+		g.emit("b .Lsfb2w_ret")
+		g.label(".Lsfb2w_alloc")
+		g.emit("mov w0, w20")
+		g.emit("bl __lang_alloc")      // x0 = dst
+		g.emit("mov x2, x20")           // n
+		g.emit("mov x1, x19")           // src = bs
+		g.emit("stp x0, xzr, [sp, #-16]!") // save dst on stack
+		g.emit("bl __lang_memcpy")
+		g.emit("ldp x0, x1, [sp], #16")  // x0 = dst (saved), x1 = junk
+		g.emit("mov w1, w20")            // len = byteLen
+		g.label(".Lsfb2w_ret")
+		g.emit("ldp x19, x20, [sp, #16]")
+		g.emit("ldp x29, x30, [sp], #48")
+		g.emit("ret")
+		g.sizeDirective("string_from_bytes")
+		g.line(".ltorg")
+		return
+	}
 	// Frame: 64 bytes — fp/lr (16) + x19/x20/x21 (24 + 8 pad) +
 	// 16 SSO inline-output buffer (only 8 bytes used, 8 padding).
 	g.emit("stp x29, x30, [sp, #-64]!")
@@ -1309,6 +1340,10 @@ func (g *generator) emitStrSliceRuntime() {
 	g.line(".global __str_slice")
 	g.typeDirective("__str_slice")
 	g.label("__str_slice")
+	if ast.UseTwoWordStrings(8) {
+		g.emitStrSliceRuntime2W()
+		return
+	}
 	// Args: x0 = base, x1 = low, x2 = high.
 	// Frame: 80 bytes — fp/lr (16) + x19..x23 (40 used + 8 pad)
 	// + 16 SSO scratch (8 for emitStrDataPtr(base) + 8 inline
@@ -1378,6 +1413,74 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
 	g.label(".Lstrslice_trap")
+	g.emit("mov x0, #134")
+	g.syscallExit()
+	g.sizeDirective("__str_slice")
+	g.line(".ltorg")
+}
+
+// emitStrSliceRuntime2W is the two-word-ABI variant of
+// emitStrSliceRuntime. Signature: `__str_slice(base_data,
+// base_len, low, high)` in (x0, x1, x2, x3). Returns
+// `(data, len)` in (x0, x1).
+//
+// Bounds-checks (low ≥ 0; high ≤ base_byteLen; low ≤ high)
+// trap with exit 134.
+//
+// Always uses heap-form output. Inline-form optimisation is
+// a follow-up.
+func (g *generator) emitStrSliceRuntime2W() {
+	// Frame: fp/lr (16) + 4 callee-saves (x19..x22, 32) for
+	// base_data / base_len / low / high across the bl calls,
+	// + 2 callee-saves (x23, x24) for dst / new_len (16), +
+	// 16-byte scratch for emitStrDataPtr2W (16), + 16 align = 96.
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0") // base_data
+	g.emit("mov x20, x1") // base_len
+	g.emit("mov x21, x2") // low
+	g.emit("mov x22, x3") // high
+	// Get base byte length.
+	g.emitStrLen2W("w23", "x20") // x23 = src_byteLen
+	// Bounds checks: low ≥ 0, high ≤ src_byteLen, low ≤ high.
+	g.emit("cmp x21, #0")
+	g.emit("blt .Lstrslice2w_trap")
+	g.emit("cmp x22, x23")
+	g.emit("bhi .Lstrslice2w_trap")
+	g.emit("cmp x21, x22")
+	g.emit("bgt .Lstrslice2w_trap")
+	// new_len = high - low.
+	g.emit("sub w24, w22, w21")
+	// Short-circuit on new_len == 0: return empty pair.
+	g.emit("cbnz w24, .Lstrslice2w_nonempty")
+	g.emit("mov x0, xzr")
+	g.emit("movz x1, #0x8000, lsl #48")
+	g.emit("b .Lstrslice2w_ret")
+	g.label(".Lstrslice2w_nonempty")
+	// Materialise base byte pointer.
+	g.emitStrDataPtr2W("x19", "x19", "x20", 64) // x19 = base byte ptr; spill at [x29+64]
+	// Allocate new_len bytes for the heap output.
+	g.emit("mov w0, w24")
+	g.emit("bl __lang_alloc")
+	g.emit("mov x23, x0") // x23 = dst
+	// memcpy(dst, base_ptr + low, new_len).
+	g.emit("add x1, x19, x21")
+	g.emit("mov x2, x24")
+	g.emit("mov x0, x23")
+	g.emit("bl __lang_memcpy")
+	// Return (dst, new_len) in (x0, x1).
+	g.emit("mov x0, x23")
+	g.emit("mov w1, w24")
+	g.label(".Lstrslice2w_ret")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.label(".Lstrslice2w_trap")
 	g.emit("mov x0, #134")
 	g.syscallExit()
 	g.sizeDirective("__str_slice")
@@ -3748,6 +3851,9 @@ func lookupArgTypes(g *generator, name string, argc int) []ast.Type {
 	case "tcp_send":
 		// (conn: i32, payload: string).
 		return []ast.Type{ast.NumberType{}, ast.StringType{}}
+	case "__str_slice":
+		// (base: string, low: i32, high: i32) → string.
+		return []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}
 	}
 	return nil
 }
@@ -3764,7 +3870,8 @@ func returnIsString(g *generator, name string) bool {
 	switch name {
 	case "env", "read_file", "random_bytes", "tcp_recv",
 		"read_line", "string_from_bytes",
-		"__method_Reader_read_line", "__method_Reader_read_chunk":
+		"__method_Reader_read_line", "__method_Reader_read_chunk",
+		"__str_slice":
 		// Built-in runtime helpers that return string.
 		return true
 	}
