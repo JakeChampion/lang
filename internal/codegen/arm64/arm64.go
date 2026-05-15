@@ -2831,6 +2831,10 @@ func (g *generator) emitWriteFileRuntime() {
 	g.line(".global __lang_write_file")
 	g.typeDirective("__lang_write_file")
 	g.label("__lang_write_file")
+	if ast.UseTwoWordStrings(8) {
+		g.emitWriteFileRuntime2W()
+		return
+	}
 	// Frame: 80 bytes — fp/lr (16) + 6 callee-saves (48) +
 	// 16 SSO scratch (8 for path materialise + 8 for content
 	// materialise).
@@ -2906,6 +2910,93 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__lang_write_file")
+	g.line(".ltorg")
+}
+
+// emitWriteFileRuntime2W is the two-word-ABI variant.
+// Signature: `__lang_write_file(path_data, path_len,
+// content_data, content_len)` in (x0..x3). Returns
+// `Option[IoError]` heap-box ptr in x0:
+//   Some(IoError): 16-byte box {tag=0@0, payload=err@8}
+//   None:           8-byte box {tag=1@0}
+func (g *generator) emitWriteFileRuntime2W() {
+	// Frame: 96 bytes. fp/lr (16) + 6 callee-saves (48) +
+	// 2× 16-byte inline-spill scratch for path + content (32).
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0") // path_data
+	g.emit("mov x20, x1") // path_len
+	g.emit("mov x21, x2") // content_data
+	g.emit("mov x22, x3") // content_len
+	// content byte length + byte ptr.
+	g.emitStrLen2W("w24", "x22")             // x24 = content byte length
+	g.emitStrDataPtr2W("x23", "x21", "x22", 64) // x23 = content byte ptr; scratch at [x29+64]
+	// path byte ptr (separate scratch).
+	g.emitStrDataPtr2W("x0", "x19", "x20", 80)  // x0 = path byte ptr; scratch at [x29+80]
+	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
+	g.emit("mov x1, x0")
+	g.emit("mov x0, #-100")
+	g.emit("mov x2, #577")
+	g.emit("mov x3, #0644")
+	g.emit("mov x8, #56")
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lwf2w_err_open")
+	g.emit("mov x21, x0") // fd (reuse x21 — content_data no longer needed past this point)
+	// Write loop. x22 = cumulative bytes written (callee-
+	// save). Note: x20 still holds path_len which we needed
+	// for io_error — preserved across the loop since syscall
+	// doesn't touch x20.
+	g.emit("mov x22, #0")
+	g.label(".Lwf2w_loop")
+	g.emit("cmp x22, x24")
+	g.emit("b.ge .Lwf2w_done")
+	g.emit("mov x0, x21")        // fd
+	g.emit("add x1, x23, x22")   // buf + offset
+	g.emit("sub x2, x24, x22")   // remaining
+	g.emit("mov x8, #64")
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lwf2w_err_close")
+	g.emit("add x22, x22, x0")
+	g.emit("b .Lwf2w_loop")
+	g.label(".Lwf2w_done")
+	g.emit("mov x0, x21")
+	g.emit("mov x8, #57") // close
+	g.emit("svc #0")
+	// Return None: 8-byte box, tag=1.
+	g.emit("mov x0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.emit("b .Lwf2w_return")
+	g.label(".Lwf2w_err_close")
+	g.emit("neg x22, x0") // errno
+	g.emit("mov x0, x21")
+	g.emit("mov x8, #57")
+	g.emit("svc #0")
+	g.emit("b .Lwf2w_err_dispatch")
+	g.label(".Lwf2w_err_open")
+	g.emit("neg x22, x0")
+	g.label(".Lwf2w_err_dispatch")
+	// __lang_io_error(errno, path_data, path_len).
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __lang_io_error")
+	g.emit("mov x19, x0") // stash IoError box
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")     // tag = 0 (Some)
+	g.emit("str x19, [x0, #8]") // payload
+	g.label(".Lwf2w_return")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
 	g.emit("ret")
 	g.sizeDirective("__lang_write_file")
 	g.line(".ltorg")
