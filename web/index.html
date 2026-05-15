@@ -191,31 +191,43 @@ function main(): i32 {
     var s: string = "  Hello, lang!  ";
     print("len:        " + len(s).to_string());
     print("trim:       \\"" + s.trim() + "\\"");
-    print("upper:      " + s.to_upper());
-    print("lower:      " + s.to_lower());
-    print("starts:     " + s.trim().starts_with("Hello").to_string());
+    print("byte[2]:    " + s[2].to_string());
+    var starts: string = "no";
+    if (s.trim().starts_with("Hello")) { starts = "yes"; }
+    print("starts:     " + starts);
+    var contains: string = "no";
+    if (s.contains("lang")) { contains = "yes"; }
+    print("contains:   " + contains);
     var parts: string[] = "a,b,c,d".split(",");
     var i: i32 = 0;
     var joined: string = "";
     while (i < len(parts)) {
+        if (i > 0) { joined = joined + " | "; }
         joined = joined + parts[i];
         i = i + 1;
     }
-    print("split+join: " + joined);
-    return 0;
+    print("split:      " + joined);
+    print("replace:    " + "hello world".replace("world", "lang"));
+    return len(parts);
 }`,
-  sort: `function main(): i32 {
-    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
-    var asc: i32[] = sort_i32_asc(xs);
+  sort: `function join_i32s(arr: i32[]): string {
     var i: i32 = 0;
-    var line: string = "";
-    while (i < len(asc)) {
-        if (i > 0) { line = line + ", "; }
-        line = line + asc[i].to_string();
+    var out: string = "";
+    while (i < len(arr)) {
+        if (i > 0) { out = out + ", "; }
+        out = out + arr[i].to_string();
         i = i + 1;
     }
-    print("input:  " + xs[0].to_string() + ", ...");
-    print("sorted: " + line);
+    return out;
+}
+
+function main(): i32 {
+    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
+    print("input:  [" + join_i32s(xs) + "]");
+    var asc: i32[] = sort_i32_asc(xs);
+    print("sorted: [" + join_i32s(asc) + "]");
+    var desc: i32[] = sort_i32_desc(xs);
+    print("desc:   [" + join_i32s(desc) + "]");
     return len(asc);
 }`,
   union: `struct Add { l: i32, r: i32 }
