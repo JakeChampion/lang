@@ -201,14 +201,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	if opts.PrintMainResult {
 		deadFuncExtras = append(deadFuncExtras, "int_to_string")
 	}
-	// `__state_init` is wired into the wasm `(start ...)`
-	// section by the codegen layer below — that wiring isn't
-	// visible to the IR-level DCE walker, so pin the function
-	// as a live root manually whenever state{} blocks declared
-	// any non-literal init expressions.
-	if len(prog.States) > 0 {
-		deadFuncExtras = append(deadFuncExtras, "__state_init")
-	}
 	if live := ir.LiveFunctionsWithAliases(ip, codegenAliasMap, deadFuncExtras...); live != nil {
 		out := ip.Funcs[:0]
 		for _, irFn := range ip.Funcs {
@@ -234,20 +226,6 @@ type generator struct {
 	// because they're the only ones a `var f = name` reference can
 	// reach by name.
 	origTopLevelCount int
-
-	// stateDecls preserves the state-block declarations from the
-	// source program so the module-emit pipeline can render them
-	// as wasm globals after the memory declaration. Empty for
-	// programs without state blocks.
-	stateDecls []*ast.StateDecl
-	// needsPersistent is true when the program has any state{}
-	// block. Triggers the two-cursor allocator wiring: a
-	// reserved persistent heap region between the strings and
-	// the arena, a separate persistent cursor at mem[44], and
-	// an active-mode flag at mem[48] that __lang_alloc consults
-	// to decide which cursor to bump. Programs without state
-	// keep the single-cursor layout for minimum overhead.
-	needsPersistent bool
 
 	// Runtime / strings / arrays.
 	needsRuntime  bool
@@ -1537,119 +1515,6 @@ func (g *generator) scanForStringEq(prog *ast.Program) {
 	}
 }
 
-// emitStateGlobals writes one `(global $state_<name> (mut T)
-// (T.const N))` declaration per state-block var. Called from
-// the module-emit pipeline after the memory declaration so
-// the globals are visible to every function that follows.
-//
-// Two paths cover the var's init expression:
-//   - Literal scalar init (NumberLit / FloatLit / BoolLit or
-//     `-LIT`) → bake the literal into the wasm global's init
-//     expression directly. Zero runtime cost.
-//   - Anything else (string init, computed scalar init like
-//     `1 + 2 * 3`) → emit the global with a zero placeholder,
-//     and the synthesised `__state_init` start function (see
-//     emitStateInit) computes the real value at module-
-//     instantiation time and `global.set`s it.
-//
-// State init runs while the bump cursor is still at its
-// initial position, so any allocations the init expression
-// performs (e.g. string concat) end up below the per-request
-// `arena_save` point and are preserved across `arena_restore`.
-func (g *generator) emitStateGlobals() {
-	for _, sd := range g.stateDecls {
-		for _, v := range sd.Vars {
-			if _, isStr := v.Type.(ast.StringType); isStr {
-				// Two-word string ABI on wasm32: a string state
-				// var occupies two i32 globals `$state_<name>_data`
-				// + `$state_<name>_len`. Both start at 0; the
-				// synthesised `__state_init` runs the init
-				// expression and writes both halves before any
-				// user code runs.
-				g.linef(`(global $state_%s_data (mut i32) (i32.const 0))`, v.Name)
-				g.linef(`(global $state_%s_len (mut i32) (i32.const 0))`, v.Name)
-				continue
-			}
-			wasmTy := stateGlobalWasmType(v.Type)
-			if isStateInitLiteralExpr(v.Init) {
-				g.linef(`(global $state_%s (mut %s) (%s.const %s))`,
-					v.Name, wasmTy, wasmTy, formatStateInit(v.Init))
-			} else {
-				// Zero / null placeholder; __state_init writes
-				// the real value before any user code runs.
-				zero := "0"
-				if wasmTy == "f32" || wasmTy == "f64" {
-					zero = "0.0"
-				}
-				g.linef(`(global $state_%s (mut %s) (%s.const %s))`,
-					v.Name, wasmTy, wasmTy, zero)
-			}
-		}
-	}
-}
-
-// stateGlobalWasmType picks the wasm scalar type for a state
-// var's declared lang-level type. Pointers (today: string) are
-// i32-shaped at the wasm layer; numeric / float types pick
-// i32 / i64 / f32 / f64 by width.
-func stateGlobalWasmType(t ast.Type) string {
-	switch typ := t.(type) {
-	case ast.NumberType:
-		if typ.Width == 64 {
-			return "i64"
-		}
-		return "i32"
-	case ast.FloatType:
-		if typ.Width == 64 {
-			return "f64"
-		}
-		return "f32"
-	case ast.StringType:
-		return "i32"
-	}
-	return "i32"
-}
-
-// isStateInitLiteralExpr matches the scalar literal shapes
-// that compile to a wasm `<type>.const N` global init
-// expression directly — no runtime computation needed. Pairs
-// with the runtime-init path in emitStateInit for everything
-// else.
-func isStateInitLiteralExpr(e ast.Expr) bool {
-	switch v := e.(type) {
-	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit:
-		return true
-	case *ast.Unary:
-		if v.Op == "-" {
-			return isStateInitLiteralExpr(v.Operand)
-		}
-	}
-	return false
-}
-
-// formatStateInit serialises a literal initialiser to the text
-// the wasm `<type>.const` opcode wants. Negation is flattened
-// (the parser produces `Unary{"-", lit}` for `-1`; wat accepts
-// `-1` as the const operand directly).
-func formatStateInit(e ast.Expr) string {
-	switch v := e.(type) {
-	case *ast.NumberLit:
-		return fmt.Sprintf("%d", v.Value)
-	case *ast.FloatLit:
-		return formatFloatBits(v.Value)
-	case *ast.BoolLit:
-		if v.Value {
-			return "1"
-		}
-		return "0"
-	case *ast.Unary:
-		if v.Op == "-" {
-			return "-" + formatStateInit(v.Operand)
-		}
-	}
-	return "0"
-}
-
 // formatFloatBits formats a float literal so wasmtime accepts
 // it. Fractional values use Go's default %g; integers get a
 // trailing `.0` so they parse as floats not ints.
@@ -2281,39 +2146,11 @@ func (g *generator) emitRuntimePreamble() {
 		// might need them for the future-trailers (no — future-trailers.drop
 		// is what we use; we don't subscribe). Skip.
 	}
-	// Memory layout with state{}-block support:
-	//   [0..63]                     reserved scratch
-	//   [64..stringEnd]             string entries + closure cells
-	//   [stringEnd..arenaStart]     persistent heap (state allocations)
-	//   [arenaStart..]              arena heap (per-request)
-	// where `arenaStart = stringEnd + persistentRegionBytes`.
-	//
-	// When the program has any state{} block we reserve
-	// `persistentRegionBytes` (= 4 MiB) up front for state-init
-	// allocations + future state-rooted mutations. Programs
-	// without state keep the original single-cursor layout
-	// (mem[40] starts at stringEnd, mem[44] / mem[48] / mem[52]
-	// are unused). Memory pages are sized accordingly so the
-	// data-segment writes for the cursor globals always land
-	// in addressable memory.
-	if g.needsPersistent {
-		// 64 pages * 64 KiB = 4 MiB persistent + ~1 page for static
-		// + arena startup. memory.grow extends arena as it fills.
-		g.line(`(memory $mem 64)`)
-	} else {
-		g.line(`(memory $mem 1)`)
-	}
-
-	// state{}-block module-globals. Each `state { var NAME: T = LIT; }`
-	// becomes a mutable wasm global named `$state_<NAME>` whose
-	// init expression is the literal directly. The wasm runtime
-	// initialises globals once at module instantiation, before
-	// any user code runs — so `main()` / `handle()` see the
-	// declared values on first read, and writes persist until
-	// the module is unloaded. First-PR scalar-only scope means
-	// every init expression is a single `<type>.const N`; richer
-	// shapes would need a runtime `__state_init` start function.
-	g.emitStateGlobals()
+	// Memory layout:
+	//   [0..63]            reserved scratch
+	//   [64..stringEnd]    string entries + closure cells
+	//   [stringEnd..]      arena heap (per-request)
+	g.line(`(memory $mem 1)`)
 
 	{
 		// $__lang_alloc bumps the allocator pointer at memory[40] and
@@ -2337,46 +2174,6 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(func $__lang_alloc (param $size i32) (result i32)`)
 		g.indent++
 		g.line(`(local $ptr i32) (local $end i32) (local $need i32)`)
-		if g.needsPersistent {
-			// Two-cursor allocator: mem[48] selects which cursor
-			// to bump. 0 = arena (mem[40]), non-zero = persistent
-			// (mem[44]). Persistent allocations stay below the
-			// per-request `arena_save` boundary even when bumped
-			// during handle() bodies, so state mutations survive
-			// `arena_restore` cleanly. Persistent OOMs trap on
-			// crossing mem[52] (the persistent floor); arena OOMs
-			// extend memory via memory.grow as before.
-			g.line(`i32.const 48`)
-			g.line(`i32.load`)
-			g.line(`if`)
-			g.indent++
-			// Persistent path: ptr = mem[44]; mem[44] = ptr + size;
-			// trap if mem[44] > mem[52] (cap).
-			g.line(`i32.const 44`)
-			g.line(`i32.load`)
-			g.line(`local.set $ptr`)
-			g.line(`local.get $ptr`)
-			g.line(`local.get $size`)
-			g.line(`i32.add`)
-			g.line(`local.set $end`)
-			g.line(`local.get $end`)
-			g.line(`i32.const 52`)
-			g.line(`i32.load`)
-			g.line(`i32.gt_u`)
-			g.line(`if`)
-			g.indent++
-			// Persistent OOM: 4 MiB region exhausted. Trap.
-			g.line(`unreachable`)
-			g.indent--
-			g.line(`end`)
-			g.line(`i32.const 44`)
-			g.line(`local.get $end`)
-			g.line(`i32.store`)
-			g.line(`local.get $ptr`)
-			g.line(`return`)
-			g.indent--
-			g.line(`end`)
-		}
 		// Arena path: ptr = mem[40]; end = ptr + size; grow memory
 		// if end > current pages * 64KB; mem[40] = end; return ptr.
 		g.line(`i32.const 40`)
@@ -2413,30 +2210,6 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`local.get $ptr`)
 		g.indent--
 		g.line(`)`)
-
-		if g.needsPersistent {
-			// $__lang_set_persistent_mode(flag) — save the previous
-			// mode, set the new one, return the old. Codegen wraps
-			// state-init bodies and state-rooted call sites as:
-			//   prev = __lang_set_persistent_mode(1)
-			//   <work>
-			//   __lang_set_persistent_mode(prev)
-			// The save/restore shape composes through nested calls
-			// without the inner reset clobbering an outer "we're
-			// already in persistent mode" frame.
-			g.line(`(func $__lang_set_persistent_mode (param $flag i32) (result i32)`)
-			g.indent++
-			g.line(`(local $prev i32)`)
-			g.line(`i32.const 48`)
-			g.line(`i32.load`)
-			g.line(`local.set $prev`)
-			g.line(`i32.const 48`)
-			g.line(`local.get $flag`)
-			g.line(`i32.store`)
-			g.line(`local.get $prev`)
-			g.indent--
-			g.line(`)`)
-		}
 
 		// SSO seams. These three helpers are the runtime side of the
 		// small-string-optimisation migration: every string value
@@ -6963,7 +6736,7 @@ func (g *generator) emitDataSegments() {
 	// floor) caps the persistent region. The two-cursor layout is
 	// described in detail at the (memory $mem ...) declaration in
 	// the same file.
-	if g.needsArrays || g.needsPersistent {
+	if g.needsArrays {
 		start := g.stringOffset
 		if start < 64 {
 			start = 64
@@ -6979,25 +6752,9 @@ func (g *generator) emitDataSegments() {
 		if start%8 != 0 {
 			start += 8 - (start % 8)
 		}
-		if g.needsPersistent {
-			persistentStart := start
-			arenaStart := start + persistentRegionBytes
-			g.linef(`(data (i32.const 40) "%s")`, encodeI32(arenaStart))
-			g.linef(`(data (i32.const 44) "%s")`, encodeI32(persistentStart))
-			g.linef(`(data (i32.const 52) "%s")`, encodeI32(arenaStart))
-		} else {
-			g.linef(`(data (i32.const 40) "%s")`, encodeI32(start))
-		}
+		g.linef(`(data (i32.const 40) "%s")`, encodeI32(start))
 	}
 }
-
-// persistentRegionBytes is the size of the reserved persistent
-// heap region for state{}-block allocations. Sits between the
-// strings and the arena heap. 4 MiB is enough for typical state
-// (counters, small Maps, small T[]); programs that need more
-// will trap on persistent OOM until the region grows
-// dynamically — that's a future PR.
-const persistentRegionBytes = 4 * 1024 * 1024
 
 // encodeI32 returns a four-byte little-endian byte string in WAT data
 // escape form (e.g. 13 → `\0d\00\00\00`).

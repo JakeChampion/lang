@@ -133,19 +133,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn
 	}
-	// State[T] (program-lifetime no-op): hoist prog.States
-	// into the generator so emitDataSections can write the
-	// .data/.bss slots, and detect __state_init so _start
-	// calls it before main.
-	g.stateDecls = prog.States
-	if info != nil && len(info.StateVars) > 0 {
-		for _, fn := range prog.Funcs {
-			if fn.Name == "__state_init" {
-				g.usesStateInit = true
-				break
-			}
-		}
-	}
 	for _, fn := range ip.Funcs {
 		for _, op := range fn.Ops {
 			if op.Kind == ir.OpCallDirect {
@@ -379,12 +366,6 @@ type generator struct {
 	usesWriteFile bool
 	usesIoError   bool
 
-	// stateDecls + usesStateInit drive State[T] codegen.
-	// See the arm64 generator for the program-lifetime / no-op
-	// interpretation this PR implements.
-	stateDecls    []*ast.StateDecl
-	usesStateInit bool
-
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
 	// open_writer / open_appender + Reader/Writer method
@@ -513,12 +494,6 @@ func (g *generator) emitStartRuntime() {
 		g.emit("lea rdi, [rsp + 8]")          // rdi = &argv[0]
 		g.emit("lea rdi, [rdi + rax*8 + 8]")  // skip argv + NULL terminator
 		g.emit("mov [rip + __lang_envp], rdi")
-	}
-	if g.usesStateInit {
-		// Run the synthesised state-init body before main.
-		// Initialises every non-literal state-block var
-		// (literal inits live in .data already).
-		g.emit("call __state_init")
 	}
 	g.emit("call main")
 	g.emit("mov edi, eax")            // exit code = main's return value
@@ -1196,43 +1171,6 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.pop()
 		g.emit(fmt.Sprintf("mov [rbp-%d], rax", (op.I32+1)*8))
 		g.push()
-
-	// -------- state (module-global) vars --------
-	//
-	// See arm64 generator for the program-lifetime / no-op
-	// interpretation. .data / .bss slot reached via rip-
-	// relative addressing; persistent-mode toggles are no-ops.
-
-	case ir.OpLoadGlobal:
-		w := stateWidthBytes(g.lookupStateType(op.Str))
-		if w == 8 {
-			g.emit(fmt.Sprintf("mov rax, [rip + .Lstate_%s]", op.Str))
-		} else {
-			g.emit(fmt.Sprintf("mov eax, [rip + .Lstate_%s]", op.Str))
-		}
-		g.push()
-	case ir.OpStoreGlobal:
-		g.pop()
-		w := stateWidthBytes(g.lookupStateType(op.Str))
-		if w == 8 {
-			g.emit(fmt.Sprintf("mov [rip + .Lstate_%s], rax", op.Str))
-		} else {
-			g.emit(fmt.Sprintf("mov [rip + .Lstate_%s], eax", op.Str))
-		}
-
-	case ir.OpPersistentSet:
-		// Toggle the allocator mode byte at __lang_alloc_mode
-		// and push the previous mode for the matching Restore.
-		// Op.I32 carries the new mode (0 = arena, 1 = persistent).
-		g.emit("movzx eax, byte ptr [rip + __lang_alloc_mode]")
-		g.emit(fmt.Sprintf("mov byte ptr [rip + __lang_alloc_mode], %d", op.I32&1))
-		g.push() // push old mode
-		g.usesAlloc = true
-	case ir.OpPersistentRestore:
-		// Pop the saved mode and write it back to the mode byte.
-		g.pop()
-		g.emit("mov [rip + __lang_alloc_mode], al")
-		g.usesAlloc = true
 
 	// -------- control flow --------
 	//
@@ -2379,10 +2317,6 @@ func (g *generator) emitDataSections() {
 			g.line("\t.space 4096")
 		}
 	}
-	// State[T] globals — emitted after the runtime .bss
-	// reservations so the layout is grouped (and any future
-	// link-time inspection sees state vars together).
-	g.emitStateGlobals()
 }
 
 // emitAllocRuntime emits `__lang_alloc(size: i64) -> i64`,
@@ -4211,132 +4145,6 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_close_fd_box, .-__lang_close_fd_box")
-}
-
-// stateWidthBytes returns the storage width (4 or 8 bytes) for
-// a state-var of the given lang type. Wide scalars (i64 / f64)
-// take 8 bytes; pointer-shaped types take ptrW (=8 on x86-64);
-// everything else takes 4. Matches arm64's helper and
-// `payloadSlotSize` in the IR.
-func stateWidthBytes(t ast.Type) int {
-	if t == nil {
-		return 4
-	}
-	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
-		return 8
-	}
-	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
-		return 8
-	}
-	if ast.IsPointerType(t) {
-		return 8
-	}
-	return 4
-}
-
-// lookupStateType resolves a state-var name to its declared
-// lang type, for width selection at OpLoadGlobal / OpStoreGlobal.
-func (g *generator) lookupStateType(name string) ast.Type {
-	if g.info == nil {
-		return nil
-	}
-	return g.info.StateVars[name]
-}
-
-// stateInitLiteralBits returns the raw bit pattern of a literal
-// state initialiser. Mirrors arm64.
-func stateInitLiteralBits(e ast.Expr, t ast.Type) (uint64, bool) {
-	switch v := e.(type) {
-	case *ast.NumberLit:
-		return uint64(v.Value), true
-	case *ast.FloatLit:
-		w := 32
-		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
-			w = 64
-		}
-		if w == 64 {
-			return math.Float64bits(v.Value), true
-		}
-		return uint64(math.Float32bits(float32(v.Value))), true
-	case *ast.BoolLit:
-		if v.Value {
-			return 1, true
-		}
-		return 0, true
-	case *ast.Unary:
-		if v.Op == "-" {
-			if inner, ok := stateInitLiteralBits(v.Operand, t); ok {
-				w := stateWidthBytes(t)
-				if w == 8 {
-					return uint64(-int64(inner)), true
-				}
-				return uint64(uint32(-int32(inner))), true
-			}
-		}
-	}
-	return 0, false
-}
-
-// emitStateGlobals writes one labelled slot per state-block
-// var (program-lifetime no-op interpretation; see arm64
-// generator + docs/BACKEND-PARITY.md). Literal initialisers
-// are baked into .data; non-literal ones land in .bss and
-// __state_init writes the real value at startup.
-func (g *generator) emitStateGlobals() {
-	if len(g.stateDecls) == 0 {
-		return
-	}
-	hasData, hasBss := false, false
-	for _, sd := range g.stateDecls {
-		for _, v := range sd.Vars {
-			if _, ok := stateInitLiteralBits(v.Init, v.Type); ok {
-				hasData = true
-			} else {
-				hasBss = true
-			}
-		}
-	}
-	if hasData {
-		g.line("")
-		g.line(".section .data")
-		for _, sd := range g.stateDecls {
-			for _, v := range sd.Vars {
-				bits, ok := stateInitLiteralBits(v.Init, v.Type)
-				if !ok {
-					continue
-				}
-				w := stateWidthBytes(v.Type)
-				if w == 8 {
-					g.line(".align 8")
-					g.label(".Lstate_" + v.Name)
-					g.line(fmt.Sprintf("\t.quad %d", int64(bits)))
-				} else {
-					g.line(".align 4")
-					g.label(".Lstate_" + v.Name)
-					g.line(fmt.Sprintf("\t.long %d", int32(bits)))
-				}
-			}
-		}
-	}
-	if hasBss {
-		g.line("")
-		g.line(".section .bss")
-		for _, sd := range g.stateDecls {
-			for _, v := range sd.Vars {
-				if _, ok := stateInitLiteralBits(v.Init, v.Type); ok {
-					continue
-				}
-				w := stateWidthBytes(v.Type)
-				if w == 8 {
-					g.line(".align 8")
-				} else {
-					g.line(".align 4")
-				}
-				g.label(".Lstate_" + v.Name)
-				g.line(fmt.Sprintf("\t.zero %d", w))
-			}
-		}
-	}
 }
 
 // escapeForGAS escapes a string for the GAS `.asciz`

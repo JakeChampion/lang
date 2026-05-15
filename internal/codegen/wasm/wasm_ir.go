@@ -48,8 +48,6 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		httpHandler:       opts.HttpHandler,
 		printMainResult:   opts.PrintMainResult,
 		origTopLevelCount: countOrigTopLevel(prog),
-		stateDecls:        prog.States,
-		needsPersistent:   len(prog.States) > 0,
 		stringPool:        map[string]int{},
 		funcIndex:         map[string]int{},
 		sigIndex:          map[string]int{},
@@ -252,18 +250,6 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 			continue
 		}
 		g.linef(`(export %q (func $%s))`, fn.Name, fn.Name)
-	}
-	// state{}-block runtime init: the synthesised
-	// `__state_init` runs at module instantiation, before any
-	// host-callable export. wasm's `(start FN)` section is the
-	// canonical wire-up — every conforming runtime invokes it
-	// once when the module is instantiated, ahead of any
-	// caller-driven entry point. Pairs with the global
-	// declarations emitted by `emitStateGlobals` (those carry
-	// zero / null placeholders for non-literal init; the
-	// `(start)` body fills them in).
-	if g.emittedFuncs["__state_init"] {
-		g.line(`(start $__state_init)`)
 	}
 	// WASI command convention (preview-1 and preview-2 alike) wants
 	// `_start` as the entry point — that's what `wasmtime run`
@@ -690,22 +676,6 @@ func slotIsString(fn *ast.FuncDecl, irFn *ir.Func, idx int32) bool {
 	return ok
 }
 
-// stateVarIsString reports whether the named state var is
-// string-typed — used by OpLoadGlobal / OpStoreGlobal to fan
-// their wat emission out into two `global.get` / `global.set`
-// pairs over `$state_<name>_data` / `$state_<name>_len`.
-func (g *generator) stateVarIsString(name string) bool {
-	if g.info == nil {
-		return false
-	}
-	t, ok := g.info.StateVars[name]
-	if !ok {
-		return false
-	}
-	_, isStr := t.(ast.StringType)
-	return isStr
-}
-
 // blockTypeSuffix returns the `(result T)` clause for a structured
 // block / loop / if op, or "" for a void block.
 func blockTypeSuffix(bt int32) string {
@@ -903,41 +873,6 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		} else {
 			g.linef("local.tee $%s", name)
 		}
-	case ir.OpLoadGlobal:
-		if g.stateVarIsString(op.Str) {
-			// Two-word ABI: push `(data, len)` in low-to-high
-			// order so the operand stack mirrors a fresh
-			// OpConstStr / runtime-helper-result shape.
-			g.linef("global.get $state_%s_data", op.Str)
-			g.linef("global.get $state_%s_len", op.Str)
-		} else {
-			g.linef("global.get $state_%s", op.Str)
-		}
-	case ir.OpStoreGlobal:
-		if g.stateVarIsString(op.Str) {
-			// Stack on entry: [..., data, len]. Pop len first
-			// (most recently pushed), then data — matches the
-			// (data, len) push order in OpLoadGlobal / OpConstStr.
-			g.linef("global.set $state_%s_len", op.Str)
-			g.linef("global.set $state_%s_data", op.Str)
-		} else {
-			g.linef("global.set $state_%s", op.Str)
-		}
-	case ir.OpPersistentSet:
-		// Toggle the state-allocator-mode flag. The wat shim
-		// `__lang_set_persistent_mode(flag)` writes the new mode
-		// to mem[48] and returns the previous mode so callers
-		// can restore on exit. I32 carries the new mode (1 =
-		// persistent, 0 = arena).
-		g.linef("i32.const %d", op.I32)
-		g.line("call $__lang_set_persistent_mode")
-	case ir.OpPersistentRestore:
-		// Pop the previously-saved mode off the operand stack
-		// and write it back through the same wat shim. The
-		// shim's return value (the now-replaced mode) is
-		// discarded — restoration happens once per save site.
-		g.line("call $__lang_set_persistent_mode")
-		g.line("drop")
 	case ir.OpAdd:
 		g.linef("%s.add", intPrefix())
 	case ir.OpSub:
