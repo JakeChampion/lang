@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lang playground</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    padding: 1.5em;
+    color: #1a1a1a;
+    background: #fafafa;
+  }
+  h1 {
+    margin: 0 0 0.25em;
+    font-size: 1.4em;
+  }
+  .subtitle {
+    color: #666;
+    font-size: 0.95em;
+    margin-bottom: 1em;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1em;
+    max-width: 1400px;
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+  }
+  .pane h2 {
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #555;
+    margin: 0 0 0.4em;
+  }
+  textarea, pre {
+    font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    background: #fff;
+    padding: 0.6em 0.8em;
+    box-sizing: border-box;
+  }
+  textarea {
+    width: 100%;
+    height: 520px;
+    resize: vertical;
+  }
+  pre {
+    margin: 0;
+    height: 520px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .out-stderr {
+    color: #b00020;
+  }
+  .out-info {
+    color: #555;
+    font-size: 0.85em;
+    padding-top: 0.5em;
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.8em;
+    margin-bottom: 0.6em;
+  }
+  button {
+    font: inherit;
+    padding: 0.45em 1em;
+    border-radius: 4px;
+    border: 1px solid #2563eb;
+    background: #2563eb;
+    color: white;
+    cursor: pointer;
+  }
+  button:disabled {
+    background: #93c5fd;
+    border-color: #93c5fd;
+    cursor: progress;
+  }
+  button:hover:not(:disabled) {
+    background: #1d4ed8;
+  }
+  select {
+    font: inherit;
+    padding: 0.35em 0.5em;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    background: white;
+  }
+  .status {
+    font-size: 0.85em;
+    color: #666;
+  }
+  @media (max-width: 800px) {
+    .grid { grid-template-columns: 1fr; }
+    textarea, pre { height: 320px; }
+  }
+</style>
+</head>
+<body>
+<h1>lang playground</h1>
+<p class="subtitle">
+  Edit a lang program on the left, hit <strong>Run</strong>, and
+  see its output on the right. Drives the in-tree AST interpreter
+  (no codegen, no link) compiled to wasm. State is fresh per run.
+</p>
+
+<div class="toolbar">
+  <button id="run" disabled>Run</button>
+  <select id="example">
+    <option value="">— pick an example —</option>
+    <option value="hello">hello, world</option>
+    <option value="fact">factorial</option>
+    <option value="union">union types + match</option>
+    <option value="result">Result error handling</option>
+    <option value="interp">lex+parse arithmetic</option>
+  </select>
+  <span class="status" id="status">loading runtime…</span>
+</div>
+
+<div class="grid">
+  <div class="pane">
+    <h2>source</h2>
+    <textarea id="src" spellcheck="false"></textarea>
+  </div>
+  <div class="pane">
+    <h2>output</h2>
+    <pre id="out"></pre>
+    <div class="out-info" id="meta"></div>
+  </div>
+</div>
+
+<script src="wasm_exec.js"></script>
+<script>
+const examples = {
+  hello: `function main(): i32 {
+    print("hello, world");
+    return 0;
+}`,
+  fact: `function fact(n: i32): i32 {
+    if (n == 0) { return 1; }
+    return n * fact(n - 1);
+}
+function main(): i32 {
+    var f: i32 = fact(5);
+    print("5! = " + f.to_string());
+    return f;
+}`,
+  union: `struct Add { l: i32, r: i32 }
+struct Mul { l: i32, r: i32 }
+struct Lit { v: i32 }
+type Expr = Add | Mul | Lit;
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Add(a) => { return a.l + a.r; },
+        Mul(m) => { return m.l * m.r; },
+        Lit(l) => { return l.v; },
+    }
+}
+
+function main(): i32 {
+    var sum: Expr = Add { l: 2, r: 3 };
+    var prod: Expr = Mul { l: eval(sum), r: 4 };
+    return eval(prod);   // (2+3) * 4 = 20
+}`,
+  result: `struct ParseError { message: string, pos: i32 }
+
+function parse_int(s: string): Result[i32, ParseError] {
+    var n: i32 = len(s);
+    if (n == 0) {
+        return Err(ParseError { message: "empty input", pos: 0 });
+    }
+    var v: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (!b.is_digit()) {
+            return Err(ParseError { message: "not a digit", pos: i });
+        }
+        v = v * 10 + (b - 48);
+        i = i + 1;
+    }
+    return Ok(v);
+}
+
+function main(): i32 {
+    match (parse_int("12abc")) {
+        Ok(v) => { print("got: " + v.to_string()); return 0; },
+        Err(e) => { print("error at " + e.pos.to_string() + ": " + e.message); return 1; },
+    }
+}`,
+  interp: `// Tiny arithmetic interpreter — lexer + parser + eval in lang.
+struct TokInt   { value: i32 }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct BinOp { op: i32, left: Expr, right: Expr }
+type Expr = Num | BinOp;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) { i = i + 1; }
+        else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function peek_kind(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) {
+        TokInt(_)   => { return 0; },
+        TokPunct(_) => { return 1; },
+        TokEof(_)   => { return 2; },
+    }
+}
+function peek_punct(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+function peek_int(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) { TokInt(t) => { return t.value; }, _ => { return 0; } }
+}
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        BinOp(b) => {
+            var l: i32 = eval(b.left);
+            var r: i32 = eval(b.right);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+    }
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    if (peek_kind(toks, pos) == 0) {
+        cur[0] = pos + 1;
+        return Num { value: peek_int(toks, pos) };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (peek_kind(toks, pos) != 1) { return lhs; }
+        var op: i32 = peek_punct(toks, pos);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (peek_kind(toks, pos) != 1) { return lhs; }
+        var op: i32 = peek_punct(toks, pos);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function main(): i32 {
+    var src: string = "(1 + 2) * 3 - 4";
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var ast: Expr = parse_expr(toks, cur);
+    var v: i32 = eval(ast);
+    print(src + " = " + v.to_string());
+    return v;
+}`,
+};
+
+const srcEl = document.getElementById("src");
+const outEl = document.getElementById("out");
+const metaEl = document.getElementById("meta");
+const runBtn = document.getElementById("run");
+const statusEl = document.getElementById("status");
+const exampleEl = document.getElementById("example");
+
+srcEl.value = examples.hello;
+
+exampleEl.addEventListener("change", () => {
+  const v = exampleEl.value;
+  if (v && examples[v]) {
+    srcEl.value = examples[v];
+    outEl.textContent = "";
+    metaEl.textContent = "";
+  }
+});
+
+function runOnce() {
+  if (typeof globalThis.langInterpret !== "function") {
+    outEl.textContent = "(runtime not ready)";
+    return;
+  }
+  runBtn.disabled = true;
+  runBtn.textContent = "Running…";
+  // Yield to the event loop so the disabled state paints before
+  // the wasm call blocks.
+  setTimeout(() => {
+    try {
+      const result = globalThis.langInterpret(srcEl.value);
+      let body = result.stdout || "";
+      if (result.stderr) {
+        body += (body ? "\n" : "") + "[stderr]\n" + result.stderr;
+      }
+      if (result.error) {
+        body += (body ? "\n\n" : "") + "[error]\n" + result.error;
+      }
+      outEl.textContent = body || "(no output)";
+      metaEl.textContent = "exit " + result.exit;
+    } catch (e) {
+      outEl.textContent = "JS error: " + e;
+      metaEl.textContent = "";
+    } finally {
+      runBtn.disabled = false;
+      runBtn.textContent = "Run";
+    }
+  }, 0);
+}
+
+runBtn.addEventListener("click", runOnce);
+srcEl.addEventListener("keydown", (e) => {
+  // Ctrl/Cmd+Enter runs.
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    runOnce();
+  }
+});
+
+// Boot the wasm runtime.
+const go = new Go();
+WebAssembly.instantiateStreaming(fetch("lang.wasm"), go.importObject)
+  .then(result => {
+    go.run(result.instance);
+    runBtn.disabled = false;
+    statusEl.textContent = "ready · Ctrl/Cmd+Enter to run";
+  })
+  .catch(err => {
+    statusEl.textContent = "wasm load failed: " + err;
+  });
+</script>
+</body>
+</html>
