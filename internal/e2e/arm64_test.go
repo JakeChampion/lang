@@ -241,6 +241,156 @@ function main(): i32 {
 	}
 }
 
+// Parser-in-lang v2: full lex → parse → eval pipeline. Wires
+// the lexer-in-lang spike (PRs #394-#395, #399-#401) to the
+// recursive-descent parser (PR #402) so a source string flows
+// through tokenisation, AST construction, and recursive
+// evaluation — all in lang.
+//
+//   interp("1 + 2 * 3") → 7
+//   interp("(1 + 2) * 3") → 9
+//
+// This is the smallest end-to-end "compiler-shaped" pipeline
+// the lang has ever run on itself. Closes the lex+parse half
+// of the self-host validation arc; the next stages (checker,
+// IR, codegen) are bigger but architecturally similar shape.
+func TestArm64InterpV2(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+
+type Token = TokInt | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct BinOp { op: i32, left: Expr, right: Expr }
+
+type Expr = Num | BinOp;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function peek_kind(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) {
+        TokInt(_) => { return 0; },
+        TokPunct(_) => { return 1; },
+        TokEof(_) => { return 2; },
+    }
+}
+
+function peek_punct(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) {
+        TokPunct(p) => { return p.ch; },
+        _ => { return 0; },
+    }
+}
+
+function peek_int(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) {
+        TokInt(t) => { return t.value; },
+        _ => { return 0; },
+    }
+}
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        BinOp(b) => {
+            var l: i32 = eval(b.left);
+            var r: i32 = eval(b.right);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+    }
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = peek_kind(toks, pos);
+    if (k == 0) {
+        var v: i32 = peek_int(toks, pos);
+        cur[0] = pos + 1;
+        return Num { value: v };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (peek_kind(toks, pos) != 1) { return lhs; }
+        var op: i32 = peek_punct(toks, pos);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (peek_kind(toks, pos) != 1) { return lhs; }
+        var op: i32 = peek_punct(toks, pos);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function interp(src: string): i32 {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var ast: Expr = parse_expr(toks, cur);
+    return eval(ast);
+}
+
+function main(): i32 {
+    if (interp("1 + 2 * 3") != 7) { return 1; }
+    if (interp("(1 + 2) * 3") != 9) { return 2; }
+    if (interp("10 - 4 - 2") != 4) { return 3; }
+    if (interp("100 / 5 / 4") != 5) { return 4; }
+    if (interp("  42  ") != 42) { return 5; }
+    if (interp("(((7)))") != 7) { return 6; }
+    if (interp("2 + 3 * 4 - 5") != 9) { return 7; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (interp v2)", code)
+	}
+}
+
 // Parser-in-lang v1: recursive-descent arithmetic-expression
 // parser that consumes a hand-built Token[] and produces an
 // AST in the union shape the Go compiler's `internal/ast`
