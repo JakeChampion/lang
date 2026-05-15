@@ -1,0 +1,88 @@
+name: Pages
+
+# Publishes the web playground to GitHub Pages on push to main.
+# The job runs `./web/build.sh` (which compiles the Go wasm
+# entry point + refreshes the wasm_exec.js shim), then uploads
+# the `web/` directory as a Pages artefact for the deploy step.
+#
+# Repo-side prerequisites (one-time):
+#   1. Repository Settings → Pages → Source: "GitHub Actions"
+#   2. The default GITHUB_TOKEN permissions cover Pages writes;
+#      no PAT or secrets needed.
+#
+# The deploy URL appears in the job summary once it lands —
+# the actions/deploy-pages action sets it as the job output.
+# Typically `https://<user>.github.io/<repo>/`.
+#
+# Gated on changes that affect the playground build so we don't
+# burn CI minutes on unrelated edits. Plus a workflow_dispatch
+# trigger for manual reruns. The cmd/lang-wasm path filter
+# catches the entry point; web/** catches the page + build
+# script; internal/{ast,checker,...}/** catches the pipeline
+# stages the wasm build links against (a checker change can
+# alter what the page can run even if cmd/lang-wasm is
+# untouched).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cmd/lang-wasm/**"
+      - "web/**"
+      - "internal/ast/**"
+      - "internal/checker/**"
+      - "internal/constfold/**"
+      - "internal/diag/**"
+      - "internal/interp/**"
+      - "internal/lexer/**"
+      - "internal/modload/**"
+      - "internal/monomorph/**"
+      - "internal/parser/**"
+      - "internal/prelude/**"
+      - "internal/treeshake/**"
+      - "go.mod"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# GitHub Pages requires these permissions on the workflow,
+# not just the job, for OIDC-backed deploys.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Cancel in-flight runs for the same ref when a new commit
+# arrives. Pages only supports one deployment at a time; a
+# queue would just deploy a stale build.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+
+      - name: Build playground wasm
+        run: ./web/build.sh
+
+      - name: Upload Pages artefact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
