@@ -169,6 +169,125 @@ function (b: i32) is_ascii(): boolean {
     return b >= 0 && b <= 127;
 }
 
+// === Byte-level case helpers ===
+//
+// `(b: i32) is_lower()` / `is_upper()` / `to_lower()` /
+// `to_upper()` — ASCII-only. Non-letter bytes (digits, punct,
+// non-ASCII) pass through unchanged for the to_* path and
+// return false for the is_* path. Used by string-level
+// methods below and by hand-rolled tokenisers.
+
+function (b: i32) is_lower(): boolean {
+    return b >= 97 && b <= 122;
+}
+
+function (b: i32) is_upper(): boolean {
+    return b >= 65 && b <= 90;
+}
+
+function (b: i32) to_lower(): i32 {
+    if (b >= 65 && b <= 90) { return b + 32; }
+    return b;
+}
+
+function (b: i32) to_upper(): i32 {
+    if (b >= 97 && b <= 122) { return b - 32; }
+    return b;
+}
+
+// === i32 numeric methods ===
+//
+// `(n: i32) abs()` — absolute value. Edge case: i32::MIN
+// (-2147483648) has no positive counterpart in i32; the
+// magnitude is carried through i64 so the result wraps to
+// i32::MIN itself (matches Rust i32::wrapping_abs / Go's
+// behaviour). Callers needing exact handling should widen
+// to i64 first.
+function (n: i32) abs(): i32 {
+    if (n < 0) {
+        var w: i64 = 0 - (n as i64);
+        return w as i32;
+    }
+    return n;
+}
+
+// `(n: i32) min(other) i32` / `max` / `clamp(lo, hi)` —
+// scalar reductions. Standard shape; matches Rust /
+// Gleam / Go (stdlib min/max which landed in Go 1.21).
+function (n: i32) min(other: i32): i32 {
+    if (n < other) { return n; }
+    return other;
+}
+
+function (n: i32) max(other: i32): i32 {
+    if (n > other) { return n; }
+    return other;
+}
+
+function (n: i32) clamp(lo: i32, hi: i32): i32 {
+    if (n < lo) { return lo; }
+    if (n > hi) { return hi; }
+    return n;
+}
+
+// === String predicates (whole-string ASCII checks) ===
+//
+// `(s: string) is_ascii_only()` / `is_numeric()` /
+// `is_alpha_only()` / `is_alnum_only()` — true iff EVERY
+// byte matches the predicate. Empty strings return true for
+// is_ascii_only (no non-ASCII bytes) and false for the
+// numeric / alpha variants (vacuously empty doesn't qualify
+// as a numeric or alphabetic word — matches Python str
+// isdigit / isalpha conventions).
+//
+// Suffix `_only` chosen because the bare names (`is_numeric`,
+// `is_alpha`) on a string would shadow the byte-receiver
+// versions above. The byte ones are scanner-loop hot paths
+// already; renaming would churn user code with no win.
+
+function (s: string) is_ascii_only(): boolean {
+    var n: i32 = len(s);
+    var i: i32 = 0;
+    while (i < n) {
+        if (s[i] > 127) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function (s: string) is_numeric(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        if (!s[i].is_digit()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function (s: string) is_alpha_only(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        if (!s[i].is_alpha()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function (s: string) is_alnum_only(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        if (!s[i].is_alnum()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // `sort_i32_asc(arr)` — return a fresh ascending-sorted
 // copy of `arr`. Insertion-sort: O(n²) worst case, but
 // for the compiler's small-list use cases (sorted field
