@@ -1165,6 +1165,188 @@ function main(): i32 {
 	}
 }
 
+// Lexer-in-lang v7: float literals + the Number/Float token-kind
+// split. Builds on v6 (line comments + full keyword set + string
+// escapes). Closes the last numeric-literal gap before f-strings.
+//
+// The Go lexer recognises a float as integer-digits followed by
+// `.<digit>+` — `1.5` is a Float, `1.` is the int `1` then a
+// `.` punctuator, `.5` is `.` then `5` (not a float either).
+// Exponent form (`1e10`, `1.5e-10`) isn't lexed as a single
+// token in lang. v7 mirrors that exactly.
+//
+// TokFloat carries the raw text spelling (`"1.5"`) rather than
+// a parsed f32/f64 — the real lexer does the same and defers
+// parse-to-double to the parser. The test asserts on the text,
+// which is sufficient to prove the lexer captured the right
+// bytes; numeric-equality testing would force the lang program
+// to do its own f32 parse, which is a downstream concern.
+//
+// The dot disambiguation point: `a[0].x` and `1.x` shouldn't
+// be lexed as floats. v7's `i + 1 < n && src[i] == '.' && next
+// is digit` rule handles both — `0.x` falls through (`x` isn't
+// a digit) so the `.` becomes a punctuator and `x` an ident.
+func TestArm64LexerV7(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokFloat { text: string }
+struct TokIdent { name: string }
+struct TokKw    { name: string }
+struct TokStr   { value: string }
+struct TokPunct { text: string }
+struct TokEof   { _pad: i32 }
+
+type Token = TokInt | TokFloat | TokIdent | TokKw | TokStr | TokPunct | TokEof;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    var numV: i32 = 0;
+    var start: i32 = 0;
+    var isFloat: boolean = false;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b == 47 && i + 1 < n && src[i + 1] == 47) {
+            i = i + 2;
+            while (i < n && src[i] != 10) { i = i + 1; }
+        } else if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            start = i;
+            numV = 0;
+            isFloat = false;
+            while (i < n && src[i].is_digit()) {
+                numV = numV * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            // Float when next is dot followed by digit. 1. and 1.x
+            // leave the dot for the punctuator branch — matches
+            // the Go lexer at internal/lexer/lexer.go:298.
+            if (i + 1 < n && src[i] == 46 && src[i + 1].is_digit()) {
+                isFloat = true;
+                i = i + 1;
+                while (i < n && src[i].is_digit()) { i = i + 1; }
+            }
+            if (isFloat) {
+                toks = toks.push(TokFloat { text: src[start:i] });
+            } else {
+                toks = toks.push(TokInt { value: numV });
+            }
+        } else if (b.is_alpha() || b == 95) {
+            start = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { text: src[i:i + 1] });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function main(): i32 {
+    // Bare floats — text spelling round-trips byte-exact.
+    var t1: Token[] = tokenize("1.5 2.0 100.001");
+    if (len(t1) != 4) { return 100 + len(t1); }
+    match (t1[0]) {
+        TokFloat(t) => { if (t.text != "1.5") { return 1; } },
+        _ => { return 2; },
+    }
+    match (t1[1]) {
+        TokFloat(t) => { if (t.text != "2.0") { return 3; } },
+        _ => { return 4; },
+    }
+    match (t1[2]) {
+        TokFloat(t) => { if (t.text != "100.001") { return 5; } },
+        _ => { return 6; },
+    }
+
+    // Mixed ints + floats — the int branch leaves untouched
+    // tokens before/after a float for the surrounding lexer state.
+    var t2: Token[] = tokenize("3 + 1.5 - 2");
+    if (len(t2) != 6) { return 200 + len(t2); }
+    match (t2[0]) {
+        TokInt(t) => { if (t.value != 3) { return 7; } },
+        _ => { return 8; },
+    }
+    match (t2[2]) {
+        TokFloat(t) => { if (t.text != "1.5") { return 9; } },
+        _ => { return 10; },
+    }
+    match (t2[4]) {
+        TokInt(t) => { if (t.value != 2) { return 11; } },
+        _ => { return 12; },
+    }
+
+    // Disambiguation: 1. must be the int 1 + the . punctuator,
+    // not a malformed float. Same for 1.x.
+    var t3: Token[] = tokenize("1.");
+    if (len(t3) != 3) { return 300 + len(t3); }
+    match (t3[0]) {
+        TokInt(t) => { if (t.value != 1) { return 13; } },
+        _ => { return 14; },
+    }
+    match (t3[1]) {
+        TokPunct(t) => { if (t.text != ".") { return 15; } },
+        _ => { return 16; },
+    }
+
+    var t4: Token[] = tokenize("1.x");
+    if (len(t4) != 4) { return 400 + len(t4); }
+    match (t4[0]) {
+        TokInt(t) => { if (t.value != 1) { return 17; } },
+        _ => { return 18; },
+    }
+    match (t4[1]) {
+        TokPunct(t) => { if (t.text != ".") { return 19; } },
+        _ => { return 20; },
+    }
+    match (t4[2]) {
+        TokIdent(t) => { if (t.name != "x") { return 21; } },
+        _ => { return 22; },
+    }
+
+    // .5 (no leading int digit) lexes as . + int 5 — the
+    // float branch never fires because the leading byte isn't
+    // a digit.
+    var t5: Token[] = tokenize(".5");
+    if (len(t5) != 3) { return 500 + len(t5); }
+    match (t5[0]) {
+        TokPunct(t) => { if (t.text != ".") { return 23; } },
+        _ => { return 24; },
+    }
+    match (t5[1]) {
+        TokInt(t) => { if (t.value != 5) { return 25; } },
+        _ => { return 26; },
+    }
+
+    // Method-call style on int: 0.to_string() — the dot
+    // disambiguation lets the parser see int + dot + ident
+    // rather than a botched float consuming to_string.
+    var t6: Token[] = tokenize("0.to_string");
+    if (len(t6) != 4) { return 600 + len(t6); }
+    match (t6[0]) {
+        TokInt(t) => { if (t.value != 0) { return 27; } },
+        _ => { return 28; },
+    }
+    match (t6[1]) {
+        TokPunct(t) => { if (t.text != ".") { return 29; } },
+        _ => { return 30; },
+    }
+    match (t6[2]) {
+        TokIdent(t) => { if (t.name != "to_string") { return 31; } },
+        _ => { return 32; },
+    }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (lexer v7)", code)
+	}
+}
+
 // Lexer-in-lang v6: line comments, full keyword set, string
 // literals with escape sequences. Builds on v5 (hex integers +
 // numeric suffixes), v4 (numeric suffixes), v3 (string literals,
