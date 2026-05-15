@@ -849,6 +849,25 @@ func pairFormVariantsFor(t ast.EnumType, info *checker.Info, ptrW int) map[strin
 		if len(t.Args) != 2 || !isPairFormPayloadShape(t.Args[0], ptrW) || !isPairFormPayloadShape(t.Args[1], ptrW) {
 			return nil
 		}
+		// Mixed-width variants (e.g. `Result[i32, MyStruct]`)
+		// break the heap-box rebox the call-site uses to
+		// integrate pair-form returns with non-pair-form
+		// consumers: the maker stores payload at the variant-
+		// specific offset (+4 for i32, +8 for pointer-shape),
+		// the rebox picks a single offset, and the match-arm
+		// reader reads at the variant-specific offset. With
+		// same-width variants those three line up; with mixed
+		// widths they don't. Fall back to the heap-box path —
+		// `Result[i32, MyStruct]` then flows as a single i32
+		// pointer and the match-arm consumer dispatches on
+		// `[ptr+0]` tag + reads the payload at its declared
+		// offset. Slower (one alloc per construction) but
+		// correct end-to-end.
+		w0 := pairPayloadWidth(t.Args[0])
+		w1 := pairPayloadWidth(t.Args[1])
+		if w0 != w1 {
+			return nil
+		}
 		return resultVariants
 	}
 	if info == nil {

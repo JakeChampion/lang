@@ -241,6 +241,211 @@ function main(): i32 {
 	}
 }
 
+// Parser-in-lang v3: error handling via `Result[Expr, ParseError]`.
+// Replaces the bare-Expr returns from PR #402 with explicit
+// Result propagation through `parse_factor` / `parse_term` /
+// `parse_expr`. The struct-typed Err payload (`ParseError {
+// message, pos }`) exercises a pair-form-return path that
+// previously had a layout bug — see this PR's prelude / IR
+// fix for "mixed-width Result variants now route through
+// heap-box rebox".
+//
+// Errors covered:
+//   - Empty input: "unexpected end of input"
+//   - Unclosed paren: "missing close paren"
+//   - Missing operand: "expected number or paren"
+//
+// Successes still parse correctly under the new Result-shaped
+// control flow.
+func TestArm64ParserV3WithResult(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct BinOp { op: i32, left: Expr, right: Expr }
+type Expr = Num | BinOp;
+
+struct ParseError { message: string, pos: i32 }
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function peek_kind(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) {
+        TokInt(_) => { return 0; },
+        TokPunct(_) => { return 1; },
+        TokEof(_) => { return 2; },
+    }
+}
+function peek_punct(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+function peek_int(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) { TokInt(t) => { return t.value; }, _ => { return 0; } }
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+    var pos: i32 = cur[0];
+    var k: i32 = peek_kind(toks, pos);
+    if (k == 0) {
+        var v: i32 = peek_int(toks, pos);
+        cur[0] = pos + 1;
+        var n: Expr = Num { value: v };
+        return Ok(n);
+    }
+    if (k == 2) {
+        return Err(ParseError { message: "unexpected end of input", pos: pos });
+    }
+    var p: i32 = peek_punct(toks, pos);
+    if (p != 40) {
+        return Err(ParseError { message: "expected number or paren", pos: pos });
+    }
+    cur[0] = pos + 1;
+    var inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
+    match (inner_r) {
+        Err(e) => { return Err(e); },
+        Ok(inner_e) => {
+            var ep: i32 = cur[0];
+            if (peek_kind(toks, ep) != 1 || peek_punct(toks, ep) != 41) {
+                return Err(ParseError { message: "missing close paren", pos: ep });
+            }
+            cur[0] = ep + 1;
+            return Ok(inner_e);
+        },
+    }
+}
+
+function parse_term(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+    var lhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
+    match (lhs_r) {
+        Err(e) => { return Err(e); },
+        Ok(lhs_e) => {
+            var lhs: Expr = lhs_e;
+            while (true) {
+                var pos: i32 = cur[0];
+                if (peek_kind(toks, pos) != 1) { return Ok(lhs); }
+                var op: i32 = peek_punct(toks, pos);
+                if (op != 42 && op != 47) { return Ok(lhs); }
+                cur[0] = pos + 1;
+                var rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
+                match (rhs_r) {
+                    Err(e) => { return Err(e); },
+                    Ok(rhs_e) => {
+                        lhs = BinOp { op: op, left: lhs, right: rhs_e };
+                    },
+                }
+            }
+            return Ok(lhs);
+        },
+    }
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+    var lhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
+    match (lhs_r) {
+        Err(e) => { return Err(e); },
+        Ok(lhs_e) => {
+            var lhs: Expr = lhs_e;
+            while (true) {
+                var pos: i32 = cur[0];
+                if (peek_kind(toks, pos) != 1) { return Ok(lhs); }
+                var op: i32 = peek_punct(toks, pos);
+                if (op != 43 && op != 45) { return Ok(lhs); }
+                cur[0] = pos + 1;
+                var rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
+                match (rhs_r) {
+                    Err(e) => { return Err(e); },
+                    Ok(rhs_e) => {
+                        lhs = BinOp { op: op, left: lhs, right: rhs_e };
+                    },
+                }
+            }
+            return Ok(lhs);
+        },
+    }
+}
+
+function eval_expr(e: Expr): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        BinOp(b) => {
+            var l: i32 = eval_expr(b.left);
+            var r: i32 = eval_expr(b.right);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+    }
+}
+
+function interp(src: string): Result[i32, ParseError] {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var ast_r: Result[Expr, ParseError] = parse_expr(toks, cur);
+    match (ast_r) {
+        Err(e) => { return Err(e); },
+        Ok(ast) => { return Ok(eval_expr(ast)); },
+    }
+}
+
+function main(): i32 {
+    var ok1: Result[i32, ParseError] = interp("1 + 2 * 3");
+    match (ok1) {
+        Ok(v) => { if (v != 7) { return 1; } },
+        Err(_) => { return 2; },
+    }
+    var ok2: Result[i32, ParseError] = interp("(1 + 2) * 3");
+    match (ok2) {
+        Ok(v) => { if (v != 9) { return 3; } },
+        Err(_) => { return 4; },
+    }
+    var err1: Result[i32, ParseError] = interp("");
+    match (err1) {
+        Ok(_) => { return 5; },
+        Err(e) => { if (!e.message.contains("unexpected end")) { return 6; } },
+    }
+    var err2: Result[i32, ParseError] = interp("(1 + 2");
+    match (err2) {
+        Ok(_) => { return 7; },
+        Err(e) => { if (!e.message.contains("close paren")) { return 8; } },
+    }
+    var err3: Result[i32, ParseError] = interp("1 + +");
+    match (err3) {
+        Ok(_) => { return 9; },
+        Err(e) => { if (!e.message.contains("expected number")) { return 10; } },
+    }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (parser v3 with Result)", code)
+	}
+}
+
 // Parser-in-lang v2: full lex → parse → eval pipeline. Wires
 // the lexer-in-lang spike (PRs #394-#395, #399-#401) to the
 // recursive-descent parser (PR #402) so a source string flows
