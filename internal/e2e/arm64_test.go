@@ -715,6 +715,275 @@ function main(): i32 {
 	}
 }
 
+// Printer-in-lang: the natural complement to parse-in-lang.
+// Closes the parse/print round-trip — `parse(print(e))` reproduces
+// the original AST shape. Together with the constfold pass
+// (#420) this rounds out lex / parse / fold / print / eval, the
+// full pipeline shape of a self-hosted compiler.
+//
+// `print_expr(e: Expr): string` walks the AST and produces a
+// canonical textual rendering. BinOp is always parenthesised,
+// which means the output isn't minimal but is always
+// unambiguous — `1 + 2 * 3` round-trips through "(1 + (2 * 3))"
+// rather than "1 + 2 * 3", but parse+ast_eq still hold because
+// the inner shape is preserved. Real lang's printer uses
+// precedence-aware parens (drops redundant ones at top of
+// binary chains); the always-parens shape lets the spike stay
+// focused on the tree walk rather than precedence tables.
+//
+// Round-trip property: `parse(print(e))` must structurally
+// equal `e`. Tested across the same expression shapes as the
+// constfold spike — atoms, simple BinOps, nested, vars mixed
+// in. Confirms the printer respects associativity (the parens
+// disambiguate; otherwise `1 - 2 - 3` and `1 - (2 - 3)` parse
+// to different ASTs).
+//
+// Bonus integration: fold + print proves the combined pipeline.
+// `print(fold(parse("1 + 2 * 3")))` should be "7" (the folded
+// Num spits out its value directly, no parens).
+func TestArm64PrinterInLang(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct Var   { name: string }
+struct BinOp { op: i32, left: Expr, right: Expr }
+type Expr = Num | Var | BinOp;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        cur[0] = pos + 1;
+        return Var { name: tok_ident_name(toks[pos]) };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_arith(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_src(src: string): Expr {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    return parse_arith(toks, cur);
+}
+
+function op_str(op: i32): string {
+    if (op == 43) { return "+"; }
+    if (op == 45) { return "-"; }
+    if (op == 42) { return "*"; }
+    if (op == 47) { return "/"; }
+    return "?";
+}
+
+// Render an Expr to text. Atoms (Num, Var) come out unwrapped;
+// BinOp is always parenthesised so the output is unambiguous
+// without consulting a precedence table. Always-parens means
+// the printed form isn't minimal but always round-trips.
+function print_expr(e: Expr): string {
+    match (e) {
+        Num(n) => { return n.value.to_string(); },
+        Var(v) => { return v.name; },
+        BinOp(b) => {
+            return "(" + print_expr(b.left) + " " + op_str(b.op) + " " + print_expr(b.right) + ")";
+        },
+    }
+}
+
+function ast_eq(a: Expr, b: Expr): boolean {
+    match (a) {
+        Num(an) => {
+            match (b) {
+                Num(bn) => { return an.value == bn.value; },
+                _ => { return false; },
+            }
+        },
+        Var(av) => {
+            match (b) {
+                Var(bv) => { return av.name == bv.name; },
+                _ => { return false; },
+            }
+        },
+        BinOp(ab) => {
+            match (b) {
+                BinOp(bb) => {
+                    if (ab.op != bb.op) { return false; }
+                    if (!ast_eq(ab.left, bb.left)) { return false; }
+                    return ast_eq(ab.right, bb.right);
+                },
+                _ => { return false; },
+            }
+        },
+    }
+}
+
+function is_num(e: Expr): boolean {
+    match (e) { Num(_) => { return true; }, _ => { return false; } }
+}
+function num_value(e: Expr): i32 {
+    match (e) { Num(n) => { return n.value; }, _ => { return 0; } }
+}
+
+function fold(e: Expr): Expr {
+    match (e) {
+        Num(_) => { return e; },
+        Var(_) => { return e; },
+        BinOp(b) => {
+            var l: Expr = fold(b.left);
+            var r: Expr = fold(b.right);
+            if (is_num(l) && is_num(r)) {
+                var lv: i32 = num_value(l);
+                var rv: i32 = num_value(r);
+                if (b.op == 43) { return Num { value: lv + rv }; }
+                if (b.op == 45) { return Num { value: lv - rv }; }
+                if (b.op == 42) { return Num { value: lv * rv }; }
+                if (b.op == 47) { return Num { value: lv / rv }; }
+            }
+            return BinOp { op: b.op, left: l, right: r };
+        },
+    }
+}
+
+function roundtrip_ok(src: string): boolean {
+    var e1: Expr = parse_src(src);
+    var s: string = print_expr(e1);
+    var e2: Expr = parse_src(s);
+    return ast_eq(e1, e2);
+}
+
+function main(): i32 {
+    // Atoms.
+    if (print_expr(Num { value: 42 }) != "42") { return 1; }
+    if (print_expr(Var { name: "x" }) != "x") { return 2; }
+
+    // Simple BinOp.
+    var e1: Expr = parse_src("1 + 2");
+    if (print_expr(e1) != "(1 + 2)") { return 3; }
+
+    // Nested BinOp.
+    var e2: Expr = parse_src("1 + 2 * 3");
+    if (print_expr(e2) != "(1 + (2 * 3))") { return 4; }
+
+    // Vars mixed with literals.
+    var e3: Expr = parse_src("x + 1");
+    if (print_expr(e3) != "(x + 1)") { return 5; }
+
+    // Round-trip property — print(parse(s)) re-parses to the
+    // same AST. The TEXTUAL form differs (always-parens
+    // canonical), but the AST shape is preserved.
+    if (!roundtrip_ok("1 + 2")) { return 6; }
+    if (!roundtrip_ok("1 + 2 * 3")) { return 7; }
+    if (!roundtrip_ok("(1 + 2) * 3")) { return 8; }
+    if (!roundtrip_ok("x + y * z")) { return 9; }
+    if (!roundtrip_ok("10 - 3 - 2")) { return 10; }
+    if (!roundtrip_ok("a * b + c * d - e")) { return 11; }
+
+    // Associativity preservation. The parser is left-associative;
+    // 10 - 3 - 2 means (10 - 3) - 2 = 5. The printer's parens
+    // make this explicit: "((10 - 3) - 2)". Without parens around
+    // the left subtree the re-parse would group right instead.
+    var assoc: Expr = parse_src("10 - 3 - 2");
+    if (print_expr(assoc) != "((10 - 3) - 2)") { return 12; }
+
+    // Fold + print integration — full-collapse case prints as a
+    // bare number, no parens, since BinOps were all folded out.
+    var folded: Expr = fold(parse_src("1 + 2 * 3"));
+    if (print_expr(folded) != "7") { return 13; }
+
+    // Partial-fold case keeps the Var-bearing outer BinOp.
+    var partial: Expr = fold(parse_src("x + 2 * 3"));
+    if (print_expr(partial) != "(x + 6)") { return 14; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (printer-in-lang)", code)
+	}
+}
+
 // Constfold-in-lang: a real compiler pass, written in lang.
 // Closes a meaningful self-host milestone — lex/parse/eval has
 // been the pattern through v1..v7, but a tree-rewriting
