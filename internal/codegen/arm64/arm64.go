@@ -738,6 +738,10 @@ func (g *generator) emitStrcatRuntime() {
 	g.line(".global __lang_strcat")
 	g.typeDirective("__lang_strcat")
 	g.label("__lang_strcat")
+	if ast.UseTwoWordStrings(8) {
+		g.emitStrcatRuntime2W()
+		return
+	}
 	// Frame: 96 bytes — saved fp/lr (16) + 5 callee-saves (40
 	// used + 8 pad) + 24 SSO scratch + 8 pad. Layout (positive
 	// offsets from x29):
@@ -831,6 +835,86 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.sizeDirective("__lang_strcat")
+	g.line(".ltorg")
+}
+
+// emitStrcatRuntime2W is the two-word-ABI variant of
+// emitStrcatRuntime. Signature: `__lang_strcat(a_data, a_len,
+// b_data, b_len)` in (x0, x1, x2, x3). Returns (data, len) in
+// (x0, x1).
+//
+// Always uses heap-form output (no inline-form
+// optimisation yet — that's a follow-up commit). Trade-off:
+// short concats allocate; in exchange the body is simple +
+// the inline-form encoding can be added incrementally.
+//
+// Empty-result short-circuit: when both byte lengths are 0,
+// return the canonical empty-string pair (data=0, len=`1<<63`)
+// without allocating.
+func (g *generator) emitStrcatRuntime2W() {
+	// Frame: fp/lr (16) + 4× callee-saves (x19..x22) for the
+	// (data, len) pair of each operand across __lang_alloc /
+	// __lang_memcpy (32) + 2× callee-saves (x23..x24) for
+	// byte lengths + dst (16) + 2× 16-byte scratch slots for
+	// emitStrDataPtr2W inline spill (32) + 16 align = 112.
+	g.emit("stp x29, x30, [sp, #-112]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	// Spill the (data, len) pairs into callee-save regs so
+	// they survive the bl calls below.
+	g.emit("mov x19, x0") // a_data
+	g.emit("mov x20, x1") // a_len
+	g.emit("mov x21, x2") // b_data
+	g.emit("mov x22, x3") // b_len
+	// Extract byte lengths.
+	g.emitStrLen2W("w23", "x20") // x23 = a byte length
+	g.emitStrLen2W("w24", "x22") // x24 = b byte length
+	// Total byte length in w0.
+	g.emit("add w0, w23, w24")
+	// Short-circuit on combined length 0.
+	g.emit("cbnz w0, .Lstrcat2w_alloc")
+	g.emit("mov x0, xzr")
+	g.emit("movz x1, #0x8000, lsl #48") // inline-flag, length 0
+	g.emit("b .Lstrcat2w_ret")
+	g.label(".Lstrcat2w_alloc")
+	// Allocate the destination buffer. The new heap-form
+	// layout has no length prefix — alloc exactly total bytes.
+	g.emit("bl __lang_alloc")
+	g.emit("mov x2, x0") // x2 = dst (temporary; clobbered by next call's args)
+	// Reserve dst in a stable callee-save by reusing x19 (we
+	// no longer need a_data as a single register since we'll
+	// re-extract via emitStrDataPtr2W). But we DO need a_data
+	// for the inline-spill path. Plan B: stash dst at
+	// [x29+96], use scratch slots at [x29+64..+79] (a) and
+	// [x29+80..+95] (b).
+	g.emit("str x2, [x29, #96]")
+	// Materialise a's byte pointer.
+	g.emitStrDataPtr2W("x4", "x19", "x20", 64) // x4 = a byte ptr; spill at [x29+64]
+	// memcpy(dst, a_data, a_byteLen).
+	g.emit("ldr x0, [x29, #96]") // x0 = dst
+	g.emit("mov x1, x4")         // src = a byte ptr
+	g.emit("mov x2, x23")        // n = a_byteLen
+	g.emit("bl __lang_memcpy")
+	// Materialise b's byte pointer.
+	g.emitStrDataPtr2W("x4", "x21", "x22", 80) // x4 = b byte ptr; spill at [x29+80]
+	// memcpy(dst + a_byteLen, b_data, b_byteLen).
+	g.emit("ldr x0, [x29, #96]")
+	g.emit("add x0, x0, x23")    // dst + a_byteLen
+	g.emit("mov x1, x4")          // src = b byte ptr
+	g.emit("mov x2, x24")         // n = b_byteLen
+	g.emit("bl __lang_memcpy")
+	// Return (dst, total_byteLen) in (x0, x1).
+	g.emit("ldr x0, [x29, #96]")
+	g.emit("add w1, w23, w24")
+	g.label(".Lstrcat2w_ret")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #112")
 	g.emit("ret")
 	g.sizeDirective("__lang_strcat")
 	g.line(".ltorg")
@@ -980,7 +1064,8 @@ func (g *generator) emitStrcmpRuntime() {
 //     grain tail.
 func (g *generator) emitStrcmpRuntime2W() {
 	// Frame: fp/lr (16) + 2× 16-byte scratch slots for inline
-	// spill (one per operand) + 16 alignment = 64.
+	// spill (one per operand at [x29+16..+31] and [x29+32..+47])
+	// + 16 alignment = 64.
 	g.emit("stp x29, x30, [sp, #-64]!")
 	g.emit("mov x29, sp")
 	// Same value pair?
@@ -997,8 +1082,8 @@ func (g *generator) emitStrcmpRuntime2W() {
 	g.emit("cmp w6, w7")
 	g.emit("bne .Lscmp2w_neq")
 	// Same length → materialise both byte pointers.
-	g.emitStrDataPtr2W("x0", "x0", "x1", -16) // x0 = a byte ptr; scratch at [x29-16]
-	g.emitStrDataPtr2W("x1", "x2", "x3", -32) // x1 = b byte ptr; scratch at [x29-32]
+	g.emitStrDataPtr2W("x0", "x0", "x1", 16) // x0 = a byte ptr; scratch at [x29+16]
+	g.emitStrDataPtr2W("x1", "x2", "x3", 32) // x1 = b byte ptr; scratch at [x29+32]
 	g.emit("mov w2, w6") // remaining bytes
 	g.label(".Lscmp2w_word")
 	g.emit("cmp w2, #4")
@@ -1585,12 +1670,12 @@ func (g *generator) emitWriteRuntime() {
 	g.label("__lang_write")
 	if ast.UseTwoWordStrings(8) {
 		// Frame: 48 bytes — fp/lr (16) + 16-byte scratch for
-		// inline-spill at [x29-16..x29-1] + 16 align pad.
+		// inline-spill at [x29+16..x29+31] + 16 align pad.
 		g.emit("stp x29, x30, [sp, #-48]!")
 		g.emit("mov x29, sp")
-		g.emitStrLen2W("w2", "x1")            // x2 = byte length
-		g.emitStrDataPtr2W("x1", "x0", "x1", -16) // x1 = byte ptr; spill scratch at [x29-16]
-		g.emit("mov x0, #1")                  // fd = stdout
+		g.emitStrLen2W("w2", "x1")                // x2 = byte length
+		g.emitStrDataPtr2W("x1", "x0", "x1", 16)  // x1 = byte ptr; spill scratch at [x29+16]
+		g.emit("mov x0, #1")                      // fd = stdout
 		g.syscall("write")
 		g.emit("ldp x29, x30, [sp], #48")
 		g.emit("ret")
@@ -1624,12 +1709,12 @@ func (g *generator) emitPutsRuntime() {
 	g.label("__lang_puts")
 	if ast.UseTwoWordStrings(8) {
 		// Two-word ABI: (data, len) in (x0, x1). Frame:
-		// fp/lr (16) + 16-byte inline-spill scratch + 16
-		// alignment.
+		// fp/lr (16) + 16-byte inline-spill scratch at
+		// [x29+16..x29+31] + 16 alignment.
 		g.emit("stp x29, x30, [sp, #-48]!")
 		g.emit("mov x29, sp")
 		g.emitStrLen2W("w2", "x1")               // x2 = byte length
-		g.emitStrDataPtr2W("x1", "x0", "x1", -16) // x1 = byte ptr
+		g.emitStrDataPtr2W("x1", "x0", "x1", 16) // x1 = byte ptr; spill at [x29+16]
 		g.emit("mov x0, #1")                     // fd
 		g.syscall("write")
 		g.adrpAdd("x1", ".LLangNewline")
@@ -4757,12 +4842,24 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// The IR's `+` between strings lowers directly to
 		// OpStrConcat (rather than going through OpCallDirect
 		// to "__lang_strcat") so codegen owns the dispatch and
-		// can target-specialise. Stack: [a, b], top = b. Pop
-		// into x1 / x0 to match the `__lang_strcat(a, b)`
-		// signature.
+		// can target-specialise. Two-word ABI: stack has
+		// (a_data, a_len, b_data, b_len), top = b_len. Pop
+		// into (x3, x2, x1, x0) for AAPCS64 arg order. Return
+		// is (data, len) in (x0, x1) → push both.
 		g.usesStrcat = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
+		if ast.UseTwoWordStrings(8) {
+			g.emit("ldr x3, [sp], #16") // b_len
+			g.emit("ldr x2, [sp], #16") // b_data
+			g.emit("ldr x1, [sp], #16") // a_len
+			g.emit("ldr x0, [sp], #16") // a_data
+			g.emit("bl __lang_strcat")
+			g.push() // push data (x0)
+			g.emit("mov x0, x1")
+			g.push() // push len
+			break
+		}
 		g.emit("ldr x1, [sp], #16") // b
 		g.emit("ldr x0, [sp], #16") // a
 		g.emit("bl __lang_strcat")
