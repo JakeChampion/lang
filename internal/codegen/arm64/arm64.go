@@ -2221,6 +2221,7 @@ func (g *generator) emitReadLineRuntime() {
 	g.line(".global __lang_read_line")
 	g.typeDirective("__lang_read_line")
 	g.label("__lang_read_line")
+	twoWord := ast.UseTwoWordStrings(8)
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -2254,27 +2255,44 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("str w1, [x0]") // tag = 1
 	g.emit("b .Lrl_ret")
 	g.label(".Lrl_some")
-	// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
-	g.emit("add x0, x20, #5")
-	g.emit("bl __lang_alloc")
-	g.emit("add x21, x0, #4")     // x21 = data ptr
-	g.emit("stur w20, [x21, #-4]") // length prefix
-	// memcpy(x21, x19, x20)
-	g.emit("mov x0, x21")
-	g.emit("mov x1, x19")
-	g.emit("mov x2, x20")
-	g.emit("bl __lang_memcpy")
-	// Trailing NUL.
-	g.emit("add x0, x21, x20")
-	g.emit("strb wzr, [x0]")
-	// Wrap as Some(x21) with the IR's ptr-width payload
-	// layout: [tag:i32, _pad:i32, str_ptr:i64]. 16 bytes
-	// total; payload at +8 matches payloadLoadOp(string).
-	g.emit("mov x19, x21")        // stash str ptr in callee-save
-	g.emit("mov x0, #16")
-	g.emit("bl __lang_alloc")
-	g.emit("str wzr, [x0]")         // tag = 0 (Some) at +0
-	g.emit("str x19, [x0, #8]")    // payload at +8 (8-byte slot)
+	if twoWord {
+		// Two-word heap form: alloc exactly x20 bytes (no
+		// length prefix, no trailing NUL).
+		g.emit("mov x0, x20")
+		g.emit("bl __lang_alloc")
+		g.emit("mov x21, x0") // x21 = data ptr
+		// memcpy(x21, x19, x20).
+		g.emit("mov x0, x21")
+		g.emit("mov x1, x19")
+		g.emit("mov x2, x20")
+		g.emit("bl __lang_memcpy")
+		// Wrap as Some(string). 24-byte box: tag@0, pad@4,
+		// data@8, len@16.
+		g.emit("mov x19, x21") // stash data ptr
+		g.emit("mov x0, #24")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")     // tag = 0 (Some)
+		g.emit("str x19, [x0, #8]")  // data
+		g.emit("str x20, [x0, #16]") // len
+		g.emit("b .Lrl_ret")
+	} else {
+		// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
+		g.emit("add x0, x20, #5")
+		g.emit("bl __lang_alloc")
+		g.emit("add x21, x0, #4")     // x21 = data ptr
+		g.emit("stur w20, [x21, #-4]") // length prefix
+		g.emit("mov x0, x21")
+		g.emit("mov x1, x19")
+		g.emit("mov x2, x20")
+		g.emit("bl __lang_memcpy")
+		g.emit("add x0, x21, x20")
+		g.emit("strb wzr, [x0]")
+		g.emit("mov x19, x21")
+		g.emit("mov x0, #16")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")
+		g.emit("str x19, [x0, #8]")
+	}
 	g.label(".Lrl_ret")
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
@@ -3263,8 +3281,14 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label(".Lww_err")
 	g.emit("neg x22, x0") // errno
 	g.emit("mov x0, x22")
-	// No path string for write errors; pass empty literal addr.
-	g.adrpAdd("x1", ".LStr_ioerr_empty")
+	// No path string for write errors; pass empty literal.
+	// Two-word ABI: `(data=0, len=1<<63)` inline-empty pair.
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
 	g.emit("bl __lang_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
@@ -3300,7 +3324,12 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label(".Lcfb_err")
 	g.emit("neg x19, x0") // errno
 	g.emit("mov x0, x19")
-	g.adrpAdd("x1", ".LStr_ioerr_empty")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
 	g.emit("bl __lang_io_error")
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
