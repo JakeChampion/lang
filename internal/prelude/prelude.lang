@@ -218,6 +218,53 @@ function (s: string) split(sep: string): string[] {
     return out.push(s[start:n]);
 }
 
+// `s.lines()` — splits on '\n', strips a trailing '\r' from
+// each line (so CRLF is treated as LF), and drops the trailing
+// empty line that a final '\n' would otherwise produce. Matches
+// Python's `str.splitlines()` and Go's `bufio.Scanner` with
+// `ScanLines`:
+//
+//   "a\nb\nc"   → ["a", "b", "c"]
+//   "a\nb\n"    → ["a", "b"]            (trailing '\n' eaten)
+//   "a\r\nb"    → ["a", "b"]            (CR stripped)
+//   "\n"        → [""]                  (one empty line)
+//   ""          → []                    (no lines at all)
+//
+// O(n) single-pass byte walk; uses index-of-byte (s[i]) and
+// substring slicing rather than the per-byte `s[i:i+1] == "\n"`
+// pattern, so the inner loop allocates nothing.
+function (s: string) lines(): string[] {
+    var n: i32 = len(s);
+    var out: string[] = [];
+    if (n == 0) { return out; }
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (s[i] == 10) {
+            var end: i32 = i;
+            if (end > start) {
+                if (s[end - 1] == 13) { end = end - 1; }
+            }
+            out = out.push(s[start:end]);
+            i = i + 1;
+            start = i;
+        } else {
+            i = i + 1;
+        }
+    }
+    // Trailing chunk (no final '\n'): emit only when non-empty.
+    // start == n means the input ended with '\n' and we DON'T
+    // want a phantom empty line.
+    if (start < n) {
+        var endTail: i32 = n;
+        if (endTail > start) {
+            if (s[endTail - 1] == 13) { endTail = endTail - 1; }
+        }
+        out = out.push(s[start:endTail]);
+    }
+    return out;
+}
+
 // `s.replace(old, new)` — substitutes every
 // non-overlapping occurrence of `old` with `new`.
 // Empty `old` is a no-op (returns the source unchanged)
