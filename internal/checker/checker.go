@@ -803,6 +803,20 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.ArrayType{Elem: arrayElemParam},
 	}
 
+	// `arr.join(sep)` — concatenates string-array elements with
+	// a separator between them. Dispatches via the same
+	// "Array.<method>" key as push; the constrained string-
+	// element receiver type makes the type check fail
+	// gracefully on non-string arrays (`nums.join(...)` on
+	// i32[] would surface as "cannot match i32[] to string[]"
+	// rather than a missing-method error). Implementation is a
+	// lang prelude function — no IR-side interception needed
+	// because the body is just string concat + loop. ONLY the
+	// Methods mapping is registered here; the FuncSigs entry
+	// comes from the prelude function declaration's natural
+	// processing so the two don't conflict ("redeclared").
+	c.info.Methods["Array.join"] = "__method_Array_join"
+
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
 	// flow through the same dispatch-path substitution. The

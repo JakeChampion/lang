@@ -437,6 +437,28 @@ function format(fmt: string, args: string[]): string {
     return out;
 }
 
+// `arr.join(sep)` — concatenate a string-array into a single
+// string with `sep` between every pair. Standard glue function
+// (Go's `strings.Join`, Python's `sep.join(arr)`, etc.). Empty
+// array → empty string; single-element array → just that
+// element; longer arrays → out[0] + sep + out[1] + sep + ...
+//
+// The receiver-dispatch path lives in the checker: see
+// `Array.join` in internal/checker/checker.go. The constrained
+// string-element signature there makes `nums.join(",")` on
+// i32[] surface as a clean type error rather than a missing-
+// method one.
+function __method_Array_join(arr: string[], sep: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (i > 0) { out = out + sep; }
+        out = out + arr[i];
+        i = i + 1;
+    }
+    return out;
+}
+
 // === Array append ===
 //
 // `arr.push(v)` is lowered inline by the IR — see
