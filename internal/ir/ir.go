@@ -2572,12 +2572,48 @@ func (b *builder) expr(e ast.Expr) error {
 					// data_ptr at offset 0.
 					b.emit(Op{Kind: OpLoad})
 					return nil
-				case ast.ArrayType, ast.StringType, ast.StructType:
-					// owned-array / string / struct values ARE
-					// the data / wrapper pointer; the length
-					// prefix (arrays/strings) or fields
-					// (structs) live at known offsets. No ops
-					// needed.
+				case ast.StringType:
+					if b.twoWordStrings() {
+						// Two-word ABI: the operand stack
+						// has `[..., data, len]` (inner
+						// already evaluated at the top of
+						// this case). Casting to usize / i32
+						// can't keep both halves on the
+						// stack — box them into a fresh
+						// 16-byte cell so the resulting
+						// pointer survives a round-trip
+						// through the integer slot. The
+						// inverse cast `usize → string`
+						// reads back via OpLoad{WidthString}.
+						lenSlot := b.allocSlot()
+						b.locals[fmt.Sprintf("__str_to_usize_len_%d", lenSlot)] = lenSlot
+						dataSlot := b.allocSlot()
+						b.locals[fmt.Sprintf("__str_to_usize_data_%d", dataSlot)] = dataSlot
+						cellSlot := b.allocSlot()
+						b.locals[fmt.Sprintf("__str_to_usize_cell_%d", cellSlot)] = cellSlot
+						// Save (data, len) from the stack
+						// into scratch locals.
+						b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
+						b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
+						// Allocate the cell.
+						b.emit(Op{Kind: OpConstI32, I32: stringSlotSize(b.ptrW)})
+						b.emit(Op{Kind: OpAlloc})
+						b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
+						// Re-stage [cell, data, len] for OpStore{WidthString}.
+						b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+						b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+						b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+						b.emit(Op{Kind: OpStore, Width: WidthString})
+						// Push the cell pointer as the cast's result.
+						b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+						return nil
+					}
+					return nil
+				case ast.ArrayType, ast.StructType:
+					// owned-array / struct values ARE the
+					// data / wrapper pointer; the length
+					// prefix (arrays) or fields (structs) live
+					// at known offsets. No ops needed.
 					return nil
 				}
 			}
