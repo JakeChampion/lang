@@ -302,7 +302,7 @@ rolled loops. Tiny code.
 
 **Inspiration**: Rust `from_str_radix`, Go strconv.
 
-### 15. String fields + ascii-fold + strip_prefix/suffix · small · ☐
+### 15. String fields + ascii-fold + strip_prefix/suffix · small · ☑
 
 **Surface**: `fields(s) string[]` (whitespace split, no
 empties), `eq_ignore_ascii_case(a, b) boolean`,

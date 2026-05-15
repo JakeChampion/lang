@@ -368,6 +368,70 @@ function (s: string) lines(): string[] {
     return out;
 }
 
+// `s.fields()` — split on runs of ASCII whitespace, dropping
+// empty pieces. Differs from `split(" ")` which preserves
+// adjacent-separator empties and only matches the single
+// space byte. Whitespace classifier matches the trim() one
+// (space / tab / CR / LF / VT / FF). Result is the run of
+// non-empty fields in order. Empty / all-whitespace input
+// returns an empty array.
+//
+// Matches Go strings.Fields, Roc Str.split (whitespace
+// flavour), Python str.split() (no-arg).
+function (s: string) fields(): string[] {
+    var n: i32 = len(s);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        while (i < n && __is_ascii_ws(s[i])) { i = i + 1; }
+        if (i >= n) { break; }
+        var start: i32 = i;
+        while (i < n && !__is_ascii_ws(s[i])) { i = i + 1; }
+        out = out.push(s[start:i]);
+    }
+    return out;
+}
+
+// `s.eq_ignore_ascii_case(other)` — equality with ASCII A-Z
+// folded to a-z on both sides. Non-ASCII bytes (>= 0x80) only
+// match byte-exact — multibyte UTF-8 sequences and Unicode
+// case folding aren't handled. Standard shape for HTTP header
+// keys ("Content-Type" vs "content-type") where the fold is
+// strictly ASCII per RFC 7230.
+function (s: string) eq_ignore_ascii_case(other: string): boolean {
+    var n: i32 = len(s);
+    if (n != len(other)) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        var a: i32 = s[i];
+        var b: i32 = other[i];
+        // Fold A-Z (65..90) into a-z (97..122) by setting bit 5.
+        if (a >= 65 && a <= 90) { a = a + 32; }
+        if (b >= 65 && b <= 90) { b = b + 32; }
+        if (a != b) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.strip_prefix(p)` — Some(rest) if s starts with p, None
+// otherwise. The Some payload is s[len(p):], which under lang's
+// arena model is a fresh independent slice (string slicing
+// allocates). Companion to starts_with that ALSO gives you
+// the trailing chunk in a single call.
+function (s: string) strip_prefix(prefix: string): Option[string] {
+    if (!s.starts_with(prefix)) { return None; }
+    return Some(s[len(prefix):len(s)]);
+}
+
+// `s.strip_suffix(s)` — Some(head) if s ends with the suffix.
+// Symmetric to strip_prefix; returns s[0:len(s)-len(suffix)].
+function (s: string) strip_suffix(suffix: string): Option[string] {
+    if (!s.ends_with(suffix)) { return None; }
+    var k: i32 = len(s) - len(suffix);
+    return Some(s[0:k]);
+}
+
 // `s.replace(old, new)` — substitutes every
 // non-overlapping occurrence of `old` with `new`.
 // Empty `old` is a no-op (returns the source unchanged)

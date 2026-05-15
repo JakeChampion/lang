@@ -6327,6 +6327,62 @@ func TestArm64Format(t *testing.T) {
 	}
 }
 
+// String surface additions per STDLIB-ROADMAP item #15:
+//   s.fields()                       — whitespace split, no empties
+//   s.eq_ignore_ascii_case(other)    — ASCII case-fold equality
+//   s.strip_prefix(p) / strip_suffix(s)  — Option[string] companions to
+//                                          starts_with / ends_with
+//
+// HTTP header parsing is the main motivator (case-insensitive
+// header-name compare, prefix-stripping path components,
+// whitespace-tolerant value tokenisation).
+func TestArm64StringExtras(t *testing.T) {
+	src := `function bstr(b: boolean): string { if (b) { return "true"; } return "false"; }
+
+function main(): i32 {
+    // fields — runs of whitespace as separator, no empties.
+    var fs: string[] = "  hello\tworld\nfoo bar  ".fields();
+    if (len(fs) != 4) { return 1; }
+    if (fs[0] != "hello") { return 2; }
+    if (fs[3] != "bar") { return 3; }
+    if (len("".fields()) != 0) { return 4; }
+    if (len("   \t\n".fields()) != 0) { return 5; }
+    if (len("solo".fields()) != 1) { return 6; }
+
+    // eq_ignore_ascii_case — symmetric in both arms.
+    if (!"Content-Type".eq_ignore_ascii_case("content-type")) { return 7; }
+    if (!"HELLO".eq_ignore_ascii_case("hello")) { return 8; }
+    if ("foo".eq_ignore_ascii_case("foobar")) { return 9; }
+    if ("apple".eq_ignore_ascii_case("banana")) { return 10; }
+    if (!"".eq_ignore_ascii_case("")) { return 11; }
+
+    // strip_prefix — Option[string] payload is the tail.
+    match ("hello world".strip_prefix("hello ")) {
+        Some(r) => { if (r != "world") { return 12; } },
+        None => { return 13; },
+    }
+    match ("hello world".strip_prefix("nope")) {
+        Some(_) => { return 14; },
+        None => { },
+    }
+
+    // strip_suffix — Option[string] payload is the head.
+    match ("file.txt".strip_suffix(".txt")) {
+        Some(h) => { if (h != "file") { return 15; } },
+        None => { return 16; },
+    }
+    match ("file.txt".strip_suffix(".log")) {
+        Some(_) => { return 17; },
+        None => { },
+    }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (string extras: fields/strip/eq_case)", code)
+	}
+}
+
 func TestArm64StringLines(t *testing.T) {
 	src := `function main(): i32 {
     var lf: string[] = "a\nb\nc".lines();
