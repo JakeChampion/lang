@@ -25,6 +25,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -88,6 +89,14 @@ func compileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	// Monomorphise generic functions before codegen — the
+	// production driver (cmd/lang) always runs this; the e2e
+	// harness was missing it which only mattered once OpCallDirect
+	// started consulting per-arg types for SysV register allocation
+	// under the two-word string ABI.
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := arm64codegen.Emit(prog, info)
 	if err != nil {
@@ -659,6 +668,14 @@ func TestArm64Args(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
+	// Monomorphise generic functions before codegen — the
+	// production driver (cmd/lang) always runs this; the e2e
+	// harness was missing it which only mattered once OpCallDirect
+	// started consulting per-arg types for SysV register allocation
+	// under the two-word string ABI.
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, err := arm64codegen.Emit(prog, info)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -870,6 +887,14 @@ func TestArm64HttpHandler(t *testing.T) {
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	// Monomorphise generic functions before codegen — the
+	// production driver (cmd/lang) always runs this; the e2e
+	// harness was missing it which only mattered once OpCallDirect
+	// started consulting per-arg types for SysV register allocation
+	// under the two-word string ABI.
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := arm64codegen.Emit(prog, info)
 	if err != nil {
@@ -1407,6 +1432,14 @@ function main(): i32 {
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	// Monomorphise generic functions before codegen — the
+	// production driver (cmd/lang) always runs this; the e2e
+	// harness was missing it which only mattered once OpCallDirect
+	// started consulting per-arg types for SysV register allocation
+	// under the two-word string ABI.
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := arm64codegen.Emit(prog, info)
 	if err != nil {
@@ -2112,6 +2145,14 @@ func compileArm64InDir(t *testing.T, src string, seed map[string]string) (stdout
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
+	// Monomorphise generic functions before codegen — the
+	// production driver (cmd/lang) always runs this; the e2e
+	// harness was missing it which only mattered once OpCallDirect
+	// started consulting per-arg types for SysV register allocation
+	// under the two-word string ABI.
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, err := arm64codegen.Emit(prog, info)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -2505,6 +2546,14 @@ func TestArm64ReadLine(t *testing.T) {
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	// Monomorphise generic functions before codegen — the
+	// production driver (cmd/lang) always runs this; the e2e
+	// harness was missing it which only mattered once OpCallDirect
+	// started consulting per-arg types for SysV register allocation
+	// under the two-word string ABI.
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := arm64codegen.Emit(prog, info)
 	if err != nil {
