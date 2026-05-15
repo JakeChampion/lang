@@ -2984,6 +2984,8 @@ func (b *builder) expr(e ast.Expr) error {
 				sliceHelper = "__slice_idx_2"
 			case 8:
 				sliceHelper = "__slice_idx_8"
+			case 16:
+				sliceHelper = "__slice_idx_16"
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: sliceHelper, I32: 2})
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
@@ -3003,6 +3005,8 @@ func (b *builder) expr(e ast.Expr) error {
 				helper = "__arr_idx_2"
 			case 8:
 				helper = "__arr_idx_8"
+			case 16:
+				helper = "__arr_idx_16"
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
@@ -4538,6 +4542,8 @@ func (b *builder) assign(n *ast.Assign) error {
 				helper = "__slice_idx_2"
 			case 8:
 				helper = "__slice_idx_8"
+			case 16:
+				helper = "__slice_idx_16"
 			default:
 				helper = "__slice_idx"
 			}
@@ -4549,6 +4555,8 @@ func (b *builder) assign(n *ast.Assign) error {
 				helper = "__arr_idx_2"
 			case 8:
 				helper = "__arr_idx_8"
+			case 16:
+				helper = "__arr_idx_16"
 			default:
 				helper = "__arr_idx"
 			}
