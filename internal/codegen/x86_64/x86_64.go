@@ -473,6 +473,32 @@ func (g *generator) recordUse(target string) {
 // `call main` pushes the return address (8 bytes), so rsp
 // enters main 8-byte-misaligned w.r.t. 16. main's prologue's
 // `push rbp` brings it back to 16-aligned, matching the AAPCS
+// callReturnsVoid reports whether a function returns void —
+// i.e. the OpCallDirect emit should NOT push rax onto the
+// operand stack after `call`. Looks up user functions in
+// g.funcs and built-in helpers via g.info.FuncSigs.
+//
+// Without this gate, void-returning helpers leave a phantom
+// rax value on the operand stack — System V x86-64 callees
+// don't promise to clear rax, so the unconditional push
+// corrupts subsequent OpStore pops. Hit by `arr.push(v)`
+// inside a struct literal field initialiser: the inner
+// `__memcpy` call left a phantom slot that the outer
+// struct-lit's OpStore consumed instead of the field address.
+func (g *generator) callReturnsVoid(name string) bool {
+	if callee, ok := g.funcs[name]; ok && callee != nil {
+		_, isVoid := callee.ReturnType.(ast.VoidType)
+		return isVoid
+	}
+	if g.info != nil {
+		if sig, ok := g.info.FuncSigs[name]; ok && sig != nil {
+			_, isVoid := sig.Result.(ast.VoidType)
+			return isVoid
+		}
+	}
+	return false
+}
+
 // invariant the rest of the code expects.
 func (g *generator) emitStartRuntime() {
 	g.line("")
@@ -1522,6 +1548,15 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emitCallArgsLoad(argc)
 		g.emit(fmt.Sprintf("call %s", target))
 		g.emitCallArgsCleanup(argc)
+		// Void-returning callees push NOTHING. Without this gate,
+		// helpers like `__memcpy` / `__memset` leave a phantom
+		// rax value on the operand stack that corrupts the
+		// subsequent OpStore / OpStoreLocal pops. Hit by
+		// `arr.push(v)` inside a struct literal field
+		// initialiser. Mirrors arm64's returnIsVoid gate.
+		if g.callReturnsVoid(op.Str) {
+			break
+		}
 		g.push()
 
 	case ir.OpCallDirectPair:

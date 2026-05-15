@@ -715,6 +715,368 @@ function main(): i32 {
 	}
 }
 
+// Regression for the void-call phantom-push codegen bug.
+// `arr.push(v)` inlines an internal `__memcpy` call which is
+// VOID-RETURNING in lang's type system. The native backends
+// (arm64 + x86_64) previously pushed rax/x0 unconditionally
+// after every `bl`/`call`, leaving a phantom slot from the
+// runtime helper's stale return register. The phantom slot
+// got consumed by the surrounding OpStore — in this case the
+// struct-lit field initialiser — corrupting the field address
+// and crashing on the subsequent store. Fixed by gating the
+// post-call push on the callee's return type (void → no push).
+// This shape (struct lit containing arr.push(...)) is the
+// minimal trigger.
+func TestArm64StructLitWithArrayPush(t *testing.T) {
+	src := `struct State { vals: i32[] }
+
+function main(): i32 {
+    var s: State = State { vals: [10] };
+    s = State { vals: s.vals.push(42) };
+    return s.vals[0] + s.vals[1];
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 52 {
+		t.Errorf("got %d, want 52 (10 + 42)", code)
+	}
+}
+
+// Stmt-interp-in-lang: statement-level constructs — `var`
+// declarations, assignment, and `return`. A FUNDAMENTALLY new
+// shape vs the expression-only spikes. v1..v7 all dealt in
+// single expressions; this spike parses a SEQUENCE of
+// statements that share a mutable env and produces the return
+// value of whichever `return` fires first.
+//
+// Grammar:
+//
+//   program ::= stmt* ;
+//   stmt    ::= "var" name "=" expr ";"     // declaration
+//             | "return" expr ";"            // exit
+//             | name "=" expr ";"            // reassignment
+//   expr    ::= existing arithmetic grammar
+//
+// The exit-on-return semantics matches every real procedural
+// language. eval_block walks the statement list, looks for a
+// return, and short-circuits on first hit. Statements before
+// the return mutate the env (declarations append, assignments
+// rebind the most recent same-named binding); statements
+// after a return are unreachable but the test doesn't bother
+// detecting that.
+//
+// Env shape: parallel string[] / i32[] arrays, mutable through
+// the in-place assign helper. Lang arrays are functional at
+// the language level, so "mutation" means replacing the env
+// arrays with fresh copies that differ in one slot — same
+// pattern the env_lookup chain has used since interp v5.
+//
+// Properties tested:
+//   1. Bare return — `return 5;` → 5.
+//   2. Var + return — `var x = 5; return x;` → 5.
+//   3. Reassignment — `var x = 1; x = x + 1; return x;` → 2.
+//      Confirms the assign path rebinds the existing slot
+//      rather than shadowing.
+//   4. Multi-var arithmetic — `var x = 3; var y = 4; return
+//      x * 10 + y;` → 34.
+//   5. Early return — `var x = 1; return x; var y = 99; return
+//      y;` → 1. The second return is dead code; the first
+//      fires and the eval stops.
+//   6. Forward dependencies — `var x = 10; var y = x + 5;
+//      return y;` → 15. Later declarations see earlier ones.
+func TestArm64StmtInterpInLang(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct Var   { name: string }
+struct BinOp { op: i32, left: Expr, right: Expr }
+type Expr = Num | Var | BinOp;
+
+struct VarDecl  { name: string, value: Expr }
+struct Assign   { name: string, value: Expr }
+struct Return   { value: Expr }
+type Stmt = VarDecl | Assign | Return;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        cur[0] = pos + 1;
+        return Var { name: tok_ident_name(toks[pos]) };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_arith(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
+    return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
+}
+
+function parse_stmt(toks: Token[], cur: i32[]): Stmt {
+    // Hoist name + value to function scope. The wasm backend
+    // names locals by lang identifier; three sibling-scope
+    // var-name / var-value declarations would collide. Same
+    // workaround the prelude uses.
+    var name: string = "";
+    var value: Expr = Num { value: 0 };
+    if (expect_kw(toks, cur[0], "var")) {
+        cur[0] = cur[0] + 1;
+        name = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '='
+        value = parse_arith(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ';'
+        return VarDecl { name: name, value: value };
+    }
+    if (expect_kw(toks, cur[0], "return")) {
+        cur[0] = cur[0] + 1;
+        value = parse_arith(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ';'
+        return Return { value: value };
+    }
+    // Assignment: ident '=' expr ';'
+    name = tok_ident_name(toks[cur[0]]);
+    cur[0] = cur[0] + 1;
+    cur[0] = cur[0] + 1;   // skip '='
+    value = parse_arith(toks, cur);
+    cur[0] = cur[0] + 1;   // skip ';'
+    return Assign { name: name, value: value };
+}
+
+function parse_program(src: string): Stmt[] {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var stmts: Stmt[] = [];
+    while (tok_kind(toks[cur[0]]) != 3) {
+        stmts = stmts.push(parse_stmt(toks, cur));
+    }
+    return stmts;
+}
+
+function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => {
+            var i: i32 = len(names) - 1;
+            while (i >= 0) {
+                if (names[i] == v.name) { return values[i]; }
+                i = i - 1;
+            }
+            return 0;
+        },
+        BinOp(b) => {
+            var l: i32 = eval_expr(b.left, names, values);
+            var r: i32 = eval_expr(b.right, names, values);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+    }
+}
+
+// Replace the value of the most recent binding of name with v.
+// Returns the new values array. If name isn't bound, leaves
+// values unchanged — a real type checker would catch this as
+// "unknown identifier", but the spike intentionally stays loose.
+function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) {
+            // Build a fresh array that differs in slot i.
+            var out: i32[] = [];
+            var j: i32 = 0;
+            while (j < len(values)) {
+                if (j == i) { out = out.push(v); }
+                else { out = out.push(values[j]); }
+                j = j + 1;
+            }
+            return out;
+        }
+        i = i - 1;
+    }
+    return values;
+}
+
+// State threaded through the eval loop: env + done flag + result.
+// Lang has no tuples-in-args, so the eval function returns a
+// fresh struct each step and the caller deconstructs.
+struct StepState {
+    names: string[],
+    values: i32[],
+    done: boolean,
+    result: i32,
+}
+
+function eval_stmt(s: Stmt, state: StepState): StepState {
+    // Single hoisted v across the three arms — sibling-scope
+    // dups would collide on the wasm emitter.
+    var v: i32 = 0;
+    match (s) {
+        VarDecl(vd) => {
+            v = eval_expr(vd.value, state.names, state.values);
+            return StepState {
+                names: state.names.push(vd.name),
+                values: state.values.push(v),
+                done: state.done,
+                result: state.result,
+            };
+        },
+        Assign(a) => {
+            v = eval_expr(a.value, state.names, state.values);
+            return StepState {
+                names: state.names,
+                values: env_assign(state.names, state.values, a.name, v),
+                done: state.done,
+                result: state.result,
+            };
+        },
+        Return(r) => {
+            v = eval_expr(r.value, state.names, state.values);
+            return StepState {
+                names: state.names,
+                values: state.values,
+                done: true,
+                result: v,
+            };
+        },
+    }
+}
+
+function run(src: string): i32 {
+    var stmts: Stmt[] = parse_program(src);
+    var state: StepState = StepState {
+        names: [],
+        values: [],
+        done: false,
+        result: 0,
+    };
+    var i: i32 = 0;
+    while (i < len(stmts) && !state.done) {
+        state = eval_stmt(stmts[i], state);
+        i = i + 1;
+    }
+    return state.result;
+}
+
+function main(): i32 {
+    // Bare return.
+    if (run("return 5;") != 5) { return 1; }
+
+    // var + return.
+    if (run("var x = 5; return x;") != 5) { return 2; }
+
+    // Reassignment — confirms env_assign rebinds rather than
+    // shadows. After x = x + 1, looking up x must return 2.
+    if (run("var x = 1; x = x + 1; return x;") != 2) { return 3; }
+
+    // Multi-var arithmetic.
+    if (run("var x = 3; var y = 4; return x * 10 + y;") != 34) { return 4; }
+
+    // Early return — the second return is dead code, the
+    // first one fires.
+    if (run("var x = 1; return x; var y = 99; return y;") != 1) { return 5; }
+
+    // Forward dependency — later var sees earlier one.
+    if (run("var x = 10; var y = x + 5; return y;") != 15) { return 6; }
+
+    // Cascading reassignments.
+    if (run("var x = 1; x = x * 2; x = x * 2; x = x * 2; return x;") != 8) { return 7; }
+
+    // Two vars, swap via temporary.
+    if (run("var a = 10; var b = 20; var t = a; a = b; b = t; return a - b;") != 10) { return 8; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stmt-interp-in-lang)", code)
+	}
+}
+
 // Stack-VM-in-lang: AST → flat bytecode → stack-machine
 // execution. A new SHAPE in the self-host spike series — fold,
 // reduce, and print all walk an AST and produce a transformed
