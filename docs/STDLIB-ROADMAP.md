@@ -354,6 +354,14 @@ think they're free additions to make.
   `s.is_numeric()` / `s.is_alpha_only()` / `s.is_alnum_only()`.
   Suffix `_only` to avoid shadowing the byte-receiver
   predicates already in the prelude.
+- **i64 / u32 / u64 scalar methods**: parallels to the i32
+  `abs` / `min` / `max` / `clamp` helpers. i64 abs wraps on
+  i64::MIN (no i128 to widen into); u32 / u64 have no abs
+  (always non-negative).
+- **String byte-level helpers**: `s.at(i)` (bounds-checked
+  Option), `s.chars()` (i32[] of byte values), `s.reverse_bytes()`
+  (ASCII-only reverse; multibyte UTF-8 will scramble). The
+  name `reverse_bytes` carries the warning.
 
 ## Cross-cutting decisions
 
