@@ -169,6 +169,67 @@ function (b: i32) is_ascii(): boolean {
     return b >= 0 && b <= 127;
 }
 
+// `sort_i32_asc(arr)` — return a fresh ascending-sorted
+// copy of `arr`. Insertion-sort: O(n²) worst case, but
+// for the compiler's small-list use cases (sorted field
+// offsets, declaration orders, capacity hints) it's fine
+// and avoids the closure-arg infrastructure a generic
+// `sort_by[T](arr: T[], cmp: (T, T) => i32)` would need.
+// `sort_i32_desc` flips the comparison direction.
+//
+// Free function rather than a method: lang's receiver
+// syntax only accepts struct, enum, or built-in types —
+// not array types. A future PR can add array-method
+// dispatch and re-spell these as `arr.sort_asc()`.
+//
+// Functional shape (returns a new array) matches the rest
+// of the prelude's array conventions (`arr.push` returns a
+// new array); the input is not mutated.
+
+function sort_i32_asc(arr: i32[]): i32[] {
+    var n: i32 = len(arr);
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: i32 = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && out[j] > key) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
+function sort_i32_desc(arr: i32[]): i32[] {
+    var n: i32 = len(arr);
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: i32 = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && out[j] < key) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
 function (s: string) trim(): string {
     var n: i32 = len(s);
     var low: i32 = 0;
