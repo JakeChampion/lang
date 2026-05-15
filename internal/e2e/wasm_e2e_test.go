@@ -1379,6 +1379,58 @@ func TestWASMStringSplit(t *testing.T) {
 	}
 }
 
+// `type X = A | B | C;` unions on wasm — the desugaring
+// produces a synthesised EnumDecl whose variants each carry
+// the named struct as a single positional payload. Verifies
+// the full wasm pipeline survives the new top-level decl shape
+// (`prog.Unions` flowing through modload's combine, checker's
+// desugar, and the unchanged IR / codegen path).
+func TestWASMUnions(t *testing.T) {
+	src := `struct Add { l: i32, r: i32 }
+struct Mul { l: i32, r: i32 }
+struct Lit { v: i32 }
+
+type Expr = Add | Mul | Lit;
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Add(a) => { return a.l + a.r; },
+        Mul(m) => { return m.l * m.r; },
+        Lit(l) => { return l.v; },
+    }
+}
+
+function main(): i32 {
+    var lhs: Expr = Add(Add { l: 2, r: 3 });
+    var rhs: Expr = Lit(Lit { v: 4 });
+    var prod: Expr = Mul(Mul { l: eval(lhs), r: eval(rhs) });
+    return eval(prod);
+}`
+	if got := runWasm(t, src); got != 20 {
+		t.Errorf("got %d, want 20 ((2+3)*4)", got)
+	}
+}
+
+// Union member that doesn't name a struct fails at the
+// checker level with a clear message — no IR-time crash.
+func TestUnionUnknownMemberErrors(t *testing.T) {
+	src := `struct A { x: i32 }
+type Foo = A | Missing;
+
+function main(): i32 { return 0; }`
+	prog, perr := parser.Parse(src)
+	if perr != nil {
+		t.Fatalf("parse: %v", perr)
+	}
+	_, cerr := checker.Check(prog)
+	if cerr == nil {
+		t.Fatalf("expected checker error for unknown union member, got none")
+	}
+	if !strings.Contains(cerr.Error(), "does not name a struct") {
+		t.Errorf("unexpected error: %v", cerr)
+	}
+}
+
 // `s.lines()` — Python `splitlines` / Go `bufio.Scanner` shape.
 // Splits on '\n', strips a trailing '\r' from each line (CRLF
 // → LF), and drops the phantom empty line a final '\n' would

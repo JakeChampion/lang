@@ -243,6 +243,36 @@ func TestX86_64StringConcat(t *testing.T) {
 	}
 }
 
+// `type X = A | B | C;` unions on x86-64 — third-backend
+// cross-check for the union-types desugaring. See the arm64
+// + wasm counterparts for the same source.
+func TestX86_64Unions(t *testing.T) {
+	src := `struct Add { l: i32, r: i32 }
+struct Mul { l: i32, r: i32 }
+struct Lit { v: i32 }
+
+type Expr = Add | Mul | Lit;
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Add(a) => { return a.l + a.r; },
+        Mul(m) => { return m.l * m.r; },
+        Lit(l) => { return l.v; },
+    }
+}
+
+function main(): i32 {
+    var lhs: Expr = Add(Add { l: 2, r: 3 });
+    var rhs: Expr = Lit(Lit { v: 4 });
+    var prod: Expr = Mul(Mul { l: eval(lhs), r: eval(rhs) });
+    return eval(prod);
+}`
+	_, code := compileAndRunX86_64(t, src)
+	if code != 20 {
+		t.Errorf("got %d, want 20 ((2+3)*4)", code)
+	}
+}
+
 // `s.lines()` on x86-64 — verifies the prelude function emits
 // identical results on the third backend, picking up the same
 // per-byte index + slice paths as wasm / arm64.

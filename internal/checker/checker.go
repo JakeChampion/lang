@@ -455,6 +455,64 @@ func Check(prog *ast.Program) (*Info, error) {
 		}
 	}
 
+	// Desugar `type X = A | B | C;` unions into synthesised
+	// EnumDecls before the enum registration loop runs — that
+	// way the rest of the pipeline only ever sees enums. Each
+	// member must resolve to a non-generic StructDecl registered
+	// above. Errors at this stage (unknown member, generic
+	// member, duplicate union name) surface as type errors with
+	// the source position of the union or member; the
+	// synthesised enum is dropped on error so callers don't see
+	// a phantom registration. After desugaring, prog.Unions is
+	// nil so subsequent passes can't read it.
+	for _, ud := range prog.Unions {
+		if _, dup := c.info.Structs[ud.Name]; dup {
+			c.errf(ud.P, "union %q collides with a struct of the same name", ud.Name)
+			continue
+		}
+		if _, dup := c.info.Enums[ud.Name]; dup {
+			c.errf(ud.P, "union %q collides with an enum of the same name", ud.Name)
+			continue
+		}
+		variants := make([]ast.EnumVariant, 0, len(ud.Members))
+		seen := map[string]bool{}
+		ok := true
+		for _, member := range ud.Members {
+			if seen[member] {
+				c.errf(ud.P, "duplicate member %q in union %s", member, ud.Name)
+				ok = false
+				continue
+			}
+			seen[member] = true
+			sd, isStruct := c.info.Structs[member]
+			if !isStruct {
+				c.errf(ud.P, "union %s member %q does not name a struct in scope", ud.Name, member)
+				ok = false
+				continue
+			}
+			if len(sd.TypeParams) > 0 {
+				c.errf(ud.P, "union %s member %q is generic; generic struct members in unions are not supported yet", ud.Name, member)
+				ok = false
+				continue
+			}
+			variants = append(variants, ast.EnumVariant{
+				P:        ud.P,
+				Name:     member,
+				Payloads: []ast.Type{ast.StructType{Name: member}},
+			})
+		}
+		if !ok {
+			continue
+		}
+		prog.Enums = append(prog.Enums, &ast.EnumDecl{
+			P:        ud.P,
+			Name:     ud.Name,
+			Variants: variants,
+			Public:   ud.Public,
+		})
+	}
+	prog.Unions = nil
+
 	// Register every enum declaration. Variant names are recorded
 	// in variantOf so an unqualified `Some(x)` or `Red` can be
 	// rewritten into a typed *EnumLit during expression checking.

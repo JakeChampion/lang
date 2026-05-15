@@ -122,6 +122,11 @@ var keywords = map[string]bool{
 	"pub":      true,
 	"const":    true,
 	"enum":     true,
+	// `type X = A | B | C;` declares a union of struct types —
+	// see UnionDecl in internal/ast. The checker desugars these
+	// to synthetic enums (`enum X { A(A), B(B), C(C) }`) so the
+	// rest of the pipeline doesn't need to know about them.
+	"type":     true,
 	"match":    true,
 	"when":     true,
 	"defer":    true,
