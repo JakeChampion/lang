@@ -6242,6 +6242,39 @@ function main(): i32 {
 // `s.lines()` on arm64 — exercises the prelude function over
 // the two-word ABI: `s[i]` byte indexing, `s[lo:hi]` slicing,
 // `out.push(line)`, and the array-result return path.
+// Runtime template substitution via the prelude format()
+// function. Walks fmt and replaces each {} placeholder with
+// args[i]. Mirrors Python str.format() / Rust format!()
+// minimal subset. Covers what f-strings DON'T: dynamic
+// templates (read from a config / locale table / error
+// catalogue), and programmatic diagnostic-string assembly
+// where the template lives in a const-table rather than at
+// every call site.
+//
+// Cases:
+//   - basic substitution: matched arg count
+//   - underfilled: more {} than args → literal {} tail
+//   - overfilled: more args than {} → extras silently dropped
+//   - no placeholders → identity (still cheap)
+//   - empty fmt → empty result
+//   - chained with to_string() for i32 args
+func TestArm64Format(t *testing.T) {
+	src := `function main(): i32 {
+    if (format("hello {}, age {}", ["alice", "30"]) != "hello alice, age 30") { return 1; }
+    if (format("{}-{}-{}", ["a", "b", "c"]) != "a-b-c") { return 2; }
+    if (format("{} and {}", ["only"]) != "only and {}") { return 3; }
+    if (format("just {}", ["one", "two", "three"]) != "just one") { return 4; }
+    if (format("no holes here", ["unused"]) != "no holes here") { return 5; }
+    if (format("", ["x"]) != "") { return 6; }
+    if (format("count = {}", [(42).to_string()]) != "count = 42") { return 7; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (format)", code)
+	}
+}
+
 func TestArm64StringLines(t *testing.T) {
 	src := `function main(): i32 {
     var lf: string[] = "a\nb\nc".lines();

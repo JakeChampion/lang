@@ -196,8 +196,15 @@ Type-system extension; ~1-2 weeks design + implementation.
   `is_hex`) — add to prelude.
 - **No `os.Stat` equivalent** — use `read_file()`'s error
   arm to probe existence.
-- **No sprintf-style formatter** — concat with `+`, or
-  add a minimal `format(fmt, args[])` to prelude.
+- **No sprintf-style formatter** — ~~concat with `+`, or
+  add a minimal `format(fmt, args[])` to prelude.~~ Resolved:
+  `format(fmt, args: string[])` landed in the prelude.
+  Walks the template byte-by-byte and substitutes each `{}`
+  placeholder with the next `args[i]`. Callers pre-stringify
+  via `.to_string()`. Underflow (more `{}`s than args) emits
+  literal `{}` so the bug surfaces at runtime; overflow
+  (more args) silently drops extras. Mirrors Python
+  `str.format()` / Rust `format!()` minimal subset.
 - **No regex** — hand-coded byte scans (the prelude
   already does this in `trim` / `split` / etc.).
 
