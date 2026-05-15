@@ -241,6 +241,124 @@ function main(): i32 {
 	}
 }
 
+// Lexer-in-lang v4: adds numeric type-suffix recognition
+// (`42i64` → TokInt{value: 42, suffix: "i64"}). Suffixes
+// accepted: `i32`, `i64`, `u32`, `u64`, `f32`, `f64` — the
+// six numeric widths lang exposes. The match is greedy but
+// strict: only a complete 3-byte suffix steals the bytes;
+// `42i6` lexes as bare `42` followed by ident `i6`. Pattern
+// mirrors Rust's numeric-literal suffix recognition.
+func TestArm64LexerV4(t *testing.T) {
+	src := `struct TokInt   { value: i32, suffix: string }
+struct TokIdent { name: string }
+struct TokKw    { name: string }
+struct TokStr   { value: string }
+struct TokPunct { text: string }
+struct TokEof   { _pad: i32 }
+
+type Token = TokInt | TokIdent | TokKw | TokStr | TokPunct | TokEof;
+
+function is_keyword(name: string): boolean {
+    return name == "function" || name == "var" || name == "if" ||
+           name == "else" || name == "while" || name == "return" ||
+           name == "true" || name == "false" || name == "match" ||
+           name == "type" || name == "struct" || name == "enum";
+}
+
+function read_num_suffix(src: string, i: i32): string {
+    var n: i32 = len(src);
+    if (i + 3 > n) { return ""; }
+    var a: i32 = src[i];
+    var b: i32 = src[i + 1];
+    var c: i32 = src[i + 2];
+    if (!(a == 105 || a == 117 || a == 102)) { return ""; } // i / u / f
+    if (b == 51 && c == 50) { return src[i : i + 3]; }      // 32
+    if (b == 54 && c == 52) { return src[i : i + 3]; }      // 64
+    return "";
+}
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            var sfx: string = read_num_suffix(src, i);
+            if (len(sfx) > 0) { i = i + len(sfx); }
+            toks = toks.push(TokInt { value: v, suffix: sfx });
+        } else if (b.is_alpha()) {
+            var start: i32 = i;
+            while (i < n && src[i].is_alnum()) { i = i + 1; }
+            var name: string = src[start:i];
+            if (is_keyword(name)) {
+                toks = toks.push(TokKw { name: name });
+            } else {
+                toks = toks.push(TokIdent { name: name });
+            }
+        } else {
+            toks = toks.push(TokPunct { text: src[i : i + 1] });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function main(): i32 {
+    // Full suffix path.
+    var toks: Token[] = tokenize("var x = 42i64; var y = 7u32; var z = 99;");
+    if (len(toks) != 16) { return 100 + len(toks); }
+    match (toks[3]) {
+        TokInt(t) => {
+            if (t.value != 42) { return 1; }
+            if (t.suffix != "i64") { return 2; }
+        },
+        _ => { return 3; },
+    }
+    match (toks[8]) {
+        TokInt(t) => {
+            if (t.value != 7) { return 4; }
+            if (t.suffix != "u32") { return 5; }
+        },
+        _ => { return 6; },
+    }
+    match (toks[13]) {
+        TokInt(t) => {
+            if (t.value != 99) { return 7; }
+            if (t.suffix != "") { return 8; }
+        },
+        _ => { return 9; },
+    }
+    // Incomplete suffix: 42i6 → 42 + ident("i6").
+    var t2: Token[] = tokenize("42i6");
+    if (len(t2) != 3) { return 200 + len(t2); }
+    match (t2[0]) {
+        TokInt(t) => {
+            if (t.value != 42) { return 10; }
+            if (t.suffix != "") { return 11; }
+        },
+        _ => { return 12; },
+    }
+    match (t2[1]) {
+        TokIdent(t) => { if (t.name != "i6") { return 13; } },
+        _ => { return 14; },
+    }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (lexer v4)", code)
+	}
+}
+
 // Lexer-in-lang v3: builds on v2 by adding block comments
 // (`/* ... */`), the `\n` / `\t` / `\r` string escapes via a
 // single `unescape(b: i32): i32` helper, AND swaps the inline
