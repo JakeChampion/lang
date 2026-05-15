@@ -1888,22 +1888,43 @@ func (g *generator) emitEprintRuntime() {
 	g.line(".global __lang_eprint")
 	g.typeDirective("__lang_eprint")
 	g.label("__lang_eprint")
-	// Frame: 48 bytes — fp/lr (16) + x19 (8) + scratch (8) + 16
-	// padding. x19 holds the ORIGINAL string value for return;
-	// scratch at [x29 + 24] for emitStrDataPtr materialisation.
+	if ast.UseTwoWordStrings(8) {
+		// Two-word ABI: (data, len) in (x0, x1). Frame:
+		// fp/lr (16) + 16-byte inline-spill scratch at
+		// [x29+16..+31] + 16 align.
+		g.emit("stp x29, x30, [sp, #-48]!")
+		g.emit("mov x29, sp")
+		g.emitStrLen2W("w2", "x1")
+		g.emitStrDataPtr2W("x1", "x0", "x1", 16)
+		g.emit("mov x0, #2")            // fd = stderr
+		g.syscall("write")
+		g.adrpAdd("x1", ".LLangNewline")
+		g.emit("mov x2, #1")
+		g.emit("mov x0, #2")
+		g.syscall("write")
+		// Return empty pair — caller's IR-side push of the
+		// "void" return is unused.
+		g.emit("mov x0, xzr")
+		g.emit("mov x1, xzr")
+		g.emit("ldp x29, x30, [sp], #48")
+		g.emit("ret")
+		g.sizeDirective("__lang_eprint")
+		g.line(".ltorg")
+		return
+	}
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
-	g.emit("mov x19, x0")               // x19 = original string value
-	g.emitStrLen("w2", "x0")            // x2 = length
-	g.emitStrDataPtr("x1", "x0", 24)    // x1 = byte ptr (buf)
-	g.emit("mov x0, #2")                // x0 = fd (stderr)
+	g.emit("mov x19, x0")
+	g.emitStrLen("w2", "x0")
+	g.emitStrDataPtr("x1", "x0", 24)
+	g.emit("mov x0, #2")
 	g.syscall("write")
 	g.adrpAdd("x1", ".LLangNewline")
 	g.emit("mov x2, #1")
 	g.emit("mov x0, #2")
 	g.syscall("write")
-	g.emit("mov x0, x19")               // return original string value
+	g.emit("mov x0, x19")
 	g.emit("ldr x19, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
@@ -2183,11 +2204,21 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("mov x20, x0") // x20 = n (saved for trailing NUL + length prefix)
-	// Allocate n + 5 (4 prefix + n data + 1 trailing NUL).
-	g.emit("add x0, x20, #5")
-	g.emit("bl __lang_alloc")
-	g.emit("add x19, x0, #4")     // x19 = data ptr base
-	g.emit("stur w20, [x19, #-4]") // length prefix
+	twoWord := ast.UseTwoWordStrings(8)
+	if twoWord {
+		// Two-word heap form: no length prefix in the data
+		// segment; len lives on the operand stack as the
+		// second return word. Alloc exactly n bytes.
+		g.emit("mov w0, w20")
+		g.emit("bl __lang_alloc")
+		g.emit("mov x19, x0") // x19 = data ptr
+	} else {
+		// Legacy single-pointer: length prefix at [data-4].
+		g.emit("add x0, x20, #5")
+		g.emit("bl __lang_alloc")
+		g.emit("add x19, x0, #4")     // x19 = data ptr (past prefix)
+		g.emit("stur w20, [x19, #-4]") // length prefix
+	}
 	if g.darwin {
 		// Darwin getentropy(buf, len), syscall 500. Max 256
 		// bytes per call. Walk the buffer in 256-byte chunks
@@ -2222,10 +2253,17 @@ func (g *generator) emitRandomBytesRuntime() {
 		g.emit("mov x8, #278")
 		g.emit("svc #0")
 	}
-	// Trailing NUL at data + n.
-	g.emit("add x1, x19, x20")
-	g.emit("strb wzr, [x1]")
-	g.emit("mov x0, x19")          // return data ptr
+	if !twoWord {
+		// Trailing NUL at data + n (only for legacy heap
+		// form — two-word heap form has no NUL padding,
+		// length is on the operand stack).
+		g.emit("add x1, x19, x20")
+		g.emit("strb wzr, [x1]")
+	}
+	g.emit("mov x0, x19") // return data ptr
+	if twoWord {
+		g.emit("mov w1, w20") // return len = n
+	}
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
