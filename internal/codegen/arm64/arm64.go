@@ -1543,6 +1543,18 @@ func (g *generator) emitEnvRuntime() {
 	g.line(".global __lang_env")
 	g.typeDirective("__lang_env")
 	g.label("__lang_env")
+	twoWord := ast.UseTwoWordStrings(8)
+	if twoWord {
+		// Two-word ABI: (name_data, name_len) in (x0, x1).
+		// Frame grows to 80 bytes: 16-byte inline-spill
+		// scratch for name materialisation at [x29+64..+79].
+		g.emit("stp x29, x30, [sp, #-80]!")
+		g.emit("mov x29, sp")
+		g.emit("stp x19, x20, [sp, #16]")
+		g.emit("stp x21, x22, [sp, #32]")
+		g.emitStrLen2W("w20", "x1") // x20 = name byte length
+		g.emitStrDataPtr2W("x19", "x0", "x1", 64) // x19 = name byte ptr
+	} else {
 	// Frame: 64 bytes — fp/lr (16) + x19..x22 (32) + 8 SSO scratch
 	// at [x29 + 48] for materialising the name + 8 padding.
 	g.emit("stp x29, x30, [sp, #-64]!")
@@ -1551,6 +1563,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emitStrLen("w20", "x0")           // x20 = name_len (read before materialise)
 	g.emitStrDataPtr("x19", "x0", 48)   // x19 = name byte ptr
+	}
 	g.adrpAdd("x21", "__lang_envp")
 	g.emit("ldr x21, [x21]")            // x21 = envp
 	g.label(".Lenv_loop")
@@ -1579,26 +1592,39 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("sub x2, x1, x0")        // x2 = value length
 	g.emit("mov x19, x0")           // stash value src ptr
 	g.emit("mov x20, x2")           // stash value len
-	g.emit("add x0, x2, #4")
-	g.emit("bl __lang_alloc")
-	g.emit("add x22, x0, #4")        // x22 = data ptr (past length prefix)
-	g.emitStrLenStore("w20", "x22")
-	g.emit("mov x0, x22")            // memcpy dst = data ptr
-	g.emit("mov x1, x19")
-	g.emit("mov x2, x20")
-	g.emit("bl __lang_memcpy")
-	// Build Option[string] with the IR's payload layout:
-	// 16-byte heap object [tag:i32, _pad:i32, str_ptr:i64].
-	// Payload sits at +8 (8-byte-aligned) so the IR's
-	// payloadLoadOp(string) → OpLoad Width:WidthPtr reads
-	// the full 64-bit string pointer. PR #267 widened
-	// pointer-typed enum payloads to ptr-width and 8-byte-
-	// aligned them; this hand-built Option matches.
-	g.emit("mov x0, #16")
-	g.emit("bl __lang_alloc")
-	g.emit("str wzr, [x0]")          // tag = 0 (Some) at +0
-	g.emit("str x22, [x0, #8]")      // payload at +8 (8-byte slot) — x22 = value data ptr
-	g.emit("b .Lenv_done")
+	if twoWord {
+		// Heap-form: alloc exactly value-len bytes (no
+		// length prefix).
+		g.emit("mov x0, x2")
+		g.emit("bl __lang_alloc")
+		g.emit("mov x22, x0") // x22 = data ptr
+		g.emit("mov x0, x22")
+		g.emit("mov x1, x19")
+		g.emit("mov x2, x20")
+		g.emit("bl __lang_memcpy")
+		// Build Option[string]: 24-byte box {tag@0, data@8,
+		// len@16}.
+		g.emit("mov x0, #24")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")     // tag = 0 (Some)
+		g.emit("str x22, [x0, #8]")  // data
+		g.emit("str x20, [x0, #16]") // len
+		g.emit("b .Lenv_done")
+	} else {
+		g.emit("add x0, x2, #4")
+		g.emit("bl __lang_alloc")
+		g.emit("add x22, x0, #4")
+		g.emitStrLenStore("w20", "x22")
+		g.emit("mov x0, x22")
+		g.emit("mov x1, x19")
+		g.emit("mov x2, x20")
+		g.emit("bl __lang_memcpy")
+		g.emit("mov x0, #16")
+		g.emit("bl __lang_alloc")
+		g.emit("str wzr, [x0]")
+		g.emit("str x22, [x0, #8]")
+		g.emit("b .Lenv_done")
+	}
 	g.label(".Lenv_next")
 	g.emit("add x21, x21, #8")
 	g.emit("b .Lenv_loop")
@@ -1611,7 +1637,11 @@ func (g *generator) emitEnvRuntime() {
 	g.label(".Lenv_done")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #64")
+	if twoWord {
+		g.emit("ldp x29, x30, [sp], #80")
+	} else {
+		g.emit("ldp x29, x30, [sp], #64")
+	}
 	g.emit("ret")
 	g.sizeDirective("__lang_env")
 	g.line(".ltorg")
@@ -1733,29 +1763,44 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.line(".global __lang_tcp_recv")
 	g.typeDirective("__lang_tcp_recv")
 	g.label("__lang_tcp_recv")
+	twoWord := ast.UseTwoWordStrings(8)
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("str x21, [sp, #32]")
 	g.emit("mov x19, x0") // x19 = fd
 	g.emit("mov x20, x1") // x20 = max
-	// Allocate `max + 5` bytes (4 prefix + max data + 1 NUL).
-	g.emit("add x0, x20, #5")
-	g.emit("bl __lang_alloc")
-	g.emit("add x21, x0, #4") // x21 = data ptr (callee-save → survives syscall)
-	// read(fd, data, max).
-	g.emit("mov x0, x19")
-	g.emit("mov x1, x21")
-	g.emit("mov x2, x20")
-	g.syscall("read")
-	// Clamp to ≥ 0 — read returns -errno or 0 on EOF.
-	g.emit("cmp x0, #0")
-	g.emit("csel x0, x0, xzr, ge")
-	g.emit("stur w0, [x21, #-4]") // length prefix
-	// Trailing NUL at data + n.
-	g.emit("add x1, x21, x0")
-	g.emit("strb wzr, [x1]")
-	g.emit("mov x0, x21") // return data ptr
+	if twoWord {
+		// Two-word heap form: alloc max bytes (no prefix /
+		// NUL); return (data, len) in (x0, x1).
+		g.emit("mov x0, x20")
+		g.emit("bl __lang_alloc")
+		g.emit("mov x21, x0") // x21 = dst
+		g.emit("mov x0, x19")
+		g.emit("mov x1, x21")
+		g.emit("mov x2, x20")
+		g.syscall("read")
+		g.emit("cmp x0, #0")
+		g.emit("csel x0, x0, xzr, ge")
+		// x0 = byte count, x21 = data ptr → return (data, len).
+		g.emit("mov x1, x0")  // x1 = len
+		g.emit("mov x0, x21") // x0 = data
+	} else {
+		// Allocate `max + 5` bytes (4 prefix + max data + 1 NUL).
+		g.emit("add x0, x20, #5")
+		g.emit("bl __lang_alloc")
+		g.emit("add x21, x0, #4")
+		g.emit("mov x0, x19")
+		g.emit("mov x1, x21")
+		g.emit("mov x2, x20")
+		g.syscall("read")
+		g.emit("cmp x0, #0")
+		g.emit("csel x0, x0, xzr, ge")
+		g.emit("stur w0, [x21, #-4]")
+		g.emit("add x1, x21, x0")
+		g.emit("strb wzr, [x1]")
+		g.emit("mov x0, x21")
+	}
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
@@ -1772,13 +1817,27 @@ func (g *generator) emitTcpSendRuntime() {
 	g.line(".global __lang_tcp_send")
 	g.typeDirective("__lang_tcp_send")
 	g.label("__lang_tcp_send")
-	// x0 = fd, x1 = data (may be inline-tagged).
-	// Frame: 32 bytes — fp/lr (16) + scratch slot at [x29 + 16]
-	// for emitStrDataPtr on inline `data`.
+	if ast.UseTwoWordStrings(8) {
+		// x0 = fd, x1 = data, x2 = len.
+		g.emit("stp x29, x30, [sp, #-48]!")
+		g.emit("mov x29, sp")
+		g.emit("mov w3, w0") // w3 = fd
+		g.emitStrLen2W("w4", "x2")             // w4 = byte length
+		g.emitStrDataPtr2W("x1", "x1", "x2", 16) // x1 = byte ptr
+		g.emit("mov w0, w3")                    // x0 = fd
+		g.emit("mov x2, x4")                    // x2 = byte length
+		g.syscall("write")
+		g.emit("ldp x29, x30, [sp], #48")
+		g.emit("ret")
+		g.sizeDirective("__lang_tcp_send")
+		g.line(".ltorg")
+		return
+	}
+	// Legacy single-pointer.
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
-	g.emitStrLen("w2", "x1")           // x2 = len(data)
-	g.emitStrDataPtr("x1", "x1", 16)   // x1 = byte ptr for syscall
+	g.emitStrLen("w2", "x1")
+	g.emitStrDataPtr("x1", "x1", 16)
 	g.syscall("write")
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
