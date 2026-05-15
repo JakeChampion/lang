@@ -3682,6 +3682,15 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 				}
 			}
 		}
+	case *ast.Call:
+		// Field access on a function call's struct return —
+		// `foo().field` where foo returns a struct. Look up the
+		// callee's return type via funcs / FuncSigs.
+		if t := b.callReturnType(x); t != nil {
+			if st, ok := t.(ast.StructType); ok {
+				return st.Name
+			}
+		}
 	case *ast.StructLit:
 		return x.TypeName
 	case *ast.CaptureRef:
@@ -3733,6 +3742,29 @@ func (b *builder) exprStaticType(e ast.Expr) ast.Type {
 			if at, ok := t.(ast.ArrayType); ok {
 				return at.Elem
 			}
+		}
+	case *ast.Call:
+		return b.callReturnType(x)
+	}
+	return nil
+}
+
+// callReturnType returns the return type of a Call expression
+// by looking up the callee in the checker's FuncSigs map. The
+// callee can be either an Ident (most common — direct call to
+// a named function) or some other expression shape; for non-
+// Ident callees we return nil since indirect-call return types
+// aren't tracked here. Used by fieldOwner / exprStaticType to
+// resolve `foo().field` patterns where the call returns a
+// struct.
+func (b *builder) callReturnType(c *ast.Call) ast.Type {
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	if b.info != nil {
+		if sig, ok := b.info.FuncSigs[id.Name]; ok && sig != nil {
+			return sig.Result
 		}
 	}
 	return nil
