@@ -41,7 +41,12 @@ const (
 	sysRead      = 63
 	sysWrite     = 64
 	sysClose     = 57
+	sysOpenat    = 56
+	sysFstat     = 80
+	sysExit      = 93
 	sysExitGroup = 94
+	sysMmap      = 222
+	sysGetrandom = 278
 	sysSocket    = 198
 	sysBind      = 200
 	sysListen    = 201
@@ -53,26 +58,59 @@ const (
 // `svc #0x80` with the number in x16, and on error returns
 // +errno in x0 with the C flag set (vs Linux's -errno in x0).
 const (
-	darRead   = 3
-	darWrite  = 4
-	darClose  = 6
-	darExit   = 1
-	darAccept = 30
-	darSocket = 97
-	darBind   = 104
-	darListen = 106
+	darRead       = 3
+	darWrite      = 4
+	darClose      = 6
+	darExit       = 1
+	darAccept     = 30
+	darSocket     = 97
+	darBind       = 104
+	darListen     = 106
+	darMmap       = 197
+	darOpenat     = 463
+	darGetentropy = 500
 )
 
 // linuxDarwinSysno maps a logical syscall name to (Linux, Darwin)
-// numbers. Used by syscall() to pick the right immediate.
+// numbers. Used by syscall() to pick the right immediate. Only
+// includes syscalls whose ABI matches closely enough that
+// substituting the number is the only platform difference —
+// `read` / `write` / `close` / `openat` / `mmap` / `socket`
+// family all qualify. `exit_group` maps to Darwin's `exit`
+// (Darwin has no thread-group exit; the process-wide single-
+// threaded variant suffices for our `-nostdlib` binaries).
+//
+// Helpers whose shape differs across platforms (`fstat` —
+// stat64 vs stat struct layout differs; `getrandom` —
+// Darwin's getentropy is chunked at 256 bytes per call) live
+// in `linuxOnlySysno` below or get branched inline in their
+// emitter.
 var linuxDarwinSysno = map[string][2]int{
-	"read":   {sysRead, darRead},
-	"write":  {sysWrite, darWrite},
-	"close":  {sysClose, darClose},
-	"socket": {sysSocket, darSocket},
-	"bind":   {sysBind, darBind},
-	"listen": {sysListen, darListen},
-	"accept": {sysAccept, darAccept},
+	"read":       {sysRead, darRead},
+	"write":      {sysWrite, darWrite},
+	"close":      {sysClose, darClose},
+	"socket":     {sysSocket, darSocket},
+	"bind":       {sysBind, darBind},
+	"listen":     {sysListen, darListen},
+	"accept":     {sysAccept, darAccept},
+	"openat":     {sysOpenat, darOpenat},
+	"exit":       {sysExit, darExit},
+	"exit_group": {sysExitGroup, darExit},
+	"mmap":       {sysMmap, darMmap},
+}
+
+// linuxOnlySysno carries syscalls whose Linux number we know
+// but whose Darwin equivalent doesn't exist with the same ABI
+// shape — `fstat` (Darwin's struct stat64 has different field
+// offsets), `getrandom` (Darwin uses chunked getentropy). The
+// `syscall()` helper emits the Linux form when `!g.darwin`
+// and panics at codegen time on Darwin, so a helper that
+// hasn't been ported to Darwin surfaces visibly when the
+// driver builds with `-target arm64-darwin` instead of
+// silently producing wrong asm.
+var linuxOnlySysno = map[string]int{
+	"fstat":     sysFstat,
+	"getrandom": sysGetrandom,
 }
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
@@ -626,17 +664,17 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov x2, #3")
 	if g.darwin {
 		g.emit("mov x3, #0x1002")
-		g.emit("mov x4, #-1")
-		g.emit("mov x5, #0")
-		g.emit("mov x16, #197")
-		g.emit("svc #0x80")
 	} else {
 		g.emit("mov x3, #0x22")
-		g.emit("mov x4, #-1")
-		g.emit("mov x5, #0")
-		g.emit("mov x8, #222")
-		g.emit("svc #0")
 	}
+	g.emit("mov x4, #-1")
+	g.emit("mov x5, #0")
+	// `syscall("mmap")` resolves to 197 on Darwin via `svc
+	// #0x80` and 222 on Linux via `svc #0`; Darwin's BSD
+	// carry-flag → -errno normalisation runs inside the helper
+	// so the `cmn x0, #0; blt` check below sees Linux-shaped
+	// values either way.
+	g.syscall("mmap")
 	g.emit("cmn x0, #0")
 	g.emit("blt .Lalloc_oom")
 	g.emit("mov x10, x0")
@@ -2437,7 +2475,7 @@ func (g *generator) emitRandomBytesRuntime() {
 		g.emit("mov x1, #256")
 		g.emit("cmp x22, x1")
 		g.emit("csel x1, x22, x1, lo") // x1 = min(remaining, 256)
-		g.emit("mov x16, #500")        // SYS_getentropy
+		g.emit("mov x16, #%d", darGetentropy)
 		g.emit("svc #0x80")
 		// Recompute chunk size to advance cursor / remaining
 		// (x1 was clobbered by the syscall).
@@ -2450,11 +2488,13 @@ func (g *generator) emitRandomBytesRuntime() {
 		g.label(".Lrb_done")
 	} else {
 		// Linux getrandom(buf, len, flags=0), syscall 278.
+		// Lives in `linuxOnlySysno` — `g.syscall("getrandom")`
+		// asserts at codegen time if it gets reached on Darwin
+		// (the if/else above is the inline Darwin branch).
 		g.emit("mov x0, x19")
 		g.emit("mov x1, x20")
 		g.emit("mov x2, #0")
-		g.emit("mov x8, #278")
-		g.emit("svc #0")
+		g.syscall("getrandom")
 	}
 	if !twoWord {
 		// Trailing NUL at data + n (only for legacy heap
@@ -2698,16 +2738,14 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov x1, x24")
 	g.emit("mov x2, #0")
 	g.emit("mov x3, #0")
-	g.emit("mov x8, #56")
-	g.emit("svc #0")
+	g.syscall("openat")
 	g.emit("tbnz x0, #63, .Lrf_err_open")
 	g.emit("mov x20, x0") // fd
 
 	// fstat(fd, statbuf). statbuf scratch at sp+64..sp+256 (192 bytes).
 	g.emit("mov x0, x20")
 	g.emit("add x1, sp, #64")
-	g.emit("mov x8, #80")
-	g.emit("svc #0")
+	g.syscall("fstat")
 	g.emit("tbnz x0, #63, .Lrf_err_close")
 	g.emit("ldr x22, [sp, #64 + 48]") // st_size
 
@@ -2727,8 +2765,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov x0, x20")
 	g.emit("add x1, x21, x23")
 	g.emit("sub x2, x22, x23")
-	g.emit("mov x8, #63") // read
-	g.emit("svc #0")
+	g.syscall("read")
 	g.emit("tbnz x0, #63, .Lrf_err_close")
 	g.emit("cbz x0, .Lrf_done") // EOF before end (file shrunk)
 	g.emit("add x23, x23, x0")
@@ -2737,8 +2774,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.label(".Lrf_done")
 	// close(fd).
 	g.emit("mov x0, x20")
-	g.emit("mov x8, #57")
-	g.emit("svc #0")
+	g.syscall("close")
 	// Build Result.Ok(string).
 	g.emit("mov x0, #16")
 	g.emit("bl __lang_alloc")
@@ -2750,8 +2786,7 @@ func (g *generator) emitReadFileRuntime() {
 	// errno = -x0, then close(fd), then build Err.
 	g.emit("neg x21, x0")     // x21 = errno (reuse slot)
 	g.emit("mov x0, x20")
-	g.emit("mov x8, #57")
-	g.emit("svc #0")
+	g.syscall("close")
 	g.emit("b .Lrf_err_dispatch")
 
 	g.label(".Lrf_err_open")
@@ -2816,15 +2851,13 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("mov x1, x25")
 	g.emit("mov x2, #0")
 	g.emit("mov x3, #0")
-	g.emit("mov x8, #56")
-	g.emit("svc #0")
+	g.syscall("openat")
 	g.emit("tbnz x0, #63, .Lrf2w_err_open")
 	g.emit("mov x21, x0") // fd
 	// fstat(fd, statbuf).
 	g.emit("mov x0, x21")
 	g.emit("add x1, x29, #96") // statbuf at [x29+96]
-	g.emit("mov x8, #80")
-	g.emit("svc #0")
+	g.syscall("fstat")
 	g.emit("tbnz x0, #63, .Lrf2w_err_close")
 	g.emit("ldr x23, [x29, #96 + 48]") // st_size
 	// Allocate exactly st_size bytes for the result string
@@ -2840,8 +2873,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("mov x0, x21")
 	g.emit("add x1, x22, x24")
 	g.emit("sub x2, x23, x24")
-	g.emit("mov x8, #63") // read
-	g.emit("svc #0")
+	g.syscall("read")
 	g.emit("tbnz x0, #63, .Lrf2w_err_close")
 	g.emit("cbz x0, .Lrf2w_done")
 	g.emit("add x24, x24, x0")
@@ -2849,8 +2881,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.label(".Lrf2w_done")
 	// close(fd).
 	g.emit("mov x0, x21")
-	g.emit("mov x8, #57")
-	g.emit("svc #0")
+	g.syscall("close")
 	// Build Result.Ok(string) box: 24 bytes — {tag@0,
 	// pad@4, data@8, len@16}.
 	g.emit("mov x0, #24")
@@ -2862,8 +2893,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.label(".Lrf2w_err_close")
 	g.emit("neg x22, x0") // x22 = errno
 	g.emit("mov x0, x21")
-	g.emit("mov x8, #57")
-	g.emit("svc #0")
+	g.syscall("close")
 	g.emit("b .Lrf2w_err_dispatch")
 	g.label(".Lrf2w_err_open")
 	g.emit("neg x22, x0")
@@ -2930,8 +2960,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov x1, x24")
 	g.emit("mov x2, #577")
 	g.emit("mov x3, #0644")
-	g.emit("mov x8, #56")
-	g.emit("svc #0")
+	g.syscall("openat")
 	g.emit("tbnz x0, #63, .Lwf_err_open")
 	g.emit("mov x21, x0") // fd
 
@@ -2943,16 +2972,14 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov x0, x21")
 	g.emit("add x1, x20, x23")
 	g.emit("sub x2, x22, x23")
-	g.emit("mov x8, #64") // write
-	g.emit("svc #0")
+	g.syscall("write")
 	g.emit("tbnz x0, #63, .Lwf_err_close")
 	g.emit("add x23, x23, x0")
 	g.emit("b .Lwf_loop")
 
 	g.label(".Lwf_done")
 	g.emit("mov x0, x21")
-	g.emit("mov x8, #57") // close
-	g.emit("svc #0")
+	g.syscall("close")
 	// Return None: 8-byte box, tag=1.
 	g.emit("mov x0, #8")
 	g.emit("bl __lang_alloc")
@@ -2963,8 +2990,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.label(".Lwf_err_close")
 	g.emit("neg x22, x0") // errno
 	g.emit("mov x0, x21")
-	g.emit("mov x8, #57")
-	g.emit("svc #0")
+	g.syscall("close")
 	g.emit("b .Lwf_err_dispatch")
 
 	g.label(".Lwf_err_open")
@@ -3020,8 +3046,7 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.emit("mov x0, #-100")
 	g.emit("mov x2, #577")
 	g.emit("mov x3, #0644")
-	g.emit("mov x8, #56")
-	g.emit("svc #0")
+	g.syscall("openat")
 	g.emit("tbnz x0, #63, .Lwf2w_err_open")
 	g.emit("mov x21, x0") // fd (reuse x21 — content_data no longer needed past this point)
 	// Write loop. x22 = cumulative bytes written (callee-
@@ -3035,15 +3060,13 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.emit("mov x0, x21")        // fd
 	g.emit("add x1, x23, x22")   // buf + offset
 	g.emit("sub x2, x24, x22")   // remaining
-	g.emit("mov x8, #64")
-	g.emit("svc #0")
+	g.syscall("write")
 	g.emit("tbnz x0, #63, .Lwf2w_err_close")
 	g.emit("add x22, x22, x0")
 	g.emit("b .Lwf2w_loop")
 	g.label(".Lwf2w_done")
 	g.emit("mov x0, x21")
-	g.emit("mov x8, #57") // close
-	g.emit("svc #0")
+	g.syscall("close")
 	// Return None: 8-byte box, tag=1.
 	g.emit("mov x0, #8")
 	g.emit("bl __lang_alloc")
@@ -3053,8 +3076,7 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.label(".Lwf2w_err_close")
 	g.emit("neg x22, x0") // errno
 	g.emit("mov x0, x21")
-	g.emit("mov x8, #57")
-	g.emit("svc #0")
+	g.syscall("close")
 	g.emit("b .Lwf2w_err_dispatch")
 	g.label(".Lwf2w_err_open")
 	g.emit("neg x22, x0")
@@ -3168,8 +3190,7 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("mov x1, x21")
 			g.emit("mov w2, #%d", e.flags)
 			g.emit("mov w3, #%d", e.mode)
-			g.emit("mov x8, #56")
-			g.emit("svc #0")
+			g.syscall("openat")
 			g.emit("tbnz x0, #63, %s", ".Lorw2w_err_"+e.sym)
 			g.emit("mov w0, w0")
 			g.emit("bl __lang_make_handle")
@@ -3207,8 +3228,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov x1, x19")
 		g.emit("mov w2, #%d", e.flags)
 		g.emit("mov w3, #%d", e.mode)
-		g.emit("mov x8, #56") // openat
-		g.emit("svc #0")
+		g.syscall("openat")
 		g.emit("tbnz x0, #63, %s", ".Lorw_err_"+e.sym)
 		// Success: alloc handle struct, store fd, wrap in Ok.
 		g.emit("mov w20, w0") // fd
@@ -3427,8 +3447,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov w0, w19")
 	g.emit("add x1, x20, x21")
 	g.emit("sub x2, x22, x21")
-	g.emit("mov x8, #64") // write
-	g.emit("svc #0")
+	g.syscall("write")
 	g.emit("tbnz x0, #63, .Lww_err")
 	g.emit("add x21, x21, x0")
 	g.emit("b .Lww_loop")
@@ -3473,8 +3492,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
 	g.emit("ldr w0, [x0]") // fd
-	g.emit("mov x8, #57") // close
-	g.emit("svc #0")
+	g.syscall("close")
 	g.emit("tbnz x0, #63, .Lcfb_err")
 	// None.
 	g.emit("mov x0, #4")
@@ -4049,23 +4067,31 @@ func (g *generator) syscallExit() {
 // only touches x0 (on the Darwin error path) and x8/x16
 // (syscall number).
 func (g *generator) syscall(name string) {
-	nums, ok := linuxDarwinSysno[name]
-	if !ok {
-		panic("arm64 syscall: unknown name " + name)
+	if nums, ok := linuxDarwinSysno[name]; ok {
+		if g.darwin {
+			g.emit("mov x16, #%d", nums[1])
+			g.emit("svc #0x80")
+			// Carry clear = success. Negate on error so callers'
+			// `cmp x0, #0; blt` checks see Linux-shaped -errno.
+			lbl := g.freshLabel("sysc_ok")
+			g.emit("b.cc %s", lbl)
+			g.emit("neg x0, x0")
+			g.label(lbl)
+		} else {
+			g.emit("mov x8, #%d", nums[0])
+			g.emit("svc #0")
+		}
+		return
 	}
-	if g.darwin {
-		g.emit("mov x16, #%d", nums[1])
-		g.emit("svc #0x80")
-		// Carry clear = success. Negate on error so callers'
-		// `cmp x0, #0; blt` checks see Linux-shaped -errno.
-		lbl := g.freshLabel("sysc_ok")
-		g.emit("b.cc %s", lbl)
-		g.emit("neg x0, x0")
-		g.label(lbl)
-	} else {
-		g.emit("mov x8, #%d", nums[0])
+	if num, ok := linuxOnlySysno[name]; ok {
+		if g.darwin {
+			panic("arm64 syscall: " + name + " has no portable Darwin form; emitter must branch inline")
+		}
+		g.emit("mov x8, #%d", num)
 		g.emit("svc #0")
+		return
 	}
+	panic("arm64 syscall: unknown name " + name)
 }
 
 // adrpAdd emits the canonical AArch64 PC-relative
