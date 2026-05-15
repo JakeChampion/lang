@@ -446,6 +446,199 @@ function main(): i32 {
 	}
 }
 
+// Parser-in-lang v4: comparison operators (`==`, `!=`, `<`,
+// `<=`, `>`, `>=`) layered on top of the arithmetic
+// interpreter. Adds a new `parse_relation` precedence level
+// above `parse_expr`; comparisons don't chain (`a < b < c` is
+// rejected by the single-relation grammar). Result of a
+// comparison is i32 1 / 0 — no boolean type at the AST level.
+//
+// BinOp now stores `op: string` instead of `op: i32`. A
+// string holds both single-char and multi-char operators
+// without a second tag field. The eval body dispatches on
+// the string directly.
+//
+// `rhs` / `op_s` hoisted to function scope in parse_relation
+// so the wasm emitter (which names locals by lang identifier)
+// doesn't see a duplicate across the two sibling `if`
+// branches — same workaround the prelude's `__map_hash`
+// already uses.
+func TestArm64InterpV4Comparisons(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokPunct { ch: i32 }
+struct TokDPunct { text: string }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokPunct | TokDPunct | TokEof;
+
+struct Num   { value: i32 }
+struct BinOp { op: string, left: Expr, right: Expr }
+type Expr = Num | BinOp;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if ((b == 61 || b == 33 || b == 60 || b == 62) &&
+                   i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokDPunct { text: src[i : i + 2] });
+            i = i + 2;
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokPunct(_) => { return 1; },
+        TokDPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+function tok_dpunct_text(t: Token): string {
+    match (t) { TokDPunct(p) => { return p.text; }, _ => { return ""; } }
+}
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        BinOp(b) => {
+            var l: i32 = eval(b.left);
+            var r: i32 = eval(b.right);
+            if (b.op == "+") { return l + r; }
+            if (b.op == "-") { return l - r; }
+            if (b.op == "*") { return l * r; }
+            if (b.op == "/") { return l / r; }
+            if (b.op == "==") { if (l == r) { return 1; } return 0; }
+            if (b.op == "!=") { if (l != r) { return 1; } return 0; }
+            if (b.op == "<")  { if (l <  r) { return 1; } return 0; }
+            if (b.op == "<=") { if (l <= r) { return 1; } return 0; }
+            if (b.op == ">")  { if (l >  r) { return 1; } return 0; }
+            if (b.op == ">=") { if (l >= r) { return 1; } return 0; }
+            return 0;
+        },
+    }
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        var v: i32 = tok_int_value(toks[pos]);
+        cur[0] = pos + 1;
+        return Num { value: v };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_relation(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 1) { return lhs; }
+        var ch: i32 = tok_punct_ch(toks[pos]);
+        if (ch != 42 && ch != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        var op_s: string = "*";
+        if (ch == 47) { op_s = "/"; }
+        lhs = BinOp { op: op_s, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 1) { return lhs; }
+        var ch: i32 = tok_punct_ch(toks[pos]);
+        if (ch != 43 && ch != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        var op_s: string = "+";
+        if (ch == 45) { op_s = "-"; }
+        lhs = BinOp { op: op_s, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_relation(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_expr(toks, cur);
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    var rhs: Expr = Num { value: 0 };
+    var op_s: string = "";
+    if (k == 1) {
+        var ch: i32 = tok_punct_ch(toks[pos]);
+        if (ch == 60 || ch == 62) {
+            cur[0] = pos + 1;
+            rhs = parse_expr(toks, cur);
+            op_s = "<";
+            if (ch == 62) { op_s = ">"; }
+            return BinOp { op: op_s, left: lhs, right: rhs };
+        }
+        return lhs;
+    }
+    if (k == 2) {
+        op_s = tok_dpunct_text(toks[pos]);
+        cur[0] = pos + 1;
+        rhs = parse_expr(toks, cur);
+        return BinOp { op: op_s, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function interp(src: string): i32 {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var ast: Expr = parse_relation(toks, cur);
+    return eval(ast);
+}
+
+function main(): i32 {
+    if (interp("1 + 2 * 3") != 7) { return 1; }
+    if (interp("3 < 5") != 1) { return 2; }
+    if (interp("5 < 3") != 0) { return 3; }
+    if (interp("2 + 3 == 5") != 1) { return 4; }
+    if (interp("2 + 3 != 5") != 0) { return 5; }
+    if (interp("10 >= 10") != 1) { return 6; }
+    if (interp("10 <= 9") != 0) { return 7; }
+    if (interp("100 - 50 > 40") != 1) { return 8; }
+    if (interp("2 * 3 == 6") != 1) { return 9; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (interp v4 comparisons)", code)
+	}
+}
+
 // Parser-in-lang v2: full lex → parse → eval pipeline. Wires
 // the lexer-in-lang spike (PRs #394-#395, #399-#401) to the
 // recursive-descent parser (PR #402) so a source string flows
