@@ -4477,6 +4477,64 @@ func (g *generator) pop() {
 	g.emit("ldr x0, [sp], #%d", slotBytes)
 }
 
+// frameLoad emits a load of `reg` from `[x29 + off]`, picking
+// the right addressing mode for the offset. `stur` / `ldur`
+// (unscaled, signed 9-bit imm) cover -256..+255 — fine for
+// shallow frames. Larger negative offsets exceed the imm
+// range and assemble-fail, so we materialise the address via
+// `sub x16, x29, #abs(off)` (x16 is the AArch64 intra-
+// procedure-call scratch — IP0 — free to clobber across
+// function calls and never carries a live value across the
+// store / load). Positive offsets follow the same pattern
+// with `add`.
+//
+// Frames over 4095 bytes would need a multi-instruction
+// `add` sequence; we don't emit those today and panic if
+// asked, leaving room for a real implementation when the
+// first user trips it. Practical frames sit well under that
+// — the largest in the current test suite is ~600 bytes.
+func (g *generator) frameLoad(reg string, off int32) {
+	if off >= -256 && off <= 255 {
+		g.emit("ldur %s, [x29, #%d]", reg, off)
+		return
+	}
+	abs := off
+	if abs < 0 {
+		abs = -abs
+	}
+	if abs > 4095 {
+		panic(fmt.Sprintf("arm64: frame offset %d exceeds 12-bit add/sub imm range; multi-step materialisation not implemented", off))
+	}
+	if off < 0 {
+		g.emit("sub x16, x29, #%d", -off)
+	} else {
+		g.emit("add x16, x29, #%d", off)
+	}
+	g.emit("ldr %s, [x16]", reg)
+}
+
+// frameStore is frameLoad's store counterpart. Same offset
+// range + scratch-register handling.
+func (g *generator) frameStore(reg string, off int32) {
+	if off >= -256 && off <= 255 {
+		g.emit("stur %s, [x29, #%d]", reg, off)
+		return
+	}
+	abs := off
+	if abs < 0 {
+		abs = -abs
+	}
+	if abs > 4095 {
+		panic(fmt.Sprintf("arm64: frame offset %d exceeds 12-bit add/sub imm range; multi-step materialisation not implemented", off))
+	}
+	if off < 0 {
+		g.emit("sub x16, x29, #%d", -off)
+	} else {
+		g.emit("add x16, x29, #%d", off)
+	}
+	g.emit("str %s, [x16]", reg)
+}
+
 // slotType returns the lang-level type of IR slot `idx` for
 // the currently emitting function. Mirrors wasm's slotType:
 // params first, then user locals, then synthetic scratch
@@ -5115,27 +5173,29 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// emitFunc per-slot, since string slots take 16 bytes
 		// under the two-word ABI. String slots: load `data` at
 		// `off+8` and `len` at `off`, push both. Non-string:
-		// load 8 bytes at `off`.
+		// load 8 bytes at `off`. frameLoad picks between `ldur`
+		// (shallow frames, -256..+255 imm range) and a
+		// scratch-register materialisation for deeper frames.
 		off := g.slotOffsets[op.I32]
 		if g.slotIsString(op.I32) {
-			g.emit("ldur x0, [x29, #%d]", off+8) // data
+			g.frameLoad("x0", off+8) // data
 			g.push()
-			g.emit("ldur x0, [x29, #%d]", off) // len
+			g.frameLoad("x0", off) // len
 			g.push()
 		} else {
-			g.emit("ldur x0, [x29, #%d]", off)
+			g.frameLoad("x0", off)
 			g.push()
 		}
 	case ir.OpStoreLocal:
 		off := g.slotOffsets[op.I32]
 		if g.slotIsString(op.I32) {
-			g.pop()                              // x0 = len (top)
-			g.emit("stur x0, [x29, #%d]", off)   // store len
-			g.pop()                              // x0 = data
-			g.emit("stur x0, [x29, #%d]", off+8) // store data
+			g.pop()                  // x0 = len (top)
+			g.frameStore("x0", off)  // store len
+			g.pop()                  // x0 = data
+			g.frameStore("x0", off+8) // store data
 		} else {
 			g.pop()
-			g.emit("stur x0, [x29, #%d]", off)
+			g.frameStore("x0", off)
 		}
 	case ir.OpTeeLocal:
 		// Pop, store, push back so the value stays on the
@@ -5144,18 +5204,18 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		off := g.slotOffsets[op.I32]
 		if g.slotIsString(op.I32) {
 			// Stack on entry: [..., data, len], top = len.
-			g.pop()                              // x0 = len
-			g.emit("mov x1, x0")                 // x1 = len
-			g.pop()                              // x0 = data
-			g.emit("stur x0, [x29, #%d]", off+8) // store data
-			g.emit("stur x1, [x29, #%d]", off)   // store len
+			g.pop()                  // x0 = len
+			g.emit("mov x1, x0")     // x1 = len
+			g.pop()                  // x0 = data
+			g.frameStore("x0", off+8) // store data
+			g.frameStore("x1", off)   // store len
 			// Re-push (data, len) so the value stays on the stack.
-			g.push()                             // push data (x0)
+			g.push()                 // push data (x0)
 			g.emit("mov x0, x1")
-			g.push()                             // push len
+			g.push()                 // push len
 		} else {
 			g.pop()
-			g.emit("stur x0, [x29, #%d]", off)
+			g.frameStore("x0", off)
 			g.push()
 		}
 
