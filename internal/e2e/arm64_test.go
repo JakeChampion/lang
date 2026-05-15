@@ -417,6 +417,43 @@ func TestArm64ByteClassifiers(t *testing.T) {
 	}
 }
 
+// `sort_i32_asc` / `sort_i32_desc` — fresh-array insertion
+// sort. Locks the prelude's first sort helper before the
+// generic `sort_by[T](arr, cmp)` infrastructure lands.
+func TestArm64SortI32(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5];
+    var asc: i32[] = sort_i32_asc(xs);
+    if (len(asc) != 9) { return 1; }
+    if (asc[0] != 1) { return 2; }
+    if (asc[1] != 1) { return 3; }
+    if (asc[8] != 9) { return 4; }
+    if (xs[0] != 3) { return 5; }  // input untouched
+
+    var desc: i32[] = sort_i32_desc(xs);
+    if (desc[0] != 9) { return 6; }
+    if (desc[8] != 1) { return 7; }
+
+    var empty: i32[] = [];
+    if (len(sort_i32_asc(empty)) != 0) { return 8; }
+
+    var one: i32[] = [42];
+    var one_sorted: i32[] = sort_i32_asc(one);
+    if (len(one_sorted) != 1) { return 9; }
+    if (one_sorted[0] != 42) { return 10; }
+
+    var negs: i32[] = [3, 0 - 5, 0, 0 - 1, 2];
+    var n_sorted: i32[] = sort_i32_asc(negs);
+    if (n_sorted[0] != 0 - 5) { return 11; }
+    if (n_sorted[4] != 3) { return 12; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (sort_i32)", code)
+	}
+}
+
 // Tiny lexer written in lang — recognises integer literals,
 // identifiers, and single-byte punctuation. Validates that:
 //
