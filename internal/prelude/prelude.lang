@@ -480,6 +480,22 @@ function __method_Array_contains(arr: string[], s: string): boolean {
     return __method_Array_index_of(arr, s) != (0 - 1);
 }
 
+// `arr.reverse()` — fresh string[] with elements in reverse
+// order. Functional shape (returns a new array; input is
+// untouched). O(n) build via push, no in-place mutation —
+// matches the rest of the array surface where push and friends
+// also return fresh arrays under lang's value-semantic array
+// model.
+function __method_Array_reverse(arr: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = len(arr) - 1;
+    while (i >= 0) {
+        out = out.push(arr[i]);
+        i = i - 1;
+    }
+    return out;
+}
+
 // === Array append ===
 //
 // `arr.push(v)` is lowered inline by the IR — see

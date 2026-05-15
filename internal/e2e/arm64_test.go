@@ -6291,11 +6291,22 @@ func TestArm64ArrayJoin(t *testing.T) {
     if (none.index_of("x") != (0 - 1)) { return 12; }
     if (none.contains("x")) { return 13; }
 
+    // reverse — fresh array, original untouched.
+    var xs: string[] = ["a", "b", "c", "d"];
+    if (xs.reverse().join(",") != "d,c,b,a") { return 14; }
+    if (xs.join(",") != "a,b,c,d") { return 15; }
+    // Single element — reverse is identity.
+    if (["solo"].reverse().join("|") != "solo") { return 16; }
+    // Empty array — empty result.
+    if (len(none.reverse()) != 0) { return 17; }
+    // Reverse twice — identity.
+    if (xs.reverse().reverse().join(",") != "a,b,c,d") { return 18; }
+
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
 	if code != 0 {
-		t.Errorf("got %d, want 0 (Array.join/index_of/contains)", code)
+		t.Errorf("got %d, want 0 (Array.join/index_of/contains/reverse)", code)
 	}
 }
 
