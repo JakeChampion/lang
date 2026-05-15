@@ -25,12 +25,14 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
@@ -62,6 +64,7 @@ func main() {
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
+	doInterp := flag.Bool("interp", false, "run FILE.lang (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	wasiAdapter := flag.String("wasi-adapter", "", "path to the wasi_snapshot_preview1.command.wasm adapter (required for -target wasm; see docs/WASI-PREVIEW2.md)")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
@@ -70,6 +73,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       lang -fmt [-w | -d] FILE.lang")
 		fmt.Fprintln(os.Stderr, "       lang -repl")
+		fmt.Fprintln(os.Stderr, "       lang -interp FILE.lang | lang -interp -    (read from stdin)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -80,6 +84,21 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	if *doInterp {
+		path := ""
+		if flag.NArg() >= 1 {
+			path = flag.Arg(0)
+		} else {
+			path = "-"
+		}
+		code, err := runInterp(path)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(code)
 	}
 
 	if flag.NArg() < 1 {
@@ -139,6 +158,79 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 	}
 	_, err = os.Stdout.WriteString(formatted)
 	return 0, err
+}
+
+// runInterp parses srcPath (or stdin when srcPath is "-"), runs the
+// pre-codegen passes (constfold + checker + monomorph) on it, and
+// invokes `main()` through the AST interpreter. The returned int
+// is `main()`'s result clamped to 0..255 — typical script-mode
+// semantics. Returns an error if any pipeline stage fails or the
+// program has no `main` to call.
+//
+// Stdin support is intentionally simple: read the whole stream into
+// memory, parse + check + interpret as a single file. No imports
+// supported in the stdin case because modload reads files from disk
+// — a file at path "-" doesn't exist. File-path callers go through
+// the full modload pipeline.
+func runInterp(srcPath string) (int, error) {
+	var prog *ast.Program
+	var src string
+	if srcPath == "-" {
+		buf, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return 1, fmt.Errorf("read stdin: %w", err)
+		}
+		src = string(buf)
+		p, err := parser.Parse(src)
+		if err != nil {
+			return 1, fmt.Errorf("%s", diag.Format("<stdin>", src, err))
+		}
+		prog = p
+	} else {
+		p, srcs, err := modload.Load(srcPath)
+		if err != nil {
+			return 1, err
+		}
+		prog = p
+		src = srcs[absPath(srcPath)]
+	}
+	if err := constfold.Fold(prog); err != nil {
+		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	}
+
+	ip := interp.New()
+	for _, ed := range prog.Enums {
+		ip.RegisterEnum(ed)
+	}
+	for _, fn := range prog.Funcs {
+		ip.Register(fn)
+	}
+	if _, ok := ip.Funcs["main"]; !ok {
+		return 1, fmt.Errorf("program has no `main` function to interpret")
+	}
+	v, err := ip.CallByName("main", nil)
+	if err != nil {
+		return 1, err
+	}
+	// Clamp main's return value to a process exit code. The AST
+	// interpreter wraps i32 in interp.Number; void main returns
+	// interp.Void. Anything else is a misuse — return 0 + a warning
+	// rather than panic.
+	if n, ok := v.(interp.Number); ok {
+		code := int(n)
+		if code < 0 {
+			code = -code
+		}
+		return code & 0xFF, nil
+	}
+	return 0, nil
 }
 
 // run drives the full pipeline. The returned int is the exit code that
