@@ -292,7 +292,7 @@ context. Pairs with #2.
 **Notes**: Auto error-conversion (Rust's `From` trait) is
 medium-effort; convention alone is small.
 
-### 14. Integer parsing / formatting in arbitrary base · small · ☐
+### 14. Integer parsing / formatting in arbitrary base · small · ☑
 
 **Surface**: `parse_int_radix(s, base) Result[i64, string]`,
 `int_to_string_radix(n, base) string`.

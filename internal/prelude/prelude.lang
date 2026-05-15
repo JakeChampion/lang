@@ -686,6 +686,89 @@ function (n: u64) to_string(): string {
     return __int_to_string_u64(n as i64, 0);
 }
 
+// === Radix integer parse / format ===
+//
+// `parse_int_radix(s, base)` / `int_to_string_radix(n, base)`
+// — companions to the decimal-only `parse_int` / `int_to_string`.
+// Supported bases: 2..36 (digits 0-9 then a-z, ignoring case).
+// Out-of-range base or a malformed digit returns None / a best-
+// effort string respectively.
+//
+// Use cases the decimal helpers don't cover: hex addressing,
+// binary debug dumps, octal permissions, base-36 short IDs.
+// Matches Rust i32::from_str_radix / i32::to_string_radix and
+// Go strconv.ParseInt / strconv.FormatInt minimal subset.
+
+function __radix_digit(c: i32): i32 {
+    if (c >= 48 && c <= 57)  { return c - 48; }     // 0-9 → 0-9
+    if (c >= 97 && c <= 122) { return c - 87; }     // a-z → 10-35
+    if (c >= 65 && c <= 90)  { return c - 55; }     // A-Z → 10-35
+    return 0 - 1;
+}
+
+function __radix_char(d: i32): i32 {
+    if (d < 10) { return d + 48; }                   // 0-9
+    return d + 87;                                    // a-z (lowercase)
+}
+
+function parse_int_radix(s: string, base: i32): Option[i32] {
+    if (base < 2 || base > 36) { return None; }
+    var n: i32 = len(s);
+    if (n == 0) { return None; }
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s[0] == 45) {           // '-'
+        neg = true;
+        i = 1;
+    } else if (s[0] == 43) {    // '+'
+        i = 1;
+    }
+    if (i >= n) { return None; }    // sign without digits
+    var v: i32 = 0;
+    while (i < n) {
+        var d: i32 = __radix_digit(s[i]);
+        if (d < 0 || d >= base) { return None; }
+        v = v * base + d;
+        i = i + 1;
+    }
+    if (neg) { v = 0 - v; }
+    return Some(v);
+}
+
+function int_to_string_radix(n: i32, base: i32): string {
+    if (base < 2 || base > 36) { return ""; }
+    if (n == 0) { return "0"; }
+    var neg: boolean = (n < 0);
+    // Use i64 magnitude so INT_MIN's negation doesn't overflow.
+    var mag: i64 = n as i64;
+    if (neg) { mag = 0 - mag; }
+    // Worst case is 32 binary digits + sign = 33; allocate slack.
+    var digits: u8[] = __alloc_u8(33);
+    var k: i32 = 0;
+    var b64: i64 = base as i64;
+    while (mag > (0 as i64)) {
+        var d: i32 = (mag % b64) as i32;
+        digits[k] = __radix_char(d) as u8;
+        k = k + 1;
+        mag = mag / b64;
+    }
+    var out_len: i32 = k;
+    if (neg) { out_len = k + 1; }
+    var buf: u8[] = __alloc_u8(out_len);
+    var bi: i32 = 0;
+    if (neg) {
+        buf[0] = 45 as u8;        // '-'
+        bi = 1;
+    }
+    var j: i32 = k - 1;
+    while (j >= 0) {
+        buf[bi] = digits[j];
+        bi = bi + 1;
+        j = j - 1;
+    }
+    return string_from_bytes(buf);
+}
+
 // === Base64 (RFC 4648, standard alphabet) ===
 //
 // `base64_encode(s)` / `base64_decode(s)` — round-trip

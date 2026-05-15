@@ -6336,6 +6336,56 @@ func TestArm64Format(t *testing.T) {
 // HTTP header parsing is the main motivator (case-insensitive
 // header-name compare, prefix-stripping path components,
 // whitespace-tolerant value tokenisation).
+// Radix parse/format per STDLIB-ROADMAP item #14:
+//   parse_int_radix(s, base) Option[i32]
+//   int_to_string_radix(n, base) string
+//
+// Supported bases: 2..36 (digits 0-9 then a-z, case-insensitive
+// on parse). Covers hex addressing, binary debug dumps, octal
+// permissions, base-36 short IDs.
+func TestArm64Radix(t *testing.T) {
+	src := `function main(): i32 {
+    // Parse — bases 2 / 8 / 10 / 16 / 36.
+    match (parse_int_radix("ff", 16))   { Some(v) => { if (v != 255) { return 1; } }, None => { return 2; }, }
+    match (parse_int_radix("FF", 16))   { Some(v) => { if (v != 255) { return 3; } }, None => { return 4; }, }
+    match (parse_int_radix("1010", 2))  { Some(v) => { if (v != 10) { return 5; } }, None => { return 6; }, }
+    match (parse_int_radix("777", 8))   { Some(v) => { if (v != 511) { return 7; } }, None => { return 8; }, }
+    match (parse_int_radix("12345", 10)){ Some(v) => { if (v != 12345) { return 9; } }, None => { return 10; }, }
+    match (parse_int_radix("z", 36))    { Some(v) => { if (v != 35) { return 11; } }, None => { return 12; }, }
+
+    // Sign handling.
+    match (parse_int_radix("-ff", 16))  { Some(v) => { if (v != (0 - 255)) { return 13; } }, None => { return 14; }, }
+    match (parse_int_radix("+ff", 16))  { Some(v) => { if (v != 255) { return 15; } }, None => { return 16; }, }
+
+    // Malformed input — None for every shape.
+    match (parse_int_radix("", 10))     { Some(_) => { return 17; }, None => { } }
+    match (parse_int_radix("-", 10))    { Some(_) => { return 18; }, None => { } }
+    match (parse_int_radix("gg", 16))   { Some(_) => { return 19; }, None => { } }
+    match (parse_int_radix("12", 1))    { Some(_) => { return 20; }, None => { } }
+    match (parse_int_radix("12", 37))   { Some(_) => { return 21; }, None => { } }
+
+    // Format — same base spread, plus sign + zero + negative.
+    if (int_to_string_radix(255, 16) != "ff") { return 22; }
+    if (int_to_string_radix(10, 2) != "1010") { return 23; }
+    if (int_to_string_radix(511, 8) != "777") { return 24; }
+    if (int_to_string_radix(12345, 10) != "12345") { return 25; }
+    if (int_to_string_radix(35, 36) != "z") { return 26; }
+    if (int_to_string_radix(0, 16) != "0") { return 27; }
+    if (int_to_string_radix(0 - 255, 16) != "-ff") { return 28; }
+
+    // Round-trip — parse(format(n)) == Some(n).
+    match (parse_int_radix(int_to_string_radix(0 - 12345, 16), 16)) {
+        Some(v) => { if (v != (0 - 12345)) { return 29; } },
+        None => { return 30; },
+    }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (radix parse/format)", code)
+	}
+}
+
 func TestArm64StringExtras(t *testing.T) {
 	src := `function bstr(b: boolean): string { if (b) { return "true"; } return "false"; }
 
