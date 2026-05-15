@@ -922,8 +922,9 @@ func isPairFormPayloadShape(t ast.Type, ptrW int) bool {
 		// the heap-box fallback (single i32 return holding a
 		// `(tag, payload)` cell pointer) handles it. Natives
 		// still use the LSB-tagged single-pointer slot — keep
-		// them eligible.
-		return ptrW != 4
+		// them eligible until the native two-word flip extends
+		// `useTwoWordStrings`.
+		return !useTwoWordStrings(ptrW)
 	case ast.ArrayType, ast.SliceType, ast.StructType, ast.TupleType:
 		return true
 	}
@@ -1237,11 +1238,11 @@ type builder struct {
 // that's true exactly for wasm32 (`ptrW == 4`). The arm64
 // native flip (in progress; see `docs/SSO-NATIVE-FLIP-STATUS.md`)
 // will extend this to arm64; x86_64 follows in a separate arc.
-// Centralising the decision behind this method names the seam
-// so future commits can flip it without grepping every call
-// site.
+// Routes through the canonical `ast.UseTwoWordStrings` so
+// the eventual flip happens in one place and propagates to
+// every consumer.
 func (b *builder) twoWordStrings() bool {
-	return b.ptrW == 4
+	return ast.UseTwoWordStrings(b.ptrW)
 }
 
 // collectDefers walks `s` recursively and appends every
@@ -4673,18 +4674,29 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 // Natives (`ptrW == 8`): returns 8. Native backends still use
 // the single-i8-pointer-slot LSB-tagged inline encoding; one
 // 8-byte slot is enough. When the natives flip to the two-word
-// ABI (§9 of SSO-TWOWORD-EXEC.md), this branch returns
-// `2 * ptrW = 16`.
+// ABI (see `docs/SSO-NATIVE-FLIP-STATUS.md`), this branch
+// returns `2 * ptrW = 16`.
 //
 // Both targets end up at 8 bytes per slot today — wasm via the
 // two-word fan-out, natives via the existing pointer width.
 // Centralising here means each backend can flip independently
 // without disturbing the other.
 func stringSlotSize(ptrW int) int32 {
-	if ptrW == 4 {
+	if useTwoWordStrings(ptrW) {
 		return int32(2 * ptrW)
 	}
 	return int32(ptrW)
+}
+
+// useTwoWordStrings is the standalone-helper companion to
+// `(b *builder) twoWordStrings()`. Routes through the
+// canonical `ast.UseTwoWordStrings` (lives in the `ast`
+// package so it's reachable from both `internal/ir` and
+// `ast.ElemSizeBytesFor`'s string branch). Naming the seam
+// means the eventual flip for arm64 is a one-line change in
+// `ast.UseTwoWordStrings` instead of a grep across helpers.
+func useTwoWordStrings(ptrW int) bool {
+	return ast.UseTwoWordStrings(ptrW)
 }
 
 // isWideScalar reports whether `t` is a 64-bit numeric or
@@ -4812,7 +4824,7 @@ func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 		return Op{Kind: OpStore, Width: 64}
 	}
 	if _, isString := t.(ast.StringType); isString {
-		if ptrW == 4 {
+		if useTwoWordStrings(ptrW) {
 			return Op{Kind: OpStore, Width: WidthString}
 		}
 		return Op{Kind: OpStore, Width: WidthPtr}
@@ -4849,7 +4861,7 @@ func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 		return Op{Kind: OpFStore, Width: w}
 	}
 	if _, isString := t.(ast.StringType); isString {
-		if ptrW == 4 {
+		if useTwoWordStrings(ptrW) {
 			return Op{Kind: OpStore, Width: WidthString}
 		}
 		return Op{Kind: OpStore, Width: WidthPtr}
@@ -4885,7 +4897,7 @@ func payloadLoadOpFor(t ast.Type, ptrW int) Op {
 		return Op{Kind: OpFLoad, Width: w}
 	}
 	if _, isString := t.(ast.StringType); isString {
-		if ptrW == 4 {
+		if useTwoWordStrings(ptrW) {
 			return Op{Kind: OpLoad, Width: WidthString}
 		}
 		return Op{Kind: OpLoad, Width: WidthPtr}
@@ -5221,7 +5233,7 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 // Natives keep the single-pointer string layout, so no boxing is
 // needed there.
 func isStringForBoxing(t ast.Type, ptrW int) bool {
-	if ptrW != 4 {
+	if !useTwoWordStrings(ptrW) {
 		return false
 	}
 	_, ok := t.(ast.StringType)

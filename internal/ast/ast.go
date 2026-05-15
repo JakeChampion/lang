@@ -330,12 +330,27 @@ func ElemSizeBytesFor(t Type, ptrW int) int {
 		}
 		return 4
 	case StringType:
-		if ptrW == 4 {
+		if UseTwoWordStrings(ptrW) {
 			return 2 * ptrW
 		}
 		return ptrW
 	}
 	return ptrW
+}
+
+// UseTwoWordStrings reports whether the target whose pointer
+// width is `ptrW` carries strings on the operand stack as a
+// `(data, len)` two-word pair (vs the legacy single LSB-tagged
+// pointer slot). Today the answer is "wasm32 only" (`ptrW ==
+// 4`); the arm64 native flip
+// (`docs/SSO-NATIVE-FLIP-STATUS.md`) will extend this.
+//
+// Lives in the `ast` package because both `internal/ir` and
+// `internal/ast`'s own `ElemSizeBytesFor` need to consult it.
+// The companion `(b *builder) twoWordStrings()` method in
+// `ir.go` calls into this for builder-level checks.
+func UseTwoWordStrings(ptrW int) bool {
+	return ptrW == 4
 }
 
 // IsPointerType reports whether values of `t` are represented

@@ -112,6 +112,25 @@ the eventual gate flip in the IR layer (extending
 `twoWordStrings()` to return true on arm64 too) becomes a
 one-liner from the codegen-side perspective.
 
+### §1c. Standalone-helper seam: `ast.UseTwoWordStrings` — DONE
+
+Companion to `(b *builder) twoWordStrings()`. Lives in the
+`ast` package (not `ir`) so both layers can call it:
+
+  - `ast.ElemSizeBytesFor(StringType, ptrW)` routes its
+    `ptrW == 4` check through `ast.UseTwoWordStrings`.
+  - `internal/ir/ir.go`'s `useTwoWordStrings(ptrW int)`
+    wraps `ast.UseTwoWordStrings` and is consumed by
+    `stringSlotSize`, `payloadStoreOpFor`,
+    `payloadLoadOpFor`, `arrayElemStoreOpFor`,
+    `isPairFormPayloadShape`, `isStringForBoxing`.
+
+The previously-named `(b *builder) twoWordStrings()` also
+routes through `ast.UseTwoWordStrings`. Net result: the
+"two-word ABI active?" decision lives in exactly one place
+(`ast.UseTwoWordStrings(ptrW int) bool { return ptrW == 4 }`)
+and the eventual flip for arm64 is a one-line change there.
+
 ### §1b. arm64 emit-side helpers (two-word variants) — DONE
 
 Added three Go-level helpers alongside the existing
