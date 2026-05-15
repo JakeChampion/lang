@@ -348,23 +348,21 @@ func (g *generator) emitDataSections() {
 		g.line(`.section .rodata`)
 	}
 	for _, s := range g.stringOrder {
-		// 4-byte little-endian length prefix + .asciz data.
-		// Pointers handed to user code address the .asciz base
-		// (.LStr_N); `len()` reads `[ptr - 4]`. Same shape at
-		// the byte level as wasm's string-literal segment.
+		// Two-word ABI: data segment holds just the bytes (no
+		// 4-byte length prefix — length lives on the operand
+		// stack as the second word of the (data, len) pair).
+		// `.asciz` adds a trailing NUL byte; harmless because
+		// runtime readers consume length-bounded bytes.
 		g.line(`.align 2`)
-		g.line(fmt.Sprintf("\t.4byte %d", len(s)))
 		g.label(g.stringLabel[s])
 		g.line("\t.asciz " + escapeForGAS(s))
 	}
-	// Empty-string sentinel. String-constructing runtime helpers
-	// (`__lang_strcat`, `__str_slice`, `string_from_bytes`) skip
-	// the alloc + memcpy when the result is zero bytes and return
-	// this static data pointer instead. Layout matches a length-
-	// prefixed string with length=0; the pointer addresses the
-	// data byte (which here is just a single trailing NUL).
+	// Empty-string sentinel. The runtime helpers don't read
+	// the bytes here (length is 0); the label exists for the
+	// rare path that needs an `adr` target for an empty data
+	// pointer. Kept at a fixed location for emitStrEmpty's
+	// inline-encoded sentinel reference.
 	g.line(`.align 2`)
-	g.line(`	.4byte 0`)
 	g.label(".LStr_Empty")
 	g.line(`	.asciz ""`)
 	if g.usesArrEmpty {
@@ -1511,16 +1509,33 @@ func (g *generator) emitTcpCloseRuntime() {
 	g.line(".ltorg")
 }
 
-// emitWriteRuntime emits `__lang_write(s)` — single write(1, s,
-// len) syscall, no trailing newline. Length lives at `[s - 4]`;
-// no `bl` happens so this stays a leaf function.
+// emitWriteRuntime emits `__lang_write(s_data, s_len)` —
+// single write(1, buf, byteLen) syscall, no trailing newline.
+// Under the two-word ABI the string arrives as a (data, len)
+// pair in (x0, x1). Byte length is extracted from x1 via
+// emitStrLen2W; the byte pointer materialises via
+// emitStrDataPtr2W (handles inline spill at [x29-16..x29-1]).
 func (g *generator) emitWriteRuntime() {
 	g.line("")
 	g.line(".global __lang_write")
 	g.typeDirective("__lang_write")
 	g.label("__lang_write")
-	// Frame: 32 bytes — fp/lr (16) + scratch at [x29 + 16] for
-	// emitStrDataPtr on inline `s`.
+	if ast.UseTwoWordStrings(8) {
+		// Frame: 48 bytes — fp/lr (16) + 16-byte scratch for
+		// inline-spill at [x29-16..x29-1] + 16 align pad.
+		g.emit("stp x29, x30, [sp, #-48]!")
+		g.emit("mov x29, sp")
+		g.emitStrLen2W("w2", "x1")            // x2 = byte length
+		g.emitStrDataPtr2W("x1", "x0", "x1", -16) // x1 = byte ptr; spill scratch at [x29-16]
+		g.emit("mov x0, #1")                  // fd = stdout
+		g.syscall("write")
+		g.emit("ldp x29, x30, [sp], #48")
+		g.emit("ret")
+		g.sizeDirective("__lang_write")
+		g.line(".ltorg")
+		return
+	}
+	// Legacy single-register native ABI.
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
 	g.emitStrLen("w2", "x0")           // x2 = length
@@ -1544,23 +1559,47 @@ func (g *generator) emitPutsRuntime() {
 	g.line(".global __lang_puts")
 	g.typeDirective("__lang_puts")
 	g.label("__lang_puts")
-	// Frame: 48 bytes — fp/lr (16) + x19 (8) + scratch (8) + 16
-	// padding for alignment. Saved x19 holds the ORIGINAL string
-	// value (heap or inline) so we can return it; scratch at
-	// [x29 + 24] feeds emitStrDataPtr for inline materialisation.
+	if ast.UseTwoWordStrings(8) {
+		// Two-word ABI: (data, len) in (x0, x1). Frame:
+		// fp/lr (16) + 16-byte inline-spill scratch + 16
+		// alignment.
+		g.emit("stp x29, x30, [sp, #-48]!")
+		g.emit("mov x29, sp")
+		g.emitStrLen2W("w2", "x1")               // x2 = byte length
+		g.emitStrDataPtr2W("x1", "x0", "x1", -16) // x1 = byte ptr
+		g.emit("mov x0, #1")                     // fd
+		g.syscall("write")
+		g.adrpAdd("x1", ".LLangNewline")
+		g.emit("mov x2, #1")
+		g.emit("mov x0, #1")
+		g.syscall("write")
+		// Return the empty (data, len) pair — print's return
+		// value is unused by lang user code, so we just hand
+		// back a zero pair to keep the AAPCS64 return-shape
+		// honest. The caller's IR-side push (commit applies
+		// returnIsString fan-out for two-word).
+		g.emit("mov x0, xzr")
+		g.emit("mov x1, xzr")
+		g.emit("ldp x29, x30, [sp], #48")
+		g.emit("ret")
+		g.sizeDirective("__lang_puts")
+		g.line(".ltorg")
+		return
+	}
+	// Legacy single-register native ABI.
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
-	g.emit("mov x19, x0")               // x19 = original string value
-	g.emitStrLen("w2", "x0")            // x2 = length
-	g.emitStrDataPtr("x1", "x0", 24)    // x1 = byte ptr (buf)
-	g.emit("mov x0, #1")                // x0 = fd
+	g.emit("mov x19, x0")
+	g.emitStrLen("w2", "x0")
+	g.emitStrDataPtr("x1", "x0", 24)
+	g.emit("mov x0, #1")
 	g.syscall("write")
 	g.adrpAdd("x1", ".LLangNewline")
 	g.emit("mov x2, #1")
 	g.emit("mov x0, #1")
 	g.syscall("write")
-	g.emit("mov x0, x19")               // return original string value
+	g.emit("mov x0, x19")
 	g.emit("ldr x19, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
@@ -2654,6 +2693,13 @@ func stateInitLiteralBits(e ast.Expr, t ast.Type) (uint64, bool) {
 // to 4 for the same alignment reason the wasm + x86-64
 // backends use.
 func arm64CaptureSlotSize(t ast.Type, ptrW int) int32 {
+	// Two-word strings: a string capture is `(data, len)` —
+	// two 8-byte slots. Centralises the decision via
+	// `ast.UseTwoWordStrings` so the arm64 native flip
+	// (`docs/SSO-NATIVE-FLIP-STATUS.md`) picks it up.
+	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
+		return int32(2 * ptrW)
+	}
 	if ast.ElemSizeBytesFor(t, ptrW) == 8 {
 		return 8
 	}
@@ -2738,25 +2784,66 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// The Nth (last) capture is at [sp, #16]; the (N-1)th
 	// at [sp, #16+slotBytes]; first at [sp, #16+slotBytes*(n-1)].
 	const calleeSaveOff = 16 // stp x19, x20 above the operand stack
-	for i, s := range slots {
-		stkOff := int32(calleeSaveOff + int32(n-1-i)*int32(slotBytes))
-		g.emit("ldr x1, [sp, #%d]", stkOff)
-		if s.size == 8 {
-			if s.off == 0 {
-				g.emit("str x1, [x19]")
-			} else {
-				g.emit("str x1, [x19, #%d]", s.off)
-			}
+	// Total operand-stack slots consumed by all captures (sum
+	// of per-capture stack-slot counts). String captures under
+	// the two-word ABI occupy 2 operand-stack slots; others 1.
+	totalStkSlots := int32(0)
+	stkSlotCounts := make([]int32, n)
+	for i, c := range hoisted.Captures {
+		if _, isStr := c.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(8) {
+			stkSlotCounts[i] = 2
 		} else {
-			if s.off == 0 {
-				g.emit("str w1, [x19]")
+			stkSlotCounts[i] = 1
+		}
+		totalStkSlots += stkSlotCounts[i]
+	}
+	// Capture i's TOP-OF-CAPTURE stack offset = calleeSaveOff +
+	// (sum of slot counts of captures > i) * slotBytes. For a
+	// non-string capture, the value lives at exactly that
+	// offset. For a string capture, [top] holds `len` and
+	// [top + slotBytes] holds `data` (data was pushed first,
+	// then len on top).
+	{
+		offFromTop := int32(0)
+		// Walk captures in reverse so we accumulate "above-i"
+		// counts naturally.
+		topOff := make([]int32, n)
+		for i := n - 1; i >= 0; i-- {
+			topOff[i] = calleeSaveOff + offFromTop*int32(slotBytes)
+			offFromTop += stkSlotCounts[i]
+		}
+		for i, s := range slots {
+			if stkSlotCounts[i] == 2 {
+				// String capture: store data at env+s.off,
+				// len at env+s.off+8.
+				g.emit("ldr x1, [sp, #%d]", topOff[i])                     // len (top)
+				g.emit("ldr x2, [sp, #%d]", topOff[i]+int32(slotBytes))    // data (below)
+				if s.off == 0 {
+					g.emit("str x2, [x19]")
+				} else {
+					g.emit("str x2, [x19, #%d]", s.off)
+				}
+				g.emit("str x1, [x19, #%d]", s.off+8)
+				continue
+			}
+			g.emit("ldr x1, [sp, #%d]", topOff[i])
+			if s.size == 8 {
+				if s.off == 0 {
+					g.emit("str x1, [x19]")
+				} else {
+					g.emit("str x1, [x19, #%d]", s.off)
+				}
 			} else {
-				g.emit("str w1, [x19, #%d]", s.off)
+				if s.off == 0 {
+					g.emit("str w1, [x19]")
+				} else {
+					g.emit("str w1, [x19, #%d]", s.off)
+				}
 			}
 		}
 	}
-	// Drop the N operand-stack slots we consumed.
-	g.emit("add sp, sp, #%d", n*slotBytes)
+	// Drop the N captures' operand-stack slots we consumed.
+	g.emit("add sp, sp, #%d", totalStkSlots*int32(slotBytes))
 	g.emit("mov x0, x19")
 	if envOnly {
 		g.emit("ldp x19, x20, [sp], #16")
@@ -2828,6 +2915,10 @@ type generator struct {
 	labelN    int
 	current   *ast.FuncDecl
 	currentIR *ir.Func
+	// slotOffsets[i] = byte offset (negative) from x29 of IR
+	// slot i's LOWEST byte. Built by emitFunc per call —
+	// string slots take 16 bytes (two-word ABI), others 8.
+	slotOffsets []int32
 	// darwin enables Mach-O / Apple-style conventions.
 	// Currently affects: (1) the program entry point — Apple
 	// links against `_main` rather than `_start`, so we emit
@@ -3286,7 +3377,7 @@ func (g *generator) emitStartRuntime() {
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.current = fn
 	g.currentIR = irFn
-	defer func() { g.current = nil; g.currentIR = nil }()
+	defer func() { g.current = nil; g.currentIR = nil; g.slotOffsets = nil }()
 
 	maxSlot := int32(-1)
 	for _, op := range irFn.Ops {
@@ -3303,11 +3394,25 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		}
 	}
 	numSlots := int(maxSlot + 1)
-	// localsSize = numSlots * 8 rounded up to 16-byte alignment
-	// so the post-allocate sp stays aligned for sp-relative
-	// memory accesses. Saved fp/lr is a separate 16 above the
-	// locals region.
-	localsSize := numSlots * 8
+	// Build the slot-offset table. Each slot is 8 bytes by
+	// default; string slots take 16 bytes (data + len) under
+	// the two-word ABI (`docs/SSO-NATIVE-FLIP-STATUS.md`). The
+	// table maps IR slot index → byte offset (negative) from
+	// x29, pointing at the LOWEST byte of the slot. For a
+	// string slot, `data` lives at `slotOffsets[i] + 8` and
+	// `len` at `slotOffsets[i]` — natural for `stp data, len,
+	// [x29, slotOffsets[i]]`.
+	g.slotOffsets = make([]int32, numSlots)
+	cumLocals := int32(0)
+	for i := 0; i < numSlots; i++ {
+		sz := int32(8)
+		if g.slotIsString(int32(i)) {
+			sz = 16
+		}
+		cumLocals += sz
+		g.slotOffsets[i] = -cumLocals
+	}
+	localsSize := int(cumLocals)
 	if localsSize%16 != 0 {
 		localsSize += 8
 	}
@@ -3332,17 +3437,46 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	}
 	// Spill parameter registers x0..x{regArgs-1} into their
 	// slots. Args at index >= regArgs come from the caller's
-	// stack at [x29 + 16 + 8*(i-regArgs)] — `+16` skips the
+	// stack at [x29 + 16 + 8*(stackIdx)] — `+16` skips the
 	// saved fp/lr pair the prologue stored, and the caller's
 	// stack-arg area starts just above. Slot i lives at
-	// `[x29, #-(i+1)*8]` so we copy via a single 8-byte mov.
-	for i := range fn.Params {
-		if i < regArgs {
-			g.emit("stur x%d, [x29, #%d]", i, -(i+1)*8)
-		} else {
-			g.emit("ldr x9, [x29, #%d]", 16+8*(i-regArgs))
-			g.emit("stur x9, [x29, #%d]", -(i+1)*8)
+	// `g.slotOffsets[i]` (negative offset from x29). Under
+	// the two-word ABI a string param takes 2 registers
+	// (data, len) → stored at slotOffsets[i]+8 and +0
+	// respectively, matching the `stp data, len` shape.
+	regIdx := 0
+	stackIdx := 0
+	for i, p := range fn.Params {
+		off := g.slotOffsets[i]
+		if _, isStr := p.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(8) {
+			// data half: from register regIdx, stored at off+8
+			if regIdx < regArgs {
+				g.emit("stur x%d, [x29, #%d]", regIdx, off+8)
+			} else {
+				g.emit("ldr x9, [x29, #%d]", 16+8*stackIdx)
+				g.emit("stur x9, [x29, #%d]", off+8)
+				stackIdx++
+			}
+			regIdx++
+			// len half: from register regIdx, stored at off
+			if regIdx < regArgs {
+				g.emit("stur x%d, [x29, #%d]", regIdx, off)
+			} else {
+				g.emit("ldr x9, [x29, #%d]", 16+8*stackIdx)
+				g.emit("stur x9, [x29, #%d]", off)
+				stackIdx++
+			}
+			regIdx++
+			continue
 		}
+		if regIdx < regArgs {
+			g.emit("stur x%d, [x29, #%d]", regIdx, off)
+		} else {
+			g.emit("ldr x9, [x29, #%d]", 16+8*stackIdx)
+			g.emit("stur x9, [x29, #%d]", off)
+			stackIdx++
+		}
+		regIdx++
 	}
 	_ = frameSize // reserved for the eventual debug-info / unwind tables
 
@@ -3430,6 +3564,63 @@ func (g *generator) slotType(idx int32) ast.Type {
 func (g *generator) slotIsString(idx int32) bool {
 	_, ok := g.slotType(idx).(ast.StringType)
 	return ok
+}
+
+// lookupArgTypes returns the parameter types of the callee
+// named `name` for an OpCallDirect with `argc` source-level
+// args. Two lookup paths:
+//
+//   - User functions live in g.funcs (the prog.Funcs slice
+//     keyed by name); return their FuncDecl.Params types.
+//   - Built-in runtime helpers (`print` / `write` / `env` /
+//     etc.) are emitted by arm64 code and don't have a
+//     FuncDecl; return a hardcoded type list for the known
+//     string-arg helpers below. Anything not in the table
+//     falls through to nil, signalling "treat as 1-slot per
+//     arg" (the legacy single-register native ABI).
+//
+// Used by the two-word-ABI flip to compute the operand-stack
+// slot count at OpCallDirect emit time.
+func lookupArgTypes(g *generator, name string, argc int) []ast.Type {
+	if callee, ok := g.funcs[name]; ok && callee != nil {
+		out := make([]ast.Type, 0, argc)
+		for i := 0; i < argc && i < len(callee.Params); i++ {
+			out = append(out, callee.Params[i].Type)
+		}
+		return out
+	}
+	switch name {
+	case "print", "write", "eprint", "env", "read_file",
+		"open_reader", "open_writer", "open_appender":
+		// Single string arg.
+		return []ast.Type{ast.StringType{}}
+	case "write_file":
+		// (path: string, content: string).
+		return []ast.Type{ast.StringType{}, ast.StringType{}}
+	case "tcp_send":
+		// (conn: i32, payload: string).
+		return []ast.Type{ast.NumberType{}, ast.StringType{}}
+	}
+	return nil
+}
+
+// returnIsString reports whether the callee named `name`
+// returns a string-typed value under the two-word ABI —
+// matters for OpCallDirect's post-call push (data, len)
+// instead of single-i32.
+func returnIsString(g *generator, name string) bool {
+	if callee, ok := g.funcs[name]; ok && callee != nil {
+		_, isStr := callee.ReturnType.(ast.StringType)
+		return isStr
+	}
+	switch name {
+	case "env", "read_file", "random_bytes", "tcp_recv",
+		"read_line", "string_from_bytes",
+		"__method_Reader_read_line", "__method_Reader_read_chunk":
+		// Built-in runtime helpers that return string.
+		return true
+	}
+	return false
 }
 
 // regW maps a 64-bit register name to its 32-bit counterpart.
@@ -3781,15 +3972,22 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpConstStr:
-		// String literals live in .rodata with a 4-byte length
-		// prefix at `[label - 4]`; the .LStr_N label points at
-		// the .asciz data so the runtime carries data pointers
-		// (post-prefix). Pointer materialised via the
-		// `adrp` + `add :lo12:` pair — the canonical AArch64
-		// PC-relative addressing for absolute symbol values.
+		// Two-word ABI: push (data, len) — the data segment
+		// holds just the bytes (no 4-byte length prefix), and
+		// length lives on the operand stack as the second
+		// word. Pointer materialised via the `adrp` + `add
+		// :lo12:` pair — the canonical AArch64 PC-relative
+		// addressing for absolute symbol values.
+		//
+		// Inline-form encoding (≤15 bytes via
+		// langstring.PackInlineNative) is a follow-up
+		// optimisation; for now every literal goes through the
+		// .rodata data segment + a runtime byte length.
 		lbl := g.internString(op.Str)
 		g.adrpAdd("x0", lbl)
-		g.push()
+		g.push() // data
+		g.emit("mov w0, #%d", len(op.Str))
+		g.push() // len
 
 	case ir.OpConstFunc:
 		// Function values materialise as static 16-byte
@@ -3964,24 +4162,53 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	// -------- locals --------
 
 	case ir.OpLoadLocal:
-		// Slot i sits at [x29, #-(i+1)*8] — see the prologue
-		// comment in emitFunc. `ldur` is the unscaled
-		// load/store form; the immediate range is ±256 bytes.
-		// Programs needing more than 32 locals (offset > 256)
-		// would need a longer addressing form — tracked as a
-		// future PR.
-		g.emit("ldur x0, [x29, #%d]", -(op.I32+1)*8)
-		g.push()
+		// Slot i lives at `slotOffsets[i]` from x29 — built by
+		// emitFunc per-slot, since string slots take 16 bytes
+		// under the two-word ABI. String slots: load `data` at
+		// `off+8` and `len` at `off`, push both. Non-string:
+		// load 8 bytes at `off`.
+		off := g.slotOffsets[op.I32]
+		if g.slotIsString(op.I32) {
+			g.emit("ldur x0, [x29, #%d]", off+8) // data
+			g.push()
+			g.emit("ldur x0, [x29, #%d]", off) // len
+			g.push()
+		} else {
+			g.emit("ldur x0, [x29, #%d]", off)
+			g.push()
+		}
 	case ir.OpStoreLocal:
-		g.pop()
-		g.emit("stur x0, [x29, #%d]", -(op.I32+1)*8)
+		off := g.slotOffsets[op.I32]
+		if g.slotIsString(op.I32) {
+			g.pop()                              // x0 = len (top)
+			g.emit("stur x0, [x29, #%d]", off)   // store len
+			g.pop()                              // x0 = data
+			g.emit("stur x0, [x29, #%d]", off+8) // store data
+		} else {
+			g.pop()
+			g.emit("stur x0, [x29, #%d]", off)
+		}
 	case ir.OpTeeLocal:
 		// Pop, store, push back so the value stays on the
 		// operand stack. arm64 has `ldr/str` post-increment but
 		// no fused tee — issue the pop / str / push sequence.
-		g.pop()
-		g.emit("stur x0, [x29, #%d]", -(op.I32+1)*8)
-		g.push()
+		off := g.slotOffsets[op.I32]
+		if g.slotIsString(op.I32) {
+			// Stack on entry: [..., data, len], top = len.
+			g.pop()                              // x0 = len
+			g.emit("mov x1, x0")                 // x1 = len
+			g.pop()                              // x0 = data
+			g.emit("stur x0, [x29, #%d]", off+8) // store data
+			g.emit("stur x1, [x29, #%d]", off)   // store len
+			// Re-push (data, len) so the value stays on the stack.
+			g.push()                             // push data (x0)
+			g.emit("mov x0, x1")
+			g.push()                             // push len
+		} else {
+			g.pop()
+			g.emit("stur x0, [x29, #%d]", off)
+			g.push()
+		}
 
 	// -------- state (module-global) vars --------
 	//
@@ -4464,12 +4691,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpStrLen:
-		// IR-level string-length seam. The Go-level helper
-		// emitStrLen owns the actual encoding so this case and
-		// every runtime helper that reads a string's length stay
-		// in sync as SSO follow-ups change the layout.
-		g.pop()                // x0 = str ptr
-		g.emitStrLen("w0", "x0") // w0 = length
+		// Two-word ABI: pop (data, len). Discard data; extract
+		// byte length from len via emitStrLen2W (top-bit-tagged
+		// flag check).
+		if ast.UseTwoWordStrings(8) {
+			g.pop() // x0 = len (top of stack)
+			g.emit("mov x1, x0")
+			g.pop() // x0 = data (discard)
+			g.emitStrLen2W("w0", "x1")
+			g.push()
+			break
+		}
+		// Legacy single-register string: pop the string-ptr value
+		// and let emitStrLen branch on the LSB-tagged inline flag.
+		g.pop()
+		g.emitStrLen("w0", "x0")
 		g.push()
 
 	case ir.OpEnumSentinel:
@@ -4771,10 +5007,40 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRandomBytes = true
 			g.usesAlloc = true
 		}
+		// Compute the effective operand-stack slot count for
+		// the call: under the two-word ABI, each string arg
+		// occupies 2 slots → 2 registers. For user functions we
+		// look up the FuncDecl signature; built-in runtime
+		// helpers fall back to a hardcoded string-arg table
+		// (the runtime helpers' Go-side emit code will be
+		// migrated to the two-word ABI in follow-up commits).
 		argc := int(op.I32)
-		g.emitCallArgsLoad(argc)
+		slotCount := argc
+		if ast.UseTwoWordStrings(8) {
+			argTypes := lookupArgTypes(g, op.Str, argc)
+			if argTypes != nil {
+				slotCount = 0
+				for _, t := range argTypes {
+					if _, isStr := t.(ast.StringType); isStr {
+						slotCount += 2
+					} else {
+						slotCount += 1
+					}
+				}
+			}
+		}
+		g.emitCallArgsLoad(slotCount)
 		g.emit("bl %s", target)
-		g.emitCallArgsCleanup(argc)
+		g.emitCallArgsCleanup(slotCount)
+		// Push return value(s). String-returning user fns return
+		// (data, len) in (x0, x1) under the two-word ABI; push
+		// both. Non-string returns push x0 only.
+		if ast.UseTwoWordStrings(8) && returnIsString(g, op.Str) {
+			g.push() // push data (x0)
+			g.emit("mov x0, x1")
+			g.push() // push len
+			break
+		}
 		g.push()
 
 	case ir.OpCallDirectPair:
