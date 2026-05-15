@@ -286,6 +286,21 @@ func TestLowerStructLitAndFieldAccess(t *testing.T) {
 	mustContainOp(t, prog, "main", OpLoad)
 }
 
+// Field access through an array index — `xs[i].field` where xs
+// is T[]. The IR's fieldOwner historically only knew about
+// Ident / FieldAccess / StructLit / CaptureRef; an Index target
+// dropped through to "" and surfaced "ir: field access on
+// unresolved struct" at lower time. Now handled via exprStaticType
+// peeling the ArrayType.Elem.
+func TestLowerFieldAccessThroughArrayIndex(t *testing.T) {
+	prog := lowerSource(t, `struct P { x: i32 }
+		function main(): i32 {
+			var ps: P[] = [P { x: 7 }];
+			return ps[0].x;
+		}`)
+	mustContainOp(t, prog, "main", OpLoad)
+}
+
 // `literal + literal` folds at compile time to a single
 // OpConstStr; the runtime OpStrConcat (and the `__lang_strcat`
 // it bottoms out in) only fires on at least one non-literal arg.
