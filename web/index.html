@@ -65,9 +65,13 @@
   }
   .out-info {
     color: #555;
-    font-size: 0.85em;
-    padding-top: 0.5em;
+    font-size: 0.9em;
+    padding-top: 0.6em;
+    font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
   }
+  .out-info .exit-ok    { color: #16a34a; font-weight: 600; }
+  .out-info .exit-err   { color: #b00020; font-weight: 600; }
+  .out-info .exit-label { color: #555; }
   kbd {
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.85em;
@@ -230,7 +234,9 @@ function eval(e: Expr): i32 {
 function main(): i32 {
     var sum: Expr = Add { l: 2, r: 3 };
     var prod: Expr = Mul { l: eval(sum), r: 4 };
-    return eval(prod);   // (2+3) * 4 = 20
+    var v: i32 = eval(prod);   // (2+3) * 4 = 20
+    print("(2+3) * 4 = " + v.to_string());
+    return v;
 }`,
   result: `struct ParseError { message: string, pos: i32 }
 
@@ -469,8 +475,15 @@ function runOnce() {
       if (result.error) {
         body += (body ? "\n\n" : "") + "[error]\n" + result.error;
       }
-      outEl.textContent = body || "(no output)";
-      metaEl.textContent = "exit " + result.exit;
+      // Empty body is normal for programs that communicate only
+      // via the exit code (most of the example presets, plus
+      // anything that does pure computation). Make sure the user
+      // sees `main()` returned 20 even when stdout is empty.
+      outEl.textContent = body || "(program produced no output)";
+      const cls = result.exit === 0 ? "exit-ok" : "exit-err";
+      metaEl.innerHTML =
+        '<span class="exit-label">main() returned exit code </span>' +
+        '<span class="' + cls + '">' + result.exit + '</span>';
     } catch (e) {
       outEl.textContent = "JS error: " + e;
       metaEl.textContent = "";
