@@ -446,6 +446,222 @@ function main(): i32 {
 	}
 }
 
+// Parser-in-lang v5: `let x = e in body` bindings + `if c
+// then a else b` expressions, layered on top of the arith /
+// relation grammar. The Expr union grows to five variants:
+//
+//   type Expr = Num | Var | BinOp | Let | If;
+//
+// Identifier tokenisation joins the lexer — `let`, `in`, `if`,
+// `then`, `else` are recognised as keywords (still TokIdent at
+// the lex layer; the parser dispatches on the spelling).
+//
+// Environment is a pair of parallel string[] / i32[] arrays
+// the eval threads through every recursive call. Let-binding
+// uses functional `.push` (PR #412 added Array.push to the
+// interp) so sibling scopes don't see each other's bindings.
+// Lookup walks the array tail-first to give inner shadows
+// precedence over outer ones.
+//
+// This is the closest the toy interp gets to a "real" mini-
+// language — Num, Var, BinOp, Let, If is the same five-node
+// shape every CS-textbook lambda calculus interpreter starts
+// with. Function declarations + calls are the natural next
+// step but need named-callable storage, which is a bigger
+// jump.
+func TestArm64InterpV5LetIf(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct Var   { name: string }
+struct BinOp { op: i32, left: Expr, right: Expr }
+struct Let   { name: string, value: Expr, body: Expr }
+struct If    { cond: Expr, thn: Expr, els: Expr }
+type Expr = Num | Var | BinOp | Let | If;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha()) {
+            var start: i32 = i;
+            while (i < n && src[i].is_alnum()) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function env_lookup(names: string[], values: i32[], name: string): i32 {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) { return values[i]; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+function eval(e: Expr, names: string[], values: i32[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => { return env_lookup(names, values, v.name); },
+        BinOp(b) => {
+            var l: i32 = eval(b.left, names, values);
+            var r: i32 = eval(b.right, names, values);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+        Let(le) => {
+            var v: i32 = eval(le.value, names, values);
+            var n2: string[] = names.push(le.name);
+            var v2: i32[] = values.push(v);
+            return eval(le.body, n2, v2);
+        },
+        If(ie) => {
+            var c: i32 = eval(ie.cond, names, values);
+            if (c != 0) { return eval(ie.thn, names, values); }
+            return eval(ie.els, names, values);
+        },
+    }
+}
+
+function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
+    return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    if (expect_kw(toks, pos, "if")) {
+        cur[0] = pos + 1;
+        var c: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;
+        var t: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;
+        var el: Expr = parse_expr(toks, cur);
+        return If { cond: c, thn: t, els: el };
+    }
+    if (expect_kw(toks, pos, "let")) {
+        cur[0] = pos + 1;
+        var name: string = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;
+        var val: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;
+        var body: Expr = parse_expr(toks, cur);
+        return Let { name: name, value: val, body: body };
+    }
+    return parse_arith(toks, cur);
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        cur[0] = pos + 1;
+        return Var { name: tok_ident_name(toks[pos]) };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function interp(src: string): i32 {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var ast: Expr = parse_expr(toks, cur);
+    var empty_n: string[] = [];
+    var empty_v: i32[] = [];
+    return eval(ast, empty_n, empty_v);
+}
+
+function main(): i32 {
+    if (interp("let x = 5 in x + 1") != 6) { return 1; }
+    if (interp("let x = 5 in let y = 10 in x + y") != 15) { return 2; }
+    if (interp("if 1 then 100 else 200") != 100) { return 3; }
+    if (interp("if 0 then 100 else 200") != 200) { return 4; }
+    if (interp("let x = 7 in if x then x * 2 else 0") != 14) { return 5; }
+    if (interp("let x = 1 in let x = 99 in x") != 99) { return 6; }
+    if (interp("(1 + 2) * 3") != 9) { return 7; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (interp v5 let+if)", code)
+	}
+}
+
 // Parser-in-lang v4: comparison operators (`==`, `!=`, `<`,
 // `<=`, `>`, `>=`) layered on top of the arithmetic
 // interpreter. Adds a new `parse_relation` precedence level
