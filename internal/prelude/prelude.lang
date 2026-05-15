@@ -1676,18 +1676,47 @@ function __map_column(m: i32, kvOffset: i32, destStride: i32): i32 {
 function __map_keys_impl(m: i32): i32 {
     var buf: i32 = __load_ptr(m);
     var keyKind: i32 = __load_i32(buf + 8);
-    var destStride: i32 = 4;
-    if (keyKind == 1) { destStride = __ptr_width(); }
-    return __map_column(m, 0, destStride);
+    if (keyKind == 1) {
+        return __map_string_column(m, 0);
+    }
+    return __map_column(m, 0, 4);
 }
 
 function __map_values_impl(m: i32): i32 {
     var buf: i32 = __load_ptr(m);
     var valKind: i32 = __load_i32(buf + 12);
     var ptrW: i32 = __ptr_width();
-    var destStride: i32 = 4;
-    if (valKind == 1) { destStride = ptrW; }
-    return __map_column(m, ptrW, destStride);
+    if (valKind == 1) {
+        return __map_string_column(m, ptrW);
+    }
+    return __map_column(m, ptrW, 4);
+}
+
+// __map_string_column builds a fresh `string[]` snapshot of
+// the Map's K or V column. Each entry slot holds a cell-
+// pointer (Map K/V boxing); we deref each one via the
+// `cellPtr as string` cast (which emits OpLoad{WidthString}
+// on two-word targets and is a no-op on legacy native single-
+// pointer-string targets) and push the resulting string into
+// a growing `string[]`. Per-element stride is whatever the
+// IR computes for `string[]` on this target (8 bytes on
+// wasm32, 16 on flipped arm64, 8 on legacy native).
+function __map_string_column(m: i32, kvOffset: i32): i32 {
+    var buf: i32 = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var entriesBase: i32 = buf + 16 + cap * 4;
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < len_) {
+        var cellPtr: i32 = __load_ptr(entriesBase + i * entryStride + kvOffset);
+        var s: string = cellPtr as string;
+        out = out.push(s);
+        i = i + 1;
+    }
+    return out as i32;
 }
 
 function __map_delete_impl(m: i32, k: i32): boolean {
