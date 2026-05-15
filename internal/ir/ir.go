@@ -3669,6 +3669,19 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 				}
 			}
 		}
+	case *ast.Index:
+		// Field access through an array index — `xs[i].field`
+		// where xs is T[]. Walk the array expression's static
+		// type, peel the ArrayType down to its element. Works
+		// recursively, so `xss[i][j].field` resolves through
+		// nested arrays.
+		if t := b.exprStaticType(x.Array); t != nil {
+			if at, ok := t.(ast.ArrayType); ok {
+				if st, ok := at.Elem.(ast.StructType); ok {
+					return st.Name
+				}
+			}
+		}
 	case *ast.StructLit:
 		return x.TypeName
 	case *ast.CaptureRef:
@@ -3679,6 +3692,50 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 		}
 	}
 	return ""
+}
+
+// exprStaticType returns the checker-recorded static type of an
+// expression, or nil if the IR can't resolve it locally. Used by
+// fieldOwner to peel through ArrayType for `xs[i].field`-style
+// access. Covers the same surface as fieldOwner (Ident, FieldAccess,
+// Index) but returns the full ast.Type rather than just a struct
+// name, so callers can handle composite return shapes (arrays of
+// structs, structs containing arrays of structs, etc.).
+func (b *builder) exprStaticType(e ast.Expr) ast.Type {
+	switch x := e.(type) {
+	case *ast.Ident:
+		for _, v := range b.info.Locals[b.fn] {
+			if v.Name == x.Name {
+				return v.Type
+			}
+		}
+		for _, p := range b.fn.Params {
+			if p.Name == x.Name {
+				return p.Type
+			}
+		}
+		if slot, ok := b.locals[x.Name]; ok {
+			if t, ok := b.scratchType[slot]; ok {
+				return t
+			}
+		}
+	case *ast.FieldAccess:
+		owner := b.fieldOwner(x.Target)
+		if sd, ok := b.info.Structs[owner]; ok {
+			for _, f := range sd.Fields {
+				if f.Name == x.Field {
+					return f.Type
+				}
+			}
+		}
+	case *ast.Index:
+		if t := b.exprStaticType(x.Array); t != nil {
+			if at, ok := t.(ast.ArrayType); ok {
+				return at.Elem
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builder) binary(n *ast.Binary) error {

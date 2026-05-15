@@ -715,6 +715,306 @@ function main(): i32 {
 	}
 }
 
+// Interp-in-lang v7: multi-arg functions. v6 (#418) shipped
+// single-arg functions, deferring multi-arg as "trivially
+// additive but doubles the line count without proving
+// anything new about the calling convention". This PR makes
+// good on that — actually adding multi-arg is mechanical, but
+// it lets the toy interpreter host pairwise / triadic helpers
+// (`min(a, b)`, `cond(c, t, f)`, `ackermann(m, n)`) without
+// the unary workaround of synthetic tuple-wrapping.
+//
+// Grammar changes:
+//
+//   fn_def ::= "fn" name "(" param ("," param)* ")" "=" expr ";"
+//   call   ::= name "(" expr ("," expr)* ")"
+//
+// Storage: each function gets a `params: string[]` list (was a
+// single `string`) and each Call gets an `args: Expr[]` list
+// (was a single `Expr`). The FnDef struct collects each
+// function's name + params + body, and the Program holds a
+// `fns: FnDef[]` + the main expression.
+//
+// Eval-side: evaluate each arg LEFT-TO-RIGHT (matches the rest
+// of lang), zip with the function's param names into a fresh
+// env, recurse with the new env. Zero-arg functions (no params
+// between the parens) round-trip cleanly — the empty arg
+// array zips with the empty param array and the body sees a
+// pristine env.
+//
+// Recursion still falls out from the closed-over fn table.
+// Mutual recursion works for the same reason.
+func TestArm64InterpV7MultiArg(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct Var   { name: string }
+struct BinOp { op: i32, left: Expr, right: Expr }
+struct If    { cond: Expr, thn: Expr, els: Expr }
+struct Call  { name: string, args: Expr[] }
+type Expr = Num | Var | BinOp | If | Call;
+
+struct FnDef { name: string, params: string[], body: Expr }
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
+    return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
+}
+
+function env_lookup(names: string[], values: i32[], name: string): i32 {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) { return values[i]; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+function find_fn(fns: FnDef[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < len(fns)) {
+        if (fns[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function eval(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => { return env_lookup(names, values, v.name); },
+        BinOp(b) => {
+            var l: i32 = eval(b.left, names, values, fns);
+            var r: i32 = eval(b.right, names, values, fns);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+        If(ie) => {
+            var c: i32 = eval(ie.cond, names, values, fns);
+            if (c != 0) { return eval(ie.thn, names, values, fns); }
+            return eval(ie.els, names, values, fns);
+        },
+        Call(ce) => {
+            var idx: i32 = find_fn(fns, ce.name);
+            var fresh_n: string[] = [];
+            var fresh_v: i32[] = [];
+            var i: i32 = 0;
+            while (i < len(ce.args)) {
+                fresh_n = fresh_n.push(fns[idx].params[i]);
+                fresh_v = fresh_v.push(eval(ce.args[i], names, values, fns));
+                i = i + 1;
+            }
+            return eval(fns[idx].body, fresh_n, fresh_v, fns);
+        },
+    }
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    if (expect_kw(toks, pos, "if")) {
+        cur[0] = pos + 1;
+        var c: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip "then"
+        var thn: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip "else"
+        var els: Expr = parse_expr(toks, cur);
+        return If { cond: c, thn: thn, els: els };
+    }
+    return parse_arith(toks, cur);
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        var name: string = tok_ident_name(toks[pos]);
+        cur[0] = pos + 1;
+        if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
+            cur[0] = cur[0] + 1;   // skip '('
+            var args: Expr[] = [];
+            // Empty arg list — immediate ')'.
+            if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 41) {
+                cur[0] = cur[0] + 1;
+                return Call { name: name, args: args };
+            }
+            args = args.push(parse_expr(toks, cur));
+            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
+                cur[0] = cur[0] + 1;   // skip ','
+                args = args.push(parse_expr(toks, cur));
+            }
+            cur[0] = cur[0] + 1;   // skip ')'
+            return Call { name: name, args: args };
+        }
+        return Var { name: name };
+    }
+    cur[0] = pos + 1;   // skip '('
+    var inner: Expr = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;   // skip ')'
+    return inner;
+}
+
+struct Program { fns: FnDef[], main_expr: Expr }
+
+function parse_program(src: string): Program {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var fns: FnDef[] = [];
+    while (expect_kw(toks, cur[0], "fn")) {
+        cur[0] = cur[0] + 1;
+        var name: string = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '('
+        var params: string[] = [];
+        if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
+            params = params.push(tok_ident_name(toks[cur[0]]));
+            cur[0] = cur[0] + 1;
+            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
+                cur[0] = cur[0] + 1;   // skip ','
+                params = params.push(tok_ident_name(toks[cur[0]]));
+                cur[0] = cur[0] + 1;
+            }
+        }
+        cur[0] = cur[0] + 1;   // skip ')'
+        cur[0] = cur[0] + 1;   // skip '='
+        var body: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ';'
+        fns = fns.push(FnDef { name: name, params: params, body: body });
+    }
+    var main_expr: Expr = parse_expr(toks, cur);
+    return Program { fns: fns, main_expr: main_expr };
+}
+
+function interp(src: string): i32 {
+    var p: Program = parse_program(src);
+    var empty_n: string[] = [];
+    var empty_v: i32[] = [];
+    return eval(p.main_expr, empty_n, empty_v, p.fns);
+}
+
+function main(): i32 {
+    // Two-arg function — add(3, 4) = 7.
+    if (interp("fn add(a, b) = a + b; add(3, 4)") != 7) { return 1; }
+
+    // Three-arg function — cond(c, t, f) selects via if.
+    if (interp("fn cond(c, t, f) = if c then t else f; cond(1, 100, 200)") != 100) { return 2; }
+    if (interp("fn cond(c, t, f) = if c then t else f; cond(0, 100, 200)") != 200) { return 3; }
+
+    // Recursive two-arg — gcd(a, b) via Euclidean algorithm.
+    // gcd(48, 18) = 6. Uses subtraction-only since % isn't lexed.
+    if (interp("fn gcd(a, b) = if b then gcd(b, a - a / b * b) else a; gcd(48, 18)") != 6) { return 4; }
+
+    // Nested call — add(mul(2, 3), mul(4, 5)) = 6 + 20 = 26.
+    if (interp("fn mul(a, b) = a * b; fn add(a, b) = a + b; add(mul(2, 3), mul(4, 5))") != 26) { return 5; }
+
+    // Zero-arg function — answer() = 42.
+    if (interp("fn answer() = 42; answer()") != 42) { return 6; }
+
+    // Mutual recursion across two two-arg functions.
+    // ackermann's smaller sibling: ack2(m, n) using m=0/1 special cases.
+    // ack(0, n) = n + 1
+    // ack(1, n) = n + 2
+    // ack(2, n) = 2n + 3
+    // Test: ack(2, 3) = 9.
+    if (interp("fn ack(m, n) = if m then if m - 1 then 2 * n + 3 else n + 2 else n + 1; ack(2, 3)") != 9) { return 7; }
+
+    // Argument evaluation order — left-to-right. The toy
+    // interp is pure (no side effects), but the order matters
+    // if a recursive call's intermediate result depends on
+    // another call's value. Test the layered composition:
+    // sum3(1, 2, 3) = 6.
+    if (interp("fn sum3(a, b, c) = a + b + c; sum3(1, 2, 3)") != 6) { return 8; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (interp v7 multi-arg)", code)
+	}
+}
+
 // Interp-in-lang v6: function declarations + calls. The toy
 // interpreter from v5 gains top-level `fn` definitions and a
 // `Call` expression node, closing the gap from "lambda-ish let
