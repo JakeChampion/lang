@@ -6352,6 +6352,53 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Third stdlib bundle: i64 / u32 / u64 scalar reductions
+// (abs only on i64; min/max/clamp on all three), plus three
+// string helpers (at / chars / reverse_bytes). 13 new methods.
+func TestArm64StdlibBundle3(t *testing.T) {
+	src := `function main(): i32 {
+    // i64 abs / min / max / clamp.
+    var i: i64 = 0 - 42 as i64;
+    if (i.abs() != (42 as i64)) { return 1; }
+    if ((5 as i64).min(7 as i64) != (5 as i64)) { return 2; }
+    if ((5 as i64).max(7 as i64) != (7 as i64)) { return 3; }
+    if ((100 as i64).clamp(0 as i64, 10 as i64) != (10 as i64)) { return 4; }
+
+    // u32 min / max / clamp (no abs — always non-negative).
+    if ((5 as u32).min(7 as u32) != (5 as u32)) { return 5; }
+    if ((100 as u32).max(50 as u32) != (100 as u32)) { return 6; }
+    if ((100 as u32).clamp(0 as u32, 10 as u32) != (10 as u32)) { return 7; }
+
+    // u64 min / max / clamp.
+    if ((5 as u64).min(7 as u64) != (5 as u64)) { return 8; }
+    if ((5 as u64).max(7 as u64) != (7 as u64)) { return 9; }
+    if ((100 as u64).clamp(0 as u64, 10 as u64) != (10 as u64)) { return 10; }
+
+    // String at — bounds-checked Option[i32].
+    match ("hello".at(0)) { Some(b) => { if (b != 104) { return 11; } }, None => { return 12; }, }
+    match ("hello".at(4)) { Some(b) => { if (b != 111) { return 13; } }, None => { return 14; }, }
+    match ("hello".at(5)) { Some(_) => { return 15; }, None => { } }
+    match ("hello".at(0 - 1)) { Some(_) => { return 16; }, None => { } }
+    match ("".at(0)) { Some(_) => { return 17; }, None => { } }
+
+    // String chars — i32[] one element per byte.
+    var cs: i32[] = "abc".chars();
+    if (len(cs) != 3) { return 18; }
+    if (cs[0] != 97 || cs[1] != 98 || cs[2] != 99) { return 19; }
+    if (len("".chars()) != 0) { return 20; }
+
+    // String reverse_bytes — ASCII only.
+    if ("hello".reverse_bytes() != "olleh") { return 21; }
+    if ("a".reverse_bytes() != "a") { return 22; }
+    if ("".reverse_bytes() != "") { return 23; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 3)", code)
+	}
+}
+
 // Second stdlib bundle: byte case helpers (is_lower/is_upper/
 // to_lower/to_upper), i32 numeric methods (abs/min/max/clamp),
 // whole-string ASCII predicates (is_ascii_only / is_numeric /
