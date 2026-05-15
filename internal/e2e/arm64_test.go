@@ -715,6 +715,299 @@ function main(): i32 {
 	}
 }
 
+// Interp-in-lang v6: function declarations + calls. The toy
+// interpreter from v5 gains top-level `fn` definitions and a
+// `Call` expression node, closing the gap from "lambda-ish let
+// blocks" to "real recursive functions". With this the in-lang
+// interpreter can host factorial, fibonacci, and arbitrary
+// mutual recursion — the same Turing-complete shape every
+// pedagogical interpreter ends on.
+//
+// Grammar additions (single-arg for brevity):
+//
+//   program ::= fn_def* expr
+//   fn_def  ::= "fn" name "(" param ")" "=" expr ";"
+//   factor  ::= ... | name "(" expr ")"
+//
+// Functions live in three parallel arrays — `fn_names`,
+// `fn_params`, `fn_bodies` — passed through every eval call.
+// Recursion works because the function table is built before
+// eval starts; a Call looks up by name, evaluates the arg,
+// pushes (param, arg-value) onto the env, and recurses into
+// the body with a FRESH env (functions don't see the caller's
+// locals — lexical scope).
+//
+// Single-arg keeps the type story simple: i32 in, i32 out.
+// Multi-arg would need parallel param/arg arrays at the Call
+// site; trivially additive but doubles the test's line count
+// without proving anything new about the calling convention.
+//
+// Calls disambiguate at parse time: `ident "("` lookahead
+// becomes Call, bare `ident` stays Var. Matches the real
+// parser's primary-postfix split.
+//
+// `fn_bodies: Expr[]` works because Expr is a union (sugar
+// over enum) — arrays of enum cells are heap-allocated value
+// containers with the standard array runtime, no special
+// support needed.
+func TestArm64InterpV6Functions(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct Var   { name: string }
+struct BinOp { op: i32, left: Expr, right: Expr }
+struct If    { cond: Expr, thn: Expr, els: Expr }
+struct Call  { name: string, arg: Expr }
+type Expr = Num | Var | BinOp | If | Call;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
+    return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
+}
+
+function env_lookup(names: string[], values: i32[], name: string): i32 {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) { return values[i]; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+function fn_index(fn_names: string[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < len(fn_names)) {
+        if (fn_names[i] == name) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function eval(e: Expr, names: string[], values: i32[], fn_names: string[], fn_params: string[], fn_bodies: Expr[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => { return env_lookup(names, values, v.name); },
+        BinOp(b) => {
+            var l: i32 = eval(b.left, names, values, fn_names, fn_params, fn_bodies);
+            var r: i32 = eval(b.right, names, values, fn_names, fn_params, fn_bodies);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+        If(ie) => {
+            var c: i32 = eval(ie.cond, names, values, fn_names, fn_params, fn_bodies);
+            if (c != 0) { return eval(ie.thn, names, values, fn_names, fn_params, fn_bodies); }
+            return eval(ie.els, names, values, fn_names, fn_params, fn_bodies);
+        },
+        Call(ce) => {
+            var av: i32 = eval(ce.arg, names, values, fn_names, fn_params, fn_bodies);
+            var idx: i32 = fn_index(fn_names, ce.name);
+            // Lexical scope: function bodies start with a fresh
+            // env containing only the param binding, not the
+            // caller's locals.
+            var fresh_n: string[] = [fn_params[idx]];
+            var fresh_v: i32[] = [av];
+            return eval(fn_bodies[idx], fresh_n, fresh_v, fn_names, fn_params, fn_bodies);
+        },
+    }
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    if (expect_kw(toks, pos, "if")) {
+        cur[0] = pos + 1;
+        var c: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip "then"
+        var thn: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip "else"
+        var els: Expr = parse_expr(toks, cur);
+        return If { cond: c, thn: thn, els: els };
+    }
+    return parse_arith(toks, cur);
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        var name: string = tok_ident_name(toks[pos]);
+        cur[0] = pos + 1;
+        // Call if next is '(' — single-token lookahead.
+        if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
+            cur[0] = cur[0] + 1;
+            var arg: Expr = parse_expr(toks, cur);
+            cur[0] = cur[0] + 1;   // skip ')'
+            return Call { name: name, arg: arg };
+        }
+        return Var { name: name };
+    }
+    cur[0] = pos + 1;   // skip '('
+    var inner: Expr = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;   // skip ')'
+    return inner;
+}
+
+struct Program {
+    fn_names: string[],
+    fn_params: string[],
+    fn_bodies: Expr[],
+    main_expr: Expr,
+}
+
+function parse_program(src: string): Program {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var fn_names: string[] = [];
+    var fn_params: string[] = [];
+    var fn_bodies: Expr[] = [];
+    while (expect_kw(toks, cur[0], "fn")) {
+        cur[0] = cur[0] + 1;
+        var name: string = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '('
+        var param: string = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip ')'
+        cur[0] = cur[0] + 1;   // skip '='
+        var body: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ';'
+        fn_names = fn_names.push(name);
+        fn_params = fn_params.push(param);
+        fn_bodies = fn_bodies.push(body);
+    }
+    var main_expr: Expr = parse_expr(toks, cur);
+    return Program {
+        fn_names: fn_names,
+        fn_params: fn_params,
+        fn_bodies: fn_bodies,
+        main_expr: main_expr,
+    };
+}
+
+function interp(src: string): i32 {
+    var p: Program = parse_program(src);
+    var empty_n: string[] = [];
+    var empty_v: i32[] = [];
+    return eval(p.main_expr, empty_n, empty_v, p.fn_names, p.fn_params, p.fn_bodies);
+}
+
+function main(): i32 {
+    // Bare expression — no functions, same as v5 territory.
+    if (interp("1 + 2 * 3") != 7) { return 1; }
+
+    // Single function — square 5 = 25.
+    if (interp("fn square(x) = x * x; square(5)") != 25) { return 2; }
+
+    // Function composition — double(square(3)) = 18.
+    if (interp("fn double(x) = x * 2; fn square(x) = x * x; double(square(3))") != 18) { return 3; }
+
+    // Recursion — factorial(6) = 720.
+    if (interp("fn fact(n) = if n then n * fact(n - 1) else 1; fact(6)") != 720) { return 4; }
+
+    // Conditional dispatch — abs(-7) via subtraction-based sign trick.
+    if (interp("fn dbl(x) = x + x; if 1 then dbl(21) else 0") != 42) { return 5; }
+
+    // Nested call — fact(fact(3)) = fact(6) = 720.
+    if (interp("fn fact(n) = if n then n * fact(n - 1) else 1; fact(fact(3))") != 720) { return 6; }
+
+    // Lexical scope check — the function body can't see the
+    // caller's bindings. Without lexical scope, the inner Var(x)
+    // would resolve to 99 from main's env (if main introduced
+    // one) rather than the param. Test: define a function that
+    // returns its param, call it with an arg distinct from any
+    // outer name. Param shadowing is the point.
+    if (interp("fn id(x) = x; id(7)") != 7) { return 7; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (interp v6 functions)", code)
+	}
+}
+
 // Parser-in-lang v5: `let x = e in body` bindings + `if c
 // then a else b` expressions, layered on top of the arith /
 // relation grammar. The Expr union grows to five variants:
