@@ -817,6 +817,19 @@ func Check(prog *ast.Program) (*Info, error) {
 	// processing so the two don't conflict ("redeclared").
 	c.info.Methods["Array.join"] = "__method_Array_join"
 
+	// `arr.index_of(s)` / `arr.contains(s)` — string-array
+	// search functions. index_of returns the first matching
+	// index (0-based), or -1 when not found. contains returns
+	// the boolean. Both dispatch via the same constrained-
+	// string-receiver pattern as join — receiver MUST be
+	// string[]; mismatched element types surface as clean type
+	// errors. Implementation in the prelude as plain linear
+	// scans (sufficient for compiler-style use cases where
+	// array lengths are small: parser-keyword tables, type-
+	// list lookups, diagnostic-tag indexing).
+	c.info.Methods["Array.index_of"] = "__method_Array_index_of"
+	c.info.Methods["Array.contains"] = "__method_Array_contains"
+
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
 	// flow through the same dispatch-path substitution. The

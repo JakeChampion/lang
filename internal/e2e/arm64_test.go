@@ -6258,19 +6258,12 @@ function main(): i32 {
 //   - no placeholders → identity (still cheap)
 //   - empty fmt → empty result
 //   - chained with to_string() for i32 args
-// Glue function on string-array — `arr.join(sep)`. Dispatches
-// via "Array.<method>" in the checker (mangled to
-// __method_Array_join) with a constrained string-element
-// receiver signature, so non-string arrays surface as a clean
-// type error rather than a missing-method. The body lives in
-// the prelude as a plain string-concat loop.
-//
-// Cases:
-//   - normal multi-element join
-//   - empty separator (concat without delimiter)
-//   - empty array → empty string
-//   - single element → just that element (no separator)
-//   - long string elements + multibyte sep
+// String-array methods — join / index_of / contains. All
+// three dispatch via the constrained-string-receiver pattern
+// in the checker; bodies live in the prelude as plain loops.
+// Tests cover the happy paths plus boundary cases (empty
+// array, not-found returns -1 from index_of and false from
+// contains, separator edge cases for join).
 func TestArm64ArrayJoin(t *testing.T) {
 	src := `function main(): i32 {
     if (["alice", "bob", "ciri"].join(", ") != "alice, bob, ciri") { return 1; }
@@ -6282,11 +6275,27 @@ func TestArm64ArrayJoin(t *testing.T) {
     // Use the result of split(...).join(...) — round trip
     // through a string list (with empty-element preservation).
     if ("a,b,c".split(",").join(";") != "a;b;c") { return 6; }
+
+    // index_of / contains — happy paths
+    var kws: string[] = ["if", "else", "while", "function", "return"];
+    if (kws.index_of("if") != 0) { return 7; }
+    if (kws.index_of("return") != 4) { return 8; }
+    if (kws.contains("else") == false) { return 9; }
+
+    // index_of — not found returns -1; contains returns false.
+    if (kws.index_of("for") != (0 - 1)) { return 10; }
+    if (kws.contains("for")) { return 11; }
+
+    // Empty array — index_of(any) = -1, contains(any) = false.
+    var none: string[] = [];
+    if (none.index_of("x") != (0 - 1)) { return 12; }
+    if (none.contains("x")) { return 13; }
+
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
 	if code != 0 {
-		t.Errorf("got %d, want 0 (Array.join)", code)
+		t.Errorf("got %d, want 0 (Array.join/index_of/contains)", code)
 	}
 }
 
