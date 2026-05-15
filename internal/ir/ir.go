@@ -3507,6 +3507,25 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// off `info.FuncSigs` (populated by the checker for
 		// every user fn + every prelude / builtin signature).
 		if id, ok := x.Callee.(*ast.Ident); ok {
+			// Generic Map methods carry TypeArgs (K, V) on the
+			// Call. The FuncSigs entry stores the generic
+			// signature whose Result is a ParamType (V); we
+			// substitute V from TypeArgs so callers consuming
+			// the result (`len(m.get_or(...))`) see the
+			// concrete type rather than the unresolved param.
+			switch id.Name {
+			case "__method_Map_get_or", "__method_MapIter_value":
+				if len(x.TypeArgs) >= 2 {
+					return x.TypeArgs[1]
+				}
+			case "__method_Map_get":
+				// Returns Option[V] — but the inner V is what
+				// matters for the boxing-aware load. Caller's
+				// match-arm reads the payload directly; this
+				// path is only consulted for `len()` etc.
+				// applied to V, which isn't the typical shape.
+				// Leave the generic for now.
+			}
 			if sig, ok := b.info.FuncSigs[id.Name]; ok && sig != nil {
 				return sig.Result
 			}
