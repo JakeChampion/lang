@@ -241,6 +241,275 @@ function main(): i32 {
 	}
 }
 
+// Parser-in-lang v4: identifier references — adds `Var { name }`
+// as a primary expression alongside numeric literals. Closes the
+// last gap before parsing real arithmetic programs that mention
+// variables (`x + 1`, not just `3 + 1`).
+//
+// Tokenizer additions: TokIdent recognition (alpha + alphanumeric
+// continuation), shared with the lexer-in-lang v6 surface.
+// Parser additions: `parse_factor` branches on the kind tag —
+// int → Num, ident → Var, paren → recurse, anything else → Err.
+//
+// Eval grows an environment, modelled as parallel `string[]` /
+// `i32[]` arrays. Lookup is linear scan from the most recent
+// binding so shadowing works for free (last-write-wins on
+// the same name). Real-world compilers use a Map for this; the
+// list-of-pairs shape keeps the test independent of Map runtime
+// gaps in the script-mode interp.
+//
+// Error coverage: undefined variable surfaces a Result Err with
+// the offending name in the message, mirroring how the real
+// checker emits "unknown identifier x" diagnostics.
+func TestArm64ParserV4WithVars(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num    { value: i32 }
+struct Var    { name: string }
+struct BinOp  { op: i32, left: Expr, right: Expr }
+type Expr = Num | Var | BinOp;
+
+struct ParseError { message: string, pos: i32 }
+struct EvalError  { message: string }
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) {
+                i = i + 1;
+            }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function peek_kind(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function peek_punct(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+function peek_int(toks: Token[], pos: i32): i32 {
+    match (toks[pos]) { TokInt(t) => { return t.value; }, _ => { return 0; } }
+}
+function peek_ident(toks: Token[], pos: i32): string {
+    match (toks[pos]) { TokIdent(t) => { return t.name; }, _ => { return ""; } }
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+    var pos: i32 = cur[0];
+    var k: i32 = peek_kind(toks, pos);
+    if (k == 0) {
+        var iv: i32 = peek_int(toks, pos);
+        cur[0] = pos + 1;
+        var n: Expr = Num { value: iv };
+        return Ok(n);
+    }
+    if (k == 1) {
+        var name: string = peek_ident(toks, pos);
+        cur[0] = pos + 1;
+        var ve: Expr = Var { name: name };
+        return Ok(ve);
+    }
+    if (k == 3) {
+        return Err(ParseError { message: "unexpected end of input", pos: pos });
+    }
+    var p: i32 = peek_punct(toks, pos);
+    if (p != 40) {
+        return Err(ParseError { message: "expected number, ident, or paren", pos: pos });
+    }
+    cur[0] = pos + 1;
+    var inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
+    match (inner_r) {
+        Err(e) => { return Err(e); },
+        Ok(inner_e) => {
+            var ep: i32 = cur[0];
+            if (peek_kind(toks, ep) != 2 || peek_punct(toks, ep) != 41) {
+                return Err(ParseError { message: "missing close paren", pos: ep });
+            }
+            cur[0] = ep + 1;
+            return Ok(inner_e);
+        },
+    }
+}
+
+function parse_term(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+    var lhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
+    match (lhs_r) {
+        Err(e) => { return Err(e); },
+        Ok(lhs_e) => {
+            var lhs: Expr = lhs_e;
+            while (true) {
+                var pos: i32 = cur[0];
+                if (peek_kind(toks, pos) != 2) { return Ok(lhs); }
+                var op: i32 = peek_punct(toks, pos);
+                if (op != 42 && op != 47) { return Ok(lhs); }
+                cur[0] = pos + 1;
+                var rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
+                match (rhs_r) {
+                    Err(e) => { return Err(e); },
+                    Ok(rhs_e) => {
+                        lhs = BinOp { op: op, left: lhs, right: rhs_e };
+                    },
+                }
+            }
+            return Ok(lhs);
+        },
+    }
+}
+
+function parse_expr(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+    var lhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
+    match (lhs_r) {
+        Err(e) => { return Err(e); },
+        Ok(lhs_e) => {
+            var lhs: Expr = lhs_e;
+            while (true) {
+                var pos: i32 = cur[0];
+                if (peek_kind(toks, pos) != 2) { return Ok(lhs); }
+                var op: i32 = peek_punct(toks, pos);
+                if (op != 43 && op != 45) { return Ok(lhs); }
+                cur[0] = pos + 1;
+                var rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
+                match (rhs_r) {
+                    Err(e) => { return Err(e); },
+                    Ok(rhs_e) => {
+                        lhs = BinOp { op: op, left: lhs, right: rhs_e };
+                    },
+                }
+            }
+            return Ok(lhs);
+        },
+    }
+}
+
+function lookup(names: string[], values: i32[], name: string): Result[i32, EvalError] {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) { return Ok(values[i]); }
+        i = i - 1;
+    }
+    return Err(EvalError { message: "unknown identifier: " + name });
+}
+
+function eval_expr(e: Expr, names: string[], values: i32[]): Result[i32, EvalError] {
+    match (e) {
+        Num(n) => { return Ok(n.value); },
+        Var(v) => { return lookup(names, values, v.name); },
+        BinOp(b) => {
+            var lr: Result[i32, EvalError] = eval_expr(b.left, names, values);
+            match (lr) {
+                Err(le) => { return Err(le); },
+                Ok(l) => {
+                    var rr: Result[i32, EvalError] = eval_expr(b.right, names, values);
+                    match (rr) {
+                        Err(re) => { return Err(re); },
+                        Ok(r) => {
+                            if (b.op == 43) { return Ok(l + r); }
+                            if (b.op == 45) { return Ok(l - r); }
+                            if (b.op == 42) { return Ok(l * r); }
+                            return Ok(l / r);
+                        },
+                    }
+                },
+            }
+        },
+    }
+}
+
+// Compose parse + eval into one helper so the success arm only
+// names one local — keeps main below the wasm sibling-scope
+// duplicate-locals threshold without renumbering every binding.
+// Returns -1 on parse error so the caller can distinguish from a
+// real eval result (a parse error during a self-host test is a
+// test bug, not a thing to surface).
+function parse_and_eval(src: string, names: string[], values: i32[]): Result[i32, EvalError] {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var pr: Result[Expr, ParseError] = parse_expr(toks, cur);
+    match (pr) {
+        Err(pe) => { return Err(EvalError { message: "parse failed: " + pe.message }); },
+        Ok(e) => { return eval_expr(e, names, values); },
+    }
+}
+
+function main(): i32 {
+    var names: string[] = ["x", "y", "z"];
+    var values: i32[] = [3, 4, 10];
+
+    // Bare variable reference: x = 3.
+    var r1: Result[i32, EvalError] = parse_and_eval("x", names, values);
+    match (r1) {
+        Err(_) => { return 1; },
+        Ok(n1) => { if (n1 != 3) { return 2; } },
+    }
+
+    // Variable + literal with precedence: x + y * 2 = 3 + 8 = 11.
+    var r2: Result[i32, EvalError] = parse_and_eval("x + y * 2", names, values);
+    match (r2) {
+        Err(_) => { return 3; },
+        Ok(n2) => { if (n2 != 11) { return 4; } },
+    }
+
+    // Parenthesised expression with vars: (x + y) * z = 70.
+    var r3: Result[i32, EvalError] = parse_and_eval("(x + y) * z", names, values);
+    match (r3) {
+        Err(_) => { return 5; },
+        Ok(n3) => { if (n3 != 70) { return 6; } },
+    }
+
+    // Undefined variable surfaces a clean Eval error.
+    var r4: Result[i32, EvalError] = parse_and_eval("missing + 1", names, values);
+    match (r4) {
+        Ok(_) => { return 7; },
+        Err(ee) => { if (!ee.message.contains("missing")) { return 8; } },
+    }
+
+    // Shadowing: the latest binding wins.
+    var snames: string[] = ["x", "x"];
+    var svalues: i32[] = [1, 99];
+    var r5: Result[i32, EvalError] = parse_and_eval("x", snames, svalues);
+    match (r5) {
+        Err(_) => { return 9; },
+        Ok(n5) => { if (n5 != 99) { return 10; } },
+    }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (parser v4 with vars)", code)
+	}
+}
+
 // Parser-in-lang v3: error handling via `Result[Expr, ParseError]`.
 // Replaces the bare-Expr returns from PR #402 with explicit
 // Result propagation through `parse_factor` / `parse_term` /
