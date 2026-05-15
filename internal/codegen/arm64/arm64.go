@@ -2430,6 +2430,10 @@ func (g *generator) emitIoErrorRuntime() {
 	g.line(".global __lang_io_error")
 	g.typeDirective("__lang_io_error")
 	g.label("__lang_io_error")
+	if ast.UseTwoWordStrings(8) {
+		g.emitIoErrorRuntime2W()
+		return
+	}
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -2506,6 +2510,81 @@ func (g *generator) emitIoErrorRuntime() {
 	g.line(".ltorg")
 }
 
+// emitIoErrorRuntime2W is the two-word-ABI variant.
+// Signature: `__lang_io_error(errno, path_data, path_len)` in
+// (x0, x1, x2). Returns the heap-allocated IoError box ptr
+// in x0.
+//
+// Box layout under two-word strings:
+//
+//	NotFound(path) / PermissionDenied(path) /
+//	  AlreadyExists(path):   tag@0, pad@4, path_data@8, path_len@16 → 24 bytes
+//	Other(path, msg):        tag@0, pad@4, path_data@8, path_len@16,
+//	                         msg_data@24, msg_len@32 → 40 bytes
+//	Interrupted:             tag@0 → 8 bytes (no payload)
+//
+// The empty-string sentinel used as the Other variant's
+// `msg` is a (data=0, len=`1<<63`) inline-empty pair —
+// stored inline rather than as a `.LStr_ioerr_empty` adrp
+// since the empty form doesn't need memory.
+func (g *generator) emitIoErrorRuntime2W() {
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
+	g.emit("mov x19, x0") // errno
+	g.emit("mov x20, x1") // path_data
+	g.emit("mov x21, x2") // path_len
+	// errno → tag.
+	g.emit("cmp w19, #2")  // ENOENT
+	g.emit("b.eq .Lioe2w_notfound")
+	g.emit("cmp w19, #13") // EACCES
+	g.emit("b.eq .Lioe2w_perm")
+	g.emit("cmp w19, #17") // EEXIST
+	g.emit("b.eq .Lioe2w_exists")
+	g.emit("cmp w19, #4")  // EINTR
+	g.emit("b.eq .Lioe2w_intr")
+	// Other(path, "") — 40-byte box, msg = empty inline pair.
+	g.emit("mov x0, #40")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #6")
+	g.emit("str w1, [x0]")
+	g.emit("str x20, [x0, #8]")  // path_data
+	g.emit("str x21, [x0, #16]") // path_len
+	g.emit("str xzr, [x0, #24]") // msg_data = 0
+	g.emit("movz x1, #0x8000, lsl #48")
+	g.emit("str x1, [x0, #32]")  // msg_len = inline-empty
+	g.emit("b .Lioe2w_done")
+	g.label(".Lioe2w_notfound")
+	g.emit("mov w19, #0")
+	g.emit("b .Lioe2w_with_path")
+	g.label(".Lioe2w_perm")
+	g.emit("mov w19, #1")
+	g.emit("b .Lioe2w_with_path")
+	g.label(".Lioe2w_exists")
+	g.emit("mov w19, #2")
+	g.emit("b .Lioe2w_with_path")
+	g.label(".Lioe2w_intr")
+	g.emit("mov x0, #8")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #4")
+	g.emit("str w1, [x0]")
+	g.emit("b .Lioe2w_done")
+	g.label(".Lioe2w_with_path")
+	g.emit("mov x0, #24")
+	g.emit("bl __lang_alloc")
+	g.emit("str w19, [x0]")
+	g.emit("str x20, [x0, #8]")  // path_data
+	g.emit("str x21, [x0, #16]") // path_len
+	g.label(".Lioe2w_done")
+	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__lang_io_error")
+	g.line(".ltorg")
+}
+
 // emitReadFileRuntime emits `__lang_read_file(path) →
 // Result[string, IoError]`. Pipeline: openat(AT_FDCWD, path,
 // O_RDONLY) → fstat → alloc length-prefixed buffer → read-loop
@@ -2522,6 +2601,10 @@ func (g *generator) emitReadFileRuntime() {
 	g.line(".global __lang_read_file")
 	g.typeDirective("__lang_read_file")
 	g.label("__lang_read_file")
+	if ast.UseTwoWordStrings(8) {
+		g.emitReadFileRuntime2W()
+		return
+	}
 	// Frame: 64-byte base + 192-byte statbuf scratch = 256.
 	// x19 = path, x20 = fd, x21 = buf base, x22 = size,
 	// x23 = bytes_read.
@@ -2616,6 +2699,116 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #256")
+	g.emit("ret")
+	g.sizeDirective("__lang_read_file")
+	g.line(".ltorg")
+}
+
+// emitReadFileRuntime2W is the two-word-ABI variant of
+// emitReadFileRuntime. Signature:
+// `__lang_read_file(path_data, path_len)` in (x0, x1).
+// Returns a heap-allocated `Result[string, IoError]` box ptr
+// in x0:
+//
+//	Ok(string):  24-byte box  {tag=0 @0, _pad @4, data @8, len @16}
+//	Err(IoError): 16-byte box  {tag=1 @0, payload=IoError @8}
+//
+// The Ok-string payload uses the OpStore{WidthString} layout
+// (data at +0 / len at +8 relative to payload offset +8 in
+// the box → data at box+8, len at box+16). Total box size:
+// max(24, 16) = 24 bytes.
+//
+// Uses callee-saves: x19 = path data, x20 = path len (the
+// original two-word string), x21 = fd, x22 = string buf data
+// ptr, x23 = file size (length), x24 = bytes read.
+func (g *generator) emitReadFileRuntime2W() {
+	// Frame: 96-byte base (fp/lr + 6 callee-saves + 16 align)
+	// + 192-byte statbuf = 288. Statbuf at [x29 + 96].
+	g.emit("stp x29, x30, [sp, #-288]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
+	g.emit("mov x19, x0") // x19 = path_data
+	g.emit("mov x20, x1") // x20 = path_len
+	// path → byte ptr (inline spill at [x29+80..95]).
+	g.emitStrDataPtr2W("x25", "x19", "x20", 80) // x25 = path byte ptr
+	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
+	g.emit("mov x0, #-100")
+	g.emit("mov x1, x25")
+	g.emit("mov x2, #0")
+	g.emit("mov x3, #0")
+	g.emit("mov x8, #56")
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lrf2w_err_open")
+	g.emit("mov x21, x0") // fd
+	// fstat(fd, statbuf).
+	g.emit("mov x0, x21")
+	g.emit("add x1, x29, #96") // statbuf at [x29+96]
+	g.emit("mov x8, #80")
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lrf2w_err_close")
+	g.emit("ldr x23, [x29, #96 + 48]") // st_size
+	// Allocate exactly st_size bytes for the result string
+	// data — no length prefix (two-word ABI).
+	g.emit("mov x0, x23")
+	g.emit("bl __lang_alloc")
+	g.emit("mov x22, x0") // x22 = data ptr
+	// Read loop.
+	g.emit("mov x24, #0")
+	g.label(".Lrf2w_loop")
+	g.emit("cmp x24, x23")
+	g.emit("b.ge .Lrf2w_done")
+	g.emit("mov x0, x21")
+	g.emit("add x1, x22, x24")
+	g.emit("sub x2, x23, x24")
+	g.emit("mov x8, #63") // read
+	g.emit("svc #0")
+	g.emit("tbnz x0, #63, .Lrf2w_err_close")
+	g.emit("cbz x0, .Lrf2w_done")
+	g.emit("add x24, x24, x0")
+	g.emit("b .Lrf2w_loop")
+	g.label(".Lrf2w_done")
+	// close(fd).
+	g.emit("mov x0, x21")
+	g.emit("mov x8, #57")
+	g.emit("svc #0")
+	// Build Result.Ok(string) box: 24 bytes — {tag@0,
+	// pad@4, data@8, len@16}.
+	g.emit("mov x0, #24")
+	g.emit("bl __lang_alloc")
+	g.emit("str wzr, [x0]")       // tag = 0 (Ok)
+	g.emit("str x22, [x0, #8]")    // payload data
+	g.emit("str x23, [x0, #16]")   // payload len
+	g.emit("b .Lrf2w_return")
+	g.label(".Lrf2w_err_close")
+	g.emit("neg x22, x0") // x22 = errno
+	g.emit("mov x0, x21")
+	g.emit("mov x8, #57")
+	g.emit("svc #0")
+	g.emit("b .Lrf2w_err_dispatch")
+	g.label(".Lrf2w_err_open")
+	g.emit("neg x22, x0")
+	g.label(".Lrf2w_err_dispatch")
+	// __lang_io_error(errno, path_data, path_len). Updated
+	// to take a two-word string for the path.
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __lang_io_error")
+	g.emit("mov x19, x0") // stash IoError box across alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __lang_alloc")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lrf2w_return")
+	g.emit("ldr x25, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #288")
 	g.emit("ret")
 	g.sizeDirective("__lang_read_file")
 	g.line(".ltorg")
@@ -4032,11 +4225,12 @@ func returnIsString(g *generator, name string) bool {
 		return isStr
 	}
 	switch name {
-	case "env", "read_file", "random_bytes", "tcp_recv",
-		"read_line", "string_from_bytes",
-		"__method_Reader_read_line", "__method_Reader_read_chunk",
-		"__str_slice":
-		// Built-in runtime helpers that return string.
+	case "random_bytes", "tcp_recv", "string_from_bytes", "__str_slice":
+		// Built-in runtime helpers that return string directly.
+		// NOT in this list: `env` / `read_file` / `read_line` /
+		// `__method_Reader_read_line` / etc — those return
+		// `Option[string]` or `Result[string, IoError]`
+		// (enum heap-box ptrs, a single i32-sized return value).
 		return true
 	}
 	return false
