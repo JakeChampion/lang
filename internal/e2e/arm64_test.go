@@ -241,6 +241,161 @@ function main(): i32 {
 	}
 }
 
+// Lexer-in-lang v5: hex integer literals (`0x1F`, `0XFF`) +
+// the carry-over numeric type-suffix recognition (`0x10i64`).
+// Recognises `0x` / `0X` prefix, scans hex digits via the
+// prelude's `is_hex_digit()` (PR #397), accumulates the value
+// via `hex_value(b)`. Bare `0x` (no hex digits) falls back
+// to two tokens — `0` then ident `x` — matching Go's behaviour.
+//
+// Numeric accumulators (`numV`, `numSfx`) are HOISTED to
+// function scope. Wasm names locals by lang identifier and
+// rejects sibling-scope duplicates; the hex + decimal arms
+// would each declare `var v` / `var sfx` and collide. The
+// hoisting is the recommended workaround the prelude already
+// uses (see `__map_hash`'s "Single shared `h` declaration"
+// comment).
+func TestArm64LexerV5(t *testing.T) {
+	src := `struct TokInt   { value: i32, base: i32, suffix: string }
+struct TokIdent { name: string }
+struct TokKw    { name: string }
+struct TokStr   { value: string }
+struct TokPunct { text: string }
+struct TokEof   { _pad: i32 }
+
+type Token = TokInt | TokIdent | TokKw | TokStr | TokPunct | TokEof;
+
+function is_keyword(name: string): boolean {
+    return name == "function" || name == "var" || name == "if";
+}
+
+function hex_value(b: i32): i32 {
+    if (b >= 48 && b <= 57) { return b - 48; }
+    if (b >= 97 && b <= 102) { return b - 87; }
+    return b - 55;
+}
+
+function read_num_suffix(src: string, i: i32): string {
+    var n: i32 = len(src);
+    if (i + 3 > n) { return ""; }
+    var a: i32 = src[i];
+    var b: i32 = src[i + 1];
+    var c: i32 = src[i + 2];
+    if (!(a == 105 || a == 117 || a == 102)) { return ""; }
+    if (b == 51 && c == 50) { return src[i : i + 3]; }
+    if (b == 54 && c == 52) { return src[i : i + 3]; }
+    return "";
+}
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    var numV: i32 = 0;
+    var numSfx: string = "";
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b == 48 && i + 1 < n && (src[i + 1] == 120 || src[i + 1] == 88)) {
+            if (i + 2 >= n || !src[i + 2].is_hex_digit()) {
+                toks = toks.push(TokInt { value: 0, base: 10, suffix: "" });
+                i = i + 1;
+            } else {
+                i = i + 2;
+                numV = 0;
+                while (i < n && src[i].is_hex_digit()) {
+                    numV = numV * 16 + hex_value(src[i]);
+                    i = i + 1;
+                }
+                numSfx = read_num_suffix(src, i);
+                if (len(numSfx) > 0) { i = i + len(numSfx); }
+                toks = toks.push(TokInt { value: numV, base: 16, suffix: numSfx });
+            }
+        } else if (b.is_digit()) {
+            numV = 0;
+            while (i < n && src[i].is_digit()) {
+                numV = numV * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            numSfx = read_num_suffix(src, i);
+            if (len(numSfx) > 0) { i = i + len(numSfx); }
+            toks = toks.push(TokInt { value: numV, base: 10, suffix: numSfx });
+        } else if (b.is_alpha()) {
+            var start: i32 = i;
+            while (i < n && src[i].is_alnum()) { i = i + 1; }
+            var name: string = src[start:i];
+            if (is_keyword(name)) {
+                toks = toks.push(TokKw { name: name });
+            } else {
+                toks = toks.push(TokIdent { name: name });
+            }
+        } else {
+            toks = toks.push(TokPunct { text: src[i : i + 1] });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function main(): i32 {
+    var toks: Token[] = tokenize("0x1F 0xab 0XFF 42 0x10i64");
+    if (len(toks) != 6) { return 100 + len(toks); }
+    match (toks[0]) {
+        TokInt(t) => {
+            if (t.value != 31) { return 1; }
+            if (t.base != 16) { return 2; }
+        },
+        _ => { return 3; },
+    }
+    match (toks[1]) {
+        TokInt(t) => {
+            if (t.value != 171) { return 4; }
+            if (t.base != 16) { return 5; }
+        },
+        _ => { return 6; },
+    }
+    match (toks[2]) {
+        TokInt(t) => {
+            if (t.value != 255) { return 7; }
+            if (t.base != 16) { return 8; }
+        },
+        _ => { return 9; },
+    }
+    match (toks[3]) {
+        TokInt(t) => {
+            if (t.value != 42) { return 10; }
+            if (t.base != 10) { return 11; }
+        },
+        _ => { return 12; },
+    }
+    match (toks[4]) {
+        TokInt(t) => {
+            if (t.value != 16) { return 13; }
+            if (t.base != 16) { return 14; }
+            if (t.suffix != "i64") { return 15; }
+        },
+        _ => { return 16; },
+    }
+    var t2: Token[] = tokenize("0x");
+    if (len(t2) != 3) { return 200 + len(t2); }
+    match (t2[0]) {
+        TokInt(t) => { if (t.value != 0) { return 17; } },
+        _ => { return 18; },
+    }
+    match (t2[1]) {
+        TokIdent(t) => { if (t.name != "x") { return 19; } },
+        _ => { return 20; },
+    }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (lexer v5)", code)
+	}
+}
+
 // Lexer-in-lang v4: adds numeric type-suffix recognition
 // (`42i64` → TokInt{value: 42, suffix: "i64"}). Suffixes
 // accepted: `i32`, `i64`, `u32`, `u64`, `f32`, `f64` — the
