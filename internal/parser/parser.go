@@ -217,21 +217,6 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			continue
 		}
-		if p.match(lexer.Keyword, "state") {
-			sd, err := p.parseStateDecl()
-			if err != nil {
-				p.errors = append(p.errors, err)
-				p.syncToTopLevel()
-				if p.i == before {
-					p.advance()
-				}
-				continue
-			}
-			if sd != nil {
-				prog.States = append(prog.States, sd)
-			}
-			continue
-		}
 		if p.match(lexer.Keyword, "enum") {
 			ed, err := p.parseEnumDecl()
 			if err != nil {
@@ -618,48 +603,6 @@ func (p *parser) parseConstDecl() (*ast.ConstDecl, error) {
 		return nil, err
 	}
 	return &ast.ConstDecl{P: kw.Pos, Name: name.Text, Type: t, Value: val}, nil
-}
-
-// parseStateDecl parses `state { var NAME: T = expr; ... }` —
-// a top-level block of module-global variables that persist
-// for the lifetime of the wasm instance. The body is just a
-// sequence of `var` declarations; the parser reuses parseVar
-// so type-annotation, initialiser, and trailing-`;` rules are
-// identical to local vars. The checker then enforces the
-// extra constraints (must have a type annotation, must be
-// scalar in the first PR, initialiser must be a constant
-// expression — same shape as `const` decls).
-func (p *parser) parseStateDecl() (*ast.StateDecl, error) {
-	kw, err := p.expect(lexer.Keyword, "state")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, "{"); err != nil {
-		return nil, err
-	}
-	out := &ast.StateDecl{P: kw.Pos}
-	for !p.match(lexer.Punct, "}") {
-		if p.match(lexer.EOF, "") {
-			return nil, p.errorf(kw.Pos, "unterminated state block")
-		}
-		if !p.match(lexer.Keyword, "var") {
-			tok := p.peek()
-			return nil, p.errorf(tok.Pos, "state block only allows `var` declarations, got %q", tok.Text)
-		}
-		st, err := p.parseVar()
-		if err != nil {
-			return nil, err
-		}
-		v, ok := st.(*ast.Var)
-		if !ok {
-			return nil, p.errorf(kw.Pos, "expected var declaration in state block")
-		}
-		out.Vars = append(out.Vars, v)
-	}
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // parseEnumDecl parses `enum Foo { Bar, Baz(T1, T2), … }`. Each

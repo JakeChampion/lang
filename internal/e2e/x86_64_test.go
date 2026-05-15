@@ -2086,71 +2086,6 @@ func TestX86_64EprintExit(t *testing.T) {
 	}
 }
 
-// State[T] on natives is the program-lifetime / no-op
-// interpretation. Mirrors TestArm64State; same source on both
-// backends so they stay observably equivalent.
-func TestX86_64State(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"scalar_counter", `state {
-    var counter: i32 = 41;
-}
-function main(): i32 {
-    counter = counter + 1;
-    return counter;
-}`, 42},
-		{"scalar_i64", `state {
-    var big: i64 = 100i64;
-}
-function main(): i32 {
-    big = big + 1i64;
-    return big as i32;
-}`, 101},
-		{"computed_init", `state {
-    var x: i32 = 1 + 2 * 3;
-}
-function main(): i32 { return x; }`, 7},
-		{"f64_and_bool", `state {
-    var pi: f64 = 3.14;
-    var maybe: boolean = true;
-}
-function main(): i32 {
-    if (maybe) { return (pi * 10.0f64) as i32; }
-    return 0;
-}`, 31},
-		{"string_init", `state {
-    var greeting: string = "hello, " + "world!";
-}
-function main(): i32 { return len(greeting); }`, 13},
-		{"map_across_calls", `state {
-    var todos: Map[i32, string] = map_new(4);
-}
-function add(id: i32, text: string): void {
-    todos.set(id, text);
-}
-function get(id: i32): string {
-    return todos.get_or(id, "?");
-}
-function main(): i32 {
-    add(1, "buy milk");
-    add(2, "feed cat");
-    add(3, "walk dog");
-    var got: string = get(2);
-    if (got == "feed cat") { return 42; }
-    return 0;
-}`, 42},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
-				t.Errorf("got %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
 // Function calls with more arguments than the register-arg
 // window (6 on System V x86-64). Args 7+ live on the caller's
 // stack at [rbp+16+8*(i-6)]; the prologue copies them into the
@@ -2273,66 +2208,6 @@ func TestX86_64UnsignedFloatConv(t *testing.T) {
 				t.Errorf("got %d, want %d", code, c.want)
 			}
 		})
-	}
-}
-
-// State-rooted Map.set inside an arena cycle (the HTTP-handler
-// shape). Without the two-cursor allocator, Map.set's grow path
-// would allocate the new backing buffer in the per-request
-// arena and arena_restore would reclaim it — leaving the state
-// Map's data pointer dangling on the next call. Mirrors
-// TestArm64StateMapGrowInsideArena.
-func TestX86_64StateMapGrowInsideArena(t *testing.T) {
-	src := `state {
-    var todos: Map[i32, i32] = map_new(2);
-}
-function add(k: i32, v: i32): void {
-    todos.set(k, v);
-}
-function main(): i32 {
-    var i: i32 = 0;
-    while (i < 50) {
-        var saved: i32 = arena_save();
-        add(i, i * 2);
-        arena_restore(saved);
-        i = i + 1;
-    }
-    if (todos.len() != 50) { return 1; }
-    if (todos.get_or(7, 0 - 1) != 14) { return 2; }
-    if (todos.get_or(49, 0 - 1) != 98) { return 3; }
-    if (todos.get_or(99, 0 - 1) != 0 - 1) { return 4; }
-    return 42;
-}`
-	if _, code := compileAndRunX86_64(t, src); code != 42 {
-		t.Errorf("got %d, want 42 (state Map grow survives arena cycle)", code)
-	}
-}
-
-// State-rooted Array.push inside an arena cycle — companion to
-// TestX86_64StateMapGrowInsideArena, exercising the IR's
-// persistent-mode wrap on the push-then-assign path.
-func TestX86_64StateArrayPushInsideArena(t *testing.T) {
-	src := `state {
-    var nums: i32[] = [];
-}
-function push_one(n: i32): void {
-    nums = nums.push(n);
-}
-function main(): i32 {
-    var i: i32 = 0;
-    while (i < 50) {
-        var saved: i32 = arena_save();
-        push_one(i);
-        arena_restore(saved);
-        i = i + 1;
-    }
-    if (len(nums) != 50) { return 1; }
-    if (nums[7] != 7) { return 2; }
-    if (nums[49] != 49) { return 3; }
-    return 42;
-}`
-	if _, code := compileAndRunX86_64(t, src); code != 42 {
-		t.Errorf("got %d, want 42 (state array push survives arena cycle)", code)
 	}
 }
 

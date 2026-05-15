@@ -68,13 +68,6 @@ type Info struct {
 	// tracks struct decls with non-empty TypeParams for the
 	// monomorphisation pass.
 	GenericStructs map[string]*ast.StructDecl
-	// StateVars maps a top-level `state { var NAME: T = ...; }`
-	// var name to its declared type. Reads / writes of NAME from
-	// inside any function refer to the persistent module-global
-	// storage; the IR emits OpLoadGlobal / OpStoreGlobal at those
-	// sites instead of the usual local-scoped ops. Empty for
-	// programs without state blocks.
-	StateVars map[string]ast.Type
 }
 
 // builtinEnumDecls returns the synthetic enum declarations the
@@ -409,7 +402,6 @@ func Check(prog *ast.Program) (*Info, error) {
 			VariantCallPayloads: map[*ast.Call][]ast.Type{},
 			GenericFuncs:        map[string]*ast.FuncDecl{},
 			GenericStructs:      map[string]*ast.StructDecl{},
-			StateVars:           map[string]ast.Type{},
 		},
 		variantOf: map[string]variantRef{},
 	}
@@ -1064,81 +1056,6 @@ func Check(prog *ast.Program) (*Info, error) {
 		}
 	}
 
-	// State blocks: `state { var NAME: T = init; ... }` declares
-	// module-global mutable storage. Scalar V with a literal
-	// init compiles to a wasm `(global ...)` init expression
-	// directly; pointer-shaped V (today: string) and non-literal
-	// init expressions both route through a synthesised
-	// `__state_init` start function that runs before any user
-	// code (`_start` on the CLI target, before the first
-	// `handle()` on wasi-http). State init runs while the bump
-	// cursor is still at its initial position, so its
-	// allocations end up below the per-request `arena_save`
-	// point and are naturally preserved across `arena_restore`.
-	//
-	// Mutable pointer-shaped state (Map / T[] / structs whose
-	// mutation allocates) is still rejected — that needs the
-	// two-cursor allocator (separate persistent / per-request
-	// bump cursors) so mutation-time allocations don't get
-	// reclaimed by `arena_restore` on handler exit. Tracked as
-	// the next state{} PR.
-	for _, sd := range prog.States {
-		for _, v := range sd.Vars {
-			if v.Type == nil {
-				c.errf(v.P, "state var %q must have a type annotation", v.Name)
-				continue
-			}
-			if !isStateVarType(v.Type) {
-				c.errf(v.P, "state var %q has type %s; state{} supports scalars (i32/u32/i64/u64/f32/f64/boolean), string, T[], and Map[K, V] over those. User structs / enums / function values are still rejected (mutation routing isn't implemented for those shapes)", v.Name, v.Type)
-				continue
-			}
-			if _, dup := c.info.StateVars[v.Name]; dup {
-				c.errf(v.P, "state var %q already declared", v.Name)
-				continue
-			}
-			// Type-check the init expression against the
-			// declared type. Reuses the regular expression
-			// checker so all the polymorphic-literal settle
-			// rules (numeric width inference, float promotion)
-			// apply at the state-init site too.
-			initType := c.checkExpr(v.Init, &scope{})
-			if initType != nil {
-				c.settleNumeric(v.Init, v.Type)
-				initType = postSettleType(v.Init, initType)
-				initType = c.maybeWrapForUnion(v.Type, &v.Init, initType, &scope{})
-				if !ast.Equal(v.Type, initType) && !assignable(v.Type, initType) {
-					c.errf(v.P, "state var %q initialiser type %s does not match declared %s", v.Name, initType, v.Type)
-					continue
-				}
-			}
-			// Settle scalar literals to the declared type so the
-			// IR's NumberLit lowering picks the right wasm const
-			// opcode for the literal-init shortcut.
-			if isStateInitLiteral(v.Init) {
-				c.settleStateInitLiteral(v.Type, v.Init)
-			}
-			c.info.StateVars[v.Name] = v.Type
-			c.info.VarTypes[v] = v.Type
-		}
-	}
-
-	// Synthesise `__state_init`: a void function whose body runs
-	// each non-literal state-init expression as `STATE_VAR =
-	// INIT_EXPR;`. The wasm backend wires this into the module's
-	// `(start ...)` section so it runs once at module
-	// instantiation; the arm64 backend calls it from `_start`
-	// before `main`. Functions with no non-literal inits get an
-	// empty body — the wasm `(start)` machinery still expects
-	// the function to exist if any state vars are declared, so
-	// we always synthesise once when prog.States is non-empty.
-	//
-	// Stamping it as an entry point in treeshake keeps the body
-	// alive through DCE; without that the tree-shaker would drop
-	// the synthesised function (no AST caller).
-	if hasNonLiteralStateInit(prog) {
-		prog.Funcs = append(prog.Funcs, synthesiseStateInit(prog))
-	}
-
 	// Auto-main from handle: when the user defines
 	// `function handle(req: HttpRequest): HttpResponse` but
 	// no `main()`, synthesise a minimal main that calls
@@ -1253,17 +1170,6 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			for j := range ed.Variants[i].Payloads {
 				c.resolveType(&ed.Variants[i].Payloads[j], params)
 			}
-		}
-	}
-	// state{} blocks declare module-globals whose types appear
-	// in source as bare identifier references (`Map[i32, string]`,
-	// `string[]`, `i32`). Walk them through resolveType so any
-	// EnumType placeholders the parser emitted for capitalised
-	// names land on the right StructType / EnumType resolution
-	// before isStateVarType inspects them.
-	for _, sd := range prog.States {
-		for _, v := range sd.Vars {
-			c.resolveType(&v.Type, nil)
 		}
 	}
 }
@@ -2823,13 +2729,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if t, ok := s.lookup(n.Name); ok {
 			return t
 		}
-		// State-block vars sit in module-global scope, visible
-		// from every function. Local vars / parameters with the
-		// same name shadow as expected (the local lookup above
-		// runs first).
-		if t, ok := c.info.StateVars[n.Name]; ok {
-			return t
-		}
 		if sig, ok := c.info.FuncSigs[n.Name]; ok {
 			return sig
 		}
@@ -4171,104 +4070,6 @@ func isFloat(t ast.Type) bool {
 	return ok
 }
 
-// isStateVarType matches the V types state{} accepts today.
-// Scalars (every NumberType / FloatType width + BoolType) compile
-// to wasm globals with their literal init expression baked in.
-// Strings are immutable in this language so a state-string is
-// read-only across requests; pointer-shaped containers
-// (Map[K, V], T[]) ride on the two-cursor allocator — state-
-// init bodies and state-rooted call sites toggle the persistent
-// allocator mode so any helper-internal allocations (Map grow,
-// T[] push backing buffer) live in the persistent heap region
-// and survive arena_restore on handler exit.
-//
-// Currently rejected: structs (mutation patterns vary; needs
-// per-method analysis), enums with payloads (same), function
-// values (closure env aliasing).
-func isStateVarType(t ast.Type) bool {
-	switch tt := t.(type) {
-	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType:
-		return true
-	case ast.ArrayType:
-		return isStateVarType(tt.Elem)
-	case ast.StructType:
-		// Map / MapIter are runtime structs with type params;
-		// allow the Map case explicitly for state{} usage.
-		// Other user structs are still rejected.
-		if tt.Name == "Map" && len(tt.Args) == 2 {
-			return isStateVarType(tt.Args[0]) && isStateVarType(tt.Args[1])
-		}
-		return false
-	}
-	return false
-}
-
-// isStateInitLiteral matches the initialiser shapes that lower
-// directly to a wasm `(<type>.const N)` global init expression:
-// a bare NumberLit, FloatLit, or BoolLit. Negated number / float
-// literals (`-1`) are also accepted — the parser produces a
-// Unary{Op:"-", Operand:<lit>} that constfold-style evaluation
-// resolves at codegen time.
-func isStateInitLiteral(e ast.Expr) bool {
-	switch v := e.(type) {
-	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit:
-		return true
-	case *ast.Unary:
-		if v.Op == "-" {
-			return isStateInitLiteral(v.Operand)
-		}
-	}
-	return false
-}
-
-// hasNonLiteralStateInit reports whether any state var in prog
-// needs a runtime init step (everything that isn't a bare
-// scalar literal — string init, computed scalar init like
-// `1 + 2 * 3`, etc.). Used to decide whether to synthesise
-// `__state_init`.
-func hasNonLiteralStateInit(prog *ast.Program) bool {
-	for _, sd := range prog.States {
-		for _, v := range sd.Vars {
-			if !isStateInitLiteral(v.Init) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// synthesiseStateInit builds a void `__state_init` FuncDecl
-// whose body assigns each non-literal state-init expression to
-// its declared global. Wasm codegen exports this via `(start
-// $__state_init)`; arm64 codegen calls it from `_start` before
-// `main`. State assignments lower to OpStoreGlobal naturally —
-// no special-case codegen needed in the body.
-func synthesiseStateInit(prog *ast.Program) *ast.FuncDecl {
-	var stmts []ast.Stmt
-	for _, sd := range prog.States {
-		for _, v := range sd.Vars {
-			if isStateInitLiteral(v.Init) {
-				continue
-			}
-			stmts = append(stmts, &ast.ExprStmt{
-				P: v.P,
-				Expr: &ast.Assign{
-					P:      v.P,
-					Target: &ast.Ident{P: v.P, Name: v.Name},
-					Value:  v.Init,
-				},
-			})
-		}
-	}
-	return &ast.FuncDecl{
-		P:          ast.Position{},
-		Name:       "__state_init",
-		Params:     nil,
-		ReturnType: ast.VoidType{},
-		Body:       &ast.Block{Stmts: stmts},
-	}
-}
-
 // hasHandleDecl reports whether the program defines a top-level
 // `function handle(req: HttpRequest): HttpResponse` — the
 // signature shape every wasi-http program targets. The check is
@@ -4337,36 +4138,6 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 		ReturnType:               ast.NumberType{Width: 32, Signed: true},
 		Body:                     body,
 		IsSynthesisedHandlerMain: true,
-	}
-}
-
-// settleStateInitLiteral stamps Width / IsFloat / FloatWidth on
-// the initialiser's NumberLit so the IR's NumberLit lowering
-// picks the right wasm const opcode (i32.const / i64.const /
-// f32.const / f64.const). Mirrors the polymorphic-literal settle
-// path that runs during expression checking, but applied at the
-// declaration site since state-block initialisers are checked
-// out-of-band from the function bodies.
-func (c *checker) settleStateInitLiteral(t ast.Type, e ast.Expr) {
-	switch lit := e.(type) {
-	case *ast.NumberLit:
-		if n, ok := t.(ast.NumberType); ok {
-			lit.Width = n.Width
-			lit.IsUnsigned = !n.Signed
-			return
-		}
-		if f, ok := t.(ast.FloatType); ok {
-			lit.IsFloat = true
-			lit.FloatWidth = f.Width
-		}
-	case *ast.FloatLit:
-		if f, ok := t.(ast.FloatType); ok {
-			lit.Width = f.Width
-		}
-	case *ast.Unary:
-		if lit.Op == "-" {
-			c.settleStateInitLiteral(t, lit.Operand)
-		}
 	}
 }
 

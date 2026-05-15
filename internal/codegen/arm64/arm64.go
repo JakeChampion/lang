@@ -179,26 +179,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn
 	}
-	// State[T] (program-lifetime no-op interpretation): each
-	// `state { var NAME: T = INIT; }` declaration becomes a
-	// .data / .bss reservation; OpLoadGlobal / OpStoreGlobal
-	// read/write it; OpPersistentSet / OpPersistentRestore are
-	// no-ops (no per-request arena mode on native). Literal
-	// inits are baked into .data; non-literal inits run via the
-	// synthesised __state_init function called before main.
-	g.stateDecls = prog.States
-	if info != nil && len(info.StateVars) > 0 {
-		// Pre-scan: does the program have a __state_init?
-		// (Synthesised by the checker only when at least one
-		// state var needs runtime init.) If so, _start calls
-		// it before main.
-		for _, fn := range prog.Funcs {
-			if fn.Name == "__state_init" {
-				g.usesStateInit = true
-				break
-			}
-		}
-	}
 	// Pre-scan IR functions to set use-flags that emitStartRuntime
 	// reads. emitStartRuntime runs before the per-function walk
 	// so any flag set inside emitOp wouldn't influence the
@@ -550,85 +530,6 @@ func (g *generator) emitDataSections() {
 		g.label("__lang_str_idx_scratch")
 		g.line(`	.quad 0`)
 		g.line(`	.quad 0`)
-	}
-	// State[T] globals. Emit literal-initialised vars in
-	// `.data` and zero-placeholder ones in `.bss`; the
-	// synthesised `__state_init` writes the real values at
-	// startup. Per docs/BACKEND-PARITY.md, this is the
-	// program-lifetime / no-op interpretation: each var is a
-	// fixed-address slot accessed via adrp+add, and the
-	// `OpPersistentSet` / `OpPersistentRestore` toggles are
-	// no-ops since natives only have one heap.
-	g.emitStateGlobals()
-}
-
-// emitStateGlobals writes one labelled slot per state-block
-// var. Literal initialisers (NumberLit, FloatLit, BoolLit,
-// `-<lit>`) bake the raw bit pattern into .data; non-literal
-// initialisers get a zero placeholder in .bss and run via
-// __state_init at startup (called from _start before main).
-func (g *generator) emitStateGlobals() {
-	if len(g.stateDecls) == 0 {
-		return
-	}
-	hasData, hasBss := false, false
-	for _, sd := range g.stateDecls {
-		for _, v := range sd.Vars {
-			if _, ok := stateInitLiteralBits(v.Init, v.Type); ok {
-				hasData = true
-			} else {
-				hasBss = true
-			}
-		}
-	}
-	if hasData {
-		g.line("")
-		if g.darwin {
-			g.line(`.section __DATA,__data`)
-		} else {
-			g.line(`.section .data`)
-		}
-		for _, sd := range g.stateDecls {
-			for _, v := range sd.Vars {
-				bits, ok := stateInitLiteralBits(v.Init, v.Type)
-				if !ok {
-					continue
-				}
-				w := stateWidthBytes(v.Type)
-				if w == 8 {
-					g.line(`.align 3`)
-					g.label(".Lstate_" + v.Name)
-					g.line(fmt.Sprintf("\t.quad %d", int64(bits)))
-				} else {
-					g.line(`.align 2`)
-					g.label(".Lstate_" + v.Name)
-					g.line(fmt.Sprintf("\t.long %d", int32(bits)))
-				}
-			}
-		}
-	}
-	if hasBss {
-		g.line("")
-		if g.darwin {
-			g.line(`.section __DATA,__bss`)
-		} else {
-			g.line(`.section .bss`)
-		}
-		for _, sd := range g.stateDecls {
-			for _, v := range sd.Vars {
-				if _, ok := stateInitLiteralBits(v.Init, v.Type); ok {
-					continue
-				}
-				w := stateWidthBytes(v.Type)
-				if w == 8 {
-					g.line(`.align 3`)
-				} else {
-					g.line(`.align 2`)
-				}
-				g.label(".Lstate_" + v.Name)
-				g.line(fmt.Sprintf("\t.space %d", w))
-			}
-		}
 	}
 }
 
@@ -3554,76 +3455,6 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.line(".ltorg")
 }
 
-// stateWidthBytes returns the storage width (4 or 8 bytes) for
-// a state-var of the given lang type. Wide scalars (i64 / f64)
-// take 8 bytes; pointer-shaped types (string, Map, T[],
-// struct, enum, slice, tuple, closure) take ptrW (=8 on arm64);
-// everything else takes 4. Matches `payloadSlotSize` in the IR.
-func stateWidthBytes(t ast.Type) int {
-	if t == nil {
-		return 4
-	}
-	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
-		return 8
-	}
-	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
-		return 8
-	}
-	if ast.IsPointerType(t) {
-		return 8
-	}
-	return 4
-}
-
-// lookupStateType resolves a state-var name to its declared
-// lang type. Used by OpLoadGlobal / OpStoreGlobal to pick the
-// correct load/store width.
-func (g *generator) lookupStateType(name string) ast.Type {
-	if g.info == nil {
-		return nil
-	}
-	return g.info.StateVars[name]
-}
-
-// stateInitLiteralBits returns the raw bit pattern of a literal
-// state initialiser (NumberLit, FloatLit, BoolLit, or
-// `-<literal>`). Used by emitStateGlobals to bake the value
-// directly into .data so no runtime init is needed. Returns the
-// (value, true) pair on success; (0, false) when the init isn't
-// a recognised literal shape (the caller falls back to the
-// zero-placeholder + __state_init path).
-func stateInitLiteralBits(e ast.Expr, t ast.Type) (uint64, bool) {
-	switch v := e.(type) {
-	case *ast.NumberLit:
-		return uint64(v.Value), true
-	case *ast.FloatLit:
-		w := 32
-		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
-			w = 64
-		}
-		if w == 64 {
-			return math.Float64bits(v.Value), true
-		}
-		return uint64(math.Float32bits(float32(v.Value))), true
-	case *ast.BoolLit:
-		if v.Value {
-			return 1, true
-		}
-		return 0, true
-	case *ast.Unary:
-		if v.Op == "-" {
-			if inner, ok := stateInitLiteralBits(v.Operand, t); ok {
-				w := stateWidthBytes(t)
-				if w == 8 {
-					return uint64(-int64(inner)), true
-				}
-				return uint64(uint32(-int32(inner))), true
-			}
-		}
-	}
-	return 0, false
-}
-
 // captureSlotSize mirrors closureconv.captureSlotSize for
 // ptrW=8 (arm64). Wide scalars (i64 / f64) take 8 bytes;
 // pointer-shaped captures take 8 bytes (the heap-pointer
@@ -4017,14 +3848,6 @@ type generator struct {
 	// flag since they now return real Reader / Writer struct
 	// pointers (fd at +0) rather than scalar sentinels.
 	usesReaderWriter bool
-
-	// stateDecls is `prog.States` — the parsed `state {}`
-	// blocks. emitStateGlobals reads this to emit one .data
-	// or .bss slot per declared variable. usesStateInit
-	// fires when the checker synthesised __state_init (any
-	// non-literal initialiser); _start calls it before main.
-	stateDecls    []*ast.StateDecl
-	usesStateInit bool
 }
 
 func (g *generator) line(s string) {
@@ -4275,12 +4098,6 @@ func (g *generator) emitStartRuntime() {
 				g.emit("str x1, [x3]")
 			}
 		}
-	}
-	if g.usesStateInit {
-		// Run state-init body before main. Initialises every
-		// non-literal state-block var (literal-initialised
-		// vars are already populated in .data).
-		g.emit("bl __state_init")
 	}
 	g.emit("bl main")
 	g.syscallExit()
@@ -5220,51 +5037,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		}
 
 	// -------- state (module-global) vars --------
-	//
-	// State[T] on native uses the program-lifetime / no-op
-	// interpretation (see docs/BACKEND-PARITY.md): each var
-	// gets a .data / .bss slot, accessed via PC-relative
-	// adrp+add and a width-appropriate load/store. The
-	// persistent-allocator-mode toggles are no-ops — natives
-	// only have one heap, and state inits run from _start
-	// (before any arena_save), so allocations the inits
-	// perform sit safely below the first arena_save point.
-
-	case ir.OpLoadGlobal:
-		w := stateWidthBytes(g.lookupStateType(op.Str))
-		g.adrpAdd("x1", ".Lstate_"+op.Str)
-		if w == 8 {
-			g.emit("ldr x0, [x1]")
-		} else {
-			g.emit("ldr w0, [x1]")
-		}
-		g.push()
-	case ir.OpStoreGlobal:
-		g.pop()
-		w := stateWidthBytes(g.lookupStateType(op.Str))
-		g.adrpAdd("x1", ".Lstate_"+op.Str)
-		if w == 8 {
-			g.emit("str x0, [x1]")
-		} else {
-			g.emit("str w0, [x1]")
-		}
-
-	case ir.OpPersistentSet:
-		// Toggle the allocator mode at __lang_alloc_mode and
-		// push the previous mode for the matching Restore.
-		// Op.I32 carries the new mode (0 = arena, 1 = persistent).
-		g.adrpAdd("x1", "__lang_alloc_mode")
-		g.emit("ldrb w0, [x1]") // old mode
-		g.emit("mov w2, #%d", op.I32&1)
-		g.emit("strb w2, [x1]")
-		g.push() // push old mode (in x0)
-		g.usesAlloc = true
-	case ir.OpPersistentRestore:
-		// Pop the saved mode and write it back to the mode byte.
-		g.pop()
-		g.adrpAdd("x1", "__lang_alloc_mode")
-		g.emit("strb w0, [x1]")
-		g.usesAlloc = true
 
 	// -------- direct calls --------
 
