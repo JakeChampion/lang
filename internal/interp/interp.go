@@ -217,6 +217,7 @@ func New() *Interp {
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
+	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
 	i.Builtins["stdin"] = &Builtin{Fn: builtinStdin}
 	i.Builtins["stdout"] = &Builtin{Fn: builtinStdout}
 	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
@@ -399,6 +400,27 @@ func builtinArenaSave(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("arena_save: expected 0 args, got %d", len(args))
 	}
 	return Number(0), nil
+}
+
+// `(arr: T[]) push(v: T): T[]` — functional append. The codegen
+// path implements push as "alloc a fresh T[] of len+1, memcpy
+// the old elements, store the new one at the tail, return the
+// new array"; the interpreter mirrors that with a fresh Go
+// slice so the source array stays untouched. Matches the
+// receiver-as-first-arg convention the checker uses for every
+// `__method_*` mangled name.
+func builtinArrayPush(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__method_Array_push: expected 2 args (arr, v), got %d", len(args))
+	}
+	arr, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("__method_Array_push: receiver must be array, got %T", args[0])
+	}
+	out := make(Array, len(arr)+1)
+	copy(out, arr)
+	out[len(arr)] = args[1]
+	return out, nil
 }
 
 func builtinArenaRestore(_ *Interp, args []Value) (Value, error) {
@@ -1298,18 +1320,25 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		}
 		return arr[idx], nil
 	case *ast.SliceExpr:
-		// Slices are stored as `Array` at interp time — same
-		// type because the interpreter doesn't model alias /
-		// ownership. Building one is just a Go-level subslice;
-		// `len(slice)` and indexing fall through to the Array
-		// path automatically.
+		// Slices on arrays are stored as `Array` at interp time
+		// — same type because the interpreter doesn't model
+		// alias / ownership. String slicing returns a fresh
+		// String holding the byte range — matches the codegen
+		// `__str_slice` runtime semantics. Both share the same
+		// SliceExpr AST shape; we dispatch on the source value's
+		// runtime type.
 		srcV, err := i.evalExpr(x.Source, env)
 		if err != nil {
 			return nil, err
 		}
-		arr, ok := srcV.(Array)
-		if !ok {
-			return nil, fmt.Errorf("cannot slice non-array %T", srcV)
+		var slen int64
+		switch v := srcV.(type) {
+		case Array:
+			slen = int64(len(v))
+		case String:
+			slen = int64(len(v))
+		default:
+			return nil, fmt.Errorf("cannot slice non-array/string %T", srcV)
 		}
 		low := int64(0)
 		if x.Low != nil {
@@ -1323,7 +1352,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			}
 			low = int64(n)
 		}
-		high := int64(len(arr))
+		high := slen
 		if x.High != nil {
 			hv, err := i.evalExpr(x.High, env)
 			if err != nil {
@@ -1335,14 +1364,16 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			}
 			high = int64(n)
 		}
-		if low < 0 || high > int64(len(arr)) || low > high {
-			return nil, fmt.Errorf("slice [%d:%d] out of range for length %d", low, high, len(arr))
+		if low < 0 || high > slen || low > high {
+			return nil, fmt.Errorf("slice [%d:%d] out of range for length %d", low, high, slen)
 		}
-		// Return a sub-slice; aliases the parent's elements like
-		// the wasm path. Mutation through the slice would write
-		// back to the parent — we don't have mutating slice
-		// operations at lang level yet, so this is moot.
-		return Array(arr[low:high]), nil
+		switch v := srcV.(type) {
+		case Array:
+			return Array(v[low:high]), nil
+		case String:
+			return String(string(v)[low:high]), nil
+		}
+		return nil, fmt.Errorf("unreachable: srcV type %T not Array/String after pre-check", srcV)
 	case *ast.Call:
 		return i.evalCall(x, env)
 	case *ast.Binary:
