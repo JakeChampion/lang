@@ -241,6 +241,150 @@ function main(): i32 {
 	}
 }
 
+// Extended lexer-in-lang: adds string literals (with `\\` /
+// `\"` escapes), multi-character operators (`==`, `!=`, `<=`,
+// `>=`, `=>`), keyword recognition vs identifier, and line
+// comments. Pushes more lang features through the pipeline
+// than `TestArm64LexerInLang`:
+//
+//   - String concatenation (`out = out + src[i:i+1]`) inside
+//     a loop — exercises strcat-in-loop allocation pattern
+//   - Multi-arm boolean chains in the keyword classifier
+//   - Mixed `match` over union variants with both `_` wildcard
+//     and explicit-variant arms
+//
+// Token surface still ~5% of the real lang lexer but enough
+// to drive a tiny self-contained source through end-to-end.
+// `TestArm64LexerInLang` keeps the minimum-viable shape; this
+// test pins the next increment so we catch regressions on the
+// bigger features before the full port lands.
+func TestArm64LexerV2(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokKw    { name: string }
+struct TokStr   { value: string }
+struct TokPunct { text: string }
+struct TokEof   { _pad: i32 }
+
+type Token = TokInt | TokIdent | TokKw | TokStr | TokPunct | TokEof;
+
+function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
+function is_alpha(b: i32): boolean {
+    return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
+}
+function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
+function is_ws(b: i32): boolean {
+    return b == 32 || b == 9 || b == 10 || b == 13;
+}
+
+function is_keyword(name: string): boolean {
+    return name == "function" || name == "var" || name == "if" ||
+           name == "else" || name == "while" || name == "return" ||
+           name == "true" || name == "false" || name == "match" ||
+           name == "type" || name == "struct" || name == "enum";
+}
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (is_ws(b)) {
+            i = i + 1;
+        } else if (b == 47 && i + 1 < n && src[i + 1] == 47) {
+            i = i + 2;
+            while (i < n && src[i] != 10) { i = i + 1; }
+        } else if (b == 34) {
+            var out: string = "";
+            i = i + 1;
+            while (i < n && src[i] != 34) {
+                if (src[i] == 92 && i + 1 < n) {
+                    out = out + src[i + 1 : i + 2];
+                    i = i + 2;
+                } else {
+                    out = out + src[i : i + 1];
+                    i = i + 1;
+                }
+            }
+            if (i < n) { i = i + 1; }
+            toks = toks.push(TokStr { value: out });
+        } else if (is_digit(b)) {
+            var v: i32 = 0;
+            while (i < n && is_digit(src[i])) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (is_alpha(b)) {
+            var start: i32 = i;
+            while (i < n && is_alnum(src[i])) { i = i + 1; }
+            var name: string = src[start:i];
+            if (is_keyword(name)) {
+                toks = toks.push(TokKw { name: name });
+            } else {
+                toks = toks.push(TokIdent { name: name });
+            }
+        } else if ((b == 61 || b == 33 || b == 60 || b == 62) &&
+                   i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { text: src[i : i + 2] });
+            i = i + 2;
+        } else if (b == 61 && i + 1 < n && src[i + 1] == 62) {
+            toks = toks.push(TokPunct { text: src[i : i + 2] });
+            i = i + 2;
+        } else {
+            toks = toks.push(TokPunct { text: src[i : i + 1] });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function main(): i32 {
+    var toks: Token[] = tokenize("var x = 42; // a comment\nfunction f() { return \"hi\"; }");
+    // var x = 42 ; function f ( ) { return "hi" ; } EOF = 15 tokens.
+    if (len(toks) != 15) { return 100 + len(toks); }
+    match (toks[0]) {
+        TokKw(t) => { if (t.name != "var") { return 1; } },
+        _ => { return 2; },
+    }
+    match (toks[1]) {
+        TokIdent(t) => { if (t.name != "x") { return 3; } },
+        _ => { return 4; },
+    }
+    match (toks[2]) {
+        TokPunct(t) => { if (t.text != "=") { return 5; } },
+        _ => { return 6; },
+    }
+    match (toks[3]) {
+        TokInt(t) => { if (t.value != 42) { return 7; } },
+        _ => { return 8; },
+    }
+    match (toks[4]) {
+        TokPunct(t) => { if (t.text != ";") { return 9; } },
+        _ => { return 10; },
+    }
+    match (toks[5]) {
+        TokKw(t) => { if (t.name != "function") { return 11; } },
+        _ => { return 12; },
+    }
+    match (toks[10]) {
+        TokKw(t) => { if (t.name != "return") { return 13; } },
+        _ => { return 14; },
+    }
+    match (toks[11]) {
+        TokStr(t) => { if (t.value != "hi") { return 15; } },
+        _ => { return 16; },
+    }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (extended lexer pipeline)", code)
+	}
+}
+
 // Tiny lexer written in lang — recognises integer literals,
 // identifiers, and single-byte punctuation. Validates that:
 //
