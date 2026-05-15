@@ -715,6 +715,316 @@ function main(): i32 {
 	}
 }
 
+// Constfold-in-lang: a real compiler pass, written in lang.
+// Closes a meaningful self-host milestone — lex/parse/eval has
+// been the pattern through v1..v7, but a tree-rewriting
+// transformation over the AST is the shape of every real
+// compiler optimization (constfold, DCE, inlining, copy-prop,
+// strength reduction). This spike proves lang can host that
+// shape too.
+//
+// The pass: `fold(e: Expr): Expr`. Walks the expression tree
+// bottom-up, replacing any BinOp whose operands are both Num
+// with a single Num holding the folded value. Anything with a
+// Var or partial-fold remainder passes through unchanged at
+// that node (but its subtrees are still folded). Matches the
+// shape of internal/constfold in the real compiler.
+//
+// Test strategy:
+//   1. Parse "1 + 2 * 3" → BinOp(+, Num(1), BinOp(*, Num(2),
+//      Num(3))). Fold → Num(7). Confirms fully-constant
+//      expressions collapse to a single literal.
+//   2. Parse "x + 2 * 3" → fold partials: the 2 * 3 inside
+//      a BinOp collapses; the outer BinOp(+, Var(x), Num(6))
+//      stays since one operand is a Var.
+//   3. Parse "(1 + 2) + (3 + 4)" → Num(10). Confirms recursive
+//      folding through nested BinOps.
+//   4. Idempotence: fold(fold(e)) == fold(e). Real compilers
+//      run optimization passes in a loop; idempotence is the
+//      stable-fixpoint property they all need.
+//   5. Semantic preservation: eval(fold(e)) == eval(e). The
+//      pass must not change the program's meaning.
+//
+// Counting helpers (`count_num`, `count_binop`) drive the
+// structural assertions — after folding the constant cases,
+// the node count is exactly 1; after the partial case it's
+// 1 BinOp + 1 Var + 1 Num.
+func TestArm64ConstfoldInLang(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct Var   { name: string }
+struct BinOp { op: i32, left: Expr, right: Expr }
+type Expr = Num | Var | BinOp;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        cur[0] = pos + 1;
+        return Var { name: tok_ident_name(toks[pos]) };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_arith(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_src(src: string): Expr {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    return parse_arith(toks, cur);
+}
+
+// Extract a Num's value, or -1 if e isn't a Num. The pass uses
+// the sentinel approach rather than an Option[i32] return so the
+// match arms stay tight; -1 would be a legitimate folded value
+// in some cases, but the only caller (fold's BinOp arm) guards
+// the check with is_num() first.
+function is_num(e: Expr): boolean {
+    match (e) { Num(_) => { return true; }, _ => { return false; } }
+}
+function num_value(e: Expr): i32 {
+    match (e) { Num(n) => { return n.value; }, _ => { return 0; } }
+}
+
+function fold(e: Expr): Expr {
+    match (e) {
+        Num(_) => { return e; },
+        Var(_) => { return e; },
+        BinOp(b) => {
+            var l: Expr = fold(b.left);
+            var r: Expr = fold(b.right);
+            if (is_num(l) && is_num(r)) {
+                var lv: i32 = num_value(l);
+                var rv: i32 = num_value(r);
+                if (b.op == 43) { return Num { value: lv + rv }; }
+                if (b.op == 45) { return Num { value: lv - rv }; }
+                if (b.op == 42) { return Num { value: lv * rv }; }
+                if (b.op == 47) { return Num { value: lv / rv }; }
+            }
+            return BinOp { op: b.op, left: l, right: r };
+        },
+    }
+}
+
+function eval(e: Expr, names: string[], values: i32[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => {
+            var i: i32 = len(names) - 1;
+            while (i >= 0) {
+                if (names[i] == v.name) { return values[i]; }
+                i = i - 1;
+            }
+            return 0;
+        },
+        BinOp(b) => {
+            var l: i32 = eval(b.left, names, values);
+            var r: i32 = eval(b.right, names, values);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+    }
+}
+
+function count_num(e: Expr): i32 {
+    match (e) {
+        Num(_) => { return 1; },
+        Var(_) => { return 0; },
+        BinOp(b) => { return count_num(b.left) + count_num(b.right); },
+    }
+}
+function count_var(e: Expr): i32 {
+    match (e) {
+        Num(_) => { return 0; },
+        Var(_) => { return 1; },
+        BinOp(b) => { return count_var(b.left) + count_var(b.right); },
+    }
+}
+function count_binop(e: Expr): i32 {
+    match (e) {
+        Num(_) => { return 0; },
+        Var(_) => { return 0; },
+        BinOp(b) => { return 1 + count_binop(b.left) + count_binop(b.right); },
+    }
+}
+
+// Compare two ASTs for structural equality. Used to test
+// idempotence: fold(fold(e)) ≡ fold(e). The op field is i32
+// so equality is byte-exact; same for Num.value. Var compares
+// by name. BinOp recurses into children.
+function ast_eq(a: Expr, b: Expr): boolean {
+    match (a) {
+        Num(an) => {
+            match (b) {
+                Num(bn) => { return an.value == bn.value; },
+                _ => { return false; },
+            }
+        },
+        Var(av) => {
+            match (b) {
+                Var(bv) => { return av.name == bv.name; },
+                _ => { return false; },
+            }
+        },
+        BinOp(ab) => {
+            match (b) {
+                BinOp(bb) => {
+                    if (ab.op != bb.op) { return false; }
+                    if (!ast_eq(ab.left, bb.left)) { return false; }
+                    return ast_eq(ab.right, bb.right);
+                },
+                _ => { return false; },
+            }
+        },
+    }
+}
+
+function main(): i32 {
+    var names: string[] = ["x"];
+    var values: i32[] = [10];
+
+    // Fully constant — 1 + 2 * 3 folds to Num(7).
+    var e1: Expr = parse_src("1 + 2 * 3");
+    var f1: Expr = fold(e1);
+    if (count_num(f1) != 1) { return 1; }
+    if (count_binop(f1) != 0) { return 2; }
+    if (eval(f1, names, values) != 7) { return 3; }
+    // Semantic preservation.
+    if (eval(e1, names, values) != eval(f1, names, values)) { return 4; }
+
+    // Partial fold — x + 2 * 3 folds 2*3 = 6, leaves x + 6.
+    var e2: Expr = parse_src("x + 2 * 3");
+    var f2: Expr = fold(e2);
+    if (count_num(f2) != 1) { return 5; }
+    if (count_var(f2) != 1) { return 6; }
+    if (count_binop(f2) != 1) { return 7; }
+    if (eval(f2, names, values) != 16) { return 8; }
+    if (eval(e2, names, values) != eval(f2, names, values)) { return 9; }
+
+    // Recursive fold through nested constant subtrees.
+    // (1 + 2) + (3 + 4) → Num(10). Confirms the post-order walk
+    // catches subtrees before the parent gets a chance to fold.
+    var e3: Expr = parse_src("(1 + 2) + (3 + 4)");
+    var f3: Expr = fold(e3);
+    if (count_num(f3) != 1) { return 10; }
+    if (count_binop(f3) != 0) { return 11; }
+    if (eval(f3, names, values) != 10) { return 12; }
+
+    // Idempotence — running fold on already-folded output is
+    // a no-op. Real optimization loops run passes to fixpoint;
+    // a non-idempotent constfold blows out the loop.
+    var f3_again: Expr = fold(f3);
+    if (!ast_eq(f3, f3_again)) { return 13; }
+    var f2_again: Expr = fold(f2);
+    if (!ast_eq(f2, f2_again)) { return 14; }
+
+    // Division case — 12 / 4 = 3.
+    var e4: Expr = parse_src("12 / 4");
+    var f4: Expr = fold(e4);
+    if (count_num(f4) != 1) { return 15; }
+    if (eval(f4, names, values) != 3) { return 16; }
+
+    // Subtraction — 10 - 3 - 2 folds left-to-right via the
+    // left-associative parser: (10 - 3) - 2 = 5.
+    var e5: Expr = parse_src("10 - 3 - 2");
+    var f5: Expr = fold(e5);
+    if (count_num(f5) != 1) { return 17; }
+    if (eval(f5, names, values) != 5) { return 18; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (constfold-in-lang)", code)
+	}
+}
+
 // Interp-in-lang v7: multi-arg functions. v6 (#418) shipped
 // single-arg functions, deferring multi-arg as "trivially
 // additive but doubles the line count without proving
