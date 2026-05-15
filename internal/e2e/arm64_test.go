@@ -241,6 +241,95 @@ function main(): i32 {
 	}
 }
 
+// Tiny lexer written in lang — recognises integer literals,
+// identifiers, and single-byte punctuation. Validates that:
+//
+//   - `type Token = TokInt | TokIdent | ...` (union types
+//     from PR #390) handles the AST-shaped sum
+//   - `Add { ... }` flows into a Token-typed slot via the
+//     implicit wrap (PR #392)
+//   - `s[i]` byte access, `s[lo:hi]` slicing, `arr.push`,
+//     and `match` over union variants all compose
+//   - The frameLoad / frameStore split (this PR) handles
+//     the deeper-than-256-byte frame the lexer's match arms
+//     produce on arm64
+//
+// First building block toward self-host: porting the real
+// lexer to lang is the smallest realistic milestone (see
+// docs/ROADMAP-AND-SELF-HOSTING.md "Realistic first-port
+// milestone"). This test pins a minimum-viable lexer shape
+// so we catch regressions before the bigger port lands.
+func TestArm64LexerInLang(t *testing.T) {
+	src := `struct TokInt { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof { _pad: i32 }
+
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
+function is_alpha(b: i32): boolean {
+    return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
+}
+function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b == 32 || b == 9 || b == 10 || b == 13) {
+            i = i + 1;
+        } else if (is_digit(b)) {
+            var v: i32 = 0;
+            while (i < n && is_digit(src[i])) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (is_alpha(b)) {
+            var start: i32 = i;
+            while (i < n && is_alnum(src[i])) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function main(): i32 {
+    var toks: Token[] = tokenize("foo + 42");
+    if (len(toks) != 4) { return 1; }
+    match (toks[0]) {
+        TokIdent(t) => { if (t.name != "foo") { return 2; } },
+        TokInt(_) => { return 3; },
+        TokPunct(_) => { return 4; },
+        TokEof(_) => { return 5; },
+    }
+    match (toks[1]) {
+        TokPunct(t) => { if (t.ch != 43) { return 6; } },
+        _ => { return 7; },
+    }
+    match (toks[2]) {
+        TokInt(t) => { if (t.value != 42) { return 8; } },
+        _ => { return 9; },
+    }
+    match (toks[3]) {
+        TokEof(_) => { return 0; },
+        _ => { return 10; },
+    }
+    return 11;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (lexer pipeline)", code)
+	}
+}
+
 // Implicit struct → union wrap on arm64: a bare member-struct
 // literal flows into a union-typed position without explicit
 // `MemberName(...)` re-wrap. Exercises wrap at var-init, call-
