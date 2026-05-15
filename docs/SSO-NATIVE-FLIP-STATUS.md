@@ -131,6 +131,21 @@ routes through `ast.UseTwoWordStrings`. Net result: the
 (`ast.UseTwoWordStrings(ptrW int) bool { return ptrW == 4 }`)
 and the eventual flip for arm64 is a one-line change there.
 
+### §1d. arm64 slot-type tracking — DONE
+
+Added `(g *generator) slotType(idx int32) ast.Type` and
+`(g *generator) slotIsString(idx int32) bool` to arm64
+codegen. Mirrors wasm's `slotType` / `slotIsString` —
+walks Params → Locals → ScratchTypes to resolve the
+lang-level type of an IR slot index against the currently
+emitting function (`g.current` + `g.currentIR`, both
+already set by `emitFunc`).
+
+Dead today. Future commits in the arm64 flip arc will use
+`slotIsString` to fan out `OpLoadLocal` / `OpStoreLocal` /
+`OpTeeLocal` for string-typed slots — two stack pushes/pops
+each (data + len) instead of one.
+
 ### §1b. arm64 emit-side helpers (two-word variants) — DONE
 
 Added three Go-level helpers alongside the existing
