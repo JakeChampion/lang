@@ -432,6 +432,179 @@ function (s: string) strip_suffix(suffix: string): Option[string] {
     return Some(s[0:k]);
 }
 
+// `s.pad_start(n, ch)` / `s.pad_end(n, ch)` — left- and right-
+// pad the string with `ch` (the first byte is used) so the
+// result is at least n bytes long. Already-long strings pass
+// through unchanged. Standard alignment shape for tables, hex
+// dumps, fixed-width column output.
+//
+// `ch` is a single-byte string; multibyte fill characters
+// would need codepoint handling we don't have yet. Empty `ch`
+// degenerates to no padding (returns the original).
+function (s: string) pad_start(n: i32, ch: string): string {
+    if (len(s) >= n) { return s; }
+    if (len(ch) == 0) { return s; }
+    var pad: string = "";
+    var need: i32 = n - len(s);
+    var i: i32 = 0;
+    while (i < need) {
+        pad = pad + ch[0:1];
+        i = i + 1;
+    }
+    return pad + s;
+}
+
+function (s: string) pad_end(n: i32, ch: string): string {
+    if (len(s) >= n) { return s; }
+    if (len(ch) == 0) { return s; }
+    var pad: string = "";
+    var need: i32 = n - len(s);
+    var i: i32 = 0;
+    while (i < need) {
+        pad = pad + ch[0:1];
+        i = i + 1;
+    }
+    return s + pad;
+}
+
+// `s.split_once(sep)` — splits at the FIRST occurrence of
+// sep, returning Some((head, tail)). The separator is dropped
+// from the output. Returns None when sep doesn't appear or
+// sep is empty. Useful for "key=value", "name:port",
+// "scheme://rest" patterns where you only want one split.
+function (s: string) split_once(sep: string): Option[(string, string)] {
+    if (len(sep) == 0) { return None; }
+    var n: i32 = len(s);
+    var sLen: i32 = len(sep);
+    var i: i32 = 0;
+    while (i + sLen <= n) {
+        if (__substr_eq(s, i, sep, sLen)) {
+            return Some((s[0:i], s[i + sLen:n]));
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `s.trim_start_matches(sub)` / `s.trim_end_matches(sub)` —
+// peel sub off the beginning / end as many times as it
+// appears, contiguously. Symmetric with the regular trim()
+// that strips whitespace.
+function (s: string) trim_start_matches(sub: string): string {
+    if (len(sub) == 0) { return s; }
+    var n: i32 = len(s);
+    var subLen: i32 = len(sub);
+    var i: i32 = 0;
+    while (i + subLen <= n && __substr_eq(s, i, sub, subLen)) {
+        i = i + subLen;
+    }
+    return s[i:n];
+}
+
+function (s: string) trim_end_matches(sub: string): string {
+    if (len(sub) == 0) { return s; }
+    var n: i32 = len(s);
+    var subLen: i32 = len(sub);
+    var end: i32 = n;
+    while (end - subLen >= 0 && __substr_eq(s, end - subLen, sub, subLen)) {
+        end = end - subLen;
+    }
+    return s[0:end];
+}
+
+// `s.count(sub)` — number of non-overlapping occurrences of
+// sub in s. Empty needle returns 0 to avoid infinite-loop
+// surprises; behaviour mirrors Rust str::matches().count().
+function (s: string) count(sub: string): i32 {
+    if (len(sub) == 0) { return 0; }
+    var n: i32 = len(s);
+    var subLen: i32 = len(sub);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i + subLen <= n) {
+        if (__substr_eq(s, i, sub, subLen)) {
+            c = c + 1;
+            i = i + subLen;
+        } else {
+            i = i + 1;
+        }
+    }
+    return c;
+}
+
+// `s.replace_n(old, new, n)` — like replace() but caps at
+// the first n occurrences. Useful when only the leading
+// substitutions are interesting (e.g. unquoting the first
+// few escapes, masking PII while keeping later context).
+function (s: string) replace_n(old: string, new: string, n: i32): string {
+    var sLen: i32 = len(s);
+    var oLen: i32 = len(old);
+    if (oLen == 0 || n <= 0) { return s; }
+    var out: string = "";
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var done: i32 = 0;
+    while (i + oLen <= sLen && done < n) {
+        if (__substr_eq(s, i, old, oLen)) {
+            out = out + s[start:i] + new;
+            i = i + oLen;
+            start = i;
+            done = done + 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    return out + s[start:sLen];
+}
+
+// === i32 array math (sum / max / min) ===
+//
+// `(arr: i32[]).sum()` — total of every element.
+// `(arr: i32[]).max()` / `.min()` — Option[i32] returning
+// the extreme element, None on empty array. The Option arm
+// is necessary because there's no sentinel value that's
+// safe across the full i32 range.
+//
+// Dispatch via the same "Array.<method>" pattern used for
+// join / index_of / contains / reverse. The constrained
+// receiver type makes `["a"].sum()` surface as a clean
+// type error rather than a missing-method one.
+
+function __method_Array_sum(arr: i32[]): i32 {
+    var n: i32 = len(arr);
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        s = s + arr[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+function __method_Array_max(arr: i32[]): Option[i32] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var m: i32 = arr[0];
+    var i: i32 = 1;
+    while (i < n) {
+        if (arr[i] > m) { m = arr[i]; }
+        i = i + 1;
+    }
+    return Some(m);
+}
+
+function __method_Array_min(arr: i32[]): Option[i32] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var m: i32 = arr[0];
+    var i: i32 = 1;
+    while (i < n) {
+        if (arr[i] < m) { m = arr[i]; }
+        i = i + 1;
+    }
+    return Some(m);
+}
+
 // `s.replace(old, new)` — substitutes every
 // non-overlapping occurrence of `old` with `new`.
 // Empty `old` is a no-op (returns the source unchanged)
@@ -1190,6 +1363,28 @@ function (n: f32) to_string(): string {
 
 function (n: f64) to_string(): string {
     return __float_to_string(n, 15);
+}
+
+// === stdin convenience ===
+//
+// `read_all_stdin()` — read until EOF and return the result
+// as a single string. Loops `Reader.read_chunk(4096)` until
+// None. Counterpart to `read_file(path)` for the
+// "$ tool < input.txt" / "$ cat in | tool" CLI shape; saves
+// callers from rolling the same loop every time.
+function read_all_stdin(): string {
+    var r: Reader = stdin();
+    var out: string = "";
+    while (true) {
+        match (r.read_chunk(4096)) {
+            Some(chunk) => { out = out + chunk; },
+            None => {
+                r.close();
+                return out;
+            },
+        }
+    }
+    return out;
 }
 
 // === Path manipulation (string-level, POSIX) ===

@@ -6346,6 +6346,71 @@ func TestArm64Format(t *testing.T) {
 // Path manipulation (string-level, POSIX) per STDLIB-ROADMAP
 // item #8: path_join / path_parent / path_file_name /
 // path_extension. Pure string ops — no FS interaction.
+// Big bundle from STDLIB-ROADMAP: most of item #3 (pad_start /
+// pad_end / split_once / trim_start_matches / trim_end_matches
+// / replace_n), plus string-count (a small adjacent helper),
+// plus i32 array reductions (sum / max / min). All small
+// prelude additions wired through the existing constrained-
+// receiver dispatch.
+func TestArm64StdlibBundle(t *testing.T) {
+	src := `function main(): i32 {
+    // pad_start / pad_end
+    if ("42".pad_start(5, "0") != "00042") { return 1; }
+    if ("42".pad_end(5, " ") != "42   ") { return 2; }
+    if ("longer".pad_start(3, "0") != "longer") { return 3; }
+    if ("x".pad_start(3, "") != "x") { return 4; }       // empty ch → no-op
+    if ("".pad_start(3, "ab") != "aaa") { return 5; }    // only first byte of ch
+
+    // split_once — first match wins, empty sep / no-match → None
+    match ("key=value".split_once("=")) {
+        Some(p) => { if (p.0 != "key" || p.1 != "value") { return 6; } },
+        None => { return 7; },
+    }
+    match ("key==v".split_once("=")) {
+        Some(p) => { if (p.0 != "key" || p.1 != "=v") { return 8; } },
+        None => { return 9; },
+    }
+    match ("nosep".split_once("=")) { Some(_) => { return 10; }, None => { } }
+    match ("x".split_once("")) { Some(_) => { return 11; }, None => { } }
+
+    // trim_start_matches / trim_end_matches
+    if ("xxxhello".trim_start_matches("x") != "hello") { return 12; }
+    if ("hello".trim_start_matches("x") != "hello") { return 13; }
+    if ("hello".trim_start_matches("") != "hello") { return 14; }
+    if ("hello///".trim_end_matches("/") != "hello") { return 15; }
+    if ("ababxyz".trim_start_matches("ab") != "xyz") { return 16; }
+
+    // count — non-overlapping
+    if ("hello world".count("l") != 3) { return 17; }
+    if ("aaaa".count("aa") != 2) { return 18; }
+    if ("hello".count("z") != 0) { return 19; }
+    if ("hello".count("") != 0) { return 20; }
+
+    // replace_n — cap at first n
+    if ("aaaa".replace_n("a", "b", 2) != "bbaa") { return 21; }
+    if ("aaaa".replace_n("a", "b", 0) != "aaaa") { return 22; }
+    if ("aaaa".replace_n("a", "b", 99) != "bbbb") { return 23; }
+
+    // i32[] sum / max / min
+    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6];
+    if (xs.sum() != 31) { return 24; }
+    match (xs.max()) { Some(v) => { if (v != 9) { return 25; } }, None => { return 26; }, }
+    match (xs.min()) { Some(v) => { if (v != 1) { return 27; } }, None => { return 28; }, }
+
+    // i32[] empty cases
+    var empty: i32[] = [];
+    if (empty.sum() != 0) { return 29; }
+    match (empty.max()) { Some(_) => { return 30; }, None => { } }
+    match (empty.min()) { Some(_) => { return 31; }, None => { } }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle)", code)
+	}
+}
+
 func TestArm64Paths(t *testing.T) {
 	src := `function main(): i32 {
     // path_join — simple, leading/trailing slashes, empty parts.

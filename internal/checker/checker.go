@@ -839,6 +839,15 @@ func Check(prog *ast.Program) (*Info, error) {
 	// input array isn't mutated.
 	c.info.Methods["Array.reverse"] = "__method_Array_reverse"
 
+	// `arr.sum()` / `arr.max()` / `arr.min()` for i32[] — basic
+	// numeric reductions. sum returns i32; max/min return
+	// Option[i32] since there's no safe sentinel across the
+	// full i32 range. Constrained-receiver shape (i32-element
+	// only) means string[] / etc. surface as clean type errors.
+	c.info.Methods["Array.sum"] = "__method_Array_sum"
+	c.info.Methods["Array.max"] = "__method_Array_max"
+	c.info.Methods["Array.min"] = "__method_Array_min"
+
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
 	// flow through the same dispatch-path substitution. The
