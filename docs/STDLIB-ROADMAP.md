@@ -219,7 +219,7 @@ group_by) currently takes 4 lines.
 
 **Inspiration**: Elixir Map, Gleam dict, Rust entry API.
 
-### 8. Path manipulation (string-level) · small · ☐
+### 8. Path manipulation (string-level) · small · ☑ (partial)
 
 **Surface**: `path_join(parts: string[])`, `path_parent(p)`,
 `path_file_name(p)`, `path_extension(p)`, `path_clean(p)`.
@@ -228,6 +228,11 @@ group_by) currently takes 4 lines.
 FS interaction required.
 
 **Inspiration**: Go `path/filepath`, Zig `fs.path`.
+
+**Status**: `path_join` / `path_parent` / `path_file_name` /
+`path_extension` shipped. `path_clean` (resolving `..`, `.`,
+duplicate `/`) deferred — more complex semantics; punt to a
+follow-up if real demand surfaces.
 
 ### 9. stdin + println + io.Copy · small · ☐
 
