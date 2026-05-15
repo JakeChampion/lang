@@ -68,6 +68,14 @@
     font-size: 0.85em;
     padding-top: 0.5em;
   }
+  kbd {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.85em;
+    background: #f0f0f0;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    padding: 0.05em 0.35em;
+  }
   .toolbar {
     display: flex;
     align-items: center;
@@ -91,6 +99,18 @@
   button:hover:not(:disabled) {
     background: #1d4ed8;
   }
+  button.secondary {
+    background: white;
+    color: #2563eb;
+  }
+  button.secondary:hover:not(:disabled) {
+    background: #eff6ff;
+  }
+  button.secondary.copied {
+    background: #16a34a;
+    color: white;
+    border-color: #16a34a;
+  }
   select {
     font: inherit;
     padding: 0.35em 0.5em;
@@ -111,17 +131,23 @@
 <body>
 <h1>lang playground</h1>
 <p class="subtitle">
-  Edit a lang program on the left, hit <strong>Run</strong>, and
-  see its output on the right. Drives the in-tree AST interpreter
-  (no codegen, no link) compiled to wasm. State is fresh per run.
+  Edit a lang program on the left, hit <strong>Run</strong>
+  (or <kbd>Ctrl/Cmd+Enter</kbd>), and see its output on the
+  right. Drives the in-tree AST interpreter (no codegen, no
+  link) compiled to wasm. State is fresh per run.
+  <strong>Share</strong> encodes the source into the URL so
+  you can hand someone a snippet without a server.
 </p>
 
 <div class="toolbar">
   <button id="run" disabled>Run</button>
+  <button id="share" class="secondary">Share</button>
   <select id="example">
     <option value="">— pick an example —</option>
     <option value="hello">hello, world</option>
     <option value="fact">factorial</option>
+    <option value="strings">string methods</option>
+    <option value="sort">sort_i32_asc</option>
     <option value="union">union types + match</option>
     <option value="result">Result error handling</option>
     <option value="interp">lex+parse arithmetic</option>
@@ -156,6 +182,37 @@ function main(): i32 {
     var f: i32 = fact(5);
     print("5! = " + f.to_string());
     return f;
+}`,
+  strings: `function main(): i32 {
+    var s: string = "  Hello, lang!  ";
+    print("len:        " + len(s).to_string());
+    print("trim:       \\"" + s.trim() + "\\"");
+    print("upper:      " + s.to_upper());
+    print("lower:      " + s.to_lower());
+    print("starts:     " + s.trim().starts_with("Hello").to_string());
+    var parts: string[] = "a,b,c,d".split(",");
+    var i: i32 = 0;
+    var joined: string = "";
+    while (i < len(parts)) {
+        joined = joined + parts[i];
+        i = i + 1;
+    }
+    print("split+join: " + joined);
+    return 0;
+}`,
+  sort: `function main(): i32 {
+    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
+    var asc: i32[] = sort_i32_asc(xs);
+    var i: i32 = 0;
+    var line: string = "";
+    while (i < len(asc)) {
+        if (i > 0) { line = line + ", "; }
+        line = line + asc[i].to_string();
+        i = i + 1;
+    }
+    print("input:  " + xs[0].to_string() + ", ...");
+    print("sorted: " + line);
+    return len(asc);
 }`,
   union: `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -317,10 +374,46 @@ const srcEl = document.getElementById("src");
 const outEl = document.getElementById("out");
 const metaEl = document.getElementById("meta");
 const runBtn = document.getElementById("run");
+const shareBtn = document.getElementById("share");
 const statusEl = document.getElementById("status");
 const exampleEl = document.getElementById("example");
 
-srcEl.value = examples.hello;
+// URL-hash codec. Source is UTF-8 encoded, then base64'd with
+// URL-safe alphabet (RFC 4648 §5) and stripped of '=' padding so
+// it survives clipboard round-trips, GitHub markdown link
+// parsers, and the URL bar's auto-encoding. Decoded as the
+// inverse pipeline on page load if `location.hash` starts with
+// `#src=`.
+function encodeHash(s) {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function decodeHash(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+function loadFromHashOrDefault() {
+  const h = location.hash;
+  if (h.startsWith("#src=")) {
+    try {
+      srcEl.value = decodeHash(h.slice(5));
+      return;
+    } catch (e) {
+      // Fall through to default if the hash is malformed.
+    }
+  }
+  srcEl.value = examples.hello;
+}
+loadFromHashOrDefault();
+
+window.addEventListener("hashchange", loadFromHashOrDefault);
 
 exampleEl.addEventListener("change", () => {
   const v = exampleEl.value;
@@ -328,6 +421,32 @@ exampleEl.addEventListener("change", () => {
     srcEl.value = examples[v];
     outEl.textContent = "";
     metaEl.textContent = "";
+    // Clear the hash so the example is the "owner" of the
+    // editor state — sharing now produces a fresh link for
+    // this example, not the previous snippet.
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+});
+
+shareBtn.addEventListener("click", async () => {
+  const url = location.origin + location.pathname + location.search + "#src=" + encodeHash(srcEl.value);
+  history.replaceState(null, "", url);
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(url);
+    copied = true;
+  } catch (e) {
+    // Older browsers / file:// origins: fall back to selecting
+    // the URL in a prompt the user can copy manually.
+    window.prompt("Copy this URL to share:", url);
+  }
+  if (copied) {
+    shareBtn.classList.add("copied");
+    shareBtn.textContent = "Copied!";
+    setTimeout(() => {
+      shareBtn.classList.remove("copied");
+      shareBtn.textContent = "Share";
+    }, 1500);
   }
 });
 
