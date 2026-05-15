@@ -385,6 +385,38 @@ function main(): i32 {
 	}
 }
 
+// Byte-level ASCII classifiers — `(b: i32).is_digit()` /
+// `is_alpha()` / `is_alnum()` / `is_ascii_white_space()` /
+// `is_hex_digit()` / `is_ascii()`. Useful for hand-rolled
+// lexers and parsing routines; the lexer-in-lang spike
+// programs inline these today, this PR promotes them to
+// reusable prelude helpers.
+func TestArm64ByteClassifiers(t *testing.T) {
+	src := `function main(): i32 {
+    if (!(48).is_digit()) { return 1; }      // '0'
+    if (!(57).is_digit()) { return 2; }      // '9'
+    if ((47).is_digit()) { return 3; }       // '/' is not a digit
+    if (!(65).is_alpha()) { return 4; }      // 'A'
+    if (!(122).is_alpha()) { return 5; }     // 'z'
+    if ((64).is_alpha()) { return 6; }       // '@' is not alpha
+    if (!(48).is_alnum()) { return 7; }
+    if (!(65).is_alnum()) { return 8; }
+    if (!(32).is_ascii_white_space()) { return 9; }
+    if (!(10).is_ascii_white_space()) { return 10; }
+    if (!(97).is_hex_digit()) { return 11; } // 'a'
+    if (!(70).is_hex_digit()) { return 12; } // 'F'
+    if ((103).is_hex_digit()) { return 13; } // 'g' is not hex
+    if (!(127).is_ascii()) { return 14; }
+    if ((128).is_ascii()) { return 15; }     // 0x80 is past ASCII
+    if ((0 - 1).is_ascii()) { return 16; }   // negative reads as out
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (byte classifiers)", code)
+	}
+}
+
 // Tiny lexer written in lang — recognises integer literals,
 // identifiers, and single-byte punctuation. Validates that:
 //

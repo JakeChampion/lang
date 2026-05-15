@@ -127,6 +127,48 @@ function __is_ascii_ws(b: i32): boolean {
     return b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12;
 }
 
+// `(b: i32) is_digit()` / `is_alpha()` / `is_alnum()` /
+// `is_ascii_white_space()` / `is_hex_digit()` / `is_ascii()`
+// — byte-level ASCII classifiers, useful for hand-rolled
+// lexers and parsing routines. Each operates on the low 8
+// bits of `b` (so passing `s[i]` works without explicit
+// narrowing). Multibyte UTF-8 sequences pass through as
+// false for the alphabetic / digit predicates because their
+// leading bytes are all >= 0x80 — that matches Go's
+// `unicode/utf8` convention.
+//
+// Method-style chosen so call sites read as `s[i].is_digit()`
+// — matches the rest of the prelude's `to_string()` /
+// `is_empty()` shape on i32 / string receivers. `__is_ascii_ws`
+// stays as a free function for the `trim()` body that pre-
+// dates this surface.
+
+function (b: i32) is_digit(): boolean {
+    return b >= 48 && b <= 57;
+}
+
+function (b: i32) is_alpha(): boolean {
+    return (b >= 65 && b <= 90) || (b >= 97 && b <= 122);
+}
+
+function (b: i32) is_alnum(): boolean {
+    return b.is_digit() || b.is_alpha();
+}
+
+function (b: i32) is_ascii_white_space(): boolean {
+    return __is_ascii_ws(b);
+}
+
+function (b: i32) is_hex_digit(): boolean {
+    return b.is_digit() ||
+           (b >= 65 && b <= 70) ||   // A-F
+           (b >= 97 && b <= 102);    // a-f
+}
+
+function (b: i32) is_ascii(): boolean {
+    return b >= 0 && b <= 127;
+}
+
 function (s: string) trim(): string {
     var n: i32 = len(s);
     var low: i32 = 0;
