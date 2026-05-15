@@ -1259,6 +1259,46 @@ type EnumVariant struct {
 	Payloads []Type
 }
 
+// UnionDecl is a top-level `type Expr = Binary | Unary | Call;`
+// — a closed sum over named struct types. Each member must be
+// the name of an existing StructDecl; the checker desugars the
+// union into a synthetic EnumDecl whose variants are
+// `Name(Name)` (one positional payload per member, of the
+// matching struct type) and registers it in `info.Enums`
+// alongside hand-written enums. The rest of the pipeline
+// (monomorph / IR / codegen) only ever sees the synthetic
+// enum.
+//
+// The sugar buys two ergonomic wins over the hand-written
+// equivalent:
+//
+//   - Member names don't have to be repeated:
+//     `type Expr = Binary | Unary | Call` instead of
+//     `enum Expr { Binary(Binary), Unary(Unary), Call(Call) }`.
+//   - A bare struct literal flows into the union without an
+//     explicit wrap: `var e: Expr = Binary{...}` instead of
+//     `var e: Expr = Binary(Binary{...})`. The checker's
+//     `assignable` rule recognises the (struct, union) pair
+//     and inserts the wrapping at the AST level.
+//
+// Generics aren't supported on unions in the first cut —
+// `type Tree[T] = Leaf[T] | Node[T]` would need the desugar
+// to thread TypeParams + payload substitution, which adds a
+// pass-ordering wrinkle we punt on until self-host needs it.
+type UnionDecl struct {
+	P    Position
+	Name string
+	// Members lists the struct names that make up the union, in
+	// declaration order. Each name must resolve to a non-generic
+	// StructDecl at desugar time. The parser preserves source
+	// order; checker rewrites preserve it too so the synthesised
+	// enum's variant tags are stable across re-checks.
+	Members []string
+	// Public marks the union as exported across modules — same
+	// semantics as EnumDecl.Public.
+	Public bool
+}
+
 type Program struct {
 	Funcs   []*FuncDecl
 	Structs []*StructDecl
@@ -1267,6 +1307,12 @@ type Program struct {
 	// (`Some(x)`); the checker rewrites them to *EnumLit once
 	// the variant is resolved.
 	Enums []*EnumDecl
+	// Unions lists every top-level `type X = A | B | C;` declaration
+	// in source order. The checker rewrites each entry into a
+	// synthesised EnumDecl appended to Enums, then nils this slice
+	// — so monomorph / IR / codegen never see UnionDecl. See
+	// UnionDecl's doc comment for the desugaring shape.
+	Unions []*UnionDecl
 	// Consts lists top-level `const` declarations in source order.
 	// The constfold pass evaluates each initialiser, substitutes
 	// references throughout the program with the resolved literal,

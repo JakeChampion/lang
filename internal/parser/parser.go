@@ -173,9 +173,10 @@ func (p *parser) parseProgram() *ast.Program {
 			if !p.match(lexer.Keyword, "function") &&
 				!p.match(lexer.Keyword, "struct") &&
 				!p.match(lexer.Keyword, "enum") &&
+				!p.match(lexer.Keyword, "type") &&
 				!p.match(lexer.Keyword, "const") {
 				p.errors = append(p.errors, p.errorf(pubTok.Pos,
-					"`pub` must be followed by `function`, `struct`, `enum`, or `const`"))
+					"`pub` must be followed by `function`, `struct`, `enum`, `type`, or `const`"))
 				p.syncToTopLevel()
 				if p.i == before {
 					p.advance()
@@ -244,6 +245,22 @@ func (p *parser) parseProgram() *ast.Program {
 			if ed != nil {
 				ed.Public = isPub
 				prog.Enums = append(prog.Enums, ed)
+			}
+			continue
+		}
+		if p.match(lexer.Keyword, "type") {
+			ud, err := p.parseUnionDecl()
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			if ud != nil {
+				ud.Public = isPub
+				prog.Unions = append(prog.Unions, ud)
 			}
 			continue
 		}
@@ -725,6 +742,55 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 		return nil, err
 	}
 	return &ast.EnumDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, Variants: variants}, nil
+}
+
+// parseUnionDecl parses `type Name = A | B | C;` — a closed
+// sum over named struct types. The first cut requires:
+//
+//   - at least two members (`type X = A;` is rejected — a
+//     one-member union is uselessly an alias);
+//   - each member is a plain Ident (no generic args, no array
+//     suffix, no nested type expression). The checker
+//     resolves each name against `info.Structs`.
+//
+// Source shape: `type Expr = Binary | Unary | Call;`. The
+// `=` keeps the syntax close to type aliases in Go / Rust /
+// TS; the `|` between members reads naturally as alternation.
+// Statement-terminating `;` matches every other top-level
+// decl in the language.
+func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
+	kw, err := p.expect(lexer.Keyword, "type")
+	if err != nil {
+		return nil, err
+	}
+	name, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	var members []string
+	first, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	members = append(members, first.Text)
+	for p.match(lexer.Punct, "|") {
+		p.advance()
+		mem, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, mem.Text)
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	if len(members) < 2 {
+		return nil, p.errorf(name.Pos, "union %q must list at least two struct members (use a struct alias for a single type)", name.Text)
+	}
+	return &ast.UnionDecl{P: kw.Pos, Name: name.Text, Members: members}, nil
 }
 
 func (p *parser) parseType() (ast.Type, error) {
