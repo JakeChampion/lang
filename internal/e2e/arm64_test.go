@@ -715,6 +715,336 @@ function main(): i32 {
 	}
 }
 
+// Strength-reduce-in-lang: the algebraic-identity complement
+// to constfold (#420). Constfold collapses BinOps with two
+// literal operands; strength reduction simplifies BinOps where
+// ONE operand is a known constant that triggers an identity:
+//
+//   x + 0   →   x      x - 0   →   x
+//   0 + x   →   x      0 * x   →   0
+//   x * 1   →   x      x * 0   →   0
+//   1 * x   →   x      x / 1   →   x
+//
+// The real `internal/ir/strength.go` runs these on IR (after
+// type-aware short-circuit handling); this spike runs them on
+// the toy Expr AST. Same shape, simpler representation.
+//
+// Properties tested:
+//   1. Identity rules fire — `x + 0` collapses to `x`, the
+//      enclosing BinOp disappears. count_binop drops by one.
+//   2. Absorbing rule for `* 0` — `x * 0` collapses to `0`.
+//      Note `x / 0` does NOT collapse — that's a runtime trap,
+//      not an algebraic identity.
+//   3. Combined with constfold — running fold + reduce in
+//      sequence on `(2 + 3) + (x * 1)` collapses to `5 + x`
+//      via two passes.
+//   4. Idempotence — reduce(reduce(e)) ≡ reduce(e).
+//   5. Semantic preservation — eval(reduce(e)) == eval(e) for
+//      any e and any env that doesn't divide-by-zero.
+func TestArm64StrengthReduceInLang(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num   { value: i32 }
+struct Var   { name: string }
+struct BinOp { op: i32, left: Expr, right: Expr }
+type Expr = Num | Var | BinOp;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        cur[0] = pos + 1;
+        return Var { name: tok_ident_name(toks[pos]) };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_arith(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_src(src: string): Expr {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    return parse_arith(toks, cur);
+}
+
+function is_num_with(e: Expr, want: i32): boolean {
+    match (e) { Num(n) => { return n.value == want; }, _ => { return false; } }
+}
+function is_num(e: Expr): boolean {
+    match (e) { Num(_) => { return true; }, _ => { return false; } }
+}
+function num_value(e: Expr): i32 {
+    match (e) { Num(n) => { return n.value; }, _ => { return 0; } }
+}
+
+// Constfold from #420, included so the integration test can
+// chain fold + reduce without depending on cross-spike helpers.
+function fold(e: Expr): Expr {
+    match (e) {
+        Num(_) => { return e; },
+        Var(_) => { return e; },
+        BinOp(b) => {
+            var l: Expr = fold(b.left);
+            var r: Expr = fold(b.right);
+            if (is_num(l) && is_num(r)) {
+                var lv: i32 = num_value(l);
+                var rv: i32 = num_value(r);
+                if (b.op == 43) { return Num { value: lv + rv }; }
+                if (b.op == 45) { return Num { value: lv - rv }; }
+                if (b.op == 42) { return Num { value: lv * rv }; }
+                if (b.op == 47) { return Num { value: lv / rv }; }
+            }
+            return BinOp { op: b.op, left: l, right: r };
+        },
+    }
+}
+
+// reduce applies algebraic identities. Walks bottom-up like
+// fold so an inner reduction can expose a parent-level one.
+function reduce(e: Expr): Expr {
+    match (e) {
+        Num(_) => { return e; },
+        Var(_) => { return e; },
+        BinOp(b) => {
+            var l: Expr = reduce(b.left);
+            var r: Expr = reduce(b.right);
+            if (b.op == 43) {
+                if (is_num_with(l, 0)) { return r; }
+                if (is_num_with(r, 0)) { return l; }
+            }
+            if (b.op == 45) {
+                if (is_num_with(r, 0)) { return l; }
+            }
+            if (b.op == 42) {
+                if (is_num_with(l, 0) || is_num_with(r, 0)) { return Num { value: 0 }; }
+                if (is_num_with(l, 1)) { return r; }
+                if (is_num_with(r, 1)) { return l; }
+            }
+            if (b.op == 47) {
+                if (is_num_with(r, 1)) { return l; }
+                // x / 0 stays as-is — runtime trap, not a fold.
+            }
+            return BinOp { op: b.op, left: l, right: r };
+        },
+    }
+}
+
+function eval(e: Expr, names: string[], values: i32[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => {
+            var i: i32 = len(names) - 1;
+            while (i >= 0) {
+                if (names[i] == v.name) { return values[i]; }
+                i = i - 1;
+            }
+            return 0;
+        },
+        BinOp(b) => {
+            var l: i32 = eval(b.left, names, values);
+            var r: i32 = eval(b.right, names, values);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            return l / r;
+        },
+    }
+}
+
+function count_binop(e: Expr): i32 {
+    match (e) {
+        Num(_) => { return 0; },
+        Var(_) => { return 0; },
+        BinOp(b) => { return 1 + count_binop(b.left) + count_binop(b.right); },
+    }
+}
+
+function ast_eq(a: Expr, b: Expr): boolean {
+    match (a) {
+        Num(an) => {
+            match (b) {
+                Num(bn) => { return an.value == bn.value; },
+                _ => { return false; },
+            }
+        },
+        Var(av) => {
+            match (b) {
+                Var(bv) => { return av.name == bv.name; },
+                _ => { return false; },
+            }
+        },
+        BinOp(ab) => {
+            match (b) {
+                BinOp(bb) => {
+                    if (ab.op != bb.op) { return false; }
+                    if (!ast_eq(ab.left, bb.left)) { return false; }
+                    return ast_eq(ab.right, bb.right);
+                },
+                _ => { return false; },
+            }
+        },
+    }
+}
+
+function main(): i32 {
+    var names: string[] = ["x", "y"];
+    var values: i32[] = [10, 20];
+
+    // x + 0 → x. The BinOp disappears.
+    var r1: Expr = reduce(parse_src("x + 0"));
+    if (count_binop(r1) != 0) { return 1; }
+    if (eval(r1, names, values) != 10) { return 2; }
+
+    // 0 + x → x (commutative case).
+    var r2: Expr = reduce(parse_src("0 + x"));
+    if (count_binop(r2) != 0) { return 3; }
+    if (eval(r2, names, values) != 10) { return 4; }
+
+    // x * 1 → x.
+    var r3: Expr = reduce(parse_src("x * 1"));
+    if (count_binop(r3) != 0) { return 5; }
+    if (eval(r3, names, values) != 10) { return 6; }
+
+    // 1 * x → x.
+    var r4: Expr = reduce(parse_src("1 * x"));
+    if (count_binop(r4) != 0) { return 7; }
+    if (eval(r4, names, values) != 10) { return 8; }
+
+    // x * 0 → 0 (absorbing).
+    var r5: Expr = reduce(parse_src("x * 0"));
+    if (count_binop(r5) != 0) { return 9; }
+    if (eval(r5, names, values) != 0) { return 10; }
+
+    // x - 0 → x.
+    var r6: Expr = reduce(parse_src("x - 0"));
+    if (count_binop(r6) != 0) { return 11; }
+    if (eval(r6, names, values) != 10) { return 12; }
+
+    // x / 1 → x.
+    var r7: Expr = reduce(parse_src("x / 1"));
+    if (count_binop(r7) != 0) { return 13; }
+    if (eval(r7, names, values) != 10) { return 14; }
+
+    // Nested — (x + 0) * (y + 0) → x * y. The reduce walks
+    // children first, then the parent BinOp sees two Var
+    // operands and stays.
+    var r8: Expr = reduce(parse_src("(x + 0) * (y + 0)"));
+    if (count_binop(r8) != 1) { return 15; }
+    if (eval(r8, names, values) != 200) { return 16; }
+
+    // 0 - x does NOT collapse — subtraction isn't commutative,
+    // so the left-zero rule doesn't apply. Stays as BinOp(-, 0, x).
+    var r9: Expr = reduce(parse_src("0 - x"));
+    if (count_binop(r9) != 1) { return 17; }
+    if (eval(r9, names, values) != -10) { return 18; }
+
+    // x / 0 stays as BinOp — runtime trap, not a fold.
+    var r10: Expr = reduce(parse_src("x / 0"));
+    if (count_binop(r10) != 1) { return 19; }
+
+    // Combined pipeline — (2 + 3) + (x * 1):
+    //   fold: (5) + (x * 1)
+    //   reduce: 5 + x
+    var combined: Expr = reduce(fold(parse_src("(2 + 3) + (x * 1)")));
+    if (count_binop(combined) != 1) { return 20; }
+    if (eval(combined, names, values) != 15) { return 21; }
+
+    // Idempotence — running reduce twice gives the same result.
+    var once: Expr = reduce(parse_src("x + 0 + y * 1"));
+    var twice: Expr = reduce(once);
+    if (!ast_eq(once, twice)) { return 22; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (strength-reduce-in-lang)", code)
+	}
+}
+
 // Printer-in-lang: the natural complement to parse-in-lang.
 // Closes the parse/print round-trip — `parse(print(e))` reproduces
 // the original AST shape. Together with the constfold pass
