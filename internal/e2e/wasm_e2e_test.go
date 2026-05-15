@@ -1431,6 +1431,40 @@ function main(): i32 { return 0; }`
 	}
 }
 
+// Implicit struct → union wrap on wasm. Same source as the
+// arm64 + x86 mirrors. Verifies the wrap-and-re-check pass
+// integrates with the existing wasm enum lowering.
+func TestWASMUnionImplicitWrap(t *testing.T) {
+	src := `struct Add { l: i32, r: i32 }
+struct Mul { l: i32, r: i32 }
+struct Lit { v: i32 }
+
+type Expr = Add | Mul | Lit;
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Add(a) => { return a.l + a.r; },
+        Mul(m) => { return m.l * m.r; },
+        Lit(l) => { return l.v; },
+    }
+}
+
+function mk_add(l: i32, r: i32): Expr {
+    return Add { l: l, r: r };
+}
+
+function main(): i32 {
+    var a: Expr = Add { l: 2, r: 3 };
+    var sum: i32 = eval(Lit { v: 5 });
+    a = Mul { l: 2, r: sum };
+    var built: Expr = mk_add(1, 2);
+    return eval(a) + eval(built) + sum;
+}`
+	if got := runWasm(t, src); got != 18 {
+		t.Errorf("got %d, want 18", got)
+	}
+}
+
 // `s.lines()` — Python `splitlines` / Go `bufio.Scanner` shape.
 // Splits on '\n', strips a trailing '\r' from each line (CRLF
 // → LF), and drops the phantom empty line a final '\n' would
