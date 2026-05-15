@@ -1612,16 +1612,14 @@ function main(): i32 {
 		// values are HEAP-allocated strings (built via concat
 		// at runtime), NOT .rodata literals. On macOS the
 		// mmap address hint is ignored and the heap lands at
-		// a high (>4 GiB) address; the lang prelude declares
-		// pointer locals as `i32`, which truncates the high
-		// 32 bits of the round-tripped pointer.
-		//
-		// This case CURRENTLY FAILS on macOS CI — that's
-		// expected: the bug it probes is unfixed. Skip with
-		// t.Skipf when running natively on Darwin until the
-		// prelude pointer-width refactor lands; on Linux
-		// (under qemu / native arm64) the heap fits in 32
-		// bits so the test passes.
+		// a high (>4 GiB) address. The prelude's Map runtime
+		// previously declared pointer locals + params as
+		// `i32`, truncating the high 32 bits of the round-
+		// tripped pointer; the fix in this PR migrates the
+		// V-side of every Map helper (and most K-side cases)
+		// to `usize` so the full 8-byte address survives. The
+		// previous `t.Skip` on Darwin has been removed —
+		// macOS CI now exercises this case alongside Linux.
 		{"map_heap_value_probe", `function main(): i32 {
     var m: Map[i32, string] = map_new(4);
     var v1: string = "alp" + "ha";
@@ -1634,13 +1632,6 @@ function main(): i32 {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			// Probe for the documented heap-address truncation
-			// bug — skip on Darwin native (where the bug
-			// trips) until the prelude pointer-width refactor
-			// lands. See BACKEND-PARITY.md "Known limitations".
-			if c.name == "map_heap_value_probe" && runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-				t.Skip("known limitation: heap-address truncation in Map runtime on arm64-darwin; see docs/BACKEND-PARITY.md")
-			}
 			prog, err := parser.Parse(c.src)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
