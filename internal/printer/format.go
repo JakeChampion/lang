@@ -55,6 +55,14 @@ func Format(prog *ast.Program) string {
 		f.formatEnumDecl(ed)
 		written = true
 	}
+	for _, ud := range prog.Unions {
+		if written {
+			f.b.WriteByte('\n')
+		}
+		f.drainLeading(ud.P.Line, 0)
+		f.formatUnionDecl(ud)
+		written = true
+	}
 	for _, cd := range prog.Consts {
 		if written {
 			f.b.WriteByte('\n')
@@ -205,6 +213,29 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 		}
 	}
 	f.b.WriteString(" }\n")
+}
+
+// formatUnionDecl emits `type Name = A | B | C;` on a single
+// line. Round-trips the source shape verbatim — members are
+// preserved in declaration order (matches the checker desugar
+// that stamps variant tags by member index, so a reorder here
+// would shift the tag map). Generic unions aren't supported
+// yet (see the punted-follow-up note on UnionDecl); when they
+// land this needs to spell the `[T, U]` parameter list too.
+func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
+	if ud.Public {
+		f.b.WriteString("pub ")
+	}
+	f.b.WriteString("type ")
+	f.b.WriteString(ud.Name)
+	f.b.WriteString(" = ")
+	for i, m := range ud.Members {
+		if i > 0 {
+			f.b.WriteString(" | ")
+		}
+		f.b.WriteString(m)
+	}
+	f.b.WriteString(";\n")
 }
 
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
