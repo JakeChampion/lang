@@ -4435,6 +4435,35 @@ func returnIsString(g *generator, name string) bool {
 	return false
 }
 
+// returnIsVoid reports whether a function returns void — i.e.
+// the OpCallDirect emit should NOT push x0 onto the operand
+// stack after the `bl` instruction. Looks up user functions in
+// g.funcs and built-in helpers via g.info.FuncSigs (where the
+// checker records void returns for `__memcpy` / `__memset` /
+// the `__store_*` / `__load_*` raw-memory pokes).
+//
+// Without this gate, void-returning helpers leave a phantom x0
+// value on the operand stack — the runtime helper's epilogue
+// sets x0 even though no result was intended, and an
+// unconditional push corrupts subsequent OpStore / OpStoreLocal
+// pops. Hit in practice by `arr.push(v)` inside a struct
+// literal field initialiser: the inner `__memcpy` left a
+// phantom slot that the outer struct-lit's OpStore consumed
+// instead of the field address.
+func returnIsVoid(g *generator, name string) bool {
+	if callee, ok := g.funcs[name]; ok && callee != nil {
+		_, isVoid := callee.ReturnType.(ast.VoidType)
+		return isVoid
+	}
+	if g.info != nil {
+		if sig, ok := g.info.FuncSigs[name]; ok && sig != nil {
+			_, isVoid := sig.Result.(ast.VoidType)
+			return isVoid
+		}
+	}
+	return false
+}
+
 // regW maps a 64-bit register name to its 32-bit counterpart.
 // `x0` → `w0`; `xzr` → `wzr`. Used by emitStrLen for the
 // `ubfx wD, wS, #1, #3` length-extraction operand-size match
@@ -5842,7 +5871,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emitCallArgsCleanup(slotCount)
 		// Push return value(s). String-returning user fns return
 		// (data, len) in (x0, x1) under the two-word ABI; push
-		// both. Non-string returns push x0 only.
+		// both. Non-string returns push x0 only. Void-returning
+		// callees push NOTHING — see returnIsVoid for the
+		// rationale.
+		if returnIsVoid(g, op.Str) {
+			break
+		}
 		if ast.UseTwoWordStrings(8) && returnIsString(g, op.Str) {
 			g.push() // push data (x0)
 			g.emit("mov x0, x1")
