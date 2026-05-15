@@ -914,11 +914,10 @@ func (g *generator) emitStrcmpRuntime() {
 	g.line(".global __lang_strcmp")
 	g.typeDirective("__lang_strcmp")
 	g.label("__lang_strcmp")
-	// Frame: 48 bytes — saved fp/lr (16) + 16 bytes SSO scratch
-	// (two 8-byte slots, one per operand for emitStrDataPtr) +
-	// 16 bytes padding. Two slots needed because both operands
-	// may be inline at the same time (different inline values
-	// of equal length).
+	if ast.UseTwoWordStrings(8) {
+		g.emitStrcmpRuntime2W()
+		return
+	}
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
 	// 1. Same value? Equal — covers both same-heap-pointer and
@@ -962,6 +961,70 @@ func (g *generator) emitStrcmpRuntime() {
 	g.label(".Lscmp_neq")
 	g.emit("mov x0, #1")
 	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__lang_strcmp")
+	g.line(".ltorg")
+}
+
+// emitStrcmpRuntime2W is the two-word-ABI variant of
+// emitStrcmpRuntime. Takes (a_data, a_len, b_data, b_len) in
+// (x0, x1, x2, x3). Returns 0 (equal) / 1 (different) in x0.
+//
+//   - Same data ptr AND same len word → equal (covers both
+//     same heap pointer and identical inline encodings).
+//   - Different byte length (after flag-aware extraction) →
+//     not equal.
+//   - Same length: materialise both byte pointers via
+//     emitStrDataPtr2W (heap → dataX; inline → spill to a
+//     16-byte scratch slot), word-grain compare bulk, byte-
+//     grain tail.
+func (g *generator) emitStrcmpRuntime2W() {
+	// Frame: fp/lr (16) + 2× 16-byte scratch slots for inline
+	// spill (one per operand) + 16 alignment = 64.
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	// Same value pair?
+	g.emit("cmp x0, x2")
+	g.emit("bne .Lscmp2w_check_len")
+	g.emit("cmp x1, x3")
+	g.emit("beq .Lscmp2w_eq")
+	g.label(".Lscmp2w_check_len")
+	// Extract byte lengths.
+	g.emit("mov x4, x1") // save a_len
+	g.emit("mov x5, x3") // save b_len
+	g.emitStrLen2W("w6", "x4") // w6 = a byte length
+	g.emitStrLen2W("w7", "x5") // w7 = b byte length
+	g.emit("cmp w6, w7")
+	g.emit("bne .Lscmp2w_neq")
+	// Same length → materialise both byte pointers.
+	g.emitStrDataPtr2W("x0", "x0", "x1", -16) // x0 = a byte ptr; scratch at [x29-16]
+	g.emitStrDataPtr2W("x1", "x2", "x3", -32) // x1 = b byte ptr; scratch at [x29-32]
+	g.emit("mov w2, w6") // remaining bytes
+	g.label(".Lscmp2w_word")
+	g.emit("cmp w2, #4")
+	g.emit("blt .Lscmp2w_tail")
+	g.emit("ldr w4, [x0], #4")
+	g.emit("ldr w5, [x1], #4")
+	g.emit("cmp w4, w5")
+	g.emit("bne .Lscmp2w_neq")
+	g.emit("sub w2, w2, #4")
+	g.emit("b .Lscmp2w_word")
+	g.label(".Lscmp2w_tail")
+	g.emit("cmp w2, #0")
+	g.emit("beq .Lscmp2w_eq")
+	g.emit("ldrb w4, [x0], #1")
+	g.emit("ldrb w5, [x1], #1")
+	g.emit("cmp w4, w5")
+	g.emit("bne .Lscmp2w_neq")
+	g.emit("sub w2, w2, #1")
+	g.emit("b .Lscmp2w_tail")
+	g.label(".Lscmp2w_eq")
+	g.emit("mov x0, #0")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.label(".Lscmp2w_neq")
+	g.emit("mov x0, #1")
+	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
 	g.sizeDirective("__lang_strcmp")
 	g.line(".ltorg")
@@ -4410,9 +4473,24 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpStrEq:
-		// Strings carry a trailing NUL alongside the length
-		// prefix; equality returns 0 / 1 from __lang_strcmp.
+		// Equality via __lang_strcmp returning 0 (equal) /
+		// 1 (different). Two-word ABI: stack has (a_data,
+		// a_len, b_data, b_len), top = b_len. Pop into
+		// (x3, x2, x1, x0) so the helper sees the AAPCS64
+		// arg-register order it declares.
 		g.usesStrcmp = true
+		if ast.UseTwoWordStrings(8) {
+			g.emit("ldr x3, [sp], #16") // b_len
+			g.emit("ldr x2, [sp], #16") // b_data
+			g.emit("ldr x1, [sp], #16") // a_len
+			g.emit("ldr x0, [sp], #16") // a_data
+			g.emit("bl __lang_strcmp")
+			g.emit("cmp x0, #0")
+			g.emit("cset w0, eq")
+			g.push()
+			break
+		}
+		// Legacy single-register.
 		g.emit("ldr x1, [sp], #16")
 		g.emit("ldr x0, [sp], #16")
 		g.emit("bl __lang_strcmp")
