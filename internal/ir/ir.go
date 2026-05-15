@@ -4776,7 +4776,11 @@ func payloadLayout(types []ast.Type, count int, ptrW int) ([]int32, int32) {
 			t = types[i]
 		}
 		size := payloadSlotSize(t, ptrW)
-		if size == 8 && pos%8 != 0 {
+		// Align multi-byte values to 8. Covers i64 / f64
+		// (size=8) and string under two-word (size=16 on
+		// arm64). Smaller sizes (1/2/4) stay where they
+		// are.
+		if size >= 8 && pos%8 != 0 {
 			pos += 4
 		}
 		offsets[i] = pos
