@@ -1165,6 +1165,232 @@ function main(): i32 {
 	}
 }
 
+// Lexer-in-lang v6: line comments, full keyword set, string
+// literals with escape sequences. Builds on v5 (hex integers +
+// numeric suffixes), v4 (numeric suffixes), v3 (string literals,
+// re-introduced here with escape handling), v2 (idents +
+// punctuation), v1 (decimal integers).
+//
+// New surface vs v5:
+//
+//   1. Line comments — `// ...` until newline (or EOF). Standard
+//      C-family comment lexing; the body is dropped, the closing
+//      newline is left for the whitespace branch to eat.
+//   2. Full keyword set — function / var / let / if / else /
+//      while / for / break / continue / return / true / false /
+//      match / struct / type + sized numeric type names. Matches
+//      the Go lexer's `keywords` map. The classifier is a chain
+//      of `==` comparisons; a Map lookup would be cleaner but
+//      Map[string,boolean] in script-mode interp is on the
+//      "blocked behind virtual heap" list.
+//   3. String literals with escapes — `\n` `\t` `\r` `\0` `\"`
+//      `\\` are decoded inline. Builds the body via repeated
+//      `s = s + ...` concat (one alloc per escape, one per run
+//      of plain bytes). Quadratic on long strings, fine for the
+//      lexer where token bodies are short.
+//   4. Underscore in identifiers — `is_digit`, `_pad`, etc.
+//      Real lang allows `[a-zA-Z_][a-zA-Z0-9_]*`. v5 only
+//      called `is_alpha()` / `is_alnum()`; v6 ORs in the
+//      underscore explicitly so `__alloc_u8` and friends lex
+//      as a single ident.
+//
+// Closes a meaningful chunk of lexer-port parity — the only
+// remaining gaps vs `internal/lexer/lexer.go` are float
+// literals, f-strings, and the Number/Float kind split. Float
+// literals will land in v7.
+func TestArm64LexerV6(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokKw    { name: string }
+struct TokStr   { value: string }
+struct TokPunct { text: string }
+struct TokEof   { _pad: i32 }
+
+type Token = TokInt | TokIdent | TokKw | TokStr | TokPunct | TokEof;
+
+function is_keyword(name: string): boolean {
+    return name == "function" || name == "var" || name == "let" ||
+           name == "if" || name == "else" || name == "while" ||
+           name == "for" || name == "break" || name == "continue" ||
+           name == "return" || name == "true" || name == "false" ||
+           name == "match" || name == "struct" || name == "type" ||
+           name == "boolean" || name == "void" || name == "string" ||
+           name == "i32" || name == "i64" || name == "u8" ||
+           name == "u32" || name == "u64" || name == "f32" ||
+           name == "f64" || name == "usize";
+}
+
+function escape_byte(b: i32): i32 {
+    if (b == 110) { return 10; }   // \n
+    if (b == 116) { return 9; }    // \t
+    if (b == 114) { return 13; }   // \r
+    if (b == 48)  { return 0; }    // \0
+    return b;                       // \" \\ pass through
+}
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    var numV: i32 = 0;
+    var s: string = "";
+    var start: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b == 47 && i + 1 < n && src[i + 1] == 47) {
+            // Line comment — drop bytes through next \n.
+            i = i + 2;
+            while (i < n && src[i] != 10) { i = i + 1; }
+        } else if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b == 34) {
+            // String literal with escape handling. Build the
+            // decoded body via plain string concat.
+            i = i + 1;
+            s = "";
+            while (i < n && src[i] != 34) {
+                if (src[i] == 92 && i + 1 < n) {
+                    var bs: u8[] = __alloc_u8(1);
+                    bs[0] = escape_byte(src[i + 1]) as u8;
+                    s = s + string_from_bytes(bs);
+                    i = i + 2;
+                } else {
+                    s = s + src[i:i + 1];
+                    i = i + 1;
+                }
+            }
+            if (i < n) { i = i + 1; }   // closing "
+            toks = toks.push(TokStr { value: s });
+        } else if (b.is_digit()) {
+            numV = 0;
+            while (i < n && src[i].is_digit()) {
+                numV = numV * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: numV });
+        } else if (b.is_alpha() || b == 95) {
+            start = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) {
+                i = i + 1;
+            }
+            var name: string = src[start:i];
+            if (is_keyword(name)) {
+                toks = toks.push(TokKw { name: name });
+            } else {
+                toks = toks.push(TokIdent { name: name });
+            }
+        } else {
+            toks = toks.push(TokPunct { text: src[i:i + 1] });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function main(): i32 {
+    // Comments, keywords, idents, ints, punct in one program.
+    var src1: string = "function f() {\n    var x = 42; // local\n    return x;\n}";
+    var toks: Token[] = tokenize(src1);
+    if (len(toks) != 15) { return 100 + len(toks); }
+    match (toks[0]) {
+        TokKw(t) => { if (t.name != "function") { return 1; } },
+        _ => { return 2; },
+    }
+    match (toks[1]) {
+        TokIdent(t) => { if (t.name != "f") { return 3; } },
+        _ => { return 4; },
+    }
+    match (toks[5]) {
+        TokKw(t) => { if (t.name != "var") { return 5; } },
+        _ => { return 6; },
+    }
+    match (toks[6]) {
+        TokIdent(t) => { if (t.name != "x") { return 7; } },
+        _ => { return 8; },
+    }
+    match (toks[8]) {
+        TokInt(t) => { if (t.value != 42) { return 9; } },
+        _ => { return 10; },
+    }
+    match (toks[10]) {
+        TokKw(t) => { if (t.name != "return") { return 11; } },
+        _ => { return 12; },
+    }
+    match (toks[13]) {
+        TokPunct(t) => { if (t.text != "}") { return 13; } },
+        _ => { return 14; },
+    }
+    match (toks[14]) {
+        TokEof(_) => { },
+        _ => { return 15; },
+    }
+
+    // Underscore in idents — __alloc_u8, is_digit lex as one.
+    var t2: Token[] = tokenize("__alloc_u8 is_digit _pad");
+    if (len(t2) != 4) { return 200 + len(t2); }
+    match (t2[0]) {
+        TokIdent(t) => { if (t.name != "__alloc_u8") { return 16; } },
+        _ => { return 17; },
+    }
+    match (t2[1]) {
+        TokIdent(t) => { if (t.name != "is_digit") { return 18; } },
+        _ => { return 19; },
+    }
+    match (t2[2]) {
+        TokIdent(t) => { if (t.name != "_pad") { return 20; } },
+        _ => { return 21; },
+    }
+
+    // String literal with escape sequences — \n, \t, \", \\.
+    var t3: Token[] = tokenize("\"hello\\nworld\\t!\"");
+    if (len(t3) != 2) { return 300 + len(t3); }
+    match (t3[0]) {
+        TokStr(t) => { if (t.value != "hello\nworld\t!") { return 22; } },
+        _ => { return 23; },
+    }
+    var t4: Token[] = tokenize("\"a\\\"b\\\\c\"");
+    match (t4[0]) {
+        TokStr(t) => { if (t.value != "a\"b\\c") { return 24; } },
+        _ => { return 25; },
+    }
+
+    // Comment at EOF (no trailing newline).
+    var t5: Token[] = tokenize("var x // tail");
+    if (len(t5) != 3) { return 400 + len(t5); }
+    match (t5[0]) {
+        TokKw(t) => { if (t.name != "var") { return 26; } },
+        _ => { return 27; },
+    }
+    match (t5[1]) {
+        TokIdent(t) => { if (t.name != "x") { return 28; } },
+        _ => { return 29; },
+    }
+
+    // Sized numeric type names lex as keywords (i32 / usize etc).
+    var t6: Token[] = tokenize("i32 i64 usize f64 string");
+    if (len(t6) != 6) { return 500 + len(t6); }
+    match (t6[0]) {
+        TokKw(t) => { if (t.name != "i32") { return 30; } },
+        _ => { return 31; },
+    }
+    match (t6[2]) {
+        TokKw(t) => { if (t.name != "usize") { return 32; } },
+        _ => { return 33; },
+    }
+    match (t6[4]) {
+        TokKw(t) => { if (t.name != "string") { return 34; } },
+        _ => { return 35; },
+    }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (lexer v6)", code)
+	}
+}
+
 // Lexer-in-lang v5: hex integer literals (`0x1F`, `0XFF`) +
 // the carry-over numeric type-suffix recognition (`0x10i64`).
 // Recognises `0x` / `0X` prefix, scans hex digits via the
