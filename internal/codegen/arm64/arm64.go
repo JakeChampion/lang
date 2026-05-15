@@ -3387,6 +3387,41 @@ func (g *generator) pop() {
 	g.emit("ldr x0, [sp], #%d", slotBytes)
 }
 
+// slotType returns the lang-level type of IR slot `idx` for
+// the currently emitting function. Mirrors wasm's slotType:
+// params first, then user locals, then synthetic scratch
+// slots (whose types live on `irFn.ScratchTypes`). Returns
+// nil when idx is past the scratch range — caller treats as
+// "unknown" (defaults to single-slot emit).
+func (g *generator) slotType(idx int32) ast.Type {
+	if g.current == nil || g.currentIR == nil {
+		return nil
+	}
+	fn := g.current
+	irFn := g.currentIR
+	if int(idx) < len(fn.Params) {
+		return fn.Params[idx].Type
+	}
+	idx -= int32(len(fn.Params))
+	if int(idx) < len(irFn.Locals) {
+		return irFn.Locals[idx].Type
+	}
+	idx -= int32(len(irFn.Locals))
+	if int(idx) < len(irFn.ScratchTypes) {
+		return irFn.ScratchTypes[idx]
+	}
+	return nil
+}
+
+// slotIsString reports whether IR slot `idx` names a string-
+// typed value in the current function. Dead today; future
+// commits in the arm64 flip arc use it to fan-out
+// OpLoadLocal / OpStoreLocal / OpTeeLocal for string slots.
+func (g *generator) slotIsString(idx int32) bool {
+	_, ok := g.slotType(idx).(ast.StringType)
+	return ok
+}
+
 // regW maps a 64-bit register name to its 32-bit counterpart.
 // `x0` → `w0`; `xzr` → `wzr`. Used by emitStrLen for the
 // `ubfx wD, wS, #1, #3` length-extraction operand-size match
