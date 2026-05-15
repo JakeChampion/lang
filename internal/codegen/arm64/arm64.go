@@ -5987,10 +5987,30 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// (scrutinee position) or emitRepackPairAsHeapBox
 		// (generic position) — the IR-level "two values post-
 		// call" contract is now register-backed.
+		//
+		// Under the two-word string ABI, string args take 2
+		// operand-stack slots → 2 register slots. Look up the
+		// callee's signature via `lookupArgTypes` to compute
+		// the effective slot count (same path OpCallDirect
+		// uses).
 		argc := int(op.I32)
-		g.emitCallArgsLoad(argc)
+		slotCount := argc
+		if ast.UseTwoWordStrings(8) {
+			argTypes := lookupArgTypes(g, op.Str, argc)
+			if argTypes != nil {
+				slotCount = 0
+				for _, t := range argTypes {
+					if _, isStr := t.(ast.StringType); isStr {
+						slotCount += 2
+					} else {
+						slotCount += 1
+					}
+				}
+			}
+		}
+		g.emitCallArgsLoad(slotCount)
 		g.emit("bl %s", op.Str)
-		g.emitCallArgsCleanup(argc)
+		g.emitCallArgsCleanup(slotCount)
 		g.emit("mov x16, x1") // stash payload (x1 may be clobbered)
 		g.push()              // push x0 (tag)
 		g.emit("mov x0, x16")
