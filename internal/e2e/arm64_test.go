@@ -741,6 +741,403 @@ function main(): i32 {
 	}
 }
 
+// Stmt-interp v2 — while loops + comparison operators. v1
+// (#424) shipped var / assign / return / linear flow. v2 adds
+// the missing pieces that make the toy language actually
+// Turing-complete at the statement level: a loop construct
+// (so iterative algorithms work), and comparison operators
+// (so loops can have meaningful exit conditions).
+//
+// Grammar additions:
+//
+//   stmt ::= ... existing
+//          | "while" "(" expr ")" "{" stmt* "}"
+//   expr ::= comp
+//   comp ::= add (("=="|"!="|"<"|"<="|">"|">=") add)?
+//
+// Comparisons are NON-CHAINING: `a < b < c` is rejected by
+// the single-relation grammar (the parser produces left-assoc
+// arith inside each side but treats the relation as a flat
+// binary). Comparison results are i32 0 / 1 — same shape as
+// interp v4 (no boolean type at the toy-AST level).
+//
+// While semantics: re-evaluate the cond at the top of every
+// iteration, exit when zero or when a return fires inside the
+// body. State threads through every iteration the same way it
+// does between top-level statements: `state = eval_stmt(s,
+// state)` per statement, propagating the done flag.
+//
+// Tests:
+//   1. Bare while with single body stmt — counter 1..N.
+//   2. While + var + assign — sum 1..10 = 55.
+//   3. Nested while — multiplication table sum.
+//   4. Early return inside loop body — short-circuits.
+//   5. False initial cond — body never runs.
+//   6. Comparisons in isolation (return a < b).
+//   7. Factorial via iterative loop — closes the
+//      recursion-free Turing-completeness gap.
+//
+// Comparison opcodes (lexed as two-char punct, parser folds
+// into one op token):
+//   == → 1001, != → 1002, < → 1003, <= → 1004, > → 1005, >= → 1006
+// (Outside the 0..127 ASCII range so they don't collide with
+// existing single-char arith ops.)
+func TestArm64StmtInterpWhile(t *testing.T) {
+	src := `struct TokInt   { value: i32 }
+struct TokIdent { name: string }
+struct TokPunct { ch: i32 }
+struct TokEof   { _pad: i32 }
+type Token = TokInt | TokIdent | TokPunct | TokEof;
+
+struct Num    { value: i32 }
+struct Var    { name: string }
+struct BinOp  { op: i32, left: Expr, right: Expr }
+type Expr = Num | Var | BinOp;
+
+struct VarDecl  { name: string, value: Expr }
+struct Assign   { name: string, value: Expr }
+struct Return   { value: Expr }
+struct WhileSt  { cond: Expr, body: Stmt[] }
+type Stmt = VarDecl | Assign | Return | WhileSt;
+
+function tokenize(src: string): Token[] {
+    var toks: Token[] = [];
+    var n: i32 = len(src);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = src[i];
+        if (b.is_ascii_white_space()) {
+            i = i + 1;
+        } else if (b.is_digit()) {
+            var v: i32 = 0;
+            while (i < n && src[i].is_digit()) {
+                v = v * 10 + (src[i] - 48);
+                i = i + 1;
+            }
+            toks = toks.push(TokInt { value: v });
+        } else if (b.is_alpha() || b == 95) {
+            var start: i32 = i;
+            while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
+            toks = toks.push(TokIdent { name: src[start:i] });
+        } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1001 });   // ==
+            i = i + 2;
+        } else if (b == 33 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1002 });   // !=
+            i = i + 2;
+        } else if (b == 60 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1004 });   // <=
+            i = i + 2;
+        } else if (b == 62 && i + 1 < n && src[i + 1] == 61) {
+            toks = toks.push(TokPunct { ch: 1006 });   // >=
+            i = i + 2;
+        } else if (b == 60) {
+            toks = toks.push(TokPunct { ch: 1003 });   // <
+            i = i + 1;
+        } else if (b == 62) {
+            toks = toks.push(TokPunct { ch: 1005 });   // >
+            i = i + 1;
+        } else {
+            toks = toks.push(TokPunct { ch: b });
+            i = i + 1;
+        }
+    }
+    toks = toks.push(TokEof { _pad: 0 });
+    return toks;
+}
+
+function tok_kind(t: Token): i32 {
+    match (t) {
+        TokInt(_)   => { return 0; },
+        TokIdent(_) => { return 1; },
+        TokPunct(_) => { return 2; },
+        TokEof(_)   => { return 3; },
+    }
+}
+function tok_int_value(t: Token): i32 {
+    match (t) { TokInt(x) => { return x.value; }, _ => { return 0; } }
+}
+function tok_ident_name(t: Token): string {
+    match (t) { TokIdent(x) => { return x.name; }, _ => { return ""; } }
+}
+function tok_punct_ch(t: Token): i32 {
+    match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
+}
+
+function is_comp_op(op: i32): boolean {
+    return op == 1001 || op == 1002 || op == 1003 ||
+           op == 1004 || op == 1005 || op == 1006;
+}
+
+function parse_factor(toks: Token[], cur: i32[]): Expr {
+    var pos: i32 = cur[0];
+    var k: i32 = tok_kind(toks[pos]);
+    if (k == 0) {
+        cur[0] = pos + 1;
+        return Num { value: tok_int_value(toks[pos]) };
+    }
+    if (k == 1) {
+        cur[0] = pos + 1;
+        return Var { name: tok_ident_name(toks[pos]) };
+    }
+    cur[0] = pos + 1;
+    var inner: Expr = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;
+    return inner;
+}
+
+function parse_term(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_factor(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 42 && op != 47) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_factor(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+function parse_arith(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_term(toks, cur);
+    while (true) {
+        var pos: i32 = cur[0];
+        if (tok_kind(toks[pos]) != 2) { return lhs; }
+        var op: i32 = tok_punct_ch(toks[pos]);
+        if (op != 43 && op != 45) { return lhs; }
+        cur[0] = pos + 1;
+        var rhs: Expr = parse_term(toks, cur);
+        lhs = BinOp { op: op, left: lhs, right: rhs };
+    }
+    return lhs;
+}
+
+// Single comparison layer atop arith. NON-chaining: each comp
+// arm takes one arith on each side.
+function parse_expr(toks: Token[], cur: i32[]): Expr {
+    var lhs: Expr = parse_arith(toks, cur);
+    var pos: i32 = cur[0];
+    if (tok_kind(toks[pos]) != 2) { return lhs; }
+    var op: i32 = tok_punct_ch(toks[pos]);
+    if (!is_comp_op(op)) { return lhs; }
+    cur[0] = pos + 1;
+    var rhs: Expr = parse_arith(toks, cur);
+    return BinOp { op: op, left: lhs, right: rhs };
+}
+
+function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
+    return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
+}
+
+function parse_stmt(toks: Token[], cur: i32[]): Stmt {
+    var name: string = "";
+    var value: Expr = Num { value: 0 };
+    if (expect_kw(toks, cur[0], "var")) {
+        cur[0] = cur[0] + 1;
+        name = tok_ident_name(toks[cur[0]]);
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '='
+        value = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ';'
+        return VarDecl { name: name, value: value };
+    }
+    if (expect_kw(toks, cur[0], "return")) {
+        cur[0] = cur[0] + 1;
+        value = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ';'
+        return Return { value: value };
+    }
+    if (expect_kw(toks, cur[0], "while")) {
+        cur[0] = cur[0] + 1;
+        cur[0] = cur[0] + 1;   // skip '('
+        var cond: Expr = parse_expr(toks, cur);
+        cur[0] = cur[0] + 1;   // skip ')'
+        cur[0] = cur[0] + 1;   // skip '{'
+        var body: Stmt[] = [];
+        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+            body = body.push(parse_stmt(toks, cur));
+        }
+        cur[0] = cur[0] + 1;   // skip '}'
+        return WhileSt { cond: cond, body: body };
+    }
+    // Assignment: ident '=' expr ';'
+    name = tok_ident_name(toks[cur[0]]);
+    cur[0] = cur[0] + 1;
+    cur[0] = cur[0] + 1;   // skip '='
+    value = parse_expr(toks, cur);
+    cur[0] = cur[0] + 1;   // skip ';'
+    return Assign { name: name, value: value };
+}
+
+function parse_program(src: string): Stmt[] {
+    var toks: Token[] = tokenize(src);
+    var cur: i32[] = [0];
+    var stmts: Stmt[] = [];
+    while (tok_kind(toks[cur[0]]) != 3) {
+        stmts = stmts.push(parse_stmt(toks, cur));
+    }
+    return stmts;
+}
+
+function bool_to_i32(b: boolean): i32 { if (b) { return 1; } return 0; }
+
+function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
+    match (e) {
+        Num(n) => { return n.value; },
+        Var(v) => {
+            var i: i32 = len(names) - 1;
+            while (i >= 0) {
+                if (names[i] == v.name) { return values[i]; }
+                i = i - 1;
+            }
+            return 0;
+        },
+        BinOp(b) => {
+            var l: i32 = eval_expr(b.left, names, values);
+            var r: i32 = eval_expr(b.right, names, values);
+            if (b.op == 43) { return l + r; }
+            if (b.op == 45) { return l - r; }
+            if (b.op == 42) { return l * r; }
+            if (b.op == 47) { return l / r; }
+            if (b.op == 1001) { return bool_to_i32(l == r); }
+            if (b.op == 1002) { return bool_to_i32(l != r); }
+            if (b.op == 1003) { return bool_to_i32(l < r); }
+            if (b.op == 1004) { return bool_to_i32(l <= r); }
+            if (b.op == 1005) { return bool_to_i32(l > r); }
+            return bool_to_i32(l >= r);
+        },
+    }
+}
+
+function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
+    var i: i32 = len(names) - 1;
+    while (i >= 0) {
+        if (names[i] == name) {
+            var out: i32[] = [];
+            var j: i32 = 0;
+            while (j < len(values)) {
+                if (j == i) { out = out.push(v); }
+                else { out = out.push(values[j]); }
+                j = j + 1;
+            }
+            return out;
+        }
+        i = i - 1;
+    }
+    return values;
+}
+
+struct StepState {
+    names: string[],
+    values: i32[],
+    done: boolean,
+    result: i32,
+}
+
+function eval_stmt(s: Stmt, state: StepState): StepState {
+    var v: i32 = 0;
+    match (s) {
+        VarDecl(vd) => {
+            v = eval_expr(vd.value, state.names, state.values);
+            return StepState {
+                names: state.names.push(vd.name),
+                values: state.values.push(v),
+                done: state.done,
+                result: state.result,
+            };
+        },
+        Assign(a) => {
+            v = eval_expr(a.value, state.names, state.values);
+            return StepState {
+                names: state.names,
+                values: env_assign(state.names, state.values, a.name, v),
+                done: state.done,
+                result: state.result,
+            };
+        },
+        Return(r) => {
+            v = eval_expr(r.value, state.names, state.values);
+            return StepState {
+                names: state.names,
+                values: state.values,
+                done: true,
+                result: v,
+            };
+        },
+        WhileSt(w) => {
+            // Re-evaluate cond every iteration. Body executes
+            // until cond is zero or a Return fires deep inside.
+            // State threads through iterations same as top-level
+            // (state = eval_stmt(s, state) per stmt).
+            while (!state.done && eval_expr(w.cond, state.names, state.values) != 0) {
+                var i: i32 = 0;
+                while (i < len(w.body) && !state.done) {
+                    state = eval_stmt(w.body[i], state);
+                    i = i + 1;
+                }
+            }
+            return state;
+        },
+    }
+}
+
+function run(src: string): i32 {
+    var stmts: Stmt[] = parse_program(src);
+    var state: StepState = StepState {
+        names: [],
+        values: [],
+        done: false,
+        result: 0,
+    };
+    var i: i32 = 0;
+    while (i < len(stmts) && !state.done) {
+        state = eval_stmt(stmts[i], state);
+        i = i + 1;
+    }
+    return state.result;
+}
+
+function main(): i32 {
+    // Comparison in isolation: return 3 < 5 → 1.
+    if (run("return 3 < 5;") != 1) { return 1; }
+    if (run("return 5 < 3;") != 0) { return 2; }
+    if (run("return 5 == 5;") != 1) { return 3; }
+    if (run("return 5 != 5;") != 0) { return 4; }
+    if (run("return 5 <= 5;") != 1) { return 5; }
+    if (run("return 5 >= 5;") != 1) { return 6; }
+
+    // Sum 1..10 via a while loop. Tests state threading
+    // through iterations + reassignment.
+    if (run("var s = 0; var i = 1; while (i <= 10) { s = s + i; i = i + 1; } return s;") != 55) { return 7; }
+
+    // Factorial 5 via a loop — recursion-free Turing-complete
+    // sanity. n! where n=5 → 120.
+    if (run("var n = 5; var f = 1; while (n > 0) { f = f * n; n = n - 1; } return f;") != 120) { return 8; }
+
+    // False initial cond — body never runs, vars from outside
+    // are unchanged.
+    if (run("var x = 10; while (x < 0) { x = 999; } return x;") != 10) { return 9; }
+
+    // Early return inside a loop body. Confirms the done flag
+    // short-circuits the inner stmt walk + the outer while.
+    // The trailing return 99 is dead code — never fires
+    // because the while's first iteration returns 0.
+    if (run("var i = 0; while (i < 100) { return i; i = i + 1; } return 99;") != 0) { return 10; }
+
+    // Nested while — accumulate i*j for i in 1..3, j in 1..3.
+    // Expected: 1 + 2 + 3 + 2 + 4 + 6 + 3 + 6 + 9 = 36.
+    if (run("var s = 0; var i = 1; while (i <= 3) { var j = 1; while (j <= 3) { s = s + i * j; j = j + 1; } i = i + 1; } return s;") != 36) { return 11; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stmt-interp v2 while)", code)
+	}
+}
+
 // Stmt-interp-in-lang: statement-level constructs — `var`
 // declarations, assignment, and `return`. A FUNDAMENTALLY new
 // shape vs the expression-only spikes. v1..v7 all dealt in
