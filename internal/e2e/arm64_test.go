@@ -6352,6 +6352,54 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Second stdlib bundle: byte case helpers (is_lower/is_upper/
+// to_lower/to_upper), i32 numeric methods (abs/min/max/clamp),
+// whole-string ASCII predicates (is_ascii_only / is_numeric /
+// is_alpha_only / is_alnum_only). 12 new methods total.
+func TestArm64StdlibBundle2(t *testing.T) {
+	src := `function main(): i32 {
+    // Byte-level case classifiers + flippers.
+    if (!(65).is_upper()) { return 1; }
+    if ((65).is_lower()) { return 2; }
+    if (!(97).is_lower()) { return 3; }
+    if ((97).is_upper()) { return 4; }
+    if ((65).to_lower() != 97) { return 5; }   // 'A' → 'a'
+    if ((97).to_upper() != 65) { return 6; }   // 'a' → 'A'
+    if ((48).to_lower() != 48) { return 7; }   // digits pass through
+    if ((48).to_upper() != 48) { return 8; }
+
+    // i32 numeric methods.
+    if ((5).abs() != 5) { return 9; }
+    if ((0 - 5).abs() != 5) { return 10; }
+    if ((0).abs() != 0) { return 11; }
+    if ((3).min(7) != 3) { return 12; }
+    if ((7).min(3) != 3) { return 13; }
+    if ((3).max(7) != 7) { return 14; }
+    if ((7).max(3) != 7) { return 15; }
+    if ((5).clamp(10, 20) != 10) { return 16; }
+    if ((25).clamp(10, 20) != 20) { return 17; }
+    if ((15).clamp(10, 20) != 15) { return 18; }
+
+    // String predicates — whole-string variants.
+    if (!"abc".is_ascii_only()) { return 19; }
+    if (!"".is_ascii_only()) { return 20; }
+    if (!"12345".is_numeric()) { return 21; }
+    if ("12a".is_numeric()) { return 22; }
+    if ("".is_numeric()) { return 23; }
+    if (!"hello".is_alpha_only()) { return 24; }
+    if ("hello1".is_alpha_only()) { return 25; }
+    if ("".is_alpha_only()) { return 26; }
+    if (!"hello123".is_alnum_only()) { return 27; }
+    if ("hello world".is_alnum_only()) { return 28; }   // space breaks
+    if ("".is_alnum_only()) { return 29; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 2)", code)
+	}
+}
+
 func TestArm64StdlibBundle(t *testing.T) {
 	src := `function main(): i32 {
     // pad_start / pad_end

@@ -343,6 +343,17 @@ think they're free additions to make.
 - **`s.count(sub)`**: non-overlapping match count. Standalone
   helper that fell out of the `replace_n` work — the inner
   loop is the same as Rust `str::matches().count()`.
+- **i32 scalar methods**: `(n).abs()` / `(n).min(other)` /
+  `(n).max(other)` / `(n).clamp(lo, hi)`. Standard scalar
+  reductions; the abs path widens to i64 internally to handle
+  i32::MIN cleanly (matches Rust wrapping_abs).
+- **Byte case helpers**: `(b).is_lower()` / `is_upper()` /
+  `to_lower()` / `to_upper()` — ASCII-only. Non-letters pass
+  through unchanged from the to_* helpers.
+- **String predicates**: `s.is_ascii_only()` /
+  `s.is_numeric()` / `s.is_alpha_only()` / `s.is_alnum_only()`.
+  Suffix `_only` to avoid shadowing the byte-receiver
+  predicates already in the prelude.
 
 ## Cross-cutting decisions
 
