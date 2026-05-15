@@ -830,6 +830,15 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.Methods["Array.index_of"] = "__method_Array_index_of"
 	c.info.Methods["Array.contains"] = "__method_Array_contains"
 
+	// `arr.reverse()` — returns a fresh string[] with elements
+	// in reverse order. Same constrained-receiver dispatch; the
+	// element type is string-only because a generic reverse
+	// would need IR-side interception (push's pattern) and the
+	// string surface covers the common cases (display flipping,
+	// diagnostic chain reversal). Free functional shape — the
+	// input array isn't mutated.
+	c.info.Methods["Array.reverse"] = "__method_Array_reverse"
+
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
 	// flow through the same dispatch-path substitution. The
