@@ -24,11 +24,44 @@ name: macOS arm64
 on:
   pull_request:
     paths:
+      # arm64 codegen + arm64-specific tests are the direct
+      # targets — any asm change here can break Darwin without
+      # surfacing on the Linux arm64 CI lane (which SKIPs the
+      # Darwin subtests because clang+lld aren't installed).
       - "internal/codegen/arm64/**"
       - "internal/e2e/arm64_test.go"
+      # The prelude is shared by every backend; any change to
+      # __map_keys / IoError / etc. flows into the Darwin asm.
       - "internal/prelude/**"
-      - ".github/workflows/macos.yml"
+      # The IR layer is the language the codegen speaks. New
+      # IR ops, changed payload layouts, or shifted operand-
+      # stack semantics manifest as Darwin-specific runtime
+      # behaviour even when the codegen file is untouched. PR
+      # #383's `__map_keys/values` fix was a prelude-only +
+      # IR-untouched change that nonetheless broke Darwin; if
+      # the next prelude/IR PR doesn't also touch arm64 codegen
+      # the macOS CI lane would silently skip.
+      - "internal/ir/**"
+      - "internal/ast/**"
+      # The checker shapes the program before lowering; payload
+      # type substitution, generic instantiation, and the auto-
+      # main-from-handle synthesis all originate there.
+      - "internal/checker/**"
+      # Monomorpher emits per-instantiation FuncDecls that the
+      # backend then turns into asm.
+      - "internal/monomorph/**"
+      # The closureconv pass rewrites local fn declarations to
+      # hoisted top-level fns; capture-block layout decisions
+      # have bitten Darwin before.
+      - "internal/closureconv/**"
+      # langstring carries the inline-encoding bit patterns
+      # both backends use.
+      - "internal/langstring/**"
+      # Driver wiring + example surface.
+      - "cmd/lang/**"
       - "examples/**"
+      # This workflow itself + go module declarations.
+      - ".github/workflows/macos.yml"
       - "go.mod"
       - "go.sum"
   workflow_dispatch:
