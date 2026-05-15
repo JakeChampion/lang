@@ -459,6 +459,27 @@ function __method_Array_join(arr: string[], sep: string): string {
     return out;
 }
 
+// `arr.index_of(s)` — first index of `s` in `arr`, or -1 if
+// absent. Linear scan — fine for the compiler-style use cases
+// (parser-keyword tables, type-list lookups, diagnostic-tag
+// indexing) where arrays are bounded and small.
+function __method_Array_index_of(arr: string[], s: string): i32 {
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (arr[i] == s) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// `arr.contains(s)` — boolean companion. Thin wrapper over
+// index_of since contains-checks are common enough to deserve
+// the dedicated entrypoint, and `idx >= 0` is more verbose
+// than the boolean read.
+function __method_Array_contains(arr: string[], s: string): boolean {
+    return __method_Array_index_of(arr, s) != (0 - 1);
+}
+
 // === Array append ===
 //
 // `arr.push(v)` is lowered inline by the IR — see
