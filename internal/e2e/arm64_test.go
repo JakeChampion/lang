@@ -6343,6 +6343,56 @@ func TestArm64Format(t *testing.T) {
 // Supported bases: 2..36 (digits 0-9 then a-z, case-insensitive
 // on parse). Covers hex addressing, binary debug dumps, octal
 // permissions, base-36 short IDs.
+// Path manipulation (string-level, POSIX) per STDLIB-ROADMAP
+// item #8: path_join / path_parent / path_file_name /
+// path_extension. Pure string ops — no FS interaction.
+func TestArm64Paths(t *testing.T) {
+	src := `function main(): i32 {
+    // path_join — simple, leading/trailing slashes, empty parts.
+    if (path_join(["a", "b", "c"]) != "a/b/c") { return 1; }
+    if (path_join(["/usr", "local", "bin"]) != "/usr/local/bin") { return 2; }
+    if (path_join(["a", "", "b"]) != "a/b") { return 3; }
+    if (path_join(["a/", "b"]) != "a/b") { return 4; }
+    if (path_join(["a/", "/b"]) != "a/b") { return 5; }
+    if (path_join(["a", "/b"]) != "a/b") { return 6; }
+    if (path_join(["/", "a"]) != "/a") { return 7; }
+    if (path_join(["solo"]) != "solo") { return 8; }
+    var empty: string[] = [];
+    if (path_join(empty) != "") { return 9; }
+
+    // path_parent — handle root and trailing-slash cases.
+    if (path_parent("/a/b/c") != "/a/b") { return 10; }
+    if (path_parent("a/b") != "a") { return 11; }
+    if (path_parent("a") != "") { return 12; }
+    if (path_parent("/") != "/") { return 13; }
+    if (path_parent("") != "") { return 14; }
+    if (path_parent("/a") != "/") { return 15; }
+    if (path_parent("/a/b/") != "/a") { return 16; }
+
+    // path_file_name — last component.
+    if (path_file_name("/a/b/c.txt") != "c.txt") { return 17; }
+    if (path_file_name("file") != "file") { return 18; }
+    if (path_file_name("/") != "") { return 19; }
+    if (path_file_name("") != "") { return 20; }
+    if (path_file_name("a/b/") != "b") { return 21; }
+
+    // path_extension — last .X suffix on the last component.
+    if (path_extension("a.txt") != "txt") { return 22; }
+    if (path_extension("/path/to/file.log") != "log") { return 23; }
+    if (path_extension("multi.dot.tar.gz") != "gz") { return 24; }
+    if (path_extension("noext") != "") { return 25; }
+    if (path_extension(".hidden") != "") { return 26; }    // leading-dot file
+    if (path_extension("a.b/.hidden") != "") { return 27; }
+    if (path_extension("") != "") { return 28; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (paths)", code)
+	}
+}
+
 func TestArm64Radix(t *testing.T) {
 	src := `function main(): i32 {
     // Parse — bases 2 / 8 / 10 / 16 / 36.
