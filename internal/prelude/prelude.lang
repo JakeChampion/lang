@@ -36,6 +36,7 @@ import "std/json";
 import "std/math";
 import "std/float";
 import "std/tcp";
+import "core/int";
 
 
 
@@ -106,179 +107,12 @@ function __is_ascii_ws(b: i32): boolean {
 // === Array append ===
 //
 // `arr.push(v)` is lowered inline by the IR — see
-// `emitArrayPush` in `internal/ir/ir.go`. The previous shape
-// here was 5 nearly-identical lang-prelude functions
-// (`__array_append_string` / `_i64` / `_f64` / `_u8` / `_u16`),
-// one per stride class, each ~12 lines of raw-memory pokes;
-// the IR now emits the same shape directly (alloc + memcpy +
-// width-correct tail store) parameterised over stride. One
-// codepath instead of one-per-stride; new array methods
-// (concat, reverse, ...) drop in as IR helpers without
-// touching the prelude.
-
-// === Decimal int-to-string formatter ===
-//
-// `int_to_string(n)` — signed-i32 → ASCII decimal. Test
-// harness drives it through the `_start` wrapper to print
-// `main()`'s return value; user code calls it directly via
-// the same name. Pairs with `__int_to_string_u64` below
-// for the wider-integer method wrappers.
-//
-// Algorithm: a 16-byte scratch buffer holds digits written
-// backwards from the high end (so the final order comes
-// out left-to-right via a single trailing memcpy). The
-// negation `n = 0 - n` is unsigned-safe for INT_MIN
-// because we then read the result as u32 for the divmod
-// chain, and -INT_MIN's unsigned value is exactly
-// `2^31`.
-function int_to_string(n: i32): string {
-    var scratch: u8[] = __alloc_u8(16);
-    var scratch_ptr: i32 = scratch as i32;
-    var end: i32 = 16;
-    var neg: boolean = false;
-    if (n < 0) {
-        neg = true;
-        n = 0 - n;
-    }
-    var u: u32 = n as u32;
-    if (u == (0 as u32)) {
-        end = end - 1;
-        scratch[end] = 48 as u8;
-    } else {
-        while (u != (0 as u32)) {
-            end = end - 1;
-            scratch[end] = (((u % (10 as u32)) as i32) + 48) as u8;
-            u = u / (10 as u32);
-        }
-    }
-    if (neg) {
-        end = end - 1;
-        scratch[end] = 45 as u8;
-    }
-    var n_bytes: i32 = 16 - end;
-    var buf: u8[] = __alloc_u8(n_bytes);
-    __memcpy(buf as i32, scratch_ptr + end, n_bytes);
-    return string_from_bytes(buf);
-}
-
-// `__int_to_string_u64(mag, neg)` — the i64 / u64 cousin.
-// `mag` carries the absolute value; `neg` is the sign flag
-// (set for the i64-min path where the wrapped subtraction
-// produces a u64 magnitude that's exact). Used by the
-// method-syntax wrappers `(i64).to_string()` /
-// `(u64).to_string()` and their i32 / u32 counterparts that
-// promote first.
-function __int_to_string_u64(mag: i64, neg: i32): string {
-    var scratch: u8[] = __alloc_u8(24);
-    var scratch_ptr: i32 = scratch as i32;
-    var end: i32 = 24;
-    if (mag == (0 as i64)) {
-        end = end - 1;
-        scratch[end] = 48 as u8;
-    } else {
-        while (mag != (0 as i64)) {
-            end = end - 1;
-            scratch[end] = ((((mag as u64) % (10 as u64)) as i32) + 48) as u8;
-            mag = ((mag as u64) / (10 as u64)) as i64;
-        }
-    }
-    if (neg != 0) {
-        end = end - 1;
-        scratch[end] = 45 as u8;
-    }
-    var n_bytes: i32 = 24 - end;
-    var buf: u8[] = __alloc_u8(n_bytes);
-    __memcpy(buf as i32, scratch_ptr + end, n_bytes);
-    return string_from_bytes(buf);
-}
 
 
 
 
 
 
-// === Radix integer parse / format ===
-//
-// `parse_int_radix(s, base)` / `int_to_string_radix(n, base)`
-// — companions to the decimal-only `parse_int` / `int_to_string`.
-// Supported bases: 2..36 (digits 0-9 then a-z, ignoring case).
-// Out-of-range base or a malformed digit returns None / a best-
-// effort string respectively.
-//
-// Use cases the decimal helpers don't cover: hex addressing,
-// binary debug dumps, octal permissions, base-36 short IDs.
-// Matches Rust i32::from_str_radix / i32::to_string_radix and
-// Go strconv.ParseInt / strconv.FormatInt minimal subset.
-
-function __radix_digit(c: i32): i32 {
-    if (c >= 48 && c <= 57)  { return c - 48; }     // 0-9 → 0-9
-    if (c >= 97 && c <= 122) { return c - 87; }     // a-z → 10-35
-    if (c >= 65 && c <= 90)  { return c - 55; }     // A-Z → 10-35
-    return 0 - 1;
-}
-
-function __radix_char(d: i32): i32 {
-    if (d < 10) { return d + 48; }                   // 0-9
-    return d + 87;                                    // a-z (lowercase)
-}
-
-function parse_int_radix(s: string, base: i32): Option[i32] {
-    if (base < 2 || base > 36) { return None; }
-    var n: i32 = len(s);
-    if (n == 0) { return None; }
-    var neg: boolean = false;
-    var i: i32 = 0;
-    if (s[0] == 45) {           // '-'
-        neg = true;
-        i = 1;
-    } else if (s[0] == 43) {    // '+'
-        i = 1;
-    }
-    if (i >= n) { return None; }    // sign without digits
-    var v: i32 = 0;
-    while (i < n) {
-        var d: i32 = __radix_digit(s[i]);
-        if (d < 0 || d >= base) { return None; }
-        v = v * base + d;
-        i = i + 1;
-    }
-    if (neg) { v = 0 - v; }
-    return Some(v);
-}
-
-function int_to_string_radix(n: i32, base: i32): string {
-    if (base < 2 || base > 36) { return ""; }
-    if (n == 0) { return "0"; }
-    var neg: boolean = (n < 0);
-    // Use i64 magnitude so INT_MIN's negation doesn't overflow.
-    var mag: i64 = n as i64;
-    if (neg) { mag = 0 - mag; }
-    // Worst case is 32 binary digits + sign = 33; allocate slack.
-    var digits: u8[] = __alloc_u8(33);
-    var k: i32 = 0;
-    var b64: i64 = base as i64;
-    while (mag > (0 as i64)) {
-        var d: i32 = (mag % b64) as i32;
-        digits[k] = __radix_char(d) as u8;
-        k = k + 1;
-        mag = mag / b64;
-    }
-    var out_len: i32 = k;
-    if (neg) { out_len = k + 1; }
-    var buf: u8[] = __alloc_u8(out_len);
-    var bi: i32 = 0;
-    if (neg) {
-        buf[0] = 45 as u8;        // '-'
-        bi = 1;
-    }
-    var j: i32 = k - 1;
-    while (j >= 0) {
-        buf[bi] = digits[j];
-        bi = bi + 1;
-        j = j - 1;
-    }
-    return string_from_bytes(buf);
-}
 
 
 
