@@ -6,6 +6,8 @@
 // the transition the prelude itself does the same import so
 // existing single-file programs keep working unchanged.
 
+import "core/int";
+
 // `(n: i32) abs()` — absolute value. Edge case: i32::MIN
 // (-2147483648) has no positive counterpart in i32; the
 // magnitude is carried through i64 so the result wraps to
@@ -677,11 +679,11 @@ pub function (n: i32) rotate_right(bits: i32): i32 {
 // int_to_string_radix(n, 2) / (n, 8). Signed (negatives
 // emit a leading `-`).
 pub function (n: i32) to_binary(): string {
-    return int_to_string_radix(n, 2);
+    return int.int_to_string_radix(n, 2);
 }
 
 pub function (n: i32) to_oct(): string {
-    return int_to_string_radix(n, 8);
+    return int.int_to_string_radix(n, 8);
 }
 
 
@@ -724,7 +726,7 @@ pub function (n: i32) to_string(): string {
     if (n == 0 - 2147483647 - 1) {
         return "-2147483648";
     }
-    return int_to_string(n);
+    return int.int_to_string(n);
 }
 
 // `(n: i32) to_string_padded(width)` — decimal with zero-pad
@@ -773,7 +775,7 @@ pub function (n: i32) to_string_with_sep(sep: string): string {
 // `int_to_string_radix` on that; the i32 form here keeps
 // the signed semantics consistent with `to_string`.
 pub function (n: i32) to_hex(): string {
-    return int_to_string_radix(n, 16);
+    return int.int_to_string_radix(n, 16);
 }
 
 // `(n: i32) to_rgb_hex()` — render the low 24 bits as a

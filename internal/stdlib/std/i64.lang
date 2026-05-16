@@ -7,6 +7,8 @@
 // `n.abs()` / `.gcd(…)` / etc. on an i64 continue to work
 // unchanged.
 
+import "core/int";
+
 // `(n: i64) abs()` — absolute value. i64::MIN wraps to
 // itself (no i128 to widen into); matches Rust's
 // wrapping_abs. Callers needing exact handling should
@@ -75,7 +77,7 @@ pub function (n: i64) to_string(): string {
         neg = 1;
         mag = (0 as i64) - n;
     }
-    return __int_to_string_u64(mag, neg);
+    return int.__int_to_string_u64(mag, neg);
 }
 
 // `(n: i64) is_even()` / `is_odd()` — parity helpers

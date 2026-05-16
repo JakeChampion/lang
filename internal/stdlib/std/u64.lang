@@ -3,6 +3,8 @@
 // Counterpart to std/u32 for the wider type. Migrated from the
 // auto-injected prelude per docs/PRELUDE-TO-MODULES.md.
 
+import "core/int";
+
 pub function (n: u64) min(other: u64): u64 {
     if (n < other) { return n; }
     return other;
@@ -24,5 +26,5 @@ pub function (n: u64) clamp(lo: u64, hi: u64): u64 {
 // `__int_to_string_u64` treats its argument as unsigned given
 // `neg == 0`.
 pub function (n: u64) to_string(): string {
-    return __int_to_string_u64(n as i64, 0);
+    return int.__int_to_string_u64(n as i64, 0);
 }
