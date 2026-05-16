@@ -434,8 +434,6 @@ pub function (n: i32) checked_div(other: i32): Option[i32] {
 
 pub function (n: i32) is_even(): boolean { return n % 2 == 0; }
 pub function (n: i32) is_odd(): boolean  { return n % 2 != 0; }
-pub function (n: i64) is_even(): boolean { return n % (2 as i64) == (0 as i64); }
-pub function (n: i64) is_odd(): boolean  { return n % (2 as i64) != (0 as i64); }
 
 // `(n: i32) pow(exp)` — integer exponentiation by squaring.
 // Negative exponents return 0 (lang has no fractional i32).

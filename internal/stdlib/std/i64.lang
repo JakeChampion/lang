@@ -77,3 +77,8 @@ pub function (n: i64) to_string(): string {
     }
     return __int_to_string_u64(mag, neg);
 }
+
+// `(n: i64) is_even()` / `is_odd()` — parity helpers
+// matching the i32 versions in std/i32.
+pub function (n: i64) is_even(): boolean { return n % (2 as i64) == (0 as i64); }
+pub function (n: i64) is_odd(): boolean  { return n % (2 as i64) != (0 as i64); }
