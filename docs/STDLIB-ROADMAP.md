@@ -541,6 +541,20 @@ think they're free additions to make.
 - **`http_path_segments(path)`**: split an HTTP path into
   non-empty components. Strips query string and collapses
   duplicate slashes. Useful for simple routing.
+- **`s.center(width, ch)`**: equal padding on both sides;
+  odd-padding splits leave the extra on the right.
+- **`s.reverse_words()`**: split on whitespace, reverse,
+  join with single space.
+- **i32 bit rotation**: `(n).rotate_left(bits)` /
+  `rotate_right(bits)`. Bit count masked mod 32 so OOB
+  values still produce a valid rotation.
+- **`csv_parse_line(s)`**: RFC 4180 single-line parser.
+  Handles quoted fields with embedded commas and doubled-
+  quote escapes. Multi-line CSV (newlines inside quoted
+  fields) deferred — needs a streaming parser.
+- **`http_header_value(headers, key)`**: case-insensitive
+  header lookup against a CRLF-separated header block.
+  Returns the first matching value, trimmed.
 
 ### Additional compiler bug
 
