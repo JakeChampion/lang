@@ -6,6 +6,8 @@
 // During the transition the prelude itself does the same import
 // so existing single-file programs keep working unchanged.
 
+import "core/int";
+
 // `s.is_empty()` is a length-zero shorthand. The IR's len fold
 // resolves `len(s)` to a single i32.load at compile time when
 // `s` is statically known to be a string, so this typically
@@ -1891,11 +1893,11 @@ pub function (s: string) parse_int(): Option[i32] {
 // `s.parse_hex_int()` / `s.parse_bin_int()` — sugar for
 // parse_int_radix(s, 16) / parse_int_radix(s, 2).
 pub function (s: string) parse_hex_int(): Option[i32] {
-    return parse_int_radix(s, 16);
+    return int.parse_int_radix(s, 16);
 }
 
 pub function (s: string) parse_bin_int(): Option[i32] {
-    return parse_int_radix(s, 2);
+    return int.parse_int_radix(s, 2);
 }
 
 // `s.parse_float()` — decimal f32 parser. Grammar:
