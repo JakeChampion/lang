@@ -795,3 +795,163 @@ pub function (s: string) lines_non_empty(): string[] {
     }
     return out;
 }
+
+// === String predicates (whole-string ASCII checks) ===
+//
+// `(s: string) is_ascii_only()` / `is_numeric()` /
+// `is_alpha_only()` / `is_alnum_only()` — true iff EVERY
+// byte matches the predicate. Empty strings return true for
+// is_ascii_only (no non-ASCII bytes) and false for the
+// numeric / alpha variants (vacuously empty doesn't qualify
+// as a numeric or alphabetic word — matches Python str
+// isdigit / isalpha conventions).
+//
+// Suffix `_only` chosen because the bare names (`is_numeric`,
+// `is_alpha`) on a string would shadow the byte-receiver
+// versions above. The byte ones are scanner-loop hot paths
+// already; renaming would churn user code with no win.
+
+pub function (s: string) is_ascii_only(): boolean {
+    var n: i32 = len(s);
+    var i: i32 = 0;
+    while (i < n) {
+        if (s[i] > 127) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub function (s: string) is_numeric(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        if (!s[i].is_digit()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub function (s: string) is_alpha_only(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        if (!s[i].is_alpha()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub function (s: string) is_alnum_only(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        if (!s[i].is_alnum()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_int()` — true if s parses as a decimal integer
+// (optional leading `+` / `-`, then one-or-more digits).
+// Doesn't check for i32 overflow — `s.parse_int()` is the
+// validating + parsing form.
+pub function (s: string) is_int(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    if (s[0] == 45 || s[0] == 43) { i = 1; }
+    if (i >= n) { return false; }
+    while (i < n) {
+        if (!s[i].is_digit()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_float()` — true if s looks like a decimal float:
+// optional sign, digits, optional `.digits`. No exponent
+// form (`1e10`) — that's a follow-up. Pure-int strings are
+// also accepted (5 → true). Used as a quick "looks numeric"
+// check before invoking parse_float.
+pub function (s: string) is_float(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    if (s[0] == 45 || s[0] == 43) { i = 1; }
+    if (i >= n) { return false; }
+    var any_digits: boolean = false;
+    while (i < n && s[i].is_digit()) {
+        any_digits = true;
+        i = i + 1;
+    }
+    if (i < n && s[i] == 46) {
+        i = i + 1;
+        while (i < n && s[i].is_digit()) {
+            any_digits = true;
+            i = i + 1;
+        }
+    }
+    return any_digits && i == n;
+}
+
+// `s.wrap(prefix, suffix)` — concatenate prefix + s +
+// suffix. Saves the multi-+ call site when wrapping a value
+// in brackets / quotes / tags. `"x".wrap("[", "]")` →
+// `"[x]"`.
+pub function (s: string) wrap(prefix: string, suffix: string): string {
+    return prefix + s + suffix;
+}
+
+// `s.is_blank()` — true if s is empty or contains only ASCII
+// whitespace. Differs from is_empty by also matching strings
+// of pure tabs / spaces / newlines. Useful for "skip blank
+// lines" passes.
+pub function (s: string) is_blank(): boolean {
+    var n: i32 = len(s);
+    var i: i32 = 0;
+    while (i < n) {
+        if (!__is_ascii_ws(s[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_hex_string()` — every byte is a hex digit (case-
+// insensitive). Empty string returns false (mirrors the
+// is_numeric / is_alpha_only conventions). Useful for
+// validating user-supplied hex hashes / hex-color values.
+pub function (s: string) is_hex_string(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        if (!s[i].is_hex_digit()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.indent(prefix)` — prepend prefix to every line of s.
+// Empty lines get the prefix too (matches Python textwrap
+// indent's default; the predicate-gated variant is a
+// follow-up). Lines are determined by '\n'; CRLF input
+// gets prefix between the CR and the LF only on the first
+// line and after each '\n', which matches the bytewise
+// model.
+pub function (s: string) indent(prefix: string): string {
+    var n: i32 = len(s);
+    if (n == 0) { return ""; }
+    var out: string = prefix;
+    var i: i32 = 0;
+    while (i < n) {
+        out = out + s[i:i + 1];
+        if (s[i] == 10 && i + 1 < n) {
+            out = out + prefix;
+        }
+        i = i + 1;
+    }
+    return out;
+}
