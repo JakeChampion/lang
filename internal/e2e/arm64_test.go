@@ -25,6 +25,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -79,9 +80,21 @@ func compileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)
 
-	prog, err := parser.Parse(src)
+	// Route the source through modload so cross-module qualified
+	// imports inside the stdlib (e.g. `int.int_to_string_radix(…)`
+	// in std/i32) get the proper rewriting — that's the same
+	// pipeline `cmd/lang` uses. Without this, bare in-source
+	// qualified calls would hit "undefined identifier" because
+	// modload's rewriter is the only thing that recognises the
+	// `mod.fn(args)` shape.
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.lang")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("modload: %v", err)
 	}
 	if err := constfold.Fold(prog); err != nil {
 		t.Fatalf("constfold: %v", err)
@@ -103,7 +116,6 @@ func compileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 		t.Fatalf("emit: %v", err)
 	}
 
-	dir := t.TempDir()
 	asmPath := filepath.Join(dir, "prog.s")
 	binPath := filepath.Join(dir, "prog")
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
