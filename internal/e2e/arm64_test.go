@@ -6352,6 +6352,60 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Sixteenth stdlib bundle: string center / reverse_words,
+// i32 rotate_left / rotate_right, csv_parse_line,
+// http_header_value. 6 helpers.
+func TestArm64StdlibBundle16(t *testing.T) {
+	src := `function main(): i32 {
+    // center
+    if ("hi".center(6, "-") != "--hi--") { return 1; }
+    if ("hi".center(7, "-") != "--hi---") { return 2; }   // odd → right
+    if ("hi".center(2, "-") != "hi") { return 3; }
+    if ("hello".center(3, "-") != "hello") { return 4; }
+
+    // reverse_words
+    if ("one two three".reverse_words() != "three two one") { return 5; }
+    if ("solo".reverse_words() != "solo") { return 6; }
+    if ("".reverse_words() != "") { return 7; }
+    if ("a  b\tc".reverse_words() != "c b a") { return 8; }
+
+    // rotate_left / rotate_right
+    if ((305419896).rotate_left(8) != 878082066) { return 9; }
+    if ((305419896).rotate_left(0) != 305419896) { return 10; }
+    if ((305419896).rotate_left(32) != 305419896) { return 11; }   // mod 32
+    if ((305419896).rotate_right(8).rotate_left(8) != 305419896) { return 12; }
+    if ((123).rotate_left(7).rotate_right(7) != 123) { return 13; }
+
+    // csv_parse_line
+    var f: string[] = csv_parse_line("a,b,c");
+    if (len(f) != 3 || f[0] != "a" || f[2] != "c") { return 14; }
+    var fq: string[] = csv_parse_line("\"a,b\",c");
+    if (len(fq) != 2 || fq[0] != "a,b") { return 15; }
+    var fe: string[] = csv_parse_line("\"a\"\"b\",c");
+    if (len(fe) != 2 || fe[0] != "a\"b") { return 16; }
+    if (len(csv_parse_line("")) != 1) { return 17; }
+    var fmt: string[] = csv_parse_line("a,,b");
+    if (len(fmt) != 3 || fmt[1] != "") { return 18; }
+
+    // http_header_value
+    var hdrs: string = "Content-Type: text/html\r\nContent-Length: 42\r\nX-Foo: bar";
+    match (http_header_value(hdrs, "content-type")) {
+        Some(v) => { if (v != "text/html") { return 19; } },
+        None => { return 20; },
+    }
+    match (http_header_value(hdrs, "X-FOO")) {
+        Some(v) => { if (v != "bar") { return 21; } },
+        None => { return 22; },
+    }
+    match (http_header_value(hdrs, "x-missing")) { Some(_) => { return 23; }, None => { } }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 16)", code)
+	}
+}
+
 // Fifteenth stdlib bundle: array distinct / distinct_count,
 // i32 is_power_of_2 / next_power_of_2, byte
 // to_ascii_string, string hash_djb2, http_path_segments.
