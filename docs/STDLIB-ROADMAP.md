@@ -512,6 +512,32 @@ think they're free additions to make.
 - **`(n: i32) to_string_padded(width)`**: decimal with
   zero-pad. Negatives pad the body and re-prefix `-`
   (`-0042` not `0-042`).
+- **`trim_start_chars` / `trim_end_chars`**: one-sided
+  trim_chars companions.
+- **`random_int(lo, hi)`**: CSPRNG-backed random in [lo,
+  hi). 24-bit value width — caps bias-free range at ~16M
+  but covers port pick / ID generation / jitter. The 24-bit
+  cap is a workaround for the natives' signed-u32-modulo
+  codegen bug.
+- **`format_bytes(n)`**: human-readable size — "N B" / "N
+  KiB" / "N MiB" / "N GiB". i32 input (caps at ~2 GiB
+  representable range).
+- **`csv_escape(s)` / `csv_join(arr)`**: RFC 4180 CSV
+  field escape + comma-join. Fields with `,` / `"` / `\n`
+  / `\r` get wrapped in `"..."` with interior quotes
+  doubled.
+
+### Additional compiler bug
+
+- **arm64 + x86-64: u32 modulo path uses signed arithmetic
+  when the dividend has the high bit set.** Reproduces
+  with `(255 as u32) << (24 as u32) % (100 as u32)` — the
+  natives return 240 (the result of `-16777216 % 100 = -16`,
+  cast back to u32 → 0xFFFFFFF0 → low byte 240), interp
+  + wasm return 80 (the correct unsigned mod). Worked
+  around in `random_int` by keeping the random uint
+  24-bit. Documented separately in the known-compiler-bugs
+  section below.
 
 ## Known compiler bugs surfaced during this work
 
@@ -547,6 +573,12 @@ think they're free additions to make.
   / checked arithmetic prelude additions sidestep this by
   using sign-bit overflow detection on plain i32 ops rather
   than the natural i64-widening approach.
+- **arm64 / x86-64 u32 modulo uses signed arithmetic when
+  the dividend has the high bit set**. `(255 as u32) << (24
+  as u32) % (100 as u32)` returns 240 on the natives
+  (`-16777216 % 100 = -16`, cast to unsigned exit code →
+  240) but 80 on interp + wasm. Worked around in random_int
+  by limiting the random uint to 24 bits.
 
 ## Cross-cutting decisions
 

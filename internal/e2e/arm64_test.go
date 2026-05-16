@@ -6352,6 +6352,45 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Fourteenth stdlib bundle: trim_start_chars / trim_end_chars,
+// random_int, format_bytes, csv_escape / csv_join. 6 helpers.
+func TestArm64StdlibBundle14(t *testing.T) {
+	src := `function main(): i32 {
+    // trim_start_chars / trim_end_chars
+    if ("==hello".trim_start_chars("=") != "hello") { return 1; }
+    if ("hello==".trim_end_chars("=") != "hello") { return 2; }
+    if ("(hello)".trim_start_chars("()") != "hello)") { return 3; }
+    if ("hello".trim_start_chars("") != "hello") { return 4; }
+    if ("===".trim_start_chars("=") != "") { return 5; }
+
+    // random_int — range checks
+    var r: i32 = random_int(0, 100);
+    if (r < 0 || r >= 100) { return 6; }
+    if (random_int(10, 11) != 10) { return 7; }
+    if (random_int(5, 5) != 5) { return 8; }
+    if (random_int(10, 1) != 10) { return 9; }
+
+    // format_bytes — binary prefixes
+    if (format_bytes(0) != "0 B") { return 10; }
+    if (format_bytes(512) != "512 B") { return 11; }
+    if (format_bytes(1024) != "1 KiB") { return 12; }
+    if (format_bytes(1024 * 1024) != "1 MiB") { return 13; }
+    if (format_bytes(0 - 512) != "-512 B") { return 14; }
+
+    // csv_escape / csv_join — RFC 4180
+    if (csv_escape("simple") != "simple") { return 15; }
+    if (csv_escape("has,comma") != "\"has,comma\"") { return 16; }
+    if (csv_escape("has\"quote") != "\"has\"\"quote\"") { return 17; }
+    if (csv_join(["a", "b", "c"]) != "a,b,c") { return 18; }
+    if (csv_join(["has,comma", "plain"]) != "\"has,comma\",plain") { return 19; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 14)", code)
+	}
+}
+
 // Thirteenth stdlib bundle: array filter_non_empty /
 // count_non_empty, string word_count / escape_html /
 // strip_quotes, i32 to_string_padded. 6 helpers.
