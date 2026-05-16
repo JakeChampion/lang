@@ -1,0 +1,21 @@
+// std/i32 — integer (i32) receiver methods.
+//
+// Methods are migrated here gradually from the auto-injected
+// magic prelude per docs/PRELUDE-TO-MODULES.md. Files declare
+// `import "std/i32";` to bring the methods into scope. During
+// the transition the prelude itself does the same import so
+// existing single-file programs keep working unchanged.
+
+// `(n: i32) abs()` — absolute value. Edge case: i32::MIN
+// (-2147483648) has no positive counterpart in i32; the
+// magnitude is carried through i64 so the result wraps to
+// i32::MIN itself (matches Rust i32::wrapping_abs / Go's
+// behaviour). Callers needing exact handling should widen
+// to i64 first.
+pub function (n: i32) abs(): i32 {
+    if (n < 0) {
+        var w: i64 = 0 - (n as i64);
+        return w as i32;
+    }
+    return n;
+}
