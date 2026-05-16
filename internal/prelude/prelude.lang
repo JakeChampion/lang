@@ -288,6 +288,66 @@ function (s: string) escape_c(): string {
     return out;
 }
 
+// `(s: string) escape_shell()` — POSIX-shell-safe quoting.
+// Wraps s in single quotes and replaces any interior `'`
+// with the standard close-quote / escaped-single-quote /
+// reopen-quote dance: `'` → `'\''`. The result can be
+// concatenated into a shell command line without word
+// splitting or substitution.
+function (s: string) escape_shell(): string {
+    return "'" + s.replace("'", "'\\''") + "'";
+}
+
+// `(s: string) snake_case()` / `kebab_case()` — convert
+// camelCase or PascalCase to lower-case-with-separator
+// names. Inserts an underscore (or hyphen) before each
+// internal capital letter; lowercases everything; leaves
+// existing separators (_, -, space) alone besides the case
+// fold.
+function (s: string) snake_case(): string {
+    return __case_separator(s, 95);
+}
+
+function (s: string) kebab_case(): string {
+    return __case_separator(s, 45);
+}
+
+function __case_separator(s: string, sep_byte: i32): string {
+    var n: i32 = len(s);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b.is_upper() && i > 0) {
+            out = out + sep_byte.to_ascii_string();
+        }
+        if (b == 32) {
+            out = out + sep_byte.to_ascii_string();
+        } else {
+            out = out + b.to_lower().to_ascii_string();
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `s.is_valid_identifier()` — true if s matches lang's /
+// C / JS identifier pattern: starts with a letter or
+// underscore, continues with letters / digits / underscores.
+// Empty string returns false.
+function (s: string) is_valid_identifier(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var first: i32 = s[0];
+    if (!first.is_alpha() && first != 95) { return false; }
+    var i: i32 = 1;
+    while (i < n) {
+        if (!s[i].is_alnum() && s[i] != 95) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // `repeat_char(ch, n)` — fresh string of n copies of the byte
 // `ch`. Faster than `(c).chr().repeat(n)` would be (no chr
 // helper exists yet; this is the substitute). `n <= 0`
@@ -335,6 +395,15 @@ function http_status_text(code: i32): string {
     if (code == 503) { return "Service Unavailable"; }
     if (code == 504) { return "Gateway Timeout"; }
     return "";
+}
+
+// `is_valid_http_status(code)` — true if code is in the RFC
+// 9110 range of [100, 599]. The full HTTP status range is
+// 100..999 by the BNF but only the first three centuries
+// have semantic meaning; servers shouldn't emit codes
+// outside [100, 599].
+function is_valid_http_status(code: i32): boolean {
+    return code >= 100 && code <= 599;
 }
 
 // `http_response_ok(body)` — 200 OK with the given body.
@@ -990,6 +1059,15 @@ function (n: i32) round_down_to(m: i32): i32 {
     if (m <= 0) { return n; }
     if (n < 0) { return 0 - ((0 - n + m - 1) / m * m); }
     return (n / m) * m;
+}
+
+// `(n: i32) divmod(d)` — `(quotient, remainder)` pair from a
+// single division. Saves the two-call boilerplate `(n/d, n%d)`
+// and signals intent at the call site (the pair is the unit
+// of work). d == 0 returns (0, 0) — caller validates.
+function (n: i32) divmod(d: i32): (i32, i32) {
+    if (d == 0) { return (0, 0); }
+    return (n / d, n % d);
 }
 
 // === i32 bit ops ===
