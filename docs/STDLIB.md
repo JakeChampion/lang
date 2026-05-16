@@ -47,12 +47,12 @@ Receiver methods on i32 / byte values.
 - **String formatting:** `to_string`, `to_string_padded`,
   `to_string_with_sep`, `to_hex`, `to_binary`, `to_oct`,
   `to_rgb_hex`, `digits`, `pluralize`
-- **i64 parity (kept alongside until `std/i64` grows the
-  duplicate set):** `is_even`, `is_odd`
 
 ### `std/i64`
 
-`abs`, `min`, `max`, `clamp`, `pow`, `gcd`, `lcm`, `to_string`.
+- **Scalar:** `abs`, `min`, `max`, `clamp`, `pow`, `gcd`, `lcm`
+- **Parity:** `is_even`, `is_odd`
+- **String:** `to_string`
 
 ### `std/u32`
 
