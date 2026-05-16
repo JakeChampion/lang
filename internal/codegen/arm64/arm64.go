@@ -5582,19 +5582,76 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("ldr x17, [x16]")                // x17 = fn_ptr (= [pair + 0])
 		g.emit("ldr x0, [x16, #8]")             // x0 = env_ptr (= [pair + 8])
 		g.emit("str x0, [sp, #-%d]!", slotBytes)
-		g.emitCallArgsLoad(argc + 1)
+		// Under the two-word string ABI, string args occupy 2
+		// operand-stack slots → 2 arg registers. Consult the
+		// static Sig stamped on OpCallIndirect to translate
+		// argc (user-visible param count) into the effective
+		// slot count. The trailing env_ptr is always 1 slot.
+		slotCount := argc + 1
+		if ast.UseTwoWordStrings(8) && op.Sig != nil {
+			slotCount = 1 // env_ptr
+			for _, t := range op.Sig.Params {
+				if _, isStr := t.(ast.StringType); isStr {
+					slotCount += 2
+				} else {
+					slotCount += 1
+				}
+			}
+		}
+		g.emitCallArgsLoad(slotCount)
 		g.emit("blr x17")
-		g.emitCallArgsCleanup(argc + 1)
+		g.emitCallArgsCleanup(slotCount)
+		// Indirect-call return: push (data, len) under two-
+		// word strings when the static signature says the
+		// callee returns a string. Void-returning function
+		// values don't materialise as values today (the IR
+		// emits OpCallIndirect through a non-void expression
+		// position), so we always push at least one slot.
+		if ast.UseTwoWordStrings(8) && op.Sig != nil {
+			if _, isStr := op.Sig.Result.(ast.StringType); isStr {
+				g.push()
+				g.emit("mov x0, x1")
+				g.push()
+				break
+			}
+		}
 		g.push()
 
 	case ir.OpCallClosureDirect:
 		// Defunctionalised closure call. Operand stack holds
 		// (args..., env_ptr) — same shape as OpCallDirect with
-		// one extra arg. Reuse the standard load/cleanup pair.
+		// one extra arg (the trailing __env, present in the
+		// hoisted callee's Params list as its last entry).
+		// Under the two-word string ABI string args take 2
+		// operand-stack slots → 2 arg registers, and a string
+		// return arrives as (data, len) in (x0, x1) — both
+		// halves need pushing post-call.
 		argc := int(op.I32)
-		g.emitCallArgsLoad(argc)
+		slotCount := argc
+		if ast.UseTwoWordStrings(8) {
+			if callee, ok := g.funcs[op.Str]; ok && callee != nil {
+				slotCount = 0
+				for _, p := range callee.Params {
+					if _, isStr := p.Type.(ast.StringType); isStr {
+						slotCount += 2
+					} else {
+						slotCount += 1
+					}
+				}
+			}
+		}
+		g.emitCallArgsLoad(slotCount)
 		g.emit("bl %s", op.Str)
-		g.emitCallArgsCleanup(argc)
+		g.emitCallArgsCleanup(slotCount)
+		if returnIsVoid(g, op.Str) {
+			break
+		}
+		if ast.UseTwoWordStrings(8) && returnIsString(g, op.Str) {
+			g.push() // push data (x0)
+			g.emit("mov x0, x1")
+			g.push() // push len
+			break
+		}
 		g.push()
 
 	case ir.OpMakeClosure, ir.OpMakeEnv:
