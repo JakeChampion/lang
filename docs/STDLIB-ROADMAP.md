@@ -500,6 +500,18 @@ think they're free additions to make.
 - **Log helpers**: `log_info(msg)` / `log_warn(msg)` /
   `log_error(msg)`. Thin wrappers around `eprint` with a
   `[LEVEL]` prefix.
+- **String array hygiene**: `arr.filter_non_empty()` /
+  `arr.count_non_empty()`. Useful after `split(sep)` when
+  adjacent separators left empty pieces.
+- **`s.word_count()`**: whitespace-separated word count.
+  Empty / all-whitespace input returns 0.
+- **`s.escape_html()`**: escape the five HTML / XML
+  metacharacters (& < > " ').
+- **`s.strip_quotes()`**: `Option[string]`, returns inner
+  if the string starts AND ends with matching `"` or `'`.
+- **`(n: i32) to_string_padded(width)`**: decimal with
+  zero-pad. Negatives pad the body and re-prefix `-`
+  (`-0042` not `0-042`).
 
 ## Known compiler bugs surfaced during this work
 

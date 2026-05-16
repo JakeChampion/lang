@@ -6352,6 +6352,56 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Thirteenth stdlib bundle: array filter_non_empty /
+// count_non_empty, string word_count / escape_html /
+// strip_quotes, i32 to_string_padded. 6 helpers.
+func TestArm64StdlibBundle13(t *testing.T) {
+	src := `function main(): i32 {
+    // filter_non_empty / count_non_empty
+    var src: string[] = "a,,b,,,c".split(",");
+    if (len(src) != 6) { return 1; }
+    var clean: string[] = src.filter_non_empty();
+    if (len(clean) != 3 || clean[0] != "a" || clean[2] != "c") { return 2; }
+    if (src.count_non_empty() != 3) { return 3; }
+
+    var empty: string[] = [];
+    if (len(empty.filter_non_empty()) != 0) { return 4; }
+    if (empty.count_non_empty() != 0) { return 5; }
+
+    // word_count
+    if ("hello world".word_count() != 2) { return 6; }
+    if ("  a  b  c  ".word_count() != 3) { return 7; }
+    if ("".word_count() != 0) { return 8; }
+    if ("foo\tbar\nbaz".word_count() != 3) { return 9; }
+
+    // escape_html
+    if ("hello".escape_html() != "hello") { return 10; }
+    if ("<>".escape_html() != "&lt;&gt;") { return 11; }
+    if ("a & b".escape_html() != "a &amp; b") { return 12; }
+    if ("\"quoted\"".escape_html() != "&#34;quoted&#34;") { return 13; }
+    if ("a'b".escape_html() != "a&#39;b") { return 14; }
+
+    // strip_quotes
+    match ("\"hello\"".strip_quotes()) { Some(s) => { if (s != "hello") { return 15; } }, None => { return 16; }, }
+    match ("'world'".strip_quotes()) { Some(s) => { if (s != "world") { return 17; } }, None => { return 18; }, }
+    match ("noquotes".strip_quotes()) { Some(_) => { return 19; }, None => { } }
+    match ("\"".strip_quotes()) { Some(_) => { return 20; }, None => { } }
+    match ("\"unmatched'".strip_quotes()) { Some(_) => { return 21; }, None => { } }
+
+    // to_string_padded
+    if ((42).to_string_padded(5) != "00042") { return 22; }
+    if ((42).to_string_padded(2) != "42") { return 23; }
+    if ((0).to_string_padded(3) != "000") { return 24; }
+    if ((0 - 42).to_string_padded(5) != "-0042") { return 25; }
+    if ((0 - 42).to_string_padded(2) != "-42") { return 26; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 13)", code)
+	}
+}
+
 // Twelfth stdlib bundle: bit accessors (bit/set/clear/
 // toggle), byte newline predicate, count_lines, HTTP
 // response builders, log_info/warn/error. 12 helpers.
