@@ -354,6 +354,139 @@ function (n: i32) lcm(other: i32): i32 {
     return (n / g).abs() * other.abs();
 }
 
+// === i32 bit ops ===
+//
+// `count_ones` / `leading_zeros` / `trailing_zeros` /
+// `byte_swap` — bit-fiddling utilities. Software
+// implementations (no intrinsics surface in lang); O(width)
+// per call, fine for the use cases (hash mixing, bit-packed
+// flag inspection, endian conversion).
+
+function (n: i32) count_ones(): i32 {
+    var u: u32 = n as u32;
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < 32) {
+        if ((u & (1 as u32)) != (0 as u32)) { c = c + 1; }
+        u = u >> (1 as u32);
+        i = i + 1;
+    }
+    return c;
+}
+
+function (n: i32) leading_zeros(): i32 {
+    if (n == 0) { return 32; }
+    var u: u32 = n as u32;
+    // Top-bit mask = 1 << 31. Lang doesn't lex hex literals
+    // big enough to spell 0x80000000 directly, so construct
+    // via a left shift.
+    var top: u32 = (1 as u32) << (31 as u32);
+    var c: i32 = 0;
+    while ((u & top) == (0 as u32)) {
+        c = c + 1;
+        u = u << (1 as u32);
+    }
+    return c;
+}
+
+function (n: i32) trailing_zeros(): i32 {
+    if (n == 0) { return 32; }
+    var u: u32 = n as u32;
+    var c: i32 = 0;
+    while ((u & (1 as u32)) == (0 as u32)) {
+        c = c + 1;
+        u = u >> (1 as u32);
+    }
+    return c;
+}
+
+// `(n: i32) byte_swap()` — reverse the four bytes of n.
+// Useful for endian conversion when reading / writing on-
+// disk formats. Reverses bytewise: ABCD → DCBA.
+function (n: i32) byte_swap(): i32 {
+    var u: u32 = n as u32;
+    var b0: u32 = u & (255 as u32);
+    var b1: u32 = (u >> (8 as u32)) & (255 as u32);
+    var b2: u32 = (u >> (16 as u32)) & (255 as u32);
+    var b3: u32 = (u >> (24 as u32)) & (255 as u32);
+    return ((b0 << (24 as u32)) | (b1 << (16 as u32)) | (b2 << (8 as u32)) | b3) as i32;
+}
+
+// === i64 power / gcd / lcm (parity with i32) ===
+
+function (n: i64) pow(exp: i32): i64 {
+    if (exp < 0) { return 0 as i64; }
+    var base: i64 = n;
+    var e: i32 = exp;
+    var out: i64 = 1 as i64;
+    while (e > 0) {
+        if (e % 2 == 1) { out = out * base; }
+        base = base * base;
+        e = e / 2;
+    }
+    return out;
+}
+
+function (n: i64) gcd(other: i64): i64 {
+    var a: i64 = n.abs();
+    var b: i64 = other.abs();
+    while (b != (0 as i64)) {
+        var t: i64 = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+function (n: i64) lcm(other: i64): i64 {
+    if (n == (0 as i64) || other == (0 as i64)) { return 0 as i64; }
+    var g: i64 = n.gcd(other);
+    return (n / g).abs() * other.abs();
+}
+
+// === Range generators ===
+//
+// `range(start, end)` — i32[] of [start, end). Empty if
+// start >= end. Standard half-open range.
+// `range_step(start, end, step)` — same as range but with
+// arbitrary positive step. Step <= 0 returns empty (no
+// reverse ranges — use a manual while loop for that).
+
+function range(start: i32, end: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = start;
+    while (i < end) {
+        out = out.push(i);
+        i = i + 1;
+    }
+    return out;
+}
+
+function range_step(start: i32, end: i32, step: i32): i32[] {
+    var out: i32[] = [];
+    if (step <= 0) { return out; }
+    var i: i32 = start;
+    while (i < end) {
+        out = out.push(i);
+        i = i + step;
+    }
+    return out;
+}
+
+// `s.repeat_with_sep(n, sep)` — like repeat() but with sep
+// between every pair. `"x".repeat_with_sep(3, ", ")` →
+// "x, x, x". n <= 0 returns empty.
+function (s: string) repeat_with_sep(n: i32, sep: string): string {
+    if (n <= 0) { return ""; }
+    var out: string = s;
+    var i: i32 = 1;
+    while (i < n) {
+        out = out + sep + s;
+        i = i + 1;
+    }
+    return out;
+}
+
 // === i64 / u32 / u64 scalar methods ===
 //
 // Same shape as the i32 helpers above. i64.abs wraps on
