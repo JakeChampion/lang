@@ -1,0 +1,28 @@
+// std/io — convenience wrappers around the built-in Reader /
+// Writer primitives.
+//
+// Currently just `read_all_stdin()` — pulling the whole of
+// stdin into a single string. Companion to a future
+// `read_file(path)` for the
+// `$ tool < input.txt` / `$ cat in | tool` CLI shape.
+//
+// Migrated from the auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md.
+
+// `read_all_stdin()` — read until EOF and return the result
+// as a single string. Loops `Reader.read_chunk(4096)` until
+// None.
+pub function read_all_stdin(): string {
+    var r: Reader = stdin();
+    var out: string = "";
+    while (true) {
+        match (r.read_chunk(4096)) {
+            Some(chunk) => { out = out + chunk; },
+            None => {
+                r.close();
+                return out;
+            },
+        }
+    }
+    return out;
+}
