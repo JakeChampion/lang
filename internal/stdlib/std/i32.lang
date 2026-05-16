@@ -789,3 +789,10 @@ pub function (n: i32) to_rgb_hex(): string {
                  b.to_hex().pad_start(2, "0");
 }
 
+
+// `(n: i32) is_one()` / `is_minus_one()` — sentinel-value
+// shortcuts for the two most-checked small-integer constants.
+// Mirror `is_zero` / `is_positive` / `is_negative` already in
+// this module.
+pub function (n: i32) is_one(): boolean { return n == 1; }
+pub function (n: i32) is_minus_one(): boolean { return n == (0 - 1); }

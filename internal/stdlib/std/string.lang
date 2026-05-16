@@ -2010,3 +2010,53 @@ pub function repeat_char(ch: i32, n: i32): string {
 pub function __is_ascii_ws(b: i32): boolean {
     return b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12;
 }
+
+// `s.replace_at(i, new)` — return a copy of s with the byte at
+// index i replaced by the first byte of `new`. If new is empty,
+// the byte at i is dropped. Out-of-range i (negative or >=
+// len(s)) is a no-op and returns s unchanged.
+pub function (s: string) replace_at(i: i32, new: string): string {
+    var n: i32 = len(s);
+    if (i < 0 || i >= n) { return s; }
+    if (len(new) == 0) {
+        return s[0:i] + s[i + 1:n];
+    }
+    return s[0:i] + new[0:1] + s[i + 1:n];
+}
+
+// `s.without_byte(b)` — copy of s with every byte equal to b
+// removed. ASCII-level; for multi-byte sequences use
+// `replace_byte` or `replace(old, new)`.
+pub function (s: string) without_byte(b: i32): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    var buf: u8[] = __alloc_u8(n);
+    var pos: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (s[i] != b) {
+            buf[pos] = s[i] as u8;
+            pos = pos + 1;
+        }
+        i = i + 1;
+    }
+    var out: u8[] = __alloc_u8(pos);
+    var k: i32 = 0;
+    while (k < pos) {
+        out[k] = buf[k];
+        k = k + 1;
+    }
+    return string_from_bytes(out);
+}
+
+// `s.repeat_to(target)` — concatenate copies of s until the
+// result reaches at least `target` bytes, then truncate at the
+// last full copy that fits. Empty s or target <= 0 → "". The
+// truncate-not-overrun shape matches a common "fill to width
+// without exceeding" pattern.
+pub function (s: string) repeat_to(target: i32): string {
+    var sLen: i32 = len(s);
+    if (sLen == 0 || target <= 0) { return ""; }
+    var copies: i32 = target / sLen;
+    return s.repeat(copies);
+}
