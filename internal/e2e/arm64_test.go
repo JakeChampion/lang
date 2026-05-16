@@ -6352,6 +6352,74 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twenty-fourth stdlib bundle: string is_ipv4 / is_email_like,
+// i32 sum_of_digits / has_digit, string[] any_contains, HTTP
+// response builders (bad_request / internal_error). 7 helpers.
+//
+// is_ipv4's octet parse is a manual digit-walk rather than
+// parse_int — parse_int routes through i64 internally and hits
+// the native i64-comparison-across-i32-boundary bug for small
+// positive inputs (returns None on arm64 / x86-64 for "127").
+//
+// is_email_like binds the (string, string) tuple fields from
+// split_once to local `var`s before passing to `len`. Calling
+// `len(p.0)` directly on a tuple-field access crashes the arm64
+// backend (the string-header load folds incorrectly). The
+// workaround round-trips through a regular string local.
+func TestArm64StdlibBundle24(t *testing.T) {
+	src := `function main(): i32 {
+    // is_ipv4
+    if (!"127.0.0.1".is_ipv4()) { return 1; }
+    if (!"0.0.0.0".is_ipv4()) { return 2; }
+    if (!"255.255.255.255".is_ipv4()) { return 3; }
+    if ("256.0.0.0".is_ipv4()) { return 4; }
+    if ("1.2.3".is_ipv4()) { return 5; }
+    if ("1.2.3.4.5".is_ipv4()) { return 6; }
+    if ("abc.def.ghi.jkl".is_ipv4()) { return 7; }
+    if ("".is_ipv4()) { return 8; }
+
+    // is_email_like
+    if (!"a@b.c".is_email_like()) { return 10; }
+    if (!"alice@example.com".is_email_like()) { return 11; }
+    if ("no-at-sign".is_email_like()) { return 12; }
+    if ("@nodomain".is_email_like()) { return 13; }
+    if ("nolocal@".is_email_like()) { return 14; }
+    if ("a@b".is_email_like()) { return 15; }   // no dot in domain
+    if ("".is_email_like()) { return 16; }
+
+    // sum_of_digits
+    if ((0).sum_of_digits() != 0) { return 20; }
+    if ((9).sum_of_digits() != 9) { return 21; }
+    if ((123).sum_of_digits() != 6) { return 22; }
+    if ((9999).sum_of_digits() != 36) { return 23; }
+    if ((0 - 123).sum_of_digits() != 6) { return 24; }
+
+    // has_digit
+    if (!(123).has_digit(2)) { return 30; }
+    if ((123).has_digit(4)) { return 31; }
+    if (!(0).has_digit(0)) { return 32; }
+    if ((5).has_digit(0)) { return 33; }
+    if ((5).has_digit(10)) { return 34; }   // out of range
+
+    // any_contains
+    if (!["apple", "banana", "cherry"].any_contains("an")) { return 40; }
+    if (["apple", "banana"].any_contains("xyz")) { return 41; }
+    var empty: string[] = [];
+    if (empty.any_contains("x")) { return 42; }
+
+    // HTTP response builders
+    var r1: HttpResponse = http_response_bad_request("missing field");
+    if (r1.status != 400 || r1.body != "missing field") { return 50; }
+    var r2: HttpResponse = http_response_internal_error("server boom");
+    if (r2.status != 500 || r2.body != "server boom") { return 51; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 24)", code)
+	}
+}
+
 // Twenty-third stdlib bundle: string remove_all / before /
 // after / between, i32 is_between, byte is_letter, string[]
 // all_non_empty. 7 helpers.
