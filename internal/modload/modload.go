@@ -152,6 +152,12 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		allConsts:     map[string]bool{},
 	}
 	for _, fn := range prog.Funcs {
+		// Stamp every FuncDecl with the path of the module that
+		// declared it. The checker reads this during method
+		// dispatch to scope visibility — a method declared in
+		// module A is only callable from a file whose import
+		// closure reaches A.
+		fn.SourceModule = path
 		if fn.Public {
 			mod.publicFuncs[fn.Name] = true
 		}
@@ -239,6 +245,43 @@ func readSource(path string) (string, error) {
 	return string(b), nil
 }
 
+// importClosures computes, for each loaded module, the set of
+// module paths it transitively imports — including itself. The
+// returned map is keyed by canonical module path; each value is
+// a set whose membership answers "is module B in module A's
+// import closure?" with a single map lookup.
+//
+// The checker uses this for module-scoped method dispatch: at a
+// call site inside module A, a method declared in module B is
+// callable only if `closures[A][B]` is true. Self-membership
+// keeps the same lookup working when A == B (a module always
+// sees its own methods).
+//
+// O(N²) worst case for N modules — fine for the small import
+// graphs lang programs actually have. If that ever stops being
+// true, a SCC-based fix-point would replace the per-module
+// BFS without changing the contract.
+func importClosures(loaded map[string]*module) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for path, mod := range loaded {
+		closure := map[string]bool{path: true}
+		stack := []*module{mod}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, child := range cur.imports {
+				if closure[child.path] {
+					continue
+				}
+				closure[child.path] = true
+				stack = append(stack, child)
+			}
+		}
+		out[path] = closure
+	}
+	return out
+}
+
 // importLocalName mirrors the parser-side helper but is duplicated
 // here so the driver doesn't need to re-parse to compute it. Stdlib
 // path keys (`stdlib://std/i32.lang`) get their basename extracted
@@ -264,7 +307,9 @@ func importLocalName(path string) string {
 // the rewriter accumulates those errors and combine returns the
 // first one (other errors are wrapped under it).
 func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) {
-	combined := &ast.Program{}
+	combined := &ast.Program{
+		ModuleImports: importClosures(loaded),
+	}
 	var firstErr error
 	for _, mod := range loaded {
 		errs := mod.rewriteAll(prefixFor(mod.path == entryPath, mod.name))

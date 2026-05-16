@@ -1198,6 +1198,15 @@ type FuncDecl struct {
 	// can filter prelude noise out of "user code" listings; it
 	// has no semantic effect on type-checking, IR, or codegen.
 	IsPrelude bool
+	// SourceModule is the canonical module path that declared this
+	// function. modload stamps every FuncDecl as it loads each
+	// module — disk paths get their absolute path; stdlib paths
+	// get the `stdlib://…` form modload uses internally. The
+	// checker reads this to scope method dispatch to the call
+	// site's import closure (module-scoped methods per
+	// docs/PRELUDE-TO-MODULES.md). Single-file programs and
+	// prelude-injected decls leave this empty.
+	SourceModule string
 }
 
 // StructDecl is a top-level `struct` declaration. Fields are stored in
@@ -1328,6 +1337,16 @@ type Program struct {
 	// stitches the combined program before the checker runs.
 	// Single-file programs leave this empty.
 	Imports []*Import
+	// ModuleImports records each loaded module's transitive import
+	// closure. The map is keyed by module path; each entry is the
+	// set of module paths reachable via `import` chains starting
+	// from that module, including the module itself (so a method
+	// lookup for "is `<receiver-module>` visible from `<call-site-
+	// module>`" is a single map lookup). modload populates the
+	// full structure during loading; the checker uses it to scope
+	// method dispatch under module-scoped semantics (see
+	// docs/PRELUDE-TO-MODULES.md).
+	ModuleImports map[string]map[string]bool
 	// Comments lists every `//` line comment the lexer collected,
 	// in source order. Most consumers (checker, IR lowering,
 	// codegen) ignore this field; the formatter walks it alongside

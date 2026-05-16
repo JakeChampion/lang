@@ -556,3 +556,78 @@ function main(): i32 { return 0; }`,
 		t.Errorf("expected `unknown stdlib module` in error; got %v", err)
 	}
 }
+
+// Every FuncDecl gets stamped with the path of the module that
+// declared it. Cross-module method dispatch (Phase 3 of the
+// prelude-to-modules migration) relies on this stamp to scope
+// method visibility — methods declared in module A are only
+// callable from files whose import closure reaches A.
+func TestLoadStampsFuncDeclSourceModule(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.lang": `pub function f(): i32 { return 1; }`,
+		"main.lang": `import "./util";
+function main(): i32 { return util.f(); }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainAbs, _ := filepath.Abs(filepath.Join(dir, "main.lang"))
+	utilAbs, _ := filepath.Abs(filepath.Join(dir, "util.lang"))
+	got := map[string]string{}
+	for _, fn := range prog.Funcs {
+		got[fn.Name] = fn.SourceModule
+	}
+	if got["main"] != mainAbs {
+		t.Errorf("main.SourceModule = %q, want %q", got["main"], mainAbs)
+	}
+	if got["util__f"] != utilAbs {
+		t.Errorf("util__f.SourceModule = %q, want %q", got["util__f"], utilAbs)
+	}
+}
+
+// Transitive import closures: a module's closure includes
+// itself plus every module reachable by an import-chain. The
+// checker reads this to answer the "is the receiver's source
+// module visible from here?" question during method dispatch.
+func TestLoadComputesImportClosures(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"c.lang": `pub function c_fn(): i32 { return 3; }`,
+		"b.lang": `import "./c";
+pub function b_fn(): i32 { return c.c_fn() + 2; }`,
+		"a.lang": `import "./b";
+function main(): i32 { return b.b_fn() + 1; }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "a.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aAbs, _ := filepath.Abs(filepath.Join(dir, "a.lang"))
+	bAbs, _ := filepath.Abs(filepath.Join(dir, "b.lang"))
+	cAbs, _ := filepath.Abs(filepath.Join(dir, "c.lang"))
+
+	if prog.ModuleImports == nil {
+		t.Fatal("ModuleImports map is nil")
+	}
+	if !prog.ModuleImports[aAbs][aAbs] {
+		t.Errorf("closure[a] should contain a itself")
+	}
+	if !prog.ModuleImports[aAbs][bAbs] {
+		t.Errorf("closure[a] should contain b (direct import)")
+	}
+	if !prog.ModuleImports[aAbs][cAbs] {
+		t.Errorf("closure[a] should contain c (transitive via b)")
+	}
+
+	// Reverse direction shouldn't leak: c doesn't import a or b.
+	if prog.ModuleImports[cAbs][bAbs] {
+		t.Errorf("closure[c] should NOT contain b")
+	}
+	if prog.ModuleImports[cAbs][aAbs] {
+		t.Errorf("closure[c] should NOT contain a")
+	}
+	// Self-membership is universal.
+	if !prog.ModuleImports[cAbs][cAbs] {
+		t.Errorf("closure[c] should contain c itself")
+	}
+}
