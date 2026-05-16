@@ -417,6 +417,24 @@ think they're free additions to make.
   byte `ch`. Faster than `chr(c).repeat(n)` would be.
 - **`http_status_text(code)`**: IANA reason phrase for the
   common HTTP status codes (RFC 9110). `""` for unknown.
+- **i32 saturating + checked arithmetic**: `saturating_add` /
+  `saturating_sub` (clamp at MAX/MIN), `checked_add` /
+  `checked_sub` (Option[i32], None on overflow),
+  `checked_div` (None on DBZ or i32::MIN/-1). Overflow
+  detection via sign-bit comparison — the natural i64
+  widening trick exposed an arm64/x86-64 i64 comparison bug
+  across the i32::MAX threshold that this implementation
+  sidesteps.
+- **`(n: i32) to_hex()`**: sugar for `int_to_string_radix(n,
+  16)`. Signed (negatives emit a leading `-`); callers
+  wanting the two's-complement bit pattern should widen to
+  u32 first.
+- **`(s: string) parse_bool()`**: accepts the canonical
+  spellings `"true"` / `"false"` / `"1"` / `"0"`. Anything
+  else returns None — no implicit case-folding.
+- **HTTP method classifiers**: `s.is_http_safe_method()` (GET
+  / HEAD / OPTIONS / TRACE per RFC 9110 §9.2.1),
+  `s.is_http_idempotent_method()` (safe set + PUT / DELETE).
 
 ## Known compiler bugs surfaced during this work
 
@@ -443,6 +461,15 @@ think they're free additions to make.
   inference fails. Fix shape: seed `sub` from `n.TypeArgs`
   when they're already set. Documented here so the next
   attempt at generic Array methods starts from this context.
+- **arm64 / x86-64 i64 comparison across the i32::MAX
+  boundary returns wrong result**. The expression
+  `(la + lb) > 2147483647 as i64` where `la = 2147483647 as
+  i64` and `lb = 1 as i64` should evaluate to `true` (since
+  la + lb = 2147483648 > 2147483647) but the natives return
+  `false`. Interp + wasm get it right. The native saturating
+  / checked arithmetic prelude additions sidestep this by
+  using sign-bit overflow detection on plain i32 ops rather
+  than the natural i64-widening approach.
 
 ## Cross-cutting decisions
 

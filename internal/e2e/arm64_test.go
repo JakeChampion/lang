@@ -6352,6 +6352,57 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Eighth stdlib bundle: i32 saturating / checked arithmetic
+// (overflow detection via sign-bit comparison — natives' i64
+// codegen has a comparison bug across the i32::MAX threshold,
+// so the prelude sticks to pure-i32 ops), string parse_bool,
+// (i32).to_hex(), HTTP method classifiers. 9 helpers.
+func TestArm64StdlibBundle8(t *testing.T) {
+	src := `function main(): i32 {
+    // Saturating add / sub — clamp at MAX / MIN
+    if ((100).saturating_add(50) != 150) { return 1; }
+    if ((2147483647).saturating_add(1) != 2147483647) { return 2; }
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (min32.saturating_sub(1) != min32) { return 3; }
+    if ((100).saturating_sub(50) != 50) { return 4; }
+
+    // Checked add / sub / div — None on overflow / DBZ / MIN-by--1
+    match ((100).checked_add(50)) {
+        Some(v) => { if (v != 150) { return 5; } },
+        None => { return 6; },
+    }
+    match ((2147483647).checked_add(1)) { Some(_) => { return 7; }, None => { } }
+    match ((10).checked_div(0)) { Some(_) => { return 8; }, None => { } }
+    match (min32.checked_div(0 - 1)) { Some(_) => { return 9; }, None => { } }
+
+    // to_hex
+    if ((0).to_hex() != "0") { return 10; }
+    if ((255).to_hex() != "ff") { return 11; }
+    if ((4096).to_hex() != "1000") { return 12; }
+
+    // parse_bool
+    match ("true".parse_bool()) { Some(b) => { if (!b) { return 13; } }, None => { return 14; }, }
+    match ("false".parse_bool()) { Some(b) => { if (b) { return 15; } }, None => { return 16; }, }
+    match ("1".parse_bool()) { Some(b) => { if (!b) { return 17; } }, None => { return 18; }, }
+    match ("yes".parse_bool()) { Some(_) => { return 19; }, None => { } }
+    match ("TRUE".parse_bool()) { Some(_) => { return 20; }, None => { } }
+
+    // HTTP method classifiers
+    if (!"GET".is_http_safe_method()) { return 21; }
+    if (!"HEAD".is_http_safe_method()) { return 22; }
+    if ("POST".is_http_safe_method()) { return 23; }
+    if (!"GET".is_http_idempotent_method()) { return 24; }
+    if (!"PUT".is_http_idempotent_method()) { return 25; }
+    if (!"DELETE".is_http_idempotent_method()) { return 26; }
+    if ("POST".is_http_idempotent_method()) { return 27; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 8)", code)
+	}
+}
+
 // Seventh stdlib bundle: i32[] product / avg, string leading/
 // trailing_count, hash_fnv32, escape_c, repeat_char,
 // http_status_text. 8 new helpers. Pure-prelude.
