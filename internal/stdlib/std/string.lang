@@ -345,3 +345,453 @@ pub function (s: string) is_valid_identifier(): boolean {
     }
     return true;
 }
+
+// `s.is_ipv4()` — true if s parses as a dotted-decimal IPv4
+// address: four octets, each 0..255, separated by dots. No
+// leading-zero check; "0.0.0.0" / "255.255.255.255" / common
+// shapes all pass.
+//
+// Octet parse is a manual digit-walk rather than parse_int —
+// parse_int uses i64 internally and hits the native
+// i64-comparison-across-i32-boundary bug for small positive
+// inputs (returns None on arm64 / x86-64 for "127").
+pub function (s: string) is_ipv4(): boolean {
+    var parts: string[] = s.split(".");
+    if (len(parts) != 4) { return false; }
+    var i: i32 = 0;
+    while (i < 4) {
+        var p: string = parts[i];
+        var plen: i32 = len(p);
+        if (plen == 0 || plen > 3) { return false; }
+        var v: i32 = 0;
+        var j: i32 = 0;
+        while (j < plen) {
+            var b: i32 = p[j];
+            if (!b.is_digit()) { return false; }
+            v = v * 10 + (b - 48);
+            j = j + 1;
+        }
+        if (v < 0 || v > 255) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_email_like()` — basic syntactic check: exactly one
+// '@' with non-empty local + domain parts, and the domain
+// contains at least one dot. Not RFC 5322 compliant (real
+// email validation needs a parser); useful as a quick
+// sanity check before downstream validation.
+//
+// Tuple fields are bound to locals before passing to `len` —
+// `len(p.0)` directly on a `(string, string)` tuple-field
+// access crashes the arm64 backend (the load folds
+// incorrectly). Binding through `var` is a safe workaround
+// pending a codegen fix.
+pub function (s: string) is_email_like(): boolean {
+    match (s.split_once("@")) {
+        Some(p) => {
+            var lo: string = p.0;
+            var dom: string = p.1;
+            if (len(lo) == 0) { return false; }
+            if (len(dom) == 0) { return false; }
+            return dom.contains(".");
+        },
+        None => { return false; },
+    }
+}
+
+// `s.is_url_like()` — true if s starts with `http://` or
+// `https://` and contains at least one dot after the scheme
+// (so localhost-style "http://nodot" fails). Very loose
+// shape check, like `is_email_like`; defer to a real URL
+// parser when one lands.
+pub function (s: string) is_url_like(): boolean {
+    var rest: string = "";
+    if (s.starts_with("https://")) {
+        rest = s.remove_prefix("https://");
+    } else if (s.starts_with("http://")) {
+        rest = s.remove_prefix("http://");
+    } else {
+        return false;
+    }
+    if (len(rest) == 0) { return false; }
+    return rest.contains(".");
+}
+
+// `s.is_json_like()` — true if s (after trimming whitespace)
+// starts and ends with matching `{}` or `[]`. Not a real
+// JSON validator — just a fast pre-flight check before
+// attempting a parse. Empty strings return false.
+pub function (s: string) is_json_like(): boolean {
+    var t: string = s.trim();
+    var n: i32 = len(t);
+    if (n < 2) { return false; }
+    var first: i32 = t[0];
+    var last: i32 = t[n - 1];
+    if (first == 123 && last == 125) { return true; }   // { }
+    if (first == 91 && last == 93) { return true; }     // [ ]
+    return false;
+}
+
+// `s.common_prefix(other)` — longest shared leading
+// substring. Returns "" when the first byte differs or
+// either argument is empty.
+pub function (s: string) common_prefix(other: string): string {
+    var n: i32 = len(s);
+    var m: i32 = len(other);
+    var cap: i32 = n;
+    if (m < cap) { cap = m; }
+    var i: i32 = 0;
+    while (i < cap) {
+        if (s[i] != other[i]) { return s.take(i); }
+        i = i + 1;
+    }
+    return s.take(cap);
+}
+
+// `s.common_suffix(other)` — longest shared trailing
+// substring. Returns "" when no overlap or either side
+// is empty.
+pub function (s: string) common_suffix(other: string): string {
+    var n: i32 = len(s);
+    var m: i32 = len(other);
+    var cap: i32 = n;
+    if (m < cap) { cap = m; }
+    var i: i32 = 0;
+    while (i < cap) {
+        if (s[n - 1 - i] != other[m - 1 - i]) {
+            return s.drop(n - i);
+        }
+        i = i + 1;
+    }
+    return s.drop(n - cap);
+}
+
+// `s.starts_with_any(prefixes)` — true if any entry in
+// prefixes is a prefix of s. Empty prefixes array → false.
+// An empty-string prefix always matches (consistent with
+// `starts_with("")`).
+pub function (s: string) starts_with_any(prefixes: string[]): boolean {
+    var n: i32 = len(prefixes);
+    var i: i32 = 0;
+    while (i < n) {
+        if (s.starts_with(prefixes[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `s.ends_with_any(suffixes)` — true if any entry in
+// suffixes is a suffix of s. Empty suffixes array → false.
+pub function (s: string) ends_with_any(suffixes: string[]): boolean {
+    var n: i32 = len(suffixes);
+    var i: i32 = 0;
+    while (i < n) {
+        if (s.ends_with(suffixes[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `s.replace_first(old, new)` — replace only the first
+// occurrence of `old` with `new`. Convenience wrapper over
+// `replace_n(old, new, 1)`. Empty `old` is a no-op
+// (matches `replace`'s semantics).
+pub function (s: string) replace_first(old: string, new: string): string {
+    return s.replace_n(old, new, 1);
+}
+
+// `s.word_at(i)` — Option[string] of the i-th word in s
+// using whitespace as separator. Multiple consecutive
+// whitespace bytes collapse (driven by `fields()`).
+// Negative indices and indices >= word_count return None.
+pub function (s: string) word_at(i: i32): Option[string] {
+    if (i < 0) { return None; }
+    var words: string[] = s.fields();
+    if (i >= len(words)) { return None; }
+    return Some(words[i]);
+}
+
+// `s.word_count_min(min_len)` — count of whitespace-
+// delimited words at least `min_len` bytes long.
+// `min_len <= 0` counts every word.
+pub function (s: string) word_count_min(min_len: i32): i32 {
+    var words: string[] = s.fields();
+    var n: i32 = len(words);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (len(words[i]) >= min_len) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+// `s.longest_word()` — Option[string] of the longest
+// whitespace-delimited word. Ties go to the first
+// occurrence. Empty / all-whitespace input → None.
+pub function (s: string) longest_word(): Option[string] {
+    var words: string[] = s.fields();
+    var n: i32 = len(words);
+    if (n == 0) { return None; }
+    var best: string = words[0];
+    var i: i32 = 1;
+    while (i < n) {
+        if (len(words[i]) > len(best)) { best = words[i]; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
+// `s.is_quoted()` — true if s has at least 2 bytes and
+// the first and last bytes are matching quote characters
+// (", `, or '). Doesn't validate escaping inside the
+// quotes — purely a shape predicate. Empty / single-char
+// strings return false (need at least an opening and
+// closing quote).
+pub function (s: string) is_quoted(): boolean {
+    var n: i32 = len(s);
+    if (n < 2) { return false; }
+    var first: i32 = s[0];
+    var last: i32 = s[n - 1];
+    if (first != last) { return false; }
+    if (first == 34 || first == 39 || first == 96) { return true; }
+    return false;
+}
+
+// `s.is_kebab_case()` — true if s is non-empty,
+// lowercase / digit / hyphen only, no leading or trailing
+// hyphen, and no consecutive hyphens. Matches the
+// "url-slug" shape kebab-case usually denotes.
+pub function (s: string) is_kebab_case(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    if (s[0] == 45 || s[n - 1] == 45) { return false; }   // leading/trailing -
+    var i: i32 = 0;
+    var prev_hyphen: boolean = false;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 45) {
+            if (prev_hyphen) { return false; }
+            prev_hyphen = true;
+        } else if ((b >= 97 && b <= 122) || (b >= 48 && b <= 57)) {
+            prev_hyphen = false;
+        } else {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_snake_case()` — true if s is non-empty,
+// lowercase / digit / underscore only, no leading or
+// trailing underscore, and no consecutive underscores.
+pub function (s: string) is_snake_case(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    if (s[0] == 95 || s[n - 1] == 95) { return false; }   // leading/trailing _
+    var i: i32 = 0;
+    var prev_under: boolean = false;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 95) {
+            if (prev_under) { return false; }
+            prev_under = true;
+        } else if ((b >= 97 && b <= 122) || (b >= 48 && b <= 57)) {
+            prev_under = false;
+        } else {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.shift_byte(delta)` — Caesar-style byte shift: each
+// byte += delta, wrapping at 256. Negative deltas are
+// supported. Useful for simple obfuscation / toy ciphers;
+// don't rely on it for security.
+pub function (s: string) shift_byte(delta: i32): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    var buf: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i] + delta;
+        // Normalise into 0..255 with two mods (handles
+        // negative deltas correctly — `(-1) % 256 == -1`
+        // in i32, hence the second add).
+        b = ((b % 256) + 256) % 256;
+        buf[i] = b as u8;
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+// `s.without_chars(set)` — remove every byte from s that
+// appears anywhere in `set`. Empty set → unchanged.
+// ASCII-level character class semantics.
+pub function (s: string) without_chars(set: string): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    var setLen: i32 = len(set);
+    if (setLen == 0) { return s; }
+    var buf: u8[] = __alloc_u8(n);
+    var pos: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var found: boolean = false;
+        var j: i32 = 0;
+        while (j < setLen) {
+            if (set[j] == b) { found = true; }
+            j = j + 1;
+        }
+        if (!found) {
+            buf[pos] = b as u8;
+            pos = pos + 1;
+        }
+        i = i + 1;
+    }
+    var out: u8[] = __alloc_u8(pos);
+    var k: i32 = 0;
+    while (k < pos) {
+        out[k] = buf[k];
+        k = k + 1;
+    }
+    return string_from_bytes(out);
+}
+
+// `s.contains_only(set)` — true if every byte in s is in
+// `set`. Empty s → true (vacuous). Empty set with non-empty
+// s → false (no characters allowed). ASCII-level.
+pub function (s: string) contains_only(set: string): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return true; }
+    var setLen: i32 = len(set);
+    if (setLen == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var found: boolean = false;
+        var j: i32 = 0;
+        while (j < setLen) {
+            if (set[j] == b) { found = true; }
+            j = j + 1;
+        }
+        if (!found) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.count_chars_in(set)` — count bytes of s that appear
+// in `set`. Counterpart to `without_chars` / `contains_only`.
+// Empty set → 0.
+pub function (s: string) count_chars_in(set: string): i32 {
+    var n: i32 = len(s);
+    var setLen: i32 = len(set);
+    if (n == 0 || setLen == 0) { return 0; }
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var j: i32 = 0;
+        while (j < setLen) {
+            if (set[j] == b) { c = c + 1; j = setLen; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+// `s.split_at(i)` — split s into two parts at byte index i.
+// Returns a (string, string) tuple. Negative i clamps to 0;
+// i >= len(s) puts everything in the first part.
+pub function (s: string) split_at(i: i32): (string, string) {
+    var n: i32 = len(s);
+    var k: i32 = i;
+    if (k < 0) { k = 0; }
+    if (k > n) { k = n; }
+    return (s[0:k], s[k:n]);
+}
+
+// `s.replace_byte(from, to)` — return a copy of s with every
+// byte equal to `from` replaced by `to`. ASCII-level; for
+// multi-byte sequences use `replace(old, new)`. Both args
+// are i32 byte values (use the literal character code or a
+// helper like `b'-' as i32`).
+pub function (s: string) replace_byte(from: i32, to: i32): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    var buf: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == from) { buf[i] = to as u8; } else { buf[i] = b as u8; }
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+// `s.to_acronym()` — first byte of each whitespace-
+// separated token, uppercased and concatenated. "hello
+// world" → "HW". Empty / all-whitespace input → "".
+// ASCII upper-fold only.
+pub function (s: string) to_acronym(): string {
+    var toks: string[] = s.fields();
+    var n: i32 = len(toks);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var t: string = toks[i];
+        if (len(t) > 0) {
+            var b: i32 = t[0];
+            out = out + (b.to_upper()).to_ascii_string();
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `s.title_case()` — uppercase the first byte of every
+// space-separated word, leave the rest untouched. Splits
+// on the literal ' ' byte (preserves multi-space gaps as
+// trailing spaces on the previous word the way Go's
+// `strings.Title` does). ASCII-only; "FOX" stays "FOX".
+pub function (s: string) title_case(): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    var buf: u8[] = __alloc_u8(n);
+    var prev_space: boolean = true;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (prev_space) {
+            buf[i] = b.to_upper() as u8;
+        } else {
+            buf[i] = b as u8;
+        }
+        prev_space = (b == 32);
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+// `s.lines_non_empty()` — like `lines()` but drops empty
+// entries. Useful for parsing text that uses blank lines
+// as separators where you don't care about them.
+pub function (s: string) lines_non_empty(): string[] {
+    var raw: string[] = s.lines();
+    var n: i32 = len(raw);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (len(raw[i]) != 0) { out = out.push(raw[i]); }
+        i = i + 1;
+    }
+    return out;
+}
