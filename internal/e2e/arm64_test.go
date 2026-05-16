@@ -6352,6 +6352,87 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Thirtieth stdlib bundle: string replace_first /
+// is_kebab_case / is_snake_case / shift_byte, i32[]
+// first_index_of / pairwise_diffs, i32 factorial / is_prime.
+// 8 helpers.
+//
+// `factorial` caps at 12! (largest factorial that fits in
+// i32); n >= 13 or n < 0 returns 0 as the out-of-range
+// sentinel. `is_prime` uses 6k±1 trial division, O(sqrt n).
+// `shift_byte` is a Caesar-style byte rotation — useful for
+// puzzles / toy obfuscation, not security.
+func TestArm64StdlibBundle30(t *testing.T) {
+	src := `function main(): i32 {
+    if ("aXbXc".replace_first("X", "_") != "a_bXc") { return 1; }
+    if ("none here".replace_first("x", "y") != "none here") { return 2; }
+    if ("".replace_first("a", "b") != "") { return 3; }
+
+    if (!"hello-world".is_kebab_case()) { return 10; }
+    if (!"abc".is_kebab_case()) { return 11; }
+    if (!"a-b-c-1-2".is_kebab_case()) { return 12; }
+    if ("Hello-world".is_kebab_case()) { return 13; }
+    if ("-leading".is_kebab_case()) { return 14; }
+    if ("trailing-".is_kebab_case()) { return 15; }
+    if ("a--b".is_kebab_case()) { return 16; }
+    if ("a_b".is_kebab_case()) { return 17; }
+    if ("".is_kebab_case()) { return 18; }
+
+    if (!"hello_world".is_snake_case()) { return 20; }
+    if (!"abc".is_snake_case()) { return 21; }
+    if (!"a_b_c_1_2".is_snake_case()) { return 22; }
+    if ("Hello_world".is_snake_case()) { return 23; }
+    if ("_leading".is_snake_case()) { return 24; }
+    if ("trailing_".is_snake_case()) { return 25; }
+    if ("a__b".is_snake_case()) { return 26; }
+    if ("a-b".is_snake_case()) { return 27; }
+    if ("".is_snake_case()) { return 28; }
+
+    match ([3, 1, 4, 1, 5].first_index_of(1)) {
+        Some(i) => { if (i != 1) { return 30; } },
+        None => { return 31; },
+    }
+    match ([3, 1, 4].first_index_of(99)) { Some(_) => { return 32; }, None => { } }
+    var empty: i32[] = [];
+    match (empty.first_index_of(0)) { Some(_) => { return 33; }, None => { } }
+
+    var d: i32[] = [10, 12, 15, 20].pairwise_diffs();
+    if (len(d) != 3) { return 40; }
+    if (d[0] != 2 || d[1] != 3 || d[2] != 5) { return 41; }
+    if (len(empty.pairwise_diffs()) != 0) { return 42; }
+    var single: i32[] = [5].pairwise_diffs();
+    if (len(single) != 0) { return 43; }
+
+    if ((0).factorial() != 1) { return 50; }
+    if ((1).factorial() != 1) { return 51; }
+    if ((5).factorial() != 120) { return 52; }
+    if ((10).factorial() != 3628800) { return 53; }
+    if ((12).factorial() != 479001600) { return 54; }
+    if ((13).factorial() != 0) { return 55; }
+    if ((0 - 1).factorial() != 0) { return 56; }
+
+    if (!(2).is_prime()) { return 60; }
+    if (!(3).is_prime()) { return 61; }
+    if (!(13).is_prime()) { return 62; }
+    if (!(97).is_prime()) { return 63; }
+    if ((1).is_prime()) { return 64; }
+    if ((0).is_prime()) { return 65; }
+    if ((4).is_prime()) { return 66; }
+    if ((100).is_prime()) { return 67; }
+    if ((0 - 7).is_prime()) { return 68; }
+
+    if ("abc".shift_byte(1) != "bcd") { return 70; }
+    if ("xyz".shift_byte(0 - 1) != "wxy") { return 71; }
+    if ("".shift_byte(5) != "") { return 72; }
+    if ("a".shift_byte(0) != "a") { return 73; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 30)", code)
+	}
+}
+
 // Twenty-ninth stdlib bundle: i32[] min_max / reversed /
 // every_positive, string without_chars / contains_only /
 // split_at / count_chars_in, i32 is_perfect_square.

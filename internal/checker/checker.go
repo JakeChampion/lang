@@ -875,6 +875,8 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.Methods["Array.min_max"] = "__method_Array_min_max"
 	c.info.Methods["Array.reversed"] = "__method_Array_reversed"
 	c.info.Methods["Array.every_positive"] = "__method_Array_every_positive"
+	c.info.Methods["Array.first_index_of"] = "__method_Array_first_index_of"
+	c.info.Methods["Array.pairwise_diffs"] = "__method_Array_pairwise_diffs"
 
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
