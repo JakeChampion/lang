@@ -249,6 +249,22 @@ function (s: string) hash_fnv32(): u32 {
     return h;
 }
 
+// `(s: string) hash_djb2()` — Bernstein's djb2 hash. Alternate
+// non-cryptographic hash to FNV-1a; sometimes a better fit
+// for short keys due to the differing mixing. Initial value
+// 5381; multiplier 33. Returns u32.
+function (s: string) hash_djb2(): u32 {
+    var h: u32 = 5381 as u32;
+    var mult: u32 = 33 as u32;
+    var n: i32 = len(s);
+    var i: i32 = 0;
+    while (i < n) {
+        h = h * mult + (s[i] as u32);
+        i = i + 1;
+    }
+    return h;
+}
+
 // `s.escape_c()` — C-style escape: backslash + double-quote
 // each become \\ \", and the four whitespace bytes (\n \t
 // \r \0) become their two-char escapes. Other bytes pass
@@ -336,6 +352,28 @@ function http_response_text(status: i32, body: string): HttpResponse {
 
 function http_response_not_found(): HttpResponse {
     return HttpResponse { status: 404, body: "Not Found" };
+}
+
+// `http_path_segments(path)` — split an HTTP path into
+// non-empty components. Drops the leading "/" and any
+// double slashes; query string (`?...`) is also stripped.
+// Useful for simple routing — `/api/users/42` → `["api",
+// "users", "42"]`.
+function http_path_segments(path: string): string[] {
+    var n: i32 = len(path);
+    // Strip query string.
+    var q: i32 = path.index_of("?");
+    if (q >= 0) { n = q; }
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        while (i < n && path[i] == 47) { i = i + 1; }   // skip /
+        if (i >= n) { return out; }
+        var start: i32 = i;
+        while (i < n && path[i] != 47) { i = i + 1; }
+        out = out.push(path[start:i]);
+    }
+    return out;
 }
 
 // === Random integer in range ===
@@ -536,6 +574,18 @@ function (b: i32) hex_digit(): string {
     return string_from_bytes(buf);
 }
 
+// `(b: i32) to_ascii_string()` — single-byte string from a
+// byte value. Out-of-range (< 0 or > 255) returns "". The
+// inverse of `s[0]` for single-char strings. Useful when
+// composing tokeniser output where you've got the byte and
+// want a string at the call site.
+function (b: i32) to_ascii_string(): string {
+    if (b < 0 || b > 255) { return ""; }
+    var buf: u8[] = __alloc_u8(1);
+    buf[0] = b as u8;
+    return string_from_bytes(buf);
+}
+
 // === i32 sign helpers ===
 //
 // `(n: i32) signum()` — -1 / 0 / 1 indicating the sign.
@@ -707,6 +757,27 @@ function (n: i32) lcm(other: i32): i32 {
     if (n == 0 || other == 0) { return 0; }
     var g: i32 = n.gcd(other);
     return (n / g).abs() * other.abs();
+}
+
+// `(n: i32) is_power_of_2()` — true iff n is a positive
+// power of 2 (1, 2, 4, 8, ...). Uses the (n & (n-1)) == 0
+// trick. Zero and negative numbers return false (zero is
+// debatable; we follow Rust's convention where 0 isn't a
+// power of 2).
+function (n: i32) is_power_of_2(): boolean {
+    if (n <= 0) { return false; }
+    return (n & (n - 1)) == 0;
+}
+
+// `(n: i32) next_power_of_2()` — smallest power of 2 that
+// is >= n. Returns 1 for n <= 1 (consistent with Rust's
+// next_power_of_two). For n > 2^30 wraps to 0 — overflow
+// equivalent to "no representable power".
+function (n: i32) next_power_of_2(): i32 {
+    if (n <= 1) { return 1; }
+    var p: i32 = 1;
+    while (p < n) { p = p * 2; }
+    return p;
 }
 
 // === i32 bit ops ===
@@ -2123,6 +2194,35 @@ function __method_Array_count_non_empty(arr: string[]): i32 {
         i = i + 1;
     }
     return c;
+}
+
+// `(arr: string[]) distinct()` — fresh string[] with
+// duplicates removed (first occurrence wins; order preserved).
+// O(n²) — fine for the small-list use cases (CLI flags,
+// sorted-keys dedup). For larger N use a Map-backed dedup.
+function __method_Array_distinct(arr: string[]): string[] {
+    var n: i32 = len(arr);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (out.index_of(arr[i]) < 0) { out = out.push(arr[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `(arr: string[]) distinct_count()` — number of unique
+// elements. Same algorithm as distinct but skips building
+// the output array.
+function __method_Array_distinct_count(arr: string[]): i32 {
+    var n: i32 = len(arr);
+    var seen: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (seen.index_of(arr[i]) < 0) { seen = seen.push(arr[i]); }
+        i = i + 1;
+    }
+    return len(seen);
 }
 
 // === Array append ===

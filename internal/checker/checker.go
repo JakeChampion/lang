@@ -840,6 +840,8 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.Methods["Array.reverse"] = "__method_Array_reverse"
 	c.info.Methods["Array.filter_non_empty"] = "__method_Array_filter_non_empty"
 	c.info.Methods["Array.count_non_empty"] = "__method_Array_count_non_empty"
+	c.info.Methods["Array.distinct"] = "__method_Array_distinct"
+	c.info.Methods["Array.distinct_count"] = "__method_Array_distinct_count"
 
 	// `arr.sum()` / `arr.max()` / `arr.min()` for i32[] — basic
 	// numeric reductions. sum returns i32; max/min return

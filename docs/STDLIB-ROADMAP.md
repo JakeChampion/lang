@@ -526,6 +526,21 @@ think they're free additions to make.
   field escape + comma-join. Fields with `,` / `"` / `\n`
   / `\r` get wrapped in `"..."` with interior quotes
   doubled.
+- **String-array dedup**: `arr.distinct()` /
+  `arr.distinct_count()`. First-occurrence-wins, order-
+  preserving. O(n²) — fine for small lists.
+- **Power-of-2 helpers**: `(n).is_power_of_2()` /
+  `(n).next_power_of_2()`. Matches Rust's
+  `is_power_of_two` / `next_power_of_two`. Zero returns
+  false for is, 1 for next.
+- **`(b: i32) to_ascii_string()`**: byte → single-char
+  string. Out-of-range returns `""`.
+- **`s.hash_djb2()`**: Bernstein's djb2 hash. Alternate
+  non-crypto hash to FNV-1a; sometimes a better mix for
+  short keys.
+- **`http_path_segments(path)`**: split an HTTP path into
+  non-empty components. Strips query string and collapses
+  duplicate slashes. Useful for simple routing.
 
 ### Additional compiler bug
 

@@ -6352,6 +6352,56 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Fifteenth stdlib bundle: array distinct / distinct_count,
+// i32 is_power_of_2 / next_power_of_2, byte
+// to_ascii_string, string hash_djb2, http_path_segments.
+// 7 helpers.
+func TestArm64StdlibBundle15(t *testing.T) {
+	src := `function main(): i32 {
+    // distinct / distinct_count
+    var d: string[] = ["a", "b", "a", "c", "b"].distinct();
+    if (len(d) != 3) { return 1; }
+    if (d[0] != "a" || d[2] != "c") { return 2; }
+    if (["a", "b", "a", "c", "b"].distinct_count() != 3) { return 3; }
+    var empty: string[] = [];
+    if (len(empty.distinct()) != 0) { return 4; }
+    if (len(["x", "x", "x"].distinct()) != 1) { return 5; }
+
+    // is_power_of_2
+    if (!(1).is_power_of_2()) { return 6; }
+    if (!(1024).is_power_of_2()) { return 7; }
+    if ((3).is_power_of_2()) { return 8; }
+    if ((0).is_power_of_2()) { return 9; }
+
+    // next_power_of_2
+    if ((0).next_power_of_2() != 1) { return 10; }
+    if ((1).next_power_of_2() != 1) { return 11; }
+    if ((3).next_power_of_2() != 4) { return 12; }
+    if ((1000).next_power_of_2() != 1024) { return 13; }
+
+    // to_ascii_string
+    if ((65).to_ascii_string() != "A") { return 14; }
+    if ((48).to_ascii_string() != "0") { return 15; }
+    if ((256).to_ascii_string() != "") { return 16; }
+
+    // hash_djb2 — deterministic + distinguishing
+    if ("a".hash_djb2() == "b".hash_djb2()) { return 17; }
+    if ("hello".hash_djb2() != "hello".hash_djb2()) { return 18; }
+
+    // http_path_segments
+    var ps: string[] = http_path_segments("/api/users/42");
+    if (len(ps) != 3 || ps[0] != "api" || ps[2] != "42") { return 19; }
+    if (len(http_path_segments("/")) != 0) { return 20; }
+    if (len(http_path_segments("")) != 0) { return 21; }
+    if (len(http_path_segments("/api?q=1")) != 1) { return 22; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 15)", code)
+	}
+}
+
 // Fourteenth stdlib bundle: trim_start_chars / trim_end_chars,
 // random_int, format_bytes, csv_escape / csv_join. 6 helpers.
 func TestArm64StdlibBundle14(t *testing.T) {
