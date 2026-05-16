@@ -613,6 +613,16 @@ function (b: i32) is_newline(): boolean {
     return b == 10 || b == 13;
 }
 
+// `(b: i32) is_vowel()` — true for ASCII a/e/i/o/u in either
+// case. Y is not counted (it's contextual; matches the
+// English-class default). Useful for text analysis,
+// Pig Latin / spelling-rule kinds of routines.
+function (b: i32) is_vowel(): boolean {
+    if (b == 97 || b == 101 || b == 105 || b == 111 || b == 117) { return true; }
+    if (b == 65 || b == 69 || b == 73 || b == 79 || b == 85) { return true; }
+    return false;
+}
+
 function (b: i32) is_hex_digit(): boolean {
     return b.is_digit() ||
            (b >= 65 && b <= 70) ||   // A-F
@@ -851,6 +861,31 @@ function (n: i32) next_power_of_2(): i32 {
     var p: i32 = 1;
     while (p < n) { p = p * 2; }
     return p;
+}
+
+// `(n: i32) log2_floor()` — floor(log2(n)) for n >= 1; -1
+// for n <= 0 (no real log; sentinel chosen so callers can
+// test `>= 0` to mean "valid"). Equivalent to 31 -
+// leading_zeros(n) for positives.
+function (n: i32) log2_floor(): i32 {
+    if (n <= 0) { return 0 - 1; }
+    return 31 - n.leading_zeros();
+}
+
+// `(n: i32) sqrt_floor()` — integer square root. floor(sqrt(n))
+// for n >= 0; 0 for n <= 0 (degenerate fallback). Newton's
+// method from a half-of-n starting point — converges in
+// O(log n) iterations regardless of starting guess.
+function (n: i32) sqrt_floor(): i32 {
+    if (n <= 0) { return 0; }
+    if (n < 4) { return 1; }
+    var x: i32 = n / 2;
+    while (true) {
+        var y: i32 = (x + n / x) / 2;
+        if (y >= x) { return x; }
+        x = y;
+    }
+    return x;
 }
 
 // === i32 bit ops ===
@@ -1430,6 +1465,20 @@ function (s: string) trim_end(): string {
     var end: i32 = n;
     while (end > 0 && __is_ascii_ws(s[end - 1])) { end = end - 1; }
     return s[0:end];
+}
+
+// `s.rstrip_newline()` — strip a single trailing newline.
+// Removes "\n" or "\r\n" (the CRLF pair) but stops there —
+// runs of multiple newlines are preserved beyond the first
+// strip. Use trim_end for full whitespace strip.
+function (s: string) rstrip_newline(): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    if (s[n - 1] == 10) {
+        if (n >= 2 && s[n - 2] == 13) { return s[0:n - 2]; }
+        return s[0:n - 1];
+    }
+    return s;
 }
 
 // `s.trim_chars(chars)` — strip any byte that appears in
@@ -2346,6 +2395,35 @@ function __method_Array_distinct_count(arr: string[]): i32 {
     return len(seen);
 }
 
+// `(arr: string[]) max_by_len()` — element with the
+// longest length; Option[string] None on empty. Ties go to
+// the first occurrence.
+function __method_Array_max_by_len(arr: string[]): Option[string] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var best: string = arr[0];
+    var i: i32 = 1;
+    while (i < n) {
+        if (len(arr[i]) > len(best)) { best = arr[i]; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
+// `(arr: string[]) sum_lens()` — total bytes across every
+// element. Useful for capacity-planning a join() output
+// buffer or reporting size statistics.
+function __method_Array_sum_lens(arr: string[]): i32 {
+    var n: i32 = len(arr);
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        s = s + len(arr[i]);
+        i = i + 1;
+    }
+    return s;
+}
+
 // === Array append ===
 //
 // `arr.push(v)` is lowered inline by the IR — see
@@ -2493,6 +2571,19 @@ function (n: u64) to_string(): string {
 // the signed semantics consistent with `to_string`.
 function (n: i32) to_hex(): string {
     return int_to_string_radix(n, 16);
+}
+
+// `(n: i32) to_rgb_hex()` — render the low 24 bits as a
+// "#RRGGBB" colour string (lowercase hex, leading "#",
+// zero-padded). Useful for CSS / SVG / terminal-ANSI
+// emission. Bits above bit 23 are ignored.
+function (n: i32) to_rgb_hex(): string {
+    var r: i32 = (n >> 16) & 255;
+    var g: i32 = (n >> 8) & 255;
+    var b: i32 = n & 255;
+    return "#" + r.to_hex().pad_start(2, "0") +
+                 g.to_hex().pad_start(2, "0") +
+                 b.to_hex().pad_start(2, "0");
 }
 
 // `(s: string) parse_bool()` — accepts the canonical
