@@ -867,6 +867,11 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.Methods["Array.median"] = "__method_Array_median"
 	c.info.Methods["Array.mode"] = "__method_Array_mode"
 	c.info.Methods["Array.join_with_last"] = "__method_Array_join_with_last"
+	c.info.Methods["Array.sorted_asc"] = "__method_Array_sorted_asc"
+	c.info.Methods["Array.sorted_desc"] = "__method_Array_sorted_desc"
+	c.info.Methods["Array.sorted_str_asc"] = "__method_Array_sorted_str_asc"
+	c.info.Methods["Array.sorted_str_desc"] = "__method_Array_sorted_str_desc"
+	c.info.Methods["Array.cumsum"] = "__method_Array_cumsum"
 
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which

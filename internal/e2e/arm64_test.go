@@ -6352,6 +6352,81 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twenty-eighth stdlib bundle: i32[] sorted_asc / sorted_desc
+// / cumsum, string[] sorted_str_asc / sorted_str_desc, string
+// ellipsis / first_line, i32 min_zero / sign_str. 9 helpers.
+//
+// The `sorted_*` variants are method wrappers around the
+// existing free `sort_*` functions; they read better in
+// pipelines (`arr.sorted_asc().take(3)`). They collapse to a
+// single `sorted()` once generic Ord methods land.
+//
+// `ellipsis(n)` differs from `truncate(n, "...")`: with
+// `n == 3` on a longer string, ellipsis returns "..." while
+// truncate hard-truncates the source. Use ellipsis when you
+// want truncation always to be visually marked.
+func TestArm64StdlibBundle28(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [3, 1, 4, 1, 5];
+    var a: i32[] = xs.sorted_asc();
+    if (a[0] != 1 || a[1] != 1 || a[2] != 3 || a[3] != 4 || a[4] != 5) { return 1; }
+    var d: i32[] = xs.sorted_desc();
+    if (d[0] != 5 || d[1] != 4 || d[2] != 3 || d[3] != 1 || d[4] != 1) { return 2; }
+    var empty_i: i32[] = [];
+    if (len(empty_i.sorted_asc()) != 0) { return 3; }
+    if (len(empty_i.sorted_desc()) != 0) { return 4; }
+
+    var ss: string[] = ["banana", "apple", "cherry"];
+    var sa: string[] = ss.sorted_str_asc();
+    if (sa[0] != "apple" || sa[1] != "banana" || sa[2] != "cherry") { return 10; }
+    var sd: string[] = ss.sorted_str_desc();
+    if (sd[0] != "cherry" || sd[1] != "banana" || sd[2] != "apple") { return 11; }
+    var empty_s: string[] = [];
+    if (len(empty_s.sorted_str_asc()) != 0) { return 12; }
+
+    var cs: i32[] = [1, 2, 3, 4].cumsum();
+    if (cs[0] != 1 || cs[1] != 3 || cs[2] != 6 || cs[3] != 10) { return 20; }
+    if (len(empty_i.cumsum()) != 0) { return 21; }
+    var single: i32[] = [7].cumsum();
+    if (single[0] != 7) { return 22; }
+
+    if ("hello world".ellipsis(8) != "hello...") { return 30; }
+    if ("short".ellipsis(10) != "short") { return 31; }
+    if ("exactlyN!".ellipsis(9) != "exactlyN!") { return 32; }
+    if ("hello world".ellipsis(3) != "...") { return 33; }
+    if ("hi".ellipsis(2) != "hi") { return 34; }
+    if ("hi".ellipsis(1) != ".") { return 35; }
+    if ("".ellipsis(5) != "") { return 36; }
+
+    if ((0 - 5).min_zero() != 0) { return 40; }
+    if ((0).min_zero() != 0) { return 41; }
+    if ((7).min_zero() != 7) { return 42; }
+
+    if ((5).sign_str() != "+") { return 50; }
+    if ((0 - 3).sign_str() != "-") { return 51; }
+    if ((0).sign_str() != "") { return 52; }
+
+    match ("hello\nworld".first_line()) {
+        Some(s) => { if (s != "hello") { return 60; } },
+        None => { return 61; },
+    }
+    match ("single".first_line()) {
+        Some(s) => { if (s != "single") { return 62; } },
+        None => { return 63; },
+    }
+    match ("".first_line()) { Some(_) => { return 64; }, None => { } }
+    match ("\n".first_line()) {
+        Some(s) => { if (s != "") { return 65; } },
+        None => { return 66; },
+    }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 28)", code)
+	}
+}
+
 // Twenty-seventh stdlib bundle: i32[] median / mode /
 // sum_squared, string[] join_with_last, string
 // replace_byte / to_acronym / title_case, i32
