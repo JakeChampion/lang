@@ -6352,6 +6352,51 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Ninth stdlib bundle: case-insensitive ASCII search
+// (contains_ci / index_of_ci), multi-byte pad
+// (pad_start_str / pad_end_str), truncate with ellipsis,
+// digit count, pluralize. 7 new methods.
+func TestArm64StdlibBundle9(t *testing.T) {
+	src := `function main(): i32 {
+    // Case-insensitive search
+    if ("Hello World".index_of_ci("WORLD") != 6) { return 1; }
+    if ("Hello World".index_of_ci("world") != 6) { return 2; }
+    if ("Hello World".index_of_ci("xyz") != (0 - 1)) { return 3; }
+    if (!"Hello".contains_ci("ELL")) { return 4; }
+    if ("Hello".contains_ci("xyz")) { return 5; }
+
+    // Multi-byte pad
+    if ("hi".pad_start_str(8, "==") != "======hi") { return 6; }
+    if ("hi".pad_end_str(8, "==") != "hi======") { return 7; }
+    if ("hi".pad_start_str(5, "ab") != "abahi") { return 8; }
+    if ("longer".pad_start_str(3, "=") != "longer") { return 9; }
+    if ("hi".pad_start_str(8, "") != "hi") { return 10; }
+
+    // truncate
+    if ("hello world".truncate(8, "...") != "hello...") { return 11; }
+    if ("hello".truncate(10, "...") != "hello") { return 12; }
+    if ("hello world".truncate(3, "...") != "hel") { return 13; }   // hard cut
+
+    // digits
+    if ((0).digits() != 1) { return 14; }
+    if ((9).digits() != 1) { return 15; }
+    if ((10).digits() != 2) { return 16; }
+    if ((1000).digits() != 4) { return 17; }
+    if ((0 - 1000).digits() != 4) { return 18; }
+
+    // pluralize
+    if ((1).pluralize("widget", "widgets") != "widget") { return 19; }
+    if ((2).pluralize("widget", "widgets") != "widgets") { return 20; }
+    if ((0).pluralize("widget", "widgets") != "widgets") { return 21; }
+    if ((0 - 1).pluralize("widget", "widgets") != "widget") { return 22; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 9)", code)
+	}
+}
+
 // Eighth stdlib bundle: i32 saturating / checked arithmetic
 // (overflow detection via sign-bit comparison — natives' i64
 // codegen has a comparison bug across the i32::MAX threshold,

@@ -1163,6 +1163,108 @@ function (s: string) trim_end_matches(sub: string): string {
     return s[0:end];
 }
 
+// `s.contains_ci(needle)` / `index_of_ci(needle)` — case-
+// insensitive ASCII versions of `contains` / `index_of`.
+// Folds A-Z to a-z on both sides per byte. Multibyte UTF-8
+// matches only as exact bytes (no Unicode case folding).
+function (s: string) contains_ci(needle: string): boolean {
+    return s.index_of_ci(needle) >= 0;
+}
+
+function (s: string) index_of_ci(needle: string): i32 {
+    var nLen: i32 = len(needle);
+    if (nLen == 0) { return 0; }
+    var sLen: i32 = len(s);
+    if (nLen > sLen) { return 0 - 1; }
+    var last: i32 = sLen - nLen;
+    var i: i32 = 0;
+    while (i <= last) {
+        var j: i32 = 0;
+        var ok: boolean = true;
+        while (j < nLen) {
+            if (s[i + j].to_lower() != needle[j].to_lower()) {
+                ok = false;
+                j = nLen;
+            } else {
+                j = j + 1;
+            }
+        }
+        if (ok) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// `s.pad_start_str(width, fill)` / `pad_end_str(width, fill)`
+// — left- and right-pad to a minimum BYTE width using the
+// multi-byte `fill` string as the padding unit. The pad
+// repeats; if the byte-count overshoots, the LAST occurrence
+// is truncated at the boundary. The simpler `pad_start(n, ch)`
+// from earlier always uses a single-byte fill — these are
+// the cousins for prefix dashes / line rules / "....." kinds
+// of decorative padding.
+function (s: string) pad_start_str(width: i32, fill: string): string {
+    var sLen: i32 = len(s);
+    if (sLen >= width || len(fill) == 0) { return s; }
+    var pad: string = "";
+    while (len(pad) + len(fill) <= width - sLen) {
+        pad = pad + fill;
+    }
+    if (len(pad) < width - sLen) {
+        pad = pad + fill[0:width - sLen - len(pad)];
+    }
+    return pad + s;
+}
+
+function (s: string) pad_end_str(width: i32, fill: string): string {
+    var sLen: i32 = len(s);
+    if (sLen >= width || len(fill) == 0) { return s; }
+    var pad: string = "";
+    while (len(pad) + len(fill) <= width - sLen) {
+        pad = pad + fill;
+    }
+    if (len(pad) < width - sLen) {
+        pad = pad + fill[0:width - sLen - len(pad)];
+    }
+    return s + pad;
+}
+
+// `s.truncate(n, ellipsis)` — if len(s) > n, return the first
+// (n - len(ellipsis)) bytes followed by `ellipsis`. If
+// len(s) <= n, return s unchanged. If n is smaller than the
+// ellipsis itself, just hard-truncate s to n bytes (the
+// ellipsis would otherwise overflow).
+function (s: string) truncate(n: i32, ellipsis: string): string {
+    var sLen: i32 = len(s);
+    if (sLen <= n) { return s; }
+    var eLen: i32 = len(ellipsis);
+    if (n <= eLen) { return s[0:n]; }
+    return s[0:n - eLen] + ellipsis;
+}
+
+// `(n: i32) digits()` — number of decimal digits in n. The
+// minus sign isn't counted. Zero has 1 digit. Useful for
+// table-column-width math and progress bars.
+function (n: i32) digits(): i32 {
+    if (n == 0) { return 1; }
+    var u: i32 = n.abs();
+    var c: i32 = 0;
+    while (u > 0) {
+        c = c + 1;
+        u = u / 10;
+    }
+    return c;
+}
+
+// `(n: i32) pluralize(singular, plural)` — pick `singular`
+// when |n| == 1, otherwise `plural`. Standard English-plural
+// helper. Doesn't compose the count into the result — caller
+// formats `"$n widget$s"` themselves via concat or format().
+function (n: i32) pluralize(singular: string, plural: string): string {
+    if (n.abs() == 1) { return singular; }
+    return plural;
+}
+
 // `s.at(i)` — bounds-checked byte access. Returns Some(byte)
 // for in-range i or None if i is out of [0, len). Counterpart
 // to `s[i]` which traps on OOB; useful in tokeniser loops
