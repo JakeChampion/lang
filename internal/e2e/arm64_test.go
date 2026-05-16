@@ -6352,6 +6352,58 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Tenth stdlib bundle: numeric range constants (i32_max /
+// i32_min / i64_max / i64_min), one-sided trim (trim_start /
+// trim_end), trim_chars, case-insensitive prefix/suffix,
+// string sort, and string_cmp. 11 helpers.
+func TestArm64StdlibBundle10(t *testing.T) {
+	src := `function main(): i32 {
+    // Range constants
+    if (i32_max() != 2147483647) { return 1; }
+    if (i32_min() != (0 - 2147483647 - 1)) { return 2; }
+    if (i64_max() != 9223372036854775807) { return 3; }
+
+    // trim_start / trim_end
+    if ("  hello  ".trim_start() != "hello  ") { return 4; }
+    if ("  hello  ".trim_end() != "  hello") { return 5; }
+    if ("hello".trim_start() != "hello") { return 6; }
+    if ("   ".trim_start() != "") { return 7; }
+    if ("".trim_end() != "") { return 8; }
+
+    // trim_chars
+    if ("==hello==".trim_chars("=") != "hello") { return 9; }
+    if ("(hello)".trim_chars("()") != "hello") { return 10; }
+    if ("hello".trim_chars("") != "hello") { return 11; }
+    if ("---".trim_chars("-") != "") { return 12; }
+
+    // starts_with_ci / ends_with_ci
+    if (!"Content-Type".starts_with_ci("content")) { return 13; }
+    if (!"image/png".ends_with_ci("PNG")) { return 14; }
+    if ("hello".starts_with_ci("WORLD")) { return 15; }
+    if ("hello".ends_with_ci("WORLD")) { return 16; }
+
+    // string_cmp + sort_strings_asc/desc
+    if (string_cmp("apple", "banana") != (0 - 1)) { return 17; }
+    if (string_cmp("banana", "apple") != 1) { return 18; }
+    if (string_cmp("same", "same") != 0) { return 19; }
+    if (string_cmp("short", "shorter") != (0 - 1)) { return 20; }   // shorter <
+
+    var unsorted: string[] = ["banana", "apple", "cherry"];
+    var asc: string[] = sort_strings_asc(unsorted);
+    if (asc[0] != "apple" || asc[1] != "banana" || asc[2] != "cherry") { return 21; }
+    if (unsorted[0] != "banana") { return 22; }   // original untouched
+    var desc: string[] = sort_strings_desc(unsorted);
+    if (desc[0] != "cherry" || desc[2] != "apple") { return 23; }
+    var empty: string[] = [];
+    if (len(sort_strings_asc(empty)) != 0) { return 24; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 10)", code)
+	}
+}
+
 // Ninth stdlib bundle: case-insensitive ASCII search
 // (contains_ci / index_of_ci), multi-byte pad
 // (pad_start_str / pad_end_str), truncate with ellipsis,

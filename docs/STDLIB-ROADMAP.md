@@ -451,6 +451,22 @@ think they're free additions to make.
 - **`(n: i32).pluralize(singular, plural)`**: choose
   singular when `|n| == 1` else plural. Caller composes
   the count into the result themselves.
+- **Range constants**: `i32_max()` / `i32_min()` /
+  `i64_max()` / `i64_min()` as function-style accessors
+  (lang has no const declaration syntax yet).
+- **One-sided trim**: `s.trim_start()` / `s.trim_end()`.
+  Asymmetric whitespace strip.
+- **`s.trim_chars(chars)`**: strip any byte in `chars`
+  from both ends. Useful for unwrapping `"(x)"`, `"=x="`,
+  etc. in one pass.
+- **Case-insensitive prefix/suffix**: `s.starts_with_ci(p)`
+  / `s.ends_with_ci(s)`. Pairs with the `_ci` search
+  variants from bundle 9.
+- **String sort**: `sort_strings_asc(arr)` /
+  `sort_strings_desc(arr)`. Insertion-sort, like the i32
+  variants. Backed by a new `string_cmp(a, b)` three-way
+  comparator since lang's `<` / `>` operators are
+  numerics-only.
 
 ## Known compiler bugs surfaced during this work
 
