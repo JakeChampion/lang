@@ -117,9 +117,14 @@ func buildComponent(t *testing.T, src string) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
 
-	prog, err := parser.Parse(src)
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.lang")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("modload: %v", err)
 	}
 	if err := constfold.Fold(prog); err != nil {
 		t.Fatalf("constfold: %v", err)
