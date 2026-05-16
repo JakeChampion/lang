@@ -152,6 +152,122 @@ function (s: string) capitalize(): string {
     return string_from_bytes(buf) + s[1:n];
 }
 
+// `s.leading_count(b)` — number of leading bytes equal to b.
+// "    hello".leading_count(32) == 4 (count of spaces).
+// Useful for indent detection / column alignment.
+function (s: string) leading_count(b: i32): i32 {
+    var n: i32 = len(s);
+    var i: i32 = 0;
+    while (i < n && s[i] == b) { i = i + 1; }
+    return i;
+}
+
+// `s.trailing_count(b)` — number of trailing bytes equal to b.
+// "hello   ".trailing_count(32) == 3. Symmetric to
+// leading_count.
+function (s: string) trailing_count(b: i32): i32 {
+    var n: i32 = len(s);
+    var i: i32 = 0;
+    while (i < n && s[n - 1 - i] == b) { i = i + 1; }
+    return i;
+}
+
+// `s.hash_fnv32()` — FNV-1a 32-bit hash of the byte content.
+// Non-cryptographic; good for hash-table bucket selection
+// and fingerprinting. Constant-time per input length (no
+// data-dependent branches). Reference: http://www.isthe.com/
+// chongo/tech/comp/fnv/.
+//
+// Returns u32 because the multiply / xor mixing is defined
+// over unsigned arithmetic.
+function (s: string) hash_fnv32(): u32 {
+    // FNV offset basis (decimal: 2166136261); written as
+    // (-2128831035 as u32) since lang doesn't lex u32 literals
+    // above i32::MAX. The cast preserves the bit pattern.
+    var h: u32 = (0 - 2128831035) as u32;
+    var prime: u32 = 16777619 as u32;
+    var n: i32 = len(s);
+    var i: i32 = 0;
+    while (i < n) {
+        h = h ^ (s[i] as u32);
+        h = h * prime;
+        i = i + 1;
+    }
+    return h;
+}
+
+// `s.escape_c()` — C-style escape: backslash + double-quote
+// each become \\ \", and the four whitespace bytes (\n \t
+// \r \0) become their two-char escapes. Other bytes pass
+// through unchanged. Standard shape for emitting source-
+// code-ready string literals.
+function (s: string) escape_c(): string {
+    var n: i32 = len(s);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 92)       { out = out + "\\\\"; }
+        else if (b == 34)  { out = out + "\\\""; }
+        else if (b == 10)  { out = out + "\\n"; }
+        else if (b == 9)   { out = out + "\\t"; }
+        else if (b == 13)  { out = out + "\\r"; }
+        else if (b == 0)   { out = out + "\\0"; }
+        else               { out = out + s[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `repeat_char(ch, n)` — fresh string of n copies of the byte
+// `ch`. Faster than `(c).chr().repeat(n)` would be (no chr
+// helper exists yet; this is the substitute). `n <= 0`
+// returns empty.
+function repeat_char(ch: i32, n: i32): string {
+    if (n <= 0) { return ""; }
+    var buf: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        buf[i] = ch as u8;
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+// `http_status_text(code)` — IANA reason phrase for the
+// common HTTP status codes (RFC 9110). Returns "" for
+// unknown codes — callers should fall back to a generic
+// phrase rather than emitting nothing.
+function http_status_text(code: i32): string {
+    if (code == 200) { return "OK"; }
+    if (code == 201) { return "Created"; }
+    if (code == 204) { return "No Content"; }
+    if (code == 301) { return "Moved Permanently"; }
+    if (code == 302) { return "Found"; }
+    if (code == 304) { return "Not Modified"; }
+    if (code == 307) { return "Temporary Redirect"; }
+    if (code == 308) { return "Permanent Redirect"; }
+    if (code == 400) { return "Bad Request"; }
+    if (code == 401) { return "Unauthorized"; }
+    if (code == 403) { return "Forbidden"; }
+    if (code == 404) { return "Not Found"; }
+    if (code == 405) { return "Method Not Allowed"; }
+    if (code == 408) { return "Request Timeout"; }
+    if (code == 409) { return "Conflict"; }
+    if (code == 410) { return "Gone"; }
+    if (code == 413) { return "Payload Too Large"; }
+    if (code == 415) { return "Unsupported Media Type"; }
+    if (code == 418) { return "I'm a teapot"; }
+    if (code == 422) { return "Unprocessable Entity"; }
+    if (code == 429) { return "Too Many Requests"; }
+    if (code == 500) { return "Internal Server Error"; }
+    if (code == 501) { return "Not Implemented"; }
+    if (code == 502) { return "Bad Gateway"; }
+    if (code == 503) { return "Service Unavailable"; }
+    if (code == 504) { return "Gateway Timeout"; }
+    return "";
+}
+
 // `s.trim()` — strip leading + trailing ASCII whitespace
 // (SP, TAB, LF, CR, VT, FF). UTF-8 multibyte sequences
 // pass through unchanged because their leading bytes are
@@ -1138,6 +1254,31 @@ function __method_Array_min(arr: i32[]): Option[i32] {
         i = i + 1;
     }
     return Some(m);
+}
+
+// `(arr: i32[]) product()` — multiply every element. Empty
+// array returns 1 (multiplicative identity). Overflow wraps
+// silently; callers needing exact long-product should widen
+// to i64 first.
+function __method_Array_product(arr: i32[]): i32 {
+    var n: i32 = len(arr);
+    var p: i32 = 1;
+    var i: i32 = 0;
+    while (i < n) {
+        p = p * arr[i];
+        i = i + 1;
+    }
+    return p;
+}
+
+// `(arr: i32[]) avg()` — integer mean (truncated). None on
+// empty input. Sum-then-divide; sum is carried in i32 so
+// long arrays + large values may overflow before division.
+// For exact arithmetic, callers should pre-sum into i64.
+function __method_Array_avg(arr: i32[]): Option[i32] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    return Some(arr.sum() / n);
 }
 
 // `s.replace(old, new)` — substitutes every
