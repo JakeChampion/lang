@@ -427,6 +427,40 @@ function format_bytes(n: i32): string {
     return sign + (mag / (1024 * 1024 * 1024)).to_string() + " GiB";
 }
 
+// `format_duration_ms(ms)` — human-readable duration like
+// "1h 23m 45s" / "500ms". Components are emitted only when
+// non-zero, separated by spaces; "0" alone returns "0ms".
+// Negative ms gets a leading "-" before the magnitude.
+function format_duration_ms(ms: i32): string {
+    if (ms == 0) { return "0ms"; }
+    var neg: boolean = (ms < 0);
+    var mag: i32 = ms;
+    if (neg) { mag = ms.abs(); }
+    var sign: string = "";
+    if (neg) { sign = "-"; }
+    var h: i32 = mag / 3600000;
+    var rem: i32 = mag - h * 3600000;
+    var m: i32 = rem / 60000;
+    rem = rem - m * 60000;
+    var s: i32 = rem / 1000;
+    var msPart: i32 = rem - s * 1000;
+    var out: string = "";
+    if (h > 0) { out = out + h.to_string() + "h"; }
+    if (m > 0) {
+        if (len(out) > 0) { out = out + " "; }
+        out = out + m.to_string() + "m";
+    }
+    if (s > 0) {
+        if (len(out) > 0) { out = out + " "; }
+        out = out + s.to_string() + "s";
+    }
+    if (msPart > 0) {
+        if (len(out) > 0) { out = out + " "; }
+        out = out + msPart.to_string() + "ms";
+    }
+    return sign + out;
+}
+
 // === CSV escape / join ===
 //
 // `csv_escape(s)` — return a CSV field per RFC 4180. Fields
@@ -886,6 +920,33 @@ function (n: i32) sqrt_floor(): i32 {
         x = y;
     }
     return x;
+}
+
+// `(n: i32) ceil_div(d)` — n divided by d, rounded up.
+// Matches the standard (n + d - 1) / d formula for positive
+// d; for negative or zero d the result is undefined and
+// returns 0 (no panic — caller validates).
+function (n: i32) ceil_div(d: i32): i32 {
+    if (d <= 0) { return 0; }
+    if (n <= 0) { return n / d; }
+    return (n + d - 1) / d;
+}
+
+// `(n: i32) round_up_to(m)` — round n up to the nearest
+// multiple of m (m > 0). For n already a multiple, returns
+// n unchanged. m <= 0 returns n.
+function (n: i32) round_up_to(m: i32): i32 {
+    if (m <= 0) { return n; }
+    if (n <= 0) { return 0; }
+    return ((n + m - 1) / m) * m;
+}
+
+// `(n: i32) round_down_to(m)` — round n down to the nearest
+// multiple of m. Mirror of round_up_to.
+function (n: i32) round_down_to(m: i32): i32 {
+    if (m <= 0) { return n; }
+    if (n < 0) { return 0 - ((0 - n + m - 1) / m * m); }
+    return (n / m) * m;
 }
 
 // === i32 bit ops ===
@@ -1836,6 +1897,40 @@ function (s: string) strip_suffix(suffix: string): Option[string] {
     if (!s.ends_with(suffix)) { return None; }
     var k: i32 = len(s) - len(suffix);
     return Some(s[0:k]);
+}
+
+// `s.remove_prefix(prefix)` / `s.remove_suffix(suffix)` —
+// like strip_prefix / strip_suffix but return s unchanged
+// when the prefix / suffix doesn't match, instead of
+// Option. Avoids the match boilerplate when the unchanged
+// value is the right fallback.
+function (s: string) remove_prefix(prefix: string): string {
+    if (!s.starts_with(prefix)) { return s; }
+    return s[len(prefix):len(s)];
+}
+
+function (s: string) remove_suffix(suffix: string): string {
+    if (!s.ends_with(suffix)) { return s; }
+    var k: i32 = len(s) - len(suffix);
+    return s[0:k];
+}
+
+// `s.is_uuid()` — true if s matches the canonical UUID
+// format: 8-4-4-4-12 hex digits separated by dashes,
+// total 36 characters. Doesn't validate the version or
+// variant nibble — just the shape.
+function (s: string) is_uuid(): boolean {
+    if (len(s) != 36) { return false; }
+    var i: i32 = 0;
+    while (i < 36) {
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            if (s[i] != 45) { return false; }    // '-'
+        } else {
+            if (!s[i].is_hex_digit()) { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
 }
 
 // `s.pad_start(n, ch)` / `s.pad_end(n, ch)` — left- and right-
