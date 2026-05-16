@@ -707,40 +707,6 @@ function sort_strings_asc_ci(arr: string[]): string[] {
 }
 
 
-// `(n: i32) to_binary()` / `to_oct()` — sugar for
-// int_to_string_radix(n, 2) / (n, 8). Signed (negatives
-// emit a leading `-`).
-function (n: i32) to_binary(): string {
-    return int_to_string_radix(n, 2);
-}
-
-function (n: i32) to_oct(): string {
-    return int_to_string_radix(n, 8);
-}
-
-
-// `(n: i32) digits()` — number of decimal digits in n. The
-// minus sign isn't counted. Zero has 1 digit. Useful for
-// table-column-width math and progress bars.
-function (n: i32) digits(): i32 {
-    if (n == 0) { return 1; }
-    var u: i32 = n.abs();
-    var c: i32 = 0;
-    while (u > 0) {
-        c = c + 1;
-        u = u / 10;
-    }
-    return c;
-}
-
-// `(n: i32) pluralize(singular, plural)` — pick `singular`
-// when |n| == 1, otherwise `plural`. Standard English-plural
-// helper. Doesn't compose the count into the result — caller
-// formats `"$n widget$s"` themselves via concat or format().
-function (n: i32) pluralize(singular: string, plural: string): string {
-    if (n.abs() == 1) { return singular; }
-    return plural;
-}
 
 
 
@@ -878,63 +844,6 @@ function __int_to_string_u64(mag: i64, neg: i32): string {
     return string_from_bytes(buf);
 }
 
-// `(i32).to_string()` / `(u32).to_string()` /
-// `(i64).to_string()` / `(u64).to_string()` — method-syntax
-// wrappers around the formatter. The receiver-method
-// dispatch in the checker maps `n.to_string()` to the
-// appropriate `__method_<type>_to_string` mangled name.
-//
-// Routes through the pure-i32 `int_to_string` so handler-shaped
-// programs (whose codegen pulls in the f-string `.to_string()`
-// desugar via `int_to_string`) compile for arm64, where the
-// backend hasn't lowered i64 ops yet. INT_MIN
-// (-2147483648) is special-cased before the negate-to-magnitude
-// step in int_to_string would overflow i32.
-function (n: i32) to_string(): string {
-    if (n == 0 - 2147483647 - 1) {
-        return "-2147483648";
-    }
-    return int_to_string(n);
-}
-
-// `(n: i32) to_string_padded(width)` — decimal with zero-pad
-// to a minimum byte width. Negative numbers get their '-' in
-// the slot AFTER the leading zeros (i.e. "-0042", not
-// "0-042"). Already-wide values pass through.
-function (n: i32) to_string_padded(width: i32): string {
-    var s: string = n.to_string();
-    if (len(s) >= width) { return s; }
-    if (n >= 0) { return s.pad_start(width, "0"); }
-    // For negatives, pad the body and re-prefix with '-'.
-    var body: string = s[1:len(s)];
-    return "-" + body.pad_start(width - 1, "0");
-}
-
-// `(n: i32) to_string_with_sep(sep)` — decimal with `sep`
-// inserted every three digits from the right. "1,234,567"
-// shape; `sep` is typically "," or "_" or " ". Negative
-// numbers keep the "-" prefix outside the grouping.
-function (n: i32) to_string_with_sep(sep: string): string {
-    var s: string = n.to_string();
-    var sign: string = "";
-    if (n < 0) {
-        sign = "-";
-        s = s[1:len(s)];
-    }
-    var L: i32 = len(s);
-    if (L <= 3) { return sign + s; }
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < L) {
-        var idx: i32 = L - 1 - i;
-        out = s[idx:idx + 1] + out;
-        if (i % 3 == 2 && i < L - 1) {
-            out = sep + out;
-        }
-        i = i + 1;
-    }
-    return sign + out;
-}
 
 function (n: u32) to_string(): string {
     return __int_to_string_u64((n as i64) & (4294967295 as i64), 0);
@@ -954,28 +863,6 @@ function (n: u64) to_string(): string {
     return __int_to_string_u64(n as i64, 0);
 }
 
-// `(n: i32) to_hex()` — lowercase hex without prefix.
-// Sugar for `int_to_string_radix(n, 16)` — emits a leading
-// '-' for negative numbers. Callers that want the two's-
-// complement bit pattern should widen to u32 first and use
-// `int_to_string_radix` on that; the i32 form here keeps
-// the signed semantics consistent with `to_string`.
-function (n: i32) to_hex(): string {
-    return int_to_string_radix(n, 16);
-}
-
-// `(n: i32) to_rgb_hex()` — render the low 24 bits as a
-// "#RRGGBB" colour string (lowercase hex, leading "#",
-// zero-padded). Useful for CSS / SVG / terminal-ANSI
-// emission. Bits above bit 23 are ignored.
-function (n: i32) to_rgb_hex(): string {
-    var r: i32 = (n >> 16) & 255;
-    var g: i32 = (n >> 8) & 255;
-    var b: i32 = n & 255;
-    return "#" + r.to_hex().pad_start(2, "0") +
-                 g.to_hex().pad_start(2, "0") +
-                 b.to_hex().pad_start(2, "0");
-}
 
 // `pack_rgb(r, g, b)` — pack three 0..255 components into
 // a 24-bit i32. Inverse of (n).to_rgb_hex()'s shifts. Each
