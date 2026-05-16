@@ -210,7 +210,31 @@ Tasks:
 
 - [x] Phase 1 — modload `std/` resolver
 - [x] Phase 2 — auto-discover Array.X
-- [ ] Phase 3 — `std/i32`
-- [ ] Phase 4 — remaining modules (one PR per)
-- [ ] Phase 5 — drop auto-injection
-- [ ] Phase 6 — docs
+- [x] Phase 3 — `std/i32` proof-of-shape (single method, then bulk).
+      Receiver-method dispatch became module-scoped; the checker
+      now consults each call site's import closure (see
+      `MethodSources` in `internal/checker/checker.go`).
+- [x] Phase 4 — remaining modules carved out. Final layout, per
+      `docs/STDLIB.md`:
+      - `std/` (20): `i32`, `i64`, `u32`, `u64`, `string`, `array`,
+        `log`, `sort`, `csv`, `format`, `http`, `io`, `path`,
+        `base64`, `hex`, `url`, `json`, `math`, `float`, `tcp`.
+      - `core/` (3): `int`, `map`, `no_prelude`.
+      - `internal/prelude/prelude.lang` is now a bare import
+        block — every helper / receiver method / runtime
+        function lives in a module.
+- [ ] Phase 5 — drop auto-injection. Foundation landed:
+      `import "core/no_prelude";` is the opt-out sentinel
+      (#498). Remaining work:
+      - Cleanup the stdlib internals so cross-module bare-name
+        calls work under no-prelude (today `std/i32`'s
+        `to_hex` calls `int_to_string_radix` from `core/int`
+        by bare name — that only resolves because the auto-
+        prelude flattens every module's decls into one
+        namespace).
+      - Convert every e2e + example test program to declare
+        its imports explicitly.
+      - Once the suite passes with no-prelude as the default,
+        flip the switch and remove `injectPrelude` + the
+        `internal/prelude` package.
+- [x] Phase 6 — docs (`docs/STDLIB.md`).
