@@ -6352,6 +6352,60 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Fourth stdlib bundle: punctuation classifier, byte→hex
+// helper, i32 sign trio (signum / is_positive / is_negative /
+// is_zero), string blanks/hex predicates, indent. 11 new
+// methods. All pure-prelude, no IR / checker work — sidesteps
+// the generic-prelude-function monomorph regression.
+func TestArm64StdlibBundle4(t *testing.T) {
+	src := `function main(): i32 {
+    // is_punct
+    if (!(33).is_punct()) { return 1; }
+    if (!(126).is_punct()) { return 2; }
+    if (!(64).is_punct()) { return 3; }
+    if ((48).is_punct()) { return 4; }
+    if ((65).is_punct()) { return 5; }
+
+    // hex_digit
+    if ((0).hex_digit() != "0") { return 6; }
+    if ((10).hex_digit() != "a") { return 7; }
+    if ((15).hex_digit() != "f") { return 8; }
+    if ((16).hex_digit() != "") { return 9; }
+    if ((0 - 1).hex_digit() != "") { return 10; }
+
+    // signum / sign predicates
+    if ((5).signum() != 1) { return 11; }
+    if ((0).signum() != 0) { return 12; }
+    if ((0 - 5).signum() != (0 - 1)) { return 13; }
+    if (!(5).is_positive()) { return 14; }
+    if (!(0 - 5).is_negative()) { return 15; }
+    if (!(0).is_zero()) { return 16; }
+
+    // is_blank
+    if (!"".is_blank()) { return 17; }
+    if (!"  \t\n".is_blank()) { return 18; }
+    if (" x ".is_blank()) { return 19; }
+
+    // is_hex_string
+    if (!"deadbeef".is_hex_string()) { return 20; }
+    if (!"DEADBEEF".is_hex_string()) { return 21; }
+    if ("hello".is_hex_string()) { return 22; }
+    if ("".is_hex_string()) { return 23; }
+
+    // indent
+    if ("a\nb".indent(">> ") != ">> a\n>> b") { return 24; }
+    if ("solo".indent("-> ") != "-> solo") { return 25; }
+    if ("".indent(">> ") != "") { return 26; }
+    if ("a\n".indent(">> ") != ">> a\n") { return 27; }
+
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 4)", code)
+	}
+}
+
 // Third stdlib bundle: i64 / u32 / u64 scalar reductions
 // (abs only on i64; min/max/clamp on all three), plus three
 // string helpers (at / chars / reverse_bytes). 13 new methods.

@@ -362,6 +362,43 @@ think they're free additions to make.
   Option), `s.chars()` (i32[] of byte values), `s.reverse_bytes()`
   (ASCII-only reverse; multibyte UTF-8 will scramble). The
   name `reverse_bytes` carries the warning.
+- **Byte classifiers**: `(b).is_punct()` (Python's string.
+  punctuation set), `(b).hex_digit()` (numeric → single-byte
+  string).
+- **i32 sign helpers**: `(n).signum()` (-1/0/1 trichotomy),
+  `is_positive()` / `is_negative()` / `is_zero()`.
+- **String predicates v2**: `s.is_blank()` (empty or all
+  whitespace), `s.is_hex_string()` (all hex digits, case-
+  insensitive).
+- **`s.indent(prefix)`**: prepend prefix to every line.
+  Bytewise — empty lines get the prefix too. Trailing
+  newline doesn't produce an extra prefix at EOF.
+
+## Known compiler bugs surfaced during this work
+
+- **Generic prelude functions break unrelated `i8`-literal
+  inference at monomorph re-check time.** Adding any
+  `function foo[T](...)` to the prelude trips the
+  `TestWASMSubI32Widths` family — the `-7` in
+  `var s: i8 = -7;` re-fails as "operator '-' requires
+  i32, got i8" during the post-monomorph type re-check.
+  Root cause not pinned down yet; the re-check inference
+  seems to settle polymorphic numeric literals differently
+  when the prelude contains generic decls. Concrete
+  workaround: keep prelude generic methods limited to the
+  IR-intercepted shape (push) or to per-element-type concrete
+  declarations (join / index_of / contains / reverse / sum /
+  max / min) until the inference bug is fixed.
+- **Method-dispatch path for generic Array methods doesn't
+  re-use stamped `n.TypeArgs` for inference**: when
+  `arr.is_empty()` rewrites to `__method_Array_is_empty(arr)`
+  and the dispatch stamps TypeArgs from the receiver, the
+  subsequent generic-inference pass at checker.go:3146 still
+  tries to infer T from arg types — but `expected` is now
+  already-substituted (concrete), so no ParamType binds and
+  inference fails. Fix shape: seed `sub` from `n.TypeArgs`
+  when they're already set. Documented here so the next
+  attempt at generic Array methods starts from this context.
 
 ## Cross-cutting decisions
 
