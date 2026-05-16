@@ -467,6 +467,24 @@ think they're free additions to make.
   variants. Backed by a new `string_cmp(a, b)` three-way
   comparator since lang's `<` / `>` operators are
   numerics-only.
+- **String splitn**: `s.splitn(sep, n)` caps the result at
+  n pieces; the last piece carries the unsplit tail. Useful
+  for "first token, rest" parsing (HTTP request lines,
+  URL scheme separation, header `key: value`).
+- **String first / last**: `s.first()` / `s.last()` return
+  Option[i32] of the byte. None on empty. Saves the
+  off-by-one of `s.at(len(s) - 1)`.
+- **String take / drop**: `s.take(n)` / `s.drop(n)` with
+  bounds clamping (out-of-range counts saturate to 0 /
+  len). Saves the `s[0:min(n, len(s))]` boilerplate.
+- **String chunks**: `s.chunks(size)` splits into consecutive
+  size-byte pieces; last piece may be short. size <= 0
+  returns `[s]`. Useful for base64 line-wrapping, hex-dump
+  formatting.
+- **Case-insensitive string ops**: `string_cmp_ci(a, b)` /
+  `sort_strings_asc_ci(arr)`. Per-byte fold on the
+  comparison.
+- **i32 radix sugar**: `(n).to_binary()` / `(n).to_oct()`.
 
 ## Known compiler bugs surfaced during this work
 

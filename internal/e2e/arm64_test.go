@@ -6352,6 +6352,65 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Eleventh stdlib bundle: splitn / first / last / take /
+// drop / chunks on strings, case-insensitive sort, i32
+// to_binary / to_oct. 11 helpers.
+func TestArm64StdlibBundle11(t *testing.T) {
+	src := `function main(): i32 {
+    // splitn
+    var s1: string[] = "a=b=c=d".splitn("=", 2);
+    if (len(s1) != 2 || s1[0] != "a" || s1[1] != "b=c=d") { return 1; }
+    var s3: string[] = "a=b=c=d".splitn("=", 1);
+    if (len(s3) != 1 || s3[0] != "a=b=c=d") { return 2; }
+    var s4: string[] = "a=b=c=d".splitn("=", 0);
+    if (len(s4) != 0) { return 3; }
+    var s5: string[] = "a=b".splitn("=", 100);
+    if (len(s5) != 2) { return 4; }
+    var s6: string[] = "no-sep".splitn("=", 5);
+    if (len(s6) != 1 || s6[0] != "no-sep") { return 5; }
+
+    // first / last
+    match ("hello".first()) { Some(b) => { if (b != 104) { return 6; } }, None => { return 7; }, }
+    match ("hello".last()) { Some(b) => { if (b != 111) { return 8; } }, None => { return 9; }, }
+    match ("".first()) { Some(_) => { return 10; }, None => { } }
+
+    // take / drop — bounds clamped
+    if ("hello world".take(5) != "hello") { return 11; }
+    if ("hello".take(100) != "hello") { return 12; }
+    if ("hello".take(0) != "") { return 13; }
+    if ("hello world".drop(6) != "world") { return 14; }
+    if ("hello".drop(100) != "") { return 15; }
+    if ("hello".drop(0 - 1) != "hello") { return 16; }
+
+    // chunks
+    var c1: string[] = "abcdef".chunks(2);
+    if (len(c1) != 3 || c1[2] != "ef") { return 17; }
+    var c2: string[] = "abcdef".chunks(4);
+    if (len(c2) != 2 || c2[1] != "ef") { return 18; }   // short tail
+    if (len("".chunks(3)) != 0) { return 19; }
+    var c4: string[] = "abc".chunks(0);
+    if (len(c4) != 1 || c4[0] != "abc") { return 20; }
+
+    // case-insensitive sort + cmp
+    var asc: string[] = sort_strings_asc_ci(["Banana", "apple", "Cherry"]);
+    if (asc[0] != "apple" || asc[1] != "Banana" || asc[2] != "Cherry") { return 21; }
+    if (string_cmp_ci("APPLE", "apple") != 0) { return 22; }
+    if (string_cmp_ci("apple", "banana") != (0 - 1)) { return 23; }
+
+    // to_binary / to_oct
+    if ((5).to_binary() != "101") { return 24; }
+    if ((255).to_binary() != "11111111") { return 25; }
+    if ((0).to_binary() != "0") { return 26; }
+    if ((8).to_oct() != "10") { return 27; }
+    if ((511).to_oct() != "777") { return 28; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 11)", code)
+	}
+}
+
 // Tenth stdlib bundle: numeric range constants (i32_max /
 // i32_min / i64_max / i64_min), one-sided trim (trim_start /
 // trim_end), trim_chars, case-insensitive prefix/suffix,
