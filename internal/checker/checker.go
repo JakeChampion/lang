@@ -49,6 +49,29 @@ type Info struct {
 	// (`__method_<StructName>_<MethodName>`). Call-site rewriting
 	// uses this map to turn `p.area()` into `__method_Point_area(p)`.
 	Methods map[string]string
+	// MethodSources records the canonical source-module path each
+	// registered method's body came from. Mangled-name keys mirror
+	// the values in Methods (e.g. `__method_i32_abs` →
+	// `stdlib://std/i32.lang`). Entries with an empty value are
+	// universally visible — that's the case for synthetic methods
+	// the checker registers itself (Reader / Writer / Map /
+	// MapIter, the inline-IR `Array.push`, and the built-in string
+	// methods) plus anything sourced from the auto-injected magic
+	// prelude.
+	//
+	// The dispatch path filters method resolutions against the
+	// call site's enclosing module + the program's `ModuleImports`
+	// closure so that methods declared in a module are only callable
+	// from files whose import closure reaches that module
+	// (`docs/PRELUDE-TO-MODULES.md`). Empty entries on either side
+	// skip the filter (transitional accommodation for prelude-
+	// injected decls and single-file programs).
+	MethodSources map[string]string
+	// ModuleImports mirrors `ast.Program.ModuleImports` — the per-
+	// module transitive import closure modload computes during
+	// loading. Copied onto Info at the start of Check so the
+	// dispatch path doesn't need a back-reference to the Program.
+	ModuleImports map[string]map[string]bool
 	// VariantCallPayloads is keyed by every variant-construction
 	// Call (`Some(42)`, `Ok(v)`, …) with the variant's payload
 	// types AFTER the checker has substituted any type-parameter
@@ -399,6 +422,8 @@ func Check(prog *ast.Program) (*Info, error) {
 			Structs:             map[string]*ast.StructDecl{},
 			Enums:               map[string]*ast.EnumDecl{},
 			Methods:             map[string]string{},
+			MethodSources:       map[string]string{},
+			ModuleImports:       prog.ModuleImports,
 			VariantCallPayloads: map[*ast.Call][]ast.Type{},
 			GenericFuncs:        map[string]*ast.FuncDecl{},
 			GenericStructs:      map[string]*ast.StructDecl{},
@@ -830,6 +855,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			continue
 		}
 		c.info.Methods["Array."+suffix] = fn.Name
+		c.info.MethodSources[fn.Name] = fn.SourceModule
 	}
 
 	// MapIter[K, V] — paired with Map's iter() above. The
@@ -1067,6 +1093,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.info.Methods[methodKey] = mangled
+			c.info.MethodSources[mangled] = fn.SourceModule
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup {
 			c.errf(fn.P, "function %q redeclared", fn.Name)
@@ -1111,6 +1138,39 @@ func Check(prog *ast.Program) (*Info, error) {
 		return c.info, diag.Errors(c.errors)
 	}
 	return c.info, nil
+}
+
+// methodVisibleHere reports whether `mangled` is callable from
+// the current call-site context. The rule (per
+// docs/PRELUDE-TO-MODULES.md) is: a method declared in module M
+// is callable from a file F only if M ∈ closure(F).
+//
+// Empty source modules on either side skip the check —
+// transitional accommodation for prelude-injected decls,
+// checker-synthetic methods (Reader / Writer / Map / MapIter /
+// the inline-IR `Array.push`), and single-file programs that
+// bypass modload. Both sides go away once Phase 5 removes the
+// magic prelude and every method lives in a module.
+//
+// Same-module always passes (a module can always call its own
+// methods regardless of import graph). Cross-module visibility
+// consults the program-wide import-closure map modload built
+// during `combine`.
+func (c *checker) methodVisibleHere(mangled string) bool {
+	methodSrc := c.info.MethodSources[mangled]
+	if methodSrc == "" {
+		return true
+	}
+	if c.current == nil || c.current.SourceModule == "" {
+		return true
+	}
+	if c.current.SourceModule == methodSrc {
+		return true
+	}
+	if c.info.ModuleImports == nil {
+		return true
+	}
+	return c.info.ModuleImports[c.current.SourceModule][methodSrc]
 }
 
 type checker struct {
@@ -3012,7 +3072,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			if typeName != "" {
 				key := typeName + "." + fa.Field
-				if mangled, ok := c.info.Methods[key]; ok {
+				if mangled, ok := c.info.Methods[key]; ok && c.methodVisibleHere(mangled) {
 					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
 					// Carry the receiver's TypeArgs (if any) so

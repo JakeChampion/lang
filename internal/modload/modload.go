@@ -381,9 +381,20 @@ func (m *module) rewriteAll(selfPrefix string) []error {
 		imports:    m.imports,
 	}
 	for _, fn := range m.prog.Funcs {
-		// Rename the decl itself.
-		fn.Name = selfPrefix + fn.Name
-		if fn.Receiver != nil {
+		// Receiver methods don't get the module prefix. Dispatch
+		// happens through the checker's receiver-hoist + Methods
+		// map: a method gets hoisted to `__method_<Type>_<Name>`
+		// based on its receiver, independent of the source
+		// module. Mangling the source-level name here would force
+		// the hoist to produce `__method_<Type>_<mod>__<name>`,
+		// which no `(x).method()` call site would resolve to.
+		// Visibility across modules is enforced separately by
+		// `checker.methodVisibleHere`, which consults each
+		// FuncDecl's SourceModule (stamped during loadRecursive)
+		// against the program's import-closure map.
+		if fn.Receiver == nil {
+			fn.Name = selfPrefix + fn.Name
+		} else {
 			r.rewriteType(&fn.Receiver.Type)
 		}
 		for i := range fn.Params {
