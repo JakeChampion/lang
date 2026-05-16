@@ -31,6 +31,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -71,9 +72,20 @@ func compileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int)
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 
-	prog, err := parser.Parse(src)
+	// Route the source through modload (write to temp file, then
+	// `modload.Load`) so cross-module qualified calls in the
+	// stdlib (`int.int_to_string_radix(…)` etc.) get rewritten.
+	// Without this, the bare `parser.Parse` path used previously
+	// skipped modload's rewriter entirely. Mirrors the same
+	// refactor in `compileAndRunArm64`.
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.lang")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("modload: %v", err)
 	}
 	if err := constfold.Fold(prog); err != nil {
 		t.Fatalf("constfold: %v", err)
@@ -87,7 +99,6 @@ func compileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int)
 		t.Fatalf("emit: %v", err)
 	}
 
-	dir := t.TempDir()
 	asmPath := filepath.Join(dir, "prog.s")
 	binPath := filepath.Join(dir, "prog")
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
