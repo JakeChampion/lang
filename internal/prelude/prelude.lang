@@ -504,6 +504,64 @@ function (s: string) replace_first(old: string, new: string): string {
     return s.replace_n(old, new, 1);
 }
 
+// `s.word_at(i)` — Option[string] of the i-th word in s
+// using whitespace as separator. Multiple consecutive
+// whitespace bytes collapse (driven by `fields()`).
+// Negative indices and indices >= word_count return None.
+function (s: string) word_at(i: i32): Option[string] {
+    if (i < 0) { return None; }
+    var words: string[] = s.fields();
+    if (i >= len(words)) { return None; }
+    return Some(words[i]);
+}
+
+// `s.word_count_min(min_len)` — count of whitespace-
+// delimited words at least `min_len` bytes long.
+// `min_len <= 0` counts every word.
+function (s: string) word_count_min(min_len: i32): i32 {
+    var words: string[] = s.fields();
+    var n: i32 = len(words);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (len(words[i]) >= min_len) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+// `s.longest_word()` — Option[string] of the longest
+// whitespace-delimited word. Ties go to the first
+// occurrence. Empty / all-whitespace input → None.
+function (s: string) longest_word(): Option[string] {
+    var words: string[] = s.fields();
+    var n: i32 = len(words);
+    if (n == 0) { return None; }
+    var best: string = words[0];
+    var i: i32 = 1;
+    while (i < n) {
+        if (len(words[i]) > len(best)) { best = words[i]; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
+// `s.is_quoted()` — true if s has at least 2 bytes and
+// the first and last bytes are matching quote characters
+// (", `, or '). Doesn't validate escaping inside the
+// quotes — purely a shape predicate. Empty / single-char
+// strings return false (need at least an opening and
+// closing quote).
+function (s: string) is_quoted(): boolean {
+    var n: i32 = len(s);
+    if (n < 2) { return false; }
+    var first: i32 = s[0];
+    var last: i32 = s[n - 1];
+    if (first != last) { return false; }
+    if (first == 34 || first == 39 || first == 96) { return true; }
+    return false;
+}
+
 // `s.is_kebab_case()` — true if s is non-empty,
 // lowercase / digit / hyphen only, no leading or trailing
 // hyphen, and no consecutive hyphens. Matches the
@@ -3217,6 +3275,53 @@ function __method_Array_count(arr: i32[], v: i32): i32 {
     return c;
 }
 
+// `(arr: i32[]) gcd_all()` — fold gcd across the array.
+// Option[i32] None on empty. Single-element array returns
+// Some(arr[0].abs()). Negative inputs use their magnitude
+// (gcd is sign-invariant).
+function __method_Array_gcd_all(arr: i32[]): Option[i32] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var g: i32 = arr[0].abs();
+    var i: i32 = 1;
+    while (i < n) {
+        g = g.gcd(arr[i].abs());
+        i = i + 1;
+    }
+    return Some(g);
+}
+
+// `(arr: i32[]) lcm_all()` — fold lcm across the array.
+// Option[i32] None on empty. Overflow wraps silently;
+// callers handling unbounded ranges should pre-check or
+// widen to i64.
+function __method_Array_lcm_all(arr: i32[]): Option[i32] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var l: i32 = arr[0].abs();
+    var i: i32 = 1;
+    while (i < n) {
+        l = l.lcm(arr[i].abs());
+        i = i + 1;
+    }
+    return Some(l);
+}
+
+// `(arr: i32[]) abs_each()` — fresh array of absolute
+// values. Empty → empty. Standard map shape; collapses
+// to `arr.map(abs)` once first-class higher-order
+// methods land.
+function __method_Array_abs_each(arr: i32[]): i32[] {
+    var n: i32 = len(arr);
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i].abs());
+        i = i + 1;
+    }
+    return out;
+}
+
 // `(arr: i32[]) first_index_of(v)` — Option[i32] index of
 // the first element equal to v. None if absent or empty.
 // Numeric companion to the existing string[] `index_of`.
@@ -3671,6 +3776,32 @@ function __method_Array_count_str(arr: string[], v: string): i32 {
         i = i + 1;
     }
     return c;
+}
+
+// `(arr: string[]) all_starts_with(prefix)` — true if
+// every element starts with `prefix`. Empty array → true
+// (vacuous). Empty prefix → true (every string starts
+// with "").
+function __method_Array_all_starts_with(arr: string[], prefix: string): boolean {
+    var n: i32 = len(arr);
+    var i: i32 = 0;
+    while (i < n) {
+        if (!arr[i].starts_with(prefix)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `(arr: string[]) all_ends_with(suffix)` — true if every
+// element ends with `suffix`. Empty array → true.
+function __method_Array_all_ends_with(arr: string[], suffix: string): boolean {
+    var n: i32 = len(arr);
+    var i: i32 = 0;
+    while (i < n) {
+        if (!arr[i].ends_with(suffix)) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 // `(arr: string[]) sorted_str_asc()` / `sorted_str_desc()` —

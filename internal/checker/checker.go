@@ -877,6 +877,11 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.Methods["Array.every_positive"] = "__method_Array_every_positive"
 	c.info.Methods["Array.first_index_of"] = "__method_Array_first_index_of"
 	c.info.Methods["Array.pairwise_diffs"] = "__method_Array_pairwise_diffs"
+	c.info.Methods["Array.gcd_all"] = "__method_Array_gcd_all"
+	c.info.Methods["Array.lcm_all"] = "__method_Array_lcm_all"
+	c.info.Methods["Array.abs_each"] = "__method_Array_abs_each"
+	c.info.Methods["Array.all_starts_with"] = "__method_Array_all_starts_with"
+	c.info.Methods["Array.all_ends_with"] = "__method_Array_all_ends_with"
 
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
