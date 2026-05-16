@@ -6352,6 +6352,53 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twenty-second stdlib bundle: parse_hex_int / parse_bin_int,
+// is_in_range, matches_any, reverse_digits, is_palindrome,
+// to_array. 7 helpers.
+func TestArm64StdlibBundle22(t *testing.T) {
+	src := `function main(): i32 {
+    // parse_hex_int / parse_bin_int
+    match ("ff".parse_hex_int()) { Some(v) => { if (v != 255) { return 1; } }, None => { return 2; }, }
+    match ("1010".parse_bin_int()) { Some(v) => { if (v != 10) { return 3; } }, None => { return 4; }, }
+    match ("xyz".parse_hex_int()) { Some(_) => { return 5; }, None => { } }
+    match ("2".parse_bin_int()) { Some(_) => { return 6; }, None => { } }
+
+    // is_in_range — half-open
+    if (!(5).is_in_range(0, 10)) { return 7; }
+    if (!(0).is_in_range(0, 10)) { return 8; }
+    if ((10).is_in_range(0, 10)) { return 9; }    // exclusive upper
+    if ((5).is_in_range(10, 0)) { return 10; }    // inverted
+
+    // matches_any
+    if (!(97).matches_any("abc")) { return 11; }
+    if ((100).matches_any("abc")) { return 12; }
+    if ((97).matches_any("")) { return 13; }
+
+    // reverse_digits
+    if ((1234).reverse_digits() != 4321) { return 14; }
+    if ((1000).reverse_digits() != 1) { return 15; }
+    if ((0).reverse_digits() != 0) { return 16; }
+    if ((0 - 1234).reverse_digits() != (0 - 4321)) { return 17; }
+
+    // is_palindrome
+    if (!(0).is_palindrome()) { return 18; }
+    if (!(121).is_palindrome()) { return 19; }
+    if (!(12321).is_palindrome()) { return 20; }
+    if ((1234).is_palindrome()) { return 21; }
+    if ((0 - 121).is_palindrome()) { return 22; }
+
+    // to_array
+    var a: string[] = "abc".to_array();
+    if (len(a) != 3 || a[0] != "a" || a[2] != "c") { return 23; }
+    if (len("".to_array()) != 0) { return 24; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 22)", code)
+	}
+}
+
 // Twenty-first stdlib bundle: string is_int / is_float /
 // wrap, string[] take / drop, pack_rgb, byte is_printable /
 // is_control. 8 helpers.

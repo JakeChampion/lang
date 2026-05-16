@@ -609,6 +609,17 @@ think they're free additions to make.
   into a 24-bit i32. Pairs with `to_rgb_hex` for round-trip.
 - **Byte printability**: `(b).is_printable()` (32..126),
   `(b).is_control()` (0..31 or 127).
+- **Radix parse sugar**: `s.parse_hex_int()` /
+  `s.parse_bin_int()`. Companion to the generic
+  `parse_int_radix`.
+- **`(n: i32).is_in_range(lo, hi)`**: half-open bucket check.
+- **`(b: i32).matches_any(bytes)`**: scan check; saves the
+  `b == x || b == y || ...` chain.
+- **`(n: i32).reverse_digits()`**: 1234 → 4321 with sign
+  preserved.
+- **`(n: i32).is_palindrome()`**: decimal-palindrome check.
+- **`(s: string).to_array()`**: string[] of single-byte
+  strings — companion to `chars()` with string semantics.
 
 ### Additional compiler bug
 

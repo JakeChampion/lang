@@ -767,6 +767,20 @@ function (b: i32) is_control(): boolean {
     return (b >= 0 && b <= 31) || b == 127;
 }
 
+// `(b: i32) matches_any(bytes)` — true if b appears anywhere
+// in the bytes string. Linear scan over bytes. Useful for
+// custom classifier predicates without writing a chain of
+// `b == x || b == y || ...` comparisons.
+function (b: i32) matches_any(bytes: string): boolean {
+    var n: i32 = len(bytes);
+    var i: i32 = 0;
+    while (i < n) {
+        if (bytes[i] == b) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function (b: i32) is_hex_digit(): boolean {
     return b.is_digit() ||
            (b >= 65 && b <= 70) ||   // A-F
@@ -847,6 +861,38 @@ function (n: i32) is_positive(): boolean { return n > 0; }
 function (n: i32) is_negative(): boolean { return n < 0; }
 function (n: i32) is_zero(): boolean { return n == 0; }
 
+// `(n: i32) is_in_range(lo, hi)` — true iff lo <= n < hi
+// (half-open). Empty / inverted ranges return false. The
+// standard "bucket" / "valid array index" check shape.
+function (n: i32) is_in_range(lo: i32, hi: i32): boolean {
+    return n >= lo && n < hi;
+}
+
+// `(n: i32) reverse_digits()` — flip the decimal digit
+// order. 1234 → 4321. Sign preserved. Leading zeros after
+// reverse drop (1000 → 1). Overflow on the reverse is
+// possible for large values; wraps silently.
+function (n: i32) reverse_digits(): i32 {
+    var neg: boolean = (n < 0);
+    var mag: i32 = n;
+    if (neg) { mag = n.abs(); }
+    var r: i32 = 0;
+    while (mag > 0) {
+        r = r * 10 + (mag % 10);
+        mag = mag / 10;
+    }
+    if (neg) { return 0 - r; }
+    return r;
+}
+
+// `(n: i32) is_palindrome()` — true iff the decimal
+// representation reads the same backwards. Negative
+// numbers return false (the minus sign doesn't reverse
+// to itself). 0 is a palindrome.
+function (n: i32) is_palindrome(): boolean {
+    if (n < 0) { return false; }
+    return n == n.reverse_digits();
+}
 // === Byte-level case helpers ===
 //
 // `(b: i32) is_lower()` / `is_upper()` / `to_lower()` /
@@ -2356,6 +2402,21 @@ function (s: string) chars(): i32[] {
     return out;
 }
 
+// `s.to_array()` — string[] one element per byte (each a
+// single-byte string). Companion to chars() but with
+// string elements; useful when later operations need
+// string semantics rather than raw byte values.
+function (s: string) to_array(): string[] {
+    var n: i32 = len(s);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(s[i:i + 1]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // `s.reverse_bytes()` — fresh string with the byte order
 // reversed. NOT a Unicode-aware reverse — multibyte UTF-8
 // sequences will scramble their internal byte order, producing
@@ -3334,6 +3395,16 @@ function (s: string) parse_int(): Option[i32] {
     }
     if (acc > 2147483647) { return None; }        // > i32 max
     return Some(acc as i32);
+}
+
+// `s.parse_hex_int()` / `s.parse_bin_int()` — sugar for
+// parse_int_radix(s, 16) / parse_int_radix(s, 2).
+function (s: string) parse_hex_int(): Option[i32] {
+    return parse_int_radix(s, 16);
+}
+
+function (s: string) parse_bin_int(): Option[i32] {
+    return parse_int_radix(s, 2);
 }
 
 // `s.parse_float()` — decimal f32 parser. Grammar:
