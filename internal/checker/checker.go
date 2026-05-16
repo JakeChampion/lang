@@ -847,6 +847,7 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.Methods["Array.take"] = "__method_Array_take"
 	c.info.Methods["Array.drop"] = "__method_Array_drop"
 	c.info.Methods["Array.all_non_empty"] = "__method_Array_all_non_empty"
+	c.info.Methods["Array.any_contains"] = "__method_Array_any_contains"
 
 	// `arr.sum()` / `arr.max()` / `arr.min()` for i32[] — basic
 	// numeric reductions. sum returns i32; max/min return

@@ -685,6 +685,19 @@ think they're free additions to make.
   (`-16777216 % 100 = -16`, cast to unsigned exit code →
   240) but 80 on interp + wasm. Worked around in random_int
   by limiting the random uint to 24 bits.
+- **arm64 `len(stringTuple.field)` segfaults.** Calling
+  `len()` directly on a `(string, string)` tuple-element
+  access (e.g. `len(p.0)` where `p: (string, string)`)
+  crashes the arm64 backend with SIGSEGV. The string-header
+  load appears to fold incorrectly when the receiver is a
+  tuple-field expression rather than a plain identifier or
+  struct-field access. interp and x86-64 both handle it.
+  Workaround: bind the field to a `var s: string = p.0;`
+  local first, then call `len(s)`. Applied in prelude's
+  `is_email_like`. Likely a missing pointer-deref step in
+  the load path for tuple-element string values on arm64;
+  worth tracking down — same shape probably affects other
+  string methods called on tuple-field accesses.
 
 ## Cross-cutting decisions
 

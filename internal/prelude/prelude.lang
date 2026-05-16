@@ -348,6 +348,61 @@ function (s: string) is_valid_identifier(): boolean {
     return true;
 }
 
+// `s.is_ipv4()` — true if s parses as a dotted-decimal IPv4
+// address: four octets, each 0..255, separated by dots. No
+// leading-zero check; "0.0.0.0" / "255.255.255.255" / common
+// shapes all pass.
+//
+// Octet parse is a manual digit-walk rather than parse_int —
+// parse_int uses i64 internally and hits the native
+// i64-comparison-across-i32-boundary bug for small positive
+// inputs (returns None on arm64 / x86-64 for "127").
+function (s: string) is_ipv4(): boolean {
+    var parts: string[] = s.split(".");
+    if (len(parts) != 4) { return false; }
+    var i: i32 = 0;
+    while (i < 4) {
+        var p: string = parts[i];
+        var plen: i32 = len(p);
+        if (plen == 0 || plen > 3) { return false; }
+        var v: i32 = 0;
+        var j: i32 = 0;
+        while (j < plen) {
+            var b: i32 = p[j];
+            if (!b.is_digit()) { return false; }
+            v = v * 10 + (b - 48);
+            j = j + 1;
+        }
+        if (v < 0 || v > 255) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_email_like()` — basic syntactic check: exactly one
+// '@' with non-empty local + domain parts, and the domain
+// contains at least one dot. Not RFC 5322 compliant (real
+// email validation needs a parser); useful as a quick
+// sanity check before downstream validation.
+//
+// Tuple fields are bound to locals before passing to `len` —
+// `len(p.0)` directly on a `(string, string)` tuple-field
+// access crashes the arm64 backend (the load folds
+// incorrectly). Binding through `var` is a safe workaround
+// pending a codegen fix.
+function (s: string) is_email_like(): boolean {
+    match (s.split_once("@")) {
+        Some(p) => {
+            var lo: string = p.0;
+            var dom: string = p.1;
+            if (len(lo) == 0) { return false; }
+            if (len(dom) == 0) { return false; }
+            return dom.contains(".");
+        },
+        None => { return false; },
+    }
+}
+
 // `repeat_char(ch, n)` — fresh string of n copies of the byte
 // `ch`. Faster than `(c).chr().repeat(n)` would be (no chr
 // helper exists yet; this is the substitute). `n <= 0`
@@ -421,6 +476,19 @@ function http_response_text(status: i32, body: string): HttpResponse {
 
 function http_response_not_found(): HttpResponse {
     return HttpResponse { status: 404, body: "Not Found" };
+}
+
+// `http_response_bad_request(body)` — 400 with the given
+// body. Common shape for validation-failure responses.
+function http_response_bad_request(body: string): HttpResponse {
+    return HttpResponse { status: 400, body: body };
+}
+
+// `http_response_internal_error(body)` — 500. The default
+// body shape for unhandled / unexpected exceptions in a
+// handler.
+function http_response_internal_error(body: string): HttpResponse {
+    return HttpResponse { status: 500, body: body };
 }
 
 // `http_path_segments(path)` — split an HTTP path into
@@ -908,6 +976,34 @@ function (n: i32) is_palindrome(): boolean {
     if (n < 0) { return false; }
     return n == n.reverse_digits();
 }
+
+// `(n: i32) sum_of_digits()` — total of the decimal digits.
+// 123 → 6. Negative numbers use their magnitude. Useful for
+// digital-root puzzles, checksum precomputation.
+function (n: i32) sum_of_digits(): i32 {
+    var mag: i32 = n.abs();
+    var s: i32 = 0;
+    while (mag > 0) {
+        s = s + (mag % 10);
+        mag = mag / 10;
+    }
+    return s;
+}
+
+// `(n: i32) has_digit(d)` — true if d (0..9) appears in
+// the decimal representation. Negative numbers use their
+// magnitude.
+function (n: i32) has_digit(d: i32): boolean {
+    if (d < 0 || d > 9) { return false; }
+    var mag: i32 = n.abs();
+    if (mag == 0) { return d == 0; }
+    while (mag > 0) {
+        if (mag % 10 == d) { return true; }
+        mag = mag / 10;
+    }
+    return false;
+}
+
 // === Byte-level case helpers ===
 //
 // `(b: i32) is_lower()` / `is_upper()` / `to_lower()` /
@@ -2890,6 +2986,19 @@ function __method_Array_all_non_empty(arr: string[]): boolean {
         i = i + 1;
     }
     return true;
+}
+
+// `(arr: string[]) any_contains(needle)` — true if any entry
+// contains needle as a substring. Useful for searching a
+// list of values for a common token.
+function __method_Array_any_contains(arr: string[], needle: string): boolean {
+    var n: i32 = len(arr);
+    var i: i32 = 0;
+    while (i < n) {
+        if (arr[i].contains(needle)) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // === Array append ===
