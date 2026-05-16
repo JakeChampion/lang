@@ -43,7 +43,7 @@ pub function (b: i32) is_alnum(): boolean {
 }
 
 pub function (b: i32) is_ascii_white_space(): boolean {
-    return __is_ascii_ws(b);
+    return b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12;
 }
 
 // `(b: i32) is_newline()` — true for LF (10) or CR (13). Use
@@ -790,3 +790,4 @@ pub function (n: i32) to_rgb_hex(): string {
                  g.to_hex().pad_start(2, "0") +
                  b.to_hex().pad_start(2, "0");
 }
+
