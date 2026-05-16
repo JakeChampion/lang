@@ -42,35 +42,6 @@ import "core/map";
 
 
 
-// `repeat_char(ch, n)` — fresh string of n copies of the byte
-// `ch`. Faster than `(c).chr().repeat(n)` would be (no chr
-// helper exists yet; this is the substitute). `n <= 0`
-// returns empty.
-function repeat_char(ch: i32, n: i32): string {
-    if (n <= 0) { return ""; }
-    var buf: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
-    while (i < n) {
-        buf[i] = ch as u8;
-        i = i + 1;
-    }
-    return string_from_bytes(buf);
-}
-
-
-
-
-
-
-// `s.trim()` — strip leading + trailing ASCII whitespace
-// (SP, TAB, LF, CR, VT, FF). UTF-8 multibyte sequences
-// pass through unchanged because their leading bytes are
-// all >= 0x80, none of which are whitespace. Returns a
-// fresh slice via the `s[a:b]` lowering.
-
-function __is_ascii_ws(b: i32): boolean {
-    return b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12;
-}
 
 // i32 / byte (i32) receiver methods migrated out into
 // `std/i32` — see the `import "std/i32";` at the top of
