@@ -6352,6 +6352,87 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twenty-ninth stdlib bundle: i32[] min_max / reversed /
+// every_positive, string without_chars / contains_only /
+// split_at / count_chars_in, i32 is_perfect_square.
+// 8 helpers.
+//
+// `min_max` returns `Option[(i32, i32)]` — both bounds in
+// a single pass. `reversed` is the i32[] companion to the
+// existing string[] `reverse` (they collapse to one once
+// generic Array methods land). `every_positive` is
+// vacuously true on an empty array, matching the all-of-X
+// quantifier convention.
+//
+// `split_at` returns a `(string, string)` tuple; negative
+// indices clamp to 0, out-of-range to len. `contains_only`
+// is vacuously true on the empty string but false on a
+// non-empty string with an empty set.
+func TestArm64StdlibBundle29(t *testing.T) {
+	src := `function main(): i32 {
+    match ([3, 1, 4, 1, 5, 9, 2, 6].min_max()) {
+        Some(t) => { if (t.0 != 1 || t.1 != 9) { return 1; } },
+        None => { return 2; },
+    }
+    match ([7].min_max()) {
+        Some(t) => { if (t.0 != 7 || t.1 != 7) { return 3; } },
+        None => { return 4; },
+    }
+    var emp: i32[] = [];
+    match (emp.min_max()) { Some(_) => { return 5; }, None => { } }
+
+    var rev: i32[] = [1, 2, 3, 4].reversed();
+    if (rev[0] != 4 || rev[1] != 3 || rev[2] != 2 || rev[3] != 1) { return 10; }
+    if (len(emp.reversed()) != 0) { return 11; }
+    var single: i32[] = [7].reversed();
+    if (single[0] != 7) { return 12; }
+
+    if ("hello world".without_chars(" lo") != "hewrd") { return 20; }
+    if ("abcabc".without_chars("a") != "bcbc") { return 21; }
+    if ("xyz".without_chars("") != "xyz") { return 22; }
+    if ("".without_chars("abc") != "") { return 23; }
+
+    if (!"abc".contains_only("abcdef")) { return 30; }
+    if ("abcX".contains_only("abc")) { return 31; }
+    if (!"".contains_only("anything")) { return 32; }
+    if (!"aaa".contains_only("a")) { return 33; }
+
+    var sp1: (string, string) = "hello world".split_at(5);
+    if (sp1.0 != "hello" || sp1.1 != " world") { return 40; }
+    var sp2: (string, string) = "abc".split_at(0);
+    if (sp2.0 != "" || sp2.1 != "abc") { return 41; }
+    var sp3: (string, string) = "abc".split_at(3);
+    if (sp3.0 != "abc" || sp3.1 != "") { return 42; }
+    var sp4: (string, string) = "abc".split_at(10);
+    if (sp4.0 != "abc" || sp4.1 != "") { return 43; }
+    var sp5: (string, string) = "abc".split_at(0 - 1);
+    if (sp5.0 != "" || sp5.1 != "abc") { return 44; }
+
+    if (!(0).is_perfect_square()) { return 50; }
+    if (!(1).is_perfect_square()) { return 51; }
+    if (!(4).is_perfect_square()) { return 52; }
+    if (!(100).is_perfect_square()) { return 53; }
+    if ((2).is_perfect_square()) { return 54; }
+    if ((99).is_perfect_square()) { return 55; }
+    if ((0 - 4).is_perfect_square()) { return 56; }
+
+    if ("hello".count_chars_in("aeiou") != 2) { return 60; }
+    if ("xyz".count_chars_in("aeiou") != 0) { return 61; }
+    if ("".count_chars_in("a") != 0) { return 62; }
+    if ("aaa".count_chars_in("a") != 3) { return 63; }
+
+    if (![1, 2, 3].every_positive()) { return 70; }
+    if ([1, 0, 3].every_positive()) { return 71; }
+    if ([1, 2, 0 - 1].every_positive()) { return 72; }
+    if (!emp.every_positive()) { return 73; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 29)", code)
+	}
+}
+
 // Twenty-eighth stdlib bundle: i32[] sorted_asc / sorted_desc
 // / cumsum, string[] sorted_str_asc / sorted_str_desc, string
 // ellipsis / first_line, i32 min_zero / sign_str. 9 helpers.

@@ -496,6 +496,95 @@ function (s: string) ends_with_any(suffixes: string[]): boolean {
     return false;
 }
 
+// `s.without_chars(set)` — remove every byte from s that
+// appears anywhere in `set`. Empty set → unchanged.
+// ASCII-level character class semantics.
+function (s: string) without_chars(set: string): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    var setLen: i32 = len(set);
+    if (setLen == 0) { return s; }
+    var buf: u8[] = __alloc_u8(n);
+    var pos: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var found: boolean = false;
+        var j: i32 = 0;
+        while (j < setLen) {
+            if (set[j] == b) { found = true; }
+            j = j + 1;
+        }
+        if (!found) {
+            buf[pos] = b as u8;
+            pos = pos + 1;
+        }
+        i = i + 1;
+    }
+    var out: u8[] = __alloc_u8(pos);
+    var k: i32 = 0;
+    while (k < pos) {
+        out[k] = buf[k];
+        k = k + 1;
+    }
+    return string_from_bytes(out);
+}
+
+// `s.contains_only(set)` — true if every byte in s is in
+// `set`. Empty s → true (vacuous). Empty set with non-empty
+// s → false (no characters allowed). ASCII-level.
+function (s: string) contains_only(set: string): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return true; }
+    var setLen: i32 = len(set);
+    if (setLen == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var found: boolean = false;
+        var j: i32 = 0;
+        while (j < setLen) {
+            if (set[j] == b) { found = true; }
+            j = j + 1;
+        }
+        if (!found) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.count_chars_in(set)` — count bytes of s that appear
+// in `set`. Counterpart to `without_chars` / `contains_only`.
+// Empty set → 0.
+function (s: string) count_chars_in(set: string): i32 {
+    var n: i32 = len(s);
+    var setLen: i32 = len(set);
+    if (n == 0 || setLen == 0) { return 0; }
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var j: i32 = 0;
+        while (j < setLen) {
+            if (set[j] == b) { c = c + 1; j = setLen; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return c;
+}
+
+// `s.split_at(i)` — split s into two parts at byte index i.
+// Returns a (string, string) tuple. Negative i clamps to 0;
+// i >= len(s) puts everything in the first part.
+function (s: string) split_at(i: i32): (string, string) {
+    var n: i32 = len(s);
+    var k: i32 = i;
+    if (k < 0) { k = 0; }
+    if (k > n) { k = n; }
+    return (s[0:k], s[k:n]);
+}
+
 // `s.replace_byte(from, to)` — return a copy of s with every
 // byte equal to `from` replaced by `to`. ASCII-level; for
 // multi-byte sequences use `replace(old, new)`. Both args
@@ -1225,6 +1314,16 @@ function (n: i32) sign_str(): string {
     if (n > 0) { return "+"; }
     if (n < 0) { return "-"; }
     return "";
+}
+
+// `(n: i32) is_perfect_square()` — true if n is k*k for some
+// non-negative k. Negative n returns false. Uses
+// `sqrt_floor`, so the check is O(log n) via that helper's
+// binary search; faster than a linear k-walk.
+function (n: i32) is_perfect_square(): boolean {
+    if (n < 0) { return false; }
+    var k: i32 = n.sqrt_floor();
+    return k * k == n;
 }
 
 // === Byte-level case helpers ===
@@ -3005,6 +3104,50 @@ function __method_Array_count(arr: i32[], v: i32): i32 {
         i = i + 1;
     }
     return c;
+}
+
+// `(arr: i32[]) min_max()` — Option[(min, max)] in a single
+// pass. Empty → None. Saves a second iteration when callers
+// need both bounds.
+function __method_Array_min_max(arr: i32[]): Option[(i32, i32)] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var lo: i32 = arr[0];
+    var hi: i32 = arr[0];
+    var i: i32 = 1;
+    while (i < n) {
+        if (arr[i] < lo) { lo = arr[i]; }
+        if (arr[i] > hi) { hi = arr[i]; }
+        i = i + 1;
+    }
+    return Some((lo, hi));
+}
+
+// `(arr: i32[]) reversed()` — fresh reversed copy. Companion
+// to the existing string[] `reverse`. Both collapse to a
+// single `reversed()` once generic Array methods land.
+function __method_Array_reversed(arr: i32[]): i32[] {
+    var n: i32 = len(arr);
+    var out: i32[] = [];
+    var i: i32 = n - 1;
+    while (i >= 0) {
+        out = out.push(arr[i]);
+        i = i - 1;
+    }
+    return out;
+}
+
+// `(arr: i32[]) every_positive()` — true if every element is
+// strictly positive (n > 0). Empty → true (vacuous). Useful
+// for input validation on count / size arrays.
+function __method_Array_every_positive(arr: i32[]): boolean {
+    var n: i32 = len(arr);
+    var i: i32 = 0;
+    while (i < n) {
+        if (arr[i] <= 0) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 // `(arr: i32[]) sorted_asc()` / `sorted_desc()` — method
