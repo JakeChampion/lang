@@ -1,4 +1,4 @@
-package modload
+package modload_test
 
 import (
 	"os"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/modload"
 )
 
 // writeFiles drops the supplied path → contents pairs into a fresh
@@ -114,7 +115,7 @@ func TestLoadCombinesEntryAndImport(t *testing.T) {
 		"main.lang": `import "./util";
 function main(): i32 { return util.greet(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ function pickAdd(): (i32, i32) => i32 { return add; }`,
 		"main.lang": `import "./util";
 function main(): i32 { return 0; }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +180,7 @@ pub function call_inner(): i32 { return inner.answer(); }`,
 		"main.lang": `import "./helpers/util";
 function main(): i32 { return util.call_inner(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +201,7 @@ pub function fa(): i32 { return b.fb(); }`,
 		"b.lang": `import "./a";
 pub function fb(): i32 { return a.fa(); }`,
 	})
-	_, _, err := Load(filepath.Join(dir, "a.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "a.lang"))
 	if err == nil {
 		t.Fatal("expected cycle error from Load")
 	}
@@ -219,7 +220,7 @@ func TestLoadRejectsDuplicateLocalName(t *testing.T) {
 import "./b/util";
 function main(): i32 { return util.fa(); }`,
 	})
-	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err == nil {
 		t.Fatal("expected duplicate-import error from Load")
 	}
@@ -232,7 +233,7 @@ func TestLoadSingleFileNoImports(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"main.lang": `function main(): i32 { return 99; }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +258,7 @@ function main(): i32 {
 	return p.x + p.y;
 }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +303,7 @@ function main(): i32 {
 	return p.x;
 }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +329,7 @@ pub function origin(): Point { return Point { x: 0, y: 0 }; }`,
 function pickOrigin(): point.Point { return point.origin(); }
 function main(): i32 { return pickOrigin().x; }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +355,7 @@ func TestLoadRejectsPrivateFunctionAccess(t *testing.T) {
 		"main.lang": `import "./util";
 function main(): i32 { return util.secret(); }`,
 	})
-	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err == nil {
 		t.Fatal("expected visibility error from Load")
 	}
@@ -374,7 +375,7 @@ function main(): i32 {
 	return f();
 }`,
 	})
-	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err == nil {
 		t.Fatal("expected visibility error from Load")
 	}
@@ -394,7 +395,7 @@ function main(): i32 {
 	return p.x;
 }`,
 	})
-	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err == nil {
 		t.Fatal("expected visibility error from Load")
 	}
@@ -413,7 +414,7 @@ pub function exposed(): i32 { return helper() + 1; }`,
 		"main.lang": `import "./util";
 function main(): i32 { return util.exposed(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatalf("private same-module access should be allowed: %v", err)
 	}
@@ -435,7 +436,7 @@ func TestLoadCombinesPubConstAcrossModules(t *testing.T) {
 		"main.lang": `import "./limits";
 function main(): i32 { return limits.MAX; }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +473,7 @@ func TestLoadRejectsPrivateConstAccess(t *testing.T) {
 		"main.lang": `import "./limits";
 function main(): i32 { return limits.MAX; }`,
 	})
-	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err == nil {
 		t.Fatal("expected visibility error from Load")
 	}
@@ -492,7 +493,7 @@ func TestLoadReturnsPerFileSources(t *testing.T) {
 		"main.lang": `import "./util";
 function main(): i32 { return util.f(); }`,
 	})
-	_, srcs, err := Load(filepath.Join(dir, "main.lang"))
+	_, srcs, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +512,7 @@ func TestLoadResolvesStdlibImport(t *testing.T) {
 		"main.lang": `import "std/_test_empty";
 function main(): i32 { return _test_empty.stdlib_test_marker(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +533,7 @@ func TestLoadResolvesCoreImport(t *testing.T) {
 		"main.lang": `import "core/_test_empty";
 function main(): i32 { return _test_empty.core_test_marker(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,7 +550,7 @@ func TestLoadUnknownStdlibModule(t *testing.T) {
 		"main.lang": `import "std/does_not_exist";
 function main(): i32 { return 0; }`,
 	})
-	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err == nil {
 		t.Fatal("expected error for unknown stdlib module")
 	}
@@ -569,7 +570,7 @@ func TestLoadStampsFuncDeclSourceModule(t *testing.T) {
 		"main.lang": `import "./util";
 function main(): i32 { return util.f(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -599,7 +600,7 @@ pub function b_fn(): i32 { return c.c_fn() + 2; }`,
 		"a.lang": `import "./b";
 function main(): i32 { return b.b_fn() + 1; }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "a.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "a.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -644,7 +645,7 @@ func TestMethodVisibleAcrossExplicitImport(t *testing.T) {
 		"main.lang": `import "./lib";
 function main(): i32 { return (5).my_method(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +665,7 @@ func TestMethodNotVisibleWithoutImport(t *testing.T) {
 		"lib.lang":  `pub function (n: i32) my_method(): i32 { return n + 1; }`,
 		"main.lang": `function main(): i32 { return (5).my_method(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -684,7 +685,7 @@ pub function passthrough(n: i32): i32 { return n.deep(); }`,
 		"a.lang": `import "./b";
 function main(): i32 { return (4).deep(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "a.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "a.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -702,7 +703,7 @@ func TestUserImportOfStdI32CoexistsWithAutoPrelude(t *testing.T) {
 		"main.lang": `import "std/i32";
 function main(): i32 { return (0 - 9).abs(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -735,7 +736,7 @@ func TestNoPreludeBareProgramTypechecks(t *testing.T) {
 		"main.lang": `import "core/no_prelude";
 function main(): i32 { return 42; }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,11 +755,77 @@ func TestNoPreludeMissingImportErrors(t *testing.T) {
 		"main.lang": `import "core/no_prelude";
 function main(): i32 { return (5).abs(); }`,
 	})
-	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := checker.Check(prog); err == nil {
 		t.Fatal("expected checker error when no-prelude is set and std/i32 isn't imported")
+	}
+}
+
+// LoadStdlibFlat loads stdlib modules under a flat namespace —
+// decls keep their bare names, and qualified call sites inside
+// stdlib bodies (`int.foo()`) rewrite to bare calls (`foo()`).
+// The result is the shape the auto-prelude path needs: every
+// stdlib decl callable by name from user code, plus the
+// freedom for stdlib internals to use `import "core/int";` +
+// `int.foo(...)` style qualified calls.
+func TestLoadStdlibFlatRewritesQualifiedToBare(t *testing.T) {
+	prog, err := modload.LoadStdlibFlat([]string{"std/u32"})
+	if err != nil {
+		t.Fatalf("LoadStdlibFlat: %v", err)
+	}
+	// std/u32 has an `import "core/int"` and calls
+	// `int.__int_to_string_u64(...)`. Find the `(n: u32)
+	// to_string()` receiver method and verify its body calls
+	// bare `__int_to_string_u64`, not the mangled `int__...`
+	// form.
+	var fn *ast.FuncDecl
+	for _, f := range prog.Funcs {
+		if f.Receiver == nil || f.Name != "to_string" {
+			continue
+		}
+		nt, ok := f.Receiver.Type.(ast.NumberType)
+		if !ok || nt.Width != 32 || nt.Signed {
+			continue
+		}
+		fn = f
+		break
+	}
+	if fn == nil {
+		t.Fatalf("did not find (u32).to_string in: %v", funcNames(prog))
+	}
+	if !callsDirect(fn, "__int_to_string_u64") {
+		t.Errorf("(u32).to_string body should call bare __int_to_string_u64; flat rewriter did not strip the qualifier")
+	}
+	if callsDirect(fn, "int__int_to_string_u64") {
+		t.Errorf("(u32).to_string body should NOT call mangled int__int_to_string_u64 under LoadStdlibFlat")
+	}
+}
+
+// Core/int is pulled in transitively when LoadStdlibFlat
+// loads std/u32 (which imports it). Its decls land bare-named
+// — confirms the flat-namespace mode applies to transitive
+// loads, not just the top-level paths the caller asked for.
+func TestLoadStdlibFlatPullsTransitiveImports(t *testing.T) {
+	prog, err := modload.LoadStdlibFlat([]string{"std/u32"})
+	if err != nil {
+		t.Fatalf("LoadStdlibFlat: %v", err)
+	}
+	if findFunc(prog, "__int_to_string_u64") == nil {
+		t.Errorf("core/int's __int_to_string_u64 should land at the bare name when pulled in transitively: %v",
+			funcNames(prog))
+	}
+	if findFunc(prog, "int__int_to_string_u64") != nil {
+		t.Errorf("core/int's helpers should NOT be mangled under LoadStdlibFlat")
+	}
+}
+
+// Non-stdlib paths are rejected upfront so a misuse surfaces
+// a clean error instead of the loader's "file not found".
+func TestLoadStdlibFlatRejectsNonStdlibPath(t *testing.T) {
+	if _, err := modload.LoadStdlibFlat([]string{"./relative/util"}); err == nil {
+		t.Fatal("expected LoadStdlibFlat to reject non-stdlib path")
 	}
 }

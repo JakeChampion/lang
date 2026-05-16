@@ -5,6 +5,8 @@
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
+import "core/int";
+
 pub function (n: u32) min(other: u32): u32 {
     if (n < other) { return n; }
     return other;
@@ -24,7 +26,9 @@ pub function (n: u32) clamp(lo: u32, hi: u32): u32 {
 // `(n: u32) to_string()` — decimal representation. Routes
 // through the i64-shaped formatter helper to avoid the
 // signed-truncation pitfall a direct `n as i32` cast would
-// hit for values >= 2^31.
+// hit for values >= 2^31. Qualified call into core/int via
+// the import above — auto-prelude's `LoadStdlibFlat` rewrites
+// `int.__int_to_string_u64(...)` to the bare-name call site.
 pub function (n: u32) to_string(): string {
-    return __int_to_string_u64((n as i64) & (4294967295 as i64), 0);
+    return int.__int_to_string_u64((n as i64) & (4294967295 as i64), 0);
 }

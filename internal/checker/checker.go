@@ -13,6 +13,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/prelude"
 	"github.com/jakechampion/lang/internal/stdlib"
@@ -339,59 +340,24 @@ func injectPrelude(prog *ast.Program) error {
 	// Phase 3 of docs/PRELUDE-TO-MODULES.md: as methods migrate
 	// out of the magic prelude into `std/…` modules, the prelude
 	// file `import "std/foo";`s them back in so existing programs
-	// keep working unchanged. We follow those imports here (only
-	// stdlib paths — never disk paths) and inject the imported
-	// modules' decls alongside the prelude's own.
+	// keep working unchanged. Auto-prelude's imports are routed
+	// through `modload.LoadStdlibFlat`, which loads each path
+	// (and every stdlib module it transitively imports) and runs
+	// modload's rewriter in flat-namespace mode — qualified call
+	// sites inside stdlib bodies (`int.foo()` →) rewrite to bare
+	// calls (`foo()`), so a stdlib module can use `import
+	// "core/int";` plus `int.foo(...)` to call across-module
+	// without breaking the auto-prelude path's "all decls bare-
+	// named" invariant.
 	//
-	// `loaded` dedupes against modload's per-program load tracker:
-	// if the user's entry program already pulled `std/foo` in
-	// through modload, prog.LoadedStdlibPaths records it and the
-	// prelude's `import "std/foo"` becomes a no-op. Without this
-	// dedup the receiver-method redeclaration check at the start
-	// of Check would fire on every method imported by both paths.
-	loaded := map[string]bool{}
-	if prog.LoadedStdlibPaths != nil {
-		for path := range prog.LoadedStdlibPaths {
-			loaded[path] = true
-		}
-	}
-	if err := injectStdlibImports(prog, pre, loaded); err != nil {
-		return err
-	}
-	// Append funcs, structs, and enums separately. The
-	// IsPrelude flag is only on FuncDecl today (struct /
-	// enum decls aren't filtered by tests, since their
-	// shape is part of the auto-injected stdlib).
-	for _, fn := range pre.Funcs {
-		fn.IsPrelude = true
-		prog.Funcs = append(prog.Funcs, fn)
-	}
-	prog.Structs = append(prog.Structs, pre.Structs...)
-	prog.Enums = append(prog.Enums, pre.Enums...)
-	return nil
-}
-
-// injectStdlibImports walks the imports declared on `pre` (the
-// freshly-parsed prelude) and inlines the source of every
-// stdlib-namespaced one (`std/…` / `core/…`) into `prog`. Recursive
-// — an imported module's own imports are followed too. `loaded`
-// is the dedup set: paths already in it are skipped, paths newly
-// loaded get added.
-//
-// Decls from imported stdlib modules are marked `IsPrelude` so
-// they're treated the same as the auto-prelude itself (universally
-// visible per `methodVisibleHere`, filtered out by tests / dump
-// tools that opt out of prelude noise). Their `SourceModule` stays
-// empty for the same reason — Phase 3 keeps imported-by-prelude
-// methods universally visible; Phase 5 will make stdlib imports
-// require an explicit `import` in user code instead.
-//
-// Only stdlib paths are followed. Relative-path imports inside a
-// stdlib module aren't supported in this first cut — they'd
-// resolve outside the embedded FS — and disk-path imports from a
-// prelude file would be a footgun (a build that depends on a file
-// outside the tree). Both are skipped silently with no error.
-func injectStdlibImports(prog *ast.Program, pre *ast.Program, loaded map[string]bool) error {
+	// Top-level dedup: paths already loaded by the user's entry
+	// program through `modload.Load` are filtered out here. The
+	// user's modload-loaded copy has mangled names; loading the
+	// same module via auto-prelude again would create a second
+	// bare-named copy and the checker's receiver-method
+	// redeclaration check would fire on every method imported
+	// by both paths.
+	wantPaths := make([]string, 0, len(pre.Imports))
 	for _, imp := range pre.Imports {
 		if !stdlib.IsStdlibPath(imp.Path) {
 			continue
@@ -401,34 +367,41 @@ func injectStdlibImports(prog *ast.Program, pre *ast.Program, loaded map[string]
 			key += ".lang"
 		}
 		canonical := "stdlib://" + key
-		if loaded[canonical] {
+		if prog.LoadedStdlibPaths[canonical] {
 			continue
 		}
-		loaded[canonical] = true
-		src, ok := stdlib.Resolve(imp.Path)
-		if !ok {
-			return fmt.Errorf("prelude: unknown stdlib import %q", imp.Path)
-		}
-		sub, err := parser.Parse(src)
+		wantPaths = append(wantPaths, imp.Path)
+	}
+	if len(wantPaths) > 0 {
+		stdProg, err := modload.LoadStdlibFlat(wantPaths)
 		if err != nil {
-			return fmt.Errorf("prelude: stdlib module %s: %w", imp.Path, err)
+			return fmt.Errorf("prelude: %w", err)
 		}
-		// Recurse first so transitive imports land before
-		// `sub`'s own decls (preserves the prelude-style
-		// dependency order — leaf modules' decls before their
-		// importers').
-		if err := injectStdlibImports(prog, sub, loaded); err != nil {
-			return err
-		}
-		for _, fn := range sub.Funcs {
+		for _, fn := range stdProg.Funcs {
 			fn.IsPrelude = true
 			prog.Funcs = append(prog.Funcs, fn)
 		}
-		prog.Structs = append(prog.Structs, sub.Structs...)
-		prog.Enums = append(prog.Enums, sub.Enums...)
-		prog.Unions = append(prog.Unions, sub.Unions...)
-		prog.Consts = append(prog.Consts, sub.Consts...)
+		prog.Structs = append(prog.Structs, stdProg.Structs...)
+		prog.Enums = append(prog.Enums, stdProg.Enums...)
+		prog.Unions = append(prog.Unions, stdProg.Unions...)
+		prog.Consts = append(prog.Consts, stdProg.Consts...)
+		if prog.LoadedStdlibPaths == nil {
+			prog.LoadedStdlibPaths = map[string]bool{}
+		}
+		for p := range stdProg.LoadedStdlibPaths {
+			prog.LoadedStdlibPaths[p] = true
+		}
 	}
+	// The prelude file itself has no decls today (all its content
+	// moved into std/* + core/* modules), but the prelude path is
+	// kept open in case a future change needs to add a helper
+	// that doesn't sit cleanly in a single module.
+	for _, fn := range pre.Funcs {
+		fn.IsPrelude = true
+		prog.Funcs = append(prog.Funcs, fn)
+	}
+	prog.Structs = append(prog.Structs, pre.Structs...)
+	prog.Enums = append(prog.Enums, pre.Enums...)
 	return nil
 }
 
