@@ -33,6 +33,7 @@ import "std/base64";
 import "std/hex";
 import "std/url";
 import "std/json";
+import "std/math";
 
 
 
@@ -52,28 +53,6 @@ function repeat_char(ch: i32, n: i32): string {
     return string_from_bytes(buf);
 }
 
-
-// === Random integer in range ===
-//
-// `random_int(lo, hi)` — random i32 in [lo, hi). Returns `lo`
-// when hi <= lo (empty range fallback). Pulls 3 bytes from
-// random_bytes (kernel CSPRNG on natives, wasi_random on
-// wasm), combines into a 24-bit value, and modulo-maps to
-// the range width. 24 bits caps the maximum bias-free range
-// at ~16M which covers the common short-range use cases
-// (port pick, ID generation, jitter). Stays at 24 bits
-// rather than 32 because the natives' u32 modulo path goes
-// signed when the high bit is set — a real codegen bug, but
-// 24-bit randomness sidesteps it.
-function random_int(lo: i32, hi: i32): i32 {
-    if (hi <= lo) { return lo; }
-    var b: string = random_bytes(3);
-    var u: u32 = ((b[0] as u32) << (16 as u32)) |
-                 ((b[1] as u32) << (8 as u32)) |
-                 (b[2] as u32);
-    var range: u32 = (hi - lo) as u32;
-    return lo + ((u % range) as i32);
-}
 
 
 
@@ -99,34 +78,6 @@ function __is_ascii_ws(b: i32): boolean {
 // === i64 power / gcd / lcm (parity with i32) ===
 
 
-// === Range generators ===
-//
-// `range(start, end)` — i32[] of [start, end). Empty if
-// start >= end. Standard half-open range.
-// `range_step(start, end, step)` — same as range but with
-// arbitrary positive step. Step <= 0 returns empty (no
-// reverse ranges — use a manual while loop for that).
-
-function range(start: i32, end: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = start;
-    while (i < end) {
-        out = out.push(i);
-        i = i + 1;
-    }
-    return out;
-}
-
-function range_step(start: i32, end: i32, step: i32): i32[] {
-    var out: i32[] = [];
-    if (step <= 0) { return out; }
-    var i: i32 = start;
-    while (i < end) {
-        out = out.push(i);
-        i = i + step;
-    }
-    return out;
-}
 
 
 // === i64 / u32 / u64 scalar methods ===
@@ -140,16 +91,6 @@ function range_step(start: i32, end: i32, step: i32): i32[] {
 
 
 
-// === Numeric range constants ===
-//
-// Function-style accessors for the width boundaries. Plain
-// constants would be cleaner but lang doesn't have a const
-// declaration syntax yet; these constant-functions inline at
-// the call site via the IR's constant-folding pass.
-function i32_max(): i32 { return 2147483647; }
-function i32_min(): i32 { return 0 - 2147483647 - 1; }
-function i64_max(): i64 { return 9223372036854775807; }
-function i64_min(): i64 { return (0 as i64) - 9223372036854775807 - (1 as i64); }
 
 
 
@@ -252,16 +193,6 @@ function __int_to_string_u64(mag: i64, neg: i32): string {
 
 
 
-
-
-// `pack_rgb(r, g, b)` — pack three 0..255 components into
-// a 24-bit i32. Inverse of (n).to_rgb_hex()'s shifts. Each
-// component is masked to its low 8 bits; values outside
-// 0..255 silently wrap. Pairs with to_rgb_hex for the
-// "construct then format" colour pipeline.
-function pack_rgb(r: i32, g: i32, b: i32): i32 {
-    return ((r & 255) << 16) | ((g & 255) << 8) | (b & 255);
-}
 
 
 // === Radix integer parse / format ===
