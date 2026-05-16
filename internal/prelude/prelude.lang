@@ -17,6 +17,9 @@
 // so a user program that explicitly `import`s the same stdlib
 // module via modload doesn't get a "method redeclared" error.
 import "std/i32";
+import "std/i64";
+import "std/u32";
+import "std/u64";
 import "std/string";
 import "std/array";
 
@@ -396,35 +399,6 @@ function __is_ascii_ws(b: i32): boolean {
 //
 // === i64 power / gcd / lcm (parity with i32) ===
 
-function (n: i64) pow(exp: i32): i64 {
-    if (exp < 0) { return 0 as i64; }
-    var base: i64 = n;
-    var e: i32 = exp;
-    var out: i64 = 1 as i64;
-    while (e > 0) {
-        if (e % 2 == 1) { out = out * base; }
-        base = base * base;
-        e = e / 2;
-    }
-    return out;
-}
-
-function (n: i64) gcd(other: i64): i64 {
-    var a: i64 = n.abs();
-    var b: i64 = other.abs();
-    while (b != (0 as i64)) {
-        var t: i64 = b;
-        b = a % b;
-        a = t;
-    }
-    return a;
-}
-
-function (n: i64) lcm(other: i64): i64 {
-    if (n == (0 as i64) || other == (0 as i64)) { return 0 as i64; }
-    var g: i64 = n.gcd(other);
-    return (n / g).abs() * other.abs();
-}
 
 // === Range generators ===
 //
@@ -464,58 +438,8 @@ function range_step(start: i32, end: i32, step: i32): i32[] {
 // negative). All four numeric widths now have min / max /
 // clamp.
 
-function (n: i64) abs(): i64 {
-    if (n < (0 as i64)) { return (0 as i64) - n; }
-    return n;
-}
 
-function (n: i64) min(other: i64): i64 {
-    if (n < other) { return n; }
-    return other;
-}
 
-function (n: i64) max(other: i64): i64 {
-    if (n > other) { return n; }
-    return other;
-}
-
-function (n: i64) clamp(lo: i64, hi: i64): i64 {
-    if (n < lo) { return lo; }
-    if (n > hi) { return hi; }
-    return n;
-}
-
-function (n: u32) min(other: u32): u32 {
-    if (n < other) { return n; }
-    return other;
-}
-
-function (n: u32) max(other: u32): u32 {
-    if (n > other) { return n; }
-    return other;
-}
-
-function (n: u32) clamp(lo: u32, hi: u32): u32 {
-    if (n < lo) { return lo; }
-    if (n > hi) { return hi; }
-    return n;
-}
-
-function (n: u64) min(other: u64): u64 {
-    if (n < other) { return n; }
-    return other;
-}
-
-function (n: u64) max(other: u64): u64 {
-    if (n > other) { return n; }
-    return other;
-}
-
-function (n: u64) clamp(lo: u64, hi: u64): u64 {
-    if (n < lo) { return lo; }
-    if (n > hi) { return hi; }
-    return n;
-}
 
 // === Numeric range constants ===
 //
@@ -845,23 +769,8 @@ function __int_to_string_u64(mag: i64, neg: i32): string {
 }
 
 
-function (n: u32) to_string(): string {
-    return __int_to_string_u64((n as i64) & (4294967295 as i64), 0);
-}
 
-function (n: i64) to_string(): string {
-    var mag: i64 = n;
-    var neg: i32 = 0;
-    if (n < (0 as i64)) {
-        neg = 1;
-        mag = (0 as i64) - n;
-    }
-    return __int_to_string_u64(mag, neg);
-}
 
-function (n: u64) to_string(): string {
-    return __int_to_string_u64(n as i64, 0);
-}
 
 
 // `pack_rgb(r, g, b)` — pack three 0..255 components into
