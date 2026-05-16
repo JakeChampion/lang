@@ -169,6 +169,46 @@ function (b: i32) is_ascii(): boolean {
     return b >= 0 && b <= 127;
 }
 
+// `(b: i32) is_punct()` — true for an ASCII punctuation byte.
+// Set matches Python's `string.punctuation`: 32 chars in the
+// four ranges 33-47, 58-64, 91-96, 123-126. Useful for
+// tokenisers that slice on `!"#$%&'()*+,-./:;<=>?@[\]^_\``{|}~`.
+function (b: i32) is_punct(): boolean {
+    if (b >= 33 && b <= 47)  { return true; }
+    if (b >= 58 && b <= 64)  { return true; }
+    if (b >= 91 && b <= 96)  { return true; }
+    if (b >= 123 && b <= 126){ return true; }
+    return false;
+}
+
+// `(b: i32) hex_digit()` — single-byte string with the byte's
+// lowercase hex representation, or "" if b isn't a valid
+// digit (0..15). Inverse of is_hex_digit which classifies
+// the string byte → numeric value direction.
+function (b: i32) hex_digit(): string {
+    if (b < 0 || b > 15) { return ""; }
+    var buf: u8[] = __alloc_u8(1);
+    if (b < 10) { buf[0] = (b + 48) as u8; }
+    else        { buf[0] = (b + 87) as u8; }
+    return string_from_bytes(buf);
+}
+
+// === i32 sign helpers ===
+//
+// `(n: i32) signum()` — -1 / 0 / 1 indicating the sign.
+// `is_positive` / `is_negative` / `is_zero` — boolean
+// companions. signum is the function name used by Rust /
+// Java / Haskell; matches Rust i32::signum exactly.
+function (n: i32) signum(): i32 {
+    if (n > 0) { return 1; }
+    if (n < 0) { return 0 - 1; }
+    return 0;
+}
+
+function (n: i32) is_positive(): boolean { return n > 0; }
+function (n: i32) is_negative(): boolean { return n < 0; }
+function (n: i32) is_zero(): boolean { return n == 0; }
+
 // === Byte-level case helpers ===
 //
 // `(b: i32) is_lower()` / `is_upper()` / `to_lower()` /
@@ -347,6 +387,57 @@ function (s: string) is_alnum_only(): boolean {
         i = i + 1;
     }
     return true;
+}
+
+// `s.is_blank()` — true if s is empty or contains only ASCII
+// whitespace. Differs from is_empty by also matching strings
+// of pure tabs / spaces / newlines. Useful for "skip blank
+// lines" passes.
+function (s: string) is_blank(): boolean {
+    var n: i32 = len(s);
+    var i: i32 = 0;
+    while (i < n) {
+        if (!__is_ascii_ws(s[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_hex_string()` — every byte is a hex digit (case-
+// insensitive). Empty string returns false (mirrors the
+// is_numeric / is_alpha_only conventions). Useful for
+// validating user-supplied hex hashes / hex-color values.
+function (s: string) is_hex_string(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        if (!s[i].is_hex_digit()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.indent(prefix)` — prepend prefix to every line of s.
+// Empty lines get the prefix too (matches Python textwrap
+// indent's default; the predicate-gated variant is a
+// follow-up). Lines are determined by '\n'; CRLF input
+// gets prefix between the CR and the LF only on the first
+// line and after each '\n', which matches the bytewise
+// model.
+function (s: string) indent(prefix: string): string {
+    var n: i32 = len(s);
+    if (n == 0) { return ""; }
+    var out: string = prefix;
+    var i: i32 = 0;
+    while (i < n) {
+        out = out + s[i:i + 1];
+        if (s[i] == 10 && i + 1 < n) {
+            out = out + prefix;
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 // `sort_i32_asc(arr)` — return a fresh ascending-sorted
