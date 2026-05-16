@@ -390,6 +390,17 @@ think they're free additions to make.
   every letter) and from Python `str.capitalize` (which
   ALSO lowercases the tail — our version preserves the
   tail since the lossy fold is rarely what callers want).
+- **i32 bit ops**: `count_ones()`, `leading_zeros()`,
+  `trailing_zeros()`, `byte_swap()`. Software implementations
+  (no intrinsic surface in lang yet) — O(width) per call.
+- **i64 pow/gcd/lcm**: parity with the i32 versions. `pow`
+  takes an i32 exponent.
+- **`range(start, end)` / `range_step(start, end, step)`**:
+  i32[] generators for half-open ranges. `range(5, 5)` is
+  empty; `range_step` with step <= 0 is empty (no reverse
+  ranges).
+- **`s.repeat_with_sep(n, sep)`**: like `repeat` but with a
+  separator between every pair. `n <= 0` returns empty.
 
 ## Known compiler bugs surfaced during this work
 

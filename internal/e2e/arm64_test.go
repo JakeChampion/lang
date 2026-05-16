@@ -6352,6 +6352,60 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Sixth stdlib bundle: i32 bit ops (count_ones, leading/
+// trailing_zeros, byte_swap), i64 power/gcd/lcm parity with
+// i32, range / range_step generators, repeat_with_sep. 11
+// new methods. Pure-prelude.
+func TestArm64StdlibBundle6(t *testing.T) {
+	src := `function main(): i32 {
+    // count_ones — population count
+    if ((0).count_ones() != 0) { return 1; }
+    if ((1).count_ones() != 1) { return 2; }
+    if ((7).count_ones() != 3) { return 3; }
+    if ((0 - 1).count_ones() != 32) { return 4; }   // all bits set
+
+    // leading_zeros — top-bit walk
+    if ((0).leading_zeros() != 32) { return 5; }
+    if ((1).leading_zeros() != 31) { return 6; }
+    if ((0 - 1).leading_zeros() != 0) { return 7; }
+
+    // trailing_zeros — bottom-bit walk
+    if ((0).trailing_zeros() != 32) { return 8; }
+    if ((1).trailing_zeros() != 0) { return 9; }
+    if ((8).trailing_zeros() != 3) { return 10; }
+
+    // byte_swap — 0x01020304 → 0x04030201
+    if ((16909060).byte_swap() != 67305985) { return 11; }
+    if ((0).byte_swap() != 0) { return 12; }
+
+    // i64 pow / gcd / lcm — parity with i32 versions
+    if ((2 as i64).pow(40) != (1099511627776 as i64)) { return 13; }
+    if ((48 as i64).gcd(18 as i64) != (6 as i64)) { return 14; }
+    if ((4 as i64).lcm(6 as i64) != (12 as i64)) { return 15; }
+
+    // range — half-open
+    var r1: i32[] = range(0, 5);
+    if (len(r1) != 5 || r1[0] != 0 || r1[4] != 4) { return 16; }
+    if (len(range(5, 5)) != 0) { return 17; }   // empty when start >= end
+
+    // range_step — step <= 0 returns empty
+    var rs: i32[] = range_step(0, 10, 2);
+    if (len(rs) != 5 || rs[0] != 0 || rs[4] != 8) { return 18; }
+    if (len(range_step(0, 10, 0)) != 0) { return 19; }
+
+    // repeat_with_sep
+    if ("x".repeat_with_sep(3, ", ") != "x, x, x") { return 20; }
+    if ("abc".repeat_with_sep(2, "-") != "abc-abc") { return 21; }
+    if ("x".repeat_with_sep(1, ", ") != "x") { return 22; }
+    if ("x".repeat_with_sep(0, ", ") != "") { return 23; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 6)", code)
+	}
+}
+
 // Fifth stdlib bundle: numeric methods (is_even/is_odd for
 // i32 + i64, pow, gcd, lcm), string search (last_index_of),
 // string casing (capitalize). 11 new methods. Pure-prelude.
