@@ -496,6 +496,84 @@ function (s: string) ends_with_any(suffixes: string[]): boolean {
     return false;
 }
 
+// `s.replace_first(old, new)` — replace only the first
+// occurrence of `old` with `new`. Convenience wrapper over
+// `replace_n(old, new, 1)`. Empty `old` is a no-op
+// (matches `replace`'s semantics).
+function (s: string) replace_first(old: string, new: string): string {
+    return s.replace_n(old, new, 1);
+}
+
+// `s.is_kebab_case()` — true if s is non-empty,
+// lowercase / digit / hyphen only, no leading or trailing
+// hyphen, and no consecutive hyphens. Matches the
+// "url-slug" shape kebab-case usually denotes.
+function (s: string) is_kebab_case(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    if (s[0] == 45 || s[n - 1] == 45) { return false; }   // leading/trailing -
+    var i: i32 = 0;
+    var prev_hyphen: boolean = false;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 45) {
+            if (prev_hyphen) { return false; }
+            prev_hyphen = true;
+        } else if ((b >= 97 && b <= 122) || (b >= 48 && b <= 57)) {
+            prev_hyphen = false;
+        } else {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_snake_case()` — true if s is non-empty,
+// lowercase / digit / underscore only, no leading or
+// trailing underscore, and no consecutive underscores.
+function (s: string) is_snake_case(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    if (s[0] == 95 || s[n - 1] == 95) { return false; }   // leading/trailing _
+    var i: i32 = 0;
+    var prev_under: boolean = false;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 95) {
+            if (prev_under) { return false; }
+            prev_under = true;
+        } else if ((b >= 97 && b <= 122) || (b >= 48 && b <= 57)) {
+            prev_under = false;
+        } else {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.shift_byte(delta)` — Caesar-style byte shift: each
+// byte += delta, wrapping at 256. Negative deltas are
+// supported. Useful for simple obfuscation / toy ciphers;
+// don't rely on it for security.
+function (s: string) shift_byte(delta: i32): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    var buf: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i] + delta;
+        // Normalise into 0..255 with two mods (handles
+        // negative deltas correctly — `(-1) % 256 == -1`
+        // in i32, hence the second add).
+        b = ((b % 256) + 256) % 256;
+        buf[i] = b as u8;
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
 // `s.without_chars(set)` — remove every byte from s that
 // appears anywhere in `set`. Empty set → unchanged.
 // ASCII-level character class semantics.
@@ -1324,6 +1402,39 @@ function (n: i32) is_perfect_square(): boolean {
     if (n < 0) { return false; }
     var k: i32 = n.sqrt_floor();
     return k * k == n;
+}
+
+// `(n: i32) factorial()` — n! for n in 0..12. Returns 1 for
+// 0!. Caps at 12! = 479001600 (the largest factorial that
+// fits in i32); n >= 13 or n < 0 returns 0 as the
+// out-of-range sentinel. Callers needing 13!+ should widen
+// to i64 / bigint when those land.
+function (n: i32) factorial(): i32 {
+    if (n < 0 || n > 12) { return 0; }
+    var result: i32 = 1;
+    var i: i32 = 2;
+    while (i <= n) {
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+
+// `(n: i32) is_prime()` — primality check via 6k±1 trial
+// division. n < 2 returns false. O(sqrt n). Adequate for
+// the small-n use cases (input validation, puzzle code);
+// callers running heavy number theory should bring a
+// sieve.
+function (n: i32) is_prime(): boolean {
+    if (n < 2) { return false; }
+    if (n == 2 || n == 3) { return true; }
+    if (n % 2 == 0 || n % 3 == 0) { return false; }
+    var i: i32 = 5;
+    while (i * i <= n) {
+        if (n % i == 0 || n % (i + 2) == 0) { return false; }
+        i = i + 6;
+    }
+    return true;
 }
 
 // === Byte-level case helpers ===
@@ -3104,6 +3215,35 @@ function __method_Array_count(arr: i32[], v: i32): i32 {
         i = i + 1;
     }
     return c;
+}
+
+// `(arr: i32[]) first_index_of(v)` — Option[i32] index of
+// the first element equal to v. None if absent or empty.
+// Numeric companion to the existing string[] `index_of`.
+function __method_Array_first_index_of(arr: i32[], v: i32): Option[i32] {
+    var n: i32 = len(arr);
+    var i: i32 = 0;
+    while (i < n) {
+        if (arr[i] == v) { return Some(i); }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `(arr: i32[]) pairwise_diffs()` — array of consecutive
+// differences: out[i] = arr[i+1] - arr[i]. Length is
+// max(len(arr) - 1, 0). Empty / singleton inputs return
+// empty. Useful for slope / delta computations on samples.
+function __method_Array_pairwise_diffs(arr: i32[]): i32[] {
+    var n: i32 = len(arr);
+    var out: i32[] = [];
+    if (n < 2) { return out; }
+    var i: i32 = 1;
+    while (i < n) {
+        out = out.push(arr[i] - arr[i - 1]);
+        i = i + 1;
+    }
+    return out;
 }
 
 // `(arr: i32[]) min_max()` — Option[(min, max)] in a single
