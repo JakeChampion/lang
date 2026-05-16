@@ -1593,3 +1593,171 @@ pub function (s: string) first_line(): Option[string] {
     if (idx < 0) { return Some(s); }
     return Some(s[0:idx]);
 }
+
+// `s.at(i)` — bounds-checked byte access. Returns Some(byte)
+// for in-range i or None if i is out of [0, len). Counterpart
+// to `s[i]` which traps on OOB; useful in tokeniser loops
+// where the end check would otherwise need an explicit bounds
+// guard at every step.
+pub function (s: string) at(i: i32): Option[i32] {
+    if (i < 0 || i >= len(s)) { return None; }
+    return Some(s[i]);
+}
+
+// `s.chars()` — byte array of the string's contents as
+// i32 values (one per byte). Byte-level, not codepoint —
+// multibyte UTF-8 sequences come out as separate i32s in
+// order. Convenience over s.bytes() (which returns u8[])
+// when callers want to do i32 arithmetic / comparisons on
+// each byte without manually widening. The bytes() function
+// stays as the canonical way to get a u8[] slice; chars() is
+// the i32 sibling.
+pub function (s: string) chars(): i32[] {
+    var n: i32 = len(s);
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(s[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// `s.to_array()` — string[] one element per byte (each a
+// single-byte string). Companion to chars() but with
+// string elements; useful when later operations need
+// string semantics rather than raw byte values.
+pub function (s: string) to_array(): string[] {
+    var n: i32 = len(s);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(s[i:i + 1]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// `s.reverse_bytes()` — fresh string with the byte order
+// reversed. NOT a Unicode-aware reverse — multibyte UTF-8
+// sequences will scramble their internal byte order, producing
+// invalid UTF-8. The name carries the warning. For pure-ASCII
+// inputs (HTTP headers, hex / base64 / log lines, parser
+// fragments) the operation is well-defined.
+pub function (s: string) reverse_bytes(): string {
+    var n: i32 = len(s);
+    if (n == 0) { return ""; }
+    var buf: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        buf[i] = s[n - 1 - i] as u8;
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+// `s.count(sub)` — number of non-overlapping occurrences of
+// sub in s. Empty needle returns 0 to avoid infinite-loop
+// surprises; behaviour mirrors Rust str::matches().count().
+pub function (s: string) count(sub: string): i32 {
+    if (len(sub) == 0) { return 0; }
+    var n: i32 = len(s);
+    var subLen: i32 = len(sub);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i + subLen <= n) {
+        if (__substr_eq(s, i, sub, subLen)) {
+            c = c + 1;
+            i = i + subLen;
+        } else {
+            i = i + 1;
+        }
+    }
+    return c;
+}
+
+// `s.count_byte(b)` — number of bytes equal to b. O(n)
+// single-pass; cheaper than count(byte.to_ascii_string())
+// when the needle is known to be a single byte.
+pub function (s: string) count_byte(b: i32): i32 {
+    var n: i32 = len(s);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (s[i] == b) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+// `s.replace_n(old, new, n)` — like replace() but caps at
+// the first n occurrences. Useful when only the leading
+// substitutions are interesting (e.g. unquoting the first
+// few escapes, masking PII while keeping later context).
+pub function (s: string) replace_n(old: string, new: string, n: i32): string {
+    var sLen: i32 = len(s);
+    var oLen: i32 = len(old);
+    if (oLen == 0 || n <= 0) { return s; }
+    var out: string = "";
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var done: i32 = 0;
+    while (i + oLen <= sLen && done < n) {
+        if (__substr_eq(s, i, old, oLen)) {
+            out = out + s[start:i] + new;
+            i = i + oLen;
+            start = i;
+            done = done + 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    return out + s[start:sLen];
+}
+
+// `s.remove_all(needle)` — replace every occurrence of
+// needle with empty. Sugar for `replace(needle, "")`.
+pub function (s: string) remove_all(needle: string): string {
+    return s.replace(needle, "");
+}
+
+// `s.before(sep)` — substring before the first occurrence
+// of sep. Returns s unchanged if sep not present, "" if
+// s starts with sep. Doesn't include sep in the result.
+pub function (s: string) before(sep: string): string {
+    var idx: i32 = s.index_of(sep);
+    if (idx < 0) { return s; }
+    return s[0:idx];
+}
+
+// `s.after(sep)` — substring after the first occurrence
+// of sep. Returns "" if sep not present, s unchanged if sep
+// is empty. Doesn't include sep in the result.
+pub function (s: string) after(sep: string): string {
+    if (len(sep) == 0) { return s; }
+    var idx: i32 = s.index_of(sep);
+    if (idx < 0) { return ""; }
+    return s[idx + len(sep):len(s)];
+}
+
+// `s.between(start, end)` — Some(substring) for the content
+// between the first start and the first end AFTER that start.
+// None if either marker is missing (or empty). Useful for
+// extracting tag bodies, parenthesised content, brace-
+// delimited fields.
+pub function (s: string) between(start: string, end: string): Option[string] {
+    if (len(start) == 0 || len(end) == 0) { return None; }
+    var i: i32 = s.index_of(start);
+    if (i < 0) { return None; }
+    var begin: i32 = i + len(start);
+    var n: i32 = len(s);
+    var endLen: i32 = len(end);
+    var j: i32 = begin;
+    while (j + endLen <= n) {
+        if (__substr_eq(s, j, end, endLen)) {
+            return Some(s[begin:j]);
+        }
+        j = j + 1;
+    }
+    return None;
+}
