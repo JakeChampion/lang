@@ -152,6 +152,59 @@ function (s: string) capitalize(): string {
     return string_from_bytes(buf) + s[1:n];
 }
 
+// `s.word_count()` — number of whitespace-separated words.
+// Same notion as fields(): runs of any ASCII whitespace
+// count as a single separator, empty pieces dropped. Empty
+// / all-whitespace input returns 0.
+function (s: string) word_count(): i32 {
+    var n: i32 = len(s);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        while (i < n && __is_ascii_ws(s[i])) { i = i + 1; }
+        if (i >= n) { return c; }
+        c = c + 1;
+        while (i < n && !__is_ascii_ws(s[i])) { i = i + 1; }
+    }
+    return c;
+}
+
+// `s.escape_html()` — escape the five characters that have
+// special meaning in HTML / XML: & < > " '. Produces a
+// string safe to splice into element bodies and attribute
+// values; matches Go html.EscapeString.
+function (s: string) escape_html(): string {
+    var n: i32 = len(s);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 38)      { out = out + "&amp;"; }    // &
+        else if (b == 60) { out = out + "&lt;"; }     // <
+        else if (b == 62) { out = out + "&gt;"; }     // >
+        else if (b == 34) { out = out + "&#34;"; }    // "
+        else if (b == 39) { out = out + "&#39;"; }    // '
+        else              { out = out + s[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `s.strip_quotes()` — if s starts and ends with the same
+// quote character (either " or '), return Some(inner).
+// Otherwise None. Useful for parsing config files / CLI
+// flags / JSON strings where quotes are optional.
+function (s: string) strip_quotes(): Option[string] {
+    var n: i32 = len(s);
+    if (n < 2) { return None; }
+    var first: i32 = s[0];
+    var last: i32 = s[n - 1];
+    if ((first == 34 && last == 34) || (first == 39 && last == 39)) {
+        return Some(s[1:n - 1]);
+    }
+    return None;
+}
+
 // `s.leading_count(b)` — number of leading bytes equal to b.
 // "    hello".leading_count(32) == 4 (count of spaces).
 // Useful for indent detection / column alignment.
@@ -1942,6 +1995,35 @@ function __method_Array_reverse(arr: string[]): string[] {
     return out;
 }
 
+// `(arr: string[]) filter_non_empty()` — fresh string[] with
+// only the non-empty entries. Useful for cleaning up the
+// output of `split(sep)` when adjacent separators left empty
+// holes (e.g. `"a,,b".split(",")` → `["a", "", "b"]`).
+function __method_Array_filter_non_empty(arr: string[]): string[] {
+    var n: i32 = len(arr);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (len(arr[i]) > 0) { out = out.push(arr[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `(arr: string[]) count_non_empty()` — number of non-empty
+// entries. The "how many real values" counterpart to
+// filter_non_empty when callers only need the count.
+function __method_Array_count_non_empty(arr: string[]): i32 {
+    var n: i32 = len(arr);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (len(arr[i]) > 0) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
 // === Array append ===
 //
 // `arr.push(v)` is lowered inline by the IR — see
@@ -2048,6 +2130,19 @@ function (n: i32) to_string(): string {
         return "-2147483648";
     }
     return int_to_string(n);
+}
+
+// `(n: i32) to_string_padded(width)` — decimal with zero-pad
+// to a minimum byte width. Negative numbers get their '-' in
+// the slot AFTER the leading zeros (i.e. "-0042", not
+// "0-042"). Already-wide values pass through.
+function (n: i32) to_string_padded(width: i32): string {
+    var s: string = n.to_string();
+    if (len(s) >= width) { return s; }
+    if (n >= 0) { return s.pad_start(width, "0"); }
+    // For negatives, pad the body and re-prefix with '-'.
+    var body: string = s[1:len(s)];
+    return "-" + body.pad_start(width - 1, "0");
 }
 
 function (n: u32) to_string(): string {
