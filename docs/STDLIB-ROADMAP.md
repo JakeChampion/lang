@@ -373,6 +373,23 @@ think they're free additions to make.
 - **`s.indent(prefix)`**: prepend prefix to every line.
   Bytewise — empty lines get the prefix too. Trailing
   newline doesn't produce an extra prefix at EOF.
+- **Parity predicates**: `(n: i32).is_even()` / `is_odd()`
+  plus i64 versions. Cheap shortcut; saves writing `n % 2
+  == 0` per call site.
+- **Integer power / gcd / lcm**: `(n: i32).pow(exp)` (by
+  squaring, wraps on overflow; negative exp returns 0),
+  `gcd(other)` (Euclidean, sign-agnostic), `lcm(other)`
+  (computed as `abs(a*b)/gcd` with the gcd-first ordering
+  to keep the intermediate multiply small).
+- **Rightmost string search**: `s.last_index_of(needle)`
+  (symmetric to index_of). Empty needle returns `len(s)`
+  per the Python rfind / Go LastIndex "match every gap"
+  convention.
+- **`s.capitalize()`**: uppercase the first byte, leave the
+  rest unchanged. Different from `to_upper` (which folds
+  every letter) and from Python `str.capitalize` (which
+  ALSO lowercases the tail — our version preserves the
+  tail since the lossy fold is rarely what callers want).
 
 ## Known compiler bugs surfaced during this work
 

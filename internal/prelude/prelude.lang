@@ -117,6 +117,41 @@ function (s: string) index_of(needle: string): i32 {
     return 0 - 1;
 }
 
+// `s.last_index_of(needle)` — rightmost occurrence; -1 if
+// absent. Empty needle returns len(s) to match Python rfind /
+// Go LastIndex conventions (the "match at every gap" trick).
+// Walks bytes from the right; O(n*m) worst case like
+// index_of.
+function (s: string) last_index_of(needle: string): i32 {
+    var nLen: i32 = len(needle);
+    var sLen: i32 = len(s);
+    if (nLen == 0) { return sLen; }
+    if (nLen > sLen) { return 0 - 1; }
+    var i: i32 = sLen - nLen;
+    while (i >= 0) {
+        if (__substr_eq(s, i, needle, nLen)) { return i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+// `s.capitalize()` — uppercase the first byte, leave the
+// rest unchanged. ASCII-only: non-letter first bytes pass
+// through. Different from `to_upper` (which folds every
+// letter) and from Python's str.capitalize (which also
+// LOWERCASES the rest — our version intentionally preserves
+// the tail since the lossy fold is rarely what callers
+// want).
+function (s: string) capitalize(): string {
+    var n: i32 = len(s);
+    if (n == 0) { return ""; }
+    var first: i32 = s[0].to_upper();
+    if (first == s[0]) { return s; }
+    var buf: u8[] = __alloc_u8(1);
+    buf[0] = first as u8;
+    return string_from_bytes(buf) + s[1:n];
+}
+
 // `s.trim()` — strip leading + trailing ASCII whitespace
 // (SP, TAB, LF, CR, VT, FF). UTF-8 multibyte sequences
 // pass through unchanged because their leading bytes are
@@ -268,6 +303,55 @@ function (n: i32) clamp(lo: i32, hi: i32): i32 {
     if (n < lo) { return lo; }
     if (n > hi) { return hi; }
     return n;
+}
+
+// === i32 / i64 parity + power + gcd/lcm ===
+
+function (n: i32) is_even(): boolean { return n % 2 == 0; }
+function (n: i32) is_odd(): boolean  { return n % 2 != 0; }
+function (n: i64) is_even(): boolean { return n % (2 as i64) == (0 as i64); }
+function (n: i64) is_odd(): boolean  { return n % (2 as i64) != (0 as i64); }
+
+// `(n: i32) pow(exp)` — integer exponentiation by squaring.
+// Negative exponents return 0 (lang has no fractional i32).
+// Overflow wraps silently (matches Rust wrapping_pow); use
+// i64 power for ranges beyond ~2^31.
+function (n: i32) pow(exp: i32): i32 {
+    if (exp < 0) { return 0; }
+    var base: i32 = n;
+    var e: i32 = exp;
+    var out: i32 = 1;
+    while (e > 0) {
+        if (e % 2 == 1) { out = out * base; }
+        base = base * base;
+        e = e / 2;
+    }
+    return out;
+}
+
+// `(n: i32) gcd(other)` — greatest common divisor via the
+// Euclidean algorithm. Sign-agnostic — both operands are
+// abs()'d up front. gcd(0, n) == gcd(n, 0) == abs(n); gcd(0,
+// 0) == 0 per the standard convention.
+function (n: i32) gcd(other: i32): i32 {
+    var a: i32 = n.abs();
+    var b: i32 = other.abs();
+    while (b != 0) {
+        var t: i32 = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+// `(n: i32) lcm(other)` — least common multiple. Computed as
+// abs(a*b) / gcd(a, b) with the gcd-first ordering so an
+// overflow-prone multiply gets divided down before the
+// result lands. lcm(0, _) == lcm(_, 0) == 0.
+function (n: i32) lcm(other: i32): i32 {
+    if (n == 0 || other == 0) { return 0; }
+    var g: i32 = n.gcd(other);
+    return (n / g).abs() * other.abs();
 }
 
 // === i64 / u32 / u64 scalar methods ===
