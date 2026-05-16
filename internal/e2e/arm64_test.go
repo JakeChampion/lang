@@ -6352,6 +6352,60 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Seventeenth stdlib bundle: array max_by_len / sum_lens,
+// i32 log2_floor / sqrt_floor / to_rgb_hex, byte is_vowel,
+// string rstrip_newline. 7 helpers.
+func TestArm64StdlibBundle17(t *testing.T) {
+	src := `function main(): i32 {
+    // max_by_len / sum_lens
+    match (["a", "abc", "xy"].max_by_len()) {
+        Some(s) => { if (s != "abc") { return 1; } },
+        None => { return 2; },
+    }
+    var empty: string[] = [];
+    match (empty.max_by_len()) { Some(_) => { return 3; }, None => { } }
+    if (["a", "abc", "xy"].sum_lens() != 6) { return 4; }
+    if (empty.sum_lens() != 0) { return 5; }
+
+    // log2_floor
+    if ((1).log2_floor() != 0) { return 6; }
+    if ((4).log2_floor() != 2) { return 7; }
+    if ((1024).log2_floor() != 10) { return 8; }
+    if ((0).log2_floor() != (0 - 1)) { return 9; }
+
+    // sqrt_floor — Newton
+    if ((0).sqrt_floor() != 0) { return 10; }
+    if ((1).sqrt_floor() != 1) { return 11; }
+    if ((9).sqrt_floor() != 3) { return 12; }
+    if ((10).sqrt_floor() != 3) { return 13; }
+    if ((100).sqrt_floor() != 10) { return 14; }
+    if ((1000000).sqrt_floor() != 1000) { return 15; }
+
+    // to_rgb_hex — low 24 bits → "#RRGGBB"
+    if ((0).to_rgb_hex() != "#000000") { return 16; }
+    if ((255).to_rgb_hex() != "#0000ff") { return 17; }
+    if ((65280).to_rgb_hex() != "#00ff00") { return 18; }
+    if ((16711680).to_rgb_hex() != "#ff0000") { return 19; }
+
+    // is_vowel — ASCII a/e/i/o/u, no y
+    if (!(97).is_vowel()) { return 20; }
+    if (!(65).is_vowel()) { return 21; }
+    if ((98).is_vowel()) { return 22; }
+    if ((121).is_vowel()) { return 23; }
+
+    // rstrip_newline — single trailing newline
+    if ("hello\n".rstrip_newline() != "hello") { return 24; }
+    if ("hello\r\n".rstrip_newline() != "hello") { return 25; }
+    if ("hello".rstrip_newline() != "hello") { return 26; }
+    if ("hello\n\n".rstrip_newline() != "hello\n") { return 27; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 17)", code)
+	}
+}
+
 // Sixteenth stdlib bundle: string center / reverse_words,
 // i32 rotate_left / rotate_right, csv_parse_line,
 // http_header_value. 6 helpers.

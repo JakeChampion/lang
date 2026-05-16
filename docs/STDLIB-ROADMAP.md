@@ -555,6 +555,18 @@ think they're free additions to make.
 - **`http_header_value(headers, key)`**: case-insensitive
   header lookup against a CRLF-separated header block.
   Returns the first matching value, trimmed.
+- **String-array length analytics**: `arr.max_by_len()`
+  (Option[string]) and `arr.sum_lens()` (i32).
+- **`(n: i32).log2_floor()`**: floor(log2(n)) for n >= 1;
+  -1 sentinel for n <= 0.
+- **`(n: i32).sqrt_floor()`**: integer square root via
+  Newton's method. 0 fallback for n <= 0.
+- **`(n: i32).to_rgb_hex()`**: render the low 24 bits as
+  `"#RRGGBB"`. CSS / SVG / terminal-ANSI emission.
+- **`(b: i32).is_vowel()`**: ASCII a/e/i/o/u in either case.
+  Y not counted.
+- **`s.rstrip_newline()`**: strip a single trailing `\n` or
+  `\r\n` — preserves runs.
 
 ### Additional compiler bug
 
