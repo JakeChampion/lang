@@ -403,6 +403,73 @@ function (s: string) is_email_like(): boolean {
     }
 }
 
+// `s.is_url_like()` — true if s starts with `http://` or
+// `https://` and contains at least one dot after the scheme
+// (so localhost-style "http://nodot" fails). Very loose
+// shape check, like `is_email_like`; defer to a real URL
+// parser when one lands.
+function (s: string) is_url_like(): boolean {
+    var rest: string = "";
+    if (s.starts_with("https://")) {
+        rest = s.remove_prefix("https://");
+    } else if (s.starts_with("http://")) {
+        rest = s.remove_prefix("http://");
+    } else {
+        return false;
+    }
+    if (len(rest) == 0) { return false; }
+    return rest.contains(".");
+}
+
+// `s.is_json_like()` — true if s (after trimming whitespace)
+// starts and ends with matching `{}` or `[]`. Not a real
+// JSON validator — just a fast pre-flight check before
+// attempting a parse. Empty strings return false.
+function (s: string) is_json_like(): boolean {
+    var t: string = s.trim();
+    var n: i32 = len(t);
+    if (n < 2) { return false; }
+    var first: i32 = t[0];
+    var last: i32 = t[n - 1];
+    if (first == 123 && last == 125) { return true; }   // { }
+    if (first == 91 && last == 93) { return true; }     // [ ]
+    return false;
+}
+
+// `s.common_prefix(other)` — longest shared leading
+// substring. Returns "" when the first byte differs or
+// either argument is empty.
+function (s: string) common_prefix(other: string): string {
+    var n: i32 = len(s);
+    var m: i32 = len(other);
+    var cap: i32 = n;
+    if (m < cap) { cap = m; }
+    var i: i32 = 0;
+    while (i < cap) {
+        if (s[i] != other[i]) { return s.take(i); }
+        i = i + 1;
+    }
+    return s.take(cap);
+}
+
+// `s.common_suffix(other)` — longest shared trailing
+// substring. Returns "" when no overlap or either side
+// is empty.
+function (s: string) common_suffix(other: string): string {
+    var n: i32 = len(s);
+    var m: i32 = len(other);
+    var cap: i32 = n;
+    if (m < cap) { cap = m; }
+    var i: i32 = 0;
+    while (i < cap) {
+        if (s[n - 1 - i] != other[m - 1 - i]) {
+            return s.drop(n - i);
+        }
+        i = i + 1;
+    }
+    return s.drop(n - cap);
+}
+
 // `repeat_char(ch, n)` — fresh string of n copies of the byte
 // `ch`. Faster than `(c).chr().repeat(n)` would be (no chr
 // helper exists yet; this is the substitute). `n <= 0`
@@ -1002,6 +1069,17 @@ function (n: i32) has_digit(d: i32): boolean {
         mag = mag / 10;
     }
     return false;
+}
+
+// `(n: i32) percent_of(total)` — what percentage of `total`
+// is `n`? Returns `(n * 100) / total`, integer-truncated.
+// `total <= 0` returns 0 (sentinel for "undefined"; a
+// caller wanting `None` should check first). Beware
+// overflow: `n * 100` should fit in i32, so `n` must be
+// in roughly ±21M for the multiplication not to wrap.
+function (n: i32) percent_of(total: i32): i32 {
+    if (total <= 0) { return 0; }
+    return (n * 100) / total;
 }
 
 // === Byte-level case helpers ===
@@ -2921,6 +2999,21 @@ function __method_Array_max_by_len(arr: string[]): Option[string] {
     var i: i32 = 1;
     while (i < n) {
         if (len(arr[i]) > len(best)) { best = arr[i]; }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
+// `(arr: string[]) min_by_len()` — element with the
+// shortest length; Option[string] None on empty. Ties go
+// to the first occurrence. Counterpart to max_by_len.
+function __method_Array_min_by_len(arr: string[]): Option[string] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var best: string = arr[0];
+    var i: i32 = 1;
+    while (i < n) {
+        if (len(arr[i]) < len(best)) { best = arr[i]; }
         i = i + 1;
     }
     return Some(best);
