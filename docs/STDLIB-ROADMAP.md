@@ -435,6 +435,22 @@ think they're free additions to make.
 - **HTTP method classifiers**: `s.is_http_safe_method()` (GET
   / HEAD / OPTIONS / TRACE per RFC 9110 §9.2.1),
   `s.is_http_idempotent_method()` (safe set + PUT / DELETE).
+- **Case-insensitive ASCII search**: `s.contains_ci(needle)` /
+  `s.index_of_ci(needle)`. Folds A-Z to a-z per byte;
+  multibyte UTF-8 matches only byte-exact.
+- **Multi-byte pad**: `s.pad_start_str(w, fill)` /
+  `s.pad_end_str(w, fill)`. The earlier `pad_start(n, ch)`
+  uses a single byte; these repeat the `fill` string and
+  truncate at the boundary. Useful for prefix-dash / line-
+  rule decoration.
+- **`s.truncate(n, ellipsis)`**: cap to n bytes, suffix with
+  ellipsis when the input is longer. If n is shorter than
+  the ellipsis itself, hard-truncate without it.
+- **`(n: i32).digits()`**: number of decimal digits. Sign
+  not counted. `(0).digits() == 1`.
+- **`(n: i32).pluralize(singular, plural)`**: choose
+  singular when `|n| == 1` else plural. Caller composes
+  the count into the result themselves.
 
 ## Known compiler bugs surfaced during this work
 
