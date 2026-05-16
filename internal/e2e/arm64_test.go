@@ -6352,6 +6352,60 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twenty-first stdlib bundle: string is_int / is_float /
+// wrap, string[] take / drop, pack_rgb, byte is_printable /
+// is_control. 8 helpers.
+func TestArm64StdlibBundle21(t *testing.T) {
+	src := `function main(): i32 {
+    // is_int / is_float
+    if (!"42".is_int()) { return 1; }
+    if (!"-42".is_int()) { return 2; }
+    if ("42.5".is_int()) { return 3; }
+    if ("".is_int()) { return 4; }
+    if ("+".is_int()) { return 5; }
+
+    if (!"42".is_float()) { return 6; }
+    if (!"42.5".is_float()) { return 7; }
+    if (!".5".is_float()) { return 8; }
+    if ("abc".is_float()) { return 9; }
+
+    // wrap
+    if ("x".wrap("[", "]") != "[x]") { return 10; }
+    if ("".wrap("a", "b") != "ab") { return 11; }
+
+    // string[] take / drop
+    var arr: string[] = ["a", "b", "c", "d", "e"];
+    var t: string[] = arr.take(3);
+    if (len(t) != 3 || t[0] != "a" || t[2] != "c") { return 12; }
+    if (len(arr.take(100)) != 5) { return 13; }
+    if (len(arr.take(0)) != 0) { return 14; }
+    var d: string[] = arr.drop(2);
+    if (len(d) != 3 || d[0] != "c") { return 15; }
+    if (len(arr.drop(100)) != 0) { return 16; }
+
+    // pack_rgb (+ round-trip via to_rgb_hex)
+    if (pack_rgb(255, 0, 0) != 16711680) { return 17; }
+    if (pack_rgb(0, 255, 0) != 65280) { return 18; }
+    if (pack_rgb(255, 0, 0).to_rgb_hex() != "#ff0000") { return 19; }
+    if (pack_rgb(0, 128, 64).to_rgb_hex() != "#008040") { return 20; }
+
+    // is_printable / is_control
+    if (!(32).is_printable()) { return 21; }
+    if (!(126).is_printable()) { return 22; }
+    if ((31).is_printable()) { return 23; }
+    if ((127).is_printable()) { return 24; }
+    if (!(0).is_control()) { return 25; }
+    if (!(127).is_control()) { return 26; }
+    if ((32).is_control()) { return 27; }
+    if ((128).is_control()) { return 28; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 21)", code)
+	}
+}
+
 // Twentieth stdlib bundle: i32 divmod (tuple), string
 // escape_shell / snake_case / kebab_case / is_valid_identifier,
 // is_valid_http_status. 6 helpers.

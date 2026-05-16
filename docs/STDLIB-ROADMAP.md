@@ -599,6 +599,16 @@ think they're free additions to make.
   pattern: `[a-zA-Z_][a-zA-Z0-9_]*`.
 - **`is_valid_http_status(code)`**: `[100, 599]` per RFC
   9110.
+- **String numeric predicates**: `s.is_int()` /
+  `s.is_float()`. Don't validate i32 overflow — use the
+  parse variants for that.
+- **`s.wrap(prefix, suffix)`**: thin concat helper.
+- **String[] take / drop**: bounds-clamped prefix /
+  suffix selection on string arrays.
+- **`pack_rgb(r, g, b)`**: pack three 0..255 components
+  into a 24-bit i32. Pairs with `to_rgb_hex` for round-trip.
+- **Byte printability**: `(b).is_printable()` (32..126),
+  `(b).is_control()` (0..31 or 127).
 
 ### Additional compiler bug
 
