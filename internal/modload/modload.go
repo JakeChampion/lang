@@ -37,10 +37,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/stdlib"
 )
 
 // Load parses entryPath, recursively loads every module it imports,
@@ -104,11 +106,10 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	stack[path] = true
 	defer delete(stack, path)
 
-	srcBytes, err := os.ReadFile(path)
+	src, err := readSource(path)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return err
 	}
-	src := string(srcBytes)
 	srcs[path] = src
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -120,7 +121,18 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	// edge from a child reaches stack[path]==true and the cycle
 	// check fires, rather than seeing an already-loaded entry and
 	// silently completing.
-	dir := filepath.Dir(path)
+	//
+	// Stdlib modules don't have a real filesystem directory; their
+	// relative imports resolve from the embedded tree's root, so we
+	// pass an empty importing-dir and let resolveImportPath route
+	// any `std/…` / `core/…` references through the stdlib package.
+	// A relative import like `./helper` from within a stdlib module
+	// isn't supported in this first cut — they'd land outside the
+	// embedded FS — but the existing stdlib modules don't need it.
+	dir := ""
+	if !strings.HasPrefix(path, stdlibPrefix) {
+		dir = filepath.Dir(path)
+	}
 	childPaths := make([]string, len(prog.Imports))
 	for i, imp := range prog.Imports {
 		childPaths[i] = resolveImportPath(dir, imp.Path)
@@ -171,10 +183,21 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 }
 
 // resolveImportPath turns an `import "./util"` style path into a
-// filesystem path relative to the importing file's directory. We
-// auto-append `.lang` if the import path doesn't already include
-// the extension, so users can write either form.
+// canonical key the loader uses to identify a module. For disk
+// imports the key is the absolute filesystem path; for stdlib
+// imports (paths prefixed with `std/` or `core/`) the key is a
+// `stdlib://…` URI so the loader knows to fetch source from the
+// embedded FS instead of the disk. We auto-append `.lang` if the
+// import path doesn't already include the extension, so users
+// can write either form.
 func resolveImportPath(importingDir, importPath string) string {
+	if stdlib.IsStdlibPath(importPath) {
+		key := importPath
+		if !strings.HasSuffix(key, ".lang") {
+			key += ".lang"
+		}
+		return stdlibPrefix + key
+	}
 	resolved := filepath.Join(importingDir, importPath)
 	if filepath.Ext(resolved) == "" {
 		resolved += ".lang"
@@ -188,10 +211,42 @@ func resolveImportPath(importingDir, importPath string) string {
 	return abs
 }
 
+// stdlibPrefix tags a path as referring to the embedded stdlib
+// rather than the local filesystem. The prefix is chosen to be
+// distinct from any absolute filesystem path filepath.Abs would
+// produce (those start with `/` on Unix or a drive letter on
+// Windows), so the `loaded` map keys can't collide.
+const stdlibPrefix = "stdlib://"
+
+// readSource reads the source text for a module path. Disk paths
+// go through os.ReadFile; stdlib paths (`stdlib://…`) come from
+// the embedded FS in the stdlib package. A missing stdlib module
+// surfaces a clear "unknown stdlib module" error rather than
+// falling back to disk.
+func readSource(path string) (string, error) {
+	if strings.HasPrefix(path, stdlibPrefix) {
+		importPath := strings.TrimPrefix(path, stdlibPrefix)
+		src, ok := stdlib.Resolve(importPath)
+		if !ok {
+			return "", fmt.Errorf("unknown stdlib module %q", importPath)
+		}
+		return src, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	return string(b), nil
+}
+
 // importLocalName mirrors the parser-side helper but is duplicated
-// here so the driver doesn't need to re-parse to compute it.
+// here so the driver doesn't need to re-parse to compute it. Stdlib
+// path keys (`stdlib://std/i32.lang`) get their basename extracted
+// the same way as disk paths — the `stdlib://` prefix doesn't
+// participate.
 func importLocalName(path string) string {
-	base := filepath.Base(path)
+	trimmed := strings.TrimPrefix(path, stdlibPrefix)
+	base := filepath.Base(trimmed)
 	if ext := filepath.Ext(base); ext == ".lang" {
 		base = base[:len(base)-len(ext)]
 	}

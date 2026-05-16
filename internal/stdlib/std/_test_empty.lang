@@ -1,0 +1,7 @@
+// std/_test_empty — single-function fixture used by the modload
+// stdlib-resolver tests to prove the `import "std/…"` resolver
+// wiring works end-to-end before real modules land.
+
+pub function stdlib_test_marker(): i32 {
+    return 42;
+}
