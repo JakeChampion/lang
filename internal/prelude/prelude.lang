@@ -751,6 +751,22 @@ function (b: i32) is_vowel(): boolean {
     return false;
 }
 
+// `(b: i32) is_printable()` — printable ASCII (32..126).
+// Excludes control characters (0..31, 127) and the high-
+// byte range (128..255). Useful for log sanitisation /
+// diagnostic dumps.
+function (b: i32) is_printable(): boolean {
+    return b >= 32 && b <= 126;
+}
+
+// `(b: i32) is_control()` — ASCII control character: 0..31
+// or 127. Inverse of is_printable in the ASCII range; the
+// high-byte range (128..255) is neither printable nor
+// control under this definition.
+function (b: i32) is_control(): boolean {
+    return (b >= 0 && b <= 31) || b == 127;
+}
+
 function (b: i32) is_hex_digit(): boolean {
     return b.is_digit() ||
            (b >= 65 && b <= 70) ||   // A-F
@@ -1386,6 +1402,57 @@ function (s: string) is_alnum_only(): boolean {
         i = i + 1;
     }
     return true;
+}
+
+// `s.is_int()` — true if s parses as a decimal integer
+// (optional leading `+` / `-`, then one-or-more digits).
+// Doesn't check for i32 overflow — `s.parse_int()` is the
+// validating + parsing form.
+function (s: string) is_int(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    if (s[0] == 45 || s[0] == 43) { i = 1; }
+    if (i >= n) { return false; }
+    while (i < n) {
+        if (!s[i].is_digit()) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `s.is_float()` — true if s looks like a decimal float:
+// optional sign, digits, optional `.digits`. No exponent
+// form (`1e10`) — that's a follow-up. Pure-int strings are
+// also accepted (5 → true). Used as a quick "looks numeric"
+// check before invoking parse_float.
+function (s: string) is_float(): boolean {
+    var n: i32 = len(s);
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    if (s[0] == 45 || s[0] == 43) { i = 1; }
+    if (i >= n) { return false; }
+    var any_digits: boolean = false;
+    while (i < n && s[i].is_digit()) {
+        any_digits = true;
+        i = i + 1;
+    }
+    if (i < n && s[i] == 46) {
+        i = i + 1;
+        while (i < n && s[i].is_digit()) {
+            any_digits = true;
+            i = i + 1;
+        }
+    }
+    return any_digits && i == n;
+}
+
+// `s.wrap(prefix, suffix)` — concatenate prefix + s +
+// suffix. Saves the multi-+ call site when wrapping a value
+// in brackets / quotes / tags. `"x".wrap("[", "]")` →
+// `"[x]"`.
+function (s: string) wrap(prefix: string, suffix: string): string {
+    return prefix + s + suffix;
 }
 
 // `s.is_blank()` — true if s is empty or contains only ASCII
@@ -2654,6 +2721,40 @@ function __method_Array_sum_lens(arr: string[]): i32 {
     return s;
 }
 
+// `(arr: string[]) take(n)` — first n elements, bounds-
+// clamped. n <= 0 returns empty; n >= len returns the full
+// array. Companion to string take()/drop().
+function __method_Array_take(arr: string[], n: i32): string[] {
+    var out: string[] = [];
+    if (n <= 0) { return out; }
+    var alen: i32 = len(arr);
+    var stop: i32 = n;
+    if (stop > alen) { stop = alen; }
+    var i: i32 = 0;
+    while (i < stop) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// `(arr: string[]) drop(n)` — skip first n elements, bounds-
+// clamped. n <= 0 returns a fresh copy; n >= len returns
+// empty.
+function __method_Array_drop(arr: string[], n: i32): string[] {
+    var out: string[] = [];
+    var alen: i32 = len(arr);
+    var start: i32 = n;
+    if (start < 0) { start = 0; }
+    if (start > alen) { return out; }
+    var i: i32 = start;
+    while (i < alen) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // === Array append ===
 //
 // `arr.push(v)` is lowered inline by the IR — see
@@ -2840,6 +2941,15 @@ function (n: i32) to_rgb_hex(): string {
     return "#" + r.to_hex().pad_start(2, "0") +
                  g.to_hex().pad_start(2, "0") +
                  b.to_hex().pad_start(2, "0");
+}
+
+// `pack_rgb(r, g, b)` — pack three 0..255 components into
+// a 24-bit i32. Inverse of (n).to_rgb_hex()'s shifts. Each
+// component is masked to its low 8 bits; values outside
+// 0..255 silently wrap. Pairs with to_rgb_hex for the
+// "construct then format" colour pipeline.
+function pack_rgb(r: i32, g: i32, b: i32): i32 {
+    return ((r & 255) << 16) | ((g & 255) << 8) | (b & 255);
 }
 
 // `(s: string) parse_bool()` — accepts the canonical
