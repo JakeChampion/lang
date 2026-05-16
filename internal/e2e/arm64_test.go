@@ -6352,6 +6352,62 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Fifth stdlib bundle: numeric methods (is_even/is_odd for
+// i32 + i64, pow, gcd, lcm), string search (last_index_of),
+// string casing (capitalize). 11 new methods. Pure-prelude.
+func TestArm64StdlibBundle5(t *testing.T) {
+	src := `function main(): i32 {
+    // Parity i32 + i64
+    if (!(4).is_even()) { return 1; }
+    if ((4).is_odd()) { return 2; }
+    if (!(7).is_odd()) { return 3; }
+    if (!(0).is_even()) { return 4; }
+    if (!(0 - 4).is_even()) { return 5; }
+    if (!(0 - 7).is_odd()) { return 6; }
+    if (!(4 as i64).is_even()) { return 7; }
+    if (!(7 as i64).is_odd()) { return 8; }
+
+    // pow (i32) — by squaring
+    if ((2).pow(10) != 1024) { return 9; }
+    if ((3).pow(4) != 81) { return 10; }
+    if ((5).pow(0) != 1) { return 11; }
+    if ((1).pow(100) != 1) { return 12; }
+    if ((0).pow(5) != 0) { return 13; }
+    if ((2).pow(0 - 1) != 0) { return 14; }
+
+    // gcd — Euclidean, sign-agnostic
+    if ((48).gcd(18) != 6) { return 15; }
+    if ((18).gcd(48) != 6) { return 16; }
+    if ((0).gcd(7) != 7) { return 17; }
+    if ((7).gcd(0) != 7) { return 18; }
+    if ((0).gcd(0) != 0) { return 19; }
+    if ((0 - 48).gcd(18) != 6) { return 20; }
+
+    // lcm
+    if ((4).lcm(6) != 12) { return 21; }
+    if ((3).lcm(5) != 15) { return 22; }
+    if ((0).lcm(5) != 0) { return 23; }
+
+    // last_index_of — rightmost match
+    if ("hello hello".last_index_of("hello") != 6) { return 24; }
+    if ("aaa".last_index_of("a") != 2) { return 25; }
+    if ("hello".last_index_of("z") != (0 - 1)) { return 26; }
+    if ("hello".last_index_of("") != 5) { return 27; }
+
+    // capitalize — first byte uppercased, rest preserved
+    if ("hello".capitalize() != "Hello") { return 28; }
+    if ("Hello".capitalize() != "Hello") { return 29; }
+    if ("HELLO".capitalize() != "HELLO") { return 30; }
+    if ("".capitalize() != "") { return 31; }
+    if ("1abc".capitalize() != "1abc") { return 32; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 5)", code)
+	}
+}
+
 // Fourth stdlib bundle: punctuation classifier, byte→hex
 // helper, i32 sign trio (signum / is_positive / is_negative /
 // is_zero), string blanks/hex predicates, indent. 11 new
