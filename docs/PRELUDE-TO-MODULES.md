@@ -225,13 +225,22 @@ Tasks:
         function lives in a module.
 - [ ] Phase 5 — drop auto-injection. Foundation landed:
       `import "core/no_prelude";` is the opt-out sentinel
-      (#498). Remaining work:
-      - Cleanup the stdlib internals so cross-module bare-name
-        calls work under no-prelude (today `std/i32`'s
-        `to_hex` calls `int_to_string_radix` from `core/int`
-        by bare name — that only resolves because the auto-
-        prelude flattens every module's decls into one
-        namespace).
+      (#498). `modload.LoadStdlibFlat` (auto-prelude routed
+      through modload's rewriter in flat-namespace mode) lets
+      stdlib modules use qualified imports — `import
+      "core/int";` plus `int.foo(...)` — and the rewriter
+      strips the qualifier to the bare-named decl in the
+      combined Program. The auto-prelude path is now the same
+      machinery as user-program loading, just with `prefixFor`
+      forced to "" so decls stay bare-named for user code's
+      sake. Remaining work:
+      - Migrate every stdlib module's bare-name cross-module
+        calls to qualified form (one stdlib module per PR;
+        `std/u32` is the canary). This is what makes Phase 5
+        possible: under no-prelude the qualified calls
+        rewrite through modload's normal mangling path the
+        same way they rewrite through the flat-namespace
+        path here.
       - Convert every e2e + example test program to declare
         its imports explicitly.
       - Once the suite passes with no-prelude as the default,

@@ -72,6 +72,87 @@ func Load(entryPath string) (*ast.Program, map[string]string, error) {
 	return prog, srcs, nil
 }
 
+// LoadStdlibFlat loads each stdlib path in `paths` (and every
+// stdlib module it transitively imports) and returns a single
+// combined Program whose decls keep their bare names — NO
+// `<mod>__` mangling. Qualified call sites inside the loaded
+// stdlib bodies (`int.foo()`, `string.find(s, ...)`) rewrite to
+// flat bare calls (`foo()`, `find(s, ...)`) so the call resolves
+// against the bare-named decls in the same combined Program.
+//
+// Used by the checker's auto-prelude injection path: stdlib
+// modules can now use qualified imports for cross-module calls
+// without each importer module having to be loaded through the
+// normal mangling path. Safe because every free-function /
+// struct / const name in `internal/stdlib/` is globally unique
+// (receiver methods don't collide because dispatch is by
+// receiver type, not by mangled name).
+//
+// Only stdlib paths are accepted (`std/…` / `core/…`); a
+// non-stdlib path returns an error. The combined Program's
+// `LoadedStdlibPaths` is populated for the checker's dedup
+// against any same-paths loaded via the entry program's
+// `import` statements.
+func LoadStdlibFlat(paths []string) (*ast.Program, error) {
+	loaded := map[string]*module{}
+	stack := map[string]bool{}
+	srcs := map[string]string{}
+	for _, p := range paths {
+		if !stdlib.IsStdlibPath(p) {
+			return nil, fmt.Errorf("LoadStdlibFlat: %q is not a stdlib path (must start with `std/` or `core/`)", p)
+		}
+		canonical := resolveImportPath("", p)
+		if err := loadRecursive(canonical, loaded, stack, srcs); err != nil {
+			return nil, err
+		}
+	}
+	combined := &ast.Program{
+		LoadedStdlibPaths: map[string]bool{},
+	}
+	for path := range loaded {
+		combined.LoadedStdlibPaths[path] = true
+	}
+	var firstErr error
+	for _, mod := range loaded {
+		errs := mod.rewriteAllOpts("", true)
+		for _, e := range errs {
+			if firstErr == nil {
+				firstErr = e
+			}
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	// Auto-prelude semantics: stdlib decls injected by the auto-
+	// prelude path are universally visible to every other module.
+	// `methodVisibleHere` reads that off an empty `SourceModule` on
+	// the FuncDecl, so we clear the stamp `loadRecursive` set.
+	// Without this, a stdlib body that calls into another stdlib
+	// module via receiver-method dispatch (e.g. std/json calling
+	// `s.parse_int_radix(16)` whose hoisted method lives in
+	// std/i32) would fail the visibility check and the checker
+	// would re-interpret the call as a plain field-access — the
+	// "field access on non-struct value of type string" cascade.
+	//
+	// Cross-stdlib free-function calls (rewritten from `int.foo()`
+	// to bare `foo()` by the flat-namespace rewriter above) don't
+	// participate in the method visibility check, so they're fine
+	// either way.
+	for _, mod := range loaded {
+		for _, fn := range mod.prog.Funcs {
+			fn.SourceModule = ""
+		}
+		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
+		combined.Structs = append(combined.Structs, mod.prog.Structs...)
+		combined.Enums = append(combined.Enums, mod.prog.Enums...)
+		combined.Unions = append(combined.Unions, mod.prog.Unions...)
+		combined.Consts = append(combined.Consts, mod.prog.Consts...)
+		combined.Comments = append(combined.Comments, mod.prog.Comments...)
+	}
+	return combined, nil
+}
+
 // module bundles a parsed file with its canonical path and the
 // derived module name (basename without `.lang`).
 type module struct {
@@ -362,6 +443,16 @@ func prefixFor(isEntry bool, name string) string {
 // Both rewrites happen in one walk so the mangled output is
 // consistent for the rest of the pipeline.
 func (m *module) rewriteAll(selfPrefix string) []error {
+	return m.rewriteAllOpts(selfPrefix, false)
+}
+
+// rewriteAllOpts is rewriteAll with a `flatNamespace` knob — when
+// true, cross-module references rewrite without the `<mod>__`
+// prefix (`int.foo()` → `foo()`) and the own-decl selfPrefix is
+// expected to be empty too. Used by `LoadStdlibFlat` so the
+// auto-prelude path can rewrite qualified imports inside stdlib
+// bodies while keeping stdlib decl names bare.
+func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool) []error {
 	// Build the set of own-module function, struct, and const names
 	// so we can recognise internal references (`fn(args)` /
 	// `Foo { ... }` / `K`) versus references to outside symbols.
@@ -379,12 +470,13 @@ func (m *module) rewriteAll(selfPrefix string) []error {
 	}
 
 	r := &rewriter{
-		modPath:    m.path,
-		selfPrefix: selfPrefix,
-		ownFuncs:   ownFuncs,
-		ownStructs: ownStructs,
-		ownConsts:  ownConsts,
-		imports:    m.imports,
+		modPath:       m.path,
+		selfPrefix:    selfPrefix,
+		ownFuncs:      ownFuncs,
+		ownStructs:    ownStructs,
+		ownConsts:     ownConsts,
+		imports:       m.imports,
+		flatNamespace: flatNamespace,
 	}
 	for _, fn := range m.prog.Funcs {
 		// Receiver methods don't get the module prefix. Dispatch
@@ -441,6 +533,16 @@ type rewriter struct {
 	// `function range(…)` doesn't get the module-prefix mangling
 	// applied to its uses.
 	localVars map[string]bool
+	// flatNamespace, when true, drops the `<mod>__` prefix on
+	// cross-module references — `int.foo()` becomes `foo()`
+	// instead of `int__foo()`. Used by `LoadStdlibFlat` so the
+	// auto-prelude path can rewrite qualified imports inside
+	// stdlib bodies without mangling stdlib decls (decls stay
+	// at their bare names, which user code calls directly).
+	// Safe for stdlib because every free-function name there is
+	// globally unique (receiver methods don't collide because
+	// dispatch is by receiver type).
+	flatNamespace bool
 }
 
 // checkPublicFunc records an error if `fn` isn't exported from
@@ -494,6 +596,9 @@ func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 	mod, ok := r.imports[localName]
 	if !ok {
 		return nil, "", false
+	}
+	if r.flatNamespace {
+		return mod, "", true
 	}
 	return mod, mod.name + "__", true
 }
