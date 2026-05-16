@@ -6352,6 +6352,97 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twenty-seventh stdlib bundle: i32[] median / mode /
+// sum_squared, string[] join_with_last, string
+// replace_byte / to_acronym / title_case, i32
+// is_multiple_of. 8 helpers.
+//
+// `median` returns the lower middle on even-length arrays
+// (no float averaging — return type is i32). `mode` ties
+// resolve to the first occurrence in original order.
+// `join_with_last` is the Oxford-comma shape: ", " between
+// non-final pairs, " and " between the last two. `title_case`
+// only upper-folds the first byte after each space; "FOX"
+// stays "FOX".
+func TestArm64StdlibBundle27(t *testing.T) {
+	src := `function main(): i32 {
+    // median
+    match ([5, 1, 3, 4, 2].median()) {
+        Some(m) => { if (m != 3) { return 1; } },
+        None => { return 2; },
+    }
+    match ([1, 2, 3, 4].median()) {
+        Some(m) => { if (m != 2) { return 3; } },
+        None => { return 4; },
+    }
+    match ([7].median()) {
+        Some(m) => { if (m != 7) { return 5; } },
+        None => { return 6; },
+    }
+    var emp: i32[] = [];
+    match (emp.median()) { Some(_) => { return 7; }, None => { } }
+
+    // mode
+    match ([1, 2, 2, 3, 3, 3, 4].mode()) {
+        Some(m) => { if (m != 3) { return 10; } },
+        None => { return 11; },
+    }
+    match ([5].mode()) {
+        Some(m) => { if (m != 5) { return 12; } },
+        None => { return 13; },
+    }
+    match ([1, 2, 1, 2].mode()) {
+        Some(m) => { if (m != 1) { return 14; } },
+        None => { return 15; },
+    }
+    match (emp.mode()) { Some(_) => { return 16; }, None => { } }
+
+    // is_multiple_of
+    if (!(12).is_multiple_of(3)) { return 20; }
+    if ((10).is_multiple_of(3)) { return 21; }
+    if (!(0).is_multiple_of(5)) { return 22; }
+    if ((5).is_multiple_of(0)) { return 23; }
+    if (!((0 - 6)).is_multiple_of(3)) { return 24; }
+
+    // replace_byte
+    if ("a-b-c".replace_byte(45, 95) != "a_b_c") { return 30; }
+    if ("xxx".replace_byte(120, 121) != "yyy") { return 31; }
+    if ("".replace_byte(65, 66) != "") { return 32; }
+    if ("abc".replace_byte(122, 65) != "abc") { return 33; }
+
+    // join_with_last
+    if (["a", "b", "c", "d"].join_with_last(", ", " and ") != "a, b, c and d") { return 40; }
+    if (["a", "b"].join_with_last(", ", " and ") != "a and b") { return 41; }
+    if (["only"].join_with_last(", ", " and ") != "only") { return 42; }
+    var empty: string[] = [];
+    if (empty.join_with_last(", ", " and ") != "") { return 43; }
+
+    // to_acronym
+    if ("hello world".to_acronym() != "HW") { return 50; }
+    if ("the quick brown fox".to_acronym() != "TQBF") { return 51; }
+    if ("solo".to_acronym() != "S") { return 52; }
+    if ("".to_acronym() != "") { return 53; }
+    if ("  spaced  out  ".to_acronym() != "SO") { return 54; }
+
+    // title_case
+    if ("hello world".title_case() != "Hello World") { return 60; }
+    if ("the quick brown FOX".title_case() != "The Quick Brown FOX") { return 61; }
+    if ("".title_case() != "") { return 62; }
+    if ("x".title_case() != "X") { return 63; }
+
+    // sum_squared
+    if ([1, 2, 3].sum_squared() != 14) { return 70; }
+    if ([0].sum_squared() != 0) { return 71; }
+    if (emp.sum_squared() != 0) { return 72; }
+    if ([0 - 2, 3].sum_squared() != 13) { return 73; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 27)", code)
+	}
+}
+
 // Twenty-sixth stdlib bundle: string starts_with_any /
 // ends_with_any / lines_non_empty, i32[] range / count,
 // string[] count_str, HTTP redirect / no_content builders.

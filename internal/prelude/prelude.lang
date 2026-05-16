@@ -496,6 +496,68 @@ function (s: string) ends_with_any(suffixes: string[]): boolean {
     return false;
 }
 
+// `s.replace_byte(from, to)` — return a copy of s with every
+// byte equal to `from` replaced by `to`. ASCII-level; for
+// multi-byte sequences use `replace(old, new)`. Both args
+// are i32 byte values (use the literal character code or a
+// helper like `b'-' as i32`).
+function (s: string) replace_byte(from: i32, to: i32): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    var buf: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == from) { buf[i] = to as u8; } else { buf[i] = b as u8; }
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+// `s.to_acronym()` — first byte of each whitespace-
+// separated token, uppercased and concatenated. "hello
+// world" → "HW". Empty / all-whitespace input → "".
+// ASCII upper-fold only.
+function (s: string) to_acronym(): string {
+    var toks: string[] = s.fields();
+    var n: i32 = len(toks);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var t: string = toks[i];
+        if (len(t) > 0) {
+            var b: i32 = t[0];
+            out = out + (b.to_upper()).to_ascii_string();
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `s.title_case()` — uppercase the first byte of every
+// space-separated word, leave the rest untouched. Splits
+// on the literal ' ' byte (preserves multi-space gaps as
+// trailing spaces on the previous word the way Go's
+// `strings.Title` does). ASCII-only; "FOX" stays "FOX".
+function (s: string) title_case(): string {
+    var n: i32 = len(s);
+    if (n == 0) { return s; }
+    var buf: u8[] = __alloc_u8(n);
+    var prev_space: boolean = true;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (prev_space) {
+            buf[i] = b.to_upper() as u8;
+        } else {
+            buf[i] = b as u8;
+        }
+        prev_space = (b == 32);
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
 // `s.lines_non_empty()` — like `lines()` but drops empty
 // entries. Useful for parsing text that uses blank lines
 // as separators where you don't care about them.
@@ -1136,6 +1198,16 @@ function (n: i32) has_digit(d: i32): boolean {
 function (n: i32) percent_of(total: i32): i32 {
     if (total <= 0) { return 0; }
     return (n * 100) / total;
+}
+
+// `(n: i32) is_multiple_of(d)` — true if d divides n
+// evenly. `d == 0` returns false (no value is a multiple
+// of zero; avoids the divide-by-zero trap). Negative
+// divisors are normalised via the modulo — `(-6) % 3 == 0`
+// holds.
+function (n: i32) is_multiple_of(d: i32): boolean {
+    if (d == 0) { return false; }
+    return n % d == 0;
 }
 
 // === Byte-level case helpers ===
@@ -2890,6 +2962,54 @@ function __method_Array_count(arr: i32[], v: i32): i32 {
     return c;
 }
 
+// `(arr: i32[]) sum_squared()` — sum of squares (x*x for
+// each element). Empty array → 0. Useful for variance /
+// magnitude calculations. No overflow detection — squares
+// of larger ints will wrap.
+function __method_Array_sum_squared(arr: i32[]): i32 {
+    var n: i32 = len(arr);
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        s = s + arr[i] * arr[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+// `(arr: i32[]) median()` — middle value after ascending
+// sort. For even-length arrays returns the lower middle
+// (no float averaging since the result type is i32).
+// Option[i32] None on empty.
+function __method_Array_median(arr: i32[]): Option[i32] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var sorted: i32[] = sort_i32_asc(arr);
+    return Some(sorted[(n - 1) / 2]);
+}
+
+// `(arr: i32[]) mode()` — most frequently occurring
+// element. Ties resolve to the first occurrence in the
+// original array order. Option[i32] None on empty. O(n^2)
+// naive count; fine for the small-n use cases this
+// prelude targets.
+function __method_Array_mode(arr: i32[]): Option[i32] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var best: i32 = arr[0];
+    var best_count: i32 = 1;
+    var i: i32 = 0;
+    while (i < n) {
+        var c: i32 = arr.count(arr[i]);
+        if (c > best_count) {
+            best = arr[i];
+            best_count = c;
+        }
+        i = i + 1;
+    }
+    return Some(best);
+}
+
 // `s.replace(old, new)` — substitutes every
 // non-overlapping occurrence of `old` with `new`.
 // Empty `old` is a no-op (returns the source unchanged)
@@ -3194,6 +3314,26 @@ function __method_Array_count_str(arr: string[], v: string): i32 {
         i = i + 1;
     }
     return c;
+}
+
+// `(arr: string[]) join_with_last(sep, last_sep)` — like
+// `join(sep)` but use `last_sep` between the final two
+// entries. The Oxford-comma shape: ["a","b","c","d"] +
+// (", ", " and ") → "a, b, c and d". Empty array → "";
+// single-element array → that element; two-element array
+// → joined with `last_sep` only.
+function __method_Array_join_with_last(arr: string[], sep: string, last_sep: string): string {
+    var n: i32 = len(arr);
+    if (n == 0) { return ""; }
+    if (n == 1) { return arr[0]; }
+    if (n == 2) { return arr[0] + last_sep + arr[1]; }
+    var out: string = arr[0];
+    var i: i32 = 1;
+    while (i < n - 1) {
+        out = out + sep + arr[i];
+        i = i + 1;
+    }
+    return out + last_sep + arr[n - 1];
 }
 
 // === Array append ===
