@@ -6352,6 +6352,55 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twentieth stdlib bundle: i32 divmod (tuple), string
+// escape_shell / snake_case / kebab_case / is_valid_identifier,
+// is_valid_http_status. 6 helpers.
+func TestArm64StdlibBundle20(t *testing.T) {
+	src := `function main(): i32 {
+    // divmod — (quotient, remainder)
+    var p1: (i32, i32) = (10).divmod(3);
+    if (p1.0 != 3 || p1.1 != 1) { return 1; }
+    var p2: (i32, i32) = (12).divmod(4);
+    if (p2.0 != 3 || p2.1 != 0) { return 2; }
+    var p3: (i32, i32) = (5).divmod(0);
+    if (p3.0 != 0 || p3.1 != 0) { return 3; }
+
+    // escape_shell
+    if ("hello".escape_shell() != "'hello'") { return 4; }
+    if ("don't".escape_shell() != "'don'\\''t'") { return 5; }
+    if ("".escape_shell() != "''") { return 6; }
+
+    // snake_case
+    if ("camelCase".snake_case() != "camel_case") { return 7; }
+    if ("HelloWorld".snake_case() != "hello_world") { return 8; }
+    if ("ABC".snake_case() != "a_b_c") { return 9; }
+    if ("hello world".snake_case() != "hello_world") { return 10; }
+
+    // kebab_case
+    if ("camelCase".kebab_case() != "camel-case") { return 11; }
+    if ("hello world".kebab_case() != "hello-world") { return 12; }
+
+    // is_valid_identifier
+    if (!"hello".is_valid_identifier()) { return 13; }
+    if (!"_private".is_valid_identifier()) { return 14; }
+    if ("42x".is_valid_identifier()) { return 15; }
+    if ("has space".is_valid_identifier()) { return 16; }
+    if ("".is_valid_identifier()) { return 17; }
+
+    // is_valid_http_status
+    if (!is_valid_http_status(200)) { return 18; }
+    if (!is_valid_http_status(100)) { return 19; }
+    if (!is_valid_http_status(599)) { return 20; }
+    if (is_valid_http_status(99)) { return 21; }
+    if (is_valid_http_status(600)) { return 22; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 20)", code)
+	}
+}
+
 // Nineteenth stdlib bundle: byte digit_value / hex_value,
 // string count_byte, http_url_path_only,
 // http_user_agent_is_bot, i32 to_string_with_sep. 6 helpers.

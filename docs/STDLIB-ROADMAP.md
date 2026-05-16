@@ -588,6 +588,17 @@ think they're free additions to make.
   case-insensitive). Hint, not a security control.
 - **`(n: i32).to_string_with_sep(sep)`**: decimal with
   thousand-separator. `1234567` → `"1,234,567"`.
+- **`(n: i32).divmod(d)`**: returns `(quotient, remainder)`
+  pair. `d == 0` returns `(0, 0)`.
+- **`s.escape_shell()`**: POSIX-shell-safe single-quote
+  wrap with `'\''` escape dance for interior quotes.
+- **`s.snake_case()` / `s.kebab_case()`**: convert
+  camelCase / PascalCase / space-separated to lower-case
+  with underscore / hyphen separators.
+- **`s.is_valid_identifier()`**: lang / C / JS identifier
+  pattern: `[a-zA-Z_][a-zA-Z0-9_]*`.
+- **`is_valid_http_status(code)`**: `[100, 599]` per RFC
+  9110.
 
 ### Additional compiler bug
 
