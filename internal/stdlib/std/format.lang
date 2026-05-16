@@ -1,0 +1,114 @@
+// std/format — human-readable formatting helpers.
+//
+// `format(fmt, args)` — runtime template substitution with `{}`
+// placeholders. `format_bytes(n)` / `format_duration_ms(ms)` —
+// pre-canned shapes for byte sizes and elapsed durations.
+//
+// Migrated from the auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md. The auto-prelude declares
+// `import "std/format";` so existing bare-name callers
+// keep working unchanged.
+
+// `format(fmt, args)` — runtime template substitution. Walks
+// fmt byte-by-byte, replacing each `{}` placeholder with the
+// next element of args. Extra args (more args than `{}`s) are
+// silently dropped; missing args (more `{}`s than args) emit
+// the placeholder unchanged. Mirrors Python's `str.format()` /
+// Rust's `format!()` minimal subset.
+//
+// Use cases the f-string sugar doesn't cover:
+//   - Dynamic templates (read from a config file, locale
+//     table, error catalogue, etc.).
+//   - Programs that build their own diagnostic strings —
+//     a checker emitting "expected {}, got {}" where the
+//     template lives in a const-table rather than at every
+//     call site.
+//
+// Caller pre-stringifies args (`to_string()` for i32 / i64 /
+// f32 / f64 / boolean). A typed-overload story would need
+// trait dispatch which lang doesn't have yet; the string[]
+// signature keeps the type story trivial.
+pub function format(fmt: string, args: string[]): string {
+    var n: i32 = len(fmt);
+    var out: string = "";
+    var i: i32 = 0;
+    var argi: i32 = 0;
+    while (i < n) {
+        if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 125) {
+            if (argi < len(args)) {
+                out = out + args[argi];
+                argi = argi + 1;
+            } else {
+                // Missing arg — emit the literal "{}" so callers
+                // can spot the underflow at runtime.
+                out = out + "{}";
+            }
+            i = i + 2;
+        } else {
+            out = out + fmt[i:i + 1];
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// `format_bytes(n)` — render an i32 byte count as "N B" /
+// "N KiB" / "N MiB" / "N GiB" using binary (1024-based)
+// prefixes. Integer truncation only — for "1.5 KiB" the
+// caller can divide by 1024 themselves and apply
+// to_string_padded. Negative input is rendered with a
+// leading "-" before the unit ("-512 B"). i32 caps the
+// representable range at ~2 GiB which covers the common
+// CLI / log use case; callers needing larger sizes can
+// drop down to manual i64 div + to_string.
+pub function format_bytes(n: i32): string {
+    var neg: boolean = (n < 0);
+    var mag: i32 = n;
+    if (neg) { mag = n.abs(); }
+    var sign: string = "";
+    if (neg) { sign = "-"; }
+    if (mag < 1024) {
+        return sign + mag.to_string() + " B";
+    }
+    if (mag < 1024 * 1024) {
+        return sign + (mag / 1024).to_string() + " KiB";
+    }
+    if (mag < 1024 * 1024 * 1024) {
+        return sign + (mag / (1024 * 1024)).to_string() + " MiB";
+    }
+    return sign + (mag / (1024 * 1024 * 1024)).to_string() + " GiB";
+}
+
+// `format_duration_ms(ms)` — human-readable duration like
+// "1h 23m 45s" / "500ms". Components are emitted only when
+// non-zero, separated by spaces; "0" alone returns "0ms".
+// Negative ms gets a leading "-" before the magnitude.
+pub function format_duration_ms(ms: i32): string {
+    if (ms == 0) { return "0ms"; }
+    var neg: boolean = (ms < 0);
+    var mag: i32 = ms;
+    if (neg) { mag = ms.abs(); }
+    var sign: string = "";
+    if (neg) { sign = "-"; }
+    var h: i32 = mag / 3600000;
+    var rem: i32 = mag - h * 3600000;
+    var m: i32 = rem / 60000;
+    rem = rem - m * 60000;
+    var s: i32 = rem / 1000;
+    var msPart: i32 = rem - s * 1000;
+    var out: string = "";
+    if (h > 0) { out = out + h.to_string() + "h"; }
+    if (m > 0) {
+        if (len(out) > 0) { out = out + " "; }
+        out = out + m.to_string() + "m";
+    }
+    if (s > 0) {
+        if (len(out) > 0) { out = out + " "; }
+        out = out + s.to_string() + "s";
+    }
+    if (msPart > 0) {
+        if (len(out) > 0) { out = out + " "; }
+        out = out + msPart.to_string() + "ms";
+    }
+    return sign + out;
+}
