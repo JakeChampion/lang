@@ -1,0 +1,60 @@
+// std/float — f32 / f64 to-string formatting.
+//
+// Up to 7 fractional digits for f32, 15 for f64 (matching IEEE
+// 754 single / double precision); trailing zeros trimmed and
+// the decimal point is dropped if the fraction is zero. NaN
+// gets the canonical "NaN"; ±Inf get "Inf" / "-Inf". Detection
+// of Inf is approximate — the threshold check (`n * 2.0 == n`)
+// covers every practically-encountered case but isn't bit-
+// exact against `f64.const inf`.
+//
+// Migrated from the auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md.
+
+function __float_to_string(n: f64, k: i32): string {
+    if (n != n) { return "NaN"; }
+    var out: string = "";
+    if (n < 0.0) {
+        out = "-";
+        n = 0.0 - n;
+    }
+    // Inf detection without a literal `inf` constant: for
+    // any finite non-zero f64, `n * 2.0` is strictly larger
+    // than `n`. For ±Inf, `Inf * 2.0 == Inf`. We've already
+    // extracted the sign and ruled out NaN, so `n` here is
+    // either zero, finite-positive, or +Inf.
+    if (n != 0.0 && n * 2.0 == n) { return out + "Inf"; }
+    // Integer part.
+    var intPart: i64 = n as i64;
+    out = out + intPart.to_string();
+    // Fraction part.
+    var frac: f64 = n - (intPart as f64);
+    if (frac < 0.0) { frac = 0.0 - frac; }   // guard against `(intPart as f64)` rounding above n
+    // mult = 10^k.
+    var mult: f64 = 1.0;
+    var i: i32 = 0;
+    while (i < k) { mult = mult * 10.0; i = i + 1; }
+    var fracInt: i64 = (frac * mult) as i64;
+    // Find the effective number of digits by trimming
+    // trailing zeros from fracInt.
+    var effective: i32 = k;
+    var tmp: i64 = fracInt;
+    while (effective > 0 && (tmp % 10) == 0) {
+        tmp = tmp / 10;
+        effective = effective - 1;
+    }
+    if (effective == 0) { return out; }
+    // Pad fracInt's decimal repr to k digits with leading
+    // zeros, then truncate to `effective`.
+    var fracStr: string = fracInt.to_string();
+    while (len(fracStr) < k) { fracStr = "0" + fracStr; }
+    return out + "." + fracStr[0:effective];
+}
+
+pub function (n: f32) to_string(): string {
+    return __float_to_string(n as f64, 7);
+}
+
+pub function (n: f64) to_string(): string {
+    return __float_to_string(n, 15);
+}
