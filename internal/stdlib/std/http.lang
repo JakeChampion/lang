@@ -16,6 +16,8 @@
 // the bigger story (keep-alive, TE chunked, TLS) waits on a
 // richer lang shape.
 
+import "core/int";
+
 // `http_status_text(code)` — IANA reason phrase for the
 // common HTTP status codes (RFC 9110). Returns "" for
 // unknown codes — callers should fall back to a generic
@@ -317,9 +319,9 @@ function __http_reason(code: i32): string {
 // caller's `tcp_send` finishes the write. No keep-alive, no
 // chunked TE.
 pub function http_serialize_response(resp: HttpResponse): string {
-    var status_line: string = "HTTP/1.1 " + int_to_string(resp.status)
+    var status_line: string = "HTTP/1.1 " + int.int_to_string(resp.status)
         + " " + __http_reason(resp.status) + "\r\n";
-    var headers: string = "Content-Length: " + int_to_string(len(resp.body)) + "\r\n"
+    var headers: string = "Content-Length: " + int.int_to_string(len(resp.body)) + "\r\n"
         + "Connection: close\r\n"
         + "\r\n";
     return status_line + headers + resp.body;
