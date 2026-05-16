@@ -1,0 +1,245 @@
+// std/url — URL percent-encoding, URL parsing, and query
+// string parsing.
+//
+//   url_encode(s) / url_decode(s)   — RFC 3986 %-encoding.
+//   url_parse(s)                    — decompose into a Url struct.
+//   query_parse(s)                  — URL-encoded query → Map.
+//
+// `+` is left alone in both encode and decode (callers handling
+// `application/x-www-form-urlencoded` pre-process). url_parse
+// is best-effort: returns None only on empty input; otherwise
+// fills missing sections with empty strings / port=0. Query
+// duplicates collect into a `string[]` per key.
+//
+// Migrated from the auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md.
+
+function __url_unreserved(b: i32): boolean {
+    if (b >= 65 && b <= 90)  { return true; }   // A-Z
+    if (b >= 97 && b <= 122) { return true; }   // a-z
+    if (b >= 48 && b <= 57)  { return true; }   // 0-9
+    if (b == 45 || b == 46 || b == 95 || b == 126) { return true; }
+    return false;
+}
+
+function __url_hex_char(d: i32): i32 {
+    if (d < 10) { return d + 48; }   // '0' + d
+    return d + 55;                    // 'A' - 10 + d
+}
+
+function __url_hex_val(c: i32): i32 {
+    if (c >= 48 && c <= 57)  { return c - 48; }   // 0-9
+    if (c >= 97 && c <= 102) { return c - 87; }   // a-f -> 10..15
+    if (c >= 65 && c <= 70)  { return c - 55; }   // A-F -> 10..15
+    return -1;
+}
+
+pub function url_encode(s: string): string {
+    var n: i32 = len(s);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (__url_unreserved(b)) {
+            out = out + s[i:i+1];
+        } else {
+            var hi: i32 = (b >> 4) & 15;
+            var lo: i32 = b & 15;
+            // Explicit `as u8` keeps the array literal's
+            // element type uniform across re-checks (the
+            // monomorph pass re-runs the checker, which
+            // doesn't re-apply the destination-context
+            // coercion to function-call results).
+            var trip: u8[] = [
+                37 as u8,
+                __url_hex_char(hi) as u8,
+                __url_hex_char(lo) as u8
+            ];
+            out = out + string_from_bytes(trip);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function url_decode(s: string): string {
+    var n: i32 = len(s);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        var emit: string = s[i:i+1];
+        var consumed: i32 = 1;
+        if (b == 37 && i + 2 < n) {           // '%'
+            var h1: i32 = __url_hex_val(s[i+1]);
+            var h2: i32 = __url_hex_val(s[i+2]);
+            if (h1 >= 0 && h2 >= 0) {
+                var byte: u8[] = [((h1 << 4) | h2) as u8];
+                emit = string_from_bytes(byte);
+                consumed = 3;
+            }
+        }
+        out = out + emit;
+        i = i + consumed;
+    }
+    return out;
+}
+
+
+
+pub function url_parse(s: string): Option[Url] {
+    var n: i32 = len(s);
+    if (n == 0) { return None; }
+
+    var u: Url = Url {
+        scheme: "",
+        host: "",
+        port: 0,
+        path: "",
+        query: "",
+        fragment: ""
+    };
+
+    // Find scheme: look for ":" followed by "//".
+    var scheme_end: i32 = -1;
+    var i: i32 = 0;
+    while (i + 2 < n) {
+        if (s[i] == 58 && s[i+1] == 47 && s[i+2] == 47) {
+            if (i > 0) { scheme_end = i; }
+            break;
+        }
+        i = i + 1;
+    }
+
+    var rest_start: i32 = 0;
+    if (scheme_end >= 0) {
+        u.scheme = s[0:scheme_end];
+        rest_start = scheme_end + 3;
+    }
+
+    // Find fragment '#' from rest_start onwards.
+    var frag_start: i32 = n;
+    i = rest_start;
+    while (i < n) {
+        if (s[i] == 35) { frag_start = i; break; }   // '#'
+        i = i + 1;
+    }
+    if (frag_start < n) {
+        u.fragment = s[frag_start+1:n];
+    }
+
+    // Find query '?' in [rest_start, frag_start).
+    var query_start: i32 = frag_start;
+    i = rest_start;
+    while (i < frag_start) {
+        if (s[i] == 63) { query_start = i; break; }   // '?'
+        i = i + 1;
+    }
+    if (query_start < frag_start) {
+        u.query = s[query_start+1:frag_start];
+    }
+
+    // Find authority end. With a scheme, scan for the first
+    // '/' in [rest_start, query_start). Without a scheme the
+    // whole [rest_start, ...] is the path, so authority_end
+    // collapses to rest_start.
+    var authority_end: i32 = query_start;
+    if (scheme_end >= 0) {
+        i = rest_start;
+        while (i < query_start) {
+            if (s[i] == 47) { authority_end = i; break; }   // '/'
+            i = i + 1;
+        }
+    } else {
+        authority_end = rest_start;
+    }
+
+    // Authority — split host:port.
+    if (rest_start < authority_end) {
+        var colon: i32 = authority_end;
+        i = rest_start;
+        while (i < authority_end) {
+            if (s[i] == 58) { colon = i; break; }   // ':'
+            i = i + 1;
+        }
+        if (colon < authority_end) {
+            u.host = s[rest_start:colon];
+            // Port: digits only, max 65535. Any non-digit or
+            // out-of-range value zeroes the port.
+            var port: i32 = 0;
+            i = colon + 1;
+            while (i < authority_end) {
+                var b: i32 = s[i];
+                if (b < 48 || b > 57) { port = 0; break; }
+                port = port * 10 + (b - 48);
+                if (port > 65535) { port = 0; break; }
+                i = i + 1;
+            }
+            u.port = port;
+        } else {
+            u.host = s[rest_start:authority_end];
+        }
+    }
+
+    // Path: [authority_end, query_start).
+    if (authority_end < query_start) {
+        u.path = s[authority_end:query_start];
+    }
+
+    return Some(u);
+}
+
+pub function query_parse(s: string): Map[string, string[]] {
+    var m: Map[string, string[]] = map_new(8);
+    var n: i32 = len(s);
+    if (n == 0) { return m; }
+
+    var pair_start: i32 = 0;
+    var i: i32 = 0;
+    // Walk one past the end so a final pair without a
+    // trailing `&` still gets processed via the `i == n`
+    // sentinel.
+    while (i <= n) {
+        var sep: boolean = false;
+        if (i == n) { sep = true; }
+        else if (s[i] == 38) { sep = true; }   // '&'
+        if (sep) {
+            var pair_len: i32 = i - pair_start;
+            if (pair_len > 0) {
+                __query_pair(m, s, pair_start, i);
+            }
+            pair_start = i + 1;
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32) {
+    // Find '=' in [start, end).
+    var eq: i32 = -1;
+    var j: i32 = start;
+    while (j < end) {
+        if (s[j] == 61) { eq = j; break; }   // '='
+        j = j + 1;
+    }
+    var key: string = "";
+    var val: string = "";
+    if (eq >= 0) {
+        key = url_decode(s[start:eq]);
+        val = url_decode(s[eq+1:end]);
+    } else {
+        key = url_decode(s[start:end]);
+    }
+    // Append-or-create: probe the map; on hit, copy + append;
+    // else create a one-element array.
+    match (m.get(key)) {
+        Some(existing) => {
+            m.set(key, existing.push(val));
+        },
+        None => {
+            var arr: string[] = [val];
+            m.set(key, arr);
+        }
+    }
+}
