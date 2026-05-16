@@ -315,6 +315,23 @@ func injectPrelude(prog *ast.Program) error {
 			return nil
 		}
 	}
+	// Opt-out: a program that `import "core/no_prelude";`s
+	// signals it doesn't want the auto-prelude. The module
+	// itself is empty — the import statement is the signal.
+	// Used for explicit-imports test programs and (eventually,
+	// per docs/PRELUDE-TO-MODULES.md phase 5) for every program
+	// once the auto-prelude is retired.
+	//
+	// modload's `combine` doesn't copy entry-module imports into
+	// the combined Program (it flattens decls only), so we read
+	// the signal off the LoadedStdlibPaths set instead. Single-
+	// file checker callers that bypass modload (and therefore
+	// leave LoadedStdlibPaths nil) can't opt out today — but
+	// they also don't import stdlib paths, so the auto-prelude
+	// is the right behaviour for them.
+	if prog.LoadedStdlibPaths["stdlib://core/no_prelude.lang"] {
+		return nil
+	}
 	pre, err := parser.Parse(prelude.Source)
 	if err != nil {
 		return fmt.Errorf("prelude: %w", err)

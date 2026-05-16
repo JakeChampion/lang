@@ -710,3 +710,55 @@ function main(): i32 { return (0 - 9).abs(); }`,
 		t.Fatalf("expected user-import + prelude dedup, got %v", err)
 	}
 }
+
+// `import "core/no_prelude";` opts a program out of the auto-
+// injected magic prelude. The user program then needs to
+// `import` every stdlib module it uses explicitly. Phase 5 of
+// the prelude-to-modules migration relies on this gate to land
+// without a single mega-PR.
+//
+// Positive case: a no-prelude program that doesn't need any
+// stdlib at all type-checks cleanly. Proves the opt-out
+// doesn't accidentally break otherwise-valid programs.
+//
+// Programs that DO need stdlib helpers under no-prelude need
+// `import "std/foo";` for each module they touch, AND each
+// std/* module's internal cross-module refs need to be
+// qualified (e.g. `int.int_to_string_radix(…)`) since modload
+// mangles non-receiver names on import. The current std/* sources
+// rely on the auto-prelude flattening their decls into one
+// namespace; cleaning that up for the no-prelude path is a
+// follow-up — until then, no-prelude programs that lean on
+// the stdlib will hit unresolved-name errors.
+func TestNoPreludeBareProgramTypechecks(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.lang": `import "core/no_prelude";
+function main(): i32 { return 42; }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("expected no-prelude bare program to compile, got %v", err)
+	}
+}
+
+// Negative case: program imports core/no_prelude but doesn't
+// import std/i32. The `(5).abs()` call has no `abs` method in
+// scope and the checker errors. Without the opt-out the auto-
+// prelude would silently supply the method; with the opt-out
+// the missing import is caught.
+func TestNoPreludeMissingImportErrors(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.lang": `import "core/no_prelude";
+function main(): i32 { return (5).abs(); }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checker.Check(prog); err == nil {
+		t.Fatal("expected checker error when no-prelude is set and std/i32 isn't imported")
+	}
+}

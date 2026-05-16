@@ -257,6 +257,28 @@ User code should reach for the method-syntax surface
 - `parse_int_radix(s, base)` — bases 2..36
 - `int_to_string_radix(n, base)` — bases 2..36
 
+### `core/no_prelude`
+
+Sentinel import — empty module. `import "core/no_prelude";`
+in a user program signals the checker to skip the auto-
+injected magic prelude, so the program needs explicit
+`import "std/…";` lines for every helper it uses. Phase 5
+of the migration (see `docs/PRELUDE-TO-MODULES.md`) makes
+the no-prelude path the default; until then this is the
+opt-out for programs that want to verify their imports are
+complete.
+
+Caveat: the current `std/*` modules cross-reference each
+other (e.g. `std/i32`'s `to_hex` calls `int_to_string_radix`
+from `core/int`) using bare names, which only resolves under
+the auto-prelude's namespace-flattening. Under no-prelude
+the cross-module refs would need to be qualified
+(`int.int_to_string_radix(...)`). Programs that touch only
+the methods they directly need work; programs that walk
+larger slices of the stdlib will hit unresolved-name errors
+until the stdlib internals get cleaned up for explicit
+imports.
+
 ### `core/map`
 
 Generic `Map[K, V]` runtime. Open-addressing core implementing
