@@ -421,6 +421,53 @@ function (n: i32) clamp(lo: i32, hi: i32): i32 {
     return n;
 }
 
+// === i32 saturating / checked arithmetic ===
+//
+// `saturating_*` clamps to i32::MAX / i32::MIN instead of
+// wrapping; `checked_*` returns None on overflow so the
+// caller can decide. Overflow detection is sign-bit-based —
+// no i64 widening (the natives' i64 codegen has a comparison
+// bug with values straddling the i32::MAX threshold).
+
+function (n: i32) saturating_add(other: i32): i32 {
+    var r: i32 = n + other;
+    // Overflow: both signs match but result flips sign.
+    if (n > 0 && other > 0 && r < 0) { return 2147483647; }
+    if (n < 0 && other < 0 && r >= 0) { return 0 - 2147483647 - 1; }
+    return r;
+}
+
+function (n: i32) saturating_sub(other: i32): i32 {
+    var r: i32 = n - other;
+    // Overflow: signs differ and result has the wrong sign.
+    if (n >= 0 && other < 0 && r < 0) { return 2147483647; }
+    if (n < 0 && other > 0 && r > 0) { return 0 - 2147483647 - 1; }
+    return r;
+}
+
+function (n: i32) checked_add(other: i32): Option[i32] {
+    var r: i32 = n + other;
+    if (n > 0 && other > 0 && r < 0) { return None; }
+    if (n < 0 && other < 0 && r >= 0) { return None; }
+    return Some(r);
+}
+
+function (n: i32) checked_sub(other: i32): Option[i32] {
+    var r: i32 = n - other;
+    if (n >= 0 && other < 0 && r < 0) { return None; }
+    if (n < 0 && other > 0 && r > 0) { return None; }
+    return Some(r);
+}
+
+// `(n: i32) checked_div(other)` — None on divide-by-zero
+// OR on i32::MIN / -1 (the one i32 division that overflows).
+function (n: i32) checked_div(other: i32): Option[i32] {
+    if (other == 0) { return None; }
+    var min32: i32 = 0 - 2147483647 - 1;
+    if (n == min32 && other == (0 - 1)) { return None; }
+    return Some(n / other);
+}
+
 // === i32 / i64 parity + power + gcd/lcm ===
 
 function (n: i32) is_even(): boolean { return n % 2 == 0; }
@@ -1533,6 +1580,44 @@ function (n: i64) to_string(): string {
 
 function (n: u64) to_string(): string {
     return __int_to_string_u64(n as i64, 0);
+}
+
+// `(n: i32) to_hex()` — lowercase hex without prefix.
+// Sugar for `int_to_string_radix(n, 16)` — emits a leading
+// '-' for negative numbers. Callers that want the two's-
+// complement bit pattern should widen to u32 first and use
+// `int_to_string_radix` on that; the i32 form here keeps
+// the signed semantics consistent with `to_string`.
+function (n: i32) to_hex(): string {
+    return int_to_string_radix(n, 16);
+}
+
+// `(s: string) parse_bool()` — accepts the canonical
+// truthy / falsy spellings: "true" / "1" → Some(true),
+// "false" / "0" → Some(false). Anything else returns None
+// (no implicit lowercasing — callers stop their own
+// canonicalisation at the boundary). Empty string is None.
+function (s: string) parse_bool(): Option[boolean] {
+    if (s == "true" || s == "1") { return Some(true); }
+    if (s == "false" || s == "0") { return Some(false); }
+    return None;
+}
+
+// `(s: string) is_http_safe_method()` — true for GET / HEAD
+// / OPTIONS / TRACE (RFC 9110 section 9.2.1). Safe methods
+// don't mutate state; ETag caching / replay logic depends on
+// the distinction.
+function (s: string) is_http_safe_method(): boolean {
+    return s == "GET" || s == "HEAD" || s == "OPTIONS" || s == "TRACE";
+}
+
+// `(s: string) is_http_idempotent_method()` — true for any
+// safe method plus PUT / DELETE. Idempotent methods can be
+// safely retried after a network error without doubling
+// the effect.
+function (s: string) is_http_idempotent_method(): boolean {
+    if (s.is_http_safe_method()) { return true; }
+    return s == "PUT" || s == "DELETE";
 }
 
 // === Radix integer parse / format ===
