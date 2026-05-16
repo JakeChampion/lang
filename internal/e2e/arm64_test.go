@@ -6352,6 +6352,109 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Thirty-first stdlib bundle: string word_at /
+// word_count_min / longest_word / is_quoted, i32[] gcd_all
+// / lcm_all / abs_each, string[] all_starts_with /
+// all_ends_with. 9 helpers.
+//
+// `gcd_all` / `lcm_all` fold the existing scalar `gcd` /
+// `lcm` helpers. Both use abs() on inputs (gcd is
+// sign-invariant; lcm without abs would yield nonsense
+// for negative inputs). Empty array → None.
+//
+// `is_quoted` only checks the outer shape (matching first
+// and last byte from {", `, '}); it doesn't validate
+// escaping or interior quote pairing.
+func TestArm64StdlibBundle31(t *testing.T) {
+	src := `function main(): i32 {
+    match ("hello world foo".word_at(0)) {
+        Some(w) => { if (w != "hello") { return 1; } },
+        None => { return 2; },
+    }
+    match ("hello world foo".word_at(2)) {
+        Some(w) => { if (w != "foo") { return 3; } },
+        None => { return 4; },
+    }
+    match ("hello".word_at(1)) { Some(_) => { return 5; }, None => { } }
+    match ("".word_at(0)) { Some(_) => { return 6; }, None => { } }
+    match ("  multi   space  ".word_at(0)) {
+        Some(w) => { if (w != "multi") { return 7; } },
+        None => { return 8; },
+    }
+
+    if (!["foo_a", "foo_b", "foo_c"].all_starts_with("foo")) { return 10; }
+    if (["foo", "bar"].all_starts_with("f")) { return 11; }
+    var empty: string[] = [];
+    if (!empty.all_starts_with("x")) { return 12; }
+    if (!["abc"].all_starts_with("")) { return 13; }
+
+    if (!["a.txt", "b.txt", "c.txt"].all_ends_with(".txt")) { return 20; }
+    if (["a.txt", "b.png"].all_ends_with(".txt")) { return 21; }
+    if (!empty.all_ends_with(".txt")) { return 22; }
+
+    match ([12, 18, 24].gcd_all()) {
+        Some(g) => { if (g != 6) { return 30; } },
+        None => { return 31; },
+    }
+    match ([7, 13, 11].gcd_all()) {
+        Some(g) => { if (g != 1) { return 32; } },
+        None => { return 33; },
+    }
+    match ([5].gcd_all()) {
+        Some(g) => { if (g != 5) { return 34; } },
+        None => { return 35; },
+    }
+    var empty_i: i32[] = [];
+    match (empty_i.gcd_all()) { Some(_) => { return 36; }, None => { } }
+
+    match ([2, 3, 4].lcm_all()) {
+        Some(l) => { if (l != 12) { return 40; } },
+        None => { return 41; },
+    }
+    match ([6, 8].lcm_all()) {
+        Some(l) => { if (l != 24) { return 42; } },
+        None => { return 43; },
+    }
+    match ([5].lcm_all()) {
+        Some(l) => { if (l != 5) { return 44; } },
+        None => { return 45; },
+    }
+    match (empty_i.lcm_all()) { Some(_) => { return 46; }, None => { } }
+
+    if ("a bb ccc dddd".word_count_min(3) != 2) { return 50; }
+    if ("a bb ccc dddd".word_count_min(1) != 4) { return 51; }
+    if ("a bb ccc".word_count_min(10) != 0) { return 52; }
+    if ("".word_count_min(1) != 0) { return 53; }
+
+    match ("the quick brown fox".longest_word()) {
+        Some(w) => { if (w != "quick") { return 60; } },
+        None => { return 61; },
+    }
+    match ("solo".longest_word()) {
+        Some(w) => { if (w != "solo") { return 62; } },
+        None => { return 63; },
+    }
+    match ("".longest_word()) { Some(_) => { return 64; }, None => { } }
+    match ("  ".longest_word()) { Some(_) => { return 65; }, None => { } }
+
+    var a: i32[] = [0 - 3, 5, 0 - 7].abs_each();
+    if (a[0] != 3 || a[1] != 5 || a[2] != 7) { return 70; }
+    if (len(empty_i.abs_each()) != 0) { return 71; }
+
+    if (!"\"hello\"".is_quoted()) { return 80; }
+    if (!"'hi'".is_quoted()) { return 81; }
+    if ("plain".is_quoted()) { return 82; }
+    if ("\"unmatched".is_quoted()) { return 83; }
+    if ("\"".is_quoted()) { return 84; }
+    if ("".is_quoted()) { return 85; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 31)", code)
+	}
+}
+
 // Thirtieth stdlib bundle: string replace_first /
 // is_kebab_case / is_snake_case / shift_byte, i32[]
 // first_index_of / pairwise_diffs, i32 factorial / is_prime.
