@@ -6352,6 +6352,77 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twenty-sixth stdlib bundle: string starts_with_any /
+// ends_with_any / lines_non_empty, i32[] range / count,
+// string[] count_str, HTTP redirect / no_content builders.
+// 8 helpers.
+//
+// `count` and `count_str` exist as separate names because
+// the Array.X dispatch in the checker is keyed by method
+// name only — it can't fan out on receiver element type
+// the way overload resolution would. Once we have generic
+// `Array.count[T]` they collapse to one helper.
+func TestArm64StdlibBundle26(t *testing.T) {
+	src := `function main(): i32 {
+    // starts_with_any
+    if (!"hello world".starts_with_any(["foo", "hello", "bar"])) { return 1; }
+    if ("hello".starts_with_any(["x", "y", "z"])) { return 2; }
+    var nopre: string[] = [];
+    if ("anything".starts_with_any(nopre)) { return 3; }
+    if (!"abc".starts_with_any([""])) { return 4; }
+
+    // ends_with_any
+    if (!"file.txt".ends_with_any([".png", ".txt", ".jpg"])) { return 10; }
+    if ("file.bin".ends_with_any([".png", ".txt"])) { return 11; }
+    var nosuf: string[] = [];
+    if ("anything".ends_with_any(nosuf)) { return 12; }
+
+    // range (i32[])
+    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6];
+    match (xs.range()) {
+        Some(r) => { if (r != 8) { return 20; } },
+        None => { return 21; },
+    }
+    var empty32: i32[] = [];
+    match (empty32.range()) { Some(_) => { return 22; }, None => { } }
+    match ([7].range()) {
+        Some(r) => { if (r != 0) { return 23; } },
+        None => { return 24; },
+    }
+
+    // count (i32[])
+    if ([1, 2, 3, 2, 4, 2].count(2) != 3) { return 30; }
+    if ([1, 2, 3].count(5) != 0) { return 31; }
+    var empty_i: i32[] = [];
+    if (empty_i.count(1) != 0) { return 32; }
+
+    // count_str (string[])
+    if (["a", "b", "a", "c", "a"].count_str("a") != 3) { return 40; }
+    if (["a", "b"].count_str("z") != 0) { return 41; }
+    var empty_s: string[] = [];
+    if (empty_s.count_str("x") != 0) { return 42; }
+
+    // lines_non_empty
+    var src1: string = "a\n\nb\nc\n";
+    if (len(src1.lines_non_empty()) != 3) { return 50; }
+    if (src1.lines_non_empty()[0] != "a") { return 51; }
+    if (src1.lines_non_empty()[1] != "b") { return 52; }
+    if (src1.lines_non_empty()[2] != "c") { return 53; }
+    if (len("".lines_non_empty()) != 0) { return 54; }
+
+    // http builders
+    var r1: HttpResponse = http_response_redirect("/login");
+    if (r1.status != 302 || r1.body != "/login") { return 60; }
+    var r2: HttpResponse = http_response_no_content();
+    if (r2.status != 204 || r2.body != "") { return 61; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 26)", code)
+	}
+}
+
 // Twenty-fifth stdlib bundle: string is_url_like / is_json_like
 // / common_prefix / common_suffix, string[] min_by_len, i32
 // percent_of. 6 helpers (no array-method dispatch rewrite for

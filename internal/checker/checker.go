@@ -860,6 +860,9 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.Methods["Array.min"] = "__method_Array_min"
 	c.info.Methods["Array.product"] = "__method_Array_product"
 	c.info.Methods["Array.avg"] = "__method_Array_avg"
+	c.info.Methods["Array.range"] = "__method_Array_range"
+	c.info.Methods["Array.count"] = "__method_Array_count"
+	c.info.Methods["Array.count_str"] = "__method_Array_count_str"
 
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
