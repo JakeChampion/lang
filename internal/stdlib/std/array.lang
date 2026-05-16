@@ -607,3 +607,41 @@ pub function __method_Array_join_with_last(arr: string[], sep: string, last_sep:
     }
     return out + last_sep + arr[n - 1];
 }
+
+// `(arr: i32[]) sum_abs()` — sum of |x| for each element.
+// Useful for L1 norm / "ignore sign, total magnitude" cases.
+// Empty → 0. Overflow wraps silently.
+pub function __method_Array_sum_abs(arr: i32[]): i32 {
+    var n: i32 = len(arr);
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        s = s + arr[i].abs();
+        i = i + 1;
+    }
+    return s;
+}
+
+// `(arr: i32[]) all_zero()` — true iff every element is 0.
+// Empty array → true (vacuously).
+pub function __method_Array_all_zero(arr: i32[]): boolean {
+    var n: i32 = len(arr);
+    var i: i32 = 0;
+    while (i < n) {
+        if (arr[i] != 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `(arr: string[]) all_eq_str(target)` — true iff every element
+// equals `target`. Empty array → true (vacuously).
+pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
+    var n: i32 = len(arr);
+    var i: i32 = 0;
+    while (i < n) {
+        if (arr[i] != target) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
