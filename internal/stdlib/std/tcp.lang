@@ -1,0 +1,144 @@
+// std/tcp — HTTP/1.1 accept loop + handler-friendly env helper.
+//
+// `tcp_serve(port, handler)` runs an HTTP/1.1 accept loop on
+// `port`, calling `handler(req)` once per accepted connection.
+// Returns -errno when the listener can't be bound (e.g.
+// EADDRINUSE); on success the loop runs indefinitely until
+// the host kills the process (no clean-shutdown channel
+// exposed yet).
+//
+// Per-connection lifecycle:
+//   1. tcp_recv up to 8192 bytes (matches http_parse_request's
+//      header-size cap) plus body bytes via a follow-up recv
+//      loop driven by Content-Length.
+//   2. http_parse_request — return None ⇒ close the socket
+//      without a response (HTTP/1.1 §10 explicitly allows
+//      server-side reset on malformed input).
+//   3. handler(req) returns the HttpResponse.
+//   4. http_serialize_response → tcp_send → tcp_close.
+//
+// arm64 wires this through real Linux sockets via the
+// existing __lang_tcp_* syscall helpers. The wasm side gates
+// tcp_* on wasi:sockets at module instantiation; CLI-mode
+// programs that call tcp_serve need a host-pre-opened socket
+// (`wasmtime run -S tcp=y`).
+//
+// `__port_from_env(name, fallback)` is the convenience helper
+// the auto-`main`-from-`handle()` synthesis uses so handler-
+// shaped programs can be tuned via `PORT=N ./bin` without a
+// manual main().
+//
+// Migrated from the auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md.
+
+pub function tcp_serve(port: i32, handler: (HttpRequest) => HttpResponse): i32 {
+    var listener: i32 = tcp_listen(port);
+    if (listener < 0) {
+        return listener;
+    }
+    while (true) {
+        var fd: i32 = tcp_accept(listener);
+        if (fd < 0) {
+            // Transient accept failure (EINTR-style) — keep
+            // looping. Permanent failures (listener closed by
+            // the kernel, FD exhaustion) will repeat the same
+            // -errno on every iteration; that's operator-
+            // action territory and the lang-side response is
+            // the same as success here.
+            continue;
+        }
+        // Per-request arena scope. Snapshot the bump cursor
+        // before any request-shaped allocation (recv buffers,
+        // parsed HttpRequest, handler-built HttpResponse,
+        // serialized wire bytes) and rewind it after tcp_close
+        // — every byte allocated during this iteration is
+        // reclaimed before the next `tcp_accept`. state{}
+        // allocations sit below this save point (state init
+        // runs before main, so its cursor is in the
+        // pre-arena region) and survive the rewind.
+        // Matches the wasi-http `__http_entry` wrapper shape,
+        // closing the parity gap between native arm64 and
+        // wasm-http handler runtimes.
+        var saved: i32 = arena_save();
+        // Drain the connection into a single buffer up to the
+        // first parse-success. The parser returns None when
+        // the buffer is too short (header block not yet
+        // terminated by \r\n\r\n, or fewer than Content-Length
+        // body bytes), so we keep recv'ing until either parse
+        // succeeds or we hit a hard cap / EOF.
+        var buf: string = "";
+        var have_request: boolean = false;
+        var req: HttpRequest = HttpRequest { method: "", path: "", body: "" };
+        while (true) {
+            var chunk: string = tcp_recv(fd, 4096);
+            if (len(chunk) == 0) {
+                // EOF before request complete.
+                break;
+            }
+            buf = buf + chunk;
+            // Hard cap to keep slow / hostile clients from
+            // pinning unbounded memory. Headers must fit in
+            // the first 8 KiB; body capped at 1 MiB. Matches
+            // http_parse_request's internal caps.
+            if (len(buf) > 8192 + 1048576) {
+                break;
+            }
+            match (http_parse_request(buf)) {
+                Some(parsed) => {
+                    req = parsed;
+                    have_request = true;
+                },
+                None => {
+                    // Either still partial — keep recv'ing —
+                    // or definitively malformed. In either
+                    // case the next iteration will recv more
+                    // bytes; if we've already exceeded the
+                    // header cap above we've already broken
+                    // out.
+                }
+            }
+            if (have_request) {
+                break;
+            }
+        }
+        if (have_request) {
+            var resp: HttpResponse = handler(req);
+            var wire: string = http_serialize_response(resp);
+            tcp_send(fd, wire);
+        }
+        tcp_close(fd);
+        arena_restore(saved);
+    }
+    return 0;
+}
+
+// Pull a port number out of an env var. Returns the parsed
+// integer on success, -1 on missing / malformed / out-of-
+// range. Used by the auto-`main()`-from-`handle()` synthesis
+// so handler-shaped programs can be tuned via `PORT=N ./bin`
+// without writing a manual main().
+//
+// Inline i32-only digit accumulation — the prelude's
+// `s.parse_int()` uses i64 for overflow safety, which arm64
+// can't lower yet. Since the result is bounded to a valid
+// TCP port (0..65535), the i32 max is unreachable.
+function __port_from_env(name: string, fallback: i32): i32 {
+    match (env(name)) {
+        Some(s) => {
+            var n: i32 = 0;
+            var i: i32 = 0;
+            while (i < len(s)) {
+                var b: i32 = s[i];
+                if (b < 48 || b > 57) { return fallback; }
+                n = n * 10 + (b - 48);
+                if (n > 65535) { return fallback; }
+                i = i + 1;
+            }
+            if (i == 0) { return fallback; }
+            return n;
+        },
+        None => {
+            return fallback;
+        }
+    }
+}
