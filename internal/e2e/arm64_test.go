@@ -9850,6 +9850,28 @@ function main(): i32 { return outer("hello"); }`
 	}
 }
 
+// Closure RETURNS a captured string under the two-word `(data,
+// len)` ABI. The OpCallClosureDirect emit must push BOTH x0
+// (data) and x1 (len) post-call so the subsequent OpReturn pops
+// the full pair. Regression for the bug where only x0 was
+// pushed, leaving the caller's len-popping `ldr x1, [sp]` to
+// re-read the data half and `ldr x0, [sp]` to read an unrelated
+// stale stack slot.
+func TestArm64ClosureReturnsCapturedString(t *testing.T) {
+	src := `function outer(s: string): string {
+    function inner(): string { return s; }
+    return inner();
+}
+function main(): i32 {
+    var got = outer("hello");
+    if (got == "hello") { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got %d, want 0 (closure returning captured string)", code)
+	}
+}
+
 // Multi-capture closure: two i32 captures laid out at offsets 0
 // and 4 in the env block. Verifies the running-offset
 // arithmetic in emitMakeClosureOrEnv.
