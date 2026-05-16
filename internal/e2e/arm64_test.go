@@ -6352,6 +6352,63 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twenty-fifth stdlib bundle: string is_url_like / is_json_like
+// / common_prefix / common_suffix, string[] min_by_len, i32
+// percent_of. 6 helpers (no array-method dispatch rewrite for
+// the string ones — they sit as plain receiver-typed prelude
+// fns, like is_ipv4 / is_email_like).
+func TestArm64StdlibBundle25(t *testing.T) {
+	src := `function main(): i32 {
+    // is_url_like
+    if (!"http://example.com".is_url_like()) { return 1; }
+    if (!"https://x.y/z".is_url_like()) { return 2; }
+    if ("example.com".is_url_like()) { return 3; }
+    if ("http://nodot".is_url_like()) { return 4; }
+    if ("".is_url_like()) { return 5; }
+
+    // is_json_like
+    if (!"{}".is_json_like()) { return 10; }
+    if (!"  {\"a\":1}  ".is_json_like()) { return 11; }
+    if (!"[1,2,3]".is_json_like()) { return 12; }
+    if ("plain".is_json_like()) { return 13; }
+    if ("{unterminated".is_json_like()) { return 14; }
+    if ("".is_json_like()) { return 15; }
+
+    // common_prefix
+    if ("abcdef".common_prefix("abcxyz") != "abc") { return 20; }
+    if ("hello".common_prefix("world") != "") { return 21; }
+    if ("same".common_prefix("same") != "same") { return 22; }
+    if ("".common_prefix("anything") != "") { return 23; }
+    if ("abc".common_prefix("abcd") != "abc") { return 24; }
+
+    // common_suffix
+    if ("hello world".common_suffix("brave world") != " world") { return 30; }
+    if ("test".common_suffix("test") != "test") { return 31; }
+    if ("hello".common_suffix("world") != "") { return 32; }
+    if ("".common_suffix("x") != "") { return 33; }
+    if ("a".common_suffix("ba") != "a") { return 34; }
+
+    // min_by_len
+    match (["aaa", "b", "cc"].min_by_len()) {
+        Some(s) => { if (s != "b") { return 40; } },
+        None => { return 41; },
+    }
+    var empty: string[] = [];
+    match (empty.min_by_len()) { Some(_) => { return 42; }, None => { } }
+
+    // percent_of
+    if ((50).percent_of(200) != 25) { return 50; }
+    if ((0).percent_of(100) != 0) { return 51; }
+    if ((100).percent_of(100) != 100) { return 52; }
+    if ((5).percent_of(0) != 0) { return 53; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 25)", code)
+	}
+}
+
 // Twenty-fourth stdlib bundle: string is_ipv4 / is_email_like,
 // i32 sum_of_digits / has_digit, string[] any_contains, HTTP
 // response builders (bad_request / internal_error). 7 helpers.

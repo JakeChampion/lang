@@ -843,6 +843,7 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.Methods["Array.distinct"] = "__method_Array_distinct"
 	c.info.Methods["Array.distinct_count"] = "__method_Array_distinct_count"
 	c.info.Methods["Array.max_by_len"] = "__method_Array_max_by_len"
+	c.info.Methods["Array.min_by_len"] = "__method_Array_min_by_len"
 	c.info.Methods["Array.sum_lens"] = "__method_Array_sum_lens"
 	c.info.Methods["Array.take"] = "__method_Array_take"
 	c.info.Methods["Array.drop"] = "__method_Array_drop"
