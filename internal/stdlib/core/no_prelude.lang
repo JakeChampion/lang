@@ -1,0 +1,23 @@
+// core/no_prelude — sentinel import to opt out of the
+// auto-injected magic prelude.
+//
+// `import "core/no_prelude";` in a program signals the checker
+// to skip its `injectPrelude` pass. The user program is then
+// responsible for explicitly `import`-ing every stdlib module
+// it uses (`std/i32`, `std/string`, `std/array`, …).
+//
+// Use cases for opting out:
+//   - Test programs that want to verify a single module's
+//     surface works in isolation, without the rest of the
+//     prelude masking missing dispatch.
+//   - Programs that want a small binary footprint and don't
+//     need the stdlib helpers (the IR's tree-shake usually
+//     handles dead code, but skipping injection saves parse
+//     + check time).
+//   - Phase 5 of docs/PRELUDE-TO-MODULES.md: once every test
+//     program declares its imports explicitly, the auto-
+//     prelude path goes away entirely and this module's
+//     presence becomes the default.
+//
+// The module body is intentionally empty — the import itself
+// is the signal.
