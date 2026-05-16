@@ -1,0 +1,326 @@
+// std/http — HTTP/1.1 request parsing, response building, and
+// serialization. Helpers that compose on top of the runtime's
+// raw `tcp_*` socket primitives so user code (and the
+// auto-synthesised handler `main()`) can do
+// request → response work without rolling its own parser.
+//
+// Migrated from the auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md. The auto-prelude declares
+// `import "std/http";` so existing bare-name callers keep
+// working unchanged.
+//
+// Scope: HTTP/1.1 only, Content-Length-delimited bodies, no
+// chunked transfer encoding, no persistent connections (every
+// response advertises `Connection: close`), max 8 KiB headers,
+// max 1 MiB body. Sufficient for CLI tools and edge handlers;
+// the bigger story (keep-alive, TE chunked, TLS) waits on a
+// richer lang shape.
+
+// `http_status_text(code)` — IANA reason phrase for the
+// common HTTP status codes (RFC 9110). Returns "" for
+// unknown codes — callers should fall back to a generic
+// phrase rather than emitting nothing.
+pub function http_status_text(code: i32): string {
+    if (code == 200) { return "OK"; }
+    if (code == 201) { return "Created"; }
+    if (code == 204) { return "No Content"; }
+    if (code == 301) { return "Moved Permanently"; }
+    if (code == 302) { return "Found"; }
+    if (code == 304) { return "Not Modified"; }
+    if (code == 307) { return "Temporary Redirect"; }
+    if (code == 308) { return "Permanent Redirect"; }
+    if (code == 400) { return "Bad Request"; }
+    if (code == 401) { return "Unauthorized"; }
+    if (code == 403) { return "Forbidden"; }
+    if (code == 404) { return "Not Found"; }
+    if (code == 405) { return "Method Not Allowed"; }
+    if (code == 408) { return "Request Timeout"; }
+    if (code == 409) { return "Conflict"; }
+    if (code == 410) { return "Gone"; }
+    if (code == 413) { return "Payload Too Large"; }
+    if (code == 415) { return "Unsupported Media Type"; }
+    if (code == 418) { return "I'm a teapot"; }
+    if (code == 422) { return "Unprocessable Entity"; }
+    if (code == 429) { return "Too Many Requests"; }
+    if (code == 500) { return "Internal Server Error"; }
+    if (code == 501) { return "Not Implemented"; }
+    if (code == 502) { return "Bad Gateway"; }
+    if (code == 503) { return "Service Unavailable"; }
+    if (code == 504) { return "Gateway Timeout"; }
+    return "";
+}
+
+// `is_valid_http_status(code)` — true if code is in the RFC
+// 9110 range of [100, 599]. The full HTTP status range is
+// 100..999 by the BNF but only the first three centuries
+// have semantic meaning; servers shouldn't emit codes
+// outside [100, 599].
+pub function is_valid_http_status(code: i32): boolean {
+    return code >= 100 && code <= 599;
+}
+
+// `http_response_ok(body)` — 200 OK with the given body.
+// `http_response_text(status, body)` — explicit status code.
+// `http_response_not_found()` — common 404 builder.
+// Saves the `HttpResponse { status: 200, body: ... }` boiler-
+// plate at every handler call site.
+pub function http_response_ok(body: string): HttpResponse {
+    return HttpResponse { status: 200, body: body };
+}
+
+pub function http_response_text(status: i32, body: string): HttpResponse {
+    return HttpResponse { status: status, body: body };
+}
+
+pub function http_response_not_found(): HttpResponse {
+    return HttpResponse { status: 404, body: "Not Found" };
+}
+
+// `http_response_bad_request(body)` — 400 with the given
+// body. Common shape for validation-failure responses.
+pub function http_response_bad_request(body: string): HttpResponse {
+    return HttpResponse { status: 400, body: body };
+}
+
+// `http_response_internal_error(body)` — 500. The default
+// body shape for unhandled / unexpected exceptions in a
+// handler.
+pub function http_response_internal_error(body: string): HttpResponse {
+    return HttpResponse { status: 500, body: body };
+}
+
+// `http_response_redirect(location)` — 302 Found with the
+// redirect target in the body. Callers that serialize the
+// response can copy `body` into a `Location:` header.
+// Convention placeholder until HTTP headers are first-class.
+pub function http_response_redirect(location: string): HttpResponse {
+    return HttpResponse { status: 302, body: location };
+}
+
+// `http_response_no_content()` — 204 No Content, empty
+// body. The standard "I handled it, nothing to say"
+// response for DELETE / PUT / etc.
+pub function http_response_no_content(): HttpResponse {
+    return HttpResponse { status: 204, body: "" };
+}
+
+// `http_path_segments(path)` — split an HTTP path into
+// non-empty components. Drops the leading "/" and any
+// double slashes; query string (`?...`) is also stripped.
+// Useful for simple routing — `/api/users/42` → `["api",
+// "users", "42"]`.
+pub function http_path_segments(path: string): string[] {
+    var n: i32 = len(path);
+    // Strip query string.
+    var q: i32 = path.index_of("?");
+    if (q >= 0) { n = q; }
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        while (i < n && path[i] == 47) { i = i + 1; }   // skip /
+        if (i >= n) { return out; }
+        var start: i32 = i;
+        while (i < n && path[i] != 47) { i = i + 1; }
+        out = out.push(path[start:i]);
+    }
+    return out;
+}
+
+// `http_url_path_only(path)` — strip the query string
+// (everything from the first `?` onward). Returns path
+// unchanged when there's no query. Companion to
+// http_path_segments when callers want the bare path
+// without splitting.
+pub function http_url_path_only(path: string): string {
+    var q: i32 = path.index_of("?");
+    if (q < 0) { return path; }
+    return path[0:q];
+}
+
+// `http_user_agent_is_bot(ua)` — heuristic bot detection
+// via the User-Agent string. Checks for common bot tokens
+// ("bot", "crawler", "spider", "slurp") case-insensitively.
+// False negatives are common (sophisticated bots forge UAs);
+// false positives possible (a browser called "BotSimulator").
+// Use as a hint, not a security control.
+pub function http_user_agent_is_bot(ua: string): boolean {
+    if (ua.contains_ci("bot")) { return true; }
+    if (ua.contains_ci("crawler")) { return true; }
+    if (ua.contains_ci("spider")) { return true; }
+    if (ua.contains_ci("slurp")) { return true; }
+    return false;
+}
+
+// `http_header_value(headers, key)` — Option[string] for the
+// value of a case-insensitive header lookup. Headers are
+// expected to be the raw HTTP header block separated by
+// CRLF, key:value pairs. Trim whitespace around the value.
+// Returns the FIRST matching header; for multi-valued
+// headers callers need a richer parser.
+pub function http_header_value(headers: string, key: string): Option[string] {
+    var lines: string[] = headers.split("\r\n");
+    var n: i32 = len(lines);
+    var i: i32 = 0;
+    while (i < n) {
+        match (lines[i].split_once(":")) {
+            Some(p) => {
+                if (p.0.eq_ignore_ascii_case(key)) {
+                    return Some(p.1.trim());
+                }
+            },
+            None => { },
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// HTTP method + path string from a request line. Uses
+// fixed indices into the line so the caller doesn't have
+// to allocate two extra strings. Returns None on malformed
+// input (no spaces, missing version).
+function __http_parse_request_line(line: string): Option[HttpRequest] {
+    var sp1: i32 = line.index_of(" ");
+    if (sp1 < 0) {
+        return None;
+    }
+    var sp2: i32 = line[sp1 + 1:len(line)].index_of(" ");
+    if (sp2 < 0) {
+        return None;
+    }
+    var method: string = line[0:sp1];
+    var path: string = line[sp1 + 1:sp1 + 1 + sp2];
+    return Some(HttpRequest { method: method, path: path, body: "" });
+}
+
+// Pull the integer Content-Length value out of a header
+// block. Case-insensitive header name (HTTP/1.1 §3.2 says
+// names are case-insensitive). Returns 0 when absent — every
+// HTTP/1.1 method except CONNECT treats absent Content-Length
+// + Connection: close as "no body", which is what we want.
+//
+// Uses a small i32-only parse so the helper compiles for
+// arm64 (whose backend doesn't yet implement i64 ops). The
+// 1 MiB body cap upstream means values that would overflow
+// i32 are filtered out at the body-read step regardless.
+function __http_content_length(headers: string): i32 {
+    var lower: string = headers.to_lower();
+    var key: string = "content-length:";
+    var idx: i32 = lower.index_of(key);
+    if (idx < 0) {
+        return 0;
+    }
+    var rest: string = headers[idx + len(key):len(headers)];
+    var nl: i32 = rest.index_of("\r\n");
+    if (nl < 0) {
+        nl = len(rest);
+    }
+    var value: string = rest[0:nl].trim();
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < len(value)) {
+        var b: i32 = value[i];
+        if (b < 48 || b > 57) {
+            return 0;
+        }
+        acc = acc * 10 + (b - 48);
+        if (acc < 0) {
+            // i32 overflow; clamp to 0 so the request reads
+            // no body and the client gets a fast reject.
+            return 0;
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// `http_parse_request(buf)` parses a full HTTP/1.1 request
+// out of a buffer the caller has already read from the wire.
+// Caller is responsible for accumulating bytes via
+// `tcp_recv` until the buffer holds at least the header block
+// (terminated by `\r\n\r\n`) plus Content-Length bytes of
+// body — the parser returns None on a partial buffer rather
+// than blocking, so callers driving the read loop can keep
+// recv'ing until parse succeeds (or a hard cap fires).
+//
+// Caps: headers must fit in the first 8 KiB, body capped at
+// 1 MiB. Both surface as None so the caller can close the
+// socket without a response (HTTP/1.1 §10 allows server-
+// side reset on malformed input).
+pub function http_parse_request(buf: string): Option[HttpRequest] {
+    if (len(buf) > 8192 + 1048576) {
+        return None;
+    }
+    var headers_end: i32 = buf.index_of("\r\n\r\n");
+    if (headers_end < 0) {
+        return None;
+    }
+    if (headers_end > 8192) {
+        return None;
+    }
+    var headers_len: i32 = headers_end + 4;
+    var content_length: i32 = __http_content_length(buf[0:headers_end]);
+    if (content_length > 1048576) {
+        return None;
+    }
+    if (headers_len + content_length > len(buf)) {
+        // Caller hasn't read the full body yet.
+        return None;
+    }
+    var first_crlf: i32 = buf.index_of("\r\n");
+    if (first_crlf < 0) {
+        return None;
+    }
+    match (__http_parse_request_line(buf[0:first_crlf])) {
+        Some(req) => {
+            var body: string = "";
+            if (content_length > 0) {
+                body = buf[headers_len:headers_len + content_length];
+            }
+            return Some(HttpRequest {
+                method: req.method,
+                path: req.path,
+                body: body
+            });
+        },
+        None => {
+            return None;
+        }
+    }
+}
+
+// Standard HTTP/1.1 reason-phrase mapping for the few
+// status codes a typical handler returns. Falls back to
+// "Status" for unrecognised codes — the kernel doesn't care,
+// browsers display the status code as-is.
+function __http_reason(code: i32): string {
+    if (code == 200) { return "OK"; }
+    if (code == 201) { return "Created"; }
+    if (code == 204) { return "No Content"; }
+    if (code == 301) { return "Moved Permanently"; }
+    if (code == 302) { return "Found"; }
+    if (code == 304) { return "Not Modified"; }
+    if (code == 400) { return "Bad Request"; }
+    if (code == 401) { return "Unauthorized"; }
+    if (code == 403) { return "Forbidden"; }
+    if (code == 404) { return "Not Found"; }
+    if (code == 405) { return "Method Not Allowed"; }
+    if (code == 500) { return "Internal Server Error"; }
+    if (code == 503) { return "Service Unavailable"; }
+    return "Status";
+}
+
+// `http_serialize_response(resp)` builds the wire-format
+// response from an HttpResponse. Always advertises
+// `Connection: close` so the client's `read()` returns the
+// EOF that tells it the response is complete after the
+// caller's `tcp_send` finishes the write. No keep-alive, no
+// chunked TE.
+pub function http_serialize_response(resp: HttpResponse): string {
+    var status_line: string = "HTTP/1.1 " + int_to_string(resp.status)
+        + " " + __http_reason(resp.status) + "\r\n";
+    var headers: string = "Content-Length: " + int_to_string(len(resp.body)) + "\r\n"
+        + "Connection: close\r\n"
+        + "\r\n";
+    return status_line + headers + resp.body;
+}
