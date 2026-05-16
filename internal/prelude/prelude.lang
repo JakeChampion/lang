@@ -781,6 +781,13 @@ function (b: i32) matches_any(bytes: string): boolean {
     return false;
 }
 
+// `(b: i32) is_letter()` — alias for is_alpha. The name
+// matches the Unicode-aware convention seen in Roc / MoonBit;
+// is_alpha is the Python / Go convention. Both stay.
+function (b: i32) is_letter(): boolean {
+    return b.is_alpha();
+}
+
 function (b: i32) is_hex_digit(): boolean {
     return b.is_digit() ||
            (b >= 65 && b <= 70) ||   // A-F
@@ -866,6 +873,14 @@ function (n: i32) is_zero(): boolean { return n == 0; }
 // standard "bucket" / "valid array index" check shape.
 function (n: i32) is_in_range(lo: i32, hi: i32): boolean {
     return n >= lo && n < hi;
+}
+
+// `(n: i32) is_between(lo, hi)` — inclusive range check
+// (lo <= n <= hi). Companion to is_in_range which is half-
+// open. The closed form is the more natural shape for
+// human-facing bounds ("number must be between 1 and 100").
+function (n: i32) is_between(lo: i32, hi: i32): boolean {
+    return n >= lo && n <= hi;
 }
 
 // `(n: i32) reverse_digits()` — flip the decimal digit
@@ -2494,6 +2509,53 @@ function (s: string) replace_n(old: string, new: string, n: i32): string {
     return out + s[start:sLen];
 }
 
+// `s.remove_all(needle)` — replace every occurrence of
+// needle with empty. Sugar for `replace(needle, "")`.
+function (s: string) remove_all(needle: string): string {
+    return s.replace(needle, "");
+}
+
+// `s.before(sep)` — substring before the first occurrence
+// of sep. Returns s unchanged if sep not present, "" if
+// s starts with sep. Doesn't include sep in the result.
+function (s: string) before(sep: string): string {
+    var idx: i32 = s.index_of(sep);
+    if (idx < 0) { return s; }
+    return s[0:idx];
+}
+
+// `s.after(sep)` — substring after the first occurrence
+// of sep. Returns "" if sep not present, s unchanged if sep
+// is empty. Doesn't include sep in the result.
+function (s: string) after(sep: string): string {
+    if (len(sep) == 0) { return s; }
+    var idx: i32 = s.index_of(sep);
+    if (idx < 0) { return ""; }
+    return s[idx + len(sep):len(s)];
+}
+
+// `s.between(start, end)` — Some(substring) for the content
+// between the first start and the first end AFTER that start.
+// None if either marker is missing (or empty). Useful for
+// extracting tag bodies, parenthesised content, brace-
+// delimited fields.
+function (s: string) between(start: string, end: string): Option[string] {
+    if (len(start) == 0 || len(end) == 0) { return None; }
+    var i: i32 = s.index_of(start);
+    if (i < 0) { return None; }
+    var begin: i32 = i + len(start);
+    var n: i32 = len(s);
+    var endLen: i32 = len(end);
+    var j: i32 = begin;
+    while (j + endLen <= n) {
+        if (__substr_eq(s, j, end, endLen)) {
+            return Some(s[begin:j]);
+        }
+        j = j + 1;
+    }
+    return None;
+}
+
 // === i32 array math (sum / max / min) ===
 //
 // `(arr: i32[]).sum()` — total of every element.
@@ -2814,6 +2876,20 @@ function __method_Array_drop(arr: string[], n: i32): string[] {
         i = i + 1;
     }
     return out;
+}
+
+// `(arr: string[]) all_non_empty()` — true iff every entry
+// has at least one byte. Empty array returns true
+// (vacuously — there are no empty entries). Useful for
+// post-split validation.
+function __method_Array_all_non_empty(arr: string[]): boolean {
+    var n: i32 = len(arr);
+    var i: i32 = 0;
+    while (i < n) {
+        if (len(arr[i]) == 0) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 // === Array append ===

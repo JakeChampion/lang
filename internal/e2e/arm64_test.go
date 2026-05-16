@@ -6352,6 +6352,60 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twenty-third stdlib bundle: string remove_all / before /
+// after / between, i32 is_between, byte is_letter, string[]
+// all_non_empty. 7 helpers.
+func TestArm64StdlibBundle23(t *testing.T) {
+	src := `function main(): i32 {
+    // remove_all
+    if ("aXbXc".remove_all("X") != "abc") { return 1; }
+    if ("XXX".remove_all("X") != "") { return 2; }
+    if ("abc".remove_all("X") != "abc") { return 3; }
+
+    // before / after — first separator
+    if ("key=value".before("=") != "key") { return 4; }
+    if ("key=value".after("=") != "value") { return 5; }
+    if ("plain".before("=") != "plain") { return 6; }
+    if ("plain".after("=") != "") { return 7; }
+    if ("=tail".before("=") != "") { return 8; }
+    if ("head=".after("=") != "") { return 9; }
+
+    // between — markers
+    match ("(hello)".between("(", ")")) {
+        Some(s) => { if (s != "hello") { return 10; } },
+        None => { return 11; },
+    }
+    match ("<div>body</div>".between("<div>", "</div>")) {
+        Some(s) => { if (s != "body") { return 12; } },
+        None => { return 13; },
+    }
+    match ("no markers".between("[", "]")) { Some(_) => { return 14; }, None => { } }
+    match ("[unclosed".between("[", "]")) { Some(_) => { return 15; }, None => { } }
+
+    // is_between (inclusive)
+    if (!(5).is_between(0, 10)) { return 16; }
+    if (!(10).is_between(0, 10)) { return 17; }    // inclusive upper
+    if ((11).is_between(0, 10)) { return 18; }
+    if ((0 - 1).is_between(0, 10)) { return 19; }
+
+    // is_letter
+    if (!(65).is_letter()) { return 20; }
+    if (!(97).is_letter()) { return 21; }
+    if ((48).is_letter()) { return 22; }
+
+    // all_non_empty
+    if (!["a", "b", "c"].all_non_empty()) { return 23; }
+    var empty: string[] = [];
+    if (!empty.all_non_empty()) { return 24; }
+    if (["a", "", "c"].all_non_empty()) { return 25; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 23)", code)
+	}
+}
+
 // Twenty-second stdlib bundle: parse_hex_int / parse_bin_int,
 // is_in_range, matches_any, reverse_digits, is_palindrome,
 // to_array. 7 helpers.

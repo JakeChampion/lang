@@ -620,6 +620,18 @@ think they're free additions to make.
 - **`(n: i32).is_palindrome()`**: decimal-palindrome check.
 - **`(s: string).to_array()`**: string[] of single-byte
   strings — companion to `chars()` with string semantics.
+- **`s.remove_all(needle)`**: sugar for `replace(needle, "")`.
+- **`s.before(sep)` / `s.after(sep)`**: substring around the
+  FIRST `sep`. before returns s on no-match; after returns
+  empty.
+- **`s.between(start, end)`**: Some(content) between matched
+  markers; None if either is missing.
+- **`(n: i32).is_between(lo, hi)`**: inclusive companion to
+  `is_in_range` (which is half-open).
+- **`(b: i32).is_letter()`**: alias for `is_alpha`. Roc /
+  MoonBit naming.
+- **`(arr: string[]).all_non_empty()`**: vacuously true on
+  empty array; false on any empty entry.
 
 ### Additional compiler bug
 
