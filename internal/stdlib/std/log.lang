@@ -1,0 +1,24 @@
+// std/log — logging convenience helpers.
+//
+// Three thin wrappers around `eprint` with a level prefix.
+// The output goes to stderr so it interleaves with diagnostic
+// output rather than the program's actual output stream.
+// Format: "[LEVEL] msg\n".
+//
+// Migrated from the auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md. The auto-prelude declares
+// `import "std/log";` so existing programs that call
+// `log_info(msg)` / etc. by bare name keep working unchanged
+// during the transition.
+
+pub function log_info(msg: string) {
+    eprint("[INFO] " + msg);
+}
+
+pub function log_warn(msg: string) {
+    eprint("[WARN] " + msg);
+}
+
+pub function log_error(msg: string) {
+    eprint("[ERROR] " + msg);
+}

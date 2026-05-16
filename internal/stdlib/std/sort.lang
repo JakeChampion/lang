@@ -1,0 +1,195 @@
+// std/sort — free `sort_*` functions for i32[] and string[].
+//
+// Insertion-sort implementations: O(n²) worst case, but for
+// the compiler's small-list use cases (sorted field offsets,
+// declaration orders, capacity hints) it's fine and avoids
+// the closure-arg infrastructure a generic
+// `sort_by[T](arr: T[], cmp: (T, T) => i32)` would need.
+//
+// Migrated from the auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md. The auto-prelude declares
+// `import "std/sort";` so existing programs that call
+// `sort_i32_asc(arr)` etc. by bare name keep working
+// unchanged.
+//
+// `string_cmp` / `string_cmp_ci` are the underlying byte-
+// lex comparators the string sorts use; exporting them so
+// callers that need direct ordering checks (without a full
+// sort) don't have to roll their own.
+
+// `sort_i32_asc(arr)` — return a fresh ascending-sorted
+// copy of `arr`. Insertion-sort: O(n²) worst case, but
+// for the compiler's small-list use cases (sorted field
+// offsets, declaration orders, capacity hints) it's fine
+// and avoids the closure-arg infrastructure a generic
+// `sort_by[T](arr: T[], cmp: (T, T) => i32)` would need.
+// `sort_i32_desc` flips the comparison direction.
+//
+// Free function rather than a method: lang's receiver
+// syntax only accepts struct, enum, or built-in types —
+// not array types. A future PR can add array-method
+// dispatch and re-spell these as `arr.sort_asc()`.
+//
+// Functional shape (returns a new array) matches the rest
+// of the prelude's array conventions (`arr.push` returns a
+// new array); the input is not mutated.
+
+pub function sort_i32_asc(arr: i32[]): i32[] {
+    var n: i32 = len(arr);
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: i32 = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && out[j] > key) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
+pub function sort_i32_desc(arr: i32[]): i32[] {
+    var n: i32 = len(arr);
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: i32 = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && out[j] < key) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
+// `string_cmp(a, b)` — lexicographic byte-order comparator.
+// Returns -1 / 0 / 1. Lang's `<` / `>` operators only work
+// on numerics; string-array sort needs a dedicated three-way
+// comparator. Compares byte-by-byte up to the shorter
+// length, then breaks ties on length (shorter < longer).
+pub function string_cmp(a: string, b: string): i32 {
+    var n: i32 = len(a);
+    var m: i32 = len(b);
+    var min: i32 = n;
+    if (m < n) { min = m; }
+    var i: i32 = 0;
+    while (i < min) {
+        if (a[i] < b[i]) { return 0 - 1; }
+        if (a[i] > b[i]) { return 1; }
+        i = i + 1;
+    }
+    if (n < m) { return 0 - 1; }
+    if (n > m) { return 1; }
+    return 0;
+}
+
+// `sort_strings_asc(arr)` / `sort_strings_desc(arr)` —
+// lexicographic byte-order sort of a string array. Insertion
+// sort like the i32 helpers; O(n²) worst case fine for the
+// small-list use cases (config keys, sorted output for
+// stable tests, alphabetised CLI flags).
+pub function sort_strings_asc(arr: string[]): string[] {
+    var n: i32 = len(arr);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: string = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && string_cmp(out[j], key) > 0) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
+pub function sort_strings_desc(arr: string[]): string[] {
+    var n: i32 = len(arr);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: string = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && string_cmp(out[j], key) < 0) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
+// `string_cmp_ci(a, b)` — same as string_cmp but ASCII case-
+// folded per byte. Useful as the ordering for case-insensitive
+// sort.
+pub function string_cmp_ci(a: string, b: string): i32 {
+    var n: i32 = len(a);
+    var m: i32 = len(b);
+    var min: i32 = n;
+    if (m < n) { min = m; }
+    var i: i32 = 0;
+    while (i < min) {
+        var ca: i32 = a[i].to_lower();
+        var cb: i32 = b[i].to_lower();
+        if (ca < cb) { return 0 - 1; }
+        if (ca > cb) { return 1; }
+        i = i + 1;
+    }
+    if (n < m) { return 0 - 1; }
+    if (n > m) { return 1; }
+    return 0;
+}
+
+// `sort_strings_asc_ci(arr)` — case-insensitive ascending
+// sort. Useful for user-facing alphabetical listings where
+// case shouldn't fragment the ordering.
+pub function sort_strings_asc_ci(arr: string[]): string[] {
+    var n: i32 = len(arr);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: string = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && string_cmp_ci(out[j], key) > 0) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
