@@ -1,0 +1,28 @@
+// std/u64 — unsigned 64-bit integer receiver methods.
+//
+// Counterpart to std/u32 for the wider type. Migrated from the
+// auto-injected prelude per docs/PRELUDE-TO-MODULES.md.
+
+pub function (n: u64) min(other: u64): u64 {
+    if (n < other) { return n; }
+    return other;
+}
+
+pub function (n: u64) max(other: u64): u64 {
+    if (n > other) { return n; }
+    return other;
+}
+
+pub function (n: u64) clamp(lo: u64, hi: u64): u64 {
+    if (n < lo) { return lo; }
+    if (n > hi) { return hi; }
+    return n;
+}
+
+// `(n: u64) to_string()` — decimal representation. Reinterprets
+// the underlying bits as i64 to share the i64 formatter helper;
+// `__int_to_string_u64` treats its argument as unsigned given
+// `neg == 0`.
+pub function (n: u64) to_string(): string {
+    return __int_to_string_u64(n as i64, 0);
+}

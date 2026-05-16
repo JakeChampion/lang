@@ -1,0 +1,30 @@
+// std/u32 — unsigned 32-bit integer receiver methods.
+//
+// u32 has no `abs` — values are always non-negative — so this
+// module is just the scalar reductions and string formatting.
+// Migrated from the auto-injected prelude per
+// docs/PRELUDE-TO-MODULES.md.
+
+pub function (n: u32) min(other: u32): u32 {
+    if (n < other) { return n; }
+    return other;
+}
+
+pub function (n: u32) max(other: u32): u32 {
+    if (n > other) { return n; }
+    return other;
+}
+
+pub function (n: u32) clamp(lo: u32, hi: u32): u32 {
+    if (n < lo) { return lo; }
+    if (n > hi) { return hi; }
+    return n;
+}
+
+// `(n: u32) to_string()` — decimal representation. Routes
+// through the i64-shaped formatter helper to avoid the
+// signed-truncation pitfall a direct `n as i32` cast would
+// hit for values >= 2^31.
+pub function (n: u32) to_string(): string {
+    return __int_to_string_u64((n as i64) & (4294967295 as i64), 0);
+}
