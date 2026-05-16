@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/checker"
 )
 
 // writeFiles drops the supplied path → contents pairs into a fresh
@@ -629,5 +630,65 @@ function main(): i32 { return b.b_fn() + 1; }`,
 	// Self-membership is universal.
 	if !prog.ModuleImports[cAbs][cAbs] {
 		t.Errorf("closure[c] should contain c itself")
+	}
+}
+
+// Module-scoped method dispatch (Phase 3 of the prelude-to-
+// modules migration): a method declared in module L is callable
+// from module M only when M's import closure reaches L.
+//
+// Importer sees the method:
+func TestMethodVisibleAcrossExplicitImport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"lib.lang":  `pub function (n: i32) my_method(): i32 { return n + 1; }`,
+		"main.lang": `import "./lib";
+function main(): i32 { return (5).my_method(); }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("expected method to resolve, got %v", err)
+	}
+}
+
+// Non-importer can't see the method — the receiver-typed call
+// shape goes unresolved and the checker complains. The exact
+// diagnostic could improve (today it surfaces as a generic
+// "unresolved" rather than naming the missing import), but the
+// PRESENCE of a non-nil error is the load-bearing behaviour:
+// silently accepting the call would defeat module scoping.
+func TestMethodNotVisibleWithoutImport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"lib.lang":  `pub function (n: i32) my_method(): i32 { return n + 1; }`,
+		"main.lang": `function main(): i32 { return (5).my_method(); }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checker.Check(prog); err == nil {
+		t.Fatal("expected checker error when main doesn't import lib")
+	}
+}
+
+// Transitive: A imports B, B imports C, C defines a method. A
+// should see the method via the closure (B's import chain pulls
+// C in).
+func TestMethodVisibleViaTransitiveImport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"c.lang": `pub function (n: i32) deep(): i32 { return n * 3; }`,
+		"b.lang": `import "./c";
+pub function passthrough(n: i32): i32 { return n.deep(); }`,
+		"a.lang": `import "./b";
+function main(): i32 { return (4).deep(); }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "a.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("expected transitive visibility, got %v", err)
 	}
 }
