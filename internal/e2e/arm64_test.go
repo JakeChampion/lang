@@ -6352,6 +6352,58 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Seventh stdlib bundle: i32[] product / avg, string leading/
+// trailing_count, hash_fnv32, escape_c, repeat_char,
+// http_status_text. 8 new helpers. Pure-prelude.
+func TestArm64StdlibBundle7(t *testing.T) {
+	src := `function main(): i32 {
+    // i32[] product / avg
+    if ([2, 3, 4].product() != 24) { return 1; }
+    var empty: i32[] = [];
+    if (empty.product() != 1) { return 2; }    // multiplicative identity
+    match ([2, 4, 6].avg()) {
+        Some(v) => { if (v != 4) { return 3; } },
+        None => { return 4; },
+    }
+    match (empty.avg()) { Some(_) => { return 5; }, None => { } }
+
+    // leading_count / trailing_count
+    if ("    hello".leading_count(32) != 4) { return 6; }
+    if ("hello".leading_count(32) != 0) { return 7; }
+    if ("hello   ".trailing_count(32) != 3) { return 8; }
+    if ("    ".trailing_count(32) != 4) { return 9; }
+
+    // hash_fnv32 — deterministic, distinct inputs distinct hashes
+    if ("".hash_fnv32() != (0 - 2128831035) as u32) { return 10; }
+    if ("a".hash_fnv32() == "b".hash_fnv32()) { return 11; }
+    if ("hello".hash_fnv32() != "hello".hash_fnv32()) { return 12; }
+
+    // escape_c
+    if ("plain".escape_c() != "plain") { return 13; }
+    if ("\"".escape_c() != "\\\"") { return 14; }
+    if ("\\".escape_c() != "\\\\") { return 15; }
+    if ("\n".escape_c() != "\\n") { return 16; }
+    if ("a\tb".escape_c() != "a\\tb") { return 17; }
+
+    // repeat_char
+    if (repeat_char(120, 4) != "xxxx") { return 18; }
+    if (repeat_char(45, 5) != "-----") { return 19; }
+    if (repeat_char(120, 0) != "") { return 20; }
+
+    // http_status_text
+    if (http_status_text(200) != "OK") { return 21; }
+    if (http_status_text(404) != "Not Found") { return 22; }
+    if (http_status_text(500) != "Internal Server Error") { return 23; }
+    if (http_status_text(418) != "I'm a teapot") { return 24; }
+    if (http_status_text(999) != "") { return 25; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 7)", code)
+	}
+}
+
 // Sixth stdlib bundle: i32 bit ops (count_ones, leading/
 // trailing_zeros, byte_swap), i64 power/gcd/lcm parity with
 // i32, range / range_step generators, repeat_with_sep. 11

@@ -401,6 +401,22 @@ think they're free additions to make.
   ranges).
 - **`s.repeat_with_sep(n, sep)`**: like `repeat` but with a
   separator between every pair. `n <= 0` returns empty.
+- **i32[] product / avg**: `arr.product()` (multiplicative
+  identity 1 for empty; wraps on overflow), `arr.avg()`
+  (Option[i32] integer mean; truncates).
+- **String leading / trailing count**: `s.leading_count(b)` /
+  `trailing_count(b)`. Number of leading / trailing bytes
+  matching b. Useful for indent detection / column alignment.
+- **`s.hash_fnv32()`**: FNV-1a 32-bit hash. Non-cryptographic;
+  good for bucket selection / fingerprinting.
+- **`s.escape_c()`**: C-style escape — `\\` `\"` `\n` `\t`
+  `\r` `\0` get their two-char escape forms. Other bytes
+  pass through. Useful for emitting source-ready string
+  literals.
+- **`repeat_char(ch, n)`**: fresh string of n copies of the
+  byte `ch`. Faster than `chr(c).repeat(n)` would be.
+- **`http_status_text(code)`**: IANA reason phrase for the
+  common HTTP status codes (RFC 9110). `""` for unknown.
 
 ## Known compiler bugs surfaced during this work
 
