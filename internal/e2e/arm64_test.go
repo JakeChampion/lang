@@ -6352,6 +6352,51 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Eighteenth stdlib bundle: i32 ceil_div / round_up_to /
+// round_down_to, string remove_prefix / remove_suffix /
+// is_uuid, format_duration_ms. 7 helpers.
+func TestArm64StdlibBundle18(t *testing.T) {
+	src := `function main(): i32 {
+    // ceil_div
+    if ((10).ceil_div(3) != 4) { return 1; }
+    if ((9).ceil_div(3) != 3) { return 2; }
+    if ((0).ceil_div(3) != 0) { return 3; }
+    if ((10).ceil_div(0) != 0) { return 4; }
+
+    // round_up_to / round_down_to
+    if ((13).round_up_to(4) != 16) { return 5; }
+    if ((16).round_up_to(4) != 16) { return 6; }
+    if ((10).round_up_to(0) != 10) { return 7; }
+    if ((13).round_down_to(4) != 12) { return 8; }
+    if ((3).round_down_to(4) != 0) { return 9; }
+
+    // is_uuid
+    if (!"550e8400-e29b-41d4-a716-446655440000".is_uuid()) { return 10; }
+    if ("550e8400-e29b-41d4-a716-44665544000".is_uuid()) { return 11; }
+    if ("550e8400+e29b-41d4-a716-446655440000".is_uuid()) { return 12; }
+    if ("550e8400-e29b-41d4-a716-44665544000g".is_uuid()) { return 13; }
+
+    // remove_prefix / remove_suffix — unchanged on no-match
+    if ("https://example.com".remove_prefix("https://") != "example.com") { return 14; }
+    if ("hello".remove_prefix("xyz") != "hello") { return 15; }
+    if ("file.txt".remove_suffix(".txt") != "file") { return 16; }
+    if ("file.txt".remove_suffix(".log") != "file.txt") { return 17; }
+
+    // format_duration_ms
+    if (format_duration_ms(0) != "0ms") { return 18; }
+    if (format_duration_ms(500) != "500ms") { return 19; }
+    if (format_duration_ms(1500) != "1s 500ms") { return 20; }
+    if (format_duration_ms(90000) != "1m 30s") { return 21; }
+    if (format_duration_ms(3661000) != "1h 1m 1s") { return 22; }
+    if (format_duration_ms(0 - 1500) != "-1s 500ms") { return 23; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 18)", code)
+	}
+}
+
 // Seventeenth stdlib bundle: array max_by_len / sum_lens,
 // i32 log2_floor / sqrt_floor / to_rgb_hex, byte is_vowel,
 // string rstrip_newline. 7 helpers.

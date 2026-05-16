@@ -567,6 +567,17 @@ think they're free additions to make.
   Y not counted.
 - **`s.rstrip_newline()`**: strip a single trailing `\n` or
   `\r\n` — preserves runs.
+- **i32 rounding**: `(n).ceil_div(d)` / `(n).round_up_to(m)`
+  / `(n).round_down_to(m)`. Useful for memory alignment,
+  page rounding, table-column math. d/m <= 0 are no-ops.
+- **String prefix/suffix removal**: `s.remove_prefix(p)` /
+  `s.remove_suffix(s)`. Like strip_* but return s unchanged
+  on no-match instead of `Option[None]`.
+- **`s.is_uuid()`**: shape check for canonical 8-4-4-4-12
+  hex UUID. Doesn't validate version / variant nibbles.
+- **`format_duration_ms(ms)`**: human-readable durations
+  like `"1h 23m 45s"` / `"500ms"`. Components only emitted
+  when non-zero; `0` returns `"0ms"`.
 
 ### Additional compiler bug
 
