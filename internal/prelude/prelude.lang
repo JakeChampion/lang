@@ -338,6 +338,84 @@ function http_response_not_found(): HttpResponse {
     return HttpResponse { status: 404, body: "Not Found" };
 }
 
+// === Random integer in range ===
+//
+// `random_int(lo, hi)` — random i32 in [lo, hi). Returns `lo`
+// when hi <= lo (empty range fallback). Pulls 3 bytes from
+// random_bytes (kernel CSPRNG on natives, wasi_random on
+// wasm), combines into a 24-bit value, and modulo-maps to
+// the range width. 24 bits caps the maximum bias-free range
+// at ~16M which covers the common short-range use cases
+// (port pick, ID generation, jitter). Stays at 24 bits
+// rather than 32 because the natives' u32 modulo path goes
+// signed when the high bit is set — a real codegen bug, but
+// 24-bit randomness sidesteps it.
+function random_int(lo: i32, hi: i32): i32 {
+    if (hi <= lo) { return lo; }
+    var b: string = random_bytes(3);
+    var u: u32 = ((b[0] as u32) << (16 as u32)) |
+                 ((b[1] as u32) << (8 as u32)) |
+                 (b[2] as u32);
+    var range: u32 = (hi - lo) as u32;
+    return lo + ((u % range) as i32);
+}
+
+// === Human-readable byte size ===
+//
+// `format_bytes(n)` — render an i32 byte count as "N B" /
+// "N KiB" / "N MiB" / "N GiB" using binary (1024-based)
+// prefixes. Integer truncation only — for "1.5 KiB" the
+// caller can divide by 1024 themselves and apply
+// to_string_padded. Negative input is rendered with a
+// leading "-" before the unit ("-512 B"). i32 caps the
+// representable range at ~2 GiB which covers the common
+// CLI / log use case; callers needing larger sizes can
+// drop down to manual i64 div + to_string.
+function format_bytes(n: i32): string {
+    var neg: boolean = (n < 0);
+    var mag: i32 = n;
+    if (neg) { mag = n.abs(); }
+    var sign: string = "";
+    if (neg) { sign = "-"; }
+    if (mag < 1024) {
+        return sign + mag.to_string() + " B";
+    }
+    if (mag < 1024 * 1024) {
+        return sign + (mag / 1024).to_string() + " KiB";
+    }
+    if (mag < 1024 * 1024 * 1024) {
+        return sign + (mag / (1024 * 1024)).to_string() + " MiB";
+    }
+    return sign + (mag / (1024 * 1024 * 1024)).to_string() + " GiB";
+}
+
+// === CSV escape / join ===
+//
+// `csv_escape(s)` — return a CSV field per RFC 4180. Fields
+// containing comma / double-quote / newline get wrapped in
+// "..." with interior quotes doubled. Other inputs pass
+// through unchanged.
+// `csv_join(arr)` — join with "," after escaping each field.
+function csv_escape(s: string): string {
+    if (s.index_of(",") < 0 && s.index_of("\"") < 0 &&
+        s.index_of("\n") < 0 && s.index_of("\r") < 0) {
+        return s;
+    }
+    return "\"" + s.replace("\"", "\"\"") + "\"";
+}
+
+function csv_join(arr: string[]): string {
+    var n: i32 = len(arr);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        if (i > 0) { out = out + ","; }
+        out = out + csv_escape(arr[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // === Logging convenience ===
 //
 // Three thin wrappers around eprint with a level prefix.
@@ -1204,6 +1282,29 @@ function (s: string) trim_chars(chars: string): string {
         high = high - 1;
     }
     return s[low:high];
+}
+
+// `s.trim_start_chars(chars)` / `s.trim_end_chars(chars)` —
+// one-sided variants of trim_chars. Strip any byte in `chars`
+// from the start / end only.
+function (s: string) trim_start_chars(chars: string): string {
+    var n: i32 = len(s);
+    if (len(chars) == 0) { return s; }
+    var i: i32 = 0;
+    while (i < n && chars.index_of(s[i:i + 1]) >= 0) {
+        i = i + 1;
+    }
+    return s[i:n];
+}
+
+function (s: string) trim_end_chars(chars: string): string {
+    var n: i32 = len(s);
+    if (len(chars) == 0) { return s; }
+    var end: i32 = n;
+    while (end > 0 && chars.index_of(s[end - 1:end]) >= 0) {
+        end = end - 1;
+    }
+    return s[0:end];
 }
 
 // `s.starts_with_ci(prefix)` / `s.ends_with_ci(suffix)` —
