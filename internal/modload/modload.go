@@ -407,7 +407,7 @@ func (m *module) rewriteAll(selfPrefix string) []error {
 			r.rewriteType(&fn.Params[i].Type)
 		}
 		r.rewriteType(&fn.ReturnType)
-		r.rewriteBlock(fn.Body)
+		r.rewriteFuncBody(fn)
 	}
 	for _, sd := range m.prog.Structs {
 		sd.Name = selfPrefix + sd.Name
@@ -432,6 +432,15 @@ type rewriter struct {
 	ownConsts  map[string]bool    // names of consts declared in this module (pre-mangle)
 	imports    map[string]*module // local name → imported module
 	errs       []error            // visibility / unresolved-name errors collected during the walk
+	// localVars is the set of identifier names bound as local
+	// variables / parameters in the currently-walking function
+	// body. Populated by `rewriteFuncBody` from the function's
+	// params + a pre-walk that collects `var` declarations. The
+	// Ident rewriter consults the set so a local `var range: u32`
+	// inside a function whose enclosing module also declares
+	// `function range(…)` doesn't get the module-prefix mangling
+	// applied to its uses.
+	localVars map[string]bool
 }
 
 // checkPublicFunc records an error if `fn` isn't exported from
@@ -489,6 +498,97 @@ func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 	return mod, mod.name + "__", true
 }
 
+// rewriteFuncBody walks fn's body with a fresh local-var set
+// scoped to that function. The set is the union of fn's
+// parameters + any `var` declared anywhere in the body,
+// including in nested blocks. The granularity is intentionally
+// coarse — we collect at function granularity, not lexical
+// scope — because we only need to answer "is this Ident a
+// local at *all* in this function?" so the Ident rewriter can
+// skip the module-prefix mangling for local variable
+// references that happen to share a name with a module-level
+// function or const. A var declared inside a block that
+// shadows a function with the same name correctly suppresses
+// the rewrite for *every* use of that name inside the
+// function — that's not lexically precise but it matches the
+// "if there's any local binding, treat it as a local" rule
+// that's correct for our purposes (we'd never want to silently
+// mangle a name that has a local binding somewhere in scope).
+func (r *rewriter) rewriteFuncBody(fn *ast.FuncDecl) {
+	prev := r.localVars
+	r.localVars = map[string]bool{}
+	for _, p := range fn.Params {
+		r.localVars[p.Name] = true
+	}
+	collectLocals(fn.Body, r.localVars)
+	r.rewriteBlock(fn.Body)
+	r.localVars = prev
+}
+
+// collectLocals walks b and adds every `var name : T` and
+// `for var i …` / destructure-binding name to dst.
+func collectLocals(b *ast.Block, dst map[string]bool) {
+	if b == nil {
+		return
+	}
+	for _, s := range b.Stmts {
+		collectLocalsStmt(s, dst)
+	}
+}
+
+func collectLocalsStmt(s ast.Stmt, dst map[string]bool) {
+	switch x := s.(type) {
+	case *ast.Block:
+		collectLocals(x, dst)
+	case *ast.Arena:
+		collectLocals(x.Body, dst)
+	case *ast.If:
+		collectLocalsStmt(x.Then, dst)
+		collectLocalsStmt(x.Else, dst)
+	case *ast.IfLet:
+		for _, n := range x.Bindings {
+			dst[n] = true
+		}
+		collectLocalsStmt(x.Then, dst)
+		collectLocalsStmt(x.Else, dst)
+	case *ast.LetElse:
+		for _, n := range x.Bindings {
+			dst[n] = true
+		}
+		collectLocals(x.Else, dst)
+	case *ast.While:
+		collectLocalsStmt(x.Body, dst)
+	case *ast.For:
+		collectLocalsStmt(x.Init, dst)
+		collectLocalsStmt(x.Body, dst)
+	case *ast.Var:
+		dst[x.Name] = true
+	case *ast.Destructure:
+		for _, n := range x.Names {
+			dst[n] = true
+		}
+	case *ast.Match:
+		for _, arm := range x.Arms {
+			for _, n := range arm.Bindings {
+				dst[n] = true
+			}
+			collectLocals(arm.Body, dst)
+		}
+	case *ast.Switch:
+		for _, k := range x.Cases {
+			collectLocals(k.Body, dst)
+		}
+		if x.Default != nil {
+			collectLocals(x.Default, dst)
+		}
+	case *ast.FuncDecl:
+		// Nested local function — its parameters and body are
+		// their own scope. Don't bleed those into the enclosing
+		// function's locals set; closure conversion handles the
+		// captured-vars story separately.
+	}
+}
+
 func (r *rewriter) rewriteBlock(b *ast.Block) {
 	if b == nil {
 		return
@@ -544,6 +644,25 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 		if x.Default != nil {
 			r.rewriteBlock(x.Default)
 		}
+	case *ast.Match:
+		r.rewriteExpr(&x.Tag)
+		for _, arm := range x.Arms {
+			if arm.Guard != nil {
+				r.rewriteExpr(&arm.Guard)
+			}
+			r.rewriteBlock(arm.Body)
+		}
+	case *ast.IfLet:
+		r.rewriteExpr(&x.Source)
+		r.rewriteStmt(x.Then)
+		if x.Else != nil {
+			r.rewriteStmt(x.Else)
+		}
+	case *ast.LetElse:
+		r.rewriteExpr(&x.Source)
+		r.rewriteBlock(x.Else)
+	case *ast.Defer:
+		r.rewriteExpr(&x.Expr)
 	case *ast.FuncDecl:
 		// Nested local function — its name doesn't get the module
 		// prefix because closure conversion mangles it on its own
@@ -567,6 +686,15 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		// Same-module function value or const reference: prefix
 		// with selfPrefix. Cross-module references arrive as
 		// `mod.X` (FieldAccess) and are handled below.
+		//
+		// A local variable / parameter that happens to share a
+		// name with a module-level function or const wins — we
+		// skip the prefix so the reference stays bound to the
+		// local. `localVars` is populated per-function by
+		// `rewriteFuncBody`.
+		if r.localVars[x.Name] {
+			return
+		}
 		if r.ownFuncs[x.Name] || r.ownConsts[x.Name] {
 			x.Name = r.selfPrefix + x.Name
 		}
@@ -624,6 +752,30 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		r.rewriteExpr(&x.Else)
 	case *ast.TryOp:
 		r.rewriteExpr(&x.Inner)
+	case *ast.CastExpr:
+		r.rewriteExpr(&x.Inner)
+		r.rewriteType(&x.Target)
+	case *ast.SliceExpr:
+		r.rewriteExpr(&x.Source)
+		if x.Low != nil {
+			r.rewriteExpr(&x.Low)
+		}
+		if x.High != nil {
+			r.rewriteExpr(&x.High)
+		}
+	case *ast.FString:
+		for i := range x.Parts {
+			if x.Parts[i].Expr != nil {
+				r.rewriteExpr(&x.Parts[i].Expr)
+			}
+		}
+		if x.Desugared != nil {
+			r.rewriteExpr(&x.Desugared)
+		}
+	case *ast.MakeClosure:
+		for i := range x.Captures {
+			r.rewriteExpr(&x.Captures[i])
+		}
 	case *ast.MatchExpr:
 		r.rewriteExpr(&x.Tag)
 		for _, arm := range x.Arms {
