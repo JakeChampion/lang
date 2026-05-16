@@ -7,6 +7,17 @@
 // declaring a same-named function — useful for testing or for
 // callers that need different semantics (eg a stricter
 // `s.parse_int()` that errors on whitespace).
+//
+// stdlib imports here are auto-followed by `injectPrelude` (see
+// `internal/checker/checker.go`). Methods migrated out of the
+// prelude into `std/…` modules during the prelude-to-modules
+// migration (docs/PRELUDE-TO-MODULES.md) come back in this way
+// so existing programs keep working without changes. The
+// `injectPrelude` path dedupes against `ast.Program.LoadedStdlibPaths`
+// so a user program that explicitly `import`s the same stdlib
+// module via modload doesn't get a "method redeclared" error.
+import "std/i32";
+
 
 // `s.is_empty()` is a length-zero shorthand. The IR's len fold
 // resolves `len(s)` to a single i32.load at compile time when
@@ -1523,20 +1534,12 @@ function (b: i32) to_upper(): i32 {
 
 // === i32 numeric methods ===
 //
-// `(n: i32) abs()` — absolute value. Edge case: i32::MIN
-// (-2147483648) has no positive counterpart in i32; the
-// magnitude is carried through i64 so the result wraps to
-// i32::MIN itself (matches Rust i32::wrapping_abs / Go's
-// behaviour). Callers needing exact handling should widen
-// to i64 first.
-function (n: i32) abs(): i32 {
-    if (n < 0) {
-        var w: i64 = 0 - (n as i64);
-        return w as i32;
-    }
-    return n;
-}
-
+// `(n: i32) abs()` migrated to `std/i32` — see the
+// `import "std/i32";` at the top of this file. The
+// auto-prelude path in `internal/checker/checker.go`
+// follows stdlib imports declared here, so existing
+// programs keep working unchanged.
+//
 // `(n: i32) min(other) i32` / `max` / `clamp(lo, hi)` —
 // scalar reductions. Standard shape; matches Rust /
 // Gleam / Go (stdlib min/max which landed in Go 1.21).

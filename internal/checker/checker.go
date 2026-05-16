@@ -15,6 +15,7 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/prelude"
+	"github.com/jakechampion/lang/internal/stdlib"
 )
 
 type Error struct {
@@ -318,6 +319,28 @@ func injectPrelude(prog *ast.Program) error {
 	if err != nil {
 		return fmt.Errorf("prelude: %w", err)
 	}
+	// Phase 3 of docs/PRELUDE-TO-MODULES.md: as methods migrate
+	// out of the magic prelude into `std/…` modules, the prelude
+	// file `import "std/foo";`s them back in so existing programs
+	// keep working unchanged. We follow those imports here (only
+	// stdlib paths — never disk paths) and inject the imported
+	// modules' decls alongside the prelude's own.
+	//
+	// `loaded` dedupes against modload's per-program load tracker:
+	// if the user's entry program already pulled `std/foo` in
+	// through modload, prog.LoadedStdlibPaths records it and the
+	// prelude's `import "std/foo"` becomes a no-op. Without this
+	// dedup the receiver-method redeclaration check at the start
+	// of Check would fire on every method imported by both paths.
+	loaded := map[string]bool{}
+	if prog.LoadedStdlibPaths != nil {
+		for path := range prog.LoadedStdlibPaths {
+			loaded[path] = true
+		}
+	}
+	if err := injectStdlibImports(prog, pre, loaded); err != nil {
+		return err
+	}
 	// Append funcs, structs, and enums separately. The
 	// IsPrelude flag is only on FuncDecl today (struct /
 	// enum decls aren't filtered by tests, since their
@@ -328,6 +351,67 @@ func injectPrelude(prog *ast.Program) error {
 	}
 	prog.Structs = append(prog.Structs, pre.Structs...)
 	prog.Enums = append(prog.Enums, pre.Enums...)
+	return nil
+}
+
+// injectStdlibImports walks the imports declared on `pre` (the
+// freshly-parsed prelude) and inlines the source of every
+// stdlib-namespaced one (`std/…` / `core/…`) into `prog`. Recursive
+// — an imported module's own imports are followed too. `loaded`
+// is the dedup set: paths already in it are skipped, paths newly
+// loaded get added.
+//
+// Decls from imported stdlib modules are marked `IsPrelude` so
+// they're treated the same as the auto-prelude itself (universally
+// visible per `methodVisibleHere`, filtered out by tests / dump
+// tools that opt out of prelude noise). Their `SourceModule` stays
+// empty for the same reason — Phase 3 keeps imported-by-prelude
+// methods universally visible; Phase 5 will make stdlib imports
+// require an explicit `import` in user code instead.
+//
+// Only stdlib paths are followed. Relative-path imports inside a
+// stdlib module aren't supported in this first cut — they'd
+// resolve outside the embedded FS — and disk-path imports from a
+// prelude file would be a footgun (a build that depends on a file
+// outside the tree). Both are skipped silently with no error.
+func injectStdlibImports(prog *ast.Program, pre *ast.Program, loaded map[string]bool) error {
+	for _, imp := range pre.Imports {
+		if !stdlib.IsStdlibPath(imp.Path) {
+			continue
+		}
+		key := imp.Path
+		if !strings.HasSuffix(key, ".lang") {
+			key += ".lang"
+		}
+		canonical := "stdlib://" + key
+		if loaded[canonical] {
+			continue
+		}
+		loaded[canonical] = true
+		src, ok := stdlib.Resolve(imp.Path)
+		if !ok {
+			return fmt.Errorf("prelude: unknown stdlib import %q", imp.Path)
+		}
+		sub, err := parser.Parse(src)
+		if err != nil {
+			return fmt.Errorf("prelude: stdlib module %s: %w", imp.Path, err)
+		}
+		// Recurse first so transitive imports land before
+		// `sub`'s own decls (preserves the prelude-style
+		// dependency order — leaf modules' decls before their
+		// importers').
+		if err := injectStdlibImports(prog, sub, loaded); err != nil {
+			return err
+		}
+		for _, fn := range sub.Funcs {
+			fn.IsPrelude = true
+			prog.Funcs = append(prog.Funcs, fn)
+		}
+		prog.Structs = append(prog.Structs, sub.Structs...)
+		prog.Enums = append(prog.Enums, sub.Enums...)
+		prog.Unions = append(prog.Unions, sub.Unions...)
+		prog.Consts = append(prog.Consts, sub.Consts...)
+	}
 	return nil
 }
 

@@ -1347,6 +1347,16 @@ type Program struct {
 	// method dispatch under module-scoped semantics (see
 	// docs/PRELUDE-TO-MODULES.md).
 	ModuleImports map[string]map[string]bool
+	// LoadedStdlibPaths records every `std/…` / `core/…` canonical
+	// path modload pulled in (keyed by the `stdlib://…` path form
+	// modload uses internally — see `internal/modload/modload.go`).
+	// The checker's auto-prelude path consults this set so a
+	// prelude file declaring `import "std/foo";` doesn't re-inject
+	// `std/foo` when the user's entry program already imported the
+	// same module via modload. Transitional plumbing for the
+	// prelude-to-modules migration; goes away once auto-prelude
+	// injection does (Phase 5 in docs/PRELUDE-TO-MODULES.md).
+	LoadedStdlibPaths map[string]bool
 	// Comments lists every `//` line comment the lexer collected,
 	// in source order. Most consumers (checker, IR lowering,
 	// codegen) ignore this field; the formatter walks it alongside

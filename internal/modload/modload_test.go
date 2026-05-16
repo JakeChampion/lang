@@ -692,3 +692,21 @@ function main(): i32 { return (4).deep(); }`,
 		t.Fatalf("expected transitive visibility, got %v", err)
 	}
 }
+
+// User code can `import "std/i32";` to bring the migrated
+// methods into scope. The auto-prelude also imports the same
+// module, but `prog.LoadedStdlibPaths` dedupes so the receiver-
+// method redeclaration check doesn't fire.
+func TestUserImportOfStdI32CoexistsWithAutoPrelude(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.lang": `import "std/i32";
+function main(): i32 { return (0 - 9).abs(); }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("expected user-import + prelude dedup, got %v", err)
+	}
+}

@@ -308,7 +308,13 @@ func importLocalName(path string) string {
 // first one (other errors are wrapped under it).
 func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) {
 	combined := &ast.Program{
-		ModuleImports: importClosures(loaded),
+		ModuleImports:     importClosures(loaded),
+		LoadedStdlibPaths: map[string]bool{},
+	}
+	for path := range loaded {
+		if strings.HasPrefix(path, stdlibPrefix) {
+			combined.LoadedStdlibPaths[path] = true
+		}
 	}
 	var firstErr error
 	for _, mod := range loaded {
