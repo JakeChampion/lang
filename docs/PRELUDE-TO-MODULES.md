@@ -209,7 +209,7 @@ Tasks:
 ## Tracking
 
 - [x] Phase 1 — modload `std/` resolver
-- [ ] Phase 2 — auto-discover Array.X
+- [x] Phase 2 — auto-discover Array.X
 - [ ] Phase 3 — `std/i32`
 - [ ] Phase 4 — remaining modules (one PR per)
 - [ ] Phase 5 — drop auto-injection

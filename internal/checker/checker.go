@@ -786,13 +786,16 @@ func Check(prog *ast.Program) (*Info, error) {
 	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
 	registerMapMethod("iter", nil, mapIterKV)
 
-	// Generic array methods. `arr.push(v)` is registered here
-	// for method dispatch + type checking; the IR intercepts
-	// the rewritten `__method_Array_push(arr, v)` call and
-	// emits the alloc + memcpy + width-correct tail store
-	// inline (see emitArrayPush in internal/ir/ir.go). One
-	// codepath covers every stride class — no per-stride
-	// mangled names, no per-stride prelude functions.
+	// `arr.push(v)` is the one Array method that DOESN'T have a
+	// prelude function declaration — the IR intercepts the
+	// rewritten `__method_Array_push(arr, v)` call and emits the
+	// alloc + memcpy + width-correct tail store inline (see
+	// `emitArrayPush` in `internal/ir/ir.go`). One codepath covers
+	// every stride class — no per-stride mangled names, no
+	// per-stride prelude functions. Because there's no source-
+	// level decl, the auto-discovery loop below can't see push:
+	// we register it manually here along with its generic
+	// signature so dispatch + type-checking work.
 	arrayElemParam := ast.ParamType{Name: "T"}
 	c.info.Methods["Array.push"] = "__method_Array_push"
 	c.info.FuncSigs["__method_Array_push"] = &ast.FuncType{
@@ -803,85 +806,31 @@ func Check(prog *ast.Program) (*Info, error) {
 		Result: ast.ArrayType{Elem: arrayElemParam},
 	}
 
-	// `arr.join(sep)` — concatenates string-array elements with
-	// a separator between them. Dispatches via the same
-	// "Array.<method>" key as push; the constrained string-
-	// element receiver type makes the type check fail
-	// gracefully on non-string arrays (`nums.join(...)` on
-	// i32[] would surface as "cannot match i32[] to string[]"
-	// rather than a missing-method error). Implementation is a
-	// lang prelude function — no IR-side interception needed
-	// because the body is just string concat + loop. ONLY the
-	// Methods mapping is registered here; the FuncSigs entry
-	// comes from the prelude function declaration's natural
-	// processing so the two don't conflict ("redeclared").
-	c.info.Methods["Array.join"] = "__method_Array_join"
-
-	// `arr.index_of(s)` / `arr.contains(s)` — string-array
-	// search functions. index_of returns the first matching
-	// index (0-based), or -1 when not found. contains returns
-	// the boolean. Both dispatch via the same constrained-
-	// string-receiver pattern as join — receiver MUST be
-	// string[]; mismatched element types surface as clean type
-	// errors. Implementation in the prelude as plain linear
-	// scans (sufficient for compiler-style use cases where
-	// array lengths are small: parser-keyword tables, type-
-	// list lookups, diagnostic-tag indexing).
-	c.info.Methods["Array.index_of"] = "__method_Array_index_of"
-	c.info.Methods["Array.contains"] = "__method_Array_contains"
-
-	// `arr.reverse()` — returns a fresh string[] with elements
-	// in reverse order. Same constrained-receiver dispatch; the
-	// element type is string-only because a generic reverse
-	// would need IR-side interception (push's pattern) and the
-	// string surface covers the common cases (display flipping,
-	// diagnostic chain reversal). Free functional shape — the
-	// input array isn't mutated.
-	c.info.Methods["Array.reverse"] = "__method_Array_reverse"
-	c.info.Methods["Array.filter_non_empty"] = "__method_Array_filter_non_empty"
-	c.info.Methods["Array.count_non_empty"] = "__method_Array_count_non_empty"
-	c.info.Methods["Array.distinct"] = "__method_Array_distinct"
-	c.info.Methods["Array.distinct_count"] = "__method_Array_distinct_count"
-	c.info.Methods["Array.max_by_len"] = "__method_Array_max_by_len"
-	c.info.Methods["Array.min_by_len"] = "__method_Array_min_by_len"
-	c.info.Methods["Array.sum_lens"] = "__method_Array_sum_lens"
-	c.info.Methods["Array.take"] = "__method_Array_take"
-	c.info.Methods["Array.drop"] = "__method_Array_drop"
-	c.info.Methods["Array.all_non_empty"] = "__method_Array_all_non_empty"
-	c.info.Methods["Array.any_contains"] = "__method_Array_any_contains"
-
-	// `arr.sum()` / `arr.max()` / `arr.min()` for i32[] — basic
-	// numeric reductions. sum returns i32; max/min return
-	// Option[i32] since there's no safe sentinel across the
-	// full i32 range. Constrained-receiver shape (i32-element
-	// only) means string[] / etc. surface as clean type errors.
-	c.info.Methods["Array.sum"] = "__method_Array_sum"
-	c.info.Methods["Array.max"] = "__method_Array_max"
-	c.info.Methods["Array.min"] = "__method_Array_min"
-	c.info.Methods["Array.product"] = "__method_Array_product"
-	c.info.Methods["Array.avg"] = "__method_Array_avg"
-	c.info.Methods["Array.range"] = "__method_Array_range"
-	c.info.Methods["Array.count"] = "__method_Array_count"
-	c.info.Methods["Array.count_str"] = "__method_Array_count_str"
-	c.info.Methods["Array.sum_squared"] = "__method_Array_sum_squared"
-	c.info.Methods["Array.median"] = "__method_Array_median"
-	c.info.Methods["Array.mode"] = "__method_Array_mode"
-	c.info.Methods["Array.join_with_last"] = "__method_Array_join_with_last"
-	c.info.Methods["Array.sorted_asc"] = "__method_Array_sorted_asc"
-	c.info.Methods["Array.sorted_desc"] = "__method_Array_sorted_desc"
-	c.info.Methods["Array.sorted_str_asc"] = "__method_Array_sorted_str_asc"
-	c.info.Methods["Array.sorted_str_desc"] = "__method_Array_sorted_str_desc"
-	c.info.Methods["Array.cumsum"] = "__method_Array_cumsum"
-	c.info.Methods["Array.min_max"] = "__method_Array_min_max"
-	c.info.Methods["Array.reversed"] = "__method_Array_reversed"
-	c.info.Methods["Array.every_positive"] = "__method_Array_every_positive"
-	c.info.Methods["Array.first_index_of"] = "__method_Array_first_index_of"
-	c.info.Methods["Array.pairwise_diffs"] = "__method_Array_pairwise_diffs"
-	c.info.Methods["Array.gcd_all"] = "__method_Array_gcd_all"
-	c.info.Methods["Array.lcm_all"] = "__method_Array_lcm_all"
-	c.info.Methods["Array.abs_each"] = "__method_Array_abs_each"
-	c.info.Methods["Array.all_starts_with"] = "__method_Array_all_starts_with"
-	c.info.Methods["Array.all_ends_with"] = "__method_Array_all_ends_with"
+	// Auto-discover the remaining Array methods from the
+	// `__method_Array_<name>` naming convention. Every prelude
+	// function (and, post-migration, every `std/array` module
+	// function) that follows the convention registers itself for
+	// the `arr.<name>(…)` dispatch path without a hand-written
+	// line per method. The receiver-element constraint stays
+	// inside the prelude function signature (e.g.
+	// `function __method_Array_join(arr: string[], …)`); the
+	// checker's type unification surfaces a clean
+	// "cannot match i32[] to string[]" diagnostic when callers
+	// mismatch.
+	//
+	// FuncSigs for these functions get populated by the normal
+	// FuncDecl processing in `Check` — we only need to wire the
+	// Methods map here.
+	for _, fn := range prog.Funcs {
+		if !strings.HasPrefix(fn.Name, "__method_Array_") {
+			continue
+		}
+		suffix := fn.Name[len("__method_Array_"):]
+		if suffix == "" || suffix == "push" {
+			continue
+		}
+		c.info.Methods["Array."+suffix] = fn.Name
+	}
 
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which

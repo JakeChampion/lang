@@ -1122,3 +1122,51 @@ function main(): i32 {
 		t.Errorf("expected 'could not infer' error, got: %v", err)
 	}
 }
+
+// Auto-discovery: every prelude function named
+// `__method_Array_<name>` gets a corresponding
+// `Array.<name>` entry in `Info.Methods` without any
+// hand-written registration in `checker.go`. Phase 2 of
+// the prelude-to-modules migration relies on this so
+// later phases can drop new `__method_Array_*` functions
+// into a `std/array` module and have dispatch Just Work.
+//
+// The probe checks for representative methods drawn from
+// the existing prelude (one synthetic + one IR-discovered)
+// plus the canonical hand-registered `Array.push` which
+// must continue to work despite being skipped by the
+// auto-discovery loop.
+func TestArrayMethodDispatchAutoDiscovers(t *testing.T) {
+	prog, err := parser.Parse(`function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	cases := []struct {
+		key, mangled string
+	}{
+		// Synthetic, registered by hand (IR-intercepted).
+		{"Array.push", "__method_Array_push"},
+		// Discovered from naming convention — these are
+		// implemented as ordinary prelude functions whose
+		// declarations would otherwise be invisible to the
+		// method-dispatch map.
+		{"Array.join", "__method_Array_join"},
+		{"Array.sum", "__method_Array_sum"},
+		{"Array.median", "__method_Array_median"},
+		{"Array.min_max", "__method_Array_min_max"},
+	}
+	for _, c := range cases {
+		got, ok := info.Methods[c.key]
+		if !ok {
+			t.Errorf("Methods[%q] missing; auto-discovery didn't pick up the prelude function", c.key)
+			continue
+		}
+		if got != c.mangled {
+			t.Errorf("Methods[%q] = %q, want %q", c.key, got, c.mangled)
+		}
+	}
+}
