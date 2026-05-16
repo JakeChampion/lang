@@ -1,0 +1,9 @@
+// core/_test_empty — mirror of std/_test_empty for the core/
+// resolver path. Both prefixes share the same Resolve code path
+// in stdlib.go, but a test fixture in each keeps the embedded-FS
+// directory tree non-empty (go:embed of an empty directory is
+// a build error) and proves both branches independently.
+
+pub function core_test_marker(): i32 {
+    return 7;
+}

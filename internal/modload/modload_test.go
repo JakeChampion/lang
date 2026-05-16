@@ -499,3 +499,60 @@ function main(): i32 { return util.f(); }`,
 		t.Errorf("expected 2 entries in srcs map (entry + util), got %d", len(srcs))
 	}
 }
+
+// Stdlib resolver: `import "std/…";` routes through the embedded
+// internal/stdlib FS rather than the local filesystem. Phase 1
+// of the prelude-to-modules migration (see
+// docs/PRELUDE-TO-MODULES.md) — this test pins the wiring before
+// real stdlib modules land.
+func TestLoadResolvesStdlibImport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.lang": `import "std/_test_empty";
+function main(): i32 { return _test_empty.stdlib_test_marker(); }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// After flattening, the std module's function lands at the
+	// mangled name `_test_empty__stdlib_test_marker`. The entry
+	// module's `_test_empty.stdlib_test_marker()` call should be
+	// rewritten to a direct call to that name.
+	if findFunc(prog, "_test_empty__stdlib_test_marker") == nil {
+		t.Errorf("expected mangled stdlib function in combined program; got %v", funcNames(prog))
+	}
+}
+
+// Mirror of the std/ case for the core/ prefix — both share a
+// single Resolve code path in the stdlib package, but the test
+// proves the prefix-classifier in modload accepts both.
+func TestLoadResolvesCoreImport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.lang": `import "core/_test_empty";
+function main(): i32 { return _test_empty.core_test_marker(); }`,
+	})
+	prog, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findFunc(prog, "_test_empty__core_test_marker") == nil {
+		t.Errorf("expected mangled core function in combined program; got %v", funcNames(prog))
+	}
+}
+
+// Unknown stdlib module → a clear error rather than a fallthrough
+// to filesystem resolution (which would produce a confusing
+// "read stdlib://…: no such file" message from os.ReadFile).
+func TestLoadUnknownStdlibModule(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.lang": `import "std/does_not_exist";
+function main(): i32 { return 0; }`,
+	})
+	_, _, err := Load(filepath.Join(dir, "main.lang"))
+	if err == nil {
+		t.Fatal("expected error for unknown stdlib module")
+	}
+	if !strings.Contains(err.Error(), "unknown stdlib module") {
+		t.Errorf("expected `unknown stdlib module` in error; got %v", err)
+	}
+}
