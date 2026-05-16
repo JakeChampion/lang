@@ -578,6 +578,16 @@ think they're free additions to make.
 - **`format_duration_ms(ms)`**: human-readable durations
   like `"1h 23m 45s"` / `"500ms"`. Components only emitted
   when non-zero; `0` returns `"0ms"`.
+- **Byte digit/hex values**: `(b).digit_value()` / `(b).hex_value()`.
+  Return -1 on non-digits. Useful for hand-rolled parsers.
+- **`s.count_byte(b)`**: single-byte fast path on count.
+- **`http_url_path_only(path)`**: strip the `?query`
+  suffix.
+- **`http_user_agent_is_bot(ua)`**: heuristic check for
+  common bot tokens (bot / crawler / spider / slurp,
+  case-insensitive). Hint, not a security control.
+- **`(n: i32).to_string_with_sep(sep)`**: decimal with
+  thousand-separator. `1234567` → `"1,234,567"`.
 
 ### Additional compiler bug
 

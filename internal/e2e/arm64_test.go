@@ -6352,6 +6352,52 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Nineteenth stdlib bundle: byte digit_value / hex_value,
+// string count_byte, http_url_path_only,
+// http_user_agent_is_bot, i32 to_string_with_sep. 6 helpers.
+func TestArm64StdlibBundle19(t *testing.T) {
+	src := `function main(): i32 {
+    // digit_value
+    if ((48).digit_value() != 0) { return 1; }
+    if ((57).digit_value() != 9) { return 2; }
+    if ((65).digit_value() != (0 - 1)) { return 3; }
+
+    // hex_value
+    if ((48).hex_value() != 0) { return 4; }
+    if ((97).hex_value() != 10) { return 5; }
+    if ((70).hex_value() != 15) { return 6; }
+    if ((71).hex_value() != (0 - 1)) { return 7; }
+
+    // count_byte
+    if ("hello".count_byte(108) != 2) { return 8; }
+    if ("hello".count_byte(122) != 0) { return 9; }
+    if ("aaaaa".count_byte(97) != 5) { return 10; }
+
+    // http_url_path_only
+    if (http_url_path_only("/api/users") != "/api/users") { return 11; }
+    if (http_url_path_only("/api/users?id=42") != "/api/users") { return 12; }
+    if (http_url_path_only("?foo=bar") != "") { return 13; }
+
+    // http_user_agent_is_bot
+    if (!http_user_agent_is_bot("Googlebot/2.1")) { return 14; }
+    if (!http_user_agent_is_bot("Mozilla/5.0 (compatible; bingbot/2.0)")) { return 15; }
+    if (http_user_agent_is_bot("Mozilla/5.0 (X11; Linux x86_64) Chrome/91")) { return 16; }
+    if (!http_user_agent_is_bot("yahoo slurp")) { return 17; }
+
+    // to_string_with_sep
+    if ((1000).to_string_with_sep(",") != "1,000") { return 18; }
+    if ((1234567).to_string_with_sep(",") != "1,234,567") { return 19; }
+    if ((0 - 1234567).to_string_with_sep(",") != "-1,234,567") { return 20; }
+    if ((999).to_string_with_sep(",") != "999") { return 21; }
+    if ((1000).to_string_with_sep("_") != "1_000") { return 22; }
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 19)", code)
+	}
+}
+
 // Eighteenth stdlib bundle: i32 ceil_div / round_up_to /
 // round_down_to, string remove_prefix / remove_suffix /
 // is_uuid, format_duration_ms. 7 helpers.

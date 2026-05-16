@@ -376,6 +376,31 @@ function http_path_segments(path: string): string[] {
     return out;
 }
 
+// `http_url_path_only(path)` — strip the query string
+// (everything from the first `?` onward). Returns path
+// unchanged when there's no query. Companion to
+// http_path_segments when callers want the bare path
+// without splitting.
+function http_url_path_only(path: string): string {
+    var q: i32 = path.index_of("?");
+    if (q < 0) { return path; }
+    return path[0:q];
+}
+
+// `http_user_agent_is_bot(ua)` — heuristic bot detection
+// via the User-Agent string. Checks for common bot tokens
+// ("bot", "crawler", "spider", "slurp") case-insensitively.
+// False negatives are common (sophisticated bots forge UAs);
+// false positives possible (a browser called "BotSimulator").
+// Use as a hint, not a security control.
+function http_user_agent_is_bot(ua: string): boolean {
+    if (ua.contains_ci("bot")) { return true; }
+    if (ua.contains_ci("crawler")) { return true; }
+    if (ua.contains_ci("spider")) { return true; }
+    if (ua.contains_ci("slurp")) { return true; }
+    return false;
+}
+
 // === Random integer in range ===
 //
 // `random_int(lo, hi)` — random i32 in [lo, hi). Returns `lo`
@@ -689,6 +714,24 @@ function (b: i32) hex_digit(): string {
     if (b < 10) { buf[0] = (b + 48) as u8; }
     else        { buf[0] = (b + 87) as u8; }
     return string_from_bytes(buf);
+}
+
+// `(b: i32) digit_value()` — '0'..'9' → 0..9, -1 otherwise.
+// Useful for hand-rolled numeric parsers without the
+// __radix_digit detour.
+function (b: i32) digit_value(): i32 {
+    if (b >= 48 && b <= 57) { return b - 48; }
+    return 0 - 1;
+}
+
+// `(b: i32) hex_value()` — '0'..'9' / 'a'..'f' / 'A'..'F'
+// → 0..15, -1 otherwise. Same semantics as the internal
+// __hex_value but on the public byte-receiver surface.
+function (b: i32) hex_value(): i32 {
+    if (b >= 48 && b <= 57)  { return b - 48; }      // 0-9
+    if (b >= 97 && b <= 102) { return b - 87; }      // a-f
+    if (b >= 65 && b <= 70)  { return b - 55; }      // A-F
+    return 0 - 1;
 }
 
 // `(b: i32) to_ascii_string()` — single-byte string from a
@@ -2206,6 +2249,20 @@ function (s: string) count(sub: string): i32 {
     return c;
 }
 
+// `s.count_byte(b)` — number of bytes equal to b. O(n)
+// single-pass; cheaper than count(byte.to_ascii_string())
+// when the needle is known to be a single byte.
+function (s: string) count_byte(b: i32): i32 {
+    var n: i32 = len(s);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (s[i] == b) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
 // `s.replace_n(old, new, n)` — like replace() but caps at
 // the first n occurrences. Useful when only the leading
 // substitutions are interesting (e.g. unquoting the first
@@ -2638,6 +2695,32 @@ function (n: i32) to_string_padded(width: i32): string {
     // For negatives, pad the body and re-prefix with '-'.
     var body: string = s[1:len(s)];
     return "-" + body.pad_start(width - 1, "0");
+}
+
+// `(n: i32) to_string_with_sep(sep)` — decimal with `sep`
+// inserted every three digits from the right. "1,234,567"
+// shape; `sep` is typically "," or "_" or " ". Negative
+// numbers keep the "-" prefix outside the grouping.
+function (n: i32) to_string_with_sep(sep: string): string {
+    var s: string = n.to_string();
+    var sign: string = "";
+    if (n < 0) {
+        sign = "-";
+        s = s[1:len(s)];
+    }
+    var L: i32 = len(s);
+    if (L <= 3) { return sign + s; }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < L) {
+        var idx: i32 = L - 1 - i;
+        out = s[idx:idx + 1] + out;
+        if (i % 3 == 2 && i < L - 1) {
+            out = sep + out;
+        }
+        i = i + 1;
+    }
+    return sign + out;
 }
 
 function (n: u32) to_string(): string {
