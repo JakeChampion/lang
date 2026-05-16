@@ -470,6 +470,47 @@ function (s: string) common_suffix(other: string): string {
     return s.drop(n - cap);
 }
 
+// `s.starts_with_any(prefixes)` — true if any entry in
+// prefixes is a prefix of s. Empty prefixes array → false.
+// An empty-string prefix always matches (consistent with
+// `starts_with("")`).
+function (s: string) starts_with_any(prefixes: string[]): boolean {
+    var n: i32 = len(prefixes);
+    var i: i32 = 0;
+    while (i < n) {
+        if (s.starts_with(prefixes[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `s.ends_with_any(suffixes)` — true if any entry in
+// suffixes is a suffix of s. Empty suffixes array → false.
+function (s: string) ends_with_any(suffixes: string[]): boolean {
+    var n: i32 = len(suffixes);
+    var i: i32 = 0;
+    while (i < n) {
+        if (s.ends_with(suffixes[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `s.lines_non_empty()` — like `lines()` but drops empty
+// entries. Useful for parsing text that uses blank lines
+// as separators where you don't care about them.
+function (s: string) lines_non_empty(): string[] {
+    var raw: string[] = s.lines();
+    var n: i32 = len(raw);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (len(raw[i]) != 0) { out = out.push(raw[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // `repeat_char(ch, n)` — fresh string of n copies of the byte
 // `ch`. Faster than `(c).chr().repeat(n)` would be (no chr
 // helper exists yet; this is the substitute). `n <= 0`
@@ -556,6 +597,21 @@ function http_response_bad_request(body: string): HttpResponse {
 // handler.
 function http_response_internal_error(body: string): HttpResponse {
     return HttpResponse { status: 500, body: body };
+}
+
+// `http_response_redirect(location)` — 302 Found with the
+// redirect target in the body. Callers that serialize the
+// response can copy `body` into a `Location:` header.
+// Convention placeholder until HTTP headers are first-class.
+function http_response_redirect(location: string): HttpResponse {
+    return HttpResponse { status: 302, body: location };
+}
+
+// `http_response_no_content()` — 204 No Content, empty
+// body. The standard "I handled it, nothing to say"
+// response for DELETE / PUT / etc.
+function http_response_no_content(): HttpResponse {
+    return HttpResponse { status: 204, body: "" };
 }
 
 // `http_path_segments(path)` — split an HTTP path into
@@ -2803,6 +2859,37 @@ function __method_Array_avg(arr: i32[]): Option[i32] {
     return Some(arr.sum() / n);
 }
 
+// `(arr: i32[]) range()` — max - min, the spread of the
+// data. Option[i32] None when empty. Single-element arrays
+// return Some(0). Useful as a quick variance proxy.
+function __method_Array_range(arr: i32[]): Option[i32] {
+    var n: i32 = len(arr);
+    if (n == 0) { return None; }
+    var lo: i32 = arr[0];
+    var hi: i32 = arr[0];
+    var i: i32 = 1;
+    while (i < n) {
+        if (arr[i] < lo) { lo = arr[i]; }
+        if (arr[i] > hi) { hi = arr[i]; }
+        i = i + 1;
+    }
+    return Some(hi - lo);
+}
+
+// `(arr: i32[]) count(v)` — how many times v appears.
+// Linear scan; for repeated queries on big arrays a
+// pre-built frequency map is faster.
+function __method_Array_count(arr: i32[], v: i32): i32 {
+    var n: i32 = len(arr);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (arr[i] == v) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
 // `s.replace(old, new)` — substitutes every
 // non-overlapping occurrence of `old` with `new`.
 // Empty `old` is a no-op (returns the source unchanged)
@@ -3092,6 +3179,21 @@ function __method_Array_any_contains(arr: string[], needle: string): boolean {
         i = i + 1;
     }
     return false;
+}
+
+// `(arr: string[]) count_str(v)` — how many times v appears.
+// Separate from i32[].count to avoid the receiver-type
+// overload (the Array.X dispatch is name-keyed and can't
+// fan out on element type).
+function __method_Array_count_str(arr: string[], v: string): i32 {
+    var n: i32 = len(arr);
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (arr[i] == v) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
 }
 
 // === Array append ===
