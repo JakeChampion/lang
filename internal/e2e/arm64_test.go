@@ -6352,6 +6352,62 @@ func TestArm64Format(t *testing.T) {
 // plus i32 array reductions (sum / max / min). All small
 // prelude additions wired through the existing constrained-
 // receiver dispatch.
+// Twelfth stdlib bundle: bit accessors (bit/set/clear/
+// toggle), byte newline predicate, count_lines, HTTP
+// response builders, log_info/warn/error. 12 helpers.
+func TestArm64StdlibBundle12(t *testing.T) {
+	src := `function main(): i32 {
+    // Bit accessors
+    if ((5).bit(0) != true) { return 1; }
+    if ((5).bit(1) != false) { return 2; }
+    if ((5).bit(2) != true) { return 3; }
+    if ((5).bit(100) != false) { return 4; }
+
+    if ((0).set_bit(3) != 8) { return 5; }
+    if ((5).set_bit(1) != 7) { return 6; }
+    if ((5).set_bit(100) != 5) { return 7; }
+
+    if ((7).clear_bit(1) != 5) { return 8; }
+    if ((7).clear_bit(100) != 7) { return 9; }
+
+    if ((5).toggle_bit(0) != 4) { return 10; }
+    if ((5).toggle_bit(1) != 7) { return 11; }
+    if ((5).toggle_bit(100) != 5) { return 12; }
+
+    // is_newline
+    if (!(10).is_newline()) { return 13; }
+    if (!(13).is_newline()) { return 14; }
+    if ((32).is_newline()) { return 15; }
+
+    // count_lines
+    if ("a\nb\nc".count_lines() != 3) { return 16; }
+    if ("a\nb\nc\n".count_lines() != 3) { return 17; }
+    if ("".count_lines() != 0) { return 18; }
+    if ("solo".count_lines() != 1) { return 19; }
+    if ("\n".count_lines() != 1) { return 20; }
+
+    // HTTP response builders
+    var r1: HttpResponse = http_response_ok("hello");
+    if (r1.status != 200 || r1.body != "hello") { return 21; }
+    var r2: HttpResponse = http_response_not_found();
+    if (r2.status != 404 || r2.body != "Not Found") { return 22; }
+    var r3: HttpResponse = http_response_text(500, "boom");
+    if (r3.status != 500 || r3.body != "boom") { return 23; }
+
+    // Log helpers — sanity-check they don't crash; output
+    // goes to stderr so the e2e harness exit-code check still
+    // sees the program's intended return value.
+    log_info("test info");
+    log_warn("test warn");
+    log_error("test error");
+    return 0;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("got %d, want 0 (stdlib bundle 12)", code)
+	}
+}
+
 // Eleventh stdlib bundle: splitn / first / last / take /
 // drop / chunks on strings, case-insensitive sort, i32
 // to_binary / to_oct. 11 helpers.

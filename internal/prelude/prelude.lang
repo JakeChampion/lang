@@ -268,6 +268,59 @@ function http_status_text(code: i32): string {
     return "";
 }
 
+// `http_response_ok(body)` — 200 OK with the given body.
+// `http_response_text(status, body)` — explicit status code.
+// `http_response_not_found()` — common 404 builder.
+// Saves the `HttpResponse { status: 200, body: ... }` boiler-
+// plate at every handler call site.
+function http_response_ok(body: string): HttpResponse {
+    return HttpResponse { status: 200, body: body };
+}
+
+function http_response_text(status: i32, body: string): HttpResponse {
+    return HttpResponse { status: status, body: body };
+}
+
+function http_response_not_found(): HttpResponse {
+    return HttpResponse { status: 404, body: "Not Found" };
+}
+
+// === Logging convenience ===
+//
+// Three thin wrappers around eprint with a level prefix.
+// The output goes to stderr so it interleaves with diagnostic
+// output rather than the program's actual output stream.
+// Format: "[LEVEL] msg\n".
+function log_info(msg: string) {
+    eprint("[INFO] " + msg);
+}
+
+function log_warn(msg: string) {
+    eprint("[WARN] " + msg);
+}
+
+function log_error(msg: string) {
+    eprint("[ERROR] " + msg);
+}
+
+// `s.count_lines()` — number of lines in s. Empty string
+// returns 0; lines are separated by '\n'. A trailing newline
+// is NOT counted as an extra empty line (matches Go's
+// bufio.Scanner ScanLines + lines() prelude function).
+function (s: string) count_lines(): i32 {
+    var n: i32 = len(s);
+    if (n == 0) { return 0; }
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        if (s[i] == 10) { c = c + 1; }
+        i = i + 1;
+    }
+    // No trailing newline → there's still a final line.
+    if (s[n - 1] != 10) { c = c + 1; }
+    return c;
+}
+
 // `s.trim()` — strip leading + trailing ASCII whitespace
 // (SP, TAB, LF, CR, VT, FF). UTF-8 multibyte sequences
 // pass through unchanged because their leading bytes are
@@ -308,6 +361,14 @@ function (b: i32) is_alnum(): boolean {
 
 function (b: i32) is_ascii_white_space(): boolean {
     return __is_ascii_ws(b);
+}
+
+// `(b: i32) is_newline()` — true for LF (10) or CR (13). Use
+// when tokenising line-oriented input that should treat the
+// CRLF pair like a single boundary; pair with the trailing-CR
+// strip in lines().
+function (b: i32) is_newline(): boolean {
+    return b == 10 || b == 13;
 }
 
 function (b: i32) is_hex_digit(): boolean {
@@ -561,6 +622,37 @@ function (n: i32) trailing_zeros(): i32 {
         u = u >> (1 as u32);
     }
     return c;
+}
+
+// `(n: i32) bit(i)` — read bit at position i (0 = LSB).
+// Out-of-range returns false. Useful for unpacking bit-
+// packed flags / nibbles.
+function (n: i32) bit(i: i32): boolean {
+    if (i < 0 || i >= 32) { return false; }
+    var mask: u32 = (1 as u32) << (i as u32);
+    return ((n as u32) & mask) != (0 as u32);
+}
+
+// `(n: i32) set_bit(i)` / `clear_bit(i)` / `toggle_bit(i)`
+// — return a fresh i32 with bit i set / cleared / flipped.
+// Out-of-range i is a no-op (returns n unchanged).
+function (n: i32) set_bit(i: i32): i32 {
+    if (i < 0 || i >= 32) { return n; }
+    var mask: u32 = (1 as u32) << (i as u32);
+    return ((n as u32) | mask) as i32;
+}
+
+function (n: i32) clear_bit(i: i32): i32 {
+    if (i < 0 || i >= 32) { return n; }
+    var mask: u32 = (1 as u32) << (i as u32);
+    var inv: u32 = ((0 - 1) as u32) ^ mask;
+    return ((n as u32) & inv) as i32;
+}
+
+function (n: i32) toggle_bit(i: i32): i32 {
+    if (i < 0 || i >= 32) { return n; }
+    var mask: u32 = (1 as u32) << (i as u32);
+    return ((n as u32) ^ mask) as i32;
 }
 
 // `(n: i32) byte_swap()` — reverse the four bytes of n.

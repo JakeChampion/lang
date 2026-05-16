@@ -485,6 +485,21 @@ think they're free additions to make.
   `sort_strings_asc_ci(arr)`. Per-byte fold on the
   comparison.
 - **i32 radix sugar**: `(n).to_binary()` / `(n).to_oct()`.
+- **i32 bit accessors**: `(n).bit(i)` / `set_bit(i)` /
+  `clear_bit(i)` / `toggle_bit(i)`. Out-of-range i is a
+  no-op for the mutators and false for the reader.
+- **`(b: i32).is_newline()`**: true for LF or CR. Companion
+  to the existing is_ascii_white_space.
+- **`(s: string).count_lines()`**: count newline-separated
+  lines; a trailing newline doesn't add a phantom empty
+  line.
+- **HTTP response builders**: `http_response_ok(body)`,
+  `http_response_text(status, body)`,
+  `http_response_not_found()`. Saves the
+  `HttpResponse { status: 200, body: ... }` boilerplate.
+- **Log helpers**: `log_info(msg)` / `log_warn(msg)` /
+  `log_error(msg)`. Thin wrappers around `eprint` with a
+  `[LEVEL]` prefix.
 
 ## Known compiler bugs surfaced during this work
 
