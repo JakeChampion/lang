@@ -3921,6 +3921,18 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.settleNumeric(el, hn.Elem)
 			}
 		}
+	case ast.TupleType:
+		// Tuple-literal element-type propagation. Without
+		// this, `var p: (string, i64) = ("hi", 100)` rejects
+		// the i32-defaulted literal against the i64 slot —
+		// each element is checked in isolation by checkExpr.
+		// Walk in lockstep so element `i` settles to
+		// `hn.Elems[i]`.
+		if tl, ok := e.(*ast.TupleLit); ok && len(tl.Elems) == len(hn.Elems) {
+			for i, el := range tl.Elems {
+				c.settleNumeric(el, hn.Elems[i])
+			}
+		}
 	case ast.EnumType:
 		// Variant constructor with a destination annotation:
 		// `var o: Option[i64] = Some(1);` — the literal `1`
@@ -4085,6 +4097,20 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	case *ast.ArrayLit:
 		if x.ElemType != nil {
 			return ast.ArrayType{Elem: x.ElemType}
+		}
+	case *ast.TupleLit:
+		// After settleNumeric has propagated the destination's
+		// element types into the literal, recompute the tuple
+		// shape so the `assignable` check sees the resolved
+		// widths. Without this, a `var p: (string, i64) =
+		// ("hi", 1)` keeps its pre-settle `(string, i32)`
+		// type and the assignment rejects.
+		if tt, ok := prior.(ast.TupleType); ok && len(tt.Elems) == len(x.Elems) {
+			out := make([]ast.Type, len(x.Elems))
+			for i, el := range x.Elems {
+				out[i] = postSettleType(el, tt.Elems[i])
+			}
+			return ast.TupleType{Elems: out}
 		}
 	}
 	return prior

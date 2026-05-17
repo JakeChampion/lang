@@ -3490,6 +3490,18 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		}
 	case *ast.StringLit:
 		return ast.StringType{}
+	case *ast.NumberLit:
+		// The checker stamps `Width` on the literal once
+		// the destination type is known. Mirror it back as
+		// a `NumberType` so callers (TupleLit slot sizing
+		// especially) see the resolved width rather than
+		// the nil-default i32.
+		if x.IsFloat {
+			return ast.FloatType{Width: x.FloatWidth}
+		}
+		if x.Width != 0 {
+			return ast.NumberType{Width: x.Width, Signed: !x.IsUnsigned}
+		}
 	case *ast.FieldAccess:
 		// Struct field access. `r.body` on `r: HttpRequest`
 		// needs to resolve to `string` so `len(r.body)` routes
