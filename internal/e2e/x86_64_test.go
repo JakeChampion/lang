@@ -1509,6 +1509,43 @@ func TestX86_64MapGetMatch(t *testing.T) {
 	}
 }
 
+// x86_64 sibling to TestArm64I64CmpDivWidth — same i64
+// comparison + division width bug hit both natives via the
+// same root cause (the codegen ignored `op.Width` and always
+// emitted the 32-bit cmp / idiv).
+func TestX86_64I64CmpDivWidth(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"to_string_round_trip", `function main(): i32 {
+    var n: i64 = 1234567890123;
+    var s: string = n.to_string();
+    if (s == "1234567890123") { return 0; }
+    return 1;
+}`, 0},
+		{"i64_max_to_string", `function main(): i32 {
+    var n: i64 = 9223372036854775807;
+    var s: string = n.to_string();
+    if (s == "9223372036854775807") { return 0; }
+    return 1;
+}`, 0},
+		{"i64_mul_then_divide", `function main(): i32 {
+    var n: i64 = (1234567 as i64) * (1000000 as i64);
+    var q: i64 = n / (1000000 as i64);
+    if (q == (1234567 as i64)) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // Sub-i32 array reads + casts. Exercises:
 //
 //   - OpLoadI8S  (i8[] read; x86-64 `movsx eax, byte ptr [rax]`)

@@ -4715,6 +4715,44 @@ func (g *generator) binPop() {
 	g.emit("ldr x1, [sp], #%d", slotBytes) // lhs (next)
 }
 
+// cmpForWidth emits a `cmp` whose operand size matches the
+// integer width — `cmp x1, x0` for i64 / u64 / usize (width
+// 64 or pointer-width on arm64), `cmp w1, w0` otherwise. The
+// 32-bit form would truncate i64 operands to their lower 32
+// bits, which silently mis-compares values whose upper bits
+// matter (`1234567000000 < 0` evaluates false on the lower-
+// 32-bit `1911386048` projection, but is correctly false on
+// the full i64 — yet `1234567000000 == 0` evaluates true on
+// the truncated projection of any multiple of 2^32 even
+// though the full i64 is nonzero).
+func (g *generator) cmpForWidth(width int) {
+	if width == 64 || width == ir.WidthPtr {
+		g.emit("cmp x1, x0")
+		return
+	}
+	g.emit("cmp w1, w0")
+}
+
+// regForWidth returns the AArch64 register-name prefix matching
+// the integer width — `x` for 64-bit / pointer-width, `w` for
+// 32-bit and narrower. Callers paste this prefix in front of
+// the register number: `g.regForWidth(64) + "0"` → "x0".
+func (g *generator) regForWidth(width int) string {
+	if width == 64 || width == ir.WidthPtr {
+		return "x"
+	}
+	return "w"
+}
+
+// divOpForOp picks the AArch64 division opcode (`sdiv` /
+// `udiv`) based on the IR op's `Unsigned` flag.
+func (g *generator) divOpForOp(op ir.Op) string {
+	if op.Unsigned {
+		return "udiv"
+	}
+	return "sdiv"
+}
+
 // fbinPop32 pops two raw 32-bit float bit-patterns off the
 // operand stack and loads them into s0 (rhs) and s1 (lhs)
 // via fmov. The bit patterns are stored as i32 on the operand
@@ -4930,19 +4968,22 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("mul x0, x1, x0")
 		g.push()
 	case ir.OpDivS:
-		// Signed division. ARMv8-A includes sdiv as a base-ISA
-		// instruction (no divider extension required like on
-		// armv7-a). Uses w-form so the result is treated as
-		// 32-bit signed for the divide; downstream consumers
-		// that need 64-bit pointer arithmetic don't go through
-		// OpDivS.
+		// AArch64's `sdiv` / `udiv` are base-ISA on ARMv8-A.
+		// Width matters: i32 / u32 div uses the w-form
+		// (32-bit), i64 / u64 / usize uses the x-form. The
+		// previous unconditional `sdiv w0, w1, w0` silently
+		// truncated i64 dividends to their lower 32 bits, which
+		// broke `mag / 10` inside __int_to_string_u64 — every
+		// large i64 stringified as its mod-2^32 projection.
 		g.binPop()
-		g.emit("sdiv w0, w1, w0")
+		g.emit("%s %s0, %s1, %s0", g.divOpForOp(op), g.regForWidth(op.Width), g.regForWidth(op.Width), g.regForWidth(op.Width))
 		g.push()
 	case ir.OpRemS:
 		g.binPop()
-		g.emit("sdiv w2, w1, w0")
-		g.emit("msub w0, w2, w0, w1")
+		divOp := g.divOpForOp(op)
+		r := g.regForWidth(op.Width)
+		g.emit("%s %s2, %s1, %s0", divOp, r, r, r)
+		g.emit("msub %s0, %s2, %s0, %s1", r, r, r, r)
 		g.push()
 	case ir.OpAnd:
 		g.binPop()
@@ -4973,32 +5014,32 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 
 	case ir.OpEq:
 		g.binPop()
-		g.emit("cmp w1, w0")
+		g.cmpForWidth(op.Width)
 		g.emit("cset w0, eq")
 		g.push()
 	case ir.OpNe:
 		g.binPop()
-		g.emit("cmp w1, w0")
+		g.cmpForWidth(op.Width)
 		g.emit("cset w0, ne")
 		g.push()
 	case ir.OpLtS:
 		g.binPop()
-		g.emit("cmp w1, w0")
+		g.cmpForWidth(op.Width)
 		g.emit("cset w0, lt")
 		g.push()
 	case ir.OpLeS:
 		g.binPop()
-		g.emit("cmp w1, w0")
+		g.cmpForWidth(op.Width)
 		g.emit("cset w0, le")
 		g.push()
 	case ir.OpGtS:
 		g.binPop()
-		g.emit("cmp w1, w0")
+		g.cmpForWidth(op.Width)
 		g.emit("cset w0, gt")
 		g.push()
 	case ir.OpGeS:
 		g.binPop()
-		g.emit("cmp w1, w0")
+		g.cmpForWidth(op.Width)
 		g.emit("cset w0, ge")
 		g.push()
 

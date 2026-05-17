@@ -8798,6 +8798,55 @@ function main(): i32 {
 	}
 }
 
+// Regression for i64 compares + division that silently used
+// the w-form on arm64 (`cmp w1, w0`, `sdiv w0, w1, w0`), so
+// any value whose upper 32 bits mattered got truncated:
+//
+//   - `n != (0 as i64)` inside the __int_to_string_u64 loop
+//     exited the loop whenever the lower 32 bits hit zero,
+//     stringifying every i64 as `n mod 2^32` (1234567000000
+//     → "1911386048", 9223372036854775807 → "-1", etc.).
+//   - `mag / 10` truncated the dividend to its lower 32 bits
+//     before the divide, so the digit-extraction loop walked
+//     the wrong number.
+//
+// Fix: comparisons + divisions now consult `op.Width` and
+// emit x-form (`cmp x1, x0`, `sdiv/udiv x0, x1, x0`) when
+// width=64 / pointer-width. Three sub-tests pin the shape;
+// matching x86_64 sibling lives in TestX86_64I64CmpDivWidth.
+func TestArm64I64CmpDivWidth(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"to_string_round_trip", `function main(): i32 {
+    var n: i64 = 1234567890123;
+    var s: string = n.to_string();
+    if (s == "1234567890123") { return 0; }
+    return 1;
+}`, 0},
+		{"i64_max_to_string", `function main(): i32 {
+    var n: i64 = 9223372036854775807;
+    var s: string = n.to_string();
+    if (s == "9223372036854775807") { return 0; }
+    return 1;
+}`, 0},
+		{"i64_mul_then_divide", `function main(): i32 {
+    var n: i64 = (1234567 as i64) * (1000000 as i64);  // 1234567000000
+    var q: i64 = n / (1000000 as i64);                 // 1234567
+    if (q == (1234567 as i64)) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
