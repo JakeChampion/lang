@@ -8924,6 +8924,47 @@ function main(): i32 {
 	}
 }
 
+// Tuple-literal element-type propagation. Two issues fed
+// the same observation — `var p: (string, i64) = ("hi",
+// 1234567890123)` either rejected as "(string, i32) not
+// assignable" or compiled with the i64 element packed into
+// a 4-byte slot:
+//
+//  1. settleNumeric had no TupleType case, so each element
+//     was checked in isolation against checkExpr's default
+//     (i32 for an unsuffixed integer literal).
+//  2. postSettleType + b.exprType didn't re-derive the
+//     tuple/element type from the literal after settle,
+//     so the type check and slot-sizing both saw the pre-
+//     settle width.
+//
+// Fix splits across the checker (settle + postSettle) and
+// the IR (exprType reports NumberLit's settled Width back).
+func TestArm64TupleMixedElementSettle(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"string_and_i64", `function main(): i32 {
+    var p: (string, i64) = ("hello", 1234567890123);
+    if (p.0 == "hello" && p.1 == 1234567890123) { return 0; }
+    return 1;
+}`, 0},
+		{"two_i64_literals", `function main(): i32 {
+    var p: (i64, i64) = (1234567890123, 9876543210);
+    if (p.0 == 1234567890123 && p.1 == 9876543210) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
