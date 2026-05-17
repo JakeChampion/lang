@@ -1717,6 +1717,25 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	if ast.Equal(a, b) {
 		return a
 	}
+	// Polymorphic numeric (an unsettled NumberLit) is
+	// compatible with any concrete numeric / float type —
+	// return the concrete side and let the surrounding
+	// settle pass stamp the literal's width. Without this,
+	// `var n: i64 = if cond { a * b } else { 0 };` fails
+	// the unify check because `0` is polymorphic while
+	// `a * b` is i64.
+	if an, aok := a.(ast.NumberType); aok && an.Polymorphic {
+		switch b.(type) {
+		case ast.NumberType, ast.FloatType:
+			return b
+		}
+	}
+	if bn, bok := b.(ast.NumberType); bok && bn.Polymorphic {
+		switch a.(type) {
+		case ast.NumberType, ast.FloatType:
+			return a
+		}
+	}
 	ae, aok := a.(ast.EnumType)
 	be, bok := b.(ast.EnumType)
 	if aok && bok && ae.Name == be.Name {

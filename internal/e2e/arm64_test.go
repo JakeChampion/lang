@@ -9189,6 +9189,32 @@ function main(): i32 {
 	}
 }
 
+// `var n: i64 = if cond { a * b } else { 0 };` failed with
+// "if-expression branches differ: i64 vs i32". The Then
+// arm typed as i64 (concrete from `a * b`), but the Else
+// arm's `0` was a polymorphic NumberLit that the checker
+// reports as `NumberType{Polymorphic: true}`. unifyIfArms
+// had no rule for polymorphic-vs-concrete, returned nil,
+// and the error fired before settleInt got a chance to
+// propagate the i64 hint to the literal.
+//
+// Fix: unifyIfArms treats a polymorphic NumberType as a
+// match for any concrete NumberType / FloatType, returning
+// the concrete side so settleInt can stamp the polymorphic
+// literal's width on the post-check pass.
+func TestArm64UnifyIfArmsPolymorphicNumeric(t *testing.T) {
+	src := `function main(): i32 {
+    var a: i64 = 1000000;
+    var b: i64 = 1234567;
+    var n: i64 = if (true) { a * b } else { 0 };
+    if (n == 1234567000000) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("if (a*b) else 0 with i64 lhs got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
