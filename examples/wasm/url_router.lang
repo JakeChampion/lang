@@ -14,6 +14,18 @@
 //   $ wasmtime serve url.wasm &
 //   $ curl 'http://localhost:8080/search?q=lang&tag=fast&tag=small'
 //   {"path":"/search","q":"lang","tags":["fast","small"]}
+import "core/no_prelude";
+// HttpRequest / HttpResponse + the synthesised tcp_serve main;
+// Url + url_parse + query_parse; JsonValue + json_encode; the
+// Map runtime; (string).split-style methods needed by the JSON
+// encoder's internals.
+import "std/http";
+import "std/tcp";
+import "std/url";
+import "std/json";
+import "core/map";
+import "std/string";
+
 // Pull each value of a multi-valued key out as a JString
 // array. `query_parse` always returns the full list per key,
 // even for single-valued keys.
@@ -53,18 +65,18 @@ function handle(req: HttpRequest): HttpResponse {
   // Build a "synthetic" full URL so url_parse has a host
   // to anchor against — req.path on its own is path+query.
   var full: string = "http://example.local" + req.path;
-  match (url_parse(full)) {
+  match (url.url_parse(full)) {
     None => {
       return HttpResponse { status: 400, body: "bad URL\n" };
     },
     Some(u) => {
       // u.path is the scheme/host-stripped path; u.query
       // is the raw `?` payload (no leading `?`).
-      var q: Map[string, string[]] = query_parse(u.query);
-      // Pipe form: describe(...) |> json_encode is the
-      // same as json_encode(describe(...)). Pure parse-
+      var q: Map[string, string[]] = url.query_parse(u.query);
+      // Pipe form: describe(...) |> json.json_encode is the
+      // same as json.json_encode(describe(...)). Pure parse-
       // time desugar — no runtime cost.
-      var body: string = describe(u.path, q) |> json_encode;
+      var body: string = describe(u.path, q) |> json.json_encode;
       return HttpResponse { status: 200, body: body };
     }
   }

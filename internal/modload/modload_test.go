@@ -989,3 +989,42 @@ function main(): i32 {
 		t.Fatalf("expected check to succeed (Array.sum dispatch resolves), got %v", err)
 	}
 }
+
+// Map runtime helpers — `map_new_impl`, `__map_*_impl`,
+// `__mapiter_*_impl` — keep their bare names under modload
+// because codegen rewrites the high-level `map_new` /
+// `__method_Map_*` calls to those concrete targets via
+// hardcoded `case` switches. If modload prefixed them to
+// `map__map_new_impl` etc., the codegen-emitted call site
+// would dangle: the bare-named symbol the assembler emits a
+// `bl` to wouldn't resolve at link time.
+//
+// Repro: a no-prelude program that uses `Map[string, i32]`
+// via `import "core/map"` would surface the failure as
+// `undefined reference to map_new_impl` from the linker.
+func TestLoadPreservesMapRuntimeHelperNames(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.lang": `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("answer", 42);
+    return m.get_or("answer", 0);
+}`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"map_new_impl", "__map_set_impl", "__map_get_or_impl"} {
+		if findFunc(prog, want) == nil {
+			t.Errorf("expected %q to keep its bare name; got: %v", want, funcNames(prog))
+		}
+	}
+	if findFunc(prog, "map__map_new_impl") != nil {
+		t.Errorf("modload should not prefix map_new_impl with the module prefix")
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("expected check to succeed (map runtime helpers resolve), got %v", err)
+	}
+}

@@ -495,6 +495,42 @@ func prefixFor(isEntry bool, name string) string {
 	return name + "__"
 }
 
+// isRuntimeHelperName reports whether a function name should be
+// exempt from modload's `<mod>__` prefix mangling. The set covers:
+//
+//   - `__method_<Type>_<Name>` receiver-method hoist targets.
+//     The checker's auto-discovery pass keys off the `__method_`
+//     prefix to register `Type.<Name>` in the Methods map.
+//   - `__map_*` / `__mapiter_*` Map runtime helpers. The codegen
+//     translates `__method_Map_get` etc. to `__map_get_impl` via
+//     a hardcoded `case` switch, so the target name has to live
+//     at its bare form for the call to resolve.
+//   - `map_new_impl` — the one Map runtime helper without the
+//     `__` prefix. `map_new` is a checker builtin that codegen
+//     rewrites to `map_new_impl`.
+//
+// Everything else gets the module prefix as usual. User-defined
+// `__foo` names in entry modules are unaffected (entry has no
+// prefix); user-defined `__foo` names in imported modules
+// would also stay bare under this rule but the convention in
+// this codebase is that `__`-prefixed names ARE runtime helpers,
+// so the bare-name preservation is correct.
+func isRuntimeHelperName(name string) bool {
+	if strings.HasPrefix(name, "__method_") {
+		return true
+	}
+	if strings.HasPrefix(name, "__map_") {
+		return true
+	}
+	if strings.HasPrefix(name, "__mapiter_") {
+		return true
+	}
+	if name == "map_new_impl" {
+		return true
+	}
+	return false
+}
+
 // rewriteAll walks the module's AST applying two related rewrites:
 //
 //   1. `selfPrefix` is prepended to every top-level Func / Struct
@@ -530,13 +566,13 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 	ownStructs := map[string]bool{}
 	ownConsts := map[string]bool{}
 	for _, fn := range m.prog.Funcs {
-		// `__method_<Type>_<Name>` decls keep their bare names
-		// (see the rename loop below for the rationale). Their
-		// internal references — bare-name calls to one method
-		// from another — must NOT pick up the module prefix
-		// either, or we'd produce `mod____method_<Type>_<Name>`
-		// idents that nothing in the combined Program resolves.
-		if strings.HasPrefix(fn.Name, "__method_") {
+		// Runtime / codegen helpers keep their bare names —
+		// see `isRuntimeHelperName` for the full rationale.
+		// Their internal references — bare-name calls between
+		// one helper and another — must NOT pick up the module
+		// prefix either, or we'd produce `mod__<name>` idents
+		// that nothing in the combined Program resolves.
+		if isRuntimeHelperName(fn.Name) {
 			continue
 		}
 		ownFuncs[fn.Name] = true
@@ -572,13 +608,13 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		// against the program's import-closure map.
 		//
 		// Same exemption applies to functions whose source-level
-		// name is already in `__method_<Type>_<Name>` form (e.g.
-		// std/array's `pub function __method_Array_sum(...)`).
-		// These are "manually hoisted" methods — the checker's
-		// auto-discovery pass keys off the `__method_` prefix to
-		// register them, so prefixing here would break dispatch
-		// the same way it would for syntactic receiver methods.
-		if fn.Receiver == nil && !strings.HasPrefix(fn.Name, "__method_") {
+		// name is a runtime / codegen helper — see
+		// `isRuntimeHelperName`. The checker's auto-discovery
+		// keys off the `__method_` prefix and the codegen's
+		// `case "map_new"` / `case "__map_get_impl"` / etc.
+		// switches resolve targets by their bare name; prefixing
+		// here would leave every call site dangling.
+		if fn.Receiver == nil && !isRuntimeHelperName(fn.Name) {
 			fn.Name = selfPrefix + fn.Name
 		} else if fn.Receiver != nil {
 			r.rewriteType(&fn.Receiver.Type)
