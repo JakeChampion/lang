@@ -9351,6 +9351,39 @@ func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
 	}
 }
 
+// `var m: Map[string, i64] = Map { "a": 1234567890123, ... };`
+// rejected with "cannot assign Map[string, i32] to variable
+// of type Map[string, i64]". MapLit's first-entry walk
+// returned `NumberType{Polymorphic: true}` for the bare
+// literal, and settleNumeric had no `ast.StructType` case
+// to flow the destination's V (i64) into each entry. The
+// IR also keyed off the MapLit's own `KeyType` /
+// `ValueType` stamps for the runtime keyKind / valKind
+// tags, so even compiling past the assignable check left
+// the box-allocator emitting the wrong stride for i64
+// values.
+//
+// Fix:
+//
+//   - settleNumeric gains a StructType case that walks each
+//     MapLit entry's key + value with the destination's
+//     `Map[K, V]` Args.
+//   - postSettleType returns a fresh StructType built from
+//     the resolved first entry, and refreshes the MapLit
+//     node's KeyType / ValueType in place so the IR sees
+//     the post-settle widths.
+func TestArm64MapLitI64ValueSettle(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i64] = Map { "a": 1234567890123, "b": 9876543210 };
+    var v: i64 = m.get_or("a", 0);
+    if (v == 1234567890123) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("Map[string, i64] literal got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
