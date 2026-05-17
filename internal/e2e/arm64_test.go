@@ -10815,6 +10815,78 @@ function main(): i32 {
 	}
 }
 
+// Programs that opt out of the auto-prelude via
+// `import "core/no_prelude";` must declare every stdlib module
+// they use. With the prelude-to-modules migration (PRs #505 → #513)
+// every stdlib module declares its own method-source imports —
+// std/i32 ↔ std/string ↔ std/array form cyclic dependencies that
+// modload's stdlib-cycle gate handles — so the user's explicit
+// imports transitively pull in everything the dispatched methods
+// need.
+//
+// Each case below proves a different slice of the no-prelude
+// stack:
+//
+//   - `i32_string_cycle` — std/i32 imports std/string for
+//     `pad_start` inside to_string_padded; the cycle resolves.
+//   - `array_method_chain` — std/array transitively pulls in
+//     std/i32 (for `.abs()` inside abs_each) and std/sort.
+//   - `qualified_int_call` — qualified `int.int_to_string_radix`
+//     resolves through modload's normal mangling path under
+//     no-prelude.
+//   - `mixed_stdlib` — multiple explicit imports compose cleanly.
+//
+// All programs return 0 on success and a small nonzero code on
+// the first failing assertion, so the exit-code channel is
+// enough to verify correctness end-to-end.
+func TestArm64NoPreludeStdlibImports(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+	}{
+		{"i32_string_cycle", `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
+    var s: string = (42).to_string_padded(6);
+    if (s == "000042") { return 0; }
+    return 1;
+}`},
+		{"array_method_chain", `import "core/no_prelude";
+import "std/array";
+function main(): i32 {
+    var xs: i32[] = [0 - 3, 4, 0 - 1];
+    var ys = xs.abs_each();
+    if (ys[0] + ys[1] + ys[2] == 8) { return 0; }
+    return 1;
+}`},
+		{"qualified_int_call", `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
+    var s: string = int.int_to_string_radix(255, 16);
+    if (s == "ff") { return 0; }
+    return 1;
+}`},
+		{"mixed_stdlib", `import "core/no_prelude";
+import "std/i32";
+import "std/string";
+import "std/array";
+function main(): i32 {
+    var s: string = (0 - 42).to_string();
+    if (s != "-42") { return 1; }
+    var strs: string[] = ["b", "a", "c"];
+    var joined: string = strs.join(",");
+    if (joined != "b,a,c") { return 2; }
+    return 0;
+}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != 0 {
+				t.Errorf("got exit %d, want 0", code)
+			}
+		})
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
