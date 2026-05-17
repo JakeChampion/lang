@@ -772,6 +772,21 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm
 		// is a future PR.
 		return false
 	}
+	// `__map_get_impl` is the call-target codegen's alias-
+	// rewrite path uses for `__method_Map_get`. The IR-side
+	// pair-form check at the call site keys off the user-
+	// visible name (`__method_Map_get`), which isn't a real
+	// FuncDecl in pairForm — so OpCallDirect (heap-box ABI)
+	// is emitted regardless. If the called function uses
+	// pair-form, the caller drops the payload (x1 / rdx)
+	// and reads garbage at the heap-box pointer dereference,
+	// segfaulting at runtime on natives. Force the Map
+	// runtime's Option-returning helpers to the heap-box
+	// path so the call-site ABI and the function's actual
+	// return shape agree.
+	if fn.Name == "__map_get_impl" {
+		return false
+	}
 	enumT, ok := fn.ReturnType.(ast.EnumType)
 	if !ok {
 		return false

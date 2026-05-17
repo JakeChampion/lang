@@ -8685,6 +8685,63 @@ func TestArm64Map(t *testing.T) {
 	}
 }
 
+// Regression for the `Map[K, V].get(k)` + `match` segfault on
+// natives. The IR rewrites `__method_Map_get` →
+// `__map_get_impl` (returns `Option[usize]`) but the caller
+// keys its pair-form lookup off the user-visible
+// `__method_Map_get` name. That alias isn't in `pairForm` —
+// so the call-site emits OpCallDirect (heap-box ABI) — yet
+// `__map_get_impl`'s body IS pair-form-eligible
+// (`if … return None; … return Some(…)`) and gets lowered
+// with the (tag, payload) register-return shape. The caller
+// then pushes x0 only (treating tag as a heap-box pointer)
+// and `ldr w0, [x0]` segfaults at the match's tag read.
+//
+// Fix: exclude `__map_get_impl` from pair-form eligibility
+// so its ABI matches what the call site expects (heap-box).
+// `m.get_or(k, default)` was unaffected — it returns V
+// directly, no Option wrapper.
+func TestArm64MapGetMatch(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"some_branch", `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m.set(7, 42);
+    match (m.get(7)) {
+        Some(v) => { return v; },
+        None => { return 0; }
+    }
+    return 1;
+}`, 42},
+		{"none_branch", `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    match (m.get(7)) {
+        Some(v) => { return 99; },
+        None => { return 0; }
+    }
+    return 1;
+}`, 0},
+		{"string_key", `function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("hello", 42);
+    match (m.get("hello")) {
+        Some(v) => { return v; },
+        None => { return 0; }
+    }
+    return 1;
+}`, 42},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,

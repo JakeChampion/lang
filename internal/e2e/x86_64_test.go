@@ -1465,6 +1465,50 @@ func TestX86_64Map(t *testing.T) {
 	}
 }
 
+// x86-64 sibling to TestArm64MapGetMatch — the same Map.get +
+// match segfault hit both natives via the same IR pair-form
+// alias mismatch. See the arm64 comment for the diagnosis.
+func TestX86_64MapGetMatch(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"some_branch", `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    m.set(7, 42);
+    match (m.get(7)) {
+        Some(v) => { return v; },
+        None => { return 0; }
+    }
+    return 1;
+}`, 42},
+		{"none_branch", `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    match (m.get(7)) {
+        Some(v) => { return 99; },
+        None => { return 0; }
+    }
+    return 1;
+}`, 0},
+		{"string_key", `function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("hello", 42);
+    match (m.get("hello")) {
+        Some(v) => { return v; },
+        None => { return 0; }
+    }
+    return 1;
+}`, 42},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // Sub-i32 array reads + casts. Exercises:
 //
 //   - OpLoadI8S  (i8[] read; x86-64 `movsx eax, byte ptr [rax]`)
