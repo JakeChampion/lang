@@ -1,3 +1,8 @@
+// Pure arithmetic — no stdlib needed, just the no-prelude
+// opt-out so the program's import list is its complete
+// dependency surface.
+import "core/no_prelude";
+
 function main(): i32 {
   var sum: i32 = 0;
   for (var i: i32 = 1; i <= 10; i = i + 1) {

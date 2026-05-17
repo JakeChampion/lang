@@ -1,3 +1,8 @@
+// `print` is a built-in, so no stdlib imports are needed —
+// just the no-prelude opt-out to declare that this program
+// won't be pulling anything from std/.
+import "core/no_prelude";
+
 function main(): i32 {
   print("Hello, world!");
   return 0;
