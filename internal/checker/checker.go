@@ -3959,10 +3959,27 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// [1, 2, 3]` should settle each element to u8 so the IR
 		// emits 1-byte stores. Stamp the AST node's ElemType too
 		// so the IR's ArrayLit lowering picks the right stride.
+		// IfExpr / MatchExpr forms: recurse into each arm so
+		// `var arr: i64[] = if cond { [...] } else { [...] }`
+		// reaches each branch's array literal.
 		if al, ok := e.(*ast.ArrayLit); ok {
 			al.ElemType = hn.Elem
 			for _, el := range al.Elems {
 				c.settleNumeric(el, hn.Elem)
+			}
+		} else if ie, ok := e.(*ast.IfExpr); ok {
+			if ie.Then != nil {
+				c.settleNumeric(ie.Then, hint)
+			}
+			if ie.Else != nil {
+				c.settleNumeric(ie.Else, hint)
+			}
+		} else if me, ok := e.(*ast.MatchExpr); ok {
+			for _, arm := range me.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
 			}
 		}
 	case ast.SliceType:
@@ -3970,6 +3987,20 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 			al.ElemType = hn.Elem
 			for _, el := range al.Elems {
 				c.settleNumeric(el, hn.Elem)
+			}
+		} else if ie, ok := e.(*ast.IfExpr); ok {
+			if ie.Then != nil {
+				c.settleNumeric(ie.Then, hint)
+			}
+			if ie.Else != nil {
+				c.settleNumeric(ie.Else, hint)
+			}
+		} else if me, ok := e.(*ast.MatchExpr); ok {
+			for _, arm := range me.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
 			}
 		}
 	case ast.TupleType:

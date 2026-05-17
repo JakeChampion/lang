@@ -9478,6 +9478,51 @@ function main(): i32 {
 	}
 }
 
+// Sibling to #545: settleNumeric for `ArrayType` /
+// `SliceType` hints only matched a top-level `*ast.ArrayLit`.
+// When the array literal sat inside an `IfExpr` or
+// `MatchExpr`, the destination element type never reached
+// the inner literal — `var arr: i64[] = if cond { [...] }
+// else { [...] };` rejected with
+// "cannot assign i32[] to variable of type i64[]".
+//
+// Fix: ArrayType and SliceType cases recurse through
+// IfExpr Then/Else and MatchExpr arm bodies with the same
+// hint. Same shape as the TupleType / EnumType fan-outs
+// added previously.
+func TestArm64SettleArraySliceInCondArms(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"if_expr_array", `function main(): i32 {
+    var cond: boolean = true;
+    var arr: i64[] = if (cond) { [1234567890123, 9876543210] } else { [0, 0] };
+    if (arr[0] == 1234567890123 && arr[1] == 9876543210) { return 0; }
+    return 1;
+}`, 0},
+		{"match_expr_array", `enum E { A, B }
+function pick(e: E): i64[] {
+    return match (e) {
+        A => [1234567890123, 9876543210],
+        B => [0, 0]
+    };
+}
+function main(): i32 {
+    var arr: i64[] = pick(A);
+    if (arr[0] == 1234567890123 && arr[1] == 9876543210) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
