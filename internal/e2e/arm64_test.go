@@ -9442,6 +9442,42 @@ function main(): i32 {
 	}
 }
 
+// Settle for `EnumType` hints recurses through if / match
+// arms. Before: `return match (c) { Set => Some(1234567890123),
+// Reset => Some(0), Init => None };` against an `Option[i64]`
+// return type silently produced `Some(0)` because the
+// settleNumeric EnumType case only matched a top-level
+// `*ast.Call` — when the variant constructor sat inside a
+// match arm body, the literal in `Some(...)` never saw
+// the destination's `T = i64` and stayed at the i32
+// default.
+//
+// Mirrors #534 (TupleType arm recursion) and #538
+// (match-arm unify) — same fan-out pattern for enum hints.
+func TestArm64SettleEnumInMatchAndIfArms(t *testing.T) {
+	src := `enum Cmd { Set, Reset, Init }
+function get(c: Cmd): Option[i64] {
+    return match (c) {
+        Set => Some(1234567890123),
+        Reset => Some(0),
+        Init => None
+    };
+}
+function main(): i32 {
+    match (get(Set)) {
+        Some(v) => {
+            if (v == 1234567890123) { return 0; }
+            return 1;
+        },
+        None => { return 2; },
+    }
+    return 99;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("Option[i64] from match arm got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,

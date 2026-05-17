@@ -4034,6 +4034,28 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// re-stamps `VariantCallPayloads` so the IR's
 		// emitEnumNew picks the resolved (no-longer-polymorphic)
 		// payload type for slot sizing + store-op selection.
+		// IfExpr / MatchExpr forms: recurse into each arm
+		// body so `return match (e) { A => Some(...) }`
+		// against an `Option[i64]` destination reaches the
+		// inner variant constructor.
+		if ie, ok := e.(*ast.IfExpr); ok {
+			if ie.Then != nil {
+				c.settleNumeric(ie.Then, hint)
+			}
+			if ie.Else != nil {
+				c.settleNumeric(ie.Else, hint)
+			}
+			return
+		}
+		if me, ok := e.(*ast.MatchExpr); ok {
+			for _, arm := range me.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
+			}
+			return
+		}
 		call, ok := e.(*ast.Call)
 		if !ok {
 			return
