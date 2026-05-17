@@ -24,6 +24,15 @@
 // invocation in an implicit arena (PR #200): all the strings
 // the handler builds get reclaimed at handler-return, so
 // multi-request long-running deployments don't leak.
+import "core/no_prelude";
+// HttpRequest / HttpResponse struct types live in std/http; the
+// synthesised `main()` calls into std/tcp; the f-string in
+// `body` interpolates an i32 length, which the formatter
+// dispatches through (i32).to_string from std/i32.
+import "std/http";
+import "std/tcp";
+import "std/i32";
+
 function handle(req: HttpRequest): HttpResponse {
   var body: string = f"{req.method} {req.path} ({len(req.body)} bytes)\n\n{req.body}";
   return HttpResponse { status: 200, body: body };

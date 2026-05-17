@@ -19,10 +19,12 @@
 // serialised wire bytes) is reclaimed before the next
 // `tcp_accept` — bump-allocator semantics matching the wasi-
 // http path's implicit `__http_entry` arena.
+import "core/no_prelude";
+// HttpRequest / HttpResponse struct types live in std/http; the
+// auto-synthesised `main()` calls into std/tcp.
+import "std/http";
+import "std/tcp";
 
 function handle(req: HttpRequest): HttpResponse {
-    return HttpResponse {
-        status: 200,
-        body: "method=" + req.method + " path=" + req.path + "\n"
-    };
+  return HttpResponse { status: 200, body: "method=" + req.method + " path=" + req.path + "\n" };
 }
