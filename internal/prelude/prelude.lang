@@ -3,19 +3,27 @@
 // any user code, so they get peephole / dce / inline optimisation
 // and drop into every backend without backend-specific shims.
 //
-// User code can shadow / override anything in this file by
-// declaring a same-named function — useful for testing or for
-// callers that need different semantics (eg a stricter
-// `s.parse_int()` that errors on whitespace).
+// This file is now JUST an import list. Every helper has migrated
+// into a `std/…` or `core/…` module — `injectPrelude` follows
+// the imports below via `modload.LoadStdlibFlatSkipping` and
+// inlines their bodies under the bare-name namespace user code
+// expects (`abs(...)`, `format(...)`, `int_to_string(...)`, etc.).
 //
-// stdlib imports here are auto-followed by `injectPrelude` (see
-// `internal/checker/checker.go`). Methods migrated out of the
-// prelude into `std/…` modules during the prelude-to-modules
-// migration (docs/PRELUDE-TO-MODULES.md) come back in this way
-// so existing programs keep working without changes. The
-// `injectPrelude` path dedupes against `ast.Program.LoadedStdlibPaths`
-// so a user program that explicitly `import`s the same stdlib
-// module via modload doesn't get a "method redeclared" error.
+// User code can shadow / override anything by declaring a same-
+// named function — useful for testing or for callers that need
+// different semantics (eg a stricter `s.parse_int()` that errors
+// on whitespace).
+//
+// The injected stdlib decls dedupe against
+// `ast.Program.LoadedStdlibPaths` so a user program that explicitly
+// `import`s the same stdlib module via modload doesn't get a
+// "method redeclared" error.
+//
+// Phase 5 of docs/PRELUDE-TO-MODULES.md flips the switch:
+// programs opt into `import "core/no_prelude";` today; once every
+// e2e + example program migrates to explicit imports the file
+// (and `injectPrelude` itself) goes away entirely.
+
 import "std/i32";
 import "std/i64";
 import "std/u32";
@@ -38,64 +46,3 @@ import "std/float";
 import "std/tcp";
 import "core/int";
 import "core/map";
-
-
-
-
-
-// i32 / byte (i32) receiver methods migrated out into
-// `std/i32` — see the `import "std/i32";` at the top of
-// this file. `injectPrelude` follows that import and brings
-// every `pub` method back into universal-visibility scope
-// so existing programs that call `.abs()` / `.clamp(…)` /
-// `.is_digit()` / etc. continue to work unchanged.
-//
-// === i64 power / gcd / lcm (parity with i32) ===
-
-
-
-
-// === i64 / u32 / u64 scalar methods ===
-//
-// Same shape as the i32 helpers above. i64.abs wraps on
-// i64::MIN since lang has no i128 to widen into — matches
-// Rust wrapping_abs. u32 / u64 have no abs (always non-
-// negative). All four numeric widths now have min / max /
-// clamp.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// === Array append ===
-//
-// `arr.push(v)` is lowered inline by the IR — see
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
