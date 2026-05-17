@@ -4207,6 +4207,30 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 			}
 			c.settleFloat(arm.Body, hf)
 		}
+	case *ast.Call:
+		// Generic-function call returning T against a float
+		// destination. Mirror the settleInt Call case so
+		// `var x: f64 = pick(true, 3.14, 0.0);` settles the
+		// arg widths and re-stamps TypeArgs for monomorph.
+		// Without this, the arg literals stayed at the f32
+		// / Polymorphic default and the f64 destination
+		// load returned garbage (observed: `0` for a
+		// `pick(true, 3.14, 0.0)` call).
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
+				for i, p := range fn.Params {
+					if i >= len(x.Args) {
+						break
+					}
+					if _, ok := p.Type.(ast.ParamType); ok {
+						c.settleFloat(x.Args[i], hf)
+					}
+				}
+				if len(fn.TypeParams) == 1 && len(x.TypeArgs) == 1 {
+					x.TypeArgs[0] = hf
+				}
+			}
+		}
 	}
 }
 
