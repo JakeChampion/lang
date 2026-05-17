@@ -5002,8 +5002,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("lsl x0, x1, x0")
 		g.push()
 	case ir.OpShrS:
+		// Right shift: `asr` (arithmetic) shifts in the sign
+		// bit — correct for signed types but it leaves
+		// `(u64::MAX >> 1)` at `0xFFFF…` instead of
+		// `0x7FFF…` because the sign bit propagates. Pick
+		// `lsr` (logical) for unsigned operands.
 		g.binPop()
-		g.emit("asr x0, x1, x0")
+		if op.Unsigned {
+			g.emit("lsr x0, x1, x0")
+		} else {
+			g.emit("asr x0, x1, x0")
+		}
 		g.push()
 
 	// -------- comparison (i32) --------
