@@ -9138,6 +9138,57 @@ func TestArm64ArrayIndexTupleFieldAccess(t *testing.T) {
 	}
 }
 
+// Regression for `var n: i64 = if cond { 1 } else { 2 }`
+// and the matching f64 / match-expression flavour. The
+// destination's int/float width never reached the arm
+// bodies because settleInt / settleFloat only recursed
+// through Unary / Binary nodes — IfExpr and MatchExpr were
+// no-ops. The arm-body literals stayed at the i32 / f32
+// default and the i64 / f64 load read the wrong width.
+//
+// Observed: `var n: i64 = if (true) { 1234567890123 } else
+// { 0 }` returned `1912276171` (the lower 32 bits of the
+// literal).
+//
+// Fix: settleInt + settleFloat recurse into IfExpr Then /
+// Else and MatchExpr arm bodies with the same hint.
+func TestArm64SettleIntFloatInCondArms(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"i64_if_expr", `function main(): i32 {
+    var cond: boolean = true;
+    var n: i64 = if (cond) { 1234567890123 } else { 0 };
+    if (n == 1234567890123) { return 0; }
+    return 1;
+}`, 0},
+		{"i64_match_expr", `enum E { A, B }
+function main(): i32 {
+    var e: E = A;
+    var n: i64 = match (e) {
+        A => 1234567890123,
+        B => 9876543210
+    };
+    if (n == 1234567890123) { return 0; }
+    return 1;
+}`, 0},
+		{"f64_if_expr", `function main(): i32 {
+    var cond: boolean = true;
+    var f: f64 = if (cond) { 3.14 } else { 0.0 };
+    if (f > 3.0 && f < 4.0) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
