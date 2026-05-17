@@ -3934,9 +3934,30 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// each element is checked in isolation by checkExpr.
 		// Walk in lockstep so element `i` settles to
 		// `hn.Elems[i]`.
-		if tl, ok := e.(*ast.TupleLit); ok && len(tl.Elems) == len(hn.Elems) {
-			for i, el := range tl.Elems {
-				c.settleNumeric(el, hn.Elems[i])
+		switch tl := e.(type) {
+		case *ast.TupleLit:
+			if len(tl.Elems) == len(hn.Elems) {
+				for i, el := range tl.Elems {
+					c.settleNumeric(el, hn.Elems[i])
+				}
+			}
+		case *ast.IfExpr:
+			// `return if cond { tup1 } else { tup2 }` — feed
+			// the destination tuple type into both arms so
+			// each arm's TupleLit settles its elements.
+			c.settleNumeric(tl.Then, hint)
+			if tl.Else != nil {
+				c.settleNumeric(tl.Else, hint)
+			}
+		case *ast.MatchExpr:
+			// `return match (e) { A => tup }` — each arm
+			// body is an expression that must produce the
+			// destination tuple type.
+			for _, arm := range tl.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
 			}
 		}
 	case ast.EnumType:
@@ -4117,6 +4138,34 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 				out[i] = postSettleType(el, tt.Elems[i])
 			}
 			return ast.TupleType{Elems: out}
+		}
+	case *ast.IfExpr:
+		// Recurse through `if cond { … } else { … }` — after
+		// settleNumeric walked both arms with the destination
+		// type, the unified shape lives in the arm bodies.
+		// First arm whose post-settle type differs from `prior`
+		// wins; otherwise both arms agreed with `prior`.
+		if x.Then != nil {
+			if t := postSettleType(x.Then, prior); t != nil {
+				return t
+			}
+		}
+		if x.Else != nil {
+			if t := postSettleType(x.Else, prior); t != nil {
+				return t
+			}
+		}
+	case *ast.MatchExpr:
+		// `return match (e) { Variant => tupleLit, … }` —
+		// recurse into each arm body and let it refresh the
+		// type. Same shape as IfExpr.
+		for _, arm := range x.Arms {
+			if arm == nil {
+				continue
+			}
+			if t := postSettleType(arm.Body, prior); t != nil {
+				return t
+			}
 		}
 	}
 	return prior
