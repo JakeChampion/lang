@@ -2507,6 +2507,15 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			result = armT
 			return
 		}
+		// Reuse the same widening rules as IfExpr (covers
+		// polymorphic-numeric vs concrete-numeric and the
+		// no-payload-vs-with-payload enum match). Falling
+		// through to ast.Equal first preserves existing
+		// behaviour for already-aligned pairs.
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
+			return
+		}
 		if !ast.Equal(result, armT) {
 			c.errf(p, "match-expression arms differ: %s vs %s", result, armT)
 		}

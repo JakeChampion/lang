@@ -9215,6 +9215,34 @@ func TestArm64UnifyIfArmsPolymorphicNumeric(t *testing.T) {
 	}
 }
 
+// Sibling to #537: the match-expression arm-unify path
+// used a plain ast.Equal check, so a polymorphic NumberLit
+// (`0`) in one arm vs a concrete i64 expression (`a * b`)
+// in another erred at type-check time as
+// "match-expression arms differ: i64 vs i32" — the literal
+// never reached settleInt to be widened.
+//
+// Fix: route the arm unify through `unifyIfArms` so the
+// polymorphic-vs-concrete widening rules apply to match
+// arms the same way they do to if-expression arms.
+func TestArm64MatchExprUnifyPolyNumeric(t *testing.T) {
+	src := `enum E { A, B }
+function main(): i32 {
+    var a: i64 = 1234567;
+    var b: i64 = 1000000;
+    var e: E = A;
+    var n: i64 = match (e) {
+        A => a * b,
+        B => 0
+    };
+    if (n == 1234567000000) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("match (a*b) (0) with i64 lhs got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
