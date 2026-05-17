@@ -9523,6 +9523,29 @@ function main(): i32 {
 	}
 }
 
+// Sibling to #546: settleNumeric for the StructType
+// (`Map[K, V]`) hint only matched a top-level
+// `*ast.MapLit`. When the map literal sat inside an
+// `IfExpr` or `MatchExpr`, the destination's V never
+// reached the inner literal, so a bare-i64 value stayed
+// at the i32 default and `Map[string, i64]` rejected as
+// `Map[string, i32]`.
+//
+// Fix: recurse the Map-shaped StructType hint into IfExpr
+// Then/Else and MatchExpr arm bodies.
+func TestArm64SettleMapLitInCondArms(t *testing.T) {
+	src := `function main(): i32 {
+    var cond: boolean = true;
+    var m: Map[string, i64] = if (cond) { Map { "a": 1234567890123 } } else { Map { "a": 0 } };
+    var v: i64 = m.get_or("a", 0);
+    if (v == 1234567890123) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("Map[string, i64] from if-expr got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,

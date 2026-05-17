@@ -4051,6 +4051,23 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.settleNumeric(ent.Key, hn.Args[0])
 				c.settleNumeric(ent.Value, hn.Args[1])
 			}
+		} else if ie, ok := e.(*ast.IfExpr); ok {
+			// `var m: Map[K, V] = if cond { Map {...} } else
+			// { Map {...} }` — fan out the destination Map type
+			// into both arms.
+			if ie.Then != nil {
+				c.settleNumeric(ie.Then, hint)
+			}
+			if ie.Else != nil {
+				c.settleNumeric(ie.Else, hint)
+			}
+		} else if me, ok := e.(*ast.MatchExpr); ok {
+			for _, arm := range me.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
+			}
 		}
 	case ast.EnumType:
 		// Variant constructor with a destination annotation:
