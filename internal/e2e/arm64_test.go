@@ -9281,6 +9281,40 @@ function main(): i32 {
 	}
 }
 
+// Regression for variant constructor calls whose payload
+// needed post-settle widening. `var o: Option[(i64, i32)] =
+// Some((1234567890123, 42));` failed with "cannot assign
+// Option[(i32, i32)] to variable of type Option[(i64, i32)]"
+// because postSettleType returned the pre-settle EnumType
+// type unchanged — it didn't recompute Args from the
+// post-settle constructor argument.
+//
+// settleNumeric DID propagate the destination type into
+// the tuple literal's elements (i64 stamped on the wide
+// literal), but the surrounding Some(...) call kept its
+// pre-settle (i32, i32) shape for the assignable check.
+//
+// Fix: postSettleType(*ast.Call) re-runs postSettleType on
+// each constructor argument when prior is an EnumType with
+// matching arity, rebuilding the Args from the resolved
+// argument types.
+func TestArm64PostSettleVariantCall(t *testing.T) {
+	src := `function main(): i32 {
+    var o: Option[(i64, i32)] = Some((1234567890123, 42));
+    match (o) {
+        Some(p) => {
+            if (p.0 == 1234567890123 && p.1 == 42) { return 0; }
+            return 1;
+        },
+        None => { return 2; },
+    }
+    return 99;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("Option[(i64, i32)] variant call got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
