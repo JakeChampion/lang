@@ -3685,6 +3685,16 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 				}
 			}
 		}
+	case *ast.Index:
+		// `arr[i].N` where arr is an array of tuples — the
+		// Index result's static type is the element type of
+		// the array. Without this, the IR's FieldAccess
+		// lowering falls through to the struct path,
+		// `fieldOwner` returns "", and codegen errors with
+		// `field access on unresolved struct ""`.
+		if t, ok := b.exprType(x).(ast.TupleType); ok {
+			return t, true
+		}
 	}
 	return ast.TupleType{}, false
 }
