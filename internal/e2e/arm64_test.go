@@ -9568,6 +9568,40 @@ func TestArm64FloatLitInTupleViaIfExpr(t *testing.T) {
 	}
 }
 
+// `struct S { v: Option[i64] }` initialised with `S { v:
+// None }` rejected with "field v: expected Option[i64],
+// got Option". The StructLit check used a raw `ast.Equal`
+// comparison between the field's declared type and the
+// value's `checkExpr` result — `None` checks to `Option`
+// with empty Args (the destination's T is unknown to the
+// caller), and the strict Equal fails.
+//
+// Same family as #541 (array element widen via
+// unifyIfArms). Fix: route StructLit's field-type mismatch
+// through `unifyIfArms`, which already knows
+// no-payload-vs-with-payload enums are compatible.
+func TestArm64StructFieldNoneOption(t *testing.T) {
+	src := `struct Wrap { inner: Option[i64] }
+function main(): i32 {
+    var w1: Wrap = Wrap { inner: Some(1234567890123) };
+    var w2: Wrap = Wrap { inner: None };
+    match (w1.inner) {
+        Some(v) => {
+            if (v != 1234567890123) { return 1; }
+        },
+        None => { return 2; },
+    }
+    match (w2.inner) {
+        Some(_) => { return 3; },
+        None => { return 0; },
+    }
+    return 99;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("struct { Option[i64] } with None initialiser got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
