@@ -2196,6 +2196,12 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		got := c.checkExpr(n.Value, s)
 		c.settleNumeric(n.Value, want)
+		// Refresh `got` from the post-settle AST — the
+		// `Var` path does the same via `postSettleType`,
+		// and a tuple / numeric-literal return would
+		// otherwise compare the pre-settle width against
+		// the function's declared return type.
+		got = postSettleType(n.Value, got)
 		got = c.maybeWrapForUnion(want, &n.Value, got, s)
 		if got != nil && !assignable(want, got) {
 			c.errf(n.P, "return type mismatch: function returns %s but expression is %s", want, got)
