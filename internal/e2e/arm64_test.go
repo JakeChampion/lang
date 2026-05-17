@@ -9315,6 +9315,42 @@ func TestArm64PostSettleVariantCall(t *testing.T) {
 	}
 }
 
+// `var arr: Option[i64][] = [Some(1234567890123), None,
+// Some(9876543210)];` failed with "array element type
+// Option, expected Option[i64]". The ArrayLit check
+// compared elements with raw `ast.Equal`, so a
+// `Some(literal)` (typed `Option[<polymorphic>]`) vs
+// a payloadless `None` (typed `Option` with empty Args)
+// triggered the error even though both shapes are
+// destination-compatible.
+//
+// Fix: ArrayLit element-check routes mismatches through
+// `unifyIfArms`, picking the concrete side. The
+// no-payload-vs-with-payload enum unify (already in
+// unifyIfArms) and the polymorphic-vs-concrete numeric
+// unify (#537) both flow through, so a mixed array of
+// Some / None lands on the concrete `Option[<num>]` and
+// settleNumeric walks each element with the right hint.
+func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
+	src := `function main(): i32 {
+    var arr: Option[i64][] = [Some(1234567890123), None, Some(9876543210)];
+    var s: i64 = 0;
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        match (arr[i]) {
+            Some(n) => { s = s + n; },
+            None => {},
+        }
+        i = i + 1;
+    }
+    if (s == 1244444433333) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("[Some(i64), None, Some(i64)] got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
