@@ -9,6 +9,12 @@
 // `import "std/format";` so existing bare-name callers
 // keep working unchanged.
 
+// std/format's bodies dispatch (i32) `.abs()` (for negative
+// sign handling) and (i32) `.to_string()` (in format_bytes /
+// format_duration_ms). Declare std/i32 so those methods
+// register under no-prelude.
+import "std/i32";
+
 // `format(fmt, args)` — runtime template substitution. Walks
 // fmt byte-by-byte, replacing each `{}` placeholder with the
 // next element of args. Extra args (more args than `{}`s) are

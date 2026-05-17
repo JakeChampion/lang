@@ -17,6 +17,11 @@
 // richer lang shape.
 
 import "core/int";
+// std/http's bodies dispatch (string) methods all over the
+// request parser and response builder — `.index_of()`,
+// `.split()`, `.trim()`, `.to_lower()`, etc. Declare std/string
+// so those receiver methods register under no-prelude.
+import "std/string";
 
 // `http_status_text(code)` — IANA reason phrase for the
 // common HTTP status codes (RFC 9110). Returns "" for

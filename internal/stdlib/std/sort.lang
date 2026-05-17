@@ -34,6 +34,11 @@
 // of the prelude's array conventions (`arr.push` returns a
 // new array); the input is not mutated.
 
+// std/sort's case-insensitive string comparison dispatches
+// (string) `.to_lower()` — declare std/string so the receiver
+// method registers under no-prelude.
+import "std/string";
+
 pub function sort_i32_asc(arr: i32[]): i32[] {
     var n: i32 = len(arr);
     var out: i32[] = [];
