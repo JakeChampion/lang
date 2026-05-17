@@ -9,6 +9,11 @@
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
+// Dispatches (string) `.index_of()` / `.replace()` on field
+// contents — declare std/string so the receiver methods register
+// under no-prelude.
+import "std/string";
+
 // === CSV escape / join ===
 //
 // `csv_escape(s)` — return a CSV field per RFC 4180. Fields

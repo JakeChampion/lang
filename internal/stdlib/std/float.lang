@@ -11,6 +11,11 @@
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
+// __float_to_string's body dispatches (i32) `.to_string()` on
+// the integer and fractional parts. Declare std/i32 so the
+// method registers under no-prelude.
+import "std/i32";
+
 function __float_to_string(n: f64, k: i32): string {
     if (n != n) { return "NaN"; }
     var out: string = "";
