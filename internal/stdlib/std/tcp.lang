@@ -31,6 +31,8 @@
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
+import "std/http";
+
 pub function tcp_serve(port: i32, handler: (HttpRequest) => HttpResponse): i32 {
     var listener: i32 = tcp_listen(port);
     if (listener < 0) {
@@ -83,7 +85,7 @@ pub function tcp_serve(port: i32, handler: (HttpRequest) => HttpResponse): i32 {
             if (len(buf) > 8192 + 1048576) {
                 break;
             }
-            match (http_parse_request(buf)) {
+            match (http.http_parse_request(buf)) {
                 Some(parsed) => {
                     req = parsed;
                     have_request = true;
@@ -103,7 +105,7 @@ pub function tcp_serve(port: i32, handler: (HttpRequest) => HttpResponse): i32 {
         }
         if (have_request) {
             var resp: HttpResponse = handler(req);
-            var wire: string = http_serialize_response(resp);
+            var wire: string = http.http_serialize_response(resp);
             tcp_send(fd, wire);
         }
         tcp_close(fd);
