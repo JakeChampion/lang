@@ -9036,6 +9036,35 @@ func TestArm64NestedTupleFieldExprType(t *testing.T) {
 	}
 }
 
+// `return (1234567890123, 42)` from a function with a
+// `(i64, i32)` signature used to be rejected as "return
+// type mismatch: function returns (i64, i32) but
+// expression is (i32, i32)". `settleNumeric` had been
+// taught to propagate tuple-element widths into the AST,
+// but the `Return` path didn't refresh its local `got`
+// from the post-settle tree — so the assignability check
+// still saw the pre-settle `(i32, i32)` shape and rejected
+// a valid return.
+//
+// Fix: feed `got` through `postSettleType` after
+// `settleNumeric`, mirroring the `Var` initializer path.
+func TestArm64ReturnTupleI64Settle(t *testing.T) {
+	src := `function pick(cond: boolean): (i64, i32) {
+    if (cond) {
+        return (1234567890123, 42);
+    }
+    return (9999999999999, 0 - 1);
+}
+function main(): i32 {
+    var p = pick(true);
+    if (p.0 == 1234567890123 && p.1 == 42) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("return (i64, i32) tuple got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
