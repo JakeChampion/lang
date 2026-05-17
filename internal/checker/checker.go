@@ -4298,11 +4298,34 @@ func hasMainDecl(prog *ast.Program) bool {
 // invokes the user's `handle` directly; main existing
 // alongside it costs nothing (wasi-http's _start is an empty
 // stub anyway).
+//
+// Under the auto-prelude, both `tcp_serve` and `__port_from_env`
+// live at their bare names (LoadStdlibFlat doesn't mangle).
+// Under no-prelude with `import "std/tcp";` they get the
+// modload `tcp__` prefix instead. We probe `prog.Funcs` for
+// whichever name exists and stamp the Ident accordingly so the
+// synthesised main resolves cleanly through both load paths.
 func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 	pos := ast.Position{}
+	resolve := func(bare, mangled string) string {
+		for _, fn := range prog.Funcs {
+			if fn.Name == bare {
+				return bare
+			}
+		}
+		for _, fn := range prog.Funcs {
+			if fn.Name == mangled {
+				return mangled
+			}
+		}
+		// Neither variant present — the bare name still gives
+		// the cleanest "undefined identifier" diagnostic when
+		// the program forgot to import std/tcp.
+		return bare
+	}
 	portCall := &ast.Call{
 		P:      pos,
-		Callee: &ast.Ident{P: pos, Name: "__port_from_env"},
+		Callee: &ast.Ident{P: pos, Name: resolve("__port_from_env", "tcp____port_from_env")},
 		Args: []ast.Expr{
 			&ast.StringLit{P: pos, Value: "PORT"},
 			&ast.NumberLit{P: pos, Value: 8080},
@@ -4310,7 +4333,7 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 	}
 	tcpServeCall := &ast.Call{
 		P:      pos,
-		Callee: &ast.Ident{P: pos, Name: "tcp_serve"},
+		Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve", "tcp__tcp_serve")},
 		Args: []ast.Expr{
 			portCall,
 			&ast.Ident{P: pos, Name: "handle"},
