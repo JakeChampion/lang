@@ -14,6 +14,12 @@
 //
 //   $ printf 'name,age\nada,36\ngrace,85\n' | wasmtime csv_to_json.wasm
 //   [{"name":"ada","age":"36"},{"name":"grace","age":"85"}]
+import "core/no_prelude";
+// json.json_encode for the final emit; std/string for the
+// (string).split / (string).trim methods inside row_to_object.
+import "std/json";
+import "std/string";
+
 function read_all(r: Reader): string {
   var out: string = "";
   while (true) {
@@ -56,6 +62,6 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  print(json_encode(JArray(rows)));
+  print(json.json_encode(JArray(rows)));
   return 0;
 }

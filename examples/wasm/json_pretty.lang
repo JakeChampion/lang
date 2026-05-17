@@ -18,6 +18,12 @@
 //       3.14
 //     ]
 //   }
+import "core/no_prelude";
+// json.json_parse / json.json_encode for the read/write halves;
+// std/string for (string).repeat used by the indent helper.
+import "std/json";
+import "std/string";
+
 function read_all(r: Reader): string {
   var out: string = "";
   while (true) {
@@ -52,7 +58,7 @@ function pretty(v: JsonValue, depth: i32): string {
     JString(s) => {
       // Round-trip via json_encode so escapes are
       // re-applied identically to the parser's input.
-      return json_encode(JString(s));
+      return json.json_encode(JString(s));
     },
     JArray(elems) => {
       if (len(elems) == 0) {
@@ -84,7 +90,7 @@ function pretty(v: JsonValue, depth: i32): string {
         first = false;
         var k: string = it.key();
         var entry_v: JsonValue = it.value();
-        obj_out = obj_out + pad_inner + json_encode(JString(k)) + ": " + pretty(entry_v, depth + 1);
+        obj_out = obj_out + pad_inner + json.json_encode(JString(k)) + ": " + pretty(entry_v, depth + 1);
         it.advance();
       }
       return obj_out + "\n" + pad + "}";
@@ -95,7 +101,7 @@ function pretty(v: JsonValue, depth: i32): string {
 
 function main(): i32 {
   var input: string = read_all(stdin());
-  match (json_parse(input)) {
+  match (json.json_parse(input)) {
     Some(v) => {
       print(pretty(v, 0));
       return 0;
