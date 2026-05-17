@@ -2,7 +2,12 @@
 // resolver path. Both prefixes share the same Resolve code path
 // in stdlib.go, but a test fixture in each keeps the embedded-FS
 // directory tree non-empty (go:embed of an empty directory is
-// a build error) and proves both branches independently.
+// a build error) and proves both branches independently. Imports
+// std/_test_empty (which imports this file back) to form the
+// minimal stdlib-cycle test fixture; the cycle gate in
+// modload.loadRecursive lets the back-edge through.
+
+import "std/_test_empty";
 
 pub function core_test_marker(): i32 {
     return 7;
