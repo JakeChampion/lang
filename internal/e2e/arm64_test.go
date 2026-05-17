@@ -9546,6 +9546,28 @@ func TestArm64SettleMapLitInCondArms(t *testing.T) {
 	}
 }
 
+// Sibling to #530's NumberLit case. The IR's
+// b.exprType(*ast.FloatLit) returned nil — TupleLit
+// slot-sizing fell back to the 4-byte default for
+// `(3.14, 42)` against `(f64, i32)` and the f64 store /
+// load mis-aligned its operand-stack slot. Observed:
+// `var p: (f64, i32) = if (true) { (3.14, 42) } else
+// { (0.0, 0) };` printed `0` for p.0 instead of `3.14`.
+//
+// Fix: exprType(*ast.FloatLit) returns `FloatType{Width:
+// x.Width}` once the checker has stamped a width.
+func TestArm64FloatLitInTupleViaIfExpr(t *testing.T) {
+	src := `function main(): i32 {
+    var cond: boolean = true;
+    var p: (f64, i32) = if (cond) { (3.14, 42) } else { (0.0, 0) };
+    if (p.0 > 3.0 && p.0 < 4.0 && p.1 == 42) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("(f64, i32) tuple via if-expr got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,

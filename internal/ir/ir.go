@@ -3509,6 +3509,17 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if x.Width != 0 {
 			return ast.NumberType{Width: x.Width, Signed: !x.IsUnsigned}
 		}
+	case *ast.FloatLit:
+		// Mirror the NumberLit handling above for float-
+		// literal source forms (`3.14`, `1.5e10`). The
+		// checker stamps `Width` once the destination
+		// commits; without this, a tuple-literal `(3.14,
+		// 42)` against `(f64, i32)` saw payloadSlotSize
+		// fall back to its 4-byte default and the f64
+		// store/load mis-aligned its operand-stack slot.
+		if x.Width != 0 {
+			return ast.FloatType{Width: x.Width}
+		}
 	case *ast.FieldAccess:
 		// Tuple field access (`pair.0`) — resolve the static
 		// tuple type, parse the numeric selector, and look up
