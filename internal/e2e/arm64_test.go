@@ -9011,6 +9011,31 @@ function main(): i32 {
 	}
 }
 
+// Regression for tuple-field-access in a tuple literal.
+// `b.exprType(*ast.FieldAccess)` only handled struct field
+// access via `fieldOwner`; tuple field access (numeric
+// selector like `inner.0`) fell through and returned nil.
+// TupleLit slot-sizing then defaulted to 4 bytes per
+// element, truncating wide i64 reads.
+//
+// Observed: `(inner.0, inner.1)` where inner is `(i64, i32)`
+// returned a garbage i64 (`182300902603`) and `0` instead of
+// the original `(1234567890123, 42)`.
+//
+// Fix: exprType(FieldAccess) now checks `targetTupleType`
+// first and returns the element type for numeric selectors.
+func TestArm64NestedTupleFieldExprType(t *testing.T) {
+	src := `function main(): i32 {
+    var inner: (i64, i32) = (1234567890123, 42);
+    var p: (i64, i32) = (inner.0, inner.1);
+    if (p.0 == 1234567890123 && p.1 == 42) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("nested tuple field access got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
