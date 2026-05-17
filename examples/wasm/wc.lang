@@ -11,6 +11,13 @@
 //   $ lang -target wasm -wasi-adapter ... -o wc.wasm wc.lang
 //   $ wasmtime --dir=. wc.wasm README.md docs/LANGUAGE-DIRECTION.md
 //   ...
+import "core/no_prelude";
+// (string).split / (string).is_empty inside count_chunk; the
+// f-string in format_counts dispatches (i32).to_string on
+// each Counts field.
+import "std/string";
+import "std/i32";
+
 struct Counts { lines: i32, words: i32, bytes: i32 }
 
 function count_chunk(chunk: string, acc: Counts): Counts {
