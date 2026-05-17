@@ -1,6 +1,12 @@
 // std/_test_empty — single-function fixture used by the modload
 // stdlib-resolver tests to prove the `import "std/…"` resolver
-// wiring works end-to-end before real modules land.
+// wiring works end-to-end before real modules land. Also imports
+// core/_test_empty (which imports this file back) so the
+// stdlib-cycle code path in modload.loadRecursive +
+// resolveCyclicImports has a live test fixture to exercise —
+// without the cycle gate the back-edge here would be rejected.
+
+import "core/_test_empty";
 
 pub function stdlib_test_marker(): i32 {
     return 42;

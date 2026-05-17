@@ -65,6 +65,7 @@ func Load(entryPath string) (*ast.Program, map[string]string, error) {
 	if err := loadRecursive(entryAbs, loaded, stack, srcs); err != nil {
 		return nil, nil, err
 	}
+	resolveCyclicImports(loaded)
 	prog, err := combine(loaded, entryAbs)
 	if err != nil {
 		return nil, nil, err
@@ -106,6 +107,7 @@ func LoadStdlibFlat(paths []string) (*ast.Program, error) {
 			return nil, err
 		}
 	}
+	resolveCyclicImports(loaded)
 	combined := &ast.Program{
 		LoadedStdlibPaths: map[string]bool{},
 	}
@@ -160,6 +162,11 @@ type module struct {
 	name    string
 	prog    *ast.Program
 	imports map[string]*module // local-name → loaded module
+	// importPaths mirrors imports keyed by the canonical child path
+	// rather than the loaded module pointer. Used to patch a nil
+	// imports[localName] entry once every cyclically-loaded module
+	// is in the global `loaded` map (see resolveCyclicImports).
+	importPaths map[string]string
 	// publicFuncs / publicStructs / publicConsts hold the original
 	// (pre-mangle) names of `pub` decls, populated when the module
 	// loads. The rewriter uses them to gate cross-module references.
@@ -176,12 +183,22 @@ type module struct {
 // loadRecursive parses path (if not already loaded), then recurses
 // into every import. Cycle detection uses the in-flight `stack`:
 // if we're asked to load a path we're already loading, that's a
-// cycle and the load fails.
+// cycle. Disk-path cycles error; stdlib-to-stdlib cycles are
+// allowed (the stdlib's method graph has natural cycles —
+// std/string's bodies dispatch (i32) byte methods from std/i32;
+// std/i32's bodies dispatch (string) methods from std/string —
+// and modload's role here is to surface every needed source file,
+// not to enforce a strict DAG). When a stdlib cycle is detected
+// we just return without recursing; the back-edge's `imports`
+// pointer is patched up in the second pass below.
 func loadRecursive(path string, loaded map[string]*module, stack map[string]bool, srcs map[string]string) error {
 	if _, done := loaded[path]; done {
 		return nil
 	}
 	if stack[path] {
+		if strings.HasPrefix(path, stdlibPrefix) {
+			return nil
+		}
 		return fmt.Errorf("import cycle detected including %s", path)
 	}
 	stack[path] = true
@@ -227,6 +244,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		name:          importLocalName(path),
 		prog:          prog,
 		imports:       map[string]*module{},
+		importPaths:   map[string]string{},
 		publicFuncs:   map[string]bool{},
 		publicStructs: map[string]bool{},
 		publicConsts:  map[string]bool{},
@@ -263,10 +281,35 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 			return fmt.Errorf("%s: import name %q bound twice (paths %s and %s)",
 				path, imp.LocalName, existing.path, child.path)
 		}
+		// child may be nil if the recursive load short-circuited
+		// on a stdlib cycle above — the back-edge's parent isn't
+		// in `loaded` yet. `importPaths` records the canonical
+		// path under each local name so the caller of
+		// loadRecursive (`Load` / `LoadStdlibFlat`) can patch the
+		// pointer in a second pass once every module is loaded.
 		mod.imports[imp.LocalName] = child
+		mod.importPaths[imp.LocalName] = childPaths[i]
 	}
 	loaded[path] = mod
 	return nil
+}
+
+// resolveCyclicImports walks every loaded module and fills in any
+// `imports[localName]` entry that's nil because the corresponding
+// child wasn't yet in `loaded` at the time loadRecursive set up the
+// parent's imports map (stdlib cycle back-edge). Idempotent; safe
+// to call when there are no cycles.
+func resolveCyclicImports(loaded map[string]*module) {
+	for _, mod := range loaded {
+		for localName, childPath := range mod.importPaths {
+			if mod.imports[localName] != nil {
+				continue
+			}
+			if child, ok := loaded[childPath]; ok {
+				mod.imports[localName] = child
+			}
+		}
+	}
 }
 
 // resolveImportPath turns an `import "./util"` style path into a

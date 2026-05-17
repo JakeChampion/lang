@@ -210,6 +210,46 @@ pub function fb(): i32 { return a.fa(); }`,
 	}
 }
 
+// Cycles between two STDLIB modules are allowed — the stdlib's
+// method graph has natural cycles (std/string ↔ std/i32 for byte
+// methods both ways) that modload's regular cycle gate would
+// reject. The back-edge's imports[localName] pointer is patched
+// up in a second pass once both modules are in `loaded`.
+//
+// The `_test_empty` fixtures import each other to form the
+// canonical cycle (std/_test_empty ↔ core/_test_empty). Before
+// the cycle gate this load would error with
+// `import cycle detected including stdlib://…`.
+func TestLoadStdlibFlatAllowsCycles(t *testing.T) {
+	prog, err := modload.LoadStdlibFlat([]string{"std/_test_empty"})
+	if err != nil {
+		t.Fatalf("LoadStdlibFlat(std/_test_empty) failed under stdlib cycle: %v", err)
+	}
+	// Both ends of the cycle should be in the combined Program.
+	if findFunc(prog, "stdlib_test_marker") == nil {
+		t.Errorf("expected stdlib_test_marker in combined Program: %v", funcNames(prog))
+	}
+	if findFunc(prog, "core_test_marker") == nil {
+		t.Errorf("expected core_test_marker pulled in via cycle: %v", funcNames(prog))
+	}
+}
+
+// Same cycle through the regular Load path (which mangles
+// non-entry decls). Confirms the gate isn't LoadStdlibFlat-
+// specific — any user program that imports a cyclically-
+// referencing pair of stdlib modules goes through the same
+// codepath.
+func TestLoadAllowsStdlibCyclesViaUserImport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.lang": `import "core/no_prelude";
+import "std/_test_empty";
+function main(): i32 { return _test_empty.stdlib_test_marker(); }`,
+	})
+	if _, _, err := modload.Load(filepath.Join(dir, "main.lang")); err != nil {
+		t.Fatalf("Load of program importing cyclic stdlib failed: %v", err)
+	}
+}
+
 // Two imports binding to the same local name in the same file is a
 // load-time error — qualified calls would be ambiguous.
 func TestLoadRejectsDuplicateLocalName(t *testing.T) {
