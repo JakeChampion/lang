@@ -223,26 +223,39 @@ Tasks:
       - `internal/prelude/prelude.lang` is now a bare import
         block — every helper / receiver method / runtime
         function lives in a module.
-- [ ] Phase 5 — drop auto-injection. Foundation landed:
+- [ ] Phase 5 — drop auto-injection. Foundation fully landed:
       `import "core/no_prelude";` is the opt-out sentinel
-      (#498). `modload.LoadStdlibFlat` (auto-prelude routed
-      through modload's rewriter in flat-namespace mode) lets
-      stdlib modules use qualified imports — `import
-      "core/int";` plus `int.foo(...)` — and the rewriter
-      strips the qualifier to the bare-named decl in the
-      combined Program. The auto-prelude path is now the same
-      machinery as user-program loading, just with `prefixFor`
-      forced to "" so decls stay bare-named for user code's
-      sake. Remaining work:
-      - Migrate every stdlib module's bare-name cross-module
-        calls to qualified form (one stdlib module per PR;
-        `std/u32` is the canary). This is what makes Phase 5
-        possible: under no-prelude the qualified calls
-        rewrite through modload's normal mangling path the
-        same way they rewrite through the flat-namespace
-        path here.
+      (#498). `modload.LoadStdlibFlat` /
+      `LoadStdlibFlatSkipping` route the auto-prelude through
+      modload's rewriter in flat-namespace mode — qualified
+      imports inside stdlib bodies (`int.foo(...)`) rewrite
+      to bare-named decls on the auto-prelude path AND to
+      mangled `int__foo` decls on the no-prelude path
+      depending on which copy of the target module survives.
+      Stdlib-to-stdlib import cycles are now allowed
+      (`std/i32` ↔ `std/string`); the back-edge's `imports`
+      pointer is patched up in a second pass once both
+      modules are in `loaded` (#510). The checker's
+      `methodVisibleHere` treats any cross-stdlib method
+      call as universally visible (#509), so stdlib bodies
+      don't need to enumerate every method-source import
+      under no-prelude — only the explicit `import`
+      declarations matter for which modules `modload`
+      loads. Every stdlib module's cross-module
+      free-function calls are qualified (#505 → #508) and
+      every stdlib module that dispatches methods from
+      another stdlib module now declares the corresponding
+      `import` (#511 → #513). End-to-end coverage on
+      arm64 / x86-64 / wasm32 lands as the
+      `Test*NoPreludeStdlibImports` suites (#514 / #515).
+      Remaining work:
       - Convert every e2e + example test program to declare
-        its imports explicitly.
+        its imports explicitly. Each program would add
+        `import "core/no_prelude";` plus one `import "std/X";`
+        line per stdlib module it touches. Free-function
+        calls become qualified (`int.int_to_string_radix(s, 16)`);
+        bare receiver methods (`.abs()`, `.to_string()`)
+        stay unchanged.
       - Once the suite passes with no-prelude as the default,
         flip the switch and remove `injectPrelude` + the
         `internal/prelude` package.
