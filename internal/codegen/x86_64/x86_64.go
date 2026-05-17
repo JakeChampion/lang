@@ -746,32 +746,58 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit("imul rax, rcx")
 		g.push()
 	case ir.OpDivS:
-		// 32-bit signed divide: cdq sign-extends eax → edx,
-		// then idiv ecx puts quotient in eax / remainder in
-		// edx. Matches arm64's `sdiv w0, w1, w0` shape (w-
-		// form). Unsigned divide is xor edx, edx + div ecx.
+		// Signed/unsigned divide. Width-aware: i32 / u32 go
+		// through eax/ecx; i64 / u64 / usize through rax/rcx.
+		// `cdq` (i32) and `cqo` (i64) sign-extend rax into
+		// rdx; `xor edx, edx` / `xor rdx, rdx` clear rdx for
+		// unsigned. Without the width split, i64 dividends
+		// truncated to their lower 32 bits — `mag / 10`
+		// inside __int_to_string_u64 stringified large i64s
+		// as their mod-2^32 projections.
 		g.binPop()
-		if op.Unsigned {
-			g.emit("xor edx, edx")
-			g.emit("div ecx")
+		if op.Width == 64 {
+			if op.Unsigned {
+				g.emit("xor rdx, rdx")
+				g.emit("div rcx")
+			} else {
+				g.emit("cqo")
+				g.emit("idiv rcx")
+			}
 		} else {
-			g.emit("cdq")
-			g.emit("idiv ecx")
+			if op.Unsigned {
+				g.emit("xor edx, edx")
+				g.emit("div ecx")
+			} else {
+				g.emit("cdq")
+				g.emit("idiv ecx")
+			}
 		}
 		g.push()
 	case ir.OpRemS:
-		// Same prologue as OpDivS; remainder lives in edx
-		// post-instruction. mov eax, edx routes it back to
-		// the canonical "result in rax" lane before the push.
+		// Same prologue as OpDivS; remainder lives in
+		// rdx / edx post-instruction. `mov rax, rdx` /
+		// `mov eax, edx` routes it back to the canonical
+		// "result in rax" lane before the push.
 		g.binPop()
-		if op.Unsigned {
-			g.emit("xor edx, edx")
-			g.emit("div ecx")
+		if op.Width == 64 {
+			if op.Unsigned {
+				g.emit("xor rdx, rdx")
+				g.emit("div rcx")
+			} else {
+				g.emit("cqo")
+				g.emit("idiv rcx")
+			}
+			g.emit("mov rax, rdx")
 		} else {
-			g.emit("cdq")
-			g.emit("idiv ecx")
+			if op.Unsigned {
+				g.emit("xor edx, edx")
+				g.emit("div ecx")
+			} else {
+				g.emit("cdq")
+				g.emit("idiv ecx")
+			}
+			g.emit("mov eax, edx")
 		}
-		g.emit("mov eax, edx")
 		g.push()
 	case ir.OpAnd:
 		g.binPop()
@@ -813,19 +839,19 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 
 	case ir.OpEq:
 		g.binPop()
-		g.emit("cmp eax, ecx")
+		g.cmpForWidth(op.Width)
 		g.emit("sete al")
 		g.emit("movzx eax, al")
 		g.push()
 	case ir.OpNe:
 		g.binPop()
-		g.emit("cmp eax, ecx")
+		g.cmpForWidth(op.Width)
 		g.emit("setne al")
 		g.emit("movzx eax, al")
 		g.push()
 	case ir.OpLtS:
 		g.binPop()
-		g.emit("cmp eax, ecx")
+		g.cmpForWidth(op.Width)
 		if op.Unsigned {
 			g.emit("setb al")
 		} else {
@@ -835,7 +861,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push()
 	case ir.OpLeS:
 		g.binPop()
-		g.emit("cmp eax, ecx")
+		g.cmpForWidth(op.Width)
 		if op.Unsigned {
 			g.emit("setbe al")
 		} else {
@@ -845,7 +871,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push()
 	case ir.OpGtS:
 		g.binPop()
-		g.emit("cmp eax, ecx")
+		g.cmpForWidth(op.Width)
 		if op.Unsigned {
 			g.emit("seta al")
 		} else {
@@ -855,7 +881,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push()
 	case ir.OpGeS:
 		g.binPop()
-		g.emit("cmp eax, ecx")
+		g.cmpForWidth(op.Width)
 		if op.Unsigned {
 			g.emit("setae al")
 		} else {
@@ -1611,6 +1637,20 @@ func (g *generator) binPop() {
 	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
 	g.emit("mov rax, [rsp]") // lhs (next)
 	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
+}
+
+// cmpForWidth emits a `cmp` whose operand size matches the
+// integer width — `cmp rax, rcx` for i64 / u64 / usize (width
+// 64 or pointer-width), `cmp eax, ecx` for i32 and narrower.
+// The 32-bit form silently truncated i64 operands to their
+// lower 32 bits and mis-compared values whose upper bits
+// matter — see the matching arm64 helper for the diagnosis.
+func (g *generator) cmpForWidth(width int) {
+	if width == 64 || width == ir.WidthPtr {
+		g.emit("cmp rax, rcx")
+		return
+	}
+	g.emit("cmp eax, ecx")
 }
 
 // fbinPop pops two float-shaped values off the operand stack
