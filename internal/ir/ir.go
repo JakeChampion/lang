@@ -3503,6 +3503,18 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 			return ast.NumberType{Width: x.Width, Signed: !x.IsUnsigned}
 		}
 	case *ast.FieldAccess:
+		// Tuple field access (`pair.0`) — resolve the static
+		// tuple type, parse the numeric selector, and look up
+		// the element type. Without this the struct path
+		// below falls through to `fieldOwner` (which returns
+		// "" for tuples) and exprType returns nil — the
+		// surrounding TupleLit slot-sizing then defaulted to
+		// 4 bytes and truncated wide elements.
+		if tup, ok := b.targetTupleType(x.Target); ok {
+			if idx, err := strconv.Atoi(x.Field); err == nil && idx >= 0 && idx < len(tup.Elems) {
+				return tup.Elems[idx]
+			}
+		}
 		// Struct field access. `r.body` on `r: HttpRequest`
 		// needs to resolve to `string` so `len(r.body)` routes
 		// through OpStrLen for the SSO seam. Look up the
