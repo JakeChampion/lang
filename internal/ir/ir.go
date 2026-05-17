@@ -3474,6 +3474,20 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if x.IsStringCmp {
 			return ast.BoolType{}
 		}
+		// Numeric binaries — return a NumberType / FloatType
+		// shaped by the checker's stamps so the IR can size
+		// payload slots correctly for tuple / struct elements.
+		// Without this, `(a + b)` in a tuple literal lands
+		// with type nil → payloadSlotSize defaults to 4 →
+		// tupleElemLayout packs i64 / f64 elements at 4-byte
+		// offsets → both stores clobber each other's high
+		// bits.
+		if x.FloatWidth != 0 {
+			return ast.FloatType{Width: x.FloatWidth}
+		}
+		if x.IntWidth != 0 {
+			return ast.NumberType{Width: x.IntWidth, Signed: !x.IsUnsigned}
+		}
 	case *ast.StringLit:
 		return ast.StringType{}
 	case *ast.FieldAccess:

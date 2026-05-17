@@ -8869,6 +8869,61 @@ func TestArm64UnsignedRightShift(t *testing.T) {
 	}
 }
 
+// Regression for the tuple-literal i64-element layout bug.
+// `(a + b, a - b)` where both operands are i64 used to lay
+// out the tuple with 4-byte slots (size=8, offsets {0, 4})
+// instead of 8-byte slots (size=16, offsets {0, 8}), so the
+// second element's store partially clobbered the first's
+// high half. Cross-target — wasm rejected the wat at parse
+// time ("type mismatch: expected i32, found i64"); natives
+// produced silently-wrong values (sums of garbage high
+// bits).
+//
+// Root cause: `b.exprType(*ast.Binary)` only handled the
+// string-concat / string-cmp special cases and returned nil
+// for numeric binaries. `payloadSlotSize(nil, ptrW)`
+// defaulted to 4. Now exprType returns
+// `NumberType{Width: x.IntWidth}` / `FloatType{Width: x.FloatWidth}`
+// when the checker stamped one.
+func TestArm64I64TupleElementLayout(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"add_sub_pair", `function compute(a: i64, b: i64): (i64, i64) {
+    return (a + b, a - b);
+}
+function main(): i32 {
+    var p = compute(1234567890123, 1000);
+    if (p.0 == 1234567891123 && p.1 == 1234567889123) { return 0; }
+    return 1;
+}`, 0},
+		{"divmod_inline", `function compute(a: i64, b: i64): (i64, i64) {
+    return (a / b, a - (a / b) * b);
+}
+function main(): i32 {
+    var p = compute(1234567890123, 1000);
+    if (p.0 == 1234567890 && p.1 == 123) { return 0; }
+    return 1;
+}`, 0},
+		{"f64_elements", `function pair(a: f64, b: f64): (f64, f64) {
+    return (a + b, a * b);
+}
+function main(): i32 {
+    var p = pair(1.5, 2.5);
+    if (p.0 == 4.0 && p.1 == 3.75) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
