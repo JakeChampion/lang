@@ -14,6 +14,14 @@
 //   3\ta
 //   2\tb
 //   1\tc
+import "core/no_prelude";
+// Map runtime for the count table; std/string for
+// (string).to_lower and the tokenisation byte-class methods;
+// std/i32 for the f-string interpolation of counts.
+import "core/map";
+import "std/string";
+import "std/i32";
+
 function read_all(r: Reader): string {
   var out: string = "";
   while (true) {

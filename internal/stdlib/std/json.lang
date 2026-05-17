@@ -23,6 +23,16 @@
 // payload string verbatim — the responsibility for valid
 // numeric formatting sits with the caller.
 
+// json_encode walks Map[string, JsonValue] for JObject values
+// via `.iter()` / `.has_next()` / `.key()` / `.value()`;
+// json_parse builds one with `map_new` / `.set(...)`. Declare
+// core/map so the receiver methods register under no-prelude
+// and the Map runtime helpers link cleanly.
+import "core/map";
+// String / byte methods inside the encoder / parser bodies.
+import "std/string";
+import "std/i32";
+
 function __json_hex_lower(d: i32): i32 {
     if (d < 10) { return d + 48; }   // '0' + d
     return d + 87;                    // 'a' - 10 + d
