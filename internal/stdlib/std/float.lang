@@ -11,10 +11,14 @@
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
-// __float_to_string's body dispatches (i32) `.to_string()` on
-// the integer and fractional parts. Declare std/i32 so the
-// method registers under no-prelude.
+// __float_to_string's body dispatches (i64) `.to_string()` on
+// the integer and fractional parts (both `intPart` / `fracInt`
+// are i64 to avoid the `f64 → i32` truncation pitfall on
+// large magnitudes). Declare std/i64 so the receiver method
+// registers under no-prelude. std/i32 stays imported for the
+// trailing-zero loop's i32 arithmetic.
 import "std/i32";
+import "std/i64";
 
 function __float_to_string(n: f64, k: i32): string {
     if (n != n) { return "NaN"; }
