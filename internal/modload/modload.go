@@ -95,6 +95,25 @@ func Load(entryPath string) (*ast.Program, map[string]string, error) {
 // against any same-paths loaded via the entry program's
 // `import` statements.
 func LoadStdlibFlat(paths []string) (*ast.Program, error) {
+	return LoadStdlibFlatSkipping(paths, nil)
+}
+
+// LoadStdlibFlatSkipping is LoadStdlibFlat with a `skipPaths` set
+// of canonical `stdlib://…` paths that should not contribute decls
+// to the combined Program. Transitive imports through stdlib still
+// load + rewrite (so receiver-method visibility / publicFuncs
+// metadata stays consistent with the full graph), but the
+// combine step skips the modules whose path is in skipPaths.
+//
+// Used by the checker's auto-prelude injection path: the entry
+// program may have already loaded some stdlib modules through the
+// regular `modload.Load` mangling path, and re-loading them
+// flat-namespace here would surface duplicate decls — receiver
+// method `__method_<Type>_<Name>` names land bare under both
+// modes and the checker's redeclaration gate fires. skipPaths
+// lets the caller exclude those modules from the auto-prelude
+// contribution.
+func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Program, error) {
 	loaded := map[string]*module{}
 	stack := map[string]bool{}
 	srcs := map[string]string{}
@@ -116,7 +135,7 @@ func LoadStdlibFlat(paths []string) (*ast.Program, error) {
 	}
 	var firstErr error
 	for _, mod := range loaded {
-		errs := mod.rewriteAllOpts("", true)
+		errs := mod.rewriteAllOpts("", true, skipPaths)
 		for _, e := range errs {
 			if firstErr == nil {
 				firstErr = e
@@ -142,6 +161,9 @@ func LoadStdlibFlat(paths []string) (*ast.Program, error) {
 	// participate in the method visibility check, so they're fine
 	// either way.
 	for _, mod := range loaded {
+		if skipPaths[mod.path] {
+			continue
+		}
 		for _, fn := range mod.prog.Funcs {
 			fn.SourceModule = ""
 		}
@@ -486,7 +508,7 @@ func prefixFor(isEntry bool, name string) string {
 // Both rewrites happen in one walk so the mangled output is
 // consistent for the rest of the pipeline.
 func (m *module) rewriteAll(selfPrefix string) []error {
-	return m.rewriteAllOpts(selfPrefix, false)
+	return m.rewriteAllOpts(selfPrefix, false, nil)
 }
 
 // rewriteAllOpts is rewriteAll with a `flatNamespace` knob — when
@@ -495,7 +517,12 @@ func (m *module) rewriteAll(selfPrefix string) []error {
 // expected to be empty too. Used by `LoadStdlibFlat` so the
 // auto-prelude path can rewrite qualified imports inside stdlib
 // bodies while keeping stdlib decl names bare.
-func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool) []error {
+//
+// `skipPaths` is consulted only in flat-namespace mode: a cross-
+// module reference targeting a skipped module rewrites to the
+// mangled `<mod>__` form, matching the entry program's parallel
+// modload-mangled load of that same path.
+func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths map[string]bool) []error {
 	// Build the set of own-module function, struct, and const names
 	// so we can recognise internal references (`fn(args)` /
 	// `Foo { ... }` / `K`) versus references to outside symbols.
@@ -529,6 +556,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool) []error {
 		ownConsts:     ownConsts,
 		imports:       m.imports,
 		flatNamespace: flatNamespace,
+		skipPaths:     skipPaths,
 	}
 	for _, fn := range m.prog.Funcs {
 		// Receiver methods don't get the module prefix. Dispatch
@@ -603,6 +631,16 @@ type rewriter struct {
 	// globally unique (receiver methods don't collide because
 	// dispatch is by receiver type).
 	flatNamespace bool
+	// skipPaths is consulted only in flat-namespace mode: a
+	// cross-module reference whose target lives in a skipped
+	// module rewrites to the mangled `<mod>__` form (matching
+	// what modload's regular `Load`+`combine` would produce
+	// for the entry program's parallel load of that path).
+	// Without this, a flat-namespace body referencing a
+	// skipped module's decl by qualified name would rewrite to
+	// bare — but the entry program's modload-mangled copy lives
+	// under the prefixed name, and the bare lookup would fail.
+	skipPaths map[string]bool
 }
 
 // checkPublicFunc records an error if `fn` isn't exported from
@@ -658,6 +696,21 @@ func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 		return nil, "", false
 	}
 	if r.flatNamespace {
+		// In flat-namespace mode, references to OWN-pass modules
+		// rewrite to bare names (the decls land bare-named in the
+		// combined Program). References to skipped modules — i.e.
+		// modules the auto-prelude path is skipping because the
+		// entry program already loaded them through modload's
+		// regular mangling path — need to use the same mangled
+		// prefix `Load`+`combine` would produce, since the
+		// skipped module's decls live in `prog` under those
+		// mangled names. Without this, a stdlib body loaded via
+		// LoadStdlibFlat that calls `int.foo()` qualified would
+		// rewrite to bare `foo()`, which the entry's mangled
+		// `int__foo` wouldn't match.
+		if r.skipPaths[mod.path] {
+			return mod, mod.name + "__", true
+		}
 		return mod, "", true
 	}
 	return mod, mod.name + "__", true
