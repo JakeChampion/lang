@@ -12,6 +12,8 @@
 // `arr.sum()` / `arr.join(",")` / etc. continue to work
 // unchanged during the transition.
 
+import "std/sort";
+
 // === i32 array math (sum / max / min) ===
 //
 // `(arr: i32[]).sum()` — total of every element.
@@ -242,11 +244,11 @@ pub function __method_Array_every_positive(arr: i32[]): boolean {
 // pipelines (`arr.sorted_asc().take(3)`) and matches the
 // shape we'll converge on once generic Ord methods land.
 pub function __method_Array_sorted_asc(arr: i32[]): i32[] {
-    return sort_i32_asc(arr);
+    return sort.sort_i32_asc(arr);
 }
 
 pub function __method_Array_sorted_desc(arr: i32[]): i32[] {
-    return sort_i32_desc(arr);
+    return sort.sort_i32_desc(arr);
 }
 
 // `(arr: i32[]) cumsum()` — running sum: out[i] is the sum
@@ -287,7 +289,7 @@ pub function __method_Array_sum_squared(arr: i32[]): i32 {
 pub function __method_Array_median(arr: i32[]): Option[i32] {
     var n: i32 = len(arr);
     if (n == 0) { return None; }
-    var sorted: i32[] = sort_i32_asc(arr);
+    var sorted: i32[] = sort.sort_i32_asc(arr);
     return Some(sorted[(n - 1) / 2]);
 }
 
@@ -581,11 +583,11 @@ pub function __method_Array_all_ends_with(arr: string[], suffix: string): boolea
 // Companion to the i32[] sorted_asc/desc above; collapses to
 // `sorted()` once generic Ord methods land.
 pub function __method_Array_sorted_str_asc(arr: string[]): string[] {
-    return sort_strings_asc(arr);
+    return sort.sort_strings_asc(arr);
 }
 
 pub function __method_Array_sorted_str_desc(arr: string[]): string[] {
-    return sort_strings_desc(arr);
+    return sort.sort_strings_desc(arr);
 }
 
 // `(arr: string[]) join_with_last(sep, last_sep)` — like
