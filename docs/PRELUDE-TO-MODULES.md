@@ -245,17 +245,27 @@ Tasks:
       free-function calls are qualified (#505 → #508) and
       every stdlib module that dispatches methods from
       another stdlib module now declares the corresponding
-      `import` (#511 → #513). End-to-end coverage on
-      arm64 / x86-64 / wasm32 lands as the
-      `Test*NoPreludeStdlibImports` suites (#514 / #515).
-      Remaining work:
-      - Convert every e2e + example test program to declare
-        its imports explicitly. Each program would add
-        `import "core/no_prelude";` plus one `import "std/X";`
-        line per stdlib module it touches. Free-function
-        calls become qualified (`int.int_to_string_radix(s, 16)`);
-        bare receiver methods (`.abs()`, `.to_string()`)
-        stay unchanged.
+      `import` (#511 → #513). modload exempts the Map
+      runtime helpers (`map_new_impl`, `__map_*_impl`,
+      `__mapiter_*_impl`) from prefix mangling so codegen's
+      hardcoded rewrites resolve cleanly under both load
+      paths (#520). End-to-end coverage on arm64 / x86-64 /
+      wasm32 lands as the `Test*NoPreludeStdlibImports`
+      suites (#514 / #515). Every `examples/*.lang` and
+      `examples/wasm/*.lang` program migrated to declare
+      explicit imports (#517 / #518 / #519 / #520 / #521 /
+      #522). Remaining work:
+      - Convert every internal/e2e test program to declare
+        its imports explicitly. The shape mirrors the
+        examples migration: add `import "core/no_prelude";`
+        plus one `import "std/X";` line per stdlib module
+        the test touches. Free-function calls become
+        qualified (`int.int_to_string_radix(s, 16)`); bare
+        receiver methods (`.abs()`, `.to_string()`) stay
+        unchanged. ~389 tests in arm64_test.go /
+        x86_64_test.go / wasm_e2e_test.go, each with its
+        own source string — the migration is mechanical
+        but bulky.
       - Once the suite passes with no-prelude as the default,
         flip the switch and remove `injectPrelude` + the
         `internal/prelude` package.
