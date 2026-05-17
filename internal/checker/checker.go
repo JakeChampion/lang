@@ -3728,7 +3728,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
 				}
 			} else if !ast.Equal(vt, expected) {
-				c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
+				// Allow the polymorphic / argless-enum vs
+				// concrete widening rules from `unifyIfArms`
+				// — e.g. `struct Node { next: Option[Node] }`
+				// initialised with `next: None` (which checks
+				// to `Option` with empty Args). Same shape as
+				// the array-element widening from #541.
+				if unifyIfArms(expected, vt) == nil {
+					c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
+				}
 			}
 		}
 		for _, f := range sd.Fields {
