@@ -9065,6 +9065,53 @@ function main(): i32 {
 	}
 }
 
+// Tuple settle through match / if expressions. After #533
+// (Return refreshes from post-settle) and #530
+// (settleNumeric got a TupleType case), `return match (e)
+// { A => (1234567890123, 42) }` still failed because
+// settleNumeric on a TupleType hint only matched literal
+// *ast.TupleLit nodes — it didn't recurse through MatchExpr
+// or IfExpr arms.
+//
+// Fix: settleNumeric(ast.TupleType) recurses into MatchExpr
+// arms and IfExpr Then/Else; postSettleType handles the
+// same shapes so the assignability check sees the resolved
+// widths.
+func TestArm64TupleSettleInMatchAndIf(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"match_arm_tuple", `enum E { A }
+function pick(e: E): (i64, i32) {
+    return match (e) {
+        A => (1234567890123, 42)
+    };
+}
+function main(): i32 {
+    var p = pick(A);
+    if (p.0 == 1234567890123 && p.1 == 42) { return 0; }
+    return 1;
+}`, 0},
+		{"if_arm_tuple", `function pick(cond: boolean): (i64, i32) {
+    return if (cond) { (1234567890123, 42) } else { (9876543210, 0 - 1) };
+}
+function main(): i32 {
+    var p = pick(true);
+    var q = pick(false);
+    if (p.0 == 1234567890123 && p.1 == 42 && q.0 == 9876543210 && q.1 == 0 - 1) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
