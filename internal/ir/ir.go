@@ -2763,6 +2763,30 @@ func (b *builder) expr(e ast.Expr) error {
 		if n.IsFloat {
 			resultType = ast.FloatType{}
 		}
+		// Promote the slot's width when an arm body resolves
+		// to a concrete i64 / f64 — the scratch type drives
+		// the local's declared width on wasm, and a default
+		// polymorphic NumberType lands as i32 there. An i64
+		// arm body stored into an i32 slot fails the wasm
+		// validator with "type mismatch: expected i32, found
+		// i64". The checker's MatchExpr settle (#534 / #545)
+		// plus exprType (#530 / #532) already resolve each
+		// arm body's width; the first arm body that returns
+		// a non-polymorphic type wins.
+		for _, arm := range n.Arms {
+			if arm == nil {
+				continue
+			}
+			t := b.exprType(arm.Body)
+			if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
+				resultType = nt
+				break
+			}
+			if ft, ok := t.(ast.FloatType); ok && !ft.Polymorphic {
+				resultType = ft
+				break
+			}
+		}
 		resultSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
 		b.scratchType[resultSlot] = resultType
