@@ -2906,9 +2906,16 @@ func (b *builder) expr(e ast.Expr) error {
 			return fmt.Errorf("ir: TryOp with unstamped Kind")
 		}
 		b.closeScope()
-		// Success path: load payload at ptr+4.
+		// Success path: load payload at the same offset
+		// emitEnumNew stored it. `payloadLayout` aligns
+		// 8-byte payloads (i64 / f64 / two-word strings) to
+		// offset 8 because the tag occupies offset 0..3 —
+		// the previous unconditional `ptr + 4` load read
+		// padding bytes for any wide payload (Option[i64]'s
+		// success path returned junk high bits).
+		offsets, _ := payloadLayout([]ast.Type{n.Type}, 1, b.ptrW)
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpConstI32, I32: 4})
+		b.emit(Op{Kind: OpConstI32, I32: offsets[0]})
 		b.emit(Op{Kind: OpAdd})
 		b.emit(payloadLoadOpFor(n.Type, b.ptrW))
 	case *ast.Index:

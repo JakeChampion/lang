@@ -9243,6 +9243,44 @@ function main(): i32 {
 	}
 }
 
+// Regression for the `?` try-op on Option[i64] / Result[i64, _].
+// The IR's TryOp lowering loaded the success-path payload
+// at the hardcoded `ptr + 4` offset, but `emitEnumNew`
+// stores 8-byte payloads (i64 / f64 / two-word strings)
+// at `ptr + 8` to keep them 8-byte aligned past the
+// 4-byte tag. The success branch read the alignment
+// padding instead of the payload — every i64 unwrap
+// returned a 0-with-junk-high-bits value (observed:
+// 8213163615365103616 for an Option[i64] holding
+// 1234567890123).
+//
+// Fix: ask `payloadLayout` for the payload's actual
+// offset and emit that immediate instead of `4`.
+func TestArm64TryOpI64PayloadOffset(t *testing.T) {
+	src := `function fetch(): Option[i64] {
+    return Some(1234567890123);
+}
+
+function process(): Option[i64] {
+    var v: i64 = fetch()?;
+    return Some(v + 100);
+}
+
+function main(): i32 {
+    match (process()) {
+        Some(n) => {
+            if (n == 1234567890223) { return 0; }
+            return 1;
+        },
+        None => { return 2; },
+    }
+    return 99;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("Option[i64] try-op got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
