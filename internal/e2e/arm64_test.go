@@ -8847,6 +8847,28 @@ func TestArm64I64CmpDivWidth(t *testing.T) {
 	}
 }
 
+// Regression for unsigned right-shift on arm64. The OpShrS
+// codegen unconditionally emitted `asr` (arithmetic right
+// shift), which propagates the sign bit. Correct for signed
+// types, but `(u64::MAX >> 1)` ended up as `u64::MAX` again
+// instead of `2^63 - 1` because every shifted-in bit was 1.
+//
+// The wasm + x86_64 codegens picked `lsr` / `shr` based on
+// `op.Unsigned` from the start; this aligns arm64 with that
+// contract.
+func TestArm64UnsignedRightShift(t *testing.T) {
+	src := `function main(): i32 {
+    var n: u64 = 18446744073709551615 as u64;
+    var r: u64 = n >> 1;
+    var s: string = r.to_string();
+    if (s == "9223372036854775807") { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("u64::MAX >> 1 round-trip got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
