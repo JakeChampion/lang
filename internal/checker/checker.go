@@ -4043,6 +4043,27 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 				x.IsUnsigned = isUnsigned
 			}
 		}
+	case *ast.IfExpr:
+		// `var n: i64 = if cond { 1 } else { 2 }` — settle
+		// both arm bodies against the destination width.
+		// Without this, the literals stayed i32 and the i64
+		// load read garbage high bits.
+		if x.Then != nil {
+			c.settleInt(x.Then, hn)
+		}
+		if x.Else != nil {
+			c.settleInt(x.Else, hn)
+		}
+	case *ast.MatchExpr:
+		// Same fan-out for `var n: i64 = match (e) { A => 1,
+		// B => 2 }` — every arm body is an expression that
+		// must reach the destination width.
+		for _, arm := range x.Arms {
+			if arm == nil {
+				continue
+			}
+			c.settleInt(arm.Body, hn)
+		}
 	}
 }
 
@@ -4076,6 +4097,22 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 				c.settleFloat(x.Right, hf)
 				x.FloatWidth = width
 			}
+		}
+	case *ast.IfExpr:
+		// `var f: f64 = if cond { 3.14 } else { 0.0 }` —
+		// fan the float hint into both arms.
+		if x.Then != nil {
+			c.settleFloat(x.Then, hf)
+		}
+		if x.Else != nil {
+			c.settleFloat(x.Else, hf)
+		}
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			if arm == nil {
+				continue
+			}
+			c.settleFloat(arm.Body, hf)
 		}
 	}
 }
