@@ -106,10 +106,14 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// `_start` (printMainResult test mode) calls
 	// `int_to_string` from a codegen-emitted wat snippet that
 	// the AST walker can't see, so list it as an extra entry
-	// point to keep the prelude version alive.
+	// point to keep the prelude version alive. List both the
+	// bare name (auto-prelude / single-file path) AND the
+	// modload-mangled `int__int_to_string` (no-prelude path
+	// where the user `import "core/int";`s explicitly) so
+	// whichever copy actually exists survives treeshaking.
 	var extras []string
 	if opts.PrintMainResult {
-		extras = append(extras, "int_to_string")
+		extras = append(extras, "int_to_string", "int__int_to_string")
 	}
 	// Wasi-http target uses the user's `handle()` directly via
 	// the `wasi:http/incoming-handler.handle` export wrapper —
@@ -199,7 +203,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	// needsArrays / etc.) still see the full program.
 	deadFuncExtras := []string(nil)
 	if opts.PrintMainResult {
-		deadFuncExtras = append(deadFuncExtras, "int_to_string")
+		deadFuncExtras = append(deadFuncExtras, "int_to_string", "int__int_to_string")
 	}
 	if live := ir.LiveFunctionsWithAliases(ip, codegenAliasMap, deadFuncExtras...); live != nil {
 		out := ip.Funcs[:0]

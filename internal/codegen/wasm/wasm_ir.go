@@ -270,8 +270,29 @@ func EmitFromIRWithOptions(prog *ast.Program, info *checker.Info, ip *ir.Program
 		g.line(`(call $main)`)
 		mainReturnsInt := !ast.Equal(mainFn.ReturnType, ast.VoidType{}) && ast.Equal(mainFn.ReturnType, ast.NumberType{})
 		if g.printMainResult && mainReturnsInt {
-			g.line(`call $int_to_string`)
-			g.line(`call $print`)
+			// `int_to_string` lives in core/int. Under the auto-
+			// prelude it lands at the bare name; under modload's
+			// explicit-import path (e.g. a no-prelude program
+			// importing core/int directly) it's mangled to
+			// `int__int_to_string`. Pick whichever is present in
+			// funcDecls so the test harness's PrintMainResult
+			// mode works under either compilation path. If
+			// neither exists (no-prelude program without
+			// core/int at all) fall back to a plain drop — the
+			// test then sees an empty stdout instead of a wat
+			// reference that won't resolve.
+			intToStringName := ""
+			if g.funcDecls["int_to_string"] != nil {
+				intToStringName = "int_to_string"
+			} else if g.funcDecls["int__int_to_string"] != nil {
+				intToStringName = "int__int_to_string"
+			}
+			if intToStringName != "" {
+				g.line(`call $` + intToStringName)
+				g.line(`call $print`)
+			} else {
+				g.line(`drop`)
+			}
 		} else if !ast.Equal(mainFn.ReturnType, ast.VoidType{}) {
 			g.line(`drop`)
 		}

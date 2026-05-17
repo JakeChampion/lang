@@ -5301,3 +5301,62 @@ function main(): i32 {
 		t.Errorf("sum_to(100000, 0) → %d, want 705082704", got)
 	}
 }
+
+// Wasm counterpart to TestArm64NoPreludeStdlibImports / its
+// x86-64 sibling — proves the no-prelude path through the
+// prelude-to-modules stack works on wasm32 too. See the arm64
+// version for the rationale and per-case explanations. Programs
+// return 0 on success; runWasm parses the i32 main returned out
+// of the PrintMainResult-emitted stdout line.
+//
+// The PrintMainResult wrapper picks the mangled `int__int_to_string`
+// name (versus bare `int_to_string` under auto-prelude) so this
+// test exercises both the no-prelude load path AND the wat
+// emitter's runtime-name lookup.
+func TestWASMNoPreludeStdlibImports(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+	}{
+		{"i32_string_cycle", `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
+    var s: string = (42).to_string_padded(6);
+    if (s == "000042") { return 0; }
+    return 1;
+}`},
+		{"array_method_chain", `import "core/no_prelude";
+import "std/array";
+function main(): i32 {
+    var xs: i32[] = [0 - 3, 4, 0 - 1];
+    var ys = xs.abs_each();
+    if (ys[0] + ys[1] + ys[2] == 8) { return 0; }
+    return 1;
+}`},
+		{"qualified_int_call", `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
+    var s: string = int.int_to_string_radix(255, 16);
+    if (s == "ff") { return 0; }
+    return 1;
+}`},
+		{"mixed_stdlib", `import "core/no_prelude";
+import "std/i32";
+import "std/string";
+import "std/array";
+function main(): i32 {
+    var s: string = (0 - 42).to_string();
+    if (s != "-42") { return 1; }
+    var strs: string[] = ["b", "a", "c"];
+    var joined: string = strs.join(",");
+    if (joined != "b,a,c") { return 2; }
+    return 0;
+}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := runWasm(t, c.src); got != 0 {
+				t.Errorf("got exit %d, want 0", got)
+			}
+		})
+	}
+}
