@@ -4125,6 +4125,38 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 			}
 			c.settleInt(arm.Body, hn)
 		}
+	case *ast.Call:
+		// Generic-function call whose result type substitutes
+		// to the hint's T. The initial check ran with sub[T]
+		// = Polymorphic (every NumberLit arg returned a
+		// polymorphic NumberType, leaving T un-pinned), and
+		// the result type substituted to the same polymorphic
+		// shape. Now that the destination commits to a
+		// concrete width, walk the args that map to the
+		// generic parameter and settle them — both pins the
+		// literal widths and lets TypeArgs/monomorph pick the
+		// right clone.
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
+				for i, p := range fn.Params {
+					if i >= len(x.Args) {
+						break
+					}
+					if pt, ok := p.Type.(ast.ParamType); ok {
+						_ = pt
+						c.settleInt(x.Args[i], hn)
+					}
+				}
+				// Re-stamp TypeArgs so the monomorph pass
+				// picks the concrete clone. The first
+				// matching param's resolved type is enough
+				// because the unify pass enforces same-T
+				// across all positions.
+				if len(fn.TypeParams) == 1 && len(x.TypeArgs) == 1 {
+					x.TypeArgs[0] = hn
+				}
+			}
+		}
 	}
 }
 

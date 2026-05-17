@@ -9384,6 +9384,35 @@ func TestArm64MapLitI64ValueSettle(t *testing.T) {
 	}
 }
 
+// Generic-function calls inferred their type-param T from
+// the arguments alone — for a polymorphic NumberLit arg the
+// inferred T was `NumberType{Polymorphic: true}` and the
+// arg's width never settled. `var x: i64 = pick(true,
+// 1234567890123, 0);` against
+// `function pick[T](cond: boolean, a: T, b: T): T`
+// silently truncated to `1912276171` (the literal's lower
+// 32 bits).
+//
+// Fix: settleInt gains an `*ast.Call` case that walks a
+// generic-function call's args, settling each arg position
+// that maps to the T parameter against the destination
+// width. The monomorph pass picks up the resolved width
+// via the refreshed `TypeArgs`.
+func TestArm64SettleGenericCallArgs(t *testing.T) {
+	src := `function pick[T](cond: boolean, a: T, b: T): T {
+    if (cond) { return a; }
+    return b;
+}
+function main(): i32 {
+    var x: i64 = pick(true, 1234567890123, 0);
+    if (x == 1234567890123) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("generic call with bare i64 literal got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
