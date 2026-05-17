@@ -38,7 +38,22 @@ import (
 // Format returns idiomatic source text for prog.
 func Format(prog *ast.Program) string {
 	f := &formatter{comments: prog.Comments}
-	written := false
+	// Imports cluster at the top of the file with no blank line
+	// between consecutive ones — they read like a single block
+	// that introduces the module's dependencies. A blank line
+	// follows the last import before the first decl, same shape
+	// the inter-decl loop produces below.
+	if len(prog.Imports) > 0 {
+		for _, imp := range prog.Imports {
+			f.drainLeading(imp.P.Line, 0)
+			f.b.WriteString(`import "`)
+			f.b.WriteString(imp.Path)
+			f.b.WriteString(`";`)
+			f.emitTrailing(imp.P.Line)
+			f.b.WriteByte('\n')
+		}
+	}
+	written := len(prog.Imports) > 0
 	for _, sd := range prog.Structs {
 		if written {
 			f.b.WriteByte('\n')
