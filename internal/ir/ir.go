@@ -3612,6 +3612,14 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// ExprStmt drops it. Knowing the type here lets the drop
 		// fan correctly for two-word strings on wasm32.
 		return b.exprType(x.Target)
+	case *ast.CastExpr:
+		// `n as i64` resolves to the cast's target type.
+		// Without this, a tuple literal whose element is a
+		// cast (`(n as i64, 0 as i64)`) saw exprType→nil →
+		// payloadSlotSize defaulted to 4 → both elements
+		// packed into 4-byte slots and the i64 value
+		// truncated.
+		return x.Target
 	}
 	return nil
 }

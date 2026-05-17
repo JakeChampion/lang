@@ -8965,6 +8965,52 @@ func TestArm64TupleMixedElementSettle(t *testing.T) {
 	}
 }
 
+// Regression for tuple literals whose element is a
+// `CastExpr` (`n as i64`) or a match expression returning a
+// cast. The IR's `b.exprType(*ast.CastExpr)` previously
+// returned nil; tuple-slot sizing fell back to the 4-byte
+// default and silently truncated wide i64 elements (the
+// observed `1234567890123` came back as `431409005771`).
+//
+// Match propagation was the indirect path — exprType
+// recursed on each arm body, and every arm body was a
+// CastExpr.
+//
+// Fix: exprType returns `x.Target` for CastExpr.
+func TestArm64TupleCastExprElementType(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"cast_in_tuple", `function main(): i32 {
+    var n: i32 = 100;
+    var p: (i64, i64) = (n as i64, 1234567890123);
+    if (p.0 == 100 && p.1 == 1234567890123) { return 0; }
+    return 1;
+}`, 0},
+		{"match_returning_cast", `enum E { A, B }
+function main(): i32 {
+    var e: E = A;
+    var p: (i64, i64) = (
+        match (e) {
+            A => 1234567890123 as i64,
+            B => 9876543210 as i64
+        },
+        100 as i64
+    );
+    if (p.0 == 1234567890123 && p.1 == 100) { return 0; }
+    return 1;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
