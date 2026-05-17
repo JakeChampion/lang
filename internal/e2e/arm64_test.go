@@ -9602,6 +9602,48 @@ function main(): i32 {
 	}
 }
 
+// A match-expression returning i64 was lowered with a
+// scratch-slot type of polymorphic NumberType{} — that
+// landed as `local.set $T (i32)` on wasm, and the i64 arm
+// body's `local.set` failed with "type mismatch: expected
+// i32, found i64" at validation time.
+//
+// Native targets store every slot as an 8-byte word so
+// the mismatch was hidden, but wasm declares each local's
+// width explicitly. Symptom: any function whose body is
+// `return match (o) { Some(n) => i64-expr, None => 0 };`
+// rejected at wasm compile time.
+//
+// Fix: the IR's MatchExpr lowering walks the arm bodies,
+// picks the first non-polymorphic NumberType / FloatType
+// it finds via `exprType`, and uses that for the scratch
+// slot. Wasm's local declaration then sees i64 / f64 and
+// the validator accepts the store. The arm-body settle
+// from #534 / #545 already resolves widths; this just
+// consumes them.
+//
+// The test pin lives on arm64 (where it passed silently
+// before too) — the actual win is on wasm, exercised
+// implicitly by the full e2e suite.
+func TestArm64MatchExprI64ResultWidth(t *testing.T) {
+	src := `struct Node { v: i64 }
+function get(o: Option[Node]): i64 {
+    return match (o) {
+        Some(node) => node.v,
+        None => 0 as i64
+    };
+}
+function main(): i32 {
+    var n: Node = Node { v: 1234567890123 };
+    var s: i64 = get(Some(n));
+    if (s == 1234567890123) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("match-expression returning i64 got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
