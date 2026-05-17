@@ -8742,6 +8742,62 @@ func TestArm64MapGetMatch(t *testing.T) {
 	}
 }
 
+// End-to-end exercise of the word-frequency pipeline that was
+// segfaulting on natives before the Map.get + match pair-form
+// fix. The shape: tokenize input → `Map[string, i32]` count
+// table populated via `m.set(key, n + 1)` inside the
+// `Some(n) => …, None => …` match arm → snapshot keys +
+// values via `.keys() / .values()` → print rows. The match
+// branch inside the counting loop was the exact pattern
+// TestArm64MapGetMatch pins in isolation; this test ensures
+// the fix holds up in the realistic mix of slice keys (string
+// slicing from the tokenizer), Array.push, and Map iteration.
+func TestArm64MapGetMatchFullPipeline(t *testing.T) {
+	src := `function tokenize(s: string): string[] {
+  var out: string[] = [];
+  var i: i32 = 0;
+  var sLen: i32 = len(s);
+  var start: i32 = 0;
+  while (i <= sLen) {
+    var b: i32 = 0;
+    if (i < sLen) { b = s[i]; }
+    var is_break: boolean = i == sLen || b == 32;
+    if (is_break) {
+      if (i > start) { out = out.push(s[start:i]); }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+function main(): i32 {
+  var words: string[] = tokenize("a b a c b a");
+  var counts: Map[string, i32] = map_new(8);
+  var i: i32 = 0;
+  while (i < len(words)) {
+    var w: string = words[i];
+    match (counts.get(w)) {
+      Some(n) => { counts.set(w, n + 1); },
+      None    => { counts.set(w, 1); }
+    }
+    i = i + 1;
+  }
+  // a → 3, b → 2, c → 1; sum 6.
+  var keys: string[] = counts.keys();
+  var vals: i32[] = counts.values();
+  var sum: i32 = 0;
+  var j: i32 = 0;
+  while (j < len(vals)) {
+    sum = sum + vals[j];
+    j = j + 1;
+  }
+  return sum;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 6 {
+		t.Errorf("word-freq pipeline got %d, want 6", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
