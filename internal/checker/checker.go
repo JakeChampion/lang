@@ -373,7 +373,16 @@ func injectPrelude(prog *ast.Program) error {
 		wantPaths = append(wantPaths, imp.Path)
 	}
 	if len(wantPaths) > 0 {
-		stdProg, err := modload.LoadStdlibFlat(wantPaths)
+		// LoadStdlibFlatSkipping recursively loads stdlib paths
+		// the user didn't explicitly import. Transitive imports
+		// inside stdlib may reach back to a path the entry program
+		// already loaded through modload's mangling path (e.g.
+		// std/string now imports std/array, so an entry program
+		// importing `std/array` would surface duplicate
+		// `__method_Array_*` decls without the skip). Passing the
+		// already-loaded paths suppresses their flat-namespace
+		// contribution.
+		stdProg, err := modload.LoadStdlibFlatSkipping(wantPaths, prog.LoadedStdlibPaths)
 		if err != nil {
 			return fmt.Errorf("prelude: %w", err)
 		}

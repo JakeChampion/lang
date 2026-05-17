@@ -7,6 +7,12 @@
 // existing single-file programs keep working unchanged.
 
 import "core/int";
+// std/i32's bodies dispatch (string) methods like `s.pad_start(
+// width, "0")` (inside to_string_padded / to_string_with_sep).
+// Declaring the import makes those resolve under no-prelude;
+// the resulting std/i32 ↔ std/string cycle is handled by
+// modload's stdlib-cycle support.
+import "std/string";
 
 // `(n: i32) abs()` — absolute value. Edge case: i32::MIN
 // (-2147483648) has no positive counterpart in i32; the

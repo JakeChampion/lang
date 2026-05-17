@@ -210,6 +210,50 @@ pub function fb(): i32 { return a.fa(); }`,
 	}
 }
 
+// `LoadStdlibFlatSkipping` excludes the named paths from the
+// combined Program (so a user program that already loaded those
+// paths through modload's mangling path doesn't end up with two
+// copies of every `__method_<Type>_<Name>` decl), AND rewrites
+// references TO skipped paths from non-skipped modules using the
+// modload `<mod>__` prefix instead of bare. Without the latter,
+// a flat-namespace body referencing `int.foo()` qualified would
+// rewrite to bare `foo()` — but the entry program's modload
+// load of core/int has the decl under the mangled name only.
+func TestLoadStdlibFlatSkippingRewritesToMangledForSkippedPaths(t *testing.T) {
+	skip := map[string]bool{
+		"stdlib://core/int.lang": true,
+	}
+	prog, err := modload.LoadStdlibFlatSkipping([]string{"std/u32"}, skip)
+	if err != nil {
+		t.Fatalf("LoadStdlibFlatSkipping(std/u32, skip core/int): %v", err)
+	}
+	// std/u32 (u32).to_string body should now call the mangled
+	// form `int____int_to_string_u64`, not the bare flat form.
+	var fn *ast.FuncDecl
+	for _, f := range prog.Funcs {
+		if f.Receiver == nil || f.Name != "to_string" {
+			continue
+		}
+		nt, ok := f.Receiver.Type.(ast.NumberType)
+		if !ok || nt.Width != 32 || nt.Signed {
+			continue
+		}
+		fn = f
+		break
+	}
+	if fn == nil {
+		t.Fatalf("did not find (u32).to_string: %v", funcNames(prog))
+	}
+	if !callsDirect(fn, "int____int_to_string_u64") {
+		t.Errorf("(u32).to_string body should call mangled int____int_to_string_u64 when core/int is skipped; the bare flat form leaves the reference dangling against the entry's modload-mangled copy")
+	}
+	// And core/int's own decls should be ABSENT from the
+	// combined Program (the entry's modload load owns them).
+	if findFunc(prog, "__int_to_string_u64") != nil {
+		t.Errorf("LoadStdlibFlatSkipping should not include skipped path's decls in combined Program")
+	}
+}
+
 // Cycles between two STDLIB modules are allowed — the stdlib's
 // method graph has natural cycles (std/string ↔ std/i32 for byte
 // methods both ways) that modload's regular cycle gate would
