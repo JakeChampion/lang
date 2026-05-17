@@ -9413,6 +9413,35 @@ function main(): i32 {
 	}
 }
 
+// Sibling to #543. The settleInt Call case widened generic
+// arg widths against an integer destination, but
+// settleFloat had no Call case — so `var x: f64 = pick(true,
+// 3.14, 0.0);` printed `0` instead of `3.14`. The float
+// literal arguments stayed at the f32 / Polymorphic
+// default, the destination's 8-byte load read the wrong
+// half of the operand-stack slot, and the d0 register
+// received a zero.
+//
+// Fix: mirror the settleInt Call case in settleFloat —
+// recognise generic-function calls via
+// c.info.GenericFuncs, settle each `ParamType` arg
+// position against the destination float type, and
+// re-stamp TypeArgs[0] for monomorph.
+func TestArm64SettleGenericCallArgsFloat(t *testing.T) {
+	src := `function pick[T](cond: boolean, a: T, b: T): T {
+    if (cond) { return a; }
+    return b;
+}
+function main(): i32 {
+    var x: f64 = pick(true, 3.14, 0.0);
+    if (x > 3.0 && x < 4.0) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("generic call with f64 literal got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
