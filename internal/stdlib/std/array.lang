@@ -13,6 +13,15 @@
 // unchanged during the transition.
 
 import "std/sort";
+// std/array's bodies dispatch (i32) byte methods like `.abs()`
+// in abs_each and (string) methods like `.contains(needle)` /
+// `.index_of(...)` / `.count(...)` / `.join(...)` in the
+// string-array helpers. Declaring those imports makes the
+// dispatch resolve under no-prelude; the cycles with
+// std/string + std/i32 are handled by modload's stdlib-cycle
+// support.
+import "std/i32";
+import "std/string";
 
 // === i32 array math (sum / max / min) ===
 //
