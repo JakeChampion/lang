@@ -4232,6 +4232,32 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 				return t
 			}
 		}
+	case *ast.Call:
+		// Variant constructor calls (`Some(tupleLit)`,
+		// `Ok(...)`) — after settleNumeric stamped widths
+		// onto each constructor arg, the prior EnumType's
+		// Args still reflect the pre-settle widths (the
+		// type was unified before the settle pass touched
+		// the literals). Recompute Args[0] from the
+		// (now-resolved) first arg, when:
+		//
+		//   - prior is an EnumType with a single Arg, and
+		//   - the call has at least one arg
+		//
+		// Multi-arg generic variants (multi-type-param
+		// generics like Result[T, E]) need both args
+		// refreshed — walk both when prior carries the
+		// right shape. Without this refresh,
+		// `Some((1234567890123, 42))` keeps its pre-settle
+		// `Option[(i32, i32)]` type and a `var o:
+		// Option[(i64, i32)] = ...` assignment rejects.
+		if et, ok := prior.(ast.EnumType); ok && len(et.Args) > 0 && len(x.Args) >= len(et.Args) {
+			newArgs := make([]ast.Type, len(et.Args))
+			for i := range et.Args {
+				newArgs[i] = postSettleType(x.Args[i], et.Args[i])
+			}
+			return ast.EnumType{Name: et.Name, Args: newArgs}
+		}
 	}
 	return prior
 }
