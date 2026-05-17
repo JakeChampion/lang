@@ -4005,6 +4005,22 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.settleNumeric(arm.Body, hint)
 			}
 		}
+	case ast.StructType:
+		// Map literal with a destination annotation. The
+		// `Map[K, V]` struct's TypeArgs are (key-type,
+		// value-type); a `MapLit` with bare-numeric values
+		// (`Map { "a": 1234567890123 }`) needs the V to flow
+		// into each entry so polymorphic literals settle to
+		// the destination's slot width. Without this,
+		// `var m: Map[string, i64] = Map { "a": 1234567890123 };`
+		// keeps its inferred `Map[string, i32]` shape and
+		// the assignable check rejects.
+		if ml, ok := e.(*ast.MapLit); ok && hn.Name == "Map" && len(hn.Args) == 2 {
+			for _, ent := range ml.Entries {
+				c.settleNumeric(ent.Key, hn.Args[0])
+				c.settleNumeric(ent.Value, hn.Args[1])
+			}
+		}
 	case ast.EnumType:
 		// Variant constructor with a destination annotation:
 		// `var o: Option[i64] = Some(1);` — the literal `1`
@@ -4274,6 +4290,26 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 				newArgs[i] = postSettleType(x.Args[i], et.Args[i])
 			}
 			return ast.EnumType{Name: et.Name, Args: newArgs}
+		}
+	case *ast.MapLit:
+		// After settleNumeric stamped widths onto each entry
+		// key / value, the prior StructType's TypeArgs may
+		// still point at the pre-settle K / V. Recompute
+		// from the (now-resolved) first entry — the entry
+		// re-check below the MapLit case in `checkExpr`
+		// already enforces same-type-across-entries.
+		// Also refresh the MapLit's own KeyType / ValueType
+		// stamps so the IR's MapLit lowering sees the
+		// resolved widths (it reads them to pick the
+		// runtime keyKind / valKind tags and the boxing
+		// path for wide V).
+		if st, ok := prior.(ast.StructType); ok && st.Name == "Map" && len(st.Args) == 2 && len(x.Entries) > 0 {
+			ent := x.Entries[0]
+			newK := postSettleType(ent.Key, st.Args[0])
+			newV := postSettleType(ent.Value, st.Args[1])
+			x.KeyType = newK
+			x.ValueType = newV
+			return ast.StructType{Name: "Map", Args: []ast.Type{newK, newV}}
 		}
 	}
 	return prior
