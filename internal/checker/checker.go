@@ -2990,9 +2990,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		elemT := c.checkExpr(n.Elems[0], s)
 		for _, el := range n.Elems[1:] {
 			t := c.checkExpr(el, s)
-			if t != nil && elemT != nil && !ast.Equal(t, elemT) {
-				c.errf(el.Pos(), "array element type %s, expected %s", t, elemT)
+			if t == nil || elemT == nil {
+				continue
 			}
+			if ast.Equal(t, elemT) {
+				continue
+			}
+			// Allow polymorphic-vs-concrete and the
+			// argless-enum-vs-with-args shapes that
+			// `unifyIfArms` already handles for if-expression
+			// arms. Picks the concrete side so a later
+			// `settleNumeric` walk against the destination
+			// element type still has a fixed point to land
+			// on. Mirrors the cohort of fixes that make
+			// numeric / enum widening work across the
+			// language's other "two-arm" positions.
+			if unified := unifyIfArms(elemT, t); unified != nil {
+				elemT = unified
+				continue
+			}
+			c.errf(el.Pos(), "array element type %s, expected %s", t, elemT)
 		}
 		n.ElemType = elemT
 		return ast.ArrayType{Elem: elemT}
