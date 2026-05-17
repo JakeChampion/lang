@@ -9112,6 +9112,32 @@ function main(): i32 {
 	}
 }
 
+// Regression: tuple-field access on an array index.
+// `arr[i].N` over `(i64, i32)[]` errored at IR-build time
+// with `field access on unresolved struct ""` —
+// `targetTupleType` recognised Ident / TupleLit / nested
+// FieldAccess but had no `*ast.Index` case, so the
+// FieldAccess lowering fell through to the struct path and
+// `fieldOwner` returned "" for the indexed value.
+//
+// Fix: `targetTupleType(*ast.Index)` consults `exprType`,
+// which already returns the array's ElemType (a TupleType
+// when the array elements are tuples).
+func TestArm64ArrayIndexTupleFieldAccess(t *testing.T) {
+	src := `function main(): i32 {
+    var arr: (i64, i32)[] = [(1234567890123, 42), (9876543210, 0 - 1)];
+    if (arr[0].0 == 1234567890123 && arr[1].0 == 9876543210) {
+        if (arr[0].1 == 42 && arr[1].1 == 0 - 1) {
+            return 0;
+        }
+    }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("(i64, i32)[] index + field access got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
