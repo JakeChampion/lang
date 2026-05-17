@@ -1230,6 +1230,18 @@ func Check(prog *ast.Program) (*Info, error) {
 // methods regardless of import graph). Cross-module visibility
 // consults the program-wide import-closure map modload built
 // during `combine`.
+//
+// Stdlib-to-stdlib shortcut: a method declared in any stdlib
+// module is universally callable from any other stdlib module
+// regardless of import closure. The stdlib's method graph has
+// natural cycles (std/string's bodies call (i32) byte methods
+// from std/i32; std/i32's bodies call (string) methods from
+// std/string) that modload's cycle-detector would otherwise
+// reject, and the auto-prelude path already side-steps the
+// gate by clearing `SourceModule` on every loaded fn. The
+// shortcut keeps no-prelude semantically identical to auto-
+// prelude for stdlib internals — only USER → stdlib visibility
+// still requires an explicit import.
 func (c *checker) methodVisibleHere(mangled string) bool {
 	methodSrc := c.info.MethodSources[mangled]
 	if methodSrc == "" {
@@ -1239,6 +1251,10 @@ func (c *checker) methodVisibleHere(mangled string) bool {
 		return true
 	}
 	if c.current.SourceModule == methodSrc {
+		return true
+	}
+	if strings.HasPrefix(c.current.SourceModule, "stdlib://") &&
+		strings.HasPrefix(methodSrc, "stdlib://") {
 		return true
 	}
 	if c.info.ModuleImports == nil {

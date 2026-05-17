@@ -829,3 +829,79 @@ func TestLoadStdlibFlatRejectsNonStdlibPath(t *testing.T) {
 		t.Fatal("expected LoadStdlibFlat to reject non-stdlib path")
 	}
 }
+
+// Stdlib-to-stdlib method dispatch is universally visible
+// without an explicit import between the two stdlib modules.
+// The stdlib's method graph has natural cycles (std/string's
+// bodies dispatch (i32) byte methods from std/i32; std/i32's
+// bodies dispatch (string) methods from std/string), and the
+// auto-prelude path already side-steps the visibility gate by
+// clearing `SourceModule` on every loaded fn. The shortcut
+// preserves that semantics under no-prelude too — std/array
+// can call .abs() on an (i32) byte element without std/array's
+// source needing `import "std/i32"`.
+func TestCheckStdlibToStdlibMethodsVisibleAcrossModules(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		// std/array's `abs_each` body calls `arr[i].abs()` — an
+		// (i32) method declared in std/i32. With the visibility
+		// shortcut, no explicit `import "std/i32"` is needed
+		// inside std/array's source — the user lists both
+		// modules and the dispatch resolves regardless of any
+		// stdlib-internal import graph. Extra stdlib imports
+		// satisfy ancillary method-source visibility needs
+		// (std/array body also calls (string).contains, etc.).
+		"main.lang": `import "core/no_prelude";
+import "std/array";
+import "std/i32";
+import "std/string";
+import "std/sort";
+function main(): i32 {
+    var xs: i32[] = [0 - 3, 4, 0 - 1];
+    var ys = xs.abs_each();
+    return ys[0] + ys[1] + ys[2];
+}`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("expected stdlib-to-stdlib method visibility, got %v", err)
+	}
+}
+
+// "Manually hoisted" methods — top-level `pub function
+// __method_<Type>_<Name>(...)` decls without a receiver block
+// — must NOT pick up the `<mod>__` prefix during cross-module
+// load. The checker's auto-discovery pass keys off the
+// `__method_` prefix to register them as `Type.<Name>` in the
+// Methods map; if modload renamed them to `mod____method_…`
+// dispatch would fail.
+//
+// Repro: explicit `import "std/array";` from a user file. Under
+// the buggy prefix every `(arr).sum()` / `.avg()` / etc. method
+// call surfaces as "field access on non-struct value of type
+// i32[]" because the renamed function never registers as
+// `Array.sum` / `Array.avg`.
+func TestLoadPreservesManuallyHoistedMethodNames(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.lang": `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    return xs.sum();
+}`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findFunc(prog, "__method_Array_sum") == nil {
+		t.Fatalf("__method_Array_sum should keep its bare name under modload; got: %v", funcNames(prog))
+	}
+	if findFunc(prog, "array____method_Array_sum") != nil {
+		t.Errorf("modload should not prefix __method_ names with the module prefix")
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("expected check to succeed (Array.sum dispatch resolves), got %v", err)
+	}
+}

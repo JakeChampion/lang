@@ -460,6 +460,15 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool) []error {
 	ownStructs := map[string]bool{}
 	ownConsts := map[string]bool{}
 	for _, fn := range m.prog.Funcs {
+		// `__method_<Type>_<Name>` decls keep their bare names
+		// (see the rename loop below for the rationale). Their
+		// internal references — bare-name calls to one method
+		// from another — must NOT pick up the module prefix
+		// either, or we'd produce `mod____method_<Type>_<Name>`
+		// idents that nothing in the combined Program resolves.
+		if strings.HasPrefix(fn.Name, "__method_") {
+			continue
+		}
 		ownFuncs[fn.Name] = true
 	}
 	for _, sd := range m.prog.Structs {
@@ -490,9 +499,17 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool) []error {
 		// `checker.methodVisibleHere`, which consults each
 		// FuncDecl's SourceModule (stamped during loadRecursive)
 		// against the program's import-closure map.
-		if fn.Receiver == nil {
+		//
+		// Same exemption applies to functions whose source-level
+		// name is already in `__method_<Type>_<Name>` form (e.g.
+		// std/array's `pub function __method_Array_sum(...)`).
+		// These are "manually hoisted" methods — the checker's
+		// auto-discovery pass keys off the `__method_` prefix to
+		// register them, so prefixing here would break dispatch
+		// the same way it would for syntactic receiver methods.
+		if fn.Receiver == nil && !strings.HasPrefix(fn.Name, "__method_") {
 			fn.Name = selfPrefix + fn.Name
-		} else {
+		} else if fn.Receiver != nil {
 			r.rewriteType(&fn.Receiver.Type)
 		}
 		for i := range fn.Params {
