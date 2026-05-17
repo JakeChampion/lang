@@ -268,16 +268,23 @@ the no-prelude path the default; until then this is the
 opt-out for programs that want to verify their imports are
 complete.
 
-Caveat: the current `std/*` modules cross-reference each
-other (e.g. `std/i32`'s `to_hex` calls `int_to_string_radix`
-from `core/int`) using bare names, which only resolves under
-the auto-prelude's namespace-flattening. Under no-prelude
-the cross-module refs would need to be qualified
-(`int.int_to_string_radix(...)`). Programs that touch only
-the methods they directly need work; programs that walk
-larger slices of the stdlib will hit unresolved-name errors
-until the stdlib internals get cleaned up for explicit
-imports.
+Free-function calls into stdlib become qualified under
+no-prelude — `int.int_to_string_radix(s, 16)` rather than
+the bare `int_to_string_radix(s, 16)` the auto-prelude
+flattens. Bare receiver-method calls (`.abs()`,
+`.to_string()`, `.pad_start(...)`) stay unchanged: the
+checker dispatches them by receiver type through the
+Methods map regardless of import path.
+
+Transitive stdlib loads: importing a stdlib module pulls
+in every other stdlib module its body dispatches into.
+`import "std/i32"` reaches `std/string` (for the byte-
+method ↔ string-method cycle) which reaches `std/array`
+(for `.reverse()` / `.join()`) which reaches `std/sort`
+(for `sort.sort_*` qualified). Cyclic stdlib imports are
+allowed and resolve through modload's stdlib-cycle gate.
+End-to-end coverage on arm64 / x86-64 / wasm32 lands as
+the `Test*NoPreludeStdlibImports` suites in `internal/e2e`.
 
 ### `core/map`
 
