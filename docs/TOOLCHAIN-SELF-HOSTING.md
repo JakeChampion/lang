@@ -186,14 +186,30 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   single-byte opcodes — same one-line shape as numeric.lang.
   Tests (`TestWASMConvertIntWidth`, `…FloatInt`) walk every
   variant.
-- Remaining Phase 1 work: the IR-walking entry point that turns
-  the codegen IR into a complete wasm module (composes the
-  type / import / function / memory / export / code / data
-  sections via the existing primitives), and the driver-wiring
-  step that deletes the `wasm-tools parse` call at
-  `cmd/lang/main.go:604`. Saturating-truncate ops and bulk-memory
-  ops (both 0xFC-prefixed) are deliberately out of scope — the
-  production backend doesn't lean on them.
+- **Section composers shipped** in
+  `internal/stdlib/std/wasm/sections.lang`: one function per
+  section that takes the section's logical input (lists of
+  typeidxs, parallel name/kind/idx arrays for exports, pre-
+  wrapped bodies for code, etc.) and emits the complete
+  `id + size + body` envelope. Covers type, function, memory,
+  export, start, code, and data sections plus the four
+  `export_{func,table,memory,global}` kind constants. Import and
+  element are intentionally skipped — imports carry a four-variant
+  union descriptor (func / table / mem / global) that warrants
+  its own helper module, and the existing wasm backend doesn't
+  exercise element segments. Tests
+  (`TestWASMSections{Function, StartMemory, Export, TypeCode,
+  Data}`) cover empty-vector cases, multi-byte uleb fields,
+  flag=0 vs flag=1 memory limits, and a code section that wraps
+  an inst.put_function_body-produced body end-to-end.
+- Remaining Phase 1 work: the IR-walking entry point that
+  arranges a codegen IR program as inputs to these section
+  composers and stitches them together (preamble + sections in
+  the spec-required order), and the driver-wiring step that
+  deletes the `wasm-tools parse` call at `cmd/lang/main.go:604`.
+  Saturating-truncate ops and bulk-memory ops (both 0xFC-prefixed)
+  are deliberately out of scope — the production backend doesn't
+  lean on them.
 
 ---
 

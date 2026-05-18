@@ -7384,3 +7384,248 @@ function main(): i32 {
 		t.Errorf("convert float/int: exit = %d, want 0", got)
 	}
 }
+
+// TestWASMSectionsFunction covers encode_function_section, the
+// simplest section composer — body is just a vec(typeidx).
+// Walks a 0-entry case, a 1-entry case, and a multi-byte uleb
+// typeidx (128) to verify the leb path inside the loop.
+func TestWASMSectionsFunction(t *testing.T) {
+	src := `import "std/wasm/sections";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // No functions: section id=3, size=1, body=[0x00] (vec count 0).
+    var noidxs: u32[] = [];
+    var s0: u8[] = sections.encode_function_section(empty, noidxs);
+    if (len(s0) != 3) { return 1; }
+    if (s0[0] != 3u8) { return 2; }
+    if (s0[1] != 1u8) { return 3; }
+    if (s0[2] != 0u8) { return 4; }
+
+    // Three functions with typeidxs 0, 1, 2 -> body [0x03, 0x00,
+    // 0x01, 0x02]. Wrapped: [0x03, 0x04, 0x03, 0x00, 0x01, 0x02].
+    var idxs: u32[] = [0u32, 1u32, 2u32];
+    var s3: u8[] = sections.encode_function_section(empty, idxs);
+    if (len(s3) != 6) { return 10; }
+    if (s3[0] != 3u8) { return 11; }    // section_function id
+    if (s3[1] != 4u8) { return 12; }    // size = 4
+    if (s3[2] != 3u8) { return 13; }    // vec count = 3
+    if (s3[3] != 0u8) { return 14; }
+    if (s3[4] != 1u8) { return 15; }
+    if (s3[5] != 2u8) { return 16; }
+
+    // Multi-byte typeidx (128 = uleb 0x80 0x01) -> body is
+    // count=1 + 0x80 0x01 = 3 bytes; wrapped = 5 bytes.
+    var big: u32[] = [128u32];
+    var s4: u8[] = sections.encode_function_section(empty, big);
+    if (len(s4) != 5)   { return 20; }
+    if (s4[0] != 3u8)   { return 21; }
+    if (s4[1] != 3u8)   { return 22; }    // body size 3
+    if (s4[2] != 1u8)   { return 23; }    // vec count 1
+    if (s4[3] != 128u8) { return 24; }    // typeidx low byte
+    if (s4[4] != 1u8)   { return 25; }    // typeidx high byte
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("sections function: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMSectionsStartMemory covers encode_start_section (single
+// funcidx body) and encode_memory_section in both flag=0 (no max)
+// and flag=1 (with max) cases.
+func TestWASMSectionsStartMemory(t *testing.T) {
+	src := `import "std/wasm/sections";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // start: id=8, size=1, body=[funcidx]. funcidx=0 -> [0x08, 0x01, 0x00].
+    var ss: u8[] = sections.encode_start_section(empty, 0u32);
+    if (len(ss) != 3) { return 1; }
+    if (ss[0] != 8u8) { return 2; }
+    if (ss[1] != 1u8) { return 3; }
+    if (ss[2] != 0u8) { return 4; }
+
+    // memory, no max: id=5, body=[count=1, flag=0, min=1]
+    // -> wrapped 5 bytes.
+    var mNoMax: u8[] = sections.encode_memory_section(empty, 1u32, 0 - 1);
+    if (len(mNoMax) != 5) { return 10; }
+    if (mNoMax[0] != 5u8) { return 11; }   // section_memory id
+    if (mNoMax[1] != 3u8) { return 12; }   // size = 3
+    if (mNoMax[2] != 1u8) { return 13; }   // count = 1
+    if (mNoMax[3] != 0u8) { return 14; }   // flag = no max
+    if (mNoMax[4] != 1u8) { return 15; }   // min = 1
+
+    // memory, with max: id=5, body=[count=1, flag=1, min=1, max=2]
+    // -> wrapped 6 bytes.
+    var mWithMax: u8[] = sections.encode_memory_section(empty, 1u32, 2);
+    if (len(mWithMax) != 6) { return 20; }
+    if (mWithMax[0] != 5u8) { return 21; }
+    if (mWithMax[1] != 4u8) { return 22; }   // size = 4
+    if (mWithMax[2] != 1u8) { return 23; }   // count = 1
+    if (mWithMax[3] != 1u8) { return 24; }   // flag = with max
+    if (mWithMax[4] != 1u8) { return 25; }   // min
+    if (mWithMax[5] != 2u8) { return 26; }   // max
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("sections start/memory: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMSectionsExport covers encode_export_section with two
+// exports of different kinds, exercising the three parallel-array
+// inputs together with put_name's uleb-prefixed UTF-8 encoding.
+func TestWASMSectionsExport(t *testing.T) {
+	src := `import "std/wasm/sections";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // One func export named "main" -> 0 + 0x00 + 0
+    // body: count=1, "main"=[4, 0x6D, 0x61, 0x69, 0x6E], kind=0, idx=0
+    var nms: string[] = ["main"];
+    var ks: u8[] = [sections.export_func()];
+    var ixs: u32[] = [0u32];
+    var s1: u8[] = sections.encode_export_section(empty, nms, ks, ixs);
+    // Expected: [0x07, 0x08, 0x01, 0x04, 'm', 'a', 'i', 'n', 0x00, 0x00]
+    // = 10 bytes.
+    if (len(s1) != 10) { return 1; }
+    if (s1[0] != 7u8)   { return 2; }    // section_export
+    if (s1[1] != 8u8)   { return 3; }    // body size 8
+    if (s1[2] != 1u8)   { return 4; }    // count
+    if (s1[3] != 4u8)   { return 5; }    // name len
+    if (s1[4] != 109u8) { return 6; }    // 'm'
+    if (s1[5] != 97u8)  { return 7; }    // 'a'
+    if (s1[6] != 105u8) { return 8; }    // 'i'
+    if (s1[7] != 110u8) { return 9; }    // 'n'
+    if (s1[8] != 0u8)   { return 10; }   // kind func
+    if (s1[9] != 0u8)   { return 11; }   // idx 0
+
+    // Two exports: ("memory", memory, 0) and ("g", global, 2).
+    var nms2: string[] = ["memory", "g"];
+    var ks2: u8[] = [sections.export_memory(), sections.export_global()];
+    var ixs2: u32[] = [0u32, 2u32];
+    var s2: u8[] = sections.encode_export_section(empty, nms2, ks2, ixs2);
+    // Body: count=2,
+    //   "memory"=[6, m,e,m,o,r,y], kind=2, idx=0     -> 9 bytes
+    //   "g"=[1, g], kind=3, idx=2                    -> 4 bytes
+    // total body = 1 + 9 + 4 = 14. Wrapped = 16 bytes.
+    if (len(s2) != 16)  { return 20; }
+    if (s2[0] != 7u8)   { return 21; }
+    if (s2[1] != 14u8)  { return 22; }
+    if (s2[2] != 2u8)   { return 23; }
+    if (s2[3] != 6u8)   { return 24; }   // "memory" length
+    // Skip "memory" content bytes; check kind + idx.
+    if (s2[10] != 2u8)  { return 25; }   // kind memory
+    if (s2[11] != 0u8)  { return 26; }   // idx 0
+    if (s2[12] != 1u8)  { return 27; }   // "g" length
+    if (s2[13] != 103u8) { return 28; }  // 'g'
+    if (s2[14] != 3u8)  { return 29; }   // kind global
+    if (s2[15] != 2u8)  { return 30; }   // idx 2
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("sections export: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMSectionsTypeCode walks the two sections that take "list
+// of pre-encoded sub-objects" inputs: type section (vec of
+// functypes) and code section (vec of pre-wrapped function
+// bodies).
+func TestWASMSectionsTypeCode(t *testing.T) {
+	src := `import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // Type section with one (i32) -> (i32) functype.
+    var p: u8[] = [encode.valtype_i32()];
+    var r: u8[] = [encode.valtype_i32()];
+    var pp: u8[][] = [p];
+    var rr: u8[][] = [r];
+    var ts: u8[] = sections.encode_type_section(empty, pp, rr);
+    // Expected: id=1, size=6, body=[count=1, 0x60, 1, 0x7F, 1, 0x7F] = 8 bytes.
+    if (len(ts) != 8) { return 1; }
+    if (ts[0] != 1u8) { return 2; }
+    if (ts[1] != 6u8) { return 3; }
+    if (ts[2] != 1u8) { return 4; }
+    if (ts[3] != 96u8) { return 5; }
+    if (ts[4] != 1u8) { return 6; }
+    if (ts[5] != 127u8) { return 7; }
+    if (ts[6] != 1u8) { return 8; }
+    if (ts[7] != 127u8) { return 9; }
+
+    // Code section with one body: i32.const 42 returning. Use
+    // put_function_body to wrap, then feed to encode_code_section.
+    var bodyExpr: u8[] = inst.inst_i32_const(empty, 42);
+    var locals: u8[] = inst.put_locals_empty(empty);
+    var fn: u8[] = inst.put_function_body(empty, locals, bodyExpr);
+    // fn = [size=4, 0x00 locals, 0x41 0x2A, 0x0B end] = 5 bytes.
+    var bodies: u8[][] = [fn];
+    var cs: u8[] = sections.encode_code_section(empty, bodies);
+    // Section body: count=1 (1 byte) + fn (5 bytes) = 6 bytes.
+    // Wrapped: id (1) + size_uleb (1) + body (6) = 8 bytes.
+    if (len(cs) != 8)  { return 20; }
+    if (cs[0] != 10u8) { return 21; }    // section_code id
+    if (cs[1] != 6u8)  { return 22; }    // body size 6
+    if (cs[2] != 1u8)  { return 23; }    // body count 1
+    if (cs[3] != 4u8)  { return 24; }    // fn size (locals + expr + end)
+    if (cs[4] != 0u8)  { return 25; }    // locals (empty)
+    if (cs[5] != 65u8) { return 26; }    // i32.const
+    if (cs[6] != 42u8) { return 27; }    // sleb 42
+    if (cs[7] != 11u8) { return 28; }    // 0x0B end
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("sections type/code: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMSectionsData covers encode_data_section. The active-
+// segment shape is: memidx (0) + offset expr (i32.const N ; end)
+// + init bytes (uleb-prefixed). One segment in the test plus a
+// parallel-array sanity-check with two segments.
+func TestWASMSectionsData(t *testing.T) {
+	src := `import "std/wasm/sections";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // One segment at offset 50 with init bytes [0xAA, 0xBB].
+    // Offset 50 (= 0x32) has bit-6 clear so sleb fits in 1 byte;
+    // 100 would need 2 bytes (bit-6 set), which is a fine
+    // boundary to bear in mind for the wider IR-walker tests.
+    var offs: i32[] = [50];
+    var initBytes: u8[] = [170u8, 187u8];
+    var inits: u8[][] = [initBytes];
+    var ds: u8[] = sections.encode_data_section(empty, offs, inits);
+    // Segment bytes:
+    //   memidx 0 (1 byte)
+    //   i32.const 50 ; end -> 0x41 0x32 0x0B (3 bytes)
+    //   init vec: 0x02 (count), 0xAA, 0xBB (3 bytes)
+    // = 7 bytes per segment.
+    // Section body: count=1 (1) + 7 = 8 bytes. Wrapped: id + size + body
+    // = 1 + 1 + 8 = 10 bytes.
+    if (len(ds) != 10) { return 1; }
+    if (ds[0] != 11u8) { return 2; }    // section_data id
+    if (ds[1] != 8u8)  { return 3; }    // body size 8
+    if (ds[2] != 1u8)  { return 4; }    // segment count 1
+    if (ds[3] != 0u8)  { return 5; }    // memidx 0
+    if (ds[4] != 65u8) { return 6; }    // 0x41 i32.const
+    if (ds[5] != 50u8) { return 7; }    // sleb 50 -> 0x32 (1 byte, bit-6 clear)
+    if (ds[6] != 11u8) { return 8; }    // 0x0B end
+    if (ds[7] != 2u8)  { return 9; }    // init bytes count
+    if (ds[8] != 170u8){ return 10; }
+    if (ds[9] != 187u8){ return 11; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("sections data: exit = %d, want 0", got)
+	}
+}
