@@ -8941,3 +8941,190 @@ function main(): i32 {
 		t.Errorf("wasmtime stdout = %q, want -1 / 4294967295 (255 sign-extended)", out)
 	}
 }
+
+// TestWASMModuleRunsI64Arithmetic: body is (1_000_000_000_000 +
+// 234_567_890_123) as i64, returning the result truncated to i32
+// via i32.wrap_i64. Exercises i64.const + i64.add + i32.wrap_i64
+// at runtime — the i64 path is otherwise only byte-vector tested.
+//
+// 1_234_567_890_123 mod 2^32 = 1_912_276_171.
+func TestWASMModuleRunsI64Arithmetic(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/convert";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    var body: u8[] = inst.inst_i64_const([], 1000000000000i64);
+    body = inst.inst_i64_const(body, 234567890123i64);
+    body = numeric.inst_i64_add(body);
+    body = convert.inst_i32_wrap_i64(body);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "1912276171") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 1912276171 (i64 sum low 32)", out)
+	}
+}
+
+// TestWASMModuleRunsBitwise: 12 ^ 10 = 6. Catches a swap among
+// the bitwise ops (and = 0x71, or = 0x72, xor = 0x73 — adjacent
+// opcodes that could be transposed). 12 & 10 = 8, 12 | 10 = 14,
+// 12 ^ 10 = 6, so any swap shows immediately.
+func TestWASMModuleRunsBitwise(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    var body: u8[] = inst.inst_i32_const([], 12);
+    body = inst.inst_i32_const(body, 10);
+    body = numeric.inst_i32_xor(body);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "6") {
+		t.Errorf("wasmtime stdout = %q, want 6 (12 ^ 10)", out)
+	}
+}
+
+// TestWASMModuleRunsSignedVsUnsignedCmp: -1 vs 1 under
+// i32.lt_s = 1 (true), under i32.lt_u = 0 (false, since -1 as
+// u32 is 0xFFFFFFFF which is greater than 1). The body picks
+// lt_s, so result is 1. A swap with lt_u (0x49 vs 0x48) would
+// flip the result to 0.
+func TestWASMModuleRunsSignedVsUnsignedCmp(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    var body: u8[] = inst.inst_i32_const([], 0 - 1);
+    body = inst.inst_i32_const(body, 1);
+    body = numeric.inst_i32_lt_s(body);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "1") {
+		t.Errorf("wasmtime stdout = %q, want 1 ((-1) <_s 1 = true)", out)
+	}
+}
+
+// TestWASMModuleRunsShiftRotate: (1 << 5) = 32 ; then rotr by 1
+// gives 16. Exercises the shift / rotate block (0x74..0x78)
+// which is otherwise only byte-vector tested.
+func TestWASMModuleRunsShiftRotate(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // (1 << 5) = 32 ; then rotr by 1 -> 16.
+    var body: u8[] = inst.inst_i32_const([], 1);
+    body = inst.inst_i32_const(body, 5);
+    body = numeric.inst_i32_shl(body);
+    body = inst.inst_i32_const(body, 1);
+    body = numeric.inst_i32_rotr(body);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "16") {
+		t.Errorf("wasmtime stdout = %q, want 16 ((1 << 5) rotr 1)", out)
+	}
+}
