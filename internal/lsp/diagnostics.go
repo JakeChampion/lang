@@ -5,25 +5,6 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 )
 
-// runDiagnostics parses + type-checks src and returns LSP diagnostics
-// for every problem found. A clean source produces an empty slice
-// (not nil) so the JSON serialiser emits `[]`, which clears any
-// previous diagnostics on the client.
-func runDiagnostics(src string) []Diagnostic {
-	out := []Diagnostic{}
-	prog, err := parseFor(src)
-	if err != nil {
-		out = append(out, toDiagnostics(err)...)
-	}
-	if prog == nil {
-		return out
-	}
-	if err := checkFor(prog); err != nil {
-		out = append(out, toDiagnostics(err)...)
-	}
-	return out
-}
-
 // toDiagnostics flattens a diag.Errors (or a single error) into LSP
 // Diagnostic structs. Anything that doesn't carry source position
 // info is reported at the start of the file with the raw message.

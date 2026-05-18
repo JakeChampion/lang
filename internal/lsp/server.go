@@ -22,9 +22,14 @@ import (
 // timer that runs off the read loop, that's the place to add a mutex.
 type Server struct {
 	// docs is the in-memory mirror of every document the editor has
-	// opened. Keyed by URI; value is the most recent full text we've
-	// been told about. Removed on didClose.
-	docs map[string]string
+	// opened. Keyed by URI; value carries the source text plus the
+	// most recent parse + check products. Removed on didClose.
+	//
+	// We cache prog + info so hover / definition don't redo work
+	// per cursor move — the editor sends those requests far more
+	// often than didChange. The cache is rebuilt on every
+	// didOpen / didChange.
+	docs map[string]*docState
 
 	// publish is called whenever the server decides to push a
 	// notification (e.g. publishDiagnostics) back to the client.
@@ -46,7 +51,18 @@ type Server struct {
 // (for stdio) or call HandleMessage directly (for in-process drivers
 // like the wasm playground).
 func NewServer() *Server {
-	return &Server{docs: map[string]string{}}
+	return &Server{docs: map[string]*docState{}}
+}
+
+// docState is everything we cache per open document. Both prog and
+// info may be nil when the source has problems severe enough that
+// parsing or type-checking bailed; consumers (hover, definition)
+// must nil-check before walking.
+type docState struct {
+	src   string
+	prog  *ast.Program
+	info  *checker.Info
+	diags []Diagnostic
 }
 
 // ExitCode returns the process exit code the server thinks the
@@ -160,6 +176,10 @@ func (s *Server) handleMethod(method string, params json.RawMessage) (any, *rpcE
 		return nil, s.handleDidChange(params)
 	case "textDocument/didClose":
 		return nil, s.handleDidClose(params)
+	case "textDocument/hover":
+		return s.handleHover(params)
+	case "textDocument/definition":
+		return s.handleDefinition(params)
 	}
 	return nil, &rpcError{
 		Code:    errCodeMethodNotFound,
@@ -170,10 +190,42 @@ func (s *Server) handleMethod(method string, params json.RawMessage) (any, *rpcE
 func (s *Server) handleInitialize() initializeResult {
 	return initializeResult{
 		Capabilities: serverCapabilities{
-			TextDocumentSync: syncKindFull,
+			TextDocumentSync:   syncKindFull,
+			HoverProvider:      true,
+			DefinitionProvider: true,
 		},
 		ServerInfo: &serverInfo{Name: "lang-lsp"},
 	}
+}
+
+func (s *Server) handleHover(raw json.RawMessage) (any, *rpcError) {
+	var p hoverParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return nil, nil
+	}
+	if r := runHover(state, p.Position); r != nil {
+		return r, nil
+	}
+	return nil, nil // null hover = "nothing to show here"
+}
+
+func (s *Server) handleDefinition(raw json.RawMessage) (any, *rpcError) {
+	var p definitionParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return nil, nil
+	}
+	if loc := runDefinition(state, p.TextDocument.URI, p.Position); loc != nil {
+		return loc, nil
+	}
+	return nil, nil
 }
 
 func (s *Server) handleDidOpen(raw json.RawMessage) *rpcError {
@@ -181,7 +233,7 @@ func (s *Server) handleDidOpen(raw json.RawMessage) *rpcError {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
 	}
-	s.docs[p.TextDocument.URI] = p.TextDocument.Text
+	s.updateDoc(p.TextDocument.URI, p.TextDocument.Text)
 	s.publishDiagnostics(p.TextDocument.URI)
 	return nil
 }
@@ -197,9 +249,35 @@ func (s *Server) handleDidChange(raw json.RawMessage) *rpcError {
 	// Full-sync mode: the last entry holds the entire new document.
 	// We ignore Range; editors that respect our declared sync kind
 	// never send one.
-	s.docs[p.TextDocument.URI] = p.ContentChanges[len(p.ContentChanges)-1].Text
+	s.updateDoc(p.TextDocument.URI, p.ContentChanges[len(p.ContentChanges)-1].Text)
 	s.publishDiagnostics(p.TextDocument.URI)
 	return nil
+}
+
+// updateDoc re-parses + re-checks src and caches the products. Called
+// from didOpen and didChange. parseFor + checkFor are package-local
+// indirections so future test code can stub the pipeline.
+func (s *Server) updateDoc(uri, src string) {
+	state := &docState{src: src}
+	prog, perr := parseFor(src)
+	state.prog = prog
+	var checkErr error
+	if prog != nil {
+		state.info, checkErr = checker.Check(prog)
+	}
+	state.diags = collectDiagnostics(perr, checkErr)
+	s.docs[uri] = state
+}
+
+func collectDiagnostics(parseErr, checkErr error) []Diagnostic {
+	out := []Diagnostic{}
+	if parseErr != nil {
+		out = append(out, toDiagnostics(parseErr)...)
+	}
+	if checkErr != nil {
+		out = append(out, toDiagnostics(checkErr)...)
+	}
+	return out
 }
 
 func (s *Server) handleDidClose(raw json.RawMessage) *rpcError {
@@ -218,7 +296,7 @@ func (s *Server) handleDidClose(raw json.RawMessage) *rpcError {
 }
 
 func (s *Server) publishDiagnostics(uri string) {
-	src, ok := s.docs[uri]
+	state, ok := s.docs[uri]
 	if !ok {
 		return
 	}
@@ -227,21 +305,16 @@ func (s *Server) publishDiagnostics(uri string) {
 	}
 	s.publish("textDocument/publishDiagnostics", publishDiagnosticsParams{
 		URI:         uri,
-		Diagnostics: runDiagnostics(src),
+		Diagnostics: state.diags,
 	})
 }
 
-// parseFor + checkFor are package-local thunks so future test code can
-// swap them with stubs. They're also where stdlib + module loading
-// would hook in; for the MVP the playground runs single-file programs
-// and `parser.Parse` / `checker.Check` are enough.
+// parseFor is a package-local indirection so future test code can swap
+// the pipeline. It's also where stdlib + module loading would hook
+// in; for the MVP the playground runs single-file programs and
+// `parser.Parse` is enough.
 func parseFor(src string) (*ast.Program, error) {
 	return parser.Parse(src)
-}
-
-func checkFor(prog *ast.Program) error {
-	_, err := checker.Check(prog)
-	return err
 }
 
 // ---- framing ----
