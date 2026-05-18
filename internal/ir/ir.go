@@ -3829,6 +3829,17 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 		if t, ok := x.Type.(ast.TupleType); ok {
 			return t, true
 		}
+	case *ast.Call:
+		// `f().N` where `f` returns a tuple — either a top-level
+		// function (resolved through FuncSigs) or a closure value
+		// (function-typed local / param / capture). callReturnType
+		// covers all three shapes; we just peel back the TupleType
+		// when it lands.
+		if t := b.callReturnType(x); t != nil {
+			if tt, ok := t.(ast.TupleType); ok {
+				return tt, true
+			}
+		}
 	}
 	return ast.TupleType{}, false
 }
@@ -3957,12 +3968,20 @@ func (b *builder) exprStaticType(e ast.Expr) ast.Type {
 // callReturnType returns the return type of a Call expression
 // by looking up the callee in the checker's FuncSigs map. The
 // callee can be either an Ident (most common — direct call to
-// a named function) or some other expression shape; for non-
-// Ident callees we return nil since indirect-call return types
-// aren't tracked here. Used by fieldOwner / exprStaticType to
-// resolve `foo().field` patterns where the call returns a
-// struct.
+// a named function), a closure-typed Ident (a Var / param of
+// FuncType), or a *ast.CaptureRef whose stamped Type carries
+// the captured outer-scope FuncType. Used by fieldOwner /
+// exprStaticType / targetTupleType to resolve `foo().field`
+// and `foo().0` patterns where the call returns a struct /
+// tuple — and crucially when `foo` is a closure value, not a
+// top-level function.
 func (b *builder) callReturnType(c *ast.Call) ast.Type {
+	if cr, ok := c.Callee.(*ast.CaptureRef); ok {
+		if ft, ok := cr.Type.(*ast.FuncType); ok {
+			return ft.Result
+		}
+		return nil
+	}
 	id, ok := c.Callee.(*ast.Ident)
 	if !ok {
 		return nil
@@ -3970,6 +3989,25 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 	if b.info != nil {
 		if sig, ok := b.info.FuncSigs[id.Name]; ok && sig != nil {
 			return sig.Result
+		}
+	}
+	// Function-typed local / param: `foo` is bound as a
+	// closure value (a Var of FuncType) or arrived as a param
+	// of FuncType. Its Result is what callers see post-call.
+	for _, p := range b.fn.Params {
+		if p.Name == id.Name {
+			if ft, ok := p.Type.(*ast.FuncType); ok {
+				return ft.Result
+			}
+		}
+	}
+	if b.info != nil {
+		for _, v := range b.info.Locals[b.fn] {
+			if v.Name == id.Name {
+				if ft, ok := v.Type.(*ast.FuncType); ok {
+					return ft.Result
+				}
+			}
 		}
 	}
 	return nil

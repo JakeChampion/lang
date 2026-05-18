@@ -3054,6 +3054,24 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if t, ok := s.lookup(n.Name); ok {
 			return t
 		}
+		// Inside a local function: a name not found in the local
+		// scope might resolve in the enclosing function's scope.
+		// Record it as a capture and return its outer type. This
+		// check fires before the FuncSigs lookup below — local
+		// FuncDecls register in FuncSigs too, and FuncSigs alone
+		// would short-circuit the capture path for a sibling
+		// local function name (`function outer() { return inner; }`
+		// where both inner and outer are local to the same outer
+		// function). The outer scope is the authoritative source
+		// for whether a sibling needs capturing.
+		if c.captureOuter != nil {
+			if t, ok := c.captureOuter.lookup(n.Name); ok {
+				if c.captureSink != nil {
+					c.captureSink(n.Name, t)
+				}
+				return t
+			}
+		}
 		if sig, ok := c.info.FuncSigs[n.Name]; ok {
 			return sig
 		}
@@ -3067,17 +3085,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			return ast.EnumType{Name: vr.enumName}
-		}
-		// Inside a local function: a name not found in the local
-		// scope might resolve in the enclosing function's scope.
-		// Record it as a capture and return its outer type.
-		if c.captureOuter != nil {
-			if t, ok := c.captureOuter.lookup(n.Name); ok {
-				if c.captureSink != nil {
-					c.captureSink(n.Name, t)
-				}
-				return t
-			}
 		}
 		c.errIdent(n, s, "undefined identifier %q", n.Name)
 		return nil
