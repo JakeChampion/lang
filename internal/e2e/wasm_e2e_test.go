@@ -9446,3 +9446,94 @@ function main(): i32 {
 		t.Errorf("wasmtime stdout = %q, want 100 (sum of [10,20,30,40] via memory loop)", out)
 	}
 }
+
+// TestWASMLebCrossValidates runs std/wasm/leb128 on a curated
+// input set + asserts the bytes match what internal/wasm/leb128
+// (the Go mirror) produces for the same inputs. Together with
+// the per-side unit tests this enforces lock-step: any drift
+// off-spec on one side fires here.
+func TestWASMLebCrossValidates(t *testing.T) {
+	type expect struct {
+		fn     string
+		input  string
+		expect []byte
+	}
+	exps := []expect{
+		{"uleb_u32", "0u32", []byte{0x00}},
+		{"uleb_u32", "1u32", []byte{0x01}},
+		{"uleb_u32", "127u32", []byte{0x7f}},
+		{"uleb_u32", "128u32", []byte{0x80, 0x01}},
+		{"uleb_u32", "16384u32", []byte{0x80, 0x80, 0x01}},
+		{"uleb_u32", "624485u32", []byte{0xe5, 0x8e, 0x26}},
+		{"uleb_u32", "4294967295u32", []byte{0xff, 0xff, 0xff, 0xff, 0x0f}},
+		{"sleb_i32", "0", []byte{0x00}},
+		{"sleb_i32", "1", []byte{0x01}},
+		{"sleb_i32", "(0 - 1)", []byte{0x7f}},
+		{"sleb_i32", "63", []byte{0x3f}},
+		{"sleb_i32", "64", []byte{0xc0, 0x00}},
+		{"sleb_i32", "(0 - 64)", []byte{0x40}},
+		{"sleb_i32", "(0 - 65)", []byte{0xbf, 0x7f}},
+		{"sleb_i32", "2147483647", []byte{0xff, 0xff, 0xff, 0xff, 0x07}},
+		{"sleb_i32", "(0 - 2147483647) - 1", []byte{0x80, 0x80, 0x80, 0x80, 0x78}},
+		{"uleb_u64", "0u64", []byte{0x00}},
+		{"uleb_u64", "127u64", []byte{0x7f}},
+		{"uleb_u64", "128u64", []byte{0x80, 0x01}},
+		{"uleb_u64", "4294967295u64", []byte{0xff, 0xff, 0xff, 0xff, 0x0f}},
+		{"sleb_i64", "0i64", []byte{0x00}},
+		{"sleb_i64", "(0i64 - 1i64)", []byte{0x7f}},
+		{"sleb_i64", "64i64", []byte{0xc0, 0x00}},
+		{"sleb_i64", "(0i64 - 64i64)", []byte{0x40}},
+		// The algorithm both sides use produces a 10-byte encoding
+		// for max-i64 (valid sleb128, just not the minimal form).
+		{"sleb_i64", "9223372036854775807i64", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}},
+		{"sleb_i64", "(0i64 - 9223372036854775807i64) - 1i64", []byte{0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7f}},
+	}
+
+	// Compose a Lang program that prints one space-separated
+	// byte sequence per expect-row.
+	var sb strings.Builder
+	sb.WriteString(`import "std/wasm/leb128";
+
+function dump(bs: u8[]): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < len(bs)) {
+        if (i > 0) { s = s + " "; }
+        s = s + (bs[i] as i32).to_string();
+        i = i + 1;
+    }
+    return s;
+}
+
+function main(): i32 {
+    var empty: u8[] = [];
+`)
+	for _, e := range exps {
+		sb.WriteString("    print(dump(leb128.")
+		sb.WriteString(e.fn)
+		sb.WriteString("(empty, ")
+		sb.WriteString(e.input)
+		sb.WriteString(")));\n")
+	}
+	sb.WriteString("    return 0;\n}\n")
+
+	stdout, _ := invokeWasmtime(t, sb.String())
+	// buildComponent uses PrintMainResult: true, so the harness's
+	// trailing main()-returns-0 produces an extra "0" line at the
+	// end. Drop trailing blank + the result line.
+	gotLines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(gotLines) < len(exps) {
+		t.Fatalf("got %d lines, want >= %d\nstdout:\n%s", len(gotLines), len(exps), stdout)
+	}
+	for i, e := range exps {
+		wantParts := make([]string, len(e.expect))
+		for j, b := range e.expect {
+			wantParts[j] = strconv.Itoa(int(b))
+		}
+		want := strings.Join(wantParts, " ")
+		if gotLines[i] != want {
+			t.Errorf("%s(%s):\n  Lang got: %q\n  Go want:  %q",
+				e.fn, e.input, gotLines[i], want)
+		}
+	}
+}
