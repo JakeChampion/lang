@@ -204,6 +204,25 @@ type Generator struct {
 	// IEEE-754 edges (NaN propagation, denormal flush, Inf
 	// comparison) that may legitimately differ across backends.
 	noFloats bool
+	// helpers is the running list of every top-level function
+	// signature emitted so far. Subsequent function bodies
+	// (including main) can call any prior helper with type-
+	// correct arguments — this exercises the calling
+	// convention, parameter passing, and cross-function return
+	// flow that single-function programs miss. Order matters:
+	// only forward calls are allowed (helper N can call helpers
+	// 0..N-1), which sidesteps self-recursion and unbounded
+	// stack growth without needing a static check.
+	helpers []helperSig
+}
+
+// helperSig is the bare minimum the generator needs to emit a
+// call site: the function's name, the types it takes, and the
+// type it returns.
+type helperSig struct {
+	name    string
+	params  []gtype
+	retType gtype
 }
 
 // gtype is the generator's internal enum of Lang types. Each kind
@@ -285,25 +304,51 @@ func GenMain(seed uint64) string {
 	return newRandGen(seed, DefaultConfig()).MainProgram()
 }
 
-// MainProgram emits a single `function main(): i32 { ... }`. Body
-// declares 0..N integer/boolean vars (which give the differential
-// harness something to disagree on across backends) and returns
-// `(<i32-expr> & 255i32)`. Sets `noFloats` for the duration of
-// the call so nested productions can't sneak f32 in through
+// MainProgram emits a program of the shape
+//
+//	function gen_f0(...): ... { ... }
+//	function gen_f1(...): ... { ... }
+//	...
+//	function main(): i32 { ... return (<i32-expr> & 255i32); }
+//
+// The 0..K helpers exist so main has things to call: every call
+// site in main exercises one more chunk of the calling
+// convention / parameter-passing path that single-function
+// programs miss. Helpers can themselves call any *earlier*
+// helper (forward refs only — sidesteps self- and mutual-
+// recursion without a static check). Sets `noFloats` for the
+// duration so nested productions can't sneak f32 in through
 // boolean comparisons.
 func (g *Generator) MainProgram() string {
 	prevNoFloats := g.noFloats
+	prevHelpers := g.helpers
 	g.noFloats = true
-	defer func() { g.noFloats = prevNoFloats }()
+	g.helpers = nil
+	defer func() {
+		g.noFloats = prevNoFloats
+		g.helpers = prevHelpers
+	}()
 
 	var b strings.Builder
+
+	// Emit a small number of helpers before main. Helpers in
+	// main-program mode inherit noFloats, so their signatures are
+	// drawn from {i32, i64, bool, string}. Main only consumes
+	// i32-returning helpers in its return expression, but
+	// non-i32 helpers still get exercised: any helper can call
+	// any earlier helper of matching arg/return types.
+	nHelpers := g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
+	for i := 0; i < nHelpers; i++ {
+		g.funcDecl(&b, i)
+	}
+
 	sc := newScope(nil)
 	b.WriteString("function main(): i32 { ")
 	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
-		// Restrict to deterministic-across-backends types. Strings
-		// would also need a print channel to observe; we just want
-		// the return-value byte.
+		// Restrict main's *vars* to deterministic-across-backends
+		// types. Strings would need a print channel to observe;
+		// we just want the return-value byte.
 		vt := []gtype{tI32, tI64, tBool}[g.ch.intN(3)]
 		vname := fmt.Sprintf("v%d", i)
 		fmt.Fprintf(&b, "var %s: %s = ", vname, vt)
@@ -332,12 +377,15 @@ func (g *Generator) Program() string {
 func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	sc := newScope(nil)
 	nParams := g.ch.intN(maxInt(g.cfg.MaxParams, 0) + 1)
-	fmt.Fprintf(b, "function gen_f%d(", idx)
+	name := fmt.Sprintf("gen_f%d", idx)
+	params := make([]gtype, nParams)
+	fmt.Fprintf(b, "function %s(", name)
 	for i := 0; i < nParams; i++ {
 		if i > 0 {
 			b.WriteString(", ")
 		}
 		pt := g.pickType()
+		params[i] = pt
 		pn := fmt.Sprintf("p%d", i)
 		sc.declare(pt, pn)
 		fmt.Fprintf(b, "%s: %s", pn, pt)
@@ -347,6 +395,9 @@ func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	fmt.Fprintf(b, ": %s { ", ret)
 	g.body(b, sc, ret)
 	b.WriteString("}\n")
+	// Register AFTER the body emit so this decl can't accidentally
+	// recurse into itself. Only forward calls are visible.
+	g.helpers = append(g.helpers, helperSig{name: name, params: params, retType: ret})
 }
 
 // body emits a sequence of `var` declarations followed by a typed
@@ -373,9 +424,31 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 // current recursion level; once it exceeds cfg.MaxExprDepth, only
 // leaf productions (literals + variable references) are emitted so
 // the tree always terminates.
+//
+// Two non-leaf productions are tried before falling through to the
+// per-type composite path: a call to a registered helper whose
+// return type is t, and an if-expression with both arms typed t.
+// Either can short-circuit the rest of the dispatch — when neither
+// applies, the dispatch falls into numericExpr / boolExpr / a
+// leaf depending on t.
 func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	if depth >= g.cfg.MaxExprDepth || g.flip(0.4) {
 		g.leaf(b, sc, t)
+		return
+	}
+	// Helper call. Skipped when no helper returns t, or when the
+	// generator rolls "small branch" — exhaustion convention
+	// keeps generation terminating.
+	if !g.flip(0.7) {
+		if g.emitCall(b, sc, t, depth) {
+			return
+		}
+	}
+	// If-expression. The Lang `if (cond) { then } else { else }`
+	// in expression position requires both arms to share a type;
+	// recursing with the same t on both arms preserves that.
+	if !g.flip(0.8) {
+		g.emitIfExpr(b, sc, t, depth)
 		return
 	}
 	switch t {
@@ -389,6 +462,46 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		// invariant. Stick to leaves.
 		g.leaf(b, sc, t)
 	}
+}
+
+// emitCall picks a previously-registered helper whose return type
+// is t and emits a typed call to it. Returns false (without
+// writing) if no such helper exists; the caller should fall back
+// to another production.
+func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) bool {
+	var cands []helperSig
+	for _, h := range g.helpers {
+		if h.retType == t {
+			cands = append(cands, h)
+		}
+	}
+	if len(cands) == 0 {
+		return false
+	}
+	h := cands[g.ch.intN(len(cands))]
+	b.WriteString(h.name)
+	b.WriteByte('(')
+	for i, pt := range h.params {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		g.expr(b, sc, pt, depth+1)
+	}
+	b.WriteByte(')')
+	return true
+}
+
+// emitIfExpr writes `(if (<bool-expr>) { <expr-of-t> } else {
+// <expr-of-t> })`. Outer parens make the result safe to drop into
+// any expression slot regardless of precedence.
+func (g *Generator) emitIfExpr(b *strings.Builder, sc *scope, t gtype, depth int) {
+	b.WriteString("(if (")
+	g.expr(b, sc, tBool, depth+1)
+	b.WriteString(") { ")
+	g.expr(b, sc, t, depth+1)
+	b.WriteString(" } else { ")
+	g.expr(b, sc, t, depth+1)
+	b.WriteString(" })")
 }
 
 func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype) {

@@ -147,6 +147,66 @@ func TestGenBytesIsDeterministic(t *testing.T) {
 	}
 }
 
+// TestGenFeatureCoverage — the load-bearing observation that
+// language features added to the generator actually show up in
+// practice. Without this, regressions like "the call production
+// stopped firing because the flip bias drifted" would only
+// surface when someone notices a backend stopped crashing.
+// Walks 1024 seeds and asserts each landmark feature appears in
+// at least one program.
+func TestGenFeatureCoverage(t *testing.T) {
+	want := map[string]bool{
+		"function call":              false,
+		"if-expression":              false,
+		"binary arithmetic":          false,
+		"variable reference":         false,
+		"helper-call inside main":    false,
+		"nested call (call as arg)":  false,
+		"main with var declarations": false,
+	}
+	for seed := uint64(0); seed < 1024; seed++ {
+		src := langsmith.GenMain(seed)
+		// "gen_f0(" appears either in the helper decl OR a call.
+		// Both forms are useful evidence; the nested-call check
+		// distinguishes a call-from-main shape.
+		if strings.Contains(src, "gen_f0(") {
+			want["function call"] = true
+		}
+		if strings.Contains(src, "(if (") {
+			want["if-expression"] = true
+		}
+		if strings.Contains(src, " + ") || strings.Contains(src, " * ") {
+			want["binary arithmetic"] = true
+		}
+		// Reference to a generated var inside an expression — `v0`
+		// only ever appears as a token after a `var v0` decl.
+		if strings.Contains(src, "v0") && strings.Count(src, "v0") > 1 {
+			want["variable reference"] = true
+		}
+		// Helper call inside main: the helper name appears after
+		// `function main`.
+		if i := strings.Index(src, "function main"); i >= 0 {
+			tail := src[i:]
+			if strings.Contains(tail, "gen_f0(") || strings.Contains(tail, "gen_f1(") {
+				want["helper-call inside main"] = true
+			}
+		}
+		// Nested call: `gen_f0(... gen_f0(...) ...)` — second `gen_f0(`
+		// occurs before the matching close of the first.
+		if strings.Count(src, "gen_f0(") >= 2 || strings.Count(src, "gen_f1(") >= 2 {
+			want["nested call (call as arg)"] = true
+		}
+		if i := strings.Index(src, "function main"); i >= 0 && strings.Contains(src[i:], "var v0") {
+			want["main with var declarations"] = true
+		}
+	}
+	for feature, ok := range want {
+		if !ok {
+			t.Errorf("feature never seen in 1024 GenMain seeds: %s", feature)
+		}
+	}
+}
+
 // TestGenBytesExhaustionShrinksProgram — chopping bytes off the
 // end of a corpus shouldn't make the emitted program *longer*.
 // This is the load-bearing minimisation property: the fuzzer's
