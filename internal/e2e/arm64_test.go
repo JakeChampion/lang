@@ -9644,6 +9644,31 @@ function main(): i32 {
 	}
 }
 
+// Sibling to #537. The polymorphic-numeric branch in
+// unifyIfArms had no float counterpart, so a polymorphic
+// FloatLit (`0.0`) in one if-arm vs a concrete f64
+// (struct field load) in another rejected the
+// if-expression as "branches differ: f64 vs f32".
+//
+// Fix: unifyIfArms also pairs a polymorphic FloatType
+// with a concrete FloatType, returning the concrete side
+// so the settle pass can stamp the literal's width.
+func TestArm64UnifyIfArmsPolymorphicFloat(t *testing.T) {
+	src := `struct N { v: f64 }
+function get(n: N, cond: boolean): f64 {
+    return if (cond) { n.v } else { 0.0 };
+}
+function main(): i32 {
+    var n: N = N { v: 3.14 };
+    var s: f64 = get(n, true);
+    if (s > 3.0 && s < 4.0) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("if-expr f64 vs poly float got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,

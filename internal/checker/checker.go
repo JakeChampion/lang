@@ -1736,6 +1736,22 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 			return a
 		}
 	}
+	// Polymorphic float (an unsettled FloatLit) is
+	// compatible with any concrete FloatType — let the
+	// settle pass stamp the literal's width. Without this,
+	// `var f: f64 = if cond { n.v } else { 0.0 };` rejects
+	// because `0.0` defaults to f32 polymorphic and `n.v`
+	// is concrete f64.
+	if af, aok := a.(ast.FloatType); aok && af.Polymorphic {
+		if _, ok := b.(ast.FloatType); ok {
+			return b
+		}
+	}
+	if bf, bok := b.(ast.FloatType); bok && bf.Polymorphic {
+		if _, ok := a.(ast.FloatType); ok {
+			return a
+		}
+	}
 	ae, aok := a.(ast.EnumType)
 	be, bok := b.(ast.EnumType)
 	if aok && bok && ae.Name == be.Name {
