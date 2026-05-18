@@ -246,6 +246,14 @@ type Interp struct {
 	// works in both worlds.
 	openFiles map[int64]*os.File
 	nextFd    int64
+	// deferStack is a per-call list of expressions to evaluate at
+	// function exit, in LIFO order. callFunc / callClosure push
+	// a fresh empty frame on entry, the `*ast.Defer` stmt
+	// appends to the current frame, and the call's exit paths
+	// (`return val`, falloff to Void) iterate the frame in
+	// reverse before popping it. Nested calls get their own
+	// frame — defers inside a callee don't run in the caller.
+	deferStack [][]ast.Expr
 	// tcpListeners / tcpConns are the interpreter's analogue
 	// of OS socket fds. The AOT backends return raw kernel
 	// fds; the interpreter returns opaque integer IDs into
@@ -1357,14 +1365,32 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	for k, p := range fn.Params {
 		e.declare(p.Name, args[k])
 	}
+	i.deferStack = append(i.deferStack, nil)
 	r, err := i.execBlock(fn.Body, e)
+	defers := i.deferStack[len(i.deferStack)-1]
+	i.deferStack = i.deferStack[:len(i.deferStack)-1]
 	if err != nil {
+		i.runDefers(defers, e)
 		return nil, err
 	}
+	i.runDefers(defers, e)
 	if r.flow == flowReturn {
 		return r.val, nil
 	}
 	return Void{}, nil
+}
+
+// runDefers evaluates the LIFO list of expressions a callee
+// accumulated via `defer expr;` statements. Each one runs
+// against the env at function exit — closures already capture
+// any local bindings they read; deferred expressions just read
+// the same env. Errors from a deferred expression are dropped
+// (defer is "fire and forget" at function exit) — matching
+// codegen which doesn't propagate them either.
+func (i *Interp) runDefers(defers []ast.Expr, e *env) {
+	for k := len(defers) - 1; k >= 0; k-- {
+		_, _ = i.evalExpr(defers[k], e)
+	}
 }
 
 func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
@@ -1635,6 +1661,16 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 			}
 		}
 		return result{}, fmt.Errorf("interp: match did not cover variant %s (this should have been a checker error)", ev.VariantName)
+	case *ast.Defer:
+		// Push onto the enclosing call's defer frame. The frame
+		// is unwound LIFO at function exit by callFunc /
+		// callClosure. No frame = `defer` outside any function
+		// call (REPL top level) — treat as a no-op since
+		// there's no exit point to run the deferred expr at.
+		if n := len(i.deferStack); n > 0 {
+			i.deferStack[n-1] = append(i.deferStack[n-1], x.Expr)
+		}
+		return result{flow: flowNormal}, nil
 	}
 	return result{}, fmt.Errorf("interp: unsupported statement %T", s)
 }
@@ -2064,10 +2100,15 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	for k, p := range c.Decl.Params {
 		e.declare(p.Name, args[k])
 	}
+	i.deferStack = append(i.deferStack, nil)
 	r, err := i.execBlock(c.Decl.Body, e)
+	defers := i.deferStack[len(i.deferStack)-1]
+	i.deferStack = i.deferStack[:len(i.deferStack)-1]
 	if err != nil {
+		i.runDefers(defers, e)
 		return nil, err
 	}
+	i.runDefers(defers, e)
 	if r.flow == flowReturn {
 		return r.val, nil
 	}
