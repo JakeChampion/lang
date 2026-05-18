@@ -176,6 +176,10 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"f-string":                   false,
 		"len(string)":                false,
 		"pipe operator":              false,
+		"Some literal":               false,
+		"None literal":               false,
+		"Option match":               false,
+		"try operator (?)":           false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -269,6 +273,30 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "|>") {
 			want["pipe operator"] = true
+		}
+		// Some appears in literals + match arms. Match arms are
+		// `Some(__opt_x...)`, so check for the literal-call form
+		// `Some(` separately. Subtract 0 occurrences in Color decl.
+		if strings.Contains(src, "(Some(") {
+			want["Some literal"] = true
+		}
+		// None as a bare token. Appears in literal positions plus
+		// match arms. Don't conflate with `Done` / `Stone` / etc.
+		// — full word match is enough since the generator never
+		// emits names ending in "None".
+		for _, tok := range []string{" None;", " None,", " None ", "{None}", "= None;"} {
+			if strings.Contains(src, tok) {
+				want["None literal"] = true
+				break
+			}
+		}
+		if strings.Contains(src, "match (") && strings.Contains(src, "Some(__opt_x") {
+			want["Option match"] = true
+		}
+		// `?)` is the generator's try-operator shape (always
+		// emitted with the outer paren).
+		if strings.Contains(src, "?)") {
+			want["try operator (?)"] = true
 		}
 	}
 	for feature, ok := range want {

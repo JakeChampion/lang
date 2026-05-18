@@ -423,6 +423,28 @@ func TestIfExprStillRejectsActualBranchMismatch(t *testing.T) {
 }
 
 // Postfix `?` produces the unwrapped Some payload type.
+// Regression: a non-variant call returning Option[T] used to be
+// refreshed by postSettleType's Call branch as Option[<arg type>],
+// because the gate didn't distinguish variant constructors from
+// regular function calls. The minimal repro is a function whose
+// first param is an array type — the arg-rebuild would turn
+// `Option[i32]` into e.g. `Option[boolean[]]`.
+func TestNonVariantCallReturningGenericEnum(t *testing.T) {
+	cases := []string{
+		`function f(p: boolean[]): Option[i32] { return None; }
+function main(): i32 { var v: Option[i32] = f([true]); return 0; }`,
+		`function g(p: i32[], q: string): Option[i64] { return None; }
+function main(): i32 { var v: Option[i64] = g([1], "x"); return 0; }`,
+		`function h(p: boolean[]): Result[i32, i32] { return Ok(0); }
+function main(): i32 { var v: Result[i32, i32] = h([true]); return 0; }`,
+	}
+	for _, src := range cases {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("unexpected error for non-variant Option/Result-returning call: %v\nsrc:\n%s", err, src)
+		}
+	}
+}
+
 func TestOptionTryTypechecks(t *testing.T) {
 	src := `function f(m: Map[i32, i32]): Option[i32] {
 		var v: i32 = m.get(1)?;
