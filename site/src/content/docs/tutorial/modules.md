@@ -61,7 +61,7 @@ function main(): i32 {
 }
 ```
 
-The full list is under [Standard library →](/stdlib/).
+The full list is under [Standard library →](../../stdlib/).
 
 ## Working with the language server
 
