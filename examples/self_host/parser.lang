@@ -1,0 +1,561 @@
+// examples/self_host/parser.lang — extends examples/self_host/lexer.lang
+// with a recursive-descent parser. Together they form the second
+// concrete step of the self-host port (after the lexer in
+// examples/self_host/lexer.lang).
+//
+// Why one file: cross-module union-pattern matching isn't
+// supported yet (`mod.VariantName(x) => …`), so the parser needs
+// the Token union's members in its own module. Lexer + parser
+// both ship together until that gap closes.
+//
+// Scope:
+//   - Expressions with precedence: + - * / % comparisons
+//     equality && || (mirrors Go parser's precedence climbing)
+//   - Numbers (with float / integer / suffix distinction
+//     surfaced on the AST node)
+//   - Identifier expressions + function calls `f(a, b)`
+//   - Parenthesised grouping
+//   - Statements: `var x = expr;`, `return expr;`, expression
+//     stmts
+//
+// Out of scope (Go parser covers them; follow-up port):
+//   - Types / type annotations
+//   - Struct / enum / union decls
+//   - `if` / `while` / `for` / `match` / `defer` / `arena`
+//   - String / f-string handling (lexer recognises them; parser
+//     stub treats them as opaque ExprUnknown)
+//   - Receivers, type-params, `pub`, `import`
+
+// =================== LEXER (copy of lexer.lang) ====================
+
+struct TokEof { line: i32, col: i32 }
+struct TokNumber { text: string, suffix: string, is_float: boolean, line: i32, col: i32 }
+struct TokIdent { name: string, line: i32, col: i32 }
+struct TokKeyword { name: string, line: i32, col: i32 }
+struct TokPunct { text: string, line: i32, col: i32 }
+struct TokString { value: string, line: i32, col: i32 }
+type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString;
+
+function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
+function is_alpha(b: i32): boolean {
+    return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
+}
+function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
+function is_space(b: i32): boolean { return b == 32 || b == 9 || b == 10 || b == 13; }
+function is_suffix_start(b: i32): boolean { return b == 105 || b == 117 || b == 102; }
+
+function is_keyword(name: string): boolean {
+    return name == "function" || name == "var" || name == "let"
+        || name == "use" || name == "if" || name == "else"
+        || name == "while" || name == "for" || name == "break"
+        || name == "continue" || name == "return"
+        || name == "true" || name == "false"
+        || name == "boolean" || name == "void" || name == "string"
+        || name == "i8" || name == "i16" || name == "i32" || name == "i64"
+        || name == "u8" || name == "u16" || name == "u32" || name == "u64"
+        || name == "usize" || name == "f32" || name == "f64"
+        || name == "as" || name == "switch" || name == "case" || name == "default"
+        || name == "struct" || name == "import" || name == "pub" || name == "const"
+        || name == "enum" || name == "type" || name == "match" || name == "when"
+        || name == "defer" || name == "arena";
+}
+
+function match_multipunct(src: string, i: i32, n: i32): string {
+    if (i + 3 <= n) {
+        var s3: string = src[i:i + 3];
+        if (s3 == "<<=" || s3 == ">>=") { return s3; }
+    }
+    if (i + 2 <= n) {
+        var s2: string = src[i:i + 2];
+        if (s2 == "==" || s2 == "!=" || s2 == "<=" || s2 == ">="
+            || s2 == "&&" || s2 == "||" || s2 == "<<" || s2 == ">>"
+            || s2 == "=>" || s2 == "|>"
+            || s2 == "+=" || s2 == "-=" || s2 == "*=" || s2 == "/="
+            || s2 == "%=" || s2 == "&=" || s2 == "|=" || s2 == "^=") {
+            return s2;
+        }
+    }
+    return "";
+}
+
+function is_single_punct(b: i32): boolean {
+    return b == 43 || b == 45 || b == 42 || b == 47 || b == 37
+        || b == 40 || b == 41 || b == 123 || b == 125
+        || b == 91 || b == 93 || b == 44 || b == 59 || b == 58
+        || b == 61 || b == 60 || b == 62 || b == 33
+        || b == 38 || b == 124 || b == 94 || b == 63 || b == 46;
+}
+
+struct Lex { src: string, i: i32, n: i32, line: i32, col: i32 }
+
+function (l: Lex) at_end(): boolean { return l.i >= l.n; }
+function (l: Lex) peek_byte(): i32 {
+    if (l.i >= l.n) { return 0; }
+    return l.src[l.i];
+}
+function (l: Lex) advance(): Lex {
+    if (l.i >= l.n) { return l; }
+    var b: i32 = l.src[l.i];
+    var new_line: i32 = l.line;
+    var new_col: i32 = l.col;
+    if (b == 10) { new_line = new_line + 1; new_col = 1; }
+    else { new_col = new_col + 1; }
+    return Lex { src: l.src, i: l.i + 1, n: l.n, line: new_line, col: new_col };
+}
+
+function skip_trivia(l: Lex): Lex {
+    while (!l.at_end()) {
+        var b: i32 = l.peek_byte();
+        if (is_space(b)) { l = l.advance(); continue; }
+        if (b == 47 && l.i + 1 < l.n && l.src[l.i + 1] == 47) {
+            l = l.advance(); l = l.advance();
+            while (!l.at_end() && l.peek_byte() != 10) { l = l.advance(); }
+            continue;
+        }
+        return l;
+    }
+    return l;
+}
+
+struct NumResult { lex: Lex, tok: Token }
+
+function eof_tok(line: i32, col: i32): Token { return TokEof { line: line, col: col }; }
+function string_tok(value: string, line: i32, col: i32): Token { return TokString { value: value, line: line, col: col }; }
+function ident_tok(name: string, line: i32, col: i32): Token { return TokIdent { name: name, line: line, col: col }; }
+function keyword_tok(name: string, line: i32, col: i32): Token { return TokKeyword { name: name, line: line, col: col }; }
+function punct_tok(text: string, line: i32, col: i32): Token { return TokPunct { text: text, line: line, col: col }; }
+function number_tok(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Token {
+    return TokNumber { text: text, suffix: suffix, is_float: is_float, line: line, col: col };
+}
+
+function scan_number(l: Lex, sl: i32, sc: i32): NumResult {
+    var begin: i32 = l.i;
+    while (!l.at_end() && is_digit(l.peek_byte())) { l = l.advance(); }
+    var is_float: boolean = false;
+    if (l.i + 1 < l.n && l.src[l.i] == 46 && is_digit(l.src[l.i + 1])) {
+        is_float = true; l = l.advance();
+        while (!l.at_end() && is_digit(l.peek_byte())) { l = l.advance(); }
+    }
+    var text: string = l.src[begin:l.i];
+    var suffix: string = "";
+    if (!l.at_end() && is_suffix_start(l.peek_byte())) {
+        var s_begin: i32 = l.i; l = l.advance();
+        while (!l.at_end() && is_digit(l.peek_byte())) { l = l.advance(); }
+        suffix = l.src[s_begin:l.i];
+    }
+    if (!is_float && len(suffix) > 0 && suffix[0] == 102) { is_float = true; }
+    return NumResult { lex: l, tok: number_tok(text, suffix, is_float, sl, sc) };
+}
+
+function scan_ident(l: Lex, sl: i32, sc: i32): NumResult {
+    var begin: i32 = l.i;
+    while (!l.at_end() && is_alnum(l.peek_byte())) { l = l.advance(); }
+    var text: string = l.src[begin:l.i];
+    var t: Token = ident_tok(text, sl, sc);
+    if (is_keyword(text)) { t = keyword_tok(text, sl, sc); }
+    return NumResult { lex: l, tok: t };
+}
+
+function scan_string(l: Lex, sl: i32, sc: i32): NumResult {
+    l = l.advance();
+    var out: string = "";
+    while (!l.at_end() && l.peek_byte() != 34) {
+        var c: i32 = l.peek_byte();
+        if (c == 10) { return NumResult { lex: l, tok: eof_tok(sl, sc) }; }
+        if (c == 92) {
+            l = l.advance();
+            if (l.at_end()) { return NumResult { lex: l, tok: eof_tok(sl, sc) }; }
+            var esc: i32 = l.peek_byte(); l = l.advance();
+            if (esc == 110) { out = out + "\n"; }
+            else if (esc == 116) { out = out + "\t"; }
+            else if (esc == 114) { out = out + "\r"; }
+            else if (esc == 48) { out = out + "\0"; }
+            else if (esc == 34) { out = out + "\""; }
+            else if (esc == 92) { out = out + "\\"; }
+            else { return NumResult { lex: l, tok: eof_tok(sl, sc) }; }
+            continue;
+        }
+        out = out + l.src[l.i:l.i + 1];
+        l = l.advance();
+    }
+    if (l.at_end()) { return NumResult { lex: l, tok: eof_tok(sl, sc) }; }
+    l = l.advance();
+    return NumResult { lex: l, tok: string_tok(out, sl, sc) };
+}
+
+function tokenize(src: string): Token[] {
+    var l: Lex = Lex { src: src, i: 0, n: len(src), line: 1, col: 1 };
+    var out: Token[] = [];
+    while (true) {
+        l = skip_trivia(l);
+        if (l.at_end()) { out = out.push(eof_tok(l.line, l.col)); return out; }
+        var sl: i32 = l.line; var sc: i32 = l.col;
+        var b: i32 = l.peek_byte();
+        if (is_digit(b)) { var rn = scan_number(l, sl, sc); l = rn.lex; out = out.push(rn.tok); continue; }
+        if (is_alpha(b)) { var ri = scan_ident(l, sl, sc); l = ri.lex; out = out.push(ri.tok); continue; }
+        if (b == 34) { var rs = scan_string(l, sl, sc); l = rs.lex; out = out.push(rs.tok); continue; }
+        var mp: string = match_multipunct(l.src, l.i, l.n);
+        if (len(mp) > 0) {
+            var i: i32 = 0;
+            while (i < len(mp)) { l = l.advance(); i = i + 1; }
+            out = out.push(punct_tok(mp, sl, sc));
+            continue;
+        }
+        if (is_single_punct(b)) {
+            var text: string = l.src[l.i:l.i + 1];
+            l = l.advance();
+            out = out.push(punct_tok(text, sl, sc));
+            continue;
+        }
+        out = out.push(eof_tok(sl, sc));
+        return out;
+    }
+    return out;
+}
+
+// =================== PARSER ====================
+
+// Expression nodes. Recursive via the union — `ExprBinary` holds
+// two Expr children, `ExprCall` holds a list of args, etc. The Go
+// parser produces a denser typed AST (NumberLit / FloatLit /
+// Ident / Binary / Call); this port collapses similar shapes into
+// fewer variants to keep the union member count tractable.
+
+struct ExprNumber { text: string, suffix: string, is_float: boolean }
+struct ExprIdent { name: string }
+struct ExprString { value: string }
+struct ExprBool { value: boolean }
+struct ExprBinary { op: string, left: Expr, right: Expr }
+struct ExprUnary { op: string, operand: Expr }
+struct ExprCall { callee: Expr, args: Expr[] }
+struct ExprUnknown { kind: string }
+
+type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
+          | ExprBinary | ExprUnary | ExprCall | ExprUnknown;
+
+// Statement nodes.
+
+struct StmtVar { name: string, init: Expr }
+struct StmtReturn { value: Expr }
+struct StmtExpr { value: Expr }
+struct StmtUnknown { kind: string }
+
+type Stmt = StmtVar | StmtReturn | StmtExpr | StmtUnknown;
+
+// Helper wraps to satisfy the implicit-union-wrap return-position
+// rule. Same pattern lexer.lang uses for Token construction.
+
+function e_number(text: string, suffix: string, is_float: boolean): Expr {
+    return ExprNumber { text: text, suffix: suffix, is_float: is_float };
+}
+function e_ident(name: string): Expr { return ExprIdent { name: name }; }
+function e_string(value: string): Expr { return ExprString { value: value }; }
+function e_bool(value: boolean): Expr { return ExprBool { value: value }; }
+function e_binary(op: string, left: Expr, right: Expr): Expr {
+    return ExprBinary { op: op, left: left, right: right };
+}
+function e_unary(op: string, operand: Expr): Expr { return ExprUnary { op: op, operand: operand }; }
+function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args }; }
+function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
+
+function s_var(name: string, init: Expr): Stmt { return StmtVar { name: name, init: init }; }
+function s_return(value: Expr): Stmt { return StmtReturn { value: value }; }
+function s_expr(value: Expr): Stmt { return StmtExpr { value: value }; }
+function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
+
+// Parser state. `toks` is the lexer's output; `pos` is the
+// current cursor into it. We mutate via value-semantics (return
+// fresh Par from each consume()).
+
+struct Par { toks: Token[], pos: i32 }
+
+function (p: Par) at_end(): boolean {
+    if (p.pos >= len(p.toks)) { return true; }
+    var t: Token = p.toks[p.pos];
+    match (t) {
+        TokEof(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function (p: Par) peek(): Token {
+    if (p.pos < len(p.toks)) { return p.toks[p.pos]; }
+    return eof_tok(0, 0);
+}
+
+function (p: Par) advance(): Par {
+    return Par { toks: p.toks, pos: p.pos + 1 };
+}
+
+// Token-shape queries: each returns "" when the token isn't of
+// the expected kind, otherwise the text/name. Callers branch on
+// the empty-string result rather than re-matching.
+function (p: Par) peek_punct(): string {
+    var t: Token = p.peek();
+    match (t) {
+        TokPunct(x) => { return x.text; },
+        _ => { return ""; }
+    }
+    return "";
+}
+function (p: Par) peek_keyword(): string {
+    var t: Token = p.peek();
+    match (t) {
+        TokKeyword(x) => { return x.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+function (p: Par) peek_ident(): string {
+    var t: Token = p.peek();
+    match (t) {
+        TokIdent(x) => { return x.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// Result types — both pieces of the (new_parser, parsed_thing)
+// pair we need to thread through recursive-descent. Avoids a
+// stateful `var p: Par` shared across helpers.
+struct ExprResult { par: Par, expr: Expr }
+struct StmtResult { par: Par, stmt: Stmt }
+
+// parse_primary: number, ident (which may extend to call), string,
+// bool, parenthesised expr, unknown otherwise.
+function parse_primary(p: Par): ExprResult {
+    var t: Token = p.peek();
+    match (t) {
+        TokNumber(x) => {
+            p = p.advance();
+            return ExprResult { par: p, expr: e_number(x.text, x.suffix, x.is_float) };
+        },
+        TokString(x) => {
+            p = p.advance();
+            return ExprResult { par: p, expr: e_string(x.value) };
+        },
+        TokKeyword(x) => {
+            if (x.name == "true") {
+                p = p.advance();
+                return ExprResult { par: p, expr: e_bool(true) };
+            }
+            if (x.name == "false") {
+                p = p.advance();
+                return ExprResult { par: p, expr: e_bool(false) };
+            }
+            return ExprResult { par: p, expr: e_unknown("keyword:" + x.name) };
+        },
+        TokIdent(x) => {
+            p = p.advance();
+            var base: Expr = e_ident(x.name);
+            // Postfix `(`: function call.
+            if (p.peek_punct() == "(") {
+                p = p.advance();
+                var args: Expr[] = [];
+                if (p.peek_punct() != ")") {
+                    while (true) {
+                        var ra = parse_expr(p);
+                        p = ra.par;
+                        args = args.push(ra.expr);
+                        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                        break;
+                    }
+                }
+                if (p.peek_punct() != ")") {
+                    return ExprResult { par: p, expr: e_unknown("missing ) in call") };
+                }
+                p = p.advance();
+                return ExprResult { par: p, expr: e_call(base, args) };
+            }
+            return ExprResult { par: p, expr: base };
+        },
+        TokPunct(x) => {
+            if (x.text == "(") {
+                p = p.advance();
+                var inner = parse_expr(p);
+                p = inner.par;
+                if (p.peek_punct() == ")") { p = p.advance(); }
+                return ExprResult { par: p, expr: inner.expr };
+            }
+            if (x.text == "-" || x.text == "!") {
+                p = p.advance();
+                var operand = parse_primary(p);
+                return ExprResult { par: operand.par, expr: e_unary(x.text, operand.expr) };
+            }
+            return ExprResult { par: p, expr: e_unknown("punct:" + x.text) };
+        },
+        TokEof(_) => { return ExprResult { par: p, expr: e_unknown("eof") }; }
+    }
+    return ExprResult { par: p, expr: e_unknown("primary") };
+}
+
+// precedence: higher binds tighter. Returns -1 for non-binop
+// punctuators. Mirrors the Go parser's Pratt-style table.
+function precedence(op: string): i32 {
+    if (op == "||") { return 1; }
+    if (op == "&&") { return 2; }
+    if (op == "==" || op == "!=") { return 3; }
+    if (op == "<" || op == ">" || op == "<=" || op == ">=") { return 4; }
+    if (op == "+" || op == "-") { return 5; }
+    if (op == "*" || op == "/" || op == "%") { return 6; }
+    return 0 - 1;
+}
+
+// parse_binary uses precedence climbing. `min_prec` is the
+// minimum precedence the caller will accept — recursively
+// climbs while the next operator's prec is >= min_prec.
+function parse_binary(p: Par, min_prec: i32): ExprResult {
+    var lhs = parse_primary(p);
+    p = lhs.par;
+    while (true) {
+        var op: string = p.peek_punct();
+        var prec: i32 = precedence(op);
+        if (prec < min_prec) { return ExprResult { par: p, expr: lhs.expr }; }
+        p = p.advance();
+        var rhs = parse_binary(p, prec + 1);
+        p = rhs.par;
+        var combined: Expr = e_binary(op, lhs.expr, rhs.expr);
+        lhs = ExprResult { par: p, expr: combined };
+    }
+    return lhs;
+}
+
+function parse_expr(p: Par): ExprResult {
+    return parse_binary(p, 1);
+}
+
+// parse_stmt: `var x = expr;`, `return expr;`, or `expr;`.
+function parse_stmt(p: Par): StmtResult {
+    var kw: string = p.peek_keyword();
+    if (kw == "var") {
+        p = p.advance();
+        var name: string = p.peek_ident();
+        if (len(name) == 0) {
+            return StmtResult { par: p, stmt: s_unknown("missing var name") };
+        }
+        p = p.advance();
+        // Optional `: Type` — skip past until `=` for this port.
+        if (p.peek_punct() == ":") {
+            p = p.advance();
+            // Consume one token (the type name); a richer port
+            // would parse full type syntax here.
+            p = p.advance();
+        }
+        if (p.peek_punct() != "=") {
+            return StmtResult { par: p, stmt: s_unknown("missing = in var") };
+        }
+        p = p.advance();
+        var init = parse_expr(p);
+        p = init.par;
+        if (p.peek_punct() == ";") { p = p.advance(); }
+        return StmtResult { par: p, stmt: s_var(name, init.expr) };
+    }
+    if (kw == "return") {
+        p = p.advance();
+        var val = parse_expr(p);
+        p = val.par;
+        if (p.peek_punct() == ";") { p = p.advance(); }
+        return StmtResult { par: p, stmt: s_return(val.expr) };
+    }
+    // Expression statement.
+    var e = parse_expr(p);
+    p = e.par;
+    if (p.peek_punct() == ";") { p = p.advance(); }
+    return StmtResult { par: p, stmt: s_expr(e.expr) };
+}
+
+function parse_program(toks: Token[]): Stmt[] {
+    var p: Par = Par { toks: toks, pos: 0 };
+    var out: Stmt[] = [];
+    while (!p.at_end()) {
+        var r = parse_stmt(p);
+        p = r.par;
+        out = out.push(r.stmt);
+    }
+    return out;
+}
+
+// =================== VALIDATION ====================
+
+function main(): i32 {
+    // Source under test:
+    //   var x = 1 + 2 * 3;        // x = 7
+    //   var y = (1 + 2) * 3;      // y = 9
+    //   return x + y;             // returns 16
+    var src: string = "var x = 1 + 2 * 3; var y = (1 + 2) * 3; return x + y;";
+    var toks: Token[] = tokenize(src);
+    var prog: Stmt[] = parse_program(toks);
+    if (len(prog) != 3) { return 1; }
+
+    // Stmt 0: var x = 1 + 2 * 3   →   StmtVar { name: "x", init: ExprBinary "+" }
+    match (prog[0]) {
+        StmtVar(s0) => {
+            if (s0.name != "x") { return 100; }
+            match (s0.init) {
+                ExprBinary(b) => {
+                    if (b.op != "+") { return 101; }
+                    // Right side should be `2 * 3` (binary with op "*").
+                    match (b.right) {
+                        ExprBinary(rb) => {
+                            if (rb.op != "*") { return 102; }
+                        },
+                        _ => { return 103; }
+                    }
+                    // Left side should be number 1.
+                    match (b.left) {
+                        ExprNumber(n) => { if (n.text != "1") { return 104; } },
+                        _ => { return 105; }
+                    }
+                },
+                _ => { return 106; }
+            }
+        },
+        _ => { return 107; }
+    }
+
+    // Stmt 1: var y = (1 + 2) * 3   →  StmtVar { name: "y", init: ExprBinary "*" }
+    match (prog[1]) {
+        StmtVar(s1) => {
+            if (s1.name != "y") { return 200; }
+            match (s1.init) {
+                ExprBinary(b) => {
+                    if (b.op != "*") { return 201; }
+                    // Left side is the grouped `1 + 2` — should
+                    // be a `+` binary thanks to the parens.
+                    match (b.left) {
+                        ExprBinary(lb) => {
+                            if (lb.op != "+") { return 202; }
+                        },
+                        _ => { return 203; }
+                    }
+                },
+                _ => { return 204; }
+            }
+        },
+        _ => { return 205; }
+    }
+
+    // Stmt 2: return x + y   →  StmtReturn { value: ExprBinary "+" }
+    match (prog[2]) {
+        StmtReturn(s2) => {
+            match (s2.value) {
+                ExprBinary(b) => {
+                    if (b.op != "+") { return 300; }
+                    match (b.left) {
+                        ExprIdent(id) => { if (id.name != "x") { return 301; } },
+                        _ => { return 302; }
+                    }
+                    match (b.right) {
+                        ExprIdent(id) => { if (id.name != "y") { return 303; } },
+                        _ => { return 304; }
+                    }
+                },
+                _ => { return 305; }
+            }
+        },
+        _ => { return 306; }
+    }
+
+    return 0;
+}
