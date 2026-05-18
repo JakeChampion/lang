@@ -32,13 +32,13 @@ export default defineConfig({
       title: "lang",
       description:
         "A small, fast-startup language with native arm64 / x86-64 / wasm backends.",
-      // Starlight 0.30's social schema is the object form
-      // (key=icon, value=url). The array-with-{icon,label,href}
-      // form is the 0.32+ shape — we'll switch when the package
-      // bumps. CI caught the wrong shape with a clear error.
-      social: {
-        github: "https://github.com/JakeChampion/lang",
-      },
+      social: [
+        {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/JakeChampion/lang",
+        },
+      ],
       sidebar: [
         { label: "Overview", link: "/" },
         {
