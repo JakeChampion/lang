@@ -41,10 +41,19 @@ pub struct ExprBool { value: boolean }
 pub struct ExprBinary { op: string, left: Expr, right: Expr }
 pub struct ExprUnary { op: string, operand: Expr }
 pub struct ExprCall { callee: Expr, args: Expr[] }
+// Array literal `[e1, e2, e3]`. Empty literal `[]` is allowed —
+// the checker rejects an empty literal in inference contexts
+// because it can't infer the element type.
+pub struct ExprArray { elements: Expr[] }
+// Postfix indexing `a[i]`. `a` can be any Expr that evaluates to
+// an array; `i` must type-check to i32. Out-of-range access at
+// runtime surfaces as VErr from the interp.
+pub struct ExprIndex { array: Expr, index: Expr }
 pub struct ExprUnknown { kind: string }
 
 pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
-              | ExprBinary | ExprUnary | ExprCall | ExprUnknown;
+              | ExprBinary | ExprUnary | ExprCall
+              | ExprArray | ExprIndex | ExprUnknown;
 
 // Statement nodes.
 
@@ -98,6 +107,8 @@ function e_binary(op: string, left: Expr, right: Expr): Expr {
 }
 function e_unary(op: string, operand: Expr): Expr { return ExprUnary { op: op, operand: operand }; }
 function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args }; }
+function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements }; }
+function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index }; }
 function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
 
 function s_var(name: string, init: Expr): Stmt { return StmtVar { name: name, init: init }; }
@@ -217,7 +228,18 @@ function parse_primary(p: Par): ExprResult {
                     return ExprResult { par: p, expr: e_unknown("missing ) in call") };
                 }
                 p = p.advance();
-                return ExprResult { par: p, expr: e_call(base, args) };
+                base = e_call(base, args);
+            }
+            // Postfix `[`: indexing. Repeats so `a[i][j]` chains.
+            while (p.peek_punct() == "[") {
+                p = p.advance();
+                var idx = parse_expr(p);
+                p = idx.par;
+                if (p.peek_punct() != "]") {
+                    return ExprResult { par: p, expr: e_unknown("missing ] in index") };
+                }
+                p = p.advance();
+                base = e_index(base, idx.expr);
             }
             return ExprResult { par: p, expr: base };
         },
@@ -228,6 +250,25 @@ function parse_primary(p: Par): ExprResult {
                 p = inner.par;
                 if (p.peek_punct() == ")") { p = p.advance(); }
                 return ExprResult { par: p, expr: inner.expr };
+            }
+            if (x.text == "[") {
+                // Array literal `[e1, e2, e3]`. Empty `[]` allowed.
+                p = p.advance();
+                var elems: Expr[] = [];
+                if (p.peek_punct() != "]") {
+                    while (true) {
+                        var er = parse_expr(p);
+                        p = er.par;
+                        elems = elems.push(er.expr);
+                        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                        break;
+                    }
+                }
+                if (p.peek_punct() != "]") {
+                    return ExprResult { par: p, expr: e_unknown("missing ] in array literal") };
+                }
+                p = p.advance();
+                return ExprResult { par: p, expr: e_array(elems) };
             }
             if (x.text == "-" || x.text == "!") {
                 p = p.advance();

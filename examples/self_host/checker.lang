@@ -45,9 +45,15 @@ import "./parser";
 pub struct TypeI32 { tag: i32 }       // tag fields are placeholder
 pub struct TypeBool { tag: i32 }      // payload — variants need a
 pub struct TypeString { tag: i32 }    // shape; the field is unused.
+// Array of homogeneous elements. elem can itself be any Type, so
+// `i32[][]` is representable. An empty literal `[]` defaults to
+// TypeArray { elem: TypeUnknown(...) } — the checker rejects it
+// in inference contexts because it can't infer a concrete elem
+// type.
+pub struct TypeArray { elem: Type }
 pub struct TypeUnknown { reason: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeUnknown;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeArray | TypeUnknown;
 
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
@@ -56,6 +62,7 @@ pub type Type = TypeI32 | TypeBool | TypeString | TypeUnknown;
 function t_i32(): Type { return TypeI32 { tag: 0 }; }
 function t_bool(): Type { return TypeBool { tag: 0 }; }
 function t_string(): Type { return TypeString { tag: 0 }; }
+function t_array(elem: Type): Type { return TypeArray { elem: elem }; }
 function t_unknown(reason: string): Type { return TypeUnknown { reason: reason }; }
 
 // type_eq: structural equality on the type union. Returns true
@@ -82,6 +89,12 @@ function type_eq(a: Type, b: Type): boolean {
                 _ => { return false; }
             }
         },
+        TypeArray(ae) => {
+            match (b) {
+                TypeArray(be) => { return type_eq(ae.elem, be.elem); },
+                _ => { return false; }
+            }
+        },
         TypeUnknown(_) => { return false; }
     }
     return false;
@@ -94,6 +107,11 @@ function is_unknown(t: Type): boolean {
     }
     return false;
 }
+
+// type_from_name accepts an optional `[]` suffix on the type
+// name string (the parser currently only captures the first
+// token, but a future extension that captures `i32[]` should
+// flow through here cleanly). For now bare names only.
 
 // =================== SCOPE ====================
 
@@ -236,6 +254,19 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                 parser.ExprIdent(id) => { name = id.name; },
                 _ => { return t_unknown("call target is not an identifier"); }
             }
+            // Builtins: `len(x)` returns i32 for any array or
+            // string. Checked separately because the sig table
+            // doesn't enumerate them.
+            if (name == "len") {
+                if (len(c.args) != 1) { return t_unknown("len takes 1 argument"); }
+                var at: Type = check_expr(c.args[0], s);
+                match (at) {
+                    TypeArray(_) => { return t_i32(); },
+                    TypeString(_) => { return t_i32(); },
+                    _ => { return t_unknown("len: argument must be array or string"); }
+                }
+                return t_unknown("unreachable len arm");
+            }
             var sig: FuncSig = s.lookup_sig(name);
             if (len(sig.name) == 0) {
                 return t_unknown("undefined function: " + name);
@@ -252,6 +283,36 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                 i = i + 1;
             }
             return sig.ret_type;
+        },
+        parser.ExprArray(a) => {
+            if (len(a.elements) == 0) {
+                // Empty literal — element type undecidable at this
+                // site. Future improvement: propagate expected
+                // type from context.
+                return t_array(t_unknown("empty array literal"));
+            }
+            var first: Type = check_expr(a.elements[0], s);
+            var i: i32 = 1;
+            while (i < len(a.elements)) {
+                var et: Type = check_expr(a.elements[i], s);
+                if (!type_eq(et, first)) {
+                    return t_unknown("array elements have mixed types");
+                }
+                i = i + 1;
+            }
+            return t_array(first);
+        },
+        parser.ExprIndex(x) => {
+            var at: Type = check_expr(x.array, s);
+            var it: Type = check_expr(x.index, s);
+            if (!type_eq(it, t_i32())) {
+                return t_unknown("array index must be i32");
+            }
+            match (at) {
+                TypeArray(ta) => { return ta.elem; },
+                _ => { return t_unknown("can only index into an array"); }
+            }
+            return t_unknown("unreachable index arm");
         },
         parser.ExprUnknown(u) => { return t_unknown("parser-side unknown:" + u.kind); }
     }
@@ -529,6 +590,33 @@ function main(): i32 {
     var mod8: parser.Module = parser.parse_module(lexer.tokenize(src8));
     var mt8: ModuleTypes = check_module(mod8);
     if (!mt8.all_well_typed) { return 80; }
+
+    // Array literal: `var a = [1, 2, 3]; return a[0];` → i32.
+    var src9: string = "var a = [1, 2, 3]; return a[0];";
+    var stmts9: parser.Stmt[] = parser.parse_program(lexer.tokenize(src9));
+    var pt9: ProgramTypes = check_program(stmts9);
+    if (len(pt9.tys) != 2) { return 90; }
+    // First stmt's type is the array type.
+    match (pt9.tys[0]) {
+        TypeArray(ae) => {
+            if (!type_eq(ae.elem, t_i32())) { return 91; }
+        },
+        _ => { return 92; }
+    }
+    // Second stmt (return a[0]) types as i32.
+    if (!type_eq(pt9.tys[1], t_i32())) { return 93; }
+
+    // len() builtin on array → i32.
+    var src10: string = "var a = [\"x\", \"y\"]; return len(a);";
+    var stmts10: parser.Stmt[] = parser.parse_program(lexer.tokenize(src10));
+    var pt10: ProgramTypes = check_program(stmts10);
+    if (!type_eq(pt10.tys[1], t_i32())) { return 100; }
+
+    // Mixed-type array literal → TypeUnknown.
+    var src11: string = "var a = [1, \"oops\"]; return a[0];";
+    var stmts11: parser.Stmt[] = parser.parse_program(lexer.tokenize(src11));
+    var pt11: ProgramTypes = check_program(stmts11);
+    if (!is_unknown(pt11.tys[0])) { return 110; }
 
     return 0;
 }
