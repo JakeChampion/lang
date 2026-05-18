@@ -832,8 +832,15 @@ type MapEntry struct {
 }
 
 type FieldInit struct {
-	Name  string
-	Value Expr
+	Name string
+	// NamePos is the position of the Name token in the source (the
+	// `x` in `Point { x: 1, y: 2 }`). The parser populates it for
+	// every literal it parses; synthetic FieldInits inserted by
+	// downstream passes leave it zero. The LSP uses this for
+	// rename of struct fields — without it, occurrences inside
+	// struct literals would be unrewrittable.
+	NamePos Position
+	Value   Expr
 }
 
 // EnumLit constructs a tagged-union value: `Circle(3.0)` or bare
@@ -1197,12 +1204,27 @@ func (*FuncDecl) isStmt() {} // legal as a stmt only when IsLocal is true
 
 type Param struct {
 	Name string
-	Type Type
+	// NamePos is the position of the Name token in the source (the
+	// `a` in `function add(a: i32, …)` or the `x` in a struct
+	// declaration `struct Point { x: i32, … }`). Synthetic Params
+	// (the receiver injected by closure conversion, generic-call
+	// rewrites) leave it zero. The LSP uses this for parameter
+	// + struct-field rename + hover; without it occurrences in
+	// declarations would be unrewrittable.
+	NamePos Position
+	Type    Type
 }
 
 type FuncDecl struct {
-	P          Position
-	Name       string
+	P    Position
+	Name string
+	// NamePos is the position of the Name token after the
+	// `function` keyword + any receiver clause. Synthetic decls
+	// (the auto-generated `main` for handler-shaped programs,
+	// closure-converted hoists, monomorphisation clones) leave it
+	// zero. Used by the LSP to rewrite both the decl site and
+	// every call-site reference during rename.
+	NamePos Position
 	// TypeParams names the type variables a generic function
 	// introduces — `function id[T](x: T): T` declares
 	// TypeParams=["T"]. The checker rewrites occurrences of

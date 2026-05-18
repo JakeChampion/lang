@@ -76,14 +76,49 @@ func TestRename_TopLevelFunction(t *testing.T) {
 	}
 }
 
-func TestRename_OnMethodCallIsNoOp(t *testing.T) {
-	// Method renames need Methods-map rewriting we don't support
-	// yet — return nil to signal "rename not available here".
+func TestRename_MethodCall(t *testing.T) {
 	src := "struct Point { x: i32, y: i32 }\n" +
 		"function (p: Point) sum(): i32 { return p.x + p.y; }\n" +
 		"function main(): i32 {\n  var p: Point = Point { x: 1, y: 2 };\n  return p.sum();\n}\n"
 	got := renameFor(src, 4, 13, "total")
-	if got != nil {
-		t.Errorf("expected nil for method-call rename, got %+v", got)
+	if got == nil {
+		t.Fatal("expected a WorkspaceEdit for method rename, got nil")
+	}
+	edits := got.Changes["file:///t"]
+	if len(edits) != 2 {
+		t.Errorf("expected 2 edits (decl + 1 call site), got %d (%+v)", len(edits), edits)
+	}
+	for _, e := range edits {
+		if e.NewText != "total" {
+			t.Errorf("edit newText = %q, want \"total\"", e.NewText)
+		}
+	}
+}
+
+func TestRename_StructField(t *testing.T) {
+	src := "struct Point { x: i32, y: i32 }\n" +
+		"function main(): i32 {\n  var p: Point = Point { x: 3, y: 4 };\n  return p.x;\n}\n"
+	got := renameFor(src, 3, 11, "horiz") // cursor on `x` in `p.x`
+	if got == nil {
+		t.Fatal("expected a WorkspaceEdit for field rename, got nil")
+	}
+	edits := got.Changes["file:///t"]
+	// decl-site `x` + struct-lit `x:` + access `p.x` = 3 edits.
+	if len(edits) != 3 {
+		t.Errorf("expected 3 edits (decl + struct lit + access), got %d (%+v)", len(edits), edits)
+	}
+}
+
+func TestRename_EnumVariant(t *testing.T) {
+	src := "enum Color { Red, Green, Blue }\n" +
+		"function main(): i32 {\n  var c: Color = Red;\n  match (c) { Red => { return 1; }, _ => { return 0; } }\n}\n"
+	got := renameFor(src, 2, 17, "Crimson") // cursor on `Red` in init
+	if got == nil {
+		t.Fatal("expected a WorkspaceEdit for variant rename, got nil")
+	}
+	edits := got.Changes["file:///t"]
+	// decl + literal + match arm = 3 edits.
+	if len(edits) != 3 {
+		t.Errorf("expected 3 edits (decl + literal + match arm), got %d (%+v)", len(edits), edits)
 	}
 }
