@@ -152,11 +152,25 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   vector-check every opcode against the spec, including the
   i32.const sleb bit-6 boundary (63 fits in 1 byte; 127 needs a
   continuation byte to disambiguate from -1).
-- Remaining Phase 1 work: arithmetic + comparison + bitwise
-  opcodes (one byte each, ~40 functions), memory load/store +
-  conversion ops (~30 functions), the IR-walking entry point that
-  produces a complete module from the codegen IR, and the
-  driver-wiring step that deletes the `wasm-tools parse` call at
+- **Numeric instruction encoders shipped** in
+  `internal/stdlib/std/wasm/numeric.lang`: every wasm numeric
+  opcode that fits the "single byte, no immediate" shape —
+  i32 / i64 unary (clz, ctz, popcnt, eqz), compare (eq, ne, lt,
+  gt, le, ge with signed / unsigned variants for integers),
+  arithmetic (add, sub, mul, div, rem), bitwise (and, or, xor),
+  shift / rotate (shl, shr_s, shr_u, rotl, rotr); plus f32 / f64
+  compare (eq, ne, lt, gt, le, ge), unary (abs, neg, ceil, floor,
+  trunc, nearest, sqrt) and binary (add, sub, mul, div, min, max,
+  copysign). ~96 functions, each a one-line `return
+  buf.push(<opcode>);`. Tests
+  (`TestWASMNumeric{I32, I64, Float, Compose}`) spot-check each
+  family with a wider compose test that builds the canonical
+  `local.get 0; local.get 1; i32.add` body.
+- Remaining Phase 1 work: memory load/store (carry alignment +
+  offset immediates) and conversion / sign-extension opcodes
+  (~30 functions), the IR-walking entry point that produces a
+  complete module from the codegen IR, and the driver-wiring step
+  that deletes the `wasm-tools parse` call at
   `cmd/lang/main.go:604`.
 
 ---

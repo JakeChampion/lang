@@ -1,0 +1,140 @@
+// std/wasm/numeric — arithmetic / compare / bitwise / unary
+// instruction encoders for the WebAssembly Core 1.0 binary format.
+//
+// Spec: https://webassembly.github.io/spec/core/binary/instructions.html#numeric-instructions
+//
+// Fourth slice of Phase 1 of docs/TOOLCHAIN-SELF-HOSTING.md. After
+// the leb128 / encode / inst slices, this one covers every wasm
+// numeric opcode that fits the simple "opcode byte, no immediate"
+// shape — which is all of arithmetic, comparison, bitwise / shift,
+// and the four unary operators (clz / ctz / popcnt / eqz for
+// integers; abs / neg / ceil / floor / trunc / nearest / sqrt for
+// floats).
+//
+// Memory load/store (which carry alignment + offset immediates) and
+// conversion / sign-extension (which are similarly bare-opcode but
+// fall in a different spec section) are deferred to the next slice.
+//
+// Same shape as the rest of std/wasm: every encoder takes a u8[]
+// and appends a single byte. The one-line shape — `return
+// buf.push(<opcode>);` — is intentional: each function is
+// individually trivial and the whole module reads as a printed
+// opcode table.
+
+// ---- i32 unary ------------------------------------------------
+pub function inst_i32_clz(buf: u8[]): u8[]    { return buf.push(103u8); }  // 0x67
+pub function inst_i32_ctz(buf: u8[]): u8[]    { return buf.push(104u8); }  // 0x68
+pub function inst_i32_popcnt(buf: u8[]): u8[] { return buf.push(105u8); }  // 0x69
+pub function inst_i32_eqz(buf: u8[]): u8[]    { return buf.push(69u8);  }  // 0x45
+
+// ---- i32 compare ----------------------------------------------
+pub function inst_i32_eq(buf: u8[]): u8[]   { return buf.push(70u8); }  // 0x46
+pub function inst_i32_ne(buf: u8[]): u8[]   { return buf.push(71u8); }  // 0x47
+pub function inst_i32_lt_s(buf: u8[]): u8[] { return buf.push(72u8); }  // 0x48
+pub function inst_i32_lt_u(buf: u8[]): u8[] { return buf.push(73u8); }  // 0x49
+pub function inst_i32_gt_s(buf: u8[]): u8[] { return buf.push(74u8); }  // 0x4A
+pub function inst_i32_gt_u(buf: u8[]): u8[] { return buf.push(75u8); }  // 0x4B
+pub function inst_i32_le_s(buf: u8[]): u8[] { return buf.push(76u8); }  // 0x4C
+pub function inst_i32_le_u(buf: u8[]): u8[] { return buf.push(77u8); }  // 0x4D
+pub function inst_i32_ge_s(buf: u8[]): u8[] { return buf.push(78u8); }  // 0x4E
+pub function inst_i32_ge_u(buf: u8[]): u8[] { return buf.push(79u8); }  // 0x4F
+
+// ---- i32 binary (arithmetic + bitwise) ------------------------
+pub function inst_i32_add(buf: u8[]): u8[]   { return buf.push(106u8); }  // 0x6A
+pub function inst_i32_sub(buf: u8[]): u8[]   { return buf.push(107u8); }  // 0x6B
+pub function inst_i32_mul(buf: u8[]): u8[]   { return buf.push(108u8); }  // 0x6C
+pub function inst_i32_div_s(buf: u8[]): u8[] { return buf.push(109u8); }  // 0x6D
+pub function inst_i32_div_u(buf: u8[]): u8[] { return buf.push(110u8); }  // 0x6E
+pub function inst_i32_rem_s(buf: u8[]): u8[] { return buf.push(111u8); }  // 0x6F
+pub function inst_i32_rem_u(buf: u8[]): u8[] { return buf.push(112u8); }  // 0x70
+pub function inst_i32_and(buf: u8[]): u8[]   { return buf.push(113u8); }  // 0x71
+pub function inst_i32_or(buf: u8[]): u8[]    { return buf.push(114u8); }  // 0x72
+pub function inst_i32_xor(buf: u8[]): u8[]   { return buf.push(115u8); }  // 0x73
+pub function inst_i32_shl(buf: u8[]): u8[]   { return buf.push(116u8); }  // 0x74
+pub function inst_i32_shr_s(buf: u8[]): u8[] { return buf.push(117u8); }  // 0x75
+pub function inst_i32_shr_u(buf: u8[]): u8[] { return buf.push(118u8); }  // 0x76
+pub function inst_i32_rotl(buf: u8[]): u8[]  { return buf.push(119u8); }  // 0x77
+pub function inst_i32_rotr(buf: u8[]): u8[]  { return buf.push(120u8); }  // 0x78
+
+// ---- i64 unary ------------------------------------------------
+pub function inst_i64_clz(buf: u8[]): u8[]    { return buf.push(121u8); }  // 0x79
+pub function inst_i64_ctz(buf: u8[]): u8[]    { return buf.push(122u8); }  // 0x7A
+pub function inst_i64_popcnt(buf: u8[]): u8[] { return buf.push(123u8); }  // 0x7B
+pub function inst_i64_eqz(buf: u8[]): u8[]    { return buf.push(80u8);  }  // 0x50
+
+// ---- i64 compare ----------------------------------------------
+pub function inst_i64_eq(buf: u8[]): u8[]   { return buf.push(81u8); }  // 0x51
+pub function inst_i64_ne(buf: u8[]): u8[]   { return buf.push(82u8); }  // 0x52
+pub function inst_i64_lt_s(buf: u8[]): u8[] { return buf.push(83u8); }  // 0x53
+pub function inst_i64_lt_u(buf: u8[]): u8[] { return buf.push(84u8); }  // 0x54
+pub function inst_i64_gt_s(buf: u8[]): u8[] { return buf.push(85u8); }  // 0x55
+pub function inst_i64_gt_u(buf: u8[]): u8[] { return buf.push(86u8); }  // 0x56
+pub function inst_i64_le_s(buf: u8[]): u8[] { return buf.push(87u8); }  // 0x57
+pub function inst_i64_le_u(buf: u8[]): u8[] { return buf.push(88u8); }  // 0x58
+pub function inst_i64_ge_s(buf: u8[]): u8[] { return buf.push(89u8); }  // 0x59
+pub function inst_i64_ge_u(buf: u8[]): u8[] { return buf.push(90u8); }  // 0x5A
+
+// ---- i64 binary (arithmetic + bitwise) ------------------------
+pub function inst_i64_add(buf: u8[]): u8[]   { return buf.push(124u8); }  // 0x7C
+pub function inst_i64_sub(buf: u8[]): u8[]   { return buf.push(125u8); }  // 0x7D
+pub function inst_i64_mul(buf: u8[]): u8[]   { return buf.push(126u8); }  // 0x7E
+pub function inst_i64_div_s(buf: u8[]): u8[] { return buf.push(127u8); }  // 0x7F
+pub function inst_i64_div_u(buf: u8[]): u8[] { return buf.push(128u8); }  // 0x80
+pub function inst_i64_rem_s(buf: u8[]): u8[] { return buf.push(129u8); }  // 0x81
+pub function inst_i64_rem_u(buf: u8[]): u8[] { return buf.push(130u8); }  // 0x82
+pub function inst_i64_and(buf: u8[]): u8[]   { return buf.push(131u8); }  // 0x83
+pub function inst_i64_or(buf: u8[]): u8[]    { return buf.push(132u8); }  // 0x84
+pub function inst_i64_xor(buf: u8[]): u8[]   { return buf.push(133u8); }  // 0x85
+pub function inst_i64_shl(buf: u8[]): u8[]   { return buf.push(134u8); }  // 0x86
+pub function inst_i64_shr_s(buf: u8[]): u8[] { return buf.push(135u8); }  // 0x87
+pub function inst_i64_shr_u(buf: u8[]): u8[] { return buf.push(136u8); }  // 0x88
+pub function inst_i64_rotl(buf: u8[]): u8[]  { return buf.push(137u8); }  // 0x89
+pub function inst_i64_rotr(buf: u8[]): u8[]  { return buf.push(138u8); }  // 0x8A
+
+// ---- f32 compare ----------------------------------------------
+pub function inst_f32_eq(buf: u8[]): u8[] { return buf.push(91u8); }  // 0x5B
+pub function inst_f32_ne(buf: u8[]): u8[] { return buf.push(92u8); }  // 0x5C
+pub function inst_f32_lt(buf: u8[]): u8[] { return buf.push(93u8); }  // 0x5D
+pub function inst_f32_gt(buf: u8[]): u8[] { return buf.push(94u8); }  // 0x5E
+pub function inst_f32_le(buf: u8[]): u8[] { return buf.push(95u8); }  // 0x5F
+pub function inst_f32_ge(buf: u8[]): u8[] { return buf.push(96u8); }  // 0x60
+
+// ---- f32 unary + binary --------------------------------------
+pub function inst_f32_abs(buf: u8[]): u8[]      { return buf.push(139u8); }  // 0x8B
+pub function inst_f32_neg(buf: u8[]): u8[]      { return buf.push(140u8); }  // 0x8C
+pub function inst_f32_ceil(buf: u8[]): u8[]     { return buf.push(141u8); }  // 0x8D
+pub function inst_f32_floor(buf: u8[]): u8[]    { return buf.push(142u8); }  // 0x8E
+pub function inst_f32_trunc(buf: u8[]): u8[]    { return buf.push(143u8); }  // 0x8F
+pub function inst_f32_nearest(buf: u8[]): u8[]  { return buf.push(144u8); }  // 0x90
+pub function inst_f32_sqrt(buf: u8[]): u8[]     { return buf.push(145u8); }  // 0x91
+pub function inst_f32_add(buf: u8[]): u8[]      { return buf.push(146u8); }  // 0x92
+pub function inst_f32_sub(buf: u8[]): u8[]      { return buf.push(147u8); }  // 0x93
+pub function inst_f32_mul(buf: u8[]): u8[]      { return buf.push(148u8); }  // 0x94
+pub function inst_f32_div(buf: u8[]): u8[]      { return buf.push(149u8); }  // 0x95
+pub function inst_f32_min(buf: u8[]): u8[]      { return buf.push(150u8); }  // 0x96
+pub function inst_f32_max(buf: u8[]): u8[]      { return buf.push(151u8); }  // 0x97
+pub function inst_f32_copysign(buf: u8[]): u8[] { return buf.push(152u8); }  // 0x98
+
+// ---- f64 compare ----------------------------------------------
+pub function inst_f64_eq(buf: u8[]): u8[] { return buf.push(97u8);  }  // 0x61
+pub function inst_f64_ne(buf: u8[]): u8[] { return buf.push(98u8);  }  // 0x62
+pub function inst_f64_lt(buf: u8[]): u8[] { return buf.push(99u8);  }  // 0x63
+pub function inst_f64_gt(buf: u8[]): u8[] { return buf.push(100u8); }  // 0x64
+pub function inst_f64_le(buf: u8[]): u8[] { return buf.push(101u8); }  // 0x65
+pub function inst_f64_ge(buf: u8[]): u8[] { return buf.push(102u8); }  // 0x66
+
+// ---- f64 unary + binary --------------------------------------
+pub function inst_f64_abs(buf: u8[]): u8[]      { return buf.push(153u8); }  // 0x99
+pub function inst_f64_neg(buf: u8[]): u8[]      { return buf.push(154u8); }  // 0x9A
+pub function inst_f64_ceil(buf: u8[]): u8[]     { return buf.push(155u8); }  // 0x9B
+pub function inst_f64_floor(buf: u8[]): u8[]    { return buf.push(156u8); }  // 0x9C
+pub function inst_f64_trunc(buf: u8[]): u8[]    { return buf.push(157u8); }  // 0x9D
+pub function inst_f64_nearest(buf: u8[]): u8[]  { return buf.push(158u8); }  // 0x9E
+pub function inst_f64_sqrt(buf: u8[]): u8[]     { return buf.push(159u8); }  // 0x9F
+pub function inst_f64_add(buf: u8[]): u8[]      { return buf.push(160u8); }  // 0xA0
+pub function inst_f64_sub(buf: u8[]): u8[]      { return buf.push(161u8); }  // 0xA1
+pub function inst_f64_mul(buf: u8[]): u8[]      { return buf.push(162u8); }  // 0xA2
+pub function inst_f64_div(buf: u8[]): u8[]      { return buf.push(163u8); }  // 0xA3
+pub function inst_f64_min(buf: u8[]): u8[]      { return buf.push(164u8); }  // 0xA4
+pub function inst_f64_max(buf: u8[]): u8[]      { return buf.push(165u8); }  // 0xA5
+pub function inst_f64_copysign(buf: u8[]): u8[] { return buf.push(166u8); }  // 0xA6
