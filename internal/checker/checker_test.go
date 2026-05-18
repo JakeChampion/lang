@@ -117,7 +117,23 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 			if !strings.Contains(err.Error(), c.name) {
 				t.Errorf("error %q does not name %q", err.Error(), c.name)
 			}
+			// IsReservedName is the public-facing query the
+			// rest of the codebase consults; it must agree
+			// with what the checker actually rejects. Pinning
+			// them together here keeps the two paths from
+			// drifting.
+			if !IsReservedName(c.name) {
+				t.Errorf("IsReservedName(%q) returned false but the checker rejects it", c.name)
+			}
 		})
+	}
+	// Also assert the helper returns false for things that
+	// AREN'T reserved — a sanity check that the helper isn't
+	// just `return true`.
+	for _, name := range []string{"Foo", "Bar", "main", "x"} {
+		if IsReservedName(name) {
+			t.Errorf("IsReservedName(%q) returned true for a user-name", name)
+		}
 	}
 }
 

@@ -107,6 +107,30 @@ type Info struct {
 // `OpMakeOkI32 → tag=0` mapping. Letting a user redeclare
 // `Option` with the variants swapped silently miscompiles —
 // `Check` rejects any user `enum Option { … }` /
+// IsReservedName reports whether name is the name of an auto-
+// injected built-in enum or struct. User code can't redeclare
+// these — the checker rejects shadow attempts at the source
+// position of the user decl (see `shadowedEnums` /
+// `shadowedStructs` in `Check`).
+//
+// Single source of truth for the reserved-name set: external
+// callers (langsmith's generator, IDE rename refactors,
+// documentation tooling) consult this rather than maintaining
+// their own copy.
+func IsReservedName(name string) bool {
+	for _, ed := range builtinEnumDecls() {
+		if ed.Name == name {
+			return true
+		}
+	}
+	for _, sd := range builtinStructDecls() {
+		if sd.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // `enum Result { … }` (and the other reserved names below)
 // before reaching variant registration. The decls live in the
 // AST, not just the checker info, so the formatter /
