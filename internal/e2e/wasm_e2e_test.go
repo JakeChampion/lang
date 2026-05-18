@@ -4256,6 +4256,67 @@ function main(): i32 {
 	}
 }
 
+// `f().field` / `f().0` where `f` is a closure value (function-
+// typed local or param). callReturnType used to consult only
+// `info.FuncSigs[id.Name]` — function-typed locals weren't in
+// FuncSigs, so the lookup returned nil and `fieldOwner` /
+// `targetTupleType` fell through to an unresolved struct,
+// erroring at IR-emit with `field access on unresolved struct ""`.
+// Now callReturnType also looks up function-typed params,
+// info.Locals, and *ast.CaptureRef callees.
+func TestWASMClosureResultStructFieldAccess(t *testing.T) {
+	src := `struct P { x: i32, y: i32 }
+function makeReader(): () => P {
+    function build(): P { return P { x: 10, y: 32 }; }
+    return build;
+}
+function main(): i32 {
+    var f = makeReader();
+    return f().x + f().y;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMClosureResultTupleAccess(t *testing.T) {
+	src := `function makeReader(): () => (i32, i32) {
+    function build(): (i32, i32) { return (10, 32); }
+    return build;
+}
+function main(): i32 {
+    var f = makeReader();
+    return f().0 + f().1;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+// Sibling local functions: `outer` references `inner`, both
+// defined in the same enclosing function. checker's Ident
+// lookup used to consult info.FuncSigs before captureOuter,
+// which made local FuncDecl names resolve as top-level
+// functions instead of as captures — closureconv then left
+// the Ident untouched and codegen errored with
+// `function "inner" not in table`. captureOuter now wins so
+// the sibling gets captured.
+func TestWASMSiblingLocalFnCapture(t *testing.T) {
+	src := `function makeMaker(): () => () => i32 {
+    function inner(): i32 { return 42; }
+    function outer(): () => i32 { return inner; }
+    return outer;
+}
+function main(): i32 {
+    var mk = makeMaker();
+    var f = mk();
+    return f();
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
 // `len(f())` where `f` is a closure-typed local returning a
 // string. The IR's `len()` lowering picks between `OpStrLen`
 // (SSO-aware) and the array-shape `[ptr-4]; load` based on
