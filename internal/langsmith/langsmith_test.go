@@ -163,6 +163,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"helper-call inside main":    false,
 		"nested call (call as arg)":  false,
 		"main with var declarations": false,
+		"while loop":                 false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -198,6 +199,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if i := strings.Index(src, "function main"); i >= 0 && strings.Contains(src[i:], "var v0") {
 			want["main with var declarations"] = true
+		}
+		if strings.Contains(src, "while (__loop_i") {
+			want["while loop"] = true
 		}
 	}
 	for feature, ok := range want {
