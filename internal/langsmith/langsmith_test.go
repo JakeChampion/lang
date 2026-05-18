@@ -164,6 +164,14 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"nested call (call as arg)":  false,
 		"main with var declarations": false,
 		"while loop":                 false,
+		"struct decl":                false,
+		"enum decl":                  false,
+		"array literal":              false,
+		"array index":                false,
+		"pair literal":               false,
+		"field access":               false,
+		"enum variant in expr":       false,
+		"match expression":           false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -202,6 +210,46 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "while (__loop_i") {
 			want["while loop"] = true
+		}
+		// Prelude decls — should always be present, but assert
+		// they're not silently dropped.
+		if strings.Contains(src, "struct Pair { fst: i32, snd: i32 }") {
+			want["struct decl"] = true
+		}
+		if strings.Contains(src, "enum Color { Red, Green, Blue }") {
+			want["enum decl"] = true
+		}
+		// Array-typed var: `: i32[] = [` is a strong signal for
+		// "literal array constructed at runtime".
+		if strings.Contains(src, "i32[] = [") || strings.Contains(src, "i64[] = [") || strings.Contains(src, "boolean[] = [") {
+			want["array literal"] = true
+		}
+		// Array indexed read: `v0[0i32]` shape — written in
+		// tryCompositeProduction.
+		if strings.Contains(src, "[0i32]") {
+			want["array index"] = true
+		}
+		// Pair literal written by pairLiteral as `(Pair {`.
+		if strings.Contains(src, "(Pair { fst: ") {
+			want["pair literal"] = true
+		}
+		// Field access from tryCompositeProduction: `vN.fst` or
+		// `vN.snd`.
+		if strings.Contains(src, ".fst") || strings.Contains(src, ".snd") {
+			want["field access"] = true
+		}
+		// An enum variant appears as a bare identifier in an
+		// expression position. The prelude line contains them
+		// but with `{` / `,` / `}` punctuation. A use site has
+		// the variant followed by either `,` (inside match arm)
+		// or a token like `;` / `)` / `}` / space. Just check
+		// for one occurrence outside the prelude line — count
+		// total occurrences > 1 in the source.
+		if strings.Count(src, "Red") > 1 || strings.Count(src, "Green") > 1 || strings.Count(src, "Blue") > 1 {
+			want["enum variant in expr"] = true
+		}
+		if strings.Contains(src, "match (") {
+			want["match expression"] = true
 		}
 	}
 	for feature, ok := range want {

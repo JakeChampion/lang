@@ -256,6 +256,15 @@ type helperSig struct {
 // gtype is the generator's internal enum of Lang types. Each kind
 // has its own literal form, applicable operators, and per-type
 // bucket inside scope.
+//
+// Composite types here are deliberately limited to a single
+// representative per kind: one array per scalar (i32 / i64 /
+// bool element), one fixed `struct Pair { fst: i32, snd: i32 }`,
+// and one fixed payload-less `enum Color { Red, Green, Blue }`.
+// That keeps the generator's nominal-type tracking trivial (no
+// map keyed on declarations) while still exercising the codegen
+// paths for array literals + indexing, struct construction +
+// field access, and enum literals + match dispatch.
 type gtype int
 
 const (
@@ -264,10 +273,18 @@ const (
 	tBool
 	tF32
 	tString
+	tArrI32
+	tArrI64
+	tArrBool
+	tPair
+	tColor
 	numTypes
 )
 
-var allTypes = [numTypes]gtype{tI32, tI64, tBool, tF32, tString}
+var allTypes = [numTypes]gtype{
+	tI32, tI64, tBool, tF32, tString,
+	tArrI32, tArrI64, tArrBool, tPair, tColor,
+}
 
 func (t gtype) String() string {
 	switch t {
@@ -281,8 +298,47 @@ func (t gtype) String() string {
 		return "f32"
 	case tString:
 		return "string"
+	case tArrI32:
+		return "i32[]"
+	case tArrI64:
+		return "i64[]"
+	case tArrBool:
+		return "boolean[]"
+	case tPair:
+		return "Pair"
+	case tColor:
+		return "Color"
 	}
 	panic(fmt.Sprintf("unknown gtype %d", int(t)))
+}
+
+// arrayTypeFor returns the array gtype whose element is t, plus a
+// success flag. Used to decide whether an in-scope array can be
+// indexed to produce a value of type t.
+func arrayTypeFor(t gtype) (gtype, bool) {
+	switch t {
+	case tI32:
+		return tArrI32, true
+	case tI64:
+		return tArrI64, true
+	case tBool:
+		return tArrBool, true
+	}
+	return 0, false
+}
+
+// arrayElemOf returns the element gtype of an array gtype, plus a
+// success flag.
+func arrayElemOf(t gtype) (gtype, bool) {
+	switch t {
+	case tArrI32:
+		return tI32, true
+	case tArrI64:
+		return tI64, true
+	case tArrBool:
+		return tBool, true
+	}
+	return 0, false
 }
 
 // scope tracks identifiers visible at the current generation point,
@@ -358,13 +414,15 @@ func (g *Generator) MainProgram() string {
 	}()
 
 	var b strings.Builder
+	g.preludeDecls(&b)
 
 	// Emit a small number of helpers before main. Helpers in
 	// main-program mode inherit noFloats, so their signatures are
-	// drawn from {i32, i64, bool, string}. Main only consumes
-	// i32-returning helpers in its return expression, but
-	// non-i32 helpers still get exercised: any helper can call
-	// any earlier helper of matching arg/return types.
+	// drawn from {i32, i64, bool, string, i32[], i64[], boolean[],
+	// Pair, Color}. Main only consumes i32-returning helpers in
+	// its return expression, but non-i32 helpers still get
+	// exercised: any helper can call any earlier helper of
+	// matching arg/return types.
 	nHelpers := g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
 	for i := 0; i < nHelpers; i++ {
 		g.funcDecl(&b, i)
@@ -377,10 +435,13 @@ func (g *Generator) MainProgram() string {
 		if g.maybeEmitWhile(&b, sc) {
 			continue
 		}
-		// Restrict main's *vars* to deterministic-across-backends
-		// types. Strings would need a print channel to observe;
-		// we just want the return-value byte.
-		vt := []gtype{tI32, tI64, tBool}[g.ch.intN(3)]
+		// Main's vars are drawn from the deterministic-across-
+		// backends subset (no floats, no strings whose
+		// observation needs a print channel). Composite types
+		// (arrays / Pair / Color) are pure values that flow
+		// through the i32 return path via index / field /
+		// match-expr productions in expr(), so they're safe.
+		vt := mainVarTypes[g.ch.intN(len(mainVarTypes))]
 		vname := fmt.Sprintf("v%d", i)
 		fmt.Fprintf(&b, "var %s: %s = ", vname, vt)
 		g.expr(&b, sc, vt, 0)
@@ -393,11 +454,31 @@ func (g *Generator) MainProgram() string {
 	return b.String()
 }
 
-// Program emits a complete program with N top-level function
-// declarations. Each function is independent: no inter-function
-// calls in v1.
+// mainVarTypes are the gtypes legal for `var v<N>` declarations
+// inside `main` under noFloats. Strings stay out — they'd
+// need a print channel to observe — but composite types are
+// fine because the i32 return path can extract bytes from them
+// (array index, Pair.fst/.snd, match over Color).
+var mainVarTypes = []gtype{
+	tI32, tI64, tBool,
+	tArrI32, tArrI64, tArrBool,
+	tPair, tColor,
+}
+
+// preludeDecls emits the fixed `struct Pair` and `enum Color`
+// declarations every generated program shares. Called at the top
+// of Program / MainProgram before any function decl.
+func (g *Generator) preludeDecls(b *strings.Builder) {
+	b.WriteString("struct Pair { fst: i32, snd: i32 }\n")
+	b.WriteString("enum Color { Red, Green, Blue }\n")
+}
+
+// Program emits a complete program: prelude type decls followed
+// by N top-level function declarations. Helpers can call any
+// earlier helper (forward refs only — see funcDecl).
 func (g *Generator) Program() string {
 	var b strings.Builder
+	g.preludeDecls(&b)
 	n := 1 + g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
 	for i := 0; i < n; i++ {
 		g.funcDecl(&b, i)
@@ -534,7 +615,7 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 // leaf depending on t.
 func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	if depth >= g.cfg.MaxExprDepth || g.flip(0.4) {
-		g.leaf(b, sc, t)
+		g.leaf(b, sc, t, depth)
 		return
 	}
 	// Helper call. Skipped when no helper returns t, or when the
@@ -542,6 +623,16 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	// keeps generation terminating.
 	if !g.flip(0.7) {
 		if g.emitCall(b, sc, t, depth) {
+			return
+		}
+	}
+	// Composite-derived production: route an in-scope array /
+	// Pair / Color through an index / field / match-expr to
+	// produce a value of type t. Bails out (returns false)
+	// when no in-scope composite supplies t; caller falls
+	// through to the per-type composite path below.
+	if !g.flip(0.75) {
+		if g.tryCompositeProduction(b, sc, t, depth) {
 			return
 		}
 	}
@@ -557,12 +648,64 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		g.numericExpr(b, sc, t, depth)
 	case tBool:
 		g.boolExpr(b, sc, depth)
-	case tString:
-		// No string-producing binary op in v1 — concat lowers
-		// through a checker-stamped helper and complicates the
-		// invariant. Stick to leaves.
-		g.leaf(b, sc, t)
+	default:
+		// String + composite types — no binary / arithmetic
+		// productions, fall through to leaf which handles var-
+		// refs and literals (including the recursive array /
+		// Pair literal forms).
+		g.leaf(b, sc, t, depth)
 	}
+}
+
+// tryCompositeProduction emits one of: array index access,
+// struct field access, or enum match-expression — whichever
+// kind of in-scope composite var can produce a value of type t.
+// Tries them in fixed order (array, struct, enum) so a richer
+// program seed naturally cascades through more shapes. Returns
+// false (without writing) when no in-scope composite supplies
+// t; caller falls back to another production.
+func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtype, depth int) bool {
+	// Array index. `<arr-var>[0i32]` — fixed index avoids
+	// needing to track per-array lengths. The generator emits
+	// every array literal with length >= 1, so [0] is in-
+	// bounds by construction.
+	if arrT, ok := arrayTypeFor(t); ok {
+		arrs := sc.inScope(arrT)
+		if len(arrs) > 0 {
+			name := arrs[g.ch.intN(len(arrs))]
+			fmt.Fprintf(b, "%s[0i32]", name)
+			return true
+		}
+	}
+	// Struct field. `Pair.fst` / `.snd` are both i32.
+	if t == tI32 {
+		pairs := sc.inScope(tPair)
+		if len(pairs) > 0 {
+			name := pairs[g.ch.intN(len(pairs))]
+			field := []string{"fst", "snd"}[g.ch.intN(2)]
+			fmt.Fprintf(b, "%s.%s", name, field)
+			return true
+		}
+	}
+	// Enum match-expr. `(match (c) { Red => e1, Green => e2,
+	// Blue => e3 })` routes a Color into any non-Color t.
+	// Skipped for t == Color to avoid infinite recursion (the
+	// arms would themselves need Color values).
+	if t != tColor {
+		colors := sc.inScope(tColor)
+		if len(colors) > 0 {
+			name := colors[g.ch.intN(len(colors))]
+			fmt.Fprintf(b, "(match (%s) { Red => ", name)
+			g.expr(b, sc, t, depth+1)
+			b.WriteString(", Green => ")
+			g.expr(b, sc, t, depth+1)
+			b.WriteString(", Blue => ")
+			g.expr(b, sc, t, depth+1)
+			b.WriteString(" })")
+			return true
+		}
+	}
+	return false
 }
 
 // emitCall picks a previously-registered helper whose return type
@@ -605,13 +748,13 @@ func (g *Generator) emitIfExpr(b *strings.Builder, sc *scope, t gtype, depth int
 	b.WriteString(" })")
 }
 
-func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype) {
+func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 	vars := sc.inScope(t)
 	if len(vars) > 0 && g.flip(0.6) {
 		b.WriteString(vars[g.ch.intN(len(vars))])
 		return
 	}
-	g.literal(b, t)
+	g.literal(b, sc, t, depth)
 }
 
 // numericExpr picks `+`, `-`, or `*` and recurses with operands of
@@ -653,7 +796,13 @@ func (g *Generator) boolExpr(b *strings.Builder, sc *scope, depth int) {
 	}
 }
 
-func (g *Generator) literal(b *strings.Builder, t gtype) {
+// literal emits a value-of-type-t in the simplest available
+// form. Composite literals (array / Pair / Color) get scope +
+// depth because they contain sub-expressions whose depth must
+// extend the current cap (resetting to 0 would let a recursive
+// composite — `i32[]` element that's another `i32[]` — blow the
+// stack). Scalar literals ignore sc + depth.
+func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 	switch t {
 	case tI32:
 		fmt.Fprintf(b, "%di32", g.ch.intN(1000))
@@ -674,7 +823,45 @@ func (g *Generator) literal(b *strings.Builder, t gtype) {
 		fmt.Fprintf(b, "%.2ff32", float64(g.ch.intN(10000))/100.0)
 	case tString:
 		b.WriteString(g.stringLiteral())
+	case tArrI32, tArrI64, tArrBool:
+		elem, _ := arrayElemOf(t)
+		g.arrayLiteral(b, sc, elem, depth)
+	case tPair:
+		g.pairLiteral(b, sc, depth)
+	case tColor:
+		b.WriteString([]string{"Red", "Green", "Blue"}[g.ch.intN(3)])
 	}
+}
+
+// arrayLiteral emits `[e1, e2, ...]` with at least one element so
+// the fixed `[0i32]` index used by tryCompositeProduction is
+// always in-bounds. Sub-expressions recurse at depth+1 so the
+// outer MaxExprDepth budget keeps composite-of-composite
+// recursion finite.
+func (g *Generator) arrayLiteral(b *strings.Builder, sc *scope, elem gtype, depth int) {
+	n := 1 + g.ch.intN(4) // 1..4 elements
+	b.WriteByte('[')
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		g.expr(b, sc, elem, depth+1)
+	}
+	b.WriteByte(']')
+}
+
+// pairLiteral emits `(Pair { fst: <i32-expr>, snd: <i32-expr> })`.
+// Outer parens disambiguate the brace-balanced struct literal in
+// contexts where bare `Pair { ... }` would clash with the
+// surrounding statement / arm-block braces (e.g. inside match-arm
+// bodies or if-then arm expressions). Both field exprs recurse
+// at depth+1 to extend the outer budget.
+func (g *Generator) pairLiteral(b *strings.Builder, sc *scope, depth int) {
+	b.WriteString("(Pair { fst: ")
+	g.expr(b, sc, tI32, depth+1)
+	b.WriteString(", snd: ")
+	g.expr(b, sc, tI32, depth+1)
+	b.WriteString(" })")
 }
 
 // stringLiteral emits a short ASCII-only string with no escape
@@ -694,12 +881,17 @@ func (g *Generator) stringLiteral() string {
 // ---------- random helpers ----------
 
 // pickType draws from the full type universe, honouring noFloats
-// when the generator is in main-program mode.
+// when the generator is in main-program mode. The composite types
+// (arrays, Pair, Color) are float-free, so they're allowed in
+// both modes.
 func (g *Generator) pickType() gtype {
 	if g.noFloats {
-		// Skip tF32 — the type universe has it at index tF32.
-		// Round-robin over the other four entries instead.
-		nonFloats := []gtype{tI32, tI64, tBool, tString}
+		// Skip tF32 — everything else (scalar + composite) is
+		// safe across backends for the differential oracle.
+		nonFloats := []gtype{
+			tI32, tI64, tBool, tString,
+			tArrI32, tArrI64, tArrBool, tPair, tColor,
+		}
 		return nonFloats[g.ch.intN(len(nonFloats))]
 	}
 	return allTypes[g.ch.intN(len(allTypes))]
