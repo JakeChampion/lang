@@ -885,6 +885,187 @@ func TestEmitCallUnknownCallee(t *testing.T) {
 	}
 }
 
+// TestEmitCallIndirect — three functions of signature (i32) → i32
+// in the table, with the caller picking a funcidx by parameter and
+// dispatching via call_indirect. Exercises the table/element
+// section emission AND op.Sig → typeidx resolution.
+func TestEmitCallIndirect(t *testing.T) {
+	sigI32I32 := &ast.FuncType{
+		Params: []ast.Type{i32()},
+		Result: i32(),
+	}
+	mk := func(name string, body []ir.Op) *ir.Func {
+		return &ir.Func{
+			Name:       name,
+			Params:     []ast.Param{{Name: "x", Type: i32()}},
+			ReturnType: i32(),
+			Ops:        body,
+		}
+	}
+	prog := &ir.Program{Funcs: []*ir.Func{
+		// funcidx 0: double
+		mk("double", []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpMul},
+		}),
+		// funcidx 1: negate
+		mk("negate", []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpSub},
+		}),
+		// funcidx 2: dispatch — takes (funcidx, value) and
+		// calls the chosen function with value, returning the
+		// result. Stack on call: [value, funcidx]; we'll push
+		// in that order.
+		{
+			Name: "dispatch",
+			Params: []ast.Param{
+				{Name: "which", Type: i32()},
+				{Name: "v", Type: i32()},
+			},
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpLoadLocal, I32: 1}, // v
+				{Kind: ir.OpLoadLocal, I32: 0}, // funcidx
+				{Kind: ir.OpCallIndirect, Sig: sigI32I32},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, c := range []struct {
+		which, v, want string
+	}{
+		{"0", "21", "42"},  // double(21) = 42
+		{"1", "100", "-100"}, // negate(100) = -100
+	} {
+		cmd := exec.Command("wasmtime", "run", "--invoke", "dispatch", p, c.which, c.v)
+		var so, se bytes.Buffer
+		cmd.Stdout = &so
+		cmd.Stderr = &se
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("dispatch(%s,%s): %v\nstderr:%s", c.which, c.v, err, se.String())
+		}
+		if got := strings.TrimSpace(so.String()); got != c.want {
+			t.Fatalf("dispatch(%s,%s) = %q, want %q", c.which, c.v, got, c.want)
+		}
+	}
+}
+
+// TestEmitCallClosureDirect — OpCallClosureDirect is the
+// defunctionalised form: env_ptr is already on the stack as the
+// last arg, so it's a plain `call funcidx`. Verify it routes to
+// the named target.
+func TestEmitCallClosureDirect(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name: "doubled",
+			Params: []ast.Param{
+				{Name: "v", Type: i32()},
+				{Name: "env", Type: i32()},
+			},
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpLoadLocal, I32: 0},
+				{Kind: ir.OpConstI32, I32: 2},
+				{Kind: ir.OpMul},
+			},
+		},
+		{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 21}, // v
+				{Kind: ir.OpConstI32, I32: 0},  // env_ptr (unused)
+				{Kind: ir.OpCallClosureDirect, Str: "doubled"},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "42" {
+		t.Fatalf("got %q, want %q", got, "42")
+	}
+}
+
+// TestEmitNoTableWhenUnused — confirm the table section stays
+// absent for programs that don't use OpCallIndirect / OpConstFunc.
+// OpCallClosureDirect alone should not trigger a table.
+func TestEmitNoTableWhenUnused(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if walkHasTableSection(t, bin) {
+		t.Fatal("table section present in module without indirect calls")
+	}
+}
+
+// walkHasTableSection — same shape as walkHasMemorySection but
+// looking for section id 4.
+func walkHasTableSection(t *testing.T, bin []byte) bool {
+	t.Helper()
+	if len(bin) < 8 {
+		return false
+	}
+	i := 8
+	for i < len(bin) {
+		id := bin[i]
+		i++
+		size := 0
+		shift := 0
+		for {
+			if i >= len(bin) {
+				return false
+			}
+			b := bin[i]
+			i++
+			size |= int(b&0x7f) << shift
+			if b&0x80 == 0 {
+				break
+			}
+			shift += 7
+		}
+		if id == encode.SectionTable {
+			return true
+		}
+		i += size
+	}
+	return false
+}
+
+// TestEmitCallIndirectMissingSig — without op.Sig the emitter
+// must report an error since there's no way to resolve a typeidx.
+func TestEmitCallIndirectMissingSig(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops:        []ir.Op{{Kind: ir.OpCallIndirect}}, // no Sig
+	}}}
+	if _, err := Emit(prog); err == nil {
+		t.Fatal("expected missing-Sig error")
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpStrLen) and confirm we get a useful error rather
 // than emitting nonsense bytes. Regressions here would silently

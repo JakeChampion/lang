@@ -65,6 +65,38 @@ func TestEncodeMemorySection(t *testing.T) {
 	}
 }
 
+func TestEncodeTableSection(t *testing.T) {
+	// No max: flag 0 + min slots.
+	got := sections.EncodeTableSection(nil, 2, -1)
+	// id 4, size 4, count 1, reftype 0x70 (funcref), flag 0, min 2.
+	want := []byte{0x04, 0x04, 0x01, 0x70, 0x00, 0x02}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("no-max: got % x, want % x", got, want)
+	}
+	// With max: flag 1 + min + max.
+	got = sections.EncodeTableSection(nil, 2, 10)
+	want = []byte{0x04, 0x05, 0x01, 0x70, 0x01, 0x02, 0x0a}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("with-max: got % x, want % x", got, want)
+	}
+}
+
+func TestEncodeElementSection(t *testing.T) {
+	// One active segment, table 0, offset 0, two func indices.
+	got := sections.EncodeElementSection(nil,
+		[]int32{0}, [][]uint32{{0, 1}})
+	want := []byte{
+		0x09, 0x08, // id 9 (element), size 8
+		0x01,             // segment count
+		0x00,             // flag: active, table 0
+		0x41, 0x00, 0x0b, // i32.const 0; end
+		0x02, 0x00, 0x01, // vec(funcidx): 2, funcidx 0, funcidx 1
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("got % x, want % x", got, want)
+	}
+}
+
 func TestEncodeGlobalSection(t *testing.T) {
 	// Single i32 const = 42: init expr `i32.const 42 ; end`.
 	initExpr := []byte{0x41, 0x2a, 0x0b}
