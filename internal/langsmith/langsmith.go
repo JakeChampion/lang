@@ -414,55 +414,56 @@ var allTypes = [numTypes]gtype{
 	tXyz, tStatus, tResI32I32,
 }
 
+// gtypeNames is the source-level name for each builtin gtype, in
+// the same iota order as the const block above. Single-source-of-
+// truth — `gtype.String()` and `Generator.typeName()` both look
+// through this table for the builtin range, so adding a builtin
+// is one slot here (plus the const + allTypes entries) rather
+// than three switch cases that can drift apart. Pinned in place by
+// `TestGtypeNamesCoversEveryBuiltin`.
+var gtypeNames = [numTypes]string{
+	tI32:        "i32",
+	tI64:        "i64",
+	tBool:       "boolean",
+	tF32:        "f32",
+	tString:     "string",
+	tArrI32:     "i32[]",
+	tArrI64:     "i64[]",
+	tArrBool:    "boolean[]",
+	tPair:       "Pair",
+	tColor:      "Color",
+	tOptI32:     "Option[i32]",
+	tMapI32I32:  "Map[i32, i32]",
+	tXyz:        "Xyz",
+	tStatus:     "Status",
+	tResI32I32:  "Result[i32, i32]",
+}
+
+// String reports the source-level name for a builtin gtype.
+// Dynamic nominal types (struct / enum shapes registered at
+// generation time on a Generator) DON'T resolve through this
+// path because the value receiver can't see generator state.
+// Use `Generator.typeName(t)` everywhere a dynamic-type name
+// might be needed — this method is for builtin-only diagnostic
+// paths (panic messages, internal asserts).
 func (t gtype) String() string {
-	switch t {
-	case tI32:
-		return "i32"
-	case tI64:
-		return "i64"
-	case tBool:
-		return "boolean"
-	case tF32:
-		return "f32"
-	case tString:
-		return "string"
-	case tArrI32:
-		return "i32[]"
-	case tArrI64:
-		return "i64[]"
-	case tArrBool:
-		return "boolean[]"
-	case tPair:
-		return "Pair"
-	case tColor:
-		return "Color"
-	case tOptI32:
-		return "Option[i32]"
-	case tMapI32I32:
-		return "Map[i32, i32]"
-	case tXyz:
-		return "Xyz"
-	case tStatus:
-		return "Status"
-	case tResI32I32:
-		return "Result[i32, i32]"
+	if t >= 0 && int(t) < len(gtypeNames) {
+		return gtypeNames[t]
 	}
-	// Dynamic nominal types live past numTypes — the
-	// Generator-aware caller should resolve them via
-	// `g.typeName(t)`. Return a placeholder when reached
-	// directly so debug prints don't crash.
 	return fmt.Sprintf("?dyn%d", int(t))
 }
 
-// typeName returns the source-level name token for type t,
-// consulting the Generator's dynamic nominal-type maps first.
-// Use this anywhere a type's name needs to land in the emitted
-// source (var annotations, function-decl return types, struct-
-// field types). For purely-diagnostic uses, gtype.String() is
-// fine.
+// typeName returns the source-level name token for type t. This
+// is the canonical name-fetcher: builtin gtypes resolve through
+// the static `gtypeNames` table, dynamic nominal types through
+// the generator's per-shape maps. Use anywhere a type's name
+// needs to land in the emitted source (var annotations,
+// function-decl return types, struct-field types). Diagnostic-
+// only callers that don't have a Generator can fall back to
+// `gtype.String()`, which covers the builtin range.
 func (g *Generator) typeName(t gtype) string {
 	if t < numTypes {
-		return t.String()
+		return gtypeNames[t]
 	}
 	if sh, ok := g.structShapes[t]; ok {
 		return sh.name
