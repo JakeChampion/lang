@@ -1,14 +1,18 @@
 // examples/self_host/asm.lang — first true codegen layer in the
 // self-host port. Walks a parser.Module and emits AT&T x86_64
-// assembly text for `return <i32-arithmetic>;` programs. The
-// emitted asm uses Linux syscall conventions (sys_exit_group =
-// 60) and is assemble-able with `gcc -nostdlib`.
+// assembly text. The emitted asm uses Linux syscall conventions
+// (sys_exit_group = 60) and is assemble-able with
+// `gcc -nostdlib`.
 //
-// Scope (intentionally narrow):
+// Scope:
 //   - i32 literals
 //   - i32 arithmetic: + - * / %
+//   - Comparisons: < <= > >= == != → 0/1 i32 via cmpq + setcc
 //   - Parenthesised grouping (handled implicitly via recursion)
 //   - Unary `-`
+//   - Control flow: if/else and while (forward-jump patching
+//     via unique generated labels)
+//   - Statement-level: `return <expr>;` lowers to sys_exit_group
 //
 // The output programs are valid standalone Linux ELF binaries
 // after `gcc -nostdlib -static <out>.s -o <out>`. A follow-up
@@ -73,47 +77,71 @@ function digits_to_i32(s: string): i32 {
     return acc;
 }
 
+// =================== EMIT STATE ====================
+
+// EmitState bundles the running output text with a monotonic
+// label counter. Threaded by value through every emit_* call —
+// each return produces a fresh EmitState with the appended
+// text and (where relevant) incremented label_n. label_n is
+// the next ID to hand out; .L0, .L1, … by emit time.
+pub struct EmitState { out: string, label_n: i32 }
+
+function new_state(): EmitState {
+    return EmitState { out: "", label_n: 0 };
+}
+
+function (s: EmitState) write(text: string): EmitState {
+    return EmitState { out: s.out + text, label_n: s.label_n };
+}
+
+// fresh_label hands out a unique label name (".L<n>") and
+// returns the new state with label_n already bumped — so the
+// caller can reuse `s` for subsequent emits without
+// double-allocating.
+struct LabelOut { state: EmitState, name: string }
+function fresh_label(s: EmitState): LabelOut {
+    var name: string = ".L" + i32_to_string(s.label_n);
+    var ns: EmitState = EmitState { out: s.out, label_n: s.label_n + 1 };
+    return LabelOut { state: ns, name: name };
+}
+
 // =================== ASM EMITTER ====================
 
-// emit_expr walks the expression, appending asm lines to `out`.
-// Each call leaves the result on the rt-stack via pushq %rax.
-// Unsupported variants surface as a `# unsupported: <kind>`
-// comment so the emitted asm is still well-formed text.
-function emit_expr(e: parser.Expr, out: string): string {
+function emit_expr(e: parser.Expr, s: EmitState): EmitState {
     match (e) {
         parser.ExprNumber(n) => {
-            out = out + "    movq $" + n.text + ", %rax\n";
-            out = out + "    pushq %rax\n";
-            return out;
+            s = s.write("    movq $" + n.text + ", %rax\n");
+            s = s.write("    pushq %rax\n");
+            return s;
         },
         parser.ExprBinary(b) => {
-            out = emit_expr(b.left, out);
-            out = emit_expr(b.right, out);
-            out = out + "    popq %rcx\n";        // rhs
-            out = out + "    popq %rax\n";        // lhs
+            s = emit_expr(b.left, s);
+            s = emit_expr(b.right, s);
+            s = s.write("    popq %rcx\n");        // rhs
+            s = s.write("    popq %rax\n");        // lhs
             if (b.op == "+") {
-                out = out + "    addq %rcx, %rax\n";
+                s = s.write("    addq %rcx, %rax\n");
             } else if (b.op == "-") {
-                out = out + "    subq %rcx, %rax\n";
+                s = s.write("    subq %rcx, %rax\n");
             } else if (b.op == "*") {
-                out = out + "    imulq %rcx, %rax\n";
+                s = s.write("    imulq %rcx, %rax\n");
             } else if (b.op == "/") {
                 // idivq: dividend in rdx:rax (sign-extended via
                 // cqto), divisor in operand. Result quotient in
                 // rax, remainder in rdx.
-                out = out + "    cqto\n";
-                out = out + "    idivq %rcx\n";
+                s = s.write("    cqto\n");
+                s = s.write("    idivq %rcx\n");
             } else if (b.op == "%") {
-                out = out + "    cqto\n";
-                out = out + "    idivq %rcx\n";
-                out = out + "    movq %rdx, %rax\n";
+                s = s.write("    cqto\n");
+                s = s.write("    idivq %rcx\n");
+                s = s.write("    movq %rdx, %rax\n");
             } else if (b.op == "<" || b.op == "<=" || b.op == ">"
                     || b.op == ">=" || b.op == "==" || b.op == "!=") {
                 // Comparison: `cmpq rhs, lhs` sets flags from
                 // (lhs - rhs); setcc materialises the bool in
                 // %al, movzbq zero-extends into %rax so the
                 // surrounding stack push gets a clean 0/1.
-                out = out + "    cmpq %rcx, %rax\n";
+                s = s.write("    cmpq %rcx, %rax\n");
                 var cc: string = "";
                 if (b.op == "<") { cc = "setl"; }
                 else if (b.op == "<=") { cc = "setle"; }
@@ -121,88 +149,143 @@ function emit_expr(e: parser.Expr, out: string): string {
                 else if (b.op == ">=") { cc = "setge"; }
                 else if (b.op == "==") { cc = "sete"; }
                 else { cc = "setne"; }
-                out = out + "    " + cc + " %al\n";
-                out = out + "    movzbq %al, %rax\n";
+                s = s.write("    " + cc + " %al\n");
+                s = s.write("    movzbq %al, %rax\n");
             } else {
-                out = out + "    # unsupported binop: " + b.op + "\n";
+                s = s.write("    # unsupported binop: " + b.op + "\n");
             }
-            out = out + "    pushq %rax\n";
-            return out;
+            s = s.write("    pushq %rax\n");
+            return s;
         },
         parser.ExprUnary(u) => {
             if (u.op == "-") {
-                out = emit_expr(u.operand, out);
-                out = out + "    popq %rax\n";
-                out = out + "    negq %rax\n";
-                out = out + "    pushq %rax\n";
-                return out;
+                s = emit_expr(u.operand, s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    negq %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
             }
-            out = out + "    # unsupported unary: " + u.op + "\n";
-            return out;
+            s = s.write("    # unsupported unary: " + u.op + "\n");
+            return s;
         },
         parser.ExprIdent(_) => {
-            out = out + "    # unsupported: ident (no locals yet)\n";
-            out = out + "    pushq $0\n";
-            return out;
+            s = s.write("    # unsupported: ident (no locals yet)\n");
+            s = s.write("    pushq $0\n");
+            return s;
         },
-        parser.ExprBool(_) => {
-            out = out + "    # unsupported: bool\n";
-            out = out + "    pushq $0\n";
-            return out;
+        parser.ExprBool(b) => {
+            // Bool literal — encode as a 0/1 i32 so it can flow
+            // through comparison-style consumers (e.g. an if
+            // cond branching on `true`).
+            var v: i32 = 0;
+            if (b.value) { v = 1; }
+            s = s.write("    movq $" + i32_to_string(v) + ", %rax\n");
+            s = s.write("    pushq %rax\n");
+            return s;
         },
         parser.ExprString(_) => {
-            out = out + "    # unsupported: string\n";
-            out = out + "    pushq $0\n";
-            return out;
+            s = s.write("    # unsupported: string\n");
+            s = s.write("    pushq $0\n");
+            return s;
         },
         parser.ExprCall(_) => {
-            out = out + "    # unsupported: call\n";
-            out = out + "    pushq $0\n";
-            return out;
+            s = s.write("    # unsupported: call\n");
+            s = s.write("    pushq $0\n");
+            return s;
         },
         parser.ExprArray(_) => {
-            out = out + "    # unsupported: array\n";
-            out = out + "    pushq $0\n";
-            return out;
+            s = s.write("    # unsupported: array\n");
+            s = s.write("    pushq $0\n");
+            return s;
         },
         parser.ExprIndex(_) => {
-            out = out + "    # unsupported: index\n";
-            out = out + "    pushq $0\n";
-            return out;
+            s = s.write("    # unsupported: index\n");
+            s = s.write("    pushq $0\n");
+            return s;
         },
         parser.ExprSlice(_) => {
-            out = out + "    # unsupported: slice\n";
-            out = out + "    pushq $0\n";
-            return out;
+            s = s.write("    # unsupported: slice\n");
+            s = s.write("    pushq $0\n");
+            return s;
         },
         parser.ExprUnknown(_) => {
-            out = out + "    # parser-side unknown\n";
-            out = out + "    pushq $0\n";
-            return out;
+            s = s.write("    # parser-side unknown\n");
+            s = s.write("    pushq $0\n");
+            return s;
         }
     }
-    return out;
+    return s;
 }
 
-// emit_stmt handles only StmtReturn for this cut. Other stmts
-// emit a comment marker so the caller can spot the gap.
-function emit_stmt(st: parser.Stmt, out: string): string {
-    match (st) {
-        parser.StmtReturn(r) => {
-            out = emit_expr(r.value, out);
-            out = out + "    popq %rdi\n";       // exit code
-            out = out + "    movq $60, %rax\n";  // sys_exit_group
-            out = out + "    syscall\n";
-            return out;
-        },
-        parser.StmtVar(_) => { return out + "    # unsupported: StmtVar\n"; },
-        parser.StmtExpr(_) => { return out + "    # unsupported: StmtExpr\n"; },
-        parser.StmtIf(_) => { return out + "    # unsupported: StmtIf\n"; },
-        parser.StmtWhile(_) => { return out + "    # unsupported: StmtWhile\n"; },
-        parser.StmtAssign(_) => { return out + "    # unsupported: StmtAssign\n"; },
-        parser.StmtUnknown(_) => { return out + "    # unsupported: StmtUnknown\n"; }
+function emit_block(body: parser.Stmt[], s: EmitState): EmitState {
+    var i: i32 = 0;
+    while (i < len(body)) {
+        s = emit_stmt(body[i], s);
+        i = i + 1;
     }
-    return out;
+    return s;
+}
+
+function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
+    match (stmt) {
+        parser.StmtReturn(r) => {
+            s = emit_expr(r.value, s);
+            s = s.write("    popq %rdi\n");
+            s = s.write("    movq $60, %rax\n");
+            s = s.write("    syscall\n");
+            return s;
+        },
+        parser.StmtIf(ifs) => {
+            // if/else lowers to:
+            //   <cond>; popq %rax; cmpq $0, %rax; je <else_lbl>
+            //   <then-body>; jmp <end_lbl>
+            // <else_lbl>: <else-body>; <end_lbl>:
+            // No-else uses a single label = end of then.
+            s = emit_expr(ifs.cond, s);
+            s = s.write("    popq %rax\n");
+            s = s.write("    cmpq $0, %rax\n");
+            var else_l: LabelOut = fresh_label(s);
+            s = else_l.state;
+            s = s.write("    je " + else_l.name + "\n");
+            s = emit_block(ifs.then_body, s);
+            if (len(ifs.else_body) > 0) {
+                var end_l: LabelOut = fresh_label(s);
+                s = end_l.state;
+                s = s.write("    jmp " + end_l.name + "\n");
+                s = s.write(else_l.name + ":\n");
+                s = emit_block(ifs.else_body, s);
+                s = s.write(end_l.name + ":\n");
+            } else {
+                s = s.write(else_l.name + ":\n");
+            }
+            return s;
+        },
+        parser.StmtWhile(w) => {
+            // while lowers to:
+            // <top_lbl>: <cond>; popq %rax; cmpq $0, %rax;
+            //            je <exit_lbl>
+            //            <body>; jmp <top_lbl>
+            // <exit_lbl>:
+            var top_l: LabelOut = fresh_label(s);
+            s = top_l.state;
+            var exit_l: LabelOut = fresh_label(s);
+            s = exit_l.state;
+            s = s.write(top_l.name + ":\n");
+            s = emit_expr(w.cond, s);
+            s = s.write("    popq %rax\n");
+            s = s.write("    cmpq $0, %rax\n");
+            s = s.write("    je " + exit_l.name + "\n");
+            s = emit_block(w.body, s);
+            s = s.write("    jmp " + top_l.name + "\n");
+            s = s.write(exit_l.name + ":\n");
+            return s;
+        },
+        parser.StmtVar(_) => { return s.write("    # unsupported: StmtVar\n"); },
+        parser.StmtExpr(_) => { return s.write("    # unsupported: StmtExpr\n"); },
+        parser.StmtAssign(_) => { return s.write("    # unsupported: StmtAssign\n"); },
+        parser.StmtUnknown(_) => { return s.write("    # unsupported: StmtUnknown\n"); }
+    }
+    return s;
 }
 
 // emit_module produces the full assembly text. Top-level stmts
@@ -210,20 +293,21 @@ function emit_stmt(st: parser.Stmt, out: string): string {
 // `_start` first; sys_exit_group terminates the process with
 // the exit code in %rdi.
 pub function emit_module(mod: parser.Module): string {
-    var out: string = "    .globl _start\n";
-    out = out + "    .text\n";
-    out = out + "_start:\n";
+    var s: EmitState = new_state();
+    s = s.write("    .globl _start\n");
+    s = s.write("    .text\n");
+    s = s.write("_start:\n");
     var i: i32 = 0;
     while (i < len(mod.top_stmts)) {
-        out = emit_stmt(mod.top_stmts[i], out);
+        s = emit_stmt(mod.top_stmts[i], s);
         i = i + 1;
     }
     // Fallback exit in case there's no return. Doesn't normally
     // run if a StmtReturn was emitted (the syscall above exits).
-    out = out + "    movq $0, %rdi\n";
-    out = out + "    movq $60, %rax\n";
-    out = out + "    syscall\n";
-    return out;
+    s = s.write("    movq $0, %rdi\n");
+    s = s.write("    movq $60, %rax\n");
+    s = s.write("    syscall\n");
+    return s.out;
 }
 
 // =================== VALIDATION ====================
@@ -315,6 +399,27 @@ function main(): i32 {
 
     var a14: string = emit_source("return 4 != 5;");
     if (!contains(a14, "setne")) { return 140; }
+
+    // If/else: emits `cmpq $0`, `je .L0`, the then-block, `jmp
+    // .L1`, `.L0:`, the else-block, `.L1:`.
+    var a15: string = emit_source("if (true) { return 1; } else { return 2; }");
+    if (!contains(a15, "cmpq $0")) { return 150; }
+    if (!contains(a15, "je .L")) { return 151; }
+    if (!contains(a15, "jmp .L")) { return 152; }
+    if (!contains(a15, ".L0:")) { return 153; }
+    if (!contains(a15, ".L1:")) { return 154; }
+
+    // No-else if: only the cond-fail jump label, no second jmp.
+    var a16: string = emit_source("if (true) { return 1; } return 0;");
+    if (!contains(a16, "cmpq $0")) { return 160; }
+    if (!contains(a16, "je .L")) { return 161; }
+
+    // While: emits top label, cond, je exit, body, jmp top,
+    // exit label.
+    var a17: string = emit_source("while (1 < 2) { return 0; }");
+    if (!contains(a17, "cmpq $0")) { return 170; }
+    if (!contains(a17, "je .L")) { return 171; }
+    if (!contains(a17, "jmp .L")) { return 172; }
 
     return 0;
 }
