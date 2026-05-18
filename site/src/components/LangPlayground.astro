@@ -1,10 +1,10 @@
 ---
 // LangPlayground — embed a runnable snippet inline in a docs page.
 //
-// Renders an iframe pointing at the playground bundle deployed at
-// `/playground/`. The snippet's source is base64-URL-encoded into
-// the iframe's hash (same codec the standalone playground's Share
-// button uses) so the embedded editor loads pre-populated.
+// Wraps the playground in iframe-embed mode (`?embed=1`), which
+// strips the chrome (title, subtitle, examples dropdown, share
+// button, problems panel) and tightens the layout so the snippet
+// renders cleanly inside a docs-page-sized iframe.
 //
 // Usage in MDX:
 //
@@ -13,16 +13,28 @@
 //
 // Props:
 //   code     — the lang source to embed.
-//   height   — iframe height in CSS units (default "320px").
+//   height   — iframe height in CSS units. Defaults to 420px which
+//              fits the stacked source + output panes comfortably.
+//   autoRun  — boolean (default true). When true the snippet runs
+//              once after wasm boots so the output renders on
+//              first paint without the reader clicking Run.
+//              Opt out with `autoRun={false}` for snippets where
+//              the reader is meant to predict the output first.
 //   title    — accessibility title for the iframe.
 
 interface Props {
   code: string;
   height?: string;
+  autoRun?: boolean;
   title?: string;
 }
 
-const { code, height = "320px", title = "lang playground" } = Astro.props;
+const {
+  code,
+  height = "420px",
+  autoRun = true,
+  title = "lang playground",
+} = Astro.props;
 
 // URL-safe base64 (RFC 4648 §5), '=' padding stripped — matches
 // the encodeHash() helper in web/index.html so a copy-pasted hash
@@ -31,8 +43,6 @@ function encodeHash(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
-  // btoa exists in browsers; for Astro build we run in Node, so
-  // fall back to Buffer when btoa is unavailable.
   const b64 =
     typeof btoa === "function"
       ? btoa(bin)
@@ -41,13 +51,23 @@ function encodeHash(s: string): string {
 }
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-const src = `${base}/playground/#src=${encodeHash(code)}`;
+const fullSrc = `${base}/playground/#src=${encodeHash(code)}`;
+const params = new URLSearchParams();
+params.set("embed", "1");
+if (autoRun) params.set("autorun", "1");
+const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code)}`;
 ---
 
 <figure class="lang-playground">
   <header>
-    <span>live snippet</span>
-    <a href={src} target="_blank" rel="noopener">open full playground &rarr;</a>
+    <span aria-hidden="true">▸ live snippet</span>
+    <a href={fullSrc} target="_blank" rel="noopener">
+      open in playground &rarr;
+    </a>
   </header>
-  <iframe src={src} title={title} style={`height: ${height};`}></iframe>
+  <iframe
+    src={embedSrc}
+    title={title}
+    style={`height: ${height};`}
+    loading="lazy"></iframe>
 </figure>

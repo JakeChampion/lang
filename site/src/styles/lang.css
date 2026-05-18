@@ -19,10 +19,12 @@
 .lang-playground {
   display: block;
   width: 100%;
+  margin: 1.25rem 0;
   border: 1px solid var(--sl-color-gray-5);
   border-radius: 0.5rem;
   background: var(--sl-color-bg-sidebar);
   overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .lang-playground iframe {
@@ -30,6 +32,8 @@
   width: 100%;
   border: 0;
   background: var(--sl-color-bg);
+  /* `block` is enough — explicit height set inline per-snippet
+   * via the component's `height` prop. */
 }
 
 .lang-playground header {
@@ -39,14 +43,20 @@
   padding: 0.4rem 0.8rem;
   border-bottom: 1px solid var(--sl-color-gray-5);
   background: var(--sl-color-bg-nav);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--sl-color-gray-3);
   font-family: var(--sl-font-system-mono);
+  letter-spacing: 0.01em;
+}
+
+.lang-playground header span[aria-hidden] {
+  color: var(--sl-color-accent);
 }
 
 .lang-playground header a {
   color: var(--sl-color-accent-high);
   text-decoration: none;
+  font-weight: 500;
 }
 
 .lang-playground header a:hover {

@@ -207,6 +207,69 @@
     .grid { grid-template-columns: 1fr; }
     textarea, pre, #srcMount { height: 320px; }
   }
+
+  /* ---------------- Embed mode ----------------
+   *
+   * Activated by `?embed=1` on the URL. Strips the page chrome
+   * (title, subtitle, examples dropdown, share button, problems
+   * panel, full-keyboard hints) so the playground renders cleanly
+   * inside a small iframe — typically 320–520 CSS px tall on a
+   * docs page. The Run button stays, the editor + output panes
+   * stack vertically, and padding tightens up so the available
+   * space goes to code rather than layout.
+   *
+   * Keep these rules narrowly scoped so the standalone playground
+   * keeps its current look when not embedded.
+   */
+  body.embed {
+    padding: 0.5em 0.6em;
+    background: transparent;
+  }
+  body.embed h1,
+  body.embed .subtitle,
+  body.embed #share,
+  body.embed #example,
+  body.embed .out-info,
+  body.embed .problems {
+    display: none;
+  }
+  body.embed .toolbar {
+    margin-bottom: 0.4em;
+    gap: 0.5em;
+  }
+  body.embed .toolbar .status {
+    font-size: 0.78em;
+  }
+  body.embed .grid {
+    grid-template-columns: 1fr;
+    gap: 0.5em;
+    max-width: none;
+  }
+  body.embed .pane h2 {
+    font-size: 0.72em;
+    margin-bottom: 0.25em;
+  }
+  body.embed textarea,
+  body.embed #srcMount,
+  body.embed pre {
+    height: 180px;
+  }
+  body.embed #srcMount .cm-content {
+    padding: 0.35em 0;
+  }
+  body.embed pre {
+    padding: 0.4em 0.6em;
+  }
+  /* When the iframe is taller (height >= 380px the docs site
+   * passes), expand both panes proportionally. The container-
+   * query-free approach: 100vh-derived sizing, clamped so very
+   * tall embeds don't make everything balloon.
+   */
+  body.embed textarea,
+  body.embed #srcMount,
+  body.embed pre {
+    height: clamp(140px, calc((100vh - 4em) / 2), 360px);
+  }
 </style>
 </head>
 <body>
@@ -523,6 +586,25 @@ const exampleEl = document.getElementById("example");
 const problemListEl = document.getElementById("problemList");
 const problemCountEl = document.getElementById("problemCount");
 const srcMount = document.getElementById("srcMount");
+
+// Embed mode: `?embed=1` (or `?embed=true`) on the URL strips the
+// chrome (title, subtitle, examples dropdown, share button, problems
+// panel) so the playground renders cleanly inside a small iframe.
+// The `body.embed` CSS class drives the styling; we only need to
+// flip it here. The standalone playground URL works unchanged.
+//
+// Bonus: an `?autorun=1` flag runs the snippet automatically after
+// boot — handy for "look at this output" docs embeds.
+const urlParams = new URLSearchParams(location.search);
+const embedMode = ["1", "true", "yes"].includes(
+  (urlParams.get("embed") ?? "").toLowerCase(),
+);
+const autoRun = ["1", "true", "yes"].includes(
+  (urlParams.get("autorun") ?? "").toLowerCase(),
+);
+if (embedMode) {
+  document.body.classList.add("embed");
+}
 
 // URL-hash codec. Source is UTF-8 encoded, then base64'd with
 // URL-safe alphabet (RFC 4648 §5) and stripped of '=' padding so
@@ -998,8 +1080,15 @@ WebAssembly.instantiateStreaming(fetch("lang.wasm"), go.importObject)
   .then(result => {
     go.run(result.instance);
     runBtn.disabled = false;
-    statusEl.textContent = "ready · Ctrl/Cmd+Enter to run · hover for types";
+    statusEl.textContent = embedMode
+      ? "ready"
+      : "ready · Ctrl/Cmd+Enter to run · hover for types";
     initLsp();
+    if (autoRun) {
+      // Defer to the next tick so the "ready" status paints before
+      // the synchronous wasm call freezes the UI.
+      setTimeout(runOnce, 0);
+    }
   })
   .catch(err => {
     statusEl.textContent = "wasm load failed: " + err;
