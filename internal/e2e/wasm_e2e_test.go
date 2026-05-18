@@ -3146,6 +3146,92 @@ function main(): i32 {
 	}
 }
 
+// Match on literal patterns: `match (n) { 0 => …, 1 => …, _ => … }`
+// for number / string / bool scrutinees. The checker dispatches
+// to `checkLiteralMatch` when the scrutinee isn't an enum; the
+// IR lowers as an if-else-if chain (eq-test per arm, wildcard
+// fall-through). Exhaustiveness requires a trailing unguarded `_`.
+func TestWASMMatchLiteralInt(t *testing.T) {
+	src := `function main(): i32 {
+    var n: i32 = 1;
+    match (n) {
+        0 => { return 100; },
+        1 => { return 200; },
+        2 => { return 300; },
+        _ => { return 0; }
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 200 {
+		t.Errorf("got %d, want 200", got)
+	}
+}
+
+func TestWASMMatchLiteralExpr(t *testing.T) {
+	src := `function classify(n: i32): string {
+    return match (n) {
+        0 => "zero",
+        1 => "one",
+        _ => "many",
+    };
+}
+function main(): i32 {
+    if (classify(1) != "one") { return 1; }
+    if (classify(99) != "many") { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0", got)
+	}
+}
+
+func TestWASMMatchLiteralBool(t *testing.T) {
+	src := `function main(): i32 {
+    var b: boolean = true;
+    return match (b) {
+        true => 1,
+        false => 0,
+        _ => -1,
+    };
+}`
+	if got := runWasm(t, src); got != 1 {
+		t.Errorf("got %d, want 1", got)
+	}
+}
+
+func TestWASMMatchLiteralString(t *testing.T) {
+	src := `function main(): i32 {
+    var s: string = "world";
+    return match (s) {
+        "hello" => 1,
+        "world" => 2,
+        _ => 0,
+    };
+}`
+	if got := runWasm(t, src); got != 2 {
+		t.Errorf("got %d, want 2", got)
+	}
+}
+
+func TestWASMMatchLiteralWithGuard(t *testing.T) {
+	src := `function classify(n: i32, big: boolean): i32 {
+    return match (n) {
+        0 when big => 100,
+        0 => 0,
+        _ => 999,
+    };
+}
+function main(): i32 {
+    if (classify(0, true) != 100) { return 1; }
+    if (classify(0, false) != 0) { return 2; }
+    if (classify(5, true) != 999) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0", got)
+	}
+}
+
 // Anonymous function expressions (lambdas). `function (x: T): R
 // { body }` in expression position. The parser emits an `*ast.Lambda`
 // node; the checker treats it like a local FuncDecl (captures

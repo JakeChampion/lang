@@ -1146,12 +1146,19 @@ type Match struct {
 // the guard is false the arm is skipped — the match falls
 // through to the next arm. Spelled `<pattern> when <expr> => …`
 // in source. Nil for unconditional arms.
+//
+// Literal, when non-nil, marks this arm as a literal-pattern
+// arm (`0 => …`, `"yes" => …`, `true => …`). Mutually exclusive
+// with VariantName / IsWildcard — the parser sets exactly one
+// of {Literal, IsWildcard, VariantName}. Literal-pattern arms
+// dispatch via equality comparison instead of tag-based match.
 type MatchArm struct {
 	P            Position
-	VariantName  string   // empty when IsWildcard is true
+	VariantName  string   // empty when IsWildcard or Literal != nil
 	Bindings     []string // payload binding names, in payload order
 	BindingTypes []Type   // resolved by the checker; same length as Bindings
 	IsWildcard   bool     // `_ => …`
+	Literal      Expr     // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
 	Guard        Expr     // optional `when <expr>`; nil for unconditional arms
 	Body         *Block
 }
@@ -1176,13 +1183,15 @@ type MatchExpr struct {
 }
 
 // MatchExprArm is the expression-form arm. Body is an Expr; all
-// other fields mirror MatchArm exactly.
+// other fields mirror MatchArm exactly — including the optional
+// Literal field for literal-pattern arms (`0 => …`, `"yes" => …`).
 type MatchExprArm struct {
 	P            Position
 	VariantName  string
 	Bindings     []string
 	BindingTypes []Type
 	IsWildcard   bool
+	Literal      Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
 	Guard        Expr
 	Body         Expr
 }
