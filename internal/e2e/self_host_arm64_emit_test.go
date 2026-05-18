@@ -86,6 +86,12 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"cmp-eq-true", "return 4 == 4;", 1},
 		{"cmp-eq-false", "return 4 == 5;", 0},
 		{"cmp-ne-true", "return 4 != 5;", 1},
+		{"bool-true", "return true;", 1},
+		{"bool-false", "return false;", 0},
+		{"if-then-taken", "if (true) { return 9; } else { return 0; }", 9},
+		{"if-else-taken", "if (false) { return 9; } else { return 7; }", 7},
+		{"if-no-else-fall", "if (false) { return 9; } return 5;", 5},
+		{"if-cond-via-cmp", "if (5 < 10) { return 1; } else { return 2; }", 1},
 	}
 
 	for _, tc := range cases {
