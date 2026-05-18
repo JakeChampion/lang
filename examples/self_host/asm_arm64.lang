@@ -57,28 +57,68 @@ function i32_to_string(n: i32): string {
 // =================== EMIT STATE ====================
 
 // EmitState carries the running output text, a monotonic label
-// counter, and the active locals table. Threaded by value
-// through every emit_* call; receiver method `(s) write(text)`
-// makes call sites concise. local_names is parallel-array
-// shape: index i → offset -8*(i+1) off x29.
+// counter, the active locals table, and a flag for whether the
+// current emit position is inside a function body (so
+// StmtReturn knows to use ldp+ret instead of sys_exit).
+// local_names is parallel-array shape: index i → offset
+// -8*(i+1) off x29.
 pub struct EmitState {
     out: string,
     label_n: i32,
-    local_names: string[]
+    local_names: string[],
+    in_function: boolean
 }
 
 function new_state(): EmitState {
     var ns: string[] = [];
-    return EmitState { out: "", label_n: 0, local_names: ns };
+    return EmitState { out: "", label_n: 0, local_names: ns, in_function: false };
 }
 
 function (s: EmitState) write(text: string): EmitState {
-    return EmitState { out: s.out + text, label_n: s.label_n, local_names: s.local_names };
+    return EmitState {
+        out: s.out + text,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function
+    };
 }
 
 function (s: EmitState) bind_local(name: string): EmitState {
     var ln: string[] = s.local_names.push(name);
-    return EmitState { out: s.out, label_n: s.label_n, local_names: ln };
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: ln,
+        in_function: s.in_function
+    };
+}
+
+function (s: EmitState) reset_locals(): EmitState {
+    var ln: string[] = [];
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: ln,
+        in_function: s.in_function
+    };
+}
+
+function (s: EmitState) enter_function(): EmitState {
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: true
+    };
+}
+
+function (s: EmitState) leave_function(): EmitState {
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: false
+    };
 }
 
 function (s: EmitState) lookup_local(name: string): i32 {
@@ -104,7 +144,12 @@ function (s: EmitState) has_local(name: string): boolean {
 struct LabelOut { state: EmitState, name: string }
 function fresh_label(s: EmitState): LabelOut {
     var name: string = ".L" + i32_to_string(s.label_n);
-    var ns: EmitState = EmitState { out: s.out, label_n: s.label_n + 1, local_names: s.local_names };
+    var ns: EmitState = EmitState {
+        out: s.out,
+        label_n: s.label_n + 1,
+        local_names: s.local_names,
+        in_function: s.in_function
+    };
     return LabelOut { state: ns, name: name };
 }
 
@@ -224,9 +269,33 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
-        parser.ExprCall(_) => {
-            s = s.write("    // unsupported: call\n");
-            s = s.write("    mov x0, #0\n");
+        parser.ExprCall(c) => {
+            // Only bare-ident callees. Push args RIGHT-to-LEFT
+            // so the callee sees param[0] at [x29, #16] (after
+            // its stp x29, x30 prologue). Each arg occupies 16
+            // bytes on the rt-stack to keep sp 16-aligned.
+            var name: string = "";
+            match (c.callee) {
+                parser.ExprIdent(id) => { name = id.name; },
+                _ => {
+                    s = s.write("    // call target not ident\n");
+                    s = s.write("    mov x0, #0\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    return s;
+                }
+            }
+            var i: i32 = len(c.args) - 1;
+            while (i >= 0) {
+                s = emit_expr(c.args[i], s);
+                i = i - 1;
+            }
+            s = s.write("    bl __fn_" + name + "\n");
+            // Caller cleans up stack args.
+            if (len(c.args) > 0) {
+                s = s.write("    add sp, sp, #" + i32_to_string(len(c.args) * 16) + "\n");
+            }
+            // Result in x0 — push for the surrounding expr's
+            // stack-machine semantics.
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
@@ -271,9 +340,21 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
     match (stmt) {
         parser.StmtReturn(r) => {
             s = emit_expr(r.value, s);
-            s = s.write("    ldr x0, [sp], #16\n");  // exit code
-            s = s.write("    mov x8, #93\n");        // sys_exit
-            s = s.write("    svc #0\n");
+            if (s.in_function) {
+                // Function return: pop value to x0, restore
+                // x29/x30 from the saved pair, ret to caller.
+                // `mov sp, x29` undoes whatever sub sp the
+                // prologue did; ldp post-indexes sp by 16.
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    mov sp, x29\n");
+                s = s.write("    ldp x29, x30, [sp], #16\n");
+                s = s.write("    ret\n");
+            } else {
+                // Top-level return: sys_exit syscall.
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    mov x8, #93\n");
+                s = s.write("    svc #0\n");
+            }
             return s;
         },
         parser.StmtIf(ifs) => {
@@ -350,31 +431,98 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
     return s;
 }
 
+// emit_function emits a single FuncDecl as a `__fn_<name>:`
+// label with prologue, arg-copy, body, and (fallback) epilogue.
+// Args arrive on the stack at [x29, #16], [x29, #32], … (caller
+// pushed right-to-left, so arg 0 is closest to the saved pair).
+// Each arg takes 16 bytes because the rt-stack pushes/pops with
+// 16-byte alignment. The prologue copies each arg into its
+// local slot at [x29, #-8*(i+1)] so the body reads them
+// uniformly.
+function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
+    s = s.write("__fn_" + fd.name + ":\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    var argc: i32 = len(fd.params);
+    var n_body_locals: i32 = count_locals(fd.body);
+    var total_locals: i32 = argc + n_body_locals;
+    if (total_locals > 0) {
+        var bytes: i32 = total_locals * 8;
+        if (bytes % 16 != 0) { bytes = bytes + 8; }
+        s = s.write("    sub sp, sp, #" + i32_to_string(bytes) + "\n");
+    }
+    s = s.reset_locals();
+    s = s.enter_function();
+    var i: i32 = 0;
+    while (i < argc) {
+        s = s.bind_local(fd.params[i].name);
+        var local_off: i32 = s.lookup_local(fd.params[i].name);
+        var arg_off: i32 = 16 + i * 16;
+        s = s.write("    ldr x0, [x29, #" + i32_to_string(arg_off) + "]   // param " + fd.params[i].name + "\n");
+        s = s.write("    str x0, [x29, #" + i32_to_string(local_off) + "]\n");
+        i = i + 1;
+    }
+    var bi: i32 = 0;
+    while (bi < len(fd.body)) {
+        s = emit_stmt(fd.body[bi], s);
+        bi = bi + 1;
+    }
+    // Fallback: implicit `return 0;` so falling off the end
+    // doesn't run into the next function's label.
+    s = s.write("    mov x0, #0\n");
+    s = s.write("    mov sp, x29\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    s = s.leave_function();
+    s = s.reset_locals();
+    return s;
+}
+
+function has_main(mod: parser.Module): boolean {
+    var i: i32 = 0;
+    while (i < len(mod.funcs)) {
+        if (mod.funcs[i].name == "main") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function emit_module(mod: parser.Module): string {
     var s: EmitState = new_state();
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
+    // Emit each function body first. Each gets its own
+    // __fn_<name>: label; _start dispatches into main() if it
+    // exists.
+    var fi: i32 = 0;
+    while (fi < len(mod.funcs)) {
+        s = emit_function(mod.funcs[fi], s);
+        fi = fi + 1;
+    }
     s = s.write("_start:\n");
-    // Function-entry prologue: save frame ptr + link reg pair,
-    // anchor x29 to the saved pair, reserve room for every local.
-    // ARM64 sp must stay 16-byte aligned at all public boundaries.
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
-    var n_locals: i32 = count_locals(mod.top_stmts);
-    if (n_locals > 0) {
-        var bytes: i32 = n_locals * 8;
-        if (bytes % 16 != 0) { bytes = bytes + 8; }
-        s = s.write("    sub sp, sp, #" + i32_to_string(bytes) + "\n");
+    if (has_main(mod)) {
+        s = s.write("    bl __fn_main\n");
+        s = s.write("    mov x8, #93\n");
+        s = s.write("    svc #0\n");
+    } else {
+        var n_locals: i32 = count_locals(mod.top_stmts);
+        if (n_locals > 0) {
+            var bytes: i32 = n_locals * 8;
+            if (bytes % 16 != 0) { bytes = bytes + 8; }
+            s = s.write("    sub sp, sp, #" + i32_to_string(bytes) + "\n");
+        }
+        var i: i32 = 0;
+        while (i < len(mod.top_stmts)) {
+            s = emit_stmt(mod.top_stmts[i], s);
+            i = i + 1;
+        }
+        // Fallback exit.
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    mov x8, #93\n");
+        s = s.write("    svc #0\n");
     }
-    var i: i32 = 0;
-    while (i < len(mod.top_stmts)) {
-        s = emit_stmt(mod.top_stmts[i], s);
-        i = i + 1;
-    }
-    // Fallback exit in case there's no return.
-    s = s.write("    mov x0, #0\n");
-    s = s.write("    mov x8, #93\n");
-    s = s.write("    svc #0\n");
     return s.out;
 }
 
@@ -494,6 +642,18 @@ function main(): i32 {
     if (!contains(a20, "ldr x0, [x29, #-8]")) { return 200; }
     if (!contains(a20, "str x0, [x29, #-8]")) { return 201; }
     if (!contains(a20, "add x0, x0, x1")) { return 202; }
+
+    // Function decl + call.
+    var a21: string = emit_source(
+        "function add(x: i32, y: i32): i32 { return x + y; }"
+        + " function main(): i32 { return add(2, 3); }"
+    );
+    if (!contains(a21, "__fn_add:")) { return 210; }
+    if (!contains(a21, "__fn_main:")) { return 211; }
+    if (!contains(a21, "bl __fn_add")) { return 212; }
+    if (!contains(a21, "bl __fn_main")) { return 213; }
+    if (!contains(a21, "ldp x29, x30, [sp], #16")) { return 214; }
+    if (!contains(a21, "ret\n")) { return 215; }
 
     return 0;
 }
