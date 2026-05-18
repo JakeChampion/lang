@@ -904,5 +904,23 @@ function main(): i32 {
         _ => { return 320; }
     }
 
+    // Compound assignment lowers to plain assign at parse time —
+    // `x += 1` is `x = x + 1` by the time the interp sees it.
+    // Sum 1..=10 via `+=` in the body: 55.
+    var r33: Value = run_source(
+        "var i = 1; var s = 0; while (i <= 10) { s += i; i += 1; } return s;"
+    );
+    match (r33) {
+        VInt(i) => { if (i.v != 55) { return 330; } },
+        _ => { return 331; }
+    }
+
+    // `*=` desugar: `x *= 2; x *= 3; return x;` → 6 from start 1.
+    var r34: Value = run_source("var x = 1; x *= 2; x *= 3; return x;");
+    match (r34) {
+        VInt(i) => { if (i.v != 6) { return 340; } },
+        _ => { return 341; }
+    }
+
     return 0;
 }
