@@ -53,6 +53,29 @@
     height: 520px;
     resize: vertical;
   }
+  /* CodeMirror 6 mount. The editor's own root supplies all the
+     scrollers / line numbers / gutters — we just give it a frame.
+     The .cm-editor selector targets CodeMirror's default class so
+     it picks up the border + sizing without us having to know
+     CM's full markup. */
+  #srcMount {
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    background: #fff;
+    height: 520px;
+    overflow: hidden;
+  }
+  #srcMount .cm-editor {
+    height: 100%;
+    font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+    font-size: 13px;
+  }
+  #srcMount .cm-scroller {
+    line-height: 1.5;
+  }
+  #srcMount .cm-content {
+    padding: 0.6em 0;
+  }
   pre {
     margin: 0;
     height: 520px;
@@ -126,22 +149,6 @@
     color: #888;
     font-style: italic;
   }
-  .cursor-info {
-    grid-column: 1 / -1;
-    margin-top: 0.4em;
-    padding: 0.35em 0.7em;
-    font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
-    font-size: 12px;
-    color: #444;
-    background: #f4f4f4;
-    border-radius: 4px;
-    min-height: 1.2em;
-  }
-  .cursor-info:empty::before {
-    content: "click an identifier for its type";
-    color: #999;
-    font-style: italic;
-  }
   kbd {
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.85em;
@@ -198,7 +205,7 @@
   }
   @media (max-width: 800px) {
     .grid { grid-template-columns: 1fr; }
-    textarea, pre { height: 320px; }
+    textarea, pre, #srcMount { height: 320px; }
   }
 </style>
 </head>
@@ -208,12 +215,13 @@
   Edit a lang program on the left, hit <strong>Run</strong>
   (or <kbd>Ctrl/Cmd+Enter</kbd>), and see its output on the
   right. Drives the in-tree AST interpreter (no codegen, no
-  link) compiled to wasm. Live diagnostics + click-for-type
-  come from the in-process language server (the same one
-  <code>cmd/lang-lsp</code> drives over stdio). State is
-  fresh per run. <strong>Share</strong> encodes the source
-  into the URL so you can hand someone a snippet without a
-  server.
+  link) compiled to wasm. The editor is CodeMirror 6;
+  hover for types, <kbd>Ctrl/Cmd+Space</kbd> for completion,
+  inline squiggles for errors — all powered by the in-process
+  language server the same <code>cmd/lang-lsp</code> binary
+  speaks. State is fresh per run. <strong>Share</strong>
+  encodes the source into the URL so you can hand someone a
+  snippet without a server.
 </p>
 
 <div class="toolbar">
@@ -236,7 +244,7 @@
 <div class="grid">
   <div class="pane">
     <h2>source</h2>
-    <textarea id="src" spellcheck="false"></textarea>
+    <div id="srcMount"></div>
   </div>
   <div class="pane">
     <h2>output</h2>
@@ -247,11 +255,10 @@
     <h2>problems <span class="count" id="problemCount"></span></h2>
     <ul id="problemList"></ul>
   </div>
-  <div class="cursor-info" id="cursorInfo"></div>
 </div>
 
 <script src="wasm_exec.js"></script>
-<script>
+<script type="module">
 const examples = {
   hello: `function main(): i32 {
     print("hello, world");
@@ -507,7 +514,6 @@ function main(): i32 {
 }`,
 };
 
-const srcEl = document.getElementById("src");
 const outEl = document.getElementById("out");
 const metaEl = document.getElementById("meta");
 const runBtn = document.getElementById("run");
@@ -516,7 +522,7 @@ const statusEl = document.getElementById("status");
 const exampleEl = document.getElementById("example");
 const problemListEl = document.getElementById("problemList");
 const problemCountEl = document.getElementById("problemCount");
-const cursorInfoEl = document.getElementById("cursorInfo");
+const srcMount = document.getElementById("srcMount");
 
 // URL-hash codec. Source is UTF-8 encoded, then base64'd with
 // URL-safe alphabet (RFC 4648 §5) and stripped of '=' padding so
@@ -539,37 +545,39 @@ function decodeHash(s) {
   return new TextDecoder().decode(bytes);
 }
 
-function loadFromHashOrDefault() {
+// Hash-driven source. Returns the initial program for the editor.
+// On hashchange we call setSrc() (declared later) to mutate the
+// CodeMirror state instead of a textarea value.
+function initialSrcFromHash() {
   const h = location.hash;
   if (h.startsWith("#src=")) {
-    try {
-      srcEl.value = decodeHash(h.slice(5));
-      return;
-    } catch (e) {
-      // Fall through to default if the hash is malformed.
-    }
+    try { return decodeHash(h.slice(5)); }
+    catch (e) { /* fall through */ }
   }
-  srcEl.value = examples.hello;
+  return examples.hello;
 }
-loadFromHashOrDefault();
 
-window.addEventListener("hashchange", loadFromHashOrDefault);
+window.addEventListener("hashchange", () => {
+  setSrc(initialSrcFromHash());
+  resetAndResync();
+});
 
 exampleEl.addEventListener("change", () => {
   const v = exampleEl.value;
   if (v && examples[v]) {
-    srcEl.value = examples[v];
+    setSrc(examples[v]);
     outEl.textContent = "";
     metaEl.textContent = "";
     // Clear the hash so the example is the "owner" of the
     // editor state — sharing now produces a fresh link for
     // this example, not the previous snippet.
     history.replaceState(null, "", location.pathname + location.search);
+    resetAndResync();
   }
 });
 
 shareBtn.addEventListener("click", async () => {
-  const url = location.origin + location.pathname + location.search + "#src=" + encodeHash(srcEl.value);
+  const url = location.origin + location.pathname + location.search + "#src=" + encodeHash(getSrc());
   history.replaceState(null, "", url);
   let copied = false;
   try {
@@ -601,7 +609,7 @@ function runOnce() {
   // the wasm call blocks.
   setTimeout(() => {
     try {
-      const result = globalThis.langInterpret(srcEl.value);
+      const result = globalThis.langInterpret(getSrc());
       let body = result.stdout || "";
       if (result.stderr) {
         body += (body ? "\n" : "") + "[stderr]\n" + result.stderr;
@@ -629,13 +637,8 @@ function runOnce() {
 }
 
 runBtn.addEventListener("click", runOnce);
-srcEl.addEventListener("keydown", (e) => {
-  // Ctrl/Cmd+Enter runs.
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-    e.preventDefault();
-    runOnce();
-  }
-});
+// Ctrl/Cmd+Enter to run is registered as a CodeMirror keymap entry
+// below so it composes correctly with the editor's own key handling.
 
 // ---- Language server wiring ----
 //
@@ -646,15 +649,20 @@ srcEl.addEventListener("keydown", (e) => {
 //   langLsp(jsonRpcMsg) -> jsonRpcResponse | ""   (sync request)
 //   langLspOnNotify(cb)                           (push channel)
 //
-// All requests are synchronous from JS's point of view (the wasm
-// call returns the response before yielding), so we don't need a
-// request-id table — but we keep an id counter for spec-compliance.
+// Synchronous from JS's point of view (the wasm call returns
+// before yielding), but we still tag requests with ids so the
+// server's response shape is spec-compliant.
 const LSP_URI = "file:///playground.lang";
 let lspReady = false;
 let docOpen = false;
 let docVersion = 0;
 let rpcId = 0;
 let docSyncTimer = null;
+// Latest server-published diagnostics for the open document.
+// Re-exported into CodeMirror via the linter every time it
+// changes. publishDiagnostics is async-arrival; forceLinting
+// pokes CM to re-render.
+let currentDiagnostics = [];
 
 function lspRequest(method, params, withId) {
   if (typeof globalThis.langLsp !== "function") return null;
@@ -670,11 +678,12 @@ function lspNotify(method, params) { return lspRequest(method, params, false); }
 
 function initLsp() {
   // Install the notification sink BEFORE any didOpen so the
-  // first publishDiagnostics frame the server emits has somewhere
-  // to land.
+  // first publishDiagnostics frame has somewhere to land.
   globalThis.langLspOnNotify((method, params) => {
     if (method === "textDocument/publishDiagnostics") {
-      renderDiagnostics(params.diagnostics || []);
+      currentDiagnostics = params.diagnostics || [];
+      renderProblemList(currentDiagnostics);
+      if (editorView) forceLinting(editorView);
     }
   });
   lspRequest("initialize", {
@@ -684,7 +693,7 @@ function initLsp() {
   }, true);
   lspNotify("initialized", {});
   lspReady = true;
-  syncDoc(srcEl.value); // initial open + first diagnostics
+  syncDoc(getSrc()); // initial open + first diagnostics
 }
 
 function syncDoc(text) {
@@ -711,12 +720,10 @@ function syncDoc(text) {
 // is fast enough to feel live without thrashing the wasm runtime.
 function scheduleSync() {
   if (docSyncTimer) clearTimeout(docSyncTimer);
-  docSyncTimer = setTimeout(() => syncDoc(srcEl.value), 200);
+  docSyncTimer = setTimeout(() => syncDoc(getSrc()), 200);
 }
 
-srcEl.addEventListener("input", scheduleSync);
-
-function renderDiagnostics(diags) {
+function renderProblemList(diags) {
   problemListEl.innerHTML = "";
   if (diags.length === 0) {
     problemCountEl.textContent = "0";
@@ -733,86 +740,255 @@ function renderDiagnostics(diags) {
     const li = document.createElement("li");
     const loc = document.createElement("span");
     loc.className = "loc";
-    // Surface 1-based positions in the UI since that's what
-    // editors / lang's own diagnostics show.
     loc.textContent = (d.range.start.line + 1) + ":" + (d.range.start.character + 1);
     li.appendChild(loc);
     li.appendChild(document.createTextNode(d.message));
     li.addEventListener("click", () => {
-      moveCursorTo(d.range.start.line, d.range.start.character);
-      srcEl.focus();
+      moveCursorToLspPos(d.range.start);
+      editorView && editorView.focus();
     });
     problemListEl.appendChild(li);
   }
 }
 
-// Caret <-> (line, character) conversion. Both directions assume
-// the textarea's content uses \n line breaks (browsers normalise
-// pasted CRLF to that). Character offsets are byte-counted (same
-// as the LSP server's ASCII-only assumption).
-function caretLineCol() {
-  const pos = srcEl.selectionStart;
-  const before = srcEl.value.substring(0, pos);
-  const line = (before.match(/\n/g) || []).length;
-  const lastNL = before.lastIndexOf("\n");
-  const character = pos - (lastNL + 1);
-  return { line, character };
-}
-
-function moveCursorTo(line, character) {
-  const lines = srcEl.value.split("\n");
-  let offset = 0;
-  for (let i = 0; i < line && i < lines.length; i++) {
-    offset += lines[i].length + 1; // + \n
-  }
-  offset += character;
-  srcEl.selectionStart = srcEl.selectionEnd = offset;
-}
-
-// Hover-on-click. Querying on every cursor move would feel
-// chatty; running it on click + Ctrl/Cmd-I keeps it under the
-// user's control.
-function showHover() {
-  if (!lspReady) return;
-  const pos = caretLineCol();
-  const resp = lspRequest("textDocument/hover", {
-    textDocument: { uri: LSP_URI },
-    position: pos,
-  }, true);
-  if (resp && resp.result && resp.result.contents) {
-    // The server returns markdown-fenced lang code; unwrap the
-    // fence for the inline display.
-    const text = resp.result.contents.value
-      .replace(/^```lang\n/, "")
-      .replace(/\n```$/, "");
-    cursorInfoEl.textContent = text;
-  } else {
-    cursorInfoEl.textContent = "";
-  }
-}
-
-srcEl.addEventListener("click", showHover);
-srcEl.addEventListener("keyup", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "i") {
-    showHover();
-  }
-});
-
-// Example / hash changes wipe the document state on the server so
-// the new content starts fresh. These handlers register AFTER the
-// existing ones in the same `script` block, so by the time they
-// run srcEl.value already reflects the new content.
+// Example / hash changes wipe the server-side document state so
+// the new content starts fresh. Called from both the hashchange
+// handler and the example-select handler above.
 function resetAndResync() {
   if (!lspReady) return;
   if (docOpen) {
     lspNotify("textDocument/didClose", { textDocument: { uri: LSP_URI } });
     docOpen = false;
   }
-  syncDoc(srcEl.value);
+  syncDoc(getSrc());
 }
 
-window.addEventListener("hashchange", resetAndResync);
-exampleEl.addEventListener("change", resetAndResync);
+// ---- CodeMirror 6 editor ----
+//
+// Loaded from esm.sh; the playground is served over HTTP so the
+// CDN fetch works. Pinning major versions only — minor/patch
+// updates ship transparently. If you need offline operation,
+// vendor these modules under web/vendor/cm6/ and rewrite the
+// imports below.
+import {EditorState, Compartment} from "https://esm.sh/@codemirror/state@6";
+import {EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection,
+        rectangularSelection, hoverTooltip, dropCursor} from "https://esm.sh/@codemirror/view@6";
+import {history, defaultKeymap, historyKeymap, indentWithTab} from "https://esm.sh/@codemirror/commands@6";
+import {bracketMatching, indentOnInput} from "https://esm.sh/@codemirror/language@6";
+import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "https://esm.sh/@codemirror/autocomplete@6";
+import {linter, lintGutter, forceLinting} from "https://esm.sh/@codemirror/lint@6";
+
+let editorView = null;
+
+// Position translation. CodeMirror tracks absolute byte offsets;
+// LSP uses {line, character} (0-based). The conversion is
+// straightforward because both treat \n as the line terminator.
+// Caller is responsible for clamping out-of-range positions —
+// the editor's own bounds checks catch the obvious case.
+function offsetFromLspPos(state, p) {
+  const line = state.doc.line(p.line + 1);
+  return line.from + Math.min(p.character, line.length);
+}
+
+function lspPosFromOffset(state, offset) {
+  const line = state.doc.lineAt(offset);
+  return { line: line.number - 1, character: offset - line.from };
+}
+
+function moveCursorToLspPos(pos) {
+  if (!editorView) return;
+  const off = offsetFromLspPos(editorView.state, pos);
+  editorView.dispatch({
+    selection: { anchor: off, head: off },
+    scrollIntoView: true,
+  });
+}
+
+// LSP diagnostic severity → CodeMirror severity tag. The spec
+// uses 1=error / 2=warning / 3=info / 4=hint; CM uses string
+// tags. Default to "info" so unknown values still surface.
+function severityName(n) {
+  switch (n) {
+    case 1: return "error";
+    case 2: return "warning";
+    case 3: return "info";
+    case 4: return "hint";
+    default: return "info";
+  }
+}
+
+// CodeMirror linter source. Reads currentDiagnostics (mutated
+// asynchronously by publishDiagnostics) and translates each one
+// into CM's flat {from, to, severity, message} shape.
+function langLinter(view) {
+  const out = [];
+  for (const d of currentDiagnostics) {
+    const from = offsetFromLspPos(view.state, d.range.start);
+    const to = offsetFromLspPos(view.state, d.range.end);
+    out.push({
+      from,
+      to: Math.max(from + 1, to), // make sure CM has a non-empty range
+      severity: severityName(d.severity),
+      source: d.source || "lang",
+      message: d.message,
+    });
+  }
+  return out;
+}
+
+// Hover tooltip. Returns null when the LSP says nothing.
+const langHover = hoverTooltip((view, pos) => {
+  if (!lspReady) return null;
+  const lspPos = lspPosFromOffset(view.state, pos);
+  const resp = lspRequest("textDocument/hover", {
+    textDocument: { uri: LSP_URI },
+    position: lspPos,
+  }, true);
+  if (!resp || !resp.result || !resp.result.contents) return null;
+  const value = resp.result.contents.value
+    .replace(/^```lang\n/, "")
+    .replace(/\n```$/, "");
+  // Range narrows the tooltip's hover-region; the LSP gives us
+  // a start/end pair we map back into CM offsets.
+  let from = pos, to = pos;
+  if (resp.result.range) {
+    from = offsetFromLspPos(view.state, resp.result.range.start);
+    to = offsetFromLspPos(view.state, resp.result.range.end);
+  }
+  return {
+    pos: from,
+    end: to,
+    above: true,
+    create() {
+      const dom = document.createElement("div");
+      dom.className = "lang-hover";
+      // textContent (not innerHTML) — server output isn't
+      // sanitised so we keep it as inert text.
+      dom.textContent = value;
+      dom.style.fontFamily = '"SF Mono", Menlo, monospace';
+      dom.style.fontSize = "12px";
+      dom.style.padding = "0.35em 0.6em";
+      dom.style.background = "#fffbe6";
+      dom.style.border = "1px solid #e5d56b";
+      dom.style.borderRadius = "3px";
+      dom.style.maxWidth = "480px";
+      dom.style.whiteSpace = "pre-wrap";
+      return { dom };
+    },
+  };
+});
+
+// Autocomplete source. Triggered explicitly via Ctrl/Cmd+Space
+// (CodeMirror's default keybinding) and after `.` per the LSP's
+// declared trigger character. We send the LSP request and map
+// each item into CM's option shape.
+function langCompletionSource(context) {
+  if (!lspReady) return null;
+  // Find the identifier-shaped prefix the user has typed so far
+  // so CM can offer a `from` to replace on selection.
+  const word = context.matchBefore(/[A-Za-z_][A-Za-z0-9_]*/);
+  if (!word && !context.explicit) return null;
+  const from = word ? word.from : context.pos;
+  const lspPos = lspPosFromOffset(context.state, context.pos);
+  const resp = lspRequest("textDocument/completion", {
+    textDocument: { uri: LSP_URI },
+    position: lspPos,
+  }, true);
+  if (!resp || !resp.result) return null;
+  const items = resp.result.items || [];
+  return {
+    from,
+    options: items.map(it => ({
+      label: it.label,
+      detail: it.detail || "",
+      type: completionItemType(it.kind),
+    })),
+  };
+}
+
+// LSP CompletionItemKind → CodeMirror completion "type" string
+// (drives the little icon in CM's completion popup).
+function completionItemType(kind) {
+  switch (kind) {
+    case 14: return "keyword";
+    case 6:  return "variable";
+    case 3:  return "function";
+    case 22: return "class";   // struct
+    case 13: return "enum";
+    case 20: return "enum";    // enum-member
+    default: return "text";
+  }
+}
+
+// Compartment lets us reconfigure the linter / hover without
+// recreating the whole editor; we don't currently use this but
+// it's the right shape for later "disable LSP" toggles.
+const lspCompartment = new Compartment();
+
+function makeEditorState(initial) {
+  return EditorState.create({
+    doc: initial,
+    extensions: [
+      lineNumbers(),
+      drawSelection(),
+      dropCursor(),
+      rectangularSelection(),
+      highlightActiveLine(),
+      history(),
+      bracketMatching(),
+      closeBrackets(),
+      indentOnInput(),
+      lintGutter(),
+      keymap.of([
+        // Ctrl/Cmd+Enter → run. preventDefault'd via the
+        // command's return-true so CM doesn't insert a newline.
+        {
+          key: "Mod-Enter",
+          run: () => { runOnce(); return true; },
+        },
+        ...closeBracketsKeymap,
+        ...defaultKeymap,
+        ...historyKeymap,
+        ...completionKeymap,
+        indentWithTab,
+      ]),
+      lspCompartment.of([
+        linter(langLinter, { delay: 0 }), // we drive forceLinting ourselves
+        langHover,
+        autocompletion({
+          override: [langCompletionSource],
+          activateOnTyping: true,
+          // Trigger an extra completion request after `.` so
+          // method-access completion fires without Ctrl+Space.
+          // The server side already advertises `.` as a trigger
+          // character.
+        }),
+      ]),
+      EditorView.updateListener.of(u => {
+        if (u.docChanged) scheduleSync();
+      }),
+    ],
+  });
+}
+
+// External helpers callers above use to read/write source.
+function getSrc() {
+  return editorView ? editorView.state.doc.toString() : "";
+}
+function setSrc(text) {
+  if (!editorView) return;
+  editorView.dispatch({
+    changes: { from: 0, to: editorView.state.doc.length, insert: text },
+  });
+}
+
+// Mount the editor synchronously so initialSrcFromHash + the
+// example dropdown have something to write into before the wasm
+// runtime finishes booting.
+editorView = new EditorView({
+  state: makeEditorState(initialSrcFromHash()),
+  parent: srcMount,
+});
 
 // Boot the wasm runtime.
 const go = new Go();
@@ -820,7 +996,7 @@ WebAssembly.instantiateStreaming(fetch("lang.wasm"), go.importObject)
   .then(result => {
     go.run(result.instance);
     runBtn.disabled = false;
-    statusEl.textContent = "ready · Ctrl/Cmd+Enter to run · Ctrl/Cmd+I for type";
+    statusEl.textContent = "ready · Ctrl/Cmd+Enter to run · hover for types";
     initLsp();
   })
   .catch(err => {
