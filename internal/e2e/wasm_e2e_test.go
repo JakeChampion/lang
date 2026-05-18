@@ -1149,6 +1149,32 @@ func TestWASMWideKeyMapStringV(t *testing.T) {
 	}
 }
 
+// m.keys() on a wide-K map needs to materialise an `i64[]`
+// (not `i32[]`) whose elements are the full 8 bytes. The IR
+// intercepts via emitWideMapKeys: on wasm32 (keyKind=2) the
+// K slot stores a cell pointer that's followed and the cell
+// contents memcpy'd into the wide-stride result; on natives
+// the K slot stores the raw 8-byte value and is memcpy'd
+// directly. Without this intercept the prelude's
+// `__map_keys_impl` would use a 4-byte destStride and the
+// upper 4 bytes of every key would be lost.
+func TestWASMWideKeyMapKeysSnapshot(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i64, i32] = map_new(4);
+    m.set(1i64, 10);
+    m.set(1000000000000i64, 20);
+    var keys: i64[] = m.keys();
+    if (len(keys) != 2) { return 1; }
+    if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
+    if (keys[1] != 1i64 && keys[1] != 1000000000000i64) { return 3; }
+    if (keys[0] == keys[1]) { return 4; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (wide-K keys preserved)", got)
+	}
+}
+
 // Map.delete(k) removes a key, returning true if it was
 // present. Implementation is swap-with-last (O(1), trades
 // insertion order for speed). Verifies the basic
