@@ -7199,3 +7199,114 @@ function main(): i32 {
 		t.Errorf("numeric compose: exit = %d, want 0", got)
 	}
 }
+
+// TestWASMMemoryLoad covers the memory-load opcodes plus the
+// "memarg" immediate shape (uleb align, uleb offset). align is
+// log2 of byte alignment; the i32-wide load uses align=2 (= 4
+// bytes), the i64-wide load uses align=3 (= 8 bytes), narrow
+// loads use 0 / 1.
+func TestWASMMemoryLoad(t *testing.T) {
+	src := `import "std/wasm/memory";
+function main(): i32 {
+    var e: u8[] = [];
+
+    // i32.load align=2 offset=0 -> 0x28 0x02 0x00
+    var l32: u8[] = memory.inst_i32_load(e, 2u32, 0u32);
+    if (len(l32) != 3)       { return 1; }
+    if (l32[0] != 40u8)      { return 2; }
+    if (l32[1] != 2u8)       { return 3; }
+    if (l32[2] != 0u8)       { return 4; }
+
+    // i64.load align=3 offset=128 -> 0x29 0x03 0x80 0x01 (uleb 128)
+    var l64: u8[] = memory.inst_i64_load(e, 3u32, 128u32);
+    if (len(l64) != 4)       { return 10; }
+    if (l64[0] != 41u8)      { return 11; }
+    if (l64[1] != 3u8)       { return 12; }
+    if (l64[2] != 128u8)     { return 13; }
+    if (l64[3] != 1u8)       { return 14; }
+
+    // i32.load8_u align=0 offset=0 -> 0x2D 0x00 0x00
+    var lu8: u8[] = memory.inst_i32_load8_u(e, 0u32, 0u32);
+    if (lu8[0] != 45u8)      { return 20; }
+    if (lu8[1] != 0u8)       { return 21; }
+    if (lu8[2] != 0u8)       { return 22; }
+
+    // f32.load -> 0x2A, f64.load -> 0x2B.
+    if (memory.inst_f32_load(e, 2u32, 0u32)[0] != 42u8) { return 30; }
+    if (memory.inst_f64_load(e, 3u32, 0u32)[0] != 43u8) { return 31; }
+
+    // Walk the narrow-load block (0x2C-0x35) to catch a
+    // transposed cell.
+    if (memory.inst_i32_load8_s(e, 0u32, 0u32)[0]  != 44u8) { return 40; }
+    if (memory.inst_i32_load16_s(e, 1u32, 0u32)[0] != 46u8) { return 41; }
+    if (memory.inst_i32_load16_u(e, 1u32, 0u32)[0] != 47u8) { return 42; }
+    if (memory.inst_i64_load8_s(e, 0u32, 0u32)[0]  != 48u8) { return 43; }
+    if (memory.inst_i64_load16_s(e, 1u32, 0u32)[0] != 50u8) { return 44; }
+    if (memory.inst_i64_load32_u(e, 2u32, 0u32)[0] != 53u8) { return 45; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("memory load: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMMemoryStore covers the memory-store opcodes. Same
+// memarg shape as loads. The narrow-store variants are integer-
+// only (no f32.store8 etc) so we walk the 0x36-0x3E range.
+func TestWASMMemoryStore(t *testing.T) {
+	src := `import "std/wasm/memory";
+function main(): i32 {
+    var e: u8[] = [];
+
+    // i32.store align=2 offset=4 -> 0x36 0x02 0x04
+    var s32: u8[] = memory.inst_i32_store(e, 2u32, 4u32);
+    if (len(s32) != 3)  { return 1; }
+    if (s32[0] != 54u8) { return 2; }
+    if (s32[1] != 2u8)  { return 3; }
+    if (s32[2] != 4u8)  { return 4; }
+
+    // i64.store -> 0x37
+    if (memory.inst_i64_store(e, 3u32, 0u32)[0] != 55u8) { return 10; }
+    // f32.store -> 0x38, f64.store -> 0x39
+    if (memory.inst_f32_store(e, 2u32, 0u32)[0] != 56u8) { return 11; }
+    if (memory.inst_f64_store(e, 3u32, 0u32)[0] != 57u8) { return 12; }
+
+    // Walk the narrow-store block.
+    if (memory.inst_i32_store8(e, 0u32, 0u32)[0]  != 58u8) { return 20; }
+    if (memory.inst_i32_store16(e, 1u32, 0u32)[0] != 59u8) { return 21; }
+    if (memory.inst_i64_store8(e, 0u32, 0u32)[0]  != 60u8) { return 22; }
+    if (memory.inst_i64_store16(e, 1u32, 0u32)[0] != 61u8) { return 23; }
+    if (memory.inst_i64_store32(e, 2u32, 0u32)[0] != 62u8) { return 24; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("memory store: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMMemorySizeGrow covers memory.size / memory.grow. Both
+// carry a reserved memidx byte (always 0 in MVP wasm) so each
+// encoding is exactly 2 bytes regardless of any other immediate.
+func TestWASMMemorySizeGrow(t *testing.T) {
+	src := `import "std/wasm/memory";
+function main(): i32 {
+    var e: u8[] = [];
+
+    var sz: u8[] = memory.inst_memory_size(e);
+    if (len(sz) != 2)  { return 1; }
+    if (sz[0] != 63u8) { return 2; }
+    if (sz[1] != 0u8)  { return 3; }
+
+    var gr: u8[] = memory.inst_memory_grow(e);
+    if (len(gr) != 2)  { return 10; }
+    if (gr[0] != 64u8) { return 11; }
+    if (gr[1] != 0u8)  { return 12; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("memory size/grow: exit = %d, want 0", got)
+	}
+}

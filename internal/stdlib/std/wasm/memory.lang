@@ -1,0 +1,157 @@
+// std/wasm/memory — memory load / store / size / grow instruction
+// encoders for the WebAssembly Core 1.0 binary format.
+//
+// Spec: https://webassembly.github.io/spec/core/binary/instructions.html#memory-instructions
+//
+// Fifth slice of Phase 1 of docs/TOOLCHAIN-SELF-HOSTING.md. After
+// the numeric opcodes (single-byte, no immediate), memory ops are
+// the second-largest opcode family. Every load / store carries a
+// `memarg` immediate — an alignment hint plus a base offset, both
+// uleb-encoded. memory.size / memory.grow each take a one-byte
+// reserved "memory index" immediate (always 0 in wasm 1.0, since
+// the multi-memory proposal hadn't landed).
+//
+// The "load_8_s" / "load_16_u" etc. variants only exist for the
+// integer widths — float types have no narrow-load form because
+// IEEE-754 doesn't decompose that way.
+//
+// Bulk memory ops (memory.init, data.drop, memory.copy,
+// memory.fill — all under the 0xFC multi-byte opcode prefix) and
+// the saturating-truncate ops aren't included here; the
+// production wasm backend doesn't lean on them yet.
+
+import "std/wasm/leb128";
+
+// put_memarg — append the alignment + offset uleb pair every
+// load / store opcode carries as its immediate. Kept non-pub
+// because the per-opcode wrappers below all funnel through it;
+// no external caller should ever need to compose a memarg
+// without an opcode in front of it.
+function put_memarg(buf: u8[], align: u32, offset: u32): u8[] {
+    var out: u8[] = leb128.uleb_u32(buf, align);
+    return leb128.uleb_u32(out, offset);
+}
+
+// ---- Loads (0x28 - 0x35) -------------------------------------
+//
+// `align` is the log2 of the natural alignment in bytes — 0 for
+// byte-wide accesses, 1 for halfwords, 2 for words, 3 for
+// doublewords. The spec lets the producer pass any value <= the
+// natural alignment; engines use it as a hint and ignore it
+// otherwise.
+
+pub function inst_i32_load(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(40u8), align, offset);   // 0x28
+}
+
+pub function inst_i64_load(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(41u8), align, offset);   // 0x29
+}
+
+pub function inst_f32_load(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(42u8), align, offset);   // 0x2A
+}
+
+pub function inst_f64_load(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(43u8), align, offset);   // 0x2B
+}
+
+pub function inst_i32_load8_s(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(44u8), align, offset);   // 0x2C
+}
+
+pub function inst_i32_load8_u(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(45u8), align, offset);   // 0x2D
+}
+
+pub function inst_i32_load16_s(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(46u8), align, offset);   // 0x2E
+}
+
+pub function inst_i32_load16_u(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(47u8), align, offset);   // 0x2F
+}
+
+pub function inst_i64_load8_s(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(48u8), align, offset);   // 0x30
+}
+
+pub function inst_i64_load8_u(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(49u8), align, offset);   // 0x31
+}
+
+pub function inst_i64_load16_s(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(50u8), align, offset);   // 0x32
+}
+
+pub function inst_i64_load16_u(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(51u8), align, offset);   // 0x33
+}
+
+pub function inst_i64_load32_s(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(52u8), align, offset);   // 0x34
+}
+
+pub function inst_i64_load32_u(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(53u8), align, offset);   // 0x35
+}
+
+// ---- Stores (0x36 - 0x3E) ------------------------------------
+
+pub function inst_i32_store(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(54u8), align, offset);   // 0x36
+}
+
+pub function inst_i64_store(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(55u8), align, offset);   // 0x37
+}
+
+pub function inst_f32_store(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(56u8), align, offset);   // 0x38
+}
+
+pub function inst_f64_store(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(57u8), align, offset);   // 0x39
+}
+
+pub function inst_i32_store8(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(58u8), align, offset);   // 0x3A
+}
+
+pub function inst_i32_store16(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(59u8), align, offset);   // 0x3B
+}
+
+pub function inst_i64_store8(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(60u8), align, offset);   // 0x3C
+}
+
+pub function inst_i64_store16(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(61u8), align, offset);   // 0x3D
+}
+
+pub function inst_i64_store32(buf: u8[], align: u32, offset: u32): u8[] {
+    return put_memarg(buf.push(62u8), align, offset);   // 0x3E
+}
+
+// ---- Memory size / grow --------------------------------------
+//
+// Both ops carry a single reserved byte (the memory index, fixed
+// at 0 in MVP wasm — the multi-memory proposal would let it vary).
+// memory.size pops nothing and pushes the current size in pages;
+// memory.grow pops the requested delta and pushes the old size on
+// success, -1 on failure.
+
+pub function inst_memory_size(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(63u8);   // 0x3F
+    out = out.push(0u8);    // reserved memidx
+    return out;
+}
+
+pub function inst_memory_grow(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(64u8);   // 0x40
+    out = out.push(0u8);    // reserved memidx
+    return out;
+}
