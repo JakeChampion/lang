@@ -1,0 +1,305 @@
+// examples/self_host/checker.lang — third concrete step of the
+// self-host port. Imports lexer.lang + parser.lang and walks the
+// Stmt[] / Expr tree from `parser.parse_program(toks)`, assigning
+// a type to every expression and verifying the program is
+// well-typed under a tiny static type system.
+//
+// This is the *minimal* checker — the Go checker in
+// internal/checker/checker.go is ~6700 LOC and handles unions,
+// generics, monomorphisation entry points, exhaustiveness, struct
+// methods, receiver visibility, and a host of other rules. This
+// port handles only:
+//
+//   - Primitive types: i32, bool, string (plus an `unknown`
+//     sentinel for nodes the parser couldn't fully resolve)
+//   - Variable bindings via `var x = expr;`
+//   - Binary operators: + - * / % (numeric), < <= > >= ==
+//     != (compare → bool), && || (bool-only)
+//   - Unary `-` (numeric) and `!` (bool)
+//   - String concatenation (`+` on two strings → string)
+//   - Identifier lookup through a flat scope (no nesting in this
+//     cut — there's no block-introducing stmt to scope yet)
+//
+// The point isn't completeness — it's demonstrating the
+// architectural pattern works end-to-end: `parser.ExprBinary(b)`
+// pattern-matches across module boundaries, `b.left` /
+// `b.right` recurse through `parser.Expr` cleanly, and the
+// resulting Type[] aligns row-for-row with the input Stmt[].
+//
+// Out of scope (the next iteration grows them):
+//   - Generics, type parameters, monomorphisation
+//   - Unions, enums, match exhaustiveness
+//   - Structs, methods, receiver dispatch
+//   - Function declarations + calls with arity / signature checks
+//   - Control flow (`if` / `while` / `for`) — parser stub
+//     doesn't emit them yet either
+//   - Float types (the parser flags `is_float` but the checker
+//     just lumps both into a numeric kind for now)
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+
+// =================== TYPE SYSTEM ====================
+
+pub struct TypeI32 { tag: i32 }       // tag fields are placeholder
+pub struct TypeBool { tag: i32 }      // payload — variants need a
+pub struct TypeString { tag: i32 }    // shape; the field is unused.
+pub struct TypeUnknown { reason: string }
+
+pub type Type = TypeI32 | TypeBool | TypeString | TypeUnknown;
+
+// Helper wraps: same pattern as elsewhere in the port — putting
+// the struct literal in return-position lets the implicit
+// struct→union wrap fire. Inline `var t: Type = TypeI32 { ... };`
+// inside a non-return position doesn't always trigger the wrap.
+function t_i32(): Type { return TypeI32 { tag: 0 }; }
+function t_bool(): Type { return TypeBool { tag: 0 }; }
+function t_string(): Type { return TypeString { tag: 0 }; }
+function t_unknown(reason: string): Type { return TypeUnknown { reason: reason }; }
+
+// type_eq: structural equality on the type union. Returns true
+// only for matching variants; mismatched variants and Unknown
+// on either side return false (Unknown is a "couldn't resolve"
+// marker, not a wildcard).
+function type_eq(a: Type, b: Type): boolean {
+    match (a) {
+        TypeI32(_) => {
+            match (b) {
+                TypeI32(_) => { return true; },
+                _ => { return false; }
+            }
+        },
+        TypeBool(_) => {
+            match (b) {
+                TypeBool(_) => { return true; },
+                _ => { return false; }
+            }
+        },
+        TypeString(_) => {
+            match (b) {
+                TypeString(_) => { return true; },
+                _ => { return false; }
+            }
+        },
+        TypeUnknown(_) => { return false; }
+    }
+    return false;
+}
+
+function is_unknown(t: Type): boolean {
+    match (t) {
+        TypeUnknown(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// =================== SCOPE ====================
+
+// A flat name → type map. Parallel arrays keep the implementation
+// trivial; the lang-port doesn't need a real hashmap until the
+// program grows beyond ~hundreds of bindings.
+pub struct Scope { names: string[], types: Type[] }
+
+function new_scope(): Scope {
+    var ns: string[] = [];
+    var ts: Type[] = [];
+    return Scope { names: ns, types: ts };
+}
+
+function (s: Scope) bind(name: string, t: Type): Scope {
+    var ns: string[] = s.names.push(name);
+    var ts: Type[] = s.types.push(t);
+    return Scope { names: ns, types: ts };
+}
+
+// Linear scan — newest binding wins so shadowing works
+// naturally in a single flat scope.
+function (s: Scope) lookup(name: string): Type {
+    var i: i32 = len(s.names) - 1;
+    while (i >= 0) {
+        if (s.names[i] == name) { return s.types[i]; }
+        i = i - 1;
+    }
+    return t_unknown("undefined identifier:" + name);
+}
+
+// =================== CHECKER ====================
+
+// check_expr returns the inferred type. Errors surface as
+// TypeUnknown with a `reason` string so callers can inspect them
+// without an exception channel.
+function check_expr(e: parser.Expr, s: Scope): Type {
+    match (e) {
+        parser.ExprNumber(n) => {
+            // Floats aren't a separate type in this cut — keep
+            // both `is_float` flags lumped into i32 until the
+            // checker grows a Float kind.
+            return t_i32();
+        },
+        parser.ExprBool(_) => { return t_bool(); },
+        parser.ExprString(_) => { return t_string(); },
+        parser.ExprIdent(id) => { return s.lookup(id.name); },
+        parser.ExprBinary(b) => {
+            var lt: Type = check_expr(b.left, s);
+            var rt: Type = check_expr(b.right, s);
+            // `+` is overloaded across i32 (arithmetic) and string
+            // (concatenation). Other arithmetic ops are i32-only.
+            if (b.op == "+") {
+                if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
+                    return t_string();
+                }
+                if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
+                    return t_i32();
+                }
+                return t_unknown("`+` operands type mismatch");
+            }
+            if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
+                if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
+                    return t_i32();
+                }
+                return t_unknown("arithmetic op `" + b.op + "` requires i32 operands");
+            }
+            if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
+                if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
+                    return t_bool();
+                }
+                return t_unknown("comparison op `" + b.op + "` requires i32 operands");
+            }
+            if (b.op == "==" || b.op == "!=") {
+                if (type_eq(lt, rt) && !is_unknown(lt)) {
+                    return t_bool();
+                }
+                return t_unknown("equality op `" + b.op + "` requires same-typed operands");
+            }
+            if (b.op == "&&" || b.op == "||") {
+                if (type_eq(lt, t_bool()) && type_eq(rt, t_bool())) {
+                    return t_bool();
+                }
+                return t_unknown("logical op `" + b.op + "` requires bool operands");
+            }
+            return t_unknown("unknown binary op:" + b.op);
+        },
+        parser.ExprUnary(u) => {
+            var ot: Type = check_expr(u.operand, s);
+            if (u.op == "-") {
+                if (type_eq(ot, t_i32())) { return t_i32(); }
+                return t_unknown("unary `-` requires i32 operand");
+            }
+            if (u.op == "!") {
+                if (type_eq(ot, t_bool())) { return t_bool(); }
+                return t_unknown("unary `!` requires bool operand");
+            }
+            return t_unknown("unknown unary op:" + u.op);
+        },
+        parser.ExprCall(_) => {
+            // The checker port doesn't yet maintain a function
+            // table — every call is opaque. A follow-up port
+            // would walk a `FuncDecl[]` ahead of time and bind
+            // names to signature types.
+            return t_unknown("function-call typing not implemented yet");
+        },
+        parser.ExprUnknown(u) => { return t_unknown("parser-side unknown:" + u.kind); }
+    }
+    return t_unknown("unhandled Expr variant");
+}
+
+// check_stmt returns the updated scope (StmtVar binds a new name)
+// and the inferred type of the contained expression, packaged so
+// the validation harness can assert per-statement.
+pub struct CheckResult { scope: Scope, ty: Type }
+
+function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
+    match (st) {
+        parser.StmtVar(v) => {
+            var t: Type = check_expr(v.init, s);
+            var s2: Scope = s.bind(v.name, t);
+            return CheckResult { scope: s2, ty: t };
+        },
+        parser.StmtReturn(r) => {
+            var t: Type = check_expr(r.value, s);
+            return CheckResult { scope: s, ty: t };
+        },
+        parser.StmtExpr(x) => {
+            var t: Type = check_expr(x.value, s);
+            return CheckResult { scope: s, ty: t };
+        },
+        parser.StmtUnknown(u) => { return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + u.kind) }; }
+    }
+    return CheckResult { scope: s, ty: t_unknown("unhandled Stmt variant") };
+}
+
+// check_program threads the scope through every statement in
+// source order. Returns parallel arrays: one inferred type per
+// statement so callers can spot-check the shape.
+pub struct ProgramTypes { tys: Type[] }
+
+function check_program(prog: parser.Stmt[]): ProgramTypes {
+    var s: Scope = new_scope();
+    var tys: Type[] = [];
+    var i: i32 = 0;
+    while (i < len(prog)) {
+        var r: CheckResult = check_stmt(prog[i], s);
+        s = r.scope;
+        tys = tys.push(r.ty);
+        i = i + 1;
+    }
+    return ProgramTypes { tys: tys };
+}
+
+// =================== VALIDATION ====================
+
+function main(): i32 {
+    // Well-typed program:
+    //   var a = 1 + 2 * 3;            // a: i32 = 7
+    //   var b = "hi" + " there";      // b: string
+    //   var c = a < 10;               // c: bool
+    //   var d = !c;                   // d: bool
+    //   return a + 1;                 // i32
+    var src1: string = "var a = 1 + 2 * 3; var b = \"hi\" + \" there\"; var c = a < 10; var d = !c; return a + 1;";
+    var toks1: lexer.Token[] = lexer.tokenize(src1);
+    var stmts1: parser.Stmt[] = parser.parse_program(toks1);
+    var pt1: ProgramTypes = check_program(stmts1);
+    if (len(pt1.tys) != 5) { return 1; }
+    if (!type_eq(pt1.tys[0], t_i32())) { return 10; }
+    if (!type_eq(pt1.tys[1], t_string())) { return 11; }
+    if (!type_eq(pt1.tys[2], t_bool())) { return 12; }
+    if (!type_eq(pt1.tys[3], t_bool())) { return 13; }
+    if (!type_eq(pt1.tys[4], t_i32())) { return 14; }
+
+    // Ill-typed program: mixing types in arithmetic.
+    //   var x = 1 + "no";            // Unknown — `+` mismatch
+    var src2: string = "var x = 1 + \"no\";";
+    var toks2: lexer.Token[] = lexer.tokenize(src2);
+    var stmts2: parser.Stmt[] = parser.parse_program(toks2);
+    var pt2: ProgramTypes = check_program(stmts2);
+    if (len(pt2.tys) != 1) { return 20; }
+    if (!is_unknown(pt2.tys[0])) { return 21; }
+
+    // Ident lookup: forward reference fails, backward reference resolves.
+    //   var p = q;                   // q undefined → Unknown
+    //   var q = 5;                   // i32
+    //   var r = q;                   // i32 (q now in scope)
+    var src3: string = "var p = q; var q = 5; var r = q;";
+    var toks3: lexer.Token[] = lexer.tokenize(src3);
+    var stmts3: parser.Stmt[] = parser.parse_program(toks3);
+    var pt3: ProgramTypes = check_program(stmts3);
+    if (len(pt3.tys) != 3) { return 30; }
+    if (!is_unknown(pt3.tys[0])) { return 31; }
+    if (!type_eq(pt3.tys[1], t_i32())) { return 32; }
+    if (!type_eq(pt3.tys[2], t_i32())) { return 33; }
+
+    // Logical / comparison ops with bool operands.
+    //   var f = true && false;       // bool
+    //   var g = (1 < 2) || f;        // bool
+    var src4: string = "var f = true && false; var g = (1 < 2) || f;";
+    var toks4: lexer.Token[] = lexer.tokenize(src4);
+    var stmts4: parser.Stmt[] = parser.parse_program(toks4);
+    var pt4: ProgramTypes = check_program(stmts4);
+    if (len(pt4.tys) != 2) { return 40; }
+    if (!type_eq(pt4.tys[0], t_bool())) { return 41; }
+    if (!type_eq(pt4.tys[1], t_bool())) { return 42; }
+
+    return 0;
+}

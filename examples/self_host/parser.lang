@@ -34,26 +34,26 @@ import "./lexer";
 // Ident / Binary / Call); this port collapses similar shapes into
 // fewer variants to keep the union member count tractable.
 
-struct ExprNumber { text: string, suffix: string, is_float: boolean }
-struct ExprIdent { name: string }
-struct ExprString { value: string }
-struct ExprBool { value: boolean }
-struct ExprBinary { op: string, left: Expr, right: Expr }
-struct ExprUnary { op: string, operand: Expr }
-struct ExprCall { callee: Expr, args: Expr[] }
-struct ExprUnknown { kind: string }
+pub struct ExprNumber { text: string, suffix: string, is_float: boolean }
+pub struct ExprIdent { name: string }
+pub struct ExprString { value: string }
+pub struct ExprBool { value: boolean }
+pub struct ExprBinary { op: string, left: Expr, right: Expr }
+pub struct ExprUnary { op: string, operand: Expr }
+pub struct ExprCall { callee: Expr, args: Expr[] }
+pub struct ExprUnknown { kind: string }
 
-type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
-          | ExprBinary | ExprUnary | ExprCall | ExprUnknown;
+pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
+              | ExprBinary | ExprUnary | ExprCall | ExprUnknown;
 
 // Statement nodes.
 
-struct StmtVar { name: string, init: Expr }
-struct StmtReturn { value: Expr }
-struct StmtExpr { value: Expr }
-struct StmtUnknown { kind: string }
+pub struct StmtVar { name: string, init: Expr }
+pub struct StmtReturn { value: Expr }
+pub struct StmtExpr { value: Expr }
+pub struct StmtUnknown { kind: string }
 
-type Stmt = StmtVar | StmtReturn | StmtExpr | StmtUnknown;
+pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtUnknown;
 
 // Helper wraps to satisfy the implicit-union-wrap return-position
 // rule. Same pattern lexer.lang uses for Token construction.
@@ -278,7 +278,7 @@ function parse_stmt(p: Par): StmtResult {
     return StmtResult { par: p, stmt: s_expr(e.expr) };
 }
 
-function parse_program(toks: lexer.Token[]): Stmt[] {
+pub function parse_program(toks: lexer.Token[]): Stmt[] {
     var p: Par = Par { toks: toks, pos: 0 };
     var out: Stmt[] = [];
     while (!p.at_end()) {
