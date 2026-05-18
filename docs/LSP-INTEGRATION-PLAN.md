@@ -69,28 +69,46 @@ button and `langInterpret` flow untouched.
 
 ## PR ordering
 
-Each step is independently shippable and independently testable.
+Each step landed as a separate commit on the same branch.
 
-1. **AST end-positions + `ast.Walk` helper.** Pure refactor, no behaviour
-   change. Threads end positions through `parser` for the node kinds LSP
-   touches first (Ident, Call, struct lit, var/func decls). Adds an
-   `ast.Walk` visitor. Parser tests assert end positions; a new
-   `ast/walk_test.go` covers traversal.
+1. **AST `Walk` visitor.** ✓ `internal/ast/walk.go` —
+   depth-first, source-order traversal with stop-descent
+   semantics. Top-level decls without a `Pos()` got one. End-
+   position threading on AST nodes was deferred: hover / def
+   work from name length + the existing `Spanned` interface on
+   errors, and only two niche features (type-annotation hover,
+   field-access hover) need real end positions. Future PR.
 
-2. **`cmd/lang-lsp` MVP.** Implements `initialize`, `initialized`,
-   `shutdown`, `exit`, `textDocument/didOpen`, `didChange`, `didClose`,
-   `publishDiagnostics`. Golden JSON-RPC fixtures exercise a clean file
-   and a file with parser + checker errors.
+2. **`cmd/lang-lsp` MVP.** ✓ `internal/lsp` +
+   `cmd/lang-lsp` — hand-rolled JSON-RPC wire format (no
+   third-party deps so the wasm build stays slim). Handles
+   `initialize` / `shutdown` / `exit`, full-sync `didOpen` /
+   `didChange` / `didClose`, and publishes parser + checker
+   diagnostics. Same `Server` type drives stdio and the wasm
+   wrapper via `HandleMessage` + `SetPublisher`.
 
-3. **`hover` + `definition`.** Depends on the AST walker from step 1.
+3. **`hover` + `definition`.** ✓ Single `findNameAt` helper
+   reused by both — finds the deepest `Ident` / `StructLit`
+   under the cursor, then resolves it through `checker.Info`.
+   Bare enum variants (parser emits Ident, checker resolves
+   via `variantOf` without rewriting the AST) get a fallback
+   `lookupVariant` sweep.
 
-4. **Playground hookup.** Swap textarea → CodeMirror 6 (loaded from
-   esm.sh so we don't take a build-tooling dependency), add the
-   `langLsp` wasm export, wire the lint + hover extensions. Keep
-   `langInterpret` and the `Run` button as-is.
+4. **Playground hookup.** ✓ `cmd/lang-wasm` exposes
+   `langLsp(json)` + `langLspOnNotify(cb)`; the same
+   `internal/lsp.Server` runs in-process. `web/index.html`
+   keeps the textarea (no CodeMirror swap — out of scope for
+   this PR) and gains a Problems panel + click-for-type
+   cursor strip. CodeMirror migration is now an independent
+   follow-up — the `langLsp` wire is stable, swapping the
+   editor on top of it is mechanical.
 
-5. **`completion` + `signatureHelp`.** Mine `Info.FuncSigs` and
-   `Info.Locals` for candidates, plus a hard-coded keyword list.
+5. **`completion` + `signatureHelp`.** ✓ Completion
+   enumerates locals + params + top-level decls + variants +
+   keywords; client filters. Signature help scans source text
+   backward from the cursor for the nearest unmatched `(`,
+   counting commas for the active-param index. String /
+   comment-aware so a `,` inside `"a, b"` doesn't fool it.
 
 ## Testing
 

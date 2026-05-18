@@ -180,6 +180,10 @@ func (s *Server) handleMethod(method string, params json.RawMessage) (any, *rpcE
 		return s.handleHover(params)
 	case "textDocument/definition":
 		return s.handleDefinition(params)
+	case "textDocument/completion":
+		return s.handleCompletion(params)
+	case "textDocument/signatureHelp":
+		return s.handleSignatureHelp(params)
 	}
 	return nil, &rpcError{
 		Code:    errCodeMethodNotFound,
@@ -193,6 +197,13 @@ func (s *Server) handleInitialize() initializeResult {
 			TextDocumentSync:   syncKindFull,
 			HoverProvider:      true,
 			DefinitionProvider: true,
+			CompletionProvider: &completionOptions{
+				TriggerCharacters: []string{"."},
+			},
+			SignatureHelpProvider: &signatureHelpOptions{
+				TriggerCharacters:   []string{"(", ","},
+				RetriggerCharacters: []string{","},
+			},
 		},
 		ServerInfo: &serverInfo{Name: "lang-lsp"},
 	}
@@ -224,6 +235,33 @@ func (s *Server) handleDefinition(raw json.RawMessage) (any, *rpcError) {
 	}
 	if loc := runDefinition(state, p.TextDocument.URI, p.Position); loc != nil {
 		return loc, nil
+	}
+	return nil, nil
+}
+
+func (s *Server) handleCompletion(raw json.RawMessage) (any, *rpcError) {
+	var p completionParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return &completionList{Items: []completionItem{}}, nil
+	}
+	return runCompletion(state, p.Position), nil
+}
+
+func (s *Server) handleSignatureHelp(raw json.RawMessage) (any, *rpcError) {
+	var p signatureHelpParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return nil, nil
+	}
+	if sh := runSignatureHelp(state, p.Position); sh != nil {
+		return sh, nil
 	}
 	return nil, nil
 }

@@ -7,6 +7,7 @@ package lexer
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -131,6 +132,19 @@ var keywords = map[string]bool{
 	"when":     true,
 	"defer":    true,
 	"arena":    true,
+}
+
+// Keywords returns every reserved word the lexer recognises, in
+// sorted order. Used by the LSP package to seed completion lists;
+// putting the accessor here keeps the reserved-word set in one
+// place so the lexer + completion never drift.
+func Keywords() []string {
+	out := make([]string, 0, len(keywords))
+	for k := range keywords {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Multi-character punctuators, longest first. The 3-char compound
