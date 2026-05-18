@@ -1786,6 +1786,20 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 	} else if t.Kind == lexer.Ident {
 		p.advance()
 		arm.VariantName = t.Text
+		// Optional `mod.` qualifier: `lexer.TokA(x) => …`. When the
+		// next token is `.`, the ident we just consumed was the
+		// module name, not the variant — re-consume after the dot.
+		// The checker verifies the qualifier against the scrutinee
+		// enum's source module.
+		if p.match(lexer.Punct, ".") {
+			p.advance()
+			nameTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			arm.VariantModule = arm.VariantName
+			arm.VariantName = nameTok.Text
+		}
 		if _, ok := p.accept(lexer.Punct, "("); ok {
 			if !p.match(lexer.Punct, ")") {
 				for {
@@ -1895,6 +1909,16 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 	} else if t.Kind == lexer.Ident {
 		p.advance()
 		arm.VariantName = t.Text
+		// Optional `mod.` qualifier — same handling as parseMatchArm.
+		if p.match(lexer.Punct, ".") {
+			p.advance()
+			nameTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			arm.VariantModule = arm.VariantName
+			arm.VariantName = nameTok.Text
+		}
 		if _, ok := p.accept(lexer.Punct, "("); ok {
 			if !p.match(lexer.Punct, ")") {
 				for {

@@ -1155,6 +1155,12 @@ type Match struct {
 type MatchArm struct {
 	P            Position
 	VariantName  string   // empty when IsWildcard or Literal != nil
+	// VariantModule is the optional `mod.` qualifier on a variant
+	// pattern (`mod.TokA(x) => …`). Set by the parser when the
+	// pattern spells the module name; empty for unqualified
+	// patterns. The checker validates it matches the scrutinee
+	// enum's source module when both are known.
+	VariantModule string
 	Bindings     []string // payload binding names, in payload order
 	BindingTypes []Type   // resolved by the checker; same length as Bindings
 	IsWildcard   bool     // `_ => …`
@@ -1186,14 +1192,15 @@ type MatchExpr struct {
 // other fields mirror MatchArm exactly — including the optional
 // Literal field for literal-pattern arms (`0 => …`, `"yes" => …`).
 type MatchExprArm struct {
-	P            Position
-	VariantName  string
-	Bindings     []string
-	BindingTypes []Type
-	IsWildcard   bool
-	Literal      Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
-	Guard        Expr
-	Body         Expr
+	P             Position
+	VariantName   string
+	VariantModule string // optional `mod.` qualifier — same semantics as MatchArm.VariantModule
+	Bindings      []string
+	BindingTypes  []Type
+	IsWildcard    bool
+	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
+	Guard         Expr
+	Body          Expr
 }
 
 func (s *Block) Pos() Position    { return s.P }
@@ -1433,6 +1440,11 @@ type UnionDecl struct {
 	// Public marks the union as exported across modules — same
 	// semantics as EnumDecl.Public.
 	Public bool
+	// SourceModule is the canonical module path that declared this
+	// union. modload stamps it during loadRecursive; the checker
+	// propagates it to the synthesised EnumDecl so cross-module
+	// variant-pattern qualifier checks have a comparable target.
+	SourceModule string
 }
 
 type Program struct {
