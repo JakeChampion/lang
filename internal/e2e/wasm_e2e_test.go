@@ -4256,6 +4256,45 @@ function main(): i32 {
 	}
 }
 
+// FString / MapLit inside a closure body whose captured names
+// appear in the desugared `+`-chain or per-entry expressions.
+// The closureconv pass used to skip these node kinds entirely;
+// captured-name idents inside the f"…" or `Map { … }` survived
+// as raw `*ast.Ident` and the IR errored with
+// `unresolved identifier "name" (compiler bug)`. The rewrite
+// now recurses through FString.Parts + FString.Desugared and
+// per-entry MapLit.Entries[i].Key/Value (and TupleLit.Elems
+// while we're here — the cases were missing).
+func TestWASMClosureFStringCapture(t *testing.T) {
+	src := `function makeNamer(name: string): () => string {
+    function build(): string { return f"hello, {name}!"; }
+    return build;
+}
+function main(): i32 {
+    var f = makeNamer("world");
+    if (f() != "hello, world!") { return 1; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0", got)
+	}
+}
+
+func TestWASMClosureMapLitCapture(t *testing.T) {
+	src := `function makeMap(k: i32, v: i32): () => Map[i32, i32] {
+    function build(): Map[i32, i32] { return Map { k: v }; }
+    return build;
+}
+function main(): i32 {
+    var f = makeMap(7, 42);
+    var m = f();
+    return m.get_or(7, 0);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (Map { capK: capV } inside closure)", got)
+	}
+}
+
 // Mutable captured variable: a closure body writes back to a
 // captured outer-scope variable. The env block lives on the
 // heap and is shared by every call to the same closure, so
