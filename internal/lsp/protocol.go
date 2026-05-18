@@ -90,11 +90,30 @@ type serverInfo struct {
 }
 
 type serverCapabilities struct {
-	TextDocumentSync       int                     `json:"textDocumentSync"`
-	HoverProvider          bool                    `json:"hoverProvider,omitempty"`
-	DefinitionProvider     bool                    `json:"definitionProvider,omitempty"`
-	CompletionProvider     *completionOptions      `json:"completionProvider,omitempty"`
-	SignatureHelpProvider  *signatureHelpOptions   `json:"signatureHelpProvider,omitempty"`
+	TextDocumentSync       int                    `json:"textDocumentSync"`
+	HoverProvider          bool                   `json:"hoverProvider,omitempty"`
+	DefinitionProvider     bool                   `json:"definitionProvider,omitempty"`
+	CompletionProvider     *completionOptions     `json:"completionProvider,omitempty"`
+	SignatureHelpProvider  *signatureHelpOptions  `json:"signatureHelpProvider,omitempty"`
+	InlayHintProvider      bool                   `json:"inlayHintProvider,omitempty"`
+	DocumentSymbolProvider bool                   `json:"documentSymbolProvider,omitempty"`
+	SemanticTokensProvider *semanticTokensOptions `json:"semanticTokensProvider,omitempty"`
+	ReferencesProvider     bool                   `json:"referencesProvider,omitempty"`
+	RenameProvider         bool                   `json:"renameProvider,omitempty"`
+}
+
+// semanticTokensOptions advertises the legend the client uses to
+// decode the int stream returned by textDocument/semanticTokens/full.
+// The legend's index ordering MUST match the indices the server
+// encodes in each token tuple — see semantic_tokens.go.
+type semanticTokensOptions struct {
+	Legend semanticTokensLegend `json:"legend"`
+	Full   bool                 `json:"full"`
+}
+
+type semanticTokensLegend struct {
+	TokenTypes     []string `json:"tokenTypes"`
+	TokenModifiers []string `json:"tokenModifiers"`
 }
 
 type completionOptions struct {
