@@ -1,0 +1,39 @@
+// examples/self_host/asm_run.lang — bootstrap-demo driver. Wires
+// lexer + parser + asm.emit_module to a hardcoded source program
+// and prints the resulting AT&T x86_64 assembly to stdout. The
+// companion Go-side test (self_host_asm_run_test.go) captures
+// that stdout, assembles it with gcc -nostdlib, and runs the
+// resulting binary — asserting the exit code matches what the
+// lang-port's interp / vm would produce on the same source.
+//
+// That's the real bootstrap-style demo: lang program → native
+// binary → correct exit code. End-to-end proof that
+// asm.lang produces working executables.
+//
+// Source under test:
+//   var a = 1 + 2;       // a = 3
+//   var b = 4 * 5;       // b = 20
+//   var c = a + b;       // c = 23
+//   if (c < 100) { return c; }
+//   return 0 - 1;        // unreachable when c < 100
+//
+// Expected exit code: 23.
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+import "./asm";
+
+const SOURCE: string =
+    "var a = 1 + 2;"
+    + " var b = 4 * 5;"
+    + " var c = a + b;"
+    + " if (c < 100) { return c; }"
+    + " return 0 - 1;";
+
+function main(): i32 {
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(SOURCE));
+    var emitted: string = asm.emit_module(mod);
+    print(emitted);
+    return 0;
+}
