@@ -4256,6 +4256,49 @@ function main(): i32 {
 	}
 }
 
+// `(t.N)(args)` where `t.N` is a tuple element holding a closure.
+// Same shape as the struct-field case but the field lookup goes
+// through `targetTupleType` (numeric selector + tuple's static
+// element types) instead of `fieldOwner` + struct decl. Without
+// the tuple branch in `call()`'s FieldAccess case the IR errored
+// with `indirect call from non-identifier expression`.
+func TestWASMCallClosureFromTupleElem(t *testing.T) {
+	src := `function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function main(): i32 {
+    var t: ((i32) => i32, i32) = (makeAdder(10), 32);
+    return (t.0)(t.1);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (closure stored in tuple element)", got)
+	}
+}
+
+// Pattern-binding a closure value via match: `match (o) { Some(f) => f(...) }`.
+// The match-arm binding `f` lives in `b.locals` + `b.scratchType`
+// (IR-introduced locals), not in `info.Locals` which the original
+// `localFuncType` walked. Without the scratchType fallback the
+// indirect-call lookup errored with `unknown local "f"`.
+func TestWASMCallClosurePatternBound(t *testing.T) {
+	src := `function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function main(): i32 {
+    var o: Option[(i32) => i32] = Some(makeAdder(10));
+    match (o) {
+        Some(f) => { return f(32); },
+        None => { return 0; }
+    }
+    return -1;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (closure pattern-bound by match)", got)
+	}
+}
+
 // `(b.f)(args)` where `b.f` is a struct field holding a closure
 // value. The callee is a `*ast.FieldAccess`, not an `*ast.Ident`;
 // the IR's call() guard used to reject anything non-Ident with

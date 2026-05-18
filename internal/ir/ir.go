@@ -4572,24 +4572,37 @@ func (b *builder) call(n *ast.Call) error {
 		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
 		return nil
 	}
-	// `(b.f)(args...)` where `b.f` is a struct field of FuncType:
-	// the field load produces a closure pair pointer; OpCallIndirect
-	// dispatches through the pair the same way function-typed
-	// locals do. Without this dispatch the IR's call() guard
-	// rejected the FieldAccess callee with `indirect call from
-	// non-identifier expression`. The field's type comes from the
-	// owning struct's declaration, looked up through fieldOwner.
+	// `(b.f)(args...)` / `(t.N)(args...)` where the field access
+	// resolves to a FuncType: the field load produces a closure
+	// pair pointer; OpCallIndirect dispatches through the pair the
+	// same way function-typed locals do. Without this dispatch the
+	// IR's call() guard rejected the FieldAccess callee with
+	// `indirect call from non-identifier expression`. The field's
+	// type comes from either the struct's declaration (via
+	// fieldOwner) or from the tuple's static element types (via
+	// targetTupleType for `t.N` form).
 	if fa, ok := n.Callee.(*ast.FieldAccess); ok {
-		owner := b.fieldOwner(fa.Target)
-		sd, sdOk := b.info.Structs[owner]
 		var ft *ast.FuncType
-		if sdOk {
-			for _, f := range sd.Fields {
-				if f.Name == fa.Field {
-					if fnT, isFn := f.Type.(*ast.FuncType); isFn {
-						ft = fnT
+		// Tuple field: `t.0`, `t.1`, ... — numeric selector with
+		// a TupleType target.
+		if tup, isTup := b.targetTupleType(fa.Target); isTup {
+			if idx, err := strconv.Atoi(fa.Field); err == nil && idx >= 0 && idx < len(tup.Elems) {
+				if fnT, isFn := tup.Elems[idx].(*ast.FuncType); isFn {
+					ft = fnT
+				}
+			}
+		}
+		// Struct field fallback.
+		if ft == nil {
+			owner := b.fieldOwner(fa.Target)
+			if sd, sdOk := b.info.Structs[owner]; sdOk {
+				for _, f := range sd.Fields {
+					if f.Name == fa.Field {
+						if fnT, isFn := f.Type.(*ast.FuncType); isFn {
+							ft = fnT
+						}
+						break
 					}
-					break
 				}
 			}
 		}
@@ -4929,6 +4942,21 @@ func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 			ft, ok := v.Type.(*ast.FuncType)
 			if !ok {
 				return nil, fmt.Errorf("ir: indirect call through non-function-typed var %q", name)
+			}
+			return ft, nil
+		}
+	}
+	// IR-introduced locals (match-arm bindings, if-let bindings,
+	// let-else bindings) live in b.locals + b.scratchType — not in
+	// info.Locals which only tracks checker-visible Var nodes.
+	// Without this, calling a closure value pattern-bound by a
+	// match arm (`match (o) { Some(f) => f(...) }`) errored with
+	// `indirect call through unknown local "f"`.
+	if slot, ok := b.locals[name]; ok {
+		if t, ok := b.scratchType[slot]; ok {
+			ft, isFn := t.(*ast.FuncType)
+			if !isFn {
+				return nil, fmt.Errorf("ir: indirect call through non-function-typed scratch %q", name)
 			}
 			return ft, nil
 		}
