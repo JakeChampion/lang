@@ -9824,6 +9824,44 @@ function main(): i32 {
 	}
 }
 
+// A tail-recursive function returning i64 failed wasm
+// validation with "type mismatch: expected i64, found
+// i32". TailCallOptimize wraps the body in a `loop ... end`
+// so the call sites become `local.set $param; br 0` — the
+// loop never falls through. But the wasm validator still
+// needs *something* of the function's return type after
+// the loop end (to type-check the unreachable fall-off);
+// the codegen padded that slot with `i32.const 0`
+// regardless of the return type, which an i64 / f64
+// signature rejected.
+//
+// Triggered any time a tail-recursive function returned
+// i64 (e.g. `factorial`-style accumulator loops, recursive
+// Fibonacci with i64 accumulator). Native targets ignored
+// the validator and ran fine.
+//
+// Fix: branch on the return type for the padding — push
+// `i64.const 0` for i64 returns alongside the existing
+// `i32.const 0` / `f32.const 0` / `f64.const 0` cases.
+//
+// Tests pin a tail-recursive i64 factorial (20! =
+// 2432902008176640000 — needs i64). arm64 already passed;
+// wasm now joins it.
+func TestArm64WasmI64TailCallReturn(t *testing.T) {
+	src := `function fact(n: i32, acc: i64): i64 {
+    if (n <= 1) { return acc; }
+    return fact(n - 1, acc * (n as i64));
+}
+function main(): i32 {
+    var r: i64 = fact(20, 1);
+    if (r == 2432902008176640000) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("i64 tail-call factorial got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
