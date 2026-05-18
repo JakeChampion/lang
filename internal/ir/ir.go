@@ -37,6 +37,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/closureconv"
+	"github.com/jakechampion/lang/internal/shadowrename"
 )
 
 // OpKind enumerates every IR instruction. The arity (consumed / produced
@@ -671,6 +672,15 @@ func Lower(prog *ast.Program, info *checker.Info) (*Program, error) {
 // struct fields, array elements, and closure captures so heap
 // addresses survive arm64-darwin's >= 4 GiB heap.
 func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error) {
+	// Rename shadowed local variables so each Var declaration
+	// in a function carries a name that's globally unique
+	// within the function. The IR's per-name `b.locals` slot
+	// lookup is otherwise blind to scoping — two nested
+	// `var x: i64` declarations would collapse onto a single
+	// slot and the outer reads would silently see the inner
+	// store's value. Runs before closureconv so the closure
+	// pass sees post-rename names everywhere.
+	shadowrename.Rename(prog, info)
 	if err := closureconv.ConvertWith(prog, info, ptrW); err != nil {
 		return nil, err
 	}

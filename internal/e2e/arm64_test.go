@@ -10095,6 +10095,86 @@ func TestArm64ArrayLitEmptyInnerUnify(t *testing.T) {
 	}
 }
 
+// Inner-scope variable shadowing collapsed onto the outer
+// scope's slot, so the outer reads silently saw the inner
+// store's value after the inner block returned:
+//
+//   var x: i64 = 100;
+//   if (true) {
+//       var x: i64 = 200;
+//   }
+//   print(x.to_string());  // printed 200, not 100
+//
+// The IR's `b.locals` flat name → slot map keyed by the
+// AST name; two `var x` declarations both set `b.locals["x"]`
+// in turn, second-write-wins. Both slots existed in
+// `info.Locals[fn]` (distinct entries, distinct indices), so
+// just reading them out preserved both, but every Ident
+// reference resolved to the most-recently-bound slot.
+//
+// Fix: a new shadowrename pass walks each function body
+// before closureconv / IR build, tracks a scope stack
+// (block / if / for / match-arm / iflet bindings), and
+// renames every shadowing Var / Destructure / pattern
+// binding to `name$N`. References inside the shadowing
+// scope follow via per-frame lookup. Native ABIs and wasm
+// alike see post-rename names everywhere, so the IR's
+// name-based slot map stays unambiguous.
+//
+// Three sub-tests pin sibling-shadow, depth-2 shadow, and
+// for-loop counter shadowing the outer name.
+func TestArm64VariableShadowing(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"shadow_in_if", `function main(): i32 {
+    var x: i64 = 100;
+    if (true) {
+        var x: i64 = 200;
+        if (x != 200) { return 1; }
+    }
+    if (x != 100) { return 2; }
+    return 0;
+}`, 0},
+		{"shadow_depth_2", `function main(): i32 {
+    var x: i64 = 1;
+    if (true) {
+        var x: i64 = 2;
+        if (true) {
+            var x: i64 = 3;
+            if (x != 3) { return 1; }
+        }
+        if (x != 2) { return 2; }
+    }
+    if (x != 1) { return 3; }
+    return 0;
+}`, 0},
+		{"shadow_for_counter", `function main(): i32 {
+    var i: i32 = 100;
+    for (var i: i32 = 0; i < 5; i = i + 1) { }
+    return i - 100;
+}`, 0},
+		{"shadow_rhs_reads_outer", `function main(): i32 {
+    var x: i64 = 10;
+    var y: i64 = 0;
+    if (true) {
+        var x: i64 = x + 100;
+        y = x;
+    }
+    if (x != 10 || y != 110) { return 1; }
+    return 0;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
