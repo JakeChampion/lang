@@ -3926,6 +3926,28 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// against the LAMBDA's return type, not the enclosing
 		// function's. The Lambda's type is the FuncType built
 		// from its declared params + return type.
+		//
+		// Resolve the lambda's declared param + return types
+		// against the enclosing function's type parameters. The
+		// `resolveTypesInBlock` pre-pass walks statement-level
+		// types but doesn't descend into expression-position
+		// Lambda nodes, so `T` in `function (x: T): T { ... }`
+		// would otherwise stay as `StructType{T}` and fail to
+		// match the outer's `ParamType{T}` at the return-type
+		// check. Pulling the enclosing FuncDecl's TypeParams set
+		// off `c.current` is sufficient — nested local fns
+		// inherit their host's params via this same channel.
+		var lambdaParams map[string]bool
+		if c.current != nil && len(c.current.TypeParams) > 0 {
+			lambdaParams = make(map[string]bool, len(c.current.TypeParams))
+			for _, tp := range c.current.TypeParams {
+				lambdaParams[tp] = true
+			}
+			for i := range n.Params {
+				c.resolveType(&n.Params[i].Type, lambdaParams)
+			}
+			c.resolveType(&n.ReturnType, lambdaParams)
+		}
 		root := newScope(nil)
 		for _, p := range n.Params {
 			if _, dup := root.names[p.Name]; dup {

@@ -474,6 +474,23 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 		for _, e := range x.Elems {
 			substituteExpr(e, sub)
 		}
+	case *ast.Lambda:
+		// Lambda's params + return type may reference the enclosing
+		// generic's type parameters. Without substitution the
+		// monomorphised body sees `i32`-typed exprs returning a
+		// `(T) => T` lambda — re-check mismatches and errors with
+		// `return type mismatch`. Walk the params slice in place
+		// so the lambda's checker-stamped FuncType (which it
+		// reads back via b.exprType later) reflects the
+		// monomorphised types.
+		for i := range x.Params {
+			x.Params[i].Type = substituteType(x.Params[i].Type, sub)
+		}
+		x.ReturnType = substituteType(x.ReturnType, sub)
+		for i := range x.Captures {
+			x.Captures[i].Type = substituteType(x.Captures[i].Type, sub)
+		}
+		substituteBlock(x.Body, sub)
 	}
 }
 
@@ -689,6 +706,12 @@ func cloneExpr(e ast.Expr) ast.Expr {
 		for i, e := range x.Elems {
 			c.Elems[i] = cloneExpr(e)
 		}
+		return &c
+	case *ast.Lambda:
+		c := *x
+		c.Params = append([]ast.Param(nil), x.Params...)
+		c.Captures = append([]ast.Param(nil), x.Captures...)
+		c.Body = cloneBlock(x.Body)
 		return &c
 	case *ast.StructLit:
 		c := *x
