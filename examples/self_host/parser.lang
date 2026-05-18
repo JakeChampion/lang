@@ -56,9 +56,20 @@ pub struct StmtExpr { value: Expr }
 // checker / interp branch on `len(else_body) == 0` rather than a
 // separate `has_else` flag.
 pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[] }
+// StmtWhile models `while (cond) { body... }`. The body executes
+// repeatedly as long as cond evaluates to a true VBool; an
+// in-body `return` short-circuits the loop the same way it
+// short-circuits an if-branch.
+pub struct StmtWhile { cond: Expr, body: Stmt[] }
+// StmtAssign models a re-assignment to an existing var: `x = expr;`.
+// The target is an ident name — full lvalue syntax (field /
+// index / tuple) is a later port milestone. The checker verifies
+// the target is already bound and that types match; the interp
+// updates the env's slot in place.
+pub struct StmtAssign { target: string, value: Expr }
 pub struct StmtUnknown { kind: string }
 
-pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtUnknown;
+pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile | StmtAssign | StmtUnknown;
 
 // Helper wraps to satisfy the implicit-union-wrap return-position
 // rule. Same pattern lexer.lang uses for Token construction.
@@ -81,6 +92,12 @@ function s_return(value: Expr): Stmt { return StmtReturn { value: value }; }
 function s_expr(value: Expr): Stmt { return StmtExpr { value: value }; }
 function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
     return StmtIf { cond: cond, then_body: then_body, else_body: else_body };
+}
+function s_while(cond: Expr, body: Stmt[]): Stmt {
+    return StmtWhile { cond: cond, body: body };
+}
+function s_assign(target: string, value: Expr): Stmt {
+    return StmtAssign { target: target, value: value };
 }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
 
@@ -300,6 +317,19 @@ function parse_stmt(p: Par): StmtResult {
         }
         return StmtResult { par: p, stmt: s_if(c.expr, then_blk.body, else_body) };
     }
+    if (kw == "while") {
+        p = p.advance();
+        if (p.peek_punct() != "(") {
+            return StmtResult { par: p, stmt: s_unknown("missing ( in while") };
+        }
+        p = p.advance();
+        var wc = parse_expr(p);
+        p = wc.par;
+        if (p.peek_punct() == ")") { p = p.advance(); }
+        var wb: BlockResult = parse_block(p);
+        p = wb.par;
+        return StmtResult { par: p, stmt: s_while(wc.expr, wb.body) };
+    }
     if (kw == "var") {
         p = p.advance();
         var name: string = p.peek_ident();
@@ -330,9 +360,30 @@ function parse_stmt(p: Par): StmtResult {
         if (p.peek_punct() == ";") { p = p.advance(); }
         return StmtResult { par: p, stmt: s_return(val.expr) };
     }
-    // Expression statement.
+    // Expression statement — or assignment if `=` follows. The
+    // parser doesn't accept `=` as a binary operator (it's not in
+    // the precedence table), so parse_expr stops at the ident; we
+    // peek for `=` here and switch to StmtAssign when seen. Only
+    // bare-ident targets are supported in this cut — full lvalue
+    // syntax (field / index / tuple) is a later milestone.
     var e = parse_expr(p);
     p = e.par;
+    if (p.peek_punct() == "=") {
+        // Pull the target name out of the parsed Expr. Anything
+        // other than a bare ident is an unsupported lvalue shape;
+        // surface as StmtUnknown so the surrounding test can spot
+        // the failure site.
+        var target: string = "";
+        match (e.expr) {
+            ExprIdent(id) => { target = id.name; },
+            _ => { return StmtResult { par: p, stmt: s_unknown("lhs of `=` must be ident") }; }
+        }
+        p = p.advance(); // consume `=`
+        var av = parse_expr(p);
+        p = av.par;
+        if (p.peek_punct() == ";") { p = p.advance(); }
+        return StmtResult { par: p, stmt: s_assign(target, av.expr) };
+    }
     if (p.peek_punct() == ";") { p = p.advance(); }
     return StmtResult { par: p, stmt: s_expr(e.expr) };
 }
@@ -455,6 +506,32 @@ function main(): i32 {
             if (len(ifs.else_body) != 0) { return 500; }
         },
         _ => { return 501; }
+    }
+
+    // While loop: `while (i < 5) { i = i + 1; }` → one StmtWhile
+    // with cond ExprBinary `<` and a single-stmt body (StmtAssign).
+    var src4: string = "while (i < 5) { i = i + 1; }";
+    var prog4: Stmt[] = parse_program(lexer.tokenize(src4));
+    if (len(prog4) != 1) { return 600; }
+    match (prog4[0]) {
+        StmtWhile(w) => {
+            match (w.cond) {
+                ExprBinary(b) => { if (b.op != "<") { return 601; } },
+                _ => { return 602; }
+            }
+            if (len(w.body) != 1) { return 603; }
+            match (w.body[0]) {
+                StmtAssign(a) => {
+                    if (a.target != "i") { return 604; }
+                    match (a.value) {
+                        ExprBinary(b) => { if (b.op != "+") { return 605; } },
+                        _ => { return 606; }
+                    }
+                },
+                _ => { return 607; }
+            }
+        },
+        _ => { return 608; }
     }
 
     return 0;

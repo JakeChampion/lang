@@ -75,6 +75,44 @@ function (e: Env) lookup(name: string): Value {
     return v_err("undefined identifier: " + name);
 }
 
+// update mutates the slot for an existing name. Linear back-to-
+// front scan so the most-recent shadowing binding wins (matches
+// lookup). Returns a fresh Env — the parallel-array shape is
+// rebuilt with the slot replaced because the underlying arrays
+// are value-typed (push returns a new array). Returns the
+// original env unchanged when the name isn't bound; the checker
+// is supposed to surface that as a type error, but the interp
+// guards against it via VErr-on-read at the call site.
+function (e: Env) update(name: string, v: Value): Env {
+    var n: i32 = len(e.names);
+    var ns: string[] = [];
+    var vs: Value[] = [];
+    var found: boolean = false;
+    var i: i32 = n - 1;
+    // Walk from the end forward, recording which index to
+    // replace. Then rebuild forward to keep declaration order.
+    var hit_idx: i32 = 0 - 1;
+    while (i >= 0) {
+        if (!found && e.names[i] == name) {
+            hit_idx = i;
+            found = true;
+        }
+        i = i - 1;
+    }
+    if (!found) { return e; }
+    var j: i32 = 0;
+    while (j < n) {
+        ns = ns.push(e.names[j]);
+        if (j == hit_idx) {
+            vs = vs.push(v);
+        } else {
+            vs = vs.push(e.values[j]);
+        }
+        j = j + 1;
+    }
+    return Env { names: ns, values: vs };
+}
+
 // =================== INTEGER PARSE ====================
 
 // The parser hands us a TokNumber whose text is the original
@@ -273,26 +311,105 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                 VBool(b) => {
                     var body: parser.Stmt[] = ifs.else_body;
                     if (b.v) { body = ifs.then_body; }
-                    // Branches use the caller's env as the starting
-                    // point; bindings declared inside the branch
-                    // don't escape, mirroring the checker's stance.
-                    return eval_block(body, env);
+                    // Branch-local `var`s don't escape: trim the
+                    // env back to the entry length. Assignments
+                    // to outer-scoped names sit at index < base
+                    // and survive the trim (update() rewrites
+                    // slots in place).
+                    var base: i32 = len(env.names);
+                    var step: StepResult = eval_block(body, env);
+                    return StepResult { env: trim_env(step.env, base), ret: step.ret };
                 },
                 _ => { return StepResult { env: env, ret: v_err("if cond not bool") }; }
             }
             return StepResult { env: env, ret: v_err("unreachable if-arm") };
+        },
+        parser.StmtWhile(w) => {
+            // Loop until cond is false or the body returns.
+            // Assignments inside the body need to outlive each
+            // iteration — eval_block's "drop branch-local
+            // bindings" stance is wrong here, so we step the body
+            // ourselves and thread `cur` forward. `var` declared
+            // inside the body still doesn't leak past the loop:
+            // we snapshot the names-length at entry and trim back
+            // on each iteration boundary, simulating block scope.
+            //
+            // Concretely: the names array grows only by `var`
+            // inside the body; truncating to entry-length on each
+            // iteration discards those bindings before the next
+            // iteration starts, but keeps any updates to
+            // outer-scoped names (those slots sit at index < base
+            // and update() rewrites them in place). The trim also
+            // applies on loop exit so the outer scope sees the
+            // env it started with, plus assignment updates.
+            var cur: Env = env;
+            var base: i32 = len(env.names);
+            while (true) {
+                var cv: Value = eval_expr(w.cond, cur);
+                if (is_err(cv)) { return StepResult { env: env, ret: cv }; }
+                match (cv) {
+                    VBool(b) => {
+                        if (!b.v) { return StepResult { env: cur, ret: v_err("__noreturn__") }; }
+                    },
+                    _ => { return StepResult { env: env, ret: v_err("while cond not bool") }; }
+                }
+                var step: StepResult = eval_block(w.body, cur);
+                if (!is_noreturn(step.ret)) {
+                    // A return inside the loop short-circuits all
+                    // remaining iterations.
+                    return step;
+                }
+                cur = trim_env(step.env, base);
+            }
+            return StepResult { env: cur, ret: v_err("__noreturn__") };
+        },
+        parser.StmtAssign(a) => {
+            var av: Value = eval_expr(a.value, env);
+            if (is_err(av)) { return StepResult { env: env, ret: av }; }
+            // update silently no-ops on undefined names; surface
+            // the error explicitly so a mistake is observable in
+            // tests.
+            var i: i32 = len(env.names) - 1;
+            var found: boolean = false;
+            while (i >= 0 && !found) {
+                if (env.names[i] == a.target) { found = true; }
+                i = i - 1;
+            }
+            if (!found) {
+                return StepResult { env: env, ret: v_err("assign to undefined `" + a.target + "`") };
+            }
+            return StepResult { env: env.update(a.target, av), ret: v_err("__noreturn__") };
         },
         parser.StmtUnknown(u) => { return StepResult { env: env, ret: v_err("parser-side unknown stmt: " + u.kind) }; }
     }
     return StepResult { env: env, ret: v_err("unhandled Stmt variant") };
 }
 
-// eval_block walks a body, threading the env forward, returning
-// the FIRST encountered non-__noreturn ret (typically a return
-// value) so the surrounding eval_program loop sees the return.
-// The env returned is the caller's env — branch-scoped bindings
-// don't leak. If no return fires the block surfaces the
-// __noreturn sentinel so the caller keeps stepping.
+// trim_env drops bindings past index `base`. Used by the while
+// loop to discard body-local `var`s between iterations while
+// preserving any update()s to outer-scoped names (those sit at
+// index < base and aren't touched).
+function trim_env(e: Env, base: i32): Env {
+    if (len(e.names) <= base) { return e; }
+    var ns: string[] = [];
+    var vs: Value[] = [];
+    var i: i32 = 0;
+    while (i < base) {
+        ns = ns.push(e.names[i]);
+        vs = vs.push(e.values[i]);
+        i = i + 1;
+    }
+    return Env { names: ns, values: vs };
+}
+
+// eval_block walks a body, threading env forward through every
+// stmt. Returns the threaded env so the caller can decide how
+// much of it to keep — the StmtIf path trims back to the entry
+// length (branch-local `var`s die), while StmtWhile uses the
+// same trim per iteration but keeps it. Both rely on the fact
+// that update() rewrites slots in place, so reassignments to
+// outer-scoped names sit at index < base and survive the trim.
+// First non-__noreturn ret short-circuits the walk.
 function eval_block(body: parser.Stmt[], env: Env): StepResult {
     var cur: Env = env;
     var i: i32 = 0;
@@ -300,11 +417,11 @@ function eval_block(body: parser.Stmt[], env: Env): StepResult {
         var r: StepResult = eval_stmt(body[i], cur);
         cur = r.env;
         if (!is_noreturn(r.ret)) {
-            return StepResult { env: env, ret: r.ret };
+            return StepResult { env: cur, ret: r.ret };
         }
         i = i + 1;
     }
-    return StepResult { env: env, ret: v_err("__noreturn__") };
+    return StepResult { env: cur, ret: v_err("__noreturn__") };
 }
 
 function is_noreturn(v: Value): boolean {
@@ -417,6 +534,38 @@ function main(): i32 {
     match (r11) {
         VInt(i) => { if (i.v != 20) { return 110; } },
         _ => { return 111; }
+    }
+
+    // Plain assignment: declared, reassigned, returned.
+    var r12: Value = run_source("var n = 1; n = 7; return n;");
+    match (r12) {
+        VInt(i) => { if (i.v != 7) { return 120; } },
+        _ => { return 121; }
+    }
+
+    // While loop, counter. Sum of 1..=5 == 15.
+    var r13: Value = run_source(
+        "var i = 1; var s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s;"
+    );
+    match (r13) {
+        VInt(i) => { if (i.v != 15) { return 130; } },
+        _ => { return 131; }
+    }
+
+    // Early `return` inside while short-circuits the loop.
+    var r14: Value = run_source(
+        "var i = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 0 - 1;"
+    );
+    match (r14) {
+        VInt(i) => { if (i.v != 3) { return 140; } },
+        _ => { return 141; }
+    }
+
+    // While with always-false cond: body never runs.
+    var r15: Value = run_source("var x = 5; while (false) { x = 99; } return x;");
+    match (r15) {
+        VInt(i) => { if (i.v != 5) { return 150; } },
+        _ => { return 151; }
     }
 
     return 0;

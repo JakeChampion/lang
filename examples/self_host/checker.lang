@@ -246,6 +246,36 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             check_block(ifs.else_body, s);
             return CheckResult { scope: s, ty: t_bool() };
         },
+        parser.StmtWhile(w) => {
+            // Same shape as if: cond must be bool, body walks in a
+            // derived scope. Loop control flow has no static type;
+            // the checker surfaces TypeBool on success / TypeUnknown
+            // on a non-bool cond, matching the if path.
+            var wt: Type = check_expr(w.cond, s);
+            if (!type_eq(wt, t_bool())) {
+                check_block(w.body, s);
+                return CheckResult { scope: s, ty: t_unknown("while cond not bool") };
+            }
+            check_block(w.body, s);
+            return CheckResult { scope: s, ty: t_bool() };
+        },
+        parser.StmtAssign(a) => {
+            // Target must already be bound; types of LHS and RHS
+            // must match. Type-mismatched or undefined-target
+            // assigns surface TypeUnknown so a future "collect-
+            // errors" pass can harvest them. The scope is
+            // unchanged — assignment doesn't introduce a new
+            // binding.
+            var existing: Type = s.lookup(a.target);
+            if (is_unknown(existing)) {
+                return CheckResult { scope: s, ty: t_unknown("assign to undefined `" + a.target + "`") };
+            }
+            var vt: Type = check_expr(a.value, s);
+            if (!type_eq(existing, vt)) {
+                return CheckResult { scope: s, ty: t_unknown("type mismatch in assign to `" + a.target + "`") };
+            }
+            return CheckResult { scope: s, ty: vt };
+        },
         parser.StmtUnknown(u) => { return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + u.kind) }; }
     }
     return CheckResult { scope: s, ty: t_unknown("unhandled Stmt variant") };
