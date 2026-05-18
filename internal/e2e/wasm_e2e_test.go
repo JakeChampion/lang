@@ -6771,3 +6771,254 @@ function main(): i32 {
 		t.Errorf("minimal module: exit = %d, want 0", got)
 	}
 }
+
+// TestWASMInstConsts covers the four const-instruction encoders.
+// Vectors hit the leb terminator regimes for i32 / i64 (single-byte
+// positive, single-byte negative via the canonical -1, multi-byte
+// boundary at 128 / -65) plus a fixed-width-LE check on f32_const
+// and f64_const.
+func TestWASMInstConsts(t *testing.T) {
+	src := `import "std/wasm/inst";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // i32.const 0 -> 0x41 0x00
+    var c0: u8[] = inst.inst_i32_const(empty, 0);
+    if (len(c0) != 2) { return 1; }
+    if (c0[0] != 65u8) { return 2; }
+    if (c0[1] != 0u8) { return 3; }
+
+    // i32.const 63 -> 0x41 0x3F (largest single-byte sleb positive
+    // — bit-6 clear so no continuation needed).
+    var c63: u8[] = inst.inst_i32_const(empty, 63);
+    if (len(c63) != 2) { return 10; }
+    if (c63[0] != 65u8) { return 11; }
+    if (c63[1] != 63u8) { return 12; }
+
+    // i32.const 127 -> 0x41 0xFF 0x00. 127 has bit-6 set, so the
+    // sleb form needs a continuation byte; otherwise [0x7F] would
+    // decode to -1. This is the trap wasm hex dumps stumble into.
+    var c127: u8[] = inst.inst_i32_const(empty, 127);
+    if (len(c127) != 3) { return 15; }
+    if (c127[0] != 65u8) { return 16; }
+    if (c127[1] != 255u8) { return 17; }
+    if (c127[2] != 0u8) { return 18; }
+
+    // i32.const -1 -> 0x41 0x7F (sleb 0x7F is the all-ones term)
+    var cn1: u8[] = inst.inst_i32_const(empty, 0 - 1);
+    if (len(cn1) != 2) { return 20; }
+    if (cn1[1] != 127u8) { return 22; }
+
+    // i32.const 128 -> 0x41 0x80 0x01 (sleb boundary)
+    var c128: u8[] = inst.inst_i32_const(empty, 128);
+    if (len(c128) != 3) { return 30; }
+    if (c128[0] != 65u8) { return 31; }
+    if (c128[1] != 128u8) { return 32; }
+    if (c128[2] != 1u8) { return 33; }
+
+    // i64.const 42 -> 0x42 0x2A
+    var ci64: u8[] = inst.inst_i64_const(empty, 42i64);
+    if (len(ci64) != 2) { return 40; }
+    if (ci64[0] != 66u8) { return 41; }
+    if (ci64[1] != 42u8) { return 42; }
+
+    // f32.const with bit pattern 0x3F800000 (= 1.0): 0x43 followed
+    // by four LE bytes [0x00, 0x00, 0x80, 0x3F].
+    var f1: u8[] = inst.inst_f32_const(empty, 1065353216u32);
+    if (len(f1) != 5) { return 50; }
+    if (f1[0] != 67u8) { return 51; }
+    if (f1[1] != 0u8) { return 52; }
+    if (f1[2] != 0u8) { return 53; }
+    if (f1[3] != 128u8) { return 54; }
+    if (f1[4] != 63u8) { return 55; }
+
+    // f64.const with bit pattern 0x3FF0000000000000 (= 1.0): 0x44
+    // followed by eight LE bytes ending in 0x3F.
+    var f2: u8[] = inst.inst_f64_const(empty, 4607182418800017408u64);
+    if (len(f2) != 9) { return 60; }
+    if (f2[0] != 68u8) { return 61; }
+    if (f2[1] != 0u8) { return 62; }
+    if (f2[7] != 240u8) { return 67; }  // 0xF0
+    if (f2[8] != 63u8) { return 68; }   // 0x3F
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("inst consts: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMInstVariable covers local.get / set / tee and
+// global.get / set. The single-byte and multi-byte uleb cases
+// (idx 0 vs idx 130) verify the immediate is encoded correctly
+// after the opcode byte.
+func TestWASMInstVariable(t *testing.T) {
+	src := `import "std/wasm/inst";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // local.get 0 -> 0x20 0x00
+    var lg0: u8[] = inst.inst_local_get(empty, 0u32);
+    if (len(lg0) != 2) { return 1; }
+    if (lg0[0] != 32u8) { return 2; }
+    if (lg0[1] != 0u8) { return 3; }
+
+    // local.set 5 -> 0x21 0x05
+    var ls5: u8[] = inst.inst_local_set(empty, 5u32);
+    if (len(ls5) != 2) { return 10; }
+    if (ls5[0] != 33u8) { return 11; }
+    if (ls5[1] != 5u8) { return 12; }
+
+    // local.tee 1 -> 0x22 0x01
+    var lt1: u8[] = inst.inst_local_tee(empty, 1u32);
+    if (len(lt1) != 2) { return 20; }
+    if (lt1[0] != 34u8) { return 21; }
+    if (lt1[1] != 1u8) { return 22; }
+
+    // local.get 130 -> 0x20 0x82 0x01 (uleb of 130)
+    var lg130: u8[] = inst.inst_local_get(empty, 130u32);
+    if (len(lg130) != 3) { return 30; }
+    if (lg130[0] != 32u8) { return 31; }
+    if (lg130[1] != 130u8) { return 32; }
+    if (lg130[2] != 1u8) { return 33; }
+
+    // global.get 7 -> 0x23 0x07
+    var gg7: u8[] = inst.inst_global_get(empty, 7u32);
+    if (len(gg7) != 2) { return 40; }
+    if (gg7[0] != 35u8) { return 41; }
+    if (gg7[1] != 7u8) { return 42; }
+
+    // global.set 0 -> 0x24 0x00
+    var gs0: u8[] = inst.inst_global_set(empty, 0u32);
+    if (len(gs0) != 2) { return 50; }
+    if (gs0[0] != 36u8) { return 51; }
+    if (gs0[1] != 0u8) { return 52; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("inst variable: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMInstControl covers the control-flow opcodes plus
+// drop/select. End-to-end vectors include an empty-blocktype
+// block, an i32-result block, an if/else/end sequence, a br_if
+// to a label, and a call_indirect with two leb immediates.
+func TestWASMInstControl(t *testing.T) {
+	src := `import "std/wasm/inst";
+import "std/wasm/encode";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // Single-byte opcodes.
+    if (len(inst.inst_unreachable(empty)) != 1) { return 1; }
+    if (inst.inst_unreachable(empty)[0] != 0u8) { return 2; }
+    if (inst.inst_nop(empty)[0] != 1u8) { return 3; }
+    if (inst.inst_else(empty)[0] != 5u8) { return 4; }
+    if (inst.inst_end(empty)[0] != 11u8) { return 5; }
+    if (inst.inst_return(empty)[0] != 15u8) { return 6; }
+    if (inst.inst_drop(empty)[0] != 26u8) { return 7; }
+    if (inst.inst_select(empty)[0] != 27u8) { return 8; }
+
+    // block bt=empty -> 0x02 0x40
+    var bk: u8[] = inst.inst_block_start(empty, inst.blocktype_empty());
+    if (len(bk) != 2) { return 10; }
+    if (bk[0] != 2u8) { return 11; }
+    if (bk[1] != 64u8) { return 12; }
+
+    // loop bt=i32 -> 0x03 0x7F
+    var lp: u8[] = inst.inst_loop_start(empty, encode.valtype_i32());
+    if (len(lp) != 2) { return 20; }
+    if (lp[0] != 3u8) { return 21; }
+    if (lp[1] != 127u8) { return 22; }
+
+    // if bt=empty -> 0x04 0x40
+    var ifs: u8[] = inst.inst_if_start(empty, inst.blocktype_empty());
+    if (ifs[0] != 4u8) { return 30; }
+    if (ifs[1] != 64u8) { return 31; }
+
+    // br 0 -> 0x0C 0x00
+    var br0: u8[] = inst.inst_br(empty, 0u32);
+    if (br0[0] != 12u8) { return 40; }
+    if (br0[1] != 0u8) { return 41; }
+
+    // br_if 3 -> 0x0D 0x03
+    var bri: u8[] = inst.inst_br_if(empty, 3u32);
+    if (bri[0] != 13u8) { return 50; }
+    if (bri[1] != 3u8) { return 51; }
+
+    // call 7 -> 0x10 0x07
+    var c7: u8[] = inst.inst_call(empty, 7u32);
+    if (c7[0] != 16u8) { return 60; }
+    if (c7[1] != 7u8) { return 61; }
+
+    // call_indirect typeidx=2 tableidx=0 -> 0x11 0x02 0x00
+    var ci: u8[] = inst.inst_call_indirect(empty, 2u32, 0u32);
+    if (len(ci) != 3) { return 70; }
+    if (ci[0] != 17u8) { return 71; }
+    if (ci[1] != 2u8) { return 72; }
+    if (ci[2] != 0u8) { return 73; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("inst control: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMInstFunctionBody covers the code-section entry shape:
+// uleb(size) + locals_vec + body + 0x0B. Two cases: an empty-
+// locals body that just returns a constant, and a one-group
+// locals body to exercise put_locals_one_group.
+func TestWASMInstFunctionBody(t *testing.T) {
+	src := `import "std/wasm/inst";
+import "std/wasm/encode";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // Build body: i32.const 42 (no locals).
+    var body: u8[] = inst.inst_i32_const(empty, 42);
+
+    var locals: u8[] = inst.put_locals_empty(empty);
+
+    var entry: u8[] = inst.put_function_body(empty, locals, body);
+
+    // Expected inner bytes: 0x00 (locals=0), 0x41 0x2A (i32.const 42),
+    // 0x0B (end). Wrapped: 0x04 (size=4) + the 4 inner bytes.
+    if (len(entry) != 5) { return 1; }
+    if (entry[0] != 4u8) { return 2; }     // size
+    if (entry[1] != 0u8) { return 3; }     // locals_vec(0)
+    if (entry[2] != 65u8) { return 4; }    // i32.const
+    if (entry[3] != 42u8) { return 5; }    // 42
+    if (entry[4] != 11u8) { return 6; }    // end
+
+    // Locals: one group of 3 i32s.
+    var locals3: u8[] = inst.put_locals_one_group(empty, 3u32, encode.valtype_i32());
+    if (len(locals3) != 3) { return 10; }
+    if (locals3[0] != 1u8) { return 11; }      // num groups
+    if (locals3[1] != 3u8) { return 12; }      // count
+    if (locals3[2] != 127u8) { return 13; }    // i32 valtype
+
+    // Wrap a body with those locals.
+    var body2: u8[] = inst.inst_local_get(empty, 0u32);  // 0x20 0x00
+    body2 = inst.inst_return(body2);                     // 0x0F
+    var entry2: u8[] = inst.put_function_body(empty, locals3, body2);
+    // Inner: locals(3 bytes) + body(3 bytes) + end(1) = 7 bytes.
+    // Wrapped: size_uleb(7) = 0x07, then the 7 inner bytes.
+    if (len(entry2) != 8) { return 20; }
+    if (entry2[0] != 7u8) { return 21; }      // size
+    if (entry2[1] != 1u8) { return 22; }      // locals num groups
+    if (entry2[2] != 3u8) { return 23; }      // group count
+    if (entry2[3] != 127u8) { return 24; }    // i32 valtype
+    if (entry2[4] != 32u8) { return 25; }     // local.get
+    if (entry2[5] != 0u8) { return 26; }      // idx 0
+    if (entry2[6] != 15u8) { return 27; }     // return
+    if (entry2[7] != 11u8) { return 28; }     // end
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("inst function body: exit = %d, want 0", got)
+	}
+}
