@@ -1532,6 +1532,26 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		elem := t.Elem
 		c.resolveType(&elem, params)
 		*slot = ast.ArrayType{Elem: elem}
+	case ast.SliceType:
+		elem := t.Elem
+		c.resolveType(&elem, params)
+		*slot = ast.SliceType{Elem: elem}
+	case ast.TupleType:
+		// Recurse into each element. Without this, a
+		// generic function's `(T, T)` return type kept its
+		// elements as the parser-built `StructType{Name:"T"}`
+		// (never converted to `ParamType`), while
+		// `checkExpr((x, x))` returned `TupleType` over the
+		// param's already-resolved `ParamType`. ast.Equal then
+		// compared `StructType` vs `ParamType` and returned
+		// false — the user saw "function returns (T, T) but
+		// expression is (T, T)" with identical-looking sides.
+		elems := make([]ast.Type, len(t.Elems))
+		copy(elems, t.Elems)
+		for i := range elems {
+			c.resolveType(&elems[i], params)
+		}
+		*slot = ast.TupleType{Elems: elems}
 	case *ast.FuncType:
 		for i := range t.Params {
 			c.resolveType(&t.Params[i], params)

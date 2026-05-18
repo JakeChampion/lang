@@ -9927,6 +9927,55 @@ function main(): i32 {
 	}
 }
 
+// A generic function returning a tuple of type params
+// failed type-check with the puzzling error "function
+// returns (T, T) but expression is (T, T)" — both sides
+// rendered identically.
+//
+// Root cause: `resolveType` had no `ast.TupleType` /
+// `ast.SliceType` case. The parser builds bare type
+// identifiers as `StructType{Name:"T"}`; resolveType walks
+// the function's params + return type rewriting those into
+// `ParamType{Name:"T"}` when the name is in the type-param
+// set. With no TupleType recursion, a `(T, T)` return type
+// kept its elements as `StructType` while `checkExpr((x,
+// x))` returned a `TupleType` over the param's
+// already-resolved `ParamType`. `ast.Equal` compared
+// StructType vs ParamType and returned false; the user
+// saw identical-looking sides reject each other.
+//
+// Same hole for `SliceType`, which had a `case ArrayType`
+// already but the slice form (parser builds `[T]` as
+// `ast.SliceType`) silently kept its inner StructType.
+//
+// Fix: resolveType recurses into TupleType.Elems and
+// SliceType.Elem.
+func TestArm64ResolveTypeTupleSliceGeneric(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+	}{
+		{"tuple_return", `function dup[T](x: T): (T, T) { return (x, x); }
+function main(): i32 {
+    var p = dup(42);
+    if (p.0 == 42 && p.1 == 42) { return 0; }
+    return 1;
+}`},
+		{"pair_two_params", `function pair[A, B](a: A, b: B): (A, B) { return (a, b); }
+function main(): i32 {
+    var p = pair(1234567890123, "hello");
+    if (p.0 == 1234567890123 && p.1 == "hello") { return 0; }
+    return 1;
+}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != 0 {
+				t.Errorf("got exit %d, want 0", code)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
