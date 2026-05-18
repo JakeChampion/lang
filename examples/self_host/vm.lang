@@ -1,0 +1,670 @@
+// examples/self_host/vm.lang — seventh concrete step of the
+// self-host port and the first "lower-level representation"
+// layer. Compiles a parser.Module's top-level stmts into a
+// linear bytecode stream, then executes it on a tiny stack
+// machine.
+//
+// Two demos in one file:
+//   - compile_module(mod) → Op[]: AST → bytecode lowering.
+//     Mirrors the shape of an IR builder: a recursive walk
+//     over Expr / Stmt that emits ops with patched jump
+//     targets. Demonstrates label-patching for forward jumps
+//     (if-else / while).
+//   - exec(ops): Value — stack-machine VM. Same Value union
+//     the interp uses, plus a stack[] and locals[] vector
+//     keyed by local-variable index (compile_module assigns
+//     indices as it sees each `var`).
+//
+// Scope (intentionally narrow):
+//   - i32 / bool / string values
+//   - var declarations (assigned a local index in declaration
+//     order)
+//   - reassignment via `=`
+//   - return (halts the VM with the top-of-stack value)
+//   - if/else (forward jumps patched after the then/else
+//     bodies are emitted)
+//   - while (back-edge to the cond, forward jump out of the
+//     body)
+//   - binary / unary ops, comparisons, logical && ||
+//   - println-style side-effect-free expr stmts
+//
+// Out of scope (next iteration): function decls + calls (would
+// need a call frame stack + return address mechanism), arrays
+// + indexing (need separate VArr handling in stack ops),
+// constfold integration.
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+
+// =================== VALUE ====================
+
+pub struct VInt { v: i32 }
+pub struct VBool { v: boolean }
+pub struct VString { v: string }
+pub struct VErr { msg: string }
+
+pub type Value = VInt | VBool | VString | VErr;
+
+function v_int(n: i32): Value { return VInt { v: n }; }
+function v_bool(b: boolean): Value { return VBool { v: b }; }
+function v_string(s: string): Value { return VString { v: s }; }
+function v_err(msg: string): Value { return VErr { msg: msg }; }
+
+function is_err(v: Value): boolean {
+    match (v) {
+        VErr(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// =================== OPCODES ====================
+
+// Each Op is a struct with (op-kind, payload). The union keeps
+// the bytecode array homogeneous so the VM can fetch ops via
+// `ops[ip]`. Op-kinds carry their immediate operand inline
+// (push immediates, local index, jump target) so the VM
+// doesn't need to interleave operand bytes between ops.
+
+pub struct OpPushInt { v: i32 }
+pub struct OpPushBool { v: boolean }
+pub struct OpPushStr { v: string }
+pub struct OpLoadLocal { idx: i32 }
+pub struct OpStoreLocal { idx: i32 }
+pub struct OpBinary { op: string }
+pub struct OpUnary { op: string }
+pub struct OpJump { target: i32 }
+pub struct OpJumpIfFalse { target: i32 }
+pub struct OpPop { tag: i32 }
+pub struct OpReturn { tag: i32 }
+
+pub type Op = OpPushInt | OpPushBool | OpPushStr
+            | OpLoadLocal | OpStoreLocal
+            | OpBinary | OpUnary
+            | OpJump | OpJumpIfFalse
+            | OpPop | OpReturn;
+
+function op_push_int(n: i32): Op { return OpPushInt { v: n }; }
+function op_push_bool(b: boolean): Op { return OpPushBool { v: b }; }
+function op_push_str(s: string): Op { return OpPushStr { v: s }; }
+function op_load(i: i32): Op { return OpLoadLocal { idx: i }; }
+function op_store(i: i32): Op { return OpStoreLocal { idx: i }; }
+function op_binary(op: string): Op { return OpBinary { op: op }; }
+function op_unary(op: string): Op { return OpUnary { op: op }; }
+function op_jump(t: i32): Op { return OpJump { target: t }; }
+function op_jump_if_false(t: i32): Op { return OpJumpIfFalse { target: t }; }
+function op_pop(): Op { return OpPop { tag: 0 }; }
+function op_return(): Op { return OpReturn { tag: 0 }; }
+
+// =================== COMPILER ====================
+
+// Locals table: name → index (parallel arrays). Used by the
+// compiler to translate var refs / assigns to local-index
+// load/store ops. The same indices are reused by the VM's
+// `locals[]` vector at exec time.
+pub struct LocalsTable { names: string[] }
+
+function new_locals(): LocalsTable {
+    var ns: string[] = [];
+    return LocalsTable { names: ns };
+}
+
+function (lt: LocalsTable) idx_of(name: string): i32 {
+    var i: i32 = 0;
+    while (i < len(lt.names)) {
+        if (lt.names[i] == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function (lt: LocalsTable) bind(name: string): LocalsTable {
+    var ns: string[] = lt.names.push(name);
+    return LocalsTable { names: ns };
+}
+
+// digits_to_i32: same helper the interp uses. Strips a leading
+// `-` so synthetic negative-literal nodes (produced by the
+// constfold pass on `0 - 5`) round-trip cleanly.
+function digits_to_i32(s: string): i32 {
+    if (len(s) == 0) { return 0; }
+    var neg: boolean = false;
+    var start: i32 = 0;
+    if (s[0] == 45) { neg = true; start = 1; }
+    var acc: i32 = 0;
+    var i: i32 = start;
+    while (i < len(s)) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) {
+            if (neg) { return 0 - acc; }
+            return acc;
+        }
+        acc = acc * 10 + (b - 48);
+        i = i + 1;
+    }
+    if (neg) { return 0 - acc; }
+    return acc;
+}
+
+// CompileResult bundles the ops and the threaded LocalsTable so
+// the caller can sequence multiple compile_* calls. The
+// threading mirrors the interp's StepResult shape: input state
+// plus output, returned as a value rather than mutated through
+// a shared frame.
+pub struct CompileResult { ops: Op[], lt: LocalsTable }
+
+function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult {
+    match (e) {
+        parser.ExprNumber(n) => {
+            ops = ops.push(op_push_int(digits_to_i32(n.text)));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprBool(b) => {
+            ops = ops.push(op_push_bool(b.value));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprString(s) => {
+            ops = ops.push(op_push_str(s.value));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprIdent(id) => {
+            var i: i32 = lt.idx_of(id.name);
+            if (i < 0) {
+                // Emit a sentinel push that the VM turns into a
+                // VErr at runtime. Lower-cost than a separate
+                // "compile error" channel.
+                ops = ops.push(op_push_str("__undef:" + id.name));
+                return CompileResult { ops: ops, lt: lt };
+            }
+            ops = ops.push(op_load(i));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprBinary(b) => {
+            var lr: CompileResult = compile_expr(b.left, ops, lt);
+            ops = lr.ops; lt = lr.lt;
+            var rr: CompileResult = compile_expr(b.right, ops, lt);
+            ops = rr.ops; lt = rr.lt;
+            ops = ops.push(op_binary(b.op));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprUnary(u) => {
+            var orr: CompileResult = compile_expr(u.operand, ops, lt);
+            ops = orr.ops; lt = orr.lt;
+            ops = ops.push(op_unary(u.op));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprCall(_) => {
+            ops = ops.push(op_push_str("__nocall__"));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprArray(_) => {
+            ops = ops.push(op_push_str("__noarray__"));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprIndex(_) => {
+            ops = ops.push(op_push_str("__noindex__"));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprUnknown(_) => {
+            ops = ops.push(op_push_str("__exprunknown__"));
+            return CompileResult { ops: ops, lt: lt };
+        }
+    }
+    return CompileResult { ops: ops, lt: lt };
+}
+
+// patch_jump rewrites the target field of the op at `idx` to
+// the current end-of-ops position. Used after emitting an
+// if-then body to patch the OpJumpIfFalse over to the else
+// arm, etc.
+function patch_jump(ops: Op[], idx: i32, target: i32): Op[] {
+    var out: Op[] = [];
+    var i: i32 = 0;
+    while (i < len(ops)) {
+        if (i == idx) {
+            match (ops[i]) {
+                OpJump(_) => { out = out.push(op_jump(target)); },
+                OpJumpIfFalse(_) => { out = out.push(op_jump_if_false(target)); },
+                _ => { out = out.push(ops[i]); }
+            }
+        } else {
+            out = out.push(ops[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResult {
+    match (st) {
+        parser.StmtVar(v) => {
+            var ir: CompileResult = compile_expr(v.init, ops, lt);
+            ops = ir.ops; lt = ir.lt;
+            lt = lt.bind(v.name);
+            // The just-bound local sits at index len(lt.names) - 1.
+            ops = ops.push(op_store(len(lt.names) - 1));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.StmtReturn(r) => {
+            var ir: CompileResult = compile_expr(r.value, ops, lt);
+            ops = ir.ops; lt = ir.lt;
+            ops = ops.push(op_return());
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.StmtExpr(x) => {
+            var ir: CompileResult = compile_expr(x.value, ops, lt);
+            ops = ir.ops; lt = ir.lt;
+            ops = ops.push(op_pop());
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.StmtAssign(a) => {
+            var i: i32 = lt.idx_of(a.target);
+            if (i < 0) {
+                ops = ops.push(op_push_str("__assign-undef:" + a.target));
+                ops = ops.push(op_return());
+                return CompileResult { ops: ops, lt: lt };
+            }
+            var ir: CompileResult = compile_expr(a.value, ops, lt);
+            ops = ir.ops; lt = ir.lt;
+            ops = ops.push(op_store(i));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.StmtIf(ifs) => {
+            // Emit:  cond; JUMP_IF_FALSE else_lbl; then_body; JUMP end_lbl; else_lbl: else_body; end_lbl:
+            var cr: CompileResult = compile_expr(ifs.cond, ops, lt);
+            ops = cr.ops; lt = cr.lt;
+            var jif_idx: i32 = len(ops);
+            ops = ops.push(op_jump_if_false(0 - 1));
+            // then body
+            var tr: CompileResult = compile_block(ifs.then_body, ops, lt);
+            ops = tr.ops; lt = tr.lt;
+            if (len(ifs.else_body) > 0) {
+                var jump_end_idx: i32 = len(ops);
+                ops = ops.push(op_jump(0 - 1));
+                var else_target: i32 = len(ops);
+                ops = patch_jump(ops, jif_idx, else_target);
+                var er: CompileResult = compile_block(ifs.else_body, ops, lt);
+                ops = er.ops; lt = er.lt;
+                ops = patch_jump(ops, jump_end_idx, len(ops));
+            } else {
+                ops = patch_jump(ops, jif_idx, len(ops));
+            }
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.StmtWhile(w) => {
+            var loop_top: i32 = len(ops);
+            var cr: CompileResult = compile_expr(w.cond, ops, lt);
+            ops = cr.ops; lt = cr.lt;
+            var exit_idx: i32 = len(ops);
+            ops = ops.push(op_jump_if_false(0 - 1));
+            var br: CompileResult = compile_block(w.body, ops, lt);
+            ops = br.ops; lt = br.lt;
+            ops = ops.push(op_jump(loop_top));
+            ops = patch_jump(ops, exit_idx, len(ops));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.StmtUnknown(_) => { return CompileResult { ops: ops, lt: lt }; }
+    }
+    return CompileResult { ops: ops, lt: lt };
+}
+
+function compile_block(body: parser.Stmt[], ops: Op[], lt: LocalsTable): CompileResult {
+    var i: i32 = 0;
+    while (i < len(body)) {
+        var r: CompileResult = compile_stmt(body[i], ops, lt);
+        ops = r.ops; lt = r.lt;
+        i = i + 1;
+    }
+    return CompileResult { ops: ops, lt: lt };
+}
+
+pub function compile_module(mod: parser.Module): Op[] {
+    var ops: Op[] = [];
+    var lt: LocalsTable = new_locals();
+    var r: CompileResult = compile_block(mod.top_stmts, ops, lt);
+    // Emit an implicit halt — without a terminating OpReturn
+    // the VM would step past end-of-ops and trip its bounds
+    // check.
+    var out: Op[] = r.ops;
+    out = out.push(op_push_int(0));
+    out = out.push(op_return());
+    return out;
+}
+
+// =================== VM ====================
+
+// Locals storage: parallel to LocalsTable.names but holding
+// Value. Indexed by the same i32 the compiler stamped on
+// OpLoadLocal / OpStoreLocal. Initial value VErr to make
+// "uninitialised read" observable.
+struct VMLocals { values: Value[] }
+
+function new_vm_locals(n: i32): VMLocals {
+    var vs: Value[] = [];
+    var i: i32 = 0;
+    while (i < n) { vs = vs.push(v_err("__uninit__")); i = i + 1; }
+    return VMLocals { values: vs };
+}
+
+function (l: VMLocals) get(i: i32): Value {
+    if (i < 0 || i >= len(l.values)) { return v_err("local index oob"); }
+    return l.values[i];
+}
+
+function (l: VMLocals) set(i: i32, v: Value): VMLocals {
+    if (i < 0 || i >= len(l.values)) { return l; }
+    var vs: Value[] = [];
+    var j: i32 = 0;
+    while (j < len(l.values)) {
+        if (j == i) { vs = vs.push(v); } else { vs = vs.push(l.values[j]); }
+        j = j + 1;
+    }
+    return VMLocals { values: vs };
+}
+
+// max_local_idx scans the bytecode for the highest local index
+// touched so the VM can size its locals vector once at startup.
+// Avoids an "expand on access" path inside the inner loop.
+function max_local_idx(ops: Op[]): i32 {
+    var m: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < len(ops)) {
+        match (ops[i]) {
+            OpLoadLocal(o) => { if (o.idx > m) { m = o.idx; } },
+            OpStoreLocal(o) => { if (o.idx > m) { m = o.idx; } },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+// Binary op evaluation on the value stack. Pops rhs then lhs,
+// pushes result. Mirrors the interp's eval_expr binary arm so
+// the VM and the tree-walker agree on semantics.
+function apply_binary(op: string, lhs: Value, rhs: Value): Value {
+    if (is_err(lhs)) { return lhs; }
+    if (is_err(rhs)) { return rhs; }
+    if (op == "+") {
+        match (lhs) {
+            VInt(li) => {
+                match (rhs) {
+                    VInt(ri) => { return v_int(li.v + ri.v); },
+                    _ => { return v_err("`+` rhs type"); }
+                }
+            },
+            VString(ls) => {
+                match (rhs) {
+                    VString(rs) => { return v_string(ls.v + rs.v); },
+                    _ => { return v_err("`+` rhs type"); }
+                }
+            },
+            _ => { return v_err("`+` lhs type"); }
+        }
+    }
+    if (op == "-" || op == "*" || op == "/" || op == "%") {
+        match (lhs) {
+            VInt(li) => {
+                match (rhs) {
+                    VInt(ri) => {
+                        if (op == "-") { return v_int(li.v - ri.v); }
+                        if (op == "*") { return v_int(li.v * ri.v); }
+                        if (op == "/") {
+                            if (ri.v == 0) { return v_err("div by 0"); }
+                            return v_int(li.v / ri.v);
+                        }
+                        if (ri.v == 0) { return v_err("mod by 0"); }
+                        return v_int(li.v % ri.v);
+                    },
+                    _ => { return v_err("arith rhs type"); }
+                }
+            },
+            _ => { return v_err("arith lhs type"); }
+        }
+    }
+    if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+        match (lhs) {
+            VInt(li) => {
+                match (rhs) {
+                    VInt(ri) => {
+                        if (op == "<") { return v_bool(li.v < ri.v); }
+                        if (op == "<=") { return v_bool(li.v <= ri.v); }
+                        if (op == ">") { return v_bool(li.v > ri.v); }
+                        return v_bool(li.v >= ri.v);
+                    },
+                    _ => { return v_err("cmp rhs type"); }
+                }
+            },
+            _ => { return v_err("cmp lhs type"); }
+        }
+    }
+    if (op == "==" || op == "!=") {
+        var eq: boolean = false;
+        match (lhs) {
+            VInt(li) => {
+                match (rhs) {
+                    VInt(ri) => { eq = li.v == ri.v; },
+                    _ => { }
+                }
+            },
+            VBool(lb) => {
+                match (rhs) {
+                    VBool(rb) => { eq = lb.v == rb.v; },
+                    _ => { }
+                }
+            },
+            VString(ls) => {
+                match (rhs) {
+                    VString(rs) => { eq = ls.v == rs.v; },
+                    _ => { }
+                }
+            },
+            _ => { }
+        }
+        if (op == "==") { return v_bool(eq); }
+        return v_bool(!eq);
+    }
+    if (op == "&&" || op == "||") {
+        match (lhs) {
+            VBool(lb) => {
+                match (rhs) {
+                    VBool(rb) => {
+                        if (op == "&&") { return v_bool(lb.v && rb.v); }
+                        return v_bool(lb.v || rb.v);
+                    },
+                    _ => { return v_err("logical rhs type"); }
+                }
+            },
+            _ => { return v_err("logical lhs type"); }
+        }
+    }
+    return v_err("unknown binop: " + op);
+}
+
+function apply_unary(op: string, v: Value): Value {
+    if (is_err(v)) { return v; }
+    if (op == "-") {
+        match (v) {
+            VInt(i) => { return v_int(0 - i.v); },
+            _ => { return v_err("unary `-` type"); }
+        }
+    }
+    if (op == "!") {
+        match (v) {
+            VBool(b) => { return v_bool(!b.v); },
+            _ => { return v_err("unary `!` type"); }
+        }
+    }
+    return v_err("unknown unary op: " + op);
+}
+
+// Top-of-stack helpers. The stack is a Value[]; push/pop
+// rebuild it. Cost is O(n) per op but the validation programs
+// are tiny — same trade the rest of the port makes.
+function stack_push(stack: Value[], v: Value): Value[] {
+    return stack.push(v);
+}
+
+struct PopResult { stack: Value[], v: Value }
+
+function stack_pop(stack: Value[]): PopResult {
+    if (len(stack) == 0) { return PopResult { stack: stack, v: v_err("stack underflow") }; }
+    var top: Value = stack[len(stack) - 1];
+    var ns: Value[] = [];
+    var i: i32 = 0;
+    while (i < len(stack) - 1) { ns = ns.push(stack[i]); i = i + 1; }
+    return PopResult { stack: ns, v: top };
+}
+
+// exec runs the bytecode until OpReturn or end-of-ops. Returns
+// the top-of-stack value at the time of return (or VErr).
+pub function exec(ops: Op[]): Value {
+    var stack: Value[] = [];
+    var locals: VMLocals = new_vm_locals(max_local_idx(ops) + 1);
+    var ip: i32 = 0;
+    while (ip < len(ops)) {
+        var op: Op = ops[ip];
+        match (op) {
+            OpPushInt(o) => { stack = stack_push(stack, v_int(o.v)); ip = ip + 1; },
+            OpPushBool(o) => { stack = stack_push(stack, v_bool(o.v)); ip = ip + 1; },
+            OpPushStr(o) => {
+                // Magic "__undef:..." prefix → surface as VErr.
+                if (len(o.v) >= 8 && o.v[0:8] == "__undef:") {
+                    stack = stack_push(stack, v_err(o.v));
+                } else if (len(o.v) >= 2 && o.v[0:2] == "__") {
+                    stack = stack_push(stack, v_err(o.v));
+                } else {
+                    stack = stack_push(stack, v_string(o.v));
+                }
+                ip = ip + 1;
+            },
+            OpLoadLocal(o) => { stack = stack_push(stack, locals.get(o.idx)); ip = ip + 1; },
+            OpStoreLocal(o) => {
+                var p: PopResult = stack_pop(stack);
+                stack = p.stack;
+                locals = locals.set(o.idx, p.v);
+                ip = ip + 1;
+            },
+            OpBinary(o) => {
+                var pr: PopResult = stack_pop(stack); stack = pr.stack;
+                var pl: PopResult = stack_pop(stack); stack = pl.stack;
+                stack = stack_push(stack, apply_binary(o.op, pl.v, pr.v));
+                ip = ip + 1;
+            },
+            OpUnary(o) => {
+                var p: PopResult = stack_pop(stack); stack = p.stack;
+                stack = stack_push(stack, apply_unary(o.op, p.v));
+                ip = ip + 1;
+            },
+            OpJump(o) => { ip = o.target; },
+            OpJumpIfFalse(o) => {
+                var p: PopResult = stack_pop(stack); stack = p.stack;
+                var take: boolean = false;
+                match (p.v) {
+                    VBool(b) => { take = !b.v; },
+                    _ => { return v_err("jump_if_false: not bool"); }
+                }
+                if (take) { ip = o.target; } else { ip = ip + 1; }
+            },
+            OpPop(_) => {
+                var p: PopResult = stack_pop(stack); stack = p.stack;
+                ip = ip + 1;
+            },
+            OpReturn(_) => {
+                if (len(stack) == 0) { return v_err("return: empty stack"); }
+                return stack[len(stack) - 1];
+            }
+        }
+    }
+    return v_err("ran past end of ops");
+}
+
+// =================== DRIVER + VALIDATION ====================
+
+function run_source(src: string): Value {
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var ops: Op[] = compile_module(mod);
+    return exec(ops);
+}
+
+function main(): i32 {
+    // Arithmetic + ident: var x = 7; var y = 9; return x + y;
+    var r1: Value = run_source("var x = 1 + 2 * 3; var y = (1 + 2) * 3; return x + y;");
+    match (r1) {
+        VInt(i) => { if (i.v != 16) { return 10; } },
+        _ => { return 11; }
+    }
+
+    // String concat: just confirm the program completes with
+    // the right return value — the var binding is side-effect-
+    // free.
+    var r2: Value = run_source("var s = \"a\" + \"b\"; return 42;");
+    match (r2) {
+        VInt(i) => { if (i.v != 42) { return 20; } },
+        _ => { return 21; }
+    }
+
+    // Comparison + unary `!`: return !true == false → false;
+    // dressing it up: return (!(5 < 10));  → false.
+    var r3: Value = run_source("return !(5 < 10);");
+    match (r3) {
+        VBool(b) => { if (b.v) { return 30; } },
+        _ => { return 31; }
+    }
+
+    // If/else, then-branch taken.
+    var r4: Value = run_source("var x = 5; if (x < 10) { return 1; } else { return 2; }");
+    match (r4) {
+        VInt(i) => { if (i.v != 1) { return 40; } },
+        _ => { return 41; }
+    }
+
+    // If/else, else-branch taken.
+    var r5: Value = run_source("var x = 20; if (x < 10) { return 1; } else { return 2; }");
+    match (r5) {
+        VInt(i) => { if (i.v != 2) { return 50; } },
+        _ => { return 51; }
+    }
+
+    // No-else if: condition false, falls through to next stmt.
+    var r6: Value = run_source("if (false) { return 7; } return 11;");
+    match (r6) {
+        VInt(i) => { if (i.v != 11) { return 60; } },
+        _ => { return 61; }
+    }
+
+    // While loop counter: sum 1..=5 = 15.
+    var r7: Value = run_source(
+        "var i = 1; var s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s;"
+    );
+    match (r7) {
+        VInt(i) => { if (i.v != 15) { return 70; } },
+        _ => { return 71; }
+    }
+
+    // Early return inside while short-circuits the loop.
+    var r8: Value = run_source(
+        "var i = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 0 - 1;"
+    );
+    match (r8) {
+        VInt(i) => { if (i.v != 3) { return 80; } },
+        _ => { return 81; }
+    }
+
+    // Undefined-ident becomes VErr at runtime.
+    var r9: Value = run_source("return missing;");
+    match (r9) {
+        VErr(_) => { },
+        _ => { return 90; }
+    }
+
+    // Division by zero → VErr.
+    var r10: Value = run_source("return 1 / 0;");
+    match (r10) {
+        VErr(_) => { },
+        _ => { return 100; }
+    }
+
+    return 0;
+}
