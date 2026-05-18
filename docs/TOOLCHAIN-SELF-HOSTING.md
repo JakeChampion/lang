@@ -140,11 +140,24 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   (`TestWASMEncodePreamble`, `…NameAndSection`, `…MinimalModule`)
   build a complete 16-byte wasm module from scratch and compare
   every byte against the spec-reference encoding.
-- Remaining Phase 1 work: per-IR-op instruction-byte encoders (the
-  body of the code section — opcode + immediates for each ir.Op*
-  case wasm_ir.go handles today), the IR-walking entry point that
-  produces a complete module, and the driver-wiring step that
-  deletes the `wasm-tools parse` call at `cmd/lang/main.go:604`.
+- **Control-flow + constant + variable instruction encoders
+  shipped** in `internal/stdlib/std/wasm/inst.lang`. The subset
+  covers: i32/i64/f32/f64 consts; local/global get/set/tee; the
+  block / loop / if / else / end / br / br_if / return / call /
+  call_indirect family; drop and select; unreachable and nop;
+  plus the code-section helpers `put_function_body`,
+  `put_locals_empty`, and `put_locals_one_group` that wrap a
+  fully-assembled body with its uleb size prefix. Tests
+  (`TestWASMInstConsts`, `…Variable`, `…Control`, `…FunctionBody`)
+  vector-check every opcode against the spec, including the
+  i32.const sleb bit-6 boundary (63 fits in 1 byte; 127 needs a
+  continuation byte to disambiguate from -1).
+- Remaining Phase 1 work: arithmetic + comparison + bitwise
+  opcodes (one byte each, ~40 functions), memory load/store +
+  conversion ops (~30 functions), the IR-walking entry point that
+  produces a complete module from the codegen IR, and the
+  driver-wiring step that deletes the `wasm-tools parse` call at
+  `cmd/lang/main.go:604`.
 
 ---
 

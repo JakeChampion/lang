@@ -1,0 +1,264 @@
+// std/wasm/inst — control-flow, constant, and variable
+// instruction encoders for the WebAssembly Core 1.0 binary
+// format.
+//
+// Spec: https://webassembly.github.io/spec/core/binary/instructions.html
+//
+// Third slice of Phase 1 of docs/TOOLCHAIN-SELF-HOSTING.md. After
+// leb128 (variable-length ints) and encode (module container,
+// sections, functypes), this slice handles the instruction
+// subset needed to assemble a function body:
+//
+//   - constants (i32 / i64 / f32 / f64)
+//   - parametric: drop, select
+//   - variable: local.get/set/tee, global.get/set
+//   - control: unreachable, nop, block, loop, if/else, end,
+//     br, br_if, return, call, call_indirect
+//   - code-section helpers: put_function_body, put_locals_*
+//
+// Arithmetic, comparison, memory, and conversion instructions
+// (the bulk of the opcode space) are deferred to a later slice —
+// each one is a single function (opcode byte + maybe an
+// immediate) so they're cheap to add, but together they bloat
+// this PR more than is useful for review.
+//
+// Same shape as the rest of std/wasm: every encoder takes a u8[]
+// and appends. The block / loop / if forms emit only the *start*
+// of the construct (opcode + blocktype); the caller appends the
+// body and calls inst_end to close it. That matches the
+// stream-y nature of wasm function bodies and avoids a tree-
+// shaped intermediate.
+
+import "std/wasm/leb128";
+import "std/wasm/encode";
+
+// ---- Block-type encoding -------------------------------------
+//
+// Blocktype is one of:
+//   * empty type:    0x40
+//   * single result: a valtype byte (0x7F / 0x7E / 0x7D / 0x7C)
+//   * type index:    a signed leb128 (33-bit space) referencing
+//                    a type-section entry.
+//
+// The first two are a single byte; the typeidx form goes through
+// put_blocktype_typeidx for the sleb encoding. The empty + single-
+// valtype shapes cover every block / loop / if that today's
+// wasm_ir.go emits — multi-value blocks would need typeidx
+// support but the existing backend doesn't lean on them.
+pub function blocktype_empty(): u8 { return 64u8; }   // 0x40
+
+pub function put_blocktype_typeidx(buf: u8[], idx: i32): u8[] {
+    return leb128.sleb_i32(buf, idx);
+}
+
+// ---- Constants -----------------------------------------------
+
+pub function inst_i32_const(buf: u8[], v: i32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(65u8);  // 0x41
+    return leb128.sleb_i32(out, v);
+}
+
+pub function inst_i64_const(buf: u8[], v: i64): u8[] {
+    var out: u8[] = buf;
+    out = out.push(66u8);  // 0x42
+    return leb128.sleb_i64(out, v);
+}
+
+// f32.const carries the IEEE-754 bit pattern as a fixed 4-byte
+// little-endian u32 — no leb. The caller is responsible for
+// having the bits in u32 form (`float.bits`-equivalent); this
+// encoder just lays the bytes down.
+pub function inst_f32_const(buf: u8[], bits: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(67u8);  // 0x43
+    return encode.put_u32_le(out, bits);
+}
+
+// f64.const carries an 8-byte little-endian u64 of the bit
+// pattern, same shape as f32 but doubled.
+pub function inst_f64_const(buf: u8[], bits: u64): u8[] {
+    var out: u8[] = buf;
+    out = out.push(68u8);  // 0x44
+    out = out.push((bits & 255u64) as u8);
+    out = out.push(((bits >> 8) & 255u64) as u8);
+    out = out.push(((bits >> 16) & 255u64) as u8);
+    out = out.push(((bits >> 24) & 255u64) as u8);
+    out = out.push(((bits >> 32) & 255u64) as u8);
+    out = out.push(((bits >> 40) & 255u64) as u8);
+    out = out.push(((bits >> 48) & 255u64) as u8);
+    out = out.push(((bits >> 56) & 255u64) as u8);
+    return out;
+}
+
+// ---- Parametric ----------------------------------------------
+
+pub function inst_drop(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(26u8);  // 0x1A
+    return out;
+}
+
+pub function inst_select(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(27u8);  // 0x1B
+    return out;
+}
+
+// ---- Variable: locals + globals ------------------------------
+
+pub function inst_local_get(buf: u8[], idx: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(32u8);  // 0x20
+    return leb128.uleb_u32(out, idx);
+}
+
+pub function inst_local_set(buf: u8[], idx: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(33u8);  // 0x21
+    return leb128.uleb_u32(out, idx);
+}
+
+pub function inst_local_tee(buf: u8[], idx: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(34u8);  // 0x22
+    return leb128.uleb_u32(out, idx);
+}
+
+pub function inst_global_get(buf: u8[], idx: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(35u8);  // 0x23
+    return leb128.uleb_u32(out, idx);
+}
+
+pub function inst_global_set(buf: u8[], idx: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(36u8);  // 0x24
+    return leb128.uleb_u32(out, idx);
+}
+
+// ---- Control flow --------------------------------------------
+
+pub function inst_unreachable(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(0u8);   // 0x00
+    return out;
+}
+
+pub function inst_nop(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(1u8);   // 0x01
+    return out;
+}
+
+// inst_block_start appends `block` + the blocktype byte. The
+// caller fills the body, then calls inst_end to write 0x0B.
+// `blocktype` is either `blocktype_empty()` (0x40) or one of the
+// `encode.valtype_*` bytes — anything that fits in a single byte.
+// For typeidx-encoded blocktypes, the caller composes
+// 0x02 + sleb_i32(idx) manually using put_blocktype_typeidx.
+pub function inst_block_start(buf: u8[], blocktype: u8): u8[] {
+    var out: u8[] = buf;
+    out = out.push(2u8);   // 0x02
+    out = out.push(blocktype);
+    return out;
+}
+
+pub function inst_loop_start(buf: u8[], blocktype: u8): u8[] {
+    var out: u8[] = buf;
+    out = out.push(3u8);   // 0x03
+    out = out.push(blocktype);
+    return out;
+}
+
+pub function inst_if_start(buf: u8[], blocktype: u8): u8[] {
+    var out: u8[] = buf;
+    out = out.push(4u8);   // 0x04
+    out = out.push(blocktype);
+    return out;
+}
+
+pub function inst_else(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(5u8);   // 0x05
+    return out;
+}
+
+pub function inst_end(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(11u8);  // 0x0B
+    return out;
+}
+
+pub function inst_br(buf: u8[], labelidx: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(12u8);  // 0x0C
+    return leb128.uleb_u32(out, labelidx);
+}
+
+pub function inst_br_if(buf: u8[], labelidx: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(13u8);  // 0x0D
+    return leb128.uleb_u32(out, labelidx);
+}
+
+pub function inst_return(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(15u8);  // 0x0F
+    return out;
+}
+
+pub function inst_call(buf: u8[], funcidx: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(16u8);  // 0x10
+    return leb128.uleb_u32(out, funcidx);
+}
+
+// call_indirect carries both a type index (the expected
+// signature) and a table index (0 in MVP, but the encoding
+// reserves the slot for the multi-table proposal). Stack
+// shape at the call site: ... args, callee_index.
+pub function inst_call_indirect(buf: u8[], typeidx: u32, tableidx: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push(17u8);  // 0x11
+    out = leb128.uleb_u32(out, typeidx);
+    return leb128.uleb_u32(out, tableidx);
+}
+
+// ---- Code-section helpers ------------------------------------
+//
+// A code-section entry is `size : uleb` followed by
+// `func = locals_vec + expr`, where `expr` is the instruction
+// sequence terminated by 0x0B. The two helpers below cover the
+// common shapes; an arbitrary-groups version can come later if
+// callers need it.
+
+// put_locals_empty — locals_vec of length 0: a single uleb(0).
+pub function put_locals_empty(buf: u8[]): u8[] {
+    return leb128.uleb_u32(buf, 0u32);
+}
+
+// put_locals_one_group — `count` locals of a single valtype.
+// Emits uleb(1) + uleb(count) + valtype byte. Covers the
+// "function needs N i32 spill slots" case the existing wasm
+// backend hits most often.
+pub function put_locals_one_group(buf: u8[], count: u32, vt: u8): u8[] {
+    var out: u8[] = leb128.uleb_u32(buf, 1u32);
+    out = leb128.uleb_u32(out, count);
+    out = out.push(vt);
+    return out;
+}
+
+// put_function_body wraps a fully-assembled function body —
+// locals_bytes (produced by one of the put_locals_* helpers) +
+// body_bytes (the instruction sequence, NOT including the final
+// 0x0B — this helper appends it) — with the size prefix the
+// code section expects.
+pub function put_function_body(buf: u8[], locals_bytes: u8[], body_bytes: u8[]): u8[] {
+    var inner: u8[] = [];
+    inner = encode.put_bytes(inner, locals_bytes);
+    inner = encode.put_bytes(inner, body_bytes);
+    inner = inner.push(11u8);  // 0x0B end-of-function
+    var out: u8[] = leb128.uleb_u32(buf, len(inner) as u32);
+    return encode.put_bytes(out, inner);
+}
