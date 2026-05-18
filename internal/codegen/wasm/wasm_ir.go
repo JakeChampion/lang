@@ -503,7 +503,10 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// Implicit return-value padding so the validator stays happy when
 	// the body falls off the end without a final return. String
 	// returns fan out to two i32 slots — push `(0, 0)` to match the
-	// (data, len) tuple shape.
+	// (data, len) tuple shape. i64 returns need `i64.const 0` —
+	// `i32.const 0` failed validation when TailCallOptimize wrapped
+	// the body in a loop (the loop never falls through, but the
+	// padding still has to type-check).
 	if !ast.Equal(fn.ReturnType, ast.VoidType{}) && !endsWithReturn(irFn.Ops) {
 		if ft, isFloat := fn.ReturnType.(ast.FloatType); isFloat {
 			if ft.NormalWidth() == 64 {
@@ -514,6 +517,8 @@ func (g *generator) emitFuncFromIR(fn *ast.FuncDecl, irFn *ir.Func) error {
 		} else if _, isString := fn.ReturnType.(ast.StringType); isString {
 			g.line("i32.const 0")
 			g.line("i32.const 0")
+		} else if nt, isNum := fn.ReturnType.(ast.NumberType); isNum && nt.NormalWidth() == 64 {
+			g.line("i64.const 0")
 		} else {
 			g.line("i32.const 0")
 		}
