@@ -26,17 +26,19 @@ import "./parser";
 pub struct VInt { v: i32 }
 pub struct VBool { v: boolean }
 pub struct VString { v: string }
+pub struct VArr { elements: Value[] }
 pub struct VErr { msg: string }
 
 // VErr is the bottom of the value lattice — it propagates
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
 
-pub type Value = VInt | VBool | VString | VErr;
+pub type Value = VInt | VBool | VString | VArr | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
+function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
 function v_err(msg: string): Value { return VErr { msg: msg }; }
 
 function is_err(v: Value): boolean {
@@ -271,6 +273,38 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return call_func(name, arg_vals, env.funcs);
         },
+        parser.ExprArray(a) => {
+            var elems: Value[] = [];
+            var i: i32 = 0;
+            while (i < len(a.elements)) {
+                var ev: Value = eval_expr(a.elements[i], env);
+                if (is_err(ev)) { return ev; }
+                elems = elems.push(ev);
+                i = i + 1;
+            }
+            return v_arr(elems);
+        },
+        parser.ExprIndex(x) => {
+            var av: Value = eval_expr(x.array, env);
+            if (is_err(av)) { return av; }
+            var iv: Value = eval_expr(x.index, env);
+            if (is_err(iv)) { return iv; }
+            match (av) {
+                VArr(arr) => {
+                    match (iv) {
+                        VInt(ii) => {
+                            if (ii.v < 0 || ii.v >= len(arr.elements)) {
+                                return v_err("array index out of range");
+                            }
+                            return arr.elements[ii.v];
+                        },
+                        _ => { return v_err("array index must be i32"); }
+                    }
+                },
+                _ => { return v_err("can only index into an array"); }
+            }
+            return v_err("unreachable index arm");
+        },
         parser.ExprUnknown(u) => { return v_err("parser-side unknown: " + u.kind); }
     }
     return v_err("unhandled Expr variant");
@@ -282,6 +316,17 @@ function eval_expr(e: parser.Expr, env: Env): Value {
 // as VErr. The callee runs with its own scope — caller bindings
 // are NOT visible (no closures yet).
 function call_func(name: string, args: Value[], funcs: parser.FuncDecl[]): Value {
+    // Builtin: `len(a)` on an array → i32. Special-cased here
+    // because the parser doesn't model builtins separately and
+    // the interp has no Go-side host functions yet.
+    if (name == "len") {
+        if (len(args) != 1) { return v_err("len takes exactly 1 argument"); }
+        match (args[0]) {
+            VArr(a) => { return v_int(len(a.elements)); },
+            VString(s) => { return v_int(len(s.v)); },
+            _ => { return v_err("len: argument must be array or string"); }
+        }
+    }
     var i: i32 = 0;
     while (i < len(funcs)) {
         if (funcs[i].name == name) {
@@ -330,6 +375,16 @@ function value_eq(a: Value, b: Value): boolean {
                 VString(bs) => { return av.v == bs.v; },
                 _ => { return false; }
             }
+        },
+        VArr(_) => {
+            // Array equality isn't well-defined for the
+            // checker / interp's first cut. Surface as false so
+            // `==` on arrays never short-circuits incorrectly;
+            // the checker rules out `arr == arr` ahead of time
+            // by requiring matching types in `==` (both sides
+            // would resolve to TypeArray, which is rejected by
+            // the equality op anyway).
+            return false;
         },
         VErr(_) => { return false; }
     }
@@ -701,6 +756,45 @@ function main(): i32 {
     match (r20) {
         VErr(_) => { },
         _ => { return 200; }
+    }
+
+    // Array literal + indexing: `a[0] == 10`, `a[2] == 30`.
+    var r21: Value = run_source(
+        "var a = [10, 20, 30]; return a[2];"
+    );
+    match (r21) {
+        VInt(i) => { if (i.v != 30) { return 210; } },
+        _ => { return 211; }
+    }
+
+    // len() builtin on array.
+    var r22: Value = run_source("var a = [1, 2, 3, 4]; return len(a);");
+    match (r22) {
+        VInt(i) => { if (i.v != 4) { return 220; } },
+        _ => { return 221; }
+    }
+
+    // Sum-an-array via while loop. Sum of [3, 5, 7, 9] = 24.
+    var r23: Value = run_source(
+        "var a = [3, 5, 7, 9]; var i = 0; var s = 0; while (i < len(a)) { s = s + a[i]; i = i + 1; } return s;"
+    );
+    match (r23) {
+        VInt(i) => { if (i.v != 24) { return 230; } },
+        _ => { return 231; }
+    }
+
+    // Out-of-range index → VErr.
+    var r24: Value = run_source("var a = [1, 2]; return a[5];");
+    match (r24) {
+        VErr(_) => { },
+        _ => { return 240; }
+    }
+
+    // Empty array literal: len → 0.
+    var r25: Value = run_source("var a = []; return len(a);");
+    match (r25) {
+        VInt(i) => { if (i.v != 0) { return 250; } },
+        _ => { return 251; }
     }
 
     return 0;
