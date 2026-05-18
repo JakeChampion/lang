@@ -570,15 +570,17 @@ exampleEl.addEventListener("change", () => {
     metaEl.textContent = "";
     // Clear the hash so the example is the "owner" of the
     // editor state — sharing now produces a fresh link for
-    // this example, not the previous snippet.
-    history.replaceState(null, "", location.pathname + location.search);
+    // this example, not the previous snippet. window. is
+    // necessary because `history` is shadowed in this module
+    // scope by the @codemirror/commands import.
+    window.history.replaceState(null, "", location.pathname + location.search);
     resetAndResync();
   }
 });
 
 shareBtn.addEventListener("click", async () => {
   const url = location.origin + location.pathname + location.search + "#src=" + encodeHash(getSrc());
-  history.replaceState(null, "", url);
+  window.history.replaceState(null, "", url);
   let copied = false;
   try {
     await navigator.clipboard.writeText(url);
