@@ -1171,6 +1171,30 @@ func (g *generator) emitRawIntPokesRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__store_ptr")
 
+	// `__load_i64` / `__store_i64` — 8-byte load / store.
+	// Used by the Map runtime's wide-scalar-boxed key path
+	// (keyKind=2) to dereference an i64 / u64 / f64 key
+	// from a heap cell. On arm64 a usize is already 8 bytes
+	// so the lang-level Map[i64, _] path stays on keyKind=0
+	// without these — the symbols still need linkable
+	// bodies because the prelude references them by name
+	// regardless of target.
+	g.line("")
+	g.line(".global __load_i64")
+	g.typeDirective("__load_i64")
+	g.label("__load_i64")
+	g.emit("ldr x0, [x0]")
+	g.emit("ret")
+	g.sizeDirective("__load_i64")
+
+	g.line("")
+	g.line(".global __store_i64")
+	g.typeDirective("__store_i64")
+	g.label("__store_i64")
+	g.emit("str x1, [x0]")
+	g.emit("ret")
+	g.sizeDirective("__store_i64")
+
 	// `__ptr_width()` returns 8 on arm64. The Map runtime uses
 	// this to size per-entry key/value slots; pairs with the
 	// wasm backend's `i32.const 4` constant function.

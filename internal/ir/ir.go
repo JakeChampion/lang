@@ -3314,7 +3314,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// Stash the constructed Map handle in a fresh local so
 		// each `set` call can reload it.
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
-		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType)})
+		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType, b.ptrW)})
 		b.emit(Op{Kind: OpConstI32, I32: mapValKindTag(n.ValueType)})
 		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 3})
 		mapSlot := b.allocSlot()
@@ -3326,7 +3326,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// sites. Triggers for wide V (i64 / u64 / f64) on every
 		// target, and string K / V on wasm32 (where the two-word
 		// ABI doesn't fit the helper's i32 K/V slot).
-		boxK := isStringForBoxing(n.KeyType, b.ptrW)
+		boxK := isStringForBoxing(n.KeyType, b.ptrW) || mapKeyKindTag(n.KeyType, b.ptrW) == 2
 		boxV := isWideScalar(n.ValueType) || isStringForBoxing(n.ValueType, b.ptrW)
 		for _, ent := range n.Entries {
 			b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
@@ -4405,17 +4405,29 @@ func floatOp(s string) (OpKind, bool) {
 }
 
 // mapKeyKindTag returns the runtime tag for the Map[K, V]
-// instantiation's key type. 0 = i32-sized scalar (i32, u32,
-// sub-i32 widths), 1 = string. The runtime's __map_find
-// helper branches on this to pick i32.eq vs strcmp for the
-// in-buffer key comparison. Other key types (i64 / u64 / float
-// / struct / enum) are deferred — they'd need either an
-// 8-byte-stride buffer layout or a different equality
-// strategy.
-func mapKeyKindTag(t ast.Type) int32 {
+// instantiation's key type:
+//
+//	0 = i32-sized scalar (i32, u32, sub-i32 widths) — and
+//	    wide scalars (i64 / u64 / f64) on natives where
+//	    `usize` is 8 bytes so the key fits raw.
+//	1 = string.
+//	2 = wide-scalar-boxed: an i64 / u64 / f64 key on a
+//	    target whose `usize` is narrower than the key
+//	    (wasm32, ptrW=4). The IR boxes the key into a
+//	    heap cell; the runtime's __map_hash / __map_lookup
+//	    branches dereference the cell to hash / compare
+//	    the underlying 8-byte value.
+//
+// Other key types (struct / enum / float-on-narrow-ptr)
+// still aren't supported; they'd need their own runtime
+// branches.
+func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 	switch t.(type) {
 	case ast.StringType:
 		return 1
+	}
+	if isWideScalar(t) && ptrW < 8 {
+		return 2
 	}
 	return 0
 }
@@ -4601,7 +4613,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `has` / `delete` boolean, `get` when V is i32-scalar,
 	// `get_or` when V is i32-scalar) flow through
 	// emitStringKMapCall when only K needs boxing.
-	needBoxK := len(n.TypeArgs) >= 1 && isStringForBoxing(n.TypeArgs[0], b.ptrW)
+	needBoxK := len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 2)
 	needBoxV := len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
 	if needBoxK || needBoxV {
 		switch id.Name {
@@ -4669,7 +4681,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	if id.Name == "map_new" {
 		var keyKind, valKind int32
 		if len(n.TypeArgs) >= 1 {
-			keyKind = mapKeyKindTag(n.TypeArgs[0])
+			keyKind = mapKeyKindTag(n.TypeArgs[0], b.ptrW)
 		}
 		if len(n.TypeArgs) >= 2 {
 			valKind = mapValKindTag(n.TypeArgs[1])
@@ -5569,7 +5581,7 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	boxK := isStringForBoxing(kType, b.ptrW)
+	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
 	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_set_kbox"); err != nil {
 		return err
 	}
@@ -5594,7 +5606,7 @@ func (b *builder) emitWideMapGet(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	boxK := isStringForBoxing(kType, b.ptrW)
+	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
 	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_get_kbox"); err != nil {
 		return err
 	}
@@ -5678,7 +5690,7 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	boxK := isStringForBoxing(kType, b.ptrW)
+	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
 	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_or_kbox"); err != nil {
 		return err
 	}
