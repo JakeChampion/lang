@@ -69,41 +69,45 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		name     string
 		source   string
 		expected int
+		stdout   string // "" means don't check
 	}{
-		{"return-literal", "return 42;", 42},
-		{"arithmetic", "return 1 + 2 * 3;", 7},
-		{"parens", "return (1 + 2) * 3;", 9},
-		{"subtraction", "return 100 - 23;", 77},
-		{"division", "return 84 / 2;", 42},
-		{"modulo", "return 23 % 5;", 3},
-		{"unary-neg-via-zero-minus", "return 0 - 5 + 10;", 5},
-		{"nested-arith", "return (2 + 3) * 4;", 20},
-		{"cmp-lt-true", "return 5 < 10;", 1},
-		{"cmp-lt-false", "return 10 < 5;", 0},
-		{"cmp-le-true", "return 5 <= 5;", 1},
-		{"cmp-gt-true", "return 7 > 3;", 1},
-		{"cmp-ge-true", "return 7 >= 7;", 1},
-		{"cmp-eq-true", "return 4 == 4;", 1},
-		{"cmp-eq-false", "return 4 == 5;", 0},
-		{"cmp-ne-true", "return 4 != 5;", 1},
-		{"bool-true", "return true;", 1},
-		{"bool-false", "return false;", 0},
-		{"if-then-taken", "if (true) { return 9; } else { return 0; }", 9},
-		{"if-else-taken", "if (false) { return 9; } else { return 7; }", 7},
-		{"if-no-else-fall", "if (false) { return 9; } return 5;", 5},
-		{"if-cond-via-cmp", "if (5 < 10) { return 1; } else { return 2; }", 1},
-		{"locals-single", "var x = 5; return x;", 5},
-		{"locals-three", "var a = 10; var b = 20; var c = 30; return a + b + c;", 60},
-		{"reassign", "var x = 5; x = x + 3; return x;", 8},
-		{"compound-assign", "var x = 1; x *= 6; x += 1; return x;", 7},
-		{"while-sum-counter", "var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
-		{"while-early-return", "var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 0 - 1;", 7},
-		{"func-decl-call", "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }", 5},
-		{"func-three-args", "function sum3(a: i32, b: i32, c: i32): i32 { return a + b + c; } function main(): i32 { return sum3(10, 20, 30); }", 60},
-		{"recursive-factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
-		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21},
-		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1},
-		{"func-with-local-vars", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11},
+		{"return-literal", "return 42;", 42, ""},
+		{"arithmetic", "return 1 + 2 * 3;", 7, ""},
+		{"parens", "return (1 + 2) * 3;", 9, ""},
+		{"subtraction", "return 100 - 23;", 77, ""},
+		{"division", "return 84 / 2;", 42, ""},
+		{"modulo", "return 23 % 5;", 3, ""},
+		{"unary-neg-via-zero-minus", "return 0 - 5 + 10;", 5, ""},
+		{"nested-arith", "return (2 + 3) * 4;", 20, ""},
+		{"cmp-lt-true", "return 5 < 10;", 1, ""},
+		{"cmp-lt-false", "return 10 < 5;", 0, ""},
+		{"cmp-le-true", "return 5 <= 5;", 1, ""},
+		{"cmp-gt-true", "return 7 > 3;", 1, ""},
+		{"cmp-ge-true", "return 7 >= 7;", 1, ""},
+		{"cmp-eq-true", "return 4 == 4;", 1, ""},
+		{"cmp-eq-false", "return 4 == 5;", 0, ""},
+		{"cmp-ne-true", "return 4 != 5;", 1, ""},
+		{"bool-true", "return true;", 1, ""},
+		{"bool-false", "return false;", 0, ""},
+		{"if-then-taken", "if (true) { return 9; } else { return 0; }", 9, ""},
+		{"if-else-taken", "if (false) { return 9; } else { return 7; }", 7, ""},
+		{"if-no-else-fall", "if (false) { return 9; } return 5;", 5, ""},
+		{"if-cond-via-cmp", "if (5 < 10) { return 1; } else { return 2; }", 1, ""},
+		{"locals-single", "var x = 5; return x;", 5, ""},
+		{"locals-three", "var a = 10; var b = 20; var c = 30; return a + b + c;", 60, ""},
+		{"reassign", "var x = 5; x = x + 3; return x;", 8, ""},
+		{"compound-assign", "var x = 1; x *= 6; x += 1; return x;", 7, ""},
+		{"while-sum-counter", "var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15, ""},
+		{"while-early-return", "var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 0 - 1;", 7, ""},
+		{"func-decl-call", "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }", 5, ""},
+		{"func-three-args", "function sum3(a: i32, b: i32, c: i32): i32 { return a + b + c; } function main(): i32 { return sum3(10, 20, 30); }", 60, ""},
+		{"recursive-factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120, ""},
+		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21, ""},
+		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, ""},
+		{"func-with-local-vars", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11, ""},
+		{"hello-arm64", "print(\"Hello, ARM64!\\n\"); return 0;", 0, "Hello, ARM64!\n"},
+		{"print-twice", "print(\"line A\\n\"); print(\"line B\\n\"); return 0;", 0, "line A\nline B\n"},
+		{"print-then-return", "print(\"out\\n\"); return 7;", 7, "out\n"},
 	}
 
 	for _, tc := range cases {
@@ -131,9 +135,12 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 				t.Fatalf("inner gcc: %v\n%s\n--- asm ---\n%s", err, out, emittedAsm)
 			}
 			inner := runArm64Bin(qemu, innerBin)
-			_, _ = inner.CombinedOutput()
+			innerStdout, _ := inner.Output()
 			if code := inner.ProcessState.ExitCode(); code != tc.expected {
 				t.Errorf("inner exit code = %d, want %d\n--- source ---\n%s\n--- asm ---\n%s", code, tc.expected, tc.source, emittedAsm)
+			}
+			if tc.stdout != "" && string(innerStdout) != tc.stdout {
+				t.Errorf("inner stdout = %q, want %q\n--- source ---\n%s\n--- asm ---\n%s", string(innerStdout), tc.stdout, tc.source, emittedAsm)
 			}
 		})
 	}

@@ -66,12 +66,20 @@ pub struct EmitState {
     out: string,
     label_n: i32,
     local_names: string[],
-    in_function: boolean
+    in_function: boolean,
+    string_lits: string[]
 }
 
 function new_state(): EmitState {
     var ns: string[] = [];
-    return EmitState { out: "", label_n: 0, local_names: ns, in_function: false };
+    var sl: string[] = [];
+    return EmitState {
+        out: "",
+        label_n: 0,
+        local_names: ns,
+        in_function: false,
+        string_lits: sl
+    };
 }
 
 function (s: EmitState) write(text: string): EmitState {
@@ -79,7 +87,8 @@ function (s: EmitState) write(text: string): EmitState {
         out: s.out + text,
         label_n: s.label_n,
         local_names: s.local_names,
-        in_function: s.in_function
+        in_function: s.in_function,
+        string_lits: s.string_lits
     };
 }
 
@@ -89,7 +98,8 @@ function (s: EmitState) bind_local(name: string): EmitState {
         out: s.out,
         label_n: s.label_n,
         local_names: ln,
-        in_function: s.in_function
+        in_function: s.in_function,
+        string_lits: s.string_lits
     };
 }
 
@@ -99,7 +109,8 @@ function (s: EmitState) reset_locals(): EmitState {
         out: s.out,
         label_n: s.label_n,
         local_names: ln,
-        in_function: s.in_function
+        in_function: s.in_function,
+        string_lits: s.string_lits
     };
 }
 
@@ -108,7 +119,8 @@ function (s: EmitState) enter_function(): EmitState {
         out: s.out,
         label_n: s.label_n,
         local_names: s.local_names,
-        in_function: true
+        in_function: true,
+        string_lits: s.string_lits
     };
 }
 
@@ -117,7 +129,8 @@ function (s: EmitState) leave_function(): EmitState {
         out: s.out,
         label_n: s.label_n,
         local_names: s.local_names,
-        in_function: false
+        in_function: false,
+        string_lits: s.string_lits
     };
 }
 
@@ -148,7 +161,8 @@ function fresh_label(s: EmitState): LabelOut {
         out: s.out,
         label_n: s.label_n + 1,
         local_names: s.local_names,
-        in_function: s.in_function
+        in_function: s.in_function,
+        string_lits: s.string_lits
     };
     return LabelOut { state: ns, name: name };
 }
@@ -177,6 +191,44 @@ function count_locals_in_stmt(stmt: parser.Stmt): i32 {
         _ => { return 0; }
     }
     return 0;
+}
+
+// add_string_lit appends the literal to the pool and returns
+// its index, used by the caller to emit `adrp + add` for the
+// literal's address. The pool is materialised in .rodata at
+// end-of-module.
+struct StringLitOut { state: EmitState, idx: i32 }
+function add_string_lit(s: EmitState, v: string): StringLitOut {
+    var idx: i32 = len(s.string_lits);
+    var sl: string[] = s.string_lits.push(v);
+    var ns: EmitState = EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: sl
+    };
+    return StringLitOut { state: ns, idx: idx };
+}
+
+// escape_for_ascii rewrites a string for `.ascii "…"` syntax:
+// quotes get backslashed, backslashes doubled, common
+// whitespace bytes become GAS escape sequences so a `\n` byte
+// in the source string lands as a single LF byte in .rodata.
+function escape_for_ascii(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < len(s)) {
+        var b: i32 = s[i];
+        if (b == 34) { out = out + "\\\""; }
+        else if (b == 92) { out = out + "\\\\"; }
+        else if (b == 10) { out = out + "\\n"; }
+        else if (b == 9) { out = out + "\\t"; }
+        else if (b == 13) { out = out + "\\r"; }
+        else { out = out + s[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
 }
 
 // =================== ASM EMITTER ====================
@@ -270,10 +322,6 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprCall(c) => {
-            // Only bare-ident callees. Push args RIGHT-to-LEFT
-            // so the callee sees param[0] at [x29, #16] (after
-            // its stp x29, x30 prologue). Each arg occupies 16
-            // bytes on the rt-stack to keep sp 16-aligned.
             var name: string = "";
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
@@ -282,6 +330,31 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = s.write("    mov x0, #0\n");
                     s = s.write("    str x0, [sp, #-16]!\n");
                     return s;
+                }
+            }
+            // print(str_literal) — builtin lowering to write(1,
+            // ptr, len). Compile-time we already know the
+            // literal's bytes, so we intern it in `.rodata`,
+            // load its address via adrp+add, set the length, and
+            // syscall directly.
+            if (name == "print" && len(c.args) == 1) {
+                var arg: parser.Expr = c.args[0];
+                match (arg) {
+                    parser.ExprString(sv) => {
+                        var lo: StringLitOut = add_string_lit(s, sv.value);
+                        s = lo.state;
+                        var lbl: string = ".S" + i32_to_string(lo.idx);
+                        s = s.write("    mov x0, #1\n");     // fd
+                        s = s.write("    adrp x1, " + lbl + "\n");
+                        s = s.write("    add x1, x1, :lo12:" + lbl + "\n");
+                        s = s.write("    mov x2, #" + i32_to_string(len(sv.value)) + "\n");
+                        s = s.write("    mov x8, #64\n");    // sys_write
+                        s = s.write("    svc #0\n");
+                        s = s.write("    mov x0, #0\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        return s;
+                    },
+                    _ => { }
                 }
             }
             var i: i32 = len(c.args) - 1;
@@ -523,6 +596,19 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x8, #93\n");
         s = s.write("    svc #0\n");
     }
+    // .rodata: emit each interned string literal as a
+    // labelled `.ascii` directive. GAS interprets the escape
+    // sequences in the quoted string, so a `\n` byte in the
+    // source string lands as a single LF in the resulting
+    // .rodata bytes.
+    if (len(s.string_lits) > 0) {
+        s = s.write("    .section .rodata\n");
+        var li: i32 = 0;
+        while (li < len(s.string_lits)) {
+            s = s.write(".S" + i32_to_string(li) + ": .ascii \"" + escape_for_ascii(s.string_lits[li]) + "\"\n");
+            li = li + 1;
+        }
+    }
     return s.out;
 }
 
@@ -654,6 +740,16 @@ function main(): i32 {
     if (!contains(a21, "bl __fn_main")) { return 213; }
     if (!contains(a21, "ldp x29, x30, [sp], #16")) { return 214; }
     if (!contains(a21, "ret\n")) { return 215; }
+
+    // print("...") emits adrp + add for the literal address,
+    // mov fd/len, sys_write syscall, and .rodata at end.
+    var a22: string = emit_source("print(\"hi\\n\"); return 0;");
+    if (!contains(a22, "adrp x1, .S0")) { return 220; }
+    if (!contains(a22, "add x1, x1, :lo12:.S0")) { return 221; }
+    if (!contains(a22, "mov x8, #64")) { return 222; }  // sys_write
+    if (!contains(a22, ".section .rodata")) { return 223; }
+    if (!contains(a22, ".S0: .ascii")) { return 224; }
+    if (!contains(a22, "hi")) { return 225; }
 
     return 0;
 }
