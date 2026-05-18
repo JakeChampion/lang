@@ -52,18 +52,28 @@ function is_err(v: Value): boolean {
 // Same shape as the checker's Scope but the parallel slot is
 // Value rather than Type. Linear scan, newest binding wins —
 // matches `let` semantics for the limited stmt set we handle.
-pub struct Env { names: string[], values: Value[] }
+// Env carries both the value scope and the immutable function
+// table (so ExprCall can dispatch from anywhere a value lives in
+// scope). bind / update / trim preserve `funcs` unchanged.
+pub struct Env { names: string[], values: Value[], funcs: parser.FuncDecl[] }
 
 function new_env(): Env {
     var ns: string[] = [];
     var vs: Value[] = [];
-    return Env { names: ns, values: vs };
+    var fs: parser.FuncDecl[] = [];
+    return Env { names: ns, values: vs, funcs: fs };
+}
+
+function new_env_with_funcs(fs: parser.FuncDecl[]): Env {
+    var ns: string[] = [];
+    var vs: Value[] = [];
+    return Env { names: ns, values: vs, funcs: fs };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
     var ns: string[] = e.names.push(name);
     var vs: Value[] = e.values.push(v);
-    return Env { names: ns, values: vs };
+    return Env { names: ns, values: vs, funcs: e.funcs };
 }
 
 function (e: Env) lookup(name: string): Value {
@@ -110,7 +120,7 @@ function (e: Env) update(name: string, v: Value): Env {
         }
         j = j + 1;
     }
-    return Env { names: ns, values: vs };
+    return Env { names: ns, values: vs, funcs: e.funcs };
 }
 
 // =================== INTEGER PARSE ====================
@@ -242,10 +252,58 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_err("unknown unary op: " + u.op);
         },
-        parser.ExprCall(_) => { return v_err("function-call eval not implemented yet"); },
+        parser.ExprCall(c) => {
+            // Only bare-ident callees are supported — pull the
+            // function name out of the parsed ExprIdent.
+            var name: string = "";
+            match (c.callee) {
+                parser.ExprIdent(id) => { name = id.name; },
+                _ => { return v_err("call target is not an identifier"); }
+            }
+            // Evaluate args in order, propagating the first VErr.
+            var arg_vals: Value[] = [];
+            var i: i32 = 0;
+            while (i < len(c.args)) {
+                var av: Value = eval_expr(c.args[i], env);
+                if (is_err(av)) { return av; }
+                arg_vals = arg_vals.push(av);
+                i = i + 1;
+            }
+            return call_func(name, arg_vals, env.funcs);
+        },
         parser.ExprUnknown(u) => { return v_err("parser-side unknown: " + u.kind); }
     }
     return v_err("unhandled Expr variant");
+}
+
+// call_func looks up `name` in the function table, binds args
+// to params in a fresh env that shares the same funcs table, and
+// evals the body. A missing function or arity mismatch surfaces
+// as VErr. The callee runs with its own scope — caller bindings
+// are NOT visible (no closures yet).
+function call_func(name: string, args: Value[], funcs: parser.FuncDecl[]): Value {
+    var i: i32 = 0;
+    while (i < len(funcs)) {
+        if (funcs[i].name == name) {
+            var fd: parser.FuncDecl = funcs[i];
+            if (len(args) != len(fd.params)) {
+                return v_err("arity mismatch calling `" + name + "`");
+            }
+            var env: Env = new_env_with_funcs(funcs);
+            var j: i32 = 0;
+            while (j < len(fd.params)) {
+                env = env.bind(fd.params[j].name, args[j]);
+                j = j + 1;
+            }
+            var step: StepResult = eval_block(fd.body, env);
+            if (is_noreturn(step.ret)) {
+                return v_err("function `" + name + "` reached end without `return`");
+            }
+            return step.ret;
+        }
+        i = i + 1;
+    }
+    return v_err("undefined function: " + name);
 }
 
 // value_eq: structural equality on Value. Two values of the
@@ -399,7 +457,7 @@ function trim_env(e: Env, base: i32): Env {
         vs = vs.push(e.values[i]);
         i = i + 1;
     }
-    return Env { names: ns, values: vs };
+    return Env { names: ns, values: vs, funcs: e.funcs };
 }
 
 // eval_block walks a body, threading env forward through every
@@ -447,12 +505,42 @@ function eval_program(prog: parser.Stmt[]): Value {
     return v_err("program reached end without `return`");
 }
 
+// eval_module is the main entry for sources that declare
+// functions. If `main` exists, call it with no args. Otherwise
+// fall back to running the top-level stmts in a fresh env that
+// still has access to the function table.
+pub function eval_module(mod: parser.Module): Value {
+    var i: i32 = 0;
+    while (i < len(mod.funcs)) {
+        if (mod.funcs[i].name == "main") {
+            var empty_args: Value[] = [];
+            return call_func("main", empty_args, mod.funcs);
+        }
+        i = i + 1;
+    }
+    var env: Env = new_env_with_funcs(mod.funcs);
+    var j: i32 = 0;
+    while (j < len(mod.top_stmts)) {
+        var r: StepResult = eval_stmt(mod.top_stmts[j], env);
+        env = r.env;
+        if (!is_noreturn(r.ret)) { return r.ret; }
+        j = j + 1;
+    }
+    return v_err("module has no `main` and no top-level `return`");
+}
+
 // =================== VALIDATION ====================
 
 function run_source(src: string): Value {
     var toks: lexer.Token[] = lexer.tokenize(src);
     var stmts: parser.Stmt[] = parser.parse_program(toks);
     return eval_program(stmts);
+}
+
+function run_module(src: string): Value {
+    var toks: lexer.Token[] = lexer.tokenize(src);
+    var mod: parser.Module = parser.parse_module(toks);
+    return eval_module(mod);
 }
 
 function main(): i32 {
@@ -566,6 +654,53 @@ function main(): i32 {
     match (r15) {
         VInt(i) => { if (i.v != 5) { return 150; } },
         _ => { return 151; }
+    }
+
+    // Function decl + call: `add(2, 3)` via `main` → 5.
+    var r16: Value = run_module(
+        "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }"
+    );
+    match (r16) {
+        VInt(i) => { if (i.v != 5) { return 160; } },
+        _ => { return 161; }
+    }
+
+    // Recursive factorial: fact(5) = 120.
+    var r17: Value = run_module(
+        "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }"
+    );
+    match (r17) {
+        VInt(i) => { if (i.v != 120) { return 170; } },
+        _ => { return 171; }
+    }
+
+    // Mutual recursion: is_even(4) → true (encoded as 1).
+    var r18: Value = run_module(
+        "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); }"
+        + " function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); }"
+        + " function main(): i32 { return is_even(4); }"
+    );
+    match (r18) {
+        VInt(i) => { if (i.v != 1) { return 180; } },
+        _ => { return 181; }
+    }
+
+    // Undefined function call → VErr.
+    var r19: Value = run_module(
+        "function main(): i32 { return missing(1); }"
+    );
+    match (r19) {
+        VErr(_) => { },
+        _ => { return 190; }
+    }
+
+    // Arity mismatch → VErr.
+    var r20: Value = run_module(
+        "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(1); }"
+    );
+    match (r20) {
+        VErr(_) => { },
+        _ => { return 200; }
     }
 
     return 0;

@@ -97,21 +97,35 @@ function is_unknown(t: Type): boolean {
 
 // =================== SCOPE ====================
 
-// A flat name → type map. Parallel arrays keep the implementation
-// trivial; the lang-port doesn't need a real hashmap until the
-// program grows beyond ~hundreds of bindings.
-pub struct Scope { names: string[], types: Type[] }
+// Function signature table entry — captured once per FuncDecl in
+// the module, then read at every ExprCall site. ret_type is a
+// Type (post type-name resolution); param_types parallels the
+// FuncDecl's params in declaration order.
+pub struct FuncSig { name: string, param_types: Type[], ret_type: Type }
+
+// A flat name → type map plus the function signature table.
+// Parallel arrays keep the implementation trivial; the lang-port
+// doesn't need a real hashmap until the program grows beyond
+// ~hundreds of bindings.
+pub struct Scope { names: string[], types: Type[], sigs: FuncSig[] }
 
 function new_scope(): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
-    return Scope { names: ns, types: ts };
+    var fs: FuncSig[] = [];
+    return Scope { names: ns, types: ts, sigs: fs };
+}
+
+function new_scope_with_sigs(sigs: FuncSig[]): Scope {
+    var ns: string[] = [];
+    var ts: Type[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
     var ns: string[] = s.names.push(name);
     var ts: Type[] = s.types.push(t);
-    return Scope { names: ns, types: ts };
+    return Scope { names: ns, types: ts, sigs: s.sigs };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -123,6 +137,28 @@ function (s: Scope) lookup(name: string): Type {
         i = i - 1;
     }
     return t_unknown("undefined identifier:" + name);
+}
+
+function (s: Scope) lookup_sig(name: string): FuncSig {
+    var i: i32 = 0;
+    while (i < len(s.sigs)) {
+        if (s.sigs[i].name == name) { return s.sigs[i]; }
+        i = i + 1;
+    }
+    // Sentinel: empty name + empty param list + unknown ret_type
+    // tells callers the name isn't a function.
+    var empty: Type[] = [];
+    return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name) };
+}
+
+// type_from_name resolves a parser-side bare type-name string to
+// a Type. Unrecognised names surface as TypeUnknown so the checker
+// can flag bogus signatures without hard-failing the whole check.
+function type_from_name(name: string): Type {
+    if (name == "i32") { return t_i32(); }
+    if (name == "bool" || name == "boolean") { return t_bool(); }
+    if (name == "string") { return t_string(); }
+    return t_unknown("unrecognised type name: " + name);
 }
 
 // =================== CHECKER ====================
@@ -193,12 +229,29 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             return t_unknown("unknown unary op:" + u.op);
         },
-        parser.ExprCall(_) => {
-            // The checker port doesn't yet maintain a function
-            // table — every call is opaque. A follow-up port
-            // would walk a `FuncDecl[]` ahead of time and bind
-            // names to signature types.
-            return t_unknown("function-call typing not implemented yet");
+        parser.ExprCall(c) => {
+            // Only bare-ident callees are supported.
+            var name: string = "";
+            match (c.callee) {
+                parser.ExprIdent(id) => { name = id.name; },
+                _ => { return t_unknown("call target is not an identifier"); }
+            }
+            var sig: FuncSig = s.lookup_sig(name);
+            if (len(sig.name) == 0) {
+                return t_unknown("undefined function: " + name);
+            }
+            if (len(c.args) != len(sig.param_types)) {
+                return t_unknown("arity mismatch calling `" + name + "`");
+            }
+            var i: i32 = 0;
+            while (i < len(c.args)) {
+                var at: Type = check_expr(c.args[i], s);
+                if (!type_eq(at, sig.param_types[i])) {
+                    return t_unknown("arg-type mismatch calling `" + name + "`");
+                }
+                i = i + 1;
+            }
+            return sig.ret_type;
         },
         parser.ExprUnknown(u) => { return t_unknown("parser-side unknown:" + u.kind); }
     }
@@ -317,6 +370,84 @@ function check_program(prog: parser.Stmt[]): ProgramTypes {
     return ProgramTypes { tys: tys };
 }
 
+// collect_func_sigs builds the function-signature table from the
+// module's FuncDecls. Resolves the parser's bare type-name strings
+// to Types via type_from_name. The table is built in one pass and
+// then passed to check_module's per-function body walk so calls
+// (including recursive / mutually-recursive ones) can resolve.
+function collect_func_sigs(funcs: parser.FuncDecl[]): FuncSig[] {
+    var out: FuncSig[] = [];
+    var i: i32 = 0;
+    while (i < len(funcs)) {
+        var fd: parser.FuncDecl = funcs[i];
+        var pts: Type[] = [];
+        var j: i32 = 0;
+        while (j < len(fd.params)) {
+            pts = pts.push(type_from_name(fd.params[j].type_name));
+            j = j + 1;
+        }
+        out = out.push(FuncSig { name: fd.name, param_types: pts, ret_type: type_from_name(fd.ret_type) });
+        i = i + 1;
+    }
+    return out;
+}
+
+// check_func_body type-checks a function's body in a scope
+// pre-bound to its parameters. Errors inside the body surface as
+// TypeUnknown on the offending statement — we walk for side
+// effects and don't return them yet. Returns true if every body
+// stmt type-checked (no TypeUnknown anywhere); the caller can
+// use that to count well-typed function bodies for diagnostics.
+function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[]): boolean {
+    var s: Scope = new_scope_with_sigs(sigs);
+    var i: i32 = 0;
+    while (i < len(fd.params)) {
+        s = s.bind(fd.params[i].name, type_from_name(fd.params[i].type_name));
+        i = i + 1;
+    }
+    var ok: boolean = true;
+    var j: i32 = 0;
+    while (j < len(fd.body)) {
+        var r: CheckResult = check_stmt(fd.body[j], s);
+        s = r.scope;
+        // We don't enforce return-type yet — a follow-up could
+        // walk StmtReturn arms and ensure their value type unifies
+        // with fd.ret_type. For now the body is "well-typed" if
+        // no stmt itself produced a TypeUnknown.
+        if (is_unknown(r.ty)) { ok = false; }
+        j = j + 1;
+    }
+    return ok;
+}
+
+// check_module is the new entry point for sources that declare
+// functions. Builds the sig table, walks each function body,
+// and (separately) type-checks top-level stmts in a scope that
+// has the sigs available — so `function main(): i32 { … }` and
+// loose `var x = add(1, 2);` both resolve `add`.
+pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boolean }
+
+pub function check_module(mod: parser.Module): ModuleTypes {
+    var sigs: FuncSig[] = collect_func_sigs(mod.funcs);
+    var well_typed: boolean = true;
+    var i: i32 = 0;
+    while (i < len(mod.funcs)) {
+        if (!check_func_body(mod.funcs[i], sigs)) { well_typed = false; }
+        i = i + 1;
+    }
+    var s: Scope = new_scope_with_sigs(sigs);
+    var top_tys: Type[] = [];
+    var j: i32 = 0;
+    while (j < len(mod.top_stmts)) {
+        var r: CheckResult = check_stmt(mod.top_stmts[j], s);
+        s = r.scope;
+        if (is_unknown(r.ty)) { well_typed = false; }
+        top_tys = top_tys.push(r.ty);
+        j = j + 1;
+    }
+    return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed };
+}
+
 // =================== VALIDATION ====================
 
 function main(): i32 {
@@ -369,6 +500,35 @@ function main(): i32 {
     if (len(pt4.tys) != 2) { return 40; }
     if (!type_eq(pt4.tys[0], t_bool())) { return 41; }
     if (!type_eq(pt4.tys[1], t_bool())) { return 42; }
+
+    // Module-level: well-typed function decls + a call.
+    var src5: string = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
+    var mod5: parser.Module = parser.parse_module(lexer.tokenize(src5));
+    var mt5: ModuleTypes = check_module(mod5);
+    if (!mt5.all_well_typed) { return 50; }
+    if (len(mt5.sigs) != 2) { return 51; }
+    if (mt5.sigs[0].name != "add") { return 52; }
+    if (len(mt5.sigs[0].param_types) != 2) { return 53; }
+    if (!type_eq(mt5.sigs[0].param_types[0], t_i32())) { return 54; }
+    if (!type_eq(mt5.sigs[0].ret_type, t_i32())) { return 55; }
+
+    // Ill-typed call: arity mismatch.
+    var src6: string = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(1); }";
+    var mod6: parser.Module = parser.parse_module(lexer.tokenize(src6));
+    var mt6: ModuleTypes = check_module(mod6);
+    if (mt6.all_well_typed) { return 60; }
+
+    // Ill-typed call: wrong arg type (string into i32 param).
+    var src7: string = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(1, \"x\"); }";
+    var mod7: parser.Module = parser.parse_module(lexer.tokenize(src7));
+    var mt7: ModuleTypes = check_module(mod7);
+    if (mt7.all_well_typed) { return 70; }
+
+    // Recursive call (factorial) is well-typed.
+    var src8: string = "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }";
+    var mod8: parser.Module = parser.parse_module(lexer.tokenize(src8));
+    var mt8: ModuleTypes = check_module(mod8);
+    if (!mt8.all_well_typed) { return 80; }
 
     return 0;
 }
