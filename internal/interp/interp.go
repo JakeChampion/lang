@@ -116,6 +116,30 @@ type Builtin struct {
 	Fn func(*Interp, []Value) (Value, error)
 }
 
+// Closure pairs a function declaration with the lexical
+// environment captured at its definition site. Used for two
+// surface forms: local function declarations (`function f(...) {
+// ... }` as a stmt) and Lambda expressions (`function (x): T
+// { ... }` in expression position — the parser builds an
+// `*ast.Lambda` which the interpreter wraps in a synthetic
+// FuncDecl + the current env).
+//
+// Distinct from Func (a bare *ast.FuncDecl) — Func references a
+// top-level decl whose body resolves identifiers against the
+// global registry, while Closure carries its own captured env
+// so reads of outer-scope names hit the right values.
+type Closure struct {
+	Decl *ast.FuncDecl
+	Env  *env
+}
+
+func (c *Closure) String() string {
+	if c.Decl != nil && c.Decl.Name != "" {
+		return "<closure " + c.Decl.Name + ">"
+	}
+	return "<closure>"
+}
+
 func (n Number) String() string  { return fmt.Sprintf("%d", int64(n)) }
 func (b Bool) String() string {
 	if b {
@@ -1558,7 +1582,14 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		}
 		return result{flow: flowNormal}, nil
 	case *ast.FuncDecl:
-		return result{}, fmt.Errorf("interp: nested functions / closures are not yet supported in the tree-walking interpreter (compile and run via the wasm backend)")
+		// Local function declaration: capture the enclosing
+		// env at this point in execution and bind the
+		// resulting Closure under the function's name in the
+		// local scope. Subsequent calls to the name go through
+		// the Closure → callClosure path so reads of outer
+		// vars hit the captured env.
+		e.declare(x.Name, &Closure{Decl: x, Env: e})
+		return result{flow: flowNormal}, nil
 	case *ast.Match:
 		tag, err := i.evalExpr(x.Tag, e)
 		if err != nil {
@@ -1818,6 +1849,20 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			return String(string(v)[low:high]), nil
 		}
 		return nil, fmt.Errorf("unreachable: srcV type %T not Array/String after pre-check", srcV)
+	case *ast.Lambda:
+		// Synthesise a FuncDecl shell from the Lambda's params /
+		// return / body so callClosure can dispatch through the
+		// same callFunc path top-level decls use. Capture the
+		// current env so reads of outer vars hit the right
+		// values.
+		decl := &ast.FuncDecl{
+			P:          x.P,
+			Name:       "",
+			Params:     x.Params,
+			ReturnType: x.ReturnType,
+			Body:       x.Body,
+		}
+		return &Closure{Decl: decl, Env: env}, nil
 	case *ast.Call:
 		return i.evalCall(x, env)
 	case *ast.Binary:
@@ -1977,8 +2022,11 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 			return b.Fn(i, args)
 		}
 		if v, ok := env.get(id.Name); ok {
-			if fv, ok := v.(Func); ok {
+			switch fv := v.(type) {
+			case Func:
 				return i.callFunc(fv.Decl, args)
+			case *Closure:
+				return i.callClosure(fv, args)
 			}
 			return nil, fmt.Errorf("calling non-function %q (%T)", id.Name, v)
 		}
@@ -1991,10 +2039,39 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	if fv, ok := cv.(Func); ok {
+	switch fv := cv.(type) {
+	case Func:
 		return i.callFunc(fv.Decl, args)
+	case *Closure:
+		return i.callClosure(fv, args)
 	}
 	return nil, fmt.Errorf("interp: not a function: %T", cv)
+}
+
+// callClosure dispatches a call through a Closure value. The
+// param environment chains off the captured env (not a fresh
+// nil parent), so reads of free variables hit the values
+// snapshot at definition time.
+func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
+	if len(args) != len(c.Decl.Params) {
+		name := c.Decl.Name
+		if name == "" {
+			name = "<closure>"
+		}
+		return nil, fmt.Errorf("%s: expected %d args, got %d", name, len(c.Decl.Params), len(args))
+	}
+	e := newEnv(c.Env)
+	for k, p := range c.Decl.Params {
+		e.declare(p.Name, args[k])
+	}
+	r, err := i.execBlock(c.Decl.Body, e)
+	if err != nil {
+		return nil, err
+	}
+	if r.flow == flowReturn {
+		return r.val, nil
+	}
+	return Void{}, nil
 }
 
 func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
