@@ -219,6 +219,8 @@ func (s *Server) handleMethod(method string, params json.RawMessage) (any, *rpcE
 		return s.handleReferences(params)
 	case "textDocument/rename":
 		return s.handleRename(params)
+	case "textDocument/formatting":
+		return s.handleFormatting(params)
 	}
 	return nil, &rpcError{
 		Code:    errCodeMethodNotFound,
@@ -248,8 +250,9 @@ func (s *Server) handleInitialize() initializeResult {
 				},
 				Full: true,
 			},
-			ReferencesProvider: true,
-			RenameProvider:     true,
+			ReferencesProvider:         true,
+			RenameProvider:             true,
+			DocumentFormattingProvider: true,
 		},
 		ServerInfo: &serverInfo{Name: "lang-lsp"},
 	}
@@ -356,6 +359,21 @@ func (s *Server) handleReferences(raw json.RawMessage) (any, *rpcError) {
 		return []Location{}, nil
 	}
 	return runReferences(state, p.TextDocument.URI, p.Position), nil
+}
+
+func (s *Server) handleFormatting(raw json.RawMessage) (any, *rpcError) {
+	var p formattingParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return []textEdit{}, nil
+	}
+	if edits := runFormatting(state); edits != nil {
+		return edits, nil
+	}
+	return []textEdit{}, nil
 }
 
 func (s *Server) handleRename(raw json.RawMessage) (any, *rpcError) {

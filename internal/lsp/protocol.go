@@ -98,8 +98,9 @@ type serverCapabilities struct {
 	InlayHintProvider      bool                   `json:"inlayHintProvider,omitempty"`
 	DocumentSymbolProvider bool                   `json:"documentSymbolProvider,omitempty"`
 	SemanticTokensProvider *semanticTokensOptions `json:"semanticTokensProvider,omitempty"`
-	ReferencesProvider     bool                   `json:"referencesProvider,omitempty"`
-	RenameProvider         bool                   `json:"renameProvider,omitempty"`
+	ReferencesProvider         bool `json:"referencesProvider,omitempty"`
+	RenameProvider             bool `json:"renameProvider,omitempty"`
+	DocumentFormattingProvider bool `json:"documentFormattingProvider,omitempty"`
 }
 
 // semanticTokensOptions advertises the legend the client uses to
