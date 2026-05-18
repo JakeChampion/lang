@@ -175,6 +175,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"string concat":              false,
 		"f-string":                   false,
 		"len(string)":                false,
+		"pipe operator":              false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -265,6 +266,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "len(") {
 			want["len(string)"] = true
+		}
+		if strings.Contains(src, "|>") {
+			want["pipe operator"] = true
 		}
 	}
 	for feature, ok := range want {
