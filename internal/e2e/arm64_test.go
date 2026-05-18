@@ -10017,6 +10017,41 @@ function main(): i32 {
 	}
 }
 
+// `var b: Box[i64] = Box { v: 1234567890123 };` failed
+// with "cannot assign Box[i32] to variable of type
+// Box[i64]". The StructLit checker's generic inference
+// only saw the literal's pre-settle width — the `T = i32`
+// default never widened against the destination
+// `Box[i64]` annotation.
+//
+// Same family as the MapLit widening from #542 / the
+// EnumType variant call refresh from #540. The generic
+// struct literal needed:
+//
+//   1. settleNumeric(StructType{Args:[i64]}) walking
+//      each field with the substituted type
+//      (`Box.v` → i64), AND
+//   2. postSettleType refreshing the StructType.Args
+//      from the literal's TypeArgs stamp so the
+//      assignable check sees the resolved shape.
+//
+// Fix: settleNumeric's StructType case handles
+// `*ast.StructLit` with a generic StructDecl — builds
+// the type-param sub, settles each field's value, and
+// stamps `sl.TypeArgs`. postSettleType for StructLit
+// returns the refreshed StructType from `x.TypeArgs`.
+func TestArm64GenericStructLitSettle(t *testing.T) {
+	src := `struct Box[T] { v: T }
+function main(): i32 {
+    var b: Box[i64] = Box { v: 1234567890123 };
+    if (b.v == 1234567890123) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("generic Box[i64] StructLit got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,

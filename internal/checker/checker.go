@@ -4150,6 +4150,32 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.settleNumeric(ent.Key, hn.Args[0])
 				c.settleNumeric(ent.Value, hn.Args[1])
 			}
+		} else if sl, ok := e.(*ast.StructLit); ok && len(hn.Args) > 0 {
+			// Generic struct literal with a destination
+			// annotation: `var b: Box[i64] = Box { v: 100 }`.
+			// Build the type-param substitution from the hint's
+			// Args, look up each field's declared type, and
+			// settle each field value against the substituted
+			// type so polymorphic literals widen. Also stamp
+			// the literal's TypeArgs so postSettleType returns
+			// the resolved StructType shape to the assignable
+			// check.
+			if sd, ok := c.info.Structs[sl.TypeName]; ok && len(sd.TypeParams) == len(hn.Args) {
+				sub := map[string]ast.Type{}
+				for i, tp := range sd.TypeParams {
+					sub[tp] = hn.Args[i]
+				}
+				fieldT := map[string]ast.Type{}
+				for _, f := range sd.Fields {
+					fieldT[f.Name] = substituteType(f.Type, sub)
+				}
+				for _, f := range sl.Fields {
+					if expected, present := fieldT[f.Name]; present && expected != nil {
+						c.settleNumeric(f.Value, expected)
+					}
+				}
+				sl.TypeArgs = append([]ast.Type{}, hn.Args...)
+			}
 		} else if ie, ok := e.(*ast.IfExpr); ok {
 			// `var m: Map[K, V] = if cond { Map {...} } else
 			// { Map {...} }` — fan out the destination Map type
@@ -4535,6 +4561,15 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 			x.KeyType = newK
 			x.ValueType = newV
 			return ast.StructType{Name: "Map", Args: []ast.Type{newK, newV}}
+		}
+	case *ast.StructLit:
+		// Generic struct literal whose TypeArgs got committed
+		// to a concrete shape by settleNumeric. The settle
+		// path stamped `x.TypeArgs` directly; reading those
+		// back here lets the `assignable` check see
+		// `Box[i64]` instead of the pre-settle `Box[i32]`.
+		if len(x.TypeArgs) > 0 {
+			return ast.StructType{Name: x.TypeName, Args: append([]ast.Type{}, x.TypeArgs...)}
 		}
 	}
 	return prior
