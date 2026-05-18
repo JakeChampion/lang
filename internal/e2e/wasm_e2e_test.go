@@ -7022,3 +7022,180 @@ function main(): i32 {
 		t.Errorf("inst function body: exit = %d, want 0", got)
 	}
 }
+
+// TestWASMNumericI32 spot-checks the i32 numeric opcodes: a
+// sample of each family (unary, compare, arithmetic, bitwise,
+// shift, rotate). The opcode table is large but mechanical, so
+// this catches typos in the constants without spelling out all
+// 33 i32 entries.
+func TestWASMNumericI32(t *testing.T) {
+	src := `import "std/wasm/numeric";
+function main(): i32 {
+    var e: u8[] = [];
+
+    // Unary
+    if (numeric.inst_i32_clz(e)[0]    != 103u8) { return 1; }
+    if (numeric.inst_i32_ctz(e)[0]    != 104u8) { return 2; }
+    if (numeric.inst_i32_popcnt(e)[0] != 105u8) { return 3; }
+    if (numeric.inst_i32_eqz(e)[0]    != 69u8)  { return 4; }
+
+    // Compare (spread across the i32 compare block 0x46-0x4F).
+    if (numeric.inst_i32_eq(e)[0]   != 70u8) { return 10; }
+    if (numeric.inst_i32_ne(e)[0]   != 71u8) { return 11; }
+    if (numeric.inst_i32_lt_s(e)[0] != 72u8) { return 12; }
+    if (numeric.inst_i32_lt_u(e)[0] != 73u8) { return 13; }
+    if (numeric.inst_i32_ge_u(e)[0] != 79u8) { return 14; }
+
+    // Arithmetic (0x6A-0x70).
+    if (numeric.inst_i32_add(e)[0]   != 106u8) { return 20; }
+    if (numeric.inst_i32_sub(e)[0]   != 107u8) { return 21; }
+    if (numeric.inst_i32_mul(e)[0]   != 108u8) { return 22; }
+    if (numeric.inst_i32_div_s(e)[0] != 109u8) { return 23; }
+    if (numeric.inst_i32_rem_u(e)[0] != 112u8) { return 24; }
+
+    // Bitwise (0x71-0x73).
+    if (numeric.inst_i32_and(e)[0] != 113u8) { return 30; }
+    if (numeric.inst_i32_or(e)[0]  != 114u8) { return 31; }
+    if (numeric.inst_i32_xor(e)[0] != 115u8) { return 32; }
+
+    // Shift / rotate (0x74-0x78).
+    if (numeric.inst_i32_shl(e)[0]   != 116u8) { return 40; }
+    if (numeric.inst_i32_shr_s(e)[0] != 117u8) { return 41; }
+    if (numeric.inst_i32_shr_u(e)[0] != 118u8) { return 42; }
+    if (numeric.inst_i32_rotl(e)[0]  != 119u8) { return 43; }
+    if (numeric.inst_i32_rotr(e)[0]  != 120u8) { return 44; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("numeric i32: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMNumericI64 spot-checks the i64 numeric opcodes. The
+// i64 table mirrors i32's shape but at a different offset (i64
+// compares are 0x51-0x5A, arithmetic / bitwise / shift are
+// 0x7C-0x8A), so it's worth verifying both blocks separately —
+// a transposed cell would still pass i32-only tests.
+func TestWASMNumericI64(t *testing.T) {
+	src := `import "std/wasm/numeric";
+function main(): i32 {
+    var e: u8[] = [];
+
+    // Unary + eqz (eqz is in the i32-eqz neighbourhood at 0x50).
+    if (numeric.inst_i64_eqz(e)[0]    != 80u8)  { return 1; }
+    if (numeric.inst_i64_clz(e)[0]    != 121u8) { return 2; }
+    if (numeric.inst_i64_ctz(e)[0]    != 122u8) { return 3; }
+    if (numeric.inst_i64_popcnt(e)[0] != 123u8) { return 4; }
+
+    // Compare block (0x51-0x5A).
+    if (numeric.inst_i64_eq(e)[0]   != 81u8) { return 10; }
+    if (numeric.inst_i64_lt_s(e)[0] != 83u8) { return 11; }
+    if (numeric.inst_i64_ge_u(e)[0] != 90u8) { return 12; }
+
+    // Arithmetic block (0x7C-0x82).
+    if (numeric.inst_i64_add(e)[0]   != 124u8) { return 20; }
+    if (numeric.inst_i64_sub(e)[0]   != 125u8) { return 21; }
+    if (numeric.inst_i64_mul(e)[0]   != 126u8) { return 22; }
+    if (numeric.inst_i64_div_s(e)[0] != 127u8) { return 23; }
+    if (numeric.inst_i64_rem_u(e)[0] != 130u8) { return 24; }
+
+    // Bitwise / shift / rotate (0x83-0x8A).
+    if (numeric.inst_i64_and(e)[0]   != 131u8) { return 30; }
+    if (numeric.inst_i64_shl(e)[0]   != 134u8) { return 31; }
+    if (numeric.inst_i64_shr_s(e)[0] != 135u8) { return 32; }
+    if (numeric.inst_i64_shr_u(e)[0] != 136u8) { return 33; }
+    if (numeric.inst_i64_rotr(e)[0]  != 138u8) { return 34; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("numeric i64: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMNumericFloat spot-checks f32 + f64. The floating-point
+// opcodes live in two interleaved blocks: compares at 0x5B-0x66
+// (f32 first, then f64) and unary / binary ops at 0x8B-0xA6
+// (again f32 first, then f64). A swapped row would survive the
+// integer-only tests, so this one walks both float widths.
+func TestWASMNumericFloat(t *testing.T) {
+	src := `import "std/wasm/numeric";
+function main(): i32 {
+    var e: u8[] = [];
+
+    // f32 compare (0x5B-0x60).
+    if (numeric.inst_f32_eq(e)[0] != 91u8) { return 1; }
+    if (numeric.inst_f32_lt(e)[0] != 93u8) { return 2; }
+    if (numeric.inst_f32_ge(e)[0] != 96u8) { return 3; }
+
+    // f64 compare (0x61-0x66).
+    if (numeric.inst_f64_eq(e)[0] != 97u8)  { return 10; }
+    if (numeric.inst_f64_lt(e)[0] != 99u8)  { return 11; }
+    if (numeric.inst_f64_ge(e)[0] != 102u8) { return 12; }
+
+    // f32 unary + binary (0x8B-0x98).
+    if (numeric.inst_f32_abs(e)[0]      != 139u8) { return 20; }
+    if (numeric.inst_f32_neg(e)[0]      != 140u8) { return 21; }
+    if (numeric.inst_f32_sqrt(e)[0]     != 145u8) { return 22; }
+    if (numeric.inst_f32_add(e)[0]      != 146u8) { return 23; }
+    if (numeric.inst_f32_div(e)[0]      != 149u8) { return 24; }
+    if (numeric.inst_f32_min(e)[0]      != 150u8) { return 25; }
+    if (numeric.inst_f32_copysign(e)[0] != 152u8) { return 26; }
+
+    // f64 unary + binary (0x99-0xA6).
+    if (numeric.inst_f64_abs(e)[0]      != 153u8) { return 30; }
+    if (numeric.inst_f64_neg(e)[0]      != 154u8) { return 31; }
+    if (numeric.inst_f64_sqrt(e)[0]     != 159u8) { return 32; }
+    if (numeric.inst_f64_add(e)[0]      != 160u8) { return 33; }
+    if (numeric.inst_f64_div(e)[0]      != 163u8) { return 34; }
+    if (numeric.inst_f64_max(e)[0]      != 165u8) { return 35; }
+    if (numeric.inst_f64_copysign(e)[0] != 166u8) { return 36; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("numeric float: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMNumericCompose verifies a real-world body shape:
+// local.get 0 ; local.get 1 ; i32.add — the canonical
+// "function that adds two i32s" body. A typo in any of the
+// three opcode tables would surface here as a mismatched byte.
+func TestWASMNumericCompose(t *testing.T) {
+	src := `import "std/wasm/inst";
+import "std/wasm/numeric";
+function main(): i32 {
+    var body: u8[] = [];
+    body = inst.inst_local_get(body, 0u32);
+    body = inst.inst_local_get(body, 1u32);
+    body = numeric.inst_i32_add(body);
+
+    // Expected: [0x20, 0x00, 0x20, 0x01, 0x6A] = 5 bytes.
+    if (len(body) != 5) { return 1; }
+    if (body[0] != 32u8)  { return 2; }    // local.get
+    if (body[1] != 0u8)   { return 3; }
+    if (body[2] != 32u8)  { return 4; }    // local.get
+    if (body[3] != 1u8)   { return 5; }
+    if (body[4] != 106u8) { return 6; }    // i32.add
+
+    // A second composite: local.get 0 ; i32.eqz ; br_if 0
+    // — the canonical "bail out early when arg is zero" shape.
+    var body2: u8[] = [];
+    body2 = inst.inst_local_get(body2, 0u32);
+    body2 = numeric.inst_i32_eqz(body2);
+    body2 = inst.inst_br_if(body2, 0u32);
+    if (len(body2) != 5) { return 10; }
+    if (body2[0] != 32u8) { return 11; }   // local.get
+    if (body2[1] != 0u8)  { return 12; }
+    if (body2[2] != 69u8) { return 13; }   // i32.eqz
+    if (body2[3] != 13u8) { return 14; }   // br_if
+    if (body2[4] != 0u8)  { return 15; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("numeric compose: exit = %d, want 0", got)
+	}
+}
