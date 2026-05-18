@@ -459,6 +459,118 @@ func TestEmitBlocktypeUnsupported(t *testing.T) {
 	}
 }
 
+// TestEmitConversions — width conversions (extend / wrap),
+// float↔int (convert / trunc), float demote/promote, sign-extend
+// of sub-i32 widths, and reinterpret. One sub-test per family;
+// the inner computation builds a value of the source type, runs
+// the conversion, and returns the result in a way that lets
+// wasmtime print it verifiably.
+func TestEmitConversions(t *testing.T) {
+	cases := []struct {
+		name string
+		ret  ast.Type
+		ops  []ir.Op
+		want string
+	}{
+		{"extend_i32_s_negative", i64(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: -1},
+			{Kind: ir.OpExtendI32S},
+		}, "-1"},
+		{"extend_i32_u_negative", i64(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: -1},
+			{Kind: ir.OpExtendI32U}, // 0xFFFFFFFF unsigned → 4294967295
+		}, "4294967295"},
+		{"wrap_i64", i32(), []ir.Op{
+			{Kind: ir.OpConstI64, I64: 0x1_0000_0000 + 42}, // high bits dropped
+			{Kind: ir.OpWrapI64},
+		}, "42"},
+		{"sign_extend_8_negative", i32(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0xff}, // 0xff → -1 when sign-extended from i8
+			{Kind: ir.OpSignExtend8},
+		}, "-1"},
+		{"sign_extend_16_negative", i32(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0xffff}, // 0xffff → -1 when sign-extended from i16
+			{Kind: ir.OpSignExtend16},
+		}, "-1"},
+		{"trunc_f32_to_i32", i32(), []ir.Op{
+			{Kind: ir.OpConstF32, F32: 3.7},
+			{Kind: ir.OpITruncF32, Width: 32}, // → i32
+		}, "3"},
+		{"convert_i32_to_f64", f64(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 7},
+			{Kind: ir.OpFConvertI32, Width: 64}, // → f64
+		}, "7"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:       "main",
+				ReturnType: tc.ret,
+				Ops:        tc.ops,
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			if got := runUnderWasmtime(t, bin, "main"); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmitPromoteDemote — f32 promoted to f64 round-trips through
+// f64 arithmetic and then demoted back to f32. Catches drift in
+// either direction since the two ops share an opcode family.
+func TestEmitPromoteDemote(t *testing.T) {
+	// main(): f32 { return f32(f64(1.5) + f64(2.25)) }  // 3.75
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: f32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstF32, F32: 1.5},
+			{Kind: ir.OpFPromoteF32},
+			{Kind: ir.OpConstF32, F32: 2.25},
+			{Kind: ir.OpFPromoteF32},
+			{Kind: ir.OpFAdd, Width: 64},
+			{Kind: ir.OpFDemoteF64},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	got := runUnderWasmtime(t, bin, "main")
+	if !strings.HasPrefix(got, "3.75") {
+		t.Fatalf("got %q, want stdout starting with 3.75", got)
+	}
+}
+
+// TestEmitReinterpret — bits round-trip via f32 ↔ i32. After
+// reinterpret(reinterpret(x)) we should get x back unchanged.
+// Picks a pattern that's not a normal float to make sure no
+// implicit normalisation happens.
+func TestEmitReinterpret(t *testing.T) {
+	// main(): i32 { return reinterpret_i32(reinterpret_f32(0x12345678)) }
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0x12345678},
+			{Kind: ir.OpReinterpretF32I32},
+			{Kind: ir.OpReinterpretI32F32},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "305419896" { // 0x12345678
+		t.Fatalf("got %q, want 305419896", got)
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpStrLen) and confirm we get a useful error rather
 // than emitting nonsense bytes. Regressions here would silently
