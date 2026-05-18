@@ -913,43 +913,30 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	// types and the monomorphiser clones the function per
 	// instantiation. Wiring them here for any t exercises that
 	// inference + monomorph path across the type universe.
-	//
-	// Gated out of noFloats mode (the runnable / differential-
-	// oracle path): the monomorphiser misses some call shapes
-	// the langsmith generator produces (a generic call buried
-	// inside a struct literal / array literal / match arm at
-	// just the wrong depth leaves an un-rewritten `id(...)` /
-	// `pick(...)` in the cloned program, and the re-check
-	// fails with "undefined identifier id"). That's a real
-	// compiler bug worth chasing separately; until it's fixed,
-	// generics participate in Gen (parse + check fuzzing)
-	// where no monomorph re-check runs.
-	if !g.noFloats {
-		if !g.flip(0.85) {
-			// `id` is the simpler call — single arg of type t,
-			// returns t. Exhaustion convention: `true` => skip the
-			// generic call (smaller output, no extra clone for
-			// monomorph to handle).
-			fmt.Fprintf(b, "id(")
-			g.genericArg(b, sc, t, depth)
-			b.WriteString(")")
-			return
-		}
-		if !g.flip(0.9) {
-			// `pick` is the three-arg variant. Both `a` and `b`
-			// recurse at type t so the checker's pairwise
-			// unification produces a single T. Use genericArg so
-			// type-ambiguous values like bare `None` get nudged
-			// into a concrete form before the inference runs.
-			b.WriteString("pick(")
-			g.expr(b, sc, tBool, depth+1)
-			b.WriteString(", ")
-			g.genericArg(b, sc, t, depth)
-			b.WriteString(", ")
-			g.genericArg(b, sc, t, depth)
-			b.WriteString(")")
-			return
-		}
+	if !g.flip(0.85) {
+		// `id` is the simpler call — single arg of type t,
+		// returns t. Exhaustion convention: `true` => skip the
+		// generic call (smaller output, no extra clone for
+		// monomorph to handle).
+		fmt.Fprintf(b, "id(")
+		g.genericArg(b, sc, t, depth)
+		b.WriteString(")")
+		return
+	}
+	if !g.flip(0.9) {
+		// `pick` is the three-arg variant. Both `a` and `b`
+		// recurse at type t so the checker's pairwise
+		// unification produces a single T. Use genericArg so
+		// type-ambiguous values like bare `None` get nudged
+		// into a concrete form before the inference runs.
+		b.WriteString("pick(")
+		g.expr(b, sc, tBool, depth+1)
+		b.WriteString(", ")
+		g.genericArg(b, sc, t, depth)
+		b.WriteString(", ")
+		g.genericArg(b, sc, t, depth)
+		b.WriteString(")")
+		return
 	}
 	switch t {
 	case tI32, tI64, tF32:
