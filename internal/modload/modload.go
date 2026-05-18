@@ -212,12 +212,15 @@ type module struct {
 	// imports[localName] entry once every cyclically-loaded module
 	// is in the global `loaded` map (see resolveCyclicImports).
 	importPaths map[string]string
-	// publicFuncs / publicStructs / publicConsts hold the original
-	// (pre-mangle) names of `pub` decls, populated when the module
-	// loads. The rewriter uses them to gate cross-module references.
+	// publicFuncs / publicStructs / publicConsts / publicEnums hold
+	// the original (pre-mangle) names of `pub` decls, populated when
+	// the module loads. The rewriter uses them to gate cross-module
+	// references. publicEnums also covers `pub type Tok = A | B;`
+	// unions because the parser desugars unions to enums.
 	publicFuncs   map[string]bool
 	publicStructs map[string]bool
 	publicConsts  map[string]bool
+	publicEnums   map[string]bool
 	// allConsts is the pre-mangle name set of every const in this
 	// module (public or private). The visibility-error path uses it
 	// to decide whether `mod.X` should suggest `pub function X`
@@ -297,6 +300,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		publicFuncs:   map[string]bool{},
 		publicStructs: map[string]bool{},
 		publicConsts:  map[string]bool{},
+		publicEnums:   map[string]bool{},
 		allConsts:     map[string]bool{},
 	}
 	for _, fn := range prog.Funcs {
@@ -321,6 +325,18 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	}
 	for _, ed := range prog.Enums {
 		ed.SourceModule = path
+		if ed.Public {
+			mod.publicEnums[ed.Name] = true
+		}
+	}
+	for _, ud := range prog.Unions {
+		ud.SourceModule = path
+		if ud.Public {
+			// `pub type Tok = A | B;` desugars to an enum later in the
+			// checker; the publicEnums map carries the export bit
+			// across that pass.
+			mod.publicEnums[ud.Name] = true
+		}
 	}
 	for _, cd := range prog.Consts {
 		mod.allConsts[cd.Name] = true
@@ -611,6 +627,17 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 	// `Foo { ... }` / `K`) versus references to outside symbols.
 	ownFuncs := map[string]bool{}
 	ownStructs := map[string]bool{}
+	ownEnums := map[string]bool{}
+	for _, ed := range m.prog.Enums {
+		ownEnums[ed.Name] = true
+	}
+	for _, ud := range m.prog.Unions {
+		// Same `ownEnums` set covers union names: the checker
+		// desugars `type X = …;` to an EnumDecl with the same
+		// name, so cross-module references treat union names and
+		// enum names interchangeably for prefix purposes.
+		ownEnums[ud.Name] = true
+	}
 	ownConsts := map[string]bool{}
 	for _, fn := range m.prog.Funcs {
 		// Runtime / codegen helpers keep their bare names —
@@ -636,6 +663,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		selfPrefix:    selfPrefix,
 		ownFuncs:      ownFuncs,
 		ownStructs:    ownStructs,
+		ownEnums:      ownEnums,
 		ownConsts:     ownConsts,
 		imports:       m.imports,
 		flatNamespace: flatNamespace,
@@ -678,6 +706,25 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 			r.rewriteType(&sd.Fields[i].Type)
 		}
 	}
+	for _, ed := range m.prog.Enums {
+		ed.Name = selfPrefix + ed.Name
+		for i := range ed.Variants {
+			for j := range ed.Variants[i].Payloads {
+				r.rewriteType(&ed.Variants[i].Payloads[j])
+			}
+		}
+	}
+	for _, ud := range m.prog.Unions {
+		// Mangling lines up with the synthesised EnumDecl the
+		// checker will produce. Member struct names get the same
+		// own-module prefix because they're declared alongside.
+		ud.Name = selfPrefix + ud.Name
+		for i, member := range ud.Members {
+			if ownStructs[member] {
+				ud.Members[i] = selfPrefix + member
+			}
+		}
+	}
 	for _, cd := range m.prog.Consts {
 		cd.Name = selfPrefix + cd.Name
 		r.rewriteType(&cd.Type)
@@ -692,6 +739,7 @@ type rewriter struct {
 	selfPrefix string             // prefix for this module's own decls
 	ownFuncs   map[string]bool    // names of funcs declared in this module (pre-mangle)
 	ownStructs map[string]bool    // names of structs declared in this module (pre-mangle)
+	ownEnums   map[string]bool    // names of enums + unions declared in this module (pre-mangle)
 	ownConsts  map[string]bool    // names of consts declared in this module (pre-mangle)
 	imports    map[string]*module // local name → imported module
 	errs       []error            // visibility / unresolved-name errors collected during the walk
@@ -739,12 +787,17 @@ func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
 
 // checkPublicStruct records an error if `name` isn't an exported
 // struct of `mod`. Used at every cross-module struct-type or
-// struct-literal reference.
+// struct-literal reference. Falls back on publicEnums for type-name
+// references like `mod.Token` that resolve to an enum (or to a
+// union, which the checker desugars to an enum) — those go through
+// the same `mod.Foo` parse shape as struct types and we can't tell
+// them apart pre-checker.
 func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position) {
-	if !mod.publicStructs[name] {
-		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub struct %s …` to make it accessible from other modules)",
-			r.modPath, pos, mod.name, name, name))
+	if mod.publicStructs[name] || mod.publicEnums[name] {
+		return
 	}
+	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub struct %s …` to make it accessible from other modules)",
+		r.modPath, pos, mod.name, name, name))
 }
 
 // checkPublicValue gates a `mod.X` reference where X is expected
@@ -948,6 +1001,7 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 	case *ast.Match:
 		r.rewriteExpr(&x.Tag)
 		for _, arm := range x.Arms {
+			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.P)
 			if arm.Guard != nil {
 				r.rewriteExpr(&arm.Guard)
 			}
@@ -1092,6 +1146,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 	case *ast.MatchExpr:
 		r.rewriteExpr(&x.Tag)
 		for _, arm := range x.Arms {
+			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.P)
 			if arm.Guard != nil {
 				r.rewriteExpr(&arm.Guard)
 			}
@@ -1110,6 +1165,39 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		for i := range x.Fields {
 			r.rewriteExpr(&x.Fields[i].Value)
 		}
+	}
+}
+
+// rewriteVariantPattern walks a match arm's variant pattern and
+// applies the same name-mangling pipeline used for struct types:
+//
+//   - `mod.TokA(...)` → VariantModule resolves to the imported
+//     module's canonical path, VariantName gains the module's
+//     mangle prefix.
+//   - `TokA(...)` with TokA declared in this module → VariantName
+//     gains selfPrefix to line up with the (already-mangled)
+//     EnumVariant.Name produced by the union desugar.
+//
+// The checker then matches arm.VariantName against the variants
+// of the scrutinee enum (also mangled), and compares
+// arm.VariantModule to the enum's SourceModule for safety.
+func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos ast.Position) {
+	if *armModule != "" {
+		mod, prefix, ok := r.importedModule(*armModule)
+		if !ok {
+			r.errs = append(r.errs, fmt.Errorf("%s:%s: unknown module %q in variant pattern", r.modPath, pos, *armModule))
+			return
+		}
+		*armModule = mod.path
+		*armName = prefix + *armName
+		return
+	}
+	// Unqualified: if this module declares an enum/union the variant
+	// could belong to, prepend selfPrefix so the name lines up with
+	// the mangled EnumVariant. Same-module references stay bare
+	// otherwise (e.g. core enums in a flat-namespace stdlib path).
+	if r.ownStructs[*armName] {
+		*armName = r.selfPrefix + *armName
 	}
 }
 
@@ -1134,7 +1222,7 @@ func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 		// surface a clear "unknown module" error.
 		return name
 	}
-	if r.ownStructs[name] {
+	if r.ownStructs[name] || r.ownEnums[name] {
 		return r.selfPrefix + name
 	}
 	return name

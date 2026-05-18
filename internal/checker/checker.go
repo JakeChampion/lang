@@ -608,10 +608,11 @@ func Check(prog *ast.Program) (*Info, error) {
 			continue
 		}
 		prog.Enums = append(prog.Enums, &ast.EnumDecl{
-			P:        ud.P,
-			Name:     ud.Name,
-			Variants: variants,
-			Public:   ud.Public,
+			P:            ud.P,
+			Name:         ud.Name,
+			Variants:     variants,
+			Public:       ud.Public,
+			SourceModule: ud.SourceModule,
 		})
 	}
 	prog.Unions = nil
@@ -2807,6 +2808,17 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			c.checkBlock(arm.Body, s)
 			continue
 		}
+		// Validate the optional `mod.` qualifier against the
+		// scrutinee enum's source module. modload rewrites the
+		// qualifier to the canonical module path (the same string
+		// stamped on EnumDecl.SourceModule), so an equality
+		// comparison is enough. Skip when either side is empty —
+		// SourceModule is "" for entry-point modules in the
+		// flat-namespace path.
+		if arm.VariantModule != "" && ed.SourceModule != "" && arm.VariantModule != ed.SourceModule {
+			c.errf(arm.P, "variant pattern qualifier names module %q, but enum %s lives in module %q",
+				arm.VariantModule, ed.Name, ed.SourceModule)
+		}
 		// Find the variant on this enum.
 		varIdx := -1
 		var variant *ast.EnumVariant
@@ -3059,6 +3071,11 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			}
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
 			continue
+		}
+		// Same qualifier validation as the stmt-form arm loop above.
+		if arm.VariantModule != "" && ed.SourceModule != "" && arm.VariantModule != ed.SourceModule {
+			c.errf(arm.P, "variant pattern qualifier names module %q, but enum %s lives in module %q",
+				arm.VariantModule, ed.Name, ed.SourceModule)
 		}
 		varIdx := -1
 		var variant *ast.EnumVariant
