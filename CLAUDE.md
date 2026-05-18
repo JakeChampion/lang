@@ -74,6 +74,11 @@ as a TODO to clean up.
 
 ## Working with PRs
 
+**Always open a PR for completed work.** Once a change is committed
+and pushed to its feature branch, open a PR for it without waiting
+to be asked. The default flow is: branch → commit → push → PR →
+subscribe. Don't stop at "pushed to the branch" — finish the loop.
+
 When you open a PR, subscribe to its activity (`subscribe_pr_activity`)
 without being asked. The user prefers to be alerted via the subscription
 flow rather than driving manual CI checks after the fact.
