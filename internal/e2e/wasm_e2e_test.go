@@ -3146,6 +3146,29 @@ function main(): i32 {
 	}
 }
 
+// Lambda inside a generic function — the lambda's params /
+// return type may reference the enclosing function's type
+// parameters. Pre-fix the checker's resolveTypesInBlock didn't
+// descend into expression-position Lambda nodes so the lambda's
+// `T` stayed as `StructType{T}` and the outer's declared
+// `(T) => T` (parser-built as `*FuncType[ParamType{T}]`) didn't
+// match. The Lambda case in checkExpr now resolves the lambda's
+// types against `c.current.TypeParams`; monomorph also walks
+// into Lambda for substitution and cloning so each
+// instantiation gets a fresh body with the concrete type.
+func TestWASMLambdaInGenericFn(t *testing.T) {
+	src := `function makeId[T](): (T) => T {
+    return function (x: T): T { return x; };
+}
+function main(): i32 {
+    var f = makeId[i32]();
+    return f(42);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
 // Generic call-site type arguments: `f[T](args)`. Most generic
 // calls already infer T from argument types, but the explicit
 // form helps when inference would otherwise fail — e.g.
