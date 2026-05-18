@@ -1,0 +1,76 @@
+// std/wasm/component — WebAssembly Component Model binary
+// encoder primitives.
+//
+// Spec: https://github.com/WebAssembly/component-model/blob/main/design/mvp/Binary.md
+//
+// First slice of Phase 2 of docs/TOOLCHAIN-SELF-HOSTING.md. The
+// std/wasm/* modules so far cover the Core 1.0 binary format —
+// every byte the production compiler used to feed `wasm-tools
+// parse`. Phase 2 is the layer above: wrapping a core module in
+// the Component Model envelope so it can run under preview-2
+// hosts (the production driver's current need, fulfilled today
+// by `wasm-tools component embed` + `wasm-tools component new`).
+//
+// This slice only covers the preamble + the core-module section
+// — the two pieces every component starts with. Type / import /
+// export / instance / canon / alias sections come later as the
+// production world (lang.wit, http.wit) shapes need them.
+//
+// Layout of the bytes inspected here:
+//
+//   Component preamble (8 bytes):
+//     00 61 73 6d   magic ("\0asm")
+//     0d 00         version 0x000d (component-model preview)
+//     01 00         layer 0x0001  (component, vs 0x0000 for core)
+//
+//   Core-module section:
+//     01            section id 1 = core-module
+//     <uleb size>   length of the embedded core module
+//     <bytes...>    a complete core wasm module (preamble + sections)
+
+import "std/wasm/leb128";
+import "std/wasm/encode";
+
+// Component section IDs from the Binary.md spec table. Only the
+// few production-path entries are wired so far.
+pub function section_core_module(): u8     { return 1u8; }
+pub function section_core_instance(): u8   { return 3u8; }
+pub function section_core_alias(): u8      { return 4u8; }
+pub function section_component_type(): u8  { return 5u8; }
+pub function section_component(): u8       { return 6u8; }
+pub function section_instance(): u8        { return 7u8; }
+pub function section_alias(): u8           { return 8u8; }
+pub function section_canon(): u8           { return 9u8; }
+pub function section_start(): u8           { return 10u8; }
+pub function section_import(): u8          { return 11u8; }
+pub function section_export(): u8          { return 12u8; }
+
+// put_component_header — append the Component Model preamble:
+// `\0asm` + version 0x000d + layer 0x0001. Always 8 bytes.
+// Layer = 0x01 is what distinguishes a component from a core
+// module (which uses layer 0x00 — i.e. its version field is
+// 0x01000000 and there's no layer field).
+pub function put_component_header(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(0u8);
+    out = out.push(97u8);    // 'a'
+    out = out.push(115u8);   // 's'
+    out = out.push(109u8);   // 'm'
+    out = out.push(13u8);    // version low byte (0x0d)
+    out = out.push(0u8);     // version high byte
+    out = out.push(1u8);     // layer low byte (0x01 — component)
+    out = out.push(0u8);     // layer high byte
+    return out;
+}
+
+// put_core_module_section — append a complete core wasm module
+// as a core-module section: `id : u8 + size : uleb + body`.
+// `core_bytes` is the entire core module starting with its own
+// preamble (00 61 73 6d 01 00 00 00 ...) as produced by
+// std/wasm/module.build.
+pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(section_core_module());
+    out = leb128.uleb_u32(out, len(core_bytes) as u32);
+    return encode.put_bytes(out, core_bytes);
+}
