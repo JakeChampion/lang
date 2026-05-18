@@ -253,6 +253,29 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
 
 ## Phase 2 — Component Model writer
 
+### Progress
+
+- **Component preamble + core-module-section composer shipped**
+  in `internal/stdlib/std/wasm/component.lang`:
+  `put_component_header` writes the 8-byte component preamble
+  (`\0asm` + version 0x000d + layer 0x0001), and
+  `put_core_module_section` wraps a std/wasm-built core module
+  as section id 1 with a uleb size prefix. The 12 component
+  section IDs (core-module, core-instance, core-alias,
+  component-type, component, instance, alias, canon, start,
+  import, export) are exposed as `section_*` constants so
+  follow-up slices can build on them without restating spec
+  numbers. End-to-end test `TestWASMComponentWraps` builds the
+  core "function returning 42" module via std/wasm/module +
+  wraps it in a component, then pipes the bytes through
+  `wasm-tools validate` (must pass) and `wasm-tools print`
+  (must show `(component`, `(core module`, and `i32.const 42`).
+  Remaining: component type / import / export / instance / canon
+  / alias section composers for the WIT-world wiring the
+  production driver does today via
+  `wasm-tools component embed` + `wasm-tools component new`.
+
+
 Scope: replace `wasm-tools component embed` and `wasm-tools component
 new --adapt …` (lines 608 and 613 of `cmd/lang/main.go`) with a Lang
 implementation.

@@ -8096,3 +8096,120 @@ function main(): i32 {
 		t.Errorf("wasm-tools print output missing main — bad export section?\n%s", watStr)
 	}
 }
+
+// TestWASMComponentHeader covers std/wasm/component's preamble
+// writer. The 8-byte component preamble differs from the core
+// wasm preamble in the version + layer fields (0x0d 0x00 0x01
+// 0x00 vs 0x01 0x00 0x00 0x00) — wasm-tools rejects a core
+// module wherever it expects a component (and vice versa) based
+// on those four bytes.
+func TestWASMComponentHeader(t *testing.T) {
+	src := `import "std/wasm/component";
+function main(): i32 {
+    var empty: u8[] = [];
+    var hdr: u8[] = component.put_component_header(empty);
+    if (len(hdr) != 8) { return 1; }
+    if (hdr[0] != 0u8)   { return 2; }
+    if (hdr[1] != 97u8)  { return 3; }   // 'a'
+    if (hdr[2] != 115u8) { return 4; }   // 's'
+    if (hdr[3] != 109u8) { return 5; }   // 'm'
+    if (hdr[4] != 13u8)  { return 6; }   // version low (0x0d)
+    if (hdr[5] != 0u8)   { return 7; }   // version high
+    if (hdr[6] != 1u8)   { return 8; }   // layer low (= component)
+    if (hdr[7] != 0u8)   { return 9; }   // layer high
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("component header: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMComponentWraps verifies put_core_module_section wraps a
+// std/wasm-built core module into a Component Model envelope
+// whose bytes parse cleanly under wasm-tools. The Lang program
+// builds (a) a "function returning 42" core module and (b) a
+// component that embeds it, then dumps the component bytes;
+// the Go test pipes the result through wasm-tools validate +
+// print, expecting the latter to show the (component) wrapper +
+// the embedded (core module) + the i32.const 42 body.
+func TestWASMComponentWraps(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/component";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    // Build a "function returning 42" core module.
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    m.code_bodies = [fn];
+    var core_bytes: u8[] = module.build(m);
+
+    // Wrap it in a component envelope.
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_core_module_section(comp, core_bytes);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(comp)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "(component") {
+		t.Errorf("expected (component header in printed output, got:\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "(core module") {
+		t.Errorf("expected (core module section in printed output, got:\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "i32.const 42") {
+		t.Errorf("expected embedded i32.const 42, got:\n%s", watStr)
+	}
+}
