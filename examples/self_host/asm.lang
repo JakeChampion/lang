@@ -92,7 +92,8 @@ pub struct EmitState {
     local_names: string[],
     in_function: boolean,
     string_lits: string[],
-    needs_print_int: boolean
+    needs_print_int: boolean,
+    needs_read_int: boolean
 }
 
 function new_state(): EmitState {
@@ -104,7 +105,8 @@ function new_state(): EmitState {
         local_names: ns,
         in_function: false,
         string_lits: sl,
-        needs_print_int: false
+        needs_print_int: false,
+        needs_read_int: false
     };
 }
 
@@ -115,7 +117,8 @@ function (s: EmitState) write(text: string): EmitState {
         local_names: s.local_names,
         in_function: s.in_function,
         string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -127,7 +130,8 @@ function (s: EmitState) bind_local(name: string): EmitState {
         local_names: ln,
         in_function: s.in_function,
         string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -139,7 +143,8 @@ function (s: EmitState) reset_locals(): EmitState {
         local_names: ln,
         in_function: s.in_function,
         string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -150,7 +155,8 @@ function (s: EmitState) enter_function(): EmitState {
         local_names: s.local_names,
         in_function: true,
         string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -161,7 +167,8 @@ function (s: EmitState) leave_function(): EmitState {
         local_names: s.local_names,
         in_function: false,
         string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -175,7 +182,22 @@ function (s: EmitState) mark_print_int(): EmitState {
         local_names: s.local_names,
         in_function: s.in_function,
         string_lits: s.string_lits,
-        needs_print_int: true
+        needs_print_int: true,
+        needs_read_int: s.needs_read_int
+    };
+}
+
+// mark_read_int flips the "this module needs the read_int
+// helper" flag. Companion to mark_print_int.
+function (s: EmitState) mark_read_int(): EmitState {
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: true
     };
 }
 
@@ -192,7 +214,8 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         local_names: s.local_names,
         in_function: s.in_function,
         string_lits: sl,
-        needs_print_int: s.needs_print_int
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -236,7 +259,8 @@ function fresh_label(s: EmitState): LabelOut {
         local_names: s.local_names,
         in_function: s.in_function,
         string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
     return LabelOut { state: ns, name: name };
 }
@@ -399,6 +423,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    call __lang_print_int\n");
                 s = s.write("    pushq $0\n");
                 s = s.mark_print_int();
+                return s;
+            }
+            // read_int() — builtin no-arg call to the read_int helper.
+            // Reads up to 16 bytes from stdin, parses an optional
+            // leading `-` followed by decimal digits, returns the
+            // result in %rax. Push it so the surrounding expression
+            // sees it on the rt-stack.
+            if (name == "read_int" && len(c.args) == 0) {
+                s = s.write("    call __lang_read_int\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_read_int();
                 return s;
             }
             // Generic user-function call. Push args RIGHT-to-LEFT
@@ -732,6 +767,56 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
+    // __lang_read_int helper: reads up to 16 bytes from stdin
+    // into a stack buffer, then parses an optional leading `-`
+    // followed by decimal digits. Returns the parsed value in
+    // %rax. Stops at the first non-digit (including newline /
+    // EOF). Skips leading whitespace not implemented — input
+    // is expected to start with the digits / minus.
+    if (s.needs_read_int) {
+        s = s.write("__lang_read_int:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    subq $32, %rsp\n");
+        s = s.write("    movq $0, %rdi\n");          // fd 0
+        s = s.write("    leaq -16(%rbp), %rsi\n");
+        s = s.write("    movq $16, %rdx\n");
+        s = s.write("    movq $0, %rax\n");          // sys_read
+        s = s.write("    syscall\n");
+        s = s.write("    leaq -16(%rbp), %rcx\n");   // cursor
+        s = s.write("    leaq -16(%rbp), %r8\n");    // end ptr
+        s = s.write("    addq %rax, %r8\n");
+        s = s.write("    movq $0, %r9\n");           // accumulator
+        s = s.write("    movq $0, %r10\n");          // neg flag
+        s = s.write("    cmpq %rcx, %r8\n");
+        s = s.write("    je .Lri_done\n");
+        s = s.write("    movzbq (%rcx), %rax\n");
+        s = s.write("    cmpq $45, %rax\n");         // '-'
+        s = s.write("    jne .Lri_loop\n");
+        s = s.write("    movq $1, %r10\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write(".Lri_loop:\n");
+        s = s.write("    cmpq %rcx, %r8\n");
+        s = s.write("    je .Lri_done\n");
+        s = s.write("    movzbq (%rcx), %rax\n");
+        s = s.write("    subq $48, %rax\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jl .Lri_done\n");
+        s = s.write("    cmpq $9, %rax\n");
+        s = s.write("    jg .Lri_done\n");
+        s = s.write("    imulq $10, %r9\n");
+        s = s.write("    addq %rax, %r9\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lri_loop\n");
+        s = s.write(".Lri_done:\n");
+        s = s.write("    cmpq $0, %r10\n");
+        s = s.write("    je .Lri_no_neg\n");
+        s = s.write("    negq %r9\n");
+        s = s.write(".Lri_no_neg:\n");
+        s = s.write("    movq %r9, %rax\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
     // .rodata: emit each interned string literal as a
     // labelled `.ascii` directive. GAS interprets the escape
     // sequences in the quoted string, so a `\n` byte in the
@@ -927,6 +1012,13 @@ function main(): i32 {
     if (!contains(a25, "call __lang_print_int")) { return 250; }
     if (!contains(a25, "__lang_print_int:")) { return 251; }
     if (!contains(a25, ".Lpi_div:")) { return 252; }
+
+    // read_int() emits a call to the __lang_read_int helper,
+    // which the module appends once at the end of .text.
+    var a26: string = emit_source("return read_int();");
+    if (!contains(a26, "call __lang_read_int")) { return 260; }
+    if (!contains(a26, "__lang_read_int:")) { return 261; }
+    if (!contains(a26, ".Lri_loop:")) { return 262; }
 
     return 0;
 }
