@@ -133,6 +133,43 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			0,
 			"tick\ntick\ntick\ntick\n",
 		},
+		{
+			"print-int-literal",
+			"function main(): i32 { print_int(42); print(\"\\n\"); return 0; }",
+			0,
+			"42\n",
+		},
+		{
+			"print-int-zero",
+			"function main(): i32 { print_int(0); print(\"\\n\"); return 0; }",
+			0,
+			"0\n",
+		},
+		{
+			"print-int-negative",
+			"function main(): i32 { print_int(0 - 7); print(\"\\n\"); return 0; }",
+			0,
+			"-7\n",
+		},
+		{
+			"print-int-computed",
+			"function main(): i32 { print_int(2 + 3 * 4); print(\"\\n\"); return 0; }",
+			0,
+			"14\n",
+		},
+		{
+			"print-int-from-function",
+			"function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } " +
+				"function main(): i32 { print_int(fact(8)); print(\"\\n\"); return 0; }",
+			0,
+			"40320\n",
+		},
+		{
+			"print-int-counter-loop",
+			"function main(): i32 { var i = 1; while (i <= 5) { print_int(i); print(\" \"); i = i + 1; } print(\"\\n\"); return 0; }",
+			0,
+			"1 2 3 4 5 \n",
+		},
 	}
 
 	for _, tc := range cases {
