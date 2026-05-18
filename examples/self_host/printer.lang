@@ -1,0 +1,290 @@
+// examples/self_host/printer.lang — fifth concrete step of the
+// self-host port. Walks a parser.Module and produces a textual
+// rendering of it: a tree-to-source emitter that round-trips
+// through the lexer + parser.
+//
+// Same shape as the checker (#619) and interp (#623): a
+// recursive walk over parser.Expr / parser.Stmt with one match
+// arm per variant. Output isn't strictly pretty — no alignment,
+// no comment-preserving — but it produces re-parseable text for
+// every shape the parser handles today.
+//
+// The .lang file's main() prints a non-trivial program, re-
+// parses the result, and asserts the round-trip preserved the
+// AST shape. Exit code 0 means every assertion passed; non-
+// zero codes identify which arm failed.
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+
+// =================== EXPRESSIONS ====================
+
+// Helper: produce the source-text form of an integer literal.
+// Implemented inline (no Int.toString in the prelude here) by
+// walking the digits LSB-first, prepending a `-` for negative
+// values. Used for the (rare) places we synthesise numeric
+// output — the parser's TokNumber-derived ExprNumber preserves
+// the original text, so most prints just echo n.text directly.
+function i32_to_string(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i32 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
+
+// quote_string wraps a string value in `"`-delimited form, with
+// the same escape set scan_string in the lexer recognises (so
+// the result re-parses). The lang strings here don't carry the
+// surrounding `"`s — they store decoded bytes — so we re-encode
+// on emit.
+function quote_string(s: string): string {
+    var out: string = "\"";
+    var i: i32 = 0;
+    while (i < len(s)) {
+        var b: i32 = s[i];
+        if (b == 34) { out = out + "\\\""; }
+        else if (b == 92) { out = out + "\\\\"; }
+        else if (b == 10) { out = out + "\\n"; }
+        else if (b == 9) { out = out + "\\t"; }
+        else if (b == 13) { out = out + "\\r"; }
+        else { out = out + s[i:i + 1]; }
+        i = i + 1;
+    }
+    return out + "\"";
+}
+
+// print_expr emits an expression in source-text form. Binary
+// expressions are always fully parenthesised to side-step the
+// precedence table — the result is re-parseable even if it's
+// noisier than a hand-formatted version. Future polish would
+// thread parent precedence through to drop redundant parens.
+function print_expr(e: parser.Expr): string {
+    match (e) {
+        parser.ExprNumber(n) => {
+            if (len(n.suffix) > 0) { return n.text + n.suffix; }
+            return n.text;
+        },
+        parser.ExprIdent(id) => { return id.name; },
+        parser.ExprString(s) => { return quote_string(s.value); },
+        parser.ExprBool(b) => {
+            if (b.value) { return "true"; }
+            return "false";
+        },
+        parser.ExprBinary(b) => {
+            return "(" + print_expr(b.left) + " " + b.op + " " + print_expr(b.right) + ")";
+        },
+        parser.ExprUnary(u) => { return "(" + u.op + print_expr(u.operand) + ")"; },
+        parser.ExprCall(c) => {
+            var out: string = print_expr(c.callee) + "(";
+            var i: i32 = 0;
+            while (i < len(c.args)) {
+                if (i > 0) { out = out + ", "; }
+                out = out + print_expr(c.args[i]);
+                i = i + 1;
+            }
+            return out + ")";
+        },
+        parser.ExprArray(a) => {
+            var out: string = "[";
+            var i: i32 = 0;
+            while (i < len(a.elements)) {
+                if (i > 0) { out = out + ", "; }
+                out = out + print_expr(a.elements[i]);
+                i = i + 1;
+            }
+            return out + "]";
+        },
+        parser.ExprIndex(x) => {
+            return print_expr(x.array) + "[" + print_expr(x.index) + "]";
+        },
+        parser.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
+    }
+    return "/*unhandled-expr*/";
+}
+
+// =================== STATEMENTS ====================
+
+// indent_str returns `depth` copies of "    " — four spaces per
+// level. Block-form stmt emission uses this to keep the output
+// re-parseable and roughly human-readable.
+function indent_str(depth: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < depth) { out = out + "    "; i = i + 1; }
+    return out;
+}
+
+function print_block(body: parser.Stmt[], depth: i32): string {
+    var out: string = "{\n";
+    var i: i32 = 0;
+    while (i < len(body)) {
+        out = out + print_stmt(body[i], depth + 1);
+        i = i + 1;
+    }
+    out = out + indent_str(depth) + "}";
+    return out;
+}
+
+function print_stmt(st: parser.Stmt, depth: i32): string {
+    var pad: string = indent_str(depth);
+    match (st) {
+        parser.StmtVar(v) => { return pad + "var " + v.name + " = " + print_expr(v.init) + ";\n"; },
+        parser.StmtReturn(r) => { return pad + "return " + print_expr(r.value) + ";\n"; },
+        parser.StmtExpr(x) => { return pad + print_expr(x.value) + ";\n"; },
+        parser.StmtIf(ifs) => {
+            var out: string = pad + "if (" + print_expr(ifs.cond) + ") " + print_block(ifs.then_body, depth);
+            if (len(ifs.else_body) > 0) {
+                out = out + " else " + print_block(ifs.else_body, depth);
+            }
+            return out + "\n";
+        },
+        parser.StmtWhile(w) => {
+            return pad + "while (" + print_expr(w.cond) + ") " + print_block(w.body, depth) + "\n";
+        },
+        parser.StmtAssign(a) => { return pad + a.target + " = " + print_expr(a.value) + ";\n"; },
+        parser.StmtUnknown(u) => { return pad + "/*unknown-stmt:" + u.kind + "*/\n"; }
+    }
+    return pad + "/*unhandled-stmt*/\n";
+}
+
+// =================== MODULE ====================
+
+function print_func_decl(fd: parser.FuncDecl): string {
+    var out: string = "function " + fd.name + "(";
+    var i: i32 = 0;
+    while (i < len(fd.params)) {
+        if (i > 0) { out = out + ", "; }
+        out = out + fd.params[i].name;
+        if (len(fd.params[i].type_name) > 0) {
+            out = out + ": " + fd.params[i].type_name;
+        }
+        i = i + 1;
+    }
+    out = out + ")";
+    if (len(fd.ret_type) > 0) { out = out + ": " + fd.ret_type; }
+    out = out + " " + print_block(fd.body, 0) + "\n";
+    return out;
+}
+
+pub function print_module(mod: parser.Module): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < len(mod.funcs)) {
+        out = out + print_func_decl(mod.funcs[i]);
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < len(mod.top_stmts)) {
+        out = out + print_stmt(mod.top_stmts[j], 0);
+        j = j + 1;
+    }
+    return out;
+}
+
+// =================== VALIDATION ====================
+
+// Round-trip: parse → print → parse again → assert the same
+// shape comes back. Catches printer bugs that would silently
+// drop or mangle nodes.
+function roundtrip_module(src: string): parser.Module {
+    var toks: lexer.Token[] = lexer.tokenize(src);
+    var mod: parser.Module = parser.parse_module(toks);
+    var emitted: string = print_module(mod);
+    var toks2: lexer.Token[] = lexer.tokenize(emitted);
+    return parser.parse_module(toks2);
+}
+
+function main(): i32 {
+    // Expression printing: ensure the binary-op rendering
+    // parenthesises and round-trips. `1 + 2 * 3` parses as
+    // `1 + (2*3)` (precedence) and prints as `(1 + (2 * 3))`.
+    var toks1: lexer.Token[] = lexer.tokenize("var a = 1 + 2 * 3; return a;");
+    var mod1: parser.Module = parser.parse_module(toks1);
+    var s1: string = print_module(mod1);
+    // Re-parse the emitted text and confirm we still get two
+    // top-level stmts with the same shape.
+    var rt1: parser.Module = parser.parse_module(lexer.tokenize(s1));
+    if (len(rt1.top_stmts) != 2) { return 10; }
+    match (rt1.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            if (v.name != "a") { return 11; }
+            match (v.init) {
+                parser.ExprBinary(b) => { if (b.op != "+") { return 12; } },
+                _ => { return 13; }
+            }
+        },
+        _ => { return 14; }
+    }
+
+    // Function decl + call: print + re-parse preserves both
+    // functions and the call site shape.
+    var src2: string = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
+    var rt2: parser.Module = roundtrip_module(src2);
+    if (len(rt2.funcs) != 2) { return 20; }
+    if (rt2.funcs[0].name != "add") { return 21; }
+    if (len(rt2.funcs[0].params) != 2) { return 22; }
+    if (rt2.funcs[0].params[0].type_name != "i32") { return 23; }
+    if (rt2.funcs[1].name != "main") { return 24; }
+
+    // If/else with assignment: round-trip the whole thing.
+    var src3: string = "var x = 5; if (x < 10) { x = x + 1; } else { x = 0; } return x;";
+    var rt3: parser.Module = roundtrip_module(src3);
+    if (len(rt3.top_stmts) != 3) { return 30; }
+    match (rt3.top_stmts[1]) {
+        parser.StmtIf(ifs) => {
+            if (len(ifs.then_body) != 1) { return 31; }
+            if (len(ifs.else_body) != 1) { return 32; }
+        },
+        _ => { return 33; }
+    }
+
+    // While + array literal + index + len.
+    var src4: string = "var a = [3, 5, 7]; var i = 0; var s = 0; while (i < len(a)) { s = s + a[i]; i = i + 1; } return s;";
+    var rt4: parser.Module = roundtrip_module(src4);
+    if (len(rt4.top_stmts) != 5) { return 40; }
+    match (rt4.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprArray(a) => { if (len(a.elements) != 3) { return 41; } },
+                _ => { return 42; }
+            }
+        },
+        _ => { return 43; }
+    }
+    // While loop preserved with body of length 2.
+    match (rt4.top_stmts[3]) {
+        parser.StmtWhile(w) => {
+            if (len(w.body) != 2) { return 44; }
+        },
+        _ => { return 45; }
+    }
+
+    // String literal escapes round-trip (`"a\"b\n"` → same).
+    var src5: string = "var s = \"hello\\nworld\"; return 0;";
+    var rt5: parser.Module = roundtrip_module(src5);
+    match (rt5.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprString(_) => { },
+                _ => { return 50; }
+            }
+        },
+        _ => { return 51; }
+    }
+
+    return 0;
+}
