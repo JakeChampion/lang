@@ -80,25 +80,30 @@ function digits_to_i32(s: string): i32 {
 // =================== EMIT STATE ====================
 
 // EmitState bundles the running output text, a monotonic label
-// counter, the active locals table, and a flag for whether the
-// current emit position is inside a function body. Threaded by
-// value through every emit_* call — each return produces a
-// fresh EmitState with the appended text and (where relevant)
-// updated counters / locals. label_n is the next ID to hand
-// out; .L0, .L1, … at emit time. local_names is parallel-array
-// shape: index i → offset -8*(i+1) off %rbp. in_function
-// switches StmtReturn between `leave; ret` (callee return)
-// and the sys_exit_group syscall (top-level program exit).
+// counter, the active locals table, an `in_function` flag, and
+// a pool of string literals that get materialised in `.rodata`
+// at the end of emit. Threaded by value through every emit_*
+// call — each return produces a fresh EmitState with the
+// appended text and (where relevant) updated counters /
+// locals / literals.
 pub struct EmitState {
     out: string,
     label_n: i32,
     local_names: string[],
-    in_function: boolean
+    in_function: boolean,
+    string_lits: string[]
 }
 
 function new_state(): EmitState {
     var ns: string[] = [];
-    return EmitState { out: "", label_n: 0, local_names: ns, in_function: false };
+    var sl: string[] = [];
+    return EmitState {
+        out: "",
+        label_n: 0,
+        local_names: ns,
+        in_function: false,
+        string_lits: sl
+    };
 }
 
 function (s: EmitState) write(text: string): EmitState {
@@ -106,47 +111,40 @@ function (s: EmitState) write(text: string): EmitState {
         out: s.out + text,
         label_n: s.label_n,
         local_names: s.local_names,
-        in_function: s.in_function
+        in_function: s.in_function,
+        string_lits: s.string_lits
     };
 }
 
-// bind_local appends `name` to the locals table — the new
-// slot's offset is -8 * (len_after + 1) from %rbp. Returns
-// the fresh state so callers can compose: `s = s.bind_local("x")`.
 function (s: EmitState) bind_local(name: string): EmitState {
     var ln: string[] = s.local_names.push(name);
     return EmitState {
         out: s.out,
         label_n: s.label_n,
         local_names: ln,
-        in_function: s.in_function
+        in_function: s.in_function,
+        string_lits: s.string_lits
     };
 }
 
-// reset_locals drops the current locals table — used at
-// function entry so each function gets a fresh slot
-// numbering. label_n is preserved (labels are unique across
-// the whole emit, not per-function).
 function (s: EmitState) reset_locals(): EmitState {
     var ln: string[] = [];
     return EmitState {
         out: s.out,
         label_n: s.label_n,
         local_names: ln,
-        in_function: s.in_function
+        in_function: s.in_function,
+        string_lits: s.string_lits
     };
 }
 
-// enter_function / leave_function flip the in_function flag.
-// Used by emit_function around the body emit so StmtReturn
-// switches between the function-return shape and the program-
-// exit shape.
 function (s: EmitState) enter_function(): EmitState {
     return EmitState {
         out: s.out,
         label_n: s.label_n,
         local_names: s.local_names,
-        in_function: true
+        in_function: true,
+        string_lits: s.string_lits
     };
 }
 
@@ -155,8 +153,26 @@ function (s: EmitState) leave_function(): EmitState {
         out: s.out,
         label_n: s.label_n,
         local_names: s.local_names,
-        in_function: false
+        in_function: false,
+        string_lits: s.string_lits
     };
+}
+
+// add_string_lit appends the literal to the pool and returns
+// its index, used by the caller to emit `leaq .S<idx>(%rip), …`.
+// The pool is materialised in .rodata at end-of-module.
+struct StringLitOut { state: EmitState, idx: i32 }
+function add_string_lit(s: EmitState, v: string): StringLitOut {
+    var idx: i32 = len(s.string_lits);
+    var sl: string[] = s.string_lits.push(v);
+    var ns: EmitState = EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: sl
+    };
+    return StringLitOut { state: ns, idx: idx };
 }
 
 // lookup_local returns the byte offset off %rbp for `name`, or
@@ -196,7 +212,8 @@ function fresh_label(s: EmitState): LabelOut {
         out: s.out,
         label_n: s.label_n + 1,
         local_names: s.local_names,
-        in_function: s.in_function
+        in_function: s.in_function,
+        string_lits: s.string_lits
     };
     return LabelOut { state: ns, name: name };
 }
@@ -317,12 +334,6 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprCall(c) => {
-            // Only bare-ident callees. Push args RIGHT-to-LEFT
-            // so the callee sees param[0] at +16(%rbp) (after
-            // `pushq %rbp` + the return address). The callee
-            // prologue copies args from those positive offsets
-            // into local slots so the body reads them like any
-            // other local.
             var name: string = "";
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
@@ -332,6 +343,34 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     return s;
                 }
             }
+            // print(str_literal) — builtin lowering to write(1, ptr, len).
+            // Compile-time we already know the literal's bytes, so we
+            // intern it in `.rodata`, look up the offset, and emit the
+            // syscall directly. Other string-typed args fall through
+            // as unsupported.
+            if (name == "print" && len(c.args) == 1) {
+                var arg: parser.Expr = c.args[0];
+                match (arg) {
+                    parser.ExprString(sv) => {
+                        var lo: StringLitOut = add_string_lit(s, sv.value);
+                        s = lo.state;
+                        s = s.write("    movq $1, %rdi\n");
+                        s = s.write("    leaq .S" + i32_to_string(lo.idx) + "(%rip), %rsi\n");
+                        s = s.write("    movq $" + i32_to_string(len(sv.value)) + ", %rdx\n");
+                        s = s.write("    movq $1, %rax\n");
+                        s = s.write("    syscall\n");
+                        s = s.write("    pushq $0\n");
+                        return s;
+                    },
+                    _ => { }
+                }
+            }
+            // Generic user-function call. Push args RIGHT-to-LEFT
+            // so the callee sees param[0] at +16(%rbp) (after
+            // `pushq %rbp` + the return address). The callee
+            // prologue copies args from those positive offsets
+            // into local slots so the body reads them like any
+            // other local.
             var i: i32 = len(c.args) - 1;
             while (i >= 0) {
                 s = emit_expr(c.args[i], s);
@@ -546,6 +585,25 @@ function has_main(mod: parser.Module): boolean {
     return false;
 }
 
+// escape_for_ascii rewrites a string for `.ascii "…"` syntax:
+// quotes get backslashed, backslashes doubled, newlines become
+// the literal escape sequence so GAS treats them as the byte.
+function escape_for_ascii(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < len(s)) {
+        var b: i32 = s[i];
+        if (b == 34) { out = out + "\\\""; }
+        else if (b == 92) { out = out + "\\\\"; }
+        else if (b == 10) { out = out + "\\n"; }
+        else if (b == 9) { out = out + "\\t"; }
+        else if (b == 13) { out = out + "\\r"; }
+        else { out = out + s[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function emit_module(mod: parser.Module): string {
     var s: EmitState = new_state();
     s = s.write("    .globl _start\n");
@@ -586,6 +644,19 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq $0, %rdi\n");
         s = s.write("    movq $60, %rax\n");
         s = s.write("    syscall\n");
+    }
+    // .rodata: emit each interned string literal as a
+    // labelled `.ascii` directive. GAS interprets the escape
+    // sequences in the quoted string, so a `\n` byte in the
+    // source string lands as a single LF in the resulting
+    // .rodata bytes.
+    if (len(s.string_lits) > 0) {
+        s = s.write("    .section .rodata\n");
+        var li: i32 = 0;
+        while (li < len(s.string_lits)) {
+            s = s.write(".S" + i32_to_string(li) + ": .ascii \"" + escape_for_ascii(s.string_lits[li]) + "\"\n");
+            li = li + 1;
+        }
     }
     return s.out;
 }
@@ -752,6 +823,16 @@ function main(): i32 {
     if (!contains(a23, "call __fn_main")) { return 233; }
     if (!contains(a23, "leave")) { return 234; }
     if (!contains(a23, "ret\n")) { return 235; }
+
+    // print("...") lowers to a write syscall + emits the
+    // literal in .rodata at label .S0.
+    var a24: string = emit_source("print(\"hi\\n\"); return 0;");
+    if (!contains(a24, "leaq .S0(%rip)")) { return 240; }
+    if (!contains(a24, "movq $1, %rdi")) { return 241; }
+    if (!contains(a24, "movq $1, %rax")) { return 242; }  // sys_write
+    if (!contains(a24, ".section .rodata")) { return 243; }
+    if (!contains(a24, ".S0: .ascii")) { return 244; }
+    if (!contains(a24, "hi")) { return 245; }
 
     return 0;
 }
