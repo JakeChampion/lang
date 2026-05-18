@@ -245,6 +245,29 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"neg\n",
 			"-42",
 		},
+		{
+			"primes-up-to-30",
+			"function is_prime(n: i32): i32 { if (n < 2) { return 0; } var i = 2; while (i * i <= n) { if (n % i == 0) { return 0; } i = i + 1; } return 1; } " +
+				"function main(): i32 { var i = 2; while (i <= 30) { if (is_prime(i) == 1) { print_int(i); print(\" \"); } i = i + 1; } print(\"\\n\"); return 0; }",
+			0,
+			"2 3 5 7 11 13 17 19 23 29 \n",
+			"",
+		},
+		{
+			"squares-1-to-5",
+			"function main(): i32 { var i = 1; while (i <= 5) { print_int(i * i); print(\" \"); i = i + 1; } print(\"\\n\"); return 0; }",
+			0,
+			"1 4 9 16 25 \n",
+			"",
+		},
+		{
+			"power-of-two",
+			"function pow2(n: i32): i32 { if (n == 0) { return 1; } return 2 * pow2(n - 1); } " +
+				"function main(): i32 { var i = 0; while (i <= 10) { print_int(pow2(i)); print(\" \"); i = i + 1; } print(\"\\n\"); return 0; }",
+			0,
+			"1 2 4 8 16 32 64 128 256 512 1024 \n",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
