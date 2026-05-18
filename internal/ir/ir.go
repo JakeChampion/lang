@@ -3522,6 +3522,20 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if x.IsStringCmp {
 			return ast.BoolType{}
 		}
+		// Comparison ops (`==`, `!=`, `<`, `<=`, `>`, `>=`)
+		// produce booleans regardless of operand width. The
+		// checker stamps IntWidth / FloatWidth on the Binary
+		// to drive codegen's i64.eq / f64.lt etc. selection,
+		// but the RESULT type is bool. Without this guard,
+		// the IntWidth=64 case below incorrectly typed
+		// `(a > b)` inside a `(bool, i64)` tuple as i64,
+		// the slot stride doubled, and wasm rejected the
+		// i32 load (the bool was an i32 0/1 on the stack)
+		// against an i64-shaped slot.
+		switch x.Op {
+		case "==", "!=", "<", "<=", ">", ">=":
+			return ast.BoolType{}
+		}
 		// Numeric binaries — return a NumberType / FloatType
 		// shaped by the checker's stamps so the IR can size
 		// payload slots correctly for tuple / struct elements.
