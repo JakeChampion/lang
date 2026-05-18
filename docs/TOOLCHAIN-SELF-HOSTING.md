@@ -240,6 +240,17 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   now confirmed to parse as a valid wasm module under an
   independent reference tool, not just match a hand-computed byte
   vector.
+- **Runtime-execution verification shipped** in
+  `TestWASMModuleRuns{Const42, Addition, TwoFunctions}`. Each
+  builds a Lang-produced wasm module and hands it to
+  `wasmtime run --invoke main`, asserting the function returns
+  the expected value at runtime. Covers `i32.const`, `i32.add`,
+  `local.get`, `call`, and multi-function code-section
+  composition. `runWasmModule` + `langProducedModuleBytes`
+  helpers are factored into the test file for reuse.
+  After these tests, the std/wasm stack has three layers of
+  correctness gates: byte-vector match → wasm-tools static
+  validity → wasmtime runtime execution.
 - Remaining Phase 1 work: the IR-walking entry point that turns
   a codegen IR program into a populated Module, and the driver-
   wiring step that deletes the `wasm-tools parse` call at

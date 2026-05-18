@@ -8096,3 +8096,219 @@ function main(): i32 {
 		t.Errorf("wasm-tools print output missing main — bad export section?\n%s", watStr)
 	}
 }
+
+// langProducedModuleBytes runs a Lang program that prints space-
+// separated decimal bytes to stdout (newline-terminated), parses
+// them, and returns the byte slice. The wasmtime-run tests below
+// share this helper to extract a std/wasm-produced wasm module
+// from a Lang program. The Lang side has to use print()
+// (newline-terminated) for the final emission — otherwise
+// wasmtime's own "0" result line fuses onto the last decimal,
+// e.g. "... 11" + "0" -> "... 110".
+func langProducedModuleBytes(t *testing.T, src string) []byte {
+	t.Helper()
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		if n < 0 || n > 255 {
+			t.Fatalf("byte %d out of u8 range: %d", i, n)
+		}
+		bs = append(bs, byte(n))
+	}
+	return bs
+}
+
+// runWasmModule writes `mod` to a tmp .wasm file and runs
+// `wasmtime --invoke main` on it. Returns wasmtime's stdout.
+// Skips the calling test if wasmtime isn't on PATH.
+func runWasmModule(t *testing.T, mod []byte) string {
+	t.Helper()
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	wasmPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(wasmPath, mod, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", wasmPath)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		hexBytes := ""
+		for _, b := range mod {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasmtime run failed: %v\nstderr:\n%s\nstdout:\n%s\nbytes: %s", err, se.String(), so.String(), hexBytes)
+	}
+	return so.String()
+}
+
+// TestWASMModuleRunsConst42 takes the bytes std/wasm produces for
+// the minimal "main returns 42" module, hands them to wasmtime,
+// and asserts the function actually returns 42 at runtime. After
+// the byte-vector and wasm-tools-validate gates, this is the
+// final correctness check: the Lang-produced module is executable.
+func TestWASMModuleRunsConst42(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    var localsBytes: u8[] = inst.put_locals_empty([]);
+    var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	if len(mod) != 37 {
+		t.Fatalf("got %d bytes, want 37", len(mod))
+	}
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "42") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 42", out)
+	}
+}
+
+// TestWASMModuleRunsAddition builds a module whose main does
+// i32.const 3 ; i32.const 4 ; i32.add and returns 7. Exercises
+// the numeric-opcode path (i32.add at 0x6A) as part of a
+// runnable module, not just a byte-vector match.
+func TestWASMModuleRunsAddition(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    var body: u8[] = inst.inst_i32_const([], 3);
+    body = inst.inst_i32_const(body, 4);
+    body = numeric.inst_i32_add(body);
+    var localsBytes: u8[] = inst.put_locals_empty([]);
+    var fn: u8[] = inst.put_function_body([], localsBytes, body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "7") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 7", out)
+	}
+}
+
+// TestWASMModuleRunsTwoFunctions builds a module with two
+// functions: a callee add(a, b) returning a+b, and main()
+// calling it with (10, 32) and returning the result (42).
+// Exercises the call opcode (0x10) and multi-function code-
+// section composition.
+//
+// Function indices are flat across imports and declared
+// functions; with no imports here, callee = 0 and main = 1.
+// main exports as funcidx 1.
+func TestWASMModuleRunsTwoFunctions(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+
+    // Two types:
+    //   type 0: (i32, i32) -> i32   for the add callee
+    //   type 1: () -> i32           for main
+    var p_add: u8[] = [encode.valtype_i32(), encode.valtype_i32()];
+    var r_add: u8[] = [encode.valtype_i32()];
+    var p_main: u8[] = [];
+    var r_main: u8[] = [encode.valtype_i32()];
+    m.type_params = [p_add, p_main];
+    m.type_results = [r_add, r_main];
+
+    // Function 0 uses type 0 (add), function 1 uses type 1 (main).
+    m.function_typeidxs = [0u32, 1u32];
+
+    // Export main as funcidx 1.
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [1u32];
+
+    // add(a, b): local.get 0 ; local.get 1 ; i32.add.
+    var add_body: u8[] = inst.inst_local_get([], 0u32);
+    add_body = inst.inst_local_get(add_body, 1u32);
+    add_body = numeric.inst_i32_add(add_body);
+    var add_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), add_body);
+
+    // main(): i32.const 10 ; i32.const 32 ; call 0.
+    var main_body: u8[] = inst.inst_i32_const([], 10);
+    main_body = inst.inst_i32_const(main_body, 32);
+    main_body = inst.inst_call(main_body, 0u32);
+    var main_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
+
+    m.code_bodies = [add_fn, main_fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "42") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 42", out)
+	}
+}
