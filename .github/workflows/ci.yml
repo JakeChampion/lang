@@ -111,6 +111,22 @@ jobs:
         # x86_64Tooling.
         run: gotestsum --format pkgname-and-test-fails -- ./...
 
+      - name: langsmith parse-roundtrip fuzz (60s)
+        # Wasm-smith-style structured fuzzer. Every emitted
+        # program parses + type-checks by construction, so any
+        # failure here is a real parser / checker bug. Caught
+        # bugs in #588 and #614 that the seed-based sweeps in
+        # `go test` didn't.
+        run: go test -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run=^$ ./internal/langsmith
+
+      - name: langsmith differential-execution fuzz (60s)
+        # Pairs the same generator with the diff oracle. Runs
+        # each emitted program through interp + every backend
+        # available on the runner; asserts byte agreement.
+        # Caught a checker bug in #601 and the monomorph
+        # walker gaps that landed in #614 / #618.
+        run: go test -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -run=^$ ./internal/e2e
+
       - name: Check examples are formatted
         # Runs `lang -fmt -d` on every examples/*.lang and fails
         # if any file would change.
