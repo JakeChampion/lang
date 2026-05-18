@@ -51,12 +51,12 @@ encodes things that must always be true about the playground:
 
 ## Knobs
 
-| Env var               | Meaning                                                   |
-| --------------------- | --------------------------------------------------------- |
-| `BOMBADIL`            | Path to the bombadil binary (defaults to `bombadil`).     |
-| `CHROME`              | Path to the Chromium-compatible browser.                  |
-| `BOMBADIL_OUTPUT`     | Results directory (defaults to `web/test/results`).       |
-| `BOMBADIL_EXTRA_ARGS` | Extra flags appended verbatim to the bombadil invocation. |
+| Env var               | Meaning                                                          |
+| --------------------- | ---------------------------------------------------------------- |
+| `BOMBADIL`            | Path to the bombadil binary (defaults to `bombadil`).            |
+| `BOMBADIL_OUTPUT`     | Results directory (defaults to `web/test/results`).              |
+| `BOMBADIL_EXTRA_ARGS` | Extra flags appended verbatim to the bombadil invocation         |
+|                       | (e.g. drop `--headless` locally to watch the browser drive).     |
 
 ## CI
 

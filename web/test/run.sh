@@ -12,9 +12,9 @@
 #
 # Optional knobs (env vars):
 #   BOMBADIL              path to the bombadil binary (defaults to `bombadil` on PATH)
-#   CHROME                path to a Chromium-compatible browser (Bombadil auto-detects when unset)
 #   BOMBADIL_OUTPUT       results directory (default: web/test/results)
 #   BOMBADIL_EXTRA_ARGS   extra flags appended verbatim to the bombadil invocation
+#                         (e.g. drop --headless locally to watch the browser drive itself)
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -81,10 +81,13 @@ fi
 
 extra_args="${BOMBADIL_EXTRA_ARGS:-}"
 echo "==> running bombadil"
+# `bombadil test <ORIGIN> [SPECIFICATION_FILE]` — the spec is a
+# positional argument, not a flag. Local devs can flip BOMBADIL_EXTRA_ARGS
+# to drop --headless and watch the browser drive itself.
 # shellcheck disable=SC2086
 "$bombadil_bin" test \
   "http://127.0.0.1:$port/index.html" \
-  --spec "$here/playground.spec.ts" \
+  "$here/playground.spec.ts" \
   --output-path "$output_dir" \
-  ${CHROME:+--browser "$CHROME"} \
+  --headless \
   $extra_args
