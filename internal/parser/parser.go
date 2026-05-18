@@ -351,6 +351,33 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Generic method type parameters: `function [T] (b: Box[T])
+	// name(...)`. The type params come BEFORE the receiver so
+	// the receiver's type (`Box[T]`) can reference them — by
+	// the time we parse `Box[T]`, T is already known as a
+	// type parameter and resolveType rewrites it as ParamType.
+	// Non-method generic functions still write their type
+	// params after the name (`function name[T](x: T): T`), so
+	// we collect this leading-position form into the same
+	// `typeParams` slot.
+	var typeParams []string
+	if p.match(lexer.Punct, "[") {
+		p.advance() // [
+		for {
+			pname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			typeParams = append(typeParams, pname.Text)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				continue
+			}
+			break
+		}
+		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			return nil, err
+		}
+	}
 	// Optional method receiver: `function (p: Point) name(...)`.
 	// We distinguish receiver from regular params by the lookahead
 	// pattern `( ident : type ) ident (` — a single typed binding in
@@ -379,12 +406,12 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		return nil, err
 	}
 	funcNamePos := name.Pos
-	// Optional type parameters: `function id[T](x: T): T`.
-	// Reuses the bracket form enums use (`enum Option[T]`) so
-	// parsers / readers learn one shape for both generic decls
-	// and generic instantiations.
-	var typeParams []string
-	if p.match(lexer.Punct, "[") {
+	// Optional type parameters AFTER the name (non-method form):
+	// `function id[T](x: T): T`. For methods, the type params
+	// already got picked up in the leading-position block above —
+	// the post-name `[T]` is rejected here (would conflict with
+	// the call-site `[T1, T2](...)` shape).
+	if p.match(lexer.Punct, "[") && len(typeParams) == 0 {
 		p.advance() // [
 		for {
 			pname, err := p.expect(lexer.Ident, "")
