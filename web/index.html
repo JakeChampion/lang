@@ -769,6 +769,13 @@ if (embedMode) {
 // via the themeCompartment defined below. The button glyph is a
 // simple emoji that always reflects what clicking it would switch
 // TO (so dark mode shows ☀, light mode shows 🌙).
+//
+// editorView is hoisted from its later declaration site so the
+// initial applyTheme() call doesn't trip a temporal-dead-zone
+// ReferenceError when it tries to reconfigure the (still-null)
+// editor — Bombadil's no-uncaught-exceptions property caught
+// this on the first run after the theme work landed.
+let editorView = null;
 const THEME_STORAGE_KEY = "langPlaygroundTheme";
 function preferredTheme() {
   const fromParam = (urlParams.get("theme") ?? "").toLowerCase();
@@ -1128,7 +1135,8 @@ import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} fr
 import {linter, lintGutter, forceLinting} from "https://esm.sh/@codemirror/lint@6";
 import {oneDark} from "https://esm.sh/@codemirror/theme-one-dark@6";
 
-let editorView = null;
+// editorView is declared earlier in this script (above the
+// theme-bootstrap call) so applyTheme() can safely reference it.
 
 // Position translation. CodeMirror tracks absolute byte offsets;
 // LSP uses {line, character} (0-based). The conversion is
