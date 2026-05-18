@@ -58,7 +58,12 @@ export default defineConfig({
         },
         {
           label: "Playground",
-          link: `${base}/playground/`,
+          // Bare `/playground/` — Starlight prepends `base` to
+          // absolute sidebar links automatically, so don't double-
+          // prefix it here. (CI's lychee link-check caught the
+          // `/lang/lang/playground/` shape the previous `${base}`
+          // produced.)
+          link: "/playground/",
           attrs: { target: "_blank" },
         },
       ],
