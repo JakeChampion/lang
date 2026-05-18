@@ -106,6 +106,40 @@ func TestUpdateDoc_CacheEviction(t *testing.T) {
 	}
 }
 
+func TestPublishDiagnostics_FirstPublishAlwaysFiresEvenWhenEmpty(t *testing.T) {
+	// Regression for the playground "clean source clears the
+	// Problems panel" test: a clean document's didOpen must emit
+	// publishDiagnostics([]) so the client knows to render the
+	// no-problems state. The dedup check was previously eating
+	// this because lastDiags[uri] defaulted to nil and
+	// diagnosticsEqual treats nil as equal to []Diagnostic{}.
+	src := "function main(): i32 { return 0; }\n"
+	s := NewServer()
+
+	var pubCount int
+	s.SetPublisher(func(method string, params any) {
+		if method == "textDocument/publishDiagnostics" {
+			pubCount++
+		}
+	})
+
+	openMsg, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didOpen",
+		Params: jsonRaw(didOpenParams{
+			TextDocument: textDocumentItem{
+				URI:        "file:///clean.lang",
+				LanguageID: "lang",
+				Text:       src,
+			},
+		}),
+	})
+	s.HandleMessage(openMsg)
+	if pubCount != 1 {
+		t.Errorf("clean document's first didOpen should still publish; got pubCount=%d", pubCount)
+	}
+}
+
 func TestPublishDiagnostics_DedupsIdentical(t *testing.T) {
 	src := "function main(): i32 { return undeclared; }\n"
 	s := NewServer()
