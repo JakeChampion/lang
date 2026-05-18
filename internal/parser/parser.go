@@ -850,6 +850,17 @@ func (p *parser) parseType() (ast.Type, error) {
 			base = &ast.FuncType{Params: elems, Result: ret}
 		} else if len(elems) >= 2 {
 			base = ast.TupleType{Elems: elems}
+		} else if len(elems) == 1 {
+			// Single-element parens act as a grouping wrapper —
+			// useful when the inner type already has its own `(`/`)`
+			// and the outer parens are there to host a suffix (e.g.
+			// `((i32) => i32)[]` for an array of function values).
+			// The arrow-form FuncType above already consumed the
+			// `=>` case; reaching here means the inner type was
+			// fully resolved on its own (e.g. an inner FuncType
+			// produced by recursion) and the outer parens just
+			// group.
+			base = elems[0]
 		} else {
 			return nil, p.errorf(t.Pos, "expected `=>` after parameter list (function type) or 2+ comma-separated types (tuple type)")
 		}
@@ -1150,6 +1161,19 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 	}
 	if _, err := p.expect(lexer.Keyword, "else"); err != nil {
 		return nil, err
+	}
+	// `else if (...) { ... } else { ... }` — chain via recursion.
+	// The recursive IfExpr stands in for the else arm, and its own
+	// `else` covers the trailing branch (which itself may be
+	// another `else if` chain). The recursive call enforces a
+	// final `else { ... }` so the IfExpr is total — matches the
+	// existing two-arm constraint.
+	if p.match(lexer.Keyword, "if") {
+		elseE, err := p.parseIfExpr()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
 	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
@@ -1835,6 +1859,14 @@ func (p *parser) parseArena() (ast.Stmt, error) {
 
 func (p *parser) parseVar() (ast.Stmt, error) {
 	kw := p.advance()
+	// Tuple-destructuring form: `var (a, b, ...) = expr;`. Mirrors
+	// `let (a, b, ...) = expr;` (handled by parseTupleDestructure)
+	// but uses the `var` keyword to keep the source surface uniform
+	// with regular `var name = expr;` declarations. Both forms
+	// produce the same `*ast.Destructure` AST node.
+	if p.match(lexer.Punct, "(") {
+		return p.parseTupleDestructure(kw.Pos)
+	}
 	name, err := p.expect(lexer.Ident, "")
 	if err != nil {
 		return nil, err

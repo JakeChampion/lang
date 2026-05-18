@@ -3146,6 +3146,110 @@ function main(): i32 {
 	}
 }
 
+// `var (a, b) = expr;` tuple destructuring — alternative to
+// `let (a, b) = expr;` for symmetry with regular `var name = …;`
+// declarations. The parser detects the `(` after `var` and routes
+// to the same parseTupleDestructure path the `let` form uses.
+func TestWASMVarTupleDestructure(t *testing.T) {
+	src := `function getit(): (i64, i32) {
+    return (1000000000000i64, 42);
+}
+function main(): i32 {
+    var (a, b) = getit();
+    if (a != 1000000000000i64) { return 1; }
+    if (b != 42) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (var tuple destructure)", got)
+	}
+}
+
+// `else if` chained in an *expression* IfExpr (not just the
+// statement form). The recursive IfExpr stands in for the else
+// arm, exactly mirroring the statement-level dispatch.
+func TestWASMElseIfExpr(t *testing.T) {
+	src := `function classify(n: i32): i32 {
+    return if (n > 0) { 1 }
+        else if (n < 0) { 0 - 1 }
+        else { 0 };
+}
+function main(): i32 {
+    if (classify(5) != 1) { return 1; }
+    if (classify(0 - 3) != (0 - 1)) { return 2; }
+    if (classify(0) != 0) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (else-if as expression)", got)
+	}
+}
+
+// Array / slice of function-typed elements: `((T) => R)[]` and
+// `[(T) => R]`. The single-element-parens case in the type
+// parser now treats them as a grouping wrapper so the inner
+// FuncType resolves cleanly before the trailing `[]` / `[low:hi]`
+// suffix. Calling `arr[i](args)` then goes through OpCallIndirect
+// the same way function-typed locals do — the IR's `call()`
+// dispatch was extended to recognise `*ast.Index` callees whose
+// element type is a `*ast.FuncType`.
+func TestWASMArrayOfClosures(t *testing.T) {
+	src := `function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function main(): i32 {
+    var arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(10), makeAdder(100)];
+    return arr[0](1) + arr[1](2) + arr[2](3);
+}`
+	// (1 + 1) + (10 + 2) + (100 + 3) = 117
+	if got := runWasm(t, src); got != 117 {
+		t.Errorf("got %d, want 117 (array of closures)", got)
+	}
+}
+
+func TestWASMSliceOfClosures(t *testing.T) {
+	src := `function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function main(): i32 {
+    var arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(2), makeAdder(3)];
+    var sl: [(i32) => i32] = arr[1:3];
+    return sl[0](10) + sl[1](10);
+}`
+	// (10 + 2) + (10 + 3) = 25
+	if got := runWasm(t, src); got != 25 {
+		t.Errorf("got %d, want 25 (slice of closures)", got)
+	}
+}
+
+// Closure created inside a loop body captures the iteration's
+// per-iteration `ic` snapshot — each closure value reads its
+// own captured slot, NOT the loop variable's final value. The
+// language's by-value-at-make-time capture semantics is what
+// gives the per-iteration shape.
+func TestWASMClosureInLoopCapturesIterVar(t *testing.T) {
+	src := `function main(): i32 {
+    var arr: ((i32) => i32)[] = [];
+    var i: i32 = 0;
+    while (i < 3) {
+        var ic: i32 = i;
+        function f(x: i32): i32 { return x + ic; }
+        arr = arr.push(f);
+        i = i + 1;
+    }
+    return arr[0](10) + arr[1](10) + arr[2](10);
+}`
+	// arr[0]: 10+0 = 10
+	// arr[1]: 10+1 = 11
+	// arr[2]: 10+2 = 12
+	// total: 33
+	if got := runWasm(t, src); got != 33 {
+		t.Errorf("got %d, want 33 (per-iteration capture)", got)
+	}
+}
+
 // Mixing i32 and i64 with matching signedness auto-widens the
 // narrower operand. The checker inserts an implicit CastExpr so
 // the IR sees a homogeneous-width binop; user code doesn't need
