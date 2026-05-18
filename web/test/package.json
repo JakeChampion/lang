@@ -1,0 +1,9 @@
+{
+  "name": "lang-playground-e2e",
+  "version": "0.0.0",
+  "description": "Bombadil property-based test harness for the lang playground.",
+  "private": true,
+  "devDependencies": {
+    "@antithesishq/bombadil": "^0.4.0"
+  }
+}
