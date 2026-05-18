@@ -236,6 +236,33 @@ func emitOp(body []byte, op ir.Op) ([]byte, error) {
 	case ir.OpReturnVoid:
 		return inst.InstReturn(body), nil
 
+	case ir.OpBlock:
+		bt, err := blocktypeByte(op.I32)
+		if err != nil {
+			return nil, err
+		}
+		return inst.InstBlockStart(body, bt), nil
+	case ir.OpLoop:
+		bt, err := blocktypeByte(op.I32)
+		if err != nil {
+			return nil, err
+		}
+		return inst.InstLoopStart(body, bt), nil
+	case ir.OpIf:
+		bt, err := blocktypeByte(op.I32)
+		if err != nil {
+			return nil, err
+		}
+		return inst.InstIfStart(body, bt), nil
+	case ir.OpElse:
+		return inst.InstElse(body), nil
+	case ir.OpEnd:
+		return inst.InstEnd(body), nil
+	case ir.OpBr:
+		return inst.InstBr(body, uint32(op.I32)), nil
+	case ir.OpBrIf:
+		return inst.InstBrIf(body, uint32(op.I32)), nil
+
 	case ir.OpAdd:
 		if op.Width == 64 {
 			return numeric.InstI64Add(body), nil
@@ -420,6 +447,32 @@ func emitOp(body []byte, op ir.Op) ([]byte, error) {
 		return numeric.InstF32Ge(body), nil
 	}
 	return nil, fmt.Errorf("unsupported op %v (slice 1 covers scalar arithmetic + locals + return only)", op.Kind)
+}
+
+// blocktypeByte maps an ir.BlockType* constant to the single-byte
+// blocktype encoding wasm 1.0 uses for `block` / `loop` / `if`
+// when the block's result is empty or a single valtype.
+//
+// Multi-value blocks (string-pair, struct unpacks, etc.) need a
+// typeidx reference here instead — they're out of scope for the
+// control-flow slice and return an error so the missing case is
+// loud.
+func blocktypeByte(bt int32) (byte, error) {
+	switch bt {
+	case ir.BlockTypeVoid:
+		return inst.BlocktypeEmpty, nil
+	case ir.BlockTypeI32:
+		return encode.ValtypeI32, nil
+	case ir.BlockTypeI64:
+		return encode.ValtypeI64, nil
+	case ir.BlockTypeF32:
+		return encode.ValtypeF32, nil
+	case ir.BlockTypeF64:
+		return encode.ValtypeF64, nil
+	case ir.BlockTypeStringPair:
+		return 0, fmt.Errorf("blocktype string-pair (multi-value) not yet supported")
+	}
+	return 0, fmt.Errorf("unknown blocktype %d", bt)
 }
 
 // appendUleb appends `v` as a uleb128 to `buf`. Duplicated from

@@ -299,6 +299,166 @@ func TestEmitTypeDedup(t *testing.T) {
 	}
 }
 
+// TestEmitIfElse — `function pick(a, b: i32): i32 {
+//   if a > b { return a } else { return b }
+// }`. Uses `if (result i32)` with branches that push the chosen
+// value. Exercises OpIf / OpElse / OpEnd + a result-typed block.
+func TestEmitIfElse(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name: "pick",
+		Params: []ast.Param{
+			{Name: "a", Type: i32()},
+			{Name: "b", Type: i32()},
+		},
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0}, // a
+			{Kind: ir.OpLoadLocal, I32: 1}, // b
+			{Kind: ir.OpGtS},
+			{Kind: ir.OpIf, I32: ir.BlockTypeI32},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpElse},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpEnd},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, c := range []struct {
+		args     []string
+		expected string
+	}{
+		{[]string{"7", "11"}, "11"},
+		{[]string{"42", "1"}, "42"},
+		{[]string{"5", "5"}, "5"}, // gt_s false → else branch
+	} {
+		cmd := exec.Command("wasmtime", append([]string{"run", "--invoke", "pick", p}, c.args...)...)
+		var so, se bytes.Buffer
+		cmd.Stdout = &so
+		cmd.Stderr = &se
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("pick%v: %v\nstderr:%s", c.args, err, se.String())
+		}
+		if got := strings.TrimSpace(so.String()); got != c.expected {
+			t.Fatalf("pick%v = %q, want %q", c.args, got, c.expected)
+		}
+	}
+}
+
+// TestEmitLoopBr — `function sum(n: i32): i32 {
+//   var acc = 0; var i = 0;
+//   loop {
+//     if !(i < n) break;
+//     acc = acc + i;
+//     i = i + 1;
+//     continue;
+//   }
+//   return acc;
+// }` — using the wasm block+loop+br_if idiom. Exercises OpBlock,
+// OpLoop, OpBr (back-edge), OpBrIf (forward exit).
+//
+// Shape (label depths in parens):
+//   block (void)         ; label 1 (forward exit)
+//     loop (void)         ; label 0 (back-edge target)
+//       i < n  →  br_if to label 0 if FALSE? No — we want:
+//       i >= n →  br to label 1 (exit outer)
+//     end loop
+//   end block
+//
+// Concretely:
+//   block
+//     loop
+//       local.get i
+//       local.get n
+//       i32.ge_s
+//       br_if 1            ; if i >= n, exit outer block
+//       local.get acc
+//       local.get i
+//       i32.add
+//       local.set acc
+//       local.get i
+//       i32.const 1
+//       i32.add
+//       local.set i
+//       br 0               ; loop back
+//     end
+//   end
+//   local.get acc
+func TestEmitLoopBr(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "sum",
+		Params:     []ast.Param{{Name: "n", Type: i32()}},
+		Locals:     []*ast.Var{{Name: "acc", Type: i32()}, {Name: "i", Type: i32()}},
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpLoop, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpLoadLocal, I32: 2}, // i
+			{Kind: ir.OpLoadLocal, I32: 0}, // n
+			{Kind: ir.OpGeS},
+			{Kind: ir.OpBrIf, I32: 1}, // exit outer block
+			{Kind: ir.OpLoadLocal, I32: 1}, // acc
+			{Kind: ir.OpLoadLocal, I32: 2}, // i
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpStoreLocal, I32: 1}, // acc
+			{Kind: ir.OpLoadLocal, I32: 2},  // i
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpStoreLocal, I32: 2}, // i
+			{Kind: ir.OpBr, I32: 0},         // back-edge to loop
+			{Kind: ir.OpEnd},                // end loop
+			{Kind: ir.OpEnd},                // end block
+			{Kind: ir.OpLoadLocal, I32: 1},  // acc
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// sum(10) = 0+1+2+...+9 = 45
+	cmd := exec.Command("wasmtime", "run", "--invoke", "sum", p, "10")
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("sum(10): %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "45" {
+		t.Fatalf("sum(10) = %q, want %q", got, "45")
+	}
+}
+
+// TestEmitBlocktypeUnsupported — string-pair blocktype isn't
+// covered yet; confirm we report it rather than emitting bytes.
+func TestEmitBlocktypeUnsupported(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "f",
+		ReturnType: i32(),
+		Ops:        []ir.Op{{Kind: ir.OpBlock, I32: ir.BlockTypeStringPair}},
+	}}}
+	if _, err := Emit(prog); err == nil {
+		t.Fatal("expected error for string-pair blocktype")
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpStrLen) and confirm we get a useful error rather
 // than emitting nonsense bytes. Regressions here would silently
