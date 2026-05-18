@@ -152,6 +152,13 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
         },
         parser.ExprIndex(x) => {
             return parser.ExprIndex { array: fold_expr(x.array), index: fold_expr(x.index) };
+        },
+        parser.ExprSlice(sl) => {
+            return parser.ExprSlice {
+                array: fold_expr(sl.array),
+                start: fold_expr(sl.start),
+                end: fold_expr(sl.end)
+            };
         }
     }
     return e;

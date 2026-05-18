@@ -96,6 +96,9 @@ pub struct OpMakeArray { n: i32 }
 pub struct OpIndex { tag: i32 }
 // OpLen pops a VArr or VString and pushes its length as a VInt.
 pub struct OpLen { tag: i32 }
+// OpSlice pops (end, start, container) and pushes the sub-view.
+// Same semantics as ExprSlice — works on both VArr and VString.
+pub struct OpSlice { tag: i32 }
 pub struct OpReturn { tag: i32 }
 
 pub type Op = OpPushInt | OpPushBool | OpPushStr
@@ -103,7 +106,7 @@ pub type Op = OpPushInt | OpPushBool | OpPushStr
             | OpBinary | OpUnary
             | OpJump | OpJumpIfFalse
             | OpPop | OpCall
-            | OpMakeArray | OpIndex | OpLen
+            | OpMakeArray | OpIndex | OpLen | OpSlice
             | OpReturn;
 
 function op_push_int(n: i32): Op { return OpPushInt { v: n }; }
@@ -120,6 +123,7 @@ function op_call(name: string, argc: i32): Op { return OpCall { name: name, argc
 function op_make_array(n: i32): Op { return OpMakeArray { n: n }; }
 function op_index(): Op { return OpIndex { tag: 0 }; }
 function op_len(): Op { return OpLen { tag: 0 }; }
+function op_slice(): Op { return OpSlice { tag: 0 }; }
 function op_return(): Op { return OpReturn { tag: 0 }; }
 
 // =================== COMPILER ====================
@@ -267,6 +271,18 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             var ir: CompileResult = compile_expr(x.index, ops, lt);
             ops = ir.ops; lt = ir.lt;
             ops = ops.push(op_index());
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprSlice(sl) => {
+            // Push container, start, end — OpSlice pops them in
+            // reverse so we keep this natural source order.
+            var ar: CompileResult = compile_expr(sl.array, ops, lt);
+            ops = ar.ops; lt = ar.lt;
+            var sr: CompileResult = compile_expr(sl.start, ops, lt);
+            ops = sr.ops; lt = sr.lt;
+            var er: CompileResult = compile_expr(sl.end, ops, lt);
+            ops = er.ops; lt = er.lt;
+            ops = ops.push(op_slice());
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprUnknown(_) => {
@@ -835,6 +851,45 @@ pub function exec_program(prog: CompiledProgram): Value {
                 }
                 ip = ip + 1;
             },
+            OpSlice(_) => {
+                var pe: PopResult = stack_pop(stack); stack = pe.stack;
+                var ps: PopResult = stack_pop(stack); stack = ps.stack;
+                var pa: PopResult = stack_pop(stack); stack = pa.stack;
+                if (is_err(pe.v)) { stack = stack_push(stack, pe.v); ip = ip + 1; continue; }
+                if (is_err(ps.v)) { stack = stack_push(stack, ps.v); ip = ip + 1; continue; }
+                if (is_err(pa.v)) { stack = stack_push(stack, pa.v); ip = ip + 1; continue; }
+                var sb: i32 = 0;
+                var eb: i32 = 0;
+                match (ps.v) {
+                    VInt(i) => { sb = i.v; },
+                    _ => { stack = stack_push(stack, v_err("slice: start not i32")); ip = ip + 1; continue; }
+                }
+                match (pe.v) {
+                    VInt(i) => { eb = i.v; },
+                    _ => { stack = stack_push(stack, v_err("slice: end not i32")); ip = ip + 1; continue; }
+                }
+                match (pa.v) {
+                    VArr(arr) => {
+                        if (sb < 0 || eb > len(arr.elements) || sb > eb) {
+                            stack = stack_push(stack, v_err("array slice out of range"));
+                        } else {
+                            var out: Value[] = [];
+                            var i: i32 = sb;
+                            while (i < eb) { out = out.push(arr.elements[i]); i = i + 1; }
+                            stack = stack_push(stack, v_arr(out));
+                        }
+                    },
+                    VString(s) => {
+                        if (sb < 0 || eb > len(s.v) || sb > eb) {
+                            stack = stack_push(stack, v_err("string slice out of range"));
+                        } else {
+                            stack = stack_push(stack, v_string(s.v[sb:eb]));
+                        }
+                    },
+                    _ => { stack = stack_push(stack, v_err("slice: receiver not array or string")); }
+                }
+                ip = ip + 1;
+            },
             OpReturn(_) => {
                 if (len(stack) == 0) { return v_err("return: empty stack"); }
                 var ret_val: Value = stack[len(stack) - 1];
@@ -1055,6 +1110,21 @@ function main(): i32 {
     match (r20) {
         VInt(i) => { if (i.v != 104) { return 200; } },
         _ => { return 201; }
+    }
+
+    // String slicing: `s[1:4]` of "hello" → "ell". Cross-check
+    // via len.
+    var r21: Value = run_source("var s = \"hello\"; var t = s[1:4]; return len(t);");
+    match (r21) {
+        VInt(i) => { if (i.v != 3) { return 210; } },
+        _ => { return 211; }
+    }
+
+    // Array slicing: `[10,20,30,40,50][1:4]` → first elem 20.
+    var r22: Value = run_source("var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0];");
+    match (r22) {
+        VInt(i) => { if (i.v != 20) { return 220; } },
+        _ => { return 221; }
     }
 
     return 0;

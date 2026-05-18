@@ -321,6 +321,43 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_err("unreachable index arm");
         },
+        parser.ExprSlice(sl) => {
+            var av: Value = eval_expr(sl.array, env);
+            if (is_err(av)) { return av; }
+            var sv: Value = eval_expr(sl.start, env);
+            if (is_err(sv)) { return sv; }
+            var ev: Value = eval_expr(sl.end, env);
+            if (is_err(ev)) { return ev; }
+            var sb: i32 = 0;
+            var eb: i32 = 0;
+            match (sv) {
+                VInt(i) => { sb = i.v; },
+                _ => { return v_err("slice start must be i32"); }
+            }
+            match (ev) {
+                VInt(i) => { eb = i.v; },
+                _ => { return v_err("slice end must be i32"); }
+            }
+            match (av) {
+                VString(s) => {
+                    if (sb < 0 || eb > len(s.v) || sb > eb) {
+                        return v_err("string slice out of range");
+                    }
+                    return v_string(s.v[sb:eb]);
+                },
+                VArr(a) => {
+                    if (sb < 0 || eb > len(a.elements) || sb > eb) {
+                        return v_err("array slice out of range");
+                    }
+                    var out: Value[] = [];
+                    var i: i32 = sb;
+                    while (i < eb) { out = out.push(a.elements[i]); i = i + 1; }
+                    return v_arr(out);
+                },
+                _ => { return v_err("can only slice array or string"); }
+            }
+            return v_err("unreachable slice arm");
+        },
         parser.ExprUnknown(u) => { return v_err("parser-side unknown: " + u.kind); }
     }
     return v_err("unhandled Expr variant");
@@ -833,6 +870,38 @@ function main(): i32 {
     match (r28) {
         VErr(_) => { },
         _ => { return 280; }
+    }
+
+    // String slicing: `"hello"[1:4]` → "ell". We can't directly
+    // return a string as exit code, so cross-check via len.
+    var r29: Value = run_source("var s = \"hello\"; var t = s[1:4]; return len(t);");
+    match (r29) {
+        VInt(i) => { if (i.v != 3) { return 290; } },
+        _ => { return 291; }
+    }
+
+    // Slice + indexing: `"hello"[1:4][1]` → 'l' = 108.
+    var r30: Value = run_source("var s = \"hello\"; return s[1:4][1];");
+    match (r30) {
+        VInt(i) => { if (i.v != 108) { return 300; } },
+        _ => { return 301; }
+    }
+
+    // Array slicing: `[10,20,30,40,50][1:4]` → length 3, first
+    // element 20.
+    var r31: Value = run_source("var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0];");
+    match (r31) {
+        VInt(i) => { if (i.v != 20) { return 310; } },
+        _ => { return 311; }
+    }
+
+    // Out-of-range slice → VErr. (Surface the VErr through
+    // len() so it reaches the program's return rather than
+    // getting silently stored in a var.)
+    var r32: Value = run_source("var s = \"hi\"; return len(s[0:99]);");
+    match (r32) {
+        VErr(_) => { },
+        _ => { return 320; }
     }
 
     return 0;
