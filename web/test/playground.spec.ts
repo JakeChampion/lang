@@ -89,23 +89,28 @@ export const problemCountMatchesItems = always(() => {
   return parsed === problemRealItemCount.current;
 });
 
+// `notBooted` is the pre-wasm guard used by the eventually-true
+// properties below. The HTML ships with `id="status"` carrying
+// "loading runtime…" and the runtime swaps it for "ready · …" once
+// wasm + LSP init finish, so the prefix is a stable boot sentinel.
+// Bombadil samples states from t=0 (before any script has run);
+// without this guard, properties about post-boot state would fire
+// on the initial HTML and report false violations.
+function notBooted(): boolean {
+  return statusText.current.startsWith("loading");
+}
+
 // 4. Once mounted, the editor stays mounted. CodeMirror loads from a
 //    CDN; a dropped fetch (or a setSrc() that accidentally tears the
 //    EditorView down) would surface as the .cm-editor disappearing
 //    after we've seen it.
-//
-//    Phrased as "if it's ever mounted, it remains mounted" via the
-//    always-the-disjunction trick: in every state, either the editor
-//    is up OR we haven't reached the "ever mounted" point yet. We
-//    approximate the latter with `statusText === ""` (the boot
-//    sentinel — set to a non-empty string the moment wasm finishes).
 export const editorStaysMountedAfterBoot = always(
-  () => editorMounted.current || statusText.current === ""
+  () => editorMounted.current || notBooted()
 );
 
-// 5. After boot, the Run button is enabled. Bombadil's `always`
-//    won't fire on the booting-but-not-yet-ready frame thanks to the
-//    same status-empty guard.
+// 5. After boot, the Run button is enabled. The notBooted() guard
+//    means the property is vacuously true while the runtime is
+//    still loading.
 export const runButtonReachableAfterBoot = always(
-  () => !runButtonDisabled.current || statusText.current === ""
+  () => !runButtonDisabled.current || notBooted()
 );
