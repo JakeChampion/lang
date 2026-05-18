@@ -354,13 +354,20 @@ const (
 	//   compare against.
 	tXyz
 	tStatus
+	// tResI32I32 = Result[i32, i32]. Pairs with the existing
+	// Option[i32] machinery (literals, match-with-binding, try
+	// operator) — Result's two-arm shape (Ok(T) / Err(E))
+	// exercises the variant-with-payload code paths Color /
+	// Status (payload-less) and Option (single payload variant)
+	// can't reach.
+	tResI32I32
 	numTypes
 )
 
 var allTypes = [numTypes]gtype{
 	tI32, tI64, tBool, tF32, tString,
 	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32, tMapI32I32,
-	tXyz, tStatus,
+	tXyz, tStatus, tResI32I32,
 }
 
 func (t gtype) String() string {
@@ -393,6 +400,8 @@ func (t gtype) String() string {
 		return "Xyz"
 	case tStatus:
 		return "Status"
+	case tResI32I32:
+		return "Result[i32, i32]"
 	}
 	// Dynamic nominal types live past numTypes — the
 	// Generator-aware caller should resolve them via
@@ -596,7 +605,7 @@ var mainVarTypes = []gtype{
 	tI32, tI64, tBool, tString,
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor, tOptI32,
-	tXyz, tStatus,
+	tXyz, tStatus, tResI32I32,
 	// tMapI32I32 is now included since the interp grew a Map
 	// runtime — `map_new`, `__method_Map_*`, and `*ast.MapLit`
 	// evaluation all live in internal/interp/interp.go now,
@@ -1044,6 +1053,28 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		b.WriteString("?)")
 		return
 	}
+	// Same try-operator pattern for Result. `(<Result-expr>?)`
+	// yields the Ok-payload T (i32 here); on Err the function
+	// short-circuits with the Err value passed through. Only
+	// legal when the enclosing function returns Result[_, E]
+	// with the SAME E — the checker requires error-type
+	// equality so we can't mix a Result[_, i32] try with a
+	// Result[_, string]-returning function.
+	//
+	// Requires an in-scope Result[i32, i32] var because bare
+	// `Ok(x)` / `Err(e)` only pins one of the two type
+	// parameters and the `?` slot doesn't propagate
+	// surrounding context to fill in the other. With an
+	// in-scope var the type is known from its annotation.
+	if t == tI32 && g.currentReturnType == tResI32I32 && !g.flip(0.85) {
+		ress := sc.inScope(tResI32I32)
+		if len(ress) > 0 {
+			fmt.Fprintf(b, "(%s?)", ress[g.ch.intN(len(ress))])
+			return
+		}
+		// Fall through to other productions if no in-scope
+		// Result var is available.
+	}
 	// Helper call. Skipped when no helper returns t, or when the
 	// generator rolls "small branch" — exhaustion convention
 	// keeps generation terminating.
@@ -1075,7 +1106,20 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	// types and the monomorphiser clones the function per
 	// instantiation. Wiring them here for any t exercises that
 	// inference + monomorph path across the type universe.
-	if !g.flip(0.85) {
+	//
+	// Skipped for Result[i32, i32] when no in-scope Result var
+	// exists: a fresh `(Ok(x))` / `(Err(e))` only pins the
+	// payload of one variant, leaving the OTHER type param
+	// unresolved. The checker's call-result inference doesn't
+	// flow surrounding-context info back to fill the missing
+	// param, so the call's TypeArgs is stamped as
+	// `[Result{no args}]`, monomorph mangles to `pick__Result`,
+	// and the clone has param/return types of bare `Result`
+	// which the re-check rejects ("Result has 2 type
+	// parameter(s), 0 supplied"). An in-scope var carries the
+	// full type via its annotation, so the inference completes.
+	skipGeneric := t == tResI32I32 && len(sc.inScope(tResI32I32)) == 0
+	if !skipGeneric && !g.flip(0.85) {
 		// `id` is the simpler call — single arg of type t,
 		// returns t. Exhaustion convention: `true` => skip the
 		// generic call (smaller output, no extra clone for
@@ -1085,7 +1129,7 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		b.WriteString(")")
 		return
 	}
-	if !g.flip(0.9) {
+	if !skipGeneric && !g.flip(0.9) {
 		// `pick` is the three-arg variant. Both `a` and `b`
 		// recurse at type t so the checker's pairwise
 		// unification produces a single T. Use genericArg so
@@ -1296,6 +1340,29 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
+	// Result[i32, i32] match-with-binding. Both arms have an
+	// i32 payload binding — exercises the two-armed-with-
+	// payload match path that Option's single-payload variant
+	// doesn't reach.
+	if t != tResI32I32 {
+		ress := sc.inScope(tResI32I32)
+		if len(ress) > 0 {
+			name := ress[g.ch.intN(len(ress))]
+			okBind := fmt.Sprintf("__res_ok%d", g.optBindCounter)
+			errBind := fmt.Sprintf("__res_err%d", g.optBindCounter)
+			g.optBindCounter++
+			fmt.Fprintf(b, "(match (%s) { Ok(%s) => ", name, okBind)
+			innerOk := newScope(sc)
+			innerOk.declare(tI32, okBind)
+			g.expr(b, innerOk, t, depth+1)
+			fmt.Fprintf(b, ", Err(%s) => ", errBind)
+			innerErr := newScope(sc)
+			innerErr.declare(tI32, errBind)
+			g.expr(b, innerErr, t, depth+1)
+			b.WriteString(" })")
+			return true
+		}
+	}
 	// Map methods. `m.get(k)` returns Option[i32], `m.has(k)` =>
 	// bool, `m.len()` => i32. Each routes an in-scope Map into
 	// the requested type.
@@ -1466,6 +1533,10 @@ func (g *Generator) genericArg(b *strings.Builder, sc *scope, t gtype, depth int
 		g.emitTypedOptI32(b, sc, depth)
 		return
 	}
+	if t == tResI32I32 {
+		g.emitTypedResI32I32(b, sc, depth)
+		return
+	}
 	g.expr(b, sc, t, depth+1)
 }
 
@@ -1484,6 +1555,38 @@ func (g *Generator) emitTypedOptI32(b *strings.Builder, sc *scope, depth int) {
 		return
 	}
 	b.WriteString("(Some(")
+	g.expr(b, sc, tI32, depth+1)
+	b.WriteString("))")
+}
+
+// emitTypedResI32I32 emits a Result[i32, i32] expression that
+// the checker can fully type without surrounding context.
+// ALWAYS uses an in-scope Result var when one is available —
+// bare `(Ok(x))` / `(Err(e))` only pins one of Result's two
+// type parameters (T from Ok, E from Err) and the checker's
+// generic-call inference doesn't flow surrounding-context
+// type info back to fill in the missing one. The call's
+// TypeArgs ends up as `[Result{no args}]` and monomorph
+// produces a clone with bare Result-typed params. Skip the
+// generic-call production entirely (via `skipGeneric` in
+// `expr`) when no Result var is in scope.
+//
+// The bare-literal fallback at the bottom is reached only
+// when called from contexts that DO carry full type info
+// (var-init annotations, fn return slots) — the surrounding
+// context makes the type unambiguous despite the variant
+// constructor only fixing one of the two params.
+func (g *Generator) emitTypedResI32I32(b *strings.Builder, sc *scope, depth int) {
+	ress := sc.inScope(tResI32I32)
+	if len(ress) > 0 {
+		b.WriteString(ress[g.ch.intN(len(ress))])
+		return
+	}
+	if g.flip(0.5) {
+		b.WriteString("(Ok(")
+	} else {
+		b.WriteString("(Err(")
+	}
 	g.expr(b, sc, tI32, depth+1)
 	b.WriteString("))")
 }
@@ -1606,6 +1709,19 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 		}
 	case tMapI32I32:
 		g.mapLiteral(b, sc, depth)
+	case tResI32I32:
+		// `(Ok(<i32>))` or `(Err(<i32>))`. Both arms carry an i32
+		// payload so the result type is always Result[i32, i32]
+		// (no inference ambiguity unlike bare `None`).
+		if g.flip(0.5) {
+			b.WriteString("(Ok(")
+			g.expr(b, sc, tI32, depth+1)
+			b.WriteString("))")
+		} else {
+			b.WriteString("(Err(")
+			g.expr(b, sc, tI32, depth+1)
+			b.WriteString("))")
+		}
 	default:
 		// Dynamic nominal types — struct lit or enum-variant
 		// pick based on which sidecar map t belongs to.
@@ -1733,7 +1849,7 @@ func (g *Generator) typePool() []gtype {
 		pool = []gtype{
 			tI32, tI64, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
-			tXyz, tStatus, tMapI32I32,
+			tXyz, tStatus, tMapI32I32, tResI32I32,
 		}
 	} else {
 		pool = append(pool, allTypes[:]...)

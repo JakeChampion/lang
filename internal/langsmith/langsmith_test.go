@@ -220,6 +220,10 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"for-each over array":        false,
 		"for-each over map":          false,
 		"nested function (closure)":  false,
+		"Ok literal":                 false,
+		"Err literal":                false,
+		"Result match-with-binding":  false,
+		"Result try (?)":             false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -403,6 +407,25 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// Nested function: `function __local_fn<N>(...)`.
 		if strings.Contains(src, "function __local_fn") {
 			want["nested function (closure)"] = true
+		}
+		// Result literals.
+		if strings.Contains(src, "(Ok(") {
+			want["Ok literal"] = true
+		}
+		if strings.Contains(src, "(Err(") {
+			want["Err literal"] = true
+		}
+		// Result match-with-binding emits `Ok(__res_ok<N>)`.
+		if strings.Contains(src, "Ok(__res_ok") {
+			want["Result match-with-binding"] = true
+		}
+		// Result try operator: generator emits `(<var>?)` where
+		// the var is a Result-typed scope var. We have the
+		// Option try gate emitting `?)` too, so distinguish by
+		// also checking for `Result[i32, i32]` somewhere in the
+		// program (a stronger signal that Result paths fired).
+		if strings.Contains(src, "?)") && strings.Contains(src, "Result[i32, i32]") {
+			want["Result try (?)"] = true
 		}
 	}
 	for feature, ok := range want {
