@@ -1051,8 +1051,13 @@ type Arena struct {
 type Var struct {
 	P    Position
 	Name string
-	Type Type // may be nil — inferred
+	Type Type // may be nil at parse time — inferred + stamped by the checker
 	Init Expr
+	// WasAnnotated records whether the source carried a `: Type`
+	// annotation after the name. Set by the parser before checker
+	// stamps an inferred type into Type, so the LSP's inlay-hint
+	// pass can tell "user wrote it" from "checker filled it in".
+	WasAnnotated bool
 }
 
 // Destructure is `let (a, b, ...) = expr;` — bind each name to the

@@ -64,6 +64,14 @@ func findNameAt(prog *ast.Program, line, col int) *nameHit {
 		ast.Walk(fd.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Ident:
+				// Skip mangled internal names — the user can't
+				// type them, so a cursor in their range must
+				// belong to a higher-level construct (method
+				// call / cross-module call) whose own match
+				// fires elsewhere in this switch.
+				if isMangledIdent(x.Name) {
+					return true
+				}
 				if spans(x.P, line, col, len(x.Name)) {
 					best = &nameHit{
 						name:      x.Name,
@@ -152,6 +160,26 @@ func spans(p ast.Position, line, col, length int) bool {
 		return false
 	}
 	return col >= p.Col && col < p.Col+length
+}
+
+// isMangledIdent reports whether name looks like an internal or
+// rewritten name a user couldn't have typed: anything starting with
+// `__` (method-hoist + map helpers + …) and anything containing
+// `__` in the middle (modload's `mod__fn`). User-typed names with a
+// double-underscore are exceedingly rare and a small false-positive
+// here (the LSP shows no hover instead of a wrong one) is a better
+// failure mode than the synthetic Ident shadowing the high-level
+// methodCall / moduleCall hit.
+func isMangledIdent(name string) bool {
+	if isInternalName(name) {
+		return true
+	}
+	for i := 0; i+1 < len(name); i++ {
+		if name[i] == '_' && name[i+1] == '_' {
+			return true
+		}
+	}
+	return false
 }
 
 // lspToInternalPos turns LSP's 0-based line + 0-based UTF-16 character

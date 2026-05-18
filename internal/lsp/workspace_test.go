@@ -119,13 +119,11 @@ func TestWorkspace_CrossModuleCallJump(t *testing.T) {
 	s.HandleMessage(open)
 
 	// `function main(): i32 { return util.foo(); }`
-	//                                ^col 24 = `u` of `util` (1-based)
-	//                                     ^col 29 = `.`
-	//                                      ^col 30 = `f` of `foo` (1-based)
-	// LSP 0-based: f of foo is at col 29.
+	// 0-based cols: `util` starts at 30, `.` at 34, `foo` at 35.
+	// Cursor on `f` of `foo`.
 	dp := definitionParams{}
 	dp.TextDocument.URI = mainURI
-	dp.Position = Position{Line: 1, Character: 30}
+	dp.Position = Position{Line: 1, Character: 35}
 	msg, _ := json.Marshal(message{
 		Jsonrpc: "2.0",
 		ID:      json.RawMessage("1"),

@@ -1840,12 +1840,14 @@ func (p *parser) parseVar() (ast.Stmt, error) {
 		return nil, err
 	}
 	var typ ast.Type
+	wasAnnotated := false
 	if _, ok := p.accept(lexer.Punct, ":"); ok {
 		t, err := p.parseType()
 		if err != nil {
 			return nil, err
 		}
 		typ = t
+		wasAnnotated = true
 	}
 	if _, err := p.expect(lexer.Punct, "="); err != nil {
 		return nil, err
@@ -1857,7 +1859,7 @@ func (p *parser) parseVar() (ast.Stmt, error) {
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
 	}
-	return &ast.Var{P: kw.Pos, Name: name.Text, Type: typ, Init: init}, nil
+	return &ast.Var{P: kw.Pos, Name: name.Text, Type: typ, Init: init, WasAnnotated: wasAnnotated}, nil
 }
 
 // parseUse desugars `use IDENT : TYPE <- EXPR;` plus the

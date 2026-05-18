@@ -209,6 +209,16 @@ func (s *Server) handleMethod(method string, params json.RawMessage) (any, *rpcE
 		return s.handleCompletion(params)
 	case "textDocument/signatureHelp":
 		return s.handleSignatureHelp(params)
+	case "textDocument/inlayHint":
+		return s.handleInlayHint(params)
+	case "textDocument/documentSymbol":
+		return s.handleDocumentSymbol(params)
+	case "textDocument/semanticTokens/full":
+		return s.handleSemanticTokens(params)
+	case "textDocument/references":
+		return s.handleReferences(params)
+	case "textDocument/rename":
+		return s.handleRename(params)
 	}
 	return nil, &rpcError{
 		Code:    errCodeMethodNotFound,
@@ -229,6 +239,17 @@ func (s *Server) handleInitialize() initializeResult {
 				TriggerCharacters:   []string{"(", ","},
 				RetriggerCharacters: []string{","},
 			},
+			InlayHintProvider:      true,
+			DocumentSymbolProvider: true,
+			SemanticTokensProvider: &semanticTokensOptions{
+				Legend: semanticTokensLegend{
+					TokenTypes:     semanticTokenTypeNames(),
+					TokenModifiers: []string{},
+				},
+				Full: true,
+			},
+			ReferencesProvider: true,
+			RenameProvider:     true,
 		},
 		ServerInfo: &serverInfo{Name: "lang-lsp"},
 	}
@@ -274,6 +295,89 @@ func (s *Server) handleCompletion(raw json.RawMessage) (any, *rpcError) {
 		return &completionList{Items: []completionItem{}}, nil
 	}
 	return runCompletion(state, p.Position), nil
+}
+
+func (s *Server) handleInlayHint(raw json.RawMessage) (any, *rpcError) {
+	var p inlayHintParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return []inlayHint{}, nil
+	}
+	return runInlayHints(state, p.Range), nil
+}
+
+func (s *Server) handleDocumentSymbol(raw json.RawMessage) (any, *rpcError) {
+	var p struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return []documentSymbol{}, nil
+	}
+	return runDocumentSymbols(state, p.TextDocument.URI), nil
+}
+
+func (s *Server) handleSemanticTokens(raw json.RawMessage) (any, *rpcError) {
+	var p struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return semanticTokensResponse{Data: []int{}}, nil
+	}
+	return runSemanticTokens(state), nil
+}
+
+func (s *Server) handleReferences(raw json.RawMessage) (any, *rpcError) {
+	var p struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+		Position Position `json:"position"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return []Location{}, nil
+	}
+	return runReferences(state, p.TextDocument.URI, p.Position), nil
+}
+
+func (s *Server) handleRename(raw json.RawMessage) (any, *rpcError) {
+	var p struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+		Position Position `json:"position"`
+		NewName  string   `json:"newName"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
+	}
+	state, ok := s.docs[p.TextDocument.URI]
+	if !ok {
+		return nil, nil
+	}
+	edit := runRename(state, p.TextDocument.URI, p.Position, p.NewName)
+	if edit == nil {
+		return nil, nil
+	}
+	return edit, nil
 }
 
 func (s *Server) handleSignatureHelp(raw json.RawMessage) (any, *rpcError) {
