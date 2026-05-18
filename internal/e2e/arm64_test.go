@@ -9862,6 +9862,40 @@ function main(): i32 {
 	}
 }
 
+// A match-expression returning a string was lowered with
+// a scratch slot typed as polymorphic NumberType{} — that
+// landed as a single i32 local on wasm32. String values
+// flow as the two-word `(data, len)` ABI on wasm32, so
+// the arm body's pair-push failed validation
+// ("expected i32 but nothing on stack") at the `local.set`
+// site that expected a single i32 instead of a pair.
+//
+// Same code path as the i64 / f64 fix from #550 — the
+// arm-body type walk now also recognises StringType and
+// carries it through, so the wasm codegen declares
+// `<slot>_data` and `<slot>_len` for the two-word fan
+// out.
+//
+// Test pin lives on arm64 (where the bug was hidden by
+// the i32 single-pointer string ABI); the actual win is
+// on wasm via the e2e suite.
+func TestArm64MatchExprStringResult(t *testing.T) {
+	src := `function fmt(o: Option[i64]): string {
+    return match (o) {
+        Some(v) => f"got {v}",
+        None => "none"
+    };
+}
+function main(): i32 {
+    var s: string = fmt(Some(1234567890123));
+    if (s == "got 1234567890123") { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("match-expression returning string got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,

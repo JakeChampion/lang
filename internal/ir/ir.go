@@ -2803,6 +2803,17 @@ func (b *builder) expr(e ast.Expr) error {
 				resultType = ft
 				break
 			}
+			// String arm bodies need the two-word
+			// `(data, len)` slot shape on wasm32; the
+			// default i32 NumberType{} maps to a single
+			// i32 local and validates wrong when the arm
+			// pushes a (data, len) pair. Carrying the
+			// StringType through makes the wasm codegen
+			// declare `<slot>_data` + `<slot>_len`.
+			if _, ok := t.(ast.StringType); ok {
+				resultType = ast.StringType{}
+				break
+			}
 		}
 		resultSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
