@@ -507,13 +507,12 @@ var mainVarTypes = []gtype{
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor, tOptI32,
 	tXyz, tStatus,
-	// tMapI32I32 stays out: the interpreter intentionally
-	// doesn't model the Map runtime (see internal/interp/interp.go
-	// "Map operations stay codegen-only for now"), so a Map
-	// flowing into main's expression path breaks the diff
-	// oracle which uses interp as the source of truth. Maps are
-	// still exercised through Gen (parse + check fuzzing) where
-	// no execution happens — see allTypes.
+	// tMapI32I32 is now included since the interp grew a Map
+	// runtime — `map_new`, `__method_Map_*`, and `*ast.MapLit`
+	// evaluation all live in internal/interp/interp.go now,
+	// so Map values flowing into main's expression path
+	// round-trip through interp + native backends identically.
+	tMapI32I32,
 }
 
 // preludeDecls emits the fixed `struct Pair` + `enum Color`
@@ -1316,10 +1315,10 @@ func (g *Generator) pickType() gtype {
 			tI32, tI64, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
 			tXyz, tStatus,
-			// tMapI32I32 excluded for the same reason as
-			// mainVarTypes: the interpreter doesn't model Maps,
-			// and noFloats mode is the path the differential
-			// oracle drives through interp + native backends.
+			// tMapI32I32 is now safe to include — the interp
+			// grew a Map runtime so Map values can flow through
+			// the diff oracle's interp path.
+			tMapI32I32,
 		}
 		return nonFloats[g.ch.intN(len(nonFloats))]
 	}

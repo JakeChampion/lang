@@ -70,6 +70,28 @@ type Enum struct {
 	Payloads    []Value
 }
 
+// Map is the interpreter's `Map[K, V]` value. Two parallel slices
+// preserve insertion order — that matches the order the IR /
+// codegen lowering uses for `keys()` / `values()` / iteration,
+// so the differential oracle sees identical output across the
+// interpreter and native backends. A `map[Value]Value` would
+// be faster but Go's map can't key on non-comparable interface
+// values (Array, Struct, *Enum, *Map), and we want any K
+// shape that type-checks to work end-to-end.
+type Map struct {
+	keys []Value
+	vals []Value
+}
+
+func (m *Map) findKey(k Value) int {
+	for i, kk := range m.keys {
+		if valuesEqual(kk, k) {
+			return i
+		}
+	}
+	return -1
+}
+
 // Builtin is a host-provided function callable from interpreted code.
 // It receives evaluated arguments and may emit output via the
 // interpreter's stdout.
@@ -113,6 +135,21 @@ func (s *Struct) String() string {
 		b.WriteString(k)
 		b.WriteString(": ")
 		b.WriteString(v.String())
+	}
+	b.WriteString(" }")
+	return b.String()
+}
+
+func (m *Map) String() string {
+	var b strings.Builder
+	b.WriteString("Map { ")
+	for i, k := range m.keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(k.String())
+		b.WriteString(": ")
+		b.WriteString(m.vals[i].String())
 	}
 	b.WriteString(" }")
 	return b.String()
@@ -218,6 +255,22 @@ func New() *Interp {
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
+	// Map builtins. `map_new(cap)` returns an empty Map; the
+	// per-method shims walk the parallel-slice representation
+	// directly. Mirror the codegen surface from the checker's
+	// `registerMapMethod` calls so user programs that go
+	// through the interp see the same API as the native /
+	// wasm backends.
+	i.Builtins["map_new"] = &Builtin{Fn: builtinMapNew}
+	i.Builtins["__method_Map_len"] = &Builtin{Fn: builtinMapLen}
+	i.Builtins["__method_Map_has"] = &Builtin{Fn: builtinMapHas}
+	i.Builtins["__method_Map_get"] = &Builtin{Fn: builtinMapGet}
+	i.Builtins["__method_Map_set"] = &Builtin{Fn: builtinMapSet}
+	i.Builtins["__method_Map_delete"] = &Builtin{Fn: builtinMapDelete}
+	i.Builtins["__method_Map_clear"] = &Builtin{Fn: builtinMapClear}
+	i.Builtins["__method_Map_get_or"] = &Builtin{Fn: builtinMapGetOr}
+	i.Builtins["__method_Map_keys"] = &Builtin{Fn: builtinMapKeys}
+	i.Builtins["__method_Map_values"] = &Builtin{Fn: builtinMapValues}
 	// Low-level prelude primitives the codegen lowers to inline
 	// alloc / memcpy / store-byte sequences. The interpreter
 	// implements them directly so prelude functions that lean
@@ -447,6 +500,155 @@ func builtinArrayPush(_ *Interp, args []Value) (Value, error) {
 	out := make(Array, len(arr)+1)
 	copy(out, arr)
 	out[len(arr)] = args[1]
+	return out, nil
+}
+
+// Map builtins. `map_new(cap)` ignores the capacity hint (the
+// parallel-slice rep grows on demand) and returns a fresh
+// empty *Map. The `__method_Map_*` shims mirror the codegen
+// surface registered in internal/checker/checker.go's
+// registerMapMethod calls — same signatures, same return
+// shapes (Option[V] for get, boolean for has/delete, etc.).
+// Insertion order is preserved across set/delete so keys() /
+// values() round-trip stably across the diff oracle.
+func builtinMapNew(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("map_new: expected 1 arg (cap), got %d", len(args))
+	}
+	return &Map{}, nil
+}
+
+func mapReceiver(name string, args []Value) (*Map, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("%s: expected at least 1 arg (receiver)", name)
+	}
+	m, ok := args[0].(*Map)
+	if !ok {
+		return nil, fmt.Errorf("%s: receiver must be Map, got %T", name, args[0])
+	}
+	return m, nil
+}
+
+func builtinMapLen(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_len", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_Map_len: expected 1 arg (receiver), got %d", len(args))
+	}
+	return Number(int64(len(m.keys))), nil
+}
+
+func builtinMapHas(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_has", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__method_Map_has: expected 2 args (m, k), got %d", len(args))
+	}
+	return Bool(m.findKey(args[1]) >= 0), nil
+}
+
+func builtinMapGet(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_get", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__method_Map_get: expected 2 args (m, k), got %d", len(args))
+	}
+	if idx := m.findKey(args[1]); idx >= 0 {
+		return optionSome(m.vals[idx]), nil
+	}
+	return optionNone(), nil
+}
+
+func builtinMapSet(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_set", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 3 {
+		return nil, fmt.Errorf("__method_Map_set: expected 3 args (m, k, v), got %d", len(args))
+	}
+	if idx := m.findKey(args[1]); idx >= 0 {
+		m.vals[idx] = args[2]
+	} else {
+		m.keys = append(m.keys, args[1])
+		m.vals = append(m.vals, args[2])
+	}
+	return Void{}, nil
+}
+
+func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_delete", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__method_Map_delete: expected 2 args (m, k), got %d", len(args))
+	}
+	idx := m.findKey(args[1])
+	if idx < 0 {
+		return Bool(false), nil
+	}
+	m.keys = append(m.keys[:idx], m.keys[idx+1:]...)
+	m.vals = append(m.vals[:idx], m.vals[idx+1:]...)
+	return Bool(true), nil
+}
+
+func builtinMapClear(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_clear", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_Map_clear: expected 1 arg (receiver), got %d", len(args))
+	}
+	m.keys = m.keys[:0]
+	m.vals = m.vals[:0]
+	return Void{}, nil
+}
+
+func builtinMapGetOr(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_get_or", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 3 {
+		return nil, fmt.Errorf("__method_Map_get_or: expected 3 args (m, k, default), got %d", len(args))
+	}
+	if idx := m.findKey(args[1]); idx >= 0 {
+		return m.vals[idx], nil
+	}
+	return args[2], nil
+}
+
+func builtinMapKeys(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_keys", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_Map_keys: expected 1 arg (receiver), got %d", len(args))
+	}
+	out := make(Array, len(m.keys))
+	copy(out, m.keys)
+	return out, nil
+}
+
+func builtinMapValues(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_values", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_Map_values: expected 1 arg (receiver), got %d", len(args))
+	}
+	out := make(Array, len(m.vals))
+	copy(out, m.vals)
 	return out, nil
 }
 
@@ -1413,6 +1615,30 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			out[k] = v
 		}
 		return out, nil
+	case *ast.MapLit:
+		// `Map { k1: v1, k2: v2, ... }` — sequence of inserts in
+		// declaration order. Matches the codegen lowering shape
+		// (`map_new(N) + .set(k, v) ...`) so the interp's
+		// insertion-order rep produces the same `.keys()` /
+		// `.values()` output as native backends.
+		m := &Map{}
+		for _, ent := range x.Entries {
+			kv, err := i.evalExpr(ent.Key, env)
+			if err != nil {
+				return nil, err
+			}
+			vv, err := i.evalExpr(ent.Value, env)
+			if err != nil {
+				return nil, err
+			}
+			if idx := m.findKey(kv); idx >= 0 {
+				m.vals[idx] = vv
+			} else {
+				m.keys = append(m.keys, kv)
+				m.vals = append(m.vals, vv)
+			}
+		}
+		return m, nil
 	case *ast.Index:
 		arrV, err := i.evalExpr(x.Array, env)
 		if err != nil {
