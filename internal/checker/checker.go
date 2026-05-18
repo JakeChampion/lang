@@ -5184,6 +5184,15 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 		// generic parameter and settle them — both pins the
 		// literal widths and lets TypeArgs/monomorph pick the
 		// right clone.
+		//
+		// Gate on the existing TypeArgs entry being polymorphic
+		// or zero-width: a call whose args already pinned T to a
+		// concrete width (`id(7i64)` → T=i64) should NOT have
+		// its TypeArgs overridden by an enclosing-context hint
+		// like a CastExpr's target. Without this gate,
+		// `(id(7i64) as i32)` flipped id's T to i32, monomorph
+		// produced id__i32 with i32-typed params, and the
+		// re-check rejected the i64 literal arg.
 		if id, ok := x.Callee.(*ast.Ident); ok {
 			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
 				for i, p := range fn.Params {
@@ -5195,17 +5204,33 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 						c.settleInt(x.Args[i], hn)
 					}
 				}
-				// Re-stamp TypeArgs so the monomorph pass
-				// picks the concrete clone. The first
-				// matching param's resolved type is enough
-				// because the unify pass enforces same-T
-				// across all positions.
-				if len(fn.TypeParams) == 1 && len(x.TypeArgs) == 1 {
+				// Re-stamp TypeArgs only when the existing entry
+				// is polymorphic — meaning args-driven inference
+				// didn't fix T at a concrete width. A concrete
+				// entry (e.g. from a typed-literal arg) wins
+				// over the surrounding-context hint.
+				if len(fn.TypeParams) == 1 && len(x.TypeArgs) == 1 &&
+					isPolymorphicNumeric(x.TypeArgs[0]) {
 					x.TypeArgs[0] = hn
 				}
 			}
 		}
 	}
+}
+
+// isPolymorphicNumeric reports whether t is an unsettled
+// numeric / float type — i.e. came from a bare literal whose
+// width hasn't been pinned yet. settleInt's generic-call case
+// uses this to decide whether the destination's width hint
+// should override the existing TypeArgs entry.
+func isPolymorphicNumeric(t ast.Type) bool {
+	if n, ok := t.(ast.NumberType); ok {
+		return n.Polymorphic || n.Width == 0
+	}
+	if f, ok := t.(ast.FloatType); ok {
+		return f.Polymorphic
+	}
+	return false
 }
 
 func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
