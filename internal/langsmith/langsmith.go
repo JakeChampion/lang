@@ -204,6 +204,43 @@ func (c *byteChooser) flip(p float64) bool {
 }
 
 
+// Profile names the langsmith generator's operating mode. The
+// two values trade coverage for cross-backend determinism:
+//
+//   - ProfileFree: free-form generation. Every type (including
+//     f32 and Map) and every production is allowed. Used by
+//     `Gen` / `GenBytes`. The output is for parse + check fuzz
+//     coverage only — not run against any backend.
+//
+//   - ProfileRunnable: the differential-oracle path. Drops f32
+//     (IEEE Inf/NaN comparisons can legitimately differ across
+//     backends) and emits a `main(): i32` whose return byte
+//     stays bit-identical from interp → arm64 → x86_64 → wasm.
+//     Used by `GenMain` / `GenMainBytes`.
+//
+// Replaces the prior `noFloats bool` field, which was three
+// concepts in one boolean: "skip f32", "runnable mode", and
+// "prefer deterministic-across-backends choices". Renaming to
+// an enum makes each gate site explicit about which axis it's
+// checking.
+type Profile int
+
+const (
+	ProfileFree Profile = iota
+	ProfileRunnable
+)
+
+// floatsAllowed reports whether the current profile's
+// production set includes f32 / float-typed values. Today only
+// ProfileFree allows them.
+func (p Profile) floatsAllowed() bool { return p == ProfileFree }
+
+// runnable reports whether the current profile is producing
+// code that has to run identically across every backend (no
+// stdout differences, no Inf/NaN edges). Today equivalent to
+// the deterministic-across-backends invariant.
+func (p Profile) runnable() bool { return p == ProfileRunnable }
+
 // Generator emits source text directly while tracking an in-scope
 // set of typed identifiers. Each expression production picks
 // operands whose types match the context so the result type-checks
@@ -214,13 +251,15 @@ func (c *byteChooser) flip(p float64) bool {
 type Generator struct {
 	ch  chooser
 	cfg Config
-	// noFloats removes f32 from every production — type picker,
-	// numeric expressions, and the operand-type chosen inside
-	// boolean comparisons. MainProgram sets this so the
-	// differential-execution oracle doesn't have to reason about
-	// IEEE-754 edges (NaN propagation, denormal flush, Inf
-	// comparison) that may legitimately differ across backends.
-	noFloats bool
+	// profile names the generator's operating mode. Two values
+	// today: ProfileFree (the free-form Gen / GenBytes path,
+	// every production allowed) and ProfileRunnable (the
+	// MainProgram path that has to produce identical output
+	// across backends). Replaces what used to be a single
+	// `noFloats bool` whose three implicit meanings — skip
+	// f32, this is the runnable path, prefer deterministic
+	// choices — kept drifting together.
+	profile Profile
 	// helpers is the running list of every top-level function
 	// signature emitted so far. Subsequent function bodies
 	// (including main) can call any prior helper with type-
@@ -520,22 +559,22 @@ func GenMain(seed uint64) string {
 // convention / parameter-passing path that single-function
 // programs miss. Helpers can themselves call any *earlier*
 // helper (forward refs only — sidesteps self- and mutual-
-// recursion without a static check). Sets `noFloats` for the
-// duration so nested productions can't sneak f32 in through
-// boolean comparisons.
+// recursion without a static check). Sets the generator's
+// profile to ProfileRunnable for the duration so nested
+// productions can't sneak f32 in through boolean comparisons.
 func (g *Generator) MainProgram() string {
-	prevNoFloats := g.noFloats
+	prevProfile := g.profile
 	prevHelpers := g.helpers
 	prevStructShapes := g.structShapes
 	prevEnumShapes := g.enumShapes
 	prevNextNominal := g.nextNominal
-	g.noFloats = true
+	g.profile = ProfileRunnable
 	g.helpers = nil
 	g.structShapes = nil
 	g.enumShapes = nil
 	g.nextNominal = 0
 	defer func() {
-		g.noFloats = prevNoFloats
+		g.profile = prevProfile
 		g.helpers = prevHelpers
 		g.structShapes = prevStructShapes
 		g.enumShapes = prevEnumShapes
@@ -546,10 +585,11 @@ func (g *Generator) MainProgram() string {
 	g.preludeDecls(&b)
 
 	// Emit a small number of helpers before main. Helpers in
-	// main-program mode inherit noFloats, so their signatures are
-	// drawn from {i32, i64, bool, string, i32[], i64[], boolean[],
-	// Pair, Color}. Main only consumes i32-returning helpers in
-	// its return expression, but non-i32 helpers still get
+	// ProfileRunnable mode share the profile's float-free type
+	// pool, so their signatures are drawn from {i32, i64, bool,
+	// string, i32[], i64[], boolean[], Pair, Color, ...}.
+	// Main only consumes i32-returning helpers in its return
+	// expression, but non-i32 helpers still get
 	// exercised: any helper can call any earlier helper of
 	// matching arg/return types.
 	nHelpers := g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
@@ -596,8 +636,9 @@ func (g *Generator) MainProgram() string {
 }
 
 // mainVarTypes are the gtypes legal for `var v<N>` declarations
-// inside `main` under noFloats. Strings are exercised through
-// `len(s)` in the i32 path (see tryCompositeProduction), so they
+// inside `main` under ProfileRunnable. Strings are exercised
+// through `len(s)` in the i32 path (see tryCompositeProduction),
+// so they
 // flow into the byte oracle even without a separate stdout
 // channel. Composite types do the same via array index, Pair
 // field access, and match-over-Color.
@@ -1806,17 +1847,17 @@ func (g *Generator) stringLiteral() string {
 
 // ---------- random helpers ----------
 
-// pickType draws from the full type universe, honouring noFloats
-// when the generator is in main-program mode. The composite types
-// (arrays, Pair, Color) are float-free, so they're allowed in
-// both modes.
+// pickType draws from the full type universe, honouring the
+// generator's profile (ProfileRunnable drops f32). The
+// composite types (arrays, Pair, Color) are float-free, so
+// they're allowed in both profiles.
 func (g *Generator) pickType() gtype {
 	pool := g.typePool()
 	return pool[g.ch.intN(len(pool))]
 }
 
-// pickMainVarType is pickType's main-program-mode counterpart.
-// Same shape as the noFloats branch of pickType (drops f32) and
+// pickMainVarType is pickType's ProfileRunnable counterpart.
+// Same shape as typePool's runnable branch (drops f32) and
 // includes any dynamic nominal types declared in
 // declareDynamicNominals so main's vars can hold values of
 // user-declared struct / enum types.
@@ -1827,13 +1868,13 @@ func (g *Generator) pickMainVarType() gtype {
 }
 
 // typePool returns the gtype universe pickType draws from,
-// branching on noFloats and including any dynamic nominal
-// types declared by the current program. Allocates fresh each
-// call so callers can mutate without aliasing the underlying
-// slices.
+// branching on the generator's profile and including any
+// dynamic nominal types declared by the current program.
+// Allocates fresh each call so callers can mutate without
+// aliasing the underlying slices.
 func (g *Generator) typePool() []gtype {
 	var pool []gtype
-	if g.noFloats {
+	if !g.profile.floatsAllowed() {
 		pool = []gtype{
 			tI32, tI64, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
@@ -1865,10 +1906,10 @@ func (g *Generator) sortedDynamicTypes() []gtype {
 }
 
 // pickNumeric draws from the numeric types only, honouring
-// noFloats. Used by `boolExpr` to choose the operand type of a
-// comparison.
+// the generator's profile. Used by `boolExpr` to choose the
+// operand type of a comparison.
 func (g *Generator) pickNumeric() gtype {
-	if g.noFloats {
+	if !g.profile.floatsAllowed() {
 		ints := []gtype{tI32, tI64}
 		return ints[g.ch.intN(len(ints))]
 	}
