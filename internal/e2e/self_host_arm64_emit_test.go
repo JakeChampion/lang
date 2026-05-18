@@ -112,6 +112,43 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"print-int-zero", "function main(): i32 { print_int(0); print(\"\\n\"); return 0; }", 0, "0\n"},
 		{"print-int-negative", "function main(): i32 { print_int(0 - 7); print(\"\\n\"); return 0; }", 0, "-7\n"},
 		{"print-int-fact", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { print_int(fact(8)); print(\"\\n\"); return 0; }", 0, "40320\n"},
+		{
+			"fizzbuzz-canonical-1-to-15",
+			"function main(): i32 { " +
+				"var i = 1; " +
+				"while (i <= 15) { " +
+				"if (i % 15 == 0) { print(\"FizzBuzz\"); } " +
+				"else if (i % 3 == 0) { print(\"Fizz\"); } " +
+				"else if (i % 5 == 0) { print(\"Buzz\"); } " +
+				"else { print_int(i); } " +
+				"print(\"\\n\"); " +
+				"i = i + 1; " +
+				"} " +
+				"return 0; }",
+			0,
+			"1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n",
+		},
+		{
+			"fibonacci-series-first-10",
+			"function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } " +
+				"function main(): i32 { var i = 0; while (i < 10) { print_int(fib(i)); print(\" \"); i = i + 1; } print(\"\\n\"); return 0; }",
+			0,
+			"0 1 1 2 3 5 8 13 21 34 \n",
+		},
+		{
+			"sum-via-recursion-and-print",
+			"function sum(n: i32): i32 { if (n == 0) { return 0; } return n + sum(n - 1); } " +
+				"function main(): i32 { print(\"sum(1..10) = \"); print_int(sum(10)); print(\"\\n\"); return 0; }",
+			0,
+			"sum(1..10) = 55\n",
+		},
+		{
+			"primes-up-to-30",
+			"function is_prime(n: i32): i32 { if (n < 2) { return 0; } var i = 2; while (i * i <= n) { if (n % i == 0) { return 0; } i = i + 1; } return 1; } " +
+				"function main(): i32 { var i = 2; while (i <= 30) { if (is_prime(i) == 1) { print_int(i); print(\" \"); } i = i + 1; } print(\"\\n\"); return 0; }",
+			0,
+			"2 3 5 7 11 13 17 19 23 29 \n",
+		},
 	}
 
 	for _, tc := range cases {
