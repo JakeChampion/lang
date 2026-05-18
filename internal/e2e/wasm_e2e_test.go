@@ -3146,6 +3146,91 @@ function main(): i32 {
 	}
 }
 
+// Generic struct methods with their own type parameters:
+// `function [T] (b: Box[T]) unwrap(): T`. The type params come
+// BEFORE the receiver so the receiver's type (`Box[T]`) can
+// reference them — by the time the parser reads `Box[T]`, T is
+// already known as a type parameter and resolveType rewrites it
+// as ParamType. The existing method machinery (mangle to
+// `__method_Box_unwrap`) + the generic-function monomorphisation
+// pipeline together cover the lowering: each call site like
+// `b.unwrap()` where b: Box[i32] instantiates the method with
+// T = i32, producing a `__method_Box_unwrap__i32` clone.
+func TestWASMGenericStructMethod(t *testing.T) {
+	src := `struct Box[T] { value: T }
+pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
+function main(): i32 {
+    var b: Box[i32] = Box { value: 42 };
+    return b.unwrap();
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMGenericStructMethodWide(t *testing.T) {
+	src := `struct Box[T] { value: T }
+pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
+function main(): i32 {
+    var b: Box[i64] = Box { value: 1000000000000i64 };
+    var v: i64 = b.unwrap();
+    if (v != 1000000000000i64) { return 1; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0", got)
+	}
+}
+
+func TestWASMGenericStructMethodString(t *testing.T) {
+	src := `struct Box[T] { value: T }
+pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
+function main(): i32 {
+    var b: Box[string] = Box { value: "hello" };
+    return len(b.unwrap());
+}`
+	if got := runWasm(t, src); got != 5 {
+		t.Errorf("got %d, want 5", got)
+	}
+}
+
+// Multiple type params + multiple methods sharing receiver shape.
+func TestWASMGenericStructMethodMultipleTypeParams(t *testing.T) {
+	src := `struct Pair[A, B] { a: A, b: B }
+pub function [A, B] (p: Pair[A, B]) first(): A { return p.a; }
+pub function [A, B] (p: Pair[A, B]) second(): B { return p.b; }
+function main(): i32 {
+    var p: Pair[i32, string] = Pair { a: 42, b: "hello" };
+    return p.first() + len(p.second());
+}`
+	if got := runWasm(t, src); got != 47 {
+		t.Errorf("got %d, want 47", got)
+	}
+}
+
+// Generic method that builds a Box[T] in its body. The monomorph
+// pass needs to defer the StructLit-TypeName mangling for
+// ParamType-bearing TypeArgs (pre-clone), then re-mangle after
+// substituteBlock has replaced T with the concrete instantiation
+// arg. Without that two-phase walk, the body's `Box { value: v }`
+// kept its placeholder `Box__T` TypeName after cloning and the
+// re-check failed with `return type mismatch: function returns
+// Box__i32 but expression is Box__T`.
+func TestWASMGenericMethodReturnsBoxOfT(t *testing.T) {
+	src := `struct Box[T] { value: T }
+pub function [T] (b: Box[T]) replace(v: T): Box[T] {
+    return Box { value: v };
+}
+function main(): i32 {
+    var b: Box[i32] = Box { value: 1 };
+    var c = b.replace(42);
+    return c.value;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
 // Mutual recursion of sibling local FuncDecls: each function
 // calls the other, both declared in the same block. Detection
 // runs as a Tarjan SCC walk in the checker pre-pass; SCC

@@ -88,8 +88,16 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		// Rewrite generic StructLits in the same body — TypeArgs
 		// was stamped by the checker for every generic struct
 		// literal, including those nested inside expressions.
+		// Skip StructLits whose TypeArgs still contain a ParamType
+		// (a type parameter from an enclosing generic function /
+		// method): those get monomorphised per-clone in the
+		// cloning loop below, after substituteBlock has replaced
+		// each ParamType with the concrete instantiation arg.
 		walkBlockStructLits(fn.Body, func(sl *ast.StructLit) {
 			if len(sl.TypeArgs) == 0 {
+				return
+			}
+			if hasParamType(sl.TypeArgs) {
 				return
 			}
 			gen, isGen := info.GenericStructs[sl.TypeName]
@@ -133,6 +141,30 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		}
 		c.ReturnType = substituteType(c.ReturnType, sub)
 		substituteBlock(c.Body, sub)
+		// Walk the substituted body's StructLits a second time
+		// to mangle any whose TypeArgs got substituted to concrete
+		// types just now (the pre-clone walk above skips ParamType-
+		// bearing TypeArgs since the substitution hasn't run yet
+		// at that point). Generic methods that build a Box[T] in
+		// their body need this so the resulting mangled name
+		// ("Box__i32") matches the cloned struct decl, not the
+		// pre-substitution placeholder.
+		walkBlockStructLits(c.Body, func(sl *ast.StructLit) {
+			if len(sl.TypeArgs) == 0 {
+				return
+			}
+			if hasParamType(sl.TypeArgs) {
+				return
+			}
+			gen, isGen := info.GenericStructs[sl.TypeName]
+			if !isGen || len(sl.TypeArgs) != len(gen.TypeParams) {
+				return
+			}
+			mang := mangle(sl.TypeName, sl.TypeArgs)
+			structInsts[instKey{name: sl.TypeName, mang: mang}] = sl.TypeArgs
+			sl.TypeName = mang
+			sl.TypeArgs = nil
+		})
 		cloned = append(cloned, c)
 	}
 
@@ -411,6 +443,42 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 // type-bearing node (StructLit.TypeArgs, CastExpr.Target,
 // Call.TypeArgs). Doesn't touch type-free shapes — the checker
 // re-derives those during the post-monomorph re-check.
+// hasParamType reports whether any type in `types` is a ParamType
+// (or recursively contains one). Used by the monomorpher to defer
+// rewriting StructLit TypeArgs that still hold a ParamType — those
+// only become concrete after substituteBlock runs over a clone.
+func hasParamType(types []ast.Type) bool {
+	for _, t := range types {
+		if containsParamType(t) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsParamType(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.ParamType:
+		return true
+	case ast.StructType:
+		return hasParamType(x.Args)
+	case ast.EnumType:
+		return hasParamType(x.Args)
+	case ast.ArrayType:
+		return containsParamType(x.Elem)
+	case ast.SliceType:
+		return containsParamType(x.Elem)
+	case ast.TupleType:
+		return hasParamType(x.Elems)
+	case *ast.FuncType:
+		if containsParamType(x.Result) {
+			return true
+		}
+		return hasParamType(x.Params)
+	}
+	return false
+}
+
 func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 	if e == nil {
 		return

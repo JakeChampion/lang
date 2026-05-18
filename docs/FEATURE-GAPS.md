@@ -297,5 +297,12 @@ Driven by "smallest, no-runtime-touch, unlocks the most user code":
 7. ✅ **Generic call-site type args (#4)** — landed in this PR.
    Disambiguated from `arr[i]` by requiring a leading type
    keyword inside the brackets.
-8. **Generic struct method type params (#8)** — biggest; needs
-   monomorph reach into methods.
+8. ✅ **Generic struct method type params (#8)** — landed.
+   Parser accepts `function [T] (b: Box[T]) name(...)`; the
+   leading-position type params resolve before the receiver
+   type so `Box[T]` correctly stamps `ParamType{T}`. Monomorph
+   defers StructLit-TypeName mangling for ParamType-bearing
+   TypeArgs (pre-clone), then re-mangles after `substituteBlock`
+   has replaced T with the concrete instantiation arg — needed
+   so a method body that builds `Box { value: v }` ends up with
+   the correct `Box__i32` TypeName after cloning.
