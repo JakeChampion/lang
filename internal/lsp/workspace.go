@@ -8,6 +8,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/modload"
 )
 
@@ -58,12 +59,13 @@ func pathToURI(p string) string {
 	return "file://" + abs
 }
 
-// loadWorkspace loads the program rooted at entryPath using
-// modload + the open-document override map so unsaved buffers
-// take precedence over disk. Returns the same shape as the
-// single-file pipeline so updateDoc can treat both paths
-// uniformly.
-func (s *Server) loadWorkspace(entryPath string) (*ast.Program, *checker.Info, []Diagnostic, error) {
+// loadWorkspace loads the program rooted at entryPath using modload
+// + the open-document override map so unsaved buffers take
+// precedence over disk. Diagnostics are split by their source-file
+// path (via the diag.Filed interface) so callers can route each
+// entry to the right URI; errors with no File() stamp fall back to
+// the entry path.
+func (s *Server) loadWorkspace(entryPath string) (*ast.Program, *checker.Info, map[string][]Diagnostic) {
 	// Snapshot the current open-doc map into the path-keyed shape
 	// modload expects. Documents whose URI doesn't resolve to a
 	// file path (the playground's opaque URIs) get skipped.
@@ -73,14 +75,46 @@ func (s *Server) loadWorkspace(entryPath string) (*ast.Program, *checker.Info, [
 			overrides[p] = doc.src
 		}
 	}
-	// Make sure entryPath's content is in the override map too —
-	// the freshly-arrived didChange may not have settled into
-	// s.docs yet when updateDoc is mid-flight.
 	prog, _, perr := modload.LoadWith(entryPath, overrides)
 	var info *checker.Info
 	var checkErr error
 	if prog != nil {
 		info, checkErr = checker.Check(prog)
 	}
-	return prog, info, collectDiagnostics(perr, checkErr), nil
+	byFile := splitDiagnosticsByFile(perr, entryPath)
+	for f, ds := range splitDiagnosticsByFile(checkErr, entryPath) {
+		byFile[f] = append(byFile[f], ds...)
+	}
+	return prog, info, byFile
+}
+
+// splitDiagnosticsByFile walks err (diag.Errors or a single error)
+// and groups the converted Diagnostics by the source-file path
+// stamped on each entry. Entries without a File() stamp land under
+// entryFallback so the entry URI still sees them — that's the
+// pre-decl checker errors, plus anything the lexer / parser
+// surfaced before modload got around to stamping (shouldn't happen
+// in workspace mode but we'd rather attribute than drop).
+func splitDiagnosticsByFile(err error, entryFallback string) map[string][]Diagnostic {
+	out := map[string][]Diagnostic{}
+	if err == nil {
+		return out
+	}
+	add := func(e error) {
+		path := entryFallback
+		if f, ok := e.(diag.Filed); ok {
+			if v := f.File(); v != "" {
+				path = v
+			}
+		}
+		out[path] = append(out[path], toDiagnostic(e))
+	}
+	if es, ok := err.(diag.Errors); ok {
+		for _, e := range es {
+			add(e)
+		}
+		return out
+	}
+	add(err)
+	return out
 }

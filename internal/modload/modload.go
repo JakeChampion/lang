@@ -256,7 +256,11 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	srcs[path] = src
 	prog, err := parser.Parse(src)
 	if err != nil {
-		return fmt.Errorf("%s", diag.Format(path, src, err))
+		// Stamp the path on each structured error so callers
+		// (LSP workspace mode, CLI formatter) can attribute it
+		// back to this file. Returned unwrapped so errors.As
+		// works for diag.Errors / diag.Filed downstream.
+		return diag.WithFile(err, path)
 	}
 
 	// Recurse into imports first. We don't add this module to

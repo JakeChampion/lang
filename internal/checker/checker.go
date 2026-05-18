@@ -24,12 +24,15 @@ type Error struct {
 	Span int    // optional: token length for `^~~~~` underline; 0 = caret only
 	Note string // optional: "did you mean foo?" hint
 	Msg  string
+	Path string // source file path; filled by errf from c.current.SourceModule
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
 func (e *Error) Position() ast.Position { return e.Pos }
 func (e *Error) Length() int            { return e.Span }
 func (e *Error) Hint() string           { return e.Note }
+func (e *Error) File() string           { return e.Path }
+func (e *Error) setFile(p string)       { e.Path = p }
 
 // Info captures everything codegen needs that the checker discovered:
 // the inferred type of every var without an annotation, and a per-function
@@ -2048,7 +2051,7 @@ func assignable(dst, src ast.Type) bool {
 }
 
 func (c *checker) errf(pos ast.Position, format string, args ...any) {
-	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...)})
+	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile()})
 }
 
 // errIdent reports an unresolved-name error and tries to attach a
@@ -2062,11 +2065,23 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 		Pos:  n.P,
 		Span: len(n.Name),
 		Msg:  fmt.Sprintf(format, args...),
+		Path: c.currentFile(),
 	}
 	if suggestion != "" {
 		e.Note = fmt.Sprintf("did you mean %q?", suggestion)
 	}
 	c.errors = append(c.errors, e)
+}
+
+// currentFile returns the SourceModule path of the FuncDecl the
+// checker is currently inside, or "" when no decl is active (the
+// top-level pre-checking phase that registers structs / enums).
+// LSP workspace mode uses this for per-file diagnostic routing.
+func (c *checker) currentFile() string {
+	if c.current == nil {
+		return ""
+	}
+	return c.current.SourceModule
 }
 
 // collectNames flattens every name reachable from s, plus all top-level
