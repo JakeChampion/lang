@@ -25,6 +25,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/module"
@@ -445,8 +446,73 @@ func emitOp(body []byte, op ir.Op) ([]byte, error) {
 			return numeric.InstF64Ge(body), nil
 		}
 		return numeric.InstF32Ge(body), nil
+
+	// ---- Conversions (slice 3) ----
+	case ir.OpExtendI32S:
+		return convert.InstI64ExtendI32S(body), nil
+	case ir.OpExtendI32U:
+		return convert.InstI64ExtendI32U(body), nil
+	case ir.OpWrapI64:
+		return convert.InstI32WrapI64(body), nil
+	case ir.OpFPromoteF32:
+		return convert.InstF64PromoteF32(body), nil
+	case ir.OpFDemoteF64:
+		return convert.InstF32DemoteF64(body), nil
+	case ir.OpSignExtend8:
+		return convert.InstI32Extend8S(body), nil
+	case ir.OpSignExtend16:
+		return convert.InstI32Extend16S(body), nil
+	case ir.OpReinterpretI32F32:
+		return convert.InstI32ReinterpretF32(body), nil
+	case ir.OpReinterpretF32I32:
+		return convert.InstF32ReinterpretI32(body), nil
+
+	case ir.OpFConvertI32:
+		if op.Width == 64 {
+			if op.Unsigned {
+				return convert.InstF64ConvertI32U(body), nil
+			}
+			return convert.InstF64ConvertI32S(body), nil
+		}
+		if op.Unsigned {
+			return convert.InstF32ConvertI32U(body), nil
+		}
+		return convert.InstF32ConvertI32S(body), nil
+	case ir.OpFConvertI64:
+		if op.Width == 64 {
+			if op.Unsigned {
+				return convert.InstF64ConvertI64U(body), nil
+			}
+			return convert.InstF64ConvertI64S(body), nil
+		}
+		if op.Unsigned {
+			return convert.InstF32ConvertI64U(body), nil
+		}
+		return convert.InstF32ConvertI64S(body), nil
+	case ir.OpITruncF32:
+		if op.Width == 64 {
+			if op.Unsigned {
+				return convert.InstI64TruncF32U(body), nil
+			}
+			return convert.InstI64TruncF32S(body), nil
+		}
+		if op.Unsigned {
+			return convert.InstI32TruncF32U(body), nil
+		}
+		return convert.InstI32TruncF32S(body), nil
+	case ir.OpITruncF64:
+		if op.Width == 64 {
+			if op.Unsigned {
+				return convert.InstI64TruncF64U(body), nil
+			}
+			return convert.InstI64TruncF64S(body), nil
+		}
+		if op.Unsigned {
+			return convert.InstI32TruncF64U(body), nil
+		}
+		return convert.InstI32TruncF64S(body), nil
 	}
-	return nil, fmt.Errorf("unsupported op %v (slice 1 covers scalar arithmetic + locals + return only)", op.Kind)
+	return nil, fmt.Errorf("unsupported op %v", op.Kind)
 }
 
 // blocktypeByte maps an ir.BlockType* constant to the single-byte
