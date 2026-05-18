@@ -1,0 +1,68 @@
+name: VS Code Extension
+
+# Validates editors/vscode/ — the language-client extension that
+# spawns lang-lsp. Two tiers, both cheap:
+#
+#   1. type-check + compile (tsc) — catches API breakages against
+#      the vscode-languageclient + @types/vscode surfaces within
+#      seconds of every PR.
+#   2. vsce package — runs the same metadata validation +
+#      .vscodeignore checks the marketplace would, then produces
+#      the .vsix as a build artefact so a maintainer can `code
+#      --install-extension` it without rerunning the toolchain.
+#
+# Path-filtered to the extension dir + this workflow file so it
+# doesn't burn minutes on unrelated edits.
+
+on:
+  pull_request:
+    paths:
+      - "editors/vscode/**"
+      - ".github/workflows/vscode-extension.yml"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          # Cache by the extension's own package.json (no lockfile
+          # in-tree — setup-node hashes the file we point at).
+          cache-dependency-path: editors/vscode/package.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Type-check + compile
+        # `npm run compile` runs `tsc -p ./` against tsconfig.json.
+        # Surfaces every type error the editor would; failure
+        # blocks the PR.
+        run: npm run compile
+
+      - name: Package extension
+        # @vscode/vsce ships its own validation pass: required
+        # manifest fields, file inclusion rules, repository / icon
+        # checks. Failures here are usually one-line manifest
+        # tweaks. The VSIX bundles node_modules so the runtime
+        # dependency on vscode-languageclient ships intact.
+        run: npx --yes @vscode/vsce@^3.2.0 package --out lang-vscode.vsix
+
+      - name: Upload VSIX artefact
+        # Maintainers iterating on the extension can grab the
+        # built .vsix from the workflow run and install it
+        # locally without rebuilding from source.
+        uses: actions/upload-artifact@v4
+        with:
+          name: lang-vscode-vsix
+          path: editors/vscode/lang-vscode.vsix
+          if-no-files-found: error
