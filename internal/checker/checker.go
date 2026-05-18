@@ -2621,6 +2621,11 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// the function's declared return type.
 		got = postSettleType(n.Value, got)
 		got = c.maybeWrapForUnion(want, &n.Value, got, s)
+		// Same generic-call destination refinement as the
+		// Var case — `return f(...)` from a function returning
+		// Result[i32, i32] needs f's TypeArgs to be fully
+		// concrete before monomorph runs.
+		c.refineCallTypeArgsFromDest(n.Value, want)
 		if got != nil && !assignable(want, got) {
 			c.errf(n.P, "return type mismatch: function returns %s but expression is %s", want, got)
 		}
@@ -2651,6 +2656,13 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			// back so the IR lowering can stamp the runtime
 			// keyKind tag.
 			c.stampStructTypeArgs(n.Init, n.Type)
+			// Generic-call destination inference: when the
+			// init is a generic call whose TypeArgs got
+			// partially inferred (e.g. variant constructor
+			// args only pin one of Result[T, E]'s two type
+			// params), refine using the destination type. See
+			// refineCallTypeArgsFromDest for the full story.
+			c.refineCallTypeArgsFromDest(n.Init, n.Type)
 		}
 		if n.Type == nil {
 			if got == nil {
@@ -3964,6 +3976,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.settleNumeric(n.Args[i], expected)
 				at = postSettleType(n.Args[i], at)
 				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
+				// If the arg is itself a generic call with
+				// partially-inferred TypeArgs (e.g. `pick(c,
+				// Ok(1), Err(2))` returning Result without
+				// inner args), refine its TypeArgs from the
+				// enclosing call's param type — same shape as
+				// the Var / Return destination refinement.
+				// Only fires when this call isn't itself
+				// generic (i.e. `sub` is nil); generic-into-
+				// generic plumbing would need bidirectional
+				// substitution we don't have yet.
+				if sub == nil {
+					c.refineCallTypeArgsFromDest(n.Args[i], expected)
+				}
 				if sub != nil {
 					if !c.unifyType(expected, at, sub) {
 						c.errf(n.Args[i].Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
@@ -4651,6 +4676,192 @@ func (c *checker) stampStructTypeArgs(e ast.Expr, dst ast.Type) {
 			call.TypeArgs = dStruct.Args
 		}
 	}
+}
+
+// refineCallTypeArgsFromDest pushes the destination type's
+// concrete args back into a generic call's TypeArgs when the
+// args-driven inference produced an under-specified entry.
+//
+// Background: variant constructors only fix the type
+// parameter(s) they have payloads for. `Ok(1)` sets
+// `Result.T → i32` from the payload, but leaves `E` unresolved
+// — the variant-call path returns `EnumType{Name:"Result"}`
+// (no Args). Pass that through `pick[T](c, a, b): T` and the
+// call's TypeArgs gets stamped as `[Result{no args}]`.
+// Monomorph mangles to `pick__Result`, the cloned param /
+// return types lack the inner Args, and the re-check rejects
+// with "Result has 2 type parameter(s), 0 supplied".
+//
+// The destination annotation (`var r: Result[i32, i32]`,
+// `return ...` against a typed fn return) carries the full
+// type. We walk the generic fn's declared return type against
+// the destination pairwise; wherever the declared return
+// position is a `ParamType{Name: T}`, the destination's
+// matching position becomes a refined `sub[T]` entry.
+// Re-stamping `TypeArgs` from the refined sub completes the
+// inference so monomorph sees `[Result[i32, i32]]` and clones
+// with the right shape.
+func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
+	if e == nil || dst == nil {
+		return
+	}
+	switch x := e.(type) {
+	case *ast.Call:
+		c.refineSingleCallTypeArgs(x, dst)
+	case *ast.IfExpr:
+		// Both arms produce dst — recurse into each.
+		c.refineCallTypeArgsFromDest(x.Then, dst)
+		c.refineCallTypeArgsFromDest(x.Else, dst)
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			if arm != nil {
+				c.refineCallTypeArgsFromDest(arm.Body, dst)
+			}
+		}
+	case *ast.TryOp:
+		// `expr?` — the inner expression is Option[dst] or
+		// Result[dst, E]; not the same shape as dst itself.
+		// Skip; the inner call's TypeArgs (if any) would need
+		// the wider Option / Result type, which only the
+		// enclosing function's return slot has.
+	}
+}
+
+// refineSingleCallTypeArgs is the leaf case of
+// refineCallTypeArgsFromDest — picks up a Call directly.
+func (c *checker) refineSingleCallTypeArgs(call *ast.Call, dst ast.Type) {
+	if len(call.TypeArgs) == 0 {
+		return
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return
+	}
+	fn, isGen := c.info.GenericFuncs[id.Name]
+	if !isGen || len(call.TypeArgs) != len(fn.TypeParams) {
+		return
+	}
+	sub := make(map[string]ast.Type, len(fn.TypeParams))
+	for i, tp := range fn.TypeParams {
+		sub[tp] = call.TypeArgs[i]
+	}
+	refineParamSubFromDest(fn.ReturnType, dst, sub)
+	for i, tp := range fn.TypeParams {
+		if v, ok := sub[tp]; ok {
+			call.TypeArgs[i] = v
+		}
+	}
+}
+
+// refineParamSubFromDest walks `src` (a generic-returning
+// function's declared return type — may contain ParamType
+// placeholders) against `dst` (the destination's fully
+// concrete type) and refines entries in `sub` that are
+// under-specified relative to the destination's same-shape
+// position.
+//
+// Conservative: only replaces a sub entry when the new value
+// strictly improves on the existing one (the existing entry
+// is nil, or is an EnumType/StructType with strictly fewer
+// Args than the destination provides). Never widens or
+// overrides a fully-resolved entry.
+func refineParamSubFromDest(src, dst ast.Type, sub map[string]ast.Type) {
+	if src == nil || dst == nil {
+		return
+	}
+	switch s := src.(type) {
+	case ast.ParamType:
+		existing, has := sub[s.Name]
+		if !has {
+			sub[s.Name] = dst
+			return
+		}
+		if betterRefinement(existing, dst) {
+			sub[s.Name] = dst
+		}
+	case ast.EnumType:
+		dEnum, dok := dst.(ast.EnumType)
+		if !dok || dEnum.Name != s.Name {
+			return
+		}
+		// Walk pairwise. Either side may have fewer args than
+		// the other (the src side can have ParamType
+		// placeholders, the dst side has concrete types).
+		n := len(s.Args)
+		if len(dEnum.Args) < n {
+			n = len(dEnum.Args)
+		}
+		for i := 0; i < n; i++ {
+			refineParamSubFromDest(s.Args[i], dEnum.Args[i], sub)
+		}
+	case ast.StructType:
+		dStruct, dok := dst.(ast.StructType)
+		if !dok || dStruct.Name != s.Name {
+			return
+		}
+		n := len(s.Args)
+		if len(dStruct.Args) < n {
+			n = len(dStruct.Args)
+		}
+		for i := 0; i < n; i++ {
+			refineParamSubFromDest(s.Args[i], dStruct.Args[i], sub)
+		}
+	case ast.ArrayType:
+		if dArr, ok := dst.(ast.ArrayType); ok {
+			refineParamSubFromDest(s.Elem, dArr.Elem, sub)
+		}
+	case ast.SliceType:
+		if dSlice, ok := dst.(ast.SliceType); ok {
+			refineParamSubFromDest(s.Elem, dSlice.Elem, sub)
+		}
+	case ast.TupleType:
+		dTup, dok := dst.(ast.TupleType)
+		if !dok || len(dTup.Elems) != len(s.Elems) {
+			return
+		}
+		for i := range s.Elems {
+			refineParamSubFromDest(s.Elems[i], dTup.Elems[i], sub)
+		}
+	case *ast.FuncType:
+		dFn, dok := dst.(*ast.FuncType)
+		if !dok || len(dFn.Params) != len(s.Params) {
+			return
+		}
+		for i := range s.Params {
+			refineParamSubFromDest(s.Params[i], dFn.Params[i], sub)
+		}
+		refineParamSubFromDest(s.Result, dFn.Result, sub)
+	}
+}
+
+// betterRefinement reports whether `candidate` is a strictly
+// more-specific version of `existing` — used to decide whether
+// the destination-driven refinement should replace what
+// args-driven inference produced.
+//
+// Today only handles the variant-constructor case: an
+// EnumType / StructType with fewer Args is improvable when a
+// candidate of the same name has more (typically the full
+// arity from the destination annotation).
+func betterRefinement(existing, candidate ast.Type) bool {
+	if existing == nil {
+		return candidate != nil
+	}
+	switch e := existing.(type) {
+	case ast.EnumType:
+		c, ok := candidate.(ast.EnumType)
+		if !ok || c.Name != e.Name {
+			return false
+		}
+		return len(e.Args) < len(c.Args)
+	case ast.StructType:
+		c, ok := candidate.(ast.StructType)
+		if !ok || c.Name != e.Name {
+			return false
+		}
+		return len(e.Args) < len(c.Args)
+	}
+	return false
 }
 
 func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
