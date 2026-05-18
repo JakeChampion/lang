@@ -3494,6 +3494,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return n.Target
 			}
 		}
+		// Type ascription. The numeric-only `as` form above is a
+		// runtime conversion (truncate / sign-extend / float-round).
+		// This branch is the opposite: a zero-cost annotation that
+		// lets the user pin a type inline where the inference can't
+		// reach. The classic case is a payload-less variant —
+		// `None as Option[i32]`, `[] as i32[]` — but the rule
+		// generalises to anything the existing `var x: T = e`
+		// destination-flow already accepts. Run the same flow
+		// (settle polymorphic numerics, stamp struct args, refine
+		// generic-call type args, union-wrap), then accept when the
+		// result is `assignable` to the target. IR / interp see a
+		// CastExpr whose inner has already evaluated; nothing more
+		// to lower.
+		c.stampStructTypeArgs(n.Inner, n.Target)
+		c.refineCallTypeArgsFromDest(n.Inner, n.Target)
+		inner = c.maybeWrapForUnion(n.Target, &n.Inner, inner, s)
+		n.InnerType = inner
+		if assignable(n.Target, inner) {
+			return n.Target
+		}
 		c.errf(n.P, "cannot cast %s to %s; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", inner, n.Target)
 		return n.Target
 	case *ast.BoolLit:

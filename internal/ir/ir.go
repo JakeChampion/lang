@@ -2907,6 +2907,23 @@ func (b *builder) expr(e ast.Expr) error {
 					return nil
 				}
 			}
+			// Non-numeric type ascription (`None as Option[i32]`,
+			// `[] as i32[]`, `Ok(1) as Result[i32, string]`). The
+			// checker accepts these when the inner is assignable to
+			// the target; the runtime representation is unchanged.
+			// Inner has already evaluated to the right shape, so
+			// this is a no-op at the IR level.
+			_, srcIsNumOrFloat := n.InnerType.(ast.NumberType)
+			if _, ok := n.InnerType.(ast.FloatType); ok {
+				srcIsNumOrFloat = true
+			}
+			_, dstIsNumOrFloat := n.Target.(ast.NumberType)
+			if _, ok := n.Target.(ast.FloatType); ok {
+				dstIsNumOrFloat = true
+			}
+			if !srcIsNumOrFloat && !dstIsNumOrFloat {
+				return nil
+			}
 			return fmt.Errorf("ir: cast from %s to %s not yet supported", n.InnerType, n.Target)
 		}
 	case *ast.BoolLit:

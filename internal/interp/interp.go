@@ -1716,6 +1716,16 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				return src, nil
 			}
 		}
+		// Type ascription (`expr as T` where the inner is already
+		// assignable to T — None as Option[i32], [] as i32[],
+		// Ok(1) as Result[i32, string], etc.). Zero-cost at runtime
+		// because the value already carries the right shape; the
+		// cast is a checker-side annotation only.
+		if _, ok := x.Target.(ast.NumberType); !ok {
+			if _, ok := x.Target.(ast.FloatType); !ok {
+				return v, nil
+			}
+		}
 		return nil, fmt.Errorf("cast from %T to %s not supported in the interpreter", v, x.Target)
 	case *ast.BoolLit:
 		return Bool(x.Value), nil
