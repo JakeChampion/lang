@@ -15,37 +15,18 @@ func evalProgramValue(t *testing.T, src string) Value {
 	return v
 }
 
+// evalProgram parses, type-checks, registers, and calls `main`.
+// Match the cmd/lang script-mode pipeline so method-call rewrites,
+// FString desugaring, and variant-call IsVariantCall flags land
+// before interp dispatch — early tests had separate "checked" and
+// "parser-only" helpers because some checker features arrived
+// later; once the interp moved to handle every AST shape directly,
+// the parser-only form became the exceptional path. Tests that
+// intentionally exercise interp BEFORE the checker has run (the
+// FString fallback case) wire up `interp.New` + `parser.Parse`
+// directly so the absence of a checker pass is documented at the
+// call site.
 func evalProgram(t *testing.T, src string) (Value, *Interp) {
-	t.Helper()
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	i := New()
-	for _, ed := range prog.Enums {
-		i.RegisterEnum(ed)
-	}
-	for _, fn := range prog.Funcs {
-		i.Register(fn)
-	}
-	if _, ok := i.Funcs["main"]; !ok {
-		t.Fatalf("program has no main")
-	}
-	v, err := i.CallByName("main", nil)
-	if err != nil {
-		t.Fatalf("call main: %v", err)
-	}
-	return v, i
-}
-
-// evalChecked is evalProgram + a leading checker.Check pass, so
-// method-call shapes (`m.set(k, v)`) get rewritten to their
-// mangled form (`__method_Map_set(m, k, v)`) before the
-// interpreter dispatches. Use this for any test that exercises
-// the method-call path; the bare evalProgram path is fine for
-// AST shapes the parser produces directly (free functions,
-// struct field access, etc.).
-func evalChecked(t *testing.T, src string) (Value, *Interp) {
 	t.Helper()
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -217,9 +198,25 @@ func TestInterpStringEquality(t *testing.T) {
 // checker run) so Desugared is nil and the interpreter assembles
 // the f-string from raw Parts. The literal-only segment proves
 // the path concatenates static text correctly.
+//
+// Wires interp directly rather than going through evalProgram
+// because that helper runs the checker (which would populate
+// Desugared and bypass the fallback this test exists to cover).
 func TestInterpFStringFallback(t *testing.T) {
 	src := `function main(): string { return f"hello world"; }`
-	if got := evalProgramValue(t, src); got != String("hello world") {
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	i := New()
+	for _, fn := range prog.Funcs {
+		i.Register(fn)
+	}
+	got, err := i.CallByName("main", nil)
+	if err != nil {
+		t.Fatalf("call main: %v", err)
+	}
+	if got != String("hello world") {
 		t.Errorf("got %v, want \"hello world\"", got)
 	}
 }
@@ -233,7 +230,7 @@ func TestInterpClosure(t *testing.T) {
 		function bump(x: i32): i32 { return x + n; }
 		return bump(5);
 	}`
-	got, _ := evalChecked(t, src)
+	got, _ := evalProgram(t, src)
 	if n, ok := got.(Number); !ok || int64(n) != 105 {
 		t.Errorf("got %v, want 105", got)
 	}
@@ -248,7 +245,7 @@ func TestInterpLambda(t *testing.T) {
 		var mul: (i32) => i32 = function (x: i32): i32 { return x * k; };
 		return mul(6);
 	}`
-	got, _ := evalChecked(t, src)
+	got, _ := evalProgram(t, src)
 	if n, ok := got.(Number); !ok || int64(n) != 42 {
 		t.Errorf("got %v, want 42", got)
 	}
@@ -321,7 +318,7 @@ func TestInterpMapBasic(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, _ := evalChecked(t, c.src)
+			got, _ := evalProgram(t, c.src)
 			n, ok := got.(Number)
 			if !ok {
 				t.Fatalf("expected Number, got %T (%v)", got, got)
@@ -369,19 +366,18 @@ func TestInterpEnumMatchPayload(t *testing.T) {
 // value works for any instantiation. Constructor inference and
 // match-arm payload extraction both route correctly.
 func TestInterpGenericOption(t *testing.T) {
-	// The interp test scaffolding doesn't invoke checker.Check
-	// (parses + interprets directly), so the builtin Option
-	// auto-inject doesn't run — declare it locally so the
-	// interpreter knows about Some/None.
-	src := `enum Option[T] { Some(T), None }
-		function main(): i32 {
-			var o: Option[i32] = Some(42);
-			match (o) {
-				Some(v) => { return v; },
-				None => { return -1; }
-			}
-			return 99;
-		}`
+	// `Option[T]` is auto-injected by the checker now (the
+	// previous test scaffolding skipped the checker and had to
+	// declare it locally). With evalProgram running the
+	// checker, just use the built-in.
+	src := `function main(): i32 {
+		var o: Option[i32] = Some(42);
+		match (o) {
+			Some(v) => { return v; },
+			None => { return -1; }
+		}
+		return 99;
+	}`
 	v, _ := evalProgram(t, src)
 	if n, ok := v.(Number); !ok || n != 42 {
 		t.Errorf("got %v, want 42", v)
