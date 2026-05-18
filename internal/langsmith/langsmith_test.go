@@ -16,6 +16,25 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
+// sweepN returns the number of seeds / iterations a generator
+// sweep should run. Drops to 1/8th the full size under
+// `testing.Short()` so dev-loop `go test ./internal/langsmith`
+// returns in ~3s instead of ~25s. Coverage-landmark sweeps
+// (TestGenFeatureCoverage) should stay at their full size —
+// dropping seeds risks missing a rarely-fired landmark and
+// turning the test flaky.
+func sweepN(t *testing.T, full uint64) uint64 {
+	t.Helper()
+	if testing.Short() {
+		short := full / 8
+		if short < 4 {
+			short = 4
+		}
+		return short
+	}
+	return full
+}
+
 // randBytes fills out with n bytes drawn from r. math/rand/v2 dropped
 // the v1 *rand.Rand.Read method, so the tests roll their own.
 func randBytes(r *rand.Rand, n int) []byte {
@@ -37,7 +56,8 @@ func randBytes(r *rand.Rand, n int) []byte {
 // remember to run the fuzzer. Failure prints the failing source so
 // the seed-to-input mapping is reproducible.
 func TestGenProducesValidPrograms(t *testing.T) {
-	for seed := uint64(0); seed < 256; seed++ {
+	n := sweepN(t, 256)
+	for seed := uint64(0); seed < n; seed++ {
 		src := langsmith.Gen(seed)
 		prog, err := parser.Parse(src)
 		if err != nil {
@@ -83,7 +103,8 @@ func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 // monomorph re-check rejected the cloned program after the
 // initial checker said OK).
 func TestGenMainProducesRunnablePrograms(t *testing.T) {
-	for seed := uint64(0); seed < 256; seed++ {
+	n := sweepN(t, 256)
+	for seed := uint64(0); seed < n; seed++ {
 		src := langsmith.GenMain(seed)
 		if !strings.Contains(src, "function main(): i32") {
 			t.Errorf("seed=%d: missing main\nsrc:\n%s", seed, src)
@@ -118,7 +139,8 @@ func TestGenMainProducesRunnablePrograms(t *testing.T) {
 // program) regimes.
 func TestGenBytesProducesValidPrograms(t *testing.T) {
 	r := rand.New(rand.NewPCG(42, 99))
-	for i := 0; i < 64; i++ {
+	n := sweepN(t, 64)
+	for i := 0; uint64(i) < n; i++ {
 		n := r.IntN(512) // 0..511 bytes; covers exhaustion path too
 		data := randBytes(r, n)
 		src := langsmith.GenBytes(data)
@@ -136,7 +158,8 @@ func TestGenBytesProducesValidPrograms(t *testing.T) {
 // mirror for GenMain. Same exhaustion-coverage rationale.
 func TestGenMainBytesProducesRunnablePrograms(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 13))
-	for i := 0; i < 64; i++ {
+	iters := sweepN(t, 64)
+	for i := 0; uint64(i) < iters; i++ {
 		n := r.IntN(512)
 		data := randBytes(r, n)
 		src := langsmith.GenMainBytes(data)
