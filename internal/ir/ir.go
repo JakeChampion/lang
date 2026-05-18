@@ -2729,11 +2729,28 @@ func (b *builder) expr(e ast.Expr) error {
 	case *ast.IfExpr:
 		// `if (c) { a } else { b }` lowers to a typed `if/else`
 		// whose arms each push the result. The block-type tells
-		// consumers whether the produced value is i32, f32, or
-		// the two-i32 (data, len) pair for string-typed arms.
+		// consumers whether the produced value is i32, i64, f32,
+		// f64, or the two-i32 (data, len) pair for string-typed
+		// arms. Without the i64 / f64 branches, wasm's if-block
+		// validator rejected `local.get $i64_var; ...` inside an
+		// `(if (result i32))` with "type mismatch: expected
+		// i32, found i64" — native targets ignore the block
+		// type so the failure was wasm-only.
 		bt := BlockTypeI32
 		if n.IsFloat {
 			bt = BlockTypeF32
+		}
+		// Promote to i64 / f64 when the arm bodies resolve to
+		// a concrete wide numeric. Mirrors the MatchExpr
+		// scratch-slot fix from #550 — the arm-body settle
+		// (#534 / #545) already pins the width; this just
+		// consumes it.
+		thenT := b.exprType(n.Then)
+		if nt, ok := thenT.(ast.NumberType); ok && nt.NormalWidth() == 64 {
+			bt = BlockTypeI64
+		}
+		if ft, ok := thenT.(ast.FloatType); ok && ft.NormalWidth() == 64 {
+			bt = BlockTypeF64
 		}
 		if _, isString := b.exprType(n).(ast.StringType); isString && b.twoWordStrings() {
 			bt = BlockTypeStringPair

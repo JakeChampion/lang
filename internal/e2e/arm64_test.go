@@ -9669,6 +9669,40 @@ function main(): i32 {
 	}
 }
 
+// An IfExpr returning i64 silently emitted the wasm block
+// type as `(if (result i32))` even when both arms produced
+// i64. Native targets ignored the block type, so the bug
+// was wasm-only. The validator rejected:
+//
+//   "type mismatch: expected i32, found i64"
+//
+// Triggered when arm bodies aren't compile-time-constant
+// (e.g. a function-parameter `a: i64` referenced from an
+// arm); literal-only IfExprs escaped because the IR's
+// constant fold inlined them.
+//
+// Mirrors the MatchExpr scratch-slot fix from #550 — same
+// "consume the post-settle width" pattern, applied to
+// IfExpr's BlockType selection. Added i64 / f64 branches
+// for the wide-numeric arms.
+//
+// Test pin lives on arm64 (where it passed silently) —
+// the actual win is on wasm, exercised implicitly by the
+// e2e suite.
+func TestArm64IfExprI64BlockType(t *testing.T) {
+	src := `function pickOpt(cond: boolean, a: i64, b: i64): i64 {
+    return if (cond) { a } else { b };
+}
+function main(): i32 {
+    var r: i64 = pickOpt(true, 1234567890123, 0);
+    if (r == 1234567890123) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("if-expr returning i64 got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
