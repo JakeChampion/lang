@@ -90,9 +90,25 @@ type serverInfo struct {
 }
 
 type serverCapabilities struct {
-	TextDocumentSync   int  `json:"textDocumentSync"`
-	HoverProvider      bool `json:"hoverProvider,omitempty"`
-	DefinitionProvider bool `json:"definitionProvider,omitempty"`
+	TextDocumentSync       int                     `json:"textDocumentSync"`
+	HoverProvider          bool                    `json:"hoverProvider,omitempty"`
+	DefinitionProvider     bool                    `json:"definitionProvider,omitempty"`
+	CompletionProvider     *completionOptions      `json:"completionProvider,omitempty"`
+	SignatureHelpProvider  *signatureHelpOptions   `json:"signatureHelpProvider,omitempty"`
+}
+
+type completionOptions struct {
+	// TriggerCharacters tells the client to re-query completion
+	// when one of these characters is typed. We don't strictly
+	// need any (completion can always be triggered explicitly)
+	// but `.` is a natural choice for field-access completion
+	// once we support it.
+	TriggerCharacters []string `json:"triggerCharacters,omitempty"`
+}
+
+type signatureHelpOptions struct {
+	TriggerCharacters   []string `json:"triggerCharacters,omitempty"`
+	RetriggerCharacters []string `json:"retriggerCharacters,omitempty"`
 }
 
 // ---- Param types we receive ----
