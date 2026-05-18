@@ -1,0 +1,54 @@
+/* lang docs custom styling. Starlight ships sensible defaults;
+ * the overrides below are minimal: brand accent colour + tighter
+ * code-block leading + an iframe frame for the live-snippet
+ * component.
+ */
+
+:root {
+  --sl-color-accent-low: hsl(220, 80%, 12%);
+  --sl-color-accent: hsl(220, 90%, 55%);
+  --sl-color-accent-high: hsl(220, 90%, 80%);
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: hsl(220, 70%, 92%);
+  --sl-color-accent: hsl(220, 90%, 45%);
+  --sl-color-accent-high: hsl(220, 90%, 25%);
+}
+
+.lang-playground {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  background: var(--sl-color-bg-sidebar);
+  overflow: hidden;
+}
+
+.lang-playground iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: var(--sl-color-bg);
+}
+
+.lang-playground header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.8rem;
+  border-bottom: 1px solid var(--sl-color-gray-5);
+  background: var(--sl-color-bg-nav);
+  font-size: 0.8rem;
+  color: var(--sl-color-gray-3);
+  font-family: var(--sl-font-system-mono);
+}
+
+.lang-playground header a {
+  color: var(--sl-color-accent-high);
+  text-decoration: none;
+}
+
+.lang-playground header a:hover {
+  text-decoration: underline;
+}

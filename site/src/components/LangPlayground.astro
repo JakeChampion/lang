@@ -1,0 +1,53 @@
+---
+// LangPlayground — embed a runnable snippet inline in a docs page.
+//
+// Renders an iframe pointing at the playground bundle deployed at
+// `/playground/`. The snippet's source is base64-URL-encoded into
+// the iframe's hash (same codec the standalone playground's Share
+// button uses) so the embedded editor loads pre-populated.
+//
+// Usage in MDX:
+//
+//   import LangPlayground from "@/components/LangPlayground.astro";
+//   <LangPlayground code={`function main(): i32 { return 0; }`} />
+//
+// Props:
+//   code     — the lang source to embed.
+//   height   — iframe height in CSS units (default "320px").
+//   title    — accessibility title for the iframe.
+
+interface Props {
+  code: string;
+  height?: string;
+  title?: string;
+}
+
+const { code, height = "320px", title = "lang playground" } = Astro.props;
+
+// URL-safe base64 (RFC 4648 §5), '=' padding stripped — matches
+// the encodeHash() helper in web/index.html so a copy-pasted hash
+// is interchangeable between embed and standalone playground.
+function encodeHash(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  // btoa exists in browsers; for Astro build we run in Node, so
+  // fall back to Buffer when btoa is unavailable.
+  const b64 =
+    typeof btoa === "function"
+      ? btoa(bin)
+      : Buffer.from(bin, "binary").toString("base64");
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const src = `${base}/playground/#src=${encodeHash(code)}`;
+---
+
+<figure class="lang-playground">
+  <header>
+    <span>live snippet</span>
+    <a href={src} target="_blank" rel="noopener">open full playground &rarr;</a>
+  </header>
+  <iframe src={src} title={title} style={`height: ${height};`}></iframe>
+</figure>

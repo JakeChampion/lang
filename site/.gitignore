@@ -1,0 +1,16 @@
+# Astro / build artefacts
+dist/
+.astro/
+node_modules/
+package-lock.json
+
+# Auto-generated docs (langdoc emits these on `npm run build`'s
+# pre-step). Committing them would put generated content under
+# review with no source-of-truth and double the diff size on every
+# stdlib change.
+src/content/docs/stdlib/*.md
+!src/content/docs/stdlib/index.md
+
+# Embedded playground bundle (copied in from web/ at build time;
+# committing it would duplicate web/lang.wasm under version control).
+public/playground/
