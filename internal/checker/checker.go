@@ -96,6 +96,14 @@ type Info struct {
 	// tracks struct decls with non-empty TypeParams for the
 	// monomorphisation pass.
 	GenericStructs map[string]*ast.StructDecl
+	// Generics is the kind-agnostic view of GenericFuncs + GenericStructs.
+	// Lets passes that just need "is this name a generic decl?" or
+	// "iterate every generic decl" (notably the monomorphisation
+	// pass's drop-loop) consult a single map instead of running
+	// parallel paths over the two type-specific maps. Always kept
+	// in sync with GenericFuncs / GenericStructs by the checker's
+	// registration code.
+	Generics map[string]ast.GenericDecl
 }
 
 // builtinEnumDecls returns the synthetic enum declarations the
@@ -537,6 +545,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			VariantCallPayloads: map[*ast.Call][]ast.Type{},
 			GenericFuncs:        map[string]*ast.FuncDecl{},
 			GenericStructs:      map[string]*ast.StructDecl{},
+			Generics:            map[string]ast.GenericDecl{},
 		},
 		variantOf: map[string][]variantRef{},
 	}
@@ -579,6 +588,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			// it would split the methods across mangled names
 			// the dispatch path doesn't know about.
 			c.info.GenericStructs[sd.Name] = sd
+			c.info.Generics[sd.Name] = sd
 		}
 	}
 
@@ -1232,6 +1242,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			// can spot them and the monomorphisation pass knows
 			// which functions to clone.
 			c.info.GenericFuncs[fn.Name] = fn
+			c.info.Generics[fn.Name] = fn
 		}
 	}
 
