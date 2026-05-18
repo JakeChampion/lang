@@ -1,0 +1,72 @@
+{
+  "name": "lang-vscode",
+  "displayName": "lang",
+  "description": "Language Server + syntax highlighting for the lang language.",
+  "version": "0.1.0",
+  "publisher": "jakechampion",
+  "engines": {
+    "vscode": "^1.86.0"
+  },
+  "license": "MIT",
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:lang"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "lang",
+        "aliases": [
+          "lang"
+        ],
+        "extensions": [
+          ".lang"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "lang",
+        "scopeName": "source.lang",
+        "path": "./syntaxes/lang.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "lang",
+      "properties": {
+        "lang.serverPath": {
+          "type": "string",
+          "default": "lang-lsp",
+          "description": "Path to the lang-lsp binary. Resolved against $PATH when unqualified."
+        },
+        "lang.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace LSP traffic between the extension and lang-lsp."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.86.0",
+    "typescript": "^5.4.0"
+  }
+}

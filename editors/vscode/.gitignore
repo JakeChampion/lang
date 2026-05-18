@@ -1,0 +1,7 @@
+# TypeScript compile output
+out/
+# Dependencies
+node_modules/
+package-lock.json
+# Packaged extension
+*.vsix
