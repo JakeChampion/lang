@@ -3146,6 +3146,58 @@ function main(): i32 {
 	}
 }
 
+// Mutual recursion of sibling local FuncDecls: each function
+// calls the other, both declared in the same block. Detection
+// runs as a Tarjan SCC walk in the checker pre-pass; SCC
+// members pre-bind their names in scope (so forward refs
+// type-check) and skip the capture path. closureconv emits a
+// null-env direct-call rewrite for each sibling call inside an
+// SCC — both hoisted closures lower to zero-capture closures
+// and the body's sibling calls bypass the env entirely,
+// avoiding the cyclic-env-init problem.
+func TestWASMMutualRecursionLocalFns(t *testing.T) {
+	src := `function main(): i32 {
+    function isEven(n: i32): boolean {
+        if (n == 0) { return true; }
+        return isOdd(n - 1);
+    }
+    function isOdd(n: i32): boolean {
+        if (n == 0) { return false; }
+        return isEven(n - 1);
+    }
+    if (isEven(10) && !isEven(11) && isOdd(7) && !isOdd(8)) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (mutual recursion correctness)", got)
+	}
+}
+
+// Three-way mutual recursion: a → b → c → a. Tarjan picks all
+// three as a single SCC of size 3 so the same null-env rewrite
+// applies to every call edge.
+func TestWASMMutualRecursionThreeWay(t *testing.T) {
+	src := `function main(): i32 {
+    function a(n: i32): i32 {
+        if (n == 0) { return 0; }
+        return b(n - 1) + 1;
+    }
+    function b(n: i32): i32 {
+        if (n == 0) { return 0; }
+        return c(n - 1) + 2;
+    }
+    function c(n: i32): i32 {
+        if (n == 0) { return 0; }
+        return a(n - 1) + 3;
+    }
+    return a(6);
+}`
+	// a(6) → 1+b(5) → 1+2+c(4) → 1+2+3+a(3) → 1+2+3+1+b(2) → 1+2+3+1+2+c(1) → 1+2+3+1+2+3+a(0) = 12
+	if got := runWasm(t, src); got != 12 {
+		t.Errorf("got %d, want 12", got)
+	}
+}
+
 // `(function (x) { … })(arg)` — calling a lambda immediately at
 // the definition site. The Lambda lowers via closureconv to a
 // MakeClosure expression; the IR's `call()` dispatch now

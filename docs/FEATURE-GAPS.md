@@ -285,11 +285,13 @@ Driven by "smallest, no-runtime-touch, unlocks the most user code":
 2. ✅ **`else if` as expression (#3)** — landed in PR #581.
 3. ✅ **Parenthesized function types in arrays (#2)** — landed in
    PR #581 + IR's `call()` handles `*ast.Index` callees.
-4. **Mutual recursion of local fns (#5)** — DEFERRED. Naive
-   checker pre-pass produces silently-buggy runtime captures
-   (siblings see uninitialised env slots). Needs a real fix
-   in closureconv (pre-alloc envs + back-fill). See entry #5
-   above.
+4. ✅ **Mutual recursion of local fns (#5)** — landed.
+   Tarjan SCC detection in the checker pre-pass; SCC members
+   skip captures and closureconv rewrites each cycle call to a
+   null-env direct call. Non-cycle forward refs still error
+   cleanly with `undefined identifier` — the env-init-order
+   semantics keeps them out of scope until source-order
+   resolution succeeds.
 5. ✅ **Anonymous lambdas (#1)** — landed in PR #584.
 6. ✅ **Match on literal patterns (#6)** — landed in this PR.
 7. ✅ **Generic call-site type args (#4)** — landed in this PR.

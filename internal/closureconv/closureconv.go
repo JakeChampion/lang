@@ -35,7 +35,13 @@ func Convert(prog *ast.Program, info *checker.Info) error {
 // in the synthesised env block so heap addresses round-trip on
 // arm64-darwin (>= 4 GiB heap).
 func ConvertWith(prog *ast.Program, info *checker.Info, ptrW int) error {
-	c := &converter{info: info, hoisted: map[string]int{}, funcIdx: map[string]int{}, ptrW: ptrW}
+	c := &converter{
+		info:          info,
+		hoisted:       map[string]int{},
+		funcIdx:       map[string]int{},
+		ptrW:          ptrW,
+		nextHoistName: map[*ast.FuncDecl]string{},
+	}
 	// Original top-level functions occupy table indices 0..N-1; track
 	// them so the synthetic env-call signature uses stable indices and
 	// MakeClosure nodes can name them by table position.
@@ -83,11 +89,235 @@ type converter struct {
 	// ptrW is the target's heap-pointer width in bytes — sizes
 	// pointer-typed capture slots.
 	ptrW int
+
+	// nextHoistName overrides freshName for a specific FuncDecl
+	// pointer. Set by the rewriteBlock pre-scan for sibling
+	// clusters so hoist() uses the pre-assigned name (which
+	// matches the entry in the siblings map that body-rewrites
+	// reference).
+	nextHoistName map[*ast.FuncDecl]string
+	// currentSiblings is the active sibling map at the current
+	// block-walk depth. Threads through to each FuncDecl's
+	// hoist() so the body rewrite can recognise sibling calls
+	// independent of the captureCtx (which is per-hoist).
+	currentSiblings map[string]string
 }
 
 func (c *converter) freshName(orig string) string {
 	c.hoisted[orig]++
 	return fmt.Sprintf("__closure_%s_%d", orig, len(c.hoisted))
+}
+
+// detectMutualRecSCCs is the closureconv-side mirror of the
+// checker's same-named helper. Both walks must agree on which
+// names participate in a mutual-recursion SCC — the checker
+// uses the result to decide what to skip in capture analysis,
+// closureconv uses it to drive the null-env direct-call
+// rewrites. Returns the set of FuncDecl names that participate
+// in an SCC of size ≥ 2.
+func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
+	siblings := map[string]*ast.FuncDecl{}
+	for _, fn := range fns {
+		siblings[fn.Name] = fn
+	}
+	adj := map[string][]string{}
+	for _, fn := range fns {
+		seen := map[string]bool{}
+		walkBodyForNames(fn.Body, fn.Name, siblings, seen)
+		out := make([]string, 0, len(seen))
+		for name := range seen {
+			out = append(out, name)
+		}
+		adj[fn.Name] = out
+	}
+	index := 0
+	indices := map[string]int{}
+	lowlinks := map[string]int{}
+	onStack := map[string]bool{}
+	var stack []string
+	out := map[string]bool{}
+	var strongconnect func(name string)
+	strongconnect = func(name string) {
+		indices[name] = index
+		lowlinks[name] = index
+		index++
+		stack = append(stack, name)
+		onStack[name] = true
+		for _, succ := range adj[name] {
+			if _, ok := indices[succ]; !ok {
+				strongconnect(succ)
+				if lowlinks[succ] < lowlinks[name] {
+					lowlinks[name] = lowlinks[succ]
+				}
+			} else if onStack[succ] {
+				if indices[succ] < lowlinks[name] {
+					lowlinks[name] = indices[succ]
+				}
+			}
+		}
+		if lowlinks[name] == indices[name] {
+			var scc []string
+			for {
+				top := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				onStack[top] = false
+				scc = append(scc, top)
+				if top == name {
+					break
+				}
+			}
+			if len(scc) >= 2 {
+				for _, n := range scc {
+					out[n] = true
+				}
+			}
+		}
+	}
+	for _, fn := range fns {
+		if _, ok := indices[fn.Name]; !ok {
+			strongconnect(fn.Name)
+		}
+	}
+	return out
+}
+
+func walkBodyForNames(b *ast.Block, selfName string, siblings map[string]*ast.FuncDecl, seen map[string]bool) {
+	if b == nil {
+		return
+	}
+	for _, st := range b.Stmts {
+		walkStmtForNames(st, selfName, siblings, seen)
+	}
+}
+
+func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.FuncDecl, seen map[string]bool) {
+	switch n := s.(type) {
+	case *ast.Block:
+		walkBodyForNames(n, selfName, siblings, seen)
+	case *ast.If:
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Then, selfName, siblings, seen)
+		walkStmtForNames(n.Else, selfName, siblings, seen)
+	case *ast.IfLet:
+		walkExprForNames(n.Source, selfName, siblings, seen)
+		walkStmtForNames(n.Then, selfName, siblings, seen)
+		walkStmtForNames(n.Else, selfName, siblings, seen)
+	case *ast.LetElse:
+		walkExprForNames(n.Source, selfName, siblings, seen)
+		walkBodyForNames(n.Else, selfName, siblings, seen)
+	case *ast.While:
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Body, selfName, siblings, seen)
+	case *ast.For:
+		walkStmtForNames(n.Init, selfName, siblings, seen)
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Step, selfName, siblings, seen)
+		walkStmtForNames(n.Body, selfName, siblings, seen)
+	case *ast.Return:
+		walkExprForNames(n.Value, selfName, siblings, seen)
+	case *ast.Var:
+		walkExprForNames(n.Init, selfName, siblings, seen)
+	case *ast.Destructure:
+		walkExprForNames(n.Init, selfName, siblings, seen)
+	case *ast.ExprStmt:
+		walkExprForNames(n.Expr, selfName, siblings, seen)
+	case *ast.Switch:
+		walkExprForNames(n.Tag, selfName, siblings, seen)
+		for _, k := range n.Cases {
+			walkBodyForNames(k.Body, selfName, siblings, seen)
+		}
+		walkBodyForNames(n.Default, selfName, siblings, seen)
+	case *ast.Match:
+		walkExprForNames(n.Tag, selfName, siblings, seen)
+		for _, arm := range n.Arms {
+			if arm.Literal != nil {
+				walkExprForNames(arm.Literal, selfName, siblings, seen)
+			}
+			walkExprForNames(arm.Guard, selfName, siblings, seen)
+			walkBodyForNames(arm.Body, selfName, siblings, seen)
+		}
+	case *ast.Defer:
+		walkExprForNames(n.Expr, selfName, siblings, seen)
+	case *ast.Arena:
+		walkBodyForNames(n.Body, selfName, siblings, seen)
+	}
+}
+
+func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.FuncDecl, seen map[string]bool) {
+	if e == nil {
+		return
+	}
+	switch n := e.(type) {
+	case *ast.Ident:
+		if n.Name != selfName {
+			if _, ok := siblings[n.Name]; ok {
+				seen[n.Name] = true
+			}
+		}
+	case *ast.Binary:
+		walkExprForNames(n.Left, selfName, siblings, seen)
+		walkExprForNames(n.Right, selfName, siblings, seen)
+	case *ast.Unary:
+		walkExprForNames(n.Operand, selfName, siblings, seen)
+	case *ast.CastExpr:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.SliceExpr:
+		walkExprForNames(n.Source, selfName, siblings, seen)
+		walkExprForNames(n.Low, selfName, siblings, seen)
+		walkExprForNames(n.High, selfName, siblings, seen)
+	case *ast.Call:
+		walkExprForNames(n.Callee, selfName, siblings, seen)
+		for _, a := range n.Args {
+			walkExprForNames(a, selfName, siblings, seen)
+		}
+	case *ast.Index:
+		walkExprForNames(n.Array, selfName, siblings, seen)
+		walkExprForNames(n.Idx, selfName, siblings, seen)
+	case *ast.ArrayLit:
+		for _, el := range n.Elems {
+			walkExprForNames(el, selfName, siblings, seen)
+		}
+	case *ast.Assign:
+		walkExprForNames(n.Target, selfName, siblings, seen)
+		walkExprForNames(n.Value, selfName, siblings, seen)
+	case *ast.IfExpr:
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkExprForNames(n.Then, selfName, siblings, seen)
+		walkExprForNames(n.Else, selfName, siblings, seen)
+	case *ast.TryOp:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.MatchExpr:
+		walkExprForNames(n.Tag, selfName, siblings, seen)
+		for _, arm := range n.Arms {
+			if arm.Literal != nil {
+				walkExprForNames(arm.Literal, selfName, siblings, seen)
+			}
+			walkExprForNames(arm.Guard, selfName, siblings, seen)
+			walkExprForNames(arm.Body, selfName, siblings, seen)
+		}
+	case *ast.StructLit:
+		for _, f := range n.Fields {
+			walkExprForNames(f.Value, selfName, siblings, seen)
+		}
+	case *ast.FieldAccess:
+		walkExprForNames(n.Target, selfName, siblings, seen)
+	case *ast.FString:
+		for _, p := range n.Parts {
+			walkExprForNames(p.Expr, selfName, siblings, seen)
+		}
+		walkExprForNames(n.Desugared, selfName, siblings, seen)
+	case *ast.TupleLit:
+		for _, el := range n.Elems {
+			walkExprForNames(el, selfName, siblings, seen)
+		}
+	case *ast.MapLit:
+		for _, ent := range n.Entries {
+			walkExprForNames(ent.Key, selfName, siblings, seen)
+			walkExprForNames(ent.Value, selfName, siblings, seen)
+		}
+	case *ast.Lambda:
+		walkBodyForNames(n.Body, selfName, siblings, seen)
+	}
 }
 
 // rewriteBlock walks a block and replaces inner FuncDecl statements
@@ -99,6 +329,62 @@ func (c *converter) rewriteBlock(b *ast.Block, hoistedFor *captureCtx) error {
 	if b == nil {
 		return nil
 	}
+	// Mutual-recursion sibling-cluster pre-scan: identify local
+	// FuncDecls in this block, pre-assign their hoisted names,
+	// then detect which form an SCC (true mutual cycle). Only
+	// SCC members get the null-env direct-call rewrite — plain
+	// forward references capture normally (the closureconv pass
+	// already builds the env entry for them; the surrounding
+	// `var <name> = MakeClosure{...}` Var is initialised before
+	// any caller reads it because Stmts run in source order).
+	var localFns []*ast.FuncDecl
+	for _, s := range b.Stmts {
+		fn, ok := s.(*ast.FuncDecl)
+		if !ok || !fn.IsLocal {
+			continue
+		}
+		hoistName := c.freshName(fn.Name)
+		c.nextHoistName[fn] = hoistName
+		localFns = append(localFns, fn)
+	}
+	var sccMembers map[string]string
+	if len(localFns) > 1 {
+		// Re-run SCC detection over the local FuncDecls. Mirrors
+		// the checker's `detectMutualRecSCCs` so we both agree
+		// on which names are cycle members.
+		ofInterest := map[string]*ast.FuncDecl{}
+		for _, fn := range localFns {
+			ofInterest[fn.Name] = fn
+		}
+		inScc := detectMutualRecSCCs(localFns)
+		sccMembers = map[string]string{}
+		for name := range inScc {
+			sccMembers[name] = c.nextHoistName[ofInterest[name]]
+		}
+	}
+	prevSiblings := c.currentSiblings
+	if len(sccMembers) > 0 {
+		// Merge with the enclosing context's mutual-rec map so
+		// nested SCCs at different depths all see the right
+		// rewrite targets.
+		merged := map[string]string{}
+		if hoistedFor != nil {
+			for k, v := range hoistedFor.siblings {
+				merged[k] = v
+			}
+		} else {
+			for k, v := range prevSiblings {
+				merged[k] = v
+			}
+		}
+		for k, v := range sccMembers {
+			merged[k] = v
+		}
+		c.currentSiblings = merged
+		if hoistedFor != nil {
+			hoistedFor.siblings = merged
+		}
+	}
 	for i, s := range b.Stmts {
 		ns, err := c.rewriteStmt(s, hoistedFor)
 		if err != nil {
@@ -106,6 +392,7 @@ func (c *converter) rewriteBlock(b *ast.Block, hoistedFor *captureCtx) error {
 		}
 		b.Stmts[i] = ns
 	}
+	c.currentSiblings = prevSiblings
 	return nil
 }
 
@@ -126,6 +413,15 @@ type captureCtx struct {
 	envName         string // always "$__env" but kept here for readability
 	selfOrigName    string
 	selfHoistedName string
+	// siblings maps each sibling local FuncDecl's original name
+	// to its hoisted top-level name. Set when the surrounding
+	// block has multiple local FuncDecls that reference each
+	// other (mutual recursion). The body-rewrite turns each
+	// sibling call into a direct call to the hoisted name with
+	// a null `__env` arg — the sibling has no real captures
+	// (the checker skipped sibling references in capture
+	// analysis), so the env block is unused.
+	siblings map[string]string
 }
 
 type capInfo struct {
@@ -425,6 +721,18 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 			if ci, ok := ctx.byName[n.Name]; ok {
 				return &ast.CaptureRef{P: n.P, Name: n.Name, Offset: ci.offset, Type: ci.typ}, nil
 			}
+			// Mutual-recursion sibling reference as a VALUE
+			// (not a Call's callee — that case has its own
+			// rewrite below). Members of a true mutual-recursion
+			// SCC have NO real outer captures (we'd have errored
+			// earlier), so each hoists to a zero-capture closure
+			// and the static closure cell `{__closure_<sib>_<N>,
+			// env=0}` is the right value. The IR's Ident lookup
+			// on the hoisted name emits OpConstFunc which
+			// produces exactly that cell pointer.
+			if hoisted, isSibling := ctx.siblings[n.Name]; isSibling && n.Name != ctx.selfOrigName {
+				return &ast.Ident{P: n.P, Name: hoisted}, nil
+			}
 		}
 		return n, nil
 	case *ast.Binary:
@@ -501,6 +809,33 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 				}
 				n.Args = append(n.Args, &ast.Ident{P: id.P, Name: "__env"})
 				return n, nil
+			}
+		}
+		// Sibling-cluster call: `isOdd(n - 1)` inside `isEven`'s
+		// body where both siblings are local FuncDecls in the
+		// same enclosing block. Rewrite to a direct call to the
+		// sibling's hoisted name + a null env arg. Mutual
+		// recursion would otherwise need cyclic env init (each
+		// closure's env pointing at the other's pair, which
+		// exists only after BOTH pairs are built). The checker
+		// skipped sibling references in capture analysis, so each
+		// hoisted sibling lowers to a zero-capture closure and
+		// the body's sibling calls bypass the env entirely.
+		if ctx != nil && len(ctx.siblings) > 0 {
+			if id, ok := n.Callee.(*ast.Ident); ok {
+				if hoisted, isSibling := ctx.siblings[id.Name]; isSibling && id.Name != ctx.selfOrigName {
+					n.Callee = &ast.Ident{P: id.P, Name: hoisted}
+					for i, a := range n.Args {
+						na, err := c.rewriteExpr(a, ctx)
+						if err != nil {
+							return nil, err
+						}
+						n.Args[i] = na
+					}
+					// Null env — sibling has no real captures.
+					n.Args = append(n.Args, &ast.NumberLit{P: id.P, Value: 0})
+					return n, nil
+				}
 			}
 		}
 		nc, err := c.rewriteExpr(n.Callee, ctx)
@@ -671,7 +1006,15 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 // at the original def site.
 func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, error) {
 	origName := fn.Name
-	hoistedName := c.freshName(origName)
+	// Use the pre-assigned hoist name if the rewriteBlock
+	// pre-scan claimed one for this FuncDecl (sibling-cluster
+	// case). Otherwise generate a fresh one.
+	hoistedName, ok := c.nextHoistName[fn]
+	if !ok {
+		hoistedName = c.freshName(origName)
+	} else {
+		delete(c.nextHoistName, fn)
+	}
 
 	// Build the capture context for the hoisted body. Captures that
 	// are themselves captures of the enclosing function need their
@@ -691,6 +1034,7 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 		envName:         "$__env",
 		selfOrigName:    origName,
 		selfHoistedName: hoistedName,
+		siblings:        c.currentSiblings,
 	}
 	off := int32(0)
 	for _, cap := range fn.Captures {

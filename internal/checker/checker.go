@@ -1321,6 +1321,15 @@ type checker struct {
 	// `undefined identifier` because the lookup only walked the
 	// immediately-enclosing scope.
 	captureChain []captureEntry
+
+	// mutualRecSiblings is the set of local FuncDecl names that
+	// form a mutual-recursion cycle in the current block (set by
+	// checkBlock's pre-pass after a Tarjan SCC walk). Only these
+	// names skip the capture path — non-cycle forward references
+	// still capture normally. closureconv consumes the same
+	// detection (via the AST walk it re-runs) to drive the
+	// null-env direct-call rewrite.
+	mutualRecSiblings map[string]bool
 }
 
 type captureEntry struct {
@@ -2155,8 +2164,265 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 
 func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 	s := newScope(parent)
+	// Pre-pass: detect mutual-recursion SCCs among the sibling
+	// local FuncDecls and bind the SCC members' names +
+	// signatures in the block's scope up front. Pure forward
+	// references (caller declared before callee, no callee→caller
+	// back-edge) DON'T pre-bind — they'll hit the regular
+	// source-order rule and fail with `undefined identifier`
+	// just like before this change. This keeps the runtime
+	// env-init-order semantics intact for non-cycle siblings
+	// (whose `var <name> = MakeClosure{...}` IS initialised in
+	// source order — a caller declared after the callee can
+	// still resolve a normal capture).
+	prevMutualRec := c.mutualRecSiblings
+	var localFns []*ast.FuncDecl
+	for _, st := range b.Stmts {
+		fn, ok := st.(*ast.FuncDecl)
+		if !ok || !fn.IsLocal {
+			continue
+		}
+		localFns = append(localFns, fn)
+	}
+	if len(localFns) > 1 {
+		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
+		for _, fn := range localFns {
+			if c.mutualRecSiblings[fn.Name] {
+				sig := &ast.FuncType{Result: fn.ReturnType}
+				for _, p := range fn.Params {
+					sig.Params = append(sig.Params, p.Type)
+				}
+				s.names[fn.Name] = sig
+			}
+		}
+	} else {
+		c.mutualRecSiblings = nil
+	}
 	for _, st := range b.Stmts {
 		c.checkStmt(st, s)
+	}
+	c.mutualRecSiblings = prevMutualRec
+}
+
+// detectMutualRecSCCs computes the names that participate in a
+// mutual-recursion SCC among `localFns`. A name is in an SCC of
+// size ≥ 2 iff there's a cycle of references through other
+// sibling names that comes back to it. Uses Tarjan's algorithm
+// to keep the work O(V + E) over the sibling-reference graph.
+//
+// Self-cycles (a single function referencing itself) are
+// excluded — recursive self-calls have a separate rewrite path
+// (#567) and don't need the env-cycle workaround.
+func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
+	siblings := map[string]*ast.FuncDecl{}
+	for _, fn := range fns {
+		siblings[fn.Name] = fn
+	}
+	// Build adjacency: fn name → set of sibling names referenced
+	// in the body.
+	adj := map[string][]string{}
+	for _, fn := range fns {
+		seen := map[string]bool{}
+		walkBodyForNames(fn.Body, fn.Name, siblings, seen)
+		out := make([]string, 0, len(seen))
+		for name := range seen {
+			out = append(out, name)
+		}
+		adj[fn.Name] = out
+	}
+	// Tarjan's SCC algorithm.
+	index := 0
+	indices := map[string]int{}
+	lowlinks := map[string]int{}
+	onStack := map[string]bool{}
+	var stack []string
+	out := map[string]bool{}
+	var strongconnect func(name string)
+	strongconnect = func(name string) {
+		indices[name] = index
+		lowlinks[name] = index
+		index++
+		stack = append(stack, name)
+		onStack[name] = true
+		for _, succ := range adj[name] {
+			if _, ok := indices[succ]; !ok {
+				strongconnect(succ)
+				if lowlinks[succ] < lowlinks[name] {
+					lowlinks[name] = lowlinks[succ]
+				}
+			} else if onStack[succ] {
+				if indices[succ] < lowlinks[name] {
+					lowlinks[name] = indices[succ]
+				}
+			}
+		}
+		if lowlinks[name] == indices[name] {
+			// Pop the SCC off the stack.
+			var scc []string
+			for {
+				top := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				onStack[top] = false
+				scc = append(scc, top)
+				if top == name {
+					break
+				}
+			}
+			if len(scc) >= 2 {
+				for _, n := range scc {
+					out[n] = true
+				}
+			}
+		}
+	}
+	for _, fn := range fns {
+		if _, ok := indices[fn.Name]; !ok {
+			strongconnect(fn.Name)
+		}
+	}
+	return out
+}
+
+// walkBodyForNames walks an AST body and records which sibling
+// names (in `siblings`) it references. Skips the function's own
+// name — self-references go through the recursive-self-call
+// path, not the mutual-rec SCC machinery.
+func walkBodyForNames(b *ast.Block, selfName string, siblings map[string]*ast.FuncDecl, seen map[string]bool) {
+	if b == nil {
+		return
+	}
+	for _, st := range b.Stmts {
+		walkStmtForNames(st, selfName, siblings, seen)
+	}
+}
+
+func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.FuncDecl, seen map[string]bool) {
+	switch n := s.(type) {
+	case *ast.Block:
+		walkBodyForNames(n, selfName, siblings, seen)
+	case *ast.If:
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Then, selfName, siblings, seen)
+		walkStmtForNames(n.Else, selfName, siblings, seen)
+	case *ast.IfLet:
+		walkExprForNames(n.Source, selfName, siblings, seen)
+		walkStmtForNames(n.Then, selfName, siblings, seen)
+		walkStmtForNames(n.Else, selfName, siblings, seen)
+	case *ast.LetElse:
+		walkExprForNames(n.Source, selfName, siblings, seen)
+		walkBodyForNames(n.Else, selfName, siblings, seen)
+	case *ast.While:
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Body, selfName, siblings, seen)
+	case *ast.For:
+		walkStmtForNames(n.Init, selfName, siblings, seen)
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Step, selfName, siblings, seen)
+		walkStmtForNames(n.Body, selfName, siblings, seen)
+	case *ast.Return:
+		walkExprForNames(n.Value, selfName, siblings, seen)
+	case *ast.Var:
+		walkExprForNames(n.Init, selfName, siblings, seen)
+	case *ast.Destructure:
+		walkExprForNames(n.Init, selfName, siblings, seen)
+	case *ast.ExprStmt:
+		walkExprForNames(n.Expr, selfName, siblings, seen)
+	case *ast.Switch:
+		walkExprForNames(n.Tag, selfName, siblings, seen)
+		for _, k := range n.Cases {
+			walkBodyForNames(k.Body, selfName, siblings, seen)
+		}
+		walkBodyForNames(n.Default, selfName, siblings, seen)
+	case *ast.Match:
+		walkExprForNames(n.Tag, selfName, siblings, seen)
+		for _, arm := range n.Arms {
+			if arm.Literal != nil {
+				walkExprForNames(arm.Literal, selfName, siblings, seen)
+			}
+			walkExprForNames(arm.Guard, selfName, siblings, seen)
+			walkBodyForNames(arm.Body, selfName, siblings, seen)
+		}
+	case *ast.Defer:
+		walkExprForNames(n.Expr, selfName, siblings, seen)
+	case *ast.Arena:
+		walkBodyForNames(n.Body, selfName, siblings, seen)
+	}
+}
+
+func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.FuncDecl, seen map[string]bool) {
+	if e == nil {
+		return
+	}
+	switch n := e.(type) {
+	case *ast.Ident:
+		if n.Name != selfName {
+			if _, ok := siblings[n.Name]; ok {
+				seen[n.Name] = true
+			}
+		}
+	case *ast.Binary:
+		walkExprForNames(n.Left, selfName, siblings, seen)
+		walkExprForNames(n.Right, selfName, siblings, seen)
+	case *ast.Unary:
+		walkExprForNames(n.Operand, selfName, siblings, seen)
+	case *ast.CastExpr:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.SliceExpr:
+		walkExprForNames(n.Source, selfName, siblings, seen)
+		walkExprForNames(n.Low, selfName, siblings, seen)
+		walkExprForNames(n.High, selfName, siblings, seen)
+	case *ast.Call:
+		walkExprForNames(n.Callee, selfName, siblings, seen)
+		for _, a := range n.Args {
+			walkExprForNames(a, selfName, siblings, seen)
+		}
+	case *ast.Index:
+		walkExprForNames(n.Array, selfName, siblings, seen)
+		walkExprForNames(n.Idx, selfName, siblings, seen)
+	case *ast.ArrayLit:
+		for _, el := range n.Elems {
+			walkExprForNames(el, selfName, siblings, seen)
+		}
+	case *ast.Assign:
+		walkExprForNames(n.Target, selfName, siblings, seen)
+		walkExprForNames(n.Value, selfName, siblings, seen)
+	case *ast.IfExpr:
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkExprForNames(n.Then, selfName, siblings, seen)
+		walkExprForNames(n.Else, selfName, siblings, seen)
+	case *ast.TryOp:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.MatchExpr:
+		walkExprForNames(n.Tag, selfName, siblings, seen)
+		for _, arm := range n.Arms {
+			if arm.Literal != nil {
+				walkExprForNames(arm.Literal, selfName, siblings, seen)
+			}
+			walkExprForNames(arm.Guard, selfName, siblings, seen)
+			walkExprForNames(arm.Body, selfName, siblings, seen)
+		}
+	case *ast.StructLit:
+		for _, f := range n.Fields {
+			walkExprForNames(f.Value, selfName, siblings, seen)
+		}
+	case *ast.FieldAccess:
+		walkExprForNames(n.Target, selfName, siblings, seen)
+	case *ast.FString:
+		for _, p := range n.Parts {
+			walkExprForNames(p.Expr, selfName, siblings, seen)
+		}
+		walkExprForNames(n.Desugared, selfName, siblings, seen)
+	case *ast.TupleLit:
+		for _, el := range n.Elems {
+			walkExprForNames(el, selfName, siblings, seen)
+		}
+	case *ast.MapLit:
+		for _, ent := range n.Entries {
+			walkExprForNames(ent.Key, selfName, siblings, seen)
+			walkExprForNames(ent.Value, selfName, siblings, seen)
+		}
+	case *ast.Lambda:
+		walkBodyForNames(n.Body, selfName, siblings, seen)
 	}
 }
 
@@ -3026,6 +3292,14 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	c.current = fn
 	c.loopDepth = 0
 	c.switchDepth = 0
+	// Snapshot the mutual-recursion sibling set at this
+	// declaration point. Nested blocks inside `fn.Body`
+	// overwrite c.mutualRecSiblings as their own pre-pass runs,
+	// but capture analysis needs the OUTER block's set to
+	// recognise (and skip) cycle members referenced inside this
+	// body. Non-cycle forward references aren't in this set and
+	// capture normally.
+	mySiblings := c.mutualRecSiblings
 	c.captureSink = func(name string, t ast.Type) {
 		if _, ok := captured[name]; ok {
 			return
@@ -3035,6 +3309,19 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		// lookup falls through here, but we don't want to treat it
 		// as a capture.
 		if name == fn.Name {
+			return
+		}
+		// Mutual-recursion sibling: handled by closureconv's
+		// null-env direct-call rewrite, not via env capture.
+		// Capturing here would create a cycle (each closure's env
+		// referencing the other's pair pointer, which exists only
+		// after BOTH pairs are built). Skipping means each SCC
+		// member hoists to a zero-capture closure and the body's
+		// sibling calls bypass the env entirely. ONLY names in a
+		// detected SCC are skipped — plain forward refs (caller
+		// references callee, callee doesn't reference back) still
+		// capture normally.
+		if mySiblings[name] {
 			return
 		}
 		// Capture eligibility. Scalars (i32 / i64 / f32 / f64 /
