@@ -1309,6 +1309,20 @@ type checker struct {
 	// outside a local function.
 	captureSink  func(name string, t ast.Type)
 	captureOuter *scope
+	// captureChain stacks (sink, scope) entries for every enclosing
+	// local function — outermost first. A name resolved several
+	// levels up must be captured by every intermediate function so
+	// each closure's env block can forward it down to the deepest
+	// reader. Without this, three-level nesting (level3 captures
+	// from makeChain; level1's body references it) would error with
+	// `undefined identifier` because the lookup only walked the
+	// immediately-enclosing scope.
+	captureChain []captureEntry
+}
+
+type captureEntry struct {
+	sink  func(name string, t ast.Type)
+	scope *scope
 }
 
 // resolveTypeNames walks every named-type position the parser may
@@ -2906,10 +2920,15 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		}
 	}
 	c.captureOuter = outer
+	// Push (sink, scope) for the deeper-lookup chain. The order
+	// matters: outermost-first so the lookup walks from
+	// immediately-enclosing inward, capturing transitively.
+	c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: outer})
 	defer func() {
 		c.current = prev
 		c.captureSink = prevSink
 		c.captureOuter = prevOuter
+		c.captureChain = c.captureChain[:len(c.captureChain)-1]
 		c.loopDepth = prevLoop
 		c.switchDepth = prevSwitch
 	}()
@@ -3064,12 +3083,30 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// where both inner and outer are local to the same outer
 		// function). The outer scope is the authoritative source
 		// for whether a sibling needs capturing.
-		if c.captureOuter != nil {
-			if t, ok := c.captureOuter.lookup(n.Name); ok {
-				if c.captureSink != nil {
-					c.captureSink(n.Name, t)
+		//
+		// Walk the captureChain outermost-first. The deepest level
+		// (current local function) is the LAST entry; the first
+		// entry to hit is the immediately-enclosing function. When
+		// a name resolves three levels up, every intermediate
+		// function captures it so the env blocks chain the
+		// reference down to the deepest reader.
+		if len(c.captureChain) > 0 {
+			for i := len(c.captureChain) - 1; i >= 0; i-- {
+				ent := c.captureChain[i]
+				if ent.scope == nil {
+					continue
 				}
-				return t
+				if t, ok := ent.scope.lookup(n.Name); ok {
+					// Record the capture in this entry's sink AND
+					// in every deeper sink (so each intermediate
+					// closure forwards the slot through).
+					for j := i; j < len(c.captureChain); j++ {
+						if c.captureChain[j].sink != nil {
+							c.captureChain[j].sink(n.Name, t)
+						}
+					}
+					return t
+				}
 			}
 		}
 		if sig, ok := c.info.FuncSigs[n.Name]; ok {
