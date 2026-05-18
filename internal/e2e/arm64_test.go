@@ -11415,6 +11415,24 @@ function main(): i32 {
 	}
 }
 
+// Mirror of TestWASMLenOfClosureReturningString — `exprType`
+// of a *ast.Call now resolves function-typed locals so the
+// `len()` dispatch picks `OpStrLen` over the array-shape
+// `[ptr-4]; load`.
+func TestArm64LenOfClosureReturningString(t *testing.T) {
+	src := `function makeReader(): () => string {
+    function build(): string { return "hello"; }
+    return build;
+}
+function main(): i32 {
+    var f = makeReader();
+    return len(f());
+}`
+	if _, code := compileAndRunArm64(t, src); code != 5 {
+		t.Errorf("got %d, want 5", code)
+	}
+}
+
 // Mirror of TestWASMClosureFStringCapture — closureconv now
 // recurses through FString.Desugared so captured-name idents
 // inside `f"…{cap}…"` get rewritten to CaptureRef nodes.
