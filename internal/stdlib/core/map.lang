@@ -46,9 +46,12 @@ pub function __map_pow2_ceil(n: i32): i32 {
 }
 
 // Hash function:
-//   keyKind 0 (i32-sized scalar): Wang's integer mix.
-//   keyKind 1 (string)          : FNV-1a 32-bit over the bytes.
-// Both produce a 32-bit hash that callers mask down to
+//   keyKind 0 (i32-sized scalar)        : Wang's integer mix.
+//   keyKind 1 (string)                  : FNV-1a 32-bit over bytes.
+//   keyKind 2 (wide-scalar boxed)       : Wang's integer mix
+//                                         over both 32-bit halves
+//                                         of the dereferenced i64.
+// All three produce a 32-bit hash that callers mask down to
 // `cap - 1` (cap is power-of-2). The unsigned shifts go
 // through `as u32` because the lang's `>>` defaults to
 // `i32.shr_s` on i32 operands.
@@ -80,6 +83,24 @@ pub function __map_hash(k: i32, keyKind: i32): i32 {
         h = h * 668265261;                      // 0x27d4eb2d
         h = h ^ (((h as u32) >> (15 as u32)) as i32);
         return h;
+    }
+    if (keyKind == 2) {
+        // Wide-scalar key on a narrow-ptr target (wasm32):
+        // `k` is a heap cell pointer, the actual 8-byte
+        // value lives at *k. Fold the two 32-bit halves
+        // together with XOR before Wang's mix so each
+        // half contributes to bucket choice.
+        var w: i64 = __load_i64(k as usize);
+        var lo: i32 = w as i32;
+        var hi: i32 = (w >> (32 as i64)) as i32;
+        var m: i32 = lo ^ hi;
+        m = m ^ 61;
+        m = m ^ (((m as u32) >> (16 as u32)) as i32);
+        m = m + (m << 3);
+        m = m ^ (((m as u32) >> (4 as u32)) as i32);
+        m = m * 668265261;                      // 0x27d4eb2d
+        m = m ^ (((m as u32) >> (15 as u32)) as i32);
+        return m;
     }
     h = 0 - 2128831035;                         // 0x811c9dc5 sign-flipped
     var s: string = k as string;
@@ -141,6 +162,11 @@ pub function __map_lookup(m: usize, k: usize): i32 {
             var eq: boolean = false;
             if (keyKind == 0) {
                 eq = entryK == k;
+            } else if (keyKind == 2) {
+                // Wide-scalar boxed keys: both `entryK` and
+                // `k` are cell pointers, the live 8-byte
+                // value sits at *cell. Deref and compare.
+                eq = __load_i64(entryK) == __load_i64(k);
             } else {
                 eq = (entryK as string) == (k as string);
             }
@@ -255,6 +281,8 @@ pub function __map_set_impl(m: usize, k: usize, v: usize) {
             var eq: boolean = false;
             if (keyKind == 0) {
                 eq = entryK == k;
+            } else if (keyKind == 2) {
+                eq = __load_i64(entryK) == __load_i64(k);
             } else {
                 eq = (entryK as string) == (k as string);
             }
@@ -379,6 +407,8 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
             var eq: boolean = false;
             if (keyKind == 0) {
                 eq = entryK == k;
+            } else if (keyKind == 2) {
+                eq = __load_i64(entryK) == __load_i64(k);
             } else {
                 eq = (entryK as string) == (k as string);
             }

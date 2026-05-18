@@ -1034,6 +1034,121 @@ func TestWASMMapValuesWideF64(t *testing.T) {
 	}
 }
 
+// Wide-K Map ops: `Map[i64, _]` / `Map[u64, _]` / `Map[f64, _]`
+// on wasm32 — the key (8 bytes) doesn't fit the runtime's i32
+// per-entry K slot, so the IR boxes each key into a heap cell
+// and tags the map's keyKind as 2; the prelude's
+// `__map_hash` / `__map_lookup` / `__map_set_impl` /
+// `__map_delete_impl` dereference via `__load_i64` to hash and
+// compare the underlying 8-byte values. On natives `usize` is
+// already 8 bytes so the raw-stored keyKind=0 path keeps
+// working (see TestX86_64WideScalarMap / TestArm64WideScalarMap).
+func TestWASMWideKeyMapBasic(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i64, i32] = map_new(4);
+    m.set(1i64, 100);
+    m.set(2i64, 200);
+    return m.get_or(2i64, 0) + m.get_or(1i64, 0);
+}`
+	if got := runWasm(t, src); got != 300 {
+		t.Errorf("got %d, want 300", got)
+	}
+}
+
+func TestWASMWideKeyMapHasDelete(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i64, i32] = map_new(4);
+    m.set(7i64, 100);
+    m.set(42i64, 200);
+    if (!m.has(7i64)) { return 1; }
+    if (!m.has(42i64)) { return 2; }
+    if (m.has(99i64)) { return 3; }
+    if (!m.delete(7i64)) { return 4; }
+    if (m.has(7i64)) { return 5; }
+    if (m.delete(7i64)) { return 6; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (has/delete on Map[i64, i32])", got)
+	}
+}
+
+func TestWASMWideKeyMapOverwrite(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i64, i32] = map_new(4);
+    m.set(1i64, 100);
+    m.set(1i64, 999);
+    if (m.len() != 1) { return 1; }
+    return m.get_or(1i64, 0);
+}`
+	if got := runWasm(t, src); got != 999 {
+		t.Errorf("got %d, want 999 (overwrite same wide key)", got)
+	}
+}
+
+func TestWASMWideKeyMapGrow(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i64, i32] = map_new(2);
+    var i: i32 = 0;
+    while (i < 20) {
+        m.set(i as i64, i * 10);
+        i = i + 1;
+    }
+    if (m.len() != 20) { return 1; }
+    var sum: i32 = 0;
+    var j: i32 = 0;
+    while (j < 20) {
+        sum = sum + m.get_or(j as i64, 0);
+        j = j + 1;
+    }
+    return sum;
+}`
+	if got := runWasm(t, src); got != 1900 {
+		// 10 * (0+1+...+19) = 1900
+		t.Errorf("got %d, want 1900 (grow + reprobe with wide keys)", got)
+	}
+}
+
+// Hash quality smoke-test: two i64 values that differ only in
+// the high 32 bits must hash distinctly so the bucket array
+// doesn't collide on the trivial low-32 truncation. Folds the
+// upper / lower halves via XOR before Wang's mix.
+func TestWASMWideKeyMapHighBitsDistinct(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i64, i32] = map_new(8);
+    var k1: i64 = 0i64;
+    var k2: i64 = 1i64 << 33i64;
+    m.set(k1, 1);
+    m.set(k2, 2);
+    return m.get_or(k1, 99) + m.get_or(k2, 99);
+}`
+	if got := runWasm(t, src); got != 3 {
+		t.Errorf("got %d, want 3 (distinct high-bit i64 keys)", got)
+	}
+}
+
+func TestWASMWideKeyMapU64(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[u64, i32] = map_new(4);
+    m.set(1u64, 100);
+    return m.get_or(1u64, 0);
+}`
+	if got := runWasm(t, src); got != 100 {
+		t.Errorf("got %d, want 100", got)
+	}
+}
+
+func TestWASMWideKeyMapStringV(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[i64, string] = map_new(4);
+    m.set(1i64, "hello");
+    return len(m.get_or(1i64, ""));
+}`
+	if got := runWasm(t, src); got != 5 {
+		t.Errorf("got %d, want 5 (len('hello'))", got)
+	}
+}
+
 // Map.delete(k) removes a key, returning true if it was
 // present. Implementation is swap-with-last (O(1), trades
 // insertion order for speed). Verifies the basic

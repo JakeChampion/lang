@@ -1084,13 +1084,29 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
-	// Wide / sub-i32 wat shims (`__load_i64` / `__store_i64`,
-	// `__load_f64` / `__store_f64`, `__load_u8` / `__store_u8`,
-	// `__load_u16` / `__store_u16`) were removed when
-	// `arr.push(v)` moved to inline IR lowering — the IR emits
-	// the typed wasm store ops directly, no callable wat shim
-	// needed. Reintroduce here next to `__store_i32` if a
-	// future lang-prelude helper needs them.
+	// `__load_i64` / `__store_i64` — 8-byte memory pokes. Used
+	// by the Map runtime's wide-scalar-boxed key path
+	// (keyKind=2): on wasm32 an i64 / u64 / f64 key doesn't
+	// fit a `usize` slot, so the IR boxes it into a heap cell
+	// and the runtime dereferences via these shims to hash and
+	// compare the underlying 8-byte value. Address stays usize
+	// (4 on wasm32, 8 on natives); the loaded / stored value
+	// is i64.
+	c.info.FuncSigs["__load_i64"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	c.info.FuncSigs["__store_i64"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
+	// Other wide / sub-i32 wat shims (`__load_f64` / `__store_f64`,
+	// `__load_u8` / `__store_u8`, `__load_u16` / `__store_u16`)
+	// were removed when `arr.push(v)` moved to inline IR
+	// lowering — the IR emits the typed wasm store ops
+	// directly, no callable wat shim needed. Reintroduce here
+	// next to `__store_i32` if a future lang-prelude helper
+	// needs them.
 
 	// `url_encode(s)` / `url_decode(s)` live in the lang
 	// prelude (internal/prelude/prelude.lang).
