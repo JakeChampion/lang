@@ -74,36 +74,37 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		source   string
 		expected int
 		stdout   string // "" means don't check
+		stdin    string // "" means no stdin
 	}{
-		{"return-literal", "return 42;", 42, ""},
-		{"arithmetic", "return 1 + 2 * 3;", 7, ""},
-		{"parens", "return (1 + 2) * 3;", 9, ""},
-		{"subtraction", "return 100 - 23;", 77, ""},
-		{"division", "return 84 / 2;", 42, ""},
-		{"modulo", "return 23 % 5;", 3, ""},
-		{"unary-neg", "return 0 - 5 + 10;", 5, ""},
-		{"comparison-true", "return 5 < 10;", 1, ""},
-		{"comparison-false", "return 10 < 5;", 0, ""},
-		{"equality-true", "return 7 == 7;", 1, ""},
-		{"equality-false", "return 7 == 8;", 0, ""},
-		{"locals", "var x = 5; var y = 10; return x + y;", 15, ""},
-		{"reassign", "var x = 5; x = x + 3; return x;", 8, ""},
-		{"compound-assign", "var x = 1; x *= 6; x += 1; return x;", 7, ""},
-		{"if-then-branch", "var x = 5; if (x < 10) { return 1; } return 2;", 1, ""},
-		{"if-else-branch", "var x = 20; if (x < 10) { return 1; } return 2;", 2, ""},
-		{"if-else-explicit", "if (true) { return 9; } else { return 0; }", 9, ""},
-		{"while-sum", "var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15, ""},
-		{"while-early-return", "var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 0 - 1;", 7, ""},
-		{"mixed", "var a = 1 + 2; var b = 4 * 5; var c = a + b; if (c < 100) { return c; } return 0 - 1;", 23, ""},
-		{"func-decl-call", "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }", 5, ""},
-		{"func-three-args", "function sum3(a: i32, b: i32, c: i32): i32 { return a + b + c; } function main(): i32 { return sum3(10, 20, 30); }", 60, ""},
-		{"recursive-factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120, ""},
-		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21, ""},
-		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, ""},
-		{"func-with-local-vars", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11, ""},
-		{"hello-world", "print(\"Hello, world!\\n\"); return 0;", 0, "Hello, world!\n"},
-		{"print-twice", "print(\"line 1\\n\"); print(\"line 2\\n\"); return 0;", 0, "line 1\nline 2\n"},
-		{"print-then-return", "print(\"out\\n\"); return 42;", 42, "out\n"},
+		{"return-literal", "return 42;", 42, "", ""},
+		{"arithmetic", "return 1 + 2 * 3;", 7, "", ""},
+		{"parens", "return (1 + 2) * 3;", 9, "", ""},
+		{"subtraction", "return 100 - 23;", 77, "", ""},
+		{"division", "return 84 / 2;", 42, "", ""},
+		{"modulo", "return 23 % 5;", 3, "", ""},
+		{"unary-neg", "return 0 - 5 + 10;", 5, "", ""},
+		{"comparison-true", "return 5 < 10;", 1, "", ""},
+		{"comparison-false", "return 10 < 5;", 0, "", ""},
+		{"equality-true", "return 7 == 7;", 1, "", ""},
+		{"equality-false", "return 7 == 8;", 0, "", ""},
+		{"locals", "var x = 5; var y = 10; return x + y;", 15, "", ""},
+		{"reassign", "var x = 5; x = x + 3; return x;", 8, "", ""},
+		{"compound-assign", "var x = 1; x *= 6; x += 1; return x;", 7, "", ""},
+		{"if-then-branch", "var x = 5; if (x < 10) { return 1; } return 2;", 1, "", ""},
+		{"if-else-branch", "var x = 20; if (x < 10) { return 1; } return 2;", 2, "", ""},
+		{"if-else-explicit", "if (true) { return 9; } else { return 0; }", 9, "", ""},
+		{"while-sum", "var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15, "", ""},
+		{"while-early-return", "var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 0 - 1;", 7, "", ""},
+		{"mixed", "var a = 1 + 2; var b = 4 * 5; var c = a + b; if (c < 100) { return c; } return 0 - 1;", 23, "", ""},
+		{"func-decl-call", "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }", 5, "", ""},
+		{"func-three-args", "function sum3(a: i32, b: i32, c: i32): i32 { return a + b + c; } function main(): i32 { return sum3(10, 20, 30); }", 60, "", ""},
+		{"recursive-factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120, "", ""},
+		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21, "", ""},
+		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, "", ""},
+		{"func-with-local-vars", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11, "", ""},
+		{"hello-world", "print(\"Hello, world!\\n\"); return 0;", 0, "Hello, world!\n", ""},
+		{"print-twice", "print(\"line 1\\n\"); print(\"line 2\\n\"); return 0;", 0, "line 1\nline 2\n", ""},
+		{"print-then-return", "print(\"out\\n\"); return 42;", 42, "out\n", ""},
 		{
 			"fizzbuzz-1-to-15",
 			"function main(): i32 { " +
@@ -119,6 +120,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 				"return 0; }",
 			0,
 			". . Fizz . Buzz Fizz . . Fizz Buzz . Fizz . . FizzBuzz \n",
+			"",
 		},
 		{
 			"print-in-function",
@@ -126,36 +128,42 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 				"function main(): i32 { var r = greet(); return r; }",
 			7,
 			"hi from greet\n",
+			"",
 		},
 		{
 			"print-loop-fixed-count",
 			"function main(): i32 { var i = 0; while (i < 4) { print(\"tick\\n\"); i = i + 1; } return 0; }",
 			0,
 			"tick\ntick\ntick\ntick\n",
+			"",
 		},
 		{
 			"print-int-literal",
 			"function main(): i32 { print_int(42); print(\"\\n\"); return 0; }",
 			0,
 			"42\n",
+			"",
 		},
 		{
 			"print-int-zero",
 			"function main(): i32 { print_int(0); print(\"\\n\"); return 0; }",
 			0,
 			"0\n",
+			"",
 		},
 		{
 			"print-int-negative",
 			"function main(): i32 { print_int(0 - 7); print(\"\\n\"); return 0; }",
 			0,
 			"-7\n",
+			"",
 		},
 		{
 			"print-int-computed",
 			"function main(): i32 { print_int(2 + 3 * 4); print(\"\\n\"); return 0; }",
 			0,
 			"14\n",
+			"",
 		},
 		{
 			"print-int-from-function",
@@ -163,12 +171,14 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 				"function main(): i32 { print_int(fact(8)); print(\"\\n\"); return 0; }",
 			0,
 			"40320\n",
+			"",
 		},
 		{
 			"print-int-counter-loop",
 			"function main(): i32 { var i = 1; while (i <= 5) { print_int(i); print(\" \"); i = i + 1; } print(\"\\n\"); return 0; }",
 			0,
 			"1 2 3 4 5 \n",
+			"",
 		},
 		{
 			"fizzbuzz-canonical-1-to-15",
@@ -185,6 +195,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 				"return 0; }",
 			0,
 			"1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n",
+			"",
 		},
 		{
 			"fibonacci-series-first-10",
@@ -192,6 +203,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 				"function main(): i32 { var i = 0; while (i < 10) { print_int(fib(i)); print(\" \"); i = i + 1; } print(\"\\n\"); return 0; }",
 			0,
 			"0 1 1 2 3 5 8 13 21 34 \n",
+			"",
 		},
 		{
 			"sum-via-recursion-and-print",
@@ -199,6 +211,39 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 				"function main(): i32 { print(\"sum(1..10) = \"); print_int(sum(10)); print(\"\\n\"); return 0; }",
 			0,
 			"sum(1..10) = 55\n",
+			"",
+		},
+		// read_int demos — pipe stdin via the cases struct's
+		// stdin field. The inner binary reads, parses, computes,
+		// and either prints the result or returns it via exit
+		// code.
+		{
+			"read-int-double-via-exit",
+			"function main(): i32 { return read_int() * 2; }",
+			42,
+			"",
+			"21",
+		},
+		{
+			"read-int-print-doubled",
+			"function main(): i32 { var n = read_int(); print_int(n * 2); print(\"\\n\"); return 0; }",
+			0,
+			"50\n",
+			"25",
+		},
+		{
+			"read-int-square",
+			"function main(): i32 { var n = read_int(); print_int(n * n); print(\"\\n\"); return 0; }",
+			0,
+			"49\n",
+			"7",
+		},
+		{
+			"read-int-negative",
+			"function main(): i32 { var n = read_int(); if (n < 0) { print(\"neg\\n\"); } else { print(\"pos\\n\"); } return 0; }",
+			0,
+			"neg\n",
+			"-42",
 		},
 	}
 
@@ -232,6 +277,9 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 				inner = exec.Command(innerBin)
 			} else {
 				inner = exec.Command(runner[0], append(runner[1:], innerBin)...)
+			}
+			if tc.stdin != "" {
+				inner.Stdin = bytes.NewReader([]byte(tc.stdin))
 			}
 			innerStdout, _ := inner.Output()
 			if code := inner.ProcessState.ExitCode(); code != tc.expected {
