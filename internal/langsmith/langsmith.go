@@ -546,6 +546,9 @@ func (g *Generator) MainProgram() string {
 		if g.maybeEmitWhile(&b, sc) {
 			continue
 		}
+		if g.maybeEmitForEach(&b, sc) {
+			continue
+		}
 		// Main's vars are drawn from the deterministic-across-
 		// backends subset (no floats, no strings whose
 		// observation needs a print channel). Composite types
@@ -769,6 +772,9 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 		if g.maybeEmitWhile(b, sc) {
 			continue
 		}
+		if g.maybeEmitForEach(b, sc) {
+			continue
+		}
 		vt := g.pickType()
 		vname := fmt.Sprintf("v%d", i)
 		fmt.Fprintf(b, "var %s: %s = ", vname, g.typeName(vt))
@@ -834,6 +840,9 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 		if g.maybeEmitWhile(b, inner) {
 			continue
 		}
+		if g.maybeEmitForEach(b, inner) {
+			continue
+		}
 		vt := g.pickType()
 		vname := fmt.Sprintf("w%d_%d", idx, i)
 		fmt.Fprintf(b, "var %s: %s = ", vname, g.typeName(vt))
@@ -844,6 +853,86 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 
 	fmt.Fprintf(b, "%s = %s + 1i32; ", counter, counter)
 	b.WriteString("} ")
+}
+
+// maybeEmitForEach probabilistically emits a `for x in arr { ... }`
+// or `for (k, v) in m { ... }` over an in-scope array / Map. Returns
+// true when it wrote one (caller should skip the var-decl it
+// would have emitted otherwise), false when no eligible scope
+// var exists or the random gate skipped emission.
+//
+// Termination is automatic: each iteration walks one position of
+// the underlying data structure, which has a finite size set at
+// construction time. No counter to mutate, no risk of infinite
+// loops.
+//
+// The body lives in an inner scope so the loop variable's name
+// can't leak out. Same loop-depth budget as the while loop.
+func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
+	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
+		return false
+	}
+	// Pick an in-scope iterable: array or Map. If neither is
+	// available, skip.
+	var arrayVar string
+	var elemType gtype
+	for _, at := range []gtype{tArrI32, tArrI64, tArrBool} {
+		vars := sc.inScope(at)
+		if len(vars) > 0 {
+			arrayVar = vars[g.ch.intN(len(vars))]
+			elemType, _ = arrayElemOf(at)
+			break
+		}
+	}
+	mapVars := sc.inScope(tMapI32I32)
+	if arrayVar == "" && len(mapVars) == 0 {
+		return false
+	}
+	// Exhaustion convention: `false` here = no loop (smaller
+	// output). Bias to ~12% emission per slot when bytes flow.
+	if g.flip(0.88) {
+		return false
+	}
+	g.loopDepth++
+	defer func() { g.loopDepth-- }()
+	idx := g.loopCounter
+	g.loopCounter++
+
+	inner := newScope(sc)
+	switch {
+	case arrayVar != "" && (len(mapVars) == 0 || g.flip(0.5)):
+		// for x in <arr> { ... }
+		bind := fmt.Sprintf("__fe_x%d", idx)
+		fmt.Fprintf(b, "for %s in %s { ", bind, arrayVar)
+		inner.declare(elemType, bind)
+	default:
+		// for (k, v) in <map> { ... } — k/v are i32 since we
+		// only generate Map[i32, i32].
+		mapVar := mapVars[g.ch.intN(len(mapVars))]
+		kBind := fmt.Sprintf("__fe_k%d", idx)
+		vBind := fmt.Sprintf("__fe_v%d", idx)
+		fmt.Fprintf(b, "for (%s, %s) in %s { ", kBind, vBind, mapVar)
+		inner.declare(tI32, kBind)
+		inner.declare(tI32, vBind)
+	}
+
+	nstmts := g.ch.intN(3)
+	for i := 0; i < nstmts; i++ {
+		if g.maybeEmitWhile(b, inner) {
+			continue
+		}
+		if g.maybeEmitForEach(b, inner) {
+			continue
+		}
+		vt := g.pickType()
+		vname := fmt.Sprintf("fe%d_%d", idx, i)
+		fmt.Fprintf(b, "var %s: %s = ", vname, g.typeName(vt))
+		g.expr(b, inner, vt, 0)
+		b.WriteString("; ")
+		inner.declare(vt, vname)
+	}
+	b.WriteString("} ")
+	return true
 }
 
 // ---------- expressions ----------

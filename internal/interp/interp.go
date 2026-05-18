@@ -92,6 +92,23 @@ func (m *Map) findKey(k Value) int {
 	return -1
 }
 
+// MapIter is the interp's `MapIter[K, V]` cursor — pairs the
+// owning Map with the index of the entry the next `key()` /
+// `value()` will report. `has_next` / `key` / `value` /
+// `advance` walk the parallel slices in insertion order,
+// matching what `keys()` / `values()` return.
+//
+// Live binding: the iterator holds the *Map by pointer, so
+// set / delete on the underlying map during iteration is
+// observed. Codegen has the same shape, so interp and native
+// stay aligned even if user code mutates mid-loop.
+type MapIter struct {
+	m   *Map
+	pos int
+}
+
+func (it *MapIter) String() string { return "<MapIter>" }
+
 // Builtin is a host-provided function callable from interpreted code.
 // It receives evaluated arguments and may emit output via the
 // interpreter's stdout.
@@ -271,6 +288,11 @@ func New() *Interp {
 	i.Builtins["__method_Map_get_or"] = &Builtin{Fn: builtinMapGetOr}
 	i.Builtins["__method_Map_keys"] = &Builtin{Fn: builtinMapKeys}
 	i.Builtins["__method_Map_values"] = &Builtin{Fn: builtinMapValues}
+	i.Builtins["__method_Map_iter"] = &Builtin{Fn: builtinMapIter}
+	i.Builtins["__method_MapIter_has_next"] = &Builtin{Fn: builtinMapIterHasNext}
+	i.Builtins["__method_MapIter_key"] = &Builtin{Fn: builtinMapIterKey}
+	i.Builtins["__method_MapIter_value"] = &Builtin{Fn: builtinMapIterValue}
+	i.Builtins["__method_MapIter_advance"] = &Builtin{Fn: builtinMapIterAdvance}
 	// Low-level prelude primitives the codegen lowers to inline
 	// alloc / memcpy / store-byte sequences. The interpreter
 	// implements them directly so prelude functions that lean
@@ -650,6 +672,79 @@ func builtinMapValues(_ *Interp, args []Value) (Value, error) {
 	out := make(Array, len(m.vals))
 	copy(out, m.vals)
 	return out, nil
+}
+
+func builtinMapIter(_ *Interp, args []Value) (Value, error) {
+	m, err := mapReceiver("__method_Map_iter", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_Map_iter: expected 1 arg (receiver), got %d", len(args))
+	}
+	return &MapIter{m: m, pos: 0}, nil
+}
+
+func mapIterReceiver(name string, args []Value) (*MapIter, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("%s: expected at least 1 arg (receiver)", name)
+	}
+	it, ok := args[0].(*MapIter)
+	if !ok {
+		return nil, fmt.Errorf("%s: receiver must be MapIter, got %T", name, args[0])
+	}
+	return it, nil
+}
+
+func builtinMapIterHasNext(_ *Interp, args []Value) (Value, error) {
+	it, err := mapIterReceiver("__method_MapIter_has_next", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_MapIter_has_next: expected 1 arg (receiver), got %d", len(args))
+	}
+	return Bool(it.pos < len(it.m.keys)), nil
+}
+
+func builtinMapIterKey(_ *Interp, args []Value) (Value, error) {
+	it, err := mapIterReceiver("__method_MapIter_key", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_MapIter_key: expected 1 arg (receiver), got %d", len(args))
+	}
+	if it.pos >= len(it.m.keys) {
+		return nil, fmt.Errorf("__method_MapIter_key: iterator exhausted")
+	}
+	return it.m.keys[it.pos], nil
+}
+
+func builtinMapIterValue(_ *Interp, args []Value) (Value, error) {
+	it, err := mapIterReceiver("__method_MapIter_value", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_MapIter_value: expected 1 arg (receiver), got %d", len(args))
+	}
+	if it.pos >= len(it.m.vals) {
+		return nil, fmt.Errorf("__method_MapIter_value: iterator exhausted")
+	}
+	return it.m.vals[it.pos], nil
+}
+
+func builtinMapIterAdvance(_ *Interp, args []Value) (Value, error) {
+	it, err := mapIterReceiver("__method_MapIter_advance", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__method_MapIter_advance: expected 1 arg (receiver), got %d", len(args))
+	}
+	it.pos++
+	return Void{}, nil
 }
 
 // `__alloc_u8(n: i32): u8[]` — codegen lowers to `__lang_alloc(n)
