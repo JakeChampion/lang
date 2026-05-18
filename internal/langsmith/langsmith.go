@@ -32,6 +32,20 @@ type Config struct {
 	MaxParams    int
 	MaxStmts     int
 	MaxExprDepth int
+	// MaxLoopDepth caps how deeply nested `while` loops can get
+	// inside a body. The bounded-counter pattern emits one i32
+	// counter per loop and increments by 1 each iteration, so
+	// every loop terminates in a small constant number of steps;
+	// the cap is there to keep emitted source short, not to
+	// prevent divergence.
+	MaxLoopDepth int
+	// MaxLoopIters caps the random iteration count picked for
+	// each emitted while-loop's counter bound. The generator
+	// emits `var c = 0; while (c < N) { ...; c = c + 1; }` with
+	// N drawn from [1, MaxLoopIters]. Differential testing
+	// needs N small so backends without optimisations don't
+	// blow up runtime.
+	MaxLoopIters int
 }
 
 // DefaultConfig is what Gen uses.
@@ -41,6 +55,8 @@ func DefaultConfig() Config {
 		MaxParams:    4,
 		MaxStmts:     6,
 		MaxExprDepth: 4,
+		MaxLoopDepth: 2,
+		MaxLoopIters: 5,
 	}
 }
 
@@ -214,6 +230,18 @@ type Generator struct {
 	// 0..N-1), which sidesteps self-recursion and unbounded
 	// stack growth without needing a static check.
 	helpers []helperSig
+	// loopDepth tracks the current `while` nesting level so the
+	// generator can cap depth at cfg.MaxLoopDepth — every loop
+	// is bounded-counter (terminates in <= MaxLoopIters
+	// iterations), but unbounded nesting still bloats the
+	// emitted source and slows the differential test.
+	loopDepth int
+	// loopCounter is the monotonically-increasing index used to
+	// name every emitted loop counter (`__loop_i0`,
+	// `__loop_i1`, …). The `__loop_` prefix guarantees these
+	// names never collide with user-style vars (`v*`, `p*`,
+	// `w*`) that the rest of the generator emits.
+	loopCounter int
 }
 
 // helperSig is the bare minimum the generator needs to emit a
@@ -346,6 +374,9 @@ func (g *Generator) MainProgram() string {
 	b.WriteString("function main(): i32 { ")
 	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
+		if g.maybeEmitWhile(&b, sc) {
+			continue
+		}
 		// Restrict main's *vars* to deterministic-across-backends
 		// types. Strings would need a print channel to observe;
 		// we just want the return-value byte.
@@ -400,12 +431,17 @@ func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	g.helpers = append(g.helpers, helperSig{name: name, params: params, retType: ret})
 }
 
-// body emits a sequence of `var` declarations followed by a typed
-// `return`. Each `var` adds a fresh name to the scope so later
-// statements can reference it.
+// body emits a sequence of `var` declarations / while-loops
+// followed by a typed `return`. Each `var` adds a fresh name to
+// the scope so later statements can reference it; while-loops use
+// the bounded-counter pattern (see emitWhileLoop) and don't add
+// anything to the outer scope.
 func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
+		if g.maybeEmitWhile(b, sc) {
+			continue
+		}
 		vt := g.pickType()
 		vname := fmt.Sprintf("v%d", i)
 		fmt.Fprintf(b, "var %s: %s = ", vname, vt)
@@ -416,6 +452,71 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 	b.WriteString("return ")
 	g.expr(b, sc, retT, 0)
 	b.WriteString("; ")
+}
+
+// maybeEmitWhile probabilistically emits a bounded-counter while
+// loop. Returns true when it wrote one (caller should skip the
+// var-decl it would have emitted otherwise), false when the
+// loop-depth cap or the random gate skipped emission.
+//
+// Bounded-counter pattern:
+//
+//	var __loop_i<N>: i32 = 0i32;
+//	while (__loop_i<N> < <K>i32) {
+//	    <body var-decls>
+//	    __loop_i<N> = __loop_i<N> + 1i32;
+//	}
+//
+// The counter name is generator-private (`__loop_` prefix), so
+// body var-decls (`v*`, `p*`, `w*`) can't shadow or alias it.
+// The body never assigns to the counter — only the trailing
+// increment does — so termination after at most K iterations is
+// statically obvious.
+func (g *Generator) maybeEmitWhile(b *strings.Builder, sc *scope) bool {
+	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
+		return false
+	}
+	// Exhaustion convention: `false` here = no loop (smaller
+	// output). Bias to ~15% loop emission per slot when bytes
+	// are flowing.
+	if g.flip(0.85) {
+		return false
+	}
+	g.emitWhileLoop(b, sc)
+	return true
+}
+
+func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
+	idx := g.loopCounter
+	g.loopCounter++
+	g.loopDepth++
+	defer func() { g.loopDepth-- }()
+
+	counter := fmt.Sprintf("__loop_i%d", idx)
+	iters := 1 + g.ch.intN(maxInt(g.cfg.MaxLoopIters, 1))
+
+	fmt.Fprintf(b, "var %s: i32 = 0i32; ", counter)
+	fmt.Fprintf(b, "while (%s < %di32) { ", counter, iters)
+
+	// Body: a few var-decls. Use an inner scope so loop-body
+	// names don't leak out; the inner scope's parent chain
+	// still gives expressions visibility into outer vars.
+	inner := newScope(sc)
+	nstmts := g.ch.intN(3)
+	for i := 0; i < nstmts; i++ {
+		if g.maybeEmitWhile(b, inner) {
+			continue
+		}
+		vt := g.pickType()
+		vname := fmt.Sprintf("w%d_%d", idx, i)
+		fmt.Fprintf(b, "var %s: %s = ", vname, vt)
+		g.expr(b, inner, vt, 0)
+		b.WriteString("; ")
+		inner.declare(vt, vname)
+	}
+
+	fmt.Fprintf(b, "%s = %s + 1i32; ", counter, counter)
+	b.WriteString("} ")
 }
 
 // ---------- expressions ----------
