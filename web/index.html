@@ -328,6 +328,51 @@
   /* Subtle gutter colour for failed compiles. */
   .asm-panel.errored pre { color: var(--err); }
 
+  /* ---- Embed-mode pane tabs ----
+   *
+   * Only shown when the page is embedded in docs (body.embed).
+   * Lets the reader switch the bottom content area between the
+   * output of `Run` and the emitted assembly without leaving the
+   * docs page. Tabs are NOT part of the standalone layout — the
+   * standalone two-column grid already shows output side-by-side
+   * with source, and asm has its own bottom-spanning panel via
+   * the View assembly button.
+   */
+  .pane-tabs {
+    display: none; /* default; embed mode flips to flex below */
+    align-items: stretch;
+    gap: 0.25rem;
+    margin: 0 0 0.4em;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .pane-tabs .tab {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--fg-secondary);
+    padding: 0.4em 0.9em;
+    font: inherit;
+    font-size: 0.85em;
+    cursor: pointer;
+    margin-bottom: -1px;
+  }
+  .pane-tabs .tab:hover {
+    color: var(--fg-primary);
+    background: var(--bg-hover);
+  }
+  .pane-tabs .tab.active {
+    color: var(--fg-primary);
+    border-bottom-color: var(--accent);
+  }
+  .pane-tabs .tab-target {
+    margin-left: auto;
+    align-self: center;
+    padding: 0.2em 0.45em;
+    font-size: 0.8em;
+  }
+  .pane-tabs .tab-target.hidden { display: none; }
+
   /* ---------------- Embed mode ----------------
    *
    * Activated by `?embed=1` on the URL. Strips the page chrome
@@ -353,10 +398,29 @@
   body.embed #targetSelect,
   body.embed .btn-asm,
   body.embed .out-info,
-  body.embed .problems,
-  body.embed .asm-panel {
+  body.embed .problems {
     display: none;
   }
+  /* The "output" pane heading is redundant in embed mode — the
+   * tab strip labels what's below. */
+  body.embed .pane-output h2 { display: none; }
+  /* Tab strip visible in embed only — see comment on .pane-tabs above. */
+  body.embed .pane-tabs { display: flex; }
+  /* Tab-driven content switch. Default state shows output; the
+   * `body.tab-asm` class swaps to the assembly panel. The asm
+   * panel lives outside the right pane (it spans both columns
+   * in standalone) so the embed-mode override below also
+   * narrows it to the single-column embed grid.
+   */
+  body.embed.tab-asm .pane-output { display: none; }
+  body.embed.tab-asm .asm-panel { display: block; margin-top: 0; }
+  body.embed .asm-panel { display: none; }
+  body.embed .asm-panel pre {
+    height: clamp(140px, calc((100vh - 4em) / 2), 360px);
+    max-height: none;
+  }
+  body.embed .asm-panel header { padding: 0.3em 0.6em; }
+  body.embed .asm-panel header h2 { display: none; }
   body.embed .toolbar {
     margin-bottom: 0.4em;
     gap: 0.5em;
@@ -444,7 +508,23 @@
     <h2>source</h2>
     <div id="srcMount"></div>
   </div>
-  <div class="pane">
+  <div class="pane pane-output">
+    <!-- Tab strip — visible only in embed mode (CSS-gated). Lets
+         docs readers swap the bottom content area between Output
+         and Assembly without leaving the page. -->
+    <div class="pane-tabs" role="tablist" aria-label="View">
+      <button class="tab active" data-tab="output" role="tab"
+              aria-selected="true">Output</button>
+      <button class="tab" data-tab="asm" role="tab"
+              aria-selected="false">Assembly</button>
+      <select class="tab-target hidden" id="embedTarget"
+              title="Backend for the assembly view">
+        <option value="arm64">arm64</option>
+        <option value="arm64-darwin">arm64-darwin</option>
+        <option value="x86-64">x86-64</option>
+        <option value="wasm">wasm (.wat)</option>
+      </select>
+    </div>
     <h2>output</h2>
     <pre id="out"></pre>
     <div class="out-info" id="meta"></div>
@@ -735,6 +815,8 @@ const viewAsmBtn = document.getElementById("viewAsm");
 const asmPanel = document.getElementById("asmPanel");
 const asmOutEl = document.getElementById("asmOut");
 const asmStatusEl = document.getElementById("asmStatus");
+const embedTargetEl = document.getElementById("embedTarget");
+const paneTabs = document.querySelectorAll(".pane-tabs .tab");
 
 // Embed mode: `?embed=1` (or `?embed=true`) on the URL strips the
 // chrome (title, subtitle, examples dropdown, share button, problems
@@ -994,6 +1076,51 @@ function scheduleAsmRefresh() {
   if (!asmAutoRebuild || !asmPanelOpen) return;
   if (asmDebounce) clearTimeout(asmDebounce);
   asmDebounce = setTimeout(refreshAsm, 200);
+}
+
+// ---- Embed-mode pane tabs ----
+//
+// Lets docs readers swap the bottom content area between Output
+// and Assembly without leaving the docs page. Tab state lives in
+// the `body.tab-asm` class (default: tab-output, no class needed
+// since the CSS treats "no class" as output-visible). Clicking
+// the Assembly tab opens the asm panel + triggers an immediate
+// recompile so the reader sees content right away.
+//
+// The embed-target dropdown is wired to mirror the standalone
+// targetSelect — both control the same `refreshAsm()` so users
+// who switch via either form see consistent state.
+function selectTab(name) {
+  const wantAsm = name === "asm";
+  document.body.classList.toggle("tab-asm", wantAsm);
+  paneTabs.forEach((btn) => {
+    const active = btn.dataset.tab === name;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  if (embedTargetEl) {
+    embedTargetEl.classList.toggle("hidden", !wantAsm);
+  }
+  if (wantAsm) {
+    // Match what the View assembly button does: open the panel,
+    // turn on auto-rebuild, and emit now.
+    asmPanelOpen = true;
+    asmAutoRebuild = true;
+    asmPanel.classList.add("shown");
+    refreshAsm();
+  }
+}
+paneTabs.forEach((btn) => {
+  btn.addEventListener("click", () => selectTab(btn.dataset.tab));
+});
+// Keep the two target dropdowns synchronised so the embed-tab
+// dropdown choice flows into refreshAsm()'s read of
+// targetSelectEl.value.
+if (embedTargetEl) {
+  embedTargetEl.addEventListener("change", () => {
+    targetSelectEl.value = embedTargetEl.value;
+    if (asmPanelOpen) refreshAsm();
+  });
 }
 
 // ---- Language server wiring ----
