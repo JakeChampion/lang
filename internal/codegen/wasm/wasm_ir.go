@@ -1095,8 +1095,32 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 	case ir.OpCallDirect:
 		// Top-level user functions in the closure ABI take a
 		// trailing __env i32 — pass 0 since the call is direct.
+		// Exception: when the call's argc already accounts for
+		// the env arg (closureconv's recursive-self-call rewrite
+		// pushes `__env` explicitly so the recursive callee gets
+		// our captured-state block, and the IR's Inline pass can
+		// surface that call into another function's body too).
+		// The natives' OpCallDirect just consumes argc explicitly,
+		// so on wasm we'd double-stub and over-fill the operand
+		// stack past the callee's signature. Skip the stub when
+		// the callee's declared parameter count (including the env
+		// param the closure ABI adds) already equals the call's
+		// argc.
 		_, isUser := g.funcIndex[op.Str]
+		envAlreadyOnStack := false
 		if g.needsClosures && isUser && g.inTable[op.Str] {
+			if callee := g.lookupFunc(op.Str); callee != nil {
+				// Hoisted closures already carry __env as their
+				// last param (closureconv appended it); the
+				// declared param count therefore matches the
+				// "with-env" expected arg count. If argc equals
+				// that, closureconv pushed __env itself.
+				if int(op.I32) == len(callee.Params) {
+					envAlreadyOnStack = true
+				}
+			}
+		}
+		if g.needsClosures && isUser && g.inTable[op.Str] && !envAlreadyOnStack {
 			g.line("i32.const 0")
 		}
 		name := op.Str
