@@ -13,6 +13,7 @@
 # Optional knobs (env vars):
 #   BOMBADIL              path to the bombadil binary (defaults to `bombadil` on PATH)
 #   BOMBADIL_OUTPUT       results directory (default: web/test/results)
+#   BOMBADIL_TIME_LIMIT   per-run upper bound, Bombadil time format (default: 60s)
 #   BOMBADIL_EXTRA_ARGS   extra flags appended verbatim to the bombadil invocation
 #                         (e.g. drop --headless locally to watch the browser drive itself)
 set -euo pipefail
@@ -80,14 +81,34 @@ if [ "$server_up" -ne 1 ]; then
 fi
 
 extra_args="${BOMBADIL_EXTRA_ARGS:-}"
+time_limit="${BOMBADIL_TIME_LIMIT:-60s}"
 echo "==> running bombadil"
 # `bombadil test <ORIGIN> [SPECIFICATION_FILE]` — the spec is a
-# positional argument, not a flag. Local devs can flip BOMBADIL_EXTRA_ARGS
-# to drop --headless and watch the browser drive itself.
+# positional argument, not a flag.
+#
+# Flag breakdown:
+#   --headless           run Chromium without a visible window (required
+#                        on CI runners without a display server)
+#   --no-sandbox         Chromium's SUID sandbox helper isn't configured
+#                        on most CI images (chrome-sandbox needs root +
+#                        mode 4755); disable it explicitly so the
+#                        browser starts at all
+#   --time-limit         cap each run so CI doesn't burn minutes
+#                        forever; tunable via BOMBADIL_TIME_LIMIT for
+#                        nightly long-runs
+#   --exit-on-violation  bail as soon as the first property fails so
+#                        the developer sees the reproducer immediately
+#                        instead of waiting for the time limit
+#
+# Local devs can drop --headless / --no-sandbox via BOMBADIL_EXTRA_ARGS
+# to watch the browser drive itself.
 # shellcheck disable=SC2086
 "$bombadil_bin" test \
   "http://127.0.0.1:$port/index.html" \
   "$here/playground.spec.ts" \
   --output-path "$output_dir" \
   --headless \
+  --no-sandbox \
+  --time-limit "$time_limit" \
+  --exit-on-violation \
   $extra_args
