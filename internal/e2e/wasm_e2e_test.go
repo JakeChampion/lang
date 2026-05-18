@@ -9128,3 +9128,160 @@ function main(): i32 {
 		t.Errorf("wasmtime stdout = %q, want 16 ((1 << 5) rotr 1)", out)
 	}
 }
+
+// TestWASMModuleRunsF32Arithmetic: f32.const 1.0 + f32.const 1.0
+// = 2.0, returned via i32.reinterpret_f32 so wasmtime can print
+// the i32 bit pattern. f32 2.0 = 0x40000000 = 1073741824.
+func TestWASMModuleRunsF32Arithmetic(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/convert";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // f32 1.0 bit pattern: 0x3F800000 = 1065353216.
+    var body: u8[] = inst.inst_f32_const([], 1065353216u32);
+    body = inst.inst_f32_const(body, 1065353216u32);
+    body = numeric.inst_f32_add(body);
+    body = convert.inst_i32_reinterpret_f32(body);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "1073741824") {
+		t.Errorf("wasmtime stdout = %q, want 1073741824 (bit pattern of f32 2.0)", out)
+	}
+}
+
+// TestWASMModuleRunsSelect: pushes 7, 9, 1 ; select. cond=1
+// (truthy) keeps the first operand, so result is 7. Exercises
+// inst_select.
+func TestWASMModuleRunsSelect(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    var body: u8[] = inst.inst_i32_const([], 7);
+    body = inst.inst_i32_const(body, 9);
+    body = inst.inst_i32_const(body, 1);
+    body = inst.inst_select(body);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "7") {
+		t.Errorf("wasmtime stdout = %q, want 7 (select with cond=1 keeps the first)", out)
+	}
+}
+
+// TestWASMModuleRunsRecursion: factorial(5) via self-recursion.
+// fact(n) = if n <= 1 { 1 } else { n * fact(n - 1) }.
+// fact(5) = 120. Exercises inst_call to a function index equal
+// to the calling function's own index.
+func TestWASMModuleRunsRecursion(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+
+    var p_fact: u8[] = [encode.valtype_i32()];
+    var r_fact: u8[] = [encode.valtype_i32()];
+    var p_main: u8[] = [];
+    var r_main: u8[] = [encode.valtype_i32()];
+    m.type_params = [p_fact, p_main];
+    m.type_results = [r_fact, r_main];
+
+    m.function_typeidxs = [0u32, 1u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [1u32];
+
+    // fact(n): if (n <= 1) 1 else n * fact(n - 1)
+    var fact_body: u8[] = inst.inst_local_get([], 0u32);
+    fact_body = inst.inst_i32_const(fact_body, 1);
+    fact_body = numeric.inst_i32_le_s(fact_body);
+    fact_body = inst.inst_if_start(fact_body, encode.valtype_i32());
+    fact_body = inst.inst_i32_const(fact_body, 1);
+    fact_body = inst.inst_else(fact_body);
+    fact_body = inst.inst_local_get(fact_body, 0u32);
+    fact_body = inst.inst_local_get(fact_body, 0u32);
+    fact_body = inst.inst_i32_const(fact_body, 1);
+    fact_body = numeric.inst_i32_sub(fact_body);
+    fact_body = inst.inst_call(fact_body, 0u32);
+    fact_body = numeric.inst_i32_mul(fact_body);
+    fact_body = inst.inst_end(fact_body);
+    var fact_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), fact_body);
+
+    // main(): i32.const 5 ; call 0
+    var main_body: u8[] = inst.inst_i32_const([], 5);
+    main_body = inst.inst_call(main_body, 0u32);
+    var main_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
+
+    m.code_bodies = [fact_fn, main_fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "120") {
+		t.Errorf("wasmtime stdout = %q, want 120 (factorial 5)", out)
+	}
+}
