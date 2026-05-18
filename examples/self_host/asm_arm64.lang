@@ -67,7 +67,9 @@ pub struct EmitState {
     label_n: i32,
     local_names: string[],
     in_function: boolean,
-    string_lits: string[]
+    string_lits: string[],
+    needs_print_int: boolean,
+    needs_read_int: boolean
 }
 
 function new_state(): EmitState {
@@ -78,7 +80,9 @@ function new_state(): EmitState {
         label_n: 0,
         local_names: ns,
         in_function: false,
-        string_lits: sl
+        string_lits: sl,
+        needs_print_int: false,
+        needs_read_int: false
     };
 }
 
@@ -88,7 +92,9 @@ function (s: EmitState) write(text: string): EmitState {
         label_n: s.label_n,
         local_names: s.local_names,
         in_function: s.in_function,
-        string_lits: s.string_lits
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -99,7 +105,9 @@ function (s: EmitState) bind_local(name: string): EmitState {
         label_n: s.label_n,
         local_names: ln,
         in_function: s.in_function,
-        string_lits: s.string_lits
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -110,7 +118,9 @@ function (s: EmitState) reset_locals(): EmitState {
         label_n: s.label_n,
         local_names: ln,
         in_function: s.in_function,
-        string_lits: s.string_lits
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -120,7 +130,9 @@ function (s: EmitState) enter_function(): EmitState {
         label_n: s.label_n,
         local_names: s.local_names,
         in_function: true,
-        string_lits: s.string_lits
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -130,7 +142,9 @@ function (s: EmitState) leave_function(): EmitState {
         label_n: s.label_n,
         local_names: s.local_names,
         in_function: false,
-        string_lits: s.string_lits
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
 }
 
@@ -162,7 +176,9 @@ function fresh_label(s: EmitState): LabelOut {
         label_n: s.label_n + 1,
         local_names: s.local_names,
         in_function: s.in_function,
-        string_lits: s.string_lits
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
     return LabelOut { state: ns, name: name };
 }
@@ -206,9 +222,35 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         label_n: s.label_n,
         local_names: s.local_names,
         in_function: s.in_function,
-        string_lits: sl
+        string_lits: sl,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int
     };
     return StringLitOut { state: ns, idx: idx };
+}
+
+function (s: EmitState) mark_print_int(): EmitState {
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: s.string_lits,
+        needs_print_int: true,
+        needs_read_int: s.needs_read_int
+    };
+}
+
+function (s: EmitState) mark_read_int(): EmitState {
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: true
+    };
 }
 
 // escape_for_ascii rewrites a string for `.ascii "…"` syntax:
@@ -356,6 +398,26 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     },
                     _ => { }
                 }
+            }
+            // print_int(i32_expr) — builtin lowering to a call into
+            // a runtime helper that converts the value to decimal
+            // text and writes it to stdout.
+            if (name == "print_int" && len(c.args) == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __lang_print_int\n");
+                s = s.write("    mov x0, #0\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_print_int();
+                return s;
+            }
+            // read_int() — builtin no-arg call to the read_int
+            // helper. Returns the value in x0; push to rt-stack.
+            if (name == "read_int" && len(c.args) == 0) {
+                s = s.write("    bl __lang_read_int\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_read_int();
+                return s;
             }
             var i: i32 = len(c.args) - 1;
             while (i >= 0) {
@@ -596,6 +658,106 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x8, #93\n");
         s = s.write("    svc #0\n");
     }
+    // __lang_print_int helper: converts the i64 in x0 to
+    // decimal text in a stack buffer and writes to stdout.
+    if (s.needs_print_int) {
+        s = s.write("__lang_print_int:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    sub sp, sp, #32\n");
+        s = s.write("    mov x9, x0\n");
+        s = s.write("    mov x10, #0\n");
+        s = s.write("    cmp x9, #0\n");
+        s = s.write("    bge .Lpi_pos\n");
+        s = s.write("    neg x9, x9\n");
+        s = s.write("    mov x10, #1\n");
+        s = s.write(".Lpi_pos:\n");
+        s = s.write("    sub x11, x29, #1\n");
+        s = s.write("    cbnz x9, .Lpi_loop\n");
+        s = s.write("    mov w12, #48\n");           // '0'
+        s = s.write("    strb w12, [x11]\n");
+        s = s.write("    sub x11, x11, #1\n");       // match loop's post-decrement
+        s = s.write("    mov x12, #1\n");
+        s = s.write("    b .Lpi_maybe_neg\n");
+        s = s.write(".Lpi_loop:\n");
+        s = s.write("    mov x12, #0\n");
+        s = s.write(".Lpi_div:\n");
+        s = s.write("    mov x13, #10\n");
+        s = s.write("    sdiv x14, x9, x13\n");
+        s = s.write("    msub x15, x14, x13, x9\n");
+        s = s.write("    add x15, x15, #48\n");
+        s = s.write("    strb w15, [x11]\n");
+        s = s.write("    sub x11, x11, #1\n");
+        s = s.write("    add x12, x12, #1\n");
+        s = s.write("    mov x9, x14\n");
+        s = s.write("    cbnz x9, .Lpi_div\n");
+        s = s.write(".Lpi_maybe_neg:\n");
+        s = s.write("    cmp x10, #0\n");
+        s = s.write("    beq .Lpi_no_neg\n");
+        s = s.write("    mov w15, #45\n");           // '-'
+        s = s.write("    strb w15, [x11]\n");
+        s = s.write("    sub x11, x11, #1\n");
+        s = s.write("    add x12, x12, #1\n");
+        s = s.write(".Lpi_no_neg:\n");
+        s = s.write("    add x11, x11, #1\n");
+        s = s.write("    mov x1, x11\n");
+        s = s.write("    mov x2, x12\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    mov x8, #64\n");            // sys_write
+        s = s.write("    svc #0\n");
+        s = s.write("    mov sp, x29\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_read_int helper: reads up to 16 bytes from stdin
+    // into a stack buffer, parses an optional leading `-`
+    // followed by decimal digits, returns the value in x0.
+    if (s.needs_read_int) {
+        s = s.write("__lang_read_int:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    sub sp, sp, #32\n");
+        s = s.write("    mov x0, #0\n");             // fd 0
+        s = s.write("    sub x1, x29, #16\n");
+        s = s.write("    mov x2, #16\n");
+        s = s.write("    mov x8, #63\n");            // sys_read
+        s = s.write("    svc #0\n");
+        s = s.write("    sub x9, x29, #16\n");       // cursor
+        s = s.write("    sub x10, x29, #16\n");
+        s = s.write("    add x10, x10, x0\n");       // end ptr
+        s = s.write("    mov x11, #0\n");            // accumulator
+        s = s.write("    mov x12, #0\n");            // neg flag
+        s = s.write("    cmp x9, x10\n");
+        s = s.write("    beq .Lri_done\n");
+        s = s.write("    ldrb w0, [x9]\n");
+        s = s.write("    cmp w0, #45\n");            // '-'
+        s = s.write("    bne .Lri_loop\n");
+        s = s.write("    mov x12, #1\n");
+        s = s.write("    add x9, x9, #1\n");
+        s = s.write(".Lri_loop:\n");
+        s = s.write("    cmp x9, x10\n");
+        s = s.write("    beq .Lri_done\n");
+        s = s.write("    ldrb w0, [x9]\n");
+        s = s.write("    sub x0, x0, #48\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    blt .Lri_done\n");
+        s = s.write("    cmp x0, #9\n");
+        s = s.write("    bgt .Lri_done\n");
+        s = s.write("    mov x13, #10\n");
+        s = s.write("    mul x11, x11, x13\n");
+        s = s.write("    add x11, x11, x0\n");
+        s = s.write("    add x9, x9, #1\n");
+        s = s.write("    b .Lri_loop\n");
+        s = s.write(".Lri_done:\n");
+        s = s.write("    cmp x12, #0\n");
+        s = s.write("    beq .Lri_no_neg\n");
+        s = s.write("    neg x11, x11\n");
+        s = s.write(".Lri_no_neg:\n");
+        s = s.write("    mov x0, x11\n");
+        s = s.write("    mov sp, x29\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
     // .rodata: emit each interned string literal as a
     // labelled `.ascii` directive. GAS interprets the escape
     // sequences in the quoted string, so a `\n` byte in the
@@ -750,6 +912,19 @@ function main(): i32 {
     if (!contains(a22, ".section .rodata")) { return 223; }
     if (!contains(a22, ".S0: .ascii")) { return 224; }
     if (!contains(a22, "hi")) { return 225; }
+
+    // print_int(N) emits a call to __lang_print_int + the
+    // helper appended once at end of .text.
+    var a23: string = emit_source("print_int(42); return 0;");
+    if (!contains(a23, "bl __lang_print_int")) { return 230; }
+    if (!contains(a23, "__lang_print_int:")) { return 231; }
+    if (!contains(a23, ".Lpi_div:")) { return 232; }
+
+    // read_int() emits a call to __lang_read_int + the helper.
+    var a24: string = emit_source("return read_int();");
+    if (!contains(a24, "bl __lang_read_int")) { return 240; }
+    if (!contains(a24, "__lang_read_int:")) { return 241; }
+    if (!contains(a24, ".Lri_loop:")) { return 242; }
 
     return 0;
 }
