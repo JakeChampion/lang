@@ -3683,6 +3683,35 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 			if sig, ok := b.info.FuncSigs[id.Name]; ok && sig != nil {
 				return sig.Result
 			}
+			// Closure-typed local / param: `len(f())` where f is
+			// a Var or param of type `() => string`. Without this
+			// dispatch `exprType` returns nil and the surrounding
+			// `len()` lowering falls through to the array-shape
+			// `[ptr - 4]; load` fallback — which traps on inline-
+			// form strings (SSO) returned by the closure.
+			for _, p := range b.fn.Params {
+				if p.Name == id.Name {
+					if ft, ok := p.Type.(*ast.FuncType); ok {
+						return ft.Result
+					}
+				}
+			}
+			for _, v := range b.info.Locals[b.fn] {
+				if v.Name == id.Name {
+					if ft, ok := v.Type.(*ast.FuncType); ok {
+						return ft.Result
+					}
+				}
+			}
+		}
+		// CaptureRef callee: `len(capF())` inside a closure body
+		// where `capF` is a captured outer function value. The
+		// captured Type is *FuncType — return its Result so the
+		// surrounding `len()` lowering picks the right load shape.
+		if cr, ok := x.Callee.(*ast.CaptureRef); ok {
+			if ft, ok := cr.Type.(*ast.FuncType); ok {
+				return ft.Result
+			}
 		}
 	case *ast.IfExpr:
 		// `len(if cond { a } else { b })` where both arms are

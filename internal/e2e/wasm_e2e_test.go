@@ -4256,6 +4256,30 @@ function main(): i32 {
 	}
 }
 
+// `len(f())` where `f` is a closure-typed local returning a
+// string. The IR's `len()` lowering picks between `OpStrLen`
+// (SSO-aware) and the array-shape `[ptr-4]; load` based on
+// `exprType(arg)` — the dispatch needs to see `string`, not
+// nil. Before this fix `exprType(*ast.Call)` only inspected
+// `info.FuncSigs[callee.Name]`, which never matches a function-
+// typed local (vars / params don't live in FuncSigs). The
+// load fell through to `[ptr-4]` and trapped on inline-form
+// strings produced by string-returning closures (the SSO flag
+// bit makes `ptr - 4` an out-of-bounds memory address).
+func TestWASMLenOfClosureReturningString(t *testing.T) {
+	src := `function makeReader(): () => string {
+    function build(): string { return "hello"; }
+    return build;
+}
+function main(): i32 {
+    var f = makeReader();
+    return len(f());
+}`
+	if got := runWasm(t, src); got != 5 {
+		t.Errorf("got %d, want 5 (len of closure-returned string)", got)
+	}
+}
+
 // `if let` / `match` / `let else` / `defer` statements inside a
 // closure body, where the scrutinee / source / deferred expr
 // references a captured outer-scope name. closureconv's
