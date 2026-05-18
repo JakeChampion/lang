@@ -11415,6 +11415,29 @@ function main(): i32 {
 	}
 }
 
+// Mirror of TestWASMMutableCapturedVar — assignment to a
+// captured outer-scope variable now stores into the env block.
+func TestArm64MutableCapturedVar(t *testing.T) {
+	src := `function makeCounter(): () => i32 {
+    var count: i32 = 0;
+    function tick(): i32 {
+        count = count + 1;
+        return count;
+    }
+    return tick;
+}
+function main(): i32 {
+    var c = makeCounter();
+    var a: i32 = c();
+    var b: i32 = c();
+    var d: i32 = c();
+    return a + b + d;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 6 {
+		t.Errorf("got %d, want 6 (counter increments in env)", code)
+	}
+}
+
 // Mirror of TestWASMClosureCallsCapturedFn — the IR's call()
 // path now handles `*ast.CaptureRef` callees so calling a
 // captured function value inside a nested closure works.

@@ -4971,6 +4971,33 @@ func (b *builder) assign(n *ast.Assign) error {
 		b.emit(payloadStoreOpFor(ft, b.ptrW))
 		return nil
 	}
+	if cr, ok := n.Target.(*ast.CaptureRef); ok {
+		// `cap = v` inside a closure body, where `cap` is a
+		// captured outer-scope variable. closureconv rewrote the
+		// target ident to a CaptureRef during the body walk. The
+		// env block is heap-allocated and shared by all calls to
+		// this closure — mutation persists across re-invocations,
+		// matching the user-expected "captures live in the closure's
+		// environment" semantics. Outer-scope reads of the same
+		// name AFTER closure construction see the original
+		// (pre-capture) value — captures are by value at make-
+		// time. No tee: assignment is statement-shaped; the
+		// exprLeavesValue dispatch's default (false for non-Ident
+		// targets) already suppresses the surrounding ExprStmt's
+		// drop.
+		envIdx, ok := b.locals["__env"]
+		if !ok {
+			return fmt.Errorf("ir: capture assignment %q in function without __env param (compiler bug)", cr.Name)
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: envIdx})
+		b.emit(Op{Kind: OpConstI32, I32: int32(cr.Offset)})
+		b.emit(Op{Kind: OpAdd})
+		if err := b.expr(n.Value); err != nil {
+			return err
+		}
+		b.emit(payloadStoreOpFor(cr.Type, b.ptrW))
+		return nil
+	}
 	return fmt.Errorf("ir: assignment target %T not yet lowered", n.Target)
 }
 
