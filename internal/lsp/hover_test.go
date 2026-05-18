@@ -105,6 +105,27 @@ func TestHover_FieldAccess(t *testing.T) {
 	}
 }
 
+func TestHover_MethodCall(t *testing.T) {
+	src := "struct Point { x: i32, y: i32 }\n" +
+		"function (p: Point) sum(): i32 { return p.x + p.y; }\n" +
+		"function main(): i32 {\n  var p: Point = Point { x: 3, y: 4 };\n  return p.sum();\n}\n"
+	// Cursor on `sum` in `p.sum()` — line 4 (0-based), col 13.
+	// `  return p.sum();` → `s` of `sum` is at col 13 (0-based).
+	got := hoverFor(src, 4, 13)
+	if got == nil {
+		t.Fatal("expected hover for method call p.sum()")
+	}
+	if !strings.Contains(got.Contents.Value, "sum") {
+		t.Errorf("hover = %q, want it to mention sum", got.Contents.Value)
+	}
+	if !strings.Contains(got.Contents.Value, "Point") {
+		t.Errorf("hover = %q, want it to mention Point (receiver)", got.Contents.Value)
+	}
+	if !strings.Contains(got.Contents.Value, "i32") {
+		t.Errorf("hover = %q, want it to mention the i32 return", got.Contents.Value)
+	}
+}
+
 func TestHover_FieldAccess_Chained(t *testing.T) {
 	src := "struct Inner { v: i32 }\nstruct Outer { inner: Inner }\n" +
 		"function main(): i32 {\n  var o: Outer = Outer { inner: Inner { v: 5 } };\n  return o.inner.v;\n}\n"

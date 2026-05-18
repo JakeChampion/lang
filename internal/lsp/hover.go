@@ -98,6 +98,13 @@ func describeName(info *checker.Info, hit *nameHit) (string, bool) {
 			return d, true
 		}
 	}
+	// Method call (`p.area()`). Look up the mangled implementation
+	// in Info.Methods + FuncSigs to surface the signature.
+	if hit.methodCall != nil && info != nil {
+		if d, ok := describeMethodCall(info, hit.methodCall); ok {
+			return d, true
+		}
+	}
 
 	// Ident hits go through the regular scope-chain resolution.
 	if hit.ident != nil {
@@ -238,6 +245,71 @@ func lookupVariant(info *checker.Info, name string) (string, ast.EnumVariant, bo
 		}
 	}
 	return "", ast.EnumVariant{}, false
+}
+
+// describeMethodCall formats the hover for a `target.method()`
+// site. Pulls the mangled implementation name from Info.Methods
+// (keyed by "ReceiverTypeName.method") and looks its signature up
+// in FuncSigs. Falls through to ok=false if the receiver type isn't
+// a struct/enum/builtin we can name, or the method isn't registered.
+func describeMethodCall(info *checker.Info, call *ast.Call) (string, bool) {
+	receiverName, ok := receiverTypeKey(call.Method.Receiver)
+	if !ok {
+		return "", false
+	}
+	key := receiverName + "." + call.Method.Field
+	mangled, ok := info.Methods[key]
+	if !ok {
+		return "", false
+	}
+	sig, ok := info.FuncSigs[mangled]
+	if !ok {
+		return "(method) " + call.Method.Field, true
+	}
+	return "(method on " + receiverName + ") " + formatMethodSig(call.Method.Field, sig), true
+}
+
+// formatMethodSig is formatFuncSig but skips the implicit receiver
+// (the first parameter of the mangled __method_* function), so the
+// user sees the method's "logical" parameter list.
+func formatMethodSig(name string, sig *ast.FuncType) string {
+	if sig == nil {
+		return name + "(?)"
+	}
+	out := "function " + name + "("
+	for i, p := range sig.Params {
+		if i == 0 {
+			continue // implicit receiver
+		}
+		if i > 1 {
+			out += ", "
+		}
+		out += typeString(p)
+	}
+	return out + "): " + typeString(sig.Result)
+}
+
+// receiverTypeKey extracts the source-level type name used as the
+// first half of the Info.Methods key. Mirrors the checker's
+// own logic in the method-rewrite site.
+func receiverTypeKey(t ast.Type) (string, bool) {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name, true
+	case ast.EnumType:
+		return x.Name, true
+	case ast.NumberType:
+		return x.String(), true
+	case ast.FloatType:
+		return x.String(), true
+	case ast.StringType:
+		return "string", true
+	case ast.BoolType:
+		return "boolean", true
+	case ast.ArrayType:
+		return "Array", true
+	}
+	return "", false
 }
 
 func formatEnumVariant(enumName string, v ast.EnumVariant) string {

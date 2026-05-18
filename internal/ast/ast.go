@@ -648,6 +648,26 @@ type Call struct {
 	// to pick the right cloned function and rewrite the callee
 	// name to the mangled form.
 	TypeArgs []Type
+	// Method is set by the checker when this Call was rewritten
+	// from a `target.method(args)` source-level method call. The
+	// rest of the pipeline ignores it; the LSP reads it to answer
+	// hover / definition on the original method name (which
+	// otherwise disappears once the call is rewritten to
+	// `__method_Type_name(target, args)`).
+	Method *MethodCallSite
+}
+
+// MethodCallSite records the original source-level shape of a
+// method call before the checker rewrote it. Field is the
+// method name as the user wrote it, FieldPos points at that
+// name's position in the source, and Receiver is the resolved
+// owner type (e.g. ast.StructType{Name:"Point"}). The LSP locates
+// the call via FieldPos and uses Receiver to look up the
+// implementation in Info.Methods.
+type MethodCallSite struct {
+	Field    string
+	FieldPos Position
+	Receiver Type
 }
 type Binary struct {
 	P           Position

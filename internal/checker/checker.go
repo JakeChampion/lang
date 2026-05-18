@@ -3385,6 +3385,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if typeName != "" {
 				key := typeName + "." + fa.Field
 				if mangled, ok := c.info.Methods[key]; ok && c.methodVisibleHere(mangled) {
+					// Preserve the source-level call site so the LSP
+					// can resolve hover / goto-def on `area` in
+					// `p.area()` after we rewrite the AST to a
+					// mangled flat call.
+					n.Method = &ast.MethodCallSite{
+						Field:    fa.Field,
+						FieldPos: fa.FieldPos,
+						Receiver: tt,
+					}
 					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
 					// Carry the receiver's TypeArgs (if any) so
