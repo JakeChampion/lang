@@ -1,0 +1,89 @@
+---
+title: Structs, enums, methods
+description: Building user-defined types and dispatching on them.
+sidebar:
+  order: 3
+---
+
+import LangPlayground from "../../../components/LangPlayground.astro";
+
+## Structs
+
+Plain records. Fields are positional in memory (layout matches
+declaration order), addressed by name in source.
+
+<LangPlayground
+  code={`struct Point { x: i32, y: i32 }
+
+function origin(): Point {
+    return Point { x: 0, y: 0 };
+}
+
+function main(): i32 {
+    var p: Point = origin();
+    print(p.x.to_string() + "," + p.y.to_string());
+    return 0;
+}`}
+/>
+
+## Methods
+
+Receiver syntax goes between `function` and the name. Method calls
+dispatch by receiver type at the call site.
+
+<LangPlayground
+  code={`struct Point { x: i32, y: i32 }
+
+function (p: Point) magnitude_sq(): i32 {
+    return p.x * p.x + p.y * p.y;
+}
+
+function main(): i32 {
+    var p: Point = Point { x: 3, y: 4 };
+    print(p.magnitude_sq().to_string()); // 25
+    return 0;
+}`}
+/>
+
+## Enums
+
+Tagged unions with optional positional payloads. The standard
+library injects `Option[T]` and `Result[T, E]` so you don't have
+to re-declare them.
+
+<LangPlayground
+  code={`enum Shape {
+    Circle(i32),         // radius
+    Rectangle(i32, i32), // width, height
+}
+
+function area(s: Shape): i32 {
+    match (s) {
+        Circle(r) => { return 3 * r * r; },
+        Rectangle(w, h) => { return w * h; },
+    }
+}
+
+function main(): i32 {
+    print(area(Circle(5)).to_string());        // 75
+    print(area(Rectangle(3, 4)).to_string());  // 12
+    return 0;
+}`}
+/>
+
+## Match is exhaustive
+
+The checker fails the build if a `match` misses a variant — or
+requires a wildcard `_` arm to acknowledge the gap.
+
+```lang
+function describe(s: Shape): string {
+    match (s) {
+        Circle(_) => { return "round"; },
+        // error: missing variant Rectangle
+        //        ^~~~~
+    }
+}
+```
+
+[Next: Modules →](/tutorial/modules/)

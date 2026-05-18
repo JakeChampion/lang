@@ -67,3 +67,9 @@ func Resolve(importPath string) (string, bool) {
 func IsStdlibPath(importPath string) bool {
 	return strings.HasPrefix(importPath, "std/") || strings.HasPrefix(importPath, "core/")
 }
+
+// FS returns the embedded filesystem so tooling can iterate the
+// stdlib tree (cmd/langdoc uses this to enumerate std/*.lang for
+// reference-page generation). Read-only by virtue of embed.FS;
+// callers that mutate the result would get a runtime panic.
+func FS() fs.FS { return src }

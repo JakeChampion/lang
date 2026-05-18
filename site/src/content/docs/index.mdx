@@ -1,0 +1,63 @@
+---
+title: lang
+description: A small, fast-startup language with native arm64 / x86-64 / wasm backends.
+template: splash
+hero:
+  tagline: A small, fast-startup language for CLI tools and edge-function HTTP servers.
+  actions:
+    - text: Get started
+      link: /tutorial/install/
+      icon: right-arrow
+      variant: primary
+    - text: Try in browser
+      link: /playground/
+      icon: external
+    - text: Source on GitHub
+      link: https://github.com/JakeChampion/lang
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+import LangPlayground from "../../components/LangPlayground.astro";
+
+<CardGrid stagger>
+  <Card title="Fast-startup binaries" icon="rocket">
+    Native arm64 + x86-64 ELF binaries with no runtime / no GC.
+    Compile a CLI tool, link statically, start in milliseconds.
+  </Card>
+  <Card title="WebAssembly ready" icon="puzzle">
+    WASI Preview 2 component output. Drop the `.wasm` into wasmtime
+    or any other host with no glue code.
+  </Card>
+  <Card title="Real LSP, real editor support" icon="laptop">
+    `cmd/lang-lsp` ships hover, goto-definition, completion,
+    signature help, inlay hints, rename, format-on-save, and a
+    VS Code extension that wraps it.
+  </Card>
+  <Card title="Type-checked" icon="approve-check-circle">
+    Sized integer types, generics with monomorphisation, tagged-
+    union enums with exhaustive pattern matching, `Option` and
+    `Result` baked in.
+  </Card>
+</CardGrid>
+
+## Hello, world
+
+<LangPlayground
+  code={`function main(): i32 {
+    print("hello, world");
+    return 0;
+}`}
+/>
+
+## Where next
+
+- **[Tutorial](/tutorial/install/)** — install the toolchain and walk
+  through the language one concept at a time.
+- **[Reference](/reference/syntax/)** — formal-ish syntax + type
+  system docs.
+- **[Standard library](/stdlib/)** — every public function in
+  `std/*` with signatures and inline examples.
+- **[Playground](/playground/)** — try lang in your browser. No
+  install required.

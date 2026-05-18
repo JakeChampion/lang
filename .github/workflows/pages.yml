@@ -1,33 +1,38 @@
 name: Pages
 
-# Publishes the web playground to GitHub Pages on push to main.
-# The job runs `./web/build.sh` (which compiles the Go wasm
-# entry point + refreshes the wasm_exec.js shim), then uploads
-# the `web/` directory as a Pages artefact for the deploy step.
+# Builds the docs site + playground as a single GitHub Pages
+# bundle. Layout:
+#
+#   /              — docs (Astro + Starlight, built from site/)
+#   /playground/   — interactive playground (web/, lang.wasm)
+#   /stdlib/...    — auto-generated reference (cmd/langdoc → MDX)
+#
+# Build order:
+#   1. Build the playground wasm via ./web/build.sh.
+#   2. Stage web/ under site/public/playground/ so Astro serves it
+#      at /playground/ in the final bundle.
+#   3. Run cmd/langdoc to emit site/src/content/docs/stdlib/*.md
+#      from internal/stdlib/std/*.lang.
+#   4. `npm install && npm run build` under site/ → site/dist/.
+#   5. Upload site/dist/ as the Pages artefact.
 #
 # Repo-side prerequisites (one-time):
 #   1. Repository Settings → Pages → Source: "GitHub Actions"
 #   2. The default GITHUB_TOKEN permissions cover Pages writes;
 #      no PAT or secrets needed.
 #
-# The deploy URL appears in the job summary once it lands —
-# the actions/deploy-pages action sets it as the job output.
-# Typically `https://<user>.github.io/<repo>/`.
-#
-# Gated on changes that affect the playground build so we don't
-# burn CI minutes on unrelated edits. Plus a workflow_dispatch
-# trigger for manual reruns. The cmd/lang-wasm path filter
-# catches the entry point; web/** catches the page + build
-# script; internal/{ast,checker,...}/** catches the pipeline
-# stages the wasm build links against (a checker change can
-# alter what the page can run even if cmd/lang-wasm is
-# untouched).
+# Gated on changes that affect the playground build, the docs
+# source, or the stdlib (since langdoc consumes it). Plus a
+# workflow_dispatch trigger for manual reruns.
+
 on:
   push:
     branches: [main]
     paths:
       - "cmd/lang-wasm/**"
+      - "cmd/langdoc/**"
       - "web/**"
+      - "site/**"
       - "internal/ast/**"
       - "internal/checker/**"
       - "internal/constfold/**"
@@ -38,21 +43,17 @@ on:
       - "internal/monomorph/**"
       - "internal/parser/**"
       - "internal/prelude/**"
+      - "internal/stdlib/**"
       - "internal/treeshake/**"
       - "go.mod"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
-# GitHub Pages requires these permissions on the workflow,
-# not just the job, for OIDC-backed deploys.
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Cancel in-flight runs for the same ref when a new commit
-# arrives. Pages only supports one deployment at a time; a
-# queue would just deploy a stale build.
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -69,13 +70,39 @@ jobs:
           go-version: "1.24"
           cache: false
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: site/package.json
+
       - name: Build playground wasm
         run: ./web/build.sh
+
+      - name: Stage playground into site/public/playground/
+        # Astro copies everything under site/public/ verbatim to
+        # the bundle root, so playground/ ends up at /playground/.
+        # Use cp -L to dereference the wasm binary (in case it's
+        # ever a symlink) — Pages rejects symlinks in artefacts.
+        run: |
+          rm -rf site/public/playground
+          mkdir -p site/public/playground
+          cp -L web/index.html web/wasm_exec.js web/lang.wasm site/public/playground/
+
+      - name: Generate stdlib reference
+        run: go run ./cmd/langdoc -out site/src/content/docs/stdlib/
+
+      - name: Install site deps + build
+        working-directory: site
+        run: |
+          npm install
+          npm run build
 
       - name: Upload Pages artefact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: web
+          path: site/dist
 
   deploy:
     runs-on: ubuntu-latest

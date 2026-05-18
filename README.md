@@ -1,5 +1,11 @@
 # lang
 
+📚 **Documentation: <https://jakechampion.github.io/lang/>**
+([tutorial](https://jakechampion.github.io/lang/tutorial/install/) ·
+[reference](https://jakechampion.github.io/lang/reference/syntax/) ·
+[standard library](https://jakechampion.github.io/lang/stdlib/) ·
+[playground](https://jakechampion.github.io/lang/playground/))
+
 A small statically-typed language with several backends, written in Go.
 Targets so far:
 

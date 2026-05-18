@@ -1,0 +1,73 @@
+---
+title: First steps
+description: Variables, control flow, the basic building blocks.
+sidebar:
+  order: 2
+---
+
+import LangPlayground from "../../../components/LangPlayground.astro";
+
+## Variables
+
+`var` declares a mutable binding; `let` is reserved for pattern-
+binding (covered later). Annotate the type explicitly, or let the
+checker infer it from the initialiser.
+
+<LangPlayground
+  code={`function main(): i32 {
+    var x: i32 = 7;
+    var y = x * 2;       // type inferred as i32
+    print(y.to_string());
+    return 0;
+}`}
+/>
+
+## Numbers have sizes
+
+There's no untyped `int`. The eight integer types are `i8`, `i16`,
+`i32`, `i64` (signed) and `u8`, `u16`, `u32`, `u64` (unsigned),
+plus `usize` for native pointer-width counts. Two float types:
+`f32` and `f64`. Mixing widths needs an explicit cast.
+
+```lang
+var a: i32 = 7;
+var b: i64 = a as i64;   // narrow → wide cast
+var c: i32 = b as i32;   // wide → narrow (may truncate)
+```
+
+## Control flow
+
+`if` / `else`, `while`, and three-part `for` — straightforward.
+
+<LangPlayground
+  code={`function main(): i32 {
+    var sum: i32 = 0;
+    for (var i: i32 = 0; i < 10; i = i + 1) {
+        if (i % 2 == 0) {
+            sum = sum + i;
+        }
+    }
+    print(sum.to_string()); // 20
+    return 0;
+}`}
+/>
+
+`if` is also an expression — useful for one-line ternaries.
+
+```lang
+var max: i32 = if (a > b) { a } else { b };
+```
+
+## Functions
+
+```lang
+function add(a: i32, b: i32): i32 {
+    return a + b;
+}
+```
+
+Return type is always required — even `void` for procedures.
+Parameter types are always required too; no inference at the
+function-signature boundary.
+
+[Next: Types →](/tutorial/types/)
