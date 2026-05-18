@@ -3616,17 +3616,31 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if len(n.Args) != len(ft.Params) {
 			c.errf(n.P, "function expects %d arguments, got %d", len(ft.Params), len(n.Args))
 		}
-		// If the callee resolves to a generic FuncDecl, infer its
-		// type arguments from the actual argument types and stamp
-		// them on the Call so the monomorphisation pass picks the
-		// right clone. Inference only consults the args — explicit
-		// type-arg syntax (`f[i32](42)`) is reserved.
+		// If the callee resolves to a generic FuncDecl, build its
+		// type-arg substitution. Two source shapes:
+		// - Explicit: `f[i32](42)` — the parser stamps `n.TypeArgs`
+		//   directly. We seed `sub` from those args, paired with
+		//   the FuncDecl's TypeParams declaration order.
+		// - Inferred: `f(42)` — `sub` starts empty and gets filled
+		//   in by walking args against the function's declared
+		//   params via unifyType below.
 		var sub map[string]ast.Type
 		var genericFn *ast.FuncDecl
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
 				genericFn = fn
 				sub = make(map[string]ast.Type, len(fn.TypeParams))
+				if len(n.TypeArgs) > 0 {
+					if len(n.TypeArgs) != len(fn.TypeParams) {
+						c.errf(n.P, "%s expects %d type argument(s), got %d",
+							fn.Name, len(fn.TypeParams), len(n.TypeArgs))
+					}
+					for i, tp := range fn.TypeParams {
+						if i < len(n.TypeArgs) {
+							sub[tp] = n.TypeArgs[i]
+						}
+					}
+				}
 			}
 		}
 		for i := range n.Args {

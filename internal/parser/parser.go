@@ -1630,6 +1630,60 @@ func (p *parser) parseSwitch() (ast.Stmt, error) {
 // Each arm body is a brace-block; we require this for consistency
 // with `if` / `for` / `while` and to keep the parser context-light.
 // Arms are separated by commas; a trailing comma is allowed.
+// peekTypeArgs reports whether the `[` at p.peek() opens a
+// generic call-site type-args list (`f[i32](args)`) as opposed
+// to an indexing / slicing `[...]`. The cheap-and-correct
+// disambiguator: the first token AFTER the `[` must be a
+// type-keyword (i32, u32, string, boolean, void, f32, f64,
+// usize, ...) — those tokens can't appear in an indexing
+// expression. The closing `]` followed by `(` is required for
+// the type-args interpretation; if either condition fails the
+// caller falls through to the regular Index / Slice handling.
+// Doesn't consume tokens.
+func (p *parser) peekTypeArgs() bool {
+	if !p.match(lexer.Punct, "[") {
+		return false
+	}
+	if p.i+1 >= len(p.tokens) {
+		return false
+	}
+	next := p.tokens[p.i+1]
+	if next.Kind != lexer.Keyword {
+		return false
+	}
+	switch next.Text {
+	case "i8", "i16", "i32", "i64",
+		"u8", "u16", "u32", "u64",
+		"usize", "f32", "f64",
+		"string", "boolean", "void":
+		// fallthrough — keep walking to find `]` followed by `(`
+	default:
+		return false
+	}
+	// Walk forward looking for the matching `]` at the same
+	// bracket depth. Then check the token after is `(`.
+	depth := 1
+	for j := p.i + 1; j < len(p.tokens); j++ {
+		t := p.tokens[j]
+		if t.Kind == lexer.Punct {
+			switch t.Text {
+			case "[":
+				depth++
+			case "]":
+				depth--
+				if depth == 0 {
+					if j+1 < len(p.tokens) {
+						nt := p.tokens[j+1]
+						return nt.Kind == lexer.Punct && nt.Text == "("
+					}
+					return false
+				}
+			}
+		}
+	}
+	return false
+}
+
 // isLiteralPatternStart reports whether the token at hand opens
 // a literal pattern in match-arm position — a NumberLit,
 // FloatLit, StringLit, or the `true` / `false` keywords. Variant
@@ -2429,6 +2483,57 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			}
 			expr = &ast.Call{P: open.Pos, Callee: expr, Args: args}
 		case p.match(lexer.Punct, "["):
+			// Generic call-site type arguments: `f[i32](args)` /
+			// `pair[i32, string](a, b)`. Disambiguated from array
+			// indexing by speculative parse: if the bracket
+			// content parses as a comma-separated list of types
+			// AND is followed by `(`, it's a type-args call.
+			// Otherwise rewind and fall through to the Index /
+			// Slice path. Required: at least one token inside the
+			// brackets must be a TYPE KEYWORD (i32, u32, string,
+			// boolean, etc.), which is unambiguously a type and
+			// can't appear as an indexing expression. This keeps
+			// `arr[i]` working unchanged while unlocking the
+			// generic-instantiation syntax for the inference
+			// cases that don't get help from arguments alone.
+			if p.peekTypeArgs() {
+				open := p.advance() // [
+				var typeArgs []ast.Type
+				for {
+					t, err := p.parseType()
+					if err != nil {
+						return nil, err
+					}
+					typeArgs = append(typeArgs, t)
+					if _, ok := p.accept(lexer.Punct, ","); !ok {
+						break
+					}
+				}
+				if _, err := p.expect(lexer.Punct, "]"); err != nil {
+					return nil, err
+				}
+				if _, err := p.expect(lexer.Punct, "("); err != nil {
+					return nil, err
+				}
+				var args []ast.Expr
+				if !p.match(lexer.Punct, ")") {
+					for {
+						a, err := p.parseExpr()
+						if err != nil {
+							return nil, err
+						}
+						args = append(args, a)
+						if _, ok := p.accept(lexer.Punct, ","); !ok {
+							break
+						}
+					}
+				}
+				if _, err := p.expect(lexer.Punct, ")"); err != nil {
+					return nil, err
+				}
+				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, TypeArgs: typeArgs}
+				continue
+			}
 			open := p.advance()
 			// Slicing distinguishes from indexing by the `:`
 			// separator: `arr[i]` indexes, `arr[a:b]` /

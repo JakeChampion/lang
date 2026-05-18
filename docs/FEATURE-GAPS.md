@@ -292,8 +292,8 @@ Driven by "smallest, no-runtime-touch, unlocks the most user code":
    above.
 5. ✅ **Anonymous lambdas (#1)** — landed in PR #584.
 6. ✅ **Match on literal patterns (#6)** — landed in this PR.
-7. **Generic call-site type args (#4)** — useful only after lambdas
-   ship (since most call sites infer anyway). Lambdas are in now,
-   but the inference-only path still handles the common cases.
+7. ✅ **Generic call-site type args (#4)** — landed in this PR.
+   Disambiguated from `arr[i]` by requiring a leading type
+   keyword inside the brackets.
 8. **Generic struct method type params (#8)** — biggest; needs
    monomorph reach into methods.
