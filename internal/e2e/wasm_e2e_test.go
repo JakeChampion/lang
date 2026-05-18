@@ -4256,6 +4256,35 @@ function main(): i32 {
 	}
 }
 
+// Higher-order closure: a nested function captures a function-
+// typed param and calls it from inside its body. The closureconv
+// pass rewrote that captured-name reference to a `*ast.CaptureRef`,
+// so the call's callee is no longer an Ident — the IR's call()
+// path used to reject anything non-Ident with `ir: indirect call
+// from non-identifier expression`. Now CaptureRef callees are
+// recognised: the captured slot holds the closure pair pointer,
+// the IR pushes args, then dispatches indirectly through the
+// pair via OpCallIndirect (same path function-typed locals use).
+func TestWASMClosureCallsCapturedFn(t *testing.T) {
+	src := `function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function makeApplier(f: (i32) => i32): (i32) => i32 {
+    function apply(x: i32): i32 { return f(x) + 1; }
+    return apply;
+}
+function main(): i32 {
+    var a = makeAdder(10);
+    var ap = makeApplier(a);
+    return ap(5);
+}`
+	// (5 + 10) + 1 = 16
+	if got := runWasm(t, src); got != 16 {
+		t.Errorf("got %d, want 16", got)
+	}
+}
+
 // Closure that recursively calls itself by name from inside its
 // own body — `fact(n - 1)` inside `function fact`. The checker
 // skips this self-reference in the capture set (to avoid the

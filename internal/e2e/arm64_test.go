@@ -11415,6 +11415,28 @@ function main(): i32 {
 	}
 }
 
+// Mirror of TestWASMClosureCallsCapturedFn — the IR's call()
+// path now handles `*ast.CaptureRef` callees so calling a
+// captured function value inside a nested closure works.
+func TestArm64ClosureCallsCapturedFn(t *testing.T) {
+	src := `function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function makeApplier(f: (i32) => i32): (i32) => i32 {
+    function apply(x: i32): i32 { return f(x) + 1; }
+    return apply;
+}
+function main(): i32 {
+    var a = makeAdder(10);
+    var ap = makeApplier(a);
+    return ap(5);
+}`
+	if _, code := compileAndRunArm64(t, src); code != 16 {
+		t.Errorf("got %d, want 16", code)
+	}
+}
+
 // Mirror of TestWASMClosureRecursiveSelfCall — closureconv now
 // rewrites a recursive self-reference inside the hoisted body
 // from the original local name (`fact`) to the hoisted name
