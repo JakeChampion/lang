@@ -3967,6 +3967,36 @@ func (c *checker) stampStructTypeArgs(e ast.Expr, dst ast.Type) {
 }
 
 func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
+	// TryOp: `Some(EXPR)?` / `Ok(EXPR)?` — the destination's
+	// hint applies to the inner expression's payload, not
+	// to the TryOp itself. Wrap the hint in the appropriate
+	// enum (Option / Result) so the inner variant-call gets
+	// its payload settled. Without this, `var v: f64 =
+	// Some(3.14)?;` left 3.14 at f32 default and wasm
+	// rejected the f64 destination load.
+	if to, ok := e.(*ast.TryOp); ok {
+		switch to.Kind {
+		case ast.TryKindOption:
+			c.settleNumeric(to.Inner, ast.EnumType{Name: "Option", Args: []ast.Type{hint}})
+		case ast.TryKindResult:
+			// Reconstruct Result[T, E] using the encl. fn's
+			// error type when known — settling Inner with
+			// just the T half is the part that matters for
+			// the polymorphic payload.
+			args := []ast.Type{hint}
+			if c.current != nil {
+				if re, ok := c.current.ReturnType.(ast.EnumType); ok && re.Name == "Result" && len(re.Args) == 2 {
+					args = append(args, re.Args[1])
+				}
+			}
+			c.settleNumeric(to.Inner, ast.EnumType{Name: "Result", Args: args})
+		}
+		// Stamp `to.Type` so postSettleType / IR sees the
+		// resolved payload width — `to.Type` was set by the
+		// original checkExpr from the source's pre-settle
+		// `srcEnum.Args[0]`.
+		to.Type = hint
+	}
 	switch hn := hint.(type) {
 	case ast.NumberType:
 		if hn.Polymorphic {

@@ -9764,6 +9764,66 @@ function main(): i32 {
 	}
 }
 
+// Two cross-target type-shape bugs that the wasm validator
+// caught and natives silently absorbed:
+//
+//   1. b.exprType(*ast.Binary) returned the IR's
+//      IntWidth-stamped NumberType even for comparison ops
+//      (==, !=, <, <=, >, >=). The OPERAND width is what
+//      drives codegen's `i64.eq` vs `i32.eq` selection, but
+//      the RESULT type is bool (i32). Without the
+//      comparison-op shortcut, `(a > b, a + b)` inside a
+//      `(boolean, i64)` tuple inferred its first slot as
+//      i64 — the tuple stride doubled, the i32 0/1 store
+//      overflowed into the i64 slot, and wasm rejected the
+//      load with "type mismatch: expected i64, found i32".
+//
+//   2. settleNumeric had no `*ast.TryOp` case. The
+//      destination's hint applies to the inner expression's
+//      payload, not to the TryOp itself. Without a wrap of
+//      the hint in `Option[T]` / `Result[T, E]`,
+//      `var v: f64 = Some(3.14)?;` left 3.14 at the f32
+//      default and wasm rejected the f64 destination load
+//      ("type mismatch: expected f64, found f32").
+//
+// Both fixes land in the same PR — they share the "the
+// surrounding type-shape needs to reach the inner
+// expression for settle to fire" pattern and were both
+// silently miscompiled to a near-correct shape on natives.
+func TestArm64BoolCmpAndTryOpSettle(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"bool_in_tuple_with_i64", `function step(a: i64, b: i64): (boolean, i64) {
+    return (a > b, a + b);
+}
+function main(): i32 {
+    var p = step(1234567890123, 100);
+    if (p.0 && p.1 == 1234567890223) { return 0; }
+    return 1;
+}`, 0},
+		{"f64_tryop_widen", `function process(): Option[f64] {
+    var v: f64 = Some(3.14)?;
+    return Some(v * 2.0);
+}
+function main(): i32 {
+    match (process()) {
+        Some(f) => { if (f > 6.0 && f < 7.0) { return 0; } return 1; },
+        None => { return 2; },
+    }
+    return 99;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
