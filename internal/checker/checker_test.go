@@ -1209,6 +1209,66 @@ func TestArrayMethodDispatchAutoDiscovers(t *testing.T) {
 	}
 }
 
+// TestInfoGenericsAggregatesFuncsAndStructs — the kind-agnostic
+// `Info.Generics` map (IMPROVEMENTS.md #10) should contain every
+// generic function AND every generic struct declared in the
+// program. Lets passes consult one map for "is this name a
+// generic decl?" instead of running parallel paths over
+// `GenericFuncs` / `GenericStructs`.
+func TestInfoGenericsAggregatesFuncsAndStructs(t *testing.T) {
+	src := `struct Box[T] { v: T }
+struct Pair[A, B] { first: A, second: B }
+function id[T](x: T): T { return x; }
+function pick[A, B](a: A, b: B, take_first: boolean): A { return a; }
+function main(): i32 {
+	var b = Box { v: 7 };
+	var p = Pair { first: 1, second: "hi" };
+	return id(b.v) + pick(0, p.second, true);
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	// Generics aggregates both kinds.
+	for _, name := range []string{"Box", "Pair", "id", "pick"} {
+		decl, ok := info.Generics[name]
+		if !ok {
+			t.Errorf("Generics[%q] missing", name)
+			continue
+		}
+		if decl.GenericName() != name {
+			t.Errorf("Generics[%q].GenericName() = %q", name, decl.GenericName())
+		}
+		if len(decl.GenericTypeParams()) == 0 {
+			t.Errorf("Generics[%q].GenericTypeParams() unexpectedly empty", name)
+		}
+	}
+	// Non-generic `main` is NOT in the map.
+	if _, ok := info.Generics["main"]; ok {
+		t.Error(`Generics["main"] should not exist (main has no type params)`)
+	}
+	// Each entry's kind-specific map agrees on the same decl
+	// pointer — no divergence between the typed maps and the
+	// kind-agnostic view.
+	for name, decl := range info.Generics {
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			if info.GenericFuncs[name] != fn {
+				t.Errorf("GenericFuncs[%q] != Generics[%q]", name, name)
+			}
+		} else if sd, ok := decl.(*ast.StructDecl); ok {
+			if info.GenericStructs[name] != sd {
+				t.Errorf("GenericStructs[%q] != Generics[%q]", name, name)
+			}
+		} else {
+			t.Errorf("Generics[%q] has unexpected type %T", name, decl)
+		}
+	}
+}
+
 // TestQualifiedVariantReferences — `Color.Red`-style references
 // let two enums declare the same variant name and disambiguate at
 // the use site. Was IMPROVEMENTS.md #15. Replaces the old decl-

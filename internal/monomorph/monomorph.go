@@ -49,7 +49,7 @@ type instKey struct {
 // field is consumed by the rewrite). info is re-populated to
 // reflect the new shape.
 func Run(prog *ast.Program, info *checker.Info) error {
-	if len(info.GenericFuncs) == 0 && len(info.GenericStructs) == 0 {
+	if len(info.Generics) == 0 {
 		return nil
 	}
 
@@ -193,10 +193,13 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		clonedStructs = append(clonedStructs, &c)
 	}
 
-	// 4. Drop the original generic decls + append the clones.
+	// 4. Drop the original generic decls + append the clones. Both
+	//    fn and struct decls flow through `info.Generics`, so the
+	//    "is this name generic?" predicate is a single map lookup
+	//    irrespective of which kind we're filtering.
 	keep := prog.Funcs[:0]
 	for _, fn := range prog.Funcs {
-		if _, isGen := info.GenericFuncs[fn.Name]; isGen {
+		if _, isGen := info.Generics[fn.Name]; isGen {
 			continue
 		}
 		keep = append(keep, fn)
@@ -204,7 +207,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	prog.Funcs = append(keep, cloned...)
 	keepStructs := prog.Structs[:0]
 	for _, sd := range prog.Structs {
-		if _, isGen := info.GenericStructs[sd.Name]; isGen {
+		if _, isGen := info.Generics[sd.Name]; isGen {
 			continue
 		}
 		keepStructs = append(keepStructs, sd)

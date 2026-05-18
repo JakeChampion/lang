@@ -1239,7 +1239,9 @@ func (s *Destructure) Pos() Position { return s.P }
 func (s *ExprStmt) Pos() Position { return s.P }
 func (s *Switch) Pos() Position   { return s.P }
 func (s *Match) Pos() Position    { return s.P }
-func (s *FuncDecl) Pos() Position { return s.P }
+func (s *FuncDecl) Pos() Position           { return s.P }
+func (s *FuncDecl) GenericName() string     { return s.Name }
+func (s *FuncDecl) GenericTypeParams() []string { return s.TypeParams }
 
 func (*Block) isStmt()    {}
 func (*If) isStmt()       {}
@@ -1357,6 +1359,22 @@ type FuncDecl struct {
 // declaration order, which is also the layout order in memory: each
 // field occupies 4 bytes and lives at offset 4*index from the struct's
 // base pointer.
+// GenericDecl is the common shape of a top-level declaration that
+// the monomorphisation pass treats uniformly: it has a name, a
+// list of type-parameter names, and a position. Both *FuncDecl
+// and *StructDecl satisfy it, which lets monomorph drive the
+// "is this name generic?" check + "drop the generic decls" pass
+// against a single map instead of running parallel paths over
+// `info.GenericFuncs` and `info.GenericStructs`. The clone +
+// substitute logic stays per-kind (function bodies vs struct
+// fields are genuinely different work) and dispatches off the
+// concrete type.
+type GenericDecl interface {
+	Node
+	GenericName() string
+	GenericTypeParams() []string
+}
+
 type StructDecl struct {
 	P    Position
 	Name string
@@ -1577,7 +1595,9 @@ type Import struct {
 // Pos accessors for top-level declarations that aren't also Stmts.
 // FuncDecl already has Pos() via its Stmt role; the rest need their
 // own so they satisfy the ast.Node interface for Walk / WalkProgram.
-func (d *StructDecl) Pos() Position { return d.P }
+func (d *StructDecl) Pos() Position             { return d.P }
+func (d *StructDecl) GenericName() string       { return d.Name }
+func (d *StructDecl) GenericTypeParams() []string { return d.TypeParams }
 func (d *EnumDecl) Pos() Position   { return d.P }
 func (d *UnionDecl) Pos() Position  { return d.P }
 func (d *ConstDecl) Pos() Position  { return d.P }
