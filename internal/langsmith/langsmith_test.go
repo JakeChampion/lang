@@ -180,6 +180,8 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"None literal":               false,
 		"Option match":               false,
 		"try operator (?)":           false,
+		"method call (.sum)":         false,
+		"method call (.swap)":        false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -297,6 +299,12 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// emitted with the outer paren).
 		if strings.Contains(src, "?)") {
 			want["try operator (?)"] = true
+		}
+		if strings.Contains(src, ".sum()") {
+			want["method call (.sum)"] = true
+		}
+		if strings.Contains(src, ".swap()") {
+			want["method call (.swap)"] = true
 		}
 	}
 	for feature, ok := range want {
