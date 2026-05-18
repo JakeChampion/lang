@@ -28,6 +28,7 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/wasm/encode"
+	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/leb128"
 	"github.com/jakechampion/lang/internal/wasm/sections"
 )
@@ -9578,5 +9579,64 @@ func TestWASMSectionsCrossValidates(t *testing.T) {
 	stdout := runWasmModule(t, out)
 	if strings.TrimSpace(stdout) != "42" {
 		t.Fatalf("wasmtime stdout = %q, want %q", stdout, "42")
+	}
+}
+
+// TestWASMInstCrossValidates uses Go encode + sections + inst
+// (no Lang side, no wasm-tools) to build a module whose
+// exported `main` runs a small if/else over locals, returning
+// max(local0, local1). Cross-checks the Go inst package against
+// wasmtime — and indirectly against the Lang side, which is
+// already covered by TestWASMSectionsCustom and friends with
+// the same control-flow shape.
+func TestWASMInstCrossValidates(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+
+	// Header + type + function + export sections.
+	out := encode.PutModuleHeader(nil)
+	out = sections.EncodeTypeSection(out,
+		[][]byte{nil}, [][]byte{{encode.ValtypeI32}})
+	out = sections.EncodeFunctionSection(out, []uint32{0})
+	out = sections.EncodeExportSection(out,
+		[]string{"main"},
+		[]byte{sections.ExportFunc},
+		[]uint32{0})
+
+	// Function body: two i32 locals, compute max(7, 11) = 11
+	// via a sequence:
+	//   i32.const 7
+	//   local.set 0
+	//   i32.const 11
+	//   local.set 1
+	//   local.get 0
+	//   local.get 1
+	//   i32.gt_s        ; 0x4A
+	//   if (result i32)
+	//     local.get 0
+	//   else
+	//     local.get 1
+	//   end
+	body := inst.InstI32Const(nil, 7)
+	body = inst.InstLocalSet(body, 0)
+	body = inst.InstI32Const(body, 11)
+	body = inst.InstLocalSet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = append(body, 0x4a) // i32.gt_s — defined in the numeric mirror, not yet imported
+	body = inst.InstIfStart(body, encode.ValtypeI32)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstElse(body)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstEnd(body)
+
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	fn := inst.PutFunctionBody(nil, locals, body)
+	out = sections.EncodeCodeSection(out, [][]byte{fn})
+
+	stdout := runWasmModule(t, out)
+	if strings.TrimSpace(stdout) != "11" {
+		t.Fatalf("wasmtime stdout = %q, want %q", stdout, "11")
 	}
 }
