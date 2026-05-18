@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -19,6 +20,39 @@ func evalProgram(t *testing.T, src string) (Value, *Interp) {
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
+	}
+	i := New()
+	for _, ed := range prog.Enums {
+		i.RegisterEnum(ed)
+	}
+	for _, fn := range prog.Funcs {
+		i.Register(fn)
+	}
+	if _, ok := i.Funcs["main"]; !ok {
+		t.Fatalf("program has no main")
+	}
+	v, err := i.CallByName("main", nil)
+	if err != nil {
+		t.Fatalf("call main: %v", err)
+	}
+	return v, i
+}
+
+// evalChecked is evalProgram + a leading checker.Check pass, so
+// method-call shapes (`m.set(k, v)`) get rewritten to their
+// mangled form (`__method_Map_set(m, k, v)`) before the
+// interpreter dispatches. Use this for any test that exercises
+// the method-call path; the bare evalProgram path is fine for
+// AST shapes the parser produces directly (free functions,
+// struct field access, etc.).
+func evalChecked(t *testing.T, src string) (Value, *Interp) {
+	t.Helper()
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
 	}
 	i := New()
 	for _, ed := range prog.Enums {
@@ -187,6 +221,77 @@ func TestInterpFStringFallback(t *testing.T) {
 	src := `function main(): string { return f"hello world"; }`
 	if got := evalProgramValue(t, src); got != String("hello world") {
 		t.Errorf("got %v, want \"hello world\"", got)
+	}
+}
+
+// TestInterpMapBasic exercises the new Map runtime through the
+// surface user code sees: literal construction, .get returning
+// Some / None, .set + read-back, .len, .has, .delete. Each
+// case is small so a regression in any single shim shows up
+// independently.
+func TestInterpMapBasic(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int64
+	}{
+		{"len of empty", `function main(): i32 { var m: Map[i32, i32] = map_new(4); return m.len(); }`, 0},
+		{"len after set", `function main(): i32 {
+			var m: Map[i32, i32] = map_new(4);
+			m.set(1, 10);
+			m.set(2, 20);
+			m.set(3, 30);
+			return m.len();
+		}`, 3},
+		{"set then get", `function main(): i32 {
+			var m: Map[i32, i32] = map_new(4);
+			m.set(7, 42);
+			match (m.get(7)) {
+				Some(v) => { return v; },
+				None => { return -1; }
+			}
+			return 999;
+		}`, 42},
+		{"get missing key", `function main(): i32 {
+			var m: Map[i32, i32] = map_new(4);
+			match (m.get(7)) {
+				Some(v) => { return v; },
+				None => { return -1; }
+			}
+			return 999;
+		}`, -1},
+		{"has and delete", `function main(): i32 {
+			var m: Map[i32, i32] = map_new(4);
+			m.set(1, 100);
+			if (m.has(1) && !m.has(2)) {
+				if (m.delete(1)) {
+					if (m.has(1)) { return -1; }
+					return 0;
+				}
+			}
+			return -2;
+		}`, 0},
+		{"get_or", `function main(): i32 {
+			var m: Map[i32, i32] = map_new(4);
+			m.set(7, 70);
+			return m.get_or(7, 1) + m.get_or(99, 2);
+		}`, 72},
+		{"literal", `function main(): i32 {
+			var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+			return m.len();
+		}`, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _ := evalChecked(t, c.src)
+			n, ok := got.(Number)
+			if !ok {
+				t.Fatalf("expected Number, got %T (%v)", got, got)
+			}
+			if int64(n) != c.want {
+				t.Errorf("got %d, want %d", int64(n), c.want)
+			}
+		})
 	}
 }
 
