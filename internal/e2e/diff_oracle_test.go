@@ -17,6 +17,7 @@
 package e2e
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -87,22 +88,27 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 //
 // Run with: go test -fuzz=FuzzGenerate_ExecutionAgrees -run=^$ ./internal/e2e
 func FuzzGenerate_ExecutionAgrees(f *testing.F) {
+	// Seed with a handful of deterministic uint64 seeds repackaged
+	// as 8-byte slices so the corpus is non-empty on first run;
+	// after that the mutator drives the byte stream directly.
 	for seed := uint64(0); seed < 16; seed++ {
-		f.Add(seed)
+		var b [8]byte
+		binary.LittleEndian.PutUint64(b[:], seed)
+		f.Add(b[:])
 	}
-	f.Fuzz(func(t *testing.T, seed uint64) {
-		src := langsmith.GenMain(seed)
+	f.Fuzz(func(t *testing.T, data []byte) {
+		src := langsmith.GenMainBytes(data)
 		expected := runInterpByte(t, src)
 		t.Run("arm64", func(t *testing.T) {
 			_, code := compileAndRunArm64(t, src)
 			if code != expected {
-				t.Errorf("arm64 exit=%d, interp=%d\nseed=%d\nsrc:\n%s", code, expected, seed, src)
+				t.Errorf("arm64 exit=%d, interp=%d\ndata=%x\nsrc:\n%s", code, expected, data, src)
 			}
 		})
 		t.Run("x86_64", func(t *testing.T) {
 			_, code := compileAndRunX86_64(t, src)
 			if code != expected {
-				t.Errorf("x86_64 exit=%d, interp=%d\nseed=%d\nsrc:\n%s", code, expected, seed, src)
+				t.Errorf("x86_64 exit=%d, interp=%d\ndata=%x\nsrc:\n%s", code, expected, data, src)
 			}
 		})
 		t.Run("wasm", func(t *testing.T) {
@@ -116,7 +122,7 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 				t.Fatalf("parse wasm stdout: %v", err)
 			}
 			if got != expected {
-				t.Errorf("wasm result=%d, interp=%d\nseed=%d\nsrc:\n%s", got, expected, seed, src)
+				t.Errorf("wasm result=%d, interp=%d\ndata=%x\nsrc:\n%s", got, expected, data, src)
 			}
 		})
 	})
