@@ -1,0 +1,266 @@
+// examples/self_host/asm_arm64.lang — sibling of asm.lang for
+// the ARM64 / aarch64 Linux target. Walks a parser.Module and
+// emits GAS-flavoured aarch64 assembly text. The emitted asm
+// uses Linux syscall conventions (sys_exit = 93) and is
+// assemble-able with `aarch64-linux-gnu-gcc -nostdlib`.
+//
+// Scope (intentionally narrow for this first cut — matches
+// asm.lang's initial scope from PR #661):
+//   - i32 literals
+//   - i32 arithmetic: + - * / %
+//   - Unary `-`
+//   - Statement-level: `return <expr>;` lowers to sys_exit
+//
+// Lowering shape — a textual stack machine on the architectural
+// stack (sp). Each expr leaves its result on the rt-stack via:
+//   literal n:  ldr x0, =n; str x0, [sp, #-16]!
+//   bin l op r: <emit l>; <emit r>;
+//               ldr x1, [sp], #16; ldr x0, [sp], #16;
+//               <op>; str x0, [sp, #-16]!
+// Statement `return <expr>;` pops into x0 and issues sys_exit
+// (syscall number in x8, args in x0..x7).
+//
+// 16-byte stack alignment requirement on ARM64 means we use
+// `[sp, #-16]!` even though each value is 8 bytes — wastes 8
+// bytes per push but keeps sp 16-aligned for any nested
+// syscalls / function calls that follow.
+//
+// Compared to asm.lang, the runtime control register
+// assignments differ:
+//   x86_64       aarch64
+//   movq         mov / ldr (=imm pool)
+//   pushq        str x0, [sp, #-16]!
+//   popq         ldr x0, [sp], #16
+//   addq         add
+//   subq         sub
+//   imulq        mul
+//   idivq        sdiv (+ msub for mod)
+//   negq         neg
+//   syscall 60   svc #0 with x8 = 93 (sys_exit)
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+
+// =================== TEXT HELPERS ====================
+
+function i32_to_string(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i32 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
+
+// =================== ASM EMITTER ====================
+
+// emit_expr leaves the result on the rt-stack (sp). Unsupported
+// variants surface as a `// unsupported: <kind>` comment so
+// the emitted asm is still well-formed text.
+function emit_expr(e: parser.Expr, out: string): string {
+    match (e) {
+        parser.ExprNumber(n) => {
+            // `ldr x0, =N` puts N in a literal pool; works for
+            // any 64-bit value, including ones that don't fit
+            // mov's 16-bit immediate field.
+            out = out + "    ldr x0, =" + n.text + "\n";
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        },
+        parser.ExprBinary(b) => {
+            out = emit_expr(b.left, out);
+            out = emit_expr(b.right, out);
+            out = out + "    ldr x1, [sp], #16\n";   // rhs
+            out = out + "    ldr x0, [sp], #16\n";   // lhs
+            if (b.op == "+") {
+                out = out + "    add x0, x0, x1\n";
+            } else if (b.op == "-") {
+                out = out + "    sub x0, x0, x1\n";
+            } else if (b.op == "*") {
+                out = out + "    mul x0, x0, x1\n";
+            } else if (b.op == "/") {
+                out = out + "    sdiv x0, x0, x1\n";
+            } else if (b.op == "%") {
+                // ARM64 has no native modulo. Compute via
+                // remainder = lhs - (lhs/rhs)*rhs.
+                // msub x_d, x_n, x_m, x_a → x_d = x_a - x_n*x_m
+                out = out + "    sdiv x2, x0, x1\n";
+                out = out + "    msub x0, x2, x1, x0\n";
+            } else {
+                out = out + "    // unsupported binop: " + b.op + "\n";
+            }
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") {
+                out = emit_expr(u.operand, out);
+                out = out + "    ldr x0, [sp], #16\n";
+                out = out + "    neg x0, x0\n";
+                out = out + "    str x0, [sp, #-16]!\n";
+                return out;
+            }
+            out = out + "    // unsupported unary: " + u.op + "\n";
+            return out;
+        },
+        parser.ExprIdent(_) => {
+            out = out + "    // unsupported: ident (no locals yet)\n";
+            out = out + "    mov x0, #0\n";
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        },
+        parser.ExprBool(_) => {
+            out = out + "    // unsupported: bool\n";
+            out = out + "    mov x0, #0\n";
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        },
+        parser.ExprString(_) => {
+            out = out + "    // unsupported: string\n";
+            out = out + "    mov x0, #0\n";
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        },
+        parser.ExprCall(_) => {
+            out = out + "    // unsupported: call\n";
+            out = out + "    mov x0, #0\n";
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        },
+        parser.ExprArray(_) => {
+            out = out + "    // unsupported: array\n";
+            out = out + "    mov x0, #0\n";
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        },
+        parser.ExprIndex(_) => {
+            out = out + "    // unsupported: index\n";
+            out = out + "    mov x0, #0\n";
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        },
+        parser.ExprSlice(_) => {
+            out = out + "    // unsupported: slice\n";
+            out = out + "    mov x0, #0\n";
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        },
+        parser.ExprUnknown(_) => {
+            out = out + "    // parser-side unknown\n";
+            out = out + "    mov x0, #0\n";
+            out = out + "    str x0, [sp, #-16]!\n";
+            return out;
+        }
+    }
+    return out;
+}
+
+// emit_stmt handles only StmtReturn for this cut. Other stmts
+// emit a comment marker so the caller can spot the gap.
+function emit_stmt(stmt: parser.Stmt, out: string): string {
+    match (stmt) {
+        parser.StmtReturn(r) => {
+            out = emit_expr(r.value, out);
+            out = out + "    ldr x0, [sp], #16\n";  // exit code
+            out = out + "    mov x8, #93\n";        // sys_exit
+            out = out + "    svc #0\n";
+            return out;
+        },
+        parser.StmtVar(_) => { return out + "    // unsupported: StmtVar\n"; },
+        parser.StmtExpr(_) => { return out + "    // unsupported: StmtExpr\n"; },
+        parser.StmtIf(_) => { return out + "    // unsupported: StmtIf\n"; },
+        parser.StmtWhile(_) => { return out + "    // unsupported: StmtWhile\n"; },
+        parser.StmtAssign(_) => { return out + "    // unsupported: StmtAssign\n"; },
+        parser.StmtUnknown(_) => { return out + "    // unsupported: StmtUnknown\n"; }
+    }
+    return out;
+}
+
+pub function emit_module(mod: parser.Module): string {
+    var out: string = "    .globl _start\n";
+    out = out + "    .text\n";
+    out = out + "_start:\n";
+    var i: i32 = 0;
+    while (i < len(mod.top_stmts)) {
+        out = emit_stmt(mod.top_stmts[i], out);
+        i = i + 1;
+    }
+    // Fallback exit in case there's no return.
+    out = out + "    mov x0, #0\n";
+    out = out + "    mov x8, #93\n";
+    out = out + "    svc #0\n";
+    return out;
+}
+
+// =================== VALIDATION ====================
+
+function contains(haystack: string, needle: string): boolean {
+    if (len(needle) == 0) { return true; }
+    if (len(haystack) < len(needle)) { return false; }
+    var i: i32 = 0;
+    while (i <= len(haystack) - len(needle)) {
+        if (haystack[i:i + len(needle)] == needle) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function emit_source(src: string): string {
+    return emit_module(parser.parse_module(lexer.tokenize(src)));
+}
+
+function main(): i32 {
+    // Minimal: `return 42;` should produce asm with the literal,
+    // the rt-stack push, exit code load, sys_exit syscall.
+    var a1: string = emit_source("return 42;");
+    if (!contains(a1, "ldr x0, =42")) { return 10; }
+    if (!contains(a1, "str x0, [sp, #-16]!")) { return 11; }
+    if (!contains(a1, "ldr x0, [sp], #16")) { return 12; }
+    if (!contains(a1, "mov x8, #93")) { return 13; }
+    if (!contains(a1, "svc #0")) { return 14; }
+    if (!contains(a1, ".globl _start")) { return 15; }
+
+    // Arithmetic: + emits add.
+    var a2: string = emit_source("return 2 + 3;");
+    if (!contains(a2, "add x0, x0, x1")) { return 20; }
+
+    // Subtraction.
+    var a3: string = emit_source("return 7 - 4;");
+    if (!contains(a3, "sub x0, x0, x1")) { return 30; }
+
+    // Multiplication.
+    var a4: string = emit_source("return 6 * 7;");
+    if (!contains(a4, "mul x0, x0, x1")) { return 40; }
+
+    // Division: ARM64 sdiv.
+    var a5: string = emit_source("return 20 / 4;");
+    if (!contains(a5, "sdiv x0, x0, x1")) { return 50; }
+
+    // Modulo: sdiv + msub (no native mod on ARM64).
+    var a6: string = emit_source("return 23 % 5;");
+    if (!contains(a6, "sdiv x2, x0, x1")) { return 60; }
+    if (!contains(a6, "msub x0, x2, x1, x0")) { return 61; }
+
+    // Unary negation.
+    var a7: string = emit_source("return -5;");
+    if (!contains(a7, "neg x0, x0")) { return 70; }
+
+    // Nested expressions: `return (2 + 3) * 4;` emits add before mul.
+    var a8: string = emit_source("return (2 + 3) * 4;");
+    if (!contains(a8, "add x0, x0, x1")) { return 80; }
+    if (!contains(a8, "mul x0, x0, x1")) { return 81; }
+
+    return 0;
+}
