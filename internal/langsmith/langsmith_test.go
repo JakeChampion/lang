@@ -183,6 +183,14 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"method call (.sum)":         false,
 		"method call (.swap)":        false,
 	}
+	// Features that only fire in Gen (the parse+check path) and
+	// not in GenMain — current example: Map[i32, i32], whose
+	// runtime the interpreter doesn't model. Tracked separately
+	// so the assertion below pins them to a different sweep.
+	wantGen := map[string]bool{
+		"Map literal":       false,
+		"map .get() / .has() / .len()": false,
+	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
 		// "gen_f0(" appears either in the helper decl OR a call.
@@ -310,6 +318,24 @@ func TestGenFeatureCoverage(t *testing.T) {
 	for feature, ok := range want {
 		if !ok {
 			t.Errorf("feature never seen in 1024 GenMain seeds: %s", feature)
+		}
+	}
+	// Gen-only landmarks: Map shows up in the parse+check fuzz
+	// path but stays out of the runnable GenMain (interp doesn't
+	// model maps). Sweep Gen separately to confirm Map
+	// productions actually fire.
+	for seed := uint64(0); seed < 1024; seed++ {
+		src := langsmith.Gen(seed)
+		if strings.Contains(src, "(Map {") || strings.Contains(src, "Map[i32, i32]") {
+			wantGen["Map literal"] = true
+		}
+		if strings.Contains(src, ".get(") || strings.Contains(src, ".has(") || strings.Contains(src, ".len()") {
+			wantGen["map .get() / .has() / .len()"] = true
+		}
+	}
+	for feature, ok := range wantGen {
+		if !ok {
+			t.Errorf("feature never seen in 1024 Gen seeds: %s", feature)
 		}
 	}
 }

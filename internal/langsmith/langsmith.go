@@ -293,12 +293,13 @@ const (
 	tPair
 	tColor
 	tOptI32
+	tMapI32I32
 	numTypes
 )
 
 var allTypes = [numTypes]gtype{
 	tI32, tI64, tBool, tF32, tString,
-	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
+	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32, tMapI32I32,
 }
 
 func (t gtype) String() string {
@@ -325,6 +326,8 @@ func (t gtype) String() string {
 		return "Color"
 	case tOptI32:
 		return "Option[i32]"
+	case tMapI32I32:
+		return "Map[i32, i32]"
 	}
 	panic(fmt.Sprintf("unknown gtype %d", int(t)))
 }
@@ -484,6 +487,13 @@ var mainVarTypes = []gtype{
 	tI32, tI64, tBool, tString,
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor, tOptI32,
+	// tMapI32I32 stays out: the interpreter intentionally
+	// doesn't model the Map runtime (see internal/interp/interp.go
+	// "Map operations stay codegen-only for now"), so a Map
+	// flowing into main's expression path breaks the diff
+	// oracle which uses interp as the source of truth. Maps are
+	// still exercised through Gen (parse + check fuzzing) where
+	// no execution happens — see allTypes.
 }
 
 // preludeDecls emits the fixed `struct Pair` + `enum Color`
@@ -860,6 +870,40 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
+	// Map methods. `m.get(k)` returns Option[i32], `m.has(k)` =>
+	// bool, `m.len()` => i32. Each routes an in-scope Map into
+	// the requested type.
+	if t == tOptI32 {
+		maps := sc.inScope(tMapI32I32)
+		if len(maps) > 0 {
+			name := maps[g.ch.intN(len(maps))]
+			fmt.Fprintf(b, "%s.get(", name)
+			g.expr(b, sc, tI32, depth+1)
+			b.WriteByte(')')
+			return true
+		}
+	}
+	if t == tBool {
+		maps := sc.inScope(tMapI32I32)
+		if len(maps) > 0 {
+			name := maps[g.ch.intN(len(maps))]
+			fmt.Fprintf(b, "%s.has(", name)
+			g.expr(b, sc, tI32, depth+1)
+			b.WriteByte(')')
+			return true
+		}
+	}
+	if t == tI32 {
+		maps := sc.inScope(tMapI32I32)
+		if len(maps) > 0 {
+			name := maps[g.ch.intN(len(maps))]
+			// Map has `.len()` as a method, not via the builtin
+			// `len()`. The latter is for string / array / slice
+			// only — using it on a Map fails the checker.
+			fmt.Fprintf(b, "%s.len()", name)
+			return true
+		}
+	}
 	return false
 }
 
@@ -1042,7 +1086,27 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 			g.expr(b, sc, tI32, depth+1)
 			b.WriteString("))")
 		}
+	case tMapI32I32:
+		g.mapLiteral(b, sc, depth)
 	}
+}
+
+// mapLiteral emits `Map { k: v, k2: v2, ... }` with 0..3 entries.
+// All keys + values are i32 expressions; the IR lowering for
+// `Map[i32, i32]` covers every backend. Outer parens
+// disambiguate when the literal lands in an arm-block slot.
+func (g *Generator) mapLiteral(b *strings.Builder, sc *scope, depth int) {
+	n := g.ch.intN(4) // 0..3 entries (empty Map is valid)
+	b.WriteString("(Map { ")
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		g.expr(b, sc, tI32, depth+1)
+		b.WriteString(": ")
+		g.expr(b, sc, tI32, depth+1)
+	}
+	b.WriteString(" })")
 }
 
 // arrayLiteral emits `[e1, e2, ...]` with at least one element so
@@ -1103,6 +1167,10 @@ func (g *Generator) pickType() gtype {
 		nonFloats := []gtype{
 			tI32, tI64, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
+			// tMapI32I32 excluded for the same reason as
+			// mainVarTypes: the interpreter doesn't model Maps,
+			// and noFloats mode is the path the differential
+			// oracle drives through interp + native backends.
 		}
 		return nonFloats[g.ch.intN(len(nonFloats))]
 	}
