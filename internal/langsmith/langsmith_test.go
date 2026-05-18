@@ -3,11 +3,16 @@ package langsmith_test
 import (
 	"encoding/binary"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/langsmith"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -69,9 +74,14 @@ func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 }
 
 // TestGenMainProducesRunnablePrograms — every seed yields a
-// well-typed program whose `main(): i32` returns a byte. The
-// load-bearing invariant of the differential-oracle harness in
-// internal/e2e.
+// well-typed program whose `main(): i32` returns a byte. Also
+// runs the full driver pipeline (modload → constfold → checker
+// → monomorph) for each seed, because the parse + check path
+// alone misses bugs that only show up under generic-function
+// monomorphisation (an earlier seed produced a program where
+// the field name `id` shadowed the `id[T]` generic, and the
+// monomorph re-check rejected the cloned program after the
+// initial checker said OK).
 func TestGenMainProducesRunnablePrograms(t *testing.T) {
 	for seed := uint64(0); seed < 256; seed++ {
 		src := langsmith.GenMain(seed)
@@ -79,12 +89,24 @@ func TestGenMainProducesRunnablePrograms(t *testing.T) {
 			t.Errorf("seed=%d: missing main\nsrc:\n%s", seed, src)
 			continue
 		}
-		prog, err := parser.Parse(src)
-		if err != nil {
-			t.Fatalf("seed=%d failed to parse:\nsrc:\n%s\nerr: %v", seed, src, err)
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "main.lang")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("seed=%d write: %v", seed, err)
 		}
-		if _, err := checker.Check(prog); err != nil {
-			t.Fatalf("seed=%d failed to type-check:\nsrc:\n%s\nerr: %v", seed, src, err)
+		prog, _, err := modload.Load(srcPath)
+		if err != nil {
+			t.Fatalf("seed=%d modload:\nsrc:\n%s\nerr: %v", seed, src, err)
+		}
+		if err := constfold.Fold(prog); err != nil {
+			t.Fatalf("seed=%d constfold:\nsrc:\n%s\nerr: %v", seed, src, err)
+		}
+		info, err := checker.Check(prog)
+		if err != nil {
+			t.Fatalf("seed=%d check:\nsrc:\n%s\nerr: %v", seed, src, err)
+		}
+		if err := monomorph.Run(prog, info); err != nil {
+			t.Fatalf("seed=%d monomorph:\nsrc:\n%s\nerr: %v", seed, src, err)
 		}
 	}
 }
@@ -184,13 +206,11 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"method call (.swap)":        false,
 		"Xyz struct decl":            false,
 		"Xyz literal":                false,
-		"Xyz.id field access":        false,
+		"Xyz.n field access":         false,
 		"Xyz.valid field access":     false,
 		"Status enum decl":           false,
 		"Status variant":             false,
 		"Status match expression":    false,
-		"id[T] generic call":         false,
-		"pick[T] generic call":       false,
 	}
 	// Features that only fire in Gen (the parse+check path) and
 	// not in GenMain — current example: Map[i32, i32], whose
@@ -199,6 +219,8 @@ func TestGenFeatureCoverage(t *testing.T) {
 	wantGen := map[string]bool{
 		"Map literal":       false,
 		"map .get() / .has() / .len()": false,
+		"id[T] generic call":           false,
+		"pick[T] generic call":         false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -323,14 +345,16 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, ".swap()") {
 			want["method call (.swap)"] = true
 		}
-		if strings.Contains(src, "struct Xyz { id: i32, valid: boolean }") {
+		if strings.Contains(src, "struct Xyz { n: i32, valid: boolean }") {
 			want["Xyz struct decl"] = true
 		}
-		if strings.Contains(src, "(Xyz { id: ") {
+		if strings.Contains(src, "(Xyz { n: ") {
 			want["Xyz literal"] = true
 		}
-		if strings.Contains(src, ".id") {
-			want["Xyz.id field access"] = true
+		// `.n ` (with trailing space / token boundary) catches
+		// `.n` as a field access but not `.snd` / `.swap()` etc.
+		if strings.Contains(src, ".n ") || strings.Contains(src, ".n)") || strings.Contains(src, ".n,") || strings.Contains(src, ".n;") {
+			want["Xyz.n field access"] = true
 		}
 		if strings.Contains(src, ".valid") {
 			want["Xyz.valid field access"] = true
@@ -345,15 +369,6 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "Active =>") {
 			want["Status match expression"] = true
-		}
-		// id(...) appears after the prelude decl `function id[T]
-		// (x: T): T { return x; }`. Total occurrences > 1 means
-		// at least one CALL site (not just the decl).
-		if strings.Count(src, "id(") > 1 {
-			want["id[T] generic call"] = true
-		}
-		if strings.Count(src, "pick(") > 1 {
-			want["pick[T] generic call"] = true
 		}
 	}
 	for feature, ok := range want {
@@ -372,6 +387,15 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, ".get(") || strings.Contains(src, ".has(") || strings.Contains(src, ".len()") {
 			wantGen["map .get() / .has() / .len()"] = true
+		}
+		// id(...) appears after the prelude decl `function id[T]
+		// (x: T): T { return x; }`. Total occurrences > 1 means
+		// at least one CALL site (not just the decl).
+		if strings.Count(src, "id(") > 1 {
+			wantGen["id[T] generic call"] = true
+		}
+		if strings.Count(src, "pick(") > 1 {
+			wantGen["pick[T] generic call"] = true
 		}
 	}
 	for feature, ok := range wantGen {

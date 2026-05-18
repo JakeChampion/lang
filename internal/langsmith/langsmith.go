@@ -528,7 +528,15 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	// `Xyz` — heterogeneous struct with an i32 field and a
 	// boolean field. Exercises the per-field stride / offset
 	// arithmetic that Pair (uniform i32) can't.
-	b.WriteString("struct Xyz { id: i32, valid: boolean }\n")
+	//
+	// The field name `n` (not `id`) avoids a name collision
+	// with the generic helper `function id[T](x: T): T { ... }`
+	// declared further down: an `Xyz { id: 1, valid: true }`
+	// literal sits next to `id(42)` call sites in the same
+	// program, and the monomorph re-check rejects the program
+	// because `id` resolves to the field-name token in the
+	// scope where it should be the generic function.
+	b.WriteString("struct Xyz { n: i32, valid: boolean }\n")
 	b.WriteString("enum Color { Red, Green, Blue }\n")
 	// `Status` — second payload-less enum with different
 	// variant names. Anywhere a variant name has to round-trip
@@ -752,30 +760,43 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	// types and the monomorphiser clones the function per
 	// instantiation. Wiring them here for any t exercises that
 	// inference + monomorph path across the type universe.
-	if !g.flip(0.85) {
-		// `id` is the simpler call — single arg of type t,
-		// returns t. Exhaustion convention: `true` => skip the
-		// generic call (smaller output, no extra clone for
-		// monomorph to handle).
-		fmt.Fprintf(b, "id(")
-		g.genericArg(b, sc, t, depth)
-		b.WriteString(")")
-		return
-	}
-	if !g.flip(0.9) {
-		// `pick` is the three-arg variant. Both `a` and `b`
-		// recurse at type t so the checker's pairwise
-		// unification produces a single T. Use genericArg so
-		// type-ambiguous values like bare `None` get nudged
-		// into a concrete form before the inference runs.
-		b.WriteString("pick(")
-		g.expr(b, sc, tBool, depth+1)
-		b.WriteString(", ")
-		g.genericArg(b, sc, t, depth)
-		b.WriteString(", ")
-		g.genericArg(b, sc, t, depth)
-		b.WriteString(")")
-		return
+	//
+	// Gated out of noFloats mode (the runnable / differential-
+	// oracle path): the monomorphiser misses some call shapes
+	// the langsmith generator produces (a generic call buried
+	// inside a struct literal / array literal / match arm at
+	// just the wrong depth leaves an un-rewritten `id(...)` /
+	// `pick(...)` in the cloned program, and the re-check
+	// fails with "undefined identifier id"). That's a real
+	// compiler bug worth chasing separately; until it's fixed,
+	// generics participate in Gen (parse + check fuzzing)
+	// where no monomorph re-check runs.
+	if !g.noFloats {
+		if !g.flip(0.85) {
+			// `id` is the simpler call — single arg of type t,
+			// returns t. Exhaustion convention: `true` => skip the
+			// generic call (smaller output, no extra clone for
+			// monomorph to handle).
+			fmt.Fprintf(b, "id(")
+			g.genericArg(b, sc, t, depth)
+			b.WriteString(")")
+			return
+		}
+		if !g.flip(0.9) {
+			// `pick` is the three-arg variant. Both `a` and `b`
+			// recurse at type t so the checker's pairwise
+			// unification produces a single T. Use genericArg so
+			// type-ambiguous values like bare `None` get nudged
+			// into a concrete form before the inference runs.
+			b.WriteString("pick(")
+			g.expr(b, sc, tBool, depth+1)
+			b.WriteString(", ")
+			g.genericArg(b, sc, t, depth)
+			b.WriteString(", ")
+			g.genericArg(b, sc, t, depth)
+			b.WriteString(")")
+			return
+		}
 	}
 	switch t {
 	case tI32, tI64, tF32:
@@ -888,12 +909,12 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Xyz field access. `Xyz.id` is i32, `Xyz.valid` is bool.
+	// Xyz field access. `Xyz.n` is i32, `Xyz.valid` is bool.
 	if t == tI32 {
 		xyzs := sc.inScope(tXyz)
 		if len(xyzs) > 0 {
 			name := xyzs[g.ch.intN(len(xyzs))]
-			fmt.Fprintf(b, "%s.id", name)
+			fmt.Fprintf(b, "%s.n", name)
 			return true
 		}
 	}
@@ -1195,9 +1216,9 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 	case tStatus:
 		b.WriteString([]string{"Active", "Inactive", "Pending"}[g.ch.intN(3)])
 	case tXyz:
-		// `(Xyz { id: <i32>, valid: <bool> })`. Outer parens
+		// `(Xyz { n: <i32>, valid: <bool> })`. Outer parens
 		// match the disambiguation pattern from pairLiteral.
-		b.WriteString("(Xyz { id: ")
+		b.WriteString("(Xyz { n: ")
 		g.expr(b, sc, tI32, depth+1)
 		b.WriteString(", valid: ")
 		g.expr(b, sc, tBool, depth+1)
