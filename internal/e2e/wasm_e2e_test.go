@@ -8429,3 +8429,166 @@ function main(): i32 {
 		t.Errorf("expected embedded i32.const 42, got:\n%s", watStr)
 	}
 }
+
+// TestWASMModuleRunsIfElse: a function that returns 100 from the
+// then-arm or 200 from the else-arm of an if/else with an i32
+// result type. Exercises inst_if_start with a non-empty blocktype
+// (encode.valtype_i32) plus inst_else / inst_end.
+func TestWASMModuleRunsIfElse(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // Body: i32.const 1 ; if (result i32) { i32.const 100 }
+    //       else { i32.const 200 } ; end
+    var body: u8[] = inst.inst_i32_const([], 1);
+    body = inst.inst_if_start(body, encode.valtype_i32());
+    body = inst.inst_i32_const(body, 100);
+    body = inst.inst_else(body);
+    body = inst.inst_i32_const(body, 200);
+    body = inst.inst_end(body);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "100") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 100", out)
+	}
+}
+
+// TestWASMModuleRunsLocalSetGet: store 42 in a local then load it
+// back. Exercises put_locals_one_group for declaring the local
+// plus inst_local_set / inst_local_get.
+func TestWASMModuleRunsLocalSetGet(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // 1 local of type i32 (index 0).
+    var localsBytes: u8[] = inst.put_locals_one_group([], 1u32, encode.valtype_i32());
+
+    // Body: i32.const 42 ; local.set 0 ; local.get 0
+    var body: u8[] = inst.inst_i32_const([], 42);
+    body = inst.inst_local_set(body, 0u32);
+    body = inst.inst_local_get(body, 0u32);
+
+    var fn: u8[] = inst.put_function_body([], localsBytes, body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "42") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 42", out)
+	}
+}
+
+// TestWASMModuleRunsSumLoop: sum 1..10 via a loop. Exercises the
+// full control-flow stack: loop_start, if_start, br (continuing
+// the loop), local_get / local_set on multiple locals, and an
+// end terminator stack of depth 2 (if inside loop). Expected
+// result: 1+2+...+10 = 55.
+func TestWASMModuleRunsSumLoop(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // 2 locals of type i32: index 0 = i (counter), index 1 = sum.
+    var localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.valtype_i32());
+
+    var body: u8[] = inst.inst_loop_start([], inst.blocktype_empty());
+    body = inst.inst_local_get(body, 0u32);
+    body = inst.inst_i32_const(body, 10);
+    body = numeric.inst_i32_lt_s(body);
+    body = inst.inst_if_start(body, inst.blocktype_empty());
+    body = inst.inst_local_get(body, 1u32);
+    body = inst.inst_local_get(body, 0u32);
+    body = inst.inst_i32_const(body, 1);
+    body = numeric.inst_i32_add(body);
+    body = numeric.inst_i32_add(body);
+    body = inst.inst_local_set(body, 1u32);
+    body = inst.inst_local_get(body, 0u32);
+    body = inst.inst_i32_const(body, 1);
+    body = numeric.inst_i32_add(body);
+    body = inst.inst_local_set(body, 0u32);
+    body = inst.inst_br(body, 1u32);
+    body = inst.inst_end(body);
+    body = inst.inst_end(body);
+    body = inst.inst_local_get(body, 1u32);
+
+    var fn: u8[] = inst.put_function_body([], localsBytes, body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "55") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 55 (sum 1..10)", out)
+	}
+}
