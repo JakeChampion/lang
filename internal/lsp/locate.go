@@ -24,6 +24,11 @@ type nameHit struct {
 	// (`var c: Color` → typeRef captures `Color`'s position).
 	// Picked up from Program.TypeRefs rather than the AST walk.
 	typeRef *ast.TypeRef
+	// methodCall is non-nil when the cursor lands on the method
+	// name in a `target.method(args)` call site. The checker
+	// preserves the source position on Call.Method even after
+	// rewriting the AST to a mangled flat call.
+	methodCall *ast.Call
 }
 
 // findNameAt walks prog's function bodies and returns the deepest
@@ -87,6 +92,19 @@ func findNameAt(prog *ast.Program, line, col int) *nameHit {
 						pos:         x.FieldPos,
 						enclosing:   fd,
 						fieldAccess: x,
+					}
+				}
+			case *ast.Call:
+				// Method-call hover / def lands on the method
+				// name (preserved by the checker on Call.Method
+				// even after the rewrite to a mangled flat call).
+				if x.Method != nil && x.Method.FieldPos.Line != 0 &&
+					spans(x.Method.FieldPos, line, col, len(x.Method.Field)) {
+					best = &nameHit{
+						name:       x.Method.Field,
+						pos:        x.Method.FieldPos,
+						enclosing:  fd,
+						methodCall: x,
 					}
 				}
 			}

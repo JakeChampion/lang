@@ -80,6 +80,21 @@ func TestDefinition_FieldAccess(t *testing.T) {
 	}
 }
 
+func TestDefinition_MethodCall(t *testing.T) {
+	src := "struct Point { x: i32, y: i32 }\n" +
+		"function (p: Point) sum(): i32 { return p.x + p.y; }\n" +
+		"function main(): i32 {\n  var p: Point = Point { x: 3, y: 4 };\n  return p.sum();\n}\n"
+	// Cursor on `sum` in `p.sum()` — line 4 (0-based), col 13.
+	got := definitionFor(src, 4, 13)
+	if got == nil {
+		t.Fatal("expected definition for method call p.sum()")
+	}
+	// The method's FuncDecl is on line 1 (0-based).
+	if got.Range.Start.Line != 1 {
+		t.Errorf("definition line = %d, want 1 (sum method decl)", got.Range.Start.Line)
+	}
+}
+
 func TestDefinition_NoIdentAtPosition(t *testing.T) {
 	src := "function main(): i32 { return 0; }\n"
 	got := definitionFor(src, 0, 30)

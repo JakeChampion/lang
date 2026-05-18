@@ -88,6 +88,11 @@ func locateDefinition(info *checker.Info, prog *ast.Program, hit *nameHit, fallb
 			return pos, len(hit.name), declURI(srcMod, fallbackURI), true
 		}
 	}
+	if hit.methodCall != nil && info != nil {
+		if pos, srcMod, ok := locateMethod(info, prog, hit.methodCall); ok {
+			return pos, len(hit.name), declURI(srcMod, fallbackURI), true
+		}
+	}
 	if hit.ident != nil {
 		pos, n, srcMod, ok := locateIdentDef(info, prog, hit.enclosing, hit.name)
 		if ok {
@@ -95,6 +100,26 @@ func locateDefinition(info *checker.Info, prog *ast.Program, hit *nameHit, fallb
 		}
 	}
 	return ast.Position{}, 0, "", false
+}
+
+// locateMethod resolves a method-call hit to the FuncDecl position
+// of the implementation. Looks the mangled name up in Info.Methods
+// + scans prog.Funcs for the matching decl.
+func locateMethod(info *checker.Info, prog *ast.Program, call *ast.Call) (ast.Position, string, bool) {
+	receiverName, ok := receiverTypeKey(call.Method.Receiver)
+	if !ok {
+		return ast.Position{}, "", false
+	}
+	mangled, ok := info.Methods[receiverName+"."+call.Method.Field]
+	if !ok {
+		return ast.Position{}, "", false
+	}
+	for _, fd := range prog.Funcs {
+		if fd.Name == mangled {
+			return fd.P, fd.SourceModule, true
+		}
+	}
+	return ast.Position{}, "", false
 }
 
 // mangleCandidates returns the names worth trying when looking up a
