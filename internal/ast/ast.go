@@ -814,10 +814,20 @@ type EnumLit struct {
 // FieldAccess reads a field off a struct value: `p.x`. Codegen lowers
 // this to `i32.load (p + offset)` once the checker has resolved the
 // field's offset on the StructDecl.
+//
+// P is the position of the `.` token (kept for backwards-compat with
+// pre-LSP error sites that point at the access expression). FieldPos
+// is the position of the field-name identifier just past the dot —
+// what the LSP uses for hover / definition queries on `p.x` so the
+// cursor on `x` resolves rather than the cursor on the dot.
+// FieldPos is zero (Line=0) on synthetic FieldAccesses inserted by
+// downstream passes (e.g. method-call rewriting) that don't have a
+// real source location.
 type FieldAccess struct {
-	P      Position
-	Target Expr
-	Field  string
+	P        Position
+	Target   Expr
+	Field    string
+	FieldPos Position
 }
 
 // CaptureRef is a synthetic expression introduced by closure
@@ -1372,6 +1382,30 @@ type Program struct {
 	// codegen) ignore this field; the formatter walks it alongside
 	// the AST to re-emit comments at their original positions.
 	Comments []Comment
+	// TypeRefs records every named-type reference the parser saw
+	// in a type-annotation slot (`var c: Color`, `Option[T]`,
+	// `pub function f(x: Point): Result[i32, Err]`, field type
+	// lists, etc.). Each entry is `(position, source-spelling)`
+	// for the name token alone — composite parts (`[T]`, `T[]`,
+	// `(T, U)`, `() => T`) get their own entries from the recursive
+	// parseType descent. The LSP queries this to answer
+	// "what type is at this position?" because ast.Type values are
+	// positionless; without this table, type-annotation hover
+	// (`var c: Color`) and goto-def on type names can't work.
+	// Modload prepends per-module-mangled forms during loading;
+	// the checker leaves it alone.
+	TypeRefs []TypeRef
+}
+
+// TypeRef is a parser-recorded source location for one named-type
+// reference. Name carries the source spelling exactly as it
+// appeared (including any `mod.Foo` qualifier and any generic-args
+// suffix is NOT included — the args are separate TypeRef entries).
+// Consumers cross-reference Name against checker.Info.Structs /
+// .Enums to describe / locate the resolved decl.
+type TypeRef struct {
+	P    Position
+	Name string
 }
 
 // ConstDecl is a top-level `const NAME[: T] = expr;` declaration.

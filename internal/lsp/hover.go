@@ -80,12 +80,103 @@ func describeName(info *checker.Info, hit *nameHit) (string, bool) {
 			return formatStructDecl(sd), true
 		}
 	}
+	// Type annotation reference (`var c: Color`, `Option[T]`, …).
+	// Look the name up as a struct or enum; the parser doesn't
+	// distinguish at parse-time, so we try both.
+	if hit.typeRef != nil && info != nil {
+		if sd, ok := info.Structs[hit.name]; ok {
+			return formatStructDecl(sd), true
+		}
+		if ed, ok := info.Enums[hit.name]; ok {
+			return formatEnumDecl(ed), true
+		}
+	}
+	// Field access (`p.x`). Surface "(field) name: type" using the
+	// receiver's resolved type to find the owning struct.
+	if hit.fieldAccess != nil && info != nil {
+		if d, ok := describeFieldAccess(info, hit.enclosing, hit.fieldAccess); ok {
+			return d, true
+		}
+	}
 
 	// Ident hits go through the regular scope-chain resolution.
 	if hit.ident != nil {
 		return describeIdentName(info, hit.enclosing, hit.name)
 	}
 	return "", false
+}
+
+// describeFieldAccess walks the target's resolved type to find the
+// owning struct, then looks up the field by name. Returns ok=false
+// when the target type isn't a known struct (which can happen
+// mid-edit, on tuple `.0` selectors, or on built-in method calls
+// the checker rewrites elsewhere).
+func describeFieldAccess(info *checker.Info, enclosing *ast.FuncDecl, fa *ast.FieldAccess) (string, bool) {
+	targetType := exprResolvedType(info, enclosing, fa.Target)
+	if targetType == nil {
+		return "", false
+	}
+	st, ok := targetType.(ast.StructType)
+	if !ok {
+		return "", false
+	}
+	sd, ok := info.Structs[st.Name]
+	if !ok {
+		return "", false
+	}
+	for _, f := range sd.Fields {
+		if f.Name == fa.Field {
+			return "(field) " + f.Name + ": " + typeString(f.Type), true
+		}
+	}
+	return "", false
+}
+
+// exprResolvedType peeks at the kinds of expression the checker
+// already stamps a type onto, so describeFieldAccess can resolve
+// `target.field` without re-running type inference. enclosing
+// scopes the Ident lookup so the user's `p` isn't shadowed by a
+// like-named local in some unrelated stdlib function. Returns nil
+// when the expression's type isn't recoverable from the AST + info
+// alone — callers fall through to "no hover" on miss.
+func exprResolvedType(info *checker.Info, enclosing *ast.FuncDecl, e ast.Expr) ast.Type {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if enclosing != nil {
+			for _, v := range info.Locals[enclosing] {
+				if v.Name != x.Name {
+					continue
+				}
+				if v.Type != nil {
+					return v.Type
+				}
+				if t, ok := info.VarTypes[v]; ok {
+					return t
+				}
+			}
+			for _, p := range enclosing.Params {
+				if p.Name == x.Name {
+					return p.Type
+				}
+			}
+		}
+	case *ast.StructLit:
+		return ast.StructType{Name: x.TypeName}
+	case *ast.FieldAccess:
+		// Chained accesses: recurse on the target then look up
+		// the field's declared type.
+		inner := exprResolvedType(info, enclosing, x.Target)
+		if st, ok := inner.(ast.StructType); ok {
+			if sd, ok := info.Structs[st.Name]; ok {
+				for _, f := range sd.Fields {
+					if f.Name == x.Field {
+						return f.Type
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func describeIdentName(info *checker.Info, enclosing *ast.FuncDecl, name string) (string, bool) {

@@ -69,6 +69,56 @@ func TestHover_StructType(t *testing.T) {
 	}
 }
 
+func TestHover_TypeAnnotation_Struct(t *testing.T) {
+	// Cursor on `Point` in `var p: Point` — that name lives in a
+	// positionless ast.Type, so resolving it relies on the parser's
+	// TypeRefs side table.
+	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  var p: Point = Point { x: 0, y: 0 };\n  return p.x;\n}\n"
+	got := hoverFor(src, 2, 9) // `P` of `Point` in the annotation
+	if got == nil {
+		t.Fatal("expected hover for type annotation Point")
+	}
+	if !strings.Contains(got.Contents.Value, "struct Point") {
+		t.Errorf("hover = %q, want it to describe struct Point", got.Contents.Value)
+	}
+}
+
+func TestHover_TypeAnnotation_Enum(t *testing.T) {
+	src := "enum Color { Red, Green, Blue }\nfunction main(): i32 {\n  var c: Color = Red;\n  return 0;\n}\n"
+	got := hoverFor(src, 2, 9) // `C` of `Color` in the annotation
+	if got == nil {
+		t.Fatal("expected hover for type annotation Color")
+	}
+	if !strings.Contains(got.Contents.Value, "enum Color") {
+		t.Errorf("hover = %q, want enum Color description", got.Contents.Value)
+	}
+}
+
+func TestHover_FieldAccess(t *testing.T) {
+	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  var p: Point = Point { x: 7, y: 9 };\n  return p.x;\n}\n"
+	got := hoverFor(src, 3, 11) // cursor on `x` in `p.x`
+	if got == nil {
+		t.Fatal("expected hover for field access p.x")
+	}
+	if !strings.Contains(got.Contents.Value, "(field) x: i32") {
+		t.Errorf("hover = %q, want (field) x: i32", got.Contents.Value)
+	}
+}
+
+func TestHover_FieldAccess_Chained(t *testing.T) {
+	src := "struct Inner { v: i32 }\nstruct Outer { inner: Inner }\n" +
+		"function main(): i32 {\n  var o: Outer = Outer { inner: Inner { v: 5 } };\n  return o.inner.v;\n}\n"
+	// Cursor on `v` in `o.inner.v` — chained access requires
+	// resolving o → Outer.inner → Inner.v.
+	got := hoverFor(src, 4, 17)
+	if got == nil {
+		t.Fatal("expected hover for chained field access")
+	}
+	if !strings.Contains(got.Contents.Value, "(field) v: i32") {
+		t.Errorf("hover = %q, want (field) v: i32", got.Contents.Value)
+	}
+}
+
 func TestHover_EnumVariant(t *testing.T) {
 	src := "enum Color { Red, Green, Blue }\nfunction main(): i32 { var c: Color = Red; return 0; }\n"
 	// Cursor on `Red` in `var c: Color = Red;` — line 1, col 39.

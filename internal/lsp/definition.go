@@ -46,8 +46,9 @@ func runDefinition(state *docState, uri string, pos Position) *Location {
 
 // locateDefinition returns the (position, name-length) of the
 // declaration the name resolves to. Resolution order matches
-// describeName: enum variant → struct constructor → ident
-// (local → parameter → top-level function / struct / enum).
+// describeName: enum variant → struct constructor → type ref →
+// field access → ident (local → parameter → top-level function /
+// struct / enum).
 func locateDefinition(info *checker.Info, prog *ast.Program, hit *nameHit) (ast.Position, int, bool) {
 	if hit.enumLit != nil && info != nil {
 		if ed, ok := info.Enums[hit.enumLit.EnumName]; ok {
@@ -63,10 +64,48 @@ func locateDefinition(info *checker.Info, prog *ast.Program, hit *nameHit) (ast.
 			return sd.P, len(hit.name), true
 		}
 	}
+	if hit.typeRef != nil && info != nil {
+		if sd, ok := info.Structs[hit.name]; ok {
+			return sd.P, len(hit.name), true
+		}
+		if ed, ok := info.Enums[hit.name]; ok {
+			return ed.P, len(hit.name), true
+		}
+	}
+	if hit.fieldAccess != nil && info != nil {
+		if pos, ok := locateField(info, hit.enclosing, hit.fieldAccess); ok {
+			return pos, len(hit.name), true
+		}
+	}
 	if hit.ident != nil {
 		return locateIdentDef(info, prog, hit.enclosing, hit.name)
 	}
 	return ast.Position{}, 0, false
+}
+
+// locateField finds the declaration position of the field accessed
+// in fa. StructDecl.Fields entries are ast.Param which don't carry
+// per-field positions, so we jump to the StructDecl itself —
+// editors scroll the user near enough to spot the field.
+func locateField(info *checker.Info, enclosing *ast.FuncDecl, fa *ast.FieldAccess) (ast.Position, bool) {
+	targetType := exprResolvedType(info, enclosing, fa.Target)
+	if targetType == nil {
+		return ast.Position{}, false
+	}
+	st, ok := targetType.(ast.StructType)
+	if !ok {
+		return ast.Position{}, false
+	}
+	sd, ok := info.Structs[st.Name]
+	if !ok {
+		return ast.Position{}, false
+	}
+	for _, f := range sd.Fields {
+		if f.Name == fa.Field {
+			return sd.P, true
+		}
+	}
+	return ast.Position{}, false
 }
 
 func locateIdentDef(info *checker.Info, prog *ast.Program, enclosing *ast.FuncDecl, name string) (ast.Position, int, bool) {
