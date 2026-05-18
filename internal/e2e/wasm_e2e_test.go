@@ -7629,3 +7629,146 @@ function main(): i32 {
 		t.Errorf("sections data: exit = %d, want 0", got)
 	}
 }
+
+// TestWASMImportsFunc covers the import section's most common
+// shape — a function import like the WASI calls the existing
+// wasm backend declares. Vectors: one function import with
+// short module+name, and a two-import case with mixed kinds.
+func TestWASMImportsFunc(t *testing.T) {
+	src := `import "std/wasm/imports";
+import "std/wasm/encode";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // One function import: ("env", "log", func, typeidx=0).
+    var mods: string[] = ["env"];
+    var nms: string[] = ["log"];
+    var ks: u8[] = [imports.import_func()];
+    var descs: u8[][] = [imports.import_desc_func(0u32)];
+    var s1: u8[] = imports.encode_import_section(empty, mods, nms, ks, descs);
+    // Body:
+    //   count=1 (1)
+    //   "env" = [3, e, n, v] (4)
+    //   "log" = [3, l, o, g] (4)
+    //   kind=0x00 (1)
+    //   desc = uleb(0) = [0] (1)
+    // = 11 bytes. Wrapped: id(1) + size(1) + body(11) = 13 bytes.
+    if (len(s1) != 13) { return 1; }
+    if (s1[0] != 2u8)  { return 2; }     // section_import id
+    if (s1[1] != 11u8) { return 3; }     // body size 11
+    if (s1[2] != 1u8)  { return 4; }     // count 1
+    if (s1[3] != 3u8)  { return 5; }     // "env" len
+    if (s1[4] != 101u8) { return 6; }    // 'e'
+    if (s1[5] != 110u8) { return 7; }    // 'n'
+    if (s1[6] != 118u8) { return 8; }    // 'v'
+    if (s1[7] != 3u8)   { return 9; }    // "log" len
+    if (s1[11] != 0u8)  { return 10; }   // kind func
+    if (s1[12] != 0u8)  { return 11; }   // typeidx 0
+
+    // Two imports of different kinds: ("wasi", "fd_write", func, 7)
+    // and ("env", "g", global, i32 mut).
+    var mods2: string[] = ["wasi", "env"];
+    var nms2: string[] = ["fd_write", "g"];
+    var ks2: u8[] = [imports.import_func(), imports.import_global()];
+    var d_func: u8[] = imports.import_desc_func(7u32);
+    var d_glob: u8[] = imports.import_desc_global(encode.valtype_i32(), imports.mut_var());
+    var descs2: u8[][] = [d_func, d_glob];
+    var s2: u8[] = imports.encode_import_section(empty, mods2, nms2, ks2, descs2);
+    // Spot-check the global descriptor at the tail: valtype + mut
+    // are the last two bytes.
+    if (len(s2) < 20) { return 20; }
+    if (s2[0] != 2u8) { return 21; }
+    var last: i32 = len(s2) - 1;
+    if (s2[last] != 1u8)       { return 22; }   // mut_var
+    if (s2[last - 1] != 127u8) { return 23; }   // valtype_i32
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("imports func: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMImportsDescBuilders walks the four import_desc_*
+// builders in isolation, verifying each produces the spec-
+// reference byte sequence.
+func TestWASMImportsDescBuilders(t *testing.T) {
+	src := `import "std/wasm/imports";
+import "std/wasm/encode";
+function main(): i32 {
+    // import_desc_func(typeidx=5) -> [0x05]
+    var df: u8[] = imports.import_desc_func(5u32);
+    if (len(df) != 1) { return 1; }
+    if (df[0] != 5u8) { return 2; }
+
+    // import_desc_global(i32, const) -> [0x7F, 0x00]
+    var dg: u8[] = imports.import_desc_global(encode.valtype_i32(), imports.mut_const());
+    if (len(dg) != 2)    { return 10; }
+    if (dg[0] != 127u8)  { return 11; }
+    if (dg[1] != 0u8)    { return 12; }
+
+    // import_desc_memory(min=1, no max) -> [0x00, 0x01]
+    var dm1: u8[] = imports.import_desc_memory(1u32, 0 - 1);
+    if (len(dm1) != 2) { return 20; }
+    if (dm1[0] != 0u8) { return 21; }
+    if (dm1[1] != 1u8) { return 22; }
+
+    // import_desc_memory(min=1, max=2) -> [0x01, 0x01, 0x02]
+    var dm2: u8[] = imports.import_desc_memory(1u32, 2);
+    if (len(dm2) != 3) { return 30; }
+    if (dm2[0] != 1u8) { return 31; }
+    if (dm2[1] != 1u8) { return 32; }
+    if (dm2[2] != 2u8) { return 33; }
+
+    // import_desc_table(funcref, min=0, no max) -> [0x70, 0x00, 0x00]
+    var dt: u8[] = imports.import_desc_table(imports.reftype_funcref(), 0u32, 0 - 1);
+    if (len(dt) != 3)   { return 40; }
+    if (dt[0] != 112u8) { return 41; }   // funcref 0x70
+    if (dt[1] != 0u8)   { return 42; }   // flag no max
+    if (dt[2] != 0u8)   { return 43; }   // min 0
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("imports desc builders: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMImportsGlobalSection covers encode_global_section.
+// Globaltype is `valtype byte + mut byte` and each entry carries
+// an init_expr that the caller pre-composes (typical shape:
+// i32.const N ; end).
+func TestWASMImportsGlobalSection(t *testing.T) {
+	src := `import "std/wasm/imports";
+import "std/wasm/encode";
+import "std/wasm/inst";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // One mutable i32 global, initialized to 0.
+    // init_expr: i32.const 0 ; end = [0x41, 0x00, 0x0B] (3 bytes)
+    var init0: u8[] = inst.inst_i32_const(empty, 0);
+    init0 = inst.inst_end(init0);
+
+    var vts: u8[] = [encode.valtype_i32()];
+    var ms: u8[] = [imports.mut_var()];
+    var inits: u8[][] = [init0];
+    var gs: u8[] = imports.encode_global_section(empty, vts, ms, inits);
+    // Body: count=1 + valtype=0x7F + mut=0x01 + init(3) = 6 bytes
+    // Wrapped: id(1) + size(1) + body(6) = 8 bytes
+    if (len(gs) != 8) { return 1; }
+    if (gs[0] != 6u8) { return 2; }    // section_global id
+    if (gs[1] != 6u8) { return 3; }    // body size
+    if (gs[2] != 1u8) { return 4; }    // count
+    if (gs[3] != 127u8) { return 5; }  // valtype i32
+    if (gs[4] != 1u8) { return 6; }    // mut_var
+    if (gs[5] != 65u8) { return 7; }   // i32.const
+    if (gs[6] != 0u8) { return 8; }    // sleb 0
+    if (gs[7] != 11u8) { return 9; }   // end
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("imports global section: exit = %d, want 0", got)
+	}
+}
