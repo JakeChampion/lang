@@ -4641,6 +4641,38 @@ func (b *builder) call(n *ast.Call) error {
 			}
 		}
 	}
+	// `arr[i](args)` where arr is `((T) => R)[]` — index expression
+	// produces a closure pair pointer. Same indirect-call shape as
+	// FieldAccess / CaptureRef / chained-Call callees: push args,
+	// evaluate the indexed expression (yields the pair ptr), then
+	// OpCallIndirect with the element's static FuncType.
+	if idx, ok := n.Callee.(*ast.Index); ok {
+		var ft *ast.FuncType
+		if idx.ElemType != nil {
+			ft, _ = idx.ElemType.(*ast.FuncType)
+		}
+		if ft == nil {
+			// Fallback: peel through the source's static type
+			// (arrays-of-T / slices-of-T) and recover the element.
+			if at, ok := b.exprStaticType(idx.Array).(ast.ArrayType); ok {
+				ft, _ = at.Elem.(*ast.FuncType)
+			} else if st, ok := b.exprStaticType(idx.Array).(ast.SliceType); ok {
+				ft, _ = st.Elem.(*ast.FuncType)
+			}
+		}
+		if ft != nil {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			if err := b.expr(idx); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+			return nil
+		}
+	}
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
