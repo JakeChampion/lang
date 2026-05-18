@@ -1288,6 +1288,24 @@ func (i *Interp) RegisterEnum(ed *ast.EnumDecl) { i.Enums[ed.Name] = ed }
 // Interp.RegisterEnum cheap; the cost only shows up at evaluation
 // of variant constructors and match arms.
 func (i *Interp) findVariant(name string) (*ast.EnumDecl, int, bool) {
+	return i.findVariantOn(name, "")
+}
+
+// findVariantOn restricts the lookup to a specific enum when
+// `enumName` is non-empty. Used by the qualified-variant paths
+// (`Color.Red` Ident / Call sites) so the lookup is deterministic
+// even when two enums share a variant name.
+func (i *Interp) findVariantOn(name, enumName string) (*ast.EnumDecl, int, bool) {
+	if enumName != "" {
+		if ed, ok := i.Enums[enumName]; ok {
+			for j, v := range ed.Variants {
+				if v.Name == name {
+					return ed, j, true
+				}
+			}
+		}
+		return nil, 0, false
+	}
 	for _, ed := range i.Enums {
 		for j, v := range ed.Variants {
 			if v.Name == name {
@@ -1764,8 +1782,12 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			return Func{Decl: fn}, nil
 		}
 		// Payload-less variant (`Red`, `EOF`) used as a value.
-		// Variants with payloads must be called explicitly.
-		if ed, idx, ok := i.findVariant(x.Name); ok {
+		// Variants with payloads must be called explicitly. The
+		// checker stamps `x.EnumName` when the bare reference was
+		// disambiguated by a qualifier or by context, so the
+		// lookup stays deterministic across multi-enum same-name
+		// variants.
+		if ed, idx, ok := i.findVariantOn(x.Name, x.EnumName); ok {
 			if len(ed.Variants[idx].Payloads) != 0 {
 				return nil, fmt.Errorf("interp: variant %s expects %d payload(s); call it instead",
 					x.Name, len(ed.Variants[idx].Payloads))
@@ -2011,6 +2033,19 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		}
 		return out, nil
 	case *ast.FieldAccess:
+		// Qualified payload-less variant: `Color.Red`. Target is
+		// an Ident naming an enum type, not a value — evaluating
+		// it as a value would fail. Mirror the checker rewrite
+		// and produce the typed Enum directly.
+		if tid, ok := x.Target.(*ast.Ident); ok {
+			if ed, idx, ok := i.findVariantOn(x.Field, tid.Name); ok {
+				if len(ed.Variants[idx].Payloads) != 0 {
+					return nil, fmt.Errorf("interp: variant %s.%s expects %d payload(s); call it instead",
+						tid.Name, x.Field, len(ed.Variants[idx].Payloads))
+				}
+				return &Enum{EnumName: ed.Name, VariantName: x.Field, Index: idx}, nil
+			}
+		}
 		tv, err := i.evalExpr(x.Target, env)
 		if err != nil {
 			return nil, err
@@ -2050,10 +2085,12 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		args[k] = v
 	}
 	if id, ok := c.Callee.(*ast.Ident); ok {
-		// Variant constructor: resolve the name across all
-		// registered enums and build an Enum value with the
-		// evaluated payloads.
-		if ed, idx, ok := i.findVariant(id.Name); ok {
+		// Variant constructor: resolve the name (optionally
+		// scoped to a stamped enum, set by the checker for
+		// qualified `Color.Red(payload)` references and
+		// disambiguated bare-name calls) and build an Enum value
+		// with the evaluated payloads.
+		if ed, idx, ok := i.findVariantOn(id.Name, id.EnumName); ok {
 			if _, shadowed := env.get(id.Name); !shadowed {
 				if _, isFn := i.Funcs[id.Name]; !isFn {
 					if got, want := len(args), len(ed.Variants[idx].Payloads); got != want {

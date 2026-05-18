@@ -460,6 +460,37 @@ function main(): i32 { return 0; }`)
 	}
 }
 
+// Qualified-variant references (`Color.Red`) round-trip through
+// the multi-line formatter in both expression and match-arm
+// positions. Was IMPROVEMENTS.md #15 — without the printer change
+// `lang -fmt -w` would silently drop the `Color.` prefix users
+// wrote to disambiguate two enums that share a variant name.
+func TestFormatQualifiedVariantsRoundTrip(t *testing.T) {
+	got := formatSrc(t, `enum A { Foo(i32), Bar }
+enum B { Foo(i32), Baz }
+function main(): i32 {
+	var a: A = A.Foo(11);
+	match (a) {
+		A.Foo(x) => { return x; },
+		A.Bar => { return 0; }
+	}
+	return 0;
+}`)
+	for _, want := range []string{
+		"var a: A = A.Foo(11);",
+		"A.Foo(x) =>",
+		"A.Bar =>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output:\n%s", want, got)
+		}
+	}
+	again := formatSrc(t, got)
+	if got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
 // Union types (`type X = A | B | C;`) round-trip through the
 // formatter — previously dropped silently because no
 // `formatUnionDecl` path existed. Members preserved in source

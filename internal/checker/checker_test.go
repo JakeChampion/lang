@@ -1209,6 +1209,122 @@ func TestArrayMethodDispatchAutoDiscovers(t *testing.T) {
 	}
 }
 
+// TestQualifiedVariantReferences — `Color.Red`-style references
+// let two enums declare the same variant name and disambiguate at
+// the use site. Was IMPROVEMENTS.md #15. Replaces the old decl-
+// time "variant declared in both" error, which used to force the
+// user to rename one of them.
+func TestQualifiedVariantReferences(t *testing.T) {
+	good := []string{
+		// Two enums declaring the same variant — coexist.
+		`enum Color { Red, Green, Blue }
+		enum Status { Red, Yellow }
+		function main(): i32 {
+			var c: Color = Color.Red;
+			var s: Status = Status.Red;
+			return 0;
+		}`,
+		// Match-arm qualifier on a clashing variant.
+		`enum A { Foo(i32), Bar }
+		enum B { Foo(i32), Baz }
+		function main(): i32 {
+			var a: A = A.Foo(11);
+			match (a) {
+				A.Foo(x) => { return x; },
+				A.Bar => { return 0; }
+			}
+			return 0;
+		}`,
+		// Qualified call with payload.
+		`enum Shape { Circle(i32), Square(i32) }
+		function main(): i32 {
+			var s: Shape = Shape.Circle(7);
+			match (s) {
+				Circle(r) => { return r; },
+				Square(side) => { return side * side; }
+			}
+			return 0;
+		}`,
+		// Single-variant-name case stays working — no qualifier
+		// required, no regression.
+		`enum Light { Red, Green, Yellow }
+		function main(): i32 {
+			var l: Light = Red;
+			match (l) {
+				Red => { return 1; },
+				Green => { return 2; },
+				Yellow => { return 3; }
+			}
+			return 0;
+		}`,
+	}
+	for _, src := range good {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected ok, got %v\nsrc:\n%s", err, src)
+		}
+	}
+
+	bad := []struct {
+		src  string
+		want string
+	}{
+		// Bare reference to a variant declared in two enums — must
+		// qualify.
+		{
+			`enum A { Foo, Bar }
+			enum B { Foo, Baz }
+			function main(): i32 {
+				var x: A = Foo;
+				return 0;
+			}`,
+			"declared in multiple enums",
+		},
+		// Bare call form too.
+		{
+			`enum A { Foo(i32) }
+			enum B { Foo(i32) }
+			function main(): i32 {
+				var x: A = Foo(7);
+				return 0;
+			}`,
+			"declared in multiple enums",
+		},
+		// Qualifier names an enum that doesn't have that variant.
+		{
+			`enum A { Foo }
+			enum B { Bar }
+			function main(): i32 {
+				var x: A = A.Bar;
+				return 0;
+			}`,
+			"no variant",
+		},
+		// Match-arm qualifier disagrees with scrutinee.
+		{
+			`enum A { Foo }
+			enum B { Foo }
+			function main(): i32 {
+				var a: A = A.Foo;
+				match (a) {
+					B.Foo => { return 1; }
+				}
+				return 0;
+			}`,
+			"does not match scrutinee enum",
+		},
+	}
+	for _, c := range bad {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected error containing %q, got nil\nsrc:\n%s", c.want, c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 // TestCastAsTypeAscription — the `as` operator doubles as a
 // zero-cost type-annotation form. Bare `None`, `[]`, partially-
 // inferred variant constructors, etc. all get a place to pin a

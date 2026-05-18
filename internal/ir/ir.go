@@ -1475,6 +1475,29 @@ func needsImplicitReturn(ops []Op) bool {
 // name in two enums) was already rejected by the checker, so the
 // first hit is authoritative.
 func (b *builder) lookupVariant(name string) (enumName string, varIdx int, payloadCount int, ok bool) {
+	return b.lookupVariantOn(name, "")
+}
+
+// lookupVariantOn resolves a variant by name, optionally restricted
+// to a specific enum. The checker stamps `Ident.EnumName` when it
+// resolves a qualified reference (`Color.Red`) or when an
+// unqualified bare name is unambiguous; passing it back here makes
+// the IR's resolution deterministic even when two enums declare the
+// same variant. The `enumName == ""` fallback keeps every legacy
+// caller (match-arm lookup, indirect-call dispatch) working: the
+// checker has already rejected ambiguous unqualified references, so
+// any name that reaches the IR with no qualifier is single-owner.
+func (b *builder) lookupVariantOn(name, enumName string) (foundEnum string, varIdx int, payloadCount int, ok bool) {
+	if enumName != "" {
+		if ed, ok := b.info.Enums[enumName]; ok {
+			for i, v := range ed.Variants {
+				if v.Name == name {
+					return enumName, i, len(v.Payloads), true
+				}
+			}
+		}
+		return "", 0, 0, false
+	}
 	for ename, ed := range b.info.Enums {
 		for i, v := range ed.Variants {
 			if v.Name == name {
@@ -3712,6 +3735,20 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures))})
 	case *ast.FieldAccess:
+		// Qualified payload-less variant reference: `Color.Red`
+		// in value position. The checker accepted it as an
+		// EnumType; lower it as the same shared sentinel
+		// `[tag=varIdx]` cell that `emitEnumNew` reuses for any
+		// payload-less variant, so match / try sites just read
+		// the tag with `[ptr+0]` like every other enum value.
+		if tid, ok := n.Target.(*ast.Ident); ok {
+			if _, isEnum := b.info.Enums[tid.Name]; isEnum {
+				if _, varIdx, payloadCount, isVar := b.lookupVariantOn(n.Field, tid.Name); isVar && payloadCount == 0 {
+					b.emit(Op{Kind: OpEnumSentinel, I32: int32(varIdx)})
+					return nil
+				}
+			}
+		}
 		// Compute base + offset_of(field), then load the value
 		// at its declared width (4-byte for i32 / f32 / sub-i32,
 		// 8-byte for i64 / f64, ptr-width for pointer types so
@@ -3879,6 +3916,17 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 			return ast.FloatType{Width: x.Width}
 		}
 	case *ast.FieldAccess:
+		// Qualified payload-less variant in value position
+		// (`Color.Red`). Same shape exprType expects for the
+		// `Red`-as-Ident form — an EnumType naming the owning
+		// enum, with no Args.
+		if tid, ok := x.Target.(*ast.Ident); ok {
+			if _, isEnum := b.info.Enums[tid.Name]; isEnum {
+				if _, _, payloadCount, isVar := b.lookupVariantOn(x.Field, tid.Name); isVar && payloadCount == 0 {
+					return ast.EnumType{Name: tid.Name}
+				}
+			}
+		}
 		// Tuple field access (`pair.0`) — resolve the static
 		// tuple type, parse the numeric selector, and look up
 		// the element type. Without this the struct path

@@ -511,6 +511,10 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			if arm.IsWildcard {
 				f.b.WriteByte('_')
 			} else {
+				if arm.VariantModule != "" {
+					f.b.WriteString(arm.VariantModule)
+					f.b.WriteByte('.')
+				}
 				f.b.WriteString(arm.VariantName)
 				if len(arm.Bindings) > 0 {
 					f.b.WriteByte('(')
@@ -881,6 +885,10 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			if arm.IsWildcard {
 				f.b.WriteByte('_')
 			} else {
+				if arm.VariantModule != "" {
+					f.b.WriteString(arm.VariantModule)
+					f.b.WriteByte('.')
+				}
 				f.b.WriteString(arm.VariantName)
 				if len(arm.Bindings) > 0 {
 					f.b.WriteByte('(')

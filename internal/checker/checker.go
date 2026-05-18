@@ -538,7 +538,7 @@ func Check(prog *ast.Program) (*Info, error) {
 			GenericFuncs:        map[string]*ast.FuncDecl{},
 			GenericStructs:      map[string]*ast.StructDecl{},
 		},
-		variantOf: map[string]variantRef{},
+		variantOf: map[string][]variantRef{},
 	}
 
 	// Surface shadow-attempts on reserved built-in type names
@@ -644,8 +644,10 @@ func Check(prog *ast.Program) (*Info, error) {
 	// Register every enum declaration. Variant names are recorded
 	// in variantOf so an unqualified `Some(x)` or `Red` can be
 	// rewritten into a typed *EnumLit during expression checking.
-	// A variant name shared across two enums is ambiguous; we
-	// drop the entry so subsequent uses surface a clear error.
+	// Two enums declaring the same variant name (e.g. `Color.Red`
+	// and `Status.Red`) coexist — the bare `Red` becomes ambiguous
+	// and must be qualified at the use site (`Color.Red`); the
+	// resolution helpers below produce the disambiguation error.
 	for _, ed := range prog.Enums {
 		if _, dup := c.info.Enums[ed.Name]; dup {
 			c.errf(ed.P, "enum %q redeclared", ed.Name)
@@ -660,17 +662,11 @@ func Check(prog *ast.Program) (*Info, error) {
 				continue
 			}
 			seen[v.Name] = true
-			if existing, dup := c.variantOf[v.Name]; dup {
-				c.errf(v.P, "variant %q is declared in both %s and %s — qualify references with the enum name (not yet supported, rename one)",
-					v.Name, existing.enumName, ed.Name)
-				delete(c.variantOf, v.Name)
-				continue
-			}
-			c.variantOf[v.Name] = variantRef{
+			c.variantOf[v.Name] = append(c.variantOf[v.Name], variantRef{
 				enumName: ed.Name,
 				index:    i,
 				payloads: v.Payloads,
-			}
+			})
 		}
 	}
 
@@ -1323,12 +1319,15 @@ type checker struct {
 	loopDepth   int
 	switchDepth int
 
-	// variantOf maps a variant's bare name (`Some`, `Err`) to the
-	// enum that owns it plus its index. Built during the enum
-	// registration pass; ambiguous names (same variant in two
-	// enums) generate an error and the entry is left as zero-value
-	// so subsequent uses report cleanly.
-	variantOf map[string]variantRef
+	// variantOf maps a variant's bare name (`Some`, `Err`, `Red`) to
+	// every enum that declares it. Built during the enum
+	// registration pass. Most names have exactly one entry — the
+	// IDE / IR pretend the map is `[string]variantRef`. When two
+	// enums declare the same variant (e.g. `Color.Red` and
+	// `Status.Red` coexist), the unqualified reference is
+	// ambiguous and the user must qualify with `Color.Red`. The
+	// resolution helpers below pick the right entry from the slice.
+	variantOf map[string][]variantRef
 
 	// Closure-capture plumbing. While checking a local function body,
 	// captureSink records each outer-scope name read by the body as
@@ -1640,6 +1639,56 @@ type variantRef struct {
 	enumName string
 	index    int
 	payloads []ast.Type
+}
+
+// resolveVariant looks up a variant reference by name and (optional)
+// enum qualifier. Returns the matching variantRef and ok=true. If
+// `enumName` is non-empty, only the entry on that specific enum
+// matches — used for `Color.Red`-style qualified references. If
+// `enumName` is empty (the bare `Red` / `Some(x)` form), there must
+// be exactly one candidate; multiple candidates means the call site
+// has to disambiguate. multi reports whether the bare-name lookup
+// hit more than one entry — the caller uses it to produce a
+// "qualify with `<E>.<v>`" hint.
+func (c *checker) resolveVariant(name, enumName string) (variantRef, bool, bool) {
+	cands := c.variantOf[name]
+	if enumName != "" {
+		for _, vr := range cands {
+			if vr.enumName == enumName {
+				return vr, true, len(cands) > 1
+			}
+		}
+		return variantRef{}, false, false
+	}
+	if len(cands) == 1 {
+		return cands[0], true, false
+	}
+	return variantRef{}, false, len(cands) > 1
+}
+
+// variantEnumList returns a human-readable list of enum names that
+// declare `name`. Used in the "ambiguous variant" diagnostic so the
+// user sees every candidate, not just the first one.
+func (c *checker) variantEnumList(name string) string {
+	cands := c.variantOf[name]
+	if len(cands) == 0 {
+		return ""
+	}
+	if len(cands) == 1 {
+		return cands[0].enumName
+	}
+	var b strings.Builder
+	for i, vr := range cands {
+		if i > 0 {
+			if i == len(cands)-1 {
+				b.WriteString(" and ")
+			} else {
+				b.WriteString(", ")
+			}
+		}
+		b.WriteString(vr.enumName)
+	}
+	return b.String()
 }
 
 // substituteType returns t with every ParamType reference
@@ -2844,16 +2893,26 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			c.checkBlock(arm.Body, s)
 			continue
 		}
-		// Validate the optional `mod.` qualifier against the
-		// scrutinee enum's source module. modload rewrites the
-		// qualifier to the canonical module path (the same string
-		// stamped on EnumDecl.SourceModule), so an equality
-		// comparison is enough. Skip when either side is empty —
-		// SourceModule is "" for entry-point modules in the
-		// flat-namespace path.
-		if arm.VariantModule != "" && ed.SourceModule != "" && arm.VariantModule != ed.SourceModule {
-			c.errf(arm.P, "variant pattern qualifier names module %q, but enum %s lives in module %q",
-				arm.VariantModule, ed.Name, ed.SourceModule)
+		// Validate the optional qualifier on the variant pattern.
+		// Two forms:
+		//   1. Module qualifier (`mod.TokA`): modload rewrote
+		//      it to the canonical module path so an equality
+		//      comparison against the enum's SourceModule is
+		//      enough.
+		//   2. Enum qualifier (`Color.Red`): names the scrutinee
+		//      enum directly. modload leaves these intact (it
+		//      detects the qualifier as a known enum name and
+		//      suppresses the "unknown module" error).
+		if arm.VariantModule != "" {
+			if _, qualIsEnum := c.info.Enums[arm.VariantModule]; qualIsEnum {
+				if arm.VariantModule != ed.Name {
+					c.errf(arm.P, "variant pattern qualifier %q does not match scrutinee enum %s",
+						arm.VariantModule, ed.Name)
+				}
+			} else if ed.SourceModule != "" && arm.VariantModule != ed.SourceModule {
+				c.errf(arm.P, "variant pattern qualifier names module %q, but enum %s lives in module %q",
+					arm.VariantModule, ed.Name, ed.SourceModule)
+			}
 		}
 		// Find the variant on this enum.
 		varIdx := -1
@@ -3614,14 +3673,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		// A bare name might be a payload-less enum variant.
 		// (Variants with payloads are constructed via Call and
-		// rejected here so the user gets a clearer error.)
-		if vr, ok := c.variantOf[n.Name]; ok {
+		// rejected here so the user gets a clearer error.) The
+		// optional `n.EnumName` qualifier (set by the FieldAccess
+		// rewrite for `Color.Red`) restricts the lookup to one
+		// specific enum.
+		if vr, ok, multi := c.resolveVariant(n.Name, n.EnumName); ok {
 			if len(vr.payloads) > 0 {
 				c.errf(n.P, "variant %s expects %d payload argument(s); call it as %s(...)",
 					n.Name, len(vr.payloads), n.Name)
 				return nil
 			}
+			n.EnumName = vr.enumName
 			return ast.EnumType{Name: vr.enumName}
+		} else if multi {
+			c.errf(n.P, "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s`",
+				n.Name, c.variantEnumList(n.Name), c.variantOf[n.Name][0].enumName, n.Name)
+			return nil
+		} else if n.EnumName != "" {
+			c.errf(n.P, "enum %s has no variant %q", n.EnumName, n.Name)
+			return nil
 		}
 		c.errIdent(n, s, "undefined identifier %q", n.Name)
 		return nil
@@ -3731,12 +3801,42 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// (like `None`) yield an EnumType with empty Args, which
 		// the assignment relaxation in `assignable` lets flow
 		// into a concretely-typed slot at the var / return site.
+		// A `Color.Red(payload)` qualified-variant call parses as
+		// Call{Callee: FieldAccess{Target: Ident{Color}, Field:
+		// "Red"}}. Detect that shape, look up the variant on the
+		// named enum, and rewrite Callee to a plain Ident with
+		// EnumName stamped so the rest of this branch (and the IR's
+		// `lookupVariant`) handle it uniformly with the unqualified
+		// form. Only fires when the target is a known enum name —
+		// every other FieldAccess (struct field, method call) flows
+		// down the usual path.
+		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
+			if tid, ok := fa.Target.(*ast.Ident); ok {
+				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+					n.Callee = &ast.Ident{P: fa.P, Name: fa.Field, EnumName: tid.Name}
+				}
+			}
+		}
 		if id, ok := n.Callee.(*ast.Ident); ok {
-			if vr, ok := c.variantOf[id.Name]; ok && !c.isUserFuncOrLocal(id.Name, s) {
+			vr, vrOk, vrMulti := c.resolveVariant(id.Name, id.EnumName)
+			isVar := vrOk && !c.isUserFuncOrLocal(id.Name, s)
+			// Bare-name reference to a variant that lives in two
+			// or more enums — the call site has to qualify.
+			// Report once, then fall through (vrOk=false) so the
+			// usual function-call path runs and the caller still
+			// gets a follow-up "undefined identifier" diag if the
+			// name resolves to nothing else.
+			if !isVar && vrMulti && id.EnumName == "" && !c.isUserFuncOrLocal(id.Name, s) {
+				c.errf(n.P, "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s(...)`",
+					id.Name, c.variantEnumList(id.Name), c.variantOf[id.Name][0].enumName, id.Name)
+				return nil
+			}
+			if isVar {
 				if len(n.Args) != len(vr.payloads) {
 					c.errf(n.P, "variant %s expects %d argument(s), got %d",
 						id.Name, len(vr.payloads), len(n.Args))
 				}
+				id.EnumName = vr.enumName
 				ed := c.info.Enums[vr.enumName]
 				sub := map[string]ast.Type{}
 				// Pre-settle polymorphic numerics against the
@@ -4601,6 +4701,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		n.ValueType = valueType
 		return ast.StructType{Name: "Map", Args: []ast.Type{keyType, valueType}}
 	case *ast.FieldAccess:
+		// Qualified payload-less variant: `Color.Red`. Detect
+		// before recursing into Target — the Target Ident names an
+		// enum type, not a value, so the usual `checkExpr` path
+		// would (correctly) reject it as undefined. The qualified-
+		// variant-call shape (`Color.Red(payload)`) is handled in
+		// the *ast.Call branch.
+		if tid, ok := n.Target.(*ast.Ident); ok {
+			if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+				if vr, ok, _ := c.resolveVariant(n.Field, tid.Name); ok {
+					if len(vr.payloads) > 0 {
+						c.errf(n.P, "variant %s.%s expects %d payload argument(s); call it as %s.%s(...)",
+							tid.Name, n.Field, len(vr.payloads), tid.Name, n.Field)
+						return nil
+					}
+					return ast.EnumType{Name: vr.enumName}
+				}
+				c.errf(n.P, "enum %s has no variant %q", tid.Name, n.Field)
+				return nil
+			}
+		}
 		tt := c.checkExpr(n.Target, s)
 		// Tuple field access: `pair.0`, `pair.1`. The Field name
 		// is the digit string from the parser; reject anything
@@ -5134,7 +5254,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		if !ok {
 			return
 		}
-		vr, isVariant := c.variantOf[id.Name]
+		vr, isVariant, _ := c.resolveVariant(id.Name, id.EnumName)
 		if !isVariant {
 			return
 		}
