@@ -28,6 +28,7 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
+	"github.com/jakechampion/lang/internal/wasm/memory"
 	"github.com/jakechampion/lang/internal/wasm/module"
 	"github.com/jakechampion/lang/internal/wasm/numeric"
 	"github.com/jakechampion/lang/internal/wasm/sections"
@@ -58,6 +59,22 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		m.TypeParams = append(m.TypeParams, params)
 		m.TypeResults = append(m.TypeResults, results)
 		return idx
+	}
+
+	// Memory section is emitted iff any function in the program
+	// touches memory (load / store / sub-width variants / fN load
+	// or store). Slice-4 modules ship a single linear memory of
+	// 1 page (64 KiB) with no upper bound — same shape the WAT
+	// emitter produces for non-string programs.
+	if anyMemoryOp(prog) {
+		m.MemoryPresent = true
+		m.MemoryMin = 1
+		m.MemoryMax = -1
+		// Export the memory under the canonical name so tests
+		// and host tooling can poke at it.
+		m.ExportNames = append(m.ExportNames, "memory")
+		m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
+		m.ExportIdxs = append(m.ExportIdxs, 0)
 	}
 
 	for fnIdx, fn := range prog.Funcs {
@@ -511,8 +528,75 @@ func emitOp(body []byte, op ir.Op) ([]byte, error) {
 			return convert.InstI32TruncF64U(body), nil
 		}
 		return convert.InstI32TruncF64S(body), nil
+
+	// ---- Memory (slice 4) ----
+	// Alignment is the *natural* alignment of the access — wasm
+	// uleb-encodes it as log2(bytes). Offset is always 0 here;
+	// the IR doesn't carry per-op offset (callers fold the base
+	// + delta with OpAdd before the load/store).
+	case ir.OpLoad:
+		if op.Width == 64 {
+			return memory.InstI64Load(body, 3, 0), nil
+		}
+		// Width=0 / 32 / WidthPtr (-1) all collapse to i32 on
+		// wasm32 — WidthPtr is only meaningful on 64-bit native
+		// targets. WidthString (-2) is the two-word string ABI
+		// and stays out of scope until the string slice.
+		if op.Width == ir.WidthString {
+			return nil, fmt.Errorf("OpLoad WidthString (two-word string ABI) not yet supported")
+		}
+		return memory.InstI32Load(body, 2, 0), nil
+	case ir.OpStore:
+		if op.Width == 64 {
+			return memory.InstI64Store(body, 3, 0), nil
+		}
+		if op.Width == ir.WidthString {
+			return nil, fmt.Errorf("OpStore WidthString (two-word string ABI) not yet supported")
+		}
+		return memory.InstI32Store(body, 2, 0), nil
+	case ir.OpFLoad:
+		if op.Width == 64 {
+			return memory.InstF64Load(body, 3, 0), nil
+		}
+		return memory.InstF32Load(body, 2, 0), nil
+	case ir.OpFStore:
+		if op.Width == 64 {
+			return memory.InstF64Store(body, 3, 0), nil
+		}
+		return memory.InstF32Store(body, 2, 0), nil
+	case ir.OpLoadByte:
+		return memory.InstI32Load8U(body, 0, 0), nil
+	case ir.OpLoadI8S:
+		return memory.InstI32Load8S(body, 0, 0), nil
+	case ir.OpStoreI8:
+		return memory.InstI32Store8(body, 0, 0), nil
+	case ir.OpLoadI16U:
+		return memory.InstI32Load16U(body, 1, 0), nil
+	case ir.OpLoadI16S:
+		return memory.InstI32Load16S(body, 1, 0), nil
+	case ir.OpStoreI16:
+		return memory.InstI32Store16(body, 1, 0), nil
 	}
 	return nil, fmt.Errorf("unsupported op %v", op.Kind)
+}
+
+// anyMemoryOp reports whether prog needs a memory section. Any
+// load / store (including sub-width and float variants) qualifies;
+// pure arithmetic / control-flow programs stay memory-free so the
+// output binary is one fewer section.
+func anyMemoryOp(prog *ir.Program) bool {
+	for _, fn := range prog.Funcs {
+		for _, op := range fn.Ops {
+			switch op.Kind {
+			case ir.OpLoad, ir.OpStore,
+				ir.OpFLoad, ir.OpFStore,
+				ir.OpLoadByte, ir.OpStoreI8, ir.OpLoadI8S,
+				ir.OpLoadI16U, ir.OpLoadI16S, ir.OpStoreI16:
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // blocktypeByte maps an ir.BlockType* constant to the single-byte
