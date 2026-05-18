@@ -166,12 +166,22 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   (`TestWASMNumeric{I32, I64, Float, Compose}`) spot-check each
   family with a wider compose test that builds the canonical
   `local.get 0; local.get 1; i32.add` body.
-- Remaining Phase 1 work: memory load/store (carry alignment +
-  offset immediates) and conversion / sign-extension opcodes
-  (~30 functions), the IR-walking entry point that produces a
-  complete module from the codegen IR, and the driver-wiring step
-  that deletes the `wasm-tools parse` call at
-  `cmd/lang/main.go:604`.
+- **Memory instruction encoders shipped** in
+  `internal/stdlib/std/wasm/memory.lang`: every wasm load / store
+  variant including the narrow widths (i32.load8_s, i64.store16,
+  etc.), all carrying the standard `memarg` immediate (uleb
+  align + uleb offset); plus `memory.size` / `memory.grow` with
+  their reserved memidx byte. ~25 functions. Tests
+  (`TestWASMMemoryLoad`, `…Store`, `…SizeGrow`) walk both the
+  full-width and narrow-width blocks plus the multi-byte uleb
+  offset case (offset=128 forces a 2-byte uleb).
+- Remaining Phase 1 work: conversion / sign-extension opcodes
+  (single-byte, ~30 functions — i32.wrap_i64, i64.extend_i32_s,
+  i32.trunc_f32_s, f32.convert_i32_u, reinterpret family, the
+  i32/i64.extend{8,16,32}_s sign-extension set), the IR-walking
+  entry point that produces a complete module from the codegen
+  IR, and the driver-wiring step that deletes the
+  `wasm-tools parse` call at `cmd/lang/main.go:604`.
 
 ---
 
