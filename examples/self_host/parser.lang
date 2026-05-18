@@ -51,9 +51,14 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 pub struct StmtVar { name: string, init: Expr }
 pub struct StmtReturn { value: Expr }
 pub struct StmtExpr { value: Expr }
+// StmtIf models `if (cond) { then... } else { else... }`. else_body
+// is empty (`[]`) when the source omits the `else` branch; the
+// checker / interp branch on `len(else_body) == 0` rather than a
+// separate `has_else` flag.
+pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[] }
 pub struct StmtUnknown { kind: string }
 
-pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtUnknown;
+pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtUnknown;
 
 // Helper wraps to satisfy the implicit-union-wrap return-position
 // rule. Same pattern lexer.lang uses for Token construction.
@@ -74,6 +79,9 @@ function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
 function s_var(name: string, init: Expr): Stmt { return StmtVar { name: name, init: init }; }
 function s_return(value: Expr): Stmt { return StmtReturn { value: value }; }
 function s_expr(value: Expr): Stmt { return StmtExpr { value: value }; }
+function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
+    return StmtIf { cond: cond, then_body: then_body, else_body: else_body };
+}
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
 
 // Parser state. `toks` is the lexer's output; `pos` is the
@@ -239,8 +247,59 @@ function parse_expr(p: Par): ExprResult {
 }
 
 // parse_stmt: `var x = expr;`, `return expr;`, or `expr;`.
+// parse_block consumes `{ stmt; stmt; … }` and returns the
+// resulting Stmt[]. The opening `{` is expected to be the current
+// token. On malformed input — missing `{` or `}` — the result is
+// a single StmtUnknown so the outer caller can still surface a
+// reasonable error site.
+pub struct BlockResult { par: Par, body: Stmt[] }
+
+function parse_block(p: Par): BlockResult {
+    var body: Stmt[] = [];
+    if (p.peek_punct() != "{") {
+        body = body.push(s_unknown("missing { in block"));
+        return BlockResult { par: p, body: body };
+    }
+    p = p.advance();
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        var r: StmtResult = parse_stmt(p);
+        p = r.par;
+        body = body.push(r.stmt);
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return BlockResult { par: p, body: body };
+}
+
 function parse_stmt(p: Par): StmtResult {
     var kw: string = p.peek_keyword();
+    if (kw == "if") {
+        p = p.advance();
+        if (p.peek_punct() != "(") {
+            return StmtResult { par: p, stmt: s_unknown("missing ( in if") };
+        }
+        p = p.advance();
+        var c = parse_expr(p);
+        p = c.par;
+        if (p.peek_punct() == ")") { p = p.advance(); }
+        var then_blk: BlockResult = parse_block(p);
+        p = then_blk.par;
+        var else_body: Stmt[] = [];
+        if (p.peek_keyword() == "else") {
+            p = p.advance();
+            // `else if` — wrap as a nested StmtIf in the else
+            // branch so an else-chain reads as one shape.
+            if (p.peek_keyword() == "if") {
+                var nested: StmtResult = parse_stmt(p);
+                p = nested.par;
+                else_body = else_body.push(nested.stmt);
+            } else {
+                var else_blk: BlockResult = parse_block(p);
+                p = else_blk.par;
+                else_body = else_blk.body;
+            }
+        }
+        return StmtResult { par: p, stmt: s_if(c.expr, then_blk.body, else_body) };
+    }
     if (kw == "var") {
         p = p.advance();
         var name: string = p.peek_ident();
@@ -368,6 +427,34 @@ function main(): i32 {
             }
         },
         _ => { return 306; }
+    }
+
+    // If-statement parse: `if (x < 0) { var a = 1; } else { var b = 2; }`
+    // should produce a single StmtIf with one stmt in each branch.
+    var src2: string = "if (x < 0) { var a = 1; } else { var b = 2; }";
+    var prog2: Stmt[] = parse_program(lexer.tokenize(src2));
+    if (len(prog2) != 1) { return 400; }
+    match (prog2[0]) {
+        StmtIf(ifs) => {
+            // cond: ExprBinary `<`.
+            match (ifs.cond) {
+                ExprBinary(b) => { if (b.op != "<") { return 401; } },
+                _ => { return 402; }
+            }
+            if (len(ifs.then_body) != 1) { return 403; }
+            if (len(ifs.else_body) != 1) { return 404; }
+        },
+        _ => { return 405; }
+    }
+
+    // Else-less if: ensure else_body is empty.
+    var src3: string = "if (true) { return 1; }";
+    var prog3: Stmt[] = parse_program(lexer.tokenize(src3));
+    match (prog3[0]) {
+        StmtIf(ifs) => {
+            if (len(ifs.else_body) != 0) { return 500; }
+        },
+        _ => { return 501; }
     }
 
     return 0;

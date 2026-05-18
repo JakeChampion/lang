@@ -225,9 +225,48 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             var t: Type = check_expr(x.value, s);
             return CheckResult { scope: s, ty: t };
         },
+        parser.StmtIf(ifs) => {
+            // cond must be bool. Branches type-check in fresh
+            // scopes that share `s` as parent — bindings inside a
+            // branch don't leak out (the Scope passed back from
+            // check_stmt for the branch's stmts is intentionally
+            // discarded). The if-statement itself surfaces
+            // TypeBool on success and TypeUnknown on a non-bool
+            // cond — there's no enclosing-expression type yet
+            // (no `if`-expression form in the parser stub), so
+            // the type slot is just a checker-side bookkeeping
+            // value.
+            var ct: Type = check_expr(ifs.cond, s);
+            if (!type_eq(ct, t_bool())) {
+                check_block(ifs.then_body, s);
+                check_block(ifs.else_body, s);
+                return CheckResult { scope: s, ty: t_unknown("if cond not bool") };
+            }
+            check_block(ifs.then_body, s);
+            check_block(ifs.else_body, s);
+            return CheckResult { scope: s, ty: t_bool() };
+        },
         parser.StmtUnknown(u) => { return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + u.kind) }; }
     }
     return CheckResult { scope: s, ty: t_unknown("unhandled Stmt variant") };
+}
+
+// check_block walks a body in a derived scope. The scope's
+// bindings don't escape — the parent caller threads its own
+// pre-block scope forward unchanged. Errors inside the block
+// don't propagate up either; they'd surface as TypeUnknown on
+// the offending statement, which a future "collect-errors" pass
+// could harvest. For this minimal cut we just walk for the side
+// effect of validating sub-expressions.
+function check_block(body: parser.Stmt[], s: Scope): i32 {
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < len(body)) {
+        var r: CheckResult = check_stmt(body[i], cur);
+        cur = r.scope;
+        i = i + 1;
+    }
+    return 0;
 }
 
 // check_program threads the scope through every statement in

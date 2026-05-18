@@ -266,9 +266,45 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // when we grow call statements).
             return StepResult { env: env, ret: v_err("__noreturn__") };
         },
+        parser.StmtIf(ifs) => {
+            var cv: Value = eval_expr(ifs.cond, env);
+            if (is_err(cv)) { return StepResult { env: env, ret: cv }; }
+            match (cv) {
+                VBool(b) => {
+                    var body: parser.Stmt[] = ifs.else_body;
+                    if (b.v) { body = ifs.then_body; }
+                    // Branches use the caller's env as the starting
+                    // point; bindings declared inside the branch
+                    // don't escape, mirroring the checker's stance.
+                    return eval_block(body, env);
+                },
+                _ => { return StepResult { env: env, ret: v_err("if cond not bool") }; }
+            }
+            return StepResult { env: env, ret: v_err("unreachable if-arm") };
+        },
         parser.StmtUnknown(u) => { return StepResult { env: env, ret: v_err("parser-side unknown stmt: " + u.kind) }; }
     }
     return StepResult { env: env, ret: v_err("unhandled Stmt variant") };
+}
+
+// eval_block walks a body, threading the env forward, returning
+// the FIRST encountered non-__noreturn ret (typically a return
+// value) so the surrounding eval_program loop sees the return.
+// The env returned is the caller's env — branch-scoped bindings
+// don't leak. If no return fires the block surfaces the
+// __noreturn sentinel so the caller keeps stepping.
+function eval_block(body: parser.Stmt[], env: Env): StepResult {
+    var cur: Env = env;
+    var i: i32 = 0;
+    while (i < len(body)) {
+        var r: StepResult = eval_stmt(body[i], cur);
+        cur = r.env;
+        if (!is_noreturn(r.ret)) {
+            return StepResult { env: env, ret: r.ret };
+        }
+        i = i + 1;
+    }
+    return StepResult { env: env, ret: v_err("__noreturn__") };
 }
 
 function is_noreturn(v: Value): boolean {
@@ -352,6 +388,35 @@ function main(): i32 {
     match (r7) {
         VErr(_) => { },
         _ => { return 70; }
+    }
+
+    // If/else, then-branch taken: `var x = 5; if (x < 10) { return 1; } else { return 2; }`
+    var r8: Value = run_source("var x = 5; if (x < 10) { return 1; } else { return 2; }");
+    match (r8) {
+        VInt(i) => { if (i.v != 1) { return 80; } },
+        _ => { return 81; }
+    }
+
+    // Else-branch taken.
+    var r9: Value = run_source("var x = 20; if (x < 10) { return 1; } else { return 2; }");
+    match (r9) {
+        VInt(i) => { if (i.v != 2) { return 90; } },
+        _ => { return 91; }
+    }
+
+    // No else, condition false: control falls past the if to the
+    // trailing return.
+    var r10: Value = run_source("if (false) { return 7; } return 11;");
+    match (r10) {
+        VInt(i) => { if (i.v != 11) { return 100; } },
+        _ => { return 101; }
+    }
+
+    // Chained else-if: branches through the second arm.
+    var r11: Value = run_source("var k = 2; if (k == 1) { return 10; } else if (k == 2) { return 20; } else { return 30; }");
+    match (r11) {
+        VInt(i) => { if (i.v != 20) { return 110; } },
+        _ => { return 111; }
     }
 
     return 0;
