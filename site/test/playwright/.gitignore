@@ -1,0 +1,6 @@
+# Playwright runtime artefacts.
+node_modules/
+package-lock.json
+test-results/
+playwright-report/
+.playwright/
