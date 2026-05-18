@@ -27,6 +27,9 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/wasm/encode"
+	"github.com/jakechampion/lang/internal/wasm/leb128"
+	"github.com/jakechampion/lang/internal/wasm/sections"
 )
 
 // preview2 tool discovery: cached across the whole test run since
@@ -9535,5 +9538,45 @@ function main(): i32 {
 			t.Errorf("%s(%s):\n  Lang got: %q\n  Go want:  %q",
 				e.fn, e.input, gotLines[i], want)
 		}
+	}
+}
+
+// TestWASMSectionsCrossValidates wires the Go sections package
+// end-to-end: build a module with type + function + export +
+// code sections, run it under wasmtime, assert the function
+// returns 42. Catches any drift between the Go mirror and the
+// wasm spec — and indirectly against the Lang composers, which
+// have their own e2e tests producing the same module shape.
+func TestWASMSectionsCrossValidates(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+
+	// Build via Go composers: a module that exports `main: () -> i32`
+	// returning 42.
+	out := encode.PutModuleHeader(nil)
+
+	// Type section: one functype () -> i32.
+	out = sections.EncodeTypeSection(out,
+		[][]byte{nil}, [][]byte{{encode.ValtypeI32}})
+
+	// Function section: one function using type 0.
+	out = sections.EncodeFunctionSection(out, []uint32{0})
+
+	// Export section: export "main" as func 0.
+	out = sections.EncodeExportSection(out,
+		[]string{"main"},
+		[]byte{sections.ExportFunc},
+		[]uint32{0})
+
+	// Code section: one body { i32.const 42 ; end }.
+	body := []byte{0x00, 0x41, 0x2a, 0x0b} // locals_vec_len=0, i32.const 42, end
+	// Code entries are size-prefixed individually.
+	codeEntry := append(leb128.UlebU32(nil, uint32(len(body))), body...)
+	out = sections.EncodeCodeSection(out, [][]byte{codeEntry})
+
+	stdout := runWasmModule(t, out)
+	if strings.TrimSpace(stdout) != "42" {
+		t.Fatalf("wasmtime stdout = %q, want %q", stdout, "42")
 	}
 }
