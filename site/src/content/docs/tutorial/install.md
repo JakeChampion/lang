@@ -63,4 +63,4 @@ lang -target wasm -o hello.wasm hello.lang
 wasmtime hello.wasm
 ```
 
-[Next: First steps →](/tutorial/first-steps/)
+[Next: First steps →](../first-steps/)

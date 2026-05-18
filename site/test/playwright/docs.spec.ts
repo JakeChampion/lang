@@ -72,3 +72,39 @@ test("search modal opens via Ctrl/Cmd-K", async ({ page }) => {
   await page.keyboard.press("ControlOrMeta+k");
   await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
 });
+
+// Regression guard for the "links 404 on the deployed site"
+// bug: markdown body links written with absolute paths (`/foo/`)
+// emit `href="/foo/"` verbatim, which 404s under the `/lang/`
+// base path. Clicking each link surfaces the issue — the prior
+// suite navigated directly via page.goto so it missed this.
+test("home → tutorial link navigates correctly", async ({ page }) => {
+  await page.goto("./");
+  await page.getByRole("link", { name: /^Tutorial$/ }).first().click();
+  await expect(page).toHaveURL(/\/lang\/tutorial\/install\/?$/);
+  await expect(page.locator("h1")).toContainText("Install");
+});
+
+test("home → reference link navigates correctly", async ({ page }) => {
+  await page.goto("./");
+  await page.getByRole("link", { name: /^Reference$/ }).first().click();
+  await expect(page).toHaveURL(/\/lang\/reference\/syntax\/?$/);
+});
+
+test("home → standard library link navigates correctly", async ({ page }) => {
+  await page.goto("./");
+  await page.getByRole("link", { name: /Standard library/ }).first().click();
+  await expect(page).toHaveURL(/\/lang\/stdlib\/?$/);
+});
+
+test("tutorial install → first-steps next-link navigates", async ({ page }) => {
+  await page.goto("tutorial/install/");
+  // The "Next: First steps →" link at the bottom of the install
+  // page is the most-likely-to-regress case (relative-path
+  // navigation inside a tutorial).
+  await page
+    .getByRole("link", { name: /Next: First steps/ })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/\/lang\/tutorial\/first-steps\/?$/);
+});
