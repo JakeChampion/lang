@@ -182,6 +182,13 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"try operator (?)":           false,
 		"method call (.sum)":         false,
 		"method call (.swap)":        false,
+		"Xyz struct decl":            false,
+		"Xyz literal":                false,
+		"Xyz.id field access":        false,
+		"Xyz.valid field access":     false,
+		"Status enum decl":           false,
+		"Status variant":             false,
+		"Status match expression":    false,
 	}
 	// Features that only fire in Gen (the parse+check path) and
 	// not in GenMain — current example: Map[i32, i32], whose
@@ -313,6 +320,29 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, ".swap()") {
 			want["method call (.swap)"] = true
+		}
+		if strings.Contains(src, "struct Xyz { id: i32, valid: boolean }") {
+			want["Xyz struct decl"] = true
+		}
+		if strings.Contains(src, "(Xyz { id: ") {
+			want["Xyz literal"] = true
+		}
+		if strings.Contains(src, ".id") {
+			want["Xyz.id field access"] = true
+		}
+		if strings.Contains(src, ".valid") {
+			want["Xyz.valid field access"] = true
+		}
+		if strings.Contains(src, "enum Status { Active, Inactive, Pending }") {
+			want["Status enum decl"] = true
+		}
+		// Status variant appears as an Ident; check for any of the
+		// three names outside the decl line. Total > 1 catches use sites.
+		if strings.Count(src, "Active") > 1 || strings.Count(src, "Inactive") > 1 || strings.Count(src, "Pending") > 1 {
+			want["Status variant"] = true
+		}
+		if strings.Contains(src, "Active =>") {
+			want["Status match expression"] = true
 		}
 	}
 	for feature, ok := range want {
