@@ -1400,3 +1400,12 @@ type Import struct {
 	Path      string
 	LocalName string
 }
+
+// Pos accessors for top-level declarations that aren't also Stmts.
+// FuncDecl already has Pos() via its Stmt role; the rest need their
+// own so they satisfy the ast.Node interface for Walk / WalkProgram.
+func (d *StructDecl) Pos() Position { return d.P }
+func (d *EnumDecl) Pos() Position   { return d.P }
+func (d *UnionDecl) Pos() Position  { return d.P }
+func (d *ConstDecl) Pos() Position  { return d.P }
+func (d *Import) Pos() Position     { return d.P }
