@@ -294,12 +294,27 @@ const (
 	tColor
 	tOptI32
 	tMapI32I32
+	// Additional nominal types. Each adds a distinct codegen
+	// shape so the differential oracle reaches code paths the
+	// first round (Pair / Color only) couldn't trigger:
+	//
+	// - Xyz: heterogeneous struct with a non-i32 field (boolean)
+	//   — exercises the per-field stride / offset arithmetic
+	//   that uniform-i32 Pair can't.
+	// - Status: three-variant payload-less enum like Color but
+	//   with different variant *names*, so anywhere a variant
+	//   name needs to round-trip through the parser / checker /
+	//   IR / codegen / formatter it has a second sample to
+	//   compare against.
+	tXyz
+	tStatus
 	numTypes
 )
 
 var allTypes = [numTypes]gtype{
 	tI32, tI64, tBool, tF32, tString,
 	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32, tMapI32I32,
+	tXyz, tStatus,
 }
 
 func (t gtype) String() string {
@@ -328,6 +343,10 @@ func (t gtype) String() string {
 		return "Option[i32]"
 	case tMapI32I32:
 		return "Map[i32, i32]"
+	case tXyz:
+		return "Xyz"
+	case tStatus:
+		return "Status"
 	}
 	panic(fmt.Sprintf("unknown gtype %d", int(t)))
 }
@@ -487,6 +506,7 @@ var mainVarTypes = []gtype{
 	tI32, tI64, tBool, tString,
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor, tOptI32,
+	tXyz, tStatus,
 	// tMapI32I32 stays out: the interpreter intentionally
 	// doesn't model the Map runtime (see internal/interp/interp.go
 	// "Map operations stay codegen-only for now"), so a Map
@@ -505,7 +525,17 @@ var mainVarTypes = []gtype{
 // the method names are fixed too.
 func (g *Generator) preludeDecls(b *strings.Builder) {
 	b.WriteString("struct Pair { fst: i32, snd: i32 }\n")
+	// `Xyz` — heterogeneous struct with an i32 field and a
+	// boolean field. Exercises the per-field stride / offset
+	// arithmetic that Pair (uniform i32) can't.
+	b.WriteString("struct Xyz { id: i32, valid: boolean }\n")
 	b.WriteString("enum Color { Red, Green, Blue }\n")
+	// `Status` — second payload-less enum with different
+	// variant names. Anywhere a variant name has to round-trip
+	// through the parser / checker / IR / codegen / formatter,
+	// this gives the path a second sample distinct from
+	// Color's Red / Green / Blue.
+	b.WriteString("enum Status { Active, Inactive, Pending }\n")
 	// `pair.sum()`: Pair → i32. The simplest method shape — no
 	// args, scalar return. Flows back into the i32 byte-oracle
 	// path via tryCompositeProduction.
@@ -818,6 +848,23 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
+	// Xyz field access. `Xyz.id` is i32, `Xyz.valid` is bool.
+	if t == tI32 {
+		xyzs := sc.inScope(tXyz)
+		if len(xyzs) > 0 {
+			name := xyzs[g.ch.intN(len(xyzs))]
+			fmt.Fprintf(b, "%s.id", name)
+			return true
+		}
+	}
+	if t == tBool {
+		xyzs := sc.inScope(tXyz)
+		if len(xyzs) > 0 {
+			name := xyzs[g.ch.intN(len(xyzs))]
+			fmt.Fprintf(b, "%s.valid", name)
+			return true
+		}
+	}
 	// `len(s)` — string-to-i32 byte-count. Same shape as the
 	// array-index path: every string is observable byte-wise,
 	// so this is the channel through which string ops flow
@@ -843,6 +890,22 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			b.WriteString(", Green => ")
 			g.expr(b, sc, t, depth+1)
 			b.WriteString(", Blue => ")
+			g.expr(b, sc, t, depth+1)
+			b.WriteString(" })")
+			return true
+		}
+	}
+	// Status match-expr (parallel to Color). Routes a Status
+	// into any non-Status t through the three variants.
+	if t != tStatus {
+		stats := sc.inScope(tStatus)
+		if len(stats) > 0 {
+			name := stats[g.ch.intN(len(stats))]
+			fmt.Fprintf(b, "(match (%s) { Active => ", name)
+			g.expr(b, sc, t, depth+1)
+			b.WriteString(", Inactive => ")
+			g.expr(b, sc, t, depth+1)
+			b.WriteString(", Pending => ")
 			g.expr(b, sc, t, depth+1)
 			b.WriteString(" })")
 			return true
@@ -1075,6 +1138,16 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 		g.pairLiteral(b, sc, depth)
 	case tColor:
 		b.WriteString([]string{"Red", "Green", "Blue"}[g.ch.intN(3)])
+	case tStatus:
+		b.WriteString([]string{"Active", "Inactive", "Pending"}[g.ch.intN(3)])
+	case tXyz:
+		// `(Xyz { id: <i32>, valid: <bool> })`. Outer parens
+		// match the disambiguation pattern from pairLiteral.
+		b.WriteString("(Xyz { id: ")
+		g.expr(b, sc, tI32, depth+1)
+		b.WriteString(", valid: ")
+		g.expr(b, sc, tBool, depth+1)
+		b.WriteString(" })")
 	case tOptI32:
 		// Exhaustion convention: smaller / more-terminating
 		// branch is `None` (no sub-expression). `Some(...)` is
@@ -1167,6 +1240,7 @@ func (g *Generator) pickType() gtype {
 		nonFloats := []gtype{
 			tI32, tI64, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
+			tXyz, tStatus,
 			// tMapI32I32 excluded for the same reason as
 			// mainVarTypes: the interpreter doesn't model Maps,
 			// and noFloats mode is the path the differential
