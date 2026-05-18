@@ -1107,19 +1107,7 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	// instantiation. Wiring them here for any t exercises that
 	// inference + monomorph path across the type universe.
 	//
-	// Skipped for Result[i32, i32] when no in-scope Result var
-	// exists: a fresh `(Ok(x))` / `(Err(e))` only pins the
-	// payload of one variant, leaving the OTHER type param
-	// unresolved. The checker's call-result inference doesn't
-	// flow surrounding-context info back to fill the missing
-	// param, so the call's TypeArgs is stamped as
-	// `[Result{no args}]`, monomorph mangles to `pick__Result`,
-	// and the clone has param/return types of bare `Result`
-	// which the re-check rejects ("Result has 2 type
-	// parameter(s), 0 supplied"). An in-scope var carries the
-	// full type via its annotation, so the inference completes.
-	skipGeneric := t == tResI32I32 && len(sc.inScope(tResI32I32)) == 0
-	if !skipGeneric && !g.flip(0.85) {
+	if !g.flip(0.85) {
 		// `id` is the simpler call — single arg of type t,
 		// returns t. Exhaustion convention: `true` => skip the
 		// generic call (smaller output, no extra clone for
@@ -1129,7 +1117,7 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		b.WriteString(")")
 		return
 	}
-	if !skipGeneric && !g.flip(0.9) {
+	if !g.flip(0.9) {
 		// `pick` is the three-arg variant. Both `a` and `b`
 		// recurse at type t so the checker's pairwise
 		// unification produces a single T. Use genericArg so

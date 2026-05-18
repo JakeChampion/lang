@@ -104,3 +104,66 @@ function main(): i32 {
 		})
 	}
 }
+
+// TestRunHandlesPartiallyInferredGenericCalls — variant
+// constructors like `Ok(x)` and `Err(e)` only fix one of
+// Result[T, E]'s two type parameters via their payload. The
+// other has to come from the surrounding context (var-init
+// annotation, function return slot).
+//
+// Before the destination-refinement work, the checker stamped
+// the call's TypeArgs as `[Result{no args}]`, monomorph
+// mangled to `pick__Result`, and the cloned param types were
+// bare Result. The re-check rejected with "Result has 2 type
+// parameter(s), 0 supplied".
+//
+// This test locks in the fix: each program type-checks and
+// monomorphs cleanly. Langsmith's `skipGeneric` workaround in
+// internal/langsmith/langsmith.go can come back to a simple
+// flip once this is solid.
+func TestRunHandlesPartiallyInferredGenericCalls(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "pick with Ok+Err args, Result destination annotation",
+			src: `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
+function main(): i32 {
+    var r: Result[i32, i32] = pick(true, Ok(1), Err(2));
+    return 0;
+}`,
+		},
+		{
+			name: "id with Ok arg, Result destination annotation",
+			src: `function id[T](x: T): T { return x; }
+function main(): i32 {
+    var r: Result[i32, i32] = id(Ok(7));
+    return 0;
+}`,
+		},
+		{
+			name: "pick with None+None args, Option destination annotation",
+			src: `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
+function main(): i32 {
+    var o: Option[i32] = pick(true, None, None);
+    return 0;
+}`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prog, err := parser.Parse(c.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+		})
+	}
+}
