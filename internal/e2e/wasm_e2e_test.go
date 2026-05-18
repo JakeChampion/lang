@@ -4256,6 +4256,70 @@ function main(): i32 {
 	}
 }
 
+// `if let` / `match` / `let else` / `defer` statements inside a
+// closure body, where the scrutinee / source / deferred expr
+// references a captured outer-scope name. closureconv's
+// rewriteStmt switch was missing cases for these four statement
+// kinds — captured refs inside them survived as raw idents and
+// IR-emit failed with `unresolved identifier "o" (compiler bug)`.
+func TestWASMClosureIfLetCapture(t *testing.T) {
+	src := `function makeReader(o: Option[i32]): () => i32 {
+    function build(): i32 {
+        if let Some(v) = o {
+            return v;
+        }
+        return 0;
+    }
+    return build;
+}
+function main(): i32 {
+    var f = makeReader(Some(42));
+    return f();
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMClosureMatchStmtCapture(t *testing.T) {
+	src := `function makeReader(o: Option[i32]): () => i32 {
+    function build(): i32 {
+        match (o) {
+            Some(v) => { return v; },
+            None => { return 0; }
+        }
+        return -1;
+    }
+    return build;
+}
+function main(): i32 {
+    var f = makeReader(Some(42));
+    return f();
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMClosureLetElseCapture(t *testing.T) {
+	src := `function makeReader(o: Option[i32]): () => i32 {
+    function build(): i32 {
+        let Some(v) = o else {
+            return 0;
+        };
+        return v;
+    }
+    return build;
+}
+function main(): i32 {
+    var f = makeReader(Some(42));
+    return f();
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
 // FString / MapLit inside a closure body whose captured names
 // appear in the desugared `+`-chain or per-entry expressions.
 // The closureconv pass used to skip these node kinds entirely;

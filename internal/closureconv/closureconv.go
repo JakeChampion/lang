@@ -282,6 +282,67 @@ func (c *converter) rewriteStmt(s ast.Stmt, ctx *captureCtx) (ast.Stmt, error) {
 			}
 		}
 		return n, nil
+	case *ast.IfLet:
+		ns, err := c.rewriteExpr(n.Source, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Source = ns
+		nt, err := c.rewriteStmt(n.Then, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Then = nt
+		if n.Else != nil {
+			ne, err := c.rewriteStmt(n.Else, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.Else = ne
+		}
+		return n, nil
+	case *ast.LetElse:
+		ns, err := c.rewriteExpr(n.Source, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Source = ns
+		if n.Else != nil {
+			if err := c.rewriteBlock(n.Else, ctx); err != nil {
+				return nil, err
+			}
+		}
+		return n, nil
+	case *ast.Match:
+		nt, err := c.rewriteExpr(n.Tag, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Tag = nt
+		for _, arm := range n.Arms {
+			if arm.Guard != nil {
+				ng, err := c.rewriteExpr(arm.Guard, ctx)
+				if err != nil {
+					return nil, err
+				}
+				arm.Guard = ng
+			}
+			if arm.Body != nil {
+				if err := c.rewriteBlock(arm.Body, ctx); err != nil {
+					return nil, err
+				}
+			}
+		}
+		return n, nil
+	case *ast.Defer:
+		if n.Expr != nil {
+			ne, err := c.rewriteExpr(n.Expr, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.Expr = ne
+		}
+		return n, nil
 	}
 	return s, nil
 }
