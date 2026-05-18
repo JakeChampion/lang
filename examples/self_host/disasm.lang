@@ -86,6 +86,9 @@ function op_name(op: vm.Op): string {
         vm.OpJumpIfFalse(_) => { return "JUMP_IF_FALSE"; },
         vm.OpPop(_) => { return "POP"; },
         vm.OpCall(_) => { return "CALL"; },
+        vm.OpMakeArray(_) => { return "MAKE_ARRAY"; },
+        vm.OpIndex(_) => { return "INDEX"; },
+        vm.OpLen(_) => { return "LEN"; },
         vm.OpReturn(_) => { return "RETURN"; }
     }
     return "???";
@@ -109,6 +112,9 @@ function op_immediate(op: vm.Op): string {
         vm.OpJumpIfFalse(o) => { return i32_to_string(o.target); },
         vm.OpPop(_) => { return ""; },
         vm.OpCall(o) => { return o.name + " (" + i32_to_string(o.argc) + ")"; },
+        vm.OpMakeArray(o) => { return i32_to_string(o.n); },
+        vm.OpIndex(_) => { return ""; },
+        vm.OpLen(_) => { return ""; },
         vm.OpReturn(_) => { return ""; }
     }
     return "";
@@ -211,6 +217,14 @@ function main(): i32 {
     );
     if (!contains(d8, "CALL")) { return 80; }
     if (!contains(d8, "add")) { return 81; }
+
+    // Array literal + indexing + len: emits MAKE_ARRAY, INDEX, LEN.
+    var d9: string = disassemble_source(
+        "var a = [1, 2, 3]; var n = len(a); return a[0];"
+    );
+    if (!contains(d9, "MAKE_ARRAY")) { return 90; }
+    if (!contains(d9, "INDEX")) { return 91; }
+    if (!contains(d9, "LEN")) { return 92; }
 
     return 0;
 }
