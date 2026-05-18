@@ -23,9 +23,12 @@ export default defineConfig({
   reporter: process.env.CI ? "github" : "list",
   use: {
     // The docs site builds under `base: "/lang"`, so navigation
-    // happens via this prefix. The webServer command below
-    // arranges Astro preview to serve it at /lang/ on `port`.
-    baseURL: `http://127.0.0.1:${port}/lang`,
+    // happens via this prefix. Trailing slash matters: per the
+    // WHATWG URL spec, `new URL("/foo", "http://x/lang/")` drops
+    // the `/lang` segment, whereas relative paths
+    // ("tutorial/install/" — no leading slash) resolve against
+    // the base path. Specs use the relative form throughout.
+    baseURL: `http://127.0.0.1:${port}/lang/`,
     trace: "on-first-retry",
     actionTimeout: 5_000,
     navigationTimeout: 15_000,
