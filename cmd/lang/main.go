@@ -15,6 +15,11 @@
 //	                                     # to print a unified diff against
 //	                                     # the on-disk version and exit
 //	                                     # non-zero when they differ)
+//	lang -check FILE.lang                # type-check the codebase rooted
+//	                                     # at FILE.lang (follows imports);
+//	                                     # silent on success, prints
+//	                                     # diagnostics + exits 1 on error.
+//	                                     # `-check -` reads from stdin.
 //
 // The -cc and -qemu flags override the linker and emulator.
 // Note: the formatter strips `//` line comments and blank lines
@@ -107,9 +112,11 @@ func main() {
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
+	doCheck := flag.Bool("check", false, "type-check FILE.lang (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       lang -fmt [-w | -d] FILE.lang")
+		fmt.Fprintln(os.Stderr, "       lang -check FILE.lang | lang -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       lang -repl")
 		fmt.Fprintln(os.Stderr, "       lang -interp FILE.lang | lang -interp -    (read from stdin)")
 		flag.PrintDefaults()
@@ -137,6 +144,20 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(code)
+	}
+
+	if *doCheck {
+		path := ""
+		if flag.NArg() >= 1 {
+			path = flag.Arg(0)
+		} else {
+			path = "-"
+		}
+		if err := runCheck(path); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	if flag.NArg() < 1 {
@@ -269,6 +290,56 @@ func runInterp(srcPath string) (int, error) {
 		return code & 0xFF, nil
 	}
 	return 0, nil
+}
+
+// runCheck parses srcPath (or stdin when srcPath is "-"), runs the
+// pre-codegen pipeline (constfold + checker + monomorph), and returns
+// nil iff the program type-checks cleanly. Unlike runInterp, this does
+// not require a `main` — library packages should check successfully.
+// Errors come back already formatted with diag.Format so the caller
+// can print them straight to stderr.
+//
+// Stdin form ("-"): the whole stream is read into memory and parsed
+// as a single file with no import resolution (modload reads from
+// disk; the synthetic "-" path has no on-disk source). File-path
+// callers go through the full modload pipeline so transitive imports
+// are checked too.
+func runCheck(srcPath string) error {
+	var prog *ast.Program
+	var src string
+	var srcs map[string]string
+	if srcPath == "-" {
+		buf, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+		src = string(buf)
+		p, err := parser.Parse(src)
+		if err != nil {
+			return fmt.Errorf("%s", diag.Format("<stdin>", src, err))
+		}
+		prog = p
+		srcPath = "<stdin>"
+	} else {
+		p, ss, err := modload.Load(srcPath)
+		if err != nil {
+			return formatLoadError(err, ss, srcPath)
+		}
+		prog = p
+		srcs = ss
+		src = ss[absPath(srcPath)]
+	}
+	if err := constfold.Fold(prog); err != nil {
+		return fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		return formatLoadError(err, srcs, srcPath)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		return fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	}
+	return nil
 }
 
 // run drives the full pipeline. The returned int is the exit code that
