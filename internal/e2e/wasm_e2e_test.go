@@ -11,6 +11,7 @@ package e2e
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -7980,5 +7981,118 @@ function main(): i32 {
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("module section order: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMModuleValidatesUnderWasmTools is the end-to-end
+// correctness gate for the std/wasm encoder stack: a Lang
+// program uses std/wasm/module.build to produce the bytes of a
+// "function returning 42" core wasm module, prints those bytes
+// to stdout as space-separated decimals, and the Go side parses
+// them back, writes them to disk, and pipes the file through
+// `wasm-tools validate`. If our encoder produces a structurally
+// invalid wasm module, validate fails with a precise diagnostic
+// — much stronger than any byte-vector test in isolation.
+//
+// We additionally pipe the file through `wasm-tools print` and
+// check the output mentions both `(type` (so the type section
+// round-trips) and `i32.const 42` (so the code section's body
+// is intact). That covers the "validate passes but the content
+// is garbage" failure mode.
+func TestWASMModuleValidatesUnderWasmTools(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+
+    // Type: one functype () -> i32.
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+
+    // Function: one function with typeidx 0.
+    m.function_typeidxs = [0u32];
+
+    // Export: ("main", func, 0). wasm-tools print uses the
+    // export to label the function in its output.
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // Code: body is i32.const 42 with no locals.
+    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    var localsBytes: u8[] = inst.put_locals_empty([]);
+    var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
+    m.code_bodies = [fn];
+
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    // Terminate with a newline so wasmtime's own trailing "0"
+    // result line doesn't fuse onto our last byte's decimal.
+    print(output);
+
+    return 0;
+}`
+	out := runWasmCapturingStdout(t, src)
+	out = strings.TrimSpace(out)
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bytes := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		if n < 0 || n > 255 {
+			t.Fatalf("byte %d out of u8 range: %d", i, n)
+		}
+		bytes = append(bytes, byte(n))
+	}
+	if len(bytes) != 37 {
+		t.Fatalf("got %d bytes, want 37 (minimal module)", len(bytes))
+	}
+
+	dir := t.TempDir()
+	wasmPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(wasmPath, bytes, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+
+	if out, err := exec.Command("wasm-tools", "validate", wasmPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bytes {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, out, hexBytes)
+	}
+
+	wat, err := exec.Command("wasm-tools", "print", wasmPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "(type") {
+		t.Errorf("wasm-tools print output missing (type — bad type section?\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "i32.const 42") {
+		t.Errorf("wasm-tools print output missing i32.const 42 — bad code section?\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "main") {
+		t.Errorf("wasm-tools print output missing main — bad export section?\n%s", watStr)
 	}
 }

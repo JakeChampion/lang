@@ -228,6 +228,18 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   37-byte "function returning 42" module end-to-end and verifies
   every byte against a hand-computed reference, exercising every
   section composer and several opcode encoders in one pass.
+- **End-to-end validation against wasm-tools shipped** in
+  `internal/e2e/wasm_e2e_test.go::TestWASMModuleValidatesUnderWasmTools`.
+  A Lang program builds the minimal "function returning 42"
+  module via `module.build`, prints the 37 bytes as space-
+  separated decimals; the Go test parses them back, writes them
+  to disk, and pipes the file through `wasm-tools validate` (must
+  pass) and `wasm-tools print` (output must contain `(type`,
+  `i32.const 42`, and `main`). This is the strongest correctness
+  gate on the std/wasm stack: a Lang-produced byte sequence is
+  now confirmed to parse as a valid wasm module under an
+  independent reference tool, not just match a hand-computed byte
+  vector.
 - Remaining Phase 1 work: the IR-walking entry point that turns
   a codegen IR program into a populated Module, and the driver-
   wiring step that deletes the `wasm-tools parse` call at
