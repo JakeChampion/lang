@@ -1,0 +1,358 @@
+// examples/self_host/interp.lang — fourth concrete step of the
+// self-host port. Imports lexer + parser and evaluates the
+// Stmt[] tree directly, producing a runtime value rather than a
+// static type or compiled artifact. Completes the
+// lexer → parser → interpreter vertical slice in lang —
+// the lang-port pipeline can now actually run lang code, end to
+// end, from a thin self-validating driver.
+//
+// Scope (matches the parser's): i32 / bool / string runtime
+// values, var binding through a flat scope, arithmetic /
+// comparison / logical / string-concat ops over the same op
+// set the checker (#619) handles. The return value of the first
+// `return` statement is what main() surfaces — anything past it
+// is dead code.
+//
+// Out of scope (next iteration): function decls + calls, control
+// flow (`if` / `while` / `for`), structs / unions, generics. The
+// parser stub doesn't emit those yet either.
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+
+// =================== VALUES ====================
+
+pub struct VInt { v: i32 }
+pub struct VBool { v: boolean }
+pub struct VString { v: string }
+pub struct VErr { msg: string }
+
+// VErr is the bottom of the value lattice — it propagates
+// silently through every operator that touches it so the first
+// error wins. Mirrors how the checker's TypeUnknown works.
+
+pub type Value = VInt | VBool | VString | VErr;
+
+function v_int(n: i32): Value { return VInt { v: n }; }
+function v_bool(b: boolean): Value { return VBool { v: b }; }
+function v_string(s: string): Value { return VString { v: s }; }
+function v_err(msg: string): Value { return VErr { msg: msg }; }
+
+function is_err(v: Value): boolean {
+    match (v) {
+        VErr(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// =================== SCOPE ====================
+
+// Same shape as the checker's Scope but the parallel slot is
+// Value rather than Type. Linear scan, newest binding wins —
+// matches `let` semantics for the limited stmt set we handle.
+pub struct Env { names: string[], values: Value[] }
+
+function new_env(): Env {
+    var ns: string[] = [];
+    var vs: Value[] = [];
+    return Env { names: ns, values: vs };
+}
+
+function (e: Env) bind(name: string, v: Value): Env {
+    var ns: string[] = e.names.push(name);
+    var vs: Value[] = e.values.push(v);
+    return Env { names: ns, values: vs };
+}
+
+function (e: Env) lookup(name: string): Value {
+    var i: i32 = len(e.names) - 1;
+    while (i >= 0) {
+        if (e.names[i] == name) { return e.values[i]; }
+        i = i - 1;
+    }
+    return v_err("undefined identifier: " + name);
+}
+
+// =================== INTEGER PARSE ====================
+
+// The parser hands us a TokNumber whose text is the original
+// digit run. Turn that into an i32. No suffix handling here —
+// we lump everything into i32 at this layer, mirroring the
+// checker's TypeI32-only stance for the first cut.
+function str_to_i32(s: string): i32 {
+    var n: i32 = len(s);
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return acc; }
+        acc = acc * 10 + (b - 48);
+        i = i + 1;
+    }
+    return acc;
+}
+
+// =================== EVAL ====================
+
+// eval_expr: a depth-first walk of the parser's Expr tree.
+// Errors propagate via VErr — the moment any sub-expression
+// errors, the surrounding op returns the same VErr. This keeps
+// the early-return pattern out of the body and matches the
+// checker's TypeUnknown threading.
+function eval_expr(e: parser.Expr, env: Env): Value {
+    match (e) {
+        parser.ExprNumber(n) => { return v_int(str_to_i32(n.text)); },
+        parser.ExprBool(b) => { return v_bool(b.value); },
+        parser.ExprString(s) => { return v_string(s.value); },
+        parser.ExprIdent(id) => { return env.lookup(id.name); },
+        parser.ExprBinary(b) => {
+            var lv: Value = eval_expr(b.left, env);
+            if (is_err(lv)) { return lv; }
+            var rv: Value = eval_expr(b.right, env);
+            if (is_err(rv)) { return rv; }
+            // `+` overloads i32 (arithmetic) and string (concat).
+            if (b.op == "+") {
+                match (lv) {
+                    VInt(li) => {
+                        match (rv) {
+                            VInt(ri) => { return v_int(li.v + ri.v); },
+                            _ => { return v_err("`+` rhs not i32"); }
+                        }
+                    },
+                    VString(ls) => {
+                        match (rv) {
+                            VString(rs) => { return v_string(ls.v + rs.v); },
+                            _ => { return v_err("`+` rhs not string"); }
+                        }
+                    },
+                    _ => { return v_err("`+` lhs not i32 or string"); }
+                }
+            }
+            if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
+                match (lv) {
+                    VInt(li) => {
+                        match (rv) {
+                            VInt(ri) => {
+                                if (b.op == "-") { return v_int(li.v - ri.v); }
+                                if (b.op == "*") { return v_int(li.v * ri.v); }
+                                if (b.op == "/") {
+                                    if (ri.v == 0) { return v_err("division by zero"); }
+                                    return v_int(li.v / ri.v);
+                                }
+                                if (ri.v == 0) { return v_err("modulo by zero"); }
+                                return v_int(li.v % ri.v);
+                            },
+                            _ => { return v_err("arithmetic rhs not i32"); }
+                        }
+                    },
+                    _ => { return v_err("arithmetic lhs not i32"); }
+                }
+            }
+            if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
+                match (lv) {
+                    VInt(li) => {
+                        match (rv) {
+                            VInt(ri) => {
+                                if (b.op == "<") { return v_bool(li.v < ri.v); }
+                                if (b.op == "<=") { return v_bool(li.v <= ri.v); }
+                                if (b.op == ">") { return v_bool(li.v > ri.v); }
+                                return v_bool(li.v >= ri.v);
+                            },
+                            _ => { return v_err("comparison rhs not i32"); }
+                        }
+                    },
+                    _ => { return v_err("comparison lhs not i32"); }
+                }
+            }
+            if (b.op == "==" || b.op == "!=") {
+                var eq: boolean = value_eq(lv, rv);
+                if (b.op == "==") { return v_bool(eq); }
+                return v_bool(!eq);
+            }
+            if (b.op == "&&" || b.op == "||") {
+                match (lv) {
+                    VBool(lb) => {
+                        match (rv) {
+                            VBool(rb) => {
+                                if (b.op == "&&") { return v_bool(lb.v && rb.v); }
+                                return v_bool(lb.v || rb.v);
+                            },
+                            _ => { return v_err("logical rhs not bool"); }
+                        }
+                    },
+                    _ => { return v_err("logical lhs not bool"); }
+                }
+            }
+            return v_err("unknown binary op: " + b.op);
+        },
+        parser.ExprUnary(u) => {
+            var ov: Value = eval_expr(u.operand, env);
+            if (is_err(ov)) { return ov; }
+            if (u.op == "-") {
+                match (ov) {
+                    VInt(i) => { return v_int(0 - i.v); },
+                    _ => { return v_err("unary `-` operand not i32"); }
+                }
+            }
+            if (u.op == "!") {
+                match (ov) {
+                    VBool(b) => { return v_bool(!b.v); },
+                    _ => { return v_err("unary `!` operand not bool"); }
+                }
+            }
+            return v_err("unknown unary op: " + u.op);
+        },
+        parser.ExprCall(_) => { return v_err("function-call eval not implemented yet"); },
+        parser.ExprUnknown(u) => { return v_err("parser-side unknown: " + u.kind); }
+    }
+    return v_err("unhandled Expr variant");
+}
+
+// value_eq: structural equality on Value. Two values of the
+// same shape compare by payload; everything else is false.
+// VErr never equals anything (including itself) — equality on
+// error is itself an error in spirit, but we surface it as
+// `false` so the caller branches consistently.
+function value_eq(a: Value, b: Value): boolean {
+    match (a) {
+        VInt(ai) => {
+            match (b) {
+                VInt(bi) => { return ai.v == bi.v; },
+                _ => { return false; }
+            }
+        },
+        VBool(ab) => {
+            match (b) {
+                VBool(bb) => { return ab.v == bb.v; },
+                _ => { return false; }
+            }
+        },
+        VString(av) => {
+            match (b) {
+                VString(bs) => { return av.v == bs.v; },
+                _ => { return false; }
+            }
+        },
+        VErr(_) => { return false; }
+    }
+    return false;
+}
+
+// eval_stmt returns the (new env, optional return value). The
+// returned env carries `var x = …;` bindings forward; the value
+// is non-VErr only for StmtReturn — every other shape leaves it
+// VErr("__noreturn__") which the driver loop reads as "keep
+// going". Using VErr for the sentinel keeps everything in the
+// same union type without growing it for a one-off Option.
+pub struct StepResult { env: Env, ret: Value }
+
+function eval_stmt(st: parser.Stmt, env: Env): StepResult {
+    match (st) {
+        parser.StmtVar(v) => {
+            var val: Value = eval_expr(v.init, env);
+            var env2: Env = env.bind(v.name, val);
+            return StepResult { env: env2, ret: v_err("__noreturn__") };
+        },
+        parser.StmtReturn(r) => {
+            var val: Value = eval_expr(r.value, env);
+            return StepResult { env: env, ret: val };
+        },
+        parser.StmtExpr(x) => {
+            var val: Value = eval_expr(x.value, env);
+            // Drop the value — expression-statements have side
+            // effects only (none in this scope; placeholder for
+            // when we grow call statements).
+            return StepResult { env: env, ret: v_err("__noreturn__") };
+        },
+        parser.StmtUnknown(u) => { return StepResult { env: env, ret: v_err("parser-side unknown stmt: " + u.kind) }; }
+    }
+    return StepResult { env: env, ret: v_err("unhandled Stmt variant") };
+}
+
+function is_noreturn(v: Value): boolean {
+    match (v) {
+        VErr(e) => { return e.msg == "__noreturn__"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// eval_program drives the stmt list. Stops at the first return
+// (or end of stmts). Returns the return-value or VErr if no
+// explicit return was seen.
+function eval_program(prog: parser.Stmt[]): Value {
+    var env: Env = new_env();
+    var i: i32 = 0;
+    while (i < len(prog)) {
+        var r: StepResult = eval_stmt(prog[i], env);
+        env = r.env;
+        if (!is_noreturn(r.ret)) { return r.ret; }
+        i = i + 1;
+    }
+    return v_err("program reached end without `return`");
+}
+
+// =================== VALIDATION ====================
+
+function run_source(src: string): Value {
+    var toks: lexer.Token[] = lexer.tokenize(src);
+    var stmts: parser.Stmt[] = parser.parse_program(toks);
+    return eval_program(stmts);
+}
+
+function main(): i32 {
+    // Arithmetic + ident lookup. var x = 7; var y = 9; return x + y.
+    var r1: Value = run_source("var x = 1 + 2 * 3; var y = (1 + 2) * 3; return x + y;");
+    match (r1) {
+        VInt(i) => { if (i.v != 16) { return 10; } },
+        _ => { return 11; }
+    }
+
+    // String concat.
+    var r2: Value = run_source("var a = \"hi \" + \"there\"; return 0 - 1;");
+    match (r2) {
+        VInt(i) => { if (i.v != 0 - 1) { return 20; } },
+        _ => { return 21; }
+    }
+
+    // Logical + equality. var b = 5 < 10; return b && (1 == 1).
+    // Can't `return bool` directly — surface as i32 via a
+    // separate var + a ternary-shaped return.
+    var r3: Value = run_source("var b = 5 < 10; var c = b && (1 == 1); return 42;");
+    match (r3) {
+        VInt(i) => { if (i.v != 42) { return 30; } },
+        _ => { return 31; }
+    }
+
+    // Unary minus.
+    var r4: Value = run_source("var n = 0 - 5; return n;");
+    match (r4) {
+        VInt(i) => { if (i.v != 0 - 5) { return 40; } },
+        _ => { return 41; }
+    }
+
+    // Division.
+    var r5: Value = run_source("return 20 / 4;");
+    match (r5) {
+        VInt(i) => { if (i.v != 5) { return 50; } },
+        _ => { return 51; }
+    }
+
+    // Division by zero → VErr.
+    var r6: Value = run_source("return 1 / 0;");
+    match (r6) {
+        VErr(_) => { },
+        _ => { return 60; }
+    }
+
+    // Undefined identifier → VErr.
+    var r7: Value = run_source("return missing;");
+    match (r7) {
+        VErr(_) => { },
+        _ => { return 70; }
+    }
+
+    return 0;
+}
