@@ -1329,7 +1329,7 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			c.resolveType(&fn.Params[i].Type, params)
 		}
 		c.resolveType(&fn.ReturnType, params)
-		c.resolveTypesInBlock(fn.Body)
+		c.resolveTypesInBlock(fn.Body, params)
 	}
 	for _, sd := range prog.Structs {
 		// Same as functions / enums: register type params so
@@ -1362,43 +1362,49 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 	}
 }
 
-func (c *checker) resolveTypesInBlock(b *ast.Block) {
+func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 	if b == nil {
 		return
 	}
 	for _, st := range b.Stmts {
 		switch x := st.(type) {
 		case *ast.Block:
-			c.resolveTypesInBlock(x)
+			c.resolveTypesInBlock(x, params)
 		case *ast.If:
-			c.resolveTypesInBlock(asBlock(x.Then))
-			c.resolveTypesInBlock(asBlock(x.Else))
+			c.resolveTypesInBlock(asBlock(x.Then), params)
+			c.resolveTypesInBlock(asBlock(x.Else), params)
 		case *ast.IfLet:
-			c.resolveTypesInBlock(asBlock(x.Then))
-			c.resolveTypesInBlock(asBlock(x.Else))
+			c.resolveTypesInBlock(asBlock(x.Then), params)
+			c.resolveTypesInBlock(asBlock(x.Else), params)
 		case *ast.LetElse:
-			c.resolveTypesInBlock(x.Else)
+			c.resolveTypesInBlock(x.Else, params)
 		case *ast.While:
-			c.resolveTypesInBlock(asBlock(x.Body))
+			c.resolveTypesInBlock(asBlock(x.Body), params)
 		case *ast.For:
-			c.resolveTypesInBlock(asBlock(x.Body))
+			c.resolveTypesInBlock(asBlock(x.Body), params)
 		case *ast.Var:
-			c.resolveType(&x.Type, nil)
+			c.resolveType(&x.Type, params)
 		case *ast.Switch:
 			for _, k := range x.Cases {
-				c.resolveTypesInBlock(k.Body)
+				c.resolveTypesInBlock(k.Body, params)
 			}
-			c.resolveTypesInBlock(x.Default)
+			c.resolveTypesInBlock(x.Default, params)
 		case *ast.Match:
 			for _, arm := range x.Arms {
-				c.resolveTypesInBlock(arm.Body)
+				c.resolveTypesInBlock(arm.Body, params)
 			}
 		case *ast.FuncDecl:
+			// Nested function declarations (closures, hoisted
+			// inner functions). Their own type-params would
+			// shadow the outer scope's; the typical inner
+			// function has no type-params and just sees the
+			// outer params, so passing the surrounding `params`
+			// set is the conservative right answer here.
 			for i := range x.Params {
-				c.resolveType(&x.Params[i].Type, nil)
+				c.resolveType(&x.Params[i].Type, params)
 			}
-			c.resolveType(&x.ReturnType, nil)
-			c.resolveTypesInBlock(x.Body)
+			c.resolveType(&x.ReturnType, params)
+			c.resolveTypesInBlock(x.Body, params)
 		}
 	}
 }

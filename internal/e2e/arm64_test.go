@@ -9976,6 +9976,47 @@ function main(): i32 {
 	}
 }
 
+// `resolveTypesInBlock` didn't carry the surrounding
+// function's type-param set into local Var declarations,
+// nested FuncDecls, or nested control-flow / Match arms.
+// As a result, a generic function with a local
+// `var m: Map[string, V] = map_new(0)` kept V as
+// `StructType{Name:"V"}` (the parser's default for a
+// bare-name type identifier) instead of `ParamType{"V"}`.
+// The Map method dispatch then substituted Map's V with
+// `StructType{"V"}`, but `checkExpr(v)` on the function
+// param returned `ParamType{"V"}` — `ast.Equal` saw them
+// as different and the user got the puzzling:
+//
+//   argument 3: expected V, got V
+//
+// — with identical-looking sides.
+//
+// Same root family as the resolveType TupleType /
+// SliceType fix from #558. This PR threads the params
+// map through resolveTypesInBlock so local Var types,
+// nested FuncDecl signatures, and control-flow / Match
+// arm bodies all consult the type-param set.
+//
+// Test pin: generic Map-returning function with a
+// local `Map[string, V]` literal — `mk[V](v) ->
+// Map[string, V]` round-trips a key/value via set + get.
+func TestArm64GenericLocalMapType(t *testing.T) {
+	src := `function mk[V](v: V): Map[string, V] {
+    var m: Map[string, V] = map_new(0);
+    m.set("k", v);
+    return m;
+}
+function main(): i32 {
+    var m: Map[string, i32] = mk(42);
+    var v: i32 = m.get_or("k", 0);
+    return v - 42;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("generic local Map type got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
