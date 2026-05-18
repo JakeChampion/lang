@@ -1497,6 +1497,35 @@ func (g *generator) scanForStringEq(prog *ast.Program) {
 		case *ast.Match:
 			walk(x.Tag)
 			for _, arm := range x.Arms {
+				if arm.Literal != nil {
+					// Literal-pattern arm: a string-literal pattern
+					// against a string-typed scrutinee will lower to
+					// an OpStrEq at IR-emit, so flag the runtime
+					// helper as needed up front. The Tag walk above
+					// would catch other shapes, but literal arms
+					// introduce equality tests the scan wouldn't
+					// otherwise see at the AST level.
+					if _, ok := arm.Literal.(*ast.StringLit); ok {
+						g.needsStrEq = true
+						g.needsRuntime = true
+					}
+					walk(arm.Literal)
+				}
+				if arm.Guard != nil {
+					walk(arm.Guard)
+				}
+				walk(arm.Body)
+			}
+		case *ast.MatchExpr:
+			walk(x.Tag)
+			for _, arm := range x.Arms {
+				if arm.Literal != nil {
+					if _, ok := arm.Literal.(*ast.StringLit); ok {
+						g.needsStrEq = true
+						g.needsRuntime = true
+					}
+					walk(arm.Literal)
+				}
 				if arm.Guard != nil {
 					walk(arm.Guard)
 				}

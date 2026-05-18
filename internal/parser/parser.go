@@ -1630,6 +1630,22 @@ func (p *parser) parseSwitch() (ast.Stmt, error) {
 // Each arm body is a brace-block; we require this for consistency
 // with `if` / `for` / `while` and to keep the parser context-light.
 // Arms are separated by commas; a trailing comma is allowed.
+// isLiteralPatternStart reports whether the token at hand opens
+// a literal pattern in match-arm position — a NumberLit,
+// FloatLit, StringLit, or the `true` / `false` keywords. Variant
+// names live in lexer.Ident space and are handled by the
+// surrounding parseMatchArm branch.
+func isLiteralPatternStart(t lexer.Token) bool {
+	switch t.Kind {
+	case lexer.Number, lexer.Float, lexer.String:
+		return true
+	}
+	if t.Kind == lexer.Keyword && (t.Text == "true" || t.Text == "false") {
+		return true
+	}
+	return false
+}
+
 func (p *parser) parseMatch() (ast.Stmt, error) {
 	kw := p.advance() // `match`
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
@@ -1675,6 +1691,17 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 	} else if t.Kind == lexer.Ident && t.Text == "_" {
 		p.advance()
 		arm.IsWildcard = true
+	} else if isLiteralPatternStart(t) {
+		// Literal pattern: `0 => …`, `"yes" => …`, `true => …`,
+		// `1.5f64 => …`. Dispatched via equality comparison
+		// against the scrutinee at IR-lower time. The checker
+		// verifies the literal's type unifies with the
+		// scrutinee's type.
+		lit, err := p.parsePrimary()
+		if err != nil {
+			return nil, err
+		}
+		arm.Literal = lit
 	} else if t.Kind == lexer.Ident {
 		p.advance()
 		arm.VariantName = t.Text
@@ -1700,7 +1727,7 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 			}
 		}
 	} else {
-		return nil, p.errorf(t.Pos, "expected variant pattern or `_` in match arm, got %s", t.Text)
+		return nil, p.errorf(t.Pos, "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
 	}
 	// Optional guard: `<pattern> when <expr> => <body>`. The
 	// guard expression has bindings in scope (so a guard like
@@ -1776,6 +1803,14 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 	if t.Kind == lexer.Ident && t.Text == "_" {
 		p.advance()
 		arm.IsWildcard = true
+	} else if isLiteralPatternStart(t) {
+		// Literal pattern in match-expr arm; same semantics as
+		// the stmt-form parseMatchArm path.
+		lit, err := p.parsePrimary()
+		if err != nil {
+			return nil, err
+		}
+		arm.Literal = lit
 	} else if t.Kind == lexer.Ident {
 		p.advance()
 		arm.VariantName = t.Text
@@ -1801,7 +1836,7 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 			}
 		}
 	} else {
-		return nil, p.errorf(t.Pos, "expected variant pattern or `_` in match arm, got %s", t.Text)
+		return nil, p.errorf(t.Pos, "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
 	}
 	if p.match(lexer.Keyword, "when") {
 		p.advance()

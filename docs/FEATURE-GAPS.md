@@ -290,9 +290,8 @@ Driven by "smallest, no-runtime-touch, unlocks the most user code":
    (siblings see uninitialised env slots). Needs a real fix
    in closureconv (pre-alloc envs + back-fill). See entry #5
    above.
-5. ✅ **Anonymous lambdas (#1)** — landed in PR #582.
-6. **Match on literal patterns (#6)** — next up; new pattern kind
-   in the AST + checker / IR.
+5. ✅ **Anonymous lambdas (#1)** — landed in PR #584.
+6. ✅ **Match on literal patterns (#6)** — landed in this PR.
 7. **Generic call-site type args (#4)** — useful only after lambdas
    ship (since most call sites infer anyway). Lambdas are in now,
    but the inference-only path still handles the common cases.

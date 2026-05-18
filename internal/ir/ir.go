@@ -1725,6 +1725,249 @@ func (b *builder) brTo(target int32, cond bool) {
 	}
 }
 
+// isLiteralMatch reports whether every arm of a `match` is a
+// literal pattern or the unguarded wildcard (i.e. no arm carries
+// a VariantName). Used to dispatch between the enum-match
+// lowering (default) and the literal-match if-else-chain
+// lowering. The checker has already validated the arms — by the
+// time we run here, an arm is literal/wildcard XOR variant.
+func isLiteralMatch(arms []*ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.IsWildcard || arm.Literal != nil {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// isLiteralMatchExprArms is the MatchExpr-side counterpart.
+func isLiteralMatchExprArms(arms []*ast.MatchExprArm) bool {
+	for _, arm := range arms {
+		if arm.IsWildcard || arm.Literal != nil {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// emitLiteralMatch lowers a non-enum `match` to an if-else-if
+// chain. For each literal arm, evaluate the scrutinee + literal
+// + eq-test; on true, run the arm body and branch out of the
+// outer exit block. The wildcard arm (if any) runs as the final
+// fall-through. Strings use OpStrEq via the regular Binary
+// path; ints / bools use OpEq. Guards on literal arms make the
+// arm conditional within its match — same exit-block topology.
+func (b *builder) emitLiteralMatch(n *ast.Match) error {
+	// Cache the scrutinee in a local so each arm's eq-test can
+	// reload it without re-evaluating side effects.
+	tagT := b.exprType(n.Tag)
+	scrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__lit_match_scr_%d", scrSlot)] = scrSlot
+	if tagT != nil {
+		b.scratchType[scrSlot] = tagT
+	}
+	if err := b.expr(n.Tag); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: scrSlot})
+
+	b.openBlock(BlockTypeVoid)
+	exitDepth := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			// Wildcard guard: when false, the arm is a no-op and
+			// the next arm runs (but for the unguarded shape this
+			// is the fall-through default).
+			if arm.Guard != nil {
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.openIf(BlockTypeVoid)
+				if err := b.stmt(arm.Body); err != nil {
+					return err
+				}
+				b.brTo(exitDepth, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.stmt(arm.Body); err != nil {
+				return err
+			}
+			b.brTo(exitDepth, false)
+			continue
+		}
+		// Literal arm: build `scrutinee == literal` as a Binary
+		// AST node so the existing OpStrEq / OpEq dispatch
+		// (with IsStringCmp / IsFloat / Width settled by the
+		// checker pass over Literal already) handles each
+		// scrutinee type uniformly.
+		cond := &ast.Binary{
+			P:            arm.P,
+			Op:           "==",
+			Left:         &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
+			Right:        arm.Literal,
+			IsStringCmp:  isStringType(tagT),
+			IsFloat:      isFloatType(tagT),
+		}
+		// Stash the scrutinee under a synthetic local name so
+		// Ident lookup hits scrSlot — saves us a manual
+		// load/eval shape. The synthetic name's slot is already
+		// in b.locals, set above.
+		if err := b.expr(cond); err != nil {
+			return err
+		}
+		if arm.Guard != nil {
+			b.openIf(BlockTypeVoid)
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+			if err := b.stmt(arm.Body); err != nil {
+				return err
+			}
+			b.brTo(exitDepth, false)
+			b.closeScope()
+			b.closeScope()
+			continue
+		}
+		b.openIf(BlockTypeVoid)
+		if err := b.stmt(arm.Body); err != nil {
+			return err
+		}
+		b.brTo(exitDepth, false)
+		b.closeScope()
+	}
+	b.closeScope() // outer exit block
+	return nil
+}
+
+func literalMatchScrName(slot int32) string {
+	return fmt.Sprintf("__lit_match_scr_%d", slot)
+}
+
+// emitLiteralMatchExpr is the expression-form counterpart of
+// emitLiteralMatch. Same scrutinee-cache + per-arm eq-test
+// shape, but each arm body is an Expr whose value is stored
+// into a result slot before branching out. The post-block
+// load yields the unified arm type as the match-expression's
+// value.
+func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
+	tagT := b.exprType(n.Tag)
+	// Cache scrutinee.
+	scrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__lit_match_scr_%d", scrSlot)] = scrSlot
+	if tagT != nil {
+		b.scratchType[scrSlot] = tagT
+	}
+	if err := b.expr(n.Tag); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: scrSlot})
+
+	// Result slot — type inferred from the first non-polymorphic
+	// arm body, mirroring the enum-match path.
+	resultType := ast.Type(ast.NumberType{})
+	for _, arm := range n.Arms {
+		if arm == nil || arm.Body == nil {
+			continue
+		}
+		t := b.exprType(arm.Body)
+		if nt, ok := t.(ast.NumberType); ok && !nt.Polymorphic {
+			resultType = nt
+			break
+		}
+		if ft, ok := t.(ast.FloatType); ok && !ft.Polymorphic {
+			resultType = ft
+			break
+		}
+		if _, ok := t.(ast.StringType); ok {
+			resultType = ast.StringType{}
+			break
+		}
+		if _, ok := t.(ast.BoolType); ok {
+			resultType = ast.BoolType{}
+			break
+		}
+	}
+	resultSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__matchexpr_r_%d", resultSlot)] = resultSlot
+	b.scratchType[resultSlot] = resultType
+
+	b.openBlock(BlockTypeVoid)
+	exitDepth := b.depth
+	for _, arm := range n.Arms {
+		if arm.IsWildcard {
+			if arm.Guard != nil {
+				if err := b.expr(arm.Guard); err != nil {
+					return err
+				}
+				b.openIf(BlockTypeVoid)
+				if err := b.expr(arm.Body); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+				b.brTo(exitDepth, false)
+				b.closeScope()
+				continue
+			}
+			if err := b.expr(arm.Body); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.brTo(exitDepth, false)
+			continue
+		}
+		cond := &ast.Binary{
+			P:           arm.P,
+			Op:          "==",
+			Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
+			Right:       arm.Literal,
+			IsStringCmp: isStringType(tagT),
+			IsFloat:     isFloatType(tagT),
+		}
+		if err := b.expr(cond); err != nil {
+			return err
+		}
+		if arm.Guard != nil {
+			b.openIf(BlockTypeVoid)
+			if err := b.expr(arm.Guard); err != nil {
+				return err
+			}
+			b.openIf(BlockTypeVoid)
+			if err := b.expr(arm.Body); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+			b.brTo(exitDepth, false)
+			b.closeScope()
+			b.closeScope()
+			continue
+		}
+		b.openIf(BlockTypeVoid)
+		if err := b.expr(arm.Body); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+		b.brTo(exitDepth, false)
+		b.closeScope()
+	}
+	b.closeScope()
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	return nil
+}
+
+func isStringType(t ast.Type) bool {
+	_, ok := t.(ast.StringType)
+	return ok
+}
+
+func isFloatType(t ast.Type) bool {
+	_, ok := t.(ast.FloatType)
+	return ok
+}
+
 func (b *builder) stmt(s ast.Stmt) error {
 	b.curPos = s.Pos()
 	switch n := s.(type) {
@@ -2263,6 +2506,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.closeScope() // end of switch
 	case *ast.Match:
+		// Literal-pattern match: when the scrutinee isn't an enum
+		// the arms are all literal-or-wildcard (the checker
+		// dispatched to `checkLiteralMatch`). Lower as if-else-if
+		// chain — eq-test against each literal, branch into the
+		// arm body, fall through to wildcard.
+		if isLiteralMatch(n.Arms) {
+			if err := b.emitLiteralMatch(n); err != nil {
+				return err
+			}
+			break
+		}
 		// Lower a `match` to: store the scrutinee pointer, load
 		// its tag once, then for each arm test `tag == k` and
 		// branch in. On match, the arm body runs with payload
@@ -2778,6 +3032,17 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.closeScope()
 	case *ast.MatchExpr:
+		// Literal-pattern match-expr: arms are literal/wildcard,
+		// scrutinee is number/string/bool. Lower as an if-chain
+		// over the result slot — same shape as the stmt-form
+		// emitLiteralMatch but each arm body is an Expr that gets
+		// stored into the result slot before branching out.
+		if isLiteralMatchExprArms(n.Arms) {
+			if err := b.emitLiteralMatchExpr(n); err != nil {
+				return err
+			}
+			return nil
+		}
 		// Lower expression-form `match`. Same per-arm structure
 		// as stmt-form Match but each arm body is an Expr — we
 		// stash its value in a scratch slot keyed off the unified

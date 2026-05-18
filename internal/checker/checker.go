@@ -2495,7 +2495,12 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
-		c.errf(n.Tag.Pos(), "match scrutinee must be an enum value, got %s", tagT)
+		// Non-enum scrutinee: every arm must be a literal pattern
+		// or the wildcard. Dispatch via the literal-pattern shape.
+		// Conventional types are number / string / bool — anything
+		// else is an error (struct / array / etc. don't have a
+		// reasonable equality match yet).
+		c.checkLiteralMatch(n, tagT, s)
 		return
 	}
 	ed, ok := c.info.Enums[et.Name]
@@ -2601,6 +2606,125 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 }
 
+// checkLiteralMatch handles `match (n) { 0 => …, _ => … }` where
+// the scrutinee is a number / string / bool. Every arm must
+// carry a literal pattern or be a wildcard; literals must
+// type-check against the scrutinee's type. Exhaustiveness:
+// a trailing unguarded `_` is required (we don't enumerate
+// integer / string domains, and bool exhaustiveness via the
+// two-literal form is intentionally NOT special-cased — the
+// `_` arm covers it more uniformly).
+func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
+	sawWildcard := false
+	for i, arm := range n.Arms {
+		if arm.IsWildcard {
+			if i != len(n.Arms)-1 {
+				c.errf(arm.P, "wildcard `_` arm must be last in the match")
+			}
+			if arm.Guard == nil {
+				sawWildcard = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+				}
+			}
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if arm.Literal == nil {
+			c.errf(arm.P, "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		litT := c.checkExpr(arm.Literal, s)
+		if litT != nil {
+			c.settleNumeric(arm.Literal, tagT)
+			litT = postSettleType(arm.Literal, litT)
+			if !assignable(litT, tagT) {
+				c.errf(arm.P, "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
+			}
+		}
+		if arm.Guard != nil {
+			gt := c.checkExpr(arm.Guard, s)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+			}
+		}
+		c.checkBlock(arm.Body, s)
+	}
+	if !sawWildcard {
+		c.errf(n.P, "match on non-enum value is not exhaustive — add an unguarded `_` arm")
+	}
+}
+
+// checkLiteralMatchExpr is the expression-form counterpart of
+// checkLiteralMatch. Each arm body is an Expr and the unified
+// arm type is returned as the match-expression's result.
+func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scope) ast.Type {
+	sawWildcard := false
+	var result ast.Type
+	unify := func(armT ast.Type, p ast.Position) {
+		if armT == nil {
+			return
+		}
+		if result == nil {
+			result = armT
+			return
+		}
+		if assignable(armT, result) {
+			return
+		}
+		if assignable(result, armT) {
+			result = armT
+			return
+		}
+		c.errf(p, "match arms have incompatible types: %s vs %s", result, armT)
+	}
+	for i, arm := range n.Arms {
+		if arm.IsWildcard {
+			if i != len(n.Arms)-1 {
+				c.errf(arm.P, "wildcard `_` arm must be last in the match")
+			}
+			if arm.Guard == nil {
+				sawWildcard = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+				}
+			}
+			unify(c.checkExpr(arm.Body, s), arm.P)
+			continue
+		}
+		if arm.Literal == nil {
+			c.errf(arm.P, "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
+			continue
+		}
+		litT := c.checkExpr(arm.Literal, s)
+		if litT != nil {
+			c.settleNumeric(arm.Literal, tagT)
+			litT = postSettleType(arm.Literal, litT)
+			if !assignable(litT, tagT) {
+				c.errf(arm.P, "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
+			}
+		}
+		if arm.Guard != nil {
+			gt := c.checkExpr(arm.Guard, s)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+			}
+		}
+		unify(c.checkExpr(arm.Body, s), arm.P)
+	}
+	if !sawWildcard {
+		c.errf(n.P, "match on non-enum value is not exhaustive — add an unguarded `_` arm")
+	}
+	return result
+}
+
 // checkMatchExpr validates an expression-position `match` and
 // returns the unified arm type. Same scrutinee, payload-binding,
 // guard, and exhaustiveness rules as checkMatch — the difference
@@ -2614,8 +2738,9 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	}
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
-		c.errf(n.Tag.Pos(), "match scrutinee must be an enum value, got %s", tagT)
-		return nil
+		// Non-enum scrutinee: arms are literal patterns + a
+		// wildcard. Delegate to the literal-pattern branch.
+		return c.checkLiteralMatchExpr(n, tagT, s)
 	}
 	ed, ok := c.info.Enums[et.Name]
 	if !ok {
