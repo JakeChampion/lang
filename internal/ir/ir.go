@@ -3789,6 +3789,17 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 		if t, ok := b.exprType(x).(ast.TupleType); ok {
 			return t, true
 		}
+	case *ast.CaptureRef:
+		// A captured tuple value: closure conversion stamps
+		// the resolved outer-scope type on `x.Type`. Without
+		// this case the IR's FieldAccess lowering for `t.N`
+		// (where `t` is a captured tuple in the closure body)
+		// falls through to the struct path and codegen errors
+		// with `field access on unresolved struct ""`. Mirror
+		// of the CaptureRef case in `fieldOwner` for structs.
+		if t, ok := x.Type.(ast.TupleType); ok {
+			return t, true
+		}
 	}
 	return ast.TupleType{}, false
 }

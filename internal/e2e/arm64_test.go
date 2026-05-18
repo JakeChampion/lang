@@ -11394,6 +11394,27 @@ function main(): i32 { return outer("hi", 40); }`
 	}
 }
 
+// Mirror of TestWASMClosureCapturesTuple — `targetTupleType`
+// now recognises `*ast.CaptureRef` so `t.0` / `t.1` inside a
+// closure body resolves through the tuple-offset path instead
+// of falling through to the struct path and erroring with
+// `field access on unresolved struct ""` at IR-emit time.
+func TestArm64ClosureCapturesTuple(t *testing.T) {
+	src := `function build(): () => i64 {
+    var t: (i64, i64) = (1000000000000i64, 2000000000000i64);
+    function read(): i64 { return t.0 + t.1; }
+    return read;
+}
+function main(): i32 {
+    var f = build();
+    if (f() != 3000000000000i64) { return 1; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got %d, want 0 (closure captures (i64, i64))", code)
+	}
+}
+
 // i32 ↔ i64 conversion. arm64 lowers OpExtendI32S via `sxtw`,
 // OpExtendI32U + OpWrapI64 via `mov w0, w0` (the 32-bit reg
 // form implicitly zero-extends the high half on AArch64).
