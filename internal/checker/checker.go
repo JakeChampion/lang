@@ -3776,6 +3776,68 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		return lt
+	case *ast.Lambda:
+		// Anonymous function expression — mirror of checkLocalFunc
+		// but inlined here so the Lambda gets its captures filled
+		// in place. Body scope is fresh-with-params; capture
+		// analysis runs against the captureChain so the lambda's
+		// reads of outer-scope names flow into its `Captures`
+		// list. `c.current` swaps to a synthetic FuncDecl so
+		// `return` statements inside the lambda body type-check
+		// against the LAMBDA's return type, not the enclosing
+		// function's. The Lambda's type is the FuncType built
+		// from its declared params + return type.
+		root := newScope(nil)
+		for _, p := range n.Params {
+			if _, dup := root.names[p.Name]; dup {
+				c.errf(n.P, "duplicate parameter %q", p.Name)
+			}
+			root.names[p.Name] = p.Type
+		}
+		captured := map[string]ast.Type{}
+		var captureOrder []string
+		prev := c.current
+		prevSink := c.captureSink
+		prevOuter := c.captureOuter
+		prevLoop := c.loopDepth
+		prevSwitch := c.switchDepth
+		c.current = &ast.FuncDecl{
+			P:          n.P,
+			Params:     n.Params,
+			ReturnType: n.ReturnType,
+			Body:       n.Body,
+		}
+		c.loopDepth = 0
+		c.switchDepth = 0
+		c.captureSink = func(name string, t ast.Type) {
+			if _, ok := captured[name]; ok {
+				return
+			}
+			switch t.(type) {
+			case ast.VoidType, ast.ParamType:
+				c.errf(n.P, "captured variable %q has unsupported type %s", name, t)
+			default:
+				captured[name] = t
+				captureOrder = append(captureOrder, name)
+			}
+		}
+		c.captureOuter = s
+		c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: s})
+		c.checkBlock(n.Body, root)
+		c.captureChain = c.captureChain[:len(c.captureChain)-1]
+		c.captureSink = prevSink
+		c.captureOuter = prevOuter
+		c.loopDepth = prevLoop
+		c.switchDepth = prevSwitch
+		c.current = prev
+		for _, name := range captureOrder {
+			n.Captures = append(n.Captures, ast.Param{Name: name, Type: captured[name]})
+		}
+		ft := &ast.FuncType{Result: n.ReturnType}
+		for _, p := range n.Params {
+			ft.Params = append(ft.Params, p.Type)
+		}
+		return ft
 	case *ast.IfExpr:
 		ct := c.checkExpr(n.Cond, s)
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {

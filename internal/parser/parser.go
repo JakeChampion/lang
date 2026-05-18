@@ -1132,6 +1132,58 @@ func (p *parser) parseWhile() (ast.Stmt, error) {
 	return &ast.While{P: kw.Pos, Cond: cond, Body: body}, nil
 }
 
+// parseLambda parses `function (params): R { body }` in
+// expression position. The `function` keyword has already been
+// peeked (not yet consumed) by parsePrimary; parseLambda
+// consumes it and reads the unnamed-function shape. The body is
+// parsed inside the parser's standard return-type stack so
+// `use` desugaring inside the lambda body picks up the right
+// callback return type.
+func (p *parser) parseLambda() (ast.Expr, error) {
+	kw := p.advance() // function
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return nil, err
+	}
+	var params []ast.Param
+	if !p.match(lexer.Punct, ")") {
+		for {
+			pname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ":"); err != nil {
+				return nil, err
+			}
+			ptype, err := p.parseType()
+			if err != nil {
+				return nil, err
+			}
+			params = append(params, ast.Param{Name: pname.Text, Type: ptype})
+			if _, ok := p.accept(lexer.Punct, ","); !ok {
+				break
+			}
+		}
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	var ret ast.Type = ast.VoidType{}
+	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		t, err := p.parseType()
+		if err != nil {
+			return nil, err
+		}
+		ret = t
+	}
+	p.returnTypeStack = append(p.returnTypeStack, ret)
+	body, err := p.parseBlock()
+	p.returnTypeStack = p.returnTypeStack[:len(p.returnTypeStack)-1]
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Lambda{P: kw.Pos, Params: params, ReturnType: ret, Body: body}, nil
+}
+
 // parseIfExpr parses the expression form `if (cond) { e1 } else
 // { e2 }`. Each arm is a single expression — no semicolon, no
 // statement list. The construct exists so the language can drop
@@ -2611,6 +2663,20 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			// expression parsing ever sees it, so this branch only
 			// fires from a true expression context.
 			return p.parseMatchExpr()
+		case "function":
+			// Anonymous function literal: `function (x: T): R { body }`.
+			// Produces a Lambda expression — same shape as a named
+			// local FuncDecl, sans the name. The checker runs
+			// capture analysis; closureconv hoists the body to a
+			// top-level synthesised name and replaces the Lambda
+			// with a MakeClosure at this position.
+			//
+			// Dispatch story: parseStmt routes `function` to
+			// parseFuncDecl (statement) before primary parsing
+			// ever sees it for the named form. parsePrimary fires
+			// only when `function` appears mid-expression — RHS
+			// of `var x = ...`, an argument, a return value, etc.
+			return p.parseLambda()
 		}
 	case lexer.Ident:
 		p.advance()

@@ -875,6 +875,27 @@ type FieldAccess struct {
 	FieldPos Position
 }
 
+// Lambda is an anonymous function expression: `function (x: i32):
+// i32 { return x; }`. It's the expression-position counterpart to
+// the FuncDecl statement form — same params / return type / body
+// shape, no Name. The checker treats it like a local FuncDecl:
+// runs capture analysis against the enclosing scope and fills
+// `Captures` with the names this lambda reads from outer-scope.
+// The closureconv pass synthesises a hoisted top-level FuncDecl
+// from the Lambda (with a fresh `__lambda_<N>` name) and replaces
+// the Lambda expression with a MakeClosure at its source location
+// — same end-shape as a named local FuncDecl declared as a stmt.
+type Lambda struct {
+	P          Position
+	Params     []Param
+	ReturnType Type
+	Body       *Block
+	// Captures gets filled by the checker, same shape as
+	// FuncDecl.Captures. closureconv reads it to size the env
+	// block.
+	Captures []Param
+}
+
 // CaptureRef is a synthetic expression introduced by closure
 // conversion. Inside a hoisted local function's body, references to
 // captured outer-scope variables are rewritten from `*Ident` to
@@ -925,6 +946,7 @@ func (e *FieldAccess) Pos() Position { return e.P }
 func (e *EnumLit) Pos() Position     { return e.P }
 func (e *CaptureRef) Pos() Position  { return e.P }
 func (e *MakeClosure) Pos() Position { return e.P }
+func (e *Lambda) Pos() Position      { return e.P }
 
 func (*NumberLit) isExpr() {}
 func (*CastExpr) isExpr()  {}
@@ -950,6 +972,7 @@ func (*FieldAccess) isExpr() {}
 func (*EnumLit) isExpr()     {}
 func (*CaptureRef) isExpr()  {}
 func (*MakeClosure) isExpr() {}
+func (*Lambda) isExpr()      {}
 
 // ---------- Statements ----------
 

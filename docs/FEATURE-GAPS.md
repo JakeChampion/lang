@@ -142,16 +142,43 @@ Top-level mutual recursion works because all top-level functions
 are registered in `info.FuncSigs` in a pre-pass before any body is
 checked.
 
-**Lift:**
-- Checker: when entering a block that contains nested FuncDecls,
-  do a pre-pass that binds every local FuncDecl's name + signature
-  in the enclosing scope BEFORE walking statements. The bodies
-  then resolve sibling references through the normal lookup path.
-- closureconv: the existing hoist + MakeClosure shape works as-is
-  (siblings already capture each other since #574).
+**Lift (initial attempt — REVERTED, deeper than it looked):**
+A checker pre-pass that binds every local FuncDecl's name +
+signature in the block's scope before walking statements DOES
+make type-checking succeed. But the runtime is broken:
+closureconv produces `var isEven = MakeClosure{__closure_isEven_1,
+[isOdd]}` followed by `var isOdd = MakeClosure{__closure_isOdd_2,
+[isEven]}`. At runtime the captures expressions run in source
+order — when isEven's MakeClosure evaluates its `[isOdd]` capture
+slot, isOdd is still uninitialised (zero). isEven's env ends up
+with a stale capture; when isEven's body calls isOdd through the
+env, it dispatches to table index 0 (which happens to be isEven
+itself). The infinite recursion eventually hits n=0 and returns
+— so simple `isEven(10)` accidentally produces the right answer,
+but `isEven(11)` (or `isOdd(8)`) returns the WRONG answer
+silently. A user staring at "1 = true" would believe their code
+is correct.
 
-**Estimate:** Small-medium. Targeted checker change. The runtime
-already supports mutual recursion (top-level path proves it).
+**Real lift:**
+- Same checker pre-pass — but ALSO emit a closureconv shape that
+  works under cyclic captures. Options:
+  1. Pre-allocate every sibling's env block first (zero-filled),
+     build all the MakeClosure pairs (which point into the env
+     blocks), then go back and store each closure's capture
+     values into its env block. The cycle now closes because
+     every closure pair pointer exists before any env's stores
+     run.
+  2. Detect "every sibling local FuncDecl in this block has
+     identical mutual-reference structure" and bypass the env
+     block for the sibling-references — emit direct calls to
+     the hoisted top-level names instead. Limited but enough
+     for the isEven/isOdd shape.
+- The hoist order in closureconv already gives each function its
+  table index up front; the missing piece is the env-block init
+  scheme.
+
+**Estimate:** Medium-large. The checker side is small but the
+closureconv + IR changes are nontrivial. Marked DEFERRED for now.
 
 ---
 
@@ -254,18 +281,20 @@ the method's type params and the struct's.
 
 Driven by "smallest, no-runtime-touch, unlocks the most user code":
 
-1. **Tuple destructuring (#7)** — cleanest small win; matches the
-   array destructure already in place.
-2. **`else if` as expression (#3)** — 5-line parser change.
-3. **Parenthesized function types in arrays (#2)** — unblocks
-   `((T) => R)[]` patterns the bug-hunt probes wanted.
-4. **Mutual recursion of local fns (#5)** — single-pass checker
-   pre-walk; runtime side already works.
-5. **Anonymous lambdas (#1)** — bigger but high-leverage; uses the
-   existing closure infrastructure.
-6. **Match on literal patterns (#6)** — bigger; new pattern kind
+1. ✅ **Tuple destructuring (#7)** — landed in PR #581.
+2. ✅ **`else if` as expression (#3)** — landed in PR #581.
+3. ✅ **Parenthesized function types in arrays (#2)** — landed in
+   PR #581 + IR's `call()` handles `*ast.Index` callees.
+4. **Mutual recursion of local fns (#5)** — DEFERRED. Naive
+   checker pre-pass produces silently-buggy runtime captures
+   (siblings see uninitialised env slots). Needs a real fix
+   in closureconv (pre-alloc envs + back-fill). See entry #5
+   above.
+5. ✅ **Anonymous lambdas (#1)** — landed in PR #582.
+6. **Match on literal patterns (#6)** — next up; new pattern kind
    in the AST + checker / IR.
 7. **Generic call-site type args (#4)** — useful only after lambdas
-   ship (since most call sites infer anyway).
+   ship (since most call sites infer anyway). Lambdas are in now,
+   but the inference-only path still handles the common cases.
 8. **Generic struct method type params (#8)** — biggest; needs
    monomorph reach into methods.
