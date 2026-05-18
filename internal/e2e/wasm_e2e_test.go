@@ -3146,6 +3146,58 @@ function main(): i32 {
 	}
 }
 
+// Anonymous function expressions (lambdas). `function (x: T): R
+// { body }` in expression position. The parser emits an `*ast.Lambda`
+// node; the checker treats it like a local FuncDecl (captures
+// analysis runs against the surrounding scope chain); closureconv
+// hoists a synthetic top-level `__lambda_<N>` FuncDecl and rewrites
+// the Lambda expression to a MakeClosure at its source location.
+// End-to-end shape is identical to a named local FuncDecl that's
+// immediately returned / passed — the lambda just elides the name.
+func TestWASMLambdaBasic(t *testing.T) {
+	src := `function main(): i32 {
+    var f = function (x: i32): i32 { return x + 1; };
+    return f(41);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMLambdaCaptures(t *testing.T) {
+	src := `function main(): i32 {
+    var n: i32 = 10;
+    var f = function (x: i32): i32 { return x + n; };
+    return f(32);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMLambdaReturned(t *testing.T) {
+	src := `function makeAdder(n: i32): (i32) => i32 {
+    return function (x: i32): i32 { return x + n; };
+}
+function main(): i32 {
+    var add10 = makeAdder(10);
+    return add10(32);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
+func TestWASMLambdaAsArg(t *testing.T) {
+	src := `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+function main(): i32 {
+    return apply(function (n: i32): i32 { return n * 2; }, 21);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42", got)
+	}
+}
+
 // `var (a, b) = expr;` tuple destructuring — alternative to
 // `let (a, b) = expr;` for symmetry with regular `var name = …;`
 // declarations. The parser detects the `(` after `var` and routes

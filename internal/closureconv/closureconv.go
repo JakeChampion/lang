@@ -349,6 +349,77 @@ func (c *converter) rewriteStmt(s ast.Stmt, ctx *captureCtx) (ast.Stmt, error) {
 
 func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 	switch n := e.(type) {
+	case *ast.Lambda:
+		// Anonymous function expression — synthesise a hoisted
+		// FuncDecl with a fresh name, hoist it via the same
+		// pipeline named local FuncDecls use, and return the
+		// MakeClosure expression in the Lambda's place. The
+		// surrounding expression sees a closure pair pointer at
+		// runtime, indistinguishable from a named local fn's
+		// closure value.
+		hoistedName := c.freshName("lambda")
+		fn := &ast.FuncDecl{
+			P:          n.P,
+			Name:       hoistedName,
+			Params:     n.Params,
+			ReturnType: n.ReturnType,
+			Body:       n.Body,
+			IsLocal:    true,
+			Captures:   n.Captures,
+		}
+		// Build the lambda's own capture context — same shape
+		// hoist() builds for named local FuncDecls. Walk the body
+		// with the new context so captured-name idents inside it
+		// resolve to CaptureRef nodes against the lambda's env.
+		lamCtx := &captureCtx{
+			byName:          map[string]capInfo{},
+			envName:         "$__env",
+			selfOrigName:    hoistedName,
+			selfHoistedName: hoistedName,
+		}
+		off := int32(0)
+		for _, cap := range fn.Captures {
+			lamCtx.byName[cap.Name] = capInfo{offset: int(off), typ: cap.Type}
+			off += captureSlotSize(cap.Type, c.ptrW)
+		}
+		// Append synthetic __env param + register the hoisted
+		// signature in FuncSigs so indirect-call dispatch can
+		// resolve the (type $tN) slot for OpCallIndirect.
+		fn.Params = append(fn.Params, ast.Param{Name: "__env", Type: ast.NumberType{}})
+		hoistedSig := &ast.FuncType{Result: fn.ReturnType}
+		for _, p := range fn.Params {
+			hoistedSig.Params = append(hoistedSig.Params, p.Type)
+		}
+		c.info.FuncSigs[hoistedName] = hoistedSig
+		// Rewrite body references through lamCtx so captures
+		// become CaptureRef and the rest passes through unchanged.
+		prevHost := c.hostFn
+		c.hostFn = fn
+		if err := c.rewriteBlock(fn.Body, lamCtx); err != nil {
+			c.hostFn = prevHost
+			return nil, err
+		}
+		c.hostFn = prevHost
+		idx := len(c.funcIdx) + len(c.appended)
+		c.funcIdx[hoistedName] = idx
+		c.appended = append(c.appended, fn)
+		// Each capture's source expression is the outer-scope name;
+		// re-walk through the surrounding context so nested
+		// closures-inside-lambdas forward captures correctly.
+		caps := make([]ast.Expr, len(n.Captures))
+		for i, cap := range n.Captures {
+			var src ast.Expr = &ast.Ident{P: n.P, Name: cap.Name}
+			if rewritten, err := c.rewriteExpr(src, ctx); err == nil {
+				src = rewritten
+			}
+			caps[i] = src
+		}
+		return &ast.MakeClosure{
+			P:         n.P,
+			FuncName:  hoistedName,
+			FuncIndex: idx,
+			Captures:  caps,
+		}, nil
 	case *ast.Ident:
 		if ctx != nil {
 			if ci, ok := ctx.byName[n.Name]; ok {
