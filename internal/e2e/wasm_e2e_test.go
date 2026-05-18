@@ -32,6 +32,7 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/leb128"
 	mem "github.com/jakechampion/lang/internal/wasm/memory"
+	mod "github.com/jakechampion/lang/internal/wasm/module"
 	num "github.com/jakechampion/lang/internal/wasm/numeric"
 	"github.com/jakechampion/lang/internal/wasm/sections"
 )
@@ -9698,5 +9699,71 @@ func TestWASMMemoryNumericConvertCross(t *testing.T) {
 	stdout := runWasmModule(t, out)
 	if strings.TrimSpace(stdout) != "10" {
 		t.Fatalf("wasmtime stdout = %q, want %q (sum of [1,2,3,4])", stdout, "10")
+	}
+}
+
+// TestWASMModuleBuildCross — build a module with both Go
+// module.Build and Lang std/wasm/module.build, identical
+// inputs, assert the produced bytes are byte-for-byte
+// identical. This is the strongest lock-step guarantee: any
+// drift between the two implementations on any opcode /
+// section / lebon any path fires here.
+func TestWASMModuleBuildCross(t *testing.T) {
+	maybeSkipNoWasmtime := func() {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH")
+		}
+	}
+	maybeSkipNoWasmtime()
+
+	// Go side: build the "main: () -> 42" module via the
+	// top-level module.Build entry point.
+	m := mod.New()
+	m.TypeParams = [][]byte{nil}
+	m.TypeResults = [][]byte{{encode.ValtypeI32}}
+	m.FunctionTypeidxs = []uint32{0}
+	m.ExportNames = []string{"main"}
+	m.ExportKinds = []byte{sections.ExportFunc}
+	m.ExportIdxs = []uint32{0}
+	body := inst.InstI32Const(nil, 42)
+	m.CodeBodies = [][]byte{inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)}
+	goBytes := mod.Build(m)
+
+	// Lang side: run the equivalent program through wasmtime
+	// and have it print the module bytes.
+	langSrc := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+    var body: u8[] = inst.inst_i32_const([], 42);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	langBytes := langProducedModuleBytes(t, langSrc)
+
+	if !bytes.Equal(goBytes, langBytes) {
+		t.Fatalf("Go and Lang module bytes differ:\n  Go (% 4d): % x\n  Lang (% 2d): % x",
+			len(goBytes), goBytes, len(langBytes), langBytes)
 	}
 }
