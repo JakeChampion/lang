@@ -4938,6 +4938,61 @@ func (b *builder) call(n *ast.Call) error {
 			return nil
 		}
 	}
+	// Immediate lambda call: `(function (x) { ... })(arg)`. The
+	// Lambda lowers to a closure pair pointer (via closureconv's
+	// MakeClosure rewrite); OpCallIndirect dispatches through it
+	// like any other function-typed value. Same shape as the
+	// chained-Call / CaptureRef / FieldAccess callee branches
+	// — Lambda just happens to be a literal closure value
+	// inlined right at the call site. closureconv has likely
+	// already rewritten Lambda → MakeClosure before the IR
+	// builder runs, so we handle both shapes.
+	if lam, ok := n.Callee.(*ast.Lambda); ok {
+		ft := &ast.FuncType{Result: lam.ReturnType}
+		for _, p := range lam.Params {
+			ft.Params = append(ft.Params, p.Type)
+		}
+		for _, a := range n.Args {
+			if err := b.expr(a); err != nil {
+				return err
+			}
+		}
+		if err := b.expr(lam); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+		return nil
+	}
+	if mc, ok := n.Callee.(*ast.MakeClosure); ok {
+		// closureconv-emitted MakeClosure callee — same path as
+		// the Lambda case above, but the function signature comes
+		// from info.FuncSigs[mc.FuncName] (closureconv stamped
+		// this for the hoisted target).
+		var ft *ast.FuncType
+		if sig, ok := b.info.FuncSigs[mc.FuncName]; ok && sig != nil {
+			// The hoisted sig includes the trailing __env param;
+			// drop it for the call-site signature, since the
+			// OpCallIndirect emit uses the pair's env_ptr to
+			// supply env automatically.
+			userSig := &ast.FuncType{Result: sig.Result}
+			if len(sig.Params) > 0 {
+				userSig.Params = append([]ast.Type(nil), sig.Params[:len(sig.Params)-1]...)
+			}
+			ft = userSig
+		}
+		if ft != nil {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			if err := b.expr(mc); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+			return nil
+		}
+	}
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
