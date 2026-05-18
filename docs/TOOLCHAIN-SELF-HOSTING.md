@@ -175,13 +175,25 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   (`TestWASMMemoryLoad`, `…Store`, `…SizeGrow`) walk both the
   full-width and narrow-width blocks plus the multi-byte uleb
   offset case (offset=128 forces a 2-byte uleb).
-- Remaining Phase 1 work: conversion / sign-extension opcodes
-  (single-byte, ~30 functions — i32.wrap_i64, i64.extend_i32_s,
-  i32.trunc_f32_s, f32.convert_i32_u, reinterpret family, the
-  i32/i64.extend{8,16,32}_s sign-extension set), the IR-walking
-  entry point that produces a complete module from the codegen
-  IR, and the driver-wiring step that deletes the
-  `wasm-tools parse` call at `cmd/lang/main.go:604`.
+- **Conversion / reinterpret / sign-extension encoders shipped**
+  in `internal/stdlib/std/wasm/convert.lang`: integer-width
+  conversion (i32.wrap_i64, i64.extend_i32_{s,u}), float-to-int
+  trapping truncation (8 variants across i32/i64 × f32/f64 × s/u),
+  int-to-float conversion (8 variants), float-width
+  demote / promote, the reinterpret family (i32↔f32 / i64↔f64
+  bit-pattern aliases), and the sign-extension extension
+  (i32.extend{8,16}_s, i64.extend{8,16,32}_s). ~28 functions, all
+  single-byte opcodes — same one-line shape as numeric.lang.
+  Tests (`TestWASMConvertIntWidth`, `…FloatInt`) walk every
+  variant.
+- Remaining Phase 1 work: the IR-walking entry point that turns
+  the codegen IR into a complete wasm module (composes the
+  type / import / function / memory / export / code / data
+  sections via the existing primitives), and the driver-wiring
+  step that deletes the `wasm-tools parse` call at
+  `cmd/lang/main.go:604`. Saturating-truncate ops and bulk-memory
+  ops (both 0xFC-prefixed) are deliberately out of scope — the
+  production backend doesn't lean on them.
 
 ---
 
