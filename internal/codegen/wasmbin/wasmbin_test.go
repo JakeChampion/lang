@@ -746,6 +746,145 @@ func walkHasMemorySection(t *testing.T, bin []byte) bool {
 	return false
 }
 
+// TestEmitDirectCall — `function helper(): i32 { return 7 }`
+// plus `function main(): i32 { return helper() + 3 }`. Exercises
+// OpCallDirect (name resolution → funcidx) and the function-
+// section / code-section ordering required for forward references.
+func TestEmitDirectCall(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "helper",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 7}},
+		},
+		{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpCallDirect, Str: "helper"},
+				{Kind: ir.OpConstI32, I32: 3},
+				{Kind: ir.OpAdd},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "10" {
+		t.Fatalf("got %q want %q", got, "10")
+	}
+}
+
+// TestEmitDirectCallWithArgs — `function add3(a, b, c: i32): i32 {
+// return a + b + c }` + `function main(): i32 {
+// return add3(10, 20, 12) }`. Exercises arg-passing through a
+// direct call.
+func TestEmitDirectCallWithArgs(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name: "add3",
+			Params: []ast.Param{
+				{Name: "a", Type: i32()},
+				{Name: "b", Type: i32()},
+				{Name: "c", Type: i32()},
+			},
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpLoadLocal, I32: 0},
+				{Kind: ir.OpLoadLocal, I32: 1},
+				{Kind: ir.OpAdd},
+				{Kind: ir.OpLoadLocal, I32: 2},
+				{Kind: ir.OpAdd},
+			},
+		},
+		{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 10},
+				{Kind: ir.OpConstI32, I32: 20},
+				{Kind: ir.OpConstI32, I32: 12},
+				{Kind: ir.OpCallDirect, Str: "add3", I32: 3},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "42" {
+		t.Fatalf("got %q want %q", got, "42")
+	}
+}
+
+// TestEmitRecursion — `function fact(n: i32): i32 {
+//   if n <= 1 { return 1 } else { return n * fact(n - 1) }
+// }`. Direct self-call. Exercises call into the same funcidx,
+// combined with if/else from the control-flow slice.
+func TestEmitRecursion(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "fact",
+		Params:     []ast.Param{{Name: "n", Type: i32()}},
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpLeS},
+			{Kind: ir.OpIf, I32: ir.BlockTypeI32},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpElse},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpSub},
+			{Kind: ir.OpCallDirect, Str: "fact", I32: 1},
+			{Kind: ir.OpMul},
+			{Kind: ir.OpEnd},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, c := range []struct{ in, want string }{
+		{"0", "1"}, {"1", "1"}, {"5", "120"}, {"10", "3628800"},
+	} {
+		cmd := exec.Command("wasmtime", "run", "--invoke", "fact", p, c.in)
+		var so, se bytes.Buffer
+		cmd.Stdout = &so
+		cmd.Stderr = &se
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("fact(%s): %v\nstderr:%s", c.in, err, se.String())
+		}
+		if got := strings.TrimSpace(so.String()); got != c.want {
+			t.Fatalf("fact(%s) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestEmitCallUnknownCallee — calling a function that isn't in
+// the program reports an error rather than emitting an invalid
+// funcidx.
+func TestEmitCallUnknownCallee(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops:        []ir.Op{{Kind: ir.OpCallDirect, Str: "does_not_exist"}},
+	}}}
+	if _, err := Emit(prog); err == nil {
+		t.Fatal("expected unknown-callee error")
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpStrLen) and confirm we get a useful error rather
 // than emitting nonsense bytes. Regressions here would silently
