@@ -1,0 +1,13 @@
+{
+  "name": "lang-playground-playwright",
+  "version": "0.0.0",
+  "description": "Scripted browser regressions for the lang playground.",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "install-browsers": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
