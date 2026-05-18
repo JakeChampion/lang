@@ -133,3 +133,31 @@ test("?theme=dark URL param boots into dark mode", async ({ page }) => {
   await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
   await expect(page.locator("body")).toHaveClass(/dark/);
 });
+
+test("embed mode shows the pane-tab strip; Assembly tab swaps content", async ({
+  page,
+}) => {
+  await page.goto("/index.html?embed=1");
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  // Tab strip visible only under body.embed.
+  await expect(page.locator(".pane-tabs")).toBeVisible();
+  // Default is the Output tab — body shouldn't carry the asm class.
+  await expect(page.locator("body")).not.toHaveClass(/tab-asm/);
+  await expect(page.locator(".asm-panel")).not.toBeVisible();
+  // Switch to Assembly. Body class flips; asm pane appears with
+  // emitted content for the default target (arm64).
+  await page.locator('.pane-tabs .tab[data-tab="asm"]').click();
+  await expect(page.locator("body")).toHaveClass(/tab-asm/);
+  await expect(page.locator(".asm-panel")).toBeVisible();
+  await expect(page.locator("#asmOut")).toContainText(".text", { timeout: 10_000 });
+  // Output pane hidden while Assembly is active.
+  await expect(page.locator(".pane-output pre#out")).not.toBeVisible();
+  // Embed target dropdown becomes visible only on the Asm tab.
+  await expect(page.locator("#embedTarget")).toBeVisible();
+});
+
+test("standalone mode does NOT show the embed tab strip", async ({ page }) => {
+  await gotoReady(page);
+  // Tab strip is gated on body.embed in CSS; standalone hides it.
+  await expect(page.locator(".pane-tabs")).not.toBeVisible();
+});
