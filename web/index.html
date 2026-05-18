@@ -407,12 +407,19 @@
   /* Tab strip visible in embed only — see comment on .pane-tabs above. */
   body.embed .pane-tabs { display: flex; }
   /* Tab-driven content switch. Default state shows output; the
-   * `body.tab-asm` class swaps to the assembly panel. The asm
-   * panel lives outside the right pane (it spans both columns
-   * in standalone) so the embed-mode override below also
-   * narrows it to the single-column embed grid.
+   * `body.tab-asm` class swaps to the assembly panel. The tab
+   * strip itself lives inside .pane-output and must stay visible
+   * across both tabs — only the output content (h2 + pre + meta)
+   * hides when Asm is active. The asm panel lives outside
+   * .pane-output (it spans both columns in standalone) so the
+   * embed-mode override below also narrows it to the single-
+   * column embed grid.
    */
-  body.embed.tab-asm .pane-output { display: none; }
+  body.embed.tab-asm .pane-output > h2,
+  body.embed.tab-asm .pane-output > #out,
+  body.embed.tab-asm .pane-output > .out-info {
+    display: none;
+  }
   body.embed.tab-asm .asm-panel { display: block; margin-top: 0; }
   body.embed .asm-panel { display: none; }
   body.embed .asm-panel pre {
