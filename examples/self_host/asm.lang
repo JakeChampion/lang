@@ -107,6 +107,22 @@ function emit_expr(e: parser.Expr, out: string): string {
                 out = out + "    cqto\n";
                 out = out + "    idivq %rcx\n";
                 out = out + "    movq %rdx, %rax\n";
+            } else if (b.op == "<" || b.op == "<=" || b.op == ">"
+                    || b.op == ">=" || b.op == "==" || b.op == "!=") {
+                // Comparison: `cmpq rhs, lhs` sets flags from
+                // (lhs - rhs); setcc materialises the bool in
+                // %al, movzbq zero-extends into %rax so the
+                // surrounding stack push gets a clean 0/1.
+                out = out + "    cmpq %rcx, %rax\n";
+                var cc: string = "";
+                if (b.op == "<") { cc = "setl"; }
+                else if (b.op == "<=") { cc = "setle"; }
+                else if (b.op == ">") { cc = "setg"; }
+                else if (b.op == ">=") { cc = "setge"; }
+                else if (b.op == "==") { cc = "sete"; }
+                else { cc = "setne"; }
+                out = out + "    " + cc + " %al\n";
+                out = out + "    movzbq %al, %rax\n";
             } else {
                 out = out + "    # unsupported binop: " + b.op + "\n";
             }
@@ -276,6 +292,29 @@ function main(): i32 {
     var a8: string = emit_source("return (2 + 3) * 4;");
     if (!contains(a8, "addq")) { return 80; }
     if (!contains(a8, "imulq")) { return 81; }
+
+    // Comparisons: each op emits `cmpq` + the matching setcc +
+    // a movzbq zero-extension. Result is a 0 or 1 on the rt
+    // stack, suitable as an i32 exit code.
+    var a9: string = emit_source("return 5 < 10;");
+    if (!contains(a9, "cmpq")) { return 90; }
+    if (!contains(a9, "setl")) { return 91; }
+    if (!contains(a9, "movzbq")) { return 92; }
+
+    var a10: string = emit_source("return 5 <= 5;");
+    if (!contains(a10, "setle")) { return 100; }
+
+    var a11: string = emit_source("return 7 > 3;");
+    if (!contains(a11, "setg")) { return 110; }
+
+    var a12: string = emit_source("return 7 >= 7;");
+    if (!contains(a12, "setge")) { return 120; }
+
+    var a13: string = emit_source("return 4 == 4;");
+    if (!contains(a13, "sete")) { return 130; }
+
+    var a14: string = emit_source("return 4 != 5;");
+    if (!contains(a14, "setne")) { return 140; }
 
     return 0;
 }
