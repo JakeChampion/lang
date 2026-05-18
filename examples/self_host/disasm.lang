@@ -85,6 +85,7 @@ function op_name(op: vm.Op): string {
         vm.OpJump(_) => { return "JUMP"; },
         vm.OpJumpIfFalse(_) => { return "JUMP_IF_FALSE"; },
         vm.OpPop(_) => { return "POP"; },
+        vm.OpCall(_) => { return "CALL"; },
         vm.OpReturn(_) => { return "RETURN"; }
     }
     return "???";
@@ -107,6 +108,7 @@ function op_immediate(op: vm.Op): string {
         vm.OpJump(o) => { return i32_to_string(o.target); },
         vm.OpJumpIfFalse(o) => { return i32_to_string(o.target); },
         vm.OpPop(_) => { return ""; },
+        vm.OpCall(o) => { return o.name + " (" + i32_to_string(o.argc) + ")"; },
         vm.OpReturn(_) => { return ""; }
     }
     return "";
@@ -202,6 +204,13 @@ function main(): i32 {
     // Expression statement: emits POP after the inner expr.
     var d7: string = disassemble_source("1 + 2; return 0;");
     if (!contains(d7, "POP")) { return 70; }
+
+    // Function call disassembly: emits CALL with name + argc.
+    var d8: string = disassemble_source(
+        "function add(x: i32, y: i32): i32 { return x + y; } return add(2, 3);"
+    );
+    if (!contains(d8, "CALL")) { return 80; }
+    if (!contains(d8, "add")) { return 81; }
 
     return 0;
 }

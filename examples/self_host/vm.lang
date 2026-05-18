@@ -77,13 +77,20 @@ pub struct OpUnary { op: string }
 pub struct OpJump { target: i32 }
 pub struct OpJumpIfFalse { target: i32 }
 pub struct OpPop { tag: i32 }
+// OpCall invokes a function by name. The VM looks the name up in
+// the program's FuncTable at exec time, pops `argc` args off the
+// operand stack, allocates a fresh locals vector sized to the
+// function's body needs, and jumps to the entry IP. OpReturn
+// from the callee restores the caller's frame and pushes the
+// return value.
+pub struct OpCall { name: string, argc: i32 }
 pub struct OpReturn { tag: i32 }
 
 pub type Op = OpPushInt | OpPushBool | OpPushStr
             | OpLoadLocal | OpStoreLocal
             | OpBinary | OpUnary
             | OpJump | OpJumpIfFalse
-            | OpPop | OpReturn;
+            | OpPop | OpCall | OpReturn;
 
 function op_push_int(n: i32): Op { return OpPushInt { v: n }; }
 function op_push_bool(b: boolean): Op { return OpPushBool { v: b }; }
@@ -95,6 +102,7 @@ function op_unary(op: string): Op { return OpUnary { op: op }; }
 function op_jump(t: i32): Op { return OpJump { target: t }; }
 function op_jump_if_false(t: i32): Op { return OpJumpIfFalse { target: t }; }
 function op_pop(): Op { return OpPop { tag: 0 }; }
+function op_call(name: string, argc: i32): Op { return OpCall { name: name, argc: argc }; }
 function op_return(): Op { return OpReturn { tag: 0 }; }
 
 // =================== COMPILER ====================
@@ -194,8 +202,27 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = ops.push(op_unary(u.op));
             return CompileResult { ops: ops, lt: lt };
         },
-        parser.ExprCall(_) => {
-            ops = ops.push(op_push_str("__nocall__"));
+        parser.ExprCall(c) => {
+            // Only bare-ident callees are supported, mirroring
+            // the interp's stance. Emit each arg in order
+            // (left-to-right) so they sit on the stack with the
+            // first arg deepest; OpCall pops `argc` of them and
+            // stores them as locals 0..argc-1 in the callee.
+            var name: string = "";
+            match (c.callee) {
+                parser.ExprIdent(id) => { name = id.name; },
+                _ => {
+                    ops = ops.push(op_push_str("__call-target-not-ident__"));
+                    return CompileResult { ops: ops, lt: lt };
+                }
+            }
+            var i: i32 = 0;
+            while (i < len(c.args)) {
+                var ar: CompileResult = compile_expr(c.args[i], ops, lt);
+                ops = ar.ops; lt = ar.lt;
+                i = i + 1;
+            }
+            ops = ops.push(op_call(name, len(c.args)));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprArray(_) => {
@@ -319,17 +346,94 @@ function compile_block(body: parser.Stmt[], ops: Op[], lt: LocalsTable): Compile
     return CompileResult { ops: ops, lt: lt };
 }
 
-pub function compile_module(mod: parser.Module): Op[] {
-    var ops: Op[] = [];
+// FuncTable: parallel arrays describing each function in the
+// module. `entries[i]` is the IP of the first op of function i's
+// body; `locals_counts[i]` is the size of the locals vector the
+// callee's frame needs (params count + body var count). The
+// VM's OpCall arm looks the name up here at exec time.
+pub struct FuncTable {
+    names: string[],
+    entries: i32[],
+    locals_counts: i32[]
+}
+
+// CompiledProgram bundles ops + funcs so callers can pass both
+// into exec(). The top-level entry point (where execution
+// starts) is always op 0, which the compiler emits as a JUMP
+// over the function bodies straight into top-level stmts.
+pub struct CompiledProgram { ops: Op[], funcs: FuncTable }
+
+// compile_func compiles one FuncDecl into a self-contained
+// Op[] suffix. Params bind to locals 0..argc-1; the rest of the
+// LocalsTable grows as `var` declarations appear. Returns the
+// new ops + locals_count so compile_module can stamp the func
+// entry into the table.
+function compile_func(fd: parser.FuncDecl, ops: Op[]): CompileResult {
     var lt: LocalsTable = new_locals();
-    var r: CompileResult = compile_block(mod.top_stmts, ops, lt);
-    // Emit an implicit halt — without a terminating OpReturn
-    // the VM would step past end-of-ops and trip its bounds
-    // check.
-    var out: Op[] = r.ops;
-    out = out.push(op_push_int(0));
-    out = out.push(op_return());
-    return out;
+    // Params arrive on the stack in source order. Pop them
+    // in REVERSE into locals 0..argc-1: the last pushed arg is
+    // on top, so it goes into the highest local index. We bind
+    // names first so we know which index each param maps to,
+    // then emit a sequence of OpStoreLocal in descending order.
+    var i: i32 = 0;
+    while (i < len(fd.params)) {
+        lt = lt.bind(fd.params[i].name);
+        i = i + 1;
+    }
+    var j: i32 = len(fd.params) - 1;
+    while (j >= 0) {
+        ops = ops.push(op_store(j));
+        j = j - 1;
+    }
+    var r: CompileResult = compile_block(fd.body, ops, lt);
+    // Implicit return-0 in case the body falls off the end.
+    ops = r.ops;
+    ops = ops.push(op_push_int(0));
+    ops = ops.push(op_return());
+    return CompileResult { ops: ops, lt: r.lt };
+}
+
+pub function compile_program(mod: parser.Module): CompiledProgram {
+    var ops: Op[] = [];
+    // First op: a jump over the function bodies. We patch the
+    // target after we know where top-level stmts start.
+    var jump_idx: i32 = len(ops);
+    ops = ops.push(op_jump(0 - 1));
+    // Emit each function body and record its entry IP.
+    var fn_names: string[] = [];
+    var fn_entries: i32[] = [];
+    var fn_locals: i32[] = [];
+    var i: i32 = 0;
+    while (i < len(mod.funcs)) {
+        var fd: parser.FuncDecl = mod.funcs[i];
+        fn_names = fn_names.push(fd.name);
+        fn_entries = fn_entries.push(len(ops));
+        var fr: CompileResult = compile_func(fd, ops);
+        ops = fr.ops;
+        fn_locals = fn_locals.push(len(fr.lt.names));
+        i = i + 1;
+    }
+    // Patch the leading JUMP to point at where top-level
+    // execution starts.
+    ops = patch_jump(ops, jump_idx, len(ops));
+    // Compile top-level stmts.
+    var top_lt: LocalsTable = new_locals();
+    var tr: CompileResult = compile_block(mod.top_stmts, ops, top_lt);
+    ops = tr.ops;
+    // Trailing return-0 so falling off top-level halts cleanly.
+    ops = ops.push(op_push_int(0));
+    ops = ops.push(op_return());
+    return CompiledProgram {
+        ops: ops,
+        funcs: FuncTable { names: fn_names, entries: fn_entries, locals_counts: fn_locals }
+    };
+}
+
+// Back-compat: keep the original compile_module shape (Op[]
+// only) for callers (the disassembler, the standalone run-
+// source helper) that don't yet need the FuncTable.
+pub function compile_module(mod: parser.Module): Op[] {
+    return compile_program(mod).ops;
 }
 
 // =================== VM ====================
@@ -519,9 +623,34 @@ function stack_pop(stack: Value[]): PopResult {
 
 // exec runs the bytecode until OpReturn or end-of-ops. Returns
 // the top-of-stack value at the time of return (or VErr).
-pub function exec(ops: Op[]): Value {
+// Frame captures the call-state we restore on OpReturn: where
+// to resume the caller's ip and what its locals vector looked
+// like before the call. Frames live in a stack — multiple
+// active calls (recursion) layer them.
+pub struct Frame { saved_ip: i32, saved_locals: VMLocals }
+
+// lookup_func returns (entry_ip, locals_count, ok). Linear scan
+// of the parallel arrays — the table is tiny (one entry per
+// FuncDecl) so a hashmap would be overkill.
+struct FuncLookup { entry: i32, locals_count: i32, ok: boolean }
+
+function lookup_func(funcs: FuncTable, name: string): FuncLookup {
+    var i: i32 = 0;
+    while (i < len(funcs.names)) {
+        if (funcs.names[i] == name) {
+            return FuncLookup { entry: funcs.entries[i], locals_count: funcs.locals_counts[i], ok: true };
+        }
+        i = i + 1;
+    }
+    return FuncLookup { entry: 0, locals_count: 0, ok: false };
+}
+
+pub function exec_program(prog: CompiledProgram): Value {
+    var ops: Op[] = prog.ops;
+    var funcs: FuncTable = prog.funcs;
     var stack: Value[] = [];
     var locals: VMLocals = new_vm_locals(max_local_idx(ops) + 1);
+    var frames: Frame[] = [];
     var ip: i32 = 0;
     while (ip < len(ops)) {
         var op: Op = ops[ip];
@@ -571,13 +700,62 @@ pub function exec(ops: Op[]): Value {
                 var p: PopResult = stack_pop(stack); stack = p.stack;
                 ip = ip + 1;
             },
+            OpCall(o) => {
+                var fl: FuncLookup = lookup_func(funcs, o.name);
+                if (!fl.ok) { return v_err("undefined function: " + o.name); }
+                // Args sit on top of the stack — last pushed is
+                // the deepest in callee-local order (the body's
+                // OpStoreLocal sequence at function entry pops
+                // them in reverse). Save current frame, allocate
+                // a new locals vector sized to the callee.
+                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals });
+                locals = new_vm_locals(fl.locals_count);
+                ip = fl.entry;
+            },
             OpReturn(_) => {
                 if (len(stack) == 0) { return v_err("return: empty stack"); }
-                return stack[len(stack) - 1];
+                var ret_val: Value = stack[len(stack) - 1];
+                if (len(frames) == 0) {
+                    // Top-level return — surface to caller.
+                    return ret_val;
+                }
+                // Pop the active frame, restore caller's locals
+                // + ip, leave the return value on the stack so
+                // the caller's next op (typically an
+                // OpStoreLocal or part of a larger expr) reads
+                // it.
+                var top_frame: Frame = frames[len(frames) - 1];
+                var nf: Frame[] = [];
+                var fi: i32 = 0;
+                while (fi < len(frames) - 1) { nf = nf.push(frames[fi]); fi = fi + 1; }
+                frames = nf;
+                // stack: we want to discard everything below
+                // the return value that was left behind by the
+                // callee (the callee's locals-zone is already
+                // gone with the locals swap, but the operand
+                // stack may have unused work). For our compiler
+                // every body ends with PUSH expr + RETURN, so
+                // there's exactly the one return value on top.
+                // No cleanup needed.
+                locals = top_frame.saved_locals;
+                ip = top_frame.saved_ip;
             }
         }
     }
     return v_err("ran past end of ops");
+}
+
+// Back-compat: exec(ops) for callers that don't have function
+// decls. Builds an empty FuncTable so OpCall (if it ever
+// appears) surfaces an "undefined function" VErr.
+pub function exec(ops: Op[]): Value {
+    var ns: string[] = [];
+    var es: i32[] = [];
+    var ls: i32[] = [];
+    return exec_program(CompiledProgram {
+        ops: ops,
+        funcs: FuncTable { names: ns, entries: es, locals_counts: ls }
+    });
 }
 
 // =================== DRIVER + VALIDATION ====================
@@ -586,6 +764,14 @@ function run_source(src: string): Value {
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var ops: Op[] = compile_module(mod);
     return exec(ops);
+}
+
+// run_module compiles + executes a source that may declare
+// functions. Threads the FuncTable through so OpCall resolves
+// correctly. Used by the function-call validation cases below.
+function run_module(src: string): Value {
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    return exec_program(compile_program(mod));
 }
 
 function main(): i32 {
@@ -664,6 +850,43 @@ function main(): i32 {
     match (r10) {
         VErr(_) => { },
         _ => { return 100; }
+    }
+
+    // Function decl + call: `add(2, 3) → 5`.
+    var r11: Value = run_module(
+        "function add(x: i32, y: i32): i32 { return x + y; } var k = add(2, 3); return k;"
+    );
+    match (r11) {
+        VInt(i) => { if (i.v != 5) { return 110; } },
+        _ => { return 111; }
+    }
+
+    // Recursive factorial via the VM. fact(5) = 120.
+    var r12: Value = run_module(
+        "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } return fact(5);"
+    );
+    match (r12) {
+        VInt(i) => { if (i.v != 120) { return 120; } },
+        _ => { return 121; }
+    }
+
+    // Mutual recursion: is_even(4) → 1. Same fixture the
+    // tree-walking interp validates.
+    var r13: Value = run_module(
+        "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); }"
+        + " function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); }"
+        + " return is_even(4);"
+    );
+    match (r13) {
+        VInt(i) => { if (i.v != 1) { return 130; } },
+        _ => { return 131; }
+    }
+
+    // Undefined function call → VErr.
+    var r14: Value = run_module("return missing(1);");
+    match (r14) {
+        VErr(_) => { },
+        _ => { return 140; }
     }
 
     return 0;
