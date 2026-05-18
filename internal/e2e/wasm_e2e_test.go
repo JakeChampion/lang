@@ -6430,3 +6430,170 @@ function main(): i32 {
 		})
 	}
 }
+
+// TestWASMLeb128Uleb covers std/wasm/leb128's unsigned encoders.
+// Vectors are drawn from the LEB128 reference and the wasm spec's
+// numeric encoding examples: small values (0, 127), the first
+// two-byte step (128), Wikipedia's 624485 worked example, and the
+// u32 / u64 widths' maxima which exercise the 5-byte and 10-byte
+// upper bounds. The seed-append case verifies the encoder preserves
+// existing buffer contents — wasm section bodies are accumulated
+// across many calls, so a non-mutating "return-the-extended-buffer"
+// shape only works if append really is append.
+func TestWASMLeb128Uleb(t *testing.T) {
+	src := `import "std/wasm/leb128";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // 0 -> [0x00]
+    var b1: u8[] = leb128.uleb_u32(empty, 0u32);
+    if (len(b1) != 1) { return 1; }
+    if (b1[0] != 0u8) { return 2; }
+
+    // 127 -> [0x7F]
+    var b2: u8[] = leb128.uleb_u32(empty, 127u32);
+    if (len(b2) != 1) { return 10; }
+    if (b2[0] != 127u8) { return 11; }
+
+    // 128 -> [0x80, 0x01]
+    var b3: u8[] = leb128.uleb_u32(empty, 128u32);
+    if (len(b3) != 2) { return 20; }
+    if (b3[0] != 128u8) { return 21; }
+    if (b3[1] != 1u8) { return 22; }
+
+    // 624485 -> [0xE5, 0x8E, 0x26]
+    var b4: u8[] = leb128.uleb_u32(empty, 624485u32);
+    if (len(b4) != 3) { return 30; }
+    if (b4[0] != 229u8) { return 31; }
+    if (b4[1] != 142u8) { return 32; }
+    if (b4[2] != 38u8) { return 33; }
+
+    // u32 max -> [0xFF, 0xFF, 0xFF, 0xFF, 0x0F]
+    var b5: u8[] = leb128.uleb_u32(empty, 4294967295u32);
+    if (len(b5) != 5) { return 40; }
+    if (b5[0] != 255u8) { return 41; }
+    if (b5[1] != 255u8) { return 42; }
+    if (b5[2] != 255u8) { return 43; }
+    if (b5[3] != 255u8) { return 44; }
+    if (b5[4] != 15u8) { return 45; }
+
+    // Append preserves seed bytes.
+    var seed: u8[] = [10u8, 20u8];
+    var b6: u8[] = leb128.uleb_u32(seed, 128u32);
+    if (len(b6) != 4) { return 50; }
+    if (b6[0] != 10u8) { return 51; }
+    if (b6[1] != 20u8) { return 52; }
+    if (b6[2] != 128u8) { return 53; }
+    if (b6[3] != 1u8) { return 54; }
+
+    // u64 path with a value above 2^32: 8589934592 (= 2^33).
+    // Encoding: [0x80, 0x80, 0x80, 0x80, 0x20].
+    var b7: u8[] = leb128.uleb_u64(empty, 8589934592u64);
+    if (len(b7) != 5) { return 60; }
+    if (b7[0] != 128u8) { return 61; }
+    if (b7[1] != 128u8) { return 62; }
+    if (b7[2] != 128u8) { return 63; }
+    if (b7[3] != 128u8) { return 64; }
+    if (b7[4] != 32u8) { return 65; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("uleb encoder: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMLeb128Sleb covers std/wasm/leb128's signed encoders.
+// Vectors hit the four terminator regimes — small positive,
+// small negative, "needs an extra zero byte because bit-6 set"
+// (64 and -65), and multi-byte negative — and a wide i64 value
+// to confirm the i64 path's arithmetic-right-shift sign extension
+// terminates correctly.
+func TestWASMLeb128Sleb(t *testing.T) {
+	src := `import "std/wasm/leb128";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // 0 -> [0x00]
+    var b1: u8[] = leb128.sleb_i32(empty, 0);
+    if (len(b1) != 1) { return 1; }
+    if (b1[0] != 0u8) { return 2; }
+
+    // -1 -> [0x7F]   (the canonical "all-ones" sleb terminator)
+    var b2: u8[] = leb128.sleb_i32(empty, 0 - 1);
+    if (len(b2) != 1) { return 10; }
+    if (b2[0] != 127u8) { return 11; }
+
+    // 63 -> [0x3F]   (largest single-byte positive)
+    var b3: u8[] = leb128.sleb_i32(empty, 63);
+    if (len(b3) != 1) { return 20; }
+    if (b3[0] != 63u8) { return 21; }
+
+    // 64 -> [0xC0, 0x00]   (bit-6 set forces a continuation byte)
+    var b4: u8[] = leb128.sleb_i32(empty, 64);
+    if (len(b4) != 2) { return 30; }
+    if (b4[0] != 192u8) { return 31; }
+    if (b4[1] != 0u8) { return 32; }
+
+    // -64 -> [0x40]   (smallest single-byte negative)
+    var b5: u8[] = leb128.sleb_i32(empty, 0 - 64);
+    if (len(b5) != 1) { return 40; }
+    if (b5[0] != 64u8) { return 41; }
+
+    // -65 -> [0xBF, 0x7F]
+    var b6: u8[] = leb128.sleb_i32(empty, 0 - 65);
+    if (len(b6) != 2) { return 50; }
+    if (b6[0] != 191u8) { return 51; }
+    if (b6[1] != 127u8) { return 52; }
+
+    // -123456 -> [0xC0, 0xBB, 0x78]   (multi-byte negative)
+    var b7: u8[] = leb128.sleb_i32(empty, 0 - 123456);
+    if (len(b7) != 3) { return 60; }
+    if (b7[0] != 192u8) { return 61; }
+    if (b7[1] != 187u8) { return 62; }
+    if (b7[2] != 120u8) { return 63; }
+
+    // i64 wide value: 8589934592 (= 2^33).
+    // Encoding: [0x80, 0x80, 0x80, 0x80, 0x20].
+    var b8: u8[] = leb128.sleb_i64(empty, 8589934592i64);
+    if (len(b8) != 5) { return 70; }
+    if (b8[0] != 128u8) { return 71; }
+    if (b8[4] != 32u8) { return 75; }
+
+    // i64 negative wide value: -8589934592.
+    // Encoding: [0x80, 0x80, 0x80, 0x80, 0x60].
+    var b9: u8[] = leb128.sleb_i64(empty, 0i64 - 8589934592i64);
+    if (len(b9) != 5) { return 80; }
+    if (b9[0] != 128u8) { return 81; }
+    if (b9[4] != 96u8) { return 85; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("sleb encoder: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMLeb128Size verifies uleb_size_* agree with the
+// post-encoding length. Useful for callers that need the length
+// before producing the bytes (e.g. wasm section headers, which
+// prefix the body with its own ULEB-encoded length).
+func TestWASMLeb128Size(t *testing.T) {
+	src := `import "std/wasm/leb128";
+function main(): i32 {
+    if (leb128.uleb_size_u32(0u32) != 1) { return 1; }
+    if (leb128.uleb_size_u32(127u32) != 1) { return 2; }
+    if (leb128.uleb_size_u32(128u32) != 2) { return 3; }
+    if (leb128.uleb_size_u32(16383u32) != 2) { return 4; }
+    if (leb128.uleb_size_u32(16384u32) != 3) { return 5; }
+    if (leb128.uleb_size_u32(4294967295u32) != 5) { return 6; }
+
+    if (leb128.uleb_size_u64(0u64) != 1) { return 10; }
+    if (leb128.uleb_size_u64(8589934592u64) != 5) { return 11; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("size helpers: exit = %d, want 0", got)
+	}
+}

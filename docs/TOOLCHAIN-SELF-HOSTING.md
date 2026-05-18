@@ -120,6 +120,25 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
 - WAT-as-input parsing. We're emitting from IR, not from WAT text.
   If someone wants `lang wat2wasm` later, that's a separate tool.
 
+### Progress
+
+- **LEB128 encoders shipped** in `internal/stdlib/std/wasm/leb128.lang`
+  with `uleb_u32` / `uleb_u64` / `sleb_i32` / `sleb_i64` plus
+  `uleb_size_u32` / `uleb_size_u64`. Vector-tested against the
+  Wikipedia LEB128 reference examples and the wasm-spec edge cases
+  (bit-6 transitions, multi-byte negatives, u32/u64/i64 widths) under
+  `internal/e2e/wasm_e2e_test.go` (TestWASMLeb128*). Pure Lang —
+  takes a `u8[]` and appends; no I/O. Not wired into the driver
+  yet, per the "Lang code only, defer running it" decision: the
+  module exists as the spec-correct reference, and once the compiler
+  can run Lang code at build time it slots straight into the section
+  encoder.
+- Remaining Phase 1 work: section-byte writers (`emit_section(id,
+  body)`), instruction-byte encoders (opcode + immediates per IR op),
+  the top-level module shape (magic, version, ordered sections), and
+  the IR-walking entry point. Once those exist, the driver-wiring
+  step is a single `wasm-tools parse` call deletion.
+
 ---
 
 ## Phase 2 — Component Model writer

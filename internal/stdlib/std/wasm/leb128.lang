@@ -1,0 +1,124 @@
+// std/wasm/leb128 — variable-length integer encoder for the
+// WebAssembly Core 1.0 binary format.
+//
+// Spec: https://webassembly.github.io/spec/core/binary/values.html
+// (the "Integers" subsection: ULEB128 for unsigned counts /
+// indices, SLEB128 for signed immediates).
+//
+// Part of Phase 1 of docs/TOOLCHAIN-SELF-HOSTING.md — prerequisite
+// for an in-Lang WAT-to-binary encoder. The module is pure: every
+// function takes a `u8[]` and a numeric value, appends the encoded
+// bytes, and returns the extended buffer. No file I/O, no globals.
+// Not yet wired into the compiler driver — that's a later phase
+// once the compiler itself can run Lang code at build time.
+//
+// Encoding shape (uleb): take the low 7 bits, shift the value
+// right by 7, repeat until the value reaches 0. Every byte except
+// the last sets bit 7 as the continuation flag.
+//
+// Encoding shape (sleb): same low-7-bit / shift loop, but the
+// terminator condition is "remaining value matches the sign-
+// extension of the byte's bit-6" — i.e. the encoded high bit
+// already implies the rest. The arithmetic shift on the signed
+// type does the sign extension for free.
+
+// uleb_u32 — append the ULEB128 encoding of `value` to `buf` and
+// return the extended buffer. 1–5 bytes for any u32.
+pub function uleb_u32(buf: u8[], value: u32): u8[] {
+    var out: u8[] = buf;
+    var v: u32 = value;
+    while (true) {
+        var lo: u32 = v & 127u32;
+        v = v >> 7;
+        if (v == 0u32) {
+            out = out.push(lo as u8);
+            return out;
+        }
+        out = out.push((lo | 128u32) as u8);
+    }
+    return out;
+}
+
+// uleb_u64 — same as uleb_u32 for the wider type. 1–10 bytes.
+pub function uleb_u64(buf: u8[], value: u64): u8[] {
+    var out: u8[] = buf;
+    var v: u64 = value;
+    while (true) {
+        var lo: u64 = v & 127u64;
+        v = v >> 7;
+        if (v == 0u64) {
+            out = out.push(lo as u8);
+            return out;
+        }
+        out = out.push((lo | 128u64) as u8);
+    }
+    return out;
+}
+
+// sleb_i32 — append the SLEB128 encoding of `value` to `buf` and
+// return the extended buffer. 1–5 bytes. The terminator checks
+// bit 6 of the just-emitted byte against the sign of the
+// remaining value: a final 0 with bit-6 clear stops a positive
+// run; a final -1 with bit-6 set stops a negative run.
+pub function sleb_i32(buf: u8[], value: i32): u8[] {
+    var out: u8[] = buf;
+    var v: i32 = value;
+    while (true) {
+        var byte: i32 = v & 127;
+        v = v >> 7;
+        var sign_bit_set: boolean = (byte & 64) != 0;
+        var done: boolean = (v == 0 && !sign_bit_set) || (v == (0 - 1) && sign_bit_set);
+        if (done) {
+            out = out.push(byte as u8);
+            return out;
+        }
+        out = out.push((byte | 128) as u8);
+    }
+    return out;
+}
+
+// sleb_i64 — same as sleb_i32 for the wider type. 1–10 bytes.
+pub function sleb_i64(buf: u8[], value: i64): u8[] {
+    var out: u8[] = buf;
+    var v: i64 = value;
+    while (true) {
+        var byte: i64 = v & 127i64;
+        v = v >> 7;
+        var sign_bit_set: boolean = (byte & 64i64) != 0i64;
+        var done: boolean = (v == 0i64 && !sign_bit_set) || (v == (0i64 - 1i64) && sign_bit_set);
+        if (done) {
+            out = out.push(byte as u8);
+            return out;
+        }
+        out = out.push((byte | 128i64) as u8);
+    }
+    return out;
+}
+
+// uleb_size_u32 — number of bytes uleb_u32 will emit for `value`.
+// Lets callers pre-size a buffer when they need to know the
+// length before encoding (e.g. wasm section headers, which carry
+// their body's size as a uleb prefix that has to be written
+// before the body).
+pub function uleb_size_u32(value: u32): i32 {
+    var v: u32 = value;
+    var n: i32 = 1;
+    while (true) {
+        v = v >> 7;
+        if (v == 0u32) { return n; }
+        n = n + 1;
+    }
+    return n;
+}
+
+// uleb_size_u64 — byte count for uleb_u64.
+pub function uleb_size_u64(value: u64): i32 {
+    var v: u64 = value;
+    var n: i32 = 1;
+    while (true) {
+        v = v >> 7;
+        if (v == 0u64) { return n; }
+        n = n + 1;
+    }
+    return n;
+}
