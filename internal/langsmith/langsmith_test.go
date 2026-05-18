@@ -189,6 +189,8 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"Status enum decl":           false,
 		"Status variant":             false,
 		"Status match expression":    false,
+		"id[T] generic call":         false,
+		"pick[T] generic call":       false,
 	}
 	// Features that only fire in Gen (the parse+check path) and
 	// not in GenMain — current example: Map[i32, i32], whose
@@ -343,6 +345,15 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "Active =>") {
 			want["Status match expression"] = true
+		}
+		// id(...) appears after the prelude decl `function id[T]
+		// (x: T): T { return x; }`. Total occurrences > 1 means
+		// at least one CALL site (not just the decl).
+		if strings.Count(src, "id(") > 1 {
+			want["id[T] generic call"] = true
+		}
+		if strings.Count(src, "pick(") > 1 {
+			want["pick[T] generic call"] = true
 		}
 	}
 	for feature, ok := range want {

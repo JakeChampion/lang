@@ -544,6 +544,15 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	// receiver type — a common stdlib shape codegen could
 	// plausibly mishandle.
 	b.WriteString("function (p: Pair) swap(): Pair { return (Pair { fst: p.snd, snd: p.fst }); }\n")
+	// Generic helpers. Each accepts a type parameter T and the
+	// checker infers it from the call's arg types. Monomorph
+	// clones each one per instantiation before codegen sees
+	// them; calling `id` with both i32 and bool args in the
+	// same program forces the monomorphiser to walk its
+	// clone-and-rename path, which the differential oracle
+	// then exercises end-to-end.
+	b.WriteString("function id[T](x: T): T { return x; }\n")
+	b.WriteString("function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }\n")
 }
 
 // Program emits a complete program: prelude type decls followed
@@ -735,6 +744,37 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	// recursing with the same t on both arms preserves that.
 	if !g.flip(0.8) {
 		g.emitIfExpr(b, sc, t, depth)
+		return
+	}
+	// Generic helper calls: `id(<expr>)` and `pick(<bool>,
+	// <expr>, <expr>)`. Both are declared in preludeDecls with
+	// type-parameter T; the checker infers T from the arg
+	// types and the monomorphiser clones the function per
+	// instantiation. Wiring them here for any t exercises that
+	// inference + monomorph path across the type universe.
+	if !g.flip(0.85) {
+		// `id` is the simpler call — single arg of type t,
+		// returns t. Exhaustion convention: `true` => skip the
+		// generic call (smaller output, no extra clone for
+		// monomorph to handle).
+		fmt.Fprintf(b, "id(")
+		g.genericArg(b, sc, t, depth)
+		b.WriteString(")")
+		return
+	}
+	if !g.flip(0.9) {
+		// `pick` is the three-arg variant. Both `a` and `b`
+		// recurse at type t so the checker's pairwise
+		// unification produces a single T. Use genericArg so
+		// type-ambiguous values like bare `None` get nudged
+		// into a concrete form before the inference runs.
+		b.WriteString("pick(")
+		g.expr(b, sc, tBool, depth+1)
+		b.WriteString(", ")
+		g.genericArg(b, sc, t, depth)
+		b.WriteString(", ")
+		g.genericArg(b, sc, t, depth)
+		b.WriteString(")")
 		return
 	}
 	switch t {
@@ -1022,6 +1062,20 @@ func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) 
 	}
 	b.WriteByte(')')
 	return true
+}
+
+// genericArg emits an expression of type t for a generic-call
+// argument slot. Same shape as `expr` for most types, but routes
+// Option[i32] through `emitTypedOptI32` to avoid bare `None` —
+// generic-arg unification can't disambiguate `None` (Option with
+// no Args) against a sibling arg's `Option[i32]`, and the
+// checker rejects with "argument N: expected T, got Option[i32]".
+func (g *Generator) genericArg(b *strings.Builder, sc *scope, t gtype, depth int) {
+	if t == tOptI32 {
+		g.emitTypedOptI32(b, sc, depth)
+		return
+	}
+	g.expr(b, sc, t, depth+1)
 }
 
 // emitTypedOptI32 emits an Option[i32] expression that the
