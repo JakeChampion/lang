@@ -92,6 +92,12 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"if-else-taken", "if (false) { return 9; } else { return 7; }", 7},
 		{"if-no-else-fall", "if (false) { return 9; } return 5;", 5},
 		{"if-cond-via-cmp", "if (5 < 10) { return 1; } else { return 2; }", 1},
+		{"locals-single", "var x = 5; return x;", 5},
+		{"locals-three", "var a = 10; var b = 20; var c = 30; return a + b + c;", 60},
+		{"reassign", "var x = 5; x = x + 3; return x;", 8},
+		{"compound-assign", "var x = 1; x *= 6; x += 1; return x;", 7},
+		{"while-sum-counter", "var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
+		{"while-early-return", "var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 0 - 1;", 7},
 	}
 
 	for _, tc := range cases {
