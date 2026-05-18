@@ -1,0 +1,139 @@
+name: Build & release
+
+# Builds the `lang` compiler for every supported host platform on
+# every push to `main`, uploads each archive as a workflow artifact
+# (so the binaries are downloadable from the Actions run page), and
+# publishes a rolling `nightly` GitHub release pointing at the
+# latest commit so users can fetch prebuilt builds from a stable
+# URL.
+#
+# The compiler is pure Go (no cgo, no external module deps; the
+# prelude + WIT files are `//go:embed`-ed into the binary), so each
+# matrix entry is a one-shot `go build ./cmd/lang` with the right
+# GOOS/GOARCH. No cross-toolchain needed.
+#
+# Host coverage matches `README.md`:
+#   - linux-amd64  : ubuntu-latest
+#   - linux-arm64  : ubuntu-24.04-arm  (matches CI's arm64 lane)
+#   - darwin-arm64 : macos-15          (matches macos.yml's pin)
+#
+# Windows is intentionally absent — the README doesn't claim it as
+# a host platform, and the language's compilation targets
+# (arm64-linux ELF, arm64-darwin Mach-O, wasm component) are
+# produced regardless of the host the compiler runs on.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    goos: linux,  goarch: amd64, name: linux-x86_64 }
+          - { runner: ubuntu-24.04-arm, goos: linux,  goarch: arm64, name: linux-arm64 }
+          - { runner: macos-15,         goos: darwin, goarch: arm64, name: darwin-arm64 }
+    name: build-${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          # No go.sum (no external deps) → setup-go's default cache
+          # attempt complains. Mirror the existing CI workflows.
+          cache: false
+
+      - name: Build lang
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o dist/lang ./cmd/lang
+
+      - name: Package archive
+        run: |
+          cd dist
+          tar -czf "../lang-${{ matrix.name }}.tar.gz" lang
+          cd ..
+          shasum -a 256 "lang-${{ matrix.name }}.tar.gz" > "lang-${{ matrix.name }}.tar.gz.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lang-${{ matrix.name }}
+          path: |
+            lang-${{ matrix.name }}.tar.gz
+            lang-${{ matrix.name }}.tar.gz.sha256
+
+  release:
+    # Only publish a release on real pushes to main; workflow_dispatch
+    # runs still build + upload artifacts (handy for verifying changes
+    # to this workflow without spamming the releases page).
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Show what we're about to publish
+        run: ls -la artifacts
+
+      - name: Delete previous nightly release + tag
+        # `softprops/action-gh-release` updates an existing release in
+        # place but won't move the underlying tag, so a rolling
+        # `nightly` tag would stay pinned to the first build's SHA.
+        # Delete the previous release + tag first so the new one
+        # lands cleanly on `github.sha`. `|| true` keeps the first
+        # ever run (no existing release) green.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete nightly --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+
+      - name: Publish rolling nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly build (${{ github.sha }})"
+          prerelease: true
+          target_commitish: ${{ github.sha }}
+          body: |
+            Prebuilt `lang` binaries from `main` at commit
+            [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}).
+
+            This release is **rolling** — it's overwritten on every
+            push to `main`, so the assets here always reflect the
+            current tip of `main`. For a pinned build, grab the
+            archives from the corresponding [Actions run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            instead.
+
+            ## Downloads
+
+            | Platform           | Archive                          |
+            |--------------------|----------------------------------|
+            | Linux x86_64       | `lang-linux-x86_64.tar.gz`       |
+            | Linux arm64        | `lang-linux-arm64.tar.gz`        |
+            | macOS Apple Silicon| `lang-darwin-arm64.tar.gz`       |
+
+            Each archive ships a single self-contained `lang`
+            binary; the prelude and WASI WIT files are embedded.
+            SHA-256 sums live alongside each archive
+            (`*.tar.gz.sha256`).
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.tar.gz.sha256
