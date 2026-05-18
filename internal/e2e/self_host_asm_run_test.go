@@ -104,6 +104,35 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"hello-world", "print(\"Hello, world!\\n\"); return 0;", 0, "Hello, world!\n"},
 		{"print-twice", "print(\"line 1\\n\"); print(\"line 2\\n\"); return 0;", 0, "line 1\nline 2\n"},
 		{"print-then-return", "print(\"out\\n\"); return 42;", 42, "out\n"},
+		{
+			"fizzbuzz-1-to-15",
+			"function main(): i32 { " +
+				"var i = 1; " +
+				"while (i <= 15) { " +
+				"if (i % 15 == 0) { print(\"FizzBuzz \"); } " +
+				"else if (i % 3 == 0) { print(\"Fizz \"); } " +
+				"else if (i % 5 == 0) { print(\"Buzz \"); } " +
+				"else { print(\". \"); } " +
+				"i = i + 1; " +
+				"} " +
+				"print(\"\\n\"); " +
+				"return 0; }",
+			0,
+			". . Fizz . Buzz Fizz . . Fizz Buzz . Fizz . . FizzBuzz \n",
+		},
+		{
+			"print-in-function",
+			"function greet(): i32 { print(\"hi from greet\\n\"); return 7; } " +
+				"function main(): i32 { var r = greet(); return r; }",
+			7,
+			"hi from greet\n",
+		},
+		{
+			"print-loop-fixed-count",
+			"function main(): i32 { var i = 0; while (i < 4) { print(\"tick\\n\"); i = i + 1; } return 0; }",
+			0,
+			"tick\ntick\ntick\ntick\n",
+		},
 	}
 
 	for _, tc := range cases {
