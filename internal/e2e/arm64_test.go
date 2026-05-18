@@ -10052,6 +10052,49 @@ function main(): i32 {
 	}
 }
 
+// Two stability / usability bugs hit when nested array
+// literals included an empty inner array. Both were
+// hiding behind each other:
+//
+//   1. `ast.ArrayType.String()` panicked with "invalid
+//      memory address or nil pointer dereference" when
+//      `Elem == nil`. The error formatter for the
+//      checker's "array element type X, expected Y"
+//      message tried to format the empty-array literal's
+//      pre-settle type — which is `ArrayType{Elem: nil}`
+//      because the empty `[]` has no element. The result
+//      was a crash dump in the error message instead of
+//      the actual diagnostic. Same hole in `SliceType`.
+//   2. Even with the formatter fixed, the checker still
+//      rejected `var arr: i64[][] = [[1234567890123],
+//      [9876543210, 100], []];` as "array element type
+//      [], expected i64[]". The empty `[]`'s type
+//      doesn't carry an Elem; unifyIfArms had no rule
+//      for empty-array-vs-typed-array. Adding that rule
+//      lets the empty inner array inherit the outer's
+//      element type from a non-empty sibling.
+//
+// Fix:
+//   - ArrayType.String() and SliceType.String() return
+//     "[]" when Elem is nil instead of dereferencing.
+//   - unifyIfArms learns the empty-array compatibility
+//     rule (mirrored for SliceType).
+//
+// Test pin: a 2D i64 array literal with an empty inner
+// element.
+func TestArm64ArrayLitEmptyInnerUnify(t *testing.T) {
+	src := `function main(): i32 {
+    var arr: i64[][] = [[1234567890123], [9876543210, 100], []];
+    if (len(arr) == 3 && arr[0][0] == 1234567890123 && arr[1][1] == 100) {
+        return 0;
+    }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("2D array with empty inner got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
