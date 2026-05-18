@@ -93,6 +93,15 @@ func locateDefinition(info *checker.Info, prog *ast.Program, hit *nameHit, fallb
 			return pos, len(hit.name), declURI(srcMod, fallbackURI), true
 		}
 	}
+	if hit.moduleCall != nil {
+		// Walk prog.Funcs for the mangled name modload baked in.
+		mangled := hit.moduleCall.Module.Mangled
+		for _, fd := range prog.Funcs {
+			if fd.Name == mangled {
+				return fd.P, len(hit.name), declURI(fd.SourceModule, fallbackURI), true
+			}
+		}
+	}
 	if hit.ident != nil {
 		pos, n, srcMod, ok := locateIdentDef(info, prog, hit.enclosing, hit.name)
 		if ok {

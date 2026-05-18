@@ -1007,7 +1007,19 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			if id, ok := fa.Target.(*ast.Ident); ok {
 				if mod, prefix, ok := r.importedModule(id.Name); ok {
 					r.checkPublicFunc(mod, fa.Field, fa.P)
-					x.Callee = &ast.Ident{P: id.P, Name: prefix + fa.Field}
+					mangled := prefix + fa.Field
+					// Preserve the source-level call site so the
+					// LSP can resolve hover / goto-def on `fn` in
+					// `mod.fn()` after we rewrite the AST to a
+					// mangled flat call.
+					x.Module = &ast.ModuleCallSite{
+						Module:    id.Name,
+						ModulePos: id.P,
+						Field:     fa.Field,
+						FieldPos:  fa.FieldPos,
+						Mangled:   mangled,
+					}
+					x.Callee = &ast.Ident{P: id.P, Name: mangled}
 					for i := range x.Args {
 						r.rewriteExpr(&x.Args[i])
 					}

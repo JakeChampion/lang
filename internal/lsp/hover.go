@@ -105,6 +105,14 @@ func describeName(info *checker.Info, hit *nameHit) (string, bool) {
 			return d, true
 		}
 	}
+	// Cross-module call (`mod.fn()`). modload's Mangled name keys
+	// directly into FuncSigs.
+	if hit.moduleCall != nil && info != nil {
+		if sig, ok := info.FuncSigs[hit.moduleCall.Module.Mangled]; ok {
+			return "(from " + hit.moduleCall.Module.Module + ") " +
+				formatFuncSig(hit.moduleCall.Module.Field, sig), true
+		}
+	}
 
 	// Ident hits go through the regular scope-chain resolution.
 	if hit.ident != nil {
