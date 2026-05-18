@@ -242,6 +242,20 @@ type Generator struct {
 	// names never collide with user-style vars (`v*`, `p*`,
 	// `w*`) that the rest of the generator emits.
 	loopCounter int
+	// currentReturnType is the return-type slot of the function
+	// whose body is currently being emitted. The try operator
+	// (`expr?`) is only legal when the enclosing function
+	// returns Option[_] / Result[_, _] — the checker enforces
+	// this — so the generator gates `?` emission on this field.
+	// Outside any function (between decls), value is unused; the
+	// initial zero value is tI32, which is harmless because
+	// `?` only fires when currentReturnType == tOptI32.
+	currentReturnType gtype
+	// optBindCounter names match-arm payload bindings the
+	// generator introduces (`__opt_x0`, `__opt_x1`, …). The
+	// `__opt_` prefix keeps these out of any path that the
+	// user-style `v*` / `p*` / `w*` names take.
+	optBindCounter int
 }
 
 // helperSig is the bare minimum the generator needs to emit a
@@ -278,12 +292,13 @@ const (
 	tArrBool
 	tPair
 	tColor
+	tOptI32
 	numTypes
 )
 
 var allTypes = [numTypes]gtype{
 	tI32, tI64, tBool, tF32, tString,
-	tArrI32, tArrI64, tArrBool, tPair, tColor,
+	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
 }
 
 func (t gtype) String() string {
@@ -308,6 +323,8 @@ func (t gtype) String() string {
 		return "Pair"
 	case tColor:
 		return "Color"
+	case tOptI32:
+		return "Option[i32]"
 	}
 	panic(fmt.Sprintf("unknown gtype %d", int(t)))
 }
@@ -430,6 +447,9 @@ func (g *Generator) MainProgram() string {
 
 	sc := newScope(nil)
 	b.WriteString("function main(): i32 { ")
+	prevRet := g.currentReturnType
+	g.currentReturnType = tI32
+	defer func() { g.currentReturnType = prevRet }()
 	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
 		if g.maybeEmitWhile(&b, sc) {
@@ -463,7 +483,7 @@ func (g *Generator) MainProgram() string {
 var mainVarTypes = []gtype{
 	tI32, tI64, tBool, tString,
 	tArrI32, tArrI64, tArrBool,
-	tPair, tColor,
+	tPair, tColor, tOptI32,
 }
 
 // preludeDecls emits the fixed `struct Pair` and `enum Color`
@@ -506,7 +526,10 @@ func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	b.WriteByte(')')
 	ret := g.pickType()
 	fmt.Fprintf(b, ": %s { ", ret)
+	prevRet := g.currentReturnType
+	g.currentReturnType = ret
 	g.body(b, sc, ret)
+	g.currentReturnType = prevRet
 	b.WriteString("}\n")
 	// Register AFTER the body emit so this decl can't accidentally
 	// recurse into itself. Only forward calls are visible.
@@ -617,6 +640,24 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	if depth >= g.cfg.MaxExprDepth || g.flip(0.4) {
 		g.leaf(b, sc, t, depth)
+		return
+	}
+	// Try operator: `(<Option[i32]-expr>?)` yields i32. Only
+	// legal when the enclosing function returns Option[T] (the
+	// checker enforces this), so gate on currentReturnType. The
+	// `?` short-circuits the function on `None`, returning None
+	// to the caller — that's the early-return path differential
+	// testing wouldn't otherwise exercise.
+	//
+	// The operand can't be bare `None` because the checker
+	// can't infer its T inside the `?` slot — `emitTypedOptI32`
+	// picks an in-scope Option[i32] var (whose type is known)
+	// or a Some-wrapped value (where the i32 payload pins the
+	// type).
+	if t == tI32 && g.currentReturnType == tOptI32 && !g.flip(0.85) {
+		b.WriteByte('(')
+		g.emitTypedOptI32(b, sc, depth)
+		b.WriteString("?)")
 		return
 	}
 	// Helper call. Skipped when no helper returns t, or when the
@@ -767,6 +808,28 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
+	// Option[i32] match-with-binding. `(match (o) { Some(x) =>
+	// <expr>, None => <expr> })` routes an Option into any
+	// non-Option t. The Some arm binds the payload as an i32 in
+	// a sub-scope so the body's recursive expr might pick it up
+	// — that's the path exercising payload-binding resolution
+	// the wildcard-pattern Color match can't reach.
+	if t != tOptI32 {
+		opts := sc.inScope(tOptI32)
+		if len(opts) > 0 {
+			name := opts[g.ch.intN(len(opts))]
+			bind := fmt.Sprintf("__opt_x%d", g.optBindCounter)
+			g.optBindCounter++
+			fmt.Fprintf(b, "(match (%s) { Some(%s) => ", name, bind)
+			innerSome := newScope(sc)
+			innerSome.declare(tI32, bind)
+			g.expr(b, innerSome, t, depth+1)
+			b.WriteString(", None => ")
+			g.expr(b, sc, t, depth+1)
+			b.WriteString(" })")
+			return true
+		}
+	}
 	return false
 }
 
@@ -822,6 +885,25 @@ func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) 
 	}
 	b.WriteByte(')')
 	return true
+}
+
+// emitTypedOptI32 emits an Option[i32] expression that the
+// checker can resolve without surrounding context. Bare `None`
+// is deliberately excluded — `None` is type-polymorphic, so in
+// slots that don't carry a type annotation (the operand of `?`,
+// some deeply nested arm positions) the checker can't infer
+// the T and errors out with "malformed Option type Option".
+// Picks an in-scope Option[i32] var (carries its declared type)
+// or wraps a fresh `Some(<i32>)` (the i32 payload pins T).
+func (g *Generator) emitTypedOptI32(b *strings.Builder, sc *scope, depth int) {
+	opts := sc.inScope(tOptI32)
+	if len(opts) > 0 && g.flip(0.6) {
+		b.WriteString(opts[g.ch.intN(len(opts))])
+		return
+	}
+	b.WriteString("(Some(")
+	g.expr(b, sc, tI32, depth+1)
+	b.WriteString("))")
 }
 
 // emitIfExpr writes `(if (<bool-expr>) { <expr-of-t> } else {
@@ -919,6 +1001,17 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 		g.pairLiteral(b, sc, depth)
 	case tColor:
 		b.WriteString([]string{"Red", "Green", "Blue"}[g.ch.intN(3)])
+	case tOptI32:
+		// Exhaustion convention: smaller / more-terminating
+		// branch is `None` (no sub-expression). `Some(...)` is
+		// the recursive shape.
+		if g.flip(0.5) {
+			b.WriteString("None")
+		} else {
+			b.WriteString("(Some(")
+			g.expr(b, sc, tI32, depth+1)
+			b.WriteString("))")
+		}
 	}
 }
 
@@ -979,7 +1072,7 @@ func (g *Generator) pickType() gtype {
 		// safe across backends for the differential oracle.
 		nonFloats := []gtype{
 			tI32, tI64, tBool, tString,
-			tArrI32, tArrI64, tArrBool, tPair, tColor,
+			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
 		}
 		return nonFloats[g.ch.intN(len(nonFloats))]
 	}

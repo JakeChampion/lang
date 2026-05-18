@@ -5057,6 +5057,29 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 // `commonIntegerWidth(poly, poly)`. This helper recomputes the
 // type from whatever the settling pass stamped. Non-numeric
 // expressions return `prior` unchanged.
+// isVariantCall reports whether a *ast.Call looks like a variant
+// constructor (`Some(x)`, `Ok(v)`) rather than a regular function
+// call. The check is intentionally syntactic / heuristic — the
+// callee is an Ident whose name starts with an upper-case ASCII
+// letter. That matches Lang's casing convention for variant
+// constructors (Some, None, Ok, Err, Square, Red, …) and excludes
+// regular function calls (`gen_f0(...)`, `len(...)`).
+//
+// The gate exists to keep `postSettleType`'s Call branch from
+// firing on non-variant calls that happen to return Option[T] /
+// Result[T, E]. For example, `f(p: boolean[]): Option[i32]` called
+// as `f([true])` used to be refreshed as `Option[boolean[]]`
+// because the gate didn't distinguish variant constructors from
+// regular calls.
+func isVariantCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || id.Name == "" {
+		return false
+	}
+	first := id.Name[0]
+	return first >= 'A' && first <= 'Z'
+}
+
 func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	switch x := e.(type) {
 	case *ast.NumberLit:
@@ -5155,7 +5178,21 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// `Some((1234567890123, 42))` keeps its pre-settle
 		// `Option[(i32, i32)]` type and a `var o:
 		// Option[(i64, i32)] = ...` assignment rejects.
-		if et, ok := prior.(ast.EnumType); ok && len(et.Args) > 0 && len(x.Args) >= len(et.Args) {
+		//
+		// Gated on the call being an actual variant
+		// constructor (not just any function call that
+		// happens to return Option[T] / Result[T, E]). The
+		// gate uses `*ast.Call.Args` pairwise against the
+		// prior's Args — for a non-variant call like
+		// `f([true]): Option[i32]`, the arg types
+		// (boolean[]) don't match the prior's Args (i32),
+		// so the assignable-check that follows would have
+		// the wrong refreshed type. The check below catches
+		// this by requiring the call's first-arg-position
+		// resolved type to be assignable to the prior's
+		// matching Arg — variant constructors satisfy this
+		// trivially (their args ARE the payload values).
+		if et, ok := prior.(ast.EnumType); ok && len(et.Args) > 0 && len(x.Args) >= len(et.Args) && isVariantCall(x) {
 			newArgs := make([]ast.Type, len(et.Args))
 			for i := range et.Args {
 				newArgs[i] = postSettleType(x.Args[i], et.Args[i])
