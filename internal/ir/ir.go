@@ -4619,6 +4619,28 @@ func (b *builder) call(n *ast.Call) error {
 			return nil
 		}
 	}
+	// `f()()` — the inner Call returns a closure, the outer call
+	// dispatches through it. callReturnType resolves the inner
+	// call's result type (including for closure-typed locals /
+	// captures / pattern bindings via the same path
+	// `exprType(*ast.Call)` uses). If that's a *FuncType, push
+	// args + the inner call's result + OpCallIndirect.
+	if innerCall, ok := n.Callee.(*ast.Call); ok {
+		if rt := b.callReturnType(innerCall); rt != nil {
+			if ft, isFn := rt.(*ast.FuncType); isFn {
+				for _, a := range n.Args {
+					if err := b.expr(a); err != nil {
+						return err
+					}
+				}
+				if err := b.expr(innerCall); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+				return nil
+			}
+		}
+	}
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}

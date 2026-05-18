@@ -4256,6 +4256,31 @@ function main(): i32 {
 	}
 }
 
+// `f()()` — chained closure call where the inner call's
+// result IS the next callee. The IR's call() guard only
+// recognised Ident / CaptureRef / FieldAccess callees; a
+// `*ast.Call` callee whose return was a closure fell through
+// to the `indirect call from non-identifier expression` error.
+// Now `call()` peels through the inner Call via
+// `callReturnType` and dispatches indirectly when the inner
+// result is a *FuncType.
+func TestWASMChainedClosureCallResult(t *testing.T) {
+	src := `function makeMaker(n: i32): () => () => i32 {
+    function level2(): () => i32 {
+        function level1(): i32 { return n; }
+        return level1;
+    }
+    return level2;
+}
+function main(): i32 {
+    var m = makeMaker(42);
+    return m()();
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (f()() chained)", got)
+	}
+}
+
 // Three-level nested closure where the innermost captures from
 // the OUTERMOST scope (skipping the two intermediate functions
 // that don't bind the name natively). Pre-fix the checker only
