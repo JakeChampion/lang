@@ -4572,6 +4572,40 @@ func (b *builder) call(n *ast.Call) error {
 		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
 		return nil
 	}
+	// `(b.f)(args...)` where `b.f` is a struct field of FuncType:
+	// the field load produces a closure pair pointer; OpCallIndirect
+	// dispatches through the pair the same way function-typed
+	// locals do. Without this dispatch the IR's call() guard
+	// rejected the FieldAccess callee with `indirect call from
+	// non-identifier expression`. The field's type comes from the
+	// owning struct's declaration, looked up through fieldOwner.
+	if fa, ok := n.Callee.(*ast.FieldAccess); ok {
+		owner := b.fieldOwner(fa.Target)
+		sd, sdOk := b.info.Structs[owner]
+		var ft *ast.FuncType
+		if sdOk {
+			for _, f := range sd.Fields {
+				if f.Name == fa.Field {
+					if fnT, isFn := f.Type.(*ast.FuncType); isFn {
+						ft = fnT
+					}
+					break
+				}
+			}
+		}
+		if ft != nil {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			if err := b.expr(fa); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+			return nil
+		}
+	}
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}

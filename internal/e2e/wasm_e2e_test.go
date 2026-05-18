@@ -4256,6 +4256,27 @@ function main(): i32 {
 	}
 }
 
+// `(b.f)(args)` where `b.f` is a struct field holding a closure
+// value. The callee is a `*ast.FieldAccess`, not an `*ast.Ident`;
+// the IR's call() guard used to reject anything non-Ident with
+// `indirect call from non-identifier expression`. Now FieldAccess
+// callees whose field type resolves to *FuncType go through the
+// same OpCallIndirect path closures-in-locals already use.
+func TestWASMCallClosureFromStructField(t *testing.T) {
+	src := `struct Box { f: (i32) => i32 }
+function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function main(): i32 {
+    var b: Box = Box { f: makeAdder(10) };
+    return (b.f)(32);
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (closure stored in struct field)", got)
+	}
+}
+
 // `f().field` / `f().0` where `f` is a closure value (function-
 // typed local or param). callReturnType used to consult only
 // `info.FuncSigs[id.Name]` — function-typed locals weren't in
