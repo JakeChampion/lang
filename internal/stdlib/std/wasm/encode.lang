@@ -33,8 +33,11 @@ pub function valtype_f32(): u8 { return 125u8; }
 pub function valtype_f64(): u8 { return 124u8; }
 
 // Section IDs (https://webassembly.github.io/spec/core/binary/modules.html#sections).
-// Custom = 0 is excluded here; custom sections are written via a
-// different helper that prepends the section name.
+// section_custom is shipped as a constant for symmetry with the
+// rest of the table; the per-section composer lives in
+// sections.lang::encode_custom_section because its body needs a
+// name prefix that the generic put_section doesn't handle.
+pub function section_custom(): u8   { return 0u8; }
 pub function section_type(): u8     { return 1u8; }
 pub function section_import(): u8   { return 2u8; }
 pub function section_function(): u8 { return 3u8; }

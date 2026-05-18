@@ -30,6 +30,19 @@ pub function export_table(): u8  { return 1u8; }
 pub function export_memory(): u8 { return 2u8; }
 pub function export_global(): u8 { return 3u8; }
 
+// ---- Custom section ------------------------------------------
+//
+// Body: `name : uleb-prefixed UTF-8 + payload : bytes`. The
+// outer section's size covers both. wasm engines ignore custom
+// sections semantically but tools (wasm-tools, the names
+// section, debug-info, the component-type marker that
+// component-embed writes) all hang their data here.
+pub function encode_custom_section(buf: u8[], name: string, payload: u8[]): u8[] {
+    var body: u8[] = encode.put_name([], name);
+    body = encode.put_bytes(body, payload);
+    return encode.put_section(buf, encode.section_custom(), body);
+}
+
 // ---- Type section --------------------------------------------
 //
 // Body: vec(functype). Each functype is `0x60 + vec(params) +

@@ -8592,3 +8592,116 @@ function main(): i32 {
 		t.Errorf("wasmtime stdout = %q, want it to contain 55 (sum 1..10)", out)
 	}
 }
+
+// TestWASMSectionsCustom verifies the byte layout of
+// encode_custom_section: section id 0 + uleb body size +
+// name (uleb-prefixed UTF-8) + payload bytes.
+func TestWASMSectionsCustom(t *testing.T) {
+	src := `import "std/wasm/sections";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // Custom section named "foo" with payload [0xAA, 0xBB].
+    // Body: uleb(3) + "foo" (3 bytes) + 0xAA 0xBB = 6 bytes.
+    // Wrapped: id(0) + uleb(6) + body = 8 bytes total.
+    var payload: u8[] = [170u8, 187u8];
+    var s: u8[] = sections.encode_custom_section(empty, "foo", payload);
+    if (len(s) != 8) { return 1; }
+    if (s[0] != 0u8)   { return 2; }    // section_custom id
+    if (s[1] != 6u8)   { return 3; }    // body size
+    if (s[2] != 3u8)   { return 4; }    // name length uleb
+    if (s[3] != 102u8) { return 5; }    // 'f'
+    if (s[4] != 111u8) { return 6; }    // 'o'
+    if (s[5] != 111u8) { return 7; }    // 'o'
+    if (s[6] != 170u8) { return 8; }    // 0xAA
+    if (s[7] != 187u8) { return 9; }    // 0xBB
+
+    // Empty payload: just the name.
+    var s2: u8[] = sections.encode_custom_section(empty, "x", empty);
+    if (len(s2) != 4)  { return 20; }
+    if (s2[0] != 0u8)  { return 21; }
+    if (s2[1] != 2u8)  { return 22; }   // body size
+    if (s2[2] != 1u8)  { return 23; }   // name length 1
+    if (s2[3] != 120u8) { return 24; }  // 'x'
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("sections custom: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMSectionsCustomInModule appends a custom section to a
+// real (valid) core module and feeds the result through
+// wasm-tools — proves the custom section can sit alongside the
+// standard sections without breaking the parser.
+func TestWASMSectionsCustomInModule(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    m.code_bodies = [fn];
+    var core_bytes: u8[] = module.build(m);
+
+    var marker_payload: u8[] = [104u8, 101u8, 108u8, 108u8, 111u8, 45u8, 108u8, 97u8, 110u8, 103u8];
+    var with_custom: u8[] = sections.encode_custom_section(core_bytes, "marker", marker_payload);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(with_custom)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (with_custom[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+	dir := t.TempDir()
+	modPath := filepath.Join(dir, "with_custom.wasm")
+	if err := os.WriteFile(modPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", modPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", modPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "marker") {
+		t.Errorf("expected custom section name 'marker' in output, got:\n%s", watStr)
+	}
+}
