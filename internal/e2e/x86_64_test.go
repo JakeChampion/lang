@@ -1838,6 +1838,25 @@ func TestX86_64WideScalarMap(t *testing.T) {
     // Coincident-collision would give v1=v2 → 2 or 4.
     return v1 + v2;
 }`, 3},
+		// m.keys() on Map[i64, _] needs to materialise an i64[]
+		// snapshot, not the i32[] truncation the lang-level
+		// `__map_keys_impl` would produce with its hard-coded
+		// 4-byte destStride. The IR's emitWideMapKeys walks the
+		// entries and memcpy's the raw 8-byte K slot into the
+		// result. Without it, every key gets its upper 32 bits
+		// dropped — distinct high-bit keys collide into the same
+		// snapshot value.
+		{"keys() preserves 8-byte values", `function main(): i32 {
+    var m: Map[i64, i32] = map_new(4);
+    m.set(1i64, 10);
+    m.set(1000000000000i64, 20);
+    var keys: i64[] = m.keys();
+    if (len(keys) != 2) { return 1; }
+    if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
+    if (keys[1] != 1i64 && keys[1] != 1000000000000i64) { return 3; }
+    if (keys[0] == keys[1]) { return 4; }
+    return 0;
+}`, 0},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
 		if code != c.want {

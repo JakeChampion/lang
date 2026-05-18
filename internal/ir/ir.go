@@ -37,6 +37,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/closureconv"
+	"github.com/jakechampion/lang/internal/shadowrename"
 )
 
 // OpKind enumerates every IR instruction. The arity (consumed / produced
@@ -671,6 +672,15 @@ func Lower(prog *ast.Program, info *checker.Info) (*Program, error) {
 // struct fields, array elements, and closure captures so heap
 // addresses survive arm64-darwin's >= 4 GiB heap.
 func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error) {
+	// Rename shadowed local variables so each Var declaration
+	// in a function carries a name that's globally unique
+	// within the function. The IR's per-name `b.locals` slot
+	// lookup is otherwise blind to scoping — two nested
+	// `var x: i64` declarations would collapse onto a single
+	// slot and the outer reads would silently see the inner
+	// store's value. Runs before closureconv so the closure
+	// pass sees post-rename names everywhere.
+	shadowrename.Rename(prog, info)
 	if err := closureconv.ConvertWith(prog, info, ptrW); err != nil {
 		return nil, err
 	}
@@ -3304,7 +3314,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// Stash the constructed Map handle in a fresh local so
 		// each `set` call can reload it.
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
-		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType)})
+		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType, b.ptrW)})
 		b.emit(Op{Kind: OpConstI32, I32: mapValKindTag(n.ValueType)})
 		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 3})
 		mapSlot := b.allocSlot()
@@ -3316,7 +3326,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// sites. Triggers for wide V (i64 / u64 / f64) on every
 		// target, and string K / V on wasm32 (where the two-word
 		// ABI doesn't fit the helper's i32 K/V slot).
-		boxK := isStringForBoxing(n.KeyType, b.ptrW)
+		boxK := isStringForBoxing(n.KeyType, b.ptrW) || mapKeyKindTag(n.KeyType, b.ptrW) == 2
 		boxV := isWideScalar(n.ValueType) || isStringForBoxing(n.ValueType, b.ptrW)
 		for _, ent := range n.Entries {
 			b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
@@ -4395,17 +4405,29 @@ func floatOp(s string) (OpKind, bool) {
 }
 
 // mapKeyKindTag returns the runtime tag for the Map[K, V]
-// instantiation's key type. 0 = i32-sized scalar (i32, u32,
-// sub-i32 widths), 1 = string. The runtime's __map_find
-// helper branches on this to pick i32.eq vs strcmp for the
-// in-buffer key comparison. Other key types (i64 / u64 / float
-// / struct / enum) are deferred — they'd need either an
-// 8-byte-stride buffer layout or a different equality
-// strategy.
-func mapKeyKindTag(t ast.Type) int32 {
+// instantiation's key type:
+//
+//	0 = i32-sized scalar (i32, u32, sub-i32 widths) — and
+//	    wide scalars (i64 / u64 / f64) on natives where
+//	    `usize` is 8 bytes so the key fits raw.
+//	1 = string.
+//	2 = wide-scalar-boxed: an i64 / u64 / f64 key on a
+//	    target whose `usize` is narrower than the key
+//	    (wasm32, ptrW=4). The IR boxes the key into a
+//	    heap cell; the runtime's __map_hash / __map_lookup
+//	    branches dereference the cell to hash / compare
+//	    the underlying 8-byte value.
+//
+// Other key types (struct / enum / float-on-narrow-ptr)
+// still aren't supported; they'd need their own runtime
+// branches.
+func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 	switch t.(type) {
 	case ast.StringType:
 		return 1
+	}
+	if isWideScalar(t) && ptrW < 8 {
+		return 2
 	}
 	return 0
 }
@@ -4523,6 +4545,24 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 		}
 	}
+	// `m.keys()` on `Map[K, V]` where K is wide (i64 / u64 /
+	// f64). The prelude's `__map_keys_impl` uses a 4-byte
+	// destStride which works for i32-K but truncates wide-K
+	// values into the low 32 bits. We mirror emitWideMapValues
+	// here, walking entries and producing a real wide-stride
+	// `K[]`. On wasm32 (keyKind=2) the K slot stores a cell
+	// pointer the IR follows via `__load_i64`; on natives
+	// (keyKind=0, ptrW=8) the K slot stores the 8-byte value
+	// raw and we load it directly.
+	if id.Name == "__method_Map_keys" && len(n.Args) == 1 {
+		recvType := b.exprType(n.Args[0])
+		if st, ok := recvType.(ast.StructType); ok && len(st.Args) >= 1 {
+			kType := st.Args[0]
+			if isWideMapValueTypeIR(kType) {
+				return b.emitWideMapKeys(n, kType)
+			}
+		}
+	}
 	// `len(x)` on a string, array, or slice is inlined. String and
 	// array layouts carry a 4-byte little-endian length prefix at
 	// `ptr - 4`; slice values carry the length at `slice + 4` after
@@ -4591,7 +4631,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `has` / `delete` boolean, `get` when V is i32-scalar,
 	// `get_or` when V is i32-scalar) flow through
 	// emitStringKMapCall when only K needs boxing.
-	needBoxK := len(n.TypeArgs) >= 1 && isStringForBoxing(n.TypeArgs[0], b.ptrW)
+	needBoxK := len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 2)
 	needBoxV := len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
 	if needBoxK || needBoxV {
 		switch id.Name {
@@ -4659,7 +4699,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	if id.Name == "map_new" {
 		var keyKind, valKind int32
 		if len(n.TypeArgs) >= 1 {
-			keyKind = mapKeyKindTag(n.TypeArgs[0])
+			keyKind = mapKeyKindTag(n.TypeArgs[0], b.ptrW)
 		}
 		if len(n.TypeArgs) >= 2 {
 			valKind = mapValKindTag(n.TypeArgs[1])
@@ -5380,6 +5420,157 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	return nil
 }
 
+// emitWideMapKeys lowers `m.keys()` when K is wide (i64 / u64 /
+// f64). Mirror of emitWideMapValues, but pulls from each
+// entry's K slot (offset 0) instead of V (offset ptrW). The
+// storage layout differs by target:
+//
+//	wasm32 (keyKind=2, ptrW=4): K slot holds a 4-byte cell
+//	  pointer. We load the cell ptr, then `__load_i64` the
+//	  underlying 8-byte value out of the cell.
+//	natives (keyKind=0, ptrW=8): K slot holds the raw
+//	  8-byte value. We load it directly via `__load_i64`
+//	  (which is a single ldr/mov on the matching asm stubs).
+//
+// Either way we end up with the 8-byte key value, which we
+// store into a wide-stride `K[]`.
+func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
+	_ = kType // 8-byte bit-identical copy regardless of i64 / u64 / f64
+
+	mSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_m_%d", mSlot)] = mSlot
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: mSlot})
+
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: mSlot})
+	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+
+	capSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_cap_%d", capSlot)] = capSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpStoreLocal, I32: capSlot})
+
+	lenSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_len_%d", lenSlot)] = lenSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
+
+	// entriesBase = buf + 16 + cap * 4
+	entriesSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_entries_%d", entriesSlot)] = entriesSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 16})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: capSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: entriesSlot})
+
+	// stride = 2 * __ptr_width()  — runtime, target-agnostic.
+	ptrWSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_ptrw_%d", ptrWSlot)] = ptrWSlot
+	b.emit(Op{Kind: OpCallDirect, Str: "__ptr_width", I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: ptrWSlot})
+
+	strideSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_stride_%d", strideSlot)] = strideSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrWSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 2})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpStoreLocal, I32: strideSlot})
+
+	// `i64[]` layout has headerBytes = max(4, stride) = 8 on
+	// natives; wasm32 ignores stride alignment so 4 also
+	// works there. Use the canonical `max(4, 8) = 8` for both
+	// so the array layout matches what ArrayLit would emit
+	// (data pointer 8-byte stride-aligned). Length prefix
+	// lives at `data - 4`.
+	hdrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_hdr_%d", hdrSlot)] = hdrSlot
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpAlloc})
+	b.emit(Op{Kind: OpStoreLocal, I32: hdrSlot})
+
+	// *(hdr + 4) = len  — length prefix at data - 4.
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+	b.emit(Op{Kind: OpStore})
+
+	dataSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_data_%d", dataSlot)] = dataSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
+
+	iSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mk_i_%d", iSlot)] = iSlot
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: iSlot})
+
+	b.openBlock(BlockTypeVoid)
+	loopExitD := b.depth
+	b.openLoop(BlockTypeVoid)
+	loopBodyD := b.depth
+
+	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+	b.emit(Op{Kind: OpGeS})
+	b.brTo(loopExitD, true)
+
+	// On wasm32 K is boxed (the K slot holds a 4-byte cell
+	// pointer): __memcpy(data + i*8, cellPtr, 8). On natives
+	// K is stored raw in an 8-byte slot at the entries base:
+	// __memcpy(data + i*8, entriesBase + i*stride, 8).
+	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+
+	// Push the source address. The K slot is at offset 0 of
+	// the entry. For keyKind=2, follow the cell pointer; for
+	// keyKind=0 raw natives, use the entry slot address itself.
+	b.emit(Op{Kind: OpLoadLocal, I32: entriesSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: strideSlot})
+	b.emit(Op{Kind: OpMul})
+	b.emit(Op{Kind: OpAdd})
+	if mapKeyKindTag(kType, b.ptrW) == 2 {
+		b.emit(Op{Kind: OpCallDirect, Str: "__load_ptr", I32: 1})
+	}
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpCallDirect, Str: "__memcpy", I32: 3})
+
+	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: iSlot})
+
+	b.brTo(loopBodyD, false)
+	b.closeScope() // loop
+	b.closeScope() // outer block
+
+	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	return nil
+}
+
 // emitArrayPush lowers `arr.push(v)` inline. Shape mirrors the
 // pre-refactor lang-prelude `__array_append_*` family —
 //
@@ -5559,7 +5750,7 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	boxK := isStringForBoxing(kType, b.ptrW)
+	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
 	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_set_kbox"); err != nil {
 		return err
 	}
@@ -5584,7 +5775,7 @@ func (b *builder) emitWideMapGet(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	boxK := isStringForBoxing(kType, b.ptrW)
+	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
 	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_get_kbox"); err != nil {
 		return err
 	}
@@ -5668,7 +5859,7 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	boxK := isStringForBoxing(kType, b.ptrW)
+	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
 	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_or_kbox"); err != nil {
 		return err
 	}

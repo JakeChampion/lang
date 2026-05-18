@@ -762,7 +762,8 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 					// (internal/prelude/prelude.lang).
 				case "__memcpy", "__memset", "__alloc_u8",
 					"__alloc", "__load_i32", "__store_i32",
-					"__load_ptr", "__store_ptr", "__ptr_width":
+					"__load_ptr", "__store_ptr", "__ptr_width",
+					"__load_i64", "__store_i64":
 					// Wat shims that wrap wasm's bulk-memory
 					// `memory.copy` / `memory.fill` plus a tiny
 					// allocator + raw 4-byte poke set. Exposed
@@ -4661,12 +4662,35 @@ func (g *generator) emitBulkMemoryHelpers() {
 	g.indent--
 	g.line(`)`)
 
-	// Wide / sub-i32 wat shims (`__store_i64`, `__store_f64`,
-	// `__store_u8`, `__store_u16`, plus the matching loads)
-	// were removed when `arr.push(v)` moved to inline IR
-	// lowering — the IR emits the typed wasm store ops
-	// directly, no callable wat shim needed. If a future
-	// lang-prelude helper needs raw wide / sub-i32 pokes,
+	// $__load_i64 / $__store_i64 — 8-byte load / store.
+	// The Map runtime's wide-scalar-boxed key path
+	// (keyKind=2, set only when ptrW < 8) boxes an
+	// i64 / u64 / f64 key into a heap cell and stores
+	// the cell pointer in the i32-stride key slot. The
+	// runtime dereferences via these shims to hash and
+	// compare the underlying 8-byte values. On natives
+	// the key fits the slot raw and these shims are
+	// emitted for symbol parity but unused.
+	g.line(`(func $__load_i64 (param $addr i32) (result i64)`)
+	g.indent++
+	g.line(`local.get $addr`)
+	g.line(`i64.load`)
+	g.indent--
+	g.line(`)`)
+
+	g.line(`(func $__store_i64 (param $addr i32) (param $v i64)`)
+	g.indent++
+	g.line(`local.get $addr`)
+	g.line(`local.get $v`)
+	g.line(`i64.store`)
+	g.indent--
+	g.line(`)`)
+
+	// Sub-i32 wat shims (`__store_u8`, `__store_u16`, plus
+	// matching loads) were removed when `arr.push(v)` moved
+	// to inline IR lowering — the IR emits the typed wasm
+	// store ops directly, no callable wat shim needed. If
+	// a future lang-prelude helper needs raw sub-i32 pokes,
 	// reintroduce them here next to `__store_i32`.
 }
 
