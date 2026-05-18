@@ -20,6 +20,7 @@ package langsmith
 import (
 	"fmt"
 	"math/rand/v2"
+	"sort"
 	"strings"
 )
 
@@ -1182,8 +1183,18 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 	}
 	// Dynamic-struct field access. For each declared struct
 	// shape, see if any field's type matches t and there's a
-	// var in scope of that struct's type.
-	for st, sh := range g.structShapes {
+	// var in scope of that struct's type. Iterate in
+	// deterministic gtype-ascending order so the same seed
+	// produces the same output (Go's `range map` is
+	// randomised — see sortedDynamicTypes for the same fix
+	// applied to pickType / pickMainVarType).
+	structKeys := make([]gtype, 0, len(g.structShapes))
+	for k := range g.structShapes {
+		structKeys = append(structKeys, k)
+	}
+	sort.Slice(structKeys, func(i, j int) bool { return structKeys[i] < structKeys[j] })
+	for _, st := range structKeys {
+		sh := g.structShapes[st]
 		vars := sc.inScope(st)
 		if len(vars) == 0 {
 			continue
@@ -1205,11 +1216,18 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 	}
 	// Dynamic-enum match. Route an in-scope dynamic enum into
 	// any non-same-enum t via an exhaustive match. Each variant
-	// arm recurses on t.
-	for et, sh := range g.enumShapes {
+	// arm recurses on t. Same determinism requirement as the
+	// struct iteration above.
+	enumKeys := make([]gtype, 0, len(g.enumShapes))
+	for k := range g.enumShapes {
+		enumKeys = append(enumKeys, k)
+	}
+	sort.Slice(enumKeys, func(i, j int) bool { return enumKeys[i] < enumKeys[j] })
+	for _, et := range enumKeys {
 		if et == t {
 			continue
 		}
+		sh := g.enumShapes[et]
 		vars := sc.inScope(et)
 		if len(vars) == 0 {
 			continue
@@ -1546,12 +1564,7 @@ func (g *Generator) pickType() gtype {
 // user-declared struct / enum types.
 func (g *Generator) pickMainVarType() gtype {
 	pool := append([]gtype{}, mainVarTypes...)
-	for t := range g.structShapes {
-		pool = append(pool, t)
-	}
-	for t := range g.enumShapes {
-		pool = append(pool, t)
-	}
+	pool = append(pool, g.sortedDynamicTypes()...)
 	return pool[g.ch.intN(len(pool))]
 }
 
@@ -1571,13 +1584,26 @@ func (g *Generator) typePool() []gtype {
 	} else {
 		pool = append(pool, allTypes[:]...)
 	}
+	pool = append(pool, g.sortedDynamicTypes()...)
+	return pool
+}
+
+// sortedDynamicTypes returns the dynamic struct + enum gtypes
+// in deterministic order (gtype-value ascending). Go's `range
+// map` iteration order is randomised per program run, so
+// iterating `g.structShapes` / `g.enumShapes` directly into
+// the type pool makes pickType non-deterministic and breaks
+// TestGenIsDeterministic for the same seed.
+func (g *Generator) sortedDynamicTypes() []gtype {
+	out := make([]gtype, 0, len(g.structShapes)+len(g.enumShapes))
 	for t := range g.structShapes {
-		pool = append(pool, t)
+		out = append(out, t)
 	}
 	for t := range g.enumShapes {
-		pool = append(pool, t)
+		out = append(out, t)
 	}
-	return pool
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 // pickNumeric draws from the numeric types only, honouring
