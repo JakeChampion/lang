@@ -213,10 +213,15 @@ func (c *byteChooser) flip(p float64) bool {
 //     coverage only — not run against any backend.
 //
 //   - ProfileRunnable: the differential-oracle path. Drops f32
-//     (IEEE Inf/NaN comparisons can legitimately differ across
-//     backends) and emits a `main(): i32` whose return byte
-//     stays bit-identical from interp → arm64 → x86_64 → wasm.
-//     Used by `GenMain` / `GenMainBytes`.
+//     because Lang's float semantics deliberately under-specify
+//     IEEE 754 edge cases (NaN bit-pattern, sign-of-zero through
+//     arithmetic, denormal handling — see docs/FLOAT-SEMANTICS.md)
+//     and the oracle compares main()'s 1-byte return code bit-for-
+//     bit across interp → arm64 → x86_64 → wasm. Generating
+//     float math in the runnable path would produce legitimate
+//     non-portable results that the oracle can't distinguish from
+//     real codegen bugs; excluding f32 keeps the oracle a clean
+//     signal. Used by `GenMain` / `GenMainBytes`.
 //
 // Replaces the prior `noFloats bool` field, which was three
 // concepts in one boolean: "skip f32", "runnable mode", and
