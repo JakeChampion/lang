@@ -215,11 +215,22 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   `mut_const / mut_var`, `reftype_funcref / externref`. Tests
   (`TestWASMImports{Func, DescBuilders, GlobalSection}`) walk
   every variant.
-- All section composers are now in place. Remaining Phase 1 work:
-  the IR-walking entry point that arranges a codegen IR program
-  as inputs to these composers and stitches the preamble +
-  sections together in spec order, and the driver-wiring step
-  that deletes the `wasm-tools parse` call at
+- **Top-level module builder shipped** in
+  `internal/stdlib/std/wasm/module.lang`. Bundles every section
+  composer behind a single `build(m: Module): u8[]` entry point:
+  the caller populates a `Module` struct field-by-field
+  (returning `module_new()` for an empty starting point), and
+  build emits the preamble followed by every populated section in
+  spec-required order (type → import → function → memory → global
+  → export → start → code → data). Empty sections are skipped.
+  Tests (`TestWASMModule{Empty, Minimal, SectionOrder}`) include
+  the strongest test yet: TestWASMModuleMinimal builds a complete
+  37-byte "function returning 42" module end-to-end and verifies
+  every byte against a hand-computed reference, exercising every
+  section composer and several opcode encoders in one pass.
+- Remaining Phase 1 work: the IR-walking entry point that turns
+  a codegen IR program into a populated Module, and the driver-
+  wiring step that deletes the `wasm-tools parse` call at
   `cmd/lang/main.go:604`. Saturating-truncate ops and bulk-memory
   ops (both 0xFC-prefixed) are deliberately out of scope — the
   production backend doesn't lean on them. Element section is
