@@ -2,19 +2,28 @@ package e2e
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/checker"
+	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
+	"github.com/jakechampion/lang/internal/codegen/x86_64"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // Second step of the self-host port: `examples/self_host/parser.lang`
 // is a recursive-descent parser written in lang, layered on top of
-// the inlined lexer (the lexer source is copied into the same file
-// because cross-module union-variant pattern matching — e.g.
-// `lexer.TokIdent(x) => …` — isn't supported yet). Together they
-// exercise: union types over Token *and* Expr/Stmt, struct methods
-// with implicit struct→union return-position wrap, precedence
-// climbing, recursive parser combinators that thread parser state
-// via value semantics (each helper returns a fresh `Par`), nested
-// `match` over union variants inside the validation harness.
+// `examples/self_host/lexer.lang` via `import "./lexer"` — the
+// cross-module qualified variant patterns from #615 are what let the
+// parser pattern-match `lexer.TokIdent(x) => …` against the lexer's
+// Token union. Together they exercise: union types over Token *and*
+// Expr/Stmt, struct methods with implicit struct→union return-position
+// wrap, precedence climbing, recursive parser combinators that thread
+// parser state via value semantics, nested `match` over union variants
+// across module boundaries inside the validation harness.
 //
 // The .lang file's `main()` parses the source
 //
@@ -24,24 +33,96 @@ import (
 // `x = 1 + (2*3)`, parens override to `(1+2) * 3`, and `return x + y`
 // is a binary `+` of two idents. Exit code 0 means every assertion
 // passed; non-zero codes identify which arm failed.
-func TestSelfHostParserX86_64(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/parser.lang")
-	if err != nil {
-		t.Fatalf("read parser.lang: %v", err)
+//
+// The test copies both lexer.lang and parser.lang into a temp dir so
+// the `import "./lexer"` resolves through modload's normal import
+// machinery — same pipeline cmd/lang uses end-to-end.
+
+func writeSelfHostParserProject(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.lang", "parser.lang"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
 	}
-	_, code := compileAndRunX86_64(t, string(src))
-	if code != 0 {
+	return dir
+}
+
+func TestSelfHostParserX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostParserProject(t)
+	prog, _, err := modload.Load(filepath.Join(dir, "parser.lang"))
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(binPath)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
+	}
+	_, _ = cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("lang-port parser assertion %d failed", code)
 	}
 }
 
 func TestSelfHostParserArm64(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/parser.lang")
+	gcc, qemu := arm64Tooling(t)
+	dir := writeSelfHostParserProject(t)
+	prog, _, err := modload.Load(filepath.Join(dir, "parser.lang"))
 	if err != nil {
-		t.Fatalf("read parser.lang: %v", err)
+		t.Fatalf("modload: %v", err)
 	}
-	_, code := compileAndRunArm64(t, string(src))
-	if code != 0 {
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	asm, err := arm64codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	cmd := runArm64Bin(qemu, binPath)
+	_, _ = cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("lang-port parser assertion %d failed", code)
 	}
 }

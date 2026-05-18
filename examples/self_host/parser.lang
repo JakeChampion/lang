@@ -1,12 +1,9 @@
-// examples/self_host/parser.lang — extends examples/self_host/lexer.lang
-// with a recursive-descent parser. Together they form the second
-// concrete step of the self-host port (after the lexer in
-// examples/self_host/lexer.lang).
-//
-// Why one file: cross-module union-pattern matching isn't
-// supported yet (`mod.VariantName(x) => …`), so the parser needs
-// the Token union's members in its own module. Lexer + parser
-// both ship together until that gap closes.
+// examples/self_host/parser.lang — recursive-descent parser
+// layered on the lang-port lexer (`./lexer`). Together they form
+// the second concrete step of the self-host port (after the
+// standalone lexer in `lexer.lang`). Now that cross-module
+// qualified variant patterns work (`lexer.TokIdent(x) => …`),
+// the parser imports the lexer rather than inlining a copy.
 //
 // Scope:
 //   - Expressions with precedence: + - * / % comparisons
@@ -26,192 +23,8 @@
 //     stub treats them as opaque ExprUnknown)
 //   - Receivers, type-params, `pub`, `import`
 
-// =================== LEXER (copy of lexer.lang) ====================
-
-struct TokEof { line: i32, col: i32 }
-struct TokNumber { text: string, suffix: string, is_float: boolean, line: i32, col: i32 }
-struct TokIdent { name: string, line: i32, col: i32 }
-struct TokKeyword { name: string, line: i32, col: i32 }
-struct TokPunct { text: string, line: i32, col: i32 }
-struct TokString { value: string, line: i32, col: i32 }
-type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString;
-
-function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
-function is_alpha(b: i32): boolean {
-    return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
-}
-function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
-function is_space(b: i32): boolean { return b == 32 || b == 9 || b == 10 || b == 13; }
-function is_suffix_start(b: i32): boolean { return b == 105 || b == 117 || b == 102; }
-
-function is_keyword(name: string): boolean {
-    return name == "function" || name == "var" || name == "let"
-        || name == "use" || name == "if" || name == "else"
-        || name == "while" || name == "for" || name == "break"
-        || name == "continue" || name == "return"
-        || name == "true" || name == "false"
-        || name == "boolean" || name == "void" || name == "string"
-        || name == "i8" || name == "i16" || name == "i32" || name == "i64"
-        || name == "u8" || name == "u16" || name == "u32" || name == "u64"
-        || name == "usize" || name == "f32" || name == "f64"
-        || name == "as" || name == "switch" || name == "case" || name == "default"
-        || name == "struct" || name == "import" || name == "pub" || name == "const"
-        || name == "enum" || name == "type" || name == "match" || name == "when"
-        || name == "defer" || name == "arena";
-}
-
-function match_multipunct(src: string, i: i32, n: i32): string {
-    if (i + 3 <= n) {
-        var s3: string = src[i:i + 3];
-        if (s3 == "<<=" || s3 == ">>=") { return s3; }
-    }
-    if (i + 2 <= n) {
-        var s2: string = src[i:i + 2];
-        if (s2 == "==" || s2 == "!=" || s2 == "<=" || s2 == ">="
-            || s2 == "&&" || s2 == "||" || s2 == "<<" || s2 == ">>"
-            || s2 == "=>" || s2 == "|>"
-            || s2 == "+=" || s2 == "-=" || s2 == "*=" || s2 == "/="
-            || s2 == "%=" || s2 == "&=" || s2 == "|=" || s2 == "^=") {
-            return s2;
-        }
-    }
-    return "";
-}
-
-function is_single_punct(b: i32): boolean {
-    return b == 43 || b == 45 || b == 42 || b == 47 || b == 37
-        || b == 40 || b == 41 || b == 123 || b == 125
-        || b == 91 || b == 93 || b == 44 || b == 59 || b == 58
-        || b == 61 || b == 60 || b == 62 || b == 33
-        || b == 38 || b == 124 || b == 94 || b == 63 || b == 46;
-}
-
-struct Lex { src: string, i: i32, n: i32, line: i32, col: i32 }
-
-function (l: Lex) at_end(): boolean { return l.i >= l.n; }
-function (l: Lex) peek_byte(): i32 {
-    if (l.i >= l.n) { return 0; }
-    return l.src[l.i];
-}
-function (l: Lex) advance(): Lex {
-    if (l.i >= l.n) { return l; }
-    var b: i32 = l.src[l.i];
-    var new_line: i32 = l.line;
-    var new_col: i32 = l.col;
-    if (b == 10) { new_line = new_line + 1; new_col = 1; }
-    else { new_col = new_col + 1; }
-    return Lex { src: l.src, i: l.i + 1, n: l.n, line: new_line, col: new_col };
-}
-
-function skip_trivia(l: Lex): Lex {
-    while (!l.at_end()) {
-        var b: i32 = l.peek_byte();
-        if (is_space(b)) { l = l.advance(); continue; }
-        if (b == 47 && l.i + 1 < l.n && l.src[l.i + 1] == 47) {
-            l = l.advance(); l = l.advance();
-            while (!l.at_end() && l.peek_byte() != 10) { l = l.advance(); }
-            continue;
-        }
-        return l;
-    }
-    return l;
-}
-
-struct NumResult { lex: Lex, tok: Token }
-
-function eof_tok(line: i32, col: i32): Token { return TokEof { line: line, col: col }; }
-function string_tok(value: string, line: i32, col: i32): Token { return TokString { value: value, line: line, col: col }; }
-function ident_tok(name: string, line: i32, col: i32): Token { return TokIdent { name: name, line: line, col: col }; }
-function keyword_tok(name: string, line: i32, col: i32): Token { return TokKeyword { name: name, line: line, col: col }; }
-function punct_tok(text: string, line: i32, col: i32): Token { return TokPunct { text: text, line: line, col: col }; }
-function number_tok(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Token {
-    return TokNumber { text: text, suffix: suffix, is_float: is_float, line: line, col: col };
-}
-
-function scan_number(l: Lex, sl: i32, sc: i32): NumResult {
-    var begin: i32 = l.i;
-    while (!l.at_end() && is_digit(l.peek_byte())) { l = l.advance(); }
-    var is_float: boolean = false;
-    if (l.i + 1 < l.n && l.src[l.i] == 46 && is_digit(l.src[l.i + 1])) {
-        is_float = true; l = l.advance();
-        while (!l.at_end() && is_digit(l.peek_byte())) { l = l.advance(); }
-    }
-    var text: string = l.src[begin:l.i];
-    var suffix: string = "";
-    if (!l.at_end() && is_suffix_start(l.peek_byte())) {
-        var s_begin: i32 = l.i; l = l.advance();
-        while (!l.at_end() && is_digit(l.peek_byte())) { l = l.advance(); }
-        suffix = l.src[s_begin:l.i];
-    }
-    if (!is_float && len(suffix) > 0 && suffix[0] == 102) { is_float = true; }
-    return NumResult { lex: l, tok: number_tok(text, suffix, is_float, sl, sc) };
-}
-
-function scan_ident(l: Lex, sl: i32, sc: i32): NumResult {
-    var begin: i32 = l.i;
-    while (!l.at_end() && is_alnum(l.peek_byte())) { l = l.advance(); }
-    var text: string = l.src[begin:l.i];
-    var t: Token = ident_tok(text, sl, sc);
-    if (is_keyword(text)) { t = keyword_tok(text, sl, sc); }
-    return NumResult { lex: l, tok: t };
-}
-
-function scan_string(l: Lex, sl: i32, sc: i32): NumResult {
-    l = l.advance();
-    var out: string = "";
-    while (!l.at_end() && l.peek_byte() != 34) {
-        var c: i32 = l.peek_byte();
-        if (c == 10) { return NumResult { lex: l, tok: eof_tok(sl, sc) }; }
-        if (c == 92) {
-            l = l.advance();
-            if (l.at_end()) { return NumResult { lex: l, tok: eof_tok(sl, sc) }; }
-            var esc: i32 = l.peek_byte(); l = l.advance();
-            if (esc == 110) { out = out + "\n"; }
-            else if (esc == 116) { out = out + "\t"; }
-            else if (esc == 114) { out = out + "\r"; }
-            else if (esc == 48) { out = out + "\0"; }
-            else if (esc == 34) { out = out + "\""; }
-            else if (esc == 92) { out = out + "\\"; }
-            else { return NumResult { lex: l, tok: eof_tok(sl, sc) }; }
-            continue;
-        }
-        out = out + l.src[l.i:l.i + 1];
-        l = l.advance();
-    }
-    if (l.at_end()) { return NumResult { lex: l, tok: eof_tok(sl, sc) }; }
-    l = l.advance();
-    return NumResult { lex: l, tok: string_tok(out, sl, sc) };
-}
-
-function tokenize(src: string): Token[] {
-    var l: Lex = Lex { src: src, i: 0, n: len(src), line: 1, col: 1 };
-    var out: Token[] = [];
-    while (true) {
-        l = skip_trivia(l);
-        if (l.at_end()) { out = out.push(eof_tok(l.line, l.col)); return out; }
-        var sl: i32 = l.line; var sc: i32 = l.col;
-        var b: i32 = l.peek_byte();
-        if (is_digit(b)) { var rn = scan_number(l, sl, sc); l = rn.lex; out = out.push(rn.tok); continue; }
-        if (is_alpha(b)) { var ri = scan_ident(l, sl, sc); l = ri.lex; out = out.push(ri.tok); continue; }
-        if (b == 34) { var rs = scan_string(l, sl, sc); l = rs.lex; out = out.push(rs.tok); continue; }
-        var mp: string = match_multipunct(l.src, l.i, l.n);
-        if (len(mp) > 0) {
-            var i: i32 = 0;
-            while (i < len(mp)) { l = l.advance(); i = i + 1; }
-            out = out.push(punct_tok(mp, sl, sc));
-            continue;
-        }
-        if (is_single_punct(b)) {
-            var text: string = l.src[l.i:l.i + 1];
-            l = l.advance();
-            out = out.push(punct_tok(text, sl, sc));
-            continue;
-        }
-        out = out.push(eof_tok(sl, sc));
-        return out;
-    }
-    return out;
-}
+import "core/no_prelude";
+import "./lexer";
 
 // =================== PARSER ====================
 
@@ -267,21 +80,21 @@ function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
 // current cursor into it. We mutate via value-semantics (return
 // fresh Par from each consume()).
 
-struct Par { toks: Token[], pos: i32 }
+struct Par { toks: lexer.Token[], pos: i32 }
 
 function (p: Par) at_end(): boolean {
     if (p.pos >= len(p.toks)) { return true; }
-    var t: Token = p.toks[p.pos];
+    var t: lexer.Token = p.toks[p.pos];
     match (t) {
-        TokEof(_) => { return true; },
+        lexer.TokEof(_) => { return true; },
         _ => { return false; }
     }
     return false;
 }
 
-function (p: Par) peek(): Token {
+function (p: Par) peek(): lexer.Token {
     if (p.pos < len(p.toks)) { return p.toks[p.pos]; }
-    return eof_tok(0, 0);
+    return lexer.eof_tok(0, 0);
 }
 
 function (p: Par) advance(): Par {
@@ -292,25 +105,25 @@ function (p: Par) advance(): Par {
 // the expected kind, otherwise the text/name. Callers branch on
 // the empty-string result rather than re-matching.
 function (p: Par) peek_punct(): string {
-    var t: Token = p.peek();
+    var t: lexer.Token = p.peek();
     match (t) {
-        TokPunct(x) => { return x.text; },
+        lexer.TokPunct(x) => { return x.text; },
         _ => { return ""; }
     }
     return "";
 }
 function (p: Par) peek_keyword(): string {
-    var t: Token = p.peek();
+    var t: lexer.Token = p.peek();
     match (t) {
-        TokKeyword(x) => { return x.name; },
+        lexer.TokKeyword(x) => { return x.name; },
         _ => { return ""; }
     }
     return "";
 }
 function (p: Par) peek_ident(): string {
-    var t: Token = p.peek();
+    var t: lexer.Token = p.peek();
     match (t) {
-        TokIdent(x) => { return x.name; },
+        lexer.TokIdent(x) => { return x.name; },
         _ => { return ""; }
     }
     return "";
@@ -325,17 +138,17 @@ struct StmtResult { par: Par, stmt: Stmt }
 // parse_primary: number, ident (which may extend to call), string,
 // bool, parenthesised expr, unknown otherwise.
 function parse_primary(p: Par): ExprResult {
-    var t: Token = p.peek();
+    var t: lexer.Token = p.peek();
     match (t) {
-        TokNumber(x) => {
+        lexer.TokNumber(x) => {
             p = p.advance();
             return ExprResult { par: p, expr: e_number(x.text, x.suffix, x.is_float) };
         },
-        TokString(x) => {
+        lexer.TokString(x) => {
             p = p.advance();
             return ExprResult { par: p, expr: e_string(x.value) };
         },
-        TokKeyword(x) => {
+        lexer.TokKeyword(x) => {
             if (x.name == "true") {
                 p = p.advance();
                 return ExprResult { par: p, expr: e_bool(true) };
@@ -346,7 +159,7 @@ function parse_primary(p: Par): ExprResult {
             }
             return ExprResult { par: p, expr: e_unknown("keyword:" + x.name) };
         },
-        TokIdent(x) => {
+        lexer.TokIdent(x) => {
             p = p.advance();
             var base: Expr = e_ident(x.name);
             // Postfix `(`: function call.
@@ -370,7 +183,7 @@ function parse_primary(p: Par): ExprResult {
             }
             return ExprResult { par: p, expr: base };
         },
-        TokPunct(x) => {
+        lexer.TokPunct(x) => {
             if (x.text == "(") {
                 p = p.advance();
                 var inner = parse_expr(p);
@@ -385,7 +198,7 @@ function parse_primary(p: Par): ExprResult {
             }
             return ExprResult { par: p, expr: e_unknown("punct:" + x.text) };
         },
-        TokEof(_) => { return ExprResult { par: p, expr: e_unknown("eof") }; }
+        lexer.TokEof(_) => { return ExprResult { par: p, expr: e_unknown("eof") }; }
     }
     return ExprResult { par: p, expr: e_unknown("primary") };
 }
@@ -465,7 +278,7 @@ function parse_stmt(p: Par): StmtResult {
     return StmtResult { par: p, stmt: s_expr(e.expr) };
 }
 
-function parse_program(toks: Token[]): Stmt[] {
+function parse_program(toks: lexer.Token[]): Stmt[] {
     var p: Par = Par { toks: toks, pos: 0 };
     var out: Stmt[] = [];
     while (!p.at_end()) {
@@ -484,7 +297,7 @@ function main(): i32 {
     //   var y = (1 + 2) * 3;      // y = 9
     //   return x + y;             // returns 16
     var src: string = "var x = 1 + 2 * 3; var y = (1 + 2) * 3; return x + y;";
-    var toks: Token[] = tokenize(src);
+    var toks: lexer.Token[] = lexer.tokenize(src);
     var prog: Stmt[] = parse_program(toks);
     if (len(prog) != 3) { return 1; }
 
