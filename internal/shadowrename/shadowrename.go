@@ -195,18 +195,28 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 			r.walkExpr(n.Expr)
 		}
 	case *ast.FuncDecl:
-		// Nested function: its body has its own scope chain.
-		// Captures look up the surrounding name, which by this
-		// point may have been renamed — that's fine, the
-		// closure-conv pass runs after us and sees the post-
-		// rename names.
-		sub := newRenamer()
-		sub.pushFrame()
-		for _, p := range n.Params {
-			sub.bindFresh(p.Name)
+		// Nested function: walks under the CURRENT renamer so
+		// the body sees the parent's renames. References to a
+		// captured outer-scope name resolve to the renamed form
+		// (e.g. `return n;` where `n` shadowed an outer param
+		// `n` rewrites to `return n$1;`). Each nested function
+		// pushes a fresh frame for its own params + body so its
+		// private bindings stay scoped. The checker-built
+		// `n.Captures` list was named with the pre-rename forms,
+		// so rewrite each capture's name to the current
+		// resolution too — the closureconv pass / IR emit need
+		// the captures' names to match the body's references.
+		for i, cap := range n.Captures {
+			if resolved, ok := r.lookup(cap.Name); ok {
+				n.Captures[i].Name = resolved
+			}
 		}
-		sub.walkBlock(n.Body)
-		sub.popFrame()
+		r.pushFrame()
+		for _, p := range n.Params {
+			r.bindFresh(p.Name)
+		}
+		r.walkBlock(n.Body)
+		r.popFrame()
 	}
 }
 

@@ -4256,6 +4256,33 @@ function main(): i32 {
 	}
 }
 
+// A nested function captures an outer-scope name that's been
+// shadowed by a sibling `var` declaration. With proper lexical
+// scoping the body should see the SHADOWED local, not the
+// pre-shadow param. Pre-fix shadowrename ran a fresh sub-
+// renamer for the nested body so the parent's `n -> n$1`
+// rename never reached the body — the body's `Ident{n}` stayed
+// raw, the checker recorded `n` (the param) as the capture,
+// and the closure returned the original param value (21)
+// instead of the shadowed local (42). The pass now walks
+// nested bodies under the SAME renamer state and patches each
+// FuncDecl's Captures list so the recorded capture names
+// match the body's post-rename references.
+func TestWASMClosureShadowedParamCapture(t *testing.T) {
+	src := `function makeReader(n: i32): () => i32 {
+    var n: i32 = n * 2;
+    function build(): i32 { return n; }
+    return build;
+}
+function main(): i32 {
+    var f = makeReader(21);
+    return f();
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (closure captures shadowed local)", got)
+	}
+}
+
 // `(t.N)(args)` where `t.N` is a tuple element holding a closure.
 // Same shape as the struct-field case but the field lookup goes
 // through `targetTupleType` (numeric selector + tuple's static
