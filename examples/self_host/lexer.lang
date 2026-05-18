@@ -16,14 +16,14 @@
 // build still owns the production code path; this file is run
 // from a Go test that compiles + executes it.
 
-struct TokEof { line: i32, col: i32 }
-struct TokNumber { text: string, suffix: string, is_float: boolean, line: i32, col: i32 }
-struct TokIdent { name: string, line: i32, col: i32 }
-struct TokKeyword { name: string, line: i32, col: i32 }
-struct TokPunct { text: string, line: i32, col: i32 }
-struct TokString { value: string, line: i32, col: i32 }
+pub struct TokEof { line: i32, col: i32 }
+pub struct TokNumber { text: string, suffix: string, is_float: boolean, line: i32, col: i32 }
+pub struct TokIdent { name: string, line: i32, col: i32 }
+pub struct TokKeyword { name: string, line: i32, col: i32 }
+pub struct TokPunct { text: string, line: i32, col: i32 }
+pub struct TokString { value: string, line: i32, col: i32 }
 
-type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString;
+pub type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString;
 
 // is_digit / is_alpha / is_alnum — byte-level classifiers,
 // matching the Go lexer's `unicode.IsDigit` / `IsLetter` on the
@@ -162,22 +162,22 @@ struct NumResult { lex: Lex, tok: Token }
 // `eof_tok(line, col)` instead of declaring an intermediate
 // `var t: Token = TokEof { … };`. Mirrors the Rust `From` impls
 // you'd write on top of a sum type.
-function eof_tok(line: i32, col: i32): Token {
+pub function eof_tok(line: i32, col: i32): Token {
     return TokEof { line: line, col: col };
 }
-function string_tok(value: string, line: i32, col: i32): Token {
+pub function string_tok(value: string, line: i32, col: i32): Token {
     return TokString { value: value, line: line, col: col };
 }
-function ident_tok(name: string, line: i32, col: i32): Token {
+pub function ident_tok(name: string, line: i32, col: i32): Token {
     return TokIdent { name: name, line: line, col: col };
 }
-function keyword_tok(name: string, line: i32, col: i32): Token {
+pub function keyword_tok(name: string, line: i32, col: i32): Token {
     return TokKeyword { name: name, line: line, col: col };
 }
-function punct_tok(text: string, line: i32, col: i32): Token {
+pub function punct_tok(text: string, line: i32, col: i32): Token {
     return TokPunct { text: text, line: line, col: col };
 }
-function number_tok(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Token {
+pub function number_tok(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Token {
     return TokNumber { text: text, suffix: suffix, is_float: is_float, line: line, col: col };
 }
 
@@ -274,7 +274,7 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
 
 // tokenize is the top-level entrypoint. Mirrors the Go lexer's
 // `Tokenize` — produces a Token[] slice terminated by TokEof.
-function tokenize(src: string): Token[] {
+pub function tokenize(src: string): Token[] {
     var l: Lex = Lex { src: src, i: 0, n: len(src), line: 1, col: 1 };
     var out: Token[] = [];
     while (true) {
