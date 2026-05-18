@@ -1,0 +1,158 @@
+// std/wasm/sections — section composers for the WebAssembly
+// Core 1.0 binary format. One step up from the per-element
+// primitives in encode.lang / leb128.lang / inst.lang / etc.:
+// each function here takes the section's logical input (a list
+// of typeidxs, a list of function bodies, etc.) and emits the
+// complete `id : u8 + size : uleb + body` envelope.
+//
+// Spec: https://webassembly.github.io/spec/core/binary/modules.html
+//
+// Seventh slice of Phase 1 of docs/TOOLCHAIN-SELF-HOSTING.md. With
+// these composers in place, an IR-walking driver only has to
+// arrange its inputs as the right Lang arrays and call through —
+// no more re-implementing the section-header / vec-length /
+// memarg / memtype / export-desc bookkeeping at each call site.
+//
+// Sections covered: type, function, memory, global (via a single-
+// const-global helper since that's all today's backend needs),
+// export, start, code, data. Import and element are deferred —
+// imports carry a four-variant union as the descriptor (func /
+// table / mem / global), and element segments aren't on the
+// existing wasm backend's hot path.
+
+import "std/wasm/leb128";
+import "std/wasm/encode";
+
+// ---- Export-kind constants -----------------------------------
+// (https://webassembly.github.io/spec/core/binary/modules.html#export-section)
+pub function export_func(): u8   { return 0u8; }
+pub function export_table(): u8  { return 1u8; }
+pub function export_memory(): u8 { return 2u8; }
+pub function export_global(): u8 { return 3u8; }
+
+// ---- Type section --------------------------------------------
+//
+// Body: vec(functype). Each functype is `0x60 + vec(params) +
+// vec(results)`, encoded by encode.put_func_type. The two
+// parallel arrays let callers compose the param / result valtype
+// byte sequences per entry without needing struct-of-arrays
+// composite types.
+pub function encode_type_section(buf: u8[], params_per_type: u8[][], results_per_type: u8[][]): u8[] {
+    var n: i32 = len(params_per_type);
+    var body: u8[] = leb128.uleb_u32([], n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_func_type(body, params_per_type[i], results_per_type[i]);
+        i = i + 1;
+    }
+    return encode.put_section(buf, encode.section_type(), body);
+}
+
+// ---- Function section ----------------------------------------
+//
+// Body: vec(typeidx). Each function declared in the module gets
+// one typeidx here, in declaration order — the i-th typeidx in
+// this section binds the i-th body in the code section to one
+// of the types from the type section.
+pub function encode_function_section(buf: u8[], typeidxs: u32[]): u8[] {
+    var n: i32 = len(typeidxs);
+    var body: u8[] = leb128.uleb_u32([], n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = leb128.uleb_u32(body, typeidxs[i]);
+        i = i + 1;
+    }
+    return encode.put_section(buf, encode.section_function(), body);
+}
+
+// ---- Memory section ------------------------------------------
+//
+// Body: vec(memtype). Wasm 1.0 allows at most one memory, so
+// this helper writes exactly one entry. memtype is a `limits`
+// record: a flag byte (0 = no max, 1 = with max), the initial
+// page count, and optionally the max page count.
+// `max_pages = -1` means "no maximum".
+pub function encode_memory_section(buf: u8[], min_pages: u32, max_pages: i32): u8[] {
+    var body: u8[] = leb128.uleb_u32([], 1u32);   // exactly one memory
+    if (max_pages < 0) {
+        body = body.push(0u8);                    // flag: no max
+        body = leb128.uleb_u32(body, min_pages);
+    } else {
+        body = body.push(1u8);                    // flag: with max
+        body = leb128.uleb_u32(body, min_pages);
+        body = leb128.uleb_u32(body, max_pages as u32);
+    }
+    return encode.put_section(buf, encode.section_memory(), body);
+}
+
+// ---- Export section ------------------------------------------
+//
+// Body: vec(export). Each export is `name : utf8 + kind : u8 +
+// idx : u32`. The three parallel arrays cover the three fields
+// — same shape as the type section's params/results split.
+pub function encode_export_section(buf: u8[], names: string[], kinds: u8[], indices: u32[]): u8[] {
+    var n: i32 = len(names);
+    var body: u8[] = leb128.uleb_u32([], n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, names[i]);
+        body = body.push(kinds[i]);
+        body = leb128.uleb_u32(body, indices[i]);
+        i = i + 1;
+    }
+    return encode.put_section(buf, encode.section_export(), body);
+}
+
+// ---- Start section -------------------------------------------
+//
+// Body: one funcidx (no length prefix — this section holds at
+// most one value, like a `Maybe<funcidx>`).
+pub function encode_start_section(buf: u8[], funcidx: u32): u8[] {
+    var body: u8[] = leb128.uleb_u32([], funcidx);
+    return encode.put_section(buf, encode.section_start(), body);
+}
+
+// ---- Code section --------------------------------------------
+//
+// Body: vec(code). Each code entry is itself a `size : uleb +
+// locals_vec + expr` — produced by inst.put_function_body, which
+// already prefixes the size. So the caller passes pre-wrapped
+// bodies and we just emit the count + concatenation.
+pub function encode_code_section(buf: u8[], bodies: u8[][]): u8[] {
+    var n: i32 = len(bodies);
+    var body: u8[] = leb128.uleb_u32([], n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_bytes(body, bodies[i]);
+        i = i + 1;
+    }
+    return encode.put_section(buf, encode.section_code(), body);
+}
+
+// ---- Data section --------------------------------------------
+//
+// Body: vec(data). Each data segment in wasm 1.0 is the "active"
+// kind: memidx (always 0 in MVP) + offset (an i32.const expr) +
+// init bytes (vec(byte)). The offset expr is just `i32.const
+// <offset>; end`, four to six bytes total.
+//
+// `offsets` and `init_bytes` are parallel arrays — one offset and
+// one byte sequence per segment.
+pub function encode_data_section(buf: u8[], offsets: i32[], init_bytes: u8[][]): u8[] {
+    var n: i32 = len(offsets);
+    var body: u8[] = leb128.uleb_u32([], n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = leb128.uleb_u32(body, 0u32);          // memidx (always 0)
+        // Offset expression: i32.const <offset> ; end
+        body = body.push(65u8);                       // 0x41 i32.const
+        body = leb128.sleb_i32(body, offsets[i]);
+        body = body.push(11u8);                       // 0x0B end
+        // Init bytes vec.
+        var seg: u8[] = init_bytes[i];
+        body = leb128.uleb_u32(body, len(seg) as u32);
+        body = encode.put_bytes(body, seg);
+        i = i + 1;
+    }
+    return encode.put_section(buf, encode.section_data(), body);
+}
