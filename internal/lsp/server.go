@@ -560,7 +560,16 @@ func (s *Server) publishDiagnostics(uri string) {
 	// marshal + the client's debounce cycle. Particularly relevant
 	// when the cache fast-paths take effect — same source ⇒ same
 	// diagnostics, no point re-announcing.
-	if diagnosticsEqual(s.lastDiags[uri], state.diags) {
+	//
+	// Important: only dedup once we've actually published for this
+	// URI before. The two-value map lookup distinguishes "never
+	// published" (hasPrior == false) from "published an empty
+	// list" (hasPrior == true, prior len 0). Without that guard,
+	// the very first publish on a clean document gets swallowed
+	// because the missing-key zero-value (nil slice) compares
+	// equal to an empty diagnostic list — and the playground
+	// never renders the "no problems found" state.
+	if prior, hasPrior := s.lastDiags[uri]; hasPrior && diagnosticsEqual(prior, state.diags) {
 		return
 	}
 	s.lastDiags[uri] = state.diags
