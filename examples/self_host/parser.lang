@@ -436,29 +436,44 @@ function parse_stmt(p: Par): StmtResult {
         if (p.peek_punct() == ";") { p = p.advance(); }
         return StmtResult { par: p, stmt: s_return(val.expr) };
     }
-    // Expression statement — or assignment if `=` follows. The
-    // parser doesn't accept `=` as a binary operator (it's not in
-    // the precedence table), so parse_expr stops at the ident; we
-    // peek for `=` here and switch to StmtAssign when seen. Only
-    // bare-ident targets are supported in this cut — full lvalue
-    // syntax (field / index / tuple) is a later milestone.
+    // Expression statement — or (compound) assignment if `=`,
+    // `+=`, `-=`, `*=`, `/=`, `%=` follows. The parser doesn't
+    // accept any of these as binary operators (none of them are
+    // in the precedence table), so parse_expr stops at the
+    // ident; we peek for the assign-op here and either build a
+    // plain StmtAssign or desugar a compound to
+    //   StmtAssign { target, ExprBinary(<op>, ExprIdent(target), rhs) }
+    // so the rest of the pipeline sees only plain assigns.
+    //
+    // Only bare-ident targets are supported in this cut — full
+    // lvalue syntax (field / index / tuple) is a later
+    // milestone.
     var e = parse_expr(p);
     p = e.par;
-    if (p.peek_punct() == "=") {
-        // Pull the target name out of the parsed Expr. Anything
-        // other than a bare ident is an unsupported lvalue shape;
-        // surface as StmtUnknown so the surrounding test can spot
-        // the failure site.
+    var assign_op: string = p.peek_punct();
+    var is_assign: boolean = assign_op == "=";
+    var is_compound: boolean = assign_op == "+=" || assign_op == "-="
+                            || assign_op == "*=" || assign_op == "/="
+                            || assign_op == "%=";
+    if (is_assign || is_compound) {
         var target: string = "";
         match (e.expr) {
             ExprIdent(id) => { target = id.name; },
-            _ => { return StmtResult { par: p, stmt: s_unknown("lhs of `=` must be ident") }; }
+            _ => { return StmtResult { par: p, stmt: s_unknown("lhs of assign must be ident") }; }
         }
-        p = p.advance(); // consume `=`
+        p = p.advance(); // consume the assign-op token
         var av = parse_expr(p);
         p = av.par;
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_assign(target, av.expr) };
+        var rhs: Expr = av.expr;
+        if (is_compound) {
+            // `x += y` desugars to `x = x + y`. Strip the
+            // trailing `=` off the op to recover the binary
+            // operator the source intended.
+            var op: string = assign_op[0:len(assign_op) - 1];
+            rhs = e_binary(op, e_ident(target), rhs);
+        }
+        return StmtResult { par: p, stmt: s_assign(target, rhs) };
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
     return StmtResult { par: p, stmt: s_expr(e.expr) };
@@ -697,6 +712,45 @@ function main(): i32 {
             }
         },
         _ => { return 608; }
+    }
+
+    // Compound assignment desugar: `x += 1;` should parse as a
+    // StmtAssign whose RHS is an ExprBinary("+", ExprIdent("x"),
+    // ExprNumber("1")). Confirms the desugar fires.
+    var srcC: string = "x += 1;";
+    var progC: Stmt[] = parse_program(lexer.tokenize(srcC));
+    if (len(progC) != 1) { return 700; }
+    match (progC[0]) {
+        StmtAssign(a) => {
+            if (a.target != "x") { return 701; }
+            match (a.value) {
+                ExprBinary(b) => {
+                    if (b.op != "+") { return 702; }
+                    match (b.left) {
+                        ExprIdent(id) => { if (id.name != "x") { return 703; } },
+                        _ => { return 704; }
+                    }
+                    match (b.right) {
+                        ExprNumber(n) => { if (n.text != "1") { return 705; } },
+                        _ => { return 706; }
+                    }
+                },
+                _ => { return 707; }
+            }
+        },
+        _ => { return 708; }
+    }
+
+    // `s *= 2;` → same shape with op `*`.
+    var srcD: string = "s *= 2;";
+    match (parse_program(lexer.tokenize(srcD))[0]) {
+        StmtAssign(a) => {
+            match (a.value) {
+                ExprBinary(b) => { if (b.op != "*") { return 720; } },
+                _ => { return 721; }
+            }
+        },
+        _ => { return 722; }
     }
 
     // Slice parsing: `s[1:4]` → ExprSlice with three subtrees.
