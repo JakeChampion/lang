@@ -93,6 +93,65 @@ func TestWorkspace_CrossModuleStructDefinition(t *testing.T) {
 	}
 }
 
+func TestWorkspace_CrossModuleCallJump(t *testing.T) {
+	// `util.foo()` cursor on `foo` should jump to util.lang at the
+	// declaration of `foo`. modload preserves the FieldPos on
+	// Call.Module so the LSP can locate it after the rewrite.
+	dir := t.TempDir()
+	utilPath := filepath.Join(dir, "util.lang")
+	mainPath := filepath.Join(dir, "main.lang")
+	writeFile(t, utilPath, "pub function foo(): i32 { return 42; }\n")
+	mainSrc := "import \"./util\";\nfunction main(): i32 { return util.foo(); }\n"
+	writeFile(t, mainPath, mainSrc)
+
+	s := NewServer()
+	s.EnableWorkspace()
+	s.SetPublisher(func(string, any) {})
+
+	mainURI := pathToURI(mainPath)
+	open, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didOpen",
+		Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
+			URI: mainURI, LanguageID: "lang", Text: mainSrc,
+		}}),
+	})
+	s.HandleMessage(open)
+
+	// `function main(): i32 { return util.foo(); }`
+	//                                ^col 24 = `u` of `util` (1-based)
+	//                                     ^col 29 = `.`
+	//                                      ^col 30 = `f` of `foo` (1-based)
+	// LSP 0-based: f of foo is at col 29.
+	dp := definitionParams{}
+	dp.TextDocument.URI = mainURI
+	dp.Position = Position{Line: 1, Character: 30}
+	msg, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/definition",
+		Params:  jsonRaw(dp),
+	})
+	resp := s.HandleMessage(msg)
+	var m message
+	if err := json.Unmarshal(resp, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(m.Result) == 0 || string(m.Result) == "null" {
+		t.Fatalf("expected a Location, got %s", m.Result)
+	}
+	var loc Location
+	if err := json.Unmarshal(m.Result, &loc); err != nil {
+		t.Fatalf("unmarshal location: %v", err)
+	}
+	if !strings.HasSuffix(loc.URI, "util.lang") {
+		t.Errorf("definition uri = %q, want a util.lang URI", loc.URI)
+	}
+	if loc.Range.Start.Line != 0 {
+		t.Errorf("definition start line = %d, want 0 (foo in util.lang)", loc.Range.Start.Line)
+	}
+}
+
 func TestWorkspace_UnsavedBufferOverridesDisk(t *testing.T) {
 	// The point of LoadWith: the editor's in-memory buffer wins
 	// over what's on disk for an open file. Write a STALE version

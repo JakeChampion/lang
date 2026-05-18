@@ -29,6 +29,11 @@ type nameHit struct {
 	// preserves the source position on Call.Method even after
 	// rewriting the AST to a mangled flat call.
 	methodCall *ast.Call
+	// moduleCall is non-nil when the cursor lands on the function
+	// name in a cross-module qualified call `mod.fn(args)`.
+	// modload preserves the original positions on Call.Module
+	// during the rewrite to a flat mangled name.
+	moduleCall *ast.Call
 }
 
 // findNameAt walks prog's function bodies and returns the deepest
@@ -105,6 +110,17 @@ func findNameAt(prog *ast.Program, line, col int) *nameHit {
 						pos:        x.Method.FieldPos,
 						enclosing:  fd,
 						methodCall: x,
+					}
+				}
+				// Cross-module call (`mod.fn(args)`) — modload
+				// stashes the original FieldPos on Call.Module.
+				if x.Module != nil && x.Module.FieldPos.Line != 0 &&
+					spans(x.Module.FieldPos, line, col, len(x.Module.Field)) {
+					best = &nameHit{
+						name:       x.Module.Field,
+						pos:        x.Module.FieldPos,
+						enclosing:  fd,
+						moduleCall: x,
 					}
 				}
 			}

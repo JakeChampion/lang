@@ -655,6 +655,10 @@ type Call struct {
 	// otherwise disappears once the call is rewritten to
 	// `__method_Type_name(target, args)`).
 	Method *MethodCallSite
+	// Module is set by modload when this Call was rewritten from a
+	// qualified cross-module call (`mod.fn(args)`). Same LSP-only
+	// rationale as Method.
+	Module *ModuleCallSite
 }
 
 // MethodCallSite records the original source-level shape of a
@@ -668,6 +672,20 @@ type MethodCallSite struct {
 	Field    string
 	FieldPos Position
 	Receiver Type
+}
+
+// ModuleCallSite is the cross-module analogue of MethodCallSite:
+// modload rewrites `mod.fn(args)` to a flat `mangled_fn(args)`
+// Ident and the field-name position would otherwise be lost. The
+// LSP uses FieldPos to locate hover / goto-def on the unqualified
+// function name; Mangled is the modload-rewritten target name so
+// the dispatcher can look up the FuncDecl directly.
+type ModuleCallSite struct {
+	Module    string   // local module name as the user wrote it (e.g. "util")
+	ModulePos Position // start of the module qualifier
+	Field     string   // unqualified function / const name (e.g. "foo")
+	FieldPos  Position // start of the field after the `.`
+	Mangled   string   // modload's flat name (e.g. "util__foo")
 }
 type Binary struct {
 	P           Position
