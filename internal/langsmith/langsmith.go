@@ -486,12 +486,24 @@ var mainVarTypes = []gtype{
 	tPair, tColor, tOptI32,
 }
 
-// preludeDecls emits the fixed `struct Pair` and `enum Color`
-// declarations every generated program shares. Called at the top
-// of Program / MainProgram before any function decl.
+// preludeDecls emits the fixed `struct Pair` + `enum Color`
+// declarations every generated program shares, plus a small set
+// of fixed methods on Pair. Methods exercise the method-dispatch
+// path (`expr.method(args)` syntactic sugar that the checker
+// rewrites to `__method_Pair_<name>(expr, args)`) without
+// needing per-struct nominal-type tracking — Pair is fixed, so
+// the method names are fixed too.
 func (g *Generator) preludeDecls(b *strings.Builder) {
 	b.WriteString("struct Pair { fst: i32, snd: i32 }\n")
 	b.WriteString("enum Color { Red, Green, Blue }\n")
+	// `pair.sum()`: Pair → i32. The simplest method shape — no
+	// args, scalar return. Flows back into the i32 byte-oracle
+	// path via tryCompositeProduction.
+	b.WriteString("function (p: Pair) sum(): i32 { return (p.fst + p.snd); }\n")
+	// `pair.swap()`: Pair → Pair. Tests methods that return the
+	// receiver type — a common stdlib shape codegen could
+	// plausibly mishandle.
+	b.WriteString("function (p: Pair) swap(): Pair { return (Pair { fst: p.snd, snd: p.fst }); }\n")
 }
 
 // Program emits a complete program: prelude type decls followed
@@ -769,12 +781,30 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 		}
 	}
 	// Struct field. `Pair.fst` / `.snd` are both i32.
+	// Sometimes a method call instead of a field access — both
+	// produce i32, both desugar through different checker paths
+	// (FieldAccess vs Call-with-MethodCallSite-rewritten).
 	if t == tI32 {
 		pairs := sc.inScope(tPair)
 		if len(pairs) > 0 {
 			name := pairs[g.ch.intN(len(pairs))]
-			field := []string{"fst", "snd"}[g.ch.intN(2)]
-			fmt.Fprintf(b, "%s.%s", name, field)
+			if g.flip(0.6) {
+				field := []string{"fst", "snd"}[g.ch.intN(2)]
+				fmt.Fprintf(b, "%s.%s", name, field)
+			} else {
+				// `pair.sum()` — method dispatch path.
+				fmt.Fprintf(b, "%s.sum()", name)
+			}
+			return true
+		}
+	}
+	// `pair.swap()`: Pair → Pair. Routes any in-scope Pair into
+	// a fresh Pair via the method-dispatch path.
+	if t == tPair {
+		pairs := sc.inScope(tPair)
+		if len(pairs) > 0 && !g.flip(0.7) {
+			name := pairs[g.ch.intN(len(pairs))]
+			fmt.Fprintf(b, "%s.swap()", name)
 			return true
 		}
 	}
