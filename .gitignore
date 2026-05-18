@@ -1,4 +1,5 @@
 /lang
+/lang-lsp
 /bin/
 /build/
 *.s
