@@ -170,6 +170,36 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			0,
 			"1 2 3 4 5 \n",
 		},
+		{
+			"fizzbuzz-canonical-1-to-15",
+			"function main(): i32 { " +
+				"var i = 1; " +
+				"while (i <= 15) { " +
+				"if (i % 15 == 0) { print(\"FizzBuzz\"); } " +
+				"else if (i % 3 == 0) { print(\"Fizz\"); } " +
+				"else if (i % 5 == 0) { print(\"Buzz\"); } " +
+				"else { print_int(i); } " +
+				"print(\"\\n\"); " +
+				"i = i + 1; " +
+				"} " +
+				"return 0; }",
+			0,
+			"1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n",
+		},
+		{
+			"fibonacci-series-first-10",
+			"function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } " +
+				"function main(): i32 { var i = 0; while (i < 10) { print_int(fib(i)); print(\" \"); i = i + 1; } print(\"\\n\"); return 0; }",
+			0,
+			"0 1 1 2 3 5 8 13 21 34 \n",
+		},
+		{
+			"sum-via-recursion-and-print",
+			"function sum(n: i32): i32 { if (n == 0) { return 0; } return n + sum(n - 1); } " +
+				"function main(): i32 { print(\"sum(1..10) = \"); print_int(sum(10)); print(\"\\n\"); return 0; }",
+			0,
+			"sum(1..10) = 55\n",
+		},
 	}
 
 	for _, tc := range cases {
