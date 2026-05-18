@@ -1,0 +1,114 @@
+name: Playground E2E
+
+# Headless-browser tests for the lang playground via Bombadil
+# (https://github.com/antithesishq/bombadil) — property-based fuzzing
+# of the live page in real Chromium. The web/test/playground.spec.ts
+# file declares the invariants Bombadil enforces; web/test/run.sh
+# builds the wasm, serves the page on a loopback port, and invokes
+# the binary.
+#
+# Gated on changes that affect playground behaviour so we don't burn
+# CI minutes on unrelated edits (same path-filter pattern as
+# pages.yml). Plus a workflow_dispatch for manual reruns and a
+# nightly schedule because Bombadil's randomised exploration finds
+# different paths each run — sampling once a day catches drift
+# without paying per-PR.
+
+on:
+  pull_request:
+    paths:
+      - "cmd/lang-wasm/**"
+      - "web/**"
+      - "internal/ast/**"
+      - "internal/checker/**"
+      - "internal/constfold/**"
+      - "internal/diag/**"
+      - "internal/interp/**"
+      - "internal/lexer/**"
+      - "internal/lsp/**"
+      - "internal/modload/**"
+      - "internal/monomorph/**"
+      - "internal/parser/**"
+      - "internal/prelude/**"
+      - "internal/treeshake/**"
+      - "go.mod"
+      - ".github/workflows/playground-e2e.yml"
+  workflow_dispatch:
+  schedule:
+    # Daily at 06:17 UTC. Off-the-hour timing avoids the noisy
+    # top-of-hour CI rush.
+    - cron: "17 6 * * *"
+
+env:
+  BOMBADIL_VERSION: "v0.4.2"
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+
+      - name: Install Chromium
+        # browser-actions/setup-chrome ships a pinned Chromium build
+        # and writes its path to GITHUB_PATH so `chromium` is on PATH
+        # for downstream steps. Pinning beats apt's distro-tracking
+        # version, which has drifted past Bombadil's compat range
+        # before.
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Cache Bombadil binary
+        id: cache-bombadil
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/bombadil
+          key: bombadil-${{ runner.os }}-${{ env.BOMBADIL_VERSION }}
+
+      - name: Install Bombadil (cache miss)
+        if: steps.cache-bombadil.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          # Pick the right binary for the runner's arch. Linux
+          # ubuntu-latest is x86_64; the arm64 mapping is here so
+          # this step keeps working when we add a matrix entry.
+          case "$(uname -m)" in
+            x86_64)  asset=bombadil-x86_64-linux ;;
+            aarch64) asset=bombadil-aarch64-linux ;;
+            *) echo "no Bombadil binary published for $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fSL \
+            -o "$HOME/.local/bin/bombadil" \
+            "https://github.com/antithesishq/bombadil/releases/download/${BOMBADIL_VERSION}/${asset}"
+          chmod +x "$HOME/.local/bin/bombadil"
+
+      - name: Wire PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Show toolchain
+        run: |
+          uname -m
+          go version
+          bombadil --version || true
+          chromium --version || google-chrome --version || true
+
+      - name: Run playground e2e
+        run: ./web/test/run.sh
+
+      - name: Upload Bombadil results on failure
+        # The results directory contains the reproducer trace + the
+        # server log; both are gold for debugging a property
+        # violation after the fact.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bombadil-results
+          path: web/test/results/
+          if-no-files-found: ignore

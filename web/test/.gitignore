@@ -1,0 +1,6 @@
+# Bombadil writes the property-violation trace + server log here.
+results/
+# Optional npm install (TypeScript typings only — the bombadil
+# binary doesn't need node_modules).
+node_modules/
+package-lock.json
