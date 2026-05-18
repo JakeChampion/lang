@@ -10,11 +10,21 @@ import (
 	"testing"
 )
 
+// diagnosticsFor is a test helper that runs src through the same
+// pipeline updateDoc does and returns just the diagnostics — saves
+// callers from constructing a Server and pulling state out of its
+// docs map.
+func diagnosticsFor(src string) []Diagnostic {
+	s := NewServer()
+	s.updateDoc("file:///t", src)
+	return s.docs["file:///t"].diags
+}
+
 // ---- diagnostics translation ----
 
 func TestRunDiagnostics_CleanSource(t *testing.T) {
 	src := `function main(): i32 { return 0; }`
-	got := runDiagnostics(src)
+	got := diagnosticsFor(src)
 	if len(got) != 0 {
 		t.Fatalf("clean source produced %d diagnostics: %+v", len(got), got)
 	}
@@ -23,7 +33,7 @@ func TestRunDiagnostics_CleanSource(t *testing.T) {
 func TestRunDiagnostics_ParserError(t *testing.T) {
 	// Missing closing brace.
 	src := `function main(): i32 { return 0;`
-	got := runDiagnostics(src)
+	got := diagnosticsFor(src)
 	if len(got) == 0 {
 		t.Fatal("expected at least one diagnostic for unterminated function")
 	}
@@ -46,7 +56,7 @@ func TestRunDiagnostics_ParserError(t *testing.T) {
 func TestRunDiagnostics_TypeError(t *testing.T) {
 	// Unknown identifier — parses cleanly, fails in checker.
 	src := `function main(): i32 { return undeclared_name; }`
-	got := runDiagnostics(src)
+	got := diagnosticsFor(src)
 	if len(got) == 0 {
 		t.Fatal("expected at least one diagnostic for unknown identifier")
 	}
@@ -67,7 +77,7 @@ func TestRunDiagnostics_TypeError(t *testing.T) {
 func TestRunDiagnostics_PositionsAreZeroBased(t *testing.T) {
 	// Force a checker error on line 3.
 	src := "function main(): i32 {\n  var x: i32 = 1;\n  return undeclared;\n}\n"
-	got := runDiagnostics(src)
+	got := diagnosticsFor(src)
 	if len(got) == 0 {
 		t.Fatal("expected diagnostic")
 	}

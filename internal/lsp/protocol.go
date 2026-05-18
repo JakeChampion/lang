@@ -90,7 +90,9 @@ type serverInfo struct {
 }
 
 type serverCapabilities struct {
-	TextDocumentSync int `json:"textDocumentSync"`
+	TextDocumentSync   int  `json:"textDocumentSync"`
+	HoverProvider      bool `json:"hoverProvider,omitempty"`
+	DefinitionProvider bool `json:"definitionProvider,omitempty"`
 }
 
 // ---- Param types we receive ----
