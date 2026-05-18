@@ -4256,6 +4256,64 @@ function main(): i32 {
 	}
 }
 
+// Mutable captured variable: a closure body writes back to a
+// captured outer-scope variable. The env block lives on the
+// heap and is shared by every call to the same closure, so
+// successive invocations see the updated value — classic
+// counter-closure shape. Pre-fix this errored at IR-emit with
+// `ir: assignment target *ast.CaptureRef not yet lowered`. The
+// assignment now stores to `[__env + capOffset]` via the type-
+// correct payloadStoreOp, matching the read side's load shape.
+// Note: captures are by VALUE at make-time. Two separate
+// closures over the same outer name would each get their own
+// env copy — they don't share the slot.
+func TestWASMMutableCapturedVar(t *testing.T) {
+	src := `function makeCounter(): () => i32 {
+    var count: i32 = 0;
+    function tick(): i32 {
+        count = count + 1;
+        return count;
+    }
+    return tick;
+}
+function main(): i32 {
+    var c = makeCounter();
+    var a: i32 = c();
+    var b: i32 = c();
+    var d: i32 = c();
+    return a + b + d;
+}`
+	// 1 + 2 + 3 = 6
+	if got := runWasm(t, src); got != 6 {
+		t.Errorf("got %d, want 6 (counter increments in env)", got)
+	}
+}
+
+// Wide-payload counterpart: an i64 captured local stores back
+// via OpStore Width=64, so the high 32 bits survive the
+// round-trip through the env block.
+func TestWASMMutableCapturedI64(t *testing.T) {
+	src := `function makeCounter(): () => i64 {
+    var count: i64 = 0i64;
+    function tick(): i64 {
+        count = count + 1i64;
+        return count;
+    }
+    return tick;
+}
+function main(): i32 {
+    var c = makeCounter();
+    var a: i64 = c();
+    var b: i64 = c();
+    if (a != 1i64) { return 1; }
+    if (b != 2i64) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0", got)
+	}
+}
+
 // Higher-order closure: a nested function captures a function-
 // typed param and calls it from inside its body. The closureconv
 // pass rewrote that captured-name reference to a `*ast.CaptureRef`,
