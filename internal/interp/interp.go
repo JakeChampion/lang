@@ -1357,6 +1357,31 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		return Bool(x.Value), nil
 	case *ast.StringLit:
 		return String(x.Value), nil
+	case *ast.FString:
+		// The checker desugars `f"foo {x} bar"` into the equivalent
+		// `"foo " + (x).to_string() + " bar"` `+`-chain and stamps
+		// it on x.Desugared. We just evaluate that. When the
+		// program reaches the interpreter without going through
+		// the checker (e.g. REPL), fall back to assembling the
+		// pieces directly so the literal segments at least work
+		// — interpolant values without a checker-resolved
+		// `.to_string()` are stringified through Value.String().
+		if x.Desugared != nil {
+			return i.evalExpr(x.Desugared, env)
+		}
+		var sb strings.Builder
+		for _, p := range x.Parts {
+			if p.Expr == nil {
+				sb.WriteString(p.Lit)
+				continue
+			}
+			v, err := i.evalExpr(p.Expr, env)
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(v.String())
+		}
+		return String(sb.String()), nil
 	case *ast.Ident:
 		if v, ok := env.get(x.Name); ok {
 			return v, nil
