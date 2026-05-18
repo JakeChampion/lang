@@ -4482,6 +4482,29 @@ func callArgTypesFromSig(params []ast.Type, argc int) []ast.Type {
 }
 
 func (b *builder) call(n *ast.Call) error {
+	// Captured-closure callee: closureconv rewrote a captured
+	// function-typed name (param / outer var) inside this body
+	// to a CaptureRef. Treat it as a function-typed value coming
+	// from the env block — push the closure pair pointer, push
+	// args, dispatch indirectly. The captured Type is the source
+	// of truth for the call's signature (the closureconv pass
+	// stamps it from the checker's resolved outer-scope type).
+	if cr, ok := n.Callee.(*ast.CaptureRef); ok {
+		ft, isFn := cr.Type.(*ast.FuncType)
+		if !isFn {
+			return fmt.Errorf("ir: captured callee %q is not function-typed", cr.Name)
+		}
+		for _, a := range n.Args {
+			if err := b.expr(a); err != nil {
+				return err
+			}
+		}
+		if err := b.expr(cr); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Sig: ft})
+		return nil
+	}
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
