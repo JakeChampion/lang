@@ -49,6 +49,5 @@ report.
 
 ## CI
 
-`.github/workflows/docs-build.yml` runs this suite plus a
-[lychee](https://github.com/lycheeverse/lychee) link-check on
-every PR that touches docs inputs. Both are required to merge.
+`.github/workflows/docs-build.yml` runs this suite on every PR
+that touches docs inputs. Failures block merging.
