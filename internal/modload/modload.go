@@ -1183,6 +1183,15 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 // arm.VariantModule to the enum's SourceModule for safety.
 func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos ast.Position) {
 	if *armModule != "" {
+		// `Color.Red`-style enum-qualified match arm. The
+		// qualifier names an enum in this module, not an imported
+		// module — leave both fields alone so the printer can
+		// round-trip the qualifier and the checker can verify it
+		// matches the scrutinee's enum. We just suppress the
+		// "unknown module" diagnostic below.
+		if r.ownEnums[*armModule] {
+			return
+		}
 		mod, prefix, ok := r.importedModule(*armModule)
 		if !ok {
 			r.errs = append(r.errs, fmt.Errorf("%s:%s: unknown module %q in variant pattern", r.modPath, pos, *armModule))

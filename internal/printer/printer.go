@@ -409,6 +409,10 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 			if arm.IsWildcard {
 				b.WriteByte('_')
 			} else {
+				if arm.VariantModule != "" {
+					b.WriteString(arm.VariantModule)
+					b.WriteByte('.')
+				}
 				b.WriteString(arm.VariantName)
 				if len(arm.Bindings) > 0 {
 					b.WriteByte('(')

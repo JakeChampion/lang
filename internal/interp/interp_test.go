@@ -384,6 +384,44 @@ func TestInterpGenericOption(t *testing.T) {
 	}
 }
 
+// TestInterpQualifiedVariants — two enums can declare the same
+// variant name; the disambiguation is the `Color.Red`-style
+// qualifier at the use site. Was IMPROVEMENTS.md #15.
+func TestInterpQualifiedVariants(t *testing.T) {
+	// Bare-name reference in payload-less position.
+	v, _ := evalProgram(t, `enum Color { Red, Green, Blue }
+		enum Status { Red, Yellow }
+		function main(): i32 {
+			var c: Color = Color.Red;
+			match (c) {
+				Color.Red => { return 1; },
+				Color.Green => { return 2; },
+				Color.Blue => { return 3; }
+			}
+			return 0;
+		}`)
+	if n, ok := v.(Number); !ok || n != 1 {
+		t.Errorf("Color.Red: got %v, want 1", v)
+	}
+	// Qualified variant call with payload. The two enums' Foo
+	// variants have different positions (`Foo` is index 0 in A,
+	// index 1 in B) — picking the wrong enum would mismatch the
+	// match arm's tag check.
+	v, _ = evalProgram(t, `enum A { Foo(i32), Bar }
+		enum B { Bar, Foo(i32) }
+		function main(): i32 {
+			var a: A = A.Foo(42);
+			match (a) {
+				A.Foo(x) => { return x; },
+				A.Bar => { return -1; }
+			}
+			return 0;
+		}`)
+	if n, ok := v.(Number); !ok || n != 42 {
+		t.Errorf("A.Foo(42): got %v, want 42", v)
+	}
+}
+
 // TestInterpTypeAscription — `expr as T` in non-numeric form is a
 // zero-cost annotation at the interp level. The checker accepts
 // the cast when `inner` is assignable to `T` (None vs Option[i32],
