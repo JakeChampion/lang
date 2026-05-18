@@ -5,19 +5,66 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>lang playground</title>
 <style>
+  /* ---- theme tokens ----
+   *
+   * Two palettes share the same set of named tokens; `body.dark`
+   * overrides the light defaults below. Theme toggle (.btn-theme
+   * in the toolbar) flips the class; the JS at the bottom of the
+   * page persists the choice in localStorage and respects
+   * `prefers-color-scheme` on first load.
+   */
+  :root {
+    --bg-page:       #fafafa;
+    --bg-card:       #ffffff;
+    --bg-toolbar:    #f4f4f4;
+    --bg-hover:      #f0f0f0;
+    --fg-primary:    #1a1a1a;
+    --fg-secondary:  #555555;
+    --fg-tertiary:   #888888;
+    --border:        #d0d0d0;
+    --border-strong: #c4c4c4;
+    --border-soft:   #e5e5e5;
+    --accent:        #2563eb;
+    --accent-fg:     #ffffff;
+    --accent-hover:  #1d4ed8;
+    --ok:            #16a34a;
+    --err:           #b00020;
+    --kbd-bg:        #f0f0f0;
+    --kbd-border:    #cccccc;
+  }
+  body.dark {
+    --bg-page:       #0d0f12;
+    --bg-card:       #161a20;
+    --bg-toolbar:    #1c2128;
+    --bg-hover:      #1f242c;
+    --fg-primary:    #e6edf3;
+    --fg-secondary:  #b6c1cf;
+    --fg-tertiary:   #7d8590;
+    --border:        #30363d;
+    --border-strong: #444c56;
+    --border-soft:   #21262d;
+    --accent:        #4493f8;
+    --accent-fg:     #0d0f12;
+    --accent-hover:  #6daafb;
+    --ok:            #2ea043;
+    --err:           #f85149;
+    --kbd-bg:        #21262d;
+    --kbd-border:    #30363d;
+  }
+
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     margin: 0;
     padding: 1.5em;
-    color: #1a1a1a;
-    background: #fafafa;
+    color: var(--fg-primary);
+    background: var(--bg-page);
   }
   h1 {
     margin: 0 0 0.25em;
     font-size: 1.4em;
   }
   .subtitle {
-    color: #666;
+    color: var(--fg-secondary);
     font-size: 0.95em;
     margin-bottom: 1em;
   }
@@ -35,16 +82,17 @@
     font-size: 0.85em;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #555;
+    color: var(--fg-secondary);
     margin: 0 0 0.4em;
   }
   textarea, pre {
     font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
     font-size: 13px;
     line-height: 1.5;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--border);
     border-radius: 4px;
-    background: #fff;
+    background: var(--bg-card);
+    color: var(--fg-primary);
     padding: 0.6em 0.8em;
     box-sizing: border-box;
   }
@@ -59,9 +107,9 @@
      it picks up the border + sizing without us having to know
      CM's full markup. */
   #srcMount {
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--border);
     border-radius: 4px;
-    background: #fff;
+    background: var(--bg-card);
     height: 520px;
     overflow: hidden;
   }
@@ -84,26 +132,26 @@
     word-wrap: break-word;
   }
   .out-stderr {
-    color: #b00020;
+    color: var(--err);
   }
   .out-info {
-    color: #555;
+    color: var(--fg-secondary);
     font-size: 0.9em;
     padding-top: 0.6em;
     font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
   }
-  .out-info .exit-ok    { color: #16a34a; font-weight: 600; }
-  .out-info .exit-err   { color: #b00020; font-weight: 600; }
-  .out-info .exit-label { color: #555; }
+  .out-info .exit-ok    { color: var(--ok);  font-weight: 600; }
+  .out-info .exit-err   { color: var(--err); font-weight: 600; }
+  .out-info .exit-label { color: var(--fg-secondary); }
   /* Live LSP problem list + cursor-type indicator. The panel
      spans both grid columns so a single source error doesn't
      compete with the output pane for vertical space. */
   .problems {
     grid-column: 1 / -1;
     margin-top: 0.8em;
-    border: 1px solid #e0e0e0;
+    border: 1px solid var(--border-soft);
     border-radius: 4px;
-    background: #fff;
+    background: var(--bg-card);
     font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
     font-size: 12px;
   }
@@ -111,20 +159,20 @@
     font-size: 0.85em;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #555;
+    color: var(--fg-secondary);
     margin: 0;
     padding: 0.5em 0.8em;
-    border-bottom: 1px solid #f0f0f0;
-    background: #fafafa;
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--bg-toolbar);
     border-radius: 4px 4px 0 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   .problems h2 .count {
-    color: #b00020;
+    color: var(--err);
     font-weight: 600;
     margin-left: 0.4em;
   }
-  .problems h2 .count.ok { color: #16a34a; }
+  .problems h2 .count.ok { color: var(--ok); }
   .problems ul {
     list-style: none;
     margin: 0;
@@ -134,26 +182,26 @@
   }
   .problems li {
     padding: 0.35em 0.8em;
-    border-top: 1px solid #f5f5f5;
+    border-top: 1px solid var(--border-soft);
     cursor: pointer;
     line-height: 1.4;
   }
   .problems li:first-child { border-top: 0; }
-  .problems li:hover { background: #f8f8f8; }
+  .problems li:hover { background: var(--bg-hover); }
   .problems .loc {
-    color: #888;
+    color: var(--fg-tertiary);
     margin-right: 0.6em;
   }
   .problems .empty {
     padding: 0.6em 0.8em;
-    color: #888;
+    color: var(--fg-tertiary);
     font-style: italic;
   }
   kbd {
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.85em;
-    background: #f0f0f0;
-    border: 1px solid #ccc;
+    background: var(--kbd-bg);
+    border: 1px solid var(--kbd-border);
     border-radius: 3px;
     padding: 0.05em 0.35em;
   }
@@ -162,51 +210,123 @@
     align-items: center;
     gap: 0.8em;
     margin-bottom: 0.6em;
+    flex-wrap: wrap;
   }
   button {
     font: inherit;
     padding: 0.45em 1em;
     border-radius: 4px;
-    border: 1px solid #2563eb;
-    background: #2563eb;
-    color: white;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--accent-fg);
     cursor: pointer;
   }
   button:disabled {
-    background: #93c5fd;
-    border-color: #93c5fd;
+    opacity: 0.55;
     cursor: progress;
   }
   button:hover:not(:disabled) {
-    background: #1d4ed8;
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
   }
   button.secondary {
-    background: white;
-    color: #2563eb;
+    background: transparent;
+    color: var(--accent);
   }
   button.secondary:hover:not(:disabled) {
-    background: #eff6ff;
+    background: var(--bg-hover);
   }
   button.secondary.copied {
-    background: #16a34a;
-    color: white;
-    border-color: #16a34a;
+    background: var(--ok);
+    color: var(--accent-fg);
+    border-color: var(--ok);
+  }
+  /* Theme toggle: icon-only ghost button. Glyph swap happens in JS. */
+  button.btn-theme {
+    background: transparent;
+    color: var(--fg-secondary);
+    border-color: var(--border);
+    padding: 0.35em 0.55em;
+    font-size: 1.05em;
+    line-height: 1;
+  }
+  button.btn-theme:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--fg-primary);
   }
   select {
     font: inherit;
     padding: 0.35em 0.5em;
     border-radius: 4px;
-    border: 1px solid #ccc;
-    background: white;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--fg-primary);
   }
   .status {
     font-size: 0.85em;
-    color: #666;
+    color: var(--fg-secondary);
   }
   @media (max-width: 800px) {
     .grid { grid-template-columns: 1fr; }
     textarea, pre, #srcMount { height: 320px; }
   }
+
+  /* ---- Assembly view ----
+   *
+   * The "View assembly" toggle reveals a third pane below the
+   * source / output grid that compiles the current source to a
+   * chosen backend (arm64 / arm64-darwin / x86-64 / wasm) and
+   * shows the textual emit. Hidden by default so first impression
+   * stays focused on running the program; users opt in when they
+   * want the Godbolt-style view.
+   */
+  .asm-panel {
+    grid-column: 1 / -1;
+    display: none;
+    margin-top: 0.8em;
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    background: var(--bg-card);
+    font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+  }
+  .asm-panel.shown { display: block; }
+  .asm-panel header {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    padding: 0.45em 0.8em;
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--bg-toolbar);
+    border-radius: 4px 4px 0 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .asm-panel header h2 {
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-secondary);
+    margin: 0;
+    flex: 0 0 auto;
+  }
+  .asm-panel header .asm-status {
+    font-size: 0.78em;
+    color: var(--fg-tertiary);
+    margin-left: auto;
+  }
+  .asm-panel pre {
+    margin: 0;
+    border: 0;
+    border-radius: 0 0 4px 4px;
+    background: transparent;
+    color: var(--fg-primary);
+    max-height: 520px;
+    overflow: auto;
+    padding: 0.7em 0.9em;
+    white-space: pre;
+  }
+  /* Subtle gutter colour for failed compiles. */
+  .asm-panel.errored pre { color: var(--err); }
 
   /* ---------------- Embed mode ----------------
    *
@@ -229,8 +349,12 @@
   body.embed .subtitle,
   body.embed #share,
   body.embed #example,
+  body.embed .btn-theme,
+  body.embed #targetSelect,
+  body.embed .btn-asm,
   body.embed .out-info,
-  body.embed .problems {
+  body.embed .problems,
+  body.embed .asm-panel {
     display: none;
   }
   body.embed .toolbar {
@@ -290,6 +414,13 @@
 <div class="toolbar">
   <button id="run" disabled>Run</button>
   <button id="share" class="secondary">Share</button>
+  <button id="viewAsm" class="secondary btn-asm" disabled>View assembly</button>
+  <select id="targetSelect" title="Backend for the assembly view">
+    <option value="arm64">arm64</option>
+    <option value="arm64-darwin">arm64-darwin</option>
+    <option value="x86-64">x86-64</option>
+    <option value="wasm">wasm (.wat)</option>
+  </select>
   <select id="example">
     <option value="">— pick an example —</option>
     <option value="hello">hello, world</option>
@@ -302,6 +433,10 @@
     <option value="format">format(fmt, args)</option>
   </select>
   <span class="status" id="status">loading runtime…</span>
+  <button id="themeToggle" class="btn-theme" type="button"
+          title="Switch theme" aria-label="Switch theme">
+    <span id="themeGlyph">🌙</span>
+  </button>
 </div>
 
 <div class="grid">
@@ -318,6 +453,13 @@
     <h2>problems <span class="count" id="problemCount"></span></h2>
     <ul id="problemList"></ul>
   </div>
+  <section class="asm-panel" id="asmPanel" aria-live="polite">
+    <header>
+      <h2>assembly</h2>
+      <span class="asm-status" id="asmStatus"></span>
+    </header>
+    <pre id="asmOut"></pre>
+  </section>
 </div>
 
 <script src="wasm_exec.js"></script>
@@ -586,6 +728,13 @@ const exampleEl = document.getElementById("example");
 const problemListEl = document.getElementById("problemList");
 const problemCountEl = document.getElementById("problemCount");
 const srcMount = document.getElementById("srcMount");
+const themeBtn = document.getElementById("themeToggle");
+const themeGlyph = document.getElementById("themeGlyph");
+const targetSelectEl = document.getElementById("targetSelect");
+const viewAsmBtn = document.getElementById("viewAsm");
+const asmPanel = document.getElementById("asmPanel");
+const asmOutEl = document.getElementById("asmOut");
+const asmStatusEl = document.getElementById("asmStatus");
 
 // Embed mode: `?embed=1` (or `?embed=true`) on the URL strips the
 // chrome (title, subtitle, examples dropdown, share button, problems
@@ -605,6 +754,68 @@ const autoRun = ["1", "true", "yes"].includes(
 if (embedMode) {
   document.body.classList.add("embed");
 }
+
+// ---- Theme (dark / light) ----
+//
+// Precedence (highest first):
+//   1. `?theme=dark|light` URL param — used by the docs site's
+//      LangPlayground component to match the parent page's theme.
+//   2. localStorage key `langPlaygroundTheme` — persisted choice
+//      from a previous visit when the user clicked the toggle.
+//   3. `prefers-color-scheme` media query — system default.
+//
+// The chosen theme is reflected as `body.dark` so CSS variables
+// flip globally. The CodeMirror editor swaps to / from `oneDark`
+// via the themeCompartment defined below. The button glyph is a
+// simple emoji that always reflects what clicking it would switch
+// TO (so dark mode shows ☀, light mode shows 🌙).
+const THEME_STORAGE_KEY = "langPlaygroundTheme";
+function preferredTheme() {
+  const fromParam = (urlParams.get("theme") ?? "").toLowerCase();
+  if (fromParam === "dark" || fromParam === "light") return fromParam;
+  const stored = (() => {
+    try { return localStorage.getItem(THEME_STORAGE_KEY); }
+    catch (e) { return null; }
+  })();
+  if (stored === "dark" || stored === "light") return stored;
+  return window.matchMedia &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+function applyTheme(theme, opts = {}) {
+  const dark = theme === "dark";
+  document.body.classList.toggle("dark", dark);
+  if (themeGlyph) themeGlyph.textContent = dark ? "☀" : "🌙";
+  if (themeBtn) themeBtn.title = `Switch to ${dark ? "light" : "dark"} mode`;
+  if (editorView) {
+    // Reconfigure the syntax-highlight extension without rebuilding
+    // the EditorView — preserves cursor + scroll position.
+    editorView.dispatch({
+      effects: themeCompartment.reconfigure(editorThemeFor(dark)),
+    });
+  }
+  if (opts.persist) {
+    try { localStorage.setItem(THEME_STORAGE_KEY, theme); }
+    catch (e) { /* localStorage may be unavailable; non-fatal. */ }
+  }
+}
+applyTheme(preferredTheme()); // before any other JS runs, so first paint is right
+if (themeBtn) {
+  themeBtn.addEventListener("click", () => {
+    const next = document.body.classList.contains("dark") ? "light" : "dark";
+    applyTheme(next, { persist: true });
+  });
+}
+// Listen to the host page's theme changes via postMessage. The
+// docs site's <LangPlayground> component posts `{type: "lang:theme",
+// theme: "dark"|"light"}` whenever Starlight's theme flips.
+window.addEventListener("message", (e) => {
+  if (!e.data || e.data.type !== "lang:theme") return;
+  if (e.data.theme === "dark" || e.data.theme === "light") {
+    applyTheme(e.data.theme);
+  }
+});
 
 // URL-hash codec. Source is UTF-8 encoded, then base64'd with
 // URL-safe alphabet (RFC 4648 §5) and stripped of '=' padding so
@@ -723,6 +934,60 @@ function runOnce() {
 runBtn.addEventListener("click", runOnce);
 // Ctrl/Cmd+Enter to run is registered as a CodeMirror keymap entry
 // below so it composes correctly with the editor's own key handling.
+
+// ---- Assembly view ----
+//
+// Wraps `langCompile(src, target)` from the wasm bundle. Reveals
+// the .asm-panel below the source / output grid the first time
+// the user clicks "View assembly"; subsequent compiles refresh in
+// place. The target dropdown re-compiles whenever it changes.
+//
+// `asmPanel.shown` controls visibility; we keep it open across
+// subsequent edits + reruns so the user doesn't have to reopen
+// the pane every time they tweak the source.
+let asmPanelOpen = false;
+let asmAutoRebuild = false; // turned on after first explicit open
+function refreshAsm() {
+  if (typeof globalThis.langCompile !== "function") return;
+  const target = targetSelectEl.value || "arm64";
+  asmStatusEl.textContent = `compiling for ${target}…`;
+  asmPanel.classList.remove("errored");
+  // Defer to the event loop so the "compiling…" label paints
+  // before the synchronous wasm call freezes the UI.
+  setTimeout(() => {
+    const result = globalThis.langCompile(getSrc(), target);
+    if (result.error) {
+      asmPanel.classList.add("errored");
+      asmOutEl.textContent = result.error;
+      asmStatusEl.textContent = `${target} · error`;
+      return;
+    }
+    asmOutEl.textContent = result.asm;
+    const lines = (result.asm.match(/\n/g) || []).length + 1;
+    asmStatusEl.textContent = `${target} · ${lines} line${lines === 1 ? "" : "s"}`;
+  }, 0);
+}
+viewAsmBtn.addEventListener("click", () => {
+  asmPanelOpen = !asmPanelOpen;
+  asmPanel.classList.toggle("shown", asmPanelOpen);
+  viewAsmBtn.textContent = asmPanelOpen ? "Hide assembly" : "View assembly";
+  if (asmPanelOpen) {
+    asmAutoRebuild = true;
+    refreshAsm();
+  }
+});
+targetSelectEl.addEventListener("change", () => {
+  if (asmPanelOpen) refreshAsm();
+});
+// Re-emit on every source change once the panel has been opened,
+// debounced alongside the existing scheduleSync. The 200ms cadence
+// matches the LSP debounce so we don't have two timers fighting.
+let asmDebounce = null;
+function scheduleAsmRefresh() {
+  if (!asmAutoRebuild || !asmPanelOpen) return;
+  if (asmDebounce) clearTimeout(asmDebounce);
+  asmDebounce = setTimeout(refreshAsm, 200);
+}
 
 // ---- Language server wiring ----
 //
@@ -861,6 +1126,7 @@ import {history, defaultKeymap, historyKeymap, indentWithTab} from "https://esm.
 import {bracketMatching, indentOnInput} from "https://esm.sh/@codemirror/language@6";
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "https://esm.sh/@codemirror/autocomplete@6";
 import {linter, lintGutter, forceLinting} from "https://esm.sh/@codemirror/lint@6";
+import {oneDark} from "https://esm.sh/@codemirror/theme-one-dark@6";
 
 let editorView = null;
 
@@ -1008,6 +1274,13 @@ function completionItemType(kind) {
 // recreating the whole editor; we don't currently use this but
 // it's the right shape for later "disable LSP" toggles.
 const lspCompartment = new Compartment();
+// Separate compartment for the syntax-highlight theme so we can
+// swap between CodeMirror's default (light) and oneDark without
+// rebuilding the editor.
+const themeCompartment = new Compartment();
+function editorThemeFor(dark) {
+  return dark ? [oneDark] : [];
+}
 
 function makeEditorState(initial) {
   return EditorState.create({
@@ -1023,6 +1296,7 @@ function makeEditorState(initial) {
       closeBrackets(),
       indentOnInput(),
       lintGutter(),
+      themeCompartment.of(editorThemeFor(document.body.classList.contains("dark"))),
       keymap.of([
         // Ctrl/Cmd+Enter → run. preventDefault'd via the
         // command's return-true so CM doesn't insert a newline.
@@ -1049,7 +1323,10 @@ function makeEditorState(initial) {
         }),
       ]),
       EditorView.updateListener.of(u => {
-        if (u.docChanged) scheduleSync();
+        if (u.docChanged) {
+          scheduleSync();
+          scheduleAsmRefresh();
+        }
       }),
     ],
   });
@@ -1080,6 +1357,7 @@ WebAssembly.instantiateStreaming(fetch("lang.wasm"), go.importObject)
   .then(result => {
     go.run(result.instance);
     runBtn.disabled = false;
+    viewAsmBtn.disabled = false;
     statusEl.textContent = embedMode
       ? "ready"
       : "ready · Ctrl/Cmd+Enter to run · hover for types";

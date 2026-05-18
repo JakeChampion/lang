@@ -58,7 +58,7 @@ if (autoRun) params.set("autorun", "1");
 const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code)}`;
 ---
 
-<figure class="lang-playground">
+<figure class="lang-playground" data-lang-playground>
   <header>
     <span aria-hidden="true">▸ live snippet</span>
     <a href={fullSrc} target="_blank" rel="noopener">
@@ -71,3 +71,57 @@ const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code
     style={`height: ${height};`}
     loading="lazy"></iframe>
 </figure>
+
+<script is:inline>
+  // Sync the embedded playground's theme with Starlight's. We
+  // append `?theme=…` to the iframe src on first paint (so the
+  // playground boots with the right palette), then postMessage
+  // on every Starlight theme-pref change so the iframe re-themes
+  // live without a reload.
+  (function () {
+    function currentTheme() {
+      // Starlight stores its setting on <html data-theme="…">. Fall
+      // back to prefers-color-scheme when the attribute hasn't been
+      // set yet (the initial paint before Starlight's inline script
+      // runs).
+      const attr = document.documentElement.getAttribute("data-theme");
+      if (attr === "dark" || attr === "light") return attr;
+      return window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+    }
+    function applyToFrame(iframe, theme) {
+      // Patch the iframe src ONCE on first paint so reloads /
+      // fresh viewers boot with the right palette.
+      if (!iframe.dataset.themeApplied) {
+        const u = new URL(iframe.src, location.href);
+        u.searchParams.set("theme", theme);
+        iframe.src = u.toString();
+        iframe.dataset.themeApplied = "1";
+        return;
+      }
+      // Subsequent flips don't need a reload — postMessage tells
+      // the running playground to re-theme.
+      try {
+        iframe.contentWindow.postMessage({ type: "lang:theme", theme }, "*");
+      } catch (e) { /* iframe not yet ready; next observer tick will catch it */ }
+    }
+    function syncAll() {
+      const theme = currentTheme();
+      document
+        .querySelectorAll("[data-lang-playground] iframe")
+        .forEach((f) => applyToFrame(f, theme));
+    }
+    // First paint.
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", syncAll);
+    } else {
+      syncAll();
+    }
+    // Watch Starlight's data-theme attribute for changes.
+    new MutationObserver(syncAll).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+  })();
+</script>
