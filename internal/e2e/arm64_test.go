@@ -9896,6 +9896,37 @@ function main(): i32 {
 	}
 }
 
+// unifyIfArms used to bail on tuple types whose elements
+// only differed by polymorphic-vs-concrete width. The
+// previous `ast.Equal(a, b)` check failed for `(i32, f32)`
+// vs `(i64, f32)` (when one arm's first element was a
+// polymorphic NumberLit and the other was a concrete i64
+// expression), and the if-expression rejected with:
+//
+//   branches differ: (i32, f32) vs (i64, f32)
+//
+// Same story for `(i64, f64)` mixed with `(i64, f32)` —
+// any whole-tuple-Equal failure short-circuited the
+// per-element widening.
+//
+// Fix: unifyIfArms learns to recurse element-wise into
+// TupleType. The integer / float widening rules already
+// added (#537, #551) flow through each element pair and
+// the surrounding settle pass stamps the final widths.
+func TestArm64UnifyIfArmsTupleElementWiden(t *testing.T) {
+	src := `function pick(b: boolean): (i64, f64) {
+    return if (b) { (1234567890123, 3.14) } else { (0 as i64, 0.0) };
+}
+function main(): i32 {
+    var p = pick(true);
+    if (p.0 == 1234567890123 && p.1 > 3.0) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("tuple if-expr with mixed-width elements got %d, want 0", code)
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,

@@ -1762,6 +1762,25 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 			return ae
 		}
 	}
+	// Tuple types: unify element-wise. Lets polymorphic /
+	// concrete widening flow through tuple-typed if-arms
+	// like `if cond { (1234567890123, 3.14) } else { (0 as
+	// i64, 0.0) }` — both arms become `(i64, f64)` once the
+	// polymorphic-numeric / polymorphic-float rules above
+	// resolve each element pair.
+	if at, aok := a.(ast.TupleType); aok {
+		if bt, bok := b.(ast.TupleType); bok && len(at.Elems) == len(bt.Elems) {
+			out := make([]ast.Type, len(at.Elems))
+			for i := range at.Elems {
+				u := unifyIfArms(at.Elems[i], bt.Elems[i])
+				if u == nil {
+					return nil
+				}
+				out[i] = u
+			}
+			return ast.TupleType{Elems: out}
+		}
+	}
 	return nil
 }
 
