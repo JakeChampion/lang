@@ -55,6 +55,20 @@ import (
 // expect: a single flat list of FuncDecls and StructDecls with
 // every name globally unique.
 func Load(entryPath string) (*ast.Program, map[string]string, error) {
+	return loadCore(entryPath, nil)
+}
+
+// LoadWith is like Load but consults `overrides` before reading from
+// disk. Keys are absolute paths (matching what filepath.Abs would
+// produce on the current OS); values are the source text to use for
+// that path. Used by the LSP to load multi-file programs against the
+// editor's in-memory document buffer instead of stale on-disk
+// content. Empty overrides == Load.
+func LoadWith(entryPath string, overrides map[string]string) (*ast.Program, map[string]string, error) {
+	return loadCore(entryPath, overrides)
+}
+
+func loadCore(entryPath string, overrides map[string]string) (*ast.Program, map[string]string, error) {
 	entryAbs, err := filepath.Abs(entryPath)
 	if err != nil {
 		return nil, nil, err
@@ -62,6 +76,9 @@ func Load(entryPath string) (*ast.Program, map[string]string, error) {
 	loaded := map[string]*module{} // path → loaded module
 	stack := map[string]bool{}     // path → true while in flight (cycle detection)
 	srcs := map[string]string{}    // path → source text (for diag formatting)
+	prev := overrideSources
+	overrideSources = overrides
+	defer func() { overrideSources = prev }()
 	if err := loadRecursive(entryAbs, loaded, stack, srcs); err != nil {
 		return nil, nil, err
 	}
@@ -72,6 +89,12 @@ func Load(entryPath string) (*ast.Program, map[string]string, error) {
 	}
 	return prog, srcs, nil
 }
+
+// overrideSources is the per-call override table installed by
+// loadCore. readSource consults it before going to disk. Single-
+// threaded loader (no concurrent Load calls), so a package-level
+// var is enough; LoadWith saves + restores around its call.
+var overrideSources map[string]string
 
 // LoadStdlibFlat loads each stdlib path in `paths` (and every
 // stdlib module it transitively imports) and returns a single
@@ -284,9 +307,16 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		}
 	}
 	for _, sd := range prog.Structs {
+		// Same source-module stamping as FuncDecl — used by the
+		// LSP to answer cross-module goto-def queries on type
+		// names. No semantic effect on the rest of the pipeline.
+		sd.SourceModule = path
 		if sd.Public {
 			mod.publicStructs[sd.Name] = true
 		}
+	}
+	for _, ed := range prog.Enums {
+		ed.SourceModule = path
 	}
 	for _, cd := range prog.Consts {
 		mod.allConsts[cd.Name] = true
@@ -383,6 +413,14 @@ func readSource(path string) (string, error) {
 			return "", fmt.Errorf("unknown stdlib module %q", importPath)
 		}
 		return src, nil
+	}
+	// In-memory override (set by LoadWith) takes precedence over
+	// disk — the editor's buffer is the source of truth while a
+	// file is open, even when it hasn't been saved yet.
+	if overrideSources != nil {
+		if src, ok := overrideSources[path]; ok {
+			return src, nil
+		}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -481,6 +519,11 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 		combined.Unions = append(combined.Unions, mod.prog.Unions...)
 		combined.Consts = append(combined.Consts, mod.prog.Consts...)
 		combined.Comments = append(combined.Comments, mod.prog.Comments...)
+		// TypeRefs is a parser-recorded side table the LSP uses
+		// for hover / definition on type annotations. Merging
+		// them here means cross-module type queries find the
+		// right TypeRef for the entry module's source.
+		combined.TypeRefs = append(combined.TypeRefs, mod.prog.TypeRefs...)
 	}
 	return combined, nil
 }

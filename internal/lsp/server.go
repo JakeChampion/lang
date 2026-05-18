@@ -59,6 +59,13 @@ type Server struct {
 	// dropping at the source saves the JSON marshal + the client's
 	// debounce cycle.
 	lastDiags map[string][]Diagnostic
+
+	// workspace flips the URI-resolution strategy: when true, file://
+	// URIs route through modload (with the in-memory document buffer
+	// overriding disk for open files). cmd/lang-lsp sets it; the
+	// wasm wrapper leaves it off because the browser has no
+	// filesystem to read sibling modules from.
+	workspace bool
 }
 
 // NewServer returns a fresh Server with no open documents. Use Serve
@@ -319,13 +326,43 @@ func (s *Server) handleDidChange(raw json.RawMessage) *rpcError {
 //  1. The URI's existing docState already has this exact source —
 //     happens when an editor sends a redundant didChange (some do on
 //     focus events). No work, no publish-side churn.
-//  2. The shared compile cache has a prior entry for this source —
-//     happens on undo / redo and on opening a snippet you've seen
-//     before. Result is reused; URI's docState is rebuilt against it.
-//  3. New source: full pipeline, then both caches updated.
+//  2. (single-file mode) The shared compile cache has a prior entry
+//     for this source — happens on undo / redo and on opening a
+//     snippet you've seen before. Result is reused; URI's docState
+//     is rebuilt against it. The cache is bypassed in workspace
+//     mode because the result depends on the rest of the import
+//     closure too, not just this file's text.
+//  3. New source: full pipeline, then (single-file only) caches
+//     updated.
 func (s *Server) updateDoc(uri, src string) {
 	if prev, ok := s.docs[uri]; ok && prev.src == src {
 		return
+	}
+	// Workspace mode: thread through modload so cross-module imports
+	// load + type-check together. file:// URIs without a real path
+	// (the playground's opaque ones) fall back to single-file.
+	if s.workspace {
+		if entryPath, ok := uriToPath(uri); ok {
+			// Stash the new src in s.docs so loadWorkspace's
+			// override-snapshot sees the latest content for this
+			// URI. We rebuild state into the same slot below.
+			s.docs[uri] = &docState{src: src}
+			prog, info, diags, err := s.loadWorkspace(entryPath)
+			if err != nil {
+				diags = append(diags, Diagnostic{
+					Severity: severityError,
+					Source:   "lang",
+					Message:  err.Error(),
+				})
+			}
+			s.docs[uri] = &docState{
+				src:   src,
+				prog:  prog,
+				info:  info,
+				diags: filterEntryDiagnostics(diags, src),
+			}
+			return
+		}
 	}
 	if hit := s.cache.get(src); hit != nil {
 		s.docs[uri] = &docState{
@@ -346,6 +383,28 @@ func (s *Server) updateDoc(uri, src string) {
 	state.diags = collectDiagnostics(perr, checkErr)
 	s.docs[uri] = state
 	s.cache.put(src, state.prog, state.info, state.diags)
+}
+
+// filterEntryDiagnostics keeps only diagnostics whose Position falls
+// within entrySrc's line range. Workspace-mode loading produces
+// diagnostics across the whole import closure; without per-error
+// filename tracking (which would require touching every parser /
+// checker error type), this heuristic surfaces only entry-file
+// errors on the entry URI and silently drops errors from imported
+// modules. Imperfect but the alternative — false-positive cross-
+// file squiggles — is worse.
+func filterEntryDiagnostics(diags []Diagnostic, entrySrc string) []Diagnostic {
+	if len(diags) == 0 {
+		return diags
+	}
+	lineCount := strings.Count(entrySrc, "\n") + 1
+	out := make([]Diagnostic, 0, len(diags))
+	for _, d := range diags {
+		if d.Range.Start.Line < lineCount {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func collectDiagnostics(parseErr, checkErr error) []Diagnostic {
