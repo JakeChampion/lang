@@ -310,7 +310,10 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             match (at) {
                 TypeArray(ta) => { return ta.elem; },
-                _ => { return t_unknown("can only index into an array"); }
+                // String indexing returns the byte as i32 — same
+                // semantics as the production lang pipeline.
+                TypeString(_) => { return t_i32(); },
+                _ => { return t_unknown("can only index into an array or string"); }
             }
             return t_unknown("unreachable index arm");
         },
@@ -617,6 +620,12 @@ function main(): i32 {
     var stmts11: parser.Stmt[] = parser.parse_program(lexer.tokenize(src11));
     var pt11: ProgramTypes = check_program(stmts11);
     if (!is_unknown(pt11.tys[0])) { return 110; }
+
+    // String indexing: `s[0]` types as i32 (the byte).
+    var src12: string = "var s = \"hi\"; return s[0];";
+    var stmts12: parser.Stmt[] = parser.parse_program(lexer.tokenize(src12));
+    var pt12: ProgramTypes = check_program(stmts12);
+    if (!type_eq(pt12.tys[1], t_i32())) { return 120; }
 
     return 0;
 }

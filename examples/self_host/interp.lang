@@ -301,7 +301,23 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                         _ => { return v_err("array index must be i32"); }
                     }
                 },
-                _ => { return v_err("can only index into an array"); }
+                VString(s) => {
+                    // String indexing returns the byte at the
+                    // given position as i32 — matches the lang
+                    // semantics in the Go pipeline. Useful for
+                    // any text-processing code (the lexer's
+                    // own implementation reads bytes this way).
+                    match (iv) {
+                        VInt(ii) => {
+                            if (ii.v < 0 || ii.v >= len(s.v)) {
+                                return v_err("string index out of range");
+                            }
+                            return v_int(s.v[ii.v]);
+                        },
+                        _ => { return v_err("string index must be i32"); }
+                    }
+                },
+                _ => { return v_err("can only index into an array or string"); }
             }
             return v_err("unreachable index arm");
         },
@@ -795,6 +811,28 @@ function main(): i32 {
     match (r25) {
         VInt(i) => { if (i.v != 0) { return 250; } },
         _ => { return 251; }
+    }
+
+    // String indexing returns the byte at position as i32.
+    // ASCII 'h' is 104.
+    var r26: Value = run_source("var s = \"hello\"; return s[0];");
+    match (r26) {
+        VInt(i) => { if (i.v != 104) { return 260; } },
+        _ => { return 261; }
+    }
+
+    // String indexing + arithmetic: "ABC" → 'A' + 'B' + 'C' = 65 + 66 + 67 = 198.
+    var r27: Value = run_source("var s = \"ABC\"; return s[0] + s[1] + s[2];");
+    match (r27) {
+        VInt(i) => { if (i.v != 198) { return 270; } },
+        _ => { return 271; }
+    }
+
+    // Out-of-range string index → VErr.
+    var r28: Value = run_source("var s = \"hi\"; return s[5];");
+    match (r28) {
+        VErr(_) => { },
+        _ => { return 280; }
     }
 
     return 0;

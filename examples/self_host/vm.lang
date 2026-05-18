@@ -805,7 +805,23 @@ pub function exec_program(prog: CompiledProgram): Value {
                             _ => { stack = stack_push(stack, v_err("index: not i32")); }
                         }
                     },
-                    _ => { stack = stack_push(stack, v_err("index: receiver not array")); }
+                    VString(s) => {
+                        // String indexing — same semantics as the
+                        // interp + checker: byte at position
+                        // returned as VInt(byte). Parity across
+                        // both evaluators.
+                        match (pi.v) {
+                            VInt(ii) => {
+                                if (ii.v < 0 || ii.v >= len(s.v)) {
+                                    stack = stack_push(stack, v_err("string index out of range"));
+                                } else {
+                                    stack = stack_push(stack, v_int(s.v[ii.v]));
+                                }
+                            },
+                            _ => { stack = stack_push(stack, v_err("index: not i32")); }
+                        }
+                    },
+                    _ => { stack = stack_push(stack, v_err("index: receiver not array or string")); }
                 }
                 ip = ip + 1;
             },
@@ -1031,6 +1047,14 @@ function main(): i32 {
     match (r19) {
         VInt(i) => { if (i.v != 0) { return 190; } },
         _ => { return 191; }
+    }
+
+    // String indexing: `s[0]` returns the byte as i32.
+    // ASCII 'h' = 104.
+    var r20: Value = run_source("var s = \"hello\"; return s[0];");
+    match (r20) {
+        VInt(i) => { if (i.v != 104) { return 200; } },
+        _ => { return 201; }
     }
 
     return 0;
