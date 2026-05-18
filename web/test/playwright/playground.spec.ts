@@ -80,3 +80,56 @@ test("Share button updates the URL hash", async ({ page }) => {
   await page.locator("#share").click();
   await expect.poll(() => page.url()).toMatch(/#src=/);
 });
+
+test("View assembly compiles the default source for arm64", async ({ page }) => {
+  await gotoReady(page);
+  // Default target dropdown selection is arm64. Click View
+  // assembly; the panel should appear with non-empty asm text.
+  await page.locator("#viewAsm").click();
+  await expect(page.locator("#asmPanel")).toHaveClass(/shown/);
+  // The compile is synchronous (wasm call) but the status update
+  // is async via setTimeout(0); poll for the final state.
+  await expect(page.locator("#asmStatus")).toContainText(/arm64.*line/, {
+    timeout: 10_000,
+  });
+  // ARM64 assembly is GAS syntax; .text + ret are universal
+  // markers in any non-trivial emit.
+  await expect(page.locator("#asmOut")).toContainText(".text");
+});
+
+test("changing the asm target re-emits for that backend", async ({ page }) => {
+  await gotoReady(page);
+  await page.locator("#viewAsm").click();
+  await expect(page.locator("#asmPanel")).toHaveClass(/shown/);
+  await page.locator("#targetSelect").selectOption("wasm");
+  await expect(page.locator("#asmStatus")).toContainText(/wasm.*line/, {
+    timeout: 10_000,
+  });
+  // WebAssembly text format always opens with `(module`.
+  await expect(page.locator("#asmOut")).toContainText("(module");
+});
+
+test("theme toggle flips body.dark and updates the glyph", async ({ page }) => {
+  await gotoReady(page);
+  // Force light mode first so the toggle has a deterministic
+  // before-state regardless of the CI runner's prefers-color-
+  // scheme.
+  await page.evaluate(() => {
+    document.body.classList.remove("dark");
+    document.getElementById("themeGlyph")!.textContent = "🌙";
+  });
+  await expect(page.locator("body")).not.toHaveClass(/dark/);
+  await page.locator("#themeToggle").click();
+  await expect(page.locator("body")).toHaveClass(/dark/);
+  await expect(page.locator("#themeGlyph")).toHaveText("☀");
+  // Click back to light.
+  await page.locator("#themeToggle").click();
+  await expect(page.locator("body")).not.toHaveClass(/dark/);
+  await expect(page.locator("#themeGlyph")).toHaveText("🌙");
+});
+
+test("?theme=dark URL param boots into dark mode", async ({ page }) => {
+  await page.goto("/index.html?theme=dark");
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  await expect(page.locator("body")).toHaveClass(/dark/);
+});

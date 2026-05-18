@@ -32,6 +32,18 @@
 //     notification (publishDiagnostics, etc). The callback gets
 //     (method: string, params: object).
 //
+//   langCompile(src, target) -> {
+//       asm:    string,        // emitted assembly / WAT text
+//       error:  string | null, // parse / check / codegen failure
+//   }
+//     Compiles src for one of the supported targets and returns
+//     the textual output the corresponding cmd/lang `-target`
+//     flag would have written. Targets: "arm64" (Linux ELF),
+//     "arm64-darwin" (Mach-O variant), "x86-64" (Linux ELF),
+//     "wasm" (WebAssembly text format / .wat). The playground's
+//     "View assembly" pane consumes this for the Godbolt-style
+//     side-by-side experience.
+//
 // State is fresh per call for langInterpret. Imports aren't
 // supported (modload reads files from disk; the browser has
 // none). TCP / file I/O builtins on the lang side would error at
@@ -47,6 +59,9 @@ import (
 	"syscall/js"
 
 	"github.com/jakechampion/lang/internal/checker"
+	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
+	wasmcodegen "github.com/jakechampion/lang/internal/codegen/wasm"
+	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
@@ -166,6 +181,69 @@ func safeCall(ip *interp.Interp) (v interp.Value, err error) {
 	return ip.CallByName("main", nil)
 }
 
+// compile runs src through parse → constfold → check → monomorph
+// → backend.Emit for the requested target and returns the textual
+// output (assembly for native targets, .wat for wasm). Mirrors the
+// `lang -target X` CLI path so what the playground shows matches
+// what a build on the user's machine would produce.
+func compile(src, target string) map[string]any {
+	result := map[string]any{
+		"asm":   "",
+		"error": nil,
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			result["error"] = fmt.Sprintf("internal: %v", r)
+		}
+	}()
+
+	prog, err := parser.Parse(src)
+	if err != nil {
+		result["error"] = diag.Format("<playground>", src, err)
+		return result
+	}
+	if err := constfold.Fold(prog); err != nil {
+		result["error"] = diag.Format("<playground>", src, err)
+		return result
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		result["error"] = diag.Format("<playground>", src, err)
+		return result
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		result["error"] = diag.Format("<playground>", src, err)
+		return result
+	}
+
+	var out string
+	switch target {
+	case "arm64":
+		out, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{})
+	case "arm64-darwin":
+		out, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
+	case "x86-64":
+		out, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{})
+	case "wasm":
+		// Return the .wat text directly — the Preview 2 component
+		// wrapping the CLI does for `-o file.wasm` only matters
+		// when producing a runnable artefact. For a Godbolt-style
+		// inspection pane, the .wat is what the user wants to
+		// read.
+		out, err = wasmcodegen.Emit(prog, info)
+	default:
+		result["error"] = fmt.Sprintf("unknown target %q (want arm64, arm64-darwin, x86-64, wasm)", target)
+		return result
+	}
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	result["asm"] = out
+	return result
+}
+
 // lspServer is the persistent LSP server backing langLsp /
 // langLspOnNotify. A single instance owns the open-document cache
 // so request-response pairs make sense across calls.
@@ -227,6 +305,16 @@ func main() {
 		}
 		lspNotify = args[0]
 		return nil
+	}))
+
+	js.Global().Set("langCompile", js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			return map[string]any{
+				"asm":   "",
+				"error": "langCompile(src, target) requires two string arguments",
+			}
+		}
+		return compile(args[0].String(), args[1].String())
 	}))
 
 	// Keep the Go runtime alive — js.FuncOf handlers are
