@@ -4256,6 +4256,34 @@ function main(): i32 {
 	}
 }
 
+// Closure that recursively calls itself by name from inside its
+// own body — `fact(n - 1)` inside `function fact`. The checker
+// skips this self-reference in the capture set (to avoid the
+// chicken-and-egg of an env containing the closure that needs
+// the env) so closureconv has to bridge the renamed top-level
+// at the call site. Pre-fix the recursive `fact(...)` survived
+// unchanged and codegen tried to call a top-level `fact` that
+// no longer existed (the function was renamed to
+// `__closure_fact_1`) — wasm-tools rejected with `unknown
+// func: failed to find name $fact`.
+func TestWASMClosureRecursiveSelfCall(t *testing.T) {
+	src := `function makeFact(): (i32) => i32 {
+    function fact(n: i32): i32 {
+        if (n <= 1) { return 1; }
+        return n * fact(n - 1);
+    }
+    return fact;
+}
+function main(): i32 {
+    var f = makeFact();
+    return f(5);
+}`
+	// 5! = 120
+	if got := runWasm(t, src); got != 120 {
+		t.Errorf("got %d, want 120 (5!)", got)
+	}
+}
+
 func TestWASMMethodOnStruct(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function (p: Point) sum(): i32 { return p.x + p.y; }

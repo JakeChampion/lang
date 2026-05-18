@@ -112,9 +112,20 @@ func (c *converter) rewriteBlock(b *ast.Block, hoistedFor *captureCtx) error {
 // captureCtx tracks the captures in scope while rewriting a hoisted
 // function's body. byName maps each capture's original name to the
 // byte offset (4 * index) inside the env block.
+//
+// `selfOrigName` / `selfHoistedName` track the function being
+// hoisted right now so recursive self-references inside the body
+// (e.g. `fact(n - 1)` inside `fact`'s body) can be rewritten to a
+// direct call to the hoisted name + an `__env` arg forwarded
+// through. The checker deliberately doesn't capture the function's
+// own name to avoid a chicken-and-egg in the env's capture set, so
+// the rewrite is the only thing that bridges the renamed top-level
+// to the original recursive call site.
 type captureCtx struct {
-	byName  map[string]capInfo
-	envName string // always "$__env" but kept here for readability
+	byName          map[string]capInfo
+	envName         string // always "$__env" but kept here for readability
+	selfOrigName    string
+	selfHoistedName string
 }
 
 type capInfo struct {
@@ -332,6 +343,34 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		}
 		return n, nil
 	case *ast.Call:
+		// Recursive self-reference inside the hoisted body:
+		// `fact(n - 1)` where `fact` is the function whose body
+		// we're rewriting. The checker skipped this in capture
+		// collection (to avoid the chicken-and-egg of the env
+		// needing the closure that needs the env), so it would
+		// otherwise fall through unchanged — IR would then call
+		// a top-level `fact` which no longer exists (it's now
+		// `__closure_fact_1`). Rewrite to a direct call to the
+		// hoisted name and forward our own `__env` through so
+		// the recursive callee gets the same captured-state
+		// block we have. Skip the Ident-as-CaptureRef rewrite
+		// on the callee for this case (a captured value named
+		// the same as the hoisted fn would be ambiguous, but
+		// the checker's capture rule forbids that already).
+		if ctx != nil && ctx.selfOrigName != "" {
+			if id, ok := n.Callee.(*ast.Ident); ok && id.Name == ctx.selfOrigName {
+				n.Callee = &ast.Ident{P: id.P, Name: ctx.selfHoistedName}
+				for i, a := range n.Args {
+					na, err := c.rewriteExpr(a, ctx)
+					if err != nil {
+						return nil, err
+					}
+					n.Args[i] = na
+				}
+				n.Args = append(n.Args, &ast.Ident{P: id.P, Name: "__env"})
+				return n, nil
+			}
+		}
 		nc, err := c.rewriteExpr(n.Callee, ctx)
 		if err != nil {
 			return nil, err
@@ -465,7 +504,12 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 	// block is written sequentially and aligned-i64 reads after
 	// a sub-i32 capture would otherwise straddle a 4-byte
 	// boundary in the unhelpful direction.
-	ctx := &captureCtx{byName: map[string]capInfo{}, envName: "$__env"}
+	ctx := &captureCtx{
+		byName:          map[string]capInfo{},
+		envName:         "$__env",
+		selfOrigName:    origName,
+		selfHoistedName: hoistedName,
+	}
 	off := int32(0)
 	for _, cap := range fn.Captures {
 		ctx.byName[cap.Name] = capInfo{offset: int(off), typ: cap.Type}

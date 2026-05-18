@@ -11415,6 +11415,28 @@ function main(): i32 {
 	}
 }
 
+// Mirror of TestWASMClosureRecursiveSelfCall — closureconv now
+// rewrites a recursive self-reference inside the hoisted body
+// from the original local name (`fact`) to the hoisted name
+// (`__closure_fact_1`) and forwards `__env` through so the
+// recursive callee gets the same captured-state block.
+func TestArm64ClosureRecursiveSelfCall(t *testing.T) {
+	src := `function makeFact(): (i32) => i32 {
+    function fact(n: i32): i32 {
+        if (n <= 1) { return 1; }
+        return n * fact(n - 1);
+    }
+    return fact;
+}
+function main(): i32 {
+    var f = makeFact();
+    return f(5);
+}`
+	if _, code := compileAndRunArm64(t, src); code != 120 {
+		t.Errorf("got %d, want 120 (5!)", code)
+	}
+}
+
 // i32 ↔ i64 conversion. arm64 lowers OpExtendI32S via `sxtw`,
 // OpExtendI32U + OpWrapI64 via `mov w0, w0` (the 32-bit reg
 // form implicitly zero-extends the high half on AArch64).

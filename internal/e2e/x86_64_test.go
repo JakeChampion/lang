@@ -1426,6 +1426,28 @@ function main(): i32 {
 	}
 }
 
+// Mirror of TestWASMClosureRecursiveSelfCall — closureconv now
+// rewrites a recursive self-reference inside the hoisted body
+// from the original local name (`fact`) to the hoisted name
+// (`__closure_fact_1`) and forwards `__env` through so the
+// recursive callee gets the same captured-state block.
+func TestX86_64ClosureRecursiveSelfCall(t *testing.T) {
+	src := `function makeFact(): (i32) => i32 {
+    function fact(n: i32): i32 {
+        if (n <= 1) { return 1; }
+        return n * fact(n - 1);
+    }
+    return fact;
+}
+function main(): i32 {
+    var f = makeFact();
+    return f(5);
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 120 {
+		t.Errorf("got %d, want 120 (5!)", code)
+	}
+}
+
 // Map runtime — exercises the codegen-alias rewrites (`map_new`
 // → `map_new_impl`, `__method_Map_*` → `_impl`), the new
 // `__store_i32` / `__load_i32` / `__store_ptr` / `__load_ptr` /
