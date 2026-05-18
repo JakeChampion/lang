@@ -20,7 +20,7 @@ encodes things that must always be true about the playground:
 
    ```bash
    curl -L -o /usr/local/bin/bombadil \
-     https://github.com/antithesishq/bombadil/releases/download/v0.4.2/bombadil-x86_64-linux
+     https://github.com/antithesishq/bombadil/releases/download/v0.5.0/bombadil-x86_64-linux
    chmod +x /usr/local/bin/bombadil
    ```
 
