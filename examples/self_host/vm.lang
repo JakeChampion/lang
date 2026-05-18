@@ -42,13 +42,15 @@ import "./parser";
 pub struct VInt { v: i32 }
 pub struct VBool { v: boolean }
 pub struct VString { v: string }
+pub struct VArr { elements: Value[] }
 pub struct VErr { msg: string }
 
-pub type Value = VInt | VBool | VString | VErr;
+pub type Value = VInt | VBool | VString | VArr | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
+function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
 function v_err(msg: string): Value { return VErr { msg: msg }; }
 
 function is_err(v: Value): boolean {
@@ -84,13 +86,25 @@ pub struct OpPop { tag: i32 }
 // from the callee restores the caller's frame and pushes the
 // return value.
 pub struct OpCall { name: string, argc: i32 }
+// OpMakeArray pops `n` values off the stack and pushes a single
+// VArr holding them in source order — the LAST element pushed
+// sits at index n-1 (so we walk the stack top-to-bottom and
+// prepend, or bottom-to-top after a length-bounded slurp).
+pub struct OpMakeArray { n: i32 }
+// OpIndex pops (index, array) and pushes array[index].
+// VErrs on out-of-range, non-i32 index, non-array receiver.
+pub struct OpIndex { tag: i32 }
+// OpLen pops a VArr or VString and pushes its length as a VInt.
+pub struct OpLen { tag: i32 }
 pub struct OpReturn { tag: i32 }
 
 pub type Op = OpPushInt | OpPushBool | OpPushStr
             | OpLoadLocal | OpStoreLocal
             | OpBinary | OpUnary
             | OpJump | OpJumpIfFalse
-            | OpPop | OpCall | OpReturn;
+            | OpPop | OpCall
+            | OpMakeArray | OpIndex | OpLen
+            | OpReturn;
 
 function op_push_int(n: i32): Op { return OpPushInt { v: n }; }
 function op_push_bool(b: boolean): Op { return OpPushBool { v: b }; }
@@ -103,6 +117,9 @@ function op_jump(t: i32): Op { return OpJump { target: t }; }
 function op_jump_if_false(t: i32): Op { return OpJumpIfFalse { target: t }; }
 function op_pop(): Op { return OpPop { tag: 0 }; }
 function op_call(name: string, argc: i32): Op { return OpCall { name: name, argc: argc }; }
+function op_make_array(n: i32): Op { return OpMakeArray { n: n }; }
+function op_index(): Op { return OpIndex { tag: 0 }; }
+function op_len(): Op { return OpLen { tag: 0 }; }
 function op_return(): Op { return OpReturn { tag: 0 }; }
 
 // =================== COMPILER ====================
@@ -216,6 +233,15 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                     return CompileResult { ops: ops, lt: lt };
                 }
             }
+            // Builtin: `len(x)` lowers to OpLen instead of a
+            // function call. Matches the checker / interp's
+            // special-case for this name.
+            if (name == "len" && len(c.args) == 1) {
+                var lar: CompileResult = compile_expr(c.args[0], ops, lt);
+                ops = lar.ops; lt = lar.lt;
+                ops = ops.push(op_len());
+                return CompileResult { ops: ops, lt: lt };
+            }
             var i: i32 = 0;
             while (i < len(c.args)) {
                 var ar: CompileResult = compile_expr(c.args[i], ops, lt);
@@ -225,12 +251,22 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = ops.push(op_call(name, len(c.args)));
             return CompileResult { ops: ops, lt: lt };
         },
-        parser.ExprArray(_) => {
-            ops = ops.push(op_push_str("__noarray__"));
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < len(a.elements)) {
+                var er: CompileResult = compile_expr(a.elements[i], ops, lt);
+                ops = er.ops; lt = er.lt;
+                i = i + 1;
+            }
+            ops = ops.push(op_make_array(len(a.elements)));
             return CompileResult { ops: ops, lt: lt };
         },
-        parser.ExprIndex(_) => {
-            ops = ops.push(op_push_str("__noindex__"));
+        parser.ExprIndex(x) => {
+            var ar: CompileResult = compile_expr(x.array, ops, lt);
+            ops = ar.ops; lt = ar.lt;
+            var ir: CompileResult = compile_expr(x.index, ops, lt);
+            ops = ir.ops; lt = ir.lt;
+            ops = ops.push(op_index());
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprUnknown(_) => {
@@ -712,6 +748,59 @@ pub function exec_program(prog: CompiledProgram): Value {
                 locals = new_vm_locals(fl.locals_count);
                 ip = fl.entry;
             },
+            OpMakeArray(o) => {
+                // Pop `n` values off the stack. They were
+                // pushed in source order so the last-pushed
+                // sits on top — walk down to build the array
+                // bottom-up.
+                if (len(stack) < o.n) { return v_err("make_array: stack underflow"); }
+                var elems: Value[] = [];
+                var start: i32 = len(stack) - o.n;
+                var i: i32 = 0;
+                while (i < o.n) {
+                    elems = elems.push(stack[start + i]);
+                    i = i + 1;
+                }
+                // Trim the popped values off the stack.
+                var ns: Value[] = [];
+                var j: i32 = 0;
+                while (j < start) { ns = ns.push(stack[j]); j = j + 1; }
+                stack = ns;
+                stack = stack_push(stack, v_arr(elems));
+                ip = ip + 1;
+            },
+            OpIndex(_) => {
+                var pi: PopResult = stack_pop(stack); stack = pi.stack;
+                var pa: PopResult = stack_pop(stack); stack = pa.stack;
+                if (is_err(pi.v)) { stack = stack_push(stack, pi.v); ip = ip + 1; continue; }
+                if (is_err(pa.v)) { stack = stack_push(stack, pa.v); ip = ip + 1; continue; }
+                match (pa.v) {
+                    VArr(arr) => {
+                        match (pi.v) {
+                            VInt(ii) => {
+                                if (ii.v < 0 || ii.v >= len(arr.elements)) {
+                                    stack = stack_push(stack, v_err("array index out of range"));
+                                } else {
+                                    stack = stack_push(stack, arr.elements[ii.v]);
+                                }
+                            },
+                            _ => { stack = stack_push(stack, v_err("index: not i32")); }
+                        }
+                    },
+                    _ => { stack = stack_push(stack, v_err("index: receiver not array")); }
+                }
+                ip = ip + 1;
+            },
+            OpLen(_) => {
+                var p: PopResult = stack_pop(stack); stack = p.stack;
+                if (is_err(p.v)) { stack = stack_push(stack, p.v); ip = ip + 1; continue; }
+                match (p.v) {
+                    VArr(a) => { stack = stack_push(stack, v_int(len(a.elements))); },
+                    VString(s) => { stack = stack_push(stack, v_int(len(s.v))); },
+                    _ => { stack = stack_push(stack, v_err("len: not array or string")); }
+                }
+                ip = ip + 1;
+            },
             OpReturn(_) => {
                 if (len(stack) == 0) { return v_err("return: empty stack"); }
                 var ret_val: Value = stack[len(stack) - 1];
@@ -887,6 +976,43 @@ function main(): i32 {
     match (r14) {
         VErr(_) => { },
         _ => { return 140; }
+    }
+
+    // Array literal + indexing: `a[2] == 30`.
+    var r15: Value = run_source("var a = [10, 20, 30]; return a[2];");
+    match (r15) {
+        VInt(i) => { if (i.v != 30) { return 150; } },
+        _ => { return 151; }
+    }
+
+    // len() builtin on array → 4.
+    var r16: Value = run_source("var a = [1, 2, 3, 4]; return len(a);");
+    match (r16) {
+        VInt(i) => { if (i.v != 4) { return 160; } },
+        _ => { return 161; }
+    }
+
+    // Sum an array via while loop: 3 + 5 + 7 + 9 = 24.
+    var r17: Value = run_source(
+        "var a = [3, 5, 7, 9]; var i = 0; var s = 0; while (i < len(a)) { s = s + a[i]; i = i + 1; } return s;"
+    );
+    match (r17) {
+        VInt(i) => { if (i.v != 24) { return 170; } },
+        _ => { return 171; }
+    }
+
+    // Out-of-range index → VErr.
+    var r18: Value = run_source("var a = [1, 2]; return a[5];");
+    match (r18) {
+        VErr(_) => { },
+        _ => { return 180; }
+    }
+
+    // Empty array literal: len → 0.
+    var r19: Value = run_source("var a = []; return len(a);");
+    match (r19) {
+        VInt(i) => { if (i.v != 0) { return 190; } },
+        _ => { return 191; }
     }
 
     return 0;
