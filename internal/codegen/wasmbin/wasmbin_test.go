@@ -10,6 +10,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/wasm/encode"
 )
 
 // runUnderWasmtime writes bin to a temp file and invokes the named
@@ -569,6 +570,180 @@ func TestEmitReinterpret(t *testing.T) {
 	if got := runUnderWasmtime(t, bin, "main"); got != "305419896" { // 0x12345678
 		t.Fatalf("got %q, want 305419896", got)
 	}
+}
+
+// TestEmitMemoryRoundTrip — store-then-load round-trip across
+// every load/store width covered by slice 4. The function takes
+// the value as a param, stores it at a fixed address, loads it
+// back, returns. Catches drift in alignment, opcode bytes, and
+// the memory-section emission.
+func TestEmitMemoryRoundTrip(t *testing.T) {
+	cases := []struct {
+		name      string
+		paramType ast.Type
+		retType   ast.Type
+		// Ops body: assume addr is computed inline (0), param at
+		// local 0 is the value to write.
+		body []ir.Op
+		args []string
+		want string
+	}{
+		{"i32_store_load", i32(), i32(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpStore},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoad},
+		}, []string{"12345"}, "12345"},
+		{"i64_store_load", i64(), i64(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpStore, Width: 64},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoad, Width: 64},
+		}, []string{"9000000000"}, "9000000000"},
+		{"f32_store_load", f32(), f32(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpFStore},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpFLoad},
+		}, []string{"2.5"}, "2.5"},
+		{"f64_store_load", f64(), f64(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpFStore, Width: 64},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpFLoad, Width: 64},
+		}, []string{"1.25"}, "1.25"},
+		{"i8_store_load_u", i32(), i32(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpStoreI8},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadByte}, // load8_u
+		}, []string{"200"}, "200"}, // 200 fits unsigned byte
+		{"i8_store_load_s_negative", i32(), i32(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpStoreI8},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadI8S}, // sign-extending load
+		}, []string{"-3"}, "-3"},
+		{"i16_store_load_s_negative", i32(), i32(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpStoreI16},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadI16S}, // sign-extending load
+		}, []string{"-100"}, "-100"},
+		{"i16_store_load_u", i32(), i32(), []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpStoreI16},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoadI16U},
+		}, []string{"50000"}, "50000"},
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:       "rt",
+				Params:     []ast.Param{{Name: "v", Type: tc.paramType}},
+				ReturnType: tc.retType,
+				Ops:        tc.body,
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			dir := t.TempDir()
+			p := filepath.Join(dir, "prog.wasm")
+			if err := os.WriteFile(p, bin, 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			cmd := exec.Command("wasmtime", append([]string{"run", "--invoke", "rt", p}, tc.args...)...)
+			var so, se bytes.Buffer
+			cmd.Stdout = &so
+			cmd.Stderr = &se
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("rt%v: %v\nstderr:%s", tc.args, err, se.String())
+			}
+			got := strings.TrimSpace(so.String())
+			if got != tc.want {
+				t.Fatalf("rt%v = %q, want %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMemorySectionOnlyWhenUsed — a module with no memory ops
+// should NOT include a memory section. Tests the anyMemoryOp
+// gate; otherwise downstream tooling that inspects sections
+// would see a phantom memory.
+func TestMemorySectionOnlyWhenUsed(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	// Section IDs after the 8-byte preamble: id 1 (type),
+	// id 3 (function), id 7 (export), id 10 (code). Memory
+	// would be id 5 — its absence means no 0x05 byte appears
+	// at any section-header position.
+	for _, b := range bin {
+		if b == encode.SectionMemory {
+			// Could be a stray data byte, but if id 5 shows up,
+			// follow up: walk sections to confirm.
+			if walkHasMemorySection(t, bin) {
+				t.Fatalf("memory section present in memory-free module")
+			}
+			return
+		}
+	}
+}
+
+// walkHasMemorySection — scan the module after the 8-byte
+// preamble, hopping section headers (1 byte id + uleb size),
+// and report whether id 5 (memory) appears as a header.
+func walkHasMemorySection(t *testing.T, bin []byte) bool {
+	t.Helper()
+	if len(bin) < 8 {
+		return false
+	}
+	i := 8
+	for i < len(bin) {
+		id := bin[i]
+		i++
+		// Decode uleb size.
+		size := 0
+		shift := 0
+		for {
+			if i >= len(bin) {
+				return false
+			}
+			b := bin[i]
+			i++
+			size |= int(b&0x7f) << shift
+			if b&0x80 == 0 {
+				break
+			}
+			shift += 7
+		}
+		if id == encode.SectionMemory {
+			return true
+		}
+		i += size
+	}
+	return false
 }
 
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
