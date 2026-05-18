@@ -1,6 +1,8 @@
 package lsp
 
 import (
+	"strings"
+
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 )
@@ -22,9 +24,10 @@ type Location struct {
 // itself, or it's an unknown name) — the LSP spec treats null here
 // as "no jump target available".
 //
-// The uri argument is echoed back unchanged: in this single-file MVP
-// every definition lives in the same document. Cross-module jumps
-// arrive when we add module resolution alongside the modload story.
+// In workspace mode, when the resolved decl carries a SourceModule
+// path different from the calling URI's file, the response URI gets
+// rewritten so editors jump across files. Single-file mode echoes
+// the calling URI unchanged.
 func runDefinition(state *docState, uri string, pos Position) *Location {
 	if state == nil || state.prog == nil {
 		return nil
@@ -34,86 +37,126 @@ func runDefinition(state *docState, uri string, pos Position) *Location {
 	if hit == nil {
 		return nil
 	}
-	defPos, defLen, ok := locateDefinition(state.info, state.prog, hit)
+	defPos, defLen, defURI, ok := locateDefinition(state.info, state.prog, hit, uri)
 	if !ok {
 		return nil
 	}
 	return &Location{
-		URI:   uri,
+		URI:   defURI,
 		Range: rangeOf(defPos, defLen),
 	}
 }
 
-// locateDefinition returns the (position, name-length) of the
-// declaration the name resolves to. Resolution order matches
+// locateDefinition returns the (position, name-length, target URI)
+// of the declaration the name resolves to. Resolution order matches
 // describeName: enum variant → struct constructor → type ref →
-// field access → ident (local → parameter → top-level function /
-// struct / enum).
-func locateDefinition(info *checker.Info, prog *ast.Program, hit *nameHit) (ast.Position, int, bool) {
+// field access → ident. The fallbackURI is returned for definitions
+// that live in the same file as the cursor; cross-module decls
+// (StructDecl / EnumDecl / FuncDecl with non-empty SourceModule)
+// rewrite to the file:// URI of their declaring module so editors
+// jump to the right file.
+func locateDefinition(info *checker.Info, prog *ast.Program, hit *nameHit, fallbackURI string) (ast.Position, int, string, bool) {
 	if hit.enumLit != nil && info != nil {
 		if ed, ok := info.Enums[hit.enumLit.EnumName]; ok {
 			for _, v := range ed.Variants {
 				if v.Name == hit.name {
-					return v.P, len(hit.name), true
+					return v.P, len(hit.name), declURI(ed.SourceModule, fallbackURI), true
 				}
 			}
 		}
 	}
 	if hit.structLit != nil && info != nil {
 		if sd, ok := info.Structs[hit.name]; ok {
-			return sd.P, len(hit.name), true
+			return sd.P, len(hit.name), declURI(sd.SourceModule, fallbackURI), true
 		}
 	}
 	if hit.typeRef != nil && info != nil {
-		if sd, ok := info.Structs[hit.name]; ok {
-			return sd.P, len(hit.name), true
-		}
-		if ed, ok := info.Enums[hit.name]; ok {
-			return ed.P, len(hit.name), true
+		// Try the raw source spelling first ("Point"), then the
+		// modload-mangled form ("util.Point" → "util__Point") so
+		// cross-module references resolve in workspace mode.
+		for _, candidate := range mangleCandidates(hit.name) {
+			if sd, ok := info.Structs[candidate]; ok {
+				return sd.P, len(hit.name), declURI(sd.SourceModule, fallbackURI), true
+			}
+			if ed, ok := info.Enums[candidate]; ok {
+				return ed.P, len(hit.name), declURI(ed.SourceModule, fallbackURI), true
+			}
 		}
 	}
 	if hit.fieldAccess != nil && info != nil {
-		if pos, ok := locateField(info, hit.enclosing, hit.fieldAccess); ok {
-			return pos, len(hit.name), true
+		if pos, srcMod, ok := locateField(info, hit.enclosing, hit.fieldAccess); ok {
+			return pos, len(hit.name), declURI(srcMod, fallbackURI), true
 		}
 	}
 	if hit.ident != nil {
-		return locateIdentDef(info, prog, hit.enclosing, hit.name)
+		pos, n, srcMod, ok := locateIdentDef(info, prog, hit.enclosing, hit.name)
+		if ok {
+			return pos, n, declURI(srcMod, fallbackURI), true
+		}
 	}
-	return ast.Position{}, 0, false
+	return ast.Position{}, 0, "", false
+}
+
+// mangleCandidates returns the names worth trying when looking up a
+// source spelling against the modload-mangled checker.Info maps.
+// `Point` → [`Point`]. `util.Point` → [`util.Point`, `util__Point`].
+// Single-file programs hit the first try; workspace mode hits the
+// second for cross-module qualified references.
+func mangleCandidates(name string) []string {
+	if !strings.Contains(name, ".") {
+		return []string{name}
+	}
+	return []string{name, strings.ReplaceAll(name, ".", "__")}
+}
+
+// declURI converts a SourceModule path (modload's absolute-path form)
+// into a file:// URI for the LSP Location. Empty SourceModule means
+// the decl is in the same file as the cursor, so we return the
+// fallback URI unchanged.
+func declURI(sourceModule, fallback string) string {
+	if sourceModule == "" {
+		return fallback
+	}
+	// Don't try to URI-ify the stdlib:// pseudo-paths — they
+	// aren't real files. Cross-module jumps into the stdlib stay
+	// pointed at the caller's URI; that's acceptable for an MVP.
+	if strings.HasPrefix(sourceModule, "stdlib://") {
+		return fallback
+	}
+	return pathToURI(sourceModule)
 }
 
 // locateField finds the declaration position of the field accessed
 // in fa. StructDecl.Fields entries are ast.Param which don't carry
 // per-field positions, so we jump to the StructDecl itself —
 // editors scroll the user near enough to spot the field.
-func locateField(info *checker.Info, enclosing *ast.FuncDecl, fa *ast.FieldAccess) (ast.Position, bool) {
+func locateField(info *checker.Info, enclosing *ast.FuncDecl, fa *ast.FieldAccess) (ast.Position, string, bool) {
 	targetType := exprResolvedType(info, enclosing, fa.Target)
 	if targetType == nil {
-		return ast.Position{}, false
+		return ast.Position{}, "", false
 	}
 	st, ok := targetType.(ast.StructType)
 	if !ok {
-		return ast.Position{}, false
+		return ast.Position{}, "", false
 	}
 	sd, ok := info.Structs[st.Name]
 	if !ok {
-		return ast.Position{}, false
+		return ast.Position{}, "", false
 	}
 	for _, f := range sd.Fields {
 		if f.Name == fa.Field {
-			return sd.P, true
+			return sd.P, sd.SourceModule, true
 		}
 	}
-	return ast.Position{}, false
+	return ast.Position{}, "", false
 }
 
-func locateIdentDef(info *checker.Info, prog *ast.Program, enclosing *ast.FuncDecl, name string) (ast.Position, int, bool) {
+func locateIdentDef(info *checker.Info, prog *ast.Program, enclosing *ast.FuncDecl, name string) (ast.Position, int, string, bool) {
 	if enclosing != nil {
 		if info != nil {
 			for _, v := range info.Locals[enclosing] {
 				if v.Name == name {
-					return v.P, len(name), true
+					return v.P, len(name), "", true
 				}
 			}
 		}
@@ -123,7 +166,7 @@ func locateIdentDef(info *checker.Info, prog *ast.Program, enclosing *ast.FuncDe
 		// surrounding signature, which is good enough for the MVP.
 		for _, p := range enclosing.Params {
 			if p.Name == name {
-				return enclosing.P, len(enclosing.Name), true
+				return enclosing.P, len(enclosing.Name), "", true
 			}
 		}
 	}
@@ -131,23 +174,27 @@ func locateIdentDef(info *checker.Info, prog *ast.Program, enclosing *ast.FuncDe
 		if _, ok := info.FuncSigs[name]; ok {
 			for _, fd := range prog.Funcs {
 				if fd.Name == name {
-					return fd.P, len(name), true
+					return fd.P, len(name), fd.SourceModule, true
 				}
 			}
 		}
 		if sd, ok := info.Structs[name]; ok {
-			return sd.P, len(name), true
+			return sd.P, len(name), sd.SourceModule, true
 		}
 		if ed, ok := info.Enums[name]; ok {
-			return ed.P, len(name), true
+			return ed.P, len(name), ed.SourceModule, true
 		}
 		// Bare enum variants (`Red`, `None`) — same fallback as
 		// describeIdentName for the variant case.
-		if _, v, ok := lookupVariant(info, name); ok {
-			return v.P, len(name), true
+		if enumName, v, ok := lookupVariant(info, name); ok {
+			var srcMod string
+			if ed, ok := info.Enums[enumName]; ok {
+				srcMod = ed.SourceModule
+			}
+			return v.P, len(name), srcMod, true
 		}
 	}
-	return ast.Position{}, 0, false
+	return ast.Position{}, 0, "", false
 }
 
 // rangeOf builds an LSP Range from a 1-based ast.Position + a byte

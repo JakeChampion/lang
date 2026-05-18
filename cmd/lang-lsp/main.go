@@ -18,6 +18,12 @@ import (
 
 func main() {
 	s := lsp.NewServer()
+	// Editors give us file:// URIs against real filesystem paths,
+	// so route multi-file programs through modload — cross-module
+	// imports type-check + resolve to-definition for the user.
+	// The wasm wrapper leaves this off because the browser has
+	// no sibling files to read.
+	s.EnableWorkspace()
 	if err := s.Serve(os.Stdin, os.Stdout); err != nil {
 		// Write to stderr so we don't corrupt the LSP wire format
 		// on stdout. The editor will see a non-zero exit and most

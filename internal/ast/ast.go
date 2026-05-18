@@ -1250,6 +1250,13 @@ type StructDecl struct {
 	// Same semantics as FuncDecl.Public — private structs can't be
 	// referenced from other modules.
 	Public bool
+	// SourceModule mirrors FuncDecl.SourceModule — modload stamps
+	// the canonical module path that declared this struct so the
+	// LSP can answer cross-module goto-definition queries (jump
+	// from `util.Point` use site to `Point`'s declaration in
+	// util.lang). Empty for parser-only single-file programs and
+	// prelude-injected decls.
+	SourceModule string
 }
 
 // EnumDecl is a top-level `enum Foo { Bar, Baz(Int), … }`. Each
@@ -1275,6 +1282,9 @@ type EnumDecl struct {
 	// other modules name `Foo`, including its variants in match
 	// patterns and constructors.
 	Public bool
+	// SourceModule mirrors FuncDecl.SourceModule. See StructDecl
+	// for the cross-module-LSP rationale.
+	SourceModule string
 }
 
 // EnumVariant is one constructor in an EnumDecl. Payloads are
