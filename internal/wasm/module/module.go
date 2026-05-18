@@ -13,10 +13,6 @@
 // in the order: type, import, function, table, memory, global,
 // export, start, element, code, data. Build emits them in
 // that order, skipping any section whose input is empty.
-//
-// Table + element sections aren't covered; the existing wasm
-// backend doesn't exercise them, and section ids 4 + 9 stay
-// unused without breaking parseability.
 package module
 
 import (
@@ -50,6 +46,20 @@ type Module struct {
 	MemoryMin     uint32
 	MemoryMax     int32
 
+	// Table section. wasm 1.0 caps tables at 1; reftype is
+	// fixed to funcref (the only reftype in MVP). Same gating
+	// pattern as memory.
+	TablePresent bool
+	TableMin     uint32
+	TableMax     int32
+
+	// Element section — one active segment per index. The
+	// caller supplies the per-segment offset (i32.const <off>)
+	// and funcidx vector. wasm requires the matching table
+	// (always table 0) to be wide enough to hold every slot.
+	ElementOffsets  []int32
+	ElementFuncidxs [][]uint32
+
 	// Global section
 	GlobalValtypes []byte
 	GlobalMuts     []byte
@@ -78,6 +88,7 @@ type Module struct {
 func New() Module {
 	return Module{
 		MemoryMax: -1,
+		TableMax:  -1,
 	}
 }
 
@@ -99,7 +110,9 @@ func Build(m Module) []byte {
 		bytes = sections.EncodeFunctionSection(bytes, m.FunctionTypeidxs)
 	}
 
-	// Table section (id 4) — intentionally skipped; no input.
+	if m.TablePresent {
+		bytes = sections.EncodeTableSection(bytes, m.TableMin, m.TableMax)
+	}
 
 	if m.MemoryPresent {
 		bytes = sections.EncodeMemorySection(bytes, m.MemoryMin, m.MemoryMax)
@@ -117,7 +130,9 @@ func Build(m Module) []byte {
 		bytes = sections.EncodeStartSection(bytes, m.StartFuncidx)
 	}
 
-	// Element section (id 9) — intentionally skipped; no input.
+	if len(m.ElementOffsets) > 0 {
+		bytes = sections.EncodeElementSection(bytes, m.ElementOffsets, m.ElementFuncidxs)
+	}
 
 	if len(m.CodeBodies) > 0 {
 		bytes = sections.EncodeCodeSection(bytes, m.CodeBodies)

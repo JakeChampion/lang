@@ -72,6 +72,50 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		return idx
 	}
 
+	ctx := &emitCtx{
+		funcIdx: funcIdx,
+		addSigType: func(sig *ast.FuncType) (uint32, error) {
+			params := make([]byte, 0, len(sig.Params))
+			for _, pt := range sig.Params {
+				vt, err := valtypeFor(pt)
+				if err != nil {
+					return 0, err
+				}
+				params = append(params, vt)
+			}
+			results, err := resultValtypes(sig.Result)
+			if err != nil {
+				return 0, err
+			}
+			return addType(params, results), nil
+		},
+	}
+
+	// Table section is emitted iff the program contains any
+	// indirect-call op (OpCallIndirect / OpCallClosureDirect /
+	// OpConstFunc). Slice 6 includes every function in the
+	// program in the funcref table at its declaration index —
+	// the simplest layout that lets OpCallIndirect dispatch by
+	// funcidx.
+	if anyTableOp(prog) {
+		n := uint32(len(prog.Funcs))
+		m.TablePresent = true
+		m.TableMin = n
+		m.TableMax = -1
+		idxs := make([]uint32, n)
+		for i := range idxs {
+			idxs[i] = uint32(i)
+		}
+		m.ElementOffsets = []int32{0}
+		m.ElementFuncidxs = [][]uint32{idxs}
+		// Export the table too — useful for hosts that want to
+		// poke at the slot layout. Same canonical name the WAT
+		// emitter uses.
+		m.ExportNames = append(m.ExportNames, "__indirect_function_table")
+		m.ExportKinds = append(m.ExportKinds, sections.ExportTable)
+		m.ExportIdxs = append(m.ExportIdxs, 0)
+	}
+
 	// Memory section is emitted iff any function in the program
 	// touches memory (load / store / sub-width variants / fN load
 	// or store). Slice-4 modules ship a single linear memory of
@@ -104,7 +148,7 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
 		m.ExportIdxs = append(m.ExportIdxs, uint32(fnIdx))
 
-		body, locals, err := emitBody(fn, funcIdx)
+		body, locals, err := emitBody(fn, ctx)
 		if err != nil {
 			return nil, fmt.Errorf("wasmbin: %s: %w", fn.Name, err)
 		}
@@ -189,11 +233,24 @@ func localValtypes(fn *ir.Func) ([]byte, error) {
 	return out, nil
 }
 
+// emitCtx bundles per-program lookups shared across every op
+// emitted in this build. Growing this struct is preferable to
+// growing emitOp's signature for each new slice.
+type emitCtx struct {
+	// funcIdx maps an IR function name to its funcidx in the
+	// emitted module. OpCallDirect / OpCallClosureDirect use it.
+	funcIdx map[string]uint32
+	// addSigType resolves a function-type signature to its
+	// typeidx, lazily inserting into the type section. Used by
+	// OpCallIndirect, whose op.Sig carries the static signature.
+	addSigType func(*ast.FuncType) (uint32, error)
+}
+
 // emitBody walks fn.Ops and returns the function's body bytes plus
 // its locals-preamble bytes (the latter pre-wrapped by
 // inst.PutLocalsOneGroup-equivalent encoding for the declared local
 // valtypes).
-func emitBody(fn *ir.Func, funcIdx map[string]uint32) (body, locals []byte, err error) {
+func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 	lvts, err := localValtypes(fn)
 	if err != nil {
 		return nil, nil, err
@@ -201,7 +258,7 @@ func emitBody(fn *ir.Func, funcIdx map[string]uint32) (body, locals []byte, err 
 	locals = encodeLocals(lvts)
 
 	for opIdx, op := range fn.Ops {
-		body, err = emitOp(body, op, funcIdx)
+		body, err = emitOp(body, op, ctx)
 		if err != nil {
 			return nil, nil, fmt.Errorf("op[%d] %v: %w", opIdx, op.Kind, err)
 		}
@@ -239,8 +296,9 @@ func encodeLocals(vts []byte) []byte {
 }
 
 // emitOp translates one IR op into its wasm bytes and appends them
-// to body. Op coverage is intentionally narrow for slice 1.
-func emitOp(body []byte, op ir.Op, funcIdx map[string]uint32) ([]byte, error) {
+// to body. Op coverage grows slice-by-slice; unsupported ops
+// return an error rather than emitting invalid bytes.
+func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	switch op.Kind {
 	case ir.OpConstI32:
 		return inst.InstI32Const(body, op.I32), nil
@@ -590,13 +648,53 @@ func emitOp(body []byte, op ir.Op, funcIdx map[string]uint32) ([]byte, error) {
 
 	// ---- Calls (slice 5) ----
 	case ir.OpCallDirect:
-		idx, ok := funcIdx[op.Str]
+		idx, ok := ctx.funcIdx[op.Str]
 		if !ok {
 			return nil, fmt.Errorf("OpCallDirect: unknown callee %q", op.Str)
 		}
 		return inst.InstCall(body, idx), nil
+
+	// ---- Indirect calls (slice 6) ----
+	case ir.OpCallClosureDirect:
+		// Defunctionalised closure call: env_ptr is already on the
+		// stack as the last arg, so this is just a direct call to
+		// the hoisted target name.
+		idx, ok := ctx.funcIdx[op.Str]
+		if !ok {
+			return nil, fmt.Errorf("OpCallClosureDirect: unknown callee %q", op.Str)
+		}
+		return inst.InstCall(body, idx), nil
+	case ir.OpCallIndirect:
+		if op.Sig == nil {
+			return nil, fmt.Errorf("OpCallIndirect: missing op.Sig")
+		}
+		tIdx, err := ctx.addSigType(op.Sig)
+		if err != nil {
+			return nil, fmt.Errorf("OpCallIndirect: resolving signature: %w", err)
+		}
+		// table 0 (the only table in MVP); typeidx as the call
+		// signature. Stack at this point: [args..., funcidx].
+		return inst.InstCallIndirect(body, tIdx, 0), nil
 	}
 	return nil, fmt.Errorf("unsupported op %v", op.Kind)
+}
+
+// anyTableOp reports whether prog needs a table + element section.
+// Indirect calls (OpCallIndirect) dispatch through the funcref
+// table; OpConstFunc materialises a static table-slot pointer.
+// OpCallClosureDirect doesn't dispatch through the table — its
+// callee is hoisted by closure conversion — so it isn't listed
+// here.
+func anyTableOp(prog *ir.Program) bool {
+	for _, fn := range prog.Funcs {
+		for _, op := range fn.Ops {
+			switch op.Kind {
+			case ir.OpCallIndirect, ir.OpConstFunc:
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // anyMemoryOp reports whether prog needs a memory section. Any

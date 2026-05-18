@@ -117,6 +117,57 @@ func EncodeStartSection(buf []byte, funcidx uint32) []byte {
 	return encode.PutSection(buf, encode.SectionStart, body)
 }
 
+// EncodeTableSection emits the table section (id 4): vec(table).
+// Wasm 1.0 allows at most one table so this writes exactly one
+// entry. tabletype is `reftype + limits`. reftype is 0x70 for
+// funcref (the only reftype in MVP). Limits follow the same
+// encoding as memory: flag byte (0 = no max, 1 = with max),
+// initial slot count, optional max. maxSlots < 0 means
+// "no maximum".
+//
+// Spec: https://webassembly.github.io/spec/core/binary/modules.html#table-section
+func EncodeTableSection(buf []byte, minSlots uint32, maxSlots int32) []byte {
+	body := leb128.UlebU32(nil, 1) // exactly one table
+	body = append(body, 0x70)      // funcref
+	if maxSlots < 0 {
+		body = append(body, 0x00)
+		body = leb128.UlebU32(body, minSlots)
+	} else {
+		body = append(body, 0x01)
+		body = leb128.UlebU32(body, minSlots)
+		body = leb128.UlebU32(body, uint32(maxSlots))
+	}
+	return encode.PutSection(buf, encode.SectionTable, body)
+}
+
+// EncodeElementSection emits the element section (id 9): vec(elem).
+// Each segment in slice 6 is the simplest MVP shape — "active in
+// table 0, with offset expression `i32.const N + end`, and a
+// funcidx vector". That's element-kind 0x00 in the binary
+// encoding.
+//
+// The two parallel slices give the per-segment offset (constant
+// i32) and funcidx vector. Slot layout downstream of the offset
+// is sequential, matching the wasm spec's "active" semantics.
+//
+// Spec: https://webassembly.github.io/spec/core/binary/modules.html#element-section
+func EncodeElementSection(buf []byte, offsets []int32, funcidxs [][]uint32) []byte {
+	body := leb128.UlebU32(nil, uint32(len(offsets)))
+	for i, off := range offsets {
+		body = append(body, 0x00) // active, table 0
+		// offset expression: i32.const <off> + end (0x0b).
+		body = append(body, 0x41) // i32.const
+		body = leb128.SlebI32(body, off)
+		body = append(body, 0x0b) // end
+		// vec(funcidx)
+		body = leb128.UlebU32(body, uint32(len(funcidxs[i])))
+		for _, idx := range funcidxs[i] {
+			body = leb128.UlebU32(body, idx)
+		}
+	}
+	return encode.PutSection(buf, encode.SectionElement, body)
+}
+
 // EncodeCodeSection emits the code section: vec(code). Each
 // entry is itself a `size : uleb + locals_vec + expr` —
 // already produced by inst.PutFunctionBody (when we add it) on
