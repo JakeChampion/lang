@@ -296,8 +296,11 @@ func (s *Server) handleDidOpen(raw json.RawMessage) *rpcError {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return &rpcError{Code: errCodeInvalidRequest, Message: err.Error()}
 	}
-	s.updateDoc(p.TextDocument.URI, p.TextDocument.Text)
+	affected := s.updateDoc(p.TextDocument.URI, p.TextDocument.Text)
 	s.publishDiagnostics(p.TextDocument.URI)
+	for _, u := range affected {
+		s.publishDiagnostics(u)
+	}
 	return nil
 }
 
@@ -312,8 +315,11 @@ func (s *Server) handleDidChange(raw json.RawMessage) *rpcError {
 	// Full-sync mode: the last entry holds the entire new document.
 	// We ignore Range; editors that respect our declared sync kind
 	// never send one.
-	s.updateDoc(p.TextDocument.URI, p.ContentChanges[len(p.ContentChanges)-1].Text)
+	affected := s.updateDoc(p.TextDocument.URI, p.ContentChanges[len(p.ContentChanges)-1].Text)
 	s.publishDiagnostics(p.TextDocument.URI)
+	for _, u := range affected {
+		s.publishDiagnostics(u)
+	}
 	return nil
 }
 
@@ -334,9 +340,14 @@ func (s *Server) handleDidChange(raw json.RawMessage) *rpcError {
 //     closure too, not just this file's text.
 //  3. New source: full pipeline, then (single-file only) caches
 //     updated.
-func (s *Server) updateDoc(uri, src string) {
+// updateDoc returns the list of OTHER open URIs whose cached
+// diagnostics changed as a side-effect of this update (workspace
+// mode only — a load from main.lang can update util.lang's diags
+// if util.lang is also open). The caller is responsible for
+// publishing diagnostics to each URI in the returned list.
+func (s *Server) updateDoc(uri, src string) []string {
 	if prev, ok := s.docs[uri]; ok && prev.src == src {
-		return
+		return nil
 	}
 	// Workspace mode: thread through modload so cross-module imports
 	// load + type-check together. file:// URIs without a real path
@@ -347,21 +358,37 @@ func (s *Server) updateDoc(uri, src string) {
 			// override-snapshot sees the latest content for this
 			// URI. We rebuild state into the same slot below.
 			s.docs[uri] = &docState{src: src}
-			prog, info, diags, err := s.loadWorkspace(entryPath)
-			if err != nil {
-				diags = append(diags, Diagnostic{
-					Severity: severityError,
-					Source:   "lang",
-					Message:  err.Error(),
-				})
-			}
+			prog, info, diagsByFile := s.loadWorkspace(entryPath)
 			s.docs[uri] = &docState{
 				src:   src,
 				prog:  prog,
 				info:  info,
-				diags: filterEntryDiagnostics(diags, src),
+				diags: diagsByFile[entryPath],
 			}
-			return
+			// Propagate diagnostics for any OTHER open URI that
+			// the load touched (sibling modules in the import
+			// closure that the editor also has open). Each one's
+			// cached diags become the new per-file slice; the
+			// caller publishes them.
+			var affected []string
+			for otherURI, doc := range s.docs {
+				if otherURI == uri {
+					continue
+				}
+				otherPath, ok := uriToPath(otherURI)
+				if !ok {
+					continue
+				}
+				newDiags := diagsByFile[otherPath]
+				if newDiags == nil {
+					newDiags = []Diagnostic{}
+				}
+				if !diagnosticsEqual(doc.diags, newDiags) {
+					doc.diags = newDiags
+					affected = append(affected, otherURI)
+				}
+			}
+			return affected
 		}
 	}
 	if hit := s.cache.get(src); hit != nil {
@@ -371,7 +398,7 @@ func (s *Server) updateDoc(uri, src string) {
 			info:  hit.info,
 			diags: hit.diags,
 		}
-		return
+		return nil
 	}
 	state := &docState{src: src}
 	prog, perr := parseFor(src)
@@ -383,28 +410,7 @@ func (s *Server) updateDoc(uri, src string) {
 	state.diags = collectDiagnostics(perr, checkErr)
 	s.docs[uri] = state
 	s.cache.put(src, state.prog, state.info, state.diags)
-}
-
-// filterEntryDiagnostics keeps only diagnostics whose Position falls
-// within entrySrc's line range. Workspace-mode loading produces
-// diagnostics across the whole import closure; without per-error
-// filename tracking (which would require touching every parser /
-// checker error type), this heuristic surfaces only entry-file
-// errors on the entry URI and silently drops errors from imported
-// modules. Imperfect but the alternative — false-positive cross-
-// file squiggles — is worse.
-func filterEntryDiagnostics(diags []Diagnostic, entrySrc string) []Diagnostic {
-	if len(diags) == 0 {
-		return diags
-	}
-	lineCount := strings.Count(entrySrc, "\n") + 1
-	out := make([]Diagnostic, 0, len(diags))
-	for _, d := range diags {
-		if d.Range.Start.Line < lineCount {
-			out = append(out, d)
-		}
-	}
-	return out
+	return nil
 }
 
 func collectDiagnostics(parseErr, checkErr error) []Diagnostic {

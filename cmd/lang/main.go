@@ -31,6 +31,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
@@ -55,6 +56,43 @@ func absPath(p string) string {
 		return p
 	}
 	return abs
+}
+
+// formatLoadError renders a structured modload / checker error by
+// pulling each entry's File() and looking that file's source up in
+// the srcs map. Errors without a File() (the checker's pre-decl
+// pass before c.current is set) fall back to entryPath's source.
+// Renders each entry on its own block, matching what the previous
+// in-modload wrapping produced for single-file programs.
+func formatLoadError(err error, srcs map[string]string, entryPath string) error {
+	if err == nil {
+		return nil
+	}
+	entryAbs := absPath(entryPath)
+	entrySrc := srcs[entryAbs]
+	render := func(one error) string {
+		path := ""
+		if f, ok := one.(diag.Filed); ok {
+			path = f.File()
+		}
+		src := srcs[path]
+		if src == "" {
+			path = entryPath
+			src = entrySrc
+		}
+		return diag.Format(path, src, one)
+	}
+	if es, ok := err.(diag.Errors); ok {
+		var b strings.Builder
+		for i, e := range es {
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(render(e))
+		}
+		return fmt.Errorf("%s", b.String())
+	}
+	return fmt.Errorf("%s", render(err))
 }
 
 func main() {
@@ -189,7 +227,7 @@ func runInterp(srcPath string) (int, error) {
 	} else {
 		p, srcs, err := modload.Load(srcPath)
 		if err != nil {
-			return 1, err
+			return 1, formatLoadError(err, srcs, srcPath)
 		}
 		prog = p
 		src = srcs[absPath(srcPath)]
@@ -239,7 +277,7 @@ func runInterp(srcPath string) (int, error) {
 func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapter string, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
-		return 1, err
+		return 1, formatLoadError(err, srcs, srcPath)
 	}
 	src := srcs[absPath(srcPath)]
 	if err := constfold.Fold(prog); err != nil {
@@ -247,7 +285,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		return 1, formatLoadError(err, srcs, srcPath)
 	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))

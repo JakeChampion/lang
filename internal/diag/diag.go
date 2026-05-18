@@ -43,6 +43,51 @@ type Hinted interface {
 	Hint() string
 }
 
+// Filed is optionally satisfied by errors that know which source
+// file they were emitted against. modload stamps this on parser /
+// lexer errors after each module's parse so cross-file diagnostics
+// can be routed back to the right URI in workspace-mode LSP. The
+// checker fills it from `c.current.SourceModule` whenever the
+// emitting context is a known FuncDecl. Empty string means
+// "unknown" — callers should fall back to the entry file.
+type Filed interface {
+	error
+	File() string
+}
+
+// WithFile walks err and stamps `filename` on every entry that
+// implements `error` and exposes a `*string` SetFile mutator (via
+// the unexported setFile interface concrete error types implement).
+// Used by modload to attribute parser / lexer errors to the module
+// they came from. Single errors and diag.Errors slices are both
+// handled.
+func WithFile(err error, filename string) error {
+	if err == nil {
+		return nil
+	}
+	if es, ok := err.(Errors); ok {
+		for _, e := range es {
+			stampFile(e, filename)
+		}
+		return es
+	}
+	stampFile(err, filename)
+	return err
+}
+
+// setFile is the package-private mutator concrete error types
+// satisfy to let WithFile poke their File field. Kept unexported
+// so consumers can't paint random errors with bogus paths.
+type setFile interface {
+	setFile(filename string)
+}
+
+func stampFile(err error, filename string) {
+	if s, ok := err.(setFile); ok {
+		s.setFile(filename)
+	}
+}
+
 // Errors is a flat collection of errors. Useful when a pass (e.g. the
 // type checker) wants to report many problems in one go.
 type Errors []error

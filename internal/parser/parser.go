@@ -17,12 +17,15 @@ import (
 )
 
 type Error struct {
-	Pos ast.Position
-	Msg string
+	Pos  ast.Position
+	Msg  string
+	Path string // source file path; populated by modload, empty otherwise
 }
 
-func (e *Error) Error() string         { return fmt.Sprintf("parse error at %s: %s", e.Pos, e.Msg) }
+func (e *Error) Error() string          { return fmt.Sprintf("parse error at %s: %s", e.Pos, e.Msg) }
 func (e *Error) Position() ast.Position { return e.Pos }
+func (e *Error) File() string           { return e.Path }
+func (e *Error) setFile(p string)       { e.Path = p }
 
 // Parse turns source into a Program, lexing along the way. The parser
 // recovers from per-statement and per-function errors and continues so

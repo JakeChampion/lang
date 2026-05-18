@@ -147,6 +147,74 @@ func TestUriToPath_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestWorkspace_CrossFileDiagnosticsRoute(t *testing.T) {
+	// Two-file workspace: main.lang is clean; util.lang has a type
+	// error. Both are open in the editor. After opening main, the
+	// workspace load should publish empty diagnostics for main and
+	// the util-side error for util.
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.lang")
+	utilPath := filepath.Join(dir, "util.lang")
+	writeFile(t, mainPath,
+		"import \"./util\";\nfunction main(): i32 { return util.thing(); }\n")
+	writeFile(t, utilPath,
+		"pub function thing(): i32 { return undeclared_in_util; }\n")
+
+	s := NewServer()
+	s.EnableWorkspace()
+	publishes := map[string][]Diagnostic{}
+	s.SetPublisher(func(method string, params any) {
+		if method != "textDocument/publishDiagnostics" {
+			return
+		}
+		b, _ := json.Marshal(params)
+		var p publishDiagnosticsParams
+		_ = json.Unmarshal(b, &p)
+		publishes[p.URI] = p.Diagnostics
+	})
+
+	mainURI := pathToURI(mainPath)
+	utilURI := pathToURI(utilPath)
+
+	// Open util first so it's in the override map; opening main
+	// triggers the workspace load and should route util's errors
+	// to its own URI.
+	openUtil, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didOpen",
+		Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
+			URI: utilURI, LanguageID: "lang",
+			Text: "pub function thing(): i32 { return undeclared_in_util; }\n",
+		}}),
+	})
+	s.HandleMessage(openUtil)
+	// util opened standalone — its own load reports the error.
+	if len(publishes[utilURI]) == 0 {
+		t.Fatalf("expected diagnostics on util URI after standalone open, got %+v", publishes[utilURI])
+	}
+
+	openMain, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didOpen",
+		Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
+			URI: mainURI, LanguageID: "lang",
+			Text: "import \"./util\";\nfunction main(): i32 { return util.thing(); }\n",
+		}}),
+	})
+	s.HandleMessage(openMain)
+
+	// main should publish empty diagnostics (it's clean).
+	if mainDiags := publishes[mainURI]; len(mainDiags) != 0 {
+		t.Errorf("main URI should have no diagnostics, got %+v", mainDiags)
+	}
+	// util's diagnostics should STILL be populated — routed by file
+	// path, not by which URI the editor opened.
+	utilDiags := publishes[utilURI]
+	if len(utilDiags) == 0 {
+		t.Errorf("util URI should retain its diagnostics after main load, got empty")
+	}
+}
+
 func TestUriToPath_RejectsNonFileScheme(t *testing.T) {
 	if _, ok := uriToPath("inmemory:///x.lang"); ok {
 		t.Errorf("expected uriToPath to reject non-file scheme")
