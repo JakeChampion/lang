@@ -1146,6 +1146,28 @@ func walkStmt(s ast.Stmt, fn func(*ast.Call)) {
 		for _, arm := range x.Arms {
 			walkStmt(arm.Body, fn)
 		}
+	case *ast.FuncDecl:
+		// Nested function declarations (`function f() { ... }`
+		// as a stmt — IsLocal=true). The body can contain
+		// generic calls that need rewriting just like a
+		// top-level decl's body. Without this case, an
+		// `id(x)` / `pick(...)` inside a local fn survives
+		// past the rewrite step and the monomorph re-check
+		// fails with "undefined identifier".
+		walkBlock(x.Body, fn)
+	case *ast.Defer:
+		walkExpr(x.Expr, fn)
+	case *ast.Switch:
+		walkExpr(x.Tag, fn)
+		for _, c := range x.Cases {
+			for _, v := range c.Values {
+				walkExpr(v, fn)
+			}
+			walkBlock(c.Body, fn)
+		}
+		if x.Default != nil {
+			walkBlock(x.Default, fn)
+		}
 	}
 }
 
@@ -1224,6 +1246,12 @@ func walkExpr(e ast.Expr, fn func(*ast.Call)) {
 	case *ast.Assign:
 		walkExpr(x.Target, fn)
 		walkExpr(x.Value, fn)
+	case *ast.Lambda:
+		// Lambda expression — `function (...) { ... }` in
+		// expression position. The body is a Block that can
+		// host generic calls just like a top-level decl's
+		// body.
+		walkBlock(x.Body, fn)
 	case *ast.CastExpr:
 		walkExpr(x.Inner, fn)
 	}

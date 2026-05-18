@@ -219,6 +219,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"pick[T] generic call":       false,
 		"for-each over array":        false,
 		"for-each over map":          false,
+		"nested function (closure)":  false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -398,6 +399,10 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "for (__fe_k") {
 			want["for-each over map"] = true
+		}
+		// Nested function: `function __local_fn<N>(...)`.
+		if strings.Contains(src, "function __local_fn") {
+			want["nested function (closure)"] = true
 		}
 	}
 	for feature, ok := range want {

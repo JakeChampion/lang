@@ -224,6 +224,36 @@ func TestInterpFStringFallback(t *testing.T) {
 	}
 }
 
+// TestInterpClosure exercises the Closure Value: a nested
+// function captures `n` from the enclosing scope and returns
+// `x + n` when called.
+func TestInterpClosure(t *testing.T) {
+	src := `function main(): i32 {
+		var n: i32 = 100;
+		function bump(x: i32): i32 { return x + n; }
+		return bump(5);
+	}`
+	got, _ := evalChecked(t, src)
+	if n, ok := got.(Number); !ok || int64(n) != 105 {
+		t.Errorf("got %v, want 105", got)
+	}
+}
+
+// TestInterpLambda exercises the *ast.Lambda Value path: an
+// anonymous function expression is bound to a var and then
+// invoked.
+func TestInterpLambda(t *testing.T) {
+	src := `function main(): i32 {
+		var k: i32 = 7;
+		var mul: (i32) => i32 = function (x: i32): i32 { return x * k; };
+		return mul(6);
+	}`
+	got, _ := evalChecked(t, src)
+	if n, ok := got.(Number); !ok || int64(n) != 42 {
+		t.Errorf("got %v, want 42", got)
+	}
+}
+
 // TestInterpMapBasic exercises the new Map runtime through the
 // surface user code sees: literal construction, .get returning
 // Some / None, .set + read-back, .len, .has, .delete. Each

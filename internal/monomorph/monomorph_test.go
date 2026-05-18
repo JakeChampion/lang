@@ -53,6 +53,22 @@ function main(): i32 {
     return n;
 }`,
 		},
+		{
+			name: "nested FuncDecl body",
+			src: `function id[T](x: T): T { return x; }
+function main(): i32 {
+    function bump(x: i32): i32 { return id(x) + 1; }
+    return bump(41);
+}`,
+		},
+		{
+			name: "Lambda body",
+			src: `function id[T](x: T): T { return x; }
+function main(): i32 {
+    var f: (i32) => i32 = function (x: i32): i32 { return id(x) + 1; };
+    return f(41);
+}`,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

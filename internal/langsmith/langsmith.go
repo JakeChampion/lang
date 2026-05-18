@@ -257,6 +257,18 @@ type Generator struct {
 	// `__opt_` prefix keeps these out of any path that the
 	// user-style `v*` / `p*` / `w*` names take.
 	optBindCounter int
+	// localHelpers tracks nested function declarations emitted
+	// inside the currently-being-generated body. Lifetime is
+	// the enclosing function — funcDecl / MainProgram
+	// save+restore around each body so local helpers stay
+	// scoped to their declaring function. emitCall walks
+	// localHelpers alongside the top-level helpers list so
+	// callable candidates include both.
+	localHelpers []helperSig
+	// localFnCounter names emitted local function decls
+	// (`__local_fn0`, ...). Generator-private prefix keeps
+	// these out of the user-style namespace.
+	localFnCounter int
 	// Dynamic nominal types. Each entry in structShapes /
 	// enumShapes lives at a gtype value beyond `numTypes`
 	// (allocated by nextNominal). Multiple struct / enum
@@ -541,12 +553,18 @@ func (g *Generator) MainProgram() string {
 	prevRet := g.currentReturnType
 	g.currentReturnType = tI32
 	defer func() { g.currentReturnType = prevRet }()
+	prevLocals := g.localHelpers
+	g.localHelpers = nil
+	defer func() { g.localHelpers = prevLocals }()
 	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
 		if g.maybeEmitWhile(&b, sc) {
 			continue
 		}
 		if g.maybeEmitForEach(&b, sc) {
+			continue
+		}
+		if g.maybeEmitLocalFn(&b, sc) {
 			continue
 		}
 		// Main's vars are drawn from the deterministic-across-
@@ -767,12 +785,18 @@ func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 // the bounded-counter pattern (see emitWhileLoop) and don't add
 // anything to the outer scope.
 func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
+	prevLocals := g.localHelpers
+	g.localHelpers = nil
+	defer func() { g.localHelpers = prevLocals }()
 	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
 		if g.maybeEmitWhile(b, sc) {
 			continue
 		}
 		if g.maybeEmitForEach(b, sc) {
+			continue
+		}
+		if g.maybeEmitLocalFn(b, sc) {
 			continue
 		}
 		vt := g.pickType()
@@ -853,6 +877,55 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 
 	fmt.Fprintf(b, "%s = %s + 1i32; ", counter, counter)
 	b.WriteString("} ")
+}
+
+// maybeEmitLocalFn probabilistically emits a nested function
+// declaration as a statement. Local fns are full closures —
+// they read outer-scope vars by name (the checker's capture
+// analysis stamps the FuncDecl.Captures list, and codegen /
+// the interpreter use that snapshot at the def site).
+//
+// Returns true when it wrote one (caller should skip the
+// var-decl it would have emitted otherwise). Adds the
+// signature to g.localHelpers so subsequent expressions in
+// the same body can emitCall it. The localHelpers list is
+// scoped to the enclosing function — save+restore around
+// each body keeps cross-function state clean.
+func (g *Generator) maybeEmitLocalFn(b *strings.Builder, sc *scope) bool {
+	if g.flip(0.88) {
+		return false
+	}
+	idx := g.localFnCounter
+	g.localFnCounter++
+	name := fmt.Sprintf("__local_fn%d", idx)
+	nParams := g.ch.intN(maxInt(g.cfg.MaxParams, 0) + 1)
+	params := make([]gtype, nParams)
+	inner := newScope(sc)
+	fmt.Fprintf(b, "function %s(", name)
+	for i := 0; i < nParams; i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		pt := g.pickType()
+		params[i] = pt
+		pn := fmt.Sprintf("lp%d", i)
+		inner.declare(pt, pn)
+		fmt.Fprintf(b, "%s: %s", pn, g.typeName(pt))
+	}
+	b.WriteByte(')')
+	ret := g.pickType()
+	fmt.Fprintf(b, ": %s { return ", g.typeName(ret))
+	// Body is a single return expression. Don't recurse into
+	// emitWhile / emitForEach / nested local fns from the body
+	// shape — that'd bloat the source and put nested closures
+	// on hot paths the diff oracle hasn't proved out yet.
+	prevReturnType := g.currentReturnType
+	g.currentReturnType = ret
+	g.expr(b, inner, ret, 0)
+	g.currentReturnType = prevReturnType
+	b.WriteString("; } ")
+	g.localHelpers = append(g.localHelpers, helperSig{name: name, params: params, retType: ret})
+	return true
 }
 
 // maybeEmitForEach probabilistically emits a `for x in arr { ... }`
@@ -1339,6 +1412,11 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) bool {
 	var cands []helperSig
 	for _, h := range g.helpers {
+		if h.retType == t {
+			cands = append(cands, h)
+		}
+	}
+	for _, h := range g.localHelpers {
 		if h.retType == t {
 			cands = append(cands, h)
 		}
