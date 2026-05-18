@@ -4097,8 +4097,7 @@ func (b *builder) maybeFoldArithIdentity(n *ast.Binary) (error, bool) {
 				if err := b.expr(n.Right); err != nil {
 					return err, true
 				}
-				b.emit(Op{Kind: OpConstI32, I32: k})
-				b.emit(Op{Kind: OpShl})
+				b.emitShlByConst(n, k)
 				return nil, true
 			}
 		}
@@ -4107,13 +4106,31 @@ func (b *builder) maybeFoldArithIdentity(n *ast.Binary) (error, bool) {
 				if err := b.expr(n.Left); err != nil {
 					return err, true
 				}
-				b.emit(Op{Kind: OpConstI32, I32: k})
-				b.emit(Op{Kind: OpShl})
+				b.emitShlByConst(n, k)
 				return nil, true
 			}
 		}
 	}
 	return nil, false
+}
+
+// emitShlByConst pushes a constant shift count `k` of the
+// width matching `n`'s resolved integer width, then emits
+// OpShl with that width. For i64 binaries the count needs
+// to be i64 on wasm (`i64.shl` requires `i64` operands) —
+// the previous shape emitted OpConstI32 and OpShl{Width:0},
+// which wasm rejected with "type mismatch: expected i64,
+// found i32" any time the strength-reduction rewrote
+// `i64-expr * 2^k` into a shift. Native targets ignored
+// the width on the const, so the failure was wasm-only.
+func (b *builder) emitShlByConst(n *ast.Binary, k int32) {
+	if n.IntWidth == 64 {
+		b.emit(Op{Kind: OpConstI64, I64: int64(k)})
+		b.emit(Op{Kind: OpShl, Width: 64})
+		return
+	}
+	b.emit(Op{Kind: OpConstI32, I32: k})
+	b.emit(Op{Kind: OpShl})
 }
 
 // constNumber peels back the small set of AST shapes that
@@ -4176,11 +4193,17 @@ func (b *builder) maybeFoldSelfIdentity(n *ast.Binary) (error, bool) {
 	}
 	switch n.Op {
 	case "-", "^":
-		b.emit(Op{Kind: OpConstI32, I32: 0})
+		// `x - x` / `x ^ x` collapse to 0. Width must match
+		// the binary's resolved IntWidth — emitting i32 0
+		// into an i64 context breaks the wasm validator
+		// ("type mismatch: expected i64, found i32").
+		b.emitZeroConstForWidth(n.IntWidth)
 		return nil, true
 	case "|", "&":
 		return b.expr(n.Left), true
 	case "==", "<=", ">=":
+		// Comparisons produce booleans (i32) regardless of
+		// operand width — leave at i32 0/1.
 		b.emit(Op{Kind: OpConstI32, I32: 1})
 		return nil, true
 	case "!=", "<", ">":
@@ -4188,6 +4211,18 @@ func (b *builder) maybeFoldSelfIdentity(n *ast.Binary) (error, bool) {
 		return nil, true
 	}
 	return nil, false
+}
+
+// emitZeroConstForWidth pushes a zero constant whose IR
+// width matches `intWidth` — i64 when 64, i32 otherwise.
+// Used by the strength-reduction / self-identity folds to
+// avoid mixing i32 and i64 on the operand stack on wasm.
+func (b *builder) emitZeroConstForWidth(intWidth int) {
+	if intWidth == 64 {
+		b.emit(Op{Kind: OpConstI64, I64: 0})
+		return
+	}
+	b.emit(Op{Kind: OpConstI32, I32: 0})
 }
 
 // powerOfTwo returns (k, true) when n == 1 << k for some

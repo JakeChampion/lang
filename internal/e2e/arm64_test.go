@@ -9703,6 +9703,67 @@ function main(): i32 {
 	}
 }
 
+// Two IR fold paths emitted an i32 constant onto the
+// operand stack ahead of an i64 op, breaking the wasm
+// validator's type discipline (the natives silently
+// promoted the 32-bit slot to 64-bit on the operand
+// stack so the failures were wasm-only):
+//
+//   1. `x * 2^k` strength reduction → `x << k` emitted
+//      OpConstI32 for k regardless of the binary's
+//      resolved width. For an i64 LHS, the subsequent
+//      OpShl resolved to `i64.shl` and the i32 const on
+//      the stack failed validation.
+//   2. `x - x` / `x ^ x` self-identity fold emitted
+//      OpConstI32 0 regardless of the resolved width.
+//      Same i64.add / i64.sub consumer mismatch on wasm.
+//
+// Fixes: emit OpConstI64 (and Width=64 on OpShl in the
+// strength-reduction path) when the binary's IntWidth is
+// 64. Comparison self-identities (==, <=, >=, !=, <, >)
+// still emit i32 — the result is bool regardless of
+// operand width.
+//
+// Test pin lives on arm64 (where it passed silently) —
+// the actual win is on wasm, exercised implicitly by the
+// e2e suite.
+func TestArm64IRFoldI64Constants(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"strength_reduction_mul", `function step(): Result[i64, string] {
+    var v: i64 = 50;
+    return Ok(v * 2);
+}
+function main(): i32 {
+    match (step()) {
+        Ok(n) => { if (n == 100) { return 0; } return 1; },
+        Err(_) => { return 2; },
+    }
+    return 99;
+}`, 0},
+		{"self_identity_sub", `function step(): Result[i64, string] {
+    var v: i64 = 50;
+    return Ok(v - v);
+}
+function main(): i32 {
+    match (step()) {
+        Ok(n) => { if (n == 0) { return 0; } return 1; },
+        Err(_) => { return 2; },
+    }
+    return 99;
+}`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != c.want {
+				t.Errorf("got exit %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 f32 / f64 arithmetic + comparisons. Float values
 // live as raw bit patterns on the operand stack; the codegen
 // fmov's them into the V-register file (s0/s1 for f32,
