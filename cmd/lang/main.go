@@ -27,11 +27,9 @@
 package main
 
 import (
-	"embed"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,6 +48,7 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/printer"
+	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
 // absPath returns the canonical absolute form of p, or p itself if
@@ -553,25 +552,16 @@ func link(asm, outPath, cc string) error {
 	return nil
 }
 
-// witFS bundles the WIT package(s) the wasm backend's preview-2
-// imports refer to. Embedding lets `lang` ship as a single binary —
-// `wasm-tools component embed` reads them from a temp directory we
-// extract at preview-2 emission time. Add new WIT under
-// cmd/lang/wit/ and they'll be picked up automatically.
-//
-//go:embed wit
-var witFS embed.FS
-
 // emitPreview2ComponentWorld wraps the WAT in a Component Model
 // component matching the named WIT world (currently `lang` for the
 // CLI target or `http` for the HTTP-handler target). Pipeline:
 //  1. write WAT to a temp file;
 //  2. `wasm-tools parse` lowers it to a binary core module;
-//  3. `wasm-tools component embed` annotates the module with the
-//     `local:lang/<world>` WIT world so the component-new step
-//     knows how to lift the native preview-2 imports we emit and,
-//     for the http world, where the exported
-//     `wasi:http/incoming-handler.handle` lives;
+//  3. internal/wasm/componenttype.Embed appends the `component-type`
+//     custom section for the world — replacing the `wasm-tools
+//     component embed` shell-out. The payload bytes are precomputed
+//     per world (see internal/wasm/componenttype/doc.go) so we don't
+//     need to parse WIT at runtime.
 //  4. `wasm-tools component new --adapt wasi_snapshot_preview1=ADAPTER`
 //     composes the module with the adapter; preview-1 imports
 //     (args/env/proc_exit) get translated to preview-2 by the
@@ -591,11 +581,6 @@ func emitPreview2ComponentWorld(wat, outPath, adapterPath, world string) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	witDir := filepath.Join(tmpDir, "wit")
-	if err := extractWIT(witDir); err != nil {
-		return fmt.Errorf("extract embedded WIT: %w", err)
-	}
-
 	watPath := filepath.Join(tmpDir, "prog.wat")
 	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
 		return err
@@ -604,11 +589,17 @@ func emitPreview2ComponentWorld(wat, outPath, adapterPath, world string) error {
 	if out, err := exec.Command("wasm-tools", "parse", watPath, "-o", modulePath).CombinedOutput(); err != nil {
 		return fmt.Errorf("wasm-tools parse failed: %w\n%s", err, out)
 	}
+	coreBytes, err := os.ReadFile(modulePath)
+	if err != nil {
+		return fmt.Errorf("read core module: %w", err)
+	}
+	embeddedBytes, err := componenttype.Embed(coreBytes, world)
+	if err != nil {
+		return fmt.Errorf("embed component-type section: %w", err)
+	}
 	embeddedPath := filepath.Join(tmpDir, "prog.embedded.wasm")
-	if out, err := exec.Command("wasm-tools", "component", "embed",
-		witDir, "-w", world,
-		modulePath, "-o", embeddedPath).CombinedOutput(); err != nil {
-		return fmt.Errorf("wasm-tools component embed failed: %w\n%s", err, out)
+	if err := os.WriteFile(embeddedPath, embeddedBytes, 0o644); err != nil {
+		return fmt.Errorf("write embedded module: %w", err)
 	}
 	if out, err := exec.Command("wasm-tools", "component", "new",
 		"--adapt", "wasi_snapshot_preview1="+adapterPath,
@@ -616,28 +607,6 @@ func emitPreview2ComponentWorld(wat, outPath, adapterPath, world string) error {
 		return fmt.Errorf("wasm-tools component new failed: %w\n%s", err, out)
 	}
 	return nil
-}
-
-// extractWIT walks the embedded `wit/` tree and writes it under
-// dstRoot, preserving the relative directory structure. Used to
-// hand a real on-disk path to `wasm-tools component embed`, which
-// resolves WIT imports through the filesystem.
-func extractWIT(dstRoot string) error {
-	return fs.WalkDir(witFS, "wit", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel("wit", p)
-		dst := filepath.Join(dstRoot, rel)
-		if d.IsDir() {
-			return os.MkdirAll(dst, 0o755)
-		}
-		data, err := witFS.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(dst, data, 0o644)
-	})
 }
 
 // execUnderQemu runs binPath through the supplied user-mode emulator
