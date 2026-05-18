@@ -89,6 +89,7 @@ function op_name(op: vm.Op): string {
         vm.OpMakeArray(_) => { return "MAKE_ARRAY"; },
         vm.OpIndex(_) => { return "INDEX"; },
         vm.OpLen(_) => { return "LEN"; },
+        vm.OpSlice(_) => { return "SLICE"; },
         vm.OpReturn(_) => { return "RETURN"; }
     }
     return "???";
@@ -115,6 +116,7 @@ function op_immediate(op: vm.Op): string {
         vm.OpMakeArray(o) => { return i32_to_string(o.n); },
         vm.OpIndex(_) => { return ""; },
         vm.OpLen(_) => { return ""; },
+        vm.OpSlice(_) => { return ""; },
         vm.OpReturn(_) => { return ""; }
     }
     return "";

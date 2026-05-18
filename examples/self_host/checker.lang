@@ -317,6 +317,19 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             return t_unknown("unreachable index arm");
         },
+        parser.ExprSlice(sl) => {
+            var at: Type = check_expr(sl.array, s);
+            var st: Type = check_expr(sl.start, s);
+            var et: Type = check_expr(sl.end, s);
+            if (!type_eq(st, t_i32())) { return t_unknown("slice start must be i32"); }
+            if (!type_eq(et, t_i32())) { return t_unknown("slice end must be i32"); }
+            match (at) {
+                TypeArray(_) => { return at; },
+                TypeString(_) => { return at; },
+                _ => { return t_unknown("can only slice array or string"); }
+            }
+            return t_unknown("unreachable slice arm");
+        },
         parser.ExprUnknown(u) => { return t_unknown("parser-side unknown:" + u.kind); }
     }
     return t_unknown("unhandled Expr variant");
@@ -626,6 +639,12 @@ function main(): i32 {
     var stmts12: parser.Stmt[] = parser.parse_program(lexer.tokenize(src12));
     var pt12: ProgramTypes = check_program(stmts12);
     if (!type_eq(pt12.tys[1], t_i32())) { return 120; }
+
+    // String slicing preserves type: `s[1:4]` is still TypeString.
+    var src13: string = "var s = \"hello\"; var t = s[1:4]; return 0;";
+    var stmts13: parser.Stmt[] = parser.parse_program(lexer.tokenize(src13));
+    var pt13: ProgramTypes = check_program(stmts13);
+    if (!type_eq(pt13.tys[1], t_string())) { return 130; }
 
     return 0;
 }

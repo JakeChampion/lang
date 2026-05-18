@@ -111,6 +111,9 @@ function print_expr(e: parser.Expr): string {
         parser.ExprIndex(x) => {
             return print_expr(x.array) + "[" + print_expr(x.index) + "]";
         },
+        parser.ExprSlice(sl) => {
+            return print_expr(sl.array) + "[" + print_expr(sl.start) + ":" + print_expr(sl.end) + "]";
+        },
         parser.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
     }
     return "/*unhandled-expr*/";
@@ -284,6 +287,19 @@ function main(): i32 {
             }
         },
         _ => { return 51; }
+    }
+
+    // Slice round-trip: `s[1:4]` → re-parses as an ExprSlice.
+    var src6: string = "var s = \"hello\"; var t = s[1:4]; return 0;";
+    var rt6: parser.Module = roundtrip_module(src6);
+    match (rt6.top_stmts[1]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprSlice(_) => { },
+                _ => { return 60; }
+            }
+        },
+        _ => { return 61; }
     }
 
     return 0;
