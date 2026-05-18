@@ -78,6 +78,14 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"modulo", "return 23 % 5;", 3},
 		{"unary-neg-via-zero-minus", "return 0 - 5 + 10;", 5},
 		{"nested-arith", "return (2 + 3) * 4;", 20},
+		{"cmp-lt-true", "return 5 < 10;", 1},
+		{"cmp-lt-false", "return 10 < 5;", 0},
+		{"cmp-le-true", "return 5 <= 5;", 1},
+		{"cmp-gt-true", "return 7 > 3;", 1},
+		{"cmp-ge-true", "return 7 >= 7;", 1},
+		{"cmp-eq-true", "return 4 == 4;", 1},
+		{"cmp-eq-false", "return 4 == 5;", 0},
+		{"cmp-ne-true", "return 4 != 5;", 1},
 	}
 
 	for _, tc := range cases {
