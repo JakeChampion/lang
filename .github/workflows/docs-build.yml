@@ -1,12 +1,20 @@
 name: Docs build
 
-# Per-PR validation that the docs site still builds. Runs the
-# same steps the Pages workflow does on push, minus the deploy:
-# build the playground wasm, stage it under site/public/,
-# regenerate the stdlib reference via cmd/langdoc, then run
-# `npm run build` under site/. Failures here block the PR — a
-# docs change that breaks the build (broken MDX, missing
-# component import, dangling link) shouldn't land.
+# Per-PR validation that the docs site builds + behaves. Three
+# layers stacked on top of each other:
+#
+#   1. Build the playground wasm, stage it under site/public/,
+#      regenerate the stdlib reference via cmd/langdoc, then run
+#      `npm run build` under site/. Failures here block the PR —
+#      a docs change that breaks the build (broken MDX, missing
+#      component import) shouldn't land.
+#   2. Link-check the built site with lychee. Catches dangling
+#      `/tutorial/foo/` references that survived the build but
+#      point at nothing.
+#   3. Run the Playwright suite under site/test/playwright/
+#      against the built site (served by `astro preview`).
+#      Asserts navigation + sidebar + embedded playground +
+#      stdlib pages + search dialog work.
 #
 # Path-filtered so unrelated edits don't burn minutes; the same
 # filter the Pages workflow uses, kept in sync manually for now.
@@ -73,6 +81,37 @@ jobs:
         run: |
           npm install
           npm run build
+
+      - name: Link-check (lychee)
+        # Crawls site/dist/ for dangling internal links + verifies
+        # the small set of external links we hard-coded. Settings
+        # live in .github/lychee.toml.
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config .github/lychee.toml 'site/dist/**/*.html'
+          fail: true
+
+      - name: Install Playwright deps
+        working-directory: site/test/playwright
+        run: |
+          npm install
+          # --with-deps installs the apt packages Chromium needs
+          # under Ubuntu sandbox restrictions.
+          npx playwright install --with-deps chromium
+
+      - name: Run docs Playwright suite
+        # `astro preview` (started by playwright.config.ts's
+        # webServer) serves site/dist/ at /lang/.
+        working-directory: site/test/playwright
+        run: npx playwright test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-playwright-report
+          path: site/test/playwright/playwright-report/
+          if-no-files-found: ignore
 
       - name: Upload built site (for review on failed deploys)
         if: failure()
