@@ -3146,6 +3146,25 @@ function main(): i32 {
 	}
 }
 
+// `(function (x) { … })(arg)` — calling a lambda immediately at
+// the definition site. The Lambda lowers via closureconv to a
+// MakeClosure expression; the IR's `call()` dispatch now
+// recognises *ast.Lambda AND *ast.MakeClosure callees (the
+// closureconv pass rewrites Lambda → MakeClosure before the IR
+// builder runs, so the MakeClosure branch is the one that fires
+// in practice; the Lambda branch covers paths that bypass
+// closureconv). Same OpCallIndirect shape function-typed locals
+// already use.
+func TestWASMImmediateLambdaCall(t *testing.T) {
+	src := `function main(): i32 {
+    var n: i32 = (function (x: i32): i32 { return x * 2; })(21);
+    return n;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (immediate lambda call)", got)
+	}
+}
+
 // Lambda inside a generic function — the lambda's params /
 // return type may reference the enclosing function's type
 // parameters. Pre-fix the checker's resolveTypesInBlock didn't
