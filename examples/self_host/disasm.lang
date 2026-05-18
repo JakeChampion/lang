@@ -1,0 +1,207 @@
+// examples/self_host/disasm.lang — eighth concrete step of the
+// self-host port. Reads the bytecode produced by vm.lang's
+// compile_module and emits a human-readable text rendering. The
+// VM's textual companion: same tree-walking shape as the
+// printer (#639), only it walks bytecode rather than AST.
+//
+// Output format (one op per line):
+//
+//   0000  PUSH_INT     7
+//   0001  STORE_LOCAL  0
+//   0002  LOAD_LOCAL   0
+//   0003  PUSH_INT     2
+//   0004  BINARY       *
+//   0005  RETURN
+//
+// Indices are zero-padded to four digits so they line up under
+// the largest realistic program (10k ops). Op names are
+// uppercase-snake to read as instructions; immediates follow
+// after a fixed-width column.
+//
+// Why a separate layer: debugging the VM was awkward without a
+// readable view of what compile_module emitted. This file
+// gives us that view in ~150 lines of lang, validating that
+// the bytecode shape is stable + observable from a third party.
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+import "./vm";
+
+// =================== STRING HELPERS ====================
+
+// i32_to_string — same LSB-first digit loop the printer +
+// constfold use. Could be lifted to a shared core helper once
+// we have generics in the parser stub.
+function i32_to_string(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i32 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
+
+// pad_left: right-aligns `s` in a column of width `w` by
+// prepending zeros. Used for the four-digit op index.
+function pad_left(s: string, w: i32): string {
+    var out: string = s;
+    while (len(out) < w) { out = "0" + out; }
+    return out;
+}
+
+// pad_right: left-aligns `s` in a column of width `w` by
+// appending spaces. Used for the op-name column so
+// immediates line up.
+function pad_right(s: string, w: i32): string {
+    var out: string = s;
+    while (len(out) < w) { out = out + " "; }
+    return out;
+}
+
+// op_name resolves a vm.Op to its printable mnemonic. Lifted
+// out so the main loop reads as `INDEX  NAME  IMMEDIATE`
+// without per-arm string assembly.
+function op_name(op: vm.Op): string {
+    match (op) {
+        vm.OpPushInt(_) => { return "PUSH_INT"; },
+        vm.OpPushBool(_) => { return "PUSH_BOOL"; },
+        vm.OpPushStr(_) => { return "PUSH_STR"; },
+        vm.OpLoadLocal(_) => { return "LOAD_LOCAL"; },
+        vm.OpStoreLocal(_) => { return "STORE_LOCAL"; },
+        vm.OpBinary(_) => { return "BINARY"; },
+        vm.OpUnary(_) => { return "UNARY"; },
+        vm.OpJump(_) => { return "JUMP"; },
+        vm.OpJumpIfFalse(_) => { return "JUMP_IF_FALSE"; },
+        vm.OpPop(_) => { return "POP"; },
+        vm.OpReturn(_) => { return "RETURN"; }
+    }
+    return "???";
+}
+
+// op_immediate renders the operand for ops that carry one.
+// Empty string for ops without immediates (POP / RETURN).
+function op_immediate(op: vm.Op): string {
+    match (op) {
+        vm.OpPushInt(o) => { return i32_to_string(o.v); },
+        vm.OpPushBool(o) => {
+            if (o.v) { return "true"; }
+            return "false";
+        },
+        vm.OpPushStr(o) => { return "\"" + o.v + "\""; },
+        vm.OpLoadLocal(o) => { return i32_to_string(o.idx); },
+        vm.OpStoreLocal(o) => { return i32_to_string(o.idx); },
+        vm.OpBinary(o) => { return o.op; },
+        vm.OpUnary(o) => { return o.op; },
+        vm.OpJump(o) => { return i32_to_string(o.target); },
+        vm.OpJumpIfFalse(o) => { return i32_to_string(o.target); },
+        vm.OpPop(_) => { return ""; },
+        vm.OpReturn(_) => { return ""; }
+    }
+    return "";
+}
+
+// =================== DISASSEMBLER ====================
+
+// disassemble emits every op on its own line. Index column is
+// four digits wide; the mnemonic column is thirteen
+// characters (the longest op name, JUMP_IF_FALSE, fits with
+// one trailing space).
+pub function disassemble(ops: vm.Op[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < len(ops)) {
+        var line: string = pad_left(i32_to_string(i), 4) + "  ";
+        line = line + pad_right(op_name(ops[i]), 13) + "  ";
+        line = line + op_immediate(ops[i]);
+        out = out + line + "\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+// =================== VALIDATION ====================
+
+// contains: trivial substring search. Used by the validation
+// harness to assert the disassembly mentions specific ops.
+function contains(haystack: string, needle: string): boolean {
+    if (len(needle) == 0) { return true; }
+    if (len(haystack) < len(needle)) { return false; }
+    var i: i32 = 0;
+    while (i <= len(haystack) - len(needle)) {
+        if (haystack[i:i + len(needle)] == needle) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function disassemble_source(src: string): string {
+    return disassemble(vm.compile_module(parser.parse_module(lexer.tokenize(src))));
+}
+
+function main(): i32 {
+    // Simple arithmetic: `var x = 1 + 2 * 3; return x;` should
+    // compile to PUSH_INT 1, PUSH_INT 2, PUSH_INT 3, BINARY *,
+    // BINARY +, STORE_LOCAL 0, LOAD_LOCAL 0, RETURN, plus the
+    // implicit terminator. We don't pin exact line content
+    // (formatting can drift); we check that the mnemonics
+    // we expect are in there.
+    var d1: string = disassemble_source("var x = 1 + 2 * 3; return x;");
+    if (!contains(d1, "PUSH_INT")) { return 10; }
+    if (!contains(d1, "BINARY")) { return 11; }
+    if (!contains(d1, "STORE_LOCAL")) { return 12; }
+    if (!contains(d1, "LOAD_LOCAL")) { return 13; }
+    if (!contains(d1, "RETURN")) { return 14; }
+    // Index column is left-zero-padded — `0000` should appear
+    // on the first line.
+    if (!contains(d1, "0000")) { return 15; }
+
+    // Bool literal + comparison.
+    var d2: string = disassemble_source("return 5 < 10;");
+    if (!contains(d2, "BINARY")) { return 20; }
+    // Binary op `<` shows up in the immediate column on one line.
+    if (!contains(d2, "<")) { return 21; }
+
+    // If/else: JUMP_IF_FALSE + JUMP both fire.
+    var d3: string = disassemble_source("if (true) { return 1; } else { return 2; }");
+    if (!contains(d3, "JUMP_IF_FALSE")) { return 30; }
+    if (!contains(d3, "JUMP")) { return 31; }
+    if (!contains(d3, "PUSH_BOOL")) { return 32; }
+
+    // While: emits a JUMP back to the loop top + JUMP_IF_FALSE
+    // out of the body. Both should show up.
+    var d4: string = disassemble_source(
+        "var i = 0; while (i < 3) { i = i + 1; } return i;"
+    );
+    if (!contains(d4, "JUMP_IF_FALSE")) { return 40; }
+    if (!contains(d4, "JUMP")) { return 41; }
+    if (!contains(d4, "STORE_LOCAL")) { return 42; }
+
+    // Unary `!`: emits UNARY.
+    var d5: string = disassemble_source("return !true;");
+    if (!contains(d5, "UNARY")) { return 50; }
+    if (!contains(d5, "PUSH_BOOL")) { return 51; }
+
+    // String literal: PUSH_STR + the quoted contents in the
+    // immediate column.
+    var d6: string = disassemble_source("var s = \"hello\"; return 0;");
+    if (!contains(d6, "PUSH_STR")) { return 60; }
+    if (!contains(d6, "hello")) { return 61; }
+
+    // Expression statement: emits POP after the inner expr.
+    var d7: string = disassemble_source("1 + 2; return 0;");
+    if (!contains(d7, "POP")) { return 70; }
+
+    return 0;
+}
