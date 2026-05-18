@@ -7310,3 +7310,77 @@ function main(): i32 {
 		t.Errorf("memory size/grow: exit = %d, want 0", got)
 	}
 }
+
+// TestWASMConvertIntWidth covers integer-width conversion +
+// reinterpret. The reinterpret variants share the 0xBC-0xBF
+// neighbourhood with the convert ops; walking both catches a
+// transposed cell in either table.
+func TestWASMConvertIntWidth(t *testing.T) {
+	src := `import "std/wasm/convert";
+function main(): i32 {
+    var e: u8[] = [];
+
+    // Integer width
+    if (convert.inst_i32_wrap_i64(e)[0]     != 167u8) { return 1; }
+    if (convert.inst_i64_extend_i32_s(e)[0] != 172u8) { return 2; }
+    if (convert.inst_i64_extend_i32_u(e)[0] != 173u8) { return 3; }
+
+    // Sign-extension extension (post-MVP, universally supported).
+    if (convert.inst_i32_extend8_s(e)[0]  != 192u8) { return 10; }
+    if (convert.inst_i32_extend16_s(e)[0] != 193u8) { return 11; }
+    if (convert.inst_i64_extend8_s(e)[0]  != 194u8) { return 12; }
+    if (convert.inst_i64_extend16_s(e)[0] != 195u8) { return 13; }
+    if (convert.inst_i64_extend32_s(e)[0] != 196u8) { return 14; }
+
+    // Reinterpret — same bits, new type label.
+    if (convert.inst_i32_reinterpret_f32(e)[0] != 188u8) { return 20; }
+    if (convert.inst_i64_reinterpret_f64(e)[0] != 189u8) { return 21; }
+    if (convert.inst_f32_reinterpret_i32(e)[0] != 190u8) { return 22; }
+    if (convert.inst_f64_reinterpret_i64(e)[0] != 191u8) { return 23; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("convert int/reinterpret: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMConvertFloatInt covers the four int/float crossover
+// blocks (trunc / convert) plus the float-width conversions
+// (demote / promote). 16 trunc+convert variants in two interleaved
+// tables — easy to mis-row, so this walks each one.
+func TestWASMConvertFloatInt(t *testing.T) {
+	src := `import "std/wasm/convert";
+function main(): i32 {
+    var e: u8[] = [];
+
+    // Float -> integer (trapping): 0xA8-0xAB then 0xAE-0xB1.
+    if (convert.inst_i32_trunc_f32_s(e)[0] != 168u8) { return 1; }
+    if (convert.inst_i32_trunc_f32_u(e)[0] != 169u8) { return 2; }
+    if (convert.inst_i32_trunc_f64_s(e)[0] != 170u8) { return 3; }
+    if (convert.inst_i32_trunc_f64_u(e)[0] != 171u8) { return 4; }
+    if (convert.inst_i64_trunc_f32_s(e)[0] != 174u8) { return 5; }
+    if (convert.inst_i64_trunc_f32_u(e)[0] != 175u8) { return 6; }
+    if (convert.inst_i64_trunc_f64_s(e)[0] != 176u8) { return 7; }
+    if (convert.inst_i64_trunc_f64_u(e)[0] != 177u8) { return 8; }
+
+    // Integer -> float: 0xB2-0xB5 then 0xB7-0xBA.
+    if (convert.inst_f32_convert_i32_s(e)[0] != 178u8) { return 10; }
+    if (convert.inst_f32_convert_i32_u(e)[0] != 179u8) { return 11; }
+    if (convert.inst_f32_convert_i64_s(e)[0] != 180u8) { return 12; }
+    if (convert.inst_f32_convert_i64_u(e)[0] != 181u8) { return 13; }
+    if (convert.inst_f64_convert_i32_s(e)[0] != 183u8) { return 14; }
+    if (convert.inst_f64_convert_i32_u(e)[0] != 184u8) { return 15; }
+    if (convert.inst_f64_convert_i64_s(e)[0] != 185u8) { return 16; }
+    if (convert.inst_f64_convert_i64_u(e)[0] != 186u8) { return 17; }
+
+    // Float width: 0xB6 / 0xBB straddle the convert block.
+    if (convert.inst_f32_demote_f64(e)[0]  != 182u8) { return 20; }
+    if (convert.inst_f64_promote_f32(e)[0] != 187u8) { return 21; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("convert float/int: exit = %d, want 0", got)
+	}
+}
