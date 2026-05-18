@@ -202,14 +202,29 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   Data}`) cover empty-vector cases, multi-byte uleb fields,
   flag=0 vs flag=1 memory limits, and a code section that wraps
   an inst.put_function_body-produced body end-to-end.
-- Remaining Phase 1 work: the IR-walking entry point that
-  arranges a codegen IR program as inputs to these section
-  composers and stitches them together (preamble + sections in
-  the spec-required order), and the driver-wiring step that
-  deletes the `wasm-tools parse` call at `cmd/lang/main.go:604`.
-  Saturating-truncate ops and bulk-memory ops (both 0xFC-prefixed)
-  are deliberately out of scope — the production backend doesn't
-  lean on them.
+- **Import + global section composers shipped** in
+  `internal/stdlib/std/wasm/imports.lang`. Imports needed their
+  own module because the import descriptor is a four-variant
+  union (func / table / memory / global) — the section composer
+  takes a `desc_bodies: u8[][]` parallel array, and each variant
+  has a builder (`import_desc_func / table / memory / global`)
+  that produces the descriptor bytes the caller threads through.
+  Global section similarly takes parallel valtypes / muts /
+  init_exprs arrays so the section composer stays flat. Constants
+  shipped: `import_func / table / memory / global`,
+  `mut_const / mut_var`, `reftype_funcref / externref`. Tests
+  (`TestWASMImports{Func, DescBuilders, GlobalSection}`) walk
+  every variant.
+- All section composers are now in place. Remaining Phase 1 work:
+  the IR-walking entry point that arranges a codegen IR program
+  as inputs to these composers and stitches the preamble +
+  sections together in spec order, and the driver-wiring step
+  that deletes the `wasm-tools parse` call at
+  `cmd/lang/main.go:604`. Saturating-truncate ops and bulk-memory
+  ops (both 0xFC-prefixed) are deliberately out of scope — the
+  production backend doesn't lean on them. Element section is
+  also deliberately deferred — the existing wasm backend doesn't
+  exercise table-element segments.
 
 ---
 

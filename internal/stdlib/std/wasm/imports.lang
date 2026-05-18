@@ -1,0 +1,134 @@
+// std/wasm/imports — import + global section composers for the
+// WebAssembly Core 1.0 binary format.
+//
+// Spec: https://webassembly.github.io/spec/core/binary/modules.html#import-section
+//       https://webassembly.github.io/spec/core/binary/modules.html#global-section
+//
+// Eighth slice of Phase 1 of docs/TOOLCHAIN-SELF-HOSTING.md. The
+// sections module covered every section that doesn't need a
+// "descriptor union" — type / function / memory / export / start /
+// code / data. Imports and globals are the two outliers:
+//
+//   - An import entry is `module : name + name : name + kind : u8
+//     + desc`, where `desc` shape depends on `kind` (typeidx for
+//     funcs, tabletype for tables, memtype for memories, globaltype
+//     for globals).
+//   - A global entry is `globaltype + init_expr`, where globaltype
+//     is `valtype + mut : u8` and the init_expr is a constant
+//     expression terminated by 0x0B.
+//
+// The shape used here: each import-descriptor variant has a helper
+// that returns the descriptor's body bytes, the caller composes a
+// parallel-array layout (modules / names / kinds / desc_bodies),
+// and encode_import_section stitches the section together. This
+// keeps the section composer flat without forcing a union type.
+
+import "std/wasm/leb128";
+import "std/wasm/encode";
+
+// ---- Import-kind constants -----------------------------------
+pub function import_func(): u8   { return 0u8; }
+pub function import_table(): u8  { return 1u8; }
+pub function import_memory(): u8 { return 2u8; }
+pub function import_global(): u8 { return 3u8; }
+
+// ---- Mut constants for globaltype ----------------------------
+pub function mut_const(): u8 { return 0u8; }
+pub function mut_var(): u8   { return 1u8; }
+
+// ---- Per-descriptor builders ---------------------------------
+// Each returns a fresh u8[] holding the descriptor's body bytes
+// (without the leading kind byte — that goes in the parallel
+// `kinds` array). Helper-shaped so the caller doesn't have to
+// open-code the per-variant leb / limit / mut encoding at the
+// import-section call site.
+
+// Function: just a typeidx.
+pub function import_desc_func(typeidx: u32): u8[] {
+    return leb128.uleb_u32([], typeidx);
+}
+
+// Global: valtype byte + mut byte.
+pub function import_desc_global(vt: u8, is_mut: u8): u8[] {
+    var out: u8[] = [];
+    out = out.push(vt);
+    out = out.push(is_mut);
+    return out;
+}
+
+// Memory: a `limits` record (same shape memtype uses in the
+// memory section). `max_pages = -1` means "no maximum".
+pub function import_desc_memory(min_pages: u32, max_pages: i32): u8[] {
+    var out: u8[] = [];
+    if (max_pages < 0) {
+        out = out.push(0u8);
+        out = leb128.uleb_u32(out, min_pages);
+    } else {
+        out = out.push(1u8);
+        out = leb128.uleb_u32(out, min_pages);
+        out = leb128.uleb_u32(out, max_pages as u32);
+    }
+    return out;
+}
+
+// Table: a `tabletype` is `reftype byte + limits`. wasm 1.0 has
+// one reftype, funcref = 0x70. (externref = 0x6F was added later
+// alongside reference types but isn't on today's backend's path.)
+pub function reftype_funcref(): u8 { return 112u8; }   // 0x70
+pub function reftype_externref(): u8 { return 111u8; } // 0x6F
+
+pub function import_desc_table(reftype: u8, min: u32, max: i32): u8[] {
+    var out: u8[] = [];
+    out = out.push(reftype);
+    if (max < 0) {
+        out = out.push(0u8);
+        out = leb128.uleb_u32(out, min);
+    } else {
+        out = out.push(1u8);
+        out = leb128.uleb_u32(out, min);
+        out = leb128.uleb_u32(out, max as u32);
+    }
+    return out;
+}
+
+// ---- Import section ------------------------------------------
+//
+// Body: vec(import). Four parallel arrays — `modules[i]` and
+// `names[i]` form the import's namespaced identity, `kinds[i]`
+// picks the descriptor variant (use the import_func / table /
+// memory / global constants above), and `desc_bodies[i]` carries
+// the descriptor body that the matching import_desc_* helper
+// produced.
+pub function encode_import_section(buf: u8[], modules: string[], names: string[], kinds: u8[], desc_bodies: u8[][]): u8[] {
+    var n: i32 = len(modules);
+    var body: u8[] = leb128.uleb_u32([], n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, modules[i]);
+        body = encode.put_name(body, names[i]);
+        body = body.push(kinds[i]);
+        body = encode.put_bytes(body, desc_bodies[i]);
+        i = i + 1;
+    }
+    return encode.put_section(buf, encode.section_import(), body);
+}
+
+// ---- Global section ------------------------------------------
+//
+// Body: vec(global). Each entry: `globaltype + init_expr`. The
+// caller supplies `init_exprs[i]` as a complete constant-
+// expression byte sequence including the terminating 0x0B end —
+// typical shape is `i32.const N ; end` (3 bytes for small N),
+// produced by inst.inst_i32_const followed by inst.inst_end.
+pub function encode_global_section(buf: u8[], valtypes: u8[], muts: u8[], init_exprs: u8[][]): u8[] {
+    var n: i32 = len(valtypes);
+    var body: u8[] = leb128.uleb_u32([], n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = body.push(valtypes[i]);
+        body = body.push(muts[i]);
+        body = encode.put_bytes(body, init_exprs[i]);
+        i = i + 1;
+    }
+    return encode.put_section(buf, encode.section_global(), body);
+}
