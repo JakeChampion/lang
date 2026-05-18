@@ -151,6 +151,26 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		{"recursive-factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
 		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21},
 		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1},
+		{
+			"prime-count-up-to-30",
+			"function is_prime(n: i32): i32 { if (n < 2) { return 0; } var i = 2; while (i * i <= n) { if (n % i == 0) { return 0; } i = i + 1; } return 1; } " +
+				"function main(): i32 { var count = 0; var i = 2; while (i <= 30) { if (is_prime(i) == 1) { count += 1; } i = i + 1; } return count; }",
+			10,
+		},
+		// Exit codes are clamped to 0..255 by Linux; these
+		// expected values are the actual computation result MOD
+		// 256.
+		{
+			"sum-of-squares-1-to-10",
+			"function main(): i32 { var i = 1; var s = 0; while (i <= 10) { s += i * i; i += 1; } return s; }",
+			385 % 256, // = 129
+		},
+		{
+			"power-of-two-recursive",
+			"function pow2(n: i32): i32 { if (n == 0) { return 1; } return 2 * pow2(n - 1); } " +
+				"function main(): i32 { return pow2(10); }",
+			1024 % 256, // = 0
+		},
 	}
 
 	for _, tc := range cases {
