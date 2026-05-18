@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,33 +13,26 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 )
 
-// Bootstrap-style end-to-end demo. asm_run.lang is a driver that
-// uses the self-host asm emitter (asm.lang) to lower a hardcoded
-// lang source to AT&T x86_64 assembly and prints the result to
-// stdout. This test:
+// Bootstrap-style end-to-end demo. asm_run.lang is a driver
+// that reads lang source from stdin, runs it through the
+// self-host lexer + parser + asm emitter, and prints the
+// resulting AT&T x86_64 assembly to stdout. This table-driven
+// test runs every entry through that pipeline:
 //
-//   1. Compiles asm_run.lang via the production langc into an
-//      x86_64 binary.
-//   2. Runs that binary, capturing its stdout — which IS the
-//      emitted assembly for the hardcoded source.
-//   3. Writes the asm to a .s file, assembles it with gcc
-//      -nostdlib, and runs the resulting binary.
-//   4. Asserts the inner binary's exit code matches the
-//      expected value (23) for the source program:
-//        var a = 1 + 2;       // a = 3
-//        var b = 4 * 5;       // b = 20
-//        var c = a + b;       // c = 23
-//        if (c < 100) { return c; }
-//        return 0 - 1;
+//   1. Build asm_run.lang once via the production langc.
+//   2. For each test case: pipe its source to the driver,
+//      capture stdout (= emitted asm), gcc-assemble the asm
+//      into a standalone Linux ELF, run it, assert the inner
+//      exit code matches the entry's expected value.
 //
-// End-to-end: lang-port asm emitter → real native binary → 23.
-// Proves the asm.lang lowering produces working executables,
-// not just text that matches substring asserts.
+// End-to-end: lang source → lang-port asm emitter → real
+// native binary → expected exit code. Proves the asm.lang
+// lowering produces working executables across the full
+// feature matrix it covers.
 
 func TestSelfHostAsmRunX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	// Stage all the lang sources asm_run.lang needs to import.
 	for _, name := range []string{"lexer.lang", "parser.lang", "asm.lang", "asm_run.lang"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -48,7 +42,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	// Step 1: build asm_run via the production pipeline.
+	// Build the driver once.
 	prog, _, err := modload.Load(filepath.Join(dir, "asm_run.lang"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
@@ -72,38 +66,71 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", driverAsm, "-o", driverBin).CombinedOutput(); err != nil {
 		t.Fatalf("driver gcc: %v\n%s", err, out)
 	}
-	// Step 2: run the driver, capture its stdout (the emitted asm).
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(driverBin)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+
+	// Each case: pipe source to driver, capture asm, assemble,
+	// run, verify exit code.
+	cases := []struct {
+		name     string
+		source   string
+		expected int
+	}{
+		{"return-literal", "return 42;", 42},
+		{"arithmetic", "return 1 + 2 * 3;", 7},
+		{"parens", "return (1 + 2) * 3;", 9},
+		{"subtraction", "return 100 - 23;", 77},
+		{"division", "return 84 / 2;", 42},
+		{"modulo", "return 23 % 5;", 3},
+		{"unary-neg", "return 0 - 5 + 10;", 5},
+		{"comparison-true", "return 5 < 10;", 1},
+		{"comparison-false", "return 10 < 5;", 0},
+		{"equality-true", "return 7 == 7;", 1},
+		{"equality-false", "return 7 == 8;", 0},
+		{"locals", "var x = 5; var y = 10; return x + y;", 15},
+		{"reassign", "var x = 5; x = x + 3; return x;", 8},
+		{"compound-assign", "var x = 1; x *= 6; x += 1; return x;", 7},
+		{"if-then-branch", "var x = 5; if (x < 10) { return 1; } return 2;", 1},
+		{"if-else-branch", "var x = 20; if (x < 10) { return 1; } return 2;", 2},
+		{"if-else-explicit", "if (true) { return 9; } else { return 0; }", 9},
+		{"while-sum", "var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
+		{"while-early-return", "var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 0 - 1;", 7},
+		{"mixed", "var a = 1 + 2; var b = 4 * 5; var c = a + b; if (c < 100) { return c; } return 0 - 1;", 23},
 	}
-	emittedAsm, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("run driver: %v", err)
-	}
-	if len(emittedAsm) == 0 {
-		t.Fatalf("driver produced no asm output")
-	}
-	// Step 3: write the emitted asm, assemble, run.
-	innerAsm := filepath.Join(dir, "inner.s")
-	innerBin := filepath.Join(dir, "inner")
-	if err := os.WriteFile(innerAsm, emittedAsm, 0o644); err != nil {
-		t.Fatalf("write inner asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", innerAsm, "-o", innerBin).CombinedOutput(); err != nil {
-		t.Fatalf("inner gcc: %v\n%s\n--- asm ---\n%s", err, out, emittedAsm)
-	}
-	var inner *exec.Cmd
-	if len(runner) == 0 {
-		inner = exec.Command(innerBin)
-	} else {
-		inner = exec.Command(runner[0], append(runner[1:], innerBin)...)
-	}
-	_, _ = inner.CombinedOutput()
-	// Step 4: assert.
-	if code := inner.ProcessState.ExitCode(); code != 23 {
-		t.Errorf("bootstrap demo: inner exit code = %d, want 23\n--- asm ---\n%s", code, emittedAsm)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.source))
+			emittedAsm, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("driver run: %v\n--- source ---\n%s", err, tc.source)
+			}
+			if len(emittedAsm) == 0 {
+				t.Fatalf("driver produced no asm output")
+			}
+			caseDir := t.TempDir()
+			innerAsm := filepath.Join(caseDir, "inner.s")
+			innerBin := filepath.Join(caseDir, "inner")
+			if err := os.WriteFile(innerAsm, emittedAsm, 0o644); err != nil {
+				t.Fatalf("write inner asm: %v", err)
+			}
+			if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", innerAsm, "-o", innerBin).CombinedOutput(); err != nil {
+				t.Fatalf("inner gcc: %v\n%s\n--- asm ---\n%s", err, out, emittedAsm)
+			}
+			var inner *exec.Cmd
+			if len(runner) == 0 {
+				inner = exec.Command(innerBin)
+			} else {
+				inner = exec.Command(runner[0], append(runner[1:], innerBin)...)
+			}
+			_, _ = inner.CombinedOutput()
+			if code := inner.ProcessState.ExitCode(); code != tc.expected {
+				t.Errorf("inner exit code = %d, want %d\n--- source ---\n%s\n--- asm ---\n%s", code, tc.expected, tc.source, emittedAsm)
+			}
+		})
 	}
 }
