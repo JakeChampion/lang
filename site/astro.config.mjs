@@ -41,17 +41,20 @@ export default defineConfig({
       ],
       sidebar: [
         { label: "Overview", link: "/" },
+        // Starlight 0.39 removed the `{label, autogenerate}`
+        // shorthand — groups now wrap autogenerate inside their
+        // items list. Same end result; one extra layer.
         {
           label: "Tutorial",
-          autogenerate: { directory: "tutorial" },
+          items: [{ autogenerate: { directory: "tutorial" } }],
         },
         {
           label: "Reference",
-          autogenerate: { directory: "reference" },
+          items: [{ autogenerate: { directory: "reference" } }],
         },
         {
           label: "Standard library",
-          autogenerate: { directory: "stdlib" },
+          items: [{ autogenerate: { directory: "stdlib" } }],
         },
         {
           label: "Playground",
