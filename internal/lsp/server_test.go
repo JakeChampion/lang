@@ -213,6 +213,60 @@ func TestHandleMessage_DidOpenPublishesDiagnostics(t *testing.T) {
 	}
 }
 
+func TestHandleMessage_DidChangeRepublishes(t *testing.T) {
+	// Mirrors the playground's edit loop: open with an error,
+	// expect a non-empty publish; change to clean source, expect
+	// a follow-up empty publish. The playground relies on the
+	// "cleared diagnostics" notification to turn off its red
+	// problem-count badge after the user fixes a typo.
+	s := NewServer()
+	var publishes []publishDiagnosticsParams
+	s.SetPublisher(func(method string, params any) {
+		if method != "textDocument/publishDiagnostics" {
+			return
+		}
+		b, _ := json.Marshal(params)
+		var p publishDiagnosticsParams
+		_ = json.Unmarshal(b, &p)
+		publishes = append(publishes, p)
+	})
+
+	openMsg, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didOpen",
+		Params: jsonRaw(didOpenParams{
+			TextDocument: textDocumentItem{
+				URI:        "file:///live.lang",
+				LanguageID: "lang",
+				Version:    1,
+				Text:       "function main(): i32 { return undeclared; }",
+			},
+		}),
+	})
+	s.HandleMessage(openMsg)
+
+	var ch didChangeParams
+	ch.TextDocument.URI = "file:///live.lang"
+	ch.TextDocument.Version = 2
+	ch.ContentChanges = []contentChange{{Text: "function main(): i32 { return 0; }"}}
+	changeMsg, _ := json.Marshal(message{
+		Jsonrpc: "2.0",
+		Method:  "textDocument/didChange",
+		Params:  jsonRaw(ch),
+	})
+	s.HandleMessage(changeMsg)
+
+	if len(publishes) != 2 {
+		t.Fatalf("expected 2 publishDiagnostics frames, got %d", len(publishes))
+	}
+	if len(publishes[0].Diagnostics) == 0 {
+		t.Errorf("first publish should carry errors, got none")
+	}
+	if len(publishes[1].Diagnostics) != 0 {
+		t.Errorf("second publish should be empty (errors fixed), got %d", len(publishes[1].Diagnostics))
+	}
+}
+
 func TestHandleMessage_DidCloseClearsDiagnostics(t *testing.T) {
 	s := NewServer()
 	var lastClearURI string

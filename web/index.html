@@ -72,6 +72,76 @@
   .out-info .exit-ok    { color: #16a34a; font-weight: 600; }
   .out-info .exit-err   { color: #b00020; font-weight: 600; }
   .out-info .exit-label { color: #555; }
+  /* Live LSP problem list + cursor-type indicator. The panel
+     spans both grid columns so a single source error doesn't
+     compete with the output pane for vertical space. */
+  .problems {
+    grid-column: 1 / -1;
+    margin-top: 0.8em;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    background: #fff;
+    font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+  }
+  .problems h2 {
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #555;
+    margin: 0;
+    padding: 0.5em 0.8em;
+    border-bottom: 1px solid #f0f0f0;
+    background: #fafafa;
+    border-radius: 4px 4px 0 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .problems h2 .count {
+    color: #b00020;
+    font-weight: 600;
+    margin-left: 0.4em;
+  }
+  .problems h2 .count.ok { color: #16a34a; }
+  .problems ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 140px;
+    overflow: auto;
+  }
+  .problems li {
+    padding: 0.35em 0.8em;
+    border-top: 1px solid #f5f5f5;
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .problems li:first-child { border-top: 0; }
+  .problems li:hover { background: #f8f8f8; }
+  .problems .loc {
+    color: #888;
+    margin-right: 0.6em;
+  }
+  .problems .empty {
+    padding: 0.6em 0.8em;
+    color: #888;
+    font-style: italic;
+  }
+  .cursor-info {
+    grid-column: 1 / -1;
+    margin-top: 0.4em;
+    padding: 0.35em 0.7em;
+    font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+    color: #444;
+    background: #f4f4f4;
+    border-radius: 4px;
+    min-height: 1.2em;
+  }
+  .cursor-info:empty::before {
+    content: "click an identifier for its type";
+    color: #999;
+    font-style: italic;
+  }
   kbd {
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.85em;
@@ -138,9 +208,12 @@
   Edit a lang program on the left, hit <strong>Run</strong>
   (or <kbd>Ctrl/Cmd+Enter</kbd>), and see its output on the
   right. Drives the in-tree AST interpreter (no codegen, no
-  link) compiled to wasm. State is fresh per run.
-  <strong>Share</strong> encodes the source into the URL so
-  you can hand someone a snippet without a server.
+  link) compiled to wasm. Live diagnostics + click-for-type
+  come from the in-process language server (the same one
+  <code>cmd/lang-lsp</code> drives over stdio). State is
+  fresh per run. <strong>Share</strong> encodes the source
+  into the URL so you can hand someone a snippet without a
+  server.
 </p>
 
 <div class="toolbar">
@@ -170,6 +243,11 @@
     <pre id="out"></pre>
     <div class="out-info" id="meta"></div>
   </div>
+  <div class="problems">
+    <h2>problems <span class="count" id="problemCount"></span></h2>
+    <ul id="problemList"></ul>
+  </div>
+  <div class="cursor-info" id="cursorInfo"></div>
 </div>
 
 <script src="wasm_exec.js"></script>
@@ -436,6 +514,9 @@ const runBtn = document.getElementById("run");
 const shareBtn = document.getElementById("share");
 const statusEl = document.getElementById("status");
 const exampleEl = document.getElementById("example");
+const problemListEl = document.getElementById("problemList");
+const problemCountEl = document.getElementById("problemCount");
+const cursorInfoEl = document.getElementById("cursorInfo");
 
 // URL-hash codec. Source is UTF-8 encoded, then base64'd with
 // URL-safe alphabet (RFC 4648 §5) and stripped of '=' padding so
@@ -556,13 +637,191 @@ srcEl.addEventListener("keydown", (e) => {
   }
 });
 
+// ---- Language server wiring ----
+//
+// The wasm bundle exposes the same in-tree LSP server that
+// `cmd/lang-lsp` runs over stdio. We talk to it through two
+// globals:
+//
+//   langLsp(jsonRpcMsg) -> jsonRpcResponse | ""   (sync request)
+//   langLspOnNotify(cb)                           (push channel)
+//
+// All requests are synchronous from JS's point of view (the wasm
+// call returns the response before yielding), so we don't need a
+// request-id table — but we keep an id counter for spec-compliance.
+const LSP_URI = "file:///playground.lang";
+let lspReady = false;
+let docOpen = false;
+let docVersion = 0;
+let rpcId = 0;
+let docSyncTimer = null;
+
+function lspRequest(method, params, withId) {
+  if (typeof globalThis.langLsp !== "function") return null;
+  const msg = { jsonrpc: "2.0", method, params };
+  if (withId) msg.id = ++rpcId;
+  const respStr = globalThis.langLsp(JSON.stringify(msg));
+  if (!respStr) return null;
+  try { return JSON.parse(respStr); }
+  catch (e) { return null; }
+}
+
+function lspNotify(method, params) { return lspRequest(method, params, false); }
+
+function initLsp() {
+  // Install the notification sink BEFORE any didOpen so the
+  // first publishDiagnostics frame the server emits has somewhere
+  // to land.
+  globalThis.langLspOnNotify((method, params) => {
+    if (method === "textDocument/publishDiagnostics") {
+      renderDiagnostics(params.diagnostics || []);
+    }
+  });
+  lspRequest("initialize", {
+    processId: null,
+    rootUri: null,
+    capabilities: {},
+  }, true);
+  lspNotify("initialized", {});
+  lspReady = true;
+  syncDoc(srcEl.value); // initial open + first diagnostics
+}
+
+function syncDoc(text) {
+  if (!lspReady) return;
+  if (!docOpen) {
+    lspNotify("textDocument/didOpen", {
+      textDocument: {
+        uri: LSP_URI,
+        languageId: "lang",
+        version: ++docVersion,
+        text,
+      },
+    });
+    docOpen = true;
+  } else {
+    lspNotify("textDocument/didChange", {
+      textDocument: { uri: LSP_URI, version: ++docVersion },
+      contentChanges: [{ text }],
+    });
+  }
+}
+
+// Debounce edits to avoid re-parsing on every keystroke. ~200ms
+// is fast enough to feel live without thrashing the wasm runtime.
+function scheduleSync() {
+  if (docSyncTimer) clearTimeout(docSyncTimer);
+  docSyncTimer = setTimeout(() => syncDoc(srcEl.value), 200);
+}
+
+srcEl.addEventListener("input", scheduleSync);
+
+function renderDiagnostics(diags) {
+  problemListEl.innerHTML = "";
+  if (diags.length === 0) {
+    problemCountEl.textContent = "0";
+    problemCountEl.className = "count ok";
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "No problems found.";
+    problemListEl.appendChild(empty);
+    return;
+  }
+  problemCountEl.textContent = diags.length;
+  problemCountEl.className = "count";
+  for (const d of diags) {
+    const li = document.createElement("li");
+    const loc = document.createElement("span");
+    loc.className = "loc";
+    // Surface 1-based positions in the UI since that's what
+    // editors / lang's own diagnostics show.
+    loc.textContent = (d.range.start.line + 1) + ":" + (d.range.start.character + 1);
+    li.appendChild(loc);
+    li.appendChild(document.createTextNode(d.message));
+    li.addEventListener("click", () => {
+      moveCursorTo(d.range.start.line, d.range.start.character);
+      srcEl.focus();
+    });
+    problemListEl.appendChild(li);
+  }
+}
+
+// Caret <-> (line, character) conversion. Both directions assume
+// the textarea's content uses \n line breaks (browsers normalise
+// pasted CRLF to that). Character offsets are byte-counted (same
+// as the LSP server's ASCII-only assumption).
+function caretLineCol() {
+  const pos = srcEl.selectionStart;
+  const before = srcEl.value.substring(0, pos);
+  const line = (before.match(/\n/g) || []).length;
+  const lastNL = before.lastIndexOf("\n");
+  const character = pos - (lastNL + 1);
+  return { line, character };
+}
+
+function moveCursorTo(line, character) {
+  const lines = srcEl.value.split("\n");
+  let offset = 0;
+  for (let i = 0; i < line && i < lines.length; i++) {
+    offset += lines[i].length + 1; // + \n
+  }
+  offset += character;
+  srcEl.selectionStart = srcEl.selectionEnd = offset;
+}
+
+// Hover-on-click. Querying on every cursor move would feel
+// chatty; running it on click + Ctrl/Cmd-I keeps it under the
+// user's control.
+function showHover() {
+  if (!lspReady) return;
+  const pos = caretLineCol();
+  const resp = lspRequest("textDocument/hover", {
+    textDocument: { uri: LSP_URI },
+    position: pos,
+  }, true);
+  if (resp && resp.result && resp.result.contents) {
+    // The server returns markdown-fenced lang code; unwrap the
+    // fence for the inline display.
+    const text = resp.result.contents.value
+      .replace(/^```lang\n/, "")
+      .replace(/\n```$/, "");
+    cursorInfoEl.textContent = text;
+  } else {
+    cursorInfoEl.textContent = "";
+  }
+}
+
+srcEl.addEventListener("click", showHover);
+srcEl.addEventListener("keyup", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "i") {
+    showHover();
+  }
+});
+
+// Example / hash changes wipe the document state on the server so
+// the new content starts fresh. These handlers register AFTER the
+// existing ones in the same `script` block, so by the time they
+// run srcEl.value already reflects the new content.
+function resetAndResync() {
+  if (!lspReady) return;
+  if (docOpen) {
+    lspNotify("textDocument/didClose", { textDocument: { uri: LSP_URI } });
+    docOpen = false;
+  }
+  syncDoc(srcEl.value);
+}
+
+window.addEventListener("hashchange", resetAndResync);
+exampleEl.addEventListener("change", resetAndResync);
+
 // Boot the wasm runtime.
 const go = new Go();
 WebAssembly.instantiateStreaming(fetch("lang.wasm"), go.importObject)
   .then(result => {
     go.run(result.instance);
     runBtn.disabled = false;
-    statusEl.textContent = "ready · Ctrl/Cmd+Enter to run";
+    statusEl.textContent = "ready · Ctrl/Cmd+Enter to run · Ctrl/Cmd+I for type";
+    initLsp();
   })
   .catch(err => {
     statusEl.textContent = "wasm load failed: " + err;
