@@ -11415,6 +11415,24 @@ function main(): i32 {
 	}
 }
 
+// Mirror of TestWASMClosureFStringCapture — closureconv now
+// recurses through FString.Desugared so captured-name idents
+// inside `f"…{cap}…"` get rewritten to CaptureRef nodes.
+func TestArm64ClosureFStringCapture(t *testing.T) {
+	src := `function makeNamer(name: string): () => string {
+    function build(): string { return f"hello, {name}!"; }
+    return build;
+}
+function main(): i32 {
+    var f = makeNamer("world");
+    if (f() != "hello, world!") { return 1; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got %d, want 0", code)
+	}
+}
+
 // Mirror of TestWASMMutableCapturedVar — assignment to a
 // captured outer-scope variable now stores into the env block.
 func TestArm64MutableCapturedVar(t *testing.T) {

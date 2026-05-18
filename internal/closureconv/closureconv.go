@@ -478,6 +478,56 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		}
 		n.Target = nt
 		return n, nil
+	case *ast.FString:
+		// The checker desugared the FString into a `+`-chain of
+		// to_string()-calls and stashed it on `n.Desugared`; the
+		// IR walks that desugaring rather than n.Parts directly.
+		// Without rewriting through Desugared, any captured-name
+		// reference inside an `f"…{cap}…"` survives as a raw
+		// Ident and the IR errors with "unresolved identifier".
+		// Walk the Parts too so AST consumers that read the raw
+		// form (formatter, LSP signatureHelp) see consistent
+		// CaptureRef-annotated trees.
+		for _, p := range n.Parts {
+			if p.Expr != nil {
+				ne, err := c.rewriteExpr(p.Expr, ctx)
+				if err != nil {
+					return nil, err
+				}
+				p.Expr = ne
+			}
+		}
+		if n.Desugared != nil {
+			nd, err := c.rewriteExpr(n.Desugared, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.Desugared = nd
+		}
+		return n, nil
+	case *ast.TupleLit:
+		for i, el := range n.Elems {
+			ne, err := c.rewriteExpr(el, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.Elems[i] = ne
+		}
+		return n, nil
+	case *ast.MapLit:
+		for i := range n.Entries {
+			nk, err := c.rewriteExpr(n.Entries[i].Key, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.Entries[i].Key = nk
+			nv, err := c.rewriteExpr(n.Entries[i].Value, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.Entries[i].Value = nv
+		}
+		return n, nil
 	}
 	return e, nil
 }
