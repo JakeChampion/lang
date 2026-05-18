@@ -45,13 +45,31 @@ type Server struct {
 	shutdownRequested bool
 	exited            bool
 	exitCode          int
+
+	// cache memoises parse + check by source content so undo / redo,
+	// re-opens, and across-document duplicates skip the pipeline.
+	// Shared across all open URIs because the compile output is a
+	// pure function of the input — there's no per-URI context yet
+	// (module loading happens once at Check time).
+	cache *compileCache
+
+	// lastDiags records the most recently published diagnostic list
+	// per URI so publishDiagnostics can skip the wire send when
+	// nothing has changed. Editors filter dedup themselves, but
+	// dropping at the source saves the JSON marshal + the client's
+	// debounce cycle.
+	lastDiags map[string][]Diagnostic
 }
 
 // NewServer returns a fresh Server with no open documents. Use Serve
 // (for stdio) or call HandleMessage directly (for in-process drivers
 // like the wasm playground).
 func NewServer() *Server {
-	return &Server{docs: map[string]*docState{}}
+	return &Server{
+		docs:      map[string]*docState{},
+		cache:     newCompileCache(16),
+		lastDiags: map[string][]Diagnostic{},
+	}
 }
 
 // docState is everything we cache per open document. Both prog and
@@ -293,9 +311,31 @@ func (s *Server) handleDidChange(raw json.RawMessage) *rpcError {
 }
 
 // updateDoc re-parses + re-checks src and caches the products. Called
-// from didOpen and didChange. parseFor + checkFor are package-local
-// indirections so future test code can stub the pipeline.
+// from didOpen and didChange. parseFor is a package-local indirection
+// so test code can stub the pipeline.
+//
+// Three fast paths avoid the parse + check cost when possible:
+//
+//  1. The URI's existing docState already has this exact source —
+//     happens when an editor sends a redundant didChange (some do on
+//     focus events). No work, no publish-side churn.
+//  2. The shared compile cache has a prior entry for this source —
+//     happens on undo / redo and on opening a snippet you've seen
+//     before. Result is reused; URI's docState is rebuilt against it.
+//  3. New source: full pipeline, then both caches updated.
 func (s *Server) updateDoc(uri, src string) {
+	if prev, ok := s.docs[uri]; ok && prev.src == src {
+		return
+	}
+	if hit := s.cache.get(src); hit != nil {
+		s.docs[uri] = &docState{
+			src:   hit.src,
+			prog:  hit.prog,
+			info:  hit.info,
+			diags: hit.diags,
+		}
+		return
+	}
 	state := &docState{src: src}
 	prog, perr := parseFor(src)
 	state.prog = prog
@@ -305,6 +345,7 @@ func (s *Server) updateDoc(uri, src string) {
 	}
 	state.diags = collectDiagnostics(perr, checkErr)
 	s.docs[uri] = state
+	s.cache.put(src, state.prog, state.info, state.diags)
 }
 
 func collectDiagnostics(parseErr, checkErr error) []Diagnostic {
@@ -325,7 +366,10 @@ func (s *Server) handleDidClose(raw json.RawMessage) *rpcError {
 	}
 	delete(s.docs, p.TextDocument.URI)
 	// Clear diagnostics for the closed file so editors don't keep
-	// stale squiggles in their Problems panel.
+	// stale squiggles in their Problems panel. Also reset the
+	// last-published slot so a later didOpen with the same source
+	// republishes from scratch.
+	delete(s.lastDiags, p.TextDocument.URI)
 	s.publish("textDocument/publishDiagnostics", publishDiagnosticsParams{
 		URI:         p.TextDocument.URI,
 		Diagnostics: []Diagnostic{},
@@ -341,17 +385,42 @@ func (s *Server) publishDiagnostics(uri string) {
 	if s.publish == nil {
 		return
 	}
+	// Skip the wire send when the diagnostic list hasn't changed
+	// since the last publish for this URI. Editors filter dedup
+	// themselves but cutting it at the source saves the JSON
+	// marshal + the client's debounce cycle. Particularly relevant
+	// when the cache fast-paths take effect — same source ⇒ same
+	// diagnostics, no point re-announcing.
+	if diagnosticsEqual(s.lastDiags[uri], state.diags) {
+		return
+	}
+	s.lastDiags[uri] = state.diags
 	s.publish("textDocument/publishDiagnostics", publishDiagnosticsParams{
 		URI:         uri,
 		Diagnostics: state.diags,
 	})
 }
 
-// parseFor is a package-local indirection so future test code can swap
-// the pipeline. It's also where stdlib + module loading would hook
-// in; for the MVP the playground runs single-file programs and
-// `parser.Parse` is enough.
-func parseFor(src string) (*ast.Program, error) {
+// diagnosticsEqual compares two diagnostic slices by value. Order-
+// sensitive; that matches our publish path (we always emit in the
+// same order the parser + checker produced).
+func diagnosticsEqual(a, b []Diagnostic) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// parseFor is a package-local indirection (variable, not func, so
+// tests can wrap it with call counters) over the parse stage. It's
+// also where stdlib + module loading would hook in; for the MVP the
+// playground runs single-file programs and `parser.Parse` is enough.
+var parseFor = func(src string) (*ast.Program, error) {
 	return parser.Parse(src)
 }
 
