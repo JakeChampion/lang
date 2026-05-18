@@ -771,9 +771,18 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 }
 
 // emitCall picks a previously-registered helper whose return type
-// is t and emits a typed call to it. Returns false (without
-// writing) if no such helper exists; the caller should fall back
-// to another production.
+// is t and emits a typed call to it. Half the time, when the
+// helper has at least one parameter, emits the pipe form
+// `(<arg0> |> helper(<arg1>, ...))` instead of the prefix form
+// `helper(<arg0>, ...)`. Both lower to the same Call AST node at
+// parse time (the parser desugars pipe to a Call with IsPipe set),
+// so the two shapes exercise the same backend codepath — but the
+// pipe form lets the generator's source resemble real-world
+// data-first stdlib chains and exercises the pipe parser /
+// formatter paths.
+//
+// Returns false (without writing) if no helper returns t; caller
+// falls back to another production.
 func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) bool {
 	var cands []helperSig
 	for _, h := range g.helpers {
@@ -785,6 +794,24 @@ func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) 
 		return false
 	}
 	h := cands[g.ch.intN(len(cands))]
+	// Pipe form: smaller-output choice is "no pipe" (exhaustion
+	// returns true here = no pipe = prefix form).
+	if len(h.params) >= 1 && !g.flip(0.6) {
+		// Outer parens so the `|>` precedence (which sits
+		// between assignment and ternary) doesn't clash with
+		// whatever expression slot the caller drops this into.
+		b.WriteByte('(')
+		g.expr(b, sc, h.params[0], depth+1)
+		fmt.Fprintf(b, " |> %s(", h.name)
+		for i, pt := range h.params[1:] {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			g.expr(b, sc, pt, depth+1)
+		}
+		b.WriteString("))")
+		return true
+	}
 	b.WriteString(h.name)
 	b.WriteByte('(')
 	for i, pt := range h.params {
