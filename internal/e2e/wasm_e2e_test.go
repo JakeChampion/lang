@@ -8312,3 +8312,168 @@ function main(): i32 {
 		t.Errorf("wasmtime stdout = %q, want it to contain 42", out)
 	}
 }
+
+// TestWASMModuleRunsMemoryLoad: a function that loads a byte from
+// linear memory and returns it. Exercises every part of the
+// std/wasm stack that the previous runtime tests skipped:
+//   - encode_memory_section          (declares a 1-page memory)
+//   - encode_data_section            (seeds memory with [42, 7, 99, 5])
+//   - inst_i32_load8_u + memarg      (loads from a specified offset)
+// Body reads offset 2 (= 99 = 0x63) and returns it.
+func TestWASMModuleRunsMemoryLoad(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/memory";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.memory_max = 0 - 1;
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // Data: at offset 0, bytes [42, 7, 99, 5].
+    m.data_offsets = [0];
+    m.data_inits = [[42u8, 7u8, 99u8, 5u8]];
+
+    // Body: i32.const 2 ; i32.load8_u align=0 offset=0
+    var body: u8[] = inst.inst_i32_const([], 2);
+    body = memory.inst_i32_load8_u(body, 0u32, 0u32);
+
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "99") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 99 (data[2])", out)
+	}
+}
+
+// TestWASMModuleRunsMemoryStoreLoad: writes a byte to memory then
+// reads it back. Exercises inst_i32_store8 + the matching load in
+// a single body, with a writable memory (no data section needed).
+func TestWASMModuleRunsMemoryStoreLoad(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/memory";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.memory_max = 0 - 1;
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // Body:
+    //   i32.const 16    ; address
+    //   i32.const 77    ; value
+    //   i32.store8 align=0 offset=0
+    //   i32.const 16
+    //   i32.load8_u align=0 offset=0
+    var body: u8[] = inst.inst_i32_const([], 16);
+    body = inst.inst_i32_const(body, 77);
+    body = memory.inst_i32_store8(body, 0u32, 0u32);
+    body = inst.inst_i32_const(body, 16);
+    body = memory.inst_i32_load8_u(body, 0u32, 0u32);
+
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "77") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 77 (stored value)", out)
+	}
+}
+
+// TestWASMModuleRunsGlobalSection: a const i32 global initialized
+// to 314 + a function that loads it via global.get. Exercises
+// encode_global_section (from std/wasm/imports), the global's
+// init_expr shape, and the inst_global_get opcode wiring at
+// runtime.
+func TestWASMModuleRunsGlobalSection(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/imports";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // Global 0: const i32 = 314. Init expr: i32.const 314 ; end.
+    var initExpr: u8[] = inst.inst_i32_const([], 314);
+    initExpr = inst.inst_end(initExpr);
+    m.global_valtypes = [encode.valtype_i32()];
+    m.global_muts = [imports.mut_const()];
+    m.global_inits = [initExpr];
+
+    // Body: global.get 0.
+    var body: u8[] = inst.inst_global_get([], 0u32);
+
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "314") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 314 (global value)", out)
+	}
+}
