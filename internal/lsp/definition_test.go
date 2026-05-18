@@ -52,6 +52,34 @@ func TestDefinition_Struct(t *testing.T) {
 	}
 }
 
+func TestDefinition_TypeAnnotation(t *testing.T) {
+	// Cursor on `Point` in `var p: Point`. The annotation lives in
+	// a positionless ast.Type, so this only works via the parser's
+	// TypeRefs side table.
+	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  var p: Point = Point { x: 0, y: 0 };\n  return p.x;\n}\n"
+	got := definitionFor(src, 2, 9)
+	if got == nil {
+		t.Fatal("expected definition for type annotation Point")
+	}
+	if got.Range.Start.Line != 0 {
+		t.Errorf("definition start line = %d, want 0 (struct decl)", got.Range.Start.Line)
+	}
+}
+
+func TestDefinition_FieldAccess(t *testing.T) {
+	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  var p: Point = Point { x: 7, y: 9 };\n  return p.x;\n}\n"
+	got := definitionFor(src, 3, 11) // cursor on `x` in `p.x`
+	if got == nil {
+		t.Fatal("expected definition for field access p.x")
+	}
+	// Jumps to the struct decl (line 0) — StructDecl.Fields lack
+	// per-field positions, so the LSP picks the decl's start as a
+	// reasonable target.
+	if got.Range.Start.Line != 0 {
+		t.Errorf("definition start line = %d, want 0 (struct decl)", got.Range.Start.Line)
+	}
+}
+
 func TestDefinition_NoIdentAtPosition(t *testing.T) {
 	src := "function main(): i32 { return 0; }\n"
 	got := definitionFor(src, 0, 30)

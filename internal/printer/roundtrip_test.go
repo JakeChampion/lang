@@ -122,6 +122,11 @@ func zeroPositions(prog *ast.Program) {
 		fn.P = ast.Position{}
 		zeroBlock(fn.Body)
 	}
+	// TypeRefs is a parser-recorded side table whose source-position
+	// content varies with whitespace, so positions diverge between
+	// the source and printer output even when the underlying AST
+	// matches. Drop it for the comparison.
+	prog.TypeRefs = nil
 }
 
 func zeroBlock(b *ast.Block) {
@@ -246,6 +251,7 @@ func zeroExpr(e ast.Expr) {
 		}
 	case *ast.FieldAccess:
 		x.P = ast.Position{}
+		x.FieldPos = ast.Position{}
 		zeroExpr(x.Target)
 	}
 }

@@ -5,20 +5,25 @@ import (
 )
 
 // nameHit is what the position-search helpers return: an addressable
-// source name (variable / type / variant) at a given source span,
-// plus the FuncDecl whose body contains it (nil when the name is at
-// top level). One of ident / structLit / enumLit will be non-nil so
-// callers can switch on the originating AST node when they need
-// kind-specific behaviour (variant lookup, struct-field listing,
-// shadow resolution).
+// source name (variable / type / variant / field) at a given source
+// span, plus the FuncDecl whose body contains it (nil when the name
+// is at top level). One of ident / structLit / enumLit / fieldAccess /
+// typeRef will be non-nil so callers can switch on the originating
+// AST node when they need kind-specific behaviour (variant lookup,
+// struct-field listing, shadow resolution).
 type nameHit struct {
 	name      string
 	pos       ast.Position
 	enclosing *ast.FuncDecl
 
-	ident     *ast.Ident
-	structLit *ast.StructLit
-	enumLit   *ast.EnumLit
+	ident       *ast.Ident
+	structLit   *ast.StructLit
+	enumLit     *ast.EnumLit
+	fieldAccess *ast.FieldAccess
+	// typeRef is non-nil for hits in type-annotation slots
+	// (`var c: Color` → typeRef captures `Color`'s position).
+	// Picked up from Program.TypeRefs rather than the AST walk.
+	typeRef *ast.TypeRef
 }
 
 // findNameAt walks prog's function bodies and returns the deepest
@@ -30,16 +35,13 @@ type nameHit struct {
 //   - *ast.Ident          — variable / parameter / function reference
 //   - *ast.StructLit      — name is the struct's TypeName, starting at P
 //   - *ast.EnumLit        — name is the variant name, starting at P
+//   - *ast.FieldAccess    — field name after a `.`, span starts at FieldPos
+//   - *ast.TypeRef        — type-annotation name, via Program.TypeRefs
 //
 // Span is half-open at the right so a cursor immediately past the
 // last character (the common "click at end of word" placement editors
 // send) still hits. Identifiers in lang can't span newlines, so a
-// single-line range check is correct for all three node kinds.
-//
-// Type-annotation positions (`var c: Color`) aren't recognised
-// because the parser stores the annotation as an ast.Type, which
-// is positionless. Adding hover for those needs an end-position
-// refactor on the parser side.
+// single-line range check is correct for all node kinds.
 func findNameAt(prog *ast.Program, line, col int) *nameHit {
 	if prog == nil {
 		return nil
@@ -78,9 +80,35 @@ func findNameAt(prog *ast.Program, line, col int) *nameHit {
 						enumLit:   x,
 					}
 				}
+			case *ast.FieldAccess:
+				if x.FieldPos.Line != 0 && spans(x.FieldPos, line, col, len(x.Field)) {
+					best = &nameHit{
+						name:        x.Field,
+						pos:         x.FieldPos,
+						enclosing:   fd,
+						fieldAccess: x,
+					}
+				}
 			}
 			return true
 		})
+	}
+	// Type annotations live outside any function body — they're in
+	// Var.Type, Param.Type, etc., which are positionless ast.Type
+	// values. The parser deposits a side table with their source
+	// positions in Program.TypeRefs; we search it last so a type
+	// ref under the cursor wins only when no in-body name does.
+	// (In practice the two never overlap — types appear in type
+	// slots, not expressions.)
+	for i := range prog.TypeRefs {
+		tr := &prog.TypeRefs[i]
+		if spans(tr.P, line, col, len(tr.Name)) {
+			best = &nameHit{
+				name:    tr.Name,
+				pos:     tr.P,
+				typeRef: tr,
+			}
+		}
 	}
 	return best
 }

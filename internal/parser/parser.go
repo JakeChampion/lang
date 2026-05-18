@@ -40,6 +40,7 @@ func Parse(src string) (*ast.Program, error) {
 	p := &parser{tokens: tokens}
 	prog := p.parseProgram()
 	prog.Comments = comments
+	prog.TypeRefs = p.typeRefs
 	if len(p.errors) > 0 {
 		return prog, diag.Errors(p.errors)
 	}
@@ -74,6 +75,14 @@ type parser struct {
 	tokens []lexer.Token
 	i      int
 	errors []error
+	// typeRefs accumulates source-position records for every
+	// named-type reference parseType encounters. Drained into
+	// prog.TypeRefs at the end of Parse. The LSP uses this side
+	// table for hover / definition on type annotations — ast.Type
+	// values themselves are positionless. Sub-parsers (e.g. the
+	// one-shot parseExprFromText for f-string interpolants) get
+	// their own *parser and their typeRefs are discarded.
+	typeRefs []ast.TypeRef
 	// foreachN counts how many `for IDENT in expr` desugars we've
 	// emitted in this Parse so synthetic slot names stay unique
 	// across nested foreach loops.
@@ -858,6 +867,12 @@ func (p *parser) parseType() (ast.Type, error) {
 			}
 			name = name + "." + fieldTok.Text
 		}
+		// Record the type-name position for the LSP. The Name we
+		// store is the full source spelling (including any
+		// `mod.` qualifier) so lookup keys match what modload
+		// will eventually rewrite to in the checker's Structs /
+		// Enums maps.
+		p.typeRefs = append(p.typeRefs, ast.TypeRef{P: t.Pos, Name: name})
 		// Generic instantiation: `Foo[T1, T2]`. Distinguished
 		// from the array-suffix loop below by a lookahead — `[`
 		// directly followed by `]` is the array form.
@@ -2344,8 +2359,8 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			// token; reuse the FieldAccess shape with a stringified
 			// index so codegen can stay uniform.
 			if num := p.peek(); num.Kind == lexer.Number {
-				p.advance()
-				expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: num.Text}
+				numTok := p.advance()
+				expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: numTok.Text, FieldPos: numTok.Pos}
 				continue
 			}
 			fname, err := p.expect(lexer.Ident, "")
@@ -2361,7 +2376,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			if id, ok := expr.(*ast.Ident); ok && p.match(lexer.Punct, "{") {
 				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
 			}
-			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text}
+			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos}
 		case p.match(lexer.Punct, "?"):
 			// Postfix `?` — Option-try operator. `expr?` evaluates
 			// to the Some payload and early-returns None when the
