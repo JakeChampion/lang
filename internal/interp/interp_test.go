@@ -280,6 +280,14 @@ func TestInterpMapBasic(t *testing.T) {
 			var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
 			return m.len();
 		}`, 3},
+		{"for-each iter", `function main(): i32 {
+			var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+			var sum: i32 = 0;
+			for (k, v) in m {
+				sum = sum + k + v;
+			}
+			return sum;
+		}`, 66},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

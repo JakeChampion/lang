@@ -217,6 +217,8 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"dynamic enum decl":          false,
 		"id[T] generic call":         false,
 		"pick[T] generic call":       false,
+		"for-each over array":        false,
+		"for-each over map":          false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -388,6 +390,14 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Count(src, "pick(") > 1 {
 			want["pick[T] generic call"] = true
+		}
+		// for-each over arrays: `for __fe_x<N> in <arr-var>`.
+		// for-each over maps: `for (__fe_k<N>, __fe_v<N>) in <map>`.
+		if strings.Contains(src, "for __fe_x") {
+			want["for-each over array"] = true
+		}
+		if strings.Contains(src, "for (__fe_k") {
+			want["for-each over map"] = true
 		}
 	}
 	for feature, ok := range want {
