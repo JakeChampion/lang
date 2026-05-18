@@ -27,9 +27,12 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	conv "github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/leb128"
+	mem "github.com/jakechampion/lang/internal/wasm/memory"
+	num "github.com/jakechampion/lang/internal/wasm/numeric"
 	"github.com/jakechampion/lang/internal/wasm/sections"
 )
 
@@ -9638,5 +9641,62 @@ func TestWASMInstCrossValidates(t *testing.T) {
 	stdout := runWasmModule(t, out)
 	if strings.TrimSpace(stdout) != "11" {
 		t.Fatalf("wasmtime stdout = %q, want %q", stdout, "11")
+	}
+}
+
+// TestWASMMemoryNumericConvertCross builds a module using Go
+// encode + sections + inst + memory + numeric + convert all
+// together: read 4 bytes from a data segment, sum them as i64,
+// truncate to i32, return. Catches drift in any of the three
+// opcode-family packages, plus their integration with memarg
+// encoding and the data section.
+func TestWASMMemoryNumericConvertCross(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+
+	out := encode.PutModuleHeader(nil)
+	out = sections.EncodeTypeSection(out,
+		[][]byte{nil}, [][]byte{{encode.ValtypeI32}})
+	out = sections.EncodeFunctionSection(out, []uint32{0})
+	out = sections.EncodeMemorySection(out, 1, -1)
+	out = sections.EncodeExportSection(out,
+		[]string{"main"},
+		[]byte{sections.ExportFunc},
+		[]uint32{0})
+
+	// Body:
+	//   i32.const 0 ; i64.load8_u 0 0      -> i64(1)
+	//   i32.const 1 ; i64.load8_u 0 0      -> i64(2)
+	//   i64.add                            -> i64(3)
+	//   i32.const 2 ; i64.load8_u 0 0      -> i64(3)
+	//   i64.add                            -> i64(6)
+	//   i32.const 3 ; i64.load8_u 0 0      -> i64(4)
+	//   i64.add                            -> i64(10)
+	//   i32.wrap_i64                       -> i32(10)
+	var body []byte
+	body = inst.InstI32Const(body, 0)
+	body = mem.InstI64Load8U(body, 0, 0)
+	body = inst.InstI32Const(body, 1)
+	body = mem.InstI64Load8U(body, 0, 0)
+	body = num.InstI64Add(body)
+	body = inst.InstI32Const(body, 2)
+	body = mem.InstI64Load8U(body, 0, 0)
+	body = num.InstI64Add(body)
+	body = inst.InstI32Const(body, 3)
+	body = mem.InstI64Load8U(body, 0, 0)
+	body = num.InstI64Add(body)
+	body = conv.InstI32WrapI64(body)
+
+	fn := inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	out = sections.EncodeCodeSection(out, [][]byte{fn})
+	// Data section (id 11) must come after code (id 10) —
+	// sections in a wasm module are required to be in id order.
+	out = sections.EncodeDataSection(out,
+		[]int32{0}, [][]byte{{1, 2, 3, 4}})
+
+	stdout := runWasmModule(t, out)
+	if strings.TrimSpace(stdout) != "10" {
+		t.Fatalf("wasmtime stdout = %q, want %q (sum of [1,2,3,4])", stdout, "10")
 	}
 }
