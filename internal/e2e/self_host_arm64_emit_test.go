@@ -108,6 +108,10 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"hello-arm64", "print(\"Hello, ARM64!\\n\"); return 0;", 0, "Hello, ARM64!\n"},
 		{"print-twice", "print(\"line A\\n\"); print(\"line B\\n\"); return 0;", 0, "line A\nline B\n"},
 		{"print-then-return", "print(\"out\\n\"); return 7;", 7, "out\n"},
+		{"print-int-literal", "function main(): i32 { print_int(42); print(\"\\n\"); return 0; }", 0, "42\n"},
+		{"print-int-zero", "function main(): i32 { print_int(0); print(\"\\n\"); return 0; }", 0, "0\n"},
+		{"print-int-negative", "function main(): i32 { print_int(0 - 7); print(\"\\n\"); return 0; }", 0, "-7\n"},
+		{"print-int-fact", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { print_int(fact(8)); print(\"\\n\"); return 0; }", 0, "40320\n"},
 	}
 
 	for _, tc := range cases {
