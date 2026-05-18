@@ -1208,3 +1208,81 @@ func TestArrayMethodDispatchAutoDiscovers(t *testing.T) {
 		}
 	}
 }
+
+// TestCastAsTypeAscription — the `as` operator doubles as a
+// zero-cost type-annotation form. Bare `None`, `[]`, partially-
+// inferred variant constructors, etc. all get a place to pin a
+// concrete type inline where there's no `var x: T = ...` site
+// for inference to flow from.
+func TestCastAsTypeAscription(t *testing.T) {
+	good := []string{
+		// Payload-less variant: only the destination type can fix
+		// the type arg.
+		`function main(): i32 {
+			var x: Option[i32] = None as Option[i32];
+			return 0;
+		}`,
+		// Partially-inferred Result — Ok(1) pins T but not E.
+		`function main(): i32 {
+			var r: Result[i32, string] = Ok(1) as Result[i32, string];
+			return 0;
+		}`,
+		// Empty array literal — `[]` carries no element type
+		// without an outside anchor.
+		`function main(): i32 {
+			var a: i32[] = [] as i32[];
+			return len(a) as i32;
+		}`,
+		// Same-shape ascription (i.e. inner already concretely
+		// typed): a no-op annotation, but should still type-check.
+		`function main(): i32 {
+			var x: Option[i32] = Some(1) as Option[i32];
+			return 0;
+		}`,
+		// Ascription threaded directly into a call argument —
+		// the original motivation. Without it, callers have to
+		// invent a `none_i32()` helper.
+		`function takes(o: Option[i32]): i32 { return 0; }
+		function main(): i32 {
+			return takes(None as Option[i32]);
+		}`,
+	}
+	for _, src := range good {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected ok, got %v\nsrc:\n%s", err, src)
+		}
+	}
+
+	bad := []struct {
+		src  string
+		want string
+	}{
+		// Genuinely incompatible types still error — ascription
+		// isn't a transmute, it just exposes the existing
+		// `assignable` rule inline.
+		{
+			`function main(): i32 {
+				var x: Option[i32] = "hi" as Option[i32];
+				return 0;
+			}`,
+			"cannot cast",
+		},
+		{
+			`function main(): i32 {
+				var n: i32 = true as i32;
+				return n;
+			}`,
+			"cannot cast",
+		},
+	}
+	for _, c := range bad {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected error containing %q, got nil\nsrc:\n%s", c.want, c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}

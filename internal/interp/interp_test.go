@@ -384,6 +384,40 @@ func TestInterpGenericOption(t *testing.T) {
 	}
 }
 
+// TestInterpTypeAscription — `expr as T` in non-numeric form is a
+// zero-cost annotation at the interp level. The checker accepts
+// the cast when `inner` is assignable to `T` (None vs Option[i32],
+// Ok(1) vs Result[i32, string], etc.); the interp must pass the
+// value through unchanged.
+func TestInterpTypeAscription(t *testing.T) {
+	// None gets a concrete type via ascription. Match still
+	// fires the None arm.
+	v, _ := evalProgram(t, `function main(): i32 {
+		var x: Option[i32] = None as Option[i32];
+		match (x) {
+			Some(n) => { return n; },
+			None => { return 42; }
+		}
+		return 0;
+	}`)
+	if n, ok := v.(Number); !ok || n != 42 {
+		t.Errorf("None as Option[i32]: got %v, want 42", v)
+	}
+	// Partial Result inference — ascription fixes E without
+	// changing the runtime value.
+	v, _ = evalProgram(t, `function main(): i32 {
+		var r: Result[i32, string] = Ok(7) as Result[i32, string];
+		match (r) {
+			Ok(n) => { return n; },
+			Err(_) => { return -1; }
+		}
+		return 0;
+	}`)
+	if n, ok := v.(Number); !ok || n != 7 {
+		t.Errorf("Ok(7) as Result[i32, string]: got %v, want 7", v)
+	}
+}
+
 // Wildcard arms catch what the explicit arms miss.
 func TestInterpMatchWildcard(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
