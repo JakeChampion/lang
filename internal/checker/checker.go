@@ -3720,6 +3720,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					resolvedPayloads[i] = substituteType(vr.payloads[i], sub)
 				}
 				c.info.VariantCallPayloads[n] = resolvedPayloads
+				// Tag this Call as a variant constructor so later
+				// passes that need to gate on the variant-vs-fn
+				// distinction (postSettleType) can do so without
+				// the previous case-sensitivity heuristic.
+				n.IsVariantCall = true
 				if ed != nil && len(ed.TypeParams) > 0 {
 					args := make([]ast.Type, len(ed.TypeParams))
 					complete := true
@@ -5074,28 +5079,20 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 // `commonIntegerWidth(poly, poly)`. This helper recomputes the
 // type from whatever the settling pass stamped. Non-numeric
 // expressions return `prior` unchanged.
-// isVariantCall reports whether a *ast.Call looks like a variant
+// isVariantCall reports whether a *ast.Call resolved to a variant
 // constructor (`Some(x)`, `Ok(v)`) rather than a regular function
-// call. The check is intentionally syntactic / heuristic — the
-// callee is an Ident whose name starts with an upper-case ASCII
-// letter. That matches Lang's casing convention for variant
-// constructors (Some, None, Ok, Err, Square, Red, …) and excludes
-// regular function calls (`gen_f0(...)`, `len(...)`).
+// call. Reads the IsVariantCall flag the checker stamps on every
+// variant-resolved call.
 //
 // The gate exists to keep `postSettleType`'s Call branch from
 // firing on non-variant calls that happen to return Option[T] /
 // Result[T, E]. For example, `f(p: boolean[]): Option[i32]` called
 // as `f([true])` used to be refreshed as `Option[boolean[]]`
 // because the gate didn't distinguish variant constructors from
-// regular calls.
-func isVariantCall(c *ast.Call) bool {
-	id, ok := c.Callee.(*ast.Ident)
-	if !ok || id.Name == "" {
-		return false
-	}
-	first := id.Name[0]
-	return first >= 'A' && first <= 'Z'
-}
+// regular calls. The previous case-sensitivity heuristic (callee
+// Ident starts with an upper-case letter) matched Lang's naming
+// convention but wasn't a guarantee; the explicit flag is.
+func isVariantCall(c *ast.Call) bool { return c.IsVariantCall }
 
 func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	switch x := e.(type) {

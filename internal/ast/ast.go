@@ -659,6 +659,17 @@ type Call struct {
 	// qualified cross-module call (`mod.fn(args)`). Same LSP-only
 	// rationale as Method.
 	Module *ModuleCallSite
+	// IsVariantCall is set by the checker when this Call resolved
+	// to a variant constructor (`Some(x)`, `Ok(v)`, `Square(2.0,
+	// 3.0)`) rather than a regular function call. Downstream
+	// passes consult this to gate variant-specific behaviour;
+	// notably `postSettleType`'s Call branch rebuilds an
+	// EnumType's Args from the call's arg widths after a
+	// `settleNumeric` pass, and that rebuild MUST NOT fire on
+	// regular function calls that happen to return an EnumType
+	// (without the flag, `f(p: boolean[]): Option[i32]` had its
+	// return type rebuilt as `Option[boolean[]]`).
+	IsVariantCall bool
 }
 
 // MethodCallSite records the original source-level shape of a
