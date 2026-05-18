@@ -80,15 +80,9 @@ type occurrence struct {
 // correctly: a local var search stays within its enclosing function;
 // a top-level decl search spans every function body.
 //
-// Method-call renames aren't supported yet (they'd need rewriting
-// every `target.method()` site AND the def-site param name, which
-// involves checker.Methods semantics we don't fully expose). When
-// hit.methodCall is non-nil this returns an empty slice; the
-// rename handler then returns null which clients display as
-// "rename not available here".
 func collectOccurrences(state *docState, hit *nameHit) []occurrence {
 	if hit.methodCall != nil {
-		return nil
+		return collectMethod(state, hit.methodCall.Method)
 	}
 	// Type-annotation references resolve to the struct/enum decl;
 	// occurrences are every TypeRef with the same Name plus every
@@ -96,17 +90,16 @@ func collectOccurrences(state *docState, hit *nameHit) []occurrence {
 	if hit.typeRef != nil {
 		return collectByName(state, hit.name, false /* local-only? */)
 	}
-	if hit.structLit != nil || hit.fieldAccess != nil {
-		// Renaming a struct constructor or a field is out of
-		// scope for this MVP (struct rename needs to also rewrite
-		// all type annotations and method receivers; field rename
-		// needs Methods-map rewriting). Punt.
-		return nil
+	if hit.structLit != nil {
+		// Struct-type rename. Same as a typeRef hit: occurrences
+		// are every TypeRef + every StructLit constructor name.
+		return collectByName(state, hit.name, false)
+	}
+	if hit.fieldAccess != nil {
+		return collectField(state, hit.enclosing, hit.fieldAccess)
 	}
 	if hit.enumLit != nil {
-		// Variant rename would need to update every match-arm
-		// pattern too. Punt for now.
-		return nil
+		return collectVariant(state, hit.enumLit.EnumName, hit.name)
 	}
 	if hit.ident == nil {
 		return nil
@@ -125,7 +118,204 @@ func collectOccurrences(state *docState, hit *nameHit) []occurrence {
 			}
 		}
 	}
+	// Bare enum variants (`Red`, `None`) parse as Idents; the
+	// checker resolves them via variantOf without rewriting the
+	// AST. Route those to collectVariant so the rewrite reaches
+	// the decl + every match-arm pattern, not just the Ident
+	// occurrences collectByName would find.
+	if state.info != nil {
+		if enumName, _, ok := lookupVariant(state.info, hit.name); ok {
+			return collectVariant(state, enumName, hit.name)
+		}
+	}
 	return collectByName(state, hit.name, false)
+}
+
+// collectVariant gathers every position naming the variant in
+// (enumName, variant). Covers the variant's declaration site
+// (EnumVariant.P), every `Red`-style EnumLit, every match-arm
+// pattern (Match + MatchExpr), and every call-shaped variant
+// construction (`Some(42)`). The checker doesn't rewrite call-
+// shaped variants to EnumLit either — they stay as Calls with an
+// Ident callee — so we sweep Idents matching the name and check
+// the surrounding context via state.info.
+func collectVariant(state *docState, enumName, variantName string) []occurrence {
+	var out []occurrence
+	if state.info == nil {
+		return out
+	}
+	ed, ok := state.info.Enums[enumName]
+	if !ok {
+		return out
+	}
+	srcMod := ed.SourceModule
+	for _, v := range ed.Variants {
+		if v.Name == variantName {
+			out = append(out, occurrence{name: variantName, pos: v.P, sourceModule: srcMod})
+		}
+	}
+	for _, fd := range state.prog.Funcs {
+		if fd == nil || fd.Body == nil {
+			continue
+		}
+		fnMod := fd.SourceModule
+		ast.Walk(fd.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.EnumLit:
+				if x.EnumName == enumName && x.VariantName == variantName {
+					out = append(out, occurrence{
+						name: variantName, pos: x.P, sourceModule: fnMod,
+					})
+				}
+			case *ast.Match:
+				for _, arm := range x.Arms {
+					if !arm.IsWildcard && arm.VariantName == variantName {
+						out = append(out, occurrence{
+							name: variantName, pos: arm.P, sourceModule: fnMod,
+						})
+					}
+				}
+			case *ast.MatchExpr:
+				for _, arm := range x.Arms {
+					if !arm.IsWildcard && arm.VariantName == variantName {
+						out = append(out, occurrence{
+							name: variantName, pos: arm.P, sourceModule: fnMod,
+						})
+					}
+				}
+			case *ast.Ident:
+				// Bare-name reference to the variant (`Red`, `None`).
+				// We trust the name match — the checker rejects an
+				// unrelated decl with the same name as the variant.
+				if x.Name == variantName {
+					out = append(out, occurrence{
+						name: variantName, pos: x.P, sourceModule: fnMod,
+					})
+				}
+			}
+			return true
+		})
+	}
+	return out
+}
+
+// collectField gathers every position naming the field
+// `target.Field` belongs to. Resolves the receiver type via the
+// shared exprResolvedType helper, then walks the program for: the
+// struct's decl-site field position (Param.NamePos), every
+// FieldAccess.Field with a matching receiver, and every
+// StructLit.Fields[].Name in the matching struct's literals.
+func collectField(state *docState, enclosing *ast.FuncDecl, fa *ast.FieldAccess) []occurrence {
+	if state.info == nil {
+		return nil
+	}
+	targetType := exprResolvedType(state.info, enclosing, fa.Target)
+	if targetType == nil {
+		return nil
+	}
+	st, ok := targetType.(ast.StructType)
+	if !ok {
+		return nil
+	}
+	sd, ok := state.info.Structs[st.Name]
+	if !ok {
+		return nil
+	}
+	srcMod := sd.SourceModule
+	var out []occurrence
+	for _, f := range sd.Fields {
+		if f.Name == fa.Field && f.NamePos.Line != 0 {
+			out = append(out, occurrence{name: fa.Field, pos: f.NamePos, sourceModule: srcMod})
+		}
+	}
+	for _, fd := range state.prog.Funcs {
+		if fd == nil || fd.Body == nil {
+			continue
+		}
+		fnMod := fd.SourceModule
+		ast.Walk(fd.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.FieldAccess:
+				if x.Field != fa.Field || x.FieldPos.Line == 0 {
+					return true
+				}
+				// Only count accesses whose receiver resolves to
+				// the same struct so we don't rename
+				// like-named fields on unrelated types.
+				tt := exprResolvedType(state.info, fd, x.Target)
+				if at, ok := tt.(ast.StructType); ok && at.Name == st.Name {
+					out = append(out, occurrence{
+						name: fa.Field, pos: x.FieldPos, sourceModule: fnMod,
+					})
+				}
+			case *ast.StructLit:
+				if x.TypeName != st.Name {
+					return true
+				}
+				for _, f := range x.Fields {
+					if f.Name == fa.Field && f.NamePos.Line != 0 {
+						out = append(out, occurrence{
+							name: fa.Field, pos: f.NamePos, sourceModule: fnMod,
+						})
+					}
+				}
+			}
+			return true
+		})
+	}
+	return out
+}
+
+// collectMethod gathers every position naming the method whose call
+// site m belongs to: the FuncDecl's NamePos for the implementation
+// + every Call.Method.FieldPos with a matching (receiver, name)
+// pair. The receiver-type match keeps `Point.sum` distinct from a
+// hypothetical `Vec.sum`.
+func collectMethod(state *docState, m *ast.MethodCallSite) []occurrence {
+	if state.info == nil || m == nil {
+		return nil
+	}
+	receiverName, ok := receiverTypeKey(m.Receiver)
+	if !ok {
+		return nil
+	}
+	mangled, ok := state.info.Methods[receiverName+"."+m.Field]
+	if !ok {
+		return nil
+	}
+	var out []occurrence
+	for _, fd := range state.prog.Funcs {
+		if fd == nil || fd.Body == nil {
+			continue
+		}
+		if fd.Name == mangled && fd.NamePos.Line != 0 {
+			out = append(out, occurrence{
+				name: m.Field, pos: fd.NamePos, sourceModule: fd.SourceModule,
+			})
+		}
+		fnMod := fd.SourceModule
+		ast.Walk(fd.Body, func(n ast.Node) bool {
+			c, ok := n.(*ast.Call)
+			if !ok || c.Method == nil {
+				return true
+			}
+			if c.Method.Field != m.Field {
+				return true
+			}
+			rn, ok := receiverTypeKey(c.Method.Receiver)
+			if !ok || rn != receiverName {
+				return true
+			}
+			if c.Method.FieldPos.Line == 0 {
+				return true
+			}
+			out = append(out, occurrence{
+				name: m.Field, pos: c.Method.FieldPos, sourceModule: fnMod,
+			})
+			return true
+		})
+	}
+	return out
 }
 
 func lookupLocal(info *checker.Info, fd *ast.FuncDecl, name string) (*ast.Var, bool) {

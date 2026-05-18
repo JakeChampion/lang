@@ -117,9 +117,19 @@ func TestRoundtripStringEscapes(t *testing.T) {
 func zeroPositions(prog *ast.Program) {
 	for _, sd := range prog.Structs {
 		sd.P = ast.Position{}
+		for i := range sd.Fields {
+			sd.Fields[i].NamePos = ast.Position{}
+		}
 	}
 	for _, fn := range prog.Funcs {
 		fn.P = ast.Position{}
+		fn.NamePos = ast.Position{}
+		for i := range fn.Params {
+			fn.Params[i].NamePos = ast.Position{}
+		}
+		if fn.Receiver != nil {
+			fn.Receiver.NamePos = ast.Position{}
+		}
 		zeroBlock(fn.Body)
 	}
 	// TypeRefs is a parser-recorded side table whose source-position
@@ -194,6 +204,13 @@ func zeroStmt(s ast.Stmt) {
 		}
 	case *ast.FuncDecl:
 		x.P = ast.Position{}
+		x.NamePos = ast.Position{}
+		for i := range x.Params {
+			x.Params[i].NamePos = ast.Position{}
+		}
+		if x.Receiver != nil {
+			x.Receiver.NamePos = ast.Position{}
+		}
 		zeroBlock(x.Body)
 	}
 }
@@ -246,8 +263,9 @@ func zeroExpr(e ast.Expr) {
 		zeroExpr(x.Inner)
 	case *ast.StructLit:
 		x.P = ast.Position{}
-		for _, f := range x.Fields {
-			zeroExpr(f.Value)
+		for i := range x.Fields {
+			x.Fields[i].NamePos = ast.Position{}
+			zeroExpr(x.Fields[i].Value)
 		}
 	case *ast.FieldAccess:
 		x.P = ast.Position{}

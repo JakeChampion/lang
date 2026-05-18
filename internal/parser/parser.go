@@ -372,12 +372,13 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return nil, err
 		}
-		receiver = &ast.Param{Name: rname.Text, Type: rtype}
+		receiver = &ast.Param{Name: rname.Text, NamePos: rname.Pos, Type: rtype}
 	}
 	name, err := p.expect(lexer.Ident, "")
 	if err != nil {
 		return nil, err
 	}
+	funcNamePos := name.Pos
 	// Optional type parameters: `function id[T](x: T): T`.
 	// Reuses the bracket form enums use (`enum Option[T]`) so
 	// parsers / readers learn one shape for both generic decls
@@ -417,7 +418,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 			if err != nil {
 				return nil, err
 			}
-			params = append(params, ast.Param{Name: pname.Text, Type: ptype})
+			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype})
 			if _, ok := p.accept(lexer.Punct, ","); !ok {
 				break
 			}
@@ -447,6 +448,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	return &ast.FuncDecl{
 		P:          kw.Pos,
 		Name:       name.Text,
+		NamePos:    funcNamePos,
 		TypeParams: typeParams,
 		Params:     params,
 		ReturnType: ret,
@@ -567,7 +569,7 @@ func (p *parser) parseStructDecl() (*ast.StructDecl, error) {
 			if err != nil {
 				return nil, err
 			}
-			fields = append(fields, ast.Param{Name: fname.Text, Type: ft})
+			fields = append(fields, ast.Param{Name: fname.Text, NamePos: fname.Pos, Type: ft})
 			if _, ok := p.accept(lexer.Punct, ","); ok {
 				if p.match(lexer.Punct, "}") {
 					break
@@ -2418,7 +2420,7 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string) (ast.Expr, er
 			if err != nil {
 				return nil, err
 			}
-			fields = append(fields, ast.FieldInit{Name: fname.Text, Value: val})
+			fields = append(fields, ast.FieldInit{Name: fname.Text, NamePos: fname.Pos, Value: val})
 			if _, ok := p.accept(lexer.Punct, ","); ok {
 				if p.match(lexer.Punct, "}") {
 					break
