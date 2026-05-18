@@ -456,6 +456,24 @@ pub function compile_program(mod: parser.Module): CompiledProgram {
     var top_lt: LocalsTable = new_locals();
     var tr: CompileResult = compile_block(mod.top_stmts, ops, top_lt);
     ops = tr.ops;
+    // If the module declares `main` but has no top-level stmts,
+    // emit an implicit `main()` call as the entry point. Mirrors
+    // the interp's eval_module behavior so a Go-style
+    //   function main(): i32 { … }
+    // program produces its main's return value as the program
+    // result.
+    if (len(mod.top_stmts) == 0) {
+        var has_main: boolean = false;
+        var mi: i32 = 0;
+        while (mi < len(fn_names)) {
+            if (fn_names[mi] == "main") { has_main = true; }
+            mi = mi + 1;
+        }
+        if (has_main) {
+            ops = ops.push(op_call("main", 0));
+            ops = ops.push(op_return());
+        }
+    }
     // Trailing return-0 so falling off top-level halts cleanly.
     ops = ops.push(op_push_int(0));
     ops = ops.push(op_return());
