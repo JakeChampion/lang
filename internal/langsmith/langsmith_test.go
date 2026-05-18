@@ -50,3 +50,24 @@ func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 		}
 	}
 }
+
+// TestGenMainProducesRunnablePrograms — every seed yields a
+// well-typed program whose `main(): i32` returns a byte. The
+// load-bearing invariant of the differential-oracle harness in
+// internal/e2e.
+func TestGenMainProducesRunnablePrograms(t *testing.T) {
+	for seed := uint64(0); seed < 256; seed++ {
+		src := langsmith.GenMain(seed)
+		if !strings.Contains(src, "function main(): i32") {
+			t.Errorf("seed=%d: missing main\nsrc:\n%s", seed, src)
+			continue
+		}
+		prog, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("seed=%d failed to parse:\nsrc:\n%s\nerr: %v", seed, src, err)
+		}
+		if _, err := checker.Check(prog); err != nil {
+			t.Fatalf("seed=%d failed to type-check:\nsrc:\n%s\nerr: %v", seed, src, err)
+		}
+	}
+}

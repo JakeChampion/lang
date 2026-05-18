@@ -67,6 +67,13 @@ func NewWithConfig(rng *rand.Rand, cfg Config) *Generator {
 type Generator struct {
 	rng *rand.Rand
 	cfg Config
+	// noFloats removes f32 from every production — type picker,
+	// numeric expressions, and the operand-type chosen inside
+	// boolean comparisons. MainProgram sets this so the
+	// differential-execution oracle doesn't have to reason about
+	// IEEE-754 edges (NaN propagation, denormal flush, Inf
+	// comparison) that may legitimately differ across backends.
+	noFloats bool
 }
 
 // gtype is the generator's internal enum of Lang types. Each kind
@@ -125,6 +132,57 @@ func (s *scope) inScope(t gtype) []string {
 }
 
 // ---------- top level ----------
+
+// GenMain returns a single-function runnable Lang program — exactly
+// one `function main(): i32 { ... }` whose return value is a
+// deterministic byte in [0, 255]. Useful as input for a
+// differential-execution oracle, which runs the program through
+// every available backend (interp + arm64 + x86_64 + wasm) and
+// asserts the observers agree on the result.
+//
+// Limited to integer + boolean operations so the same expression
+// has a single well-defined value across every backend. Floats
+// can diverge at Inf/NaN edges, strings need a print-channel
+// observation, and division would risk a `/0` trap; all three
+// stay out. The mask `& 255i32` makes the result fit in an 8-bit
+// exit code AND keeps wasm's PrintMainResult stdout output a
+// short ASCII byte string the harness can compare to the native
+// exit codes.
+func GenMain(seed uint64) string {
+	return New(rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15))).MainProgram()
+}
+
+// MainProgram emits a single `function main(): i32 { ... }`. Body
+// declares 0..N integer/boolean vars (which give the differential
+// harness something to disagree on across backends) and returns
+// `(<i32-expr> & 255i32)`. Sets `noFloats` for the duration of
+// the call so nested productions can't sneak f32 in through
+// boolean comparisons.
+func (g *Generator) MainProgram() string {
+	prevNoFloats := g.noFloats
+	g.noFloats = true
+	defer func() { g.noFloats = prevNoFloats }()
+
+	var b strings.Builder
+	sc := newScope(nil)
+	b.WriteString("function main(): i32 { ")
+	n := g.rng.IntN(maxInt(g.cfg.MaxStmts, 0) + 1)
+	for i := 0; i < n; i++ {
+		// Restrict to deterministic-across-backends types. Strings
+		// would also need a print channel to observe; we just want
+		// the return-value byte.
+		vt := []gtype{tI32, tI64, tBool}[g.rng.IntN(3)]
+		vname := fmt.Sprintf("v%d", i)
+		fmt.Fprintf(&b, "var %s: %s = ", vname, vt)
+		g.expr(&b, sc, vt, 0)
+		b.WriteString("; ")
+		sc.declare(vt, vname)
+	}
+	b.WriteString("return (")
+	g.expr(&b, sc, tI32, 0)
+	b.WriteString(" & 255i32); }\n")
+	return b.String()
+}
 
 // Program emits a complete program with N top-level function
 // declarations. Each function is independent: no inter-function
@@ -238,7 +296,7 @@ func (g *Generator) boolExpr(b *strings.Builder, sc *scope, depth int) {
 		g.expr(b, sc, tBool, depth+1)
 		b.WriteByte(')')
 	default:
-		nt := []gtype{tI32, tI64, tF32}[g.rng.IntN(3)]
+		nt := g.pickNumeric()
 		op := []string{"<", "<=", ">", ">=", "==", "!="}[g.rng.IntN(6)]
 		b.WriteByte('(')
 		g.expr(b, sc, nt, depth+1)
@@ -285,7 +343,29 @@ func (g *Generator) stringLiteral() string {
 
 // ---------- random helpers ----------
 
-func (g *Generator) pickType() gtype { return allTypes[g.rng.IntN(len(allTypes))] }
+// pickType draws from the full type universe, honouring noFloats
+// when the generator is in main-program mode.
+func (g *Generator) pickType() gtype {
+	if g.noFloats {
+		// Skip tF32 — the type universe has it at index tF32.
+		// Round-robin over the other four entries instead.
+		nonFloats := []gtype{tI32, tI64, tBool, tString}
+		return nonFloats[g.rng.IntN(len(nonFloats))]
+	}
+	return allTypes[g.rng.IntN(len(allTypes))]
+}
+
+// pickNumeric draws from the numeric types only, honouring
+// noFloats. Used by `boolExpr` to choose the operand type of a
+// comparison.
+func (g *Generator) pickNumeric() gtype {
+	if g.noFloats {
+		ints := []gtype{tI32, tI64}
+		return ints[g.rng.IntN(len(ints))]
+	}
+	return []gtype{tI32, tI64, tF32}[g.rng.IntN(3)]
+}
+
 func (g *Generator) flip(p float64) bool { return g.rng.Float64() < p }
 
 func maxInt(a, b int) int {
