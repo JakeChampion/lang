@@ -213,6 +213,8 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"Status match expression":    false,
 		"Map literal":                false,
 		"map .get() / .has() / .len()": false,
+		"dynamic struct decl":        false,
+		"dynamic enum decl":          false,
 	}
 	// Features that only fire in Gen (the parse+check path) and
 	// not in GenMain — currently the generic helper calls
@@ -375,6 +377,14 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, ".get(") || strings.Contains(src, ".has(") || strings.Contains(src, ".len()") {
 			want["map .get() / .has() / .len()"] = true
+		}
+		// Dynamic structs use `struct S<N>` and dynamic enums
+		// `enum E<N>` with `__E<N>_V<M>` variants.
+		if strings.Contains(src, "struct S0 ") || strings.Contains(src, "struct S1 ") {
+			want["dynamic struct decl"] = true
+		}
+		if strings.Contains(src, "enum E0 ") || strings.Contains(src, "enum E1 ") {
+			want["dynamic enum decl"] = true
 		}
 	}
 	for feature, ok := range want {

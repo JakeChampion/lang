@@ -256,6 +256,39 @@ type Generator struct {
 	// `__opt_` prefix keeps these out of any path that the
 	// user-style `v*` / `p*` / `w*` names take.
 	optBindCounter int
+	// Dynamic nominal types. Each entry in structShapes /
+	// enumShapes lives at a gtype value beyond `numTypes`
+	// (allocated by nextNominal). Multiple struct / enum
+	// decls per program flow through the same productions
+	// as the fixed Pair / Xyz / Color / Status — the only
+	// difference is the shape lives in these maps instead of
+	// being baked into the literal / field / match production
+	// code.
+	structShapes map[gtype]*structShape
+	enumShapes   map[gtype]*enumShape
+	nextNominal  gtype
+}
+
+// structShape is the runtime-allocated form of a struct decl.
+// Mirrors `ast.StructDecl` but holds the field types as gtype
+// values so productions can recurse into expr() directly.
+type structShape struct {
+	name   string
+	fields []structField
+}
+
+type structField struct {
+	name string
+	t    gtype
+}
+
+// enumShape is the runtime-allocated form of a payload-less
+// enum decl. Variants are bare names; payload-bearing variants
+// are out of scope for the first cut — `Some(T)` and friends
+// are reserved built-ins anyway.
+type enumShape struct {
+	name     string
+	variants []string
 }
 
 // helperSig is the bare minimum the generator needs to emit a
@@ -348,7 +381,30 @@ func (t gtype) String() string {
 	case tStatus:
 		return "Status"
 	}
-	panic(fmt.Sprintf("unknown gtype %d", int(t)))
+	// Dynamic nominal types live past numTypes — the
+	// Generator-aware caller should resolve them via
+	// `g.typeName(t)`. Return a placeholder when reached
+	// directly so debug prints don't crash.
+	return fmt.Sprintf("?dyn%d", int(t))
+}
+
+// typeName returns the source-level name token for type t,
+// consulting the Generator's dynamic nominal-type maps first.
+// Use this anywhere a type's name needs to land in the emitted
+// source (var annotations, function-decl return types, struct-
+// field types). For purely-diagnostic uses, gtype.String() is
+// fine.
+func (g *Generator) typeName(t gtype) string {
+	if t < numTypes {
+		return t.String()
+	}
+	if sh, ok := g.structShapes[t]; ok {
+		return sh.name
+	}
+	if sh, ok := g.enumShapes[t]; ok {
+		return sh.name
+	}
+	return fmt.Sprintf("?gtype%d", int(t))
 }
 
 // arrayTypeFor returns the array gtype whose element is t, plus a
@@ -380,17 +436,20 @@ func arrayElemOf(t gtype) (gtype, bool) {
 	return 0, false
 }
 
-// scope tracks identifiers visible at the current generation point,
-// bucketed by gtype so picking "any variable of type T" is a
-// constant-time lookup. Inner blocks would push a new scope; this
-// slice doesn't need that yet (no nested blocks in v1) but the
-// shape is in place for later.
+// scope tracks identifiers visible at the current generation
+// point, bucketed by gtype so picking "any variable of type T"
+// is a constant-time lookup. Map-keyed (not fixed-size array)
+// so dynamically-allocated nominal gtypes — user-declared
+// structs / enums beyond the closed const set — can be tracked
+// uniformly.
 type scope struct {
 	parent *scope
-	vars   [numTypes][]string
+	vars   map[gtype][]string
 }
 
-func newScope(parent *scope) *scope { return &scope{parent: parent} }
+func newScope(parent *scope) *scope {
+	return &scope{parent: parent, vars: map[gtype][]string{}}
+}
 
 func (s *scope) declare(t gtype, name string) { s.vars[t] = append(s.vars[t], name) }
 
@@ -445,11 +504,20 @@ func GenMain(seed uint64) string {
 func (g *Generator) MainProgram() string {
 	prevNoFloats := g.noFloats
 	prevHelpers := g.helpers
+	prevStructShapes := g.structShapes
+	prevEnumShapes := g.enumShapes
+	prevNextNominal := g.nextNominal
 	g.noFloats = true
 	g.helpers = nil
+	g.structShapes = nil
+	g.enumShapes = nil
+	g.nextNominal = 0
 	defer func() {
 		g.noFloats = prevNoFloats
 		g.helpers = prevHelpers
+		g.structShapes = prevStructShapes
+		g.enumShapes = prevEnumShapes
+		g.nextNominal = prevNextNominal
 	}()
 
 	var b strings.Builder
@@ -483,9 +551,9 @@ func (g *Generator) MainProgram() string {
 		// (arrays / Pair / Color) are pure values that flow
 		// through the i32 return path via index / field /
 		// match-expr productions in expr(), so they're safe.
-		vt := mainVarTypes[g.ch.intN(len(mainVarTypes))]
+		vt := g.pickMainVarType()
 		vname := fmt.Sprintf("v%d", i)
-		fmt.Fprintf(&b, "var %s: %s = ", vname, vt)
+		fmt.Fprintf(&b, "var %s: %s = ", vname, g.typeName(vt))
 		g.expr(&b, sc, vt, 0)
 		b.WriteString("; ")
 		sc.declare(vt, vname)
@@ -560,12 +628,97 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	// then exercises end-to-end.
 	b.WriteString("function id[T](x: T): T { return x; }\n")
 	b.WriteString("function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }\n")
+	// Dynamic nominal types — per-program random struct + enum
+	// shapes. See declareDynamicNominals for the field /
+	// variant generation rules.
+	g.declareDynamicNominals(b)
+}
+
+// declareDynamicNominals emits 0..3 additional struct decls and
+// 0..2 additional enum decls per program, with random field /
+// variant shapes drawn from the chooser. Each declaration gets a
+// fresh gtype value past `numTypes` so the scope's map keys
+// stay collision-free with the fixed Pair / Xyz / Color / Status.
+//
+// Field types are drawn from the runnable-safe scalar set
+// (i32 / i64 / boolean / string) — composites stay out of
+// fields for the first cut to keep the recursive expression
+// generation finite and the codegen layout simple.
+//
+// Variant names use a generator-private `__E<i>_V<j>` prefix to
+// guarantee global uniqueness without colliding with any
+// stdlib variant. Struct names use `S<i>` and field names
+// `f<j>` — those don't collide with anything in the prelude or
+// any user code the generator emits.
+func (g *Generator) declareDynamicNominals(b *strings.Builder) {
+	if g.structShapes == nil {
+		g.structShapes = map[gtype]*structShape{}
+	}
+	if g.enumShapes == nil {
+		g.enumShapes = map[gtype]*enumShape{}
+	}
+	if g.nextNominal < numTypes {
+		g.nextNominal = numTypes
+	}
+	// Up to 3 extra structs. Each has 2..4 fields drawn from
+	// scalar types.
+	nStructs := g.ch.intN(4) // 0..3
+	for i := 0; i < nStructs; i++ {
+		name := fmt.Sprintf("S%d", i)
+		nFields := 2 + g.ch.intN(3) // 2..4 fields
+		fields := make([]structField, nFields)
+		fmt.Fprintf(b, "struct %s { ", name)
+		for j := 0; j < nFields; j++ {
+			if j > 0 {
+				b.WriteString(", ")
+			}
+			ft := []gtype{tI32, tI64, tBool, tString}[g.ch.intN(4)]
+			fname := fmt.Sprintf("f%d", j)
+			fields[j] = structField{name: fname, t: ft}
+			fmt.Fprintf(b, "%s: %s", fname, ft)
+		}
+		b.WriteString(" }\n")
+		gt := g.nextNominal
+		g.nextNominal++
+		g.structShapes[gt] = &structShape{name: name, fields: fields}
+	}
+	// Up to 2 extra enums. Each has 2..4 payload-less variants.
+	nEnums := g.ch.intN(3) // 0..2
+	for i := 0; i < nEnums; i++ {
+		name := fmt.Sprintf("E%d", i)
+		nVariants := 2 + g.ch.intN(3) // 2..4
+		variants := make([]string, nVariants)
+		fmt.Fprintf(b, "enum %s { ", name)
+		for j := 0; j < nVariants; j++ {
+			if j > 0 {
+				b.WriteString(", ")
+			}
+			vname := fmt.Sprintf("__E%d_V%d", i, j)
+			variants[j] = vname
+			b.WriteString(vname)
+		}
+		b.WriteString(" }\n")
+		gt := g.nextNominal
+		g.nextNominal++
+		g.enumShapes[gt] = &enumShape{name: name, variants: variants}
+	}
 }
 
 // Program emits a complete program: prelude type decls followed
 // by N top-level function declarations. Helpers can call any
 // earlier helper (forward refs only — see funcDecl).
 func (g *Generator) Program() string {
+	prevStructShapes := g.structShapes
+	prevEnumShapes := g.enumShapes
+	prevNextNominal := g.nextNominal
+	g.structShapes = nil
+	g.enumShapes = nil
+	g.nextNominal = 0
+	defer func() {
+		g.structShapes = prevStructShapes
+		g.enumShapes = prevEnumShapes
+		g.nextNominal = prevNextNominal
+	}()
 	var b strings.Builder
 	g.preludeDecls(&b)
 	n := 1 + g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
@@ -589,11 +742,11 @@ func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 		params[i] = pt
 		pn := fmt.Sprintf("p%d", i)
 		sc.declare(pt, pn)
-		fmt.Fprintf(b, "%s: %s", pn, pt)
+		fmt.Fprintf(b, "%s: %s", pn, g.typeName(pt))
 	}
 	b.WriteByte(')')
 	ret := g.pickType()
-	fmt.Fprintf(b, ": %s { ", ret)
+	fmt.Fprintf(b, ": %s { ", g.typeName(ret))
 	prevRet := g.currentReturnType
 	g.currentReturnType = ret
 	g.body(b, sc, ret)
@@ -617,7 +770,7 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 		}
 		vt := g.pickType()
 		vname := fmt.Sprintf("v%d", i)
-		fmt.Fprintf(b, "var %s: %s = ", vname, vt)
+		fmt.Fprintf(b, "var %s: %s = ", vname, g.typeName(vt))
 		g.expr(b, sc, vt, 0)
 		b.WriteString("; ")
 		sc.declare(vt, vname)
@@ -682,7 +835,7 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 		}
 		vt := g.pickType()
 		vname := fmt.Sprintf("w%d_%d", idx, i)
-		fmt.Fprintf(b, "var %s: %s = ", vname, vt)
+		fmt.Fprintf(b, "var %s: %s = ", vname, g.typeName(vt))
 		g.expr(b, inner, vt, 0)
 		b.WriteString("; ")
 		inner.declare(vt, vname)
@@ -1027,6 +1180,52 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
+	// Dynamic-struct field access. For each declared struct
+	// shape, see if any field's type matches t and there's a
+	// var in scope of that struct's type.
+	for st, sh := range g.structShapes {
+		vars := sc.inScope(st)
+		if len(vars) == 0 {
+			continue
+		}
+		// Collect matching field names. Random pick among them.
+		var matching []string
+		for _, f := range sh.fields {
+			if f.t == t {
+				matching = append(matching, f.name)
+			}
+		}
+		if len(matching) == 0 {
+			continue
+		}
+		vname := vars[g.ch.intN(len(vars))]
+		fname := matching[g.ch.intN(len(matching))]
+		fmt.Fprintf(b, "%s.%s", vname, fname)
+		return true
+	}
+	// Dynamic-enum match. Route an in-scope dynamic enum into
+	// any non-same-enum t via an exhaustive match. Each variant
+	// arm recurses on t.
+	for et, sh := range g.enumShapes {
+		if et == t {
+			continue
+		}
+		vars := sc.inScope(et)
+		if len(vars) == 0 {
+			continue
+		}
+		vname := vars[g.ch.intN(len(vars))]
+		fmt.Fprintf(b, "(match (%s) {", vname)
+		for i, v := range sh.variants {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(b, " %s => ", v)
+			g.expr(b, sc, t, depth+1)
+		}
+		b.WriteString(" })")
+		return true
+	}
 	return false
 }
 
@@ -1235,7 +1434,35 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 		}
 	case tMapI32I32:
 		g.mapLiteral(b, sc, depth)
+	default:
+		// Dynamic nominal types — struct lit or enum-variant
+		// pick based on which sidecar map t belongs to.
+		if sh, ok := g.structShapes[t]; ok {
+			g.dynStructLiteral(b, sc, sh, depth)
+			return
+		}
+		if sh, ok := g.enumShapes[t]; ok {
+			b.WriteString(sh.variants[g.ch.intN(len(sh.variants))])
+			return
+		}
+		panic(fmt.Sprintf("literal: unknown gtype %d", int(t)))
 	}
+}
+
+// dynStructLiteral emits `(<Name> { f0: <expr>, f1: <expr>, ... })`
+// for a dynamic struct shape declared in declareDynamicNominals.
+// Outer parens match the pairLiteral / Xyz pattern for arm-block
+// disambiguation.
+func (g *Generator) dynStructLiteral(b *strings.Builder, sc *scope, sh *structShape, depth int) {
+	fmt.Fprintf(b, "(%s { ", sh.name)
+	for i, f := range sh.fields {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(b, "%s: ", f.name)
+		g.expr(b, sc, f.t, depth+1)
+	}
+	b.WriteString(" })")
 }
 
 // mapLiteral emits `Map { k: v, k2: v2, ... }` with 0..3 entries.
@@ -1308,21 +1535,49 @@ func (g *Generator) stringLiteral() string {
 // (arrays, Pair, Color) are float-free, so they're allowed in
 // both modes.
 func (g *Generator) pickType() gtype {
+	pool := g.typePool()
+	return pool[g.ch.intN(len(pool))]
+}
+
+// pickMainVarType is pickType's main-program-mode counterpart.
+// Same shape as the noFloats branch of pickType (drops f32) and
+// includes any dynamic nominal types declared in
+// declareDynamicNominals so main's vars can hold values of
+// user-declared struct / enum types.
+func (g *Generator) pickMainVarType() gtype {
+	pool := append([]gtype{}, mainVarTypes...)
+	for t := range g.structShapes {
+		pool = append(pool, t)
+	}
+	for t := range g.enumShapes {
+		pool = append(pool, t)
+	}
+	return pool[g.ch.intN(len(pool))]
+}
+
+// typePool returns the gtype universe pickType draws from,
+// branching on noFloats and including any dynamic nominal
+// types declared by the current program. Allocates fresh each
+// call so callers can mutate without aliasing the underlying
+// slices.
+func (g *Generator) typePool() []gtype {
+	var pool []gtype
 	if g.noFloats {
-		// Skip tF32 — everything else (scalar + composite) is
-		// safe across backends for the differential oracle.
-		nonFloats := []gtype{
+		pool = []gtype{
 			tI32, tI64, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
-			tXyz, tStatus,
-			// tMapI32I32 is now safe to include — the interp
-			// grew a Map runtime so Map values can flow through
-			// the diff oracle's interp path.
-			tMapI32I32,
+			tXyz, tStatus, tMapI32I32,
 		}
-		return nonFloats[g.ch.intN(len(nonFloats))]
+	} else {
+		pool = append(pool, allTypes[:]...)
 	}
-	return allTypes[g.ch.intN(len(allTypes))]
+	for t := range g.structShapes {
+		pool = append(pool, t)
+	}
+	for t := range g.enumShapes {
+		pool = append(pool, t)
+	}
+	return pool
 }
 
 // pickNumeric draws from the numeric types only, honouring
