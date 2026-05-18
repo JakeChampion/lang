@@ -3146,6 +3146,36 @@ function main(): i32 {
 	}
 }
 
+// Generic call-site type arguments: `f[T](args)`. Most generic
+// calls already infer T from argument types, but the explicit
+// form helps when inference would otherwise fail — e.g.
+// nullary generics or unconstrained type parameters. The
+// disambiguator between this and `arr[i](x)` requires the
+// bracket to lead with a type keyword (i32, u32, string, …),
+// keeping the indexing path untouched.
+func TestWASMGenericCallTypeArg(t *testing.T) {
+	src := `function pickFirst[T](a: T, b: T): T { return a; }
+function main(): i32 {
+    return pickFirst[i32](10, 20);
+}`
+	if got := runWasm(t, src); got != 10 {
+		t.Errorf("got %d, want 10", got)
+	}
+}
+
+func TestWASMGenericTwoTypeArgs(t *testing.T) {
+	src := `function pair[A, B](a: A, b: B): (A, B) { return (a, b); }
+function main(): i32 {
+    var p = pair[i32, string](42, "hi");
+    if (p.0 != 42) { return 1; }
+    if (p.1 != "hi") { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0", got)
+	}
+}
+
 // Match on literal patterns: `match (n) { 0 => …, 1 => …, _ => … }`
 // for number / string / bool scrutinees. The checker dispatches
 // to `checkLiteralMatch` when the scrutinee isn't an enum; the
