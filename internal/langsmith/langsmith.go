@@ -455,12 +455,13 @@ func (g *Generator) MainProgram() string {
 }
 
 // mainVarTypes are the gtypes legal for `var v<N>` declarations
-// inside `main` under noFloats. Strings stay out — they'd
-// need a print channel to observe — but composite types are
-// fine because the i32 return path can extract bytes from them
-// (array index, Pair.fst/.snd, match over Color).
+// inside `main` under noFloats. Strings are exercised through
+// `len(s)` in the i32 path (see tryCompositeProduction), so they
+// flow into the byte oracle even without a separate stdout
+// channel. Composite types do the same via array index, Pair
+// field access, and match-over-Color.
 var mainVarTypes = []gtype{
-	tI32, tI64, tBool,
+	tI32, tI64, tBool, tString,
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor,
 }
@@ -648,22 +649,71 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		g.numericExpr(b, sc, t, depth)
 	case tBool:
 		g.boolExpr(b, sc, depth)
+	case tString:
+		g.stringExpr(b, sc, depth)
 	default:
-		// String + composite types — no binary / arithmetic
-		// productions, fall through to leaf which handles var-
-		// refs and literals (including the recursive array /
-		// Pair literal forms).
+		// Composite types — no binary / arithmetic productions,
+		// fall through to leaf which handles var-refs and
+		// literals (including the recursive array / Pair literal
+		// forms).
 		g.leaf(b, sc, t, depth)
 	}
 }
 
+// stringExpr picks a non-leaf string production: either `s1 + s2`
+// concatenation or an `f"..."` interpolated string. Both are
+// observable through `len()` in the byte oracle, so they
+// participate in the differential test even without a separate
+// stdout channel.
+func (g *Generator) stringExpr(b *strings.Builder, sc *scope, depth int) {
+	if g.flip(0.5) {
+		// Concat: `(s1 + s2)`. The checker stamps IsStringConcat
+		// for backends that need the runtime helper.
+		b.WriteByte('(')
+		g.expr(b, sc, tString, depth+1)
+		b.WriteString(" + ")
+		g.expr(b, sc, tString, depth+1)
+		b.WriteByte(')')
+		return
+	}
+	// F-string: `f"<lit>{<i32-expr>}<lit>{<i32-expr>}..."`. Two
+	// literal segments + one or two interpolants keeps the
+	// emitted source short; the checker's desugar wires each
+	// `{e}` through `.to_string()` for the eventual concat.
+	n := 1 + g.ch.intN(2) // 1..2 interpolants
+	b.WriteString("f\"")
+	for i := 0; i < n; i++ {
+		g.fstringLitSegment(b)
+		b.WriteByte('{')
+		// Restrict to i32 interpolants — every backend has a
+		// to_string for i32, and the result is platform-
+		// neutral (no float NaN, no platform pointer fmt).
+		g.expr(b, sc, tI32, depth+1)
+		b.WriteByte('}')
+	}
+	g.fstringLitSegment(b)
+	b.WriteByte('"')
+}
+
+// fstringLitSegment writes a short ASCII-only segment for the
+// literal parts of an f-string. No escape sequences — the lexer
+// doesn't need to special-case them, the checker doesn't see them
+// in special-case interpolant positions.
+func (g *Generator) fstringLitSegment(b *strings.Builder) {
+	n := g.ch.intN(6)
+	for i := 0; i < n; i++ {
+		b.WriteByte(byte('a' + g.ch.intN(26)))
+	}
+}
+
 // tryCompositeProduction emits one of: array index access,
-// struct field access, or enum match-expression — whichever
-// kind of in-scope composite var can produce a value of type t.
-// Tries them in fixed order (array, struct, enum) so a richer
-// program seed naturally cascades through more shapes. Returns
-// false (without writing) when no in-scope composite supplies
-// t; caller falls back to another production.
+// struct field access, enum match-expression, or `len(s)` over
+// a string — whichever kind of in-scope composite / string var
+// can produce a value of type t. Tries them in fixed order
+// (array, struct, enum, len) so a richer program seed naturally
+// cascades through more shapes. Returns false (without writing)
+// when no in-scope composite supplies t; caller falls back to
+// another production.
 func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtype, depth int) bool {
 	// Array index. `<arr-var>[0i32]` — fixed index avoids
 	// needing to track per-array lengths. The generator emits
@@ -684,6 +734,18 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			name := pairs[g.ch.intN(len(pairs))]
 			field := []string{"fst", "snd"}[g.ch.intN(2)]
 			fmt.Fprintf(b, "%s.%s", name, field)
+			return true
+		}
+	}
+	// `len(s)` — string-to-i32 byte-count. Same shape as the
+	// array-index path: every string is observable byte-wise,
+	// so this is the channel through which string ops flow
+	// into the byte oracle's i32 return path.
+	if t == tI32 {
+		strs := sc.inScope(tString)
+		if len(strs) > 0 {
+			name := strs[g.ch.intN(len(strs))]
+			fmt.Fprintf(b, "len(%s)", name)
 			return true
 		}
 	}

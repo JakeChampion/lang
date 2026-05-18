@@ -179,6 +179,17 @@ func TestInterpStringEquality(t *testing.T) {
 	}
 }
 
+// TestInterpFStringFallback exercises the parser-only path (no
+// checker run) so Desugared is nil and the interpreter assembles
+// the f-string from raw Parts. The literal-only segment proves
+// the path concatenates static text correctly.
+func TestInterpFStringFallback(t *testing.T) {
+	src := `function main(): string { return f"hello world"; }`
+	if got := evalProgramValue(t, src); got != String("hello world") {
+		t.Errorf("got %v, want \"hello world\"", got)
+	}
+}
+
 func TestInterpStructBasic(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {

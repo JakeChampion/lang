@@ -172,6 +172,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"field access":               false,
 		"enum variant in expr":       false,
 		"match expression":           false,
+		"string concat":              false,
+		"f-string":                   false,
+		"len(string)":                false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -250,6 +253,18 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, "match (") {
 			want["match expression"] = true
+		}
+		// String concat produces a `(<string-expr> + <string-expr>)`
+		// shape. Tokens like `" + ` (string-quote then plus) only
+		// appear in the concat / f-string productions.
+		if strings.Contains(src, "\" + \"") || strings.Contains(src, "\" + ") || strings.Contains(src, " + \"") {
+			want["string concat"] = true
+		}
+		if strings.Contains(src, `f"`) {
+			want["f-string"] = true
+		}
+		if strings.Contains(src, "len(") {
+			want["len(string)"] = true
 		}
 	}
 	for feature, ok := range want {
