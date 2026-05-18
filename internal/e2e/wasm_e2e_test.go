@@ -8705,3 +8705,239 @@ function main(): i32 {
 		t.Errorf("expected custom section name 'marker' in output, got:\n%s", watStr)
 	}
 }
+
+// TestWASMModuleRunsMemoryLoad: a function that loads a byte
+// from linear memory and returns it. Exercises
+// encode_memory_section, encode_data_section, and
+// inst_i32_load8_u + memarg as a runnable module.
+func TestWASMModuleRunsMemoryLoad(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/memory";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.memory_max = 0 - 1;
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+    m.data_offsets = [0];
+    m.data_inits = [[42u8, 7u8, 99u8, 5u8]];
+
+    var body: u8[] = inst.inst_i32_const([], 2);
+    body = memory.inst_i32_load8_u(body, 0u32, 0u32);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "99") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 99 (data[2])", out)
+	}
+}
+
+// TestWASMModuleRunsMemoryStoreLoad: writes 77 to memory at
+// address 16 via i32.store8 then reads it back. Exercises the
+// writable-memory + store-then-load round-trip.
+func TestWASMModuleRunsMemoryStoreLoad(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/memory";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.memory_max = 0 - 1;
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    var body: u8[] = inst.inst_i32_const([], 16);
+    body = inst.inst_i32_const(body, 77);
+    body = memory.inst_i32_store8(body, 0u32, 0u32);
+    body = inst.inst_i32_const(body, 16);
+    body = memory.inst_i32_load8_u(body, 0u32, 0u32);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "77") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 77 (stored value)", out)
+	}
+}
+
+// TestWASMModuleRunsGlobalSection: const i32 global = 314,
+// main() loads it via global.get 0. Exercises
+// encode_global_section + inst_global_get + init-expr shape.
+func TestWASMModuleRunsGlobalSection(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/imports";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    var initExpr: u8[] = inst.inst_i32_const([], 314);
+    initExpr = inst.inst_end(initExpr);
+    m.global_valtypes = [encode.valtype_i32()];
+    m.global_muts = [imports.mut_const()];
+    m.global_inits = [initExpr];
+
+    var body: u8[] = inst.inst_global_get([], 0u32);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "314") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 314 (global value)", out)
+	}
+}
+
+// TestWASMModuleRunsDivision: i32 signed divide. div_s and div_u
+// share the call-site shape but differ in semantics for negative
+// operands — body returns (-20) / 3 = -6 under signed. Catches a
+// mis-encoded opcode (0x6D vs 0x6E) that would silently produce
+// a huge u32 under div_u.
+func TestWASMModuleRunsDivision(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/numeric";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    var body: u8[] = inst.inst_i32_const([], 0 - 20);
+    body = inst.inst_i32_const(body, 3);
+    body = numeric.inst_i32_div_s(body);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !(strings.Contains(out, "-6") || strings.Contains(out, "4294967290")) {
+		t.Errorf("wasmtime stdout = %q, want -6 / 4294967290 (signed -20 / 3)", out)
+	}
+}
+
+// TestWASMModuleRunsSignExtend: i32.extend8_s sign-extends the
+// low byte (255 = 0xFF -> -1). Exercises the post-MVP
+// sign-extension opcodes (0xC0+) at runtime.
+func TestWASMModuleRunsSignExtend(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/convert";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // i32.const 255 ; i32.extend8_s -> -1
+    var body: u8[] = inst.inst_i32_const([], 255);
+    body = convert.inst_i32_extend8_s(body);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < len(bytes)) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !(strings.Contains(out, "-1") || strings.Contains(out, "4294967295")) {
+		t.Errorf("wasmtime stdout = %q, want -1 / 4294967295 (255 sign-extended)", out)
+	}
+}
