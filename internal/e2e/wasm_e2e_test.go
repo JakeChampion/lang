@@ -4230,6 +4230,32 @@ function main(): i32 {
 	}
 }
 
+// Closure captures a tuple, then accesses fields by numeric
+// index inside the body (`t.0`, `t.1`). The IR's FieldAccess
+// lowering needs to dispatch on the receiver's static type to
+// pick between the tuple offset path and the struct offset
+// path — for captures that meant recognising `*ast.CaptureRef`
+// in `targetTupleType`. Without this dispatch the IR fell
+// through to the struct path, `fieldOwner` returned "" (no
+// matching struct decl), and codegen errored with
+// `field access on unresolved struct ""` before any code
+// reached the backends.
+func TestWASMClosureCapturesTuple(t *testing.T) {
+	src := `function build(): () => i64 {
+    var t: (i64, i64) = (1000000000000i64, 2000000000000i64);
+    function read(): i64 { return t.0 + t.1; }
+    return read;
+}
+function main(): i32 {
+    var f = build();
+    if (f() != 3000000000000i64) { return 1; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (closure captures (i64, i64))", got)
+	}
+}
+
 func TestWASMMethodOnStruct(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function (p: Point) sum(): i32 { return p.x + p.y; }
