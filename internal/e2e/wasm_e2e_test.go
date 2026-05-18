@@ -4256,6 +4256,39 @@ function main(): i32 {
 	}
 }
 
+// Three-level nested closure where the innermost captures from
+// the OUTERMOST scope (skipping the two intermediate functions
+// that don't bind the name natively). Pre-fix the checker only
+// looked one level up via captureOuter — when level1's body
+// referenced `x` (defined in makeChain), the lookup against
+// level2's scope failed and the checker errored with
+// `undefined identifier "x"`. Now the captureChain walks the
+// full nesting stack and records the name as a capture at every
+// intermediate level so each closure's env block forwards the
+// reference inward to the deepest reader.
+func TestWASMTransitiveClosureCapture(t *testing.T) {
+	src := `function makeChain(): () => () => () => i32 {
+    var x: i32 = 42;
+    function level3(): () => () => i32 {
+        function level2(): () => i32 {
+            function level1(): i32 { return x; }
+            return level1;
+        }
+        return level2;
+    }
+    return level3;
+}
+function main(): i32 {
+    var f3 = makeChain();
+    var f2 = f3();
+    var f1 = f2();
+    return f1();
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("got %d, want 42 (transitive capture through 3 levels)", got)
+	}
+}
+
 // A nested function captures an outer-scope name that's been
 // shadowed by a sibling `var` declaration. With proper lexical
 // scoping the body should see the SHADOWED local, not the
