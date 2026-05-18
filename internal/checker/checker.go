@@ -1807,6 +1807,32 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 			return ast.TupleType{Elems: out}
 		}
 	}
+	// Empty-array / empty-slice literal vs typed array of the
+	// same shape: `[]` (Elem=nil) unifies with any concrete
+	// `T[]`. Lets a mixed array literal like
+	// `[[1, 2], [], [3]]` type-check — the empty inner array
+	// inherits the outer's element type from the first
+	// non-empty sibling.
+	if aa, aok := a.(ast.ArrayType); aok {
+		if ba, bok := b.(ast.ArrayType); bok {
+			if aa.Elem == nil {
+				return ba
+			}
+			if ba.Elem == nil {
+				return aa
+			}
+		}
+	}
+	if as_, aok := a.(ast.SliceType); aok {
+		if bs, bok := b.(ast.SliceType); bok {
+			if as_.Elem == nil {
+				return bs
+			}
+			if bs.Elem == nil {
+				return as_
+			}
+		}
+	}
 	return nil
 }
 

@@ -188,8 +188,18 @@ func (StringType) String() string { return "string" }
 func (f FloatType) String() string {
 	return fmt.Sprintf("f%d", f.NormalWidth())
 }
-func (a ArrayType) String() string { return a.Elem.String() + "[]" }
-func (s SliceType) String() string { return "[" + s.Elem.String() + "]" }
+func (a ArrayType) String() string {
+	if a.Elem == nil {
+		return "[]"
+	}
+	return a.Elem.String() + "[]"
+}
+func (s SliceType) String() string {
+	if s.Elem == nil {
+		return "[]"
+	}
+	return "[" + s.Elem.String() + "]"
+}
 func (t TupleType) String() string {
 	out := "("
 	for i, e := range t.Elems {
