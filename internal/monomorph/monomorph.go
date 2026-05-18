@@ -1200,6 +1200,30 @@ func walkExpr(e ast.Expr, fn func(*ast.Call)) {
 		for _, f := range x.Fields {
 			walkExpr(f.Value, fn)
 		}
+	case *ast.MapLit:
+		// Map literals carry arbitrary expressions for both
+		// keys and values; either slot can host a generic
+		// call (`Map { id(k): v, k2: pick(c, a, b) }`). Without
+		// this case the rewriter leaves the inner call's
+		// callee Ident pointing at the (about-to-be-dropped)
+		// generic decl, and the post-monomorph re-check fails
+		// with "undefined identifier".
+		for _, ent := range x.Entries {
+			walkExpr(ent.Key, fn)
+			walkExpr(ent.Value, fn)
+		}
+	case *ast.FString:
+		// F-string interpolants — `f"...{id(x)}..."`. Each
+		// FStringPart with a non-nil Expr is a sub-expression
+		// that can itself contain generic calls.
+		for _, p := range x.Parts {
+			if p.Expr != nil {
+				walkExpr(p.Expr, fn)
+			}
+		}
+	case *ast.Assign:
+		walkExpr(x.Target, fn)
+		walkExpr(x.Value, fn)
 	case *ast.CastExpr:
 		walkExpr(x.Inner, fn)
 	}

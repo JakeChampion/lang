@@ -215,14 +215,8 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"map .get() / .has() / .len()": false,
 		"dynamic struct decl":        false,
 		"dynamic enum decl":          false,
-	}
-	// Features that only fire in Gen (the parse+check path) and
-	// not in GenMain — currently the generic helper calls
-	// (id[T] / pick[T]), which fail the monomorpher's re-check
-	// for some generator-emittable shapes.
-	wantGen := map[string]bool{
-		"id[T] generic call":   false,
-		"pick[T] generic call": false,
+		"id[T] generic call":         false,
+		"pick[T] generic call":       false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := langsmith.GenMain(seed)
@@ -386,32 +380,19 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, "enum E0 ") || strings.Contains(src, "enum E1 ") {
 			want["dynamic enum decl"] = true
 		}
-	}
-	for feature, ok := range want {
-		if !ok {
-			t.Errorf("feature never seen in 1024 GenMain seeds: %s", feature)
-		}
-	}
-	// Gen-only landmarks: generics call sites show up in the
-	// parse+check fuzz path but stay out of the runnable
-	// GenMain (the monomorpher's re-check fails on some
-	// generator-emittable shapes). Sweep Gen separately to
-	// confirm generic productions actually fire.
-	for seed := uint64(0); seed < 1024; seed++ {
-		src := langsmith.Gen(seed)
 		// id(...) appears after the prelude decl `function id[T]
 		// (x: T): T { return x; }`. Total occurrences > 1 means
 		// at least one CALL site (not just the decl).
 		if strings.Count(src, "id(") > 1 {
-			wantGen["id[T] generic call"] = true
+			want["id[T] generic call"] = true
 		}
 		if strings.Count(src, "pick(") > 1 {
-			wantGen["pick[T] generic call"] = true
+			want["pick[T] generic call"] = true
 		}
 	}
-	for feature, ok := range wantGen {
+	for feature, ok := range want {
 		if !ok {
-			t.Errorf("feature never seen in 1024 Gen seeds: %s", feature)
+			t.Errorf("feature never seen in 1024 GenMain seeds: %s", feature)
 		}
 	}
 }
