@@ -45,6 +45,17 @@ import (
 func Emit(prog *ir.Program) ([]byte, error) {
 	m := module.New()
 
+	// Build a name → funcidx map so OpCallDirect can resolve
+	// its callee. Funcidx is the declaration index — which
+	// matches FunctionTypeidxs / CodeBodies / ExportIdxs since
+	// every function is also exported by name. Imports would
+	// shift this offset; the binary path doesn't emit imports
+	// yet (the WASI / preview-2 wiring lives in a later slice).
+	funcIdx := make(map[string]uint32, len(prog.Funcs))
+	for i, fn := range prog.Funcs {
+		funcIdx[fn.Name] = uint32(i)
+	}
+
 	// Type-section dedup: same param-list + result-list → same
 	// typeidx. The string key joins valtype bytes; collisions
 	// are impossible since valtype bytes are in 0x7c..0x7f.
@@ -93,7 +104,7 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
 		m.ExportIdxs = append(m.ExportIdxs, uint32(fnIdx))
 
-		body, locals, err := emitBody(fn)
+		body, locals, err := emitBody(fn, funcIdx)
 		if err != nil {
 			return nil, fmt.Errorf("wasmbin: %s: %w", fn.Name, err)
 		}
@@ -182,7 +193,7 @@ func localValtypes(fn *ir.Func) ([]byte, error) {
 // its locals-preamble bytes (the latter pre-wrapped by
 // inst.PutLocalsOneGroup-equivalent encoding for the declared local
 // valtypes).
-func emitBody(fn *ir.Func) (body, locals []byte, err error) {
+func emitBody(fn *ir.Func, funcIdx map[string]uint32) (body, locals []byte, err error) {
 	lvts, err := localValtypes(fn)
 	if err != nil {
 		return nil, nil, err
@@ -190,7 +201,7 @@ func emitBody(fn *ir.Func) (body, locals []byte, err error) {
 	locals = encodeLocals(lvts)
 
 	for opIdx, op := range fn.Ops {
-		body, err = emitOp(body, op)
+		body, err = emitOp(body, op, funcIdx)
 		if err != nil {
 			return nil, nil, fmt.Errorf("op[%d] %v: %w", opIdx, op.Kind, err)
 		}
@@ -229,7 +240,7 @@ func encodeLocals(vts []byte) []byte {
 
 // emitOp translates one IR op into its wasm bytes and appends them
 // to body. Op coverage is intentionally narrow for slice 1.
-func emitOp(body []byte, op ir.Op) ([]byte, error) {
+func emitOp(body []byte, op ir.Op, funcIdx map[string]uint32) ([]byte, error) {
 	switch op.Kind {
 	case ir.OpConstI32:
 		return inst.InstI32Const(body, op.I32), nil
@@ -576,6 +587,14 @@ func emitOp(body []byte, op ir.Op) ([]byte, error) {
 		return memory.InstI32Load16S(body, 1, 0), nil
 	case ir.OpStoreI16:
 		return memory.InstI32Store16(body, 1, 0), nil
+
+	// ---- Calls (slice 5) ----
+	case ir.OpCallDirect:
+		idx, ok := funcIdx[op.Str]
+		if !ok {
+			return nil, fmt.Errorf("OpCallDirect: unknown callee %q", op.Str)
+		}
+		return inst.InstCall(body, idx), nil
 	}
 	return nil, fmt.Errorf("unsupported op %v", op.Kind)
 }
