@@ -15,7 +15,8 @@ exclude_all_private = true
 
 # Build artefacts are noise — Astro fingerprinted assets under
 # _astro/ and pagefind's search index don't need link-checking.
-exclude_path = ["**/_astro/**", "**/_pagefind/**"]
+# Patterns are regex; substring match is enough here.
+exclude_path = ["_astro/", "_pagefind/"]
 
 # Anchor fragments (#heading) skip target verification — Starlight
 # generates ids from heading text and getting those exactly right
