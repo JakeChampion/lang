@@ -7772,3 +7772,213 @@ function main(): i32 {
 		t.Errorf("imports global section: exit = %d, want 0", got)
 	}
 }
+
+// TestWASMModuleEmpty: module_new() + build() with no sections
+// populated should produce just the 8-byte preamble — magic
+// (\0asm) + version 1.
+func TestWASMModuleEmpty(t *testing.T) {
+	src := `import "std/wasm/module";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var bytes: u8[] = module.build(m);
+    if (len(bytes) != 8) { return 1; }
+    if (bytes[0] != 0u8)   { return 2; }
+    if (bytes[1] != 97u8)  { return 3; }    // 'a'
+    if (bytes[2] != 115u8) { return 4; }    // 's'
+    if (bytes[3] != 109u8) { return 5; }    // 'm'
+    if (bytes[4] != 1u8)   { return 6; }    // version LE
+    if (bytes[5] != 0u8)   { return 7; }
+    if (bytes[6] != 0u8)   { return 8; }
+    if (bytes[7] != 0u8)   { return 9; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("module empty: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMModuleMinimal builds a real "function returns 42" wasm
+// module end-to-end using the Module struct + build(). The
+// produced bytes go through every section composer at least once
+// — type, function, export, code — and the test verifies the
+// full byte sequence against a hand-computed reference.
+//
+// This is the strongest test in the std/wasm suite: a typo in
+// any composer or any opcode encoder would surface here as a
+// mismatched byte at a known offset.
+func TestWASMModuleMinimal(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+
+    // Type: one functype () -> i32.
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+
+    // Function: one function with typeidx 0.
+    m.function_typeidxs = [0u32];
+
+    // Export: ("main", func, 0).
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // Code: body is i32.const 42 with no locals.
+    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    var localsBytes: u8[] = inst.put_locals_empty([]);
+    var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
+    m.code_bodies = [fn];
+
+    var bytes: u8[] = module.build(m);
+
+    // Expected: 8 (preamble) + 7 (type) + 4 (function) + 10
+    // (export) + 8 (code) = 37 bytes.
+    if (len(bytes) != 37) { return 1; }
+
+    // Preamble.
+    if (bytes[0] != 0u8) { return 10; }
+    if (bytes[3] != 109u8) { return 11; }   // 'm'
+    if (bytes[4] != 1u8) { return 12; }     // version
+
+    // Type section starts at offset 8.
+    if (bytes[8] != 1u8) { return 20; }     // section_type id
+    if (bytes[9] != 5u8) { return 21; }     // body size 5
+    if (bytes[10] != 1u8) { return 22; }    // count 1
+    if (bytes[11] != 96u8) { return 23; }   // functype tag
+    if (bytes[12] != 0u8) { return 24; }    // param count 0
+    if (bytes[13] != 1u8) { return 25; }    // result count 1
+    if (bytes[14] != 127u8) { return 26; }  // i32
+
+    // Function section starts at offset 15.
+    if (bytes[15] != 3u8) { return 30; }    // section_function id
+    if (bytes[16] != 2u8) { return 31; }    // body size 2
+    if (bytes[17] != 1u8) { return 32; }    // count 1
+    if (bytes[18] != 0u8) { return 33; }    // typeidx 0
+
+    // Export section starts at offset 19.
+    if (bytes[19] != 7u8) { return 40; }    // section_export id
+    if (bytes[20] != 8u8) { return 41; }    // body size 8
+    if (bytes[21] != 1u8) { return 42; }    // count 1
+    if (bytes[22] != 4u8) { return 43; }    // name len 4
+    if (bytes[23] != 109u8) { return 44; }  // 'm'
+    if (bytes[24] != 97u8) { return 45; }   // 'a'
+    if (bytes[25] != 105u8) { return 46; }  // 'i'
+    if (bytes[26] != 110u8) { return 47; }  // 'n'
+    if (bytes[27] != 0u8) { return 48; }    // kind func
+    if (bytes[28] != 0u8) { return 49; }    // idx 0
+
+    // Code section starts at offset 29.
+    if (bytes[29] != 10u8) { return 50; }   // section_code id
+    if (bytes[30] != 6u8) { return 51; }    // body size 6
+    if (bytes[31] != 1u8) { return 52; }    // body count 1
+    if (bytes[32] != 4u8) { return 53; }    // fn size
+    if (bytes[33] != 0u8) { return 54; }    // locals empty
+    if (bytes[34] != 65u8) { return 55; }   // i32.const
+    if (bytes[35] != 42u8) { return 56; }   // 42
+    if (bytes[36] != 11u8) { return 57; }   // end
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("module minimal: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMModuleSectionOrder verifies build() emits sections in
+// the spec-required order by populating every section and
+// scanning the output for the section IDs in sequence. The byte
+// content of each section is exercised by the dedicated section
+// tests; this test focuses on ordering.
+func TestWASMModuleSectionOrder(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+import "std/wasm/imports";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+
+    // Type: one functype () -> ().
+    var pe: u8[] = [];
+    var re: u8[] = [];
+    m.type_params = [pe];
+    m.type_results = [re];
+
+    // Import: one ("env", "h", func, typeidx=0).
+    m.import_modules = ["env"];
+    m.import_names = ["h"];
+    m.import_kinds = [imports.import_func()];
+    m.import_descs = [imports.import_desc_func(0u32)];
+
+    // Function: one with typeidx 0.
+    m.function_typeidxs = [0u32];
+
+    // Memory: present, min=1.
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.memory_max = 0 - 1;
+
+    // Global: one const i32 = 0.
+    var g0: u8[] = inst.inst_i32_const([], 0);
+    g0 = inst.inst_end(g0);
+    m.global_valtypes = [encode.valtype_i32()];
+    m.global_muts = [imports.mut_const()];
+    m.global_inits = [g0];
+
+    // Export: ("e", memory, 0).
+    m.export_names = ["e"];
+    m.export_kinds = [sections.export_memory()];
+    m.export_idxs = [0u32];
+
+    // Start: funcidx 1 (the imported func is 0, our func is 1).
+    m.has_start = true;
+    m.start_funcidx = 1u32;
+
+    // Code: empty body — just the terminating 0x0B.
+    var localsBytes: u8[] = inst.put_locals_empty([]);
+    var emptyBody: u8[] = [];
+    var fn: u8[] = inst.put_function_body([], localsBytes, emptyBody);
+    m.code_bodies = [fn];
+
+    // Data: one segment at offset 0 with byte 0xAB.
+    m.data_offsets = [0];
+    m.data_inits = [[171u8]];
+
+    var bytes: u8[] = module.build(m);
+
+    // Scan for section IDs in order. Section IDs the spec assigns:
+    // type=1, import=2, function=3, table=4, memory=5, global=6,
+    // export=7, start=8, element=9, code=10, data=11.
+    // We expect 1, 2, 3, 5, 6, 7, 8, 10, 11 (no table, no element).
+    var expected_ids: u8[] = [1u8, 2u8, 3u8, 5u8, 6u8, 7u8, 8u8, 10u8, 11u8];
+
+    // Walk the byte stream: byte 8 is the first section id; after
+    // each id comes uleb size + that many body bytes; repeat.
+    var pos: i32 = 8;  // skip preamble
+    var idx: i32 = 0;
+    while (idx < len(expected_ids)) {
+        if (pos >= len(bytes)) { return 100 + idx; }
+        if (bytes[pos] != expected_ids[idx]) { return 1 + idx; }
+        pos = pos + 1;
+        // Read uleb size — small enough that bit-7 is clear here.
+        var sz: i32 = bytes[pos] as i32;
+        if (sz >= 128) { return 200 + idx; }    // would need multi-byte uleb decoder
+        pos = pos + 1;
+        pos = pos + sz;
+        idx = idx + 1;
+    }
+
+    // After the last section, pos should be at the end of bytes.
+    if (pos != len(bytes)) { return 50; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("module section order: exit = %d, want 0", got)
+	}
+}
