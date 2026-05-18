@@ -6597,3 +6597,177 @@ function main(): i32 {
 		t.Errorf("size helpers: exit = %d, want 0", got)
 	}
 }
+
+// TestWASMEncodePreamble covers the module-header + raw-byte
+// writers — the foundation everything else in std/wasm/encode is
+// built on. Vectors are taken straight from the wasm Core 1.0
+// binary spec: magic `\0asm` plus version 1 as fixed-width u32
+// LE, and the standard "byte order is least-significant first"
+// for put_u32_le.
+func TestWASMEncodePreamble(t *testing.T) {
+	src := `import "std/wasm/encode";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // Module preamble: \0asm 0x01000000.
+    var hdr: u8[] = encode.put_module_header(empty);
+    if (len(hdr) != 8) { return 1; }
+    if (hdr[0] != 0u8) { return 2; }
+    if (hdr[1] != 97u8) { return 3; }    // 'a'
+    if (hdr[2] != 115u8) { return 4; }   // 's'
+    if (hdr[3] != 109u8) { return 5; }   // 'm'
+    if (hdr[4] != 1u8) { return 6; }     // version LE
+    if (hdr[5] != 0u8) { return 7; }
+    if (hdr[6] != 0u8) { return 8; }
+    if (hdr[7] != 0u8) { return 9; }
+
+    // put_u32_le(0x12345678) — verifies byte order.
+    var le: u8[] = encode.put_u32_le(empty, 305419896u32);
+    if (len(le) != 4) { return 20; }
+    if (le[0] != 120u8) { return 21; }   // 0x78
+    if (le[1] != 86u8) { return 22; }    // 0x56
+    if (le[2] != 52u8) { return 23; }    // 0x34
+    if (le[3] != 18u8) { return 24; }    // 0x12
+
+    // put_u32_le on a seeded buffer appends, not replaces.
+    var seed: u8[] = [255u8];
+    var le2: u8[] = encode.put_u32_le(seed, 1u32);
+    if (len(le2) != 5) { return 30; }
+    if (le2[0] != 255u8) { return 31; }
+    if (le2[1] != 1u8) { return 32; }
+    if (le2[2] != 0u8) { return 33; }
+    if (le2[3] != 0u8) { return 34; }
+    if (le2[4] != 0u8) { return 35; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("preamble: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMEncodeNameAndSection covers put_name (uleb-prefixed
+// UTF-8) and put_section (id + uleb size + body). The
+// "uleb-prefixed bytes" shape shows up in three different places
+// in the wasm binary: section bodies, names, and vector
+// elements; this test exercises the two callers we have today.
+func TestWASMEncodeNameAndSection(t *testing.T) {
+	src := `import "std/wasm/encode";
+function main(): i32 {
+    var empty: u8[] = [];
+
+    // Empty name: uleb(0) only.
+    var n0: u8[] = encode.put_name(empty, "");
+    if (len(n0) != 1) { return 1; }
+    if (n0[0] != 0u8) { return 2; }
+
+    // "hi" -> [0x02, 'h', 'i']
+    var n1: u8[] = encode.put_name(empty, "hi");
+    if (len(n1) != 3) { return 10; }
+    if (n1[0] != 2u8) { return 11; }
+    if (n1[1] != 104u8) { return 12; }   // 'h'
+    if (n1[2] != 105u8) { return 13; }   // 'i'
+
+    // Empty section body: id + uleb(0) = 2 bytes.
+    var s0: u8[] = encode.put_section(empty, encode.section_type(), empty);
+    if (len(s0) != 2) { return 20; }
+    if (s0[0] != 1u8) { return 21; }     // section_type id
+    if (s0[1] != 0u8) { return 22; }     // size 0
+
+    // Non-empty section body: id + uleb(2) + body.
+    var body: u8[] = [170u8, 187u8];     // 0xAA 0xBB
+    var s1: u8[] = encode.put_section(empty, encode.section_function(), body);
+    if (len(s1) != 4) { return 30; }
+    if (s1[0] != 3u8) { return 31; }     // section_function id
+    if (s1[1] != 2u8) { return 32; }     // size 2
+    if (s1[2] != 170u8) { return 33; }
+    if (s1[3] != 187u8) { return 34; }
+
+    // section_* IDs match the wasm spec table.
+    if (encode.section_type() != 1u8) { return 40; }
+    if (encode.section_import() != 2u8) { return 41; }
+    if (encode.section_function() != 3u8) { return 42; }
+    if (encode.section_memory() != 5u8) { return 43; }
+    if (encode.section_export() != 7u8) { return 44; }
+    if (encode.section_code() != 10u8) { return 45; }
+    if (encode.section_data() != 11u8) { return 46; }
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("name + section: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMEncodeFuncType + minimal-module compose-up: build a
+// complete wasm module containing one function type (i32 -> i32)
+// and compare every byte against the reference encoding. This is
+// the smallest test that exercises the full chain — preamble,
+// section wrapping, vector-of-functype, individual functype, and
+// valtype constants — together.
+//
+// Reference bytes (16 total):
+//   00 61 73 6D 01 00 00 00          \0asm v1
+//   01 06                            section: type, size 6
+//   01                                  vec(functype) count = 1
+//   60 01 7F 01 7F                       functype: i32 -> i32
+func TestWASMEncodeMinimalModule(t *testing.T) {
+	src := `import "std/wasm/encode";
+import "std/wasm/leb128";
+function main(): i32 {
+    var bytes: u8[] = [];
+    bytes = encode.put_module_header(bytes);
+
+    // Build the type section body: vec(functype) count=1, then
+    // one functype "(i32) -> (i32)".
+    var type_body: u8[] = [];
+    type_body = leb128.uleb_u32(type_body, 1u32);
+    var params: u8[] = [encode.valtype_i32()];
+    var results: u8[] = [encode.valtype_i32()];
+    type_body = encode.put_func_type(type_body, params, results);
+
+    bytes = encode.put_section(bytes, encode.section_type(), type_body);
+
+    // Expected: 16 bytes.
+    if (len(bytes) != 16) { return 1; }
+
+    // Preamble.
+    if (bytes[0] != 0u8) { return 10; }
+    if (bytes[1] != 97u8) { return 11; }
+    if (bytes[2] != 115u8) { return 12; }
+    if (bytes[3] != 109u8) { return 13; }
+    if (bytes[4] != 1u8) { return 14; }
+    if (bytes[5] != 0u8) { return 15; }
+    if (bytes[6] != 0u8) { return 16; }
+    if (bytes[7] != 0u8) { return 17; }
+
+    // Section header: id=1 (type), size=6.
+    if (bytes[8] != 1u8) { return 20; }
+    if (bytes[9] != 6u8) { return 21; }
+
+    // Body: count=1, then one functype.
+    if (bytes[10] != 1u8) { return 30; }     // vec count
+    if (bytes[11] != 96u8) { return 31; }    // 0x60 functype tag
+    if (bytes[12] != 1u8) { return 32; }     // param count
+    if (bytes[13] != 127u8) { return 33; }   // 0x7F i32
+    if (bytes[14] != 1u8) { return 34; }     // result count
+    if (bytes[15] != 127u8) { return 35; }   // 0x7F i32
+
+    // A two-param / no-result functype: 0x60 02 7F 7E 00.
+    var ft2: u8[] = [];
+    var ps: u8[] = [encode.valtype_i32(), encode.valtype_i64()];
+    var rs: u8[] = [];
+    ft2 = encode.put_func_type(ft2, ps, rs);
+    if (len(ft2) != 5) { return 40; }
+    if (ft2[0] != 96u8) { return 41; }
+    if (ft2[1] != 2u8) { return 42; }
+    if (ft2[2] != 127u8) { return 43; }      // i32
+    if (ft2[3] != 126u8) { return 44; }      // i64
+    if (ft2[4] != 0u8) { return 45; }        // empty result vec
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("minimal module: exit = %d, want 0", got)
+	}
+}

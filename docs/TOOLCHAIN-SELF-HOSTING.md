@@ -129,15 +129,22 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   (bit-6 transitions, multi-byte negatives, u32/u64/i64 widths) under
   `internal/e2e/wasm_e2e_test.go` (TestWASMLeb128*). Pure Lang —
   takes a `u8[]` and appends; no I/O. Not wired into the driver
-  yet, per the "Lang code only, defer running it" decision: the
-  module exists as the spec-correct reference, and once the compiler
-  can run Lang code at build time it slots straight into the section
-  encoder.
-- Remaining Phase 1 work: section-byte writers (`emit_section(id,
-  body)`), instruction-byte encoders (opcode + immediates per IR op),
-  the top-level module shape (magic, version, ordered sections), and
-  the IR-walking entry point. Once those exist, the driver-wiring
-  step is a single `wasm-tools parse` call deletion.
+  yet, per the "Lang code only, defer running it" decision.
+- **Binary-container primitives shipped** in
+  `internal/stdlib/std/wasm/encode.lang`: `put_module_header`
+  (magic + version), `put_u32_le` (the one fixed-width integer the
+  wasm binary uses), `put_name` (uleb-prefixed UTF-8),
+  `put_section` (id + uleb size + body), `put_func_type` (the type
+  section's per-entry encoding), and `valtype_*` / `section_*`
+  byte-constant helpers. Tests
+  (`TestWASMEncodePreamble`, `…NameAndSection`, `…MinimalModule`)
+  build a complete 16-byte wasm module from scratch and compare
+  every byte against the spec-reference encoding.
+- Remaining Phase 1 work: per-IR-op instruction-byte encoders (the
+  body of the code section — opcode + immediates for each ir.Op*
+  case wasm_ir.go handles today), the IR-walking entry point that
+  produces a complete module, and the driver-wiring step that
+  deletes the `wasm-tools parse` call at `cmd/lang/main.go:604`.
 
 ---
 
