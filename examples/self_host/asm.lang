@@ -79,19 +79,60 @@ function digits_to_i32(s: string): i32 {
 
 // =================== EMIT STATE ====================
 
-// EmitState bundles the running output text with a monotonic
-// label counter. Threaded by value through every emit_* call —
-// each return produces a fresh EmitState with the appended
-// text and (where relevant) incremented label_n. label_n is
-// the next ID to hand out; .L0, .L1, … by emit time.
-pub struct EmitState { out: string, label_n: i32 }
+// EmitState bundles the running output text, a monotonic label
+// counter, and the active locals table. Threaded by value
+// through every emit_* call — each return produces a fresh
+// EmitState with the appended text and (where relevant)
+// updated counters / locals. label_n is the next ID to hand
+// out; .L0, .L1, … at emit time. local_names is parallel-array
+// shape: index i → offset -8*(i+1) off %rbp.
+pub struct EmitState {
+    out: string,
+    label_n: i32,
+    local_names: string[]
+}
 
 function new_state(): EmitState {
-    return EmitState { out: "", label_n: 0 };
+    var ns: string[] = [];
+    return EmitState { out: "", label_n: 0, local_names: ns };
 }
 
 function (s: EmitState) write(text: string): EmitState {
-    return EmitState { out: s.out + text, label_n: s.label_n };
+    return EmitState { out: s.out + text, label_n: s.label_n, local_names: s.local_names };
+}
+
+// bind_local appends `name` to the locals table — the new
+// slot's offset is -8 * (len_after + 1) from %rbp. Returns
+// the fresh state so callers can compose: `s = s.bind_local("x")`.
+function (s: EmitState) bind_local(name: string): EmitState {
+    var ln: string[] = s.local_names.push(name);
+    return EmitState { out: s.out, label_n: s.label_n, local_names: ln };
+}
+
+// lookup_local returns the byte offset off %rbp for `name`, or
+// 0 if not found (callers should sanity-check via the parallel
+// "is bound" path — emit_expr's ExprIdent arm surfaces a
+// comment marker on miss).
+function (s: EmitState) lookup_local(name: string): i32 {
+    // Newest binding wins. Walk back-to-front so shadowing
+    // resolves to the most-recent slot.
+    var i: i32 = len(s.local_names) - 1;
+    while (i >= 0) {
+        if (s.local_names[i] == name) {
+            return 0 - 8 * (i + 1);
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+
+function (s: EmitState) has_local(name: string): boolean {
+    var i: i32 = 0;
+    while (i < len(s.local_names)) {
+        if (s.local_names[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // fresh_label hands out a unique label name (".L<n>") and
@@ -101,8 +142,35 @@ function (s: EmitState) write(text: string): EmitState {
 struct LabelOut { state: EmitState, name: string }
 function fresh_label(s: EmitState): LabelOut {
     var name: string = ".L" + i32_to_string(s.label_n);
-    var ns: EmitState = EmitState { out: s.out, label_n: s.label_n + 1 };
+    var ns: EmitState = EmitState { out: s.out, label_n: s.label_n + 1, local_names: s.local_names };
     return LabelOut { state: ns, name: name };
+}
+
+// count_locals walks a stmt body recursively (into if / while
+// bodies) to determine the total number of `var` decls. The
+// result feeds the function-entry `subq $<N*8>, %rsp` so the
+// frame has enough room for every local that might be live.
+// Conservative: counts every var even if branches make them
+// mutually exclusive at runtime — that's fine for stack
+// allocation, and far simpler than a liveness analysis.
+function count_locals(body: parser.Stmt[]): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < len(body)) {
+        n = n + count_locals_in_stmt(body[i]);
+        i = i + 1;
+    }
+    return n;
+}
+
+function count_locals_in_stmt(stmt: parser.Stmt): i32 {
+    match (stmt) {
+        parser.StmtVar(_) => { return 1; },
+        parser.StmtIf(ifs) => { return count_locals(ifs.then_body) + count_locals(ifs.else_body); },
+        parser.StmtWhile(w) => { return count_locals(w.body); },
+        _ => { return 0; }
+    }
+    return 0;
 }
 
 // =================== ASM EMITTER ====================
@@ -168,8 +236,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    # unsupported unary: " + u.op + "\n");
             return s;
         },
-        parser.ExprIdent(_) => {
-            s = s.write("    # unsupported: ident (no locals yet)\n");
+        parser.ExprIdent(id) => {
+            if (s.has_local(id.name)) {
+                var off: i32 = s.lookup_local(id.name);
+                s = s.write("    pushq " + i32_to_string(off) + "(%rbp)\n");
+                return s;
+            }
+            s = s.write("    # unresolved ident: " + id.name + "\n");
             s = s.write("    pushq $0\n");
             return s;
         },
@@ -280,9 +353,34 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.write(exit_l.name + ":\n");
             return s;
         },
-        parser.StmtVar(_) => { return s.write("    # unsupported: StmtVar\n"); },
-        parser.StmtExpr(_) => { return s.write("    # unsupported: StmtExpr\n"); },
-        parser.StmtAssign(_) => { return s.write("    # unsupported: StmtAssign\n"); },
+        parser.StmtVar(v) => {
+            // Compile init, then pop to the new local's slot.
+            // bind_local first so lookup_local resolves to the
+            // correct offset on the right-hand side.
+            s = emit_expr(v.init, s);
+            s = s.bind_local(v.name);
+            var off: i32 = s.lookup_local(v.name);
+            s = s.write("    popq %rax\n");
+            s = s.write("    movq %rax, " + i32_to_string(off) + "(%rbp)\n");
+            return s;
+        },
+        parser.StmtAssign(a) => {
+            if (!s.has_local(a.target)) {
+                s = s.write("    # unresolved assign: " + a.target + "\n");
+                return s;
+            }
+            s = emit_expr(a.value, s);
+            var off: i32 = s.lookup_local(a.target);
+            s = s.write("    popq %rax\n");
+            s = s.write("    movq %rax, " + i32_to_string(off) + "(%rbp)\n");
+            return s;
+        },
+        parser.StmtExpr(x) => {
+            // Evaluate for side effects, drop the result.
+            s = emit_expr(x.value, s);
+            s = s.write("    popq %rax\n");
+            return s;
+        },
         parser.StmtUnknown(_) => { return s.write("    # unsupported: StmtUnknown\n"); }
     }
     return s;
@@ -297,6 +395,21 @@ pub function emit_module(mod: parser.Module): string {
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
     s = s.write("_start:\n");
+    // Function-entry prologue: set up the frame pointer and
+    // reserve space for every local. Conservative count
+    // (recurses into all branches) — wasteful but trivially
+    // correct.
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    var n_locals: i32 = count_locals(mod.top_stmts);
+    if (n_locals > 0) {
+        // Round up the frame to a multiple of 16 so SSE
+        // alignment rules hold even though we don't use SSE.
+        // Each local is 8 bytes; round (n*8 + 8) up to 16.
+        var bytes: i32 = n_locals * 8;
+        if (bytes % 16 != 0) { bytes = bytes + 8; }
+        s = s.write("    subq $" + i32_to_string(bytes) + ", %rsp\n");
+    }
     var i: i32 = 0;
     while (i < len(mod.top_stmts)) {
         s = emit_stmt(mod.top_stmts[i], s);
@@ -420,6 +533,44 @@ function main(): i32 {
     if (!contains(a17, "cmpq $0")) { return 170; }
     if (!contains(a17, "je .L")) { return 171; }
     if (!contains(a17, "jmp .L")) { return 172; }
+
+    // Locals: frame prologue + slot store + slot load. `var x =
+    // 5; return x;` should pushq %rbp, subq the frame, then
+    // movq the literal into -8(%rbp), then pushq from -8(%rbp).
+    var a18: string = emit_source("var x = 5; return x;");
+    if (!contains(a18, "pushq %rbp")) { return 180; }
+    if (!contains(a18, "movq %rsp, %rbp")) { return 181; }
+    if (!contains(a18, "subq $")) { return 182; }
+    if (!contains(a18, "movq %rax, -8(%rbp)")) { return 183; }
+    if (!contains(a18, "pushq -8(%rbp)")) { return 184; }
+
+    // Multiple locals get distinct slots: -8, -16, -24, ...
+    var a19: string = emit_source("var a = 1; var b = 2; var c = 3; return c;");
+    if (!contains(a19, "movq %rax, -8(%rbp)")) { return 190; }
+    if (!contains(a19, "movq %rax, -16(%rbp)")) { return 191; }
+    if (!contains(a19, "movq %rax, -24(%rbp)")) { return 192; }
+    if (!contains(a19, "pushq -24(%rbp)")) { return 193; }
+
+    // Re-assignment: `x = x + 1;` reads + writes the same slot.
+    var a20: string = emit_source("var x = 5; x = x + 1; return x;");
+    if (!contains(a20, "pushq -8(%rbp)")) { return 200; }
+    if (!contains(a20, "movq %rax, -8(%rbp)")) { return 201; }
+    if (!contains(a20, "addq")) { return 202; }
+
+    // Compound assign desugars: `x += 1` → `x = x + 1` so the
+    // asm shape is identical.
+    var a21: string = emit_source("var x = 0; x += 7; return x;");
+    if (!contains(a21, "addq")) { return 210; }
+    if (!contains(a21, "movq %rax, -8(%rbp)")) { return 211; }
+
+    // Counter loop: `var i = 0; while (i < 3) { i = i + 1; }
+    // return i;` exercises locals + branches together.
+    var a22: string = emit_source(
+        "var i = 0; while (i < 3) { i = i + 1; } return i;"
+    );
+    if (!contains(a22, "pushq -8(%rbp)")) { return 220; }
+    if (!contains(a22, "je .L")) { return 221; }
+    if (!contains(a22, "jmp .L")) { return 222; }
 
     return 0;
 }
