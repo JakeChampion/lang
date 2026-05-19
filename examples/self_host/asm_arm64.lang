@@ -467,6 +467,15 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // literal's bytes, so we intern it in `.rodata`,
             // load its address via adrp+add, set the length, and
             // syscall directly.
+            // len(arr) — load the length prefix at offset 0.
+            // Same semantics as the x86-64 backend.
+            if (name == "len" && len(c.args) == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    ldr x0, [x0]\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             if (name == "print" && len(c.args) == 1) {
                 var arg: parser.Expr = c.args[0];
                 match (arg) {
@@ -547,15 +556,40 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
-        parser.ExprArray(_) => {
-            s = s.write("    // unsupported: array\n");
-            s = s.write("    mov x0, #0\n");
+        parser.ExprArray(a) => {
+            // Layout: [len: 8 bytes, val0, val1, …, val_(N-1)].
+            // Same shape as the x86-64 backend; see asm.lang
+            // for the rationale.
+            var n_elems: i32 = len(a.elements);
+            var ai: i32 = 0;
+            while (ai < n_elems) {
+                s = emit_expr(a.elements[ai], s);
+                ai = ai + 1;
+            }
+            var a_bytes: i32 = (n_elems + 1) * 8;
+            s = s.write("    mov x0, #" + i32_to_string(a_bytes) + "\n");
+            s = s.write("    bl __lang_alloc\n");
+            s = s.mark_heap();
+            s = s.write("    mov x1, #" + i32_to_string(n_elems) + "\n");
+            s = s.write("    str x1, [x0]\n");
+            var aj: i32 = n_elems - 1;
+            while (aj >= 0) {
+                s = s.write("    ldr x1, [sp], #16\n");
+                s = s.write("    str x1, [x0, #" + i32_to_string((aj + 1) * 8) + "]\n");
+                aj = aj - 1;
+            }
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
-        parser.ExprIndex(_) => {
-            s = s.write("    // unsupported: index\n");
-            s = s.write("    mov x0, #0\n");
+        parser.ExprIndex(x) => {
+            // Compile array → push ptr; compile index → push i32;
+            // pop both into registers, load at offset (idx+1)*8.
+            s = emit_expr(x.array, s);
+            s = emit_expr(x.index, s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    add x1, x1, #1\n");
+            s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },

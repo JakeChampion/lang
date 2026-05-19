@@ -179,6 +179,48 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			20,
 			"",
 		},
+		{
+			"array-literal-len",
+			"function main(): i32 { var a = [10, 20, 30]; return len(a); }",
+			3,
+			"",
+		},
+		{
+			"array-index-first",
+			"function main(): i32 { var a = [42, 99, 7]; return a[0]; }",
+			42,
+			"",
+		},
+		{
+			"array-index-middle",
+			"function main(): i32 { var a = [42, 99, 7]; return a[1]; }",
+			99,
+			"",
+		},
+		{
+			"array-index-last",
+			"function main(): i32 { var a = [42, 99, 7]; return a[2]; }",
+			7,
+			"",
+		},
+		{
+			"array-index-via-var",
+			"function main(): i32 { var a = [10, 20, 30, 40]; var i = 2; return a[i]; }",
+			30,
+			"",
+		},
+		{
+			"array-sum-via-while",
+			"function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < len(a)) { s = s + a[i]; i = i + 1; } return s; }",
+			15,
+			"",
+		},
+		{
+			"array-of-expressions",
+			"function main(): i32 { var x = 4; var a = [x, x + 1, x * 2]; return a[0] + a[1] + a[2]; }",
+			17,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
