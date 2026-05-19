@@ -2683,6 +2683,50 @@ func TestEmitArgs(t *testing.T) {
 	}
 }
 
+// TestEmitArenaSaveRestore — arena_save snapshots the bump
+// cursor; an intervening alloc moves the cursor; arena_restore
+// rewinds it. Verify by saving, allocating, restoring, then
+// allocating again — the second alloc should return the same
+// pointer as the one that came right after the save.
+func TestEmitArenaSaveRestore(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32(), i32()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			// First alloc to ensure the cursor is past the
+			// reserved region.
+			{Kind: ir.OpConstI32, I32: 16},
+			{Kind: ir.OpAlloc},
+			{Kind: ir.OpDrop},
+			// $0 = arena_save() (snapshot)
+			{Kind: ir.OpCallDirect, Str: "arena_save"},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			// Allocate something
+			{Kind: ir.OpConstI32, I32: 64},
+			{Kind: ir.OpAlloc},
+			{Kind: ir.OpDrop},
+			// arena_restore($0)
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpCallDirect, Str: "arena_restore"},
+			// $1 = arena_save() — should equal $0
+			{Kind: ir.OpCallDirect, Str: "arena_save"},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			// Return ($1 == $0): 1 if equal, 0 otherwise.
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpEq},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "1" {
+		t.Fatalf("arena_save/restore round-trip = %q, want 1", got)
+	}
+}
+
 // TestEmitNowUnixMs — call OpCallDirect "now_unix_ms" and
 // verify the result is non-zero and within a plausible recent
 // range. The exact value can't be asserted but we can check
