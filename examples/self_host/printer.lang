@@ -213,6 +213,8 @@ function print_stmt(st: parser.Stmt, depth: i32): string {
         parser.StmtFor(f) => {
             return pad + "for " + f.var_name + " in " + print_expr(f.iter) + " " + print_block(f.body, depth) + "\n";
         },
+        parser.StmtBreak(_) => { return pad + "break;\n"; },
+        parser.StmtContinue(_) => { return pad + "continue;\n"; },
         parser.StmtUnknown(u) => { return pad + "/*unknown-stmt:" + u.kind + "*/\n"; }
     }
     return pad + "/*unhandled-stmt*/\n";

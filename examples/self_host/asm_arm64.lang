@@ -581,6 +581,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
         },
         parser.StmtMatch(_) => { return s.write("    // unsupported: match\n"); },
         parser.StmtFor(_) => { return s.write("    // unsupported: for-in\n"); },
+        parser.StmtBreak(_) => { return s.write("    // unsupported: break\n"); },
+        parser.StmtContinue(_) => { return s.write("    // unsupported: continue\n"); },
         parser.StmtUnknown(_) => { return s.write("    // unsupported: StmtUnknown\n"); }
     }
     return s;
