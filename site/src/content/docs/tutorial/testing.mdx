@@ -1,0 +1,135 @@
+---
+title: Testing
+description: Writing unit tests in lang with std/test.
+sidebar:
+  order: 5
+---
+
+import LangPlayground from "../../../components/LangPlayground.astro";
+
+lang ships with a pure-Lang unit-test runner under
+[`std/test`](../../stdlib/test/). Tests are ordinary `.lang`
+files: write functions that return `Option[string]`, list them
+in `main`, and the runner prints
+[TAP-13](https://testanything.org/) to stdout.
+
+The runner does **not** depend on the Go toolchain, so the same
+program runs under `lang -interp`, compiles to a native binary,
+and (once the compiler is self-hosted) keeps working unchanged.
+
+## Hello, test
+
+A test function returns `None` when the assertion holds and
+`Some(message)` when it fails. The auto-prelude makes
+`TestRunner`, `test_new`, and every `assert_*` helper available
+by bare name — no imports needed.
+
+<LangPlayground
+  code={`function test_addition(): Option[string] {
+    return assert_eq_i32(2 + 2, 4);
+}
+
+function test_strings(): Option[string] {
+    return assert_eq_string("foo" + "bar", "foobar");
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("hello");
+    r = r.it("addition", test_addition());
+    r = r.it("strings", test_strings());
+    return r.finish();
+}`}
+/>
+
+Save as `hello_test.lang` and run it:
+
+```bash
+lang -interp hello_test.lang
+```
+
+Output:
+
+```
+TAP version 13
+# Suite: hello
+ok 1 - addition
+ok 2 - strings
+1..2
+# tests 2
+# pass 2
+# fail 0
+```
+
+Exit code is `0`. A failing assertion flips it to `1`, prints a
+`not ok` line, and embeds both the actual and expected values
+in the diagnostic block.
+
+## Assertions
+
+Each helper returns `Option[string]`. The failure message names
+the predicate so a grep across CI logs finds the regression.
+
+| Family       | Helpers                                                                                               |
+| ------------ | ----------------------------------------------------------------------------------------------------- |
+| Boolean      | `assert_true`, `assert_false`                                                                          |
+| Integers     | `assert_eq_i32`, `assert_neq_i32`, `assert_lt_i32`, `assert_le_i32`, `assert_gt_i32`, `assert_ge_i32` |
+| Booleans     | `assert_eq_bool`                                                                                       |
+| Strings      | `assert_eq_string`, `assert_neq_string`, `assert_empty_string`, `assert_non_empty_string`              |
+| Substring    | `assert_contains`, `assert_not_contains`, `assert_starts_with`, `assert_ends_with`                     |
+| Array length | `assert_len_i32`, `assert_len_string`                                                                  |
+| Array eq     | `assert_eq_i32_array`, `assert_eq_string_array`                                                       |
+| Free-form    | `pass()`, `fail(msg)`                                                                                  |
+
+## Writing your own assertion
+
+A test function can run any logic that returns `Option[string]`
+— the assertions above are conveniences. For a hand-rolled diff,
+return `fail(...)` directly:
+
+```lang
+function test_modulo_table(): Option[string] {
+    var inputs: i32[] = [0, 1, 5, 10, 11];
+    var expected: i32[] = [0, 1, 5, 0, 1];
+    var i: i32 = 0;
+    while (i < len(inputs)) {
+        if (inputs[i] % 10 != expected[i]) {
+            return fail("table mismatch at " + i.to_string());
+        }
+        i = i + 1;
+    }
+    return pass();
+}
+```
+
+## Why explicit registration?
+
+lang has no reflection, so `main` lists the cases it runs. That
+mirrors Zig's `test` blocks (which compile down to the same
+shape) and keeps the runner a plain library — no build-system
+magic, no framework runtime. If a `discover_tests()` macro lands
+later, it'll lower to the same `r.it("name", func())` chain.
+
+## Failing tests in CI
+
+The process exit code is `0` on a clean run and `1` on any
+failure. Drop it into any CI runner — GitHub Actions, GitLab CI,
+Buildkite — without further configuration. TAP consumers
+(`prove`, `tape`, `tap-junit`) parse the output stream directly.
+
+## Migrating from Go-side tests
+
+Today the compiler's own tests live in Go (`internal/e2e/*.go`).
+The plan ([`docs/ROADMAP-AND-SELF-HOSTING.md`](https://github.com/JakeChampion/lang/blob/main/docs/ROADMAP-AND-SELF-HOSTING.md))
+is to retire them once the compiler is self-hosted; new tests
+for stdlib helpers and Lang code should be written against
+`std/test` so they're already in the right shape for the
+migration.
+
+See the working examples under
+[`examples/tests/`](https://github.com/JakeChampion/lang/tree/main/examples/tests)
+in the repo:
+
+- `arithmetic_test.lang` — basic integer assertions
+- `strings_test.lang` — string-method coverage
+- `runner_self_test.lang` — the runner's meta-test (verifies
+  every helper on both pass and fail paths)

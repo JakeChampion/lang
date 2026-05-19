@@ -44,5 +44,6 @@ import "std/json";
 import "std/math";
 import "std/float";
 import "std/tcp";
+import "std/test";
 import "core/int";
 import "core/map";

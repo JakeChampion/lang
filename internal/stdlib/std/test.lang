@@ -1,0 +1,376 @@
+// std/test — pure-Lang unit-test runner.
+//
+// Designed to replace the Go-side `*_test.go` harness once the
+// compiler itself is self-hosted (see
+// docs/ROADMAP-AND-SELF-HOSTING.md). The runner takes no
+// compiler dependency: it's an ordinary Lang program that
+// uses the helpers exported here, threads a `TestRunner`
+// accumulator through each test case, and exits 0 on success
+// / 1 on any failure. Output is TAP-13
+// (https://testanything.org/) so existing CI tooling
+// (`prove`, `tape`, jUnit converters) can consume it directly
+// while we transition off Go.
+//
+// std/test is part of the auto-prelude (see
+// `internal/prelude/prelude.lang`), so test programs reach for
+// the helpers by bare name — no `test.assert_eq_i32(...)`
+// qualification, no `import "std/test";` line needed. A user
+// program that opts out of the prelude with `import
+// "core/no_prelude";` would have to import this module
+// explicitly and qualify its names.
+//
+//   function test_addition(): Option[string] {
+//       return assert_eq_i32(2 + 2, 4);
+//   }
+//
+//   function test_strings(): Option[string] {
+//       return assert_eq_string("foo" + "bar", "foobar");
+//   }
+//
+//   function main(): i32 {
+//       var r: TestRunner = test_new("arithmetic");
+//       r = r.it("addition", test_addition());
+//       r = r.it("strings", test_strings());
+//       return r.finish();
+//   }
+//
+// Tests are functions returning Option[string]:
+//   None       — the case passed
+//   Some(msg)  — the case failed; msg is the human-readable diff
+//
+// The runner is value-semantic — `r.it(...)` returns a fresh
+// TestRunner with the result folded in. That matches the rest
+// of lang's stdlib (Array.push, struct receiver methods) and
+// sidesteps the lack of interior mutability.
+//
+// (`case` would have been the obvious method name but it's a
+// reserved keyword for `switch` arms; `it` matches the BDD
+// `describe / it` convention from JS / Ruby test frameworks.)
+//
+// Discovery is intentionally explicit: lang has no reflection,
+// so `main` lists the tests it runs. That's the same shape
+// Zig's `test` blocks compile down to and the same shape any
+// future macro / build-step driven discovery would lower to.
+
+// std/test reaches for (i32).to_string() in the f-string
+// failure messages and (string).contains / .starts_with /
+// .ends_with in the substring assertion helpers. The
+// auto-prelude pulls those in for the test program too, so
+// no extra `import` is needed here when std/test is included
+// in the auto-prelude — but stdlib modules can't lean on
+// the prelude's transitive imports, so they get declared
+// explicitly.
+import "std/i32";
+import "std/array";
+import "std/string";
+
+// TestRunner — per-suite accumulator. Threaded through each
+// `.it(name, result)` call. `failures` keeps the formatted
+// "<name>: <message>" line for every failing case so finish()
+// can repeat them at the bottom of the run (TAP consumers can
+// look at the per-line not-ok output; humans want a summary).
+pub struct TestRunner {
+    suite: string,
+    passed: i32,
+    failed: i32,
+    failures: string[],
+    verbose: boolean,
+}
+
+// test_new(suite) — start a new run. `suite` labels the run in
+// the TAP `# Suite:` comment line. Tests print as they execute
+// so a hanging case is obvious in the output stream.
+pub function test_new(suite: string): TestRunner {
+    print("TAP version 13");
+    print("# Suite: " + suite);
+    return TestRunner {
+        suite: suite,
+        passed: 0,
+        failed: 0,
+        failures: [],
+        verbose: false,
+    };
+}
+
+// test_new_verbose(suite) — same as test_new but flags the
+// runner for future verbose output. Currently identical to
+// test_new because TAP-13 already prints every case; the flag
+// is reserved for a future "--verbose" mode that adds timing
+// or extra context to passing cases.
+pub function test_new_verbose(suite: string): TestRunner {
+    var r: TestRunner = test_new(suite);
+    return TestRunner {
+        suite: r.suite,
+        passed: r.passed,
+        failed: r.failed,
+        failures: r.failures,
+        verbose: true,
+    };
+}
+
+// (r) it(name, result) — record the outcome of one test.
+// `result` is the value returned by the test function:
+//   None       prints "ok N - name"
+//   Some(msg)  prints "not ok N - name" + the YAML-ish ---
+//              block TAP uses for diagnostic detail
+pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunner {
+    var idx: i32 = r.passed + r.failed + 1;
+    match (result) {
+        None => {
+            print("ok " + idx.to_string() + " - " + name);
+            return TestRunner {
+                suite: r.suite,
+                passed: r.passed + 1,
+                failed: r.failed,
+                failures: r.failures,
+                verbose: r.verbose,
+            };
+        },
+        Some(msg) => {
+            print("not ok " + idx.to_string() + " - " + name);
+            print("  ---");
+            print("  message: " + msg);
+            print("  ---");
+            var fs: string[] = r.failures.push(name + ": " + msg);
+            return TestRunner {
+                suite: r.suite,
+                passed: r.passed,
+                failed: r.failed + 1,
+                failures: fs,
+                verbose: r.verbose,
+            };
+        }
+    }
+}
+
+// (r) finish() — print the TAP plan line + per-suite summary
+// and return the process exit code (0 = all passed, 1 = any
+// failed). Call this exactly once at the end of main().
+//
+// TAP plan goes at the bottom of the output (the "lazy plan"
+// shape) because the test count isn't known up-front — we'd
+// have to count cases in main() before running them, which
+// every test file would have to remember to keep in sync.
+// Bottom-plan is permitted by TAP-13 and most consumers
+// (`prove`, `tape`) handle it.
+pub function (r: TestRunner) finish(): i32 {
+    var total: i32 = r.passed + r.failed;
+    print("1.." + total.to_string());
+    print("# tests " + total.to_string());
+    print("# pass " + r.passed.to_string());
+    print("# fail " + r.failed.to_string());
+    if (r.failed > 0) {
+        print("# failures:");
+        var i: i32 = 0;
+        while (i < len(r.failures)) {
+            print("#   " + r.failures[i]);
+            i = i + 1;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+// =================== ASSERTION HELPERS ===================
+//
+// Each helper returns Option[string]:
+//   None       — the assertion holds
+//   Some(msg)  — the assertion failed; msg describes the diff
+//
+// Message format: "<predicate>: <detail>" — predicate names the
+// assertion so the failure log is grep-able, detail carries the
+// actual / expected values formatted for human reading.
+//
+// Helpers are split per-type because lang doesn't have a way to
+// express "any printable value" in a generic signature today.
+// As soon as a `Display`/`ToString` trait lands, these collapse
+// into one generic helper per family (eq, neq, contains, ...).
+
+// `pass()` — explicit None for cases that need an early
+// successful return (eg a test that walks a list and bails
+// out on the first interesting state).
+pub function pass(): Option[string] {
+    return None;
+}
+
+// `fail(msg)` — explicit failure with a custom message. Useful
+// when a test computes its own diff or wants to flag an
+// unreachable branch ("expected match to have hit the first arm").
+pub function fail(msg: string): Option[string] {
+    return Some(msg);
+}
+
+// `assert_true(cond)` / `assert_false(cond)` — boolean
+// predicates. The failure message names which direction failed
+// so a glance at the log makes it obvious.
+pub function assert_true(cond: boolean): Option[string] {
+    if (cond) { return None; }
+    return Some("assert_true: condition was false");
+}
+
+pub function assert_false(cond: boolean): Option[string] {
+    if (!cond) { return None; }
+    return Some("assert_false: condition was true");
+}
+
+// `assert_eq_i32(actual, expected)` — i32 equality. Failure
+// message embeds both values so you don't have to re-run the
+// test to see what came out.
+pub function assert_eq_i32(actual: i32, expected: i32): Option[string] {
+    if (actual == expected) { return None; }
+    return Some("assert_eq_i32: expected " + expected.to_string() +
+                ", got " + actual.to_string());
+}
+
+pub function assert_neq_i32(actual: i32, expected: i32): Option[string] {
+    if (actual != expected) { return None; }
+    return Some("assert_neq_i32: expected != " + expected.to_string() +
+                ", got " + actual.to_string());
+}
+
+// `assert_lt_i32(a, b)` / `assert_le_i32(a, b)` — relational
+// predicates. Mirror the eq/neq shape so a test that checks
+// "monotonically increasing" doesn't have to roll its own
+// failure message every time.
+pub function assert_lt_i32(a: i32, b: i32): Option[string] {
+    if (a < b) { return None; }
+    return Some("assert_lt_i32: expected " + a.to_string() + " < " + b.to_string());
+}
+
+pub function assert_le_i32(a: i32, b: i32): Option[string] {
+    if (a <= b) { return None; }
+    return Some("assert_le_i32: expected " + a.to_string() + " <= " + b.to_string());
+}
+
+pub function assert_gt_i32(a: i32, b: i32): Option[string] {
+    if (a > b) { return None; }
+    return Some("assert_gt_i32: expected " + a.to_string() + " > " + b.to_string());
+}
+
+pub function assert_ge_i32(a: i32, b: i32): Option[string] {
+    if (a >= b) { return None; }
+    return Some("assert_ge_i32: expected " + a.to_string() + " >= " + b.to_string());
+}
+
+// `assert_eq_bool(actual, expected)` — boolean equality. Less
+// common than assert_true/false but useful for tests that
+// compute a boolean and want to compare it against an expected
+// value driven from a table.
+pub function assert_eq_bool(actual: boolean, expected: boolean): Option[string] {
+    if (actual == expected) { return None; }
+    var a: string = "false";
+    if (actual) { a = "true"; }
+    var e: string = "false";
+    if (expected) { e = "true"; }
+    return Some("assert_eq_bool: expected " + e + ", got " + a);
+}
+
+// `assert_eq_string(actual, expected)` — string equality. The
+// raw values are quoted in the message so leading / trailing
+// whitespace stays visible.
+pub function assert_eq_string(actual: string, expected: string): Option[string] {
+    if (actual == expected) { return None; }
+    return Some("assert_eq_string: expected \"" + expected + "\", got \"" + actual + "\"");
+}
+
+pub function assert_neq_string(actual: string, expected: string): Option[string] {
+    if (actual != expected) { return None; }
+    return Some("assert_neq_string: expected != \"" + expected + "\", got \"" + actual + "\"");
+}
+
+// `assert_contains(haystack, needle)` — substring search.
+// Empty needle always passes (mirrors `(s).contains("")` which
+// returns true everywhere). Failure embeds the haystack so the
+// diff against your fixture is one glance.
+pub function assert_contains(haystack: string, needle: string): Option[string] {
+    if (haystack.contains(needle)) { return None; }
+    return Some("assert_contains: \"" + haystack + "\" does not contain \"" + needle + "\"");
+}
+
+// `assert_not_contains(haystack, needle)` — the inverse. Empty
+// needle always fails because every string contains the empty
+// string.
+pub function assert_not_contains(haystack: string, needle: string): Option[string] {
+    if (!haystack.contains(needle)) { return None; }
+    return Some("assert_not_contains: \"" + haystack + "\" contains \"" + needle + "\"");
+}
+
+pub function assert_starts_with(s: string, prefix: string): Option[string] {
+    if (s.starts_with(prefix)) { return None; }
+    return Some("assert_starts_with: \"" + s + "\" does not start with \"" + prefix + "\"");
+}
+
+pub function assert_ends_with(s: string, suffix: string): Option[string] {
+    if (s.ends_with(suffix)) { return None; }
+    return Some("assert_ends_with: \"" + s + "\" does not end with \"" + suffix + "\"");
+}
+
+// `assert_empty_string(s)` — sugar for assert_eq_i32(len(s), 0)
+// that names the assertion in the failure message.
+pub function assert_empty_string(s: string): Option[string] {
+    if (len(s) == 0) { return None; }
+    return Some("assert_empty_string: expected \"\", got \"" + s + "\"");
+}
+
+pub function assert_non_empty_string(s: string): Option[string] {
+    if (len(s) > 0) { return None; }
+    return Some("assert_non_empty_string: string was empty");
+}
+
+// `assert_len_i32(arr, n)` / `assert_len_string(arr, n)` —
+// array length checks. Split per element type because lang
+// doesn't have a `T[]` generic at the function-signature
+// level for the call sites we currently want.
+pub function assert_len_i32(arr: i32[], n: i32): Option[string] {
+    var got: i32 = len(arr);
+    if (got == n) { return None; }
+    return Some("assert_len_i32: expected length " + n.to_string() +
+                ", got " + got.to_string());
+}
+
+pub function assert_len_string(arr: string[], n: i32): Option[string] {
+    var got: i32 = len(arr);
+    if (got == n) { return None; }
+    return Some("assert_len_string: expected length " + n.to_string() +
+                ", got " + got.to_string());
+}
+
+// `assert_eq_i32_array(actual, expected)` — element-wise i32[]
+// equality. Returns the first mismatching index so the failure
+// localises a long array diff.
+pub function assert_eq_i32_array(actual: i32[], expected: i32[]): Option[string] {
+    var an: i32 = len(actual);
+    var en: i32 = len(expected);
+    if (an != en) {
+        return Some("assert_eq_i32_array: length differs - expected " +
+                    en.to_string() + ", got " + an.to_string());
+    }
+    var i: i32 = 0;
+    while (i < an) {
+        if (actual[i] != expected[i]) {
+            return Some("assert_eq_i32_array: at index " + i.to_string() +
+                        " expected " + expected[i].to_string() +
+                        ", got " + actual[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+pub function assert_eq_string_array(actual: string[], expected: string[]): Option[string] {
+    var an: i32 = len(actual);
+    var en: i32 = len(expected);
+    if (an != en) {
+        return Some("assert_eq_string_array: length differs - expected " +
+                    en.to_string() + ", got " + an.to_string());
+    }
+    var i: i32 = 0;
+    while (i < an) {
+        if (actual[i] != expected[i]) {
+            return Some("assert_eq_string_array: at index " + i.to_string() +
+                        " expected \"" + expected[i] + "\", got \"" + actual[i] + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
