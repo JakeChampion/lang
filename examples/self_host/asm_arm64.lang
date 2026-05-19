@@ -695,6 +695,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "i32_to_string") { return "string"; }
                     if (id.name == "str_to_i32") { return "i32"; }
                     if (id.name == "str_starts_with") { return "bool"; }
+                    if (id.name == "str_ends_with") { return "bool"; }
                     if (id.name == "str_contains") { return "bool"; }
                     if (id.name == "str_index_of") { return "i32"; }
                     var fi: i32 = 0;
@@ -1519,6 +1520,16 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    ldr x1, [sp], #16\n");
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_str_starts_with\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_str_search();
+                return s;
+            }
+            if (name == "str_ends_with" && len(c.args) == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    ldr x1, [sp], #16\n");
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __lang_str_ends_with\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 return s;
@@ -2773,6 +2784,29 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x0, #1\n");
         s = s.write("    ret\n");
         s = s.write(".Lsw_no:\n");
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    ret\n");
+        s = s.write("__lang_str_ends_with:\n");
+        s = s.write("    ldr x2, [x1, #8]\n");        // lenP
+        s = s.write("    ldr x3, [x0, #8]\n");        // lenS
+        s = s.write("    cmp x3, x2\n");
+        s = s.write("    b.lt .Lew_no\n");
+        s = s.write("    sub x3, x3, x2\n");          // offset = lenS - lenP
+        s = s.write("    ldr x0, [x0]\n");
+        s = s.write("    add x0, x0, x3\n");
+        s = s.write("    ldr x1, [x1]\n");
+        s = s.write("    cbz x2, .Lew_yes\n");
+        s = s.write(".Lew_loop:\n");
+        s = s.write("    ldrb w3, [x0], #1\n");
+        s = s.write("    ldrb w4, [x1], #1\n");
+        s = s.write("    cmp w3, w4\n");
+        s = s.write("    b.ne .Lew_no\n");
+        s = s.write("    subs x2, x2, #1\n");
+        s = s.write("    b.ne .Lew_loop\n");
+        s = s.write(".Lew_yes:\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lew_no:\n");
         s = s.write("    mov x0, #0\n");
         s = s.write("    ret\n");
         s = s.write("__lang_str_index_of:\n");
