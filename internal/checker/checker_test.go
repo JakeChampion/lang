@@ -1,6 +1,8 @@
 package checker
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -1460,5 +1462,44 @@ func TestCastAsTypeAscription(t *testing.T) {
 		if !strings.Contains(err.Error(), c.want) {
 			t.Errorf("error %q does not contain %q", err.Error(), c.want)
 		}
+	}
+}
+
+// TestCheckContextCancellationShortCircuits — pre-cancelled
+// context returns ctx.Err() without running the body-check
+// loop. The LSP rests on this so a new edit can cancel an
+// in-flight type-check (docs/IDE-COMPILATION-RESEARCH.md
+// Rec §1).
+func TestCheckContextCancellationShortCircuits(t *testing.T) {
+	prog, err := parser.Parse(`function f(): i32 { return 1; }
+function g(): i32 { return 2; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = CheckContext(ctx, prog)
+	if err == nil {
+		t.Fatal("expected ctx.Err(), got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+// TestCheckContextBackgroundBehavesLikeOldCheck — non-cancellable
+// context matches the original `Check(prog)` API behaviour.
+// Regression sentinel against breaking the wrapper.
+func TestCheckContextBackgroundBehavesLikeOldCheck(t *testing.T) {
+	prog, err := parser.Parse(`function main(): i32 { return 42; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := CheckContext(context.Background(), prog)
+	if err != nil {
+		t.Fatalf("CheckContext: %v", err)
+	}
+	if info == nil {
+		t.Fatal("CheckContext returned nil info on a valid program")
 	}
 }

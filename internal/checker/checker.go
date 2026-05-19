@@ -7,6 +7,7 @@
 package checker
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -634,6 +635,29 @@ func injectPrelude(prog *ast.Program) error {
 // Check type-checks the program. It returns an aggregated error if any
 // problems were found.
 func Check(prog *ast.Program) (*Info, error) {
+	return CheckContext(context.Background(), prog)
+}
+
+// CheckContext is the context-aware sibling of Check —
+// checks the context between each top-level function-body
+// pass so the LSP can cancel a long type-check mid-flight
+// when a new edit invalidates the in-progress result.
+// See docs/IDE-COMPILATION-RESEARCH.md Rec §1.
+//
+// On cancel, returns (nil, ctx.Err()) — same convention as
+// ParseContext. The body-check loop is by far the dominant
+// cost in Check; the preceding builtin / prelude injection
+// + first-pass collection runs are O(decl-count) walks with
+// no recursive descent, so a single up-front ctx check
+// suffices for them.
+func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return checkImpl(ctx, prog)
+}
+
+func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// Prepend the built-in Option / Result / IoError /
 	// JsonValue enums so user code (and the lang prelude)
 	// can reference them without an explicit declaration.
@@ -1621,8 +1645,14 @@ func Check(prog *ast.Program) (*Info, error) {
 		prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog))
 	}
 
-	// Second pass: check bodies.
+	// Second pass: check bodies. Per-function cancellation
+	// checkpoint — the LSP can cancel a long type-check
+	// mid-flight when a new edit invalidates the in-progress
+	// result (docs/IDE-COMPILATION-RESEARCH.md Rec §1).
 	for _, fn := range prog.Funcs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		c.checkFunction(fn)
 	}
 

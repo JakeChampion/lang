@@ -7,6 +7,7 @@
 package parser
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -36,14 +37,36 @@ func (e *Error) setFile(p string)       { e.Path = p }
 // parser doesn't otherwise consume them, leaving the formatter (or
 // any other tooling pass) free to walk them in source order.
 func Parse(src string) (*ast.Program, error) {
+	return ParseContext(context.Background(), src)
+}
+
+// ParseContext is the context-aware sibling of Parse — checks
+// the context at each top-level declaration boundary so a long
+// parse (large file, slow input) can be cancelled mid-flight by
+// the LSP when a new edit invalidates the in-progress result.
+// See docs/IDE-COMPILATION-RESEARCH.md Rec §1.
+//
+// On cancel, returns (nil, ctx.Err()) — caller distinguishes a
+// real parse error from a cancellation via `errors.Is(err,
+// context.Canceled)` / `context.DeadlineExceeded`. Same shape
+// as Go's net/http and database/sql contexts.
+//
+// Lex stays synchronous (it's already O(n) and fast); the
+// cancellation grain is per-top-level-decl. A 100-decl file
+// gets ~100 cancellation checkpoints, which is fine for the
+// ~10ms-per-keystroke budget the LSP targets.
+func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 	tokens, comments, err := lexer.Tokenize(src)
 	if err != nil {
 		return nil, err
 	}
-	p := &parser{tokens: tokens}
+	p := &parser{tokens: tokens, ctx: ctx}
 	prog := p.parseProgram()
 	prog.Comments = comments
 	prog.TypeRefs = p.typeRefs
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if len(p.errors) > 0 {
 		return prog, diag.Errors(p.errors)
 	}
@@ -78,6 +101,13 @@ type parser struct {
 	tokens []lexer.Token
 	i      int
 	errors []error
+	// ctx is the LSP-driven cancellation token. Checked at
+	// each top-level decl boundary; on cancel, parseProgram
+	// returns early. Sub-parsers (the one-shot parseExprFrom-
+	// Text for f-string interpolants) inherit context.Background
+	// — they're single-expression parses where the per-decl
+	// cancellation grain doesn't apply.
+	ctx context.Context
 	// typeRefs accumulates source-position records for every
 	// named-type reference parseType encounters. Drained into
 	// prog.TypeRefs at the end of Parse. The LSP uses this side
@@ -155,6 +185,11 @@ func (p *parser) expect(kind lexer.Kind, text string) (lexer.Token, error) {
 func (p *parser) parseProgram() *ast.Program {
 	prog := &ast.Program{}
 	for !p.match(lexer.EOF, "") {
+		// Per-decl cancellation checkpoint. nil ctx (sub-parser
+		// path that bypassed the struct init) skips the check.
+		if p.ctx != nil && p.ctx.Err() != nil {
+			return prog
+		}
 		// Snapshot the input position so we can guarantee progress
 		// after a failed declaration: if recovery would leave us at
 		// the same token, advance once to break the loop.

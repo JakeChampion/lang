@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -870,5 +872,40 @@ function f(): i32 {
 	stmts := prog.Funcs[0].Body.Stmts
 	if _, ok := stmts[0].(*ast.LetElse); !ok {
 		t.Errorf("first stmt should still be *ast.LetElse; got %T", stmts[0])
+	}
+}
+
+// TestParseContextCancellationShortCircuits checks that
+// ParseContext returns ctx.Err() promptly when the context
+// is cancelled mid-parse — the LSP rests on this so a fast
+// typist's keystrokes don't pile up un-cancellable in-flight
+// parses. The check runs once before parseProgram returns
+// AND at each top-level decl boundary, so a pre-cancelled
+// context aborts before parseProgram does any work.
+func TestParseContextCancellationShortCircuits(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel: any ParseContext call should short-circuit.
+	prog, err := ParseContext(ctx, `function f(): i32 { return 1; }
+function g(): i32 { return 2; }
+function h(): i32 { return 3; }`)
+	if err == nil {
+		t.Fatalf("expected ctx.Err(), got nil; prog has %d funcs", len(prog.Funcs))
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+// TestParseContextHonoursBackgroundLikeOldParse — the
+// non-cancellable case must behave exactly like the original
+// `Parse(src)` API. Regression sentinel against accidentally
+// breaking the wrapper.
+func TestParseContextHonoursBackgroundLikeOldParse(t *testing.T) {
+	prog, err := ParseContext(context.Background(), "function f(): i32 { return 42; }")
+	if err != nil {
+		t.Fatalf("ParseContext: %v", err)
+	}
+	if len(prog.Funcs) != 1 || prog.Funcs[0].Name != "f" {
+		t.Errorf("got %+v, want single func named f", prog.Funcs)
 	}
 }
