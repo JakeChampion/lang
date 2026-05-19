@@ -1223,6 +1223,10 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return convert.InstI32ReinterpretF32(body), nil
 	case ir.OpReinterpretF32I32:
 		return convert.InstF32ReinterpretI32(body), nil
+	case ir.OpReinterpretI64F64:
+		return convert.InstI64ReinterpretF64(body), nil
+	case ir.OpReinterpretF64I64:
+		return convert.InstF64ReinterpretI64(body), nil
 
 	case ir.OpFConvertI32:
 		if op.Width == 64 {

@@ -2683,6 +2683,30 @@ func TestEmitArgs(t *testing.T) {
 	}
 }
 
+// TestEmitReinterpretF64I64 — push an f64, reinterpret as i64,
+// reinterpret back as f64. The round-trip should preserve all
+// 64 bits (including NaN / Inf payloads, but we just check a
+// regular value here).
+func TestEmitReinterpretF64I64(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: f64(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstF64, F64: 3.14159},
+			{Kind: ir.OpReinterpretI64F64},
+			{Kind: ir.OpReinterpretF64I64},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	got := runUnderWasmtime(t, bin, "main")
+	if !strings.HasPrefix(got, "3.14") {
+		t.Fatalf("f64 round-trip = %q, want prefix 3.14", got)
+	}
+}
+
 // TestEmitFloatMathHelpers — round-trip the f64 math helpers
 // that map to native wasm ops (sqrt, abs, floor, ceil, trunc).
 // Each call should match the wasm-native semantics exactly.

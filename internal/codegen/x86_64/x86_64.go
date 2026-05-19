@@ -1128,7 +1128,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			g.emit("movd eax, xmm0")
 		}
 		g.push()
-	case ir.OpReinterpretI32F32, ir.OpReinterpretF32I32:
+	case ir.OpReinterpretI32F32, ir.OpReinterpretF32I32,
+		ir.OpReinterpretI64F64, ir.OpReinterpretF64I64:
 		// Bit-cast between f32 and i32. The operand stack
 		// already stores both as raw 32-bit values (see
 		// OpConstF32 — the f32 bit pattern goes onto the
