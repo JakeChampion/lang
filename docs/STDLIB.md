@@ -287,6 +287,26 @@ function main(): i32 {
 - **Wider int assertions:** `assert_eq_i64`, `assert_neq_i64`,
   `assert_eq_u32`, `assert_neq_u32`, `assert_eq_u64`,
   `assert_neq_u64`
+- **Float assertions:** `assert_eq_f64_near(actual, expected,
+  epsilon)`, `assert_eq_f32_near`, `assert_eq_f64_exact`,
+  `assert_is_nan_f32`, `assert_is_nan_f64` — `_near` is the
+  default; `_exact` is for f32_bits round-trips / NaN-payload
+  canonicalisation tests
+- **Range:** `assert_in_range_i32`, `assert_in_range_i64`
+- **Multi-substring:** `assert_contains_all(haystack, needles[])`,
+  `assert_contains_any`, `assert_contains_in_order` — the
+  failure message names which needle(s) didn't match so the
+  diagnostic is grep-able
+- **String diff:** `assert_eq_string_diff(actual, expected)` —
+  reports the first differing line with its 1-based number
+  + the two values; friendlier than the base `assert_eq_string`
+  on multi-line stdout / generated source
+- **File state:** `assert_file_exists`, `assert_file_not_exists`,
+  `assert_file_contains`, `assert_file_contents` — backed by
+  the `read_file` builtin
+- **Tempdir convenience:** `must_temp_dir(r, prefix) ->
+  (string, TestRunner)` — single-shot tempdir + cleanup
+  registration with fallback to a recorded skip on failure
 - **bool / string assertions:** `assert_eq_bool`,
   `assert_eq_string`, `assert_neq_string`, `assert_empty_string`,
   `assert_non_empty_string`

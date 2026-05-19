@@ -14,6 +14,7 @@ import (
 	cryptorand "crypto/rand"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -50,6 +51,25 @@ type String string
 type Void struct{}
 type Array []Value
 type Func struct{ Decl *ast.FuncDecl }
+
+// Float carries f32 / f64 IEEE-754 values for the interp. The
+// width tag is preserved because the language distinguishes f32
+// from f64 in type errors and `to_string` rendering (std/float
+// uses different digit budgets per width); the underlying
+// storage is float64 either way — for f32 we round-trip through
+// `float32` during arithmetic and at f32_bits boundary points
+// to keep the visible precision honest.
+//
+// The interp had no float values for most of its lifetime
+// (raw-memory ops in the Lang stdlib bodies couldn't be modeled
+// either way) — the native + wasm backends owned floats end-to-
+// end. Adding Float here unblocks unit tests that exercise
+// float arithmetic / formatting / property checks without
+// needing to compile to a backend.
+type Float struct {
+	V     float64
+	Width int // 32 or 64
+}
 
 // Struct is a heap-allocated record. The map preserves nothing about
 // declaration order — formatting walks the StructDecl when available
@@ -143,6 +163,12 @@ func (c *Closure) String() string {
 }
 
 func (n Number) String() string  { return fmt.Sprintf("%d", int64(n)) }
+func (f Float) String() string {
+	if f.Width == 32 {
+		return strconv.FormatFloat(float64(float32(f.V)), 'g', -1, 32)
+	}
+	return strconv.FormatFloat(f.V, 'g', -1, 64)
+}
 func (b Bool) String() string {
 	if b {
 		return "true"
@@ -361,6 +387,13 @@ func New() *Interp {
 	i.Builtins["arena_save"] = &Builtin{Fn: builtinArenaSave}
 	i.Builtins["arena_restore"] = &Builtin{Fn: builtinArenaRestore}
 	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
+	// `f32_bits(x)` / `f32_from_bits(n)` — reinterpret-cast pair.
+	// The checker exposes them for raw-IEEE manipulation in user
+	// code (Float-to-byte buffer encoders, NaN bit-pattern tests).
+	// Now that the interp models floats, route them through Go's
+	// math.Float32bits / math.Float32frombits at full precision.
+	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
+	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	// `temp_dir(prefix)` + `exec(cmd, args, stdin)` back the
 	// test-runner migration: ports of the Go-side e2e suite need
 	// somewhere to write fixture files and a way to spawn the
@@ -553,6 +586,40 @@ func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("random_bytes: %v", err)
 	}
 	return String(buf), nil
+}
+
+// builtinF32Bits reinterprets a 32-bit float's bit pattern as
+// a signed 32-bit integer. Round-trips through Go's
+// `math.Float32bits` which canonicalises the value to its
+// in-memory representation (matches what `f32.reinterpret_i32`
+// produces on wasm and the ARM64 `fmov` equivalent).
+func builtinF32Bits(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("f32_bits: expected 1 arg, got %d", len(args))
+	}
+	f, ok := args[0].(Float)
+	if !ok {
+		return nil, fmt.Errorf("f32_bits: expected float arg, got %T", args[0])
+	}
+	bits := math.Float32bits(float32(f.V))
+	return Number(int64(int32(bits))), nil
+}
+
+// builtinF32FromBits is the inverse: takes a signed 32-bit
+// integer interpreted as the IEEE-754 bit pattern and yields
+// the matching f32 value. Round-trips NaN payloads (Go's
+// `math.Float32frombits` does the no-op bit transfer).
+func builtinF32FromBits(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("f32_from_bits: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("f32_from_bits: expected number arg, got %T", args[0])
+	}
+	bits := uint32(int32(int64(n)))
+	v := float64(math.Float32frombits(bits))
+	return Float{V: v, Width: 32}, nil
 }
 
 func builtinIntToString(_ *Interp, args []Value) (Value, error) {
@@ -1946,23 +2013,70 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
 		return Number(x.Value), nil
+	case *ast.FloatLit:
+		// Width comes from the checker; default to 32 for back-
+		// compat with the previous "f32 is the only float" policy.
+		w := x.Width
+		if w == 0 {
+			w = 32
+		}
+		v := x.Value
+		if w == 32 {
+			v = float64(float32(v))
+		}
+		return Float{V: v, Width: w}, nil
 	case *ast.CastExpr:
-		// All integers live in `Number` (int64) at interp time, so
-		// most numeric casts are no-ops semantically. The exception
-		// is i64 → i32, which truncates the high 32 bits. Float
-		// casts aren't wired here because the interpreter doesn't
-		// currently model float values; the WASM / arm64 backends
-		// own floats end-to-end.
+		// Numeric casts: integer → integer, float → float (width
+		// change), and the cross-family int↔float conversions.
+		// All integers live in `Number` (int64) at interp time;
+		// floats live in `Float` (float64 storage tagged with the
+		// source width).
 		v, err := i.evalExpr(x.Inner, env)
 		if err != nil {
 			return nil, err
 		}
 		if tgt, ok := x.Target.(ast.NumberType); ok {
+			// int → int
 			if src, ok := v.(Number); ok {
 				if tgt.NormalWidth() == 32 {
 					return Number(int32(int64(src))), nil
 				}
 				return src, nil
+			}
+			// float → int (truncate-toward-zero; matches wasm
+			// `i32.trunc_f32_s` and the arm64 equivalent).
+			if src, ok := v.(Float); ok {
+				if tgt.NormalWidth() == 32 {
+					return Number(int64(int32(src.V))), nil
+				}
+				return Number(int64(src.V)), nil
+			}
+		}
+		if tgt, ok := x.Target.(ast.FloatType); ok {
+			// int → float
+			if src, ok := v.(Number); ok {
+				w := tgt.Width
+				if w == 0 {
+					w = 32
+				}
+				fv := float64(int64(src))
+				if w == 32 {
+					fv = float64(float32(fv))
+				}
+				return Float{V: fv, Width: w}, nil
+			}
+			// float → float (width change). Demote / promote
+			// rounds through the target width's representation.
+			if src, ok := v.(Float); ok {
+				w := tgt.Width
+				if w == 0 {
+					w = 32
+				}
+				fv := src.V
+				if w == 32 {
+					fv = float64(float32(fv))
+				}
+				return Float{V: fv, Width: w}, nil
 			}
 		}
 		// Type ascription (`expr as T` where the inner is already
@@ -2173,8 +2287,17 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		}
 		switch x.Op {
 		case "-":
-			n, _ := v.(Number)
-			return -n, nil
+			if n, ok := v.(Number); ok {
+				return -n, nil
+			}
+			if f, ok := v.(Float); ok {
+				nv := -f.V
+				if f.Width == 32 {
+					nv = float64(float32(nv))
+				}
+				return Float{V: nv, Width: f.Width}, nil
+			}
+			return nil, fmt.Errorf("interp: unary - on %T", v)
 		case "!":
 			b, _ := v.(Bool)
 			return !b, nil
@@ -2525,6 +2648,51 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 				return Bool(uint64(ln) >= uint64(rn)), nil
 			}
 			return Bool(signExtend(ln) >= signExtend(rn)), nil
+		}
+	}
+	if lf, ok := l.(Float); ok {
+		if rf, ok := r.(Float); ok {
+			// Both sides must be the same width — the checker
+			// rejects mismatched-width float ops, so the
+			// interp just trusts and uses the LHS width.
+			w := lf.Width
+			lv := lf.V
+			rv := rf.V
+			if w == 32 {
+				lv = float64(float32(lv))
+				rv = float64(float32(rv))
+			}
+			mkFloat := func(v float64) Float {
+				if w == 32 {
+					v = float64(float32(v))
+				}
+				return Float{V: v, Width: w}
+			}
+			switch b.Op {
+			case "+":
+				return mkFloat(lv + rv), nil
+			case "-":
+				return mkFloat(lv - rv), nil
+			case "*":
+				return mkFloat(lv * rv), nil
+			case "/":
+				// IEEE-754: division by zero is well-defined
+				// (yields ±Inf or NaN). Match that here rather
+				// than erroring like the integer path does.
+				return mkFloat(lv / rv), nil
+			case "==":
+				return Bool(lv == rv), nil
+			case "!=":
+				return Bool(lv != rv), nil
+			case "<":
+				return Bool(lv < rv), nil
+			case "<=":
+				return Bool(lv <= rv), nil
+			case ">":
+				return Bool(lv > rv), nil
+			case ">=":
+				return Bool(lv >= rv), nil
+			}
 		}
 	}
 	if lb, ok := l.(Bool); ok {
