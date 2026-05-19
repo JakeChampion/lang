@@ -1134,6 +1134,44 @@ func TestRunnerMapEqAndPredicatesExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/wider_array_contains_count_test.lang`
+// exercises batch-22 additions:
+//   - `assert_eq_i64_array` / `_u32_array` / `_u64_array`
+//     — wider-int element-wise array equality (i32 variant
+//     was already there).
+//   - `assert_array_contains_i32` / `_string` plus the
+//     negative `_not_contains_*` mirrors — typed-array
+//     membership, complementing the existing
+//     `assert_contains(haystack: string, needle: string)`.
+//   - `assert_count_i32(arr, pred, n)` / `_string` —
+//     exact-cardinality predicate match; sits between
+//     `assert_all` (every) and `assert_any` (at least one).
+//
+// 20 cases.
+func TestRunnerWiderArrayContainsCountExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/wider_array_contains_count_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 3 - eq_i64_array reports index",
+		"ok 5 - eq_u64_array pass",
+		"ok 9 - array_contains_i32 missing",
+		"ok 10 - array_contains_i32 empty fails",
+		"ok 13 - array_not_contains_i32 fail+idx",
+		"ok 17 - count_i32 zero matches",
+		"ok 19 - count_i32 mismatch reports",
+		"# pass 20",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
