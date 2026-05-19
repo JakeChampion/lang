@@ -553,6 +553,80 @@ pub function assert_neq_u64(actual: u64, expected: u64): Option[string] {
                 ", got " + actual.to_string());
 }
 
+// Float equality with a tolerance, plus exact equality for
+// callers that want it. Naive `actual == expected` on floats
+// is almost never what you want — every textbook says use an
+// epsilon. `assert_eq_f32_near` / `_f64_near` make that the
+// default; `assert_eq_f32_exact` is the escape hatch for
+// canonicalisation tests (NaN bit patterns, f32_bits round-
+// trips) where you genuinely want bitwise equality.
+
+// `assert_eq_f64_near(actual, expected, epsilon)` — passes if
+// `|actual - expected| <= epsilon`. NaN inputs always fail
+// (NaN != anything, including itself); the message names
+// "NaN" so the failure is obvious. The helper returns None
+// for ±Inf-matching-±Inf, since float subtraction would
+// yield NaN there.
+pub function assert_eq_f64_near(actual: f64, expected: f64, epsilon: f64): Option[string] {
+    // NaN guard: both `actual != actual` and `expected !=
+    // expected` indicate NaN. Bail before subtraction so the
+    // failure message can name the offender clearly.
+    if (actual != actual) {
+        return Some("assert_eq_f64_near: actual is NaN");
+    }
+    if (expected != expected) {
+        return Some("assert_eq_f64_near: expected is NaN");
+    }
+    // ±Inf match-pass: subtraction would yield NaN.
+    if (actual == expected) { return None; }
+    var diff: f64 = actual - expected;
+    if (diff < 0.0) { diff = 0.0 - diff; }
+    if (diff <= epsilon) { return None; }
+    return Some("assert_eq_f64_near: |" + actual.to_string() +
+                " - " + expected.to_string() + "| = " + diff.to_string() +
+                " > epsilon " + epsilon.to_string());
+}
+
+// `assert_eq_f32_near(actual, expected, epsilon)` — f32
+// version of the same idea. Widens both sides to f64 for the
+// difference calc to avoid the precision-loss artifact where
+// `(small_f32 - small_other_f32)` underflows to zero in f32
+// arithmetic but the values were genuinely different.
+pub function assert_eq_f32_near(actual: f32, expected: f32, epsilon: f32): Option[string] {
+    return assert_eq_f64_near(actual as f64, expected as f64, epsilon as f64);
+}
+
+// `assert_eq_f64_exact(actual, expected)` — bitwise-equal
+// floats. Use for f32_bits round-trip tests / canonical-NaN
+// checks where epsilons would smuggle bugs through. Most
+// other callers want `_near`.
+pub function assert_eq_f64_exact(actual: f64, expected: f64): Option[string] {
+    if (actual == expected) { return None; }
+    // Distinguish NaN failures from value mismatches in the
+    // message — NaN never compares equal to anything, so a
+    // plain "expected vs actual" diff looks misleading.
+    if (actual != actual || expected != expected) {
+        return Some("assert_eq_f64_exact: NaN involved (actual=" +
+                    actual.to_string() + ", expected=" + expected.to_string() + ")");
+    }
+    return Some("assert_eq_f64_exact: expected " + expected.to_string() +
+                ", got " + actual.to_string());
+}
+
+// `assert_is_nan_f64(v)` — explicit NaN check. `v != v` is
+// the textbook NaN predicate (the only float that doesn't
+// compare equal to itself). Helper exists because writing
+// `v != v` in a test reads like a typo.
+pub function assert_is_nan_f64(v: f64): Option[string] {
+    if (v != v) { return None; }
+    return Some("assert_is_nan_f64: expected NaN, got " + v.to_string());
+}
+
+pub function assert_is_nan_f32(v: f32): Option[string] {
+    if (v != v) { return None; }
+    return Some("assert_is_nan_f32: expected NaN, got " + v.to_string());
+}
+
 // `assert_eq_bool(actual, expected)` — boolean equality. Less
 // common than assert_true/false but useful for tests that
 // compute a boolean and want to compare it against an expected

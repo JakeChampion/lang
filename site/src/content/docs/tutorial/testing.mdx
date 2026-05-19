@@ -74,6 +74,11 @@ the predicate so a grep across CI logs finds the regression.
 | Boolean      | `assert_true`, `assert_false`                                                                                         |
 | Integers     | `assert_eq_i32`, `assert_neq_i32`, `assert_lt_i32`, `assert_le_i32`, `assert_gt_i32`, `assert_ge_i32`                |
 | Wider ints   | `assert_eq_i64`, `assert_neq_i64`, `assert_eq_u32`, `assert_neq_u32`, `assert_eq_u64`, `assert_neq_u64`              |
+| Floats       | `assert_eq_f32_near`, `assert_eq_f64_near`, `assert_eq_f64_exact`, `assert_is_nan_f32`, `assert_is_nan_f64`           |
+| Range        | `assert_in_range_i32`, `assert_in_range_i64`                                                                          |
+| Multi-substr | `assert_contains_all`, `assert_contains_any`, `assert_contains_in_order`                                              |
+| String diff  | `assert_eq_string_diff` — reports first differing line                                                                |
+| File state   | `assert_file_exists`, `assert_file_not_exists`, `assert_file_contains`, `assert_file_contents`                        |
 | Booleans     | `assert_eq_bool`                                                                                                      |
 | Strings      | `assert_eq_string`, `assert_neq_string`, `assert_empty_string`, `assert_non_empty_string`                             |
 | Substring    | `assert_contains`, `assert_not_contains`, `assert_starts_with`, `assert_ends_with`                                    |
@@ -252,3 +257,7 @@ in the repo:
   `-interp` / `-check` against tempdir fixtures, assert on
   `(exit, stdout, stderr)`. Gated on `$LANG_BIN` being set
   so dev laptops without the env var skip cleanly.
+- `helpers_test.lang` — multi-substring / string-diff /
+  range / file-state / `must_temp_dir` convenience helpers
+- `float_test.lang` — f32 / f64 tolerance + exact + NaN +
+  f32_bits round-trip coverage

@@ -549,6 +549,40 @@ func TestRunnerHelpersExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_test.lang` pins the f32 / f64
+// assertion family + the underlying interp Float support.
+// Before this work the interp errored out on `*ast.FloatLit`,
+// which made float-touching code impossible to unit-test
+// without compiling to a backend. Now `lang -interp` handles
+// float arithmetic, comparison, casts, and the f32_bits /
+// f32_from_bits reinterpret pair.
+//
+// Eleven cases cover: tolerance-equal vs exact-equal,
+// f32 precision-loss tolerance (the 0.1+0.1+0.1 != 0.3
+// textbook example), NaN detection + the NaN-unequal-to-
+// itself property, ±0.0, ±Inf, and f32_bits round-trips.
+func TestRunnerFloatExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - f64 addition",
+		"ok 4 - f32 precision loss tolerance",
+		"ok 6 - NaN detection",
+		"ok 8 - f32_bits gives expected pattern",
+		"ok 11 - Inf vs Inf",
+		"# pass 11",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
