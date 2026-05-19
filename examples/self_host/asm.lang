@@ -2347,10 +2347,27 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var box_off: i32 = s.lookup_local(box_name);
             s = s.write("    movq 16(%rbp), %rax\n");
             s = s.write("    movq %rax, " + i32_to_string(box_off) + "(%rbp)\n");
-            // Bind each capture, load from box[+(i+1)*8].
+            // Bind each capture, load from box[+(i+1)*8]. The
+            // capture preserves the outer scope's type so that
+            // type-aware dispatch inside the lambda body (e.g.
+            // `len(s)` resolving to the string-len helper, or
+            // `a + b` routing through `__lang_str_concat`)
+            // sees the right thing — without this the captured
+            // local lands here as `"unknown"` and falls through
+            // to the i32 path.
             var ci: i32 = 0;
             while (ci < n_caps) {
-                s = s.bind_local(caps[ci]);
+                var cap_ty: string = "unknown";
+                var li: i32 = 0;
+                while (li < len(saved_locals)) {
+                    if (saved_locals[li] == caps[ci]) {
+                        cap_ty = saved_local_types[li];
+                        li = len(saved_locals);
+                    } else {
+                        li = li + 1;
+                    }
+                }
+                s = s.bind_local_typed(caps[ci], cap_ty);
                 var c_off: i32 = s.lookup_local(caps[ci]);
                 s = s.write("    movq " + i32_to_string(box_off) + "(%rbp), %rcx\n");
                 s = s.write("    movq " + i32_to_string((ci + 1) * 8) + "(%rcx), %rax\n");
