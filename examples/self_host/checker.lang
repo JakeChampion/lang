@@ -314,7 +314,13 @@ function (s: Scope) lookup_struct(name: string): StructSig {
 function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     var i: i32 = 0;
     while (i < len(s.methods)) {
-        if (s.methods[i].name == name && s.methods[i].receiver_type == recv_type) {
+        var rt_match: boolean = s.methods[i].receiver_type == recv_type;
+        // `bool` and `boolean` are interchangeable in source —
+        // accept either spelling at the call site.
+        if (!rt_match && recv_type == "bool" && s.methods[i].receiver_type == "boolean") {
+            rt_match = true;
+        }
+        if (s.methods[i].name == name && rt_match) {
             return s.methods[i];
         }
         i = i + 1;
@@ -474,9 +480,17 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                     name = fa.field;
                     is_method = true;
                     var rt: Type = check_expr(fa.obj, s);
+                    // Receiver type-name comes from the receiver
+                    // expression's static type. Primitive types
+                    // use their type-keyword spelling so methods
+                    // declared on them dispatch correctly.
                     match (rt) {
                         TypeStruct(sn) => { recv_type_name = sn.name; },
-                        _ => { return t_unknown("method call: receiver isn't a struct"); }
+                        TypeString(_) => { recv_type_name = "string"; },
+                        TypeI32(_) => { recv_type_name = "i32"; },
+                        TypeBool(_) => { recv_type_name = "bool"; },
+                        TypeFloat(_) => { recv_type_name = "f64"; },
+                        _ => { return t_unknown("method call: receiver isn't a typed value"); }
                     }
                 },
                 _ => { return t_unknown("call target is not an identifier"); }
@@ -1557,6 +1571,25 @@ function main(): i32 {
     var mod52: parser.Module = parser.parse_module(lexer.tokenize(src52));
     var mt52: ModuleTypes = check_module(mod52);
     if (mt52.all_well_typed) { return 520; }
+
+    // Method on a primitive receiver — well-typed.
+    var src53: string = "function (s: string) doubled(): string { return s + s; } function main(): i32 { var v: string = \"ab\"; var w: string = v.doubled(); return 0; }";
+    var mod53: parser.Module = parser.parse_module(lexer.tokenize(src53));
+    var mt53: ModuleTypes = check_module(mod53);
+    if (!mt53.all_well_typed) { return 530; }
+
+    // Method on i32 receiver — well-typed.
+    var src54: string = "function (n: i32) twice(): i32 { return n * 2; } function main(): i32 { var x: i32 = 21; return x.twice(); }";
+    var mod54: parser.Module = parser.parse_module(lexer.tokenize(src54));
+    var mt54: ModuleTypes = check_module(mod54);
+    if (!mt54.all_well_typed) { return 540; }
+
+    // Method on wrong primitive receiver — rejected. The
+    // method is declared on `string`; calling on i32 fails.
+    var src55: string = "function (s: string) doubled(): string { return s + s; } function main(): i32 { var x: i32 = 5; var y: string = x.doubled(); return 0; }";
+    var mod55: parser.Module = parser.parse_module(lexer.tokenize(src55));
+    var mt55: ModuleTypes = check_module(mod55);
+    if (mt55.all_well_typed) { return 550; }
 
     return 0;
 }

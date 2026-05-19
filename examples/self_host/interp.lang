@@ -536,15 +536,29 @@ function eval_expr(e: parser.Expr, env: Env): Value {
 // The receiver is bound to `receiver_name` first, then the
 // remaining args follow in declaration order.
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[]): Value {
+    // Derive the receiver-type name from the runtime Value
+    // variant. VStruct uses its declared type_name; primitive
+    // variants map to the language's primitive type-keywords
+    // so `function (s: string) len(): i32 { … }` dispatches.
     var recv_type: string = "";
     match (recv) {
         VStruct(sv) => { recv_type = sv.type_name; },
-        _ => { return v_err("method dispatch: receiver not a struct value"); }
+        VString(_) => { recv_type = "string"; },
+        VInt(_) => { recv_type = "i32"; },
+        VBool(_) => { recv_type = "bool"; },
+        VFloat(_) => { recv_type = "f64"; },
+        _ => { return v_err("method dispatch: receiver not a typed value"); }
     }
     var i: i32 = 0;
     while (i < len(funcs)) {
         var fd: parser.FuncDecl = funcs[i];
-        if (fd.name == name && len(fd.receiver_name) > 0 && fd.receiver_type == recv_type) {
+        var rt_match: boolean = fd.receiver_type == recv_type;
+        // `bool` and `boolean` are interchangeable receiver
+        // type-names — the lexer's keyword set accepts both.
+        if (!rt_match && recv_type == "bool" && fd.receiver_type == "boolean") {
+            rt_match = true;
+        }
+        if (fd.name == name && len(fd.receiver_name) > 0 && rt_match) {
             if (len(args) != len(fd.params)) {
                 return v_err("arity mismatch calling method `" + name + "`");
             }
@@ -1538,6 +1552,24 @@ function main(): i32 {
     match (r69) {
         VInt(i) => { if (i.v != 12) { return 690; } },
         _ => { return 691; }
+    }
+
+    // Method on a primitive receiver — `function (s: string)
+    // doubled(): string { return s + s; }` dispatches when
+    // called on a string value.
+    var src70: string = "function (s: string) doubled(): string { return s + s; } function main(): i32 { var v: string = \"ab\"; var w: string = v.doubled(); if (w == \"abab\") { return 0; } return 1; }";
+    var r70: Value = run_module(src70);
+    match (r70) {
+        VInt(i) => { if (i.v != 0) { return 700; } },
+        _ => { return 701; }
+    }
+
+    // Method on an i32 receiver.
+    var src71: string = "function (n: i32) twice(): i32 { return n * 2; } function main(): i32 { var x: i32 = 21; return x.twice(); }";
+    var r71: Value = run_module(src71);
+    match (r71) {
+        VInt(i) => { if (i.v != 42) { return 710; } },
+        _ => { return 711; }
     }
 
     return 0;
