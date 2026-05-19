@@ -108,6 +108,16 @@ function print_expr(e: parser.Expr): string {
             }
             return out + "]";
         },
+        parser.ExprTuple(t) => {
+            var out: string = "(";
+            var i: i32 = 0;
+            while (i < len(t.elements)) {
+                if (i > 0) { out = out + ", "; }
+                out = out + print_expr(t.elements[i]);
+                i = i + 1;
+            }
+            return out + ")";
+        },
         parser.ExprIndex(x) => {
             return print_expr(x.array) + "[" + print_expr(x.index) + "]";
         },

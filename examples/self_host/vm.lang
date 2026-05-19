@@ -364,6 +364,10 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             }
             return CompileResult { ops: ops, lt: lt };
         },
+        parser.ExprTuple(_) => {
+            ops = ops.push(op_push_str("__tuple-not-implemented__"));
+            return CompileResult { ops: ops, lt: lt };
+        },
         parser.ExprArray(a) => {
             var i: i32 = 0;
             while (i < len(a.elements)) {

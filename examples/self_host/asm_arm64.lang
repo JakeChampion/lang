@@ -434,6 +434,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
+        parser.ExprTuple(_) => {
+            s = s.write("    // unsupported: tuple\n");
+            s = s.write("    mov x0, #0\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        },
         parser.ExprArray(_) => {
             s = s.write("    // unsupported: array\n");
             s = s.write("    mov x0, #0\n");

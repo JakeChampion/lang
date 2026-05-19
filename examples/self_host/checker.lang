@@ -485,6 +485,12 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             return sig.ret_type;
         },
+        parser.ExprTuple(_) => {
+            // Tuples aren't yet modeled in the type lattice —
+            // surface as TypeUnknown so a future slice can add
+            // TypeTuple + element-type collection.
+            return t_unknown("tuple type not implemented");
+        },
         parser.ExprArray(a) => {
             if (len(a.elements) == 0) {
                 // Empty literal — element type undecidable at this
