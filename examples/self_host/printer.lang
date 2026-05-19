@@ -135,7 +135,21 @@ function print_expr(e: parser.Expr): string {
             return out + " }";
         },
         parser.ExprFieldAccess(fa) => { return print_expr(fa.obj) + "." + fa.field; },
-        parser.ExprLambda(_) => { return "/*lambda*/"; },
+        parser.ExprLambda(lm) => {
+            var out: string = "function (";
+            var pi: i32 = 0;
+            while (pi < len(lm.params)) {
+                if (pi > 0) { out = out + ", "; }
+                out = out + lm.params[pi].name;
+                if (len(lm.params[pi].type_name) > 0) {
+                    out = out + ": " + lm.params[pi].type_name;
+                }
+                pi = pi + 1;
+            }
+            out = out + ")";
+            if (len(lm.ret_type) > 0) { out = out + ": " + lm.ret_type; }
+            return out + " " + print_block(lm.body, 0);
+        },
         parser.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
     }
     return "/*unhandled-expr*/";
@@ -539,6 +553,79 @@ function main(): i32 {
             }
         },
         _ => { return 146; }
+    }
+
+    // Lambda round-trip: `var f = function (x: i32): i32 { return
+    // x + 1; }; return f(41);` — print should emit a re-parseable
+    // `function (...)` literal.
+    var srcF: string = "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }";
+    var rtF: parser.Module = roundtrip_module(srcF);
+    if (len(rtF.funcs) != 1) { return 150; }
+    if (len(rtF.funcs[0].body) != 2) { return 151; }
+    match (rtF.funcs[0].body[0]) {
+        parser.StmtVar(v) => {
+            if (v.name != "f") { return 152; }
+            match (v.init) {
+                parser.ExprLambda(lm) => {
+                    if (len(lm.params) != 1) { return 153; }
+                    if (lm.params[0].name != "x") { return 154; }
+                    if (lm.params[0].type_name != "i32") { return 155; }
+                    if (lm.ret_type != "i32") { return 156; }
+                    if (len(lm.body) != 1) { return 157; }
+                },
+                _ => { return 158; }
+            }
+        },
+        _ => { return 159; }
+    }
+
+    // IIFE round-trip: `function () { return 7; }()` — printer
+    // wraps the lambda the same way and the re-parse sees an
+    // ExprCall whose callee is an ExprLambda.
+    var srcG: string = "function main(): i32 { return function (): i32 { return 7; }(); }";
+    var rtG: parser.Module = roundtrip_module(srcG);
+    match (rtG.funcs[0].body[0]) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprCall(cc) => {
+                    match (cc.callee) {
+                        parser.ExprLambda(_) => { },
+                        _ => { return 161; }
+                    }
+                },
+                _ => { return 162; }
+            }
+        },
+        _ => { return 163; }
+    }
+
+    // Qualified-name call round-trip: `parser.parse_module(x)`.
+    // The printer emits ExprFieldAccess as `obj.field` and ExprCall
+    // wraps it the same way, so the re-parse should preserve the
+    // ExprCall(ExprFieldAccess(ExprIdent), field) shape.
+    var srcH: string = "function main(): i32 { return parser.parse_module(42); }";
+    var rtH: parser.Module = roundtrip_module(srcH);
+    match (rtH.funcs[0].body[0]) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprCall(cc) => {
+                    match (cc.callee) {
+                        parser.ExprFieldAccess(fa) => {
+                            if (fa.field != "parse_module") { return 171; }
+                            match (fa.obj) {
+                                parser.ExprIdent(id) => {
+                                    if (id.name != "parser") { return 172; }
+                                },
+                                _ => { return 173; }
+                            }
+                        },
+                        _ => { return 174; }
+                    }
+                },
+                _ => { return 175; }
+            }
+        },
+        _ => { return 176; }
     }
 
     return 0;
