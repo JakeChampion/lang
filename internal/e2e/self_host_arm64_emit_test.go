@@ -929,6 +929,54 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			1,
 			"",
 		},
+		{
+			"str-split-basic",
+			"function main(): i32 { var a = str_split(\"a,b,c\", \",\"); return len(a); }",
+			3,
+			"",
+		},
+		{
+			"str-split-content",
+			"function main(): i32 { var a = str_split(\"a,bb,ccc\", \",\"); for s in a { print(s); print(\"|\"); } return 0; }",
+			0,
+			"a|bb|ccc|",
+		},
+		{
+			"str-split-no-sep",
+			"function main(): i32 { var a = str_split(\"abc\", \",\"); return len(a); }",
+			1,
+			"",
+		},
+		{
+			"str-split-empty-sep",
+			"function main(): i32 { var a = str_split(\"hello\", \"\"); return len(a); }",
+			1,
+			"",
+		},
+		{
+			"str-split-leading-sep",
+			"function main(): i32 { var a = str_split(\",a,b\", \",\"); for s in a { print(s); print(\"|\"); } return len(a); }",
+			3,
+			"|a|b|",
+		},
+		{
+			"str-split-trailing-sep",
+			"function main(): i32 { var a = str_split(\"a,b,\", \",\"); for s in a { print(s); print(\"|\"); } return len(a); }",
+			3,
+			"a|b||",
+		},
+		{
+			"str-split-multi-char-sep",
+			"function main(): i32 { var a = str_split(\"foo--bar--baz\", \"--\"); for s in a { print(s); print(\"|\"); } return len(a); }",
+			3,
+			"foo|bar|baz|",
+		},
+		{
+			"str-split-consecutive",
+			"function main(): i32 { var a = str_split(\"a,,b\", \",\"); for s in a { print(s); print(\"|\"); } return len(a); }",
+			3,
+			"a||b|",
+		},
 	}
 
 	for _, tc := range cases {
