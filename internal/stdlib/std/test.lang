@@ -2571,6 +2571,102 @@ pub function assert_none_of_string(actual: string, forbidden: string[]): Option[
     return None;
 }
 
+// =================== STRING-ARRAY SUBSTRING ASSERTIONS ===================
+//
+// "Every line of output starts with TIMESTAMP" / "every
+// error message contains a specific code prefix" / "every
+// emitted name ends in .lang" — common shapes that
+// previously needed a manual loop or
+// `assert_all_string + (s) => s.starts_with(prefix)`. The
+// helpers below short-circuit on the first non-matching
+// element and embed both the offending index AND the
+// offending value in the failure message so a long-array
+// failure localises immediately.
+
+// `assert_all_starts_with(arr, prefix)` — every element of
+// `arr` has `prefix` at byte 0. Empty array vacuously
+// passes (∀ over ∅). Empty prefix vacuously passes for
+// every non-null string.
+pub function assert_all_starts_with(arr: string[], prefix: string): Option[string] {
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (!arr[i].starts_with(prefix)) {
+            return Some("assert_all_starts_with: at index " +
+                        i.to_string() + " value \"" + arr[i] +
+                        "\" does not start with \"" + prefix + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_all_ends_with(arr, suffix)` — every element ends
+// with `suffix`. Same shape as the `_starts_with` mirror.
+pub function assert_all_ends_with(arr: string[], suffix: string): Option[string] {
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (!arr[i].ends_with(suffix)) {
+            return Some("assert_all_ends_with: at index " +
+                        i.to_string() + " value \"" + arr[i] +
+                        "\" does not end with \"" + suffix + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_all_contain(arr, needle)` — every element
+// contains `needle` as a substring. Use when the contract
+// is "every error message mentions the operation name" or
+// "every emitted log line has the trace id".
+pub function assert_all_contain(arr: string[], needle: string): Option[string] {
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (!arr[i].contains(needle)) {
+            return Some("assert_all_contain: at index " +
+                        i.to_string() + " value \"" + arr[i] +
+                        "\" does not contain \"" + needle + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// =================== MULTI-OPTION SUBSTRING ASSERTIONS ===================
+//
+// "String matches one of these prefixes / suffixes" —
+// single-string + multiple options. Complement to
+// `assert_starts_with(s, prefix)` (single option) and the
+// `_all_` family above (every-element + single option).
+
+// `assert_starts_with_any(s, prefixes)` — `s` starts with
+// at least one prefix in `prefixes`. Empty `prefixes`
+// list always fails (nothing to match).
+pub function assert_starts_with_any(s: string, prefixes: string[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(prefixes)) {
+        if (s.starts_with(prefixes[i])) { return None; }
+        i = i + 1;
+    }
+    return Some("assert_starts_with_any: \"" + s +
+                "\" matches none of " + len(prefixes).to_string() +
+                " prefixes");
+}
+
+// `assert_ends_with_any(s, suffixes)` — same pattern for
+// the suffix family. Common shape: "the file extension is
+// one of [.lang, .ll, .s]".
+pub function assert_ends_with_any(s: string, suffixes: string[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(suffixes)) {
+        if (s.ends_with(suffixes[i])) { return None; }
+        i = i + 1;
+    }
+    return Some("assert_ends_with_any: \"" + s +
+                "\" matches none of " + len(suffixes).to_string() +
+                " suffixes");
+}
+
 // `assert_json_eq(actual, expected)` — both inputs are JSON
 // text. Parses each via `std/json`'s `json_parse`, walks the
 // resulting trees in order-independent fashion, and reports

@@ -419,6 +419,18 @@ function main(): i32 {
   `assert_non_empty_string`
 - **Substring:** `assert_contains`, `assert_not_contains`,
   `assert_starts_with`, `assert_ends_with`
+- **Substring (multi-option):**
+  `assert_starts_with_any(s, prefixes)` /
+  `assert_ends_with_any(s, suffixes)` — single string
+  matches at least one of the supplied options; empty
+  options list always fails
+- **String-array substring:**
+  `assert_all_starts_with(arr, prefix)` /
+  `assert_all_ends_with(arr, suffix)` /
+  `assert_all_contain(arr, needle)` — substring property
+  held across every element; empty array vacuously passes
+  (∀ over ∅); failure embeds the first violation's index
+  and value
 - **Array assertions:** `assert_len_i32`, `assert_len_string`,
   `assert_eq_i32_array`, `assert_eq_string_array`,
   `assert_eq_i64_array` / `_u32_array` / `_u64_array` —
