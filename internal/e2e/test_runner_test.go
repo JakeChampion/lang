@@ -819,6 +819,34 @@ func TestRunnerTimingExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/lines_log_test.lang` exercises the
+// `assert_lines_eq(actual, expected_lines)` helper +
+// `(r).log(msg)` chainable TAP-comment emitter. Four cases
+// + interleaved log breadcrumbs verify both the matching
+// and the line-count-mismatch / first-diff-line localisation
+// paths.
+func TestRunnerLinesLogExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/lines_log_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# phase 1: positive cases",
+		"# phase 2: failure cases (inverted)",
+		"ok 1 - lines match",
+		"ok 3 - line count mismatch reports",
+		"ok 4 - first diff line localised",
+		"# pass 4",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

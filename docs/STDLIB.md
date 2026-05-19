@@ -314,6 +314,11 @@ function main(): i32 {
   reports the first differing line with its 1-based number
   + the two values; friendlier than the base `assert_eq_string`
   on multi-line stdout / generated source
+- **Lines:** `assert_lines_eq(actual, expected_lines: string[])`
+  — splits `actual` on `\n` and compares to a string array;
+  reads better than escaping a long multi-line literal
+- **Logging:** `(r).log(msg)` — chainable TAP-comment emitter
+  (`# msg`) for debug breadcrumbs between cases
 - **File state:** `assert_file_exists`, `assert_file_not_exists`,
   `assert_file_contains`, `assert_file_contents`,
   `assert_is_file`, `assert_is_dir`, `assert_file_size` —
