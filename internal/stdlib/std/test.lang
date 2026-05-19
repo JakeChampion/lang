@@ -114,6 +114,14 @@ pub struct TestRunner {
     // behaviour) — failures still produce the non-zero exit
     // code but the filesystem stays tidy.
     cleanup_paths: string[],
+    // `filter` substrings the runner against. Empty string means
+    // "run every case". Set via `test_new_filtered(...)` or
+    // `parse_filter_from_args(args())` so a test program can
+    // accept `lang -interp test.lang -- --filter PATTERN`
+    // without hand-rolling the argv plumbing. Cases whose
+    // (prefix + name) don't contain the filter substring get
+    // converted to skips with reason "filtered out".
+    filter: string,
 }
 
 // test_new(suite) — start a new run. `suite` labels the run in
@@ -133,7 +141,58 @@ pub function test_new(suite: string): TestRunner {
         prefix: "",
         base_idx: 0,
         cleanup_paths: [],
+        filter: "",
     };
+}
+
+// test_new_filtered(suite, filter) — same as test_new but
+// pre-installs a case-name filter. Cases whose
+// (prefix + name) don't contain the filter substring skip
+// instead of running. Use `parse_filter_from_args(args())`
+// to lift the filter from a `--filter PATTERN` command-line
+// flag without hand-rolling the argv plumbing.
+pub function test_new_filtered(suite: string, filter: string): TestRunner {
+    var r: TestRunner = test_new(suite);
+    return TestRunner {
+        suite: r.suite,
+        passed: r.passed,
+        failed: r.failed,
+        skipped: r.skipped,
+        failures: r.failures,
+        skip_reasons: r.skip_reasons,
+        verbose: r.verbose,
+        prefix: r.prefix,
+        base_idx: r.base_idx,
+        cleanup_paths: r.cleanup_paths,
+        filter: filter,
+    };
+}
+
+// parse_filter_from_args(args) — scan a `args()`-style
+// string array for `--filter PATTERN` or `--filter=PATTERN`
+// and return the pattern. Returns "" if no flag was given,
+// which matches the "no filter" sentinel `test_new_filtered`
+// uses.
+//
+//   var r: TestRunner = test_new_filtered("my suite",
+//                                         parse_filter_from_args(args()));
+//
+// Skip patterns that are CLI-flag-shaped beyond the basic
+// `--filter` — anything fancier should reach for a real
+// argv-parser module once one lands.
+pub function parse_filter_from_args(argv: string[]): string {
+    var i: i32 = 0;
+    while (i < len(argv)) {
+        var a: string = argv[i];
+        if (a == "--filter" && i + 1 < len(argv)) {
+            return argv[i + 1];
+        }
+        if (a.starts_with("--filter=")) {
+            return a[9:len(a)];
+        }
+        i = i + 1;
+    }
+    return "";
 }
 
 // test_new_verbose(suite) — same as test_new but flags the
@@ -154,6 +213,7 @@ pub function test_new_verbose(suite: string): TestRunner {
         prefix: r.prefix,
         base_idx: r.base_idx,
         cleanup_paths: r.cleanup_paths,
+        filter: r.filter,
     };
 }
 
@@ -170,8 +230,15 @@ pub function test_new_verbose(suite: string): TestRunner {
 // prefix duplicates the suite line so the bottom summary
 // stays scannable.
 pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunner {
-    var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
     var display: string = r.prefix + name;
+    // Pre-filter: skip cases whose display name doesn't match
+    // the runner's filter pattern (set via `test_new_filter`).
+    // Counted as skipped rather than not-printed so the TAP
+    // stream stays a faithful record of the test list.
+    if (len(r.filter) > 0 && !display.contains(r.filter)) {
+        return r.skip(name, "filtered out (--filter=" + r.filter + ")");
+    }
+    var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
     match (result) {
         None => {
             print("ok " + idx.to_string() + " - " + display);
@@ -186,6 +253,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
                 prefix: r.prefix,
                 base_idx: r.base_idx,
                 cleanup_paths: r.cleanup_paths,
+                filter: r.filter,
             };
         },
         Some(msg) => {
@@ -205,6 +273,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
                 prefix: r.prefix,
                 base_idx: r.base_idx,
                 cleanup_paths: r.cleanup_paths,
+                filter: r.filter,
             };
         }
     }
@@ -241,6 +310,7 @@ pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
         prefix: r.prefix,
         base_idx: r.base_idx,
         cleanup_paths: r.cleanup_paths,
+        filter: r.filter,
     };
 }
 
@@ -299,6 +369,10 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
         // them. Empty here — the child accumulates its own as
         // tests register them.
         cleanup_paths: [],
+        // The child inherits the parent's filter so a
+        // `--filter PATTERN` applied at the top level applies
+        // to every nested case too.
+        filter: r.filter,
     };
 }
 
@@ -337,6 +411,7 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
         prefix: r.prefix,
         base_idx: r.base_idx,
         cleanup_paths: cl,
+        filter: r.filter,
     };
 }
 
@@ -369,6 +444,7 @@ pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
         prefix: r.prefix,
         base_idx: r.base_idx,
         cleanup_paths: cl,
+        filter: r.filter,
     };
 }
 
@@ -1284,6 +1360,137 @@ function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
         }
     }
     return false;
+}
+
+// =================== GOLDEN FILES ===================
+//
+// Golden-file testing: compare `actual` against the contents
+// of `path`. If `path` doesn't exist, write `actual` to it and
+// pass — the next run becomes the comparison baseline. This
+// is the classic "approve by running" workflow for tests
+// whose expected output is too verbose to inline. CI runs
+// MUST fail on a missing golden file (the writer side is a
+// developer-time convenience); `assert_matches_golden_strict`
+// surfaces that distinction.
+
+// `assert_matches_golden(path, actual)` — if `path` exists,
+// compare byte-exactly via the line-diff helper. If `path`
+// doesn't exist, write `actual` to it and pass with a TAP
+// comment noting the bootstrap. Use this during development;
+// run `assert_matches_golden_strict` in CI to catch missing-
+// golden cases that would silently bootstrap themselves.
+pub function assert_matches_golden(path: string, actual: string): Option[string] {
+    match (read_file(path)) {
+        Ok(expected) => {
+            return assert_eq_string_diff(actual, expected);
+        },
+        Err(_) => {
+            // Golden missing — write the current output as the
+            // baseline. The TAP comment makes the bootstrap
+            // visible in logs so accidental "approve by
+            // running on CI" is easy to spot.
+            match (write_file(path, actual)) {
+                None => {
+                    print("# golden file bootstrapped at " + path);
+                    return None;
+                },
+                Some(_) => {
+                    return Some("assert_matches_golden: could not write " + path);
+                }
+            }
+        }
+    }
+    return None;
+}
+
+// `assert_matches_golden_strict(path, actual)` — same compare
+// behaviour but a missing golden file is a FAILURE rather than
+// a bootstrap. Use in CI; reach for the auto-bootstrap variant
+// only during development.
+pub function assert_matches_golden_strict(path: string, actual: string): Option[string] {
+    match (read_file(path)) {
+        Ok(expected) => {
+            return assert_eq_string_diff(actual, expected);
+        },
+        Err(_) => {
+            return Some("assert_matches_golden_strict: golden file missing: " + path);
+        }
+    }
+    return None;
+}
+
+// =================== MAP ASSERTIONS ===================
+//
+// `Map[K, V]` is the language's IndexMap container. Tests that
+// build a map up and then inspect its contents reach for a
+// "does the map have this key", "does the value at this key
+// match X", "is the map size N" shape — these helpers fold
+// the per-receiver-method check + the assertion into one call.
+//
+// Two width pairs cover the migration's needs: (i32, i32) and
+// (string, string). Other K/V combinations should write the
+// receiver-method dispatch inline.
+
+// `assert_map_len_i32_i32(m, n)` — map length matches.
+pub function assert_map_len_i32_i32(m: Map[i32, i32], n: i32): Option[string] {
+    var got: i32 = m.len();
+    if (got == n) { return None; }
+    return Some("assert_map_len: expected " + n.to_string() +
+                " entries, got " + got.to_string());
+}
+
+pub function assert_map_len_string_string(m: Map[string, string], n: i32): Option[string] {
+    var got: i32 = m.len();
+    if (got == n) { return None; }
+    return Some("assert_map_len: expected " + n.to_string() +
+                " entries, got " + got.to_string());
+}
+
+// `assert_map_has_i32_i32(m, k, v)` — key `k` is present with
+// value `v`. Failure message distinguishes "key missing" from
+// "key present with wrong value".
+pub function assert_map_has_i32_i32(m: Map[i32, i32], k: i32, v: i32): Option[string] {
+    match (m.get(k)) {
+        Some(got) => {
+            if (got == v) { return None; }
+            return Some("assert_map_has: key " + k.to_string() +
+                        " -> " + got.to_string() + ", expected " + v.to_string());
+        },
+        None => {
+            return Some("assert_map_has: key " + k.to_string() + " missing");
+        }
+    }
+    return None;
+}
+
+pub function assert_map_has_string_string(m: Map[string, string], k: string, v: string): Option[string] {
+    match (m.get(k)) {
+        Some(got) => {
+            if (got == v) { return None; }
+            return Some("assert_map_has: key \"" + k +
+                        "\" -> \"" + got + "\", expected \"" + v + "\"");
+        },
+        None => {
+            return Some("assert_map_has: key \"" + k + "\" missing");
+        }
+    }
+    return None;
+}
+
+// `assert_map_lacks_*(m, k)` — key `k` is NOT present. Used
+// after a delete or in negative-result tests.
+pub function assert_map_lacks_i32_i32(m: Map[i32, i32], k: i32): Option[string] {
+    if (m.has(k)) {
+        return Some("assert_map_lacks: key " + k.to_string() + " unexpectedly present");
+    }
+    return None;
+}
+
+pub function assert_map_lacks_string_string(m: Map[string, string], k: string): Option[string] {
+    if (m.has(k)) {
+        return Some("assert_map_lacks: key \"" + k + "\" unexpectedly present");
+    }
+    return None;
 }
 
 // `assert_json_eq(actual, expected)` — both inputs are JSON
