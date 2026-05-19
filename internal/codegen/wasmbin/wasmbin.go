@@ -1506,6 +1506,7 @@ var CallDirectAliases = map[string]string{
 	"exit":       "__lang_exit",
 	"print":      "__lang_print",
 	"eprint":     "__lang_eprint",
+	"putchar":    "__lang_putchar",
 	"random_i32": "__lang_random_i32",
 	"now_ns":     "__lang_now_ns",
 	"env_count":  "__lang_env_count",

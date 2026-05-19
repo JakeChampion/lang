@@ -98,6 +98,9 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_str_byte")
 					needs.add("__lang_alloc")
 					needs.add("__lang_eprint")
+				case "__lang_putchar":
+					// (b) → () — single-byte fd_write to stdout.
+					needs.add("__lang_putchar")
 				case "__lang_exit":
 					// wasi_proc_exit under the hood; nothing
 					// else needed.
@@ -288,6 +291,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildEprintBody,
+	},
+	"__lang_putchar": {
+		// (b) → () — fd_write a single byte to stdout. Uses
+		// the print iovec scratch region as a 1-byte buffer.
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+		body:    buildPutcharBody,
 	},
 	"__lang_exit": {
 		// (code) → () — never returns, but the wasm signature

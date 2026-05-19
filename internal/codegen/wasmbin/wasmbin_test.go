@@ -2682,6 +2682,45 @@ func TestEmitArgs(t *testing.T) {
 	}
 }
 
+// TestEmitPutchar — call OpCallDirect "putchar" twice with
+// 'A' (65) and 'B' (66) and verify stdout is "AB". Exercises
+// the single-byte fd_write path that uses printIovecAddr +
+// printRetAddr as a 1-byte scratch buffer.
+func TestEmitPutchar(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: void(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 65},
+			{Kind: ir.OpCallDirect, Str: "putchar"},
+			{Kind: ir.OpConstI32, I32: 66},
+			{Kind: ir.OpCallDirect, Str: "putchar"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := so.String(); got != "AB" {
+		t.Fatalf("putchar stdout = %q, want \"AB\"", got)
+	}
+}
+
 // TestEmitArgsEntries — each args() entry is a 2-word (data, len)
 // pair at data + i*8. Read the len of args[1] (wasmtime sets
 // argv[1] to the first positional after the module path).
