@@ -1580,6 +1580,46 @@ func TestRunnerJSONDetailExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/json_field_eq_test.lang` exercises
+// batch-34 additions — JSON field extraction:
+//   - `assert_json_eq_field_string(json_text, key, exp)`
+//     — key is JString equal to exp.
+//   - `assert_json_eq_field_i32(json_text, key, exp)` —
+//     key is JNumber parseable to i32 and equal to exp.
+//     Decimals are rejected (not silently truncated).
+//   - `assert_json_eq_field_bool(json_text, key, exp)` —
+//     key is JBool equal to exp.
+//
+// Each helper has 5+ distinct failure modes — invalid
+// JSON, top-level not object, missing key, wrong value
+// type at that key, value mismatch — and the test file
+// pins the diagnostic for each.
+//
+// 14 cases.
+func TestRunnerJSONFieldEqExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/json_field_eq_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - field_string wrong value diag",
+		"ok 3 - field_string wrong type rejected",
+		"ok 4 - field_string missing key",
+		"ok 7 - field_i32 wrong value shows both",
+		"ok 9 - field_i32 decimal rejected",
+		"ok 13 - field_bool wrong value diag",
+		"ok 14 - field_bool wrong type rejected",
+		"# pass 14",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

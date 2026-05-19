@@ -3597,3 +3597,154 @@ pub function assert_json_object_size(json_text: string, n: i32): Option[string] 
     }
     return None;
 }
+
+// =================== JSON FIELD EXTRACTION ASSERTIONS ===================
+//
+// `assert_json_has_key` checks key presence but not value.
+// `assert_json_eq` checks the whole document. These
+// helpers sit between: pin a SINGLE top-level field's
+// value at a specific type. The most common HTTP/RPC
+// test shape — "the response has `user_id` equal to
+// 'abc-123'" without committing to the rest of the
+// document.
+//
+// All four parse via `std/json` and report distinct
+// diagnostics for invalid JSON / non-object top-level /
+// missing key / wrong value type at that key / wrong
+// value.
+
+// `assert_json_eq_field_string(json_text, key, expected)`
+// — top-level object's `key` is a JString equal to
+// `expected`. Failure cases (each distinct in the
+// diagnostic): invalid JSON, top-level not object,
+// missing key, key not a string, value mismatch.
+pub function assert_json_eq_field_string(json_text: string, key: string, expected: string): Option[string] {
+    match (json.json_parse(json_text)) {
+        None => {
+            return Some("assert_json_eq_field_string: not valid JSON: " + json_text);
+        },
+        Some(v) => {
+            match (v) {
+                JObject(m) => {
+                    if (!m.has(key)) {
+                        return Some("assert_json_eq_field_string: key \"" + key +
+                                    "\" not present");
+                    }
+                    match (m.get_or(key, JNull)) {
+                        JString(s) => {
+                            if (s == expected) { return None; }
+                            return Some("assert_json_eq_field_string: at \"" + key +
+                                        "\" expected \"" + expected +
+                                        "\", got \"" + s + "\"");
+                        },
+                        JNull      => { return Some("assert_json_eq_field_string: at \"" + key + "\" value is null, not string"); },
+                        JBool(_)   => { return Some("assert_json_eq_field_string: at \"" + key + "\" value is bool, not string"); },
+                        JNumber(_) => { return Some("assert_json_eq_field_string: at \"" + key + "\" value is number, not string"); },
+                        JArray(_)  => { return Some("assert_json_eq_field_string: at \"" + key + "\" value is array, not string"); },
+                        JObject(_) => { return Some("assert_json_eq_field_string: at \"" + key + "\" value is object, not string"); }
+                    }
+                },
+                JNull      => { return Some("assert_json_eq_field_string: top-level value is null, not object"); },
+                JBool(_)   => { return Some("assert_json_eq_field_string: top-level value is bool, not object"); },
+                JNumber(_) => { return Some("assert_json_eq_field_string: top-level value is number, not object"); },
+                JString(_) => { return Some("assert_json_eq_field_string: top-level value is string, not object"); },
+                JArray(_)  => { return Some("assert_json_eq_field_string: top-level value is array, not object"); }
+            }
+        }
+    }
+    return None;
+}
+
+// `assert_json_eq_field_i32(json_text, key, expected)` —
+// top-level object's `key` is a JNumber parseable to i32
+// and equal to `expected`. JNumber stores numbers verbatim
+// as strings; we delegate to `parse_int` here so
+// "non-numeric" JNumbers (the parser accepts decimals +
+// exponents) surface as a parse failure rather than a
+// silent miscompare.
+pub function assert_json_eq_field_i32(json_text: string, key: string, expected: i32): Option[string] {
+    match (json.json_parse(json_text)) {
+        None => {
+            return Some("assert_json_eq_field_i32: not valid JSON: " + json_text);
+        },
+        Some(v) => {
+            match (v) {
+                JObject(m) => {
+                    if (!m.has(key)) {
+                        return Some("assert_json_eq_field_i32: key \"" + key +
+                                    "\" not present");
+                    }
+                    match (m.get_or(key, JNull)) {
+                        JNumber(s) => {
+                            match (s.parse_int()) {
+                                None => {
+                                    return Some("assert_json_eq_field_i32: at \"" + key +
+                                                "\" value \"" + s + "\" not i32-parseable");
+                                },
+                                Some(got) => {
+                                    if (got == expected) { return None; }
+                                    return Some("assert_json_eq_field_i32: at \"" + key +
+                                                "\" expected " + expected.to_string() +
+                                                ", got " + got.to_string());
+                                }
+                            }
+                        },
+                        JNull      => { return Some("assert_json_eq_field_i32: at \"" + key + "\" value is null, not number"); },
+                        JBool(_)   => { return Some("assert_json_eq_field_i32: at \"" + key + "\" value is bool, not number"); },
+                        JString(_) => { return Some("assert_json_eq_field_i32: at \"" + key + "\" value is string, not number"); },
+                        JArray(_)  => { return Some("assert_json_eq_field_i32: at \"" + key + "\" value is array, not number"); },
+                        JObject(_) => { return Some("assert_json_eq_field_i32: at \"" + key + "\" value is object, not number"); }
+                    }
+                },
+                JNull      => { return Some("assert_json_eq_field_i32: top-level value is null, not object"); },
+                JBool(_)   => { return Some("assert_json_eq_field_i32: top-level value is bool, not object"); },
+                JNumber(_) => { return Some("assert_json_eq_field_i32: top-level value is number, not object"); },
+                JString(_) => { return Some("assert_json_eq_field_i32: top-level value is string, not object"); },
+                JArray(_)  => { return Some("assert_json_eq_field_i32: top-level value is array, not object"); }
+            }
+        }
+    }
+    return None;
+}
+
+// `assert_json_eq_field_bool(json_text, key, expected)` —
+// top-level object's `key` is a JBool equal to `expected`.
+pub function assert_json_eq_field_bool(json_text: string, key: string, expected: boolean): Option[string] {
+    match (json.json_parse(json_text)) {
+        None => {
+            return Some("assert_json_eq_field_bool: not valid JSON: " + json_text);
+        },
+        Some(v) => {
+            match (v) {
+                JObject(m) => {
+                    if (!m.has(key)) {
+                        return Some("assert_json_eq_field_bool: key \"" + key +
+                                    "\" not present");
+                    }
+                    match (m.get_or(key, JNull)) {
+                        JBool(b) => {
+                            if (b == expected) { return None; }
+                            var ebs: string = "false";
+                            if (expected) { ebs = "true"; }
+                            var gbs: string = "false";
+                            if (b) { gbs = "true"; }
+                            return Some("assert_json_eq_field_bool: at \"" + key +
+                                        "\" expected " + ebs + ", got " + gbs);
+                        },
+                        JNull      => { return Some("assert_json_eq_field_bool: at \"" + key + "\" value is null, not bool"); },
+                        JNumber(_) => { return Some("assert_json_eq_field_bool: at \"" + key + "\" value is number, not bool"); },
+                        JString(_) => { return Some("assert_json_eq_field_bool: at \"" + key + "\" value is string, not bool"); },
+                        JArray(_)  => { return Some("assert_json_eq_field_bool: at \"" + key + "\" value is array, not bool"); },
+                        JObject(_) => { return Some("assert_json_eq_field_bool: at \"" + key + "\" value is object, not bool"); }
+                    }
+                },
+                JNull      => { return Some("assert_json_eq_field_bool: top-level value is null, not object"); },
+                JBool(_)   => { return Some("assert_json_eq_field_bool: top-level value is bool, not object"); },
+                JNumber(_) => { return Some("assert_json_eq_field_bool: top-level value is number, not object"); },
+                JString(_) => { return Some("assert_json_eq_field_bool: top-level value is string, not object"); },
+                JArray(_)  => { return Some("assert_json_eq_field_bool: top-level value is array, not object"); }
+            }
+        }
+    }
+    return None;
+}
