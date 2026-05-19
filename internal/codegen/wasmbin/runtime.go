@@ -96,6 +96,11 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// wasi_proc_exit under the hood; nothing
 					// else needed.
 					needs.add("__lang_exit")
+				case "__lang_random_i32":
+					// wasi_random_get under the hood; writes
+					// 4 random bytes to the fixed scratch slot
+					// and returns them as an i32.
+					needs.add("__lang_random_i32")
 				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
@@ -151,6 +156,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 		body:    buildExitBody,
+	},
+	"__lang_random_i32": {
+		// () → i32 — host-supplied random word via wasi_random_get.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildRandomI32Body,
 	},
 	"__str_eq": {
 		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).
