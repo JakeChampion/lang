@@ -518,7 +518,12 @@ function main(): i32 {
   builtin): `assert_exit`, `assert_stdout_eq`,
   `assert_stderr_eq`, `assert_stdout_contains`,
   `assert_stderr_contains`, `assert_process(result, exit,
-  stdout_substr)`
+  stdout_substr)`. Exit shortcuts:
+  `assert_exit_zero(proc)`, `assert_exit_nonzero(proc)`.
+  Multi-line and cardinality: `assert_stdout_lines(proc,
+  lines[])` / `assert_stderr_lines`,
+  `assert_stdout_line_count(proc, n)` /
+  `assert_stderr_line_count`
 
 Examples live under `examples/tests/`; the runner's own
 meta-test (`runner_self_test.lang`) walks every assertion
