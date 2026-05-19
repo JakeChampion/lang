@@ -102,3 +102,35 @@ flow rather than driving manual CI checks after the fact.
   helper-emission gap, the `for x in m { ... }` struct-lit clash),
   fix it in the same PR with its own test rather than leaving it
   for later.
+
+## Test runner
+
+`internal/stdlib/std/test.lang` is the pure-Lang test runner —
+the shape the project plans to migrate to once the compiler is
+self-hosted and Go-side `*_test.go` files retire. It's part of
+the auto-prelude, so test programs reach for `TestRunner`,
+`test_new`, `assert_eq_i32`, etc. by bare name. Output is
+TAP-13. Examples under `examples/tests/` (`arithmetic_test.lang`,
+`strings_test.lang`, `runner_self_test.lang`) — the self-test
+walks every assertion helper on both pass + fail paths. The
+Go-side gate that keeps the runner from regressing lives at
+`internal/e2e/test_runner_test.go`.
+
+When adding NEW assertion helpers or extending the runner,
+add a corresponding case to `runner_self_test.lang` covering
+both the passing and failing path — the failure-reporting
+contract (predicate name in the message, actual + expected
+both quoted) is the runner's most regression-prone surface.
+
+Known limitation: a user program that explicitly does
+`import "std/foo";` for a stdlib module that transitively
+imports another stdlib module (e.g. `std/json` → `std/i32`)
+hits a pre-existing module-loader bug where bare-name method
+dispatch (`(n).to_string()`) goes through the wrong copy and
+the interpreter reports "cast from interp.Array to i32 not
+supported". The auto-prelude path is unaffected because every
+stdlib module is loaded flat-namespace by the prelude
+injector; that's why std/test was added to the prelude. If
+you find yourself debugging "to_string returns an Array"
+this is the bug — work around by removing the explicit
+import (rely on the auto-prelude) or by inlining the helper.

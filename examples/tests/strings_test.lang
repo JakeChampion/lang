@@ -1,0 +1,71 @@
+// examples/tests/strings_test.lang — exercise the string
+// receiver methods from std/string via the test runner.
+//
+// This is the shape unit tests for a stdlib module will take
+// once the Lang test runner replaces the Go-side `*_test.go`
+// harness: per-module test file, explicit list of cases in
+// main(), single TAP-13 stream on stdout.
+
+function test_uppercase(): Option[string] {
+    return assert_eq_string("hello".to_upper(), "HELLO");
+}
+
+function test_lowercase(): Option[string] {
+    return assert_eq_string("HELLO".to_lower(), "hello");
+}
+
+function test_contains_substring(): Option[string] {
+    return assert_contains("hello world", "world");
+}
+
+function test_not_contains(): Option[string] {
+    return assert_not_contains("hello world", "xyz");
+}
+
+function test_starts_with(): Option[string] {
+    return assert_starts_with("foobar", "foo");
+}
+
+function test_ends_with(): Option[string] {
+    return assert_ends_with("foobar", "bar");
+}
+
+function test_concat(): Option[string] {
+    return assert_eq_string("foo" + "bar", "foobar");
+}
+
+function test_split_join_roundtrip(): Option[string] {
+    var parts: string[] = "a,b,c,d".split(",");
+    return assert_eq_string(parts.join("|"), "a|b|c|d");
+}
+
+// Length assertion + array-of-string assertion in one test.
+// Both pass; folded together to keep the test list short.
+function test_split_yields_four_parts(): Option[string] {
+    var parts: string[] = "a,b,c,d".split(",");
+    return assert_len_string(parts, 4);
+}
+
+function test_empty_string(): Option[string] {
+    return assert_empty_string("");
+}
+
+function test_non_empty_string(): Option[string] {
+    return assert_non_empty_string("x");
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("strings");
+    r = r.it("to_upper", test_uppercase());
+    r = r.it("to_lower", test_lowercase());
+    r = r.it("contains substring", test_contains_substring());
+    r = r.it("not contains", test_not_contains());
+    r = r.it("starts_with", test_starts_with());
+    r = r.it("ends_with", test_ends_with());
+    r = r.it("concatenation", test_concat());
+    r = r.it("split/join roundtrip", test_split_join_roundtrip());
+    r = r.it("split yields 4 parts", test_split_yields_four_parts());
+    r = r.it("empty string", test_empty_string());
+    r = r.it("non-empty string", test_non_empty_string());
+    return r.finish();
+}

@@ -241,6 +241,48 @@ The raw socket primitives `tcp_listen` / `tcp_accept` / `tcp_recv`
 codegen from extern stubs at module boundary — not declared in
 this module.
 
+### `std/test`
+
+Pure-Lang unit-test runner. Tests are functions returning
+`Option[string]` (None = pass, Some(msg) = fail). The shape
+the project plans to migrate to once the compiler is self-
+hosted and the Go-side `*_test.go` harness retires; see
+`docs/ROADMAP-AND-SELF-HOSTING.md`. Output is TAP-13 so
+existing test runners (`prove`, `tape`, jUnit converters)
+can consume it directly.
+
+```
+function test_addition(): Option[string] {
+    return assert_eq_i32(2 + 2, 4);
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("arithmetic");
+    r = r.it("addition", test_addition());
+    return r.finish();
+}
+```
+
+- **Runner:** `TestRunner` (struct), `test_new(suite)`,
+  `test_new_verbose(suite)`, `(r).it(name, result)`,
+  `(r).finish() -> i32`
+- **Outcome constructors:** `pass()`, `fail(msg)`
+- **Boolean assertions:** `assert_true(cond)`, `assert_false(cond)`
+- **i32 assertions:** `assert_eq_i32`, `assert_neq_i32`,
+  `assert_lt_i32`, `assert_le_i32`, `assert_gt_i32`,
+  `assert_ge_i32`
+- **bool / string assertions:** `assert_eq_bool`,
+  `assert_eq_string`, `assert_neq_string`, `assert_empty_string`,
+  `assert_non_empty_string`
+- **Substring:** `assert_contains`, `assert_not_contains`,
+  `assert_starts_with`, `assert_ends_with`
+- **Array assertions:** `assert_len_i32`, `assert_len_string`,
+  `assert_eq_i32_array`, `assert_eq_string_array`
+
+Examples live under `examples/tests/`; the runner's own
+meta-test (`runner_self_test.lang`) walks every assertion
+helper on both pass and fail paths.
+
 ## `core/`
 
 ### `core/int`

@@ -90,3 +90,22 @@ lang -repl
 State persists across lines. Multi-line forms (an `if` block,
 function decl, etc.) are entered as one logical input — the REPL
 reads until braces balance.
+
+## Running tests
+
+lang's pure-Lang test runner lives in [`std/test`](../../stdlib/test/).
+Tests are ordinary `.lang` files — run them with `-interp` (or
+compile + execute the produced binary):
+
+```bash
+lang -interp my_test.lang        # AST interpreter
+lang my_test.lang -o my_test --run   # compile + run
+```
+
+Output is [TAP-13](https://testanything.org/). Exit code is `0`
+when every case passes and `1` on any failure, so any TAP-aware
+CI runner (`prove`, `tape`, `tap-junit`) works without further
+configuration.
+
+See the [Testing tutorial](../../tutorial/testing/) for the
+authoring shape and assertion catalogue.

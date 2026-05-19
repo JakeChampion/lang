@@ -1,0 +1,170 @@
+// examples/tests/runner_self_test.lang — meta-test of the
+// `std/test` runner itself. Verifies that:
+//   - passing assertions return None
+//   - failing assertions return Some(<message>) with the
+//     expected predicate name embedded
+//   - the messages quote both actual + expected so the diff
+//     is grep-able
+//
+// Because the runner reports via Option[string], we can
+// directly inspect what each assertion returned — no need to
+// shell out and parse TAP output. This is the smallest end-
+// to-end harness that confirms the runner's failure-reporting
+// contract holds.
+
+// Helper: assert that an Option[string] is None (i.e. an
+// assertion that should have passed actually did).
+function expect_none(o: Option[string]): Option[string] {
+    match (o) {
+        None => { return None; },
+        Some(msg) => { return fail("expected None, got Some(" + msg + ")"); }
+    }
+}
+
+// Helper: assert that an Option[string] is Some(...) and that
+// its message contains the given substring (so we can verify
+// the failure message's predicate name without pinning the
+// exact wording).
+function expect_some_containing(o: Option[string], needle: string): Option[string] {
+    match (o) {
+        Some(msg) => {
+            if (msg.contains(needle)) { return None; }
+            return fail("Some(\"" + msg + "\") does not contain \"" + needle + "\"");
+        },
+        None => { return fail("expected Some, got None"); }
+    }
+}
+
+// Each assertion helper has a passing case and a failing case.
+// The passing case must return None; the failing case must
+// return Some with the assertion's predicate name in the
+// message.
+
+function test_assert_true_pass(): Option[string] {
+    return expect_none(assert_true(true));
+}
+
+function test_assert_true_fail(): Option[string] {
+    return expect_some_containing(assert_true(false), "assert_true");
+}
+
+function test_assert_false_pass(): Option[string] {
+    return expect_none(assert_false(false));
+}
+
+function test_assert_false_fail(): Option[string] {
+    return expect_some_containing(assert_false(true), "assert_false");
+}
+
+function test_eq_i32_pass(): Option[string] {
+    return expect_none(assert_eq_i32(42, 42));
+}
+
+function test_eq_i32_fail_message(): Option[string] {
+    // The message must contain BOTH "expected 5" and "got 4"
+    // — that's the contract callers will read in CI logs.
+    var o: Option[string] = assert_eq_i32(4, 5);
+    match (o) {
+        Some(msg) => {
+            if (!msg.contains("expected 5")) {
+                return fail("missing 'expected 5' in \"" + msg + "\"");
+            }
+            if (!msg.contains("got 4")) {
+                return fail("missing 'got 4' in \"" + msg + "\"");
+            }
+            return None;
+        },
+        None => { return fail("assert_eq_i32(4, 5) should fail"); }
+    }
+}
+
+function test_eq_string_pass(): Option[string] {
+    return expect_none(assert_eq_string("hello", "hello"));
+}
+
+function test_eq_string_fail(): Option[string] {
+    var o: Option[string] = assert_eq_string("a", "b");
+    return expect_some_containing(o, "assert_eq_string");
+}
+
+function test_neq_i32(): Option[string] {
+    return expect_none(assert_neq_i32(1, 2));
+}
+
+function test_contains_pass(): Option[string] {
+    return expect_none(assert_contains("hello world", "world"));
+}
+
+function test_contains_fail(): Option[string] {
+    return expect_some_containing(
+        assert_contains("hello world", "xyz"),
+        "assert_contains");
+}
+
+function test_starts_with_pass(): Option[string] {
+    return expect_none(assert_starts_with("foobar", "foo"));
+}
+
+function test_starts_with_fail(): Option[string] {
+    return expect_some_containing(
+        assert_starts_with("foobar", "bar"),
+        "assert_starts_with");
+}
+
+function test_ends_with_pass(): Option[string] {
+    return expect_none(assert_ends_with("foobar", "bar"));
+}
+
+function test_len_i32_pass(): Option[string] {
+    return expect_none(assert_len_i32([1, 2, 3], 3));
+}
+
+function test_len_i32_fail(): Option[string] {
+    return expect_some_containing(
+        assert_len_i32([1, 2, 3], 5),
+        "expected length 5");
+}
+
+function test_eq_i32_array_pass(): Option[string] {
+    return expect_none(assert_eq_i32_array([1, 2, 3], [1, 2, 3]));
+}
+
+function test_eq_i32_array_fail_index(): Option[string] {
+    // First mismatch is at index 1 (2 vs 9); the message
+    // must localise that index.
+    var o: Option[string] = assert_eq_i32_array([1, 2, 3], [1, 9, 3]);
+    return expect_some_containing(o, "index 1");
+}
+
+function test_pass_returns_none(): Option[string] {
+    return expect_none(pass());
+}
+
+function test_fail_returns_some(): Option[string] {
+    return expect_some_containing(fail("custom message"), "custom message");
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("runner self-test");
+    r = r.it("assert_true pass", test_assert_true_pass());
+    r = r.it("assert_true fail message", test_assert_true_fail());
+    r = r.it("assert_false pass", test_assert_false_pass());
+    r = r.it("assert_false fail message", test_assert_false_fail());
+    r = r.it("assert_eq_i32 pass", test_eq_i32_pass());
+    r = r.it("assert_eq_i32 fail embeds both values", test_eq_i32_fail_message());
+    r = r.it("assert_eq_string pass", test_eq_string_pass());
+    r = r.it("assert_eq_string fail", test_eq_string_fail());
+    r = r.it("assert_neq_i32", test_neq_i32());
+    r = r.it("assert_contains pass", test_contains_pass());
+    r = r.it("assert_contains fail", test_contains_fail());
+    r = r.it("assert_starts_with pass", test_starts_with_pass());
+    r = r.it("assert_starts_with fail", test_starts_with_fail());
+    r = r.it("assert_ends_with pass", test_ends_with_pass());
+    r = r.it("assert_len_i32 pass", test_len_i32_pass());
+    r = r.it("assert_len_i32 fail", test_len_i32_fail());
+    r = r.it("assert_eq_i32_array pass", test_eq_i32_array_pass());
+    r = r.it("assert_eq_i32_array fail localises index", test_eq_i32_array_fail_index());
+    r = r.it("pass() returns None", test_pass_returns_none());
+    r = r.it("fail(msg) returns Some(msg)", test_fail_returns_some());
+    return r.finish();
+}
