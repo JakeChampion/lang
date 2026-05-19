@@ -539,6 +539,30 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			0,
 			"foo-bar",
 		},
+		{
+			"i32-to-string-zero",
+			"function main(): i32 { var s = i32_to_string(0); print(s); return len(s); }",
+			1,
+			"0",
+		},
+		{
+			"i32-to-string-positive",
+			"function main(): i32 { var s = i32_to_string(12345); print(s); return len(s); }",
+			5,
+			"12345",
+		},
+		{
+			"i32-to-string-negative",
+			"function main(): i32 { var s = i32_to_string(0 - 42); print(s); return len(s); }",
+			3,
+			"-42",
+		},
+		{
+			"i32-to-string-concat",
+			"function main(): i32 { var n = 7; var msg = \"answer: \" + i32_to_string(n); print(msg); return 0; }",
+			0,
+			"answer: 7",
+		},
 	}
 
 	for _, tc := range cases {
