@@ -476,6 +476,17 @@ function main(): i32 {
   `assert_is_some_eq_i32(opt, expected)` / `_string` —
   Some AND equal in one call; failure distinguishes None
   from value-mismatch
+- **Result (Result[T, IoError]):**
+  `assert_is_ok_string(res)` / `_string_array` — Ok
+  variant; payload irrelevant.
+  `assert_is_err_string(res)` / `_string_array` — Err
+  variant; Ok-on-Err diagnostic embeds the unexpected
+  payload (string value or array length).
+  `assert_is_ok_eq_string(res, expected)` — Ok AND value
+  matches; failure distinguishes Err-when-Ok-expected
+  from value-mismatch. Stdlib's Result error type is
+  uniformly `IoError` so helpers specialise on the Ok
+  type only
 - **Array set relations:**
   `assert_array_intersects_i32(a, b)` / `_string` — at
   least one shared element (empty either side always
