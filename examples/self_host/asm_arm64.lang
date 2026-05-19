@@ -589,6 +589,19 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     }
                     return "unknown";
                 },
+                parser.ExprFieldAccess(fa) => {
+                    var rt: string = infer_expr_type(fa.obj, s);
+                    if (rt == "string" || rt == "i32" || rt == "bool" || rt == "f64") {
+                        var mi: i32 = 0;
+                        while (mi < len(s.funcs)) {
+                            if (s.funcs[mi].name == fa.field && s.funcs[mi].receiver_type == rt) {
+                                return ret_tag_of(s.funcs[mi].ret_type);
+                            }
+                            mi = mi + 1;
+                        }
+                    }
+                    return "unknown";
+                },
                 _ => { return "unknown"; }
             }
             return "unknown";
@@ -1125,6 +1138,21 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
                 parser.ExprFieldAccess(fa) => {
+                    // Primitive-receiver fast path: see
+                    // asm.lang for rationale.
+                    var prim_recv: string = infer_expr_type(fa.obj, s);
+                    if (prim_recv == "string" || prim_recv == "i32" || prim_recv == "bool" || prim_recv == "f64") {
+                        var pmi: i32 = len(c.args) - 1;
+                        while (pmi >= 0) {
+                            s = emit_expr(c.args[pmi], s);
+                            pmi = pmi - 1;
+                        }
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    bl __fn_" + sanitize_label(prim_recv + "." + fa.field) + "\n");
+                        s = s.write("    add sp, sp, #" + i32_to_string((len(c.args) + 1) * 16) + "\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        return s;
+                    }
                     // Method call mirror of asm.lang. Push args
                     // right-to-left then push the receiver, so
                     // receiver lands at +16(x29) and arg[0] at
