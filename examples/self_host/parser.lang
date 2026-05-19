@@ -122,10 +122,18 @@ pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[] }
 // continue inside the body aren't modeled yet — a future
 // slice can add them as StmtBreak / StmtContinue.
 pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[] }
+// StmtBreak / StmtContinue model `break;` and `continue;`. The
+// tag fields are placeholder payload — variants need a shape
+// in the union and these stmts have no other state. The
+// surrounding while / for body handles the actual control
+// transfer.
+pub struct StmtBreak { tag: i32 }
+pub struct StmtContinue { tag: i32 }
 pub struct StmtUnknown { kind: string }
 
 pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
-              | StmtAssign | StmtMatch | StmtFor | StmtUnknown;
+              | StmtAssign | StmtMatch | StmtFor
+              | StmtBreak | StmtContinue | StmtUnknown;
 
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
@@ -212,6 +220,8 @@ function s_while(cond: Expr, body: Stmt[]): Stmt {
 function s_for(var_name: string, iter: Expr, body: Stmt[]): Stmt {
     return StmtFor { var_name: var_name, iter: iter, body: body };
 }
+function s_break(): Stmt { return StmtBreak { tag: 0 }; }
+function s_continue(): Stmt { return StmtContinue { tag: 0 }; }
 function s_assign(target: string, value: Expr): Stmt {
     return StmtAssign { target: target, value: value };
 }
@@ -720,6 +730,16 @@ function parse_stmt(p: Par): StmtResult {
         p = val.par;
         if (p.peek_punct() == ";") { p = p.advance(); }
         return StmtResult { par: p, stmt: s_return(val.expr) };
+    }
+    if (kw == "break") {
+        p = p.advance();
+        if (p.peek_punct() == ";") { p = p.advance(); }
+        return StmtResult { par: p, stmt: s_break() };
+    }
+    if (kw == "continue") {
+        p = p.advance();
+        if (p.peek_punct() == ";") { p = p.advance(); }
+        return StmtResult { par: p, stmt: s_continue() };
     }
     // Expression statement — or (compound) assignment if `=`,
     // `+=`, `-=`, `*=`, `/=`, `%=` follows. The parser doesn't
@@ -1565,6 +1585,35 @@ function main(): i32 {
             }
         },
         _ => { return 1054; }
+    }
+
+    // break / continue stmts.
+    var srcBC: string = "while (true) { if (x > 10) { break; } if (x < 0) { continue; } }";
+    var progBC: Stmt[] = parse_program(lexer.tokenize(srcBC));
+    if (len(progBC) != 1) { return 1060; }
+    match (progBC[0]) {
+        StmtWhile(w) => {
+            if (len(w.body) != 2) { return 1061; }
+            match (w.body[0]) {
+                StmtIf(ifs) => {
+                    match (ifs.then_body[0]) {
+                        StmtBreak(_) => { },
+                        _ => { return 1062; }
+                    }
+                },
+                _ => { return 1063; }
+            }
+            match (w.body[1]) {
+                StmtIf(ifs) => {
+                    match (ifs.then_body[0]) {
+                        StmtContinue(_) => { },
+                        _ => { return 1064; }
+                    }
+                },
+                _ => { return 1065; }
+            }
+        },
+        _ => { return 1066; }
     }
 
     return 0;

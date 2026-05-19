@@ -788,6 +788,8 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             }
             return CheckResult { scope: s, ty: t_bool() };
         },
+        parser.StmtBreak(_) => { return CheckResult { scope: s, ty: t_bool() }; },
+        parser.StmtContinue(_) => { return CheckResult { scope: s, ty: t_bool() }; },
         parser.StmtFor(f) => {
             // Iter expr must be a TypeArray. Walk the body in
             // a scope where var_name is bound to the array's

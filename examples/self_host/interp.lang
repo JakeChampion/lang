@@ -816,6 +816,8 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             }
             return StepResult { env: env, ret: v_err("non-exhaustive match") };
         },
+        parser.StmtBreak(_) => { return StepResult { env: env, ret: v_err("__break__") }; },
+        parser.StmtContinue(_) => { return StepResult { env: env, ret: v_err("__continue__") }; },
         parser.StmtFor(f) => {
             // Evaluate the iter expression — must be a VArr.
             var iv: Value = eval_expr(f.iter, env);

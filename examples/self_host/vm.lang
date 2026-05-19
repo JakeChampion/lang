@@ -584,6 +584,8 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             }
             return CompileResult { ops: ops, lt: lt };
         },
+        parser.StmtBreak(_) => { return CompileResult { ops: ops, lt: lt }; },
+        parser.StmtContinue(_) => { return CompileResult { ops: ops, lt: lt }; },
         parser.StmtFor(f) => {
             // Lowering: evaluate the iter expression into a
             // synthetic local, init an index local to 0, then
