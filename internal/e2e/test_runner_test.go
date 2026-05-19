@@ -1688,6 +1688,36 @@ func TestRunnerStringPreludeMigratedExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/unions_migrated_test.lang` — Lang port
+// of `TestInterpScriptUnions` from `interp_script_test.go`.
+// Second migration in the runner-adoption campaign
+// (after the string-prelude port). Original Go test pinned
+// one Add(10, 32) → 42 data point via exit-code; the
+// migrated form expands to a small table of match-arm
+// cases since once the migration cost is paid, each
+// additional `r.it(...)` is one line of marginal cost.
+// Both versions stay live until the broader cutover.
+func TestRunnerUnionsMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/unions_migrated_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: unions + match (migrated)",
+		"ok 1 - Add(10, 32) = 42",
+		"ok 4 - Add(5, -5) = 0",
+		"ok 7 - Lit(-100) = -100",
+		"# pass 7",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
