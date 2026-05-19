@@ -508,6 +508,23 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
     match (st) {
         parser.StmtVar(v) => {
             var t: Type = check_expr(v.init, s);
+            // If the source carries a `: Type` annotation,
+            // resolve it via the scope's struct + union tables
+            // and use it as the binding's type. The init type
+            // must be assignable to the annotation (so a
+            // variant value flows into a union slot via the
+            // existing type_assignable widening).
+            if (len(v.type_name) > 0) {
+                var declared: Type = type_from_name_with_structs_unions(v.type_name, s.structs, s.unions);
+                if (is_unknown(declared)) {
+                    return CheckResult { scope: s.bind(v.name, declared), ty: declared };
+                }
+                if (!type_assignable(t, declared, s.unions)) {
+                    var err: Type = t_unknown("var `" + v.name + "`: init type doesn't match annotation `" + v.type_name + "`");
+                    return CheckResult { scope: s.bind(v.name, declared), ty: err };
+                }
+                return CheckResult { scope: s.bind(v.name, declared), ty: declared };
+            }
             var s2: Scope = s.bind(v.name, t);
             return CheckResult { scope: s2, ty: t };
         },
@@ -1163,6 +1180,38 @@ function main(): i32 {
     var mod29: parser.Module = parser.parse_module(lexer.tokenize(src29));
     var mt29: ModuleTypes = check_module(mod29);
     if (!mt29.all_well_typed) { return 290; }
+
+    // Var type annotation honoured: `var sh: Shape = Circle{…}`
+    // binds `sh` as Shape, so a match over `sh` accepts both
+    // Circle and Square arms. Previously the parser dropped the
+    // annotation and `sh` inferred to TypeStruct("Circle"),
+    // making the Square arm a never-match.
+    var src30: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function main(): i32 { var sh: Shape = Circle { r: 3 }; match (sh) { Circle(c) => { return c.r; }, Square(sq) => { return sq.s; } } return 0; }";
+    var mod30: parser.Module = parser.parse_module(lexer.tokenize(src30));
+    var mt30: ModuleTypes = check_module(mod30);
+    if (!mt30.all_well_typed) { return 300; }
+
+    // Var annotation type-mismatch: `var n: i32 = "hi"` is
+    // rejected — the init type isn't assignable to the
+    // declared type.
+    var src31: string = "function main(): i32 { var n: i32 = \"hi\"; return 0; }";
+    var mod31: parser.Module = parser.parse_module(lexer.tokenize(src31));
+    var mt31: ModuleTypes = check_module(mod31);
+    if (mt31.all_well_typed) { return 310; }
+
+    // Var annotation with primitive type: well-typed.
+    var src32: string = "function main(): i32 { var n: i32 = 7; var b: bool = true; var s: string = \"x\"; return n; }";
+    var mod32: parser.Module = parser.parse_module(lexer.tokenize(src32));
+    var mt32: ModuleTypes = check_module(mod32);
+    if (!mt32.all_well_typed) { return 320; }
+
+    // Var annotation unknown type: rejected. `var w: NotAType`
+    // resolves the annotation to TypeUnknown so well-typed
+    // flips false.
+    var src33: string = "function main(): i32 { var w: NotAType = 1; return 0; }";
+    var mod33: parser.Module = parser.parse_module(lexer.tokenize(src33));
+    var mt33: ModuleTypes = check_module(mod33);
+    if (mt33.all_well_typed) { return 330; }
 
     return 0;
 }

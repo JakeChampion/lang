@@ -71,7 +71,14 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 
 // Statement nodes.
 
-pub struct StmtVar { name: string, init: Expr }
+// StmtVar binds a name to an init value. `type_name` is the
+// optional `: Type` annotation (bare type name; empty string
+// means no annotation). The checker uses it to override the
+// inferred init type — so a `var sh: Shape = Circle { … }`
+// binds `sh` as TypeUnion("Shape") rather than the inferred
+// TypeStruct("Circle"). Interp / VM ignore it (annotations
+// are checker-only metadata).
+pub struct StmtVar { name: string, type_name: string, init: Expr }
 pub struct StmtReturn { value: Expr }
 pub struct StmtExpr { value: Expr }
 // StmtIf models `if (cond) { then... } else { else... }`. else_body
@@ -164,7 +171,9 @@ function e_field_access(obj: Expr, field: string): Expr {
 }
 function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
 
-function s_var(name: string, init: Expr): Stmt { return StmtVar { name: name, init: init }; }
+function s_var(name: string, type_name: string, init: Expr): Stmt {
+    return StmtVar { name: name, type_name: type_name, init: init };
+}
 function s_return(value: Expr): Stmt { return StmtReturn { value: value }; }
 function s_expr(value: Expr): Stmt { return StmtExpr { value: value }; }
 function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
@@ -586,11 +595,20 @@ function parse_stmt(p: Par): StmtResult {
             return StmtResult { par: p, stmt: s_unknown("missing var name") };
         }
         p = p.advance();
-        // Optional `: Type` — skip past until `=` for this port.
+        // Optional `: Type` — capture the type name string so
+        // the checker can resolve it. Full type syntax (arrays
+        // / generics) is still a later milestone; for now just
+        // the bare leading token.
+        var type_name: string = "";
         if (p.peek_punct() == ":") {
             p = p.advance();
-            // Consume one token (the type name); a richer port
-            // would parse full type syntax here.
+            // Type names arrive as TokIdent for user names
+            // (Circle, Shape) and as TokKeyword for primitives
+            // (i32, bool, string). Try ident first, fall back
+            // to keyword.
+            var tn: string = p.peek_ident();
+            if (len(tn) == 0) { tn = p.peek_keyword(); }
+            type_name = tn;
             p = p.advance();
         }
         if (p.peek_punct() != "=") {
@@ -600,7 +618,7 @@ function parse_stmt(p: Par): StmtResult {
         var init = parse_expr(p);
         p = init.par;
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_var(name, init.expr) };
+        return StmtResult { par: p, stmt: s_var(name, type_name, init.expr) };
     }
     if (kw == "return") {
         p = p.advance();
@@ -1243,6 +1261,39 @@ function main(): i32 {
             }
         },
         _ => { return 924; }
+    }
+
+    // Var type annotation — user type (Shape).
+    var srcTV: string = "var sh: Shape = c; return 0;";
+    var progTV: Stmt[] = parse_program(lexer.tokenize(srcTV));
+    match (progTV[0]) {
+        StmtVar(v) => {
+            if (v.name != "sh") { return 930; }
+            if (v.type_name != "Shape") { return 931; }
+        },
+        _ => { return 932; }
+    }
+
+    // Var type annotation — primitive (i32).
+    var srcTI: string = "var n: i32 = 7; return 0;";
+    var progTI: Stmt[] = parse_program(lexer.tokenize(srcTI));
+    match (progTI[0]) {
+        StmtVar(v) => {
+            if (v.name != "n") { return 940; }
+            if (v.type_name != "i32") { return 941; }
+        },
+        _ => { return 942; }
+    }
+
+    // Var without annotation — type_name stays empty.
+    var srcTU: string = "var x = 42; return 0;";
+    var progTU: Stmt[] = parse_program(lexer.tokenize(srcTU));
+    match (progTU[0]) {
+        StmtVar(v) => {
+            if (v.name != "x") { return 950; }
+            if (v.type_name != "") { return 951; }
+        },
+        _ => { return 952; }
     }
 
     return 0;
