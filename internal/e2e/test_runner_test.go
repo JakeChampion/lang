@@ -1508,6 +1508,39 @@ func TestRunnerProcessOutputShortcutsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/assert_at_wider_test.lang` exercises
+// batch-32 additions filling out the `assert_at_*` spot-
+// check family for wider integer + float widths:
+//   - `assert_at_u32` / `_u64` — unsigned-int variants.
+//   - `assert_at_f64(arr, idx, expected, epsilon)` /
+//     `_f32` — float variants with mandatory tolerance;
+//     NaN inputs always fail.
+//
+// 13 cases.
+func TestRunnerAssertAtWiderExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/assert_at_wider_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - at_u32 wrong value diag",
+		"ok 3 - at_u32 out of bounds",
+		"ok 7 - at_f64 within tolerance",
+		"ok 8 - at_f64 outside tol + eps",
+		"ok 9 - at_f64 NaN actual",
+		"ok 11 - at_f64 out of bounds",
+		"ok 13 - at_f32 outside tolerance",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

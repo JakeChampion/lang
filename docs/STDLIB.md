@@ -458,8 +458,13 @@ function main(): i32 {
   wider-int element-wise compares (lang has no numeric-
   array covariance so each width gets its own helper).
   Single-position spot check: `assert_at_i32(arr, idx,
-  expected)` / `_string` / `_i64` — bounds-checked,
-  failure distinguishes out-of-bounds from value mismatch
+  expected)` / `_string` / `_i64` / `_u32` / `_u64` —
+  bounds-checked; failure distinguishes out-of-bounds
+  from value mismatch.
+  Float variants: `assert_at_f64(arr, idx, expected,
+  epsilon)` / `_f32` — mandatory tolerance; NaN inputs
+  always fail; failure message embeds the diff and the
+  epsilon bound
 - **Array membership:** `assert_array_contains_i32(arr,
   needle)` / `_string`, `assert_array_not_contains_i32` /
   `_string` — typed-array membership; failure embeds the
