@@ -4328,7 +4328,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// the union.
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "len" && !c.isUserFuncOrLocal(id.Name, s) {
 			if len(n.Args) != 1 {
-				c.errf(n.P, "len expects 1 argument, got %d", len(n.Args))
+				c.errfCode(n.P, "E039", "len expects 1 argument, got %d", len(n.Args))
 				return ast.NumberType{}
 			}
 			at := c.checkExpr(n.Args[0], s)
@@ -4337,7 +4337,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// fine
 			default:
 				if at != nil {
-					c.errf(n.Args[0].Pos(), "len: expected string, array, or slice, got %s", at)
+					c.errfCode(n.Args[0].Pos(), "E039", "len: expected string, array, or slice, got %s", at)
 				}
 			}
 			return ast.NumberType{}
@@ -4514,7 +4514,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				sub = make(map[string]ast.Type, len(fn.TypeParams))
 				if len(n.TypeArgs) > 0 {
 					if len(n.TypeArgs) != len(fn.TypeParams) {
-						c.errf(n.P, "%s expects %d type argument(s), got %d",
+						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
 							fn.Name, len(fn.TypeParams), len(n.TypeArgs))
 					}
 					for i, tp := range fn.TypeParams {
@@ -4569,7 +4569,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if v, ok := sub[tp]; ok {
 					args[i] = v
 				} else {
-					c.errf(n.P, "could not infer type parameter %s for %s — explicit type args are not supported yet", tp, genericFn.Name)
+					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — explicit type args are not supported yet", tp, genericFn.Name)
 					complete = false
 				}
 			}
@@ -4727,7 +4727,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				rt = postSettleType(n.Right, rt)
 			}
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
-				c.errf(n.P, "cannot compare %s and %s", lt, rt)
+				c.errfCode(n.P, "E041", "cannot compare %s and %s", lt, rt)
 			}
 			// String-vs-string equality compares contents; flag so
 			// codegen lowers to a runtime call rather than i32.eq.
@@ -4762,7 +4762,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireBool(n.P, rt, n.Op)
 			return ast.BoolType{}
 		}
-		c.errf(n.P, "unknown binary operator %q", n.Op)
+		c.errfCode(n.P, "E041", "unknown binary operator %q", n.Op)
 		return nil
 	case *ast.Unary:
 		t := c.checkExpr(n.Operand, s)
@@ -4846,7 +4846,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		root := newScope(nil)
 		for _, p := range n.Params {
 			if _, dup := root.names[p.Name]; dup {
-				c.errf(n.P, "duplicate parameter %q", p.Name)
+				c.errfCode(n.P, "E018", "duplicate parameter %q", p.Name)
 			}
 			root.names[p.Name] = p.Type
 		}
@@ -4897,13 +4897,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.IfExpr:
 		ct := c.checkExpr(n.Cond, s)
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
-			c.errf(n.Cond.Pos(), "if-expression condition must be boolean, got %s", ct)
+			c.errfCode(n.Cond.Pos(), "E008", "if-expression condition must be boolean, got %s", ct)
 		}
 		tt := c.checkExpr(n.Then, s)
 		et := c.checkExpr(n.Else, s)
 		result := unifyIfArms(tt, et)
 		if tt != nil && et != nil && result == nil {
-			c.errf(n.P, "if-expression branches differ: %s vs %s", tt, et)
+			c.errfCode(n.P, "E031", "if-expression branches differ: %s vs %s", tt, et)
 			result = tt
 		}
 		if result == nil {
@@ -4932,24 +4932,24 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return nil
 		}
 		if c.current == nil {
-			c.errf(n.P, "`?` operator can only be used inside a function")
+			c.errfCode(n.P, "E042", "`?` operator can only be used inside a function")
 			return nil
 		}
 		ret := c.current.ReturnType
 		retEnum, retOK := ret.(ast.EnumType)
 		srcEnum, srcOK := inner.(ast.EnumType)
 		if !srcOK {
-			c.errf(n.P, "`?` operator requires an Option or Result value, got %s", inner)
+			c.errfCode(n.P, "E042", "`?` operator requires an Option or Result value, got %s", inner)
 			return nil
 		}
 		switch srcEnum.Name {
 		case "Option":
 			if len(srcEnum.Args) != 1 {
-				c.errf(n.P, "malformed Option type %s", inner)
+				c.errfCode(n.P, "E042", "malformed Option type %s", inner)
 				return nil
 			}
 			if !retOK || retEnum.Name != "Option" || len(retEnum.Args) != 1 {
-				c.errf(n.P, "`?` on Option requires the surrounding function to return Option[_], got %s", ret)
+				c.errfCode(n.P, "E042", "`?` on Option requires the surrounding function to return Option[_], got %s", ret)
 				return nil
 			}
 			n.Kind = ast.TryKindOption
@@ -4957,15 +4957,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return n.Type
 		case "Result":
 			if len(srcEnum.Args) != 2 {
-				c.errf(n.P, "malformed Result type %s", inner)
+				c.errfCode(n.P, "E042", "malformed Result type %s", inner)
 				return nil
 			}
 			if !retOK || retEnum.Name != "Result" || len(retEnum.Args) != 2 {
-				c.errf(n.P, "`?` on Result requires the surrounding function to return Result[_, E], got %s", ret)
+				c.errfCode(n.P, "E042", "`?` on Result requires the surrounding function to return Result[_, E], got %s", ret)
 				return nil
 			}
 			if !ast.Equal(srcEnum.Args[1], retEnum.Args[1]) {
-				c.errf(n.P, "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match",
+				c.errfCode(n.P, "E042", "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match",
 					srcEnum.Args[1], retEnum.Args[1])
 				return nil
 			}
@@ -4973,13 +4973,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.Type = srcEnum.Args[0]
 			return n.Type
 		default:
-			c.errf(n.P, "`?` operator requires an Option or Result value, got %s", inner)
+			c.errfCode(n.P, "E042", "`?` operator requires an Option or Result value, got %s", inner)
 			return nil
 		}
 	case *ast.StructLit:
 		sd, ok := c.info.Structs[n.TypeName]
 		if !ok {
-			c.errf(n.P, "unknown struct type %q", n.TypeName)
+			c.errfCode(n.P, "E043", "unknown struct type %q", n.TypeName)
 			return nil
 		}
 		// Each declared field must be initialised exactly once and
@@ -4999,7 +4999,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		for _, f := range n.Fields {
 			expected, present := fieldT[f.Name]
 			if !present {
-				c.errf(n.P, "struct %s has no field %q", sd.Name, f.Name)
+				c.errfCode(n.P, "E043", "struct %s has no field %q", sd.Name, f.Name)
 				continue
 			}
 			if seen[f.Name] {
@@ -5014,7 +5014,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			vt = postSettleType(f.Value, vt)
 			if sub != nil {
 				if !c.unifyType(expected, vt, sub) {
-					c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, expected, vt)
 				}
 			} else if !ast.Equal(vt, expected) {
 				// Allow the polymorphic / argless-enum vs
@@ -5024,7 +5024,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// to `Option` with empty Args). Same shape as
 				// the array-element widening from #541.
 				if unifyIfArms(expected, vt) == nil {
-					c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, expected, vt)
 				}
 			}
 		}
@@ -5040,7 +5040,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if v, ok := sub[tp]; ok {
 					args[i] = v
 				} else {
-					c.errf(n.P, "could not infer type parameter %s for struct %s — explicit type args are not supported yet", tp, sd.Name)
+					c.errfCode(n.P, "E040", "could not infer type parameter %s for struct %s — explicit type args are not supported yet", tp, sd.Name)
 					complete = false
 				}
 			}
