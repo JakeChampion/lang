@@ -17,13 +17,18 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/langsmith"
 	"github.com/jakechampion/lang/internal/parser"
@@ -73,8 +78,70 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 					t.Errorf("wasm result=%d, interp=%d\nsrc:\n%s", got, expected, src)
 				}
 			})
+			t.Run("wasmbin", func(t *testing.T) {
+				got := compileAndRunWasmbinMain(t, src)
+				if got != expected {
+					t.Errorf("wasmbin result=%d, interp=%d\nsrc:\n%s", got, expected, src)
+				}
+			})
 		})
 	}
+}
+
+// compileAndRunWasmbinMain runs the in-process parse → check →
+// wasmbin.Build pipeline on src, writes the core wasm bytes to
+// disk, and invokes `wasmtime run --invoke main` to call main()
+// directly. The exit status of wasmtime --invoke is the i32 the
+// callee returned, printed as a decimal integer on stdout.
+// Returned value is masked to a byte to match the interpreter's
+// `result & 0xFF` shape used elsewhere in this file.
+//
+// Skips the test if wasmtime is not on PATH. The wasmbin path
+// does not depend on the preview-2 toolchain — it emits a raw
+// core module that wasmtime runs without component-wrapping.
+func compileAndRunWasmbinMain(t *testing.T, src string) int {
+	t.Helper()
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v\nsrc:\n%s", err, src)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v\nsrc:\n%s", err, src)
+	}
+	bin, err := wasmbin.Build(prog, info)
+	if err != nil {
+		// Build will surface acknowledged gaps in wasmbin coverage
+		// as "unsupported" or "unsupported op" / "unsupported type"
+		// errors. Skip those: they're tracking signal, not
+		// miscompilation bugs. Any other error (parser, checker,
+		// IR pipeline) is unexpected and should fail.
+		if strings.Contains(err.Error(), "unsupported") {
+			t.Skipf("wasmbin coverage gap: %v", err)
+		}
+		t.Fatalf("wasmbin.Build: %v\nsrc:\n%s", err, src)
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:\n%s\nsrc:\n%s", err, se.String(), src)
+	}
+	trimmed := strings.TrimSpace(so.String())
+	got, err := strconv.Atoi(trimmed)
+	if err != nil {
+		t.Fatalf("parse wasmbin stdout %q: %v\nsrc:\n%s", trimmed, err, src)
+	}
+	return got & 0xFF
 }
 
 // FuzzGenerate_ExecutionAgrees is the same oracle as the table
@@ -123,6 +190,12 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 			}
 			if got != expected {
 				t.Errorf("wasm result=%d, interp=%d\ndata=%x\nsrc:\n%s", got, expected, data, src)
+			}
+		})
+		t.Run("wasmbin", func(t *testing.T) {
+			got := compileAndRunWasmbinMain(t, src)
+			if got != expected {
+				t.Errorf("wasmbin result=%d, interp=%d\ndata=%x\nsrc:\n%s", got, expected, data, src)
 			}
 		})
 	})
