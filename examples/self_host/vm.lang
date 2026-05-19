@@ -90,6 +90,14 @@ pub struct OpPop { tag: i32 }
 // from the callee restores the caller's frame and pushes the
 // return value.
 pub struct OpCall { name: string, argc: i32 }
+// OpCallMethod dispatches `recv.name(args)` — pops `argc + 1`
+// values (receiver underneath the args), matches the receiver's
+// VStruct.type_name against the FuncTable's receiver_types
+// column, and transfers into the matching method body. Receiver
+// becomes locals[0]; args follow in declaration order. Falling
+// back to a plain function is NOT performed — methods and plain
+// funcs occupy distinct slots in the FuncTable.
+pub struct OpCallMethod { name: string, argc: i32 }
 // OpMakeArray pops `n` values off the stack and pushes a single
 // VArr holding them in source order — the LAST element pushed
 // sits at index n-1 (so we walk the stack top-to-bottom and
@@ -125,7 +133,7 @@ pub type Op = OpPushInt | OpPushBool | OpPushStr
             | OpLoadLocal | OpStoreLocal
             | OpBinary | OpUnary
             | OpJump | OpJumpIfFalse
-            | OpPop | OpCall
+            | OpPop | OpCall | OpCallMethod
             | OpMakeArray | OpIndex | OpLen | OpSlice
             | OpMakeStruct | OpFieldGet
             | OpDup | OpTypeNameEq
@@ -142,6 +150,7 @@ function op_jump(t: i32): Op { return OpJump { target: t }; }
 function op_jump_if_false(t: i32): Op { return OpJumpIfFalse { target: t }; }
 function op_pop(): Op { return OpPop { tag: 0 }; }
 function op_call(name: string, argc: i32): Op { return OpCall { name: name, argc: argc }; }
+function op_call_method(name: string, argc: i32): Op { return OpCallMethod { name: name, argc: argc }; }
 function op_make_array(n: i32): Op { return OpMakeArray { n: n }; }
 function op_index(): Op { return OpIndex { tag: 0 }; }
 function op_len(): Op { return OpLen { tag: 0 }; }
@@ -252,35 +261,45 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprCall(c) => {
-            // Only bare-ident callees are supported, mirroring
-            // the interp's stance. Emit each arg in order
-            // (left-to-right) so they sit on the stack with the
-            // first arg deepest; OpCall pops `argc` of them and
-            // stores them as locals 0..argc-1 in the callee.
-            var name: string = "";
+            // ExprIdent callee → plain function. ExprFieldAccess
+            // callee → method call: compile the receiver first,
+            // then args, then OpCallMethod.
             match (c.callee) {
-                parser.ExprIdent(id) => { name = id.name; },
+                parser.ExprIdent(id) => {
+                    // Builtin: `len(x)` lowers to OpLen.
+                    if (id.name == "len" && len(c.args) == 1) {
+                        var lar: CompileResult = compile_expr(c.args[0], ops, lt);
+                        ops = lar.ops; lt = lar.lt;
+                        ops = ops.push(op_len());
+                        return CompileResult { ops: ops, lt: lt };
+                    }
+                    var ai: i32 = 0;
+                    while (ai < len(c.args)) {
+                        var ar: CompileResult = compile_expr(c.args[ai], ops, lt);
+                        ops = ar.ops; lt = ar.lt;
+                        ai = ai + 1;
+                    }
+                    ops = ops.push(op_call(id.name, len(c.args)));
+                    return CompileResult { ops: ops, lt: lt };
+                },
+                parser.ExprFieldAccess(fa) => {
+                    // Receiver onto stack first, then args.
+                    var rr: CompileResult = compile_expr(fa.obj, ops, lt);
+                    ops = rr.ops; lt = rr.lt;
+                    var mi: i32 = 0;
+                    while (mi < len(c.args)) {
+                        var mr: CompileResult = compile_expr(c.args[mi], ops, lt);
+                        ops = mr.ops; lt = mr.lt;
+                        mi = mi + 1;
+                    }
+                    ops = ops.push(op_call_method(fa.field, len(c.args)));
+                    return CompileResult { ops: ops, lt: lt };
+                },
                 _ => {
                     ops = ops.push(op_push_str("__call-target-not-ident__"));
                     return CompileResult { ops: ops, lt: lt };
                 }
             }
-            // Builtin: `len(x)` lowers to OpLen instead of a
-            // function call. Matches the checker / interp's
-            // special-case for this name.
-            if (name == "len" && len(c.args) == 1) {
-                var lar: CompileResult = compile_expr(c.args[0], ops, lt);
-                ops = lar.ops; lt = lar.lt;
-                ops = ops.push(op_len());
-                return CompileResult { ops: ops, lt: lt };
-            }
-            var i: i32 = 0;
-            while (i < len(c.args)) {
-                var ar: CompileResult = compile_expr(c.args[i], ops, lt);
-                ops = ar.ops; lt = ar.lt;
-                i = i + 1;
-            }
-            ops = ops.push(op_call(name, len(c.args)));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprArray(a) => {
@@ -508,7 +527,12 @@ function compile_block(body: parser.Stmt[], ops: Op[], lt: LocalsTable): Compile
 pub struct FuncTable {
     names: string[],
     entries: i32[],
-    locals_counts: i32[]
+    locals_counts: i32[],
+    // Parallel to `names`: receiver_types[i] is the declared
+    // receiver type for a method, or "" for a plain function.
+    // OpCall looks up by name + empty receiver; OpCallMethod
+    // looks up by name + the receiver value's type_name.
+    receiver_types: string[]
 }
 
 // CompiledProgram bundles ops + funcs so callers can pass both
@@ -524,17 +548,22 @@ pub struct CompiledProgram { ops: Op[], funcs: FuncTable }
 // entry into the table.
 function compile_func(fd: parser.FuncDecl, ops: Op[]): CompileResult {
     var lt: LocalsTable = new_locals();
-    // Params arrive on the stack in source order. Pop them
-    // in REVERSE into locals 0..argc-1: the last pushed arg is
-    // on top, so it goes into the highest local index. We bind
-    // names first so we know which index each param maps to,
-    // then emit a sequence of OpStoreLocal in descending order.
+    // Method receiver — if present — becomes locals[0]. Params
+    // follow it. The caller pushes receiver first, then args, so
+    // the receiver sits deepest and the last arg is on top.
+    var has_recv: boolean = len(fd.receiver_name) > 0;
+    if (has_recv) { lt = lt.bind(fd.receiver_name); }
     var i: i32 = 0;
     while (i < len(fd.params)) {
         lt = lt.bind(fd.params[i].name);
         i = i + 1;
     }
-    var j: i32 = len(fd.params) - 1;
+    // Total slot count drives the store sequence — descend from
+    // the highest index so the last-pushed value (top of stack)
+    // lands in the highest local.
+    var total: i32 = len(fd.params);
+    if (has_recv) { total = total + 1; }
+    var j: i32 = total - 1;
     while (j >= 0) {
         ops = ops.push(op_store(j));
         j = j - 1;
@@ -557,11 +586,13 @@ pub function compile_program(mod: parser.Module): CompiledProgram {
     var fn_names: string[] = [];
     var fn_entries: i32[] = [];
     var fn_locals: i32[] = [];
+    var fn_recv_types: string[] = [];
     var i: i32 = 0;
     while (i < len(mod.funcs)) {
         var fd: parser.FuncDecl = mod.funcs[i];
         fn_names = fn_names.push(fd.name);
         fn_entries = fn_entries.push(len(ops));
+        fn_recv_types = fn_recv_types.push(fd.receiver_type);
         var fr: CompileResult = compile_func(fd, ops);
         ops = fr.ops;
         fn_locals = fn_locals.push(len(fr.lt.names));
@@ -597,7 +628,7 @@ pub function compile_program(mod: parser.Module): CompiledProgram {
     ops = ops.push(op_return());
     return CompiledProgram {
         ops: ops,
-        funcs: FuncTable { names: fn_names, entries: fn_entries, locals_counts: fn_locals }
+        funcs: FuncTable { names: fn_names, entries: fn_entries, locals_counts: fn_locals, receiver_types: fn_recv_types }
     };
 }
 
@@ -809,7 +840,24 @@ struct FuncLookup { entry: i32, locals_count: i32, ok: boolean }
 function lookup_func(funcs: FuncTable, name: string): FuncLookup {
     var i: i32 = 0;
     while (i < len(funcs.names)) {
-        if (funcs.names[i] == name) {
+        // Plain function lookup skips method-shaped entries
+        // (non-empty receiver_types). Methods live in their
+        // own dispatch via lookup_method.
+        if (funcs.names[i] == name && len(funcs.receiver_types[i]) == 0) {
+            return FuncLookup { entry: funcs.entries[i], locals_count: funcs.locals_counts[i], ok: true };
+        }
+        i = i + 1;
+    }
+    return FuncLookup { entry: 0, locals_count: 0, ok: false };
+}
+
+// lookup_method matches by name + receiver type. The receiver
+// type is the runtime VStruct's type_name — exact string
+// equality decides the dispatch.
+function lookup_method(funcs: FuncTable, name: string, recv_type: string): FuncLookup {
+    var i: i32 = 0;
+    while (i < len(funcs.names)) {
+        if (funcs.names[i] == name && funcs.receiver_types[i] == recv_type) {
             return FuncLookup { entry: funcs.entries[i], locals_count: funcs.locals_counts[i], ok: true };
         }
         i = i + 1;
@@ -883,6 +931,33 @@ pub function exec_program(prog: CompiledProgram): Value {
                 frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals });
                 locals = new_vm_locals(fl.locals_count);
                 ip = fl.entry;
+            },
+            OpCallMethod(o) => {
+                // Receiver sits beneath the args. Peek at depth
+                // argc to read it; bail out cleanly if the stack
+                // doesn't carry enough slots.
+                if (len(stack) < o.argc + 1) {
+                    return v_err("call_method: stack underflow");
+                }
+                var recv_idx: i32 = len(stack) - o.argc - 1;
+                var recv: Value = stack[recv_idx];
+                var recv_type: string = "";
+                match (recv) {
+                    VStruct(sv) => { recv_type = sv.type_name; },
+                    _ => { return v_err("call_method: receiver not a struct"); }
+                }
+                var ml: FuncLookup = lookup_method(funcs, o.name, recv_type);
+                if (!ml.ok) {
+                    return v_err("undefined method `" + o.name + "` on `" + recv_type + "`");
+                }
+                // Stack already holds receiver + args in the
+                // shape the callee's prologue expects (descending
+                // OpStoreLocal pops the last arg into the highest
+                // local index, walking down to the receiver at
+                // local 0).
+                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals });
+                locals = new_vm_locals(ml.locals_count);
+                ip = ml.entry;
             },
             OpMakeArray(o) => {
                 // Pop `n` values off the stack. They were
@@ -1096,9 +1171,10 @@ pub function exec(ops: Op[]): Value {
     var ns: string[] = [];
     var es: i32[] = [];
     var ls: i32[] = [];
+    var rts: string[] = [];
     return exec_program(CompiledProgram {
         ops: ops,
-        funcs: FuncTable { names: ns, entries: es, locals_counts: ls }
+        funcs: FuncTable { names: ns, entries: es, locals_counts: ls, receiver_types: rts }
     });
 }
 
@@ -1362,6 +1438,39 @@ function main(): i32 {
     match (r31) {
         VInt(i) => { if (i.v != 42) { return 310; } },
         _ => { return 311; }
+    }
+
+    // Method call dispatch — `k.area()` on a Circle.
+    var src32: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { var k = Circle { r: 5 }; return k.area(); }";
+    var r32: Value = run_module(src32);
+    match (r32) {
+        VInt(i) => { if (i.v != 25) { return 320; } },
+        _ => { return 321; }
+    }
+
+    // Method with an arg — `x.scale(3)` binds c=x and n=3.
+    var src33: string = "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }";
+    var r33: Value = run_module(src33);
+    match (r33) {
+        VInt(i) => { if (i.v != 12) { return 330; } },
+        _ => { return 331; }
+    }
+
+    // Method + plain function share a name — both resolve.
+    var src34: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { var k = Circle { r: 5 }; var m: i32 = area(); var n: i32 = k.area(); return m + n; }";
+    var r34: Value = run_module(src34);
+    match (r34) {
+        VInt(i) => { if (i.v != 125) { return 340; } },
+        _ => { return 341; }
+    }
+
+    // Method on wrong receiver type — Square has no area
+    // method, returns VErr.
+    var src35: string = "struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r; } function main(): i32 { var sq = Square { s: 7 }; return sq.area(); }";
+    var r35: Value = run_module(src35);
+    match (r35) {
+        VErr(_) => { },
+        _ => { return 350; }
     }
 
     return 0;
