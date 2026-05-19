@@ -319,6 +319,23 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "values", Type: ast.ArrayType{Elem: ast.StringType{}}},
 			},
 		},
+		// Stream — byte-stream value (docs/STDLIB-DESIGN-RESEARCH.md
+		// Rec §1 Phase 2). The eventual home for
+		// `HttpRequest.body` (today: `string`; tomorrow:
+		// `Stream`). Phase 1 ships an in-memory buffer-backed
+		// Stream with `data: u8[]` + `pos: i32` cursor. Lazy /
+		// chunked reads land in Phase 2 once the underlying
+		// runtime grows a reader-shaped iteration protocol.
+		// `bytes` is treated as `u8[]` throughout — no separate
+		// type alias yet; doc-comments call out the bytes ≡
+		// u8[] equivalence.
+		{
+			Name: "Stream",
+			Fields: []ast.Param{
+				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+				{Name: "pos", Type: ast.NumberType{}},
+			},
+		},
 		// Date/time types (docs/STDLIB-DESIGN-RESEARCH.md
 		// Rec §4 — the jiff/NodaTime six-type shape).
 		// Phase 1: type registrations + a stub std/time
@@ -710,9 +727,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	// Same shape for the auto-injected structs (Reader,
 	// Writer, HttpRequest, HttpResponse, Platform, HeaderMap,
-	// Instant / Date / Time / DateTime / TimeZone / Zoned /
-	// Span / Duration, Map, MapIter, Url) — same shadow-is-an-
-	// error policy, same monomorph-re-entry handling.
+	// Stream, Instant / Date / Time / DateTime / TimeZone /
+	// Zoned / Span / Duration, Map, MapIter, Url) — same
+	// shadow-is-an-error policy, same monomorph-re-entry
+	// handling.
 	var shadowedStructs []*ast.StructDecl
 	{
 		userStructs := map[string]*ast.StructDecl{}

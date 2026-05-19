@@ -1,0 +1,103 @@
+// std/stream — byte-stream value backing the eventual
+// `HttpRequest.body: Stream` migration
+// (docs/STDLIB-DESIGN-RESEARCH.md Rec §1).
+//
+// Phase 1 (this PR): in-memory buffer-backed Stream with a
+// `data: u8[]` payload + a `pos: i32` read cursor. Reads
+// advance the cursor; `.read_all_string()` / `.read_all()`
+// consume the remainder. The buffer is allocated up-front;
+// no lazy / chunked reads yet.
+//
+// Phase 2: replace the buffer with a host-side reader that
+// pulls bytes on demand (wasi:http/incoming-body for
+// wasi-http; TCP socket for tcp_serve). The lang-side API
+// shape stays identical — handler code written against the
+// Phase 1 surface keeps working under Phase 2 without
+// changes.
+//
+// `bytes` is `u8[]` throughout the codebase (no separate
+// type alias today). Stream constructors / readers all use
+// `u8[]` for the byte-array side.
+
+import "std/string";
+import "core/int";
+
+// `stream_from_bytes(bs)` — wrap a `u8[]` buffer as a
+// Stream. The Stream owns the buffer; subsequent reads
+// advance the cursor.
+pub function stream_from_bytes(bs: u8[]): Stream {
+    return Stream { data: bs, pos: 0 };
+}
+
+// `stream_from_string(s)` — wrap a string's bytes as a
+// Stream. Cheap byte conversion (`s.bytes()` returns the
+// fresh `u8[]`).
+pub function stream_from_string(s: string): Stream {
+    return Stream { data: s.bytes(), pos: 0 };
+}
+
+// `stream_empty()` — zero-length Stream. Useful as a default
+// / placeholder.
+pub function stream_empty(): Stream {
+    var empty: u8[] = [];
+    return Stream { data: empty, pos: 0 };
+}
+
+// `(s: Stream).size()` — total byte count of the Stream's
+// backing buffer (independent of the read cursor). Named
+// `size` rather than `len` so the method doesn't shadow the
+// built-in `len()` inside the module's own bodies (same
+// workaround as HeaderMap.size).
+pub function (s: Stream) size(): i32 {
+    return len(s.data);
+}
+
+// `(s: Stream).remaining()` — bytes between the cursor and
+// the end of the buffer. Zero when the Stream is fully
+// consumed.
+pub function (s: Stream) remaining(): i32 {
+    var total: i32 = len(s.data);
+    if (s.pos >= total) { return 0; }
+    return total - s.pos;
+}
+
+// `(s: Stream).is_empty()` — whether the Stream has any
+// unread bytes left. The dual of `.remaining() == 0`;
+// reads better at call sites that gate on "any more data?"
+pub function (s: Stream) is_empty(): boolean {
+    return s.pos >= len(s.data);
+}
+
+// `(s: Stream).read_all()` — consume the remaining bytes
+// as a fresh `u8[]`. The cursor advances to the end of the
+// buffer so subsequent reads return empty.
+//
+// Phase 2 will return `Result[u8[], IoError]` once host-
+// side reads can fail; Phase 1's in-memory buffer can't
+// fail so the unwrapped return is fine.
+pub function (s: Stream) read_all(): u8[] {
+    var rem: i32 = s.remaining();
+    if (rem == 0) {
+        var empty: u8[] = [];
+        return empty;
+    }
+    var out: u8[] = [];
+    var i: i32 = s.pos;
+    var end: i32 = len(s.data);
+    while (i < end) {
+        out = out.push(s.data[i]);
+        i = i + 1;
+    }
+    s.pos = end;
+    return out;
+}
+
+// `(s: Stream).read_all_string()` — consume the remaining
+// bytes as a UTF-8 string. Convenience over
+// `string_from_bytes(s.read_all())`. The Stream's content
+// is assumed UTF-8; non-UTF-8 input round-trips through the
+// string as raw bytes (lang's string doesn't enforce UTF-8
+// validity today).
+pub function (s: Stream) read_all_string(): string {
+    return string_from_bytes(s.read_all());
+}

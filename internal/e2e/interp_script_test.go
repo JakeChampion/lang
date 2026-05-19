@@ -1594,6 +1594,96 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptStreamPrimitive pins the Phase-1 Stream
+// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §1 Phase 2).
+// Stream is the eventual home for HttpRequest.body; today's
+// in-memory buffer-backed shape gives handler code the
+// future API surface immediately.
+func TestInterpScriptStreamPrimitive(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "stream_from_string + read_all_string round-trips",
+			source: `import "std/stream";
+function main(): i32 {
+    var s: Stream = stream.stream_from_string("hello world");
+    print(s.size().to_string());
+    print(s.read_all_string());
+    if (s.is_empty()) { print("done"); }
+    return 0;
+}`,
+			wantStdout: "11\nhello world\ndone\n",
+		},
+		{
+			name: "stream_from_bytes + read_all returns the byte buffer",
+			source: `import "std/stream";
+function main(): i32 {
+    var bs: u8[] = "abc".bytes();
+    var s: Stream = stream.stream_from_bytes(bs);
+    var got: u8[] = s.read_all();
+    print(len(got).to_string());
+    print((got[0] as i32).to_string());
+    print((got[2] as i32).to_string());
+    return 0;
+}`,
+			wantStdout: "3\n97\n99\n",
+		},
+		{
+			name: "remaining decrements as bytes are consumed",
+			source: `import "std/stream";
+function main(): i32 {
+    var s: Stream = stream.stream_from_string("abc");
+    print(s.remaining().to_string());
+    var _ : u8[] = s.read_all();
+    print(s.remaining().to_string());
+    print(s.size().to_string());
+    return 0;
+}`,
+			wantStdout: "3\n0\n3\n",
+		},
+		{
+			name: "stream_empty is consistent",
+			source: `import "std/stream";
+function main(): i32 {
+    var s: Stream = stream.stream_empty();
+    if (s.size() != 0) { return 1; }
+    if (s.remaining() != 0) { return 2; }
+    if (!s.is_empty()) { return 3; }
+    var bs: u8[] = s.read_all();
+    if (len(bs) != 0) { return 4; }
+    print("ok");
+    return 0;
+}`,
+			wantStdout: "ok\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
