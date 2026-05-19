@@ -66,8 +66,12 @@ const (
 	sysAccept    = 43
 	sysBind      = 49
 	sysListen    = 50
-	sysExitGroup = 231
-	sysGetrandom = 318
+	sysExitGroup    = 231
+	sysGetrandom    = 318
+	// clock_gettime(2): x86-64 syscall 228.
+	// Used by `__lang_now_unix_ms` for the wall-clock-now
+	// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
+	sysClockGettime = 228
 )
 
 // Options tunes the emit. Currently empty; reserved for the
@@ -206,6 +210,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesExit {
 		g.emitExitRuntime()
 	}
+	if g.usesNowUnixMs {
+		g.emitNowUnixMsRuntime()
+	}
 	if g.usesTcp {
 		g.emitTcpListenRuntime()
 		g.emitTcpAcceptRuntime()
@@ -314,6 +321,12 @@ type generator struct {
 	// exit(code) → direct exit_group syscall. Both mirror arm64.
 	usesEprint bool
 	usesExit   bool
+	// usesNowUnixMs pulls in `__lang_now_unix_ms()` — wall-
+	// clock-ms via the x86_64 `clock_gettime(CLOCK_REALTIME,
+	// &ts)` syscall (#228). Returns
+	// `tv_sec * 1000 + tv_nsec / 1_000_000` in rax as i64.
+	// Backs `time.instant_now()` on x86_64 Linux.
+	usesNowUnixMs bool
 	usesTcp             bool
 	usesEnv             bool
 	usesArgs            bool
@@ -400,6 +413,8 @@ func (g *generator) recordUse(target string) {
 		g.usesEprint = true
 	case "exit":
 		g.usesExit = true
+	case "now_unix_ms":
+		g.usesNowUnixMs = true
 	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
 		g.usesTcp = true
 		// tcp_recv allocates a string buffer for the read.
@@ -1478,6 +1493,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_eprint"
 		case "exit":
 			target = "__lang_exit"
+		case "now_unix_ms":
+			target = "__lang_now_unix_ms"
 		case "tcp_listen":
 			target = "__lang_tcp_listen"
 		case "tcp_accept":
@@ -2820,6 +2837,46 @@ func (g *generator) emitExitRuntime() {
 	g.emit("syscall")
 	g.emit("ret")
 	g.line(".size __lang_exit, .-__lang_exit")
+}
+
+// emitNowUnixMsRuntime emits `__lang_now_unix_ms()` — wall-
+// clock milliseconds since the Unix epoch via x86_64
+// `clock_gettime(CLOCK_REALTIME, &ts)` (syscall 228). The
+// kernel writes a `struct timespec { i64 tv_sec; i64 tv_nsec }`
+// to the caller-provided pointer; we compute
+// `tv_sec * 1000 + tv_nsec / 1_000_000` and return it in rax.
+//
+// Stack frame: 16-byte aligned per AMD64 ABI — sub rsp,24
+// reserves 16 bytes for timespec + 8 for alignment. rbp save
+// adds another 8, total 32 from the call's misaligned-by-8
+// rsp entry point.
+//
+// Errno is ignored (same as arm64): the realistic failure
+// modes (EFAULT / EINVAL) can't trigger here since we control
+// both the clock id and the buffer.
+func (g *generator) emitNowUnixMsRuntime() {
+	g.line("")
+	g.line(".globl __lang_now_unix_ms")
+	g.line(".type __lang_now_unix_ms, @function")
+	g.label("__lang_now_unix_ms")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 24") // 16 timespec + 8 alignment
+	g.emit("xor edi, edi") // CLOCK_REALTIME = 0
+	g.emit("mov rsi, rsp") // &timespec
+	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
+	g.emit("syscall")
+	g.emit("mov r10, [rsp]")        // r10 = tv_sec
+	g.emit("imul r10, r10, 1000")   // sec * 1000
+	g.emit("xor edx, edx")          // clear high for div
+	g.emit("mov rax, [rsp + 8]")    // rax = tv_nsec (positive)
+	g.emit("mov rcx, 1000000")
+	g.emit("div rcx")               // rax = nsec / 1e6
+	g.emit("add rax, r10")          // result
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_now_unix_ms, .-__lang_now_unix_ms")
 }
 
 // emitPutcharRuntime emits `__lang_putchar(c)` — write a
