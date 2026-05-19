@@ -43,6 +43,12 @@ pub struct VTuple { elements: Value[] }
 // against the enclosing function's bindings rather than the
 // caller's.
 pub struct VFunc { params: parser.ParamDecl[], ret_type: string, body: parser.Stmt[], captured_names: string[], captured_values: Value[] }
+// VMap models the runtime hash-map. Parallel arrays for keys
+// and values keep the implementation trivial — lookup is a
+// linear scan via value_eq. Realistic-size programs would
+// route through std/map's hash table; this is the self-host
+// port's minimal-viable storage.
+pub struct VMap { keys: Value[], values: Value[] }
 // VStruct holds a user-defined struct value. Parallel arrays
 // for field names and corresponding evaluated values.
 // type_name is the struct's declared name — useful for
@@ -54,7 +60,7 @@ pub struct VErr { msg: string }
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
 
-pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VFunc | VStruct | VErr;
+pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VFunc | VMap | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
@@ -62,6 +68,11 @@ function v_string(s: string): Value { return VString { v: s }; }
 function v_float(n: f64): Value { return VFloat { v: n }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
 function v_tuple(elements: Value[]): Value { return VTuple { elements: elements }; }
+function v_map_new(): Value {
+    var ks: Value[] = [];
+    var vs: Value[] = [];
+    return VMap { keys: ks, values: vs };
+}
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
     return VStruct { type_name: type_name, field_names: names, field_values: values };
 }
@@ -640,6 +651,69 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
 }
 
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): Value {
+    // Built-in VMap methods are dispatched ahead of the user
+    // FuncDecl walk — set / get_or / has / delete / len /
+    // keys / values are baked in rather than user-defined.
+    match (recv) {
+        VMap(m) => {
+            if (name == "set") {
+                if (len(args) != 2) { return v_err("map.set: need 2 args"); }
+                var i: i32 = 0;
+                while (i < len(m.keys)) {
+                    if (value_eq(m.keys[i], args[0])) {
+                        // Replace value at slot i.
+                        var nvs: Value[] = [];
+                        var j: i32 = 0;
+                        while (j < len(m.values)) {
+                            if (j == i) { nvs = nvs.push(args[1]); }
+                            else { nvs = nvs.push(m.values[j]); }
+                            j = j + 1;
+                        }
+                        return VMap { keys: m.keys, values: nvs };
+                    }
+                    i = i + 1;
+                }
+                return VMap { keys: m.keys.push(args[0]), values: m.values.push(args[1]) };
+            }
+            if (name == "get_or") {
+                if (len(args) != 2) { return v_err("map.get_or: need 2 args"); }
+                var gi: i32 = 0;
+                while (gi < len(m.keys)) {
+                    if (value_eq(m.keys[gi], args[0])) { return m.values[gi]; }
+                    gi = gi + 1;
+                }
+                return args[1];
+            }
+            if (name == "has") {
+                if (len(args) != 1) { return v_err("map.has: need 1 arg"); }
+                var hi: i32 = 0;
+                while (hi < len(m.keys)) {
+                    if (value_eq(m.keys[hi], args[0])) { return v_bool(true); }
+                    hi = hi + 1;
+                }
+                return v_bool(false);
+            }
+            if (name == "delete") {
+                if (len(args) != 1) { return v_err("map.delete: need 1 arg"); }
+                var nk: Value[] = [];
+                var nv: Value[] = [];
+                var di: i32 = 0;
+                while (di < len(m.keys)) {
+                    if (!value_eq(m.keys[di], args[0])) {
+                        nk = nk.push(m.keys[di]);
+                        nv = nv.push(m.values[di]);
+                    }
+                    di = di + 1;
+                }
+                return VMap { keys: nk, values: nv };
+            }
+            if (name == "len") { return v_int(len(m.keys)); }
+            if (name == "keys") { return v_arr(m.keys); }
+            if (name == "values") { return v_arr(m.values); }
+            return v_err("unknown map method `" + name + "`");
+        },
+        _ => { }
+    }
     // Derive the receiver-type name from the runtime Value
     // variant. VStruct uses its declared type_name; primitive
     // variants map to the language's primitive type-keywords
@@ -699,8 +773,14 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         match (args[0]) {
             VArr(a) => { return v_int(len(a.elements)); },
             VString(s) => { return v_int(len(s.v)); },
-            _ => { return v_err("len: argument must be array or string"); }
+            VMap(m) => { return v_int(len(m.keys)); },
+            _ => { return v_err("len: argument must be array, string, or map"); }
         }
+    }
+    // map_new(cap) — capacity arg is accepted but ignored
+    // since VMap uses dynamic parallel arrays.
+    if (name == "map_new") {
+        return v_map_new();
     }
     var i: i32 = 0;
     while (i < len(funcs)) {
@@ -777,6 +857,7 @@ function value_eq(a: Value, b: Value): boolean {
             }
         },
         VFunc(_) => { return false; },
+        VMap(_) => { return false; },
         VStruct(asv) => {
             // Structural equality: same type_name + same field
             // count + pairwise structural equality on each
@@ -1804,6 +1885,38 @@ function main(): i32 {
     match (r83) {
         VInt(i) => { if (i.v != 42) { return 830; } },
         _ => { return 831; }
+    }
+
+    // Map: set / get_or / has / len.
+    var src84: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); var got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
+    var r84: Value = run_module(src84);
+    match (r84) {
+        VInt(i) => { if (i.v != 1) { return 840; } },
+        _ => { return 841; }
+    }
+
+    // Map: get_or returns default on miss.
+    var src85: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); return m.get_or(\"missing\", 99); }";
+    var r85: Value = run_module(src85);
+    match (r85) {
+        VInt(i) => { if (i.v != 99) { return 850; } },
+        _ => { return 851; }
+    }
+
+    // Map: len after multiple sets.
+    var src86: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); m = m.set(\"c\", 3); return m.len(); }";
+    var r86: Value = run_module(src86);
+    match (r86) {
+        VInt(i) => { if (i.v != 3) { return 860; } },
+        _ => { return 861; }
+    }
+
+    // Map: overwrite same key keeps the latest value.
+    var src87: string = "function main(): i32 { var m = map_new(); m = m.set(\"k\", 1); m = m.set(\"k\", 99); return m.get_or(\"k\", 0); }";
+    var r87: Value = run_module(src87);
+    match (r87) {
+        VInt(i) => { if (i.v != 99) { return 870; } },
+        _ => { return 871; }
     }
 
     return 0;
