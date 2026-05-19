@@ -387,7 +387,17 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// call targets are resolved at module-assembly time. funcIdx
 	// already has every helper's index installed up-front by the
 	// pre-scan loop above.
-	helperIdxs := make(map[string]uint32, len(helpers.order))
+	// helperIdxs carries every name visible from a helper body —
+	// both imports and other helpers. Past versions only seeded
+	// helpers here, so any helper that referenced multiple imports
+	// (e.g. __lang_arg_at calling both wasi_args_sizes_get and
+	// wasi_args_get) silently fell back to funcidx 0 for missing
+	// keys, calling whatever import happened to land first. Always
+	// include both.
+	helperIdxs := make(map[string]uint32, len(helpers.order)+len(importNeeds.order))
+	for _, name := range importNeeds.order {
+		helperIdxs[name] = funcIdx[name]
+	}
 	for _, name := range helpers.order {
 		helperIdxs[name] = funcIdx[name]
 	}
@@ -1459,6 +1469,10 @@ func callDirectAlias(name string) string {
 		return "__lang_env_count"
 	case "arg_count":
 		return "__lang_arg_count"
+	case "arg_at":
+		return "__lang_arg_at"
+	case "env_at":
+		return "__lang_env_at"
 	}
 	return name
 }

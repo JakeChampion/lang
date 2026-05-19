@@ -116,6 +116,17 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// for the 8-byte output buffer.
 					needs.add("__lang_alloc")
 					needs.add("__lang_arg_count")
+				case "__lang_arg_at":
+					// wasi_args_sizes_get + wasi_args_get +
+					// alloc for the argv_ptrs table + argv buf.
+					// One-shot init cached in low memory.
+					needs.add("__lang_alloc")
+					needs.add("__lang_arg_at")
+				case "__lang_env_at":
+					// wasi_environ_sizes_get + wasi_environ_get
+					// + alloc for the environ_ptrs table + buf.
+					needs.add("__lang_alloc")
+					needs.add("__lang_env_at")
 				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
@@ -196,6 +207,21 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildArgCountBody,
+	},
+	"__lang_arg_at": {
+		// (i) → (data, len) — the i-th argv string. (0, 0)
+		// for i out of [0..argc). Lazily inits + caches argv
+		// in low memory on first call.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildArgAtBody,
+	},
+	"__lang_env_at": {
+		// (i) → (data, len) — the i-th environ entry as a
+		// "KEY=VALUE" string. (0, 0) for i out of range.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildEnvAtBody,
 	},
 	"__str_eq": {
 		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).

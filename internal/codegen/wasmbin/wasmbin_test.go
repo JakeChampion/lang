@@ -2626,6 +2626,141 @@ func TestEmitArgCount(t *testing.T) {
 	}
 }
 
+// TestEmitArgAt — call OpCallDirect "arg_at" with i=1 under
+// wasmtime, return the string length of the result. argv[1] is
+// "alpha" (5 bytes) since wasmtime puts the module path at
+// argv[0]. Exercises wasi_args_sizes_get + wasi_args_get + the
+// strlen loop in __lang_arg_at.
+func TestEmitArgAt(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpCallDirect, Str: "arg_at"},
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p, "alpha", "beta")
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "5" {
+		t.Fatalf("len(arg_at(1)) = %q, want 5 (\"alpha\")", got)
+	}
+}
+
+// TestEmitArgAtPrint — call arg_at(2) and pipe the (data, len)
+// pair into print. wasmtime's argv[2] is "beta"; stdout should
+// match exactly.
+func TestEmitArgAtPrint(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: void(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpCallDirect, Str: "arg_at"},
+			{Kind: ir.OpCallDirect, Str: "print"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p, "alpha", "beta")
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := so.String(); got != "beta" {
+		t.Fatalf("arg_at(2) printed = %q, want \"beta\"", got)
+	}
+}
+
+// TestEmitArgAtOutOfRange — i out of [0, argc) must return
+// (0, 0), so str_len reports 0.
+func TestEmitArgAtOutOfRange(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 999},
+			{Kind: ir.OpCallDirect, Str: "arg_at"},
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "0" {
+		t.Fatalf("arg_at(999) len = %q, want 0", got)
+	}
+}
+
+// TestEmitEnvAt — call env_at(0) and assert it produces *some*
+// output via print. wasmtime sandboxes env by default, but
+// --env passes values through. We pass FOO=bar and check the
+// 0th entry is "FOO=bar".
+func TestEmitEnvAt(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: void(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpCallDirect, Str: "env_at"},
+			{Kind: ir.OpCallDirect, Str: "print"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--env", "FOO=bar", "--invoke", "main", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := so.String(); got != "FOO=bar" {
+		t.Fatalf("env_at(0) = %q, want \"FOO=bar\"", got)
+	}
+}
+
 // TestEmitExit — call OpCallDirect "exit" with a specific code
 // and verify wasmtime's exit code matches. The alias routes to
 // __lang_exit which invokes wasi_proc_exit.
