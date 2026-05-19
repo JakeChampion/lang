@@ -899,6 +899,24 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			0,
 			"out=1\n",
 		},
+		{
+			"exit-from-helper",
+			"function check(): i32 { exit(7); return 0; } function main(): i32 { check(); return 99; }",
+			7,
+			"",
+		},
+		{
+			"exit-before-print",
+			"function main(): i32 { print(\"a\"); exit(3); print(\"b\"); return 0; }",
+			3,
+			"a",
+		},
+		{
+			"exit-zero",
+			"function main(): i32 { exit(0); return 5; }",
+			0,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
