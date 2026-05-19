@@ -26,6 +26,12 @@ import "./parser";
 pub struct VInt { v: i32 }
 pub struct VBool { v: boolean }
 pub struct VString { v: string }
+// VFloat carries a 64-bit IEEE 754 float. Literals tagged
+// `is_float = true` by the parser produce a VFloat; arithmetic
+// + comparison operators on two VFloats stay in float-land.
+// Mixed i32/f64 isn't supported — explicit cast at the source
+// level would route through a future numeric coercion pass.
+pub struct VFloat { v: f64 }
 pub struct VArr { elements: Value[] }
 // VStruct holds a user-defined struct value. Parallel arrays
 // for field names and corresponding evaluated values.
@@ -38,11 +44,12 @@ pub struct VErr { msg: string }
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
 
-pub type Value = VInt | VBool | VString | VArr | VStruct | VErr;
+pub type Value = VInt | VBool | VString | VFloat | VArr | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
+function v_float(n: f64): Value { return VFloat { v: n }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
     return VStruct { type_name: type_name, field_names: names, field_values: values };
@@ -152,6 +159,39 @@ function str_to_i32(s: string): i32 {
     return acc;
 }
 
+// str_to_f64 parses a decimal float literal: an optional `-`,
+// integer digits, optional `.` + fractional digits. No
+// exponents in this cut — the parser's float literals are
+// "%d.%d" shaped. Walks the integer part first, then the
+// fractional part with a 1/10**k divisor.
+function str_to_f64(s: string): f64 {
+    var n: i32 = len(s);
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (n > 0 && s[0] == 45) { neg = true; i = 1; }  // '-' = 0x2D
+    var int_part: f64 = 0.0;
+    var frac_part: f64 = 0.0;
+    var divisor: f64 = 1.0;
+    var seen_dot: boolean = false;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 46) { seen_dot = true; i = i + 1; continue; }  // '.' = 0x2E
+        if (b < 48 || b > 57) { break; }
+        var d: i32 = b - 48;
+        var df: f64 = (d as f64);
+        if (seen_dot) {
+            divisor = divisor * 10.0;
+            frac_part = frac_part + (df / divisor);
+        } else {
+            int_part = int_part * 10.0 + df;
+        }
+        i = i + 1;
+    }
+    var v: f64 = int_part + frac_part;
+    if (neg) { v = 0.0 - v; }
+    return v;
+}
+
 // =================== EVAL ====================
 
 // eval_expr: a depth-first walk of the parser's Expr tree.
@@ -161,7 +201,10 @@ function str_to_i32(s: string): i32 {
 // checker's TypeUnknown threading.
 function eval_expr(e: parser.Expr, env: Env): Value {
     match (e) {
-        parser.ExprNumber(n) => { return v_int(str_to_i32(n.text)); },
+        parser.ExprNumber(n) => {
+            if (n.is_float) { return v_float(str_to_f64(n.text)); }
+            return v_int(str_to_i32(n.text));
+        },
         parser.ExprBool(b) => { return v_bool(b.value); },
         parser.ExprString(s) => { return v_string(s.value); },
         parser.ExprIdent(id) => { return env.lookup(id.name); },
@@ -185,7 +228,13 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             _ => { return v_err("`+` rhs not string"); }
                         }
                     },
-                    _ => { return v_err("`+` lhs not i32 or string"); }
+                    VFloat(lf) => {
+                        match (rv) {
+                            VFloat(rf) => { return v_float(lf.v + rf.v); },
+                            _ => { return v_err("`+` rhs not f64"); }
+                        }
+                    },
+                    _ => { return v_err("`+` lhs not i32, string, or f64"); }
                 }
             }
             if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
@@ -205,7 +254,25 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             _ => { return v_err("arithmetic rhs not i32"); }
                         }
                     },
-                    _ => { return v_err("arithmetic lhs not i32"); }
+                    VFloat(lf) => {
+                        match (rv) {
+                            VFloat(rf) => {
+                                if (b.op == "-") { return v_float(lf.v - rf.v); }
+                                if (b.op == "*") { return v_float(lf.v * rf.v); }
+                                if (b.op == "/") {
+                                    if (rf.v == 0.0) { return v_err("float division by zero"); }
+                                    return v_float(lf.v / rf.v);
+                                }
+                                // `%` on floats isn't supported — the
+                                // semantics differ across languages
+                                // and the parser side doesn't yet
+                                // distinguish.
+                                return v_err("`%` on f64 is unsupported");
+                            },
+                            _ => { return v_err("arithmetic rhs not f64"); }
+                        }
+                    },
+                    _ => { return v_err("arithmetic lhs not i32 or f64"); }
                 }
             }
             if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
@@ -221,7 +288,18 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             _ => { return v_err("comparison rhs not i32"); }
                         }
                     },
-                    _ => { return v_err("comparison lhs not i32"); }
+                    VFloat(lf) => {
+                        match (rv) {
+                            VFloat(rf) => {
+                                if (b.op == "<") { return v_bool(lf.v < rf.v); }
+                                if (b.op == "<=") { return v_bool(lf.v <= rf.v); }
+                                if (b.op == ">") { return v_bool(lf.v > rf.v); }
+                                return v_bool(lf.v >= rf.v);
+                            },
+                            _ => { return v_err("comparison rhs not f64"); }
+                        }
+                    },
+                    _ => { return v_err("comparison lhs not i32 or f64"); }
                 }
             }
             if (b.op == "==" || b.op == "!=") {
@@ -251,7 +329,8 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             if (u.op == "-") {
                 match (ov) {
                     VInt(i) => { return v_int(0 - i.v); },
-                    _ => { return v_err("unary `-` operand not i32"); }
+                    VFloat(f) => { return v_float(0.0 - f.v); },
+                    _ => { return v_err("unary `-` operand not i32 or f64"); }
                 }
             }
             if (u.op == "!") {
@@ -523,6 +602,12 @@ function value_eq(a: Value, b: Value): boolean {
         VString(av) => {
             match (b) {
                 VString(bs) => { return av.v == bs.v; },
+                _ => { return false; }
+            }
+        },
+        VFloat(af) => {
+            match (b) {
+                VFloat(bf) => { return af.v == bf.v; },
                 _ => { return false; }
             }
         },
@@ -1210,6 +1295,62 @@ function main(): i32 {
     match (r49) {
         VErr(_) => { },
         _ => { return 490; }
+    }
+
+    // Float literal — `3.14` evaluates to a VFloat.
+    var r50: Value = run_source("return 3.14;");
+    match (r50) {
+        VFloat(f) => { if (f.v < 3.13 || f.v > 3.15) { return 500; } },
+        _ => { return 501; }
+    }
+
+    // Float arithmetic: `1.5 + 2.5` → 4.0.
+    var r51: Value = run_source("return 1.5 + 2.5;");
+    match (r51) {
+        VFloat(f) => { if (f.v < 3.99 || f.v > 4.01) { return 510; } },
+        _ => { return 511; }
+    }
+
+    // Float multiplication: `2.5 * 4.0` → 10.0.
+    var r52: Value = run_source("return 2.5 * 4.0;");
+    match (r52) {
+        VFloat(f) => { if (f.v < 9.99 || f.v > 10.01) { return 520; } },
+        _ => { return 521; }
+    }
+
+    // Float comparison: `3.14 > 3.0` → true.
+    var r53: Value = run_source("return 3.14 > 3.0;");
+    match (r53) {
+        VBool(b) => { if (!b.v) { return 530; } },
+        _ => { return 531; }
+    }
+
+    // Float equality through ==: `1.5 == 1.5` → true.
+    var r54: Value = run_source("return 1.5 == 1.5;");
+    match (r54) {
+        VBool(b) => { if (!b.v) { return 540; } },
+        _ => { return 541; }
+    }
+
+    // Mixed-numeric `+` is rejected: `1 + 2.5` → VErr.
+    var r55: Value = run_source("return 1 + 2.5;");
+    match (r55) {
+        VErr(_) => { },
+        _ => { return 550; }
+    }
+
+    // Float division: `10.0 / 4.0` → 2.5.
+    var r56: Value = run_source("return 10.0 / 4.0;");
+    match (r56) {
+        VFloat(f) => { if (f.v < 2.49 || f.v > 2.51) { return 560; } },
+        _ => { return 561; }
+    }
+
+    // Unary minus on a float: `-3.5` → -3.5.
+    var r57: Value = run_source("return 0.0 - 3.5;");
+    match (r57) {
+        VFloat(f) => { if (f.v > 0.0 - 3.49 || f.v < 0.0 - 3.51) { return 570; } },
+        _ => { return 571; }
     }
 
     return 0;

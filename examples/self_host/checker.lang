@@ -45,6 +45,9 @@ import "./parser";
 pub struct TypeI32 { tag: i32 }       // tag fields are placeholder
 pub struct TypeBool { tag: i32 }      // payload — variants need a
 pub struct TypeString { tag: i32 }    // shape; the field is unused.
+pub struct TypeFloat { tag: i32 }     // f64 — `f32` aliases the same
+                                      // type in this cut (no width
+                                      // distinction in the checker).
 // Array of homogeneous elements. elem can itself be any Type, so
 // `i32[][]` is representable. An empty literal `[]` defaults to
 // TypeArray { elem: TypeUnknown(...) } — the checker rejects it
@@ -64,7 +67,7 @@ pub struct TypeStruct { name: string }
 pub struct TypeUnion { name: string }
 pub struct TypeUnknown { reason: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeArray | TypeStruct | TypeUnion | TypeUnknown;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeUnion | TypeUnknown;
 
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
@@ -73,6 +76,7 @@ pub type Type = TypeI32 | TypeBool | TypeString | TypeArray | TypeStruct | TypeU
 function t_i32(): Type { return TypeI32 { tag: 0 }; }
 function t_bool(): Type { return TypeBool { tag: 0 }; }
 function t_string(): Type { return TypeString { tag: 0 }; }
+function t_float(): Type { return TypeFloat { tag: 0 }; }
 function t_array(elem: Type): Type { return TypeArray { elem: elem }; }
 function t_struct(name: string): Type { return TypeStruct { name: name }; }
 function t_union(name: string): Type { return TypeUnion { name: name }; }
@@ -99,6 +103,12 @@ function type_eq(a: Type, b: Type): boolean {
         TypeString(_) => {
             match (b) {
                 TypeString(_) => { return true; },
+                _ => { return false; }
+            }
+        },
+        TypeFloat(_) => {
+            match (b) {
+                TypeFloat(_) => { return true; },
                 _ => { return false; }
             }
         },
@@ -325,6 +335,7 @@ function type_from_name(name: string): Type {
     if (name == "i32") { return t_i32(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
+    if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
     return t_unknown("unrecognised type name: " + name);
 }
 
@@ -336,9 +347,7 @@ function type_from_name(name: string): Type {
 function check_expr(e: parser.Expr, s: Scope): Type {
     match (e) {
         parser.ExprNumber(n) => {
-            // Floats aren't a separate type in this cut — keep
-            // both `is_float` flags lumped into i32 until the
-            // checker grows a Float kind.
+            if (n.is_float) { return t_float(); }
             return t_i32();
         },
         parser.ExprBool(_) => { return t_bool(); },
@@ -356,19 +365,30 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                 if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
                     return t_i32();
                 }
+                if (type_eq(lt, t_float()) && type_eq(rt, t_float())) {
+                    return t_float();
+                }
                 return t_unknown("`+` operands type mismatch");
             }
             if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
                 if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
                     return t_i32();
                 }
-                return t_unknown("arithmetic op `" + b.op + "` requires i32 operands");
+                // `%` on floats isn't supported — interp surfaces
+                // VErr; checker is lenient and just rejects it.
+                if (b.op != "%" && type_eq(lt, t_float()) && type_eq(rt, t_float())) {
+                    return t_float();
+                }
+                return t_unknown("arithmetic op `" + b.op + "` requires matching i32 or f64 operands");
             }
             if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
                 if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
                     return t_bool();
                 }
-                return t_unknown("comparison op `" + b.op + "` requires i32 operands");
+                if (type_eq(lt, t_float()) && type_eq(rt, t_float())) {
+                    return t_bool();
+                }
+                return t_unknown("comparison op `" + b.op + "` requires matching i32 or f64 operands");
             }
             if (b.op == "==" || b.op == "!=") {
                 if (type_eq(lt, rt) && !is_unknown(lt)) {
@@ -388,7 +408,8 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             var ot: Type = check_expr(u.operand, s);
             if (u.op == "-") {
                 if (type_eq(ot, t_i32())) { return t_i32(); }
-                return t_unknown("unary `-` requires i32 operand");
+                if (type_eq(ot, t_float())) { return t_float(); }
+                return t_unknown("unary `-` requires i32 or f64 operand");
             }
             if (u.op == "!") {
                 if (type_eq(ot, t_bool())) { return t_bool(); }
@@ -856,6 +877,7 @@ function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
     if (name == "i32") { return t_i32(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
+    if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
     var i: i32 = 0;
     while (i < len(structs)) {
         if (structs[i].name == name) { return t_struct(name); }
@@ -868,6 +890,7 @@ function type_from_name_with_struct_names(name: string, struct_names: string[]):
     if (name == "i32") { return t_i32(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
+    if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
     var i: i32 = 0;
     while (i < len(struct_names)) {
         if (struct_names[i] == name) { return t_struct(name); }
@@ -885,6 +908,7 @@ function type_from_name_with_structs_unions(name: string, structs: StructSig[], 
     if (name == "i32") { return t_i32(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
+    if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
     var i: i32 = 0;
     while (i < len(structs)) {
         if (structs[i].name == name) { return t_struct(name); }
@@ -902,6 +926,7 @@ function type_from_name_with_names_and_unions(name: string, struct_names: string
     if (name == "i32") { return t_i32(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
+    if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
     var i: i32 = 0;
     while (i < len(struct_names)) {
         if (struct_names[i] == name) { return t_struct(name); }
@@ -1347,6 +1372,32 @@ function main(): i32 {
     var mod38: parser.Module = parser.parse_module(lexer.tokenize(src38));
     var mt38: ModuleTypes = check_module(mod38);
     if (!mt38.all_well_typed) { return 380; }
+
+    // Float literal + arithmetic — well-typed. var f: f64
+    // catches the annotation; 1.5 + 2.5 type-checks via the
+    // new f64 arm.
+    var src39: string = "function main(): i32 { var f: f64 = 1.5 + 2.5; var g: f64 = f * 2.0; return 0; }";
+    var mod39: parser.Module = parser.parse_module(lexer.tokenize(src39));
+    var mt39: ModuleTypes = check_module(mod39);
+    if (!mt39.all_well_typed) { return 390; }
+
+    // Mixed-numeric `+` rejected: `1 + 2.5` doesn't unify.
+    var src40: string = "function main(): i32 { var f: f64 = 1 + 2.5; return 0; }";
+    var mod40: parser.Module = parser.parse_module(lexer.tokenize(src40));
+    var mt40: ModuleTypes = check_module(mod40);
+    if (mt40.all_well_typed) { return 400; }
+
+    // Float comparison — well-typed, returns bool.
+    var src41: string = "function main(): i32 { var b: bool = 3.14 > 3.0; return 0; }";
+    var mod41: parser.Module = parser.parse_module(lexer.tokenize(src41));
+    var mt41: ModuleTypes = check_module(mod41);
+    if (!mt41.all_well_typed) { return 410; }
+
+    // `%` on floats rejected.
+    var src42: string = "function main(): i32 { var f: f64 = 5.5 % 2.0; return 0; }";
+    var mod42: parser.Module = parser.parse_module(lexer.tokenize(src42));
+    var mt42: ModuleTypes = check_module(mod42);
+    if (mt42.all_well_typed) { return 420; }
 
     return 0;
 }
