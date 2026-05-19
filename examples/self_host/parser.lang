@@ -419,9 +419,9 @@ function parse_primary(p: Par): ExprResult {
                 var lret: string = "";
                 if (p.peek_punct() == ":") {
                     p = p.advance();
-                    lret = p.peek_ident();
-                    if (len(lret) == 0) { lret = p.peek_keyword(); }
-                    if (len(lret) > 0) { p = p.advance(); }
+                    var ltr: TypeNameResult = parse_type_name(p);
+                    p = ltr.par;
+                    lret = ltr.name;
                 }
                 var lblk: BlockResult = parse_block(p);
                 p = lblk.par;
@@ -761,14 +761,9 @@ function parse_stmt(p: Par): StmtResult {
         var type_name: string = "";
         if (p.peek_punct() == ":") {
             p = p.advance();
-            // Type names arrive as TokIdent for user names
-            // (Circle, Shape) and as TokKeyword for primitives
-            // (i32, bool, string). Try ident first, fall back
-            // to keyword.
-            var tn: string = p.peek_ident();
-            if (len(tn) == 0) { tn = p.peek_keyword(); }
-            type_name = tn;
-            p = p.advance();
+            var vtr: TypeNameResult = parse_type_name(p);
+            p = vtr.par;
+            type_name = vtr.name;
         }
         if (p.peek_punct() != "=") {
             return StmtResult { par: p, stmt: s_unknown("missing = in var") };
@@ -936,9 +931,9 @@ function parse_func_decl(p: Par): FuncResult {
             p = p.advance();
             if (p.peek_punct() == ":") {
                 p = p.advance();
-                receiver_type = p.peek_ident();
-                if (len(receiver_type) == 0) { receiver_type = p.peek_keyword(); }
-                if (len(receiver_type) > 0) { p = p.advance(); }
+                var rtr: TypeNameResult = parse_type_name(p);
+                p = rtr.par;
+                receiver_type = rtr.name;
             }
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
@@ -966,9 +961,9 @@ function parse_func_decl(p: Par): FuncResult {
     var ret_type: string = "";
     if (p.peek_punct() == ":") {
         p = p.advance();
-        ret_type = p.peek_ident();
-        if (len(ret_type) == 0) { ret_type = p.peek_keyword(); }
-        if (len(ret_type) > 0) { p = p.advance(); }
+        var fr_tr: TypeNameResult = parse_type_name(p);
+        p = fr_tr.par;
+        ret_type = fr_tr.name;
     }
     var blk: BlockResult = parse_block(p);
     p = blk.par;
@@ -994,10 +989,8 @@ function parse_struct_field(p: Par): StructFieldResult {
         return StructFieldResult { par: p, field: StructFieldDecl { name: name, type_name: "" } };
     }
     p = p.advance();
-    var ty: string = p.peek_ident();
-    if (len(ty) == 0) { ty = p.peek_keyword(); }
-    if (len(ty) > 0) { p = p.advance(); }
-    return StructFieldResult { par: p, field: StructFieldDecl { name: name, type_name: ty } };
+    var sftr: TypeNameResult = parse_type_name(p);
+    return StructFieldResult { par: sftr.par, field: StructFieldDecl { name: name, type_name: sftr.name } };
 }
 
 // parse_struct_decl consumes `struct Name { field, field, … }`
@@ -1735,6 +1728,27 @@ function main(): i32 {
     if (len(modGT.funcs) != 1) { return 1080; }
     if (modGT.funcs[0].params[0].type_name != "Map[string, i32]") { return 1081; }
     if (modGT.funcs[0].params[1].type_name != "string") { return 1082; }
+
+    // Generic ret_type spelling captured through parse_type_name.
+    var srcGR: string = "function fresh(): Map[string, i32] { return null; }";
+    var modGR: Module = parse_module(lexer.tokenize(srcGR));
+    if (modGR.funcs[0].ret_type != "Map[string, i32]") { return 1083; }
+
+    // Generic struct field type.
+    var srcGS: string = "struct Cache { entries: Map[string, i32] } function main(): i32 { return 0; }";
+    var modGS: Module = parse_module(lexer.tokenize(srcGS));
+    if (len(modGS.structs) != 1) { return 1084; }
+    if (modGS.structs[0].fields[0].type_name != "Map[string, i32]") { return 1085; }
+
+    // Generic var-annotation.
+    var srcGV: string = "var m: Map[string, i32] = a; return 0;";
+    var progGV: Stmt[] = parse_program(lexer.tokenize(srcGV));
+    match (progGV[0]) {
+        StmtVar(v) => {
+            if (v.type_name != "Map[string, i32]") { return 1086; }
+        },
+        _ => { return 1087; }
+    }
 
     // Lambda expression: `function (x: i32): i32 { return x + 1; }`.
     var srcLm: string = "var f = function (x: i32): i32 { return x + 1; }; return 0;";
