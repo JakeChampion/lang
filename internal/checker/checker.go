@@ -21,11 +21,12 @@ import (
 )
 
 type Error struct {
-	Pos  ast.Position
-	Span int    // optional: token length for `^~~~~` underline; 0 = caret only
-	Note string // optional: "did you mean foo?" hint
-	Msg  string
-	Path string // source file path; filled by errf from c.current.SourceModule
+	Pos     ast.Position
+	Span    int    // optional: token length for `^~~~~` underline; 0 = caret only
+	Note    string // optional: "did you mean foo?" hint
+	Msg     string
+	Path    string // source file path; filled by errf from c.current.SourceModule
+	ErrCode string // optional: stable error code (E001…), surfaces in the header + `lang explain` output
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
@@ -34,6 +35,7 @@ func (e *Error) Length() int            { return e.Span }
 func (e *Error) Hint() string           { return e.Note }
 func (e *Error) File() string           { return e.Path }
 func (e *Error) setFile(p string)       { e.Path = p }
+func (e *Error) Code() string           { return e.ErrCode }
 
 // Info captures everything codegen needs that the checker discovered:
 // the inferred type of every var without an annotation, and a per-function
@@ -2536,6 +2538,21 @@ func (c *checker) errf(pos ast.Position, format string, args ...any) {
 	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile()})
 }
 
+// errfCode is the code-stamping sibling of errf — assigns a
+// stable error code (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4)
+// to the emission. Codes line up with the per-code catalogue
+// under `internal/diag/explanations/`; surfacing them in the
+// header lets users search for the error + look up the
+// long-form explanation via `lang explain CODE`.
+//
+// Phase 1: codes stamped on a handful of common error sites
+// (undefined identifier, type mismatches, missing struct
+// fields, wrong-arity calls). Future PRs expand coverage —
+// each stamping is mechanical, just touches the errf call.
+func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
+	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile(), ErrCode: code})
+}
+
 // errIdent reports an unresolved-name error and tries to attach a
 // "did you mean foo?" hint by scanning every name visible in scope
 // (locals, params, top-level functions). The error span covers the
@@ -2544,10 +2561,11 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 	cands := c.collectNames(s)
 	suggestion := diag.Suggest(n.Name, cands)
 	e := &Error{
-		Pos:  n.P,
-		Span: len(n.Name),
-		Msg:  fmt.Sprintf(format, args...),
-		Path: c.currentFile(),
+		Pos:     n.P,
+		Span:    len(n.Name),
+		Msg:     fmt.Sprintf(format, args...),
+		Path:    c.currentFile(),
+		ErrCode: "E001",
 	}
 	if suggestion != "" {
 		e.Note = fmt.Sprintf("did you mean %q?", suggestion)
@@ -3099,7 +3117,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// concrete before monomorph runs.
 		c.refineCallTypeArgsFromDest(n.Value, want)
 		if got != nil && !assignable(want, got) {
-			c.errf(n.P, "return type mismatch: function returns %s but expression is %s", want, got)
+			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s", want, got)
 		}
 	case *ast.Defer:
 		// Just type-check the expression; its result is
@@ -3152,7 +3170,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
 			if !assignable(n.Type, got) {
-				c.errf(n.P, "cannot assign %s to variable of type %s", got, n.Type)
+				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s", got, n.Type)
 			}
 		}
 		s.names[n.Name] = n.Type
@@ -4478,7 +4496,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		_ = methodSubResult
 		if len(n.Args) != len(ft.Params) {
-			c.errf(n.P, "function expects %d arguments, got %d", len(ft.Params), len(n.Args))
+			c.errfCode(n.P, "E004", "function expects %d arguments, got %d", len(ft.Params), len(n.Args))
 		}
 		// If the callee resolves to a generic FuncDecl, build its
 		// type-arg substitution. Two source shapes:
@@ -4779,7 +4797,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !assignable(lt, rt) {
-			c.errf(n.P, "cannot assign %s to %s", rt, lt)
+			c.errfCode(n.P, "E003", "cannot assign %s to %s", rt, lt)
 		}
 		// Restrict assignment targets the same way `=` does for
 		// arrays: only Ident, Index and FieldAccess are addressable.
@@ -5012,7 +5030,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		for _, f := range sd.Fields {
 			if !seen[f.Name] {
-				c.errf(n.P, "struct literal missing field %q", f.Name)
+				c.errfCode(n.P, "E005", "struct literal missing field %q", f.Name)
 			}
 		}
 		if len(sd.TypeParams) > 0 {
