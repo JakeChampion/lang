@@ -703,7 +703,17 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
         },
         parser.ExprTuple(_) => { return "tuple"; },
         parser.ExprStructLit(_) => { return "struct"; },
-        parser.ExprLambda(_) => { return "fn"; },
+        parser.ExprLambda(lm) => {
+            // Encode the return type in the tag so a later
+            // `f()` call site can recover it from the local's
+            // recorded type. The closure-box itself is just an
+            // 8-byte pointer regardless of return shape, so
+            // capture / call machinery is unaffected; this is
+            // purely for the type-aware dispatch on the result
+            // (e.g. `print(f())` needs to know the result is a
+            // string to route through `__lang_print_str`).
+            return "fn_" + ret_tag_of(lm.ret_type);
+        },
         parser.ExprIdent(id) => { return s.local_type_of(id.name); },
         parser.ExprBinary(b) => {
             if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
@@ -744,6 +754,21 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "args_count") { return "i32"; }
                     if (id.name == "arg_at") { return "string"; }
                     if (id.name == "str_split") { return "array_string"; }
+                    // Local-callee path: when `f()` invokes a
+                    // local var that was bound to a lambda, its
+                    // recorded type is `fn_<ret>` (see the
+                    // ExprLambda match arm above). Strip the
+                    // prefix so downstream dispatch (`print(f())`,
+                    // string concat, etc.) sees the actual return
+                    // type rather than `"unknown"`.
+                    if (s.has_local(id.name)) {
+                        var lt: string = s.local_type_of(id.name);
+                        if (lt == "fn_string") { return "string"; }
+                        if (lt == "fn_i32") { return "i32"; }
+                        if (lt == "fn_bool") { return "bool"; }
+                        if (lt == "fn_array_string") { return "array_string"; }
+                        if (lt == "fn_array_i32") { return "array_i32"; }
+                    }
                     var fi: i32 = 0;
                     while (fi < len(s.funcs)) {
                         if (s.funcs[fi].name == id.name && len(s.funcs[fi].receiver_type) == 0) {
@@ -2070,6 +2095,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    stp x29, x30, [sp, #-16]!\n");
             s = s.write("    mov x29, sp\n");
             var saved_locals: string[] = s.local_names;
+            var saved_local_types: string[] = s.local_types;
             var saved_in_function: boolean = s.in_function;
             var argc_l: i32 = len(lm.params);
             var n_body_locals_l: i32 = count_locals(lm.body);
@@ -2130,7 +2156,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
                 funcs: s.funcs,
-                local_types: s.local_types,
+                local_types: saved_local_types,
                 needs_str_concat: s.needs_str_concat,
                 needs_str_eq: s.needs_str_eq,
                 needs_str_print: s.needs_str_print,
