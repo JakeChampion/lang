@@ -174,6 +174,15 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// in a 4-byte-stride array. Length prefix
 					// at [base-4].
 					needs.add("__arr_idx")
+				case "__arr_idx_1":
+					// Stride-1 byte-array indexing.
+					needs.add("__arr_idx_1")
+				case "__arr_idx_2":
+					// Stride-2 halfword-array indexing.
+					needs.add("__arr_idx_2")
+				case "__arr_idx_8":
+					// Stride-8 i64 / f64 array indexing.
+					needs.add("__arr_idx_8")
 				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
@@ -371,6 +380,24 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrIdxBody,
+	},
+	"__arr_idx_1": {
+		// (base, i) → byte address. Stride 1 (byte arrays).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrIdx1Body,
+	},
+	"__arr_idx_2": {
+		// (base, i) → byte address. Stride 2 (halfword arrays).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrIdx2Body,
+	},
+	"__arr_idx_8": {
+		// (base, i) → byte address. Stride 8 (i64/f64 arrays).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrIdx8Body,
 	},
 	"__str_eq": {
 		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).
@@ -958,3 +985,40 @@ func buildArrIdxBody(_ map[string]uint32) []byte {
 	body = numeric.InstI32Add(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
+
+// buildArrIdxStride is the common-shape factory used by the
+// stride-1/2/8 variants. stride=4 is __arr_idx (buildArrIdxBody).
+func buildArrIdxStride(stride int32) func(map[string]uint32) []byte {
+	return func(_ map[string]uint32) []byte {
+		var body []byte
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 0)
+		body = numeric.InstI32LtS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstUnreachable(body)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstUnreachable(body)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 1)
+		if stride == 1 {
+			body = numeric.InstI32Add(body)
+		} else {
+			body = inst.InstI32Const(body, stride)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+		}
+		return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	}
+}
+
+func buildArrIdx1Body(idxs map[string]uint32) []byte { return buildArrIdxStride(1)(idxs) }
+func buildArrIdx2Body(idxs map[string]uint32) []byte { return buildArrIdxStride(2)(idxs) }
+func buildArrIdx8Body(idxs map[string]uint32) []byte { return buildArrIdxStride(8)(idxs) }
