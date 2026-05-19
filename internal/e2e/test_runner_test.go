@@ -1788,6 +1788,40 @@ func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/http_response_headers_migrated_test.lang`
+// — Lang port of `TestInterpScriptHttpResponseHeaders`.
+// Fifth migration in the runner-adoption campaign.
+// Original was 4 table-driven subprocess cases; migrated
+// to 6 in-process `r.it(...)` cases — added the stronger
+// "bogus 9999 doesn't leak into wire" negative form and
+// the explicit "duplicates preserve order" invariant
+// alongside the whole-wire compare. Compares the raw
+// wire returned by `http_serialize_response` directly via
+// `assert_eq_string` instead of routing through
+// print-then-grep-stdout (cleaner since the original's
+// trailing newline was print()'s, not the wire's).
+func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_response_headers_migrated_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HTTP response headers (migrated)",
+		"ok 1 - user-set headers before auto block",
+		"ok 3 - user Content-Length overridden by auto",
+		"ok 4 - bogus Content-Length absent from wire",
+		"ok 6 - duplicate Set-Cookie preserves order",
+		"# pass 6",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
