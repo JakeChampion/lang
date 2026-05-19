@@ -25,6 +25,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/langstring"
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
@@ -72,8 +73,34 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		return idx
 	}
 
+	// String interning state for OpConstStr's heap-form path.
+	// Inline-form strings (≤7 bytes via langstring.FitsInlineWasm)
+	// pack into the two i32.consts directly and don't visit the
+	// data section. Heap-form strings get a unique offset; the
+	// data section's bytes are accumulated here in declaration
+	// order, with the per-entry offset stored alongside the bytes.
+	// stringStart matches the WAT path's choice of 1024 so the
+	// data segment doesn't collide with the low-memory pair-cells
+	// the closures slice will later allocate (the WAT path uses
+	// the same convention).
+	stringPool := map[string]int{}
+	const stringStart = 1024
+	stringNextOff := stringStart
+	var dataBytes []byte
+	internString := func(s string) int {
+		if off, ok := stringPool[s]; ok {
+			return off
+		}
+		off := stringNextOff
+		stringPool[s] = off
+		dataBytes = append(dataBytes, s...)
+		stringNextOff = off + len(s)
+		return off
+	}
+
 	ctx := &emitCtx{
-		funcIdx: funcIdx,
+		funcIdx:       funcIdx,
+		internString:  internString,
 		addSigType: func(sig *ast.FuncType) (uint32, error) {
 			params := make([]byte, 0, len(sig.Params))
 			for _, pt := range sig.Params {
@@ -153,6 +180,24 @@ func Emit(prog *ir.Program) ([]byte, error) {
 			return nil, fmt.Errorf("wasmbin: %s: %w", fn.Name, err)
 		}
 		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+	}
+
+	// Heap-form strings → data segment. Even if no other op used
+	// memory, the data segment requires a memory; force one in
+	// that case. The single segment lives at stringStart (1024)
+	// matching the WAT path so subsequent heap allocations land
+	// after the literals.
+	if len(dataBytes) > 0 {
+		if !m.MemoryPresent {
+			m.MemoryPresent = true
+			m.MemoryMin = 1
+			m.MemoryMax = -1
+			m.ExportNames = append(m.ExportNames, "memory")
+			m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
+			m.ExportIdxs = append(m.ExportIdxs, 0)
+		}
+		m.DataOffsets = []int32{int32(stringStart)}
+		m.DataInits = [][]byte{dataBytes}
 	}
 
 	return module.Build(m), nil
@@ -244,6 +289,10 @@ type emitCtx struct {
 	// typeidx, lazily inserting into the type section. Used by
 	// OpCallIndirect, whose op.Sig carries the static signature.
 	addSigType func(*ast.FuncType) (uint32, error)
+	// internString returns the data-segment offset for the
+	// heap-form bytes of s, interning so repeats share an
+	// address. Used by OpConstStr.
+	internString func(string) int
 }
 
 // emitBody walks fn.Ops and returns the function's body bytes plus
@@ -308,6 +357,24 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return inst.InstF32Const(body, math.Float32bits(op.F32)), nil
 	case ir.OpConstF64:
 		return inst.InstF64Const(body, math.Float64bits(op.F64)), nil
+
+	case ir.OpConstStr:
+		// Two-word string ABI: every OpConstStr pushes `(data, len)`
+		// onto the operand stack as two i32 values.
+		// Inline-form (≤7 bytes, ASCII-only via FitsInlineWasm)
+		// packs into the two i32.consts directly and doesn't touch
+		// the data section. Heap-form interns into the data segment
+		// and emits (data_offset, length).
+		if langstring.FitsInlineWasm(len(op.Str)) {
+			data, length := langstring.PackInlineWasm([]byte(op.Str))
+			body = inst.InstI32Const(body, int32(data))
+			body = inst.InstI32Const(body, int32(length))
+			return body, nil
+		}
+		off := ctx.internString(op.Str)
+		body = inst.InstI32Const(body, int32(off))
+		body = inst.InstI32Const(body, int32(len(op.Str)))
+		return body, nil
 
 	case ir.OpLoadLocal:
 		return inst.InstLocalGet(body, uint32(op.I32)), nil

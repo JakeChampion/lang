@@ -1066,6 +1066,221 @@ func TestEmitCallIndirectMissingSig(t *testing.T) {
 	}
 }
 
+// TestEmitConstStrHeapForm — string literal >7 bytes goes into
+// the data section, OpConstStr pushes (offset, len). Tests both:
+// (a) return-the-length: stash len in a scratch local, drop the
+// data ptr, push len back. Asserts len == 12 for "hello, world".
+// (b) return-the-first-byte: drop len, load8_u from data ptr.
+// Asserts byte 0 == 'h' (104).
+func TestEmitConstStrHeapForm(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:         "string_len",
+			ReturnType:   i32(),
+			ScratchTypes: []ast.Type{i32()},
+			Ops: []ir.Op{
+				{Kind: ir.OpConstStr, Str: "hello, world"},
+				{Kind: ir.OpStoreLocal, I32: 0}, // stash len
+				{Kind: ir.OpDrop},               // drop data
+				{Kind: ir.OpLoadLocal, I32: 0},  // push len back
+			},
+		},
+		{
+			Name:       "first_byte",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstStr, Str: "hello, world"},
+				{Kind: ir.OpDrop},     // drop len
+				{Kind: ir.OpLoadByte}, // i32.load8_u at data ptr
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "string_len"); got != "12" {
+		t.Fatalf("string_len = %q, want 12", got)
+	}
+	if got := runUnderWasmtime(t, bin, "first_byte"); got != "104" {
+		t.Fatalf("first_byte = %q, want 104 (ASCII 'h')", got)
+	}
+}
+
+// TestEmitConstStrInlineForm — short ASCII string (≤7 bytes) takes
+// the inline-form path via langstring.PackInlineWasm: no data
+// section, no memory section. The function drops both pushed
+// words and returns 0, which is enough to prove the inline path
+// produces a runnable module.
+func TestEmitConstStrInlineForm(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hi"},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpConstI32, I32: 0},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if walkHasMemorySection(t, bin) {
+		t.Fatal("inline-form-only program should not have a memory section")
+	}
+	if walkHasDataSection(t, bin) {
+		t.Fatal("inline-form-only program should not have a data section")
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "0" {
+		t.Fatalf("got %q, want 0", got)
+	}
+}
+
+// walkHasDataSection — mirror of walkHasMemorySection for id 11.
+func walkHasDataSection(t *testing.T, bin []byte) bool {
+	t.Helper()
+	if len(bin) < 8 {
+		return false
+	}
+	i := 8
+	for i < len(bin) {
+		id := bin[i]
+		i++
+		size := 0
+		shift := 0
+		for {
+			if i >= len(bin) {
+				return false
+			}
+			b := bin[i]
+			i++
+			size |= int(b&0x7f) << shift
+			if b&0x80 == 0 {
+				break
+			}
+			shift += 7
+		}
+		if id == encode.SectionData {
+			return true
+		}
+		i += size
+	}
+	return false
+}
+
+// TestEmitConstStrInterning — same heap-form literal from two
+// different functions should share a single data-segment entry.
+// Walks the data section and asserts exactly one segment whose
+// bytes equal the unique literal.
+func TestEmitConstStrInterning(t *testing.T) {
+	mk := func(name string) *ir.Func {
+		return &ir.Func{
+			Name:         name,
+			ReturnType:   i32(),
+			ScratchTypes: []ast.Type{i32()},
+			Ops: []ir.Op{
+				{Kind: ir.OpConstStr, Str: "shared-literal-string"},
+				{Kind: ir.OpStoreLocal, I32: 0},
+				{Kind: ir.OpDrop},
+				{Kind: ir.OpLoadLocal, I32: 0},
+			},
+		}
+	}
+	prog := &ir.Program{Funcs: []*ir.Func{mk("a"), mk("b")}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	segs := dataSegments(t, bin)
+	if len(segs) != 1 {
+		t.Fatalf("data segments: got %d, want 1", len(segs))
+	}
+	if string(segs[0]) != "shared-literal-string" {
+		t.Fatalf("segment 0: got %q, want %q", segs[0], "shared-literal-string")
+	}
+	for _, name := range []string{"a", "b"} {
+		if got := runUnderWasmtime(t, bin, name); got != "21" {
+			t.Fatalf("%s = %q, want 21", name, got)
+		}
+	}
+}
+
+// dataSegments returns the per-segment init bytes of the module's
+// data section (empty if no data section is present).
+func dataSegments(t *testing.T, bin []byte) [][]byte {
+	t.Helper()
+	if len(bin) < 8 {
+		return nil
+	}
+	i := 8
+	for i < len(bin) {
+		id := bin[i]
+		i++
+		size := 0
+		shift := 0
+		for {
+			if i >= len(bin) {
+				return nil
+			}
+			b := bin[i]
+			i++
+			size |= int(b&0x7f) << shift
+			if b&0x80 == 0 {
+				break
+			}
+			shift += 7
+		}
+		if id == encode.SectionData {
+			return parseDataSection(bin[i : i+size])
+		}
+		i += size
+	}
+	return nil
+}
+
+// parseDataSection decodes the data section body: count uleb +
+// per-segment (memidx + i32.const offset + end + len uleb + bytes).
+func parseDataSection(body []byte) [][]byte {
+	j := 0
+	count := 0
+	shift := 0
+	for {
+		b := body[j]
+		j++
+		count |= int(b&0x7f) << shift
+		if b&0x80 == 0 {
+			break
+		}
+		shift += 7
+	}
+	var segs [][]byte
+	for s := 0; s < count; s++ {
+		j++ // memidx (1 byte for memidx 0)
+		j++ // 0x41 i32.const
+		for body[j]&0x80 != 0 {
+			j++
+		}
+		j++ // last sleb byte
+		j++ // 0x0b end
+		segLen := 0
+		shift = 0
+		for {
+			b := body[j]
+			j++
+			segLen |= int(b&0x7f) << shift
+			if b&0x80 == 0 {
+				break
+			}
+			shift += 7
+		}
+		segs = append(segs, body[j:j+segLen])
+		j += segLen
+	}
+	return segs
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpStrLen) and confirm we get a useful error rather
 // than emitting nonsense bytes. Regressions here would silently
