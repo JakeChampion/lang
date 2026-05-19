@@ -48,11 +48,11 @@ pub struct VTuple { elements: Value[] }
 pub struct VStruct { type_name: string, field_names: string[], field_values: Value[] }
 // VFunc represents a callable value (closure). `entry` is the
 // op index where the body begins; `locals_count` is the size
-// of the body's locals vector. Capture-by-value isn't modeled
-// yet — lambdas in this cut can only reference params and
-// top-level decls. A future slice can add `captures: Value[]`
-// + free-var analysis.
-pub struct VFunc { entry: i32, locals_count: i32 }
+// of the body's locals vector. `captures` holds the values
+// closed over at the point the closure was made — empty for
+// lambdas without free vars and for top-level FuncDecl
+// dispatch (which routes through OpCall, not OpCallClosure).
+pub struct VFunc { entry: i32, locals_count: i32, captures: Value[] }
 // VMap mirrors interp's parallel-array storage. Linear-scan
 // lookup via value_eq_vm.
 pub struct VMap { keys: Value[], values: Value[] }
@@ -192,15 +192,27 @@ pub struct OpCall { name: string, argc: i32 }
 // funcs occupy distinct slots in the FuncTable.
 pub struct OpCallMethod { name: string, argc: i32 }
 // OpMakeFunc pushes a VFunc with the given body entry-ip and
-// locals_count. Emitted by compile_expr for ExprLambda — the
-// lambda body is laid out inline in the parent's bytecode with
-// a JUMP-skip over it, and OpMakeFunc captures the body's
-// entry index.
+// locals_count. Emitted by compile_expr for ExprLambda when the
+// lambda body has no free vars — the body sits inline in the
+// parent's bytecode with a JUMP-skip over it, and OpMakeFunc
+// captures the body's entry index.
 pub struct OpMakeFunc { entry: i32, locals_count: i32 }
+// OpMakeClosure is the capture-bearing variant: pops
+// `capture_count` values off the stack (in source order — the
+// LAST capture pushed sits on top of the stack), bundles them
+// with entry + locals_count into a VFunc.captures, pushes the
+// VFunc. The compile arm for ExprLambda emits OpLoadLocal for
+// each captured outer var then this op.
+pub struct OpMakeClosure { entry: i32, locals_count: i32, capture_count: i32 }
+// OpLoadCapture reads the current frame's captures[idx] and
+// pushes it. Emitted by compile_expr for an ExprIdent that
+// resolves to a captured name in the surrounding lambda.
+pub struct OpLoadCapture { idx: i32 }
 // OpCallClosure pops `argc + 1` values (callee VFunc on the
-// bottom, args on top). Allocates a new locals vector, jumps
-// to the VFunc's entry ip. The body's prologue does the
-// descending OpStoreLocal pop just like a regular function.
+// bottom, args on top). Allocates a new locals vector, threads
+// the VFunc's captures into the new frame, jumps to the
+// VFunc's entry ip. The body's prologue does the descending
+// OpStoreLocal pop just like a regular function.
 pub struct OpCallClosure { argc: i32 }
 // OpMakeArray pops `n` values off the stack and pushes a single
 // VArr holding them in source order — the LAST element pushed
@@ -242,7 +254,8 @@ pub type Op = OpPushInt | OpPushBool | OpPushStr | OpPushFloat
             | OpLoadLocal | OpStoreLocal
             | OpBinary | OpUnary
             | OpJump | OpJumpIfFalse
-            | OpPop | OpCall | OpCallMethod | OpMakeFunc | OpCallClosure
+            | OpPop | OpCall | OpCallMethod
+            | OpMakeFunc | OpMakeClosure | OpLoadCapture | OpCallClosure
             | OpMakeArray | OpMakeTuple | OpIndex | OpLen | OpSlice
             | OpMakeStruct | OpFieldGet
             | OpDup | OpTypeNameEq
@@ -262,6 +275,10 @@ function op_pop(): Op { return OpPop { tag: 0 }; }
 function op_call(name: string, argc: i32): Op { return OpCall { name: name, argc: argc }; }
 function op_call_method(name: string, argc: i32): Op { return OpCallMethod { name: name, argc: argc }; }
 function op_make_func(entry: i32, locals_count: i32): Op { return OpMakeFunc { entry: entry, locals_count: locals_count }; }
+function op_make_closure(entry: i32, locals_count: i32, capture_count: i32): Op {
+    return OpMakeClosure { entry: entry, locals_count: locals_count, capture_count: capture_count };
+}
+function op_load_capture(idx: i32): Op { return OpLoadCapture { idx: idx }; }
 function op_call_closure(argc: i32): Op { return OpCallClosure { argc: argc }; }
 function op_make_array(n: i32): Op { return OpMakeArray { n: n }; }
 function op_make_tuple(n: i32): Op { return OpMakeTuple { n: n }; }
@@ -282,11 +299,17 @@ function op_return(): Op { return OpReturn { tag: 0 }; }
 // compiler to translate var refs / assigns to local-index
 // load/store ops. The same indices are reused by the VM's
 // `locals[]` vector at exec time.
-pub struct LocalsTable { names: string[] }
+//
+// `captures` is parallel: the inner lt of a lambda body carries
+// the names captured from the outer scope so compile_expr for
+// ExprIdent emits OpLoadCapture(idx) instead of OpLoadLocal.
+// Top-level / non-lambda lts have an empty captures list.
+pub struct LocalsTable { names: string[], captures: string[] }
 
 function new_locals(): LocalsTable {
     var ns: string[] = [];
-    return LocalsTable { names: ns };
+    var cs: string[] = [];
+    return LocalsTable { names: ns, captures: cs };
 }
 
 function (lt: LocalsTable) idx_of(name: string): i32 {
@@ -298,9 +321,23 @@ function (lt: LocalsTable) idx_of(name: string): i32 {
     return 0 - 1;
 }
 
+function (lt: LocalsTable) capture_idx_of(name: string): i32 {
+    var i: i32 = 0;
+    while (i < len(lt.captures)) {
+        if (lt.captures[i] == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 function (lt: LocalsTable) bind(name: string): LocalsTable {
     var ns: string[] = lt.names.push(name);
-    return LocalsTable { names: ns };
+    return LocalsTable { names: ns, captures: lt.captures };
+}
+
+function (lt: LocalsTable) bind_capture(name: string): LocalsTable {
+    var cs: string[] = lt.captures.push(name);
+    return LocalsTable { names: lt.names, captures: cs };
 }
 
 // digits_to_i32: same helper the interp uses. Strips a leading
@@ -387,6 +424,225 @@ function digits_to_f64(s: string): f64 {
 // a shared frame.
 pub struct CompileResult { ops: Op[], lt: LocalsTable }
 
+// =================== FREE-VAR WALKER ====================
+
+// collect_idents_expr appends every ident READ in `e` to `acc`.
+// Used by the ExprLambda compile arm to find names that may
+// need to be captured. Assignment targets (StmtAssign.target,
+// pattern bindings, var-decl LHS) are collected separately by
+// the stmt walker — they're not reads.
+function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { return acc.push(id.name); },
+        parser.ExprNumber(_) => { return acc; },
+        parser.ExprString(_) => { return acc; },
+        parser.ExprBool(_) => { return acc; },
+        parser.ExprBinary(b) => {
+            acc = collect_idents_expr(b.left, acc);
+            return collect_idents_expr(b.right, acc);
+        },
+        parser.ExprUnary(u) => { return collect_idents_expr(u.operand, acc); },
+        parser.ExprCall(c) => {
+            acc = collect_idents_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < len(c.args)) {
+                acc = collect_idents_expr(c.args[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < len(a.elements)) {
+                acc = collect_idents_expr(a.elements[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < len(t.elements)) {
+                acc = collect_idents_expr(t.elements[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = collect_idents_expr(x.array, acc);
+            return collect_idents_expr(x.index, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = collect_idents_expr(sl.array, acc);
+            acc = collect_idents_expr(sl.start, acc);
+            return collect_idents_expr(sl.end, acc);
+        },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < len(sl.field_values)) {
+                acc = collect_idents_expr(sl.field_values[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
+        parser.ExprLambda(lm) => {
+            // Nested lambda: its free vars in the OUTER scope
+            // are exactly the names it reads that aren't bound
+            // by its own params or body. We collect everything
+            // it references (params will be filtered out by the
+            // outer lambda's own local-binding subtraction).
+            var i: i32 = 0;
+            while (i < len(lm.body)) {
+                acc = collect_idents_stmt(lm.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
+        parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
+        parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
+        parser.StmtIf(i) => {
+            acc = collect_idents_expr(i.cond, acc);
+            var ti: i32 = 0;
+            while (ti < len(i.then_body)) {
+                acc = collect_idents_stmt(i.then_body[ti], acc);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < len(i.else_body)) {
+                acc = collect_idents_stmt(i.else_body[ei], acc);
+                ei = ei + 1;
+            }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = collect_idents_expr(w.cond, acc);
+            var i: i32 = 0;
+            while (i < len(w.body)) {
+                acc = collect_idents_stmt(w.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtAssign(a) => {
+            // Targets are writes — but the assignment's `value`
+            // is a read. The target itself isn't collected; if
+            // the surrounding scope captures it as a write, the
+            // current cut doesn't model that (captures are
+            // read-only).
+            return collect_idents_expr(a.value, acc);
+        },
+        parser.StmtMatch(m) => {
+            acc = collect_idents_expr(m.scrutinee, acc);
+            var ai: i32 = 0;
+            while (ai < len(m.arms)) {
+                var bi: i32 = 0;
+                while (bi < len(m.arms[ai].body)) {
+                    acc = collect_idents_stmt(m.arms[ai].body[bi], acc);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = collect_idents_expr(f.iter, acc);
+            var i: i32 = 0;
+            while (i < len(f.body)) {
+                acc = collect_idents_stmt(f.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// collect_bound_stmt walks `st` collecting every name introduced
+// by a StmtVar / StmtFor / StmtMatch binding. Used to subtract
+// inner-scope names from the free-var candidate set.
+function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => { return acc.push(v.name); },
+        parser.StmtReturn(_) => { return acc; },
+        parser.StmtExpr(_) => { return acc; },
+        parser.StmtIf(i) => {
+            var ti: i32 = 0;
+            while (ti < len(i.then_body)) {
+                acc = collect_bound_stmt(i.then_body[ti], acc);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < len(i.else_body)) {
+                acc = collect_bound_stmt(i.else_body[ei], acc);
+                ei = ei + 1;
+            }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            var i: i32 = 0;
+            while (i < len(w.body)) {
+                acc = collect_bound_stmt(w.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtAssign(_) => { return acc; },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < len(m.arms)) {
+                match (m.arms[ai].pattern) {
+                    parser.PatVariant(pv) => {
+                        if (len(pv.binding) > 0) { acc = acc.push(pv.binding); }
+                    },
+                    parser.PatWildcard(_) => { }
+                }
+                var bi: i32 = 0;
+                while (bi < len(m.arms[ai].body)) {
+                    acc = collect_bound_stmt(m.arms[ai].body[bi], acc);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = acc.push(f.var_name);
+            var i: i32 = 0;
+            while (i < len(f.body)) {
+                acc = collect_bound_stmt(f.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// has_str: linear-scan membership for the small subtract steps
+// in the free-var pipeline.
+function has_str(xs: string[], s: string): boolean {
+    var i: i32 = 0;
+    while (i < len(xs)) {
+        if (xs[i] == s) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult {
     match (e) {
         parser.ExprNumber(n) => {
@@ -406,15 +662,24 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprIdent(id) => {
-            var i: i32 = lt.idx_of(id.name);
-            if (i < 0) {
-                // Emit a sentinel push that the VM turns into a
-                // VErr at runtime. Lower-cost than a separate
-                // "compile error" channel.
-                ops = ops.push(op_push_str("__undef:" + id.name));
+            // Locals shadow captures (the inner-lt only contains
+            // params + body-bound vars, so a name appearing in
+            // both means a body-local re-binding). Captures fall
+            // through to the outer-scope read.
+            var li: i32 = lt.idx_of(id.name);
+            if (li >= 0) {
+                ops = ops.push(op_load(li));
                 return CompileResult { ops: ops, lt: lt };
             }
-            ops = ops.push(op_load(i));
+            var ci: i32 = lt.capture_idx_of(id.name);
+            if (ci >= 0) {
+                ops = ops.push(op_load_capture(ci));
+                return CompileResult { ops: ops, lt: lt };
+            }
+            // Emit a sentinel push that the VM turns into a
+            // VErr at runtime. Lower-cost than a separate
+            // "compile error" channel.
+            ops = ops.push(op_push_str("__undef:" + id.name));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprBinary(b) => {
@@ -446,9 +711,10 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                         ops = ops.push(op_len());
                         return CompileResult { ops: ops, lt: lt };
                     }
-                    // If the ident is a local var (idx_of >= 0),
-                    // treat as a closure call: load the local
-                    // (VFunc), then args, then OpCallClosure.
+                    // If the ident is a local var (idx_of >= 0)
+                    // OR a captured outer var, treat as a closure
+                    // call: load the value (VFunc), then args,
+                    // then OpCallClosure.
                     if (lt.idx_of(id.name) >= 0) {
                         ops = ops.push(op_load(lt.idx_of(id.name)));
                         var cai: i32 = 0;
@@ -456,6 +722,17 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                             var car: CompileResult = compile_expr(c.args[cai], ops, lt);
                             ops = car.ops; lt = car.lt;
                             cai = cai + 1;
+                        }
+                        ops = ops.push(op_call_closure(len(c.args)));
+                        return CompileResult { ops: ops, lt: lt };
+                    }
+                    if (lt.capture_idx_of(id.name) >= 0) {
+                        ops = ops.push(op_load_capture(lt.capture_idx_of(id.name)));
+                        var cpai: i32 = 0;
+                        while (cpai < len(c.args)) {
+                            var cpar: CompileResult = compile_expr(c.args[cpai], ops, lt);
+                            ops = cpar.ops; lt = cpar.lt;
+                            cpai = cpai + 1;
                         }
                         ops = ops.push(op_call_closure(len(c.args)));
                         return CompileResult { ops: ops, lt: lt };
@@ -483,10 +760,11 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                         parser.ExprIdent(ns_id) => { ns_hint = ns_id.name; },
                         _ => { }
                     }
-                    if (len(ns_hint) > 0 && lt.idx_of(ns_hint) < 0) {
-                        // Bare ident that isn't a local — likely
-                        // a namespace prefix. Emit args + a plain
-                        // OpCall("ns.field", argc).
+                    if (len(ns_hint) > 0 && lt.idx_of(ns_hint) < 0 && lt.capture_idx_of(ns_hint) < 0) {
+                        // Bare ident that isn't a local OR a
+                        // capture — likely a namespace prefix.
+                        // Emit args + a plain OpCall("ns.field",
+                        // argc).
                         var qcai: i32 = 0;
                         while (qcai < len(c.args)) {
                             var qcar: CompileResult = compile_expr(c.args[qcai], ops, lt);
@@ -586,18 +864,64 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprLambda(lm) => {
-            // Lowering: emit a JUMP over the body, lay the
-            // body inline (same prologue + epilogue shape as
-            // compile_func), patch the JUMP to skip past it,
-            // then emit OpMakeFunc(entry, locals_count) so
-            // the surrounding expression sees a VFunc.
+            // Lowering: free-var sweep → emit a JUMP over the
+            // body → lay the body inline → patch the JUMP →
+            // load each captured outer local onto the stack →
+            // OpMakeClosure (or OpMakeFunc when no captures).
             //
-            // No capture analysis in this cut — the body can
-            // only reference its params + top-level decls.
+            // Free-var rule: a name is captured iff it's READ
+            // in the body, is NOT a param, is NOT bound by an
+            // inner `var` / `for` / match-pattern, AND exists
+            // as a name in the outer LocalsTable (either as a
+            // local or — in the nested-lambda case — as a
+            // capture). Top-level function calls (idents whose
+            // ExprCall arm routes through OpCall) appear in
+            // the referenced set but won't show up in the
+            // outer lt, so they're correctly skipped.
+            var refs: string[] = [];
+            var bri: i32 = 0;
+            while (bri < len(lm.body)) {
+                refs = collect_idents_stmt(lm.body[bri], refs);
+                bri = bri + 1;
+            }
+            var bound: string[] = [];
+            var bpi: i32 = 0;
+            while (bpi < len(lm.params)) {
+                bound = bound.push(lm.params[bpi].name);
+                bpi = bpi + 1;
+            }
+            var bsi: i32 = 0;
+            while (bsi < len(lm.body)) {
+                bound = collect_bound_stmt(lm.body[bsi], bound);
+                bsi = bsi + 1;
+            }
+            // Build capture list: dedup, keep insertion order,
+            // skip locally-bound names, require presence in
+            // outer lt (as local OR capture).
+            var captures: string[] = [];
+            var rri: i32 = 0;
+            while (rri < len(refs)) {
+                var nm: string = refs[rri];
+                if (!has_str(bound, nm) && !has_str(captures, nm)) {
+                    if (lt.idx_of(nm) >= 0 || lt.capture_idx_of(nm) >= 0) {
+                        captures = captures.push(nm);
+                    }
+                }
+                rri = rri + 1;
+            }
+            // Emit JUMP-skip + body.
             var skip_idx: i32 = len(ops);
             ops = ops.push(op_jump(0 - 1));
             var entry: i32 = len(ops);
+            // Build inner lt: empty locals + the capture list.
+            // Params + inner var-decls bind into `names` via the
+            // existing compile_block path.
             var ltc: LocalsTable = new_locals();
+            var cbi: i32 = 0;
+            while (cbi < len(captures)) {
+                ltc = ltc.bind_capture(captures[cbi]);
+                cbi = cbi + 1;
+            }
             var bi: i32 = 0;
             while (bi < len(lm.params)) {
                 ltc = ltc.bind(lm.params[bi].name);
@@ -615,7 +939,24 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = ops.push(op_return());
             var body_locals: i32 = len(br.lt.names);
             ops = patch_jump(ops, skip_idx, len(ops));
-            ops = ops.push(op_make_func(entry, body_locals));
+            // After the body, push captures (resolved against
+            // the OUTER lt — could be locals or, when this
+            // lambda is itself nested, captures of the parent).
+            if (len(captures) == 0) {
+                ops = ops.push(op_make_func(entry, body_locals));
+                return CompileResult { ops: ops, lt: lt };
+            }
+            var cpi: i32 = 0;
+            while (cpi < len(captures)) {
+                var oi: i32 = lt.idx_of(captures[cpi]);
+                if (oi >= 0) {
+                    ops = ops.push(op_load(oi));
+                } else {
+                    ops = ops.push(op_load_capture(lt.capture_idx_of(captures[cpi])));
+                }
+                cpi = cpi + 1;
+            }
+            ops = ops.push(op_make_closure(entry, body_locals, len(captures)));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprUnknown(_) => {
@@ -1324,7 +1665,10 @@ function stack_pop(stack: Value[]): PopResult {
 // to resume the caller's ip and what its locals vector looked
 // like before the call. Frames live in a stack — multiple
 // active calls (recursion) layer them.
-pub struct Frame { saved_ip: i32, saved_locals: VMLocals }
+// captures is the closure-capture vector active for this frame;
+// OpLoadCapture(idx) reads cur_captures[idx]. Plain OpCall and
+// OpCallMethod paths leave it empty.
+pub struct Frame { saved_ip: i32, saved_locals: VMLocals, saved_captures: Value[] }
 
 // lookup_func returns (entry_ip, locals_count, ok). Linear scan
 // of the parallel arrays — the table is tiny (one entry per
@@ -1395,6 +1739,7 @@ pub function exec_program(prog: CompiledProgram): Value {
     var stack: Value[] = [];
     var locals: VMLocals = new_vm_locals(max_local_idx(ops) + 1);
     var frames: Frame[] = [];
+    var cur_captures: Value[] = [];
     var ip: i32 = 0;
     while (ip < len(ops)) {
         var op: Op = ops[ip];
@@ -1466,8 +1811,10 @@ pub function exec_program(prog: CompiledProgram): Value {
                 // OpStoreLocal sequence at function entry pops
                 // them in reverse). Save current frame, allocate
                 // a new locals vector sized to the callee.
-                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals });
+                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals, saved_captures: cur_captures });
                 locals = new_vm_locals(fl.locals_count);
+                var empty_caps_c: Value[] = [];
+                cur_captures = empty_caps_c;
                 ip = fl.entry;
             },
             OpCallMethod(o) => {
@@ -1515,12 +1862,43 @@ pub function exec_program(prog: CompiledProgram): Value {
                 // OpStoreLocal pops the last arg into the highest
                 // local index, walking down to the receiver at
                 // local 0).
-                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals });
+                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals, saved_captures: cur_captures });
                 locals = new_vm_locals(ml.locals_count);
+                var empty_caps_m: Value[] = [];
+                cur_captures = empty_caps_m;
                 ip = ml.entry;
             },
             OpMakeFunc(o) => {
-                stack = stack_push(stack, VFunc { entry: o.entry, locals_count: o.locals_count });
+                var empty_caps_f: Value[] = [];
+                stack = stack_push(stack, VFunc { entry: o.entry, locals_count: o.locals_count, captures: empty_caps_f });
+                ip = ip + 1;
+            },
+            OpMakeClosure(o) => {
+                // Pop `capture_count` values (in source/push
+                // order — last pushed sits on top) and bundle
+                // them into a VFunc.
+                if (len(stack) < o.capture_count) {
+                    return v_err("make_closure: stack underflow");
+                }
+                var cap_start: i32 = len(stack) - o.capture_count;
+                var caps: Value[] = [];
+                var cki: i32 = 0;
+                while (cki < o.capture_count) {
+                    caps = caps.push(stack[cap_start + cki]);
+                    cki = cki + 1;
+                }
+                var nstk: Value[] = [];
+                var nsi2: i32 = 0;
+                while (nsi2 < cap_start) { nstk = nstk.push(stack[nsi2]); nsi2 = nsi2 + 1; }
+                stack = nstk;
+                stack = stack_push(stack, VFunc { entry: o.entry, locals_count: o.locals_count, captures: caps });
+                ip = ip + 1;
+            },
+            OpLoadCapture(o) => {
+                if (o.idx < 0 || o.idx >= len(cur_captures)) {
+                    return v_err("load_capture: idx out of range");
+                }
+                stack = stack_push(stack, cur_captures[o.idx]);
                 ip = ip + 1;
             },
             OpCallClosure(o) => {
@@ -1536,10 +1914,12 @@ pub function exec_program(prog: CompiledProgram): Value {
                 var fn_val: Value = stack[fn_idx];
                 var fn_entry: i32 = 0;
                 var fn_locals_count: i32 = 0;
+                var fn_caps: Value[] = [];
                 match (fn_val) {
                     VFunc(fv) => {
                         fn_entry = fv.entry;
                         fn_locals_count = fv.locals_count;
+                        fn_caps = fv.captures;
                     },
                     _ => { return v_err("call_closure: callee not a VFunc"); }
                 }
@@ -1551,8 +1931,9 @@ pub function exec_program(prog: CompiledProgram): Value {
                 var nsj: i32 = fn_idx + 1;
                 while (nsj < len(stack)) { ns = ns.push(stack[nsj]); nsj = nsj + 1; }
                 stack = ns;
-                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals });
+                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals, saved_captures: cur_captures });
                 locals = new_vm_locals(fn_locals_count);
+                cur_captures = fn_caps;
                 ip = fn_entry;
             },
             OpMakeArray(o) => {
@@ -1778,6 +2159,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                 // there's exactly the one return value on top.
                 // No cleanup needed.
                 locals = top_frame.saved_locals;
+                cur_captures = top_frame.saved_captures;
                 ip = top_frame.saved_ip;
             }
         }
@@ -2329,6 +2711,51 @@ function main(): i32 {
     match (r65) {
         VInt(i) => { if (i.v != 42) { return 650; } },
         _ => { return 651; }
+    }
+
+    // Closure capture: lambda body reads an outer var.
+    var src66: string = "function main(): i32 { var n = 5; var f = function (x: i32): i32 { return x + n; }; return f(7); }";
+    var r66: Value = run_module(src66);
+    match (r66) {
+        VInt(i) => { if (i.v != 12) { return 660; } },
+        _ => { return 661; }
+    }
+
+    // Closure capture, no params (thunk over outer state).
+    var src67: string = "function main(): i32 { var a = 10; var b = 20; var f = function (): i32 { return a + b; }; return f(); }";
+    var r67: Value = run_module(src67);
+    match (r67) {
+        VInt(i) => { if (i.v != 30) { return 670; } },
+        _ => { return 671; }
+    }
+
+    // Capture-by-value: outer var mutation AFTER the closure
+    // is made doesn't change what the closure sees.
+    var src68: string = "function main(): i32 { var n = 5; var f = function (): i32 { return n; }; n = 99; return f(); }";
+    var r68: Value = run_module(src68);
+    match (r68) {
+        VInt(i) => { if (i.v != 5) { return 680; } },
+        _ => { return 681; }
+    }
+
+    // Nested lambdas: inner reads a name that lives in the
+    // outer-outer lambda's scope. The outer lambda captures
+    // `n` as its own capture[0]; the inner lambda then
+    // re-captures it from the outer lambda's capture list.
+    var src69: string = "function main(): i32 { var n = 7; var outer = function (): i32 { var inner = function (): i32 { return n; }; return inner(); }; return outer(); }";
+    var r69: Value = run_module(src69);
+    match (r69) {
+        VInt(i) => { if (i.v != 7) { return 690; } },
+        _ => { return 691; }
+    }
+
+    // Closure that's also called immediately via the local-
+    // var path: round-trip through OpCallClosure.
+    var src70: string = "function main(): i32 { var k = 100; var g = function (x: i32, y: i32): i32 { return x + y + k; }; return g(2, 3); }";
+    var r70: Value = run_module(src70);
+    match (r70) {
+        VInt(i) => { if (i.v != 105) { return 700; } },
+        _ => { return 701; }
     }
 
     return 0;
