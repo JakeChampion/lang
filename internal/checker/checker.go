@@ -258,6 +258,22 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "body", Type: ast.StringType{}},
 			},
 		},
+		// Platform — the capability bag threaded as the second
+		// parameter of every handler (docs/PLATFORM-RESEARCH.md
+		// Rec §1). Phase 1 carries a single `version: i32`
+		// placeholder so the struct has a well-defined ABI
+		// without zero-sized-struct edge cases; future phases
+		// will add capability fields (fetch / kv / secrets /
+		// log / now). The auto-`main`-from-`handle` synthesis
+		// and the wasi-http wrapper construct one per request
+		// and pass it through; handler code receives it as
+		// `plat: Platform` and (for now) ignores the fields.
+		{
+			Name: "Platform",
+			Fields: []ast.Param{
+				{Name: "version", Type: ast.NumberType{}},
+			},
+		},
 		// ProcessResult — the return shape of `exec(cmd, args,
 		// stdin)`. The interp's Go-side implementation populates
 		// stdout / stderr / exit_code; the wasm + native backends
@@ -1453,10 +1469,12 @@ func Check(prog *ast.Program) (*Info, error) {
 	}
 
 	// Auto-main from handle: when the user defines
-	// `function handle(req: HttpRequest): HttpResponse` but
-	// no `main()`, synthesise a minimal main that calls
-	// `tcp_serve(port, handle)` after reading PORT from the
-	// environment (default 8080). The same source then
+	// `function handle(req: HttpRequest, plat: Platform):
+	// HttpResponse` but no `main()`, synthesise a minimal main
+	// that calls `tcp_serve(port, handle)` after reading PORT
+	// from the environment (default 8080). tcp_serve constructs
+	// a Platform per request and threads it through. The same
+	// source then
 	// compiles for arm64 (CLI-mode native server), wasm
 	// CLI-mode (`--invoke main`), and wasi-http (the
 	// existing handle()-export wiring is unaffected by main
@@ -6032,9 +6050,10 @@ func isFloat(t ast.Type) bool {
 }
 
 // hasHandleDecl reports whether the program defines a top-level
-// `function handle(req: HttpRequest): HttpResponse` — the
-// signature shape every wasi-http program targets. The check is
-// purely structural: any top-level FuncDecl named `handle`
+// `function handle(req: HttpRequest, plat: Platform): HttpResponse`
+// — the Platform-parameter signature shape every wasi-http
+// program targets (docs/PLATFORM-RESEARCH.md Rec §1). The check
+// is purely structural: any top-level FuncDecl named `handle`
 // counts. Mismatched signatures will surface as type errors at
 // the synthesised main() check (or the wasi-http wrapper's
 // signature check on that target).

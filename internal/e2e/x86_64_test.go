@@ -776,7 +776,7 @@ func TestX86_64HttpHandler(t *testing.T) {
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
 
-	src := `function handle(req: HttpRequest): HttpResponse {
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return HttpResponse {
         status: 200,
         body: "method=" + req.method + " path=" + req.path + " body-len=" + len(req.body).to_string()

@@ -72,11 +72,13 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 // options were introduced.
 type EmitOptions struct {
 	// HttpHandler emits a `wasi:http/incoming-handler@0.2.0#handle`
-	// export wrapping the user's `function handle(req: HttpRequest):
-	// HttpResponse`. No `_start` is exported (proxy-world components
-	// have no entry point — the host invokes `handle` per inbound
-	// request). When this is set, `HttpRequest` and `HttpResponse`
-	// struct decls are auto-injected into the program.
+	// export wrapping the user's `function handle(req: HttpRequest,
+	// plat: Platform): HttpResponse` (Platform-parameter shape per
+	// docs/PLATFORM-RESEARCH.md Rec §1). No `_start` is exported
+	// (proxy-world components have no entry point — the host invokes
+	// `handle` per inbound request). When this is set, `HttpRequest`,
+	// `HttpResponse`, and `Platform` struct decls are auto-injected
+	// into the program.
 	HttpHandler bool
 
 	// PrintMainResult makes the `_start` wrapper format `main()`'s
@@ -5199,9 +5201,11 @@ func (g *generator) emitTcpClosePreview2() {
 // `wasi:http/incoming-handler@0.2.0#handle` for the wasi-http
 // target. The wrapper marshals the canonical-ABI incoming request
 // into a 12-byte HttpRequest struct `(method, path, body)` (all
-// length-prefixed lang strings), invokes the user's
-// `handle(req: HttpRequest): HttpResponse`, then streams the
-// response back through outgoing-body and hands an
+// length-prefixed lang strings), constructs a 4-byte Platform
+// capability bag (Phase 1 placeholder per
+// docs/PLATFORM-RESEARCH.md Rec §1), invokes the user's
+// `handle(req: HttpRequest, plat: Platform): HttpResponse`, then
+// streams the response back through outgoing-body and hands an
 // `Ok(outgoing-response)` to response-outparam.set.
 //
 // Resource lifetime, in order:
@@ -5288,6 +5292,7 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`(local $resp_handle i32) (local $headers i32)`)
 	g.line(`(local $out_body i32) (local $out_stream i32)`)
 	g.line(`(local $__arena_handle i32)`)
+	g.line(`(local $plat_struct i32)`)
 
 	// Implicit per-request arena: save the bump cursor at
 	// entry, restore it before returning so every allocation
@@ -5659,9 +5664,18 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`i32.store`)
 
 	// ============================================================
-	// Call user-defined `handle(req): HttpResponse`.
+	// Construct Platform capability bag (Phase 1 placeholder per
+	// docs/PLATFORM-RESEARCH.md Rec §1) and call user-defined
+	// `handle(req, plat): HttpResponse`.
 	// ============================================================
+	g.line(`i32.const 4`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $plat_struct`)
+	g.line(`local.get $plat_struct`)
+	g.line(`i32.const 1`)
+	g.line(`i32.store`)
 	g.line(`local.get $req_struct`)
+	g.line(`local.get $plat_struct`)
 	g.line(`call $handle`)
 	g.line(`local.set $resp_struct`)
 

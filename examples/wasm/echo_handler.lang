@@ -1,7 +1,7 @@
 // echo_handler.lang — minimal HTTP handler. Same source
 // compiles for two targets — wasi-http components and
 // arm64 native binaries — via the auto-`main()` synthesis:
-// programs that define `function handle(req): HttpResponse`
+// programs that define `function handle(req, plat): HttpResponse`
 // without their own `main()` get a synthesised
 // `main(): i32 { return tcp_serve(__port_from_env("PORT",
 // 8080), handle); }`. wasi-http drops the synthesised main at
@@ -19,7 +19,7 @@
 //
 //   hello
 //
-// Showcases: `function handle(req: HttpRequest): HttpResponse`
+// Showcases: `function handle(req: HttpRequest, plat: Platform): HttpResponse`
 // — the canonical handler entry point. The codegen wraps each
 // invocation in an implicit arena (PR #200): all the strings
 // the handler builds get reclaimed at handler-return, so
@@ -33,7 +33,7 @@ import "std/http";
 import "std/tcp";
 import "std/i32";
 
-function handle(req: HttpRequest): HttpResponse {
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
   var body: string = f"{req.method} {req.path} ({len(req.body)} bytes)\n\n{req.body}";
   return HttpResponse { status: 200, body: body };
 }

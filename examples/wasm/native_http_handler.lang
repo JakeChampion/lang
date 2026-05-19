@@ -1,4 +1,4 @@
-// native_http_handler.lang — same `function handle(req): resp`
+// native_http_handler.lang — same `function handle(req, plat): resp`
 // shape as echo_handler.lang, but explicitly intended for the
 // arm64 / arm64-darwin native HTTP path.
 //
@@ -25,6 +25,6 @@ import "core/no_prelude";
 import "std/http";
 import "std/tcp";
 
-function handle(req: HttpRequest): HttpResponse {
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
   return HttpResponse { status: 200, body: "method=" + req.method + " path=" + req.path + "\n" };
 }

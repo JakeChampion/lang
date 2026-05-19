@@ -648,7 +648,7 @@ func TestArgsHelperHasInlineOutputFastPath(t *testing.T) {
 // the same dedup-shared offset is used by both wrapper and
 // user code.
 func TestHttpWrapperShortMethodPacksInline(t *testing.T) {
-	src := `function handle(req: HttpRequest): HttpResponse {
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		return HttpResponse { status: 200, body: "ok" };
 	}`
 	prog, err := parser.Parse(src)
