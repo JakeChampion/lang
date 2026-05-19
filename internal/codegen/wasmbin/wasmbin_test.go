@@ -2761,6 +2761,128 @@ func TestEmitEnvAt(t *testing.T) {
 	}
 }
 
+// TestEmitLoadStoreI32 — round-trip an i32 through memory via
+// __store_i32 + __load_i32. Stores 42 at addr 200, then reads
+// it back.
+func TestEmitLoadStoreI32(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			// __store_i32(200, 42)
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpConstI32, I32: 42},
+			{Kind: ir.OpCallDirect, Str: "__store_i32"},
+			// __load_i32(200)
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpCallDirect, Str: "__load_i32"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "42" {
+		t.Fatalf("load_i32 = %q, want 42", got)
+	}
+}
+
+// TestEmitLoadStoreI64 — round-trip an i64. Map runtime uses
+// these for wide-key boxing on wasm32.
+func TestEmitLoadStoreI64(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i64(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpConstI64, I64: 0x1234_5678_9abc_def0},
+			{Kind: ir.OpCallDirect, Str: "__store_i64"},
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpCallDirect, Str: "__load_i64"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	want := fmt.Sprintf("%d", int64(0x1234_5678_9abc_def0))
+	if got := runUnderWasmtime(t, bin, "main"); got != want {
+		t.Fatalf("load_i64 = %q, want %q", got, want)
+	}
+}
+
+// TestEmitPtrWidth — wasm32 returns 4.
+func TestEmitPtrWidth(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "__ptr_width"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "4" {
+		t.Fatalf("ptr_width = %q, want 4", got)
+	}
+}
+
+// TestEmitMemcpy — copy 4 bytes from addr 200 to addr 300, then
+// load i32 from 300 to verify.
+func TestEmitMemcpy(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			// __store_i32(200, 0x12345678)
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpConstI32, I32: 0x12345678},
+			{Kind: ir.OpCallDirect, Str: "__store_i32"},
+			// __memcpy(300, 200, 4)
+			{Kind: ir.OpConstI32, I32: 300},
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpCallDirect, Str: "__memcpy"},
+			// __load_i32(300)
+			{Kind: ir.OpConstI32, I32: 300},
+			{Kind: ir.OpCallDirect, Str: "__load_i32"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "305419896" {
+		t.Fatalf("memcpy + load = %q, want 305419896 (0x12345678)", got)
+	}
+}
+
+// TestEmitMemset — fill 4 bytes at addr 200 with byte 0xAB, then
+// load as i32 → 0xABABABAB = -1414812757 signed.
+func TestEmitMemset(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpConstI32, I32: 0xAB},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpCallDirect, Str: "__memset"},
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpCallDirect, Str: "__load_i32"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "-1414812757" {
+		t.Fatalf("memset + load = %q, want -1414812757 (0xABABABAB)", got)
+	}
+}
+
 // TestEmitReadByte — pipe stdin to wasmtime and expect the
 // first read_byte() call to return the ASCII code of the first
 // byte. Reading 'A' (0x41) should produce "65" on stdout.

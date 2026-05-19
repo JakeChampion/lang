@@ -324,7 +324,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// that don't execute at runtime — wasm validation still
 	// requires memory 0 to exist). Memory layout matches the
 	// WAT path: 1 page (64 KiB) with no upper bound.
-	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] || len(importNeeds.order) > 0 {
+	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] || helpers.set["__load_i32"] || helpers.set["__store_i32"] || helpers.set["__load_i64"] || helpers.set["__store_i64"] || helpers.set["__load_ptr"] || helpers.set["__store_ptr"] || helpers.set["__memcpy"] || helpers.set["__memset"] || len(importNeeds.order) > 0 {
 		m.MemoryPresent = true
 		m.MemoryMin = 1
 		m.MemoryMax = -1
@@ -1458,34 +1458,61 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	return nil, fmt.Errorf("unsupported op %v", op.Kind)
 }
 
-// callDirectAlias maps source-language built-in names that the IR
-// lowering emits as OpCallDirect targets onto the synthetic runtime
-// helpers that actually implement them in wasmbin. Names not in
-// the map pass through unchanged.
+// CallDirectAliases maps source-language built-in names that the
+// IR lowering emits as OpCallDirect targets onto the runtime
+// helpers or stdlib impls that actually implement them in wasmbin.
 //
-// Today: `print(s)` → `__lang_print` (fd_write), `exit(code)` →
-// `__lang_exit` (proc_exit). Future entries cover `putchar`,
-// `read_line`, etc.
+// Two flavours of entry:
+//   - Synthetic helper aliases (e.g. `print` → `__lang_print`)
+//     route to runtime-emitted wasm helpers in runtime.go / wasi.go.
+//   - Codegen aliases (e.g. `map_new` → `map_new_impl`) route to
+//     stdlib `.lang` functions that exist as regular IR functions
+//     but only get referenced by their alias-target name at emit
+//     time. The IR-level reachability walker has to know about
+//     these so the impls survive dead-function elimination —
+//     wasmbin.Build threads this map into LiveFunctionsWithAliases
+//     for that reason.
+//
+// Names not in the map pass through unchanged.
+var CallDirectAliases = map[string]string{
+	// Synthetic runtime helpers.
+	"exit":       "__lang_exit",
+	"print":      "__lang_print",
+	"random_i32": "__lang_random_i32",
+	"now_ns":     "__lang_now_ns",
+	"env_count":  "__lang_env_count",
+	"arg_count":  "__lang_arg_count",
+	"arg_at":     "__lang_arg_at",
+	"env_at":     "__lang_env_at",
+	"read_byte":  "__lang_read_byte",
+
+	// Map / MapIter generic-method dispatch — the lang doesn't yet
+	// support generic methods on a generic struct, so the prelude
+	// declares concrete `_impl` counterparts and call sites route
+	// through these aliases. Mirrors codegenAliasMap in the WAT
+	// path verbatim.
+	"map_new":                   "map_new_impl",
+	"__method_Map_len":          "__map_len_impl",
+	"__method_Map_has":          "__map_has_impl",
+	"__method_Map_get":          "__map_get_impl",
+	"__method_Map_get_or":       "__map_get_or_impl",
+	"__method_Map_set":          "__map_set_impl",
+	"__method_Map_delete":       "__map_delete_impl",
+	"__method_Map_clear":        "__map_clear_impl",
+	"__method_Map_keys":         "__map_keys_impl",
+	"__method_Map_values":       "__map_values_impl",
+	"__method_Map_iter":         "__map_iter_impl",
+	"__method_MapIter_has_next": "__mapiter_has_next_impl",
+	"__method_MapIter_key":      "__mapiter_key_impl",
+	"__method_MapIter_value":    "__mapiter_value_impl",
+	"__method_MapIter_advance":  "__mapiter_advance_impl",
+}
+
+// callDirectAlias is the function-form lookup over CallDirectAliases.
+// Inlined at every OpCallDirect emit site.
 func callDirectAlias(name string) string {
-	switch name {
-	case "exit":
-		return "__lang_exit"
-	case "print":
-		return "__lang_print"
-	case "random_i32":
-		return "__lang_random_i32"
-	case "now_ns":
-		return "__lang_now_ns"
-	case "env_count":
-		return "__lang_env_count"
-	case "arg_count":
-		return "__lang_arg_count"
-	case "arg_at":
-		return "__lang_arg_at"
-	case "env_at":
-		return "__lang_env_at"
-	case "read_byte":
-		return "__lang_read_byte"
+	if dst, ok := CallDirectAliases[name]; ok {
+		return dst
 	}
 	return name
 }
