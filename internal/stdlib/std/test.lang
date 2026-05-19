@@ -1319,6 +1319,134 @@ pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) 
     return ("", r);
 }
 
+// =================== BENCHMARKS ===================
+//
+// `(r) bench(name, iterations, fn)` runs `fn` `iterations`
+// times, measures each elapsed time via `monotonic_ns()`, and
+// emits a TAP comment line with min / median / mean / max in
+// microseconds. The case always passes — benchmarks aren't
+// pass/fail by default; reach for `bench_max_us` when you
+// want a regression bound.
+//
+// `fn` must be a 0-arg `() => void` closure. Pass a free
+// function (`my_workload`) or a tiny shim that drives the
+// real workload. Iteration count of 10-100 is typical;
+// each iteration runs the whole `fn` body once.
+
+// __bench_sort_us — Sort the elapsed-time samples ascending
+// so percentile lookups are straightforward. Selection sort
+// because lang's `+` doesn't concatenate non-string arrays
+// (the insertion-sort version would have used array
+// concatenation to splice the key); selection sort builds
+// each step by `push`, which DOES work on every element
+// type. O(n²) either way; sample counts stay under ~100 so
+// the absolute cost is negligible.
+function __bench_sort_us(samples: i64[]): i64[] {
+    var n: i32 = len(samples);
+    // Track which indices have been consumed via a parallel
+    // boolean array — easier than mutating `samples` in place
+    // (lang has no in-place array set today).
+    var taken: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { taken = taken.push(false); i = i + 1; }
+    var out: i64[] = [];
+    i = 0;
+    while (i < n) {
+        // Find the smallest still-available value.
+        var best: i32 = 0 - 1;
+        var j: i32 = 0;
+        while (j < n) {
+            if (!taken[j]) {
+                if (best < 0 || samples[j] < samples[best]) { best = j; }
+            }
+            j = j + 1;
+        }
+        out = out.push(samples[best]);
+        taken = taken.push(true);   // append to keep length aligned ...
+        // ... then re-flag the chosen index. Lang has no
+        // in-place set; rebuild `taken` with the slot
+        // updated.
+        var t2: boolean[] = [];
+        var k: i32 = 0;
+        while (k < n) {
+            if (k == best) { t2 = t2.push(true); }
+            else { t2 = t2.push(taken[k]); }
+            k = k + 1;
+        }
+        taken = t2;
+        i = i + 1;
+    }
+    return out;
+}
+
+// `(r) bench(name, iterations, fn)` — run `fn` repeatedly,
+// emit a TAP comment with the per-iteration timing summary.
+// Always passes; use `bench_max_us` for a regression bound.
+pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void): TestRunner {
+    if (iterations <= 0) {
+        return r.it(name, fail("bench: iterations must be > 0"));
+    }
+    var samples: i64[] = [];
+    var i: i32 = 0;
+    while (i < iterations) {
+        var start_ns: i64 = monotonic_ns();
+        fn();
+        var elapsed_ns: i64 = monotonic_ns() - start_ns;
+        samples = samples.push(elapsed_ns / (1000 as i64));
+        i = i + 1;
+    }
+    var sorted: i64[] = __bench_sort_us(samples);
+    var min_us: i64 = sorted[0];
+    var max_us: i64 = sorted[iterations - 1];
+    var median_us: i64 = sorted[iterations / 2];
+    var sum_us: i64 = 0 as i64;
+    var k: i32 = 0;
+    while (k < iterations) {
+        sum_us = sum_us + sorted[k];
+        k = k + 1;
+    }
+    var mean_us: i64 = sum_us / (iterations as i64);
+    print("# bench " + name + " (" + iterations.to_string() + " iters): " +
+          "min=" + min_us.to_string() + "us " +
+          "median=" + median_us.to_string() + "us " +
+          "mean=" + mean_us.to_string() + "us " +
+          "max=" + max_us.to_string() + "us");
+    return r.it(name, None);
+}
+
+// `(r) bench_max_us(name, iterations, fn, max_us)` — same as
+// `bench` but fails when the MEDIAN per-iteration time
+// exceeds `max_us`. Median (not mean) is the right
+// regression signal: one GC pause inflates the mean but
+// leaves the median honest.
+pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () => void, max_us: i64): TestRunner {
+    if (iterations <= 0) {
+        return r.it(name, fail("bench: iterations must be > 0"));
+    }
+    var samples: i64[] = [];
+    var i: i32 = 0;
+    while (i < iterations) {
+        var start_ns: i64 = monotonic_ns();
+        fn();
+        var elapsed_ns: i64 = monotonic_ns() - start_ns;
+        samples = samples.push(elapsed_ns / (1000 as i64));
+        i = i + 1;
+    }
+    var sorted: i64[] = __bench_sort_us(samples);
+    var median_us: i64 = sorted[iterations / 2];
+    var max_us_observed: i64 = sorted[iterations - 1];
+    print("# bench " + name + " (" + iterations.to_string() + " iters): " +
+          "median=" + median_us.to_string() + "us " +
+          "max=" + max_us_observed.to_string() + "us " +
+          "budget=" + max_us.to_string() + "us");
+    if (median_us > max_us) {
+        return r.it(name, Some("bench_max_us: median " +
+                               median_us.to_string() +
+                               "us > budget " + max_us.to_string() + "us"));
+    }
+    return r.it(name, None);
+}
+
 // =================== TIMING ASSERTIONS ===================
 //
 // Benchmark-shape assertions: "the operation under test
@@ -1354,7 +1482,7 @@ pub function assert_elapsed_lt_us(start_ns: i64, max_us: i64): Option[string] {
     var elapsed_us: i64 = elapsed_ns / (1000 as i64);
     if (elapsed_us < max_us) { return None; }
     return Some("assert_elapsed_lt_us: " + elapsed_us.to_string() +
-                "µs elapsed, expected < " + max_us.to_string() + "µs");
+                "us elapsed, expected < " + max_us.to_string() + "us");
 }
 
 // =================== JSON DEEP EQUALITY ===================

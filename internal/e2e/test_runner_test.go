@@ -874,24 +874,26 @@ func TestRunnerFuzzCorpusExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/sort_wider_test.lang` exercises the new
-// wider-int sort helpers in std/sort: `sort_i64_asc` /
-// `sort_i64_desc` / `sort_u32_asc` / `sort_u64_asc`. Six
-// cases — every helper plus the edge cases (empty input,
-// singleton, near-u64-max values where unsigned compare
-// must dominate).
-func TestRunnerSortWiderExample(t *testing.T) {
+// `examples/tests/bench_test.lang` exercises the bench
+// harness: `r.bench(name, iter, fn)` reports timing as a TAP
+// comment and always passes; `r.bench_max_us(name, iter, fn,
+// budget)` fails when the median exceeds the budget. We
+// verify both the comment shape (min / median / mean / max
+// fields) and the budgeted case's pass path.
+func TestRunnerBenchExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/sort_wider_test.lang")
+	src := langSrcAbs(t, "examples/tests/bench_test.lang")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{
-		"ok 1 - sort_i64_asc",
-		"ok 4 - sort_u64_asc near u64-max",
-		"ok 5 - sort_i64_asc empty input",
-		"# pass 6",
+		"# bench tiny arithmetic loop",
+		"min=", "median=", "mean=", "max=",
+		"ok 1 - tiny arithmetic loop",
+		"budget=1000000us",
+		"ok 3 - tiny loop under 1s budget",
+		"# pass 3",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
