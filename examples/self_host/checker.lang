@@ -55,9 +55,16 @@ pub struct TypeArray { elem: Type }
 // full field list lives in the StructTable (built once per
 // module); this variant is just the nominal handle.
 pub struct TypeStruct { name: string }
+// TypeUnion references a user-declared type alias by name —
+// `pub type Shape = Circle | Square`. Variant resolution lives
+// in the UnionTable (parallel to StructTable). The checker uses
+// the union name for assignability: a variant value (TypeStruct
+// "Circle") is assignable to a TypeUnion "Shape" if Circle
+// appears in Shape's variant list.
+pub struct TypeUnion { name: string }
 pub struct TypeUnknown { reason: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeArray | TypeStruct | TypeUnknown;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeArray | TypeStruct | TypeUnion | TypeUnknown;
 
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
@@ -68,6 +75,7 @@ function t_bool(): Type { return TypeBool { tag: 0 }; }
 function t_string(): Type { return TypeString { tag: 0 }; }
 function t_array(elem: Type): Type { return TypeArray { elem: elem }; }
 function t_struct(name: string): Type { return TypeStruct { name: name }; }
+function t_union(name: string): Type { return TypeUnion { name: name }; }
 function t_unknown(reason: string): Type { return TypeUnknown { reason: reason }; }
 
 // type_eq: structural equality on the type union. Returns true
@@ -106,6 +114,12 @@ function type_eq(a: Type, b: Type): boolean {
                 _ => { return false; }
             }
         },
+        TypeUnion(an) => {
+            match (b) {
+                TypeUnion(bn) => { return an.name == bn.name; },
+                _ => { return false; }
+            }
+        },
         TypeUnknown(_) => { return false; }
     }
     return false;
@@ -137,14 +151,21 @@ pub struct FuncSig { name: string, param_types: Type[], ret_type: Type }
 // index i holds (field_names[i], field_types[i]).
 pub struct StructSig { name: string, field_names: string[], field_types: Type[] }
 
+// UnionSig: nominal handle for a declared type alias —
+// `pub type Shape = Circle | Square`. Variants are captured
+// as bare type-name strings; variant resolution lives in
+// type_assignable, which walks the variant list at use sites.
+pub struct UnionSig { name: string, variants: string[] }
+
 // A flat name → type map plus the function signature table
-// plus the struct-decl table. Parallel arrays keep the
-// implementation trivial.
+// plus the struct-decl table plus the union-alias table.
+// Parallel arrays keep the implementation trivial.
 pub struct Scope {
     names: string[],
     types: Type[],
     sigs: FuncSig[],
-    structs: StructSig[]
+    structs: StructSig[],
+    unions: UnionSig[]
 }
 
 function new_scope(): Scope {
@@ -152,26 +173,35 @@ function new_scope(): Scope {
     var ts: Type[] = [];
     var fs: FuncSig[] = [];
     var ss: StructSig[] = [];
-    return Scope { names: ns, types: ts, sigs: fs, structs: ss };
+    var us: UnionSig[] = [];
+    return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us };
 }
 
 function new_scope_with_sigs(sigs: FuncSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
     var ss: StructSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: ss };
+    var us: UnionSig[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us };
 }
 
 function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs };
+    var us: UnionSig[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us };
+}
+
+function new_scope_with_sigs_structs_unions(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[]): Scope {
+    var ns: string[] = [];
+    var ts: Type[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
     var ns: string[] = s.names.push(name);
     var ts: Type[] = s.types.push(t);
-    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs };
+    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -207,6 +237,55 @@ function (s: Scope) lookup_struct(name: string): StructSig {
     var empty_n: string[] = [];
     var empty_t: Type[] = [];
     return StructSig { name: "", field_names: empty_n, field_types: empty_t };
+}
+
+function (s: Scope) lookup_union(name: string): UnionSig {
+    var i: i32 = 0;
+    while (i < len(s.unions)) {
+        if (s.unions[i].name == name) { return s.unions[i]; }
+        i = i + 1;
+    }
+    // Sentinel: empty name signals "no such union".
+    var empty_v: string[] = [];
+    return UnionSig { name: "", variants: empty_v };
+}
+
+// is_variant_of: is the named struct one of the variants of the
+// named union? Used by type_assignable to allow a struct value
+// to flow into a union-typed slot.
+function is_variant_of(struct_name: string, union_name: string, unions: UnionSig[]): boolean {
+    var i: i32 = 0;
+    while (i < len(unions)) {
+        if (unions[i].name == union_name) {
+            var j: i32 = 0;
+            while (j < len(unions[i].variants)) {
+                if (unions[i].variants[j] == struct_name) { return true; }
+                j = j + 1;
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// type_assignable: is `from` usable where `to` is expected?
+// Same as type_eq for primitives + structs + arrays. The
+// extra rule is the variant→union widening: a TypeStruct "C"
+// is assignable to a TypeUnion "U" iff C appears in U's
+// variant list.
+function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
+    if (type_eq(from, to)) { return true; }
+    match (to) {
+        TypeUnion(un) => {
+            match (from) {
+                TypeStruct(sn) => { return is_variant_of(sn.name, un.name, unions); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // type_from_name resolves a parser-side bare type-name string to
@@ -317,7 +396,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             var i: i32 = 0;
             while (i < len(c.args)) {
                 var at: Type = check_expr(c.args[i], s);
-                if (!type_eq(at, sig.param_types[i])) {
+                if (!type_assignable(at, sig.param_types[i], s.unions)) {
                     return t_unknown("arg-type mismatch calling `" + name + "`");
                 }
                 i = i + 1;
@@ -537,7 +616,7 @@ function check_program(prog: parser.Stmt[]): ProgramTypes {
 // to Types via type_from_name. The table is built in one pass and
 // then passed to check_module's per-function body walk so calls
 // (including recursive / mutually-recursive ones) can resolve.
-function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[]): FuncSig[] {
+function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], unions: UnionSig[]): FuncSig[] {
     var out: FuncSig[] = [];
     var i: i32 = 0;
     while (i < len(funcs)) {
@@ -545,13 +624,13 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[]): Func
         var pts: Type[] = [];
         var j: i32 = 0;
         while (j < len(fd.params)) {
-            pts = pts.push(type_from_name_with_structs(fd.params[j].type_name, structs));
+            pts = pts.push(type_from_name_with_structs_unions(fd.params[j].type_name, structs, unions));
             j = j + 1;
         }
         out = out.push(FuncSig {
             name: fd.name,
             param_types: pts,
-            ret_type: type_from_name_with_structs(fd.ret_type, structs)
+            ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions)
         });
         i = i + 1;
     }
@@ -624,17 +703,109 @@ function type_from_name_with_struct_names(name: string, struct_names: string[]):
     return t_unknown("unrecognised type name: " + name);
 }
 
+// type_from_name_with_structs_unions / _with_names_and_unions
+// extend the resolver to recognise union aliases. Order of
+// resolution: primitives → structs → unions → unknown. A
+// struct name and an alias name can't collide because
+// collect_union_sigs rejects the overlap at module build time.
+function type_from_name_with_structs_unions(name: string, structs: StructSig[], unions: UnionSig[]): Type {
+    if (name == "i32") { return t_i32(); }
+    if (name == "bool" || name == "boolean") { return t_bool(); }
+    if (name == "string") { return t_string(); }
+    var i: i32 = 0;
+    while (i < len(structs)) {
+        if (structs[i].name == name) { return t_struct(name); }
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < len(unions)) {
+        if (unions[j].name == name) { return t_union(name); }
+        j = j + 1;
+    }
+    return t_unknown("unrecognised type name: " + name);
+}
+
+function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): Type {
+    if (name == "i32") { return t_i32(); }
+    if (name == "bool" || name == "boolean") { return t_bool(); }
+    if (name == "string") { return t_string(); }
+    var i: i32 = 0;
+    while (i < len(struct_names)) {
+        if (struct_names[i] == name) { return t_struct(name); }
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < len(union_names)) {
+        if (union_names[j] == name) { return t_union(name); }
+        j = j + 1;
+    }
+    return t_unknown("unrecognised type name: " + name);
+}
+
+// collect_union_sigs builds the union-alias table from the
+// module's TypeAlias list. Variants are stored as bare names;
+// resolution-time validation (each variant must be a declared
+// struct) happens in `validate_union_sigs` after both tables
+// exist. An alias whose name collides with a declared struct
+// is silently dropped — collect_struct_sigs runs first and the
+// duplicate-name check would otherwise need a tri-state.
+function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[]): UnionSig[] {
+    var out: UnionSig[] = [];
+    var i: i32 = 0;
+    while (i < len(aliases)) {
+        var a: parser.TypeAlias = aliases[i];
+        // Skip aliases that shadow a declared struct — the
+        // struct wins, and the alias is treated as a no-op.
+        var k: i32 = 0;
+        var dup: boolean = false;
+        while (k < len(struct_names)) {
+            if (struct_names[k] == a.name) { dup = true; break; }
+            k = k + 1;
+        }
+        if (!dup) {
+            out = out.push(UnionSig { name: a.name, variants: a.variants });
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// validate_union_sigs walks each alias's variant list and
+// returns false if any variant fails to resolve to a declared
+// struct (the only variant shape supported in this slice).
+// Primitives + nested unions as variants are a follow-up.
+function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolean {
+    var i: i32 = 0;
+    while (i < len(unions)) {
+        var u: UnionSig = unions[i];
+        var v: i32 = 0;
+        while (v < len(u.variants)) {
+            var name: string = u.variants[v];
+            var k: i32 = 0;
+            var found: boolean = false;
+            while (k < len(struct_names)) {
+                if (struct_names[k] == name) { found = true; break; }
+                k = k + 1;
+            }
+            if (!found) { return false; }
+            v = v + 1;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // check_func_body type-checks a function's body in a scope
 // pre-bound to its parameters. Errors inside the body surface as
 // TypeUnknown on the offending statement — we walk for side
 // effects and don't return them yet. Returns true if every body
 // stmt type-checked (no TypeUnknown anywhere); the caller can
 // use that to count well-typed function bodies for diagnostics.
-function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[]): boolean {
-    var s: Scope = new_scope_with_sigs_structs(sigs, structs);
+function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[]): boolean {
+    var s: Scope = new_scope_with_sigs_structs_unions(sigs, structs, unions);
     var i: i32 = 0;
     while (i < len(fd.params)) {
-        s = s.bind(fd.params[i].name, type_from_name_with_structs(fd.params[i].type_name, structs));
+        s = s.bind(fd.params[i].name, type_from_name_with_structs_unions(fd.params[i].type_name, structs, unions));
         i = i + 1;
     }
     var ok: boolean = true;
@@ -660,17 +831,23 @@ function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSi
 pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boolean }
 
 pub function check_module(mod: parser.Module): ModuleTypes {
-    // Collect struct decls first; func sigs use them to
-    // resolve struct-typed params / returns.
+    // Collect struct decls first; func sigs + union aliases
+    // both use them to resolve names. Union aliases come next
+    // so func sigs can reference union-typed params / returns.
     var structs: StructSig[] = collect_struct_sigs(mod.structs);
-    var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs);
+    var struct_names: string[] = [];
+    var sn: i32 = 0;
+    while (sn < len(structs)) { struct_names = struct_names.push(structs[sn].name); sn = sn + 1; }
+    var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
     var well_typed: boolean = true;
+    if (!validate_union_sigs(unions, struct_names)) { well_typed = false; }
+    var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
     var i: i32 = 0;
     while (i < len(mod.funcs)) {
-        if (!check_func_body(mod.funcs[i], sigs, structs)) { well_typed = false; }
+        if (!check_func_body(mod.funcs[i], sigs, structs, unions)) { well_typed = false; }
         i = i + 1;
     }
-    var s: Scope = new_scope_with_sigs_structs(sigs, structs);
+    var s: Scope = new_scope_with_sigs_structs_unions(sigs, structs, unions);
     var top_tys: Type[] = [];
     var j: i32 = 0;
     while (j < len(mod.top_stmts)) {
@@ -833,6 +1010,44 @@ function main(): i32 {
     var mod18: parser.Module = parser.parse_module(lexer.tokenize(src18));
     var mt18: ModuleTypes = check_module(mod18);
     if (!mt18.all_well_typed) { return 180; }
+
+    // Well-typed union alias: both variants resolve to declared
+    // structs. Function takes a `Shape` param and the body
+    // returns 0 — alias is referenced through the signature.
+    var src19: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function area(_s: Shape): i32 { return 0; } function main(): i32 { return area(Circle { r: 3 }); }";
+    var mod19: parser.Module = parser.parse_module(lexer.tokenize(src19));
+    var mt19: ModuleTypes = check_module(mod19);
+    if (!mt19.all_well_typed) { return 190; }
+
+    // Variant→union subtyping: passing a Square into a Shape
+    // slot is fine because Square is in Shape's variant list.
+    var src20: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function area(_s: Shape): i32 { return 0; } function main(): i32 { return area(Square { s: 4 }); }";
+    var mod20: parser.Module = parser.parse_module(lexer.tokenize(src20));
+    var mt20: ModuleTypes = check_module(mod20);
+    if (!mt20.all_well_typed) { return 200; }
+
+    // Non-variant struct in a union slot is rejected. Triangle
+    // is declared but not a variant of Shape.
+    var src21: string = "struct Circle { r: i32 } struct Square { s: i32 } struct Triangle { b: i32 } pub type Shape = Circle | Square; function area(_s: Shape): i32 { return 0; } function main(): i32 { return area(Triangle { b: 5 }); }";
+    var mod21: parser.Module = parser.parse_module(lexer.tokenize(src21));
+    var mt21: ModuleTypes = check_module(mod21);
+    if (mt21.all_well_typed) { return 210; }
+
+    // Alias variant resolution: unknown variant name is
+    // rejected at module-build time. NotAStruct never gets
+    // declared, so validate_union_sigs reports failure.
+    var src22: string = "struct Circle { r: i32 } pub type Bad = Circle | NotAStruct; function main(): i32 { return 0; }";
+    var mod22: parser.Module = parser.parse_module(lexer.tokenize(src22));
+    var mt22: ModuleTypes = check_module(mod22);
+    if (mt22.all_well_typed) { return 220; }
+
+    // Union same-type equality: equality through type_eq holds
+    // when the union names match. Two `Shape`-typed slots are
+    // compatible without further widening.
+    var src23: string = "struct Circle { r: i32 } pub type Shape = Circle; function id(s: Shape): Shape { return s; } function main(): i32 { return 0; }";
+    var mod23: parser.Module = parser.parse_module(lexer.tokenize(src23));
+    var mt23: ModuleTypes = check_module(mod23);
+    if (!mt23.all_well_typed) { return 230; }
 
     return 0;
 }
