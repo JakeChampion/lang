@@ -400,6 +400,9 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "read_line") { return "string"; }
                     if (id.name == "i32_to_string") { return "string"; }
                     if (id.name == "str_to_i32") { return "i32"; }
+                    if (id.name == "str_starts_with") { return "bool"; }
+                    if (id.name == "str_contains") { return "bool"; }
+                    if (id.name == "str_index_of") { return "i32"; }
                     // Plain function call: look up ret_type.
                     var fi: i32 = 0;
                     while (fi < len(s.funcs)) {
@@ -524,7 +527,8 @@ pub struct EmitState {
     needs_str_read_line: boolean,
     needs_i32_to_string: boolean,
     needs_str_to_i32: boolean,
-    needs_eprint: boolean
+    needs_eprint: boolean,
+    needs_str_search: boolean
 }
 
 function new_state(): EmitState {
@@ -555,7 +559,8 @@ function new_state(): EmitState {
         needs_str_read_line: false,
         needs_i32_to_string: false,
         needs_str_to_i32: false,
-        needs_eprint: false
+        needs_eprint: false,
+        needs_str_search: false
     };
 }
 
@@ -581,7 +586,8 @@ function (s: EmitState) write(text: string): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -613,7 +619,8 @@ function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -650,7 +657,8 @@ function (s: EmitState) reset_locals(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -676,7 +684,8 @@ function (s: EmitState) enter_function(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -704,7 +713,8 @@ function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): Em
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -738,7 +748,8 @@ function (s: EmitState) pop_loop_labels(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -774,7 +785,8 @@ function (s: EmitState) leave_function(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -803,7 +815,8 @@ function (s: EmitState) mark_print_int(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -834,7 +847,8 @@ function (s: EmitState) mark_heap(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -852,7 +866,8 @@ function (s: EmitState) mark_str_concat(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -870,7 +885,8 @@ function (s: EmitState) mark_str_eq(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -888,7 +904,8 @@ function (s: EmitState) mark_str_print(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -906,7 +923,8 @@ function (s: EmitState) mark_str_cmp(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -924,7 +942,8 @@ function (s: EmitState) mark_str_read_line(): EmitState {
         needs_str_read_line: true,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -942,7 +961,8 @@ function (s: EmitState) mark_i32_to_string(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: true,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -960,7 +980,8 @@ function (s: EmitState) mark_str_to_i32(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: true,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -978,7 +999,27 @@ function (s: EmitState) mark_eprint(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: true
+        needs_eprint: true,
+        needs_str_search: s.needs_str_search
+    };
+}
+
+function (s: EmitState) mark_str_search(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
+        needs_str_cmp: s.needs_str_cmp,
+        needs_str_read_line: s.needs_str_read_line,
+        needs_i32_to_string: s.needs_i32_to_string,
+        needs_str_to_i32: s.needs_str_to_i32,
+        needs_eprint: s.needs_eprint,
+        needs_str_search: true
     };
 }
 
@@ -1006,7 +1047,8 @@ function (s: EmitState) mark_read_int(): EmitState {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
 }
 
@@ -1052,7 +1094,8 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -1111,7 +1154,8 @@ function fresh_label(s: EmitState): LabelOut {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
     return LabelOut { state: ns, name: name };
 }
@@ -1392,7 +1436,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         needs_str_read_line: s.needs_str_read_line,
                         needs_i32_to_string: s.needs_i32_to_string,
                         needs_str_to_i32: s.needs_str_to_i32,
-                        needs_eprint: s.needs_eprint
+                        needs_eprint: s.needs_eprint,
+                        needs_str_search: s.needs_str_search
                     };
                     // For each func whose name matches and
                     // receiver_type is non-empty, emit a shape-
@@ -1571,6 +1616,45 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    call __lang_str_to_i32\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_to_i32();
+                return s;
+            }
+            // str_starts_with(s, prefix) — bool. Checks first
+            // len(prefix) bytes of s match prefix verbatim.
+            if (name == "str_starts_with" && len(c.args) == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    popq %rsi\n");
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __lang_str_starts_with\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_str_search();
+                return s;
+            }
+            // str_contains(s, needle) — bool. Linear search.
+            if (name == "str_contains" && len(c.args) == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    popq %rsi\n");
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __lang_str_index_of\n");
+                // Convert -1 (not found) / >=0 to bool.
+                s = s.write("    cmpq $0, %rax\n");
+                s = s.write("    setge %al\n");
+                s = s.write("    movzbq %al, %rax\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_str_search();
+                return s;
+            }
+            // str_index_of(s, needle) — i32. First match offset
+            // or -1 if not found.
+            if (name == "str_index_of" && len(c.args) == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    popq %rsi\n");
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __lang_str_index_of\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_str_search();
                 return s;
             }
             // Closure call: callee ident resolves to a local
@@ -1849,7 +1933,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_str_read_line: s.needs_str_read_line,
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint
+                needs_eprint: s.needs_eprint,
+                needs_str_search: s.needs_str_search
             };
             // Walk each struct decl looking for the named
             // field. Emit a shape-pointer comparison arm for
@@ -1895,7 +1980,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         needs_str_read_line: s.needs_str_read_line,
                         needs_i32_to_string: s.needs_i32_to_string,
                         needs_str_to_i32: s.needs_str_to_i32,
-                        needs_eprint: s.needs_eprint
+                        needs_eprint: s.needs_eprint,
+                        needs_str_search: s.needs_str_search
                     };
                 }
                 di = di + 1;
@@ -1956,7 +2042,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_str_read_line: s.needs_str_read_line,
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint
+                needs_eprint: s.needs_eprint,
+                needs_str_search: s.needs_str_search
             };
             var skip_lbl: string = ".Lskip_lambda_" + i32_to_string(lam_id);
             var body_lbl: string = ".Llambda_" + i32_to_string(lam_id);
@@ -2038,7 +2125,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_str_read_line: s.needs_str_read_line,
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint
+                needs_eprint: s.needs_eprint,
+                needs_str_search: s.needs_str_search
             };
             s = s.write(skip_lbl + ":\n");
             // Allocate box: (1 + n_caps) * 8 bytes.
@@ -2224,7 +2312,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 needs_str_read_line: s.needs_str_read_line,
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint
+                needs_eprint: s.needs_eprint,
+                needs_str_search: s.needs_str_search
             };
             var ai: i32 = 0;
             while (ai < len(m.arms)) {
@@ -2251,7 +2340,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                     needs_str_read_line: s.needs_str_read_line,
                     needs_i32_to_string: s.needs_i32_to_string,
                     needs_str_to_i32: s.needs_str_to_i32,
-                    needs_eprint: s.needs_eprint
+                    needs_eprint: s.needs_eprint,
+                    needs_str_search: s.needs_str_search
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
@@ -2347,7 +2437,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 needs_str_read_line: s.needs_str_read_line,
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint
+                needs_eprint: s.needs_eprint,
+                needs_str_search: s.needs_str_search
             };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition: __for_i_N < len(__for_arr_N).
@@ -2525,7 +2616,8 @@ pub function emit_module(mod: parser.Module): string {
         needs_str_read_line: s.needs_str_read_line,
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search
     };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
@@ -2971,6 +3063,88 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq $2, %rdi\n");
         s = s.write("    movq $1, %rax\n");
         s = s.write("    syscall\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_str_starts_with: %rdi = box A, %rsi = box B
+    // (prefix). Returns 1 in %rax if A starts with B (or B is
+    // empty), else 0.
+    // __lang_str_index_of: %rdi = haystack box, %rsi = needle.
+    // Returns the first byte offset where needle matches, or
+    // -1 if not found. Empty needle returns 0.
+    if (s.needs_str_search) {
+        s = s.write("__lang_str_starts_with:\n");
+        s = s.write("    movq 8(%rsi), %rcx\n");      // lenP
+        s = s.write("    movq 8(%rdi), %rax\n");      // lenS
+        s = s.write("    cmpq %rcx, %rax\n");
+        s = s.write("    jl .Lsw_no\n");
+        s = s.write("    movq (%rdi), %rdi\n");
+        s = s.write("    movq (%rsi), %rsi\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lsw_yes\n");
+        s = s.write(".Lsw_loop:\n");
+        s = s.write("    movzbq (%rdi), %rax\n");
+        s = s.write("    movzbq (%rsi), %rdx\n");
+        s = s.write("    cmpq %rdx, %rax\n");
+        s = s.write("    jne .Lsw_no\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lsw_loop\n");
+        s = s.write(".Lsw_yes:\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lsw_no:\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    ret\n");
+        // __lang_str_index_of.
+        s = s.write("__lang_str_index_of:\n");
+        s = s.write("    movq 8(%rdi), %r8\n");       // lenS
+        s = s.write("    movq 8(%rsi), %r9\n");       // lenN
+        s = s.write("    cmpq $0, %r9\n");
+        s = s.write("    je .Lidx_zero\n");
+        s = s.write("    movq %r8, %r10\n");          // limit = lenS - lenN
+        s = s.write("    subq %r9, %r10\n");
+        s = s.write("    cmpq $0, %r10\n");
+        s = s.write("    jl .Lidx_no\n");
+        s = s.write("    movq (%rdi), %r11\n");       // data S
+        s = s.write("    movq (%rsi), %rdi\n");       // data N (reuse)
+        s = s.write("    movq $0, %rcx\n");           // offset
+        s = s.write(".Lidx_outer:\n");
+        s = s.write("    cmpq %r10, %rcx\n");
+        s = s.write("    jg .Lidx_no\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    movq $0, %r12\n");           // inner i
+        // Save %r12 across, even though we don't call alloc.
+        // Use it as a scratch register; restore via the stack.
+        s = s.write("    pushq %r12\n");
+        s = s.write("    movq $0, %r12\n");
+        s = s.write(".Lidx_inner:\n");
+        s = s.write("    cmpq %r9, %r12\n");
+        s = s.write("    je .Lidx_match\n");
+        s = s.write("    movq %r11, %rax\n");
+        s = s.write("    addq %rcx, %rax\n");
+        s = s.write("    addq %r12, %rax\n");
+        s = s.write("    movzbq (%rax), %rdx\n");
+        s = s.write("    movq %rdi, %rax\n");
+        s = s.write("    addq %r12, %rax\n");
+        s = s.write("    movzbq (%rax), %rax\n");
+        s = s.write("    cmpq %rax, %rdx\n");
+        s = s.write("    jne .Lidx_skip\n");
+        s = s.write("    incq %r12\n");
+        s = s.write("    jmp .Lidx_inner\n");
+        s = s.write(".Lidx_skip:\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lidx_outer\n");
+        s = s.write(".Lidx_match:\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    movq %rcx, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lidx_zero:\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lidx_no:\n");
+        s = s.write("    movq $-1, %rax\n");
         s = s.write("    ret\n");
     }
     // .rodata: emit each interned string literal as a
