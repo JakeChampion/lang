@@ -40,14 +40,15 @@ import (
 // native FuzzGenerate_ExecutionAgrees harness in the same package
 // expands the search space on demand.
 //
-// Bumped from 8 → 32 in PR #781's follow-up: with the
-// __alloc_u8 length-prefix fix landing, 123 of the first 128
-// seeds compile and execute correctly through wasmbin, so the
-// extra 24 seeds are nearly free in CI time and meaningfully
-// expand the codegen surface the oracle covers (the langsmith
-// generator picks different IR shapes per seed — Map ops, Result
-// pair-returns, multi-arm matches, nested loops, etc.).
-const diffOracleSeedCount = 32
+// Bumped 8 → 32 once the wasmbin path stopped tripping on string-
+// slot drops, then 32 → 64 once the differential oracle started
+// running cleanly on a broader corpus. Seeds 64..127 expose a
+// pre-existing WAT-path bug (offset 0x9e1: "expected i32 but
+// nothing on stack" at seeds 87 and 122 — same root cause as the
+// wasmbin emit-skip at offset 306, but the WAT backend tries to
+// compile and fails the validator instead of erroring at build).
+// Tracked separately; the bump waits on that fix.
+const diffOracleSeedCount = 64
 
 // TestDifferential_LangsmithMain runs each backend on the same
 // generator-emitted main() and asserts the byte return value
