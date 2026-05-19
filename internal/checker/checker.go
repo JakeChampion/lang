@@ -764,10 +764,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// the IDE squiggle lands on the offending source, not on
 	// some synthetic builtin we never actually exposed.
 	for _, ed := range shadowedEnums {
-		c.errf(ed.P, "enum %q is a reserved built-in name and cannot be redeclared", ed.Name)
+		c.errfCode(ed.P, "E010", "enum %q is a reserved built-in name and cannot be redeclared", ed.Name)
 	}
 	for _, sd := range shadowedStructs {
-		c.errf(sd.P, "struct %q is a reserved built-in name and cannot be redeclared", sd.Name)
+		c.errfCode(sd.P, "E010", "struct %q is a reserved built-in name and cannot be redeclared", sd.Name)
 	}
 
 	// Register every struct declaration up front so that types
@@ -775,13 +775,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// check function signatures below.
 	for _, sd := range prog.Structs {
 		if _, dup := c.info.Structs[sd.Name]; dup {
-			c.errf(sd.P, "struct %q redeclared", sd.Name)
+			c.errfCode(sd.P, "E006", "struct %q redeclared", sd.Name)
 			continue
 		}
 		seen := map[string]bool{}
 		for _, f := range sd.Fields {
 			if seen[f.Name] {
-				c.errf(sd.P, "duplicate field %q in struct %s", f.Name, sd.Name)
+				c.errfCode(sd.P, "E007", "duplicate field %q in struct %s", f.Name, sd.Name)
 			}
 			seen[f.Name] = true
 		}
@@ -869,7 +869,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// resolution helpers below produce the disambiguation error.
 	for _, ed := range prog.Enums {
 		if _, dup := c.info.Enums[ed.Name]; dup {
-			c.errf(ed.P, "enum %q redeclared", ed.Name)
+			c.errfCode(ed.P, "E006", "enum %q redeclared", ed.Name)
 			continue
 		}
 		c.info.Enums[ed.Name] = ed
@@ -1611,7 +1611,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			c.info.MethodSources[mangled] = fn.SourceModule
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup {
-			c.errf(fn.P, "function %q redeclared", fn.Name)
+			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
 			continue
 		}
 		params := make([]ast.Type, len(fn.Params))
@@ -2924,7 +2924,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 	case *ast.If:
 		t := c.checkExpr(n.Cond, s)
 		if t != nil && !ast.Equal(t, ast.BoolType{}) {
-			c.errf(n.Cond.Pos(), "if condition must be boolean, got %s", t)
+			c.errfCode(n.Cond.Pos(), "E008", "if condition must be boolean, got %s", t)
 		}
 		c.checkStmt(n.Then, s)
 		if n.Else != nil {
@@ -4633,7 +4633,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)
 			if !ok {
-				c.errf(n.P, "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 				return ast.NumberType{}
 			}
 			c.settleNumeric(n.Left, common)
@@ -4661,7 +4661,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)
 			if !ok {
-				c.errf(n.P, "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 				return ast.NumberType{}
 			}
 			c.settleNumeric(n.Left, common)
@@ -4693,7 +4693,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)
 			if !ok {
-				c.errf(n.P, "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 				return ast.BoolType{}
 			}
 			c.settleNumeric(n.Left, common)
@@ -5003,7 +5003,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				continue
 			}
 			if seen[f.Name] {
-				c.errf(n.P, "duplicate field %q in struct literal", f.Name)
+				c.errfCode(n.P, "E007", "duplicate field %q in struct literal", f.Name)
 			}
 			seen[f.Name] = true
 			vt := c.checkExpr(f.Value, s)
@@ -5205,7 +5205,7 @@ func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
 		return
 	}
 	if _, ok := t.(ast.NumberType); !ok {
-		c.errf(p, "operator %q requires an integer type, got %s", op, t)
+		c.errfCode(p, "E009", "operator %q requires an integer type, got %s", op, t)
 	}
 }
 
