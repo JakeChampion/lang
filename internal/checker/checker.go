@@ -336,6 +336,22 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "pos", Type: ast.NumberType{}},
 			},
 		},
+		// BytesWriter — in-memory buffered writer
+		// (docs/STDLIB-DESIGN-RESEARCH.md Rec §5). The "Memory-
+		// Writer" the doc lists alongside Reader / Writer
+		// interfaces — collects writes into a u8[] buffer that
+		// callers `.into_string()` or `.into_bytes()` at the
+		// end. Phase 1 doesn't introduce nominal interface
+		// types; concrete BytesWriter shares the same
+		// `.write_string()` / `.write_bytes()` method shape
+		// as Writer (the fd-backed version) so callers can
+		// swap one for the other.
+		{
+			Name: "BytesWriter",
+			Fields: []ast.Param{
+				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+			},
+		},
 		// MockCall + MockPlatform — test-ergonomics helpers for
 		// Tier-C Rec §11 (docs/PLATFORM-RESEARCH.md §6). Today's
 		// Platform is a one-field placeholder; once Phase 2 adds
@@ -750,10 +766,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	// Same shape for the auto-injected structs (Reader,
 	// Writer, HttpRequest, HttpResponse, Platform, HeaderMap,
-	// Stream, MockCall, MockPlatform, Instant / Date / Time /
-	// DateTime / TimeZone / Zoned / Span / Duration, Map,
-	// MapIter, Url) — same shadow-is-an-error policy, same
-	// monomorph-re-entry handling.
+	// Stream, BytesWriter, MockCall, MockPlatform, Instant /
+	// Date / Time / DateTime / TimeZone / Zoned / Span /
+	// Duration, Map, MapIter, Url) — same shadow-is-an-error
+	// policy, same monomorph-re-entry handling.
 	var shadowedStructs []*ast.StructDecl
 	{
 		userStructs := map[string]*ast.StructDecl{}
