@@ -141,6 +141,13 @@ convention.
   `first_index_of`, `pairwise_diffs`, `min_max`, `reversed`,
   `every_positive`, `sorted_asc`, `sorted_desc`, `cumsum`,
   `sum_squared`, `median`, `mode`
+- **Wider int / float reductions** (free functions —
+  array-method dispatch can't yet overload by element type,
+  so these aren't receiver methods):
+  `sum_i64`, `max_i64`, `min_i64`, `avg_i64`;
+  `sum_u32`, `max_u32`, `min_u32`;
+  `sum_u64`, `max_u64`, `min_u64`;
+  `sum_f64`, `max_f64`, `min_f64`, `avg_f64`
 - **string[] core:** `join`, `index_of`, `contains`, `reverse`,
   `filter_non_empty`, `count_non_empty`, `distinct`,
   `distinct_count`, `max_by_len`, `min_by_len`, `sum_lens`,

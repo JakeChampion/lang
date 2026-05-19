@@ -900,6 +900,35 @@ func TestRunnerSortWiderExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_reductions_test.lang` exercises the
+// new wider-int / float array reductions added as free
+// functions to std/array: `sum_i64` / `max_i64` / `min_i64` /
+// `avg_i64`, `sum_u32` / `max_u32` / `min_u32`,
+// `sum_u64` / `max_u64` / `min_u64`, `sum_f64` / `max_f64` /
+// `min_f64` / `avg_f64`. Eleven cases cover the happy path
+// + empty input semantics + the near-u64-max unsigned-
+// compare correctness check.
+func TestRunnerArrayReductionsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_reductions_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - sum_i64",
+		"ok 5 - max_i64 empty returns None",
+		"ok 8 - max_u64 unsigned semantics",
+		"ok 11 - avg_f64",
+		"# pass 11",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
