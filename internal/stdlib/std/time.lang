@@ -809,3 +809,72 @@ pub function (d: Date) days_until(other: Date): Span {
     var delta: i32 = other.days_since(d);
     return span_days(delta);
 }
+
+// `timezone_iana(name)` — lookup a known IANA zone by name.
+// Returns a fixed-offset `TimeZone` for the zone's *standard-
+// time* offset. DST transitions are NOT modeled today — that's
+// the IANA tzdb integration follow-up (Phase 5.x.x). Zones
+// where the local-time-in-summer matters (Europe / North
+// America / Australia / NZ) will surface a wrong wall-clock
+// during DST months; UTC-based handler code that just stamps
+// timestamps doesn't notice.
+//
+// Coverage in this PR — the ~80% of wall-clock-relevant zones
+// for edge-handler workloads:
+//   "UTC", "GMT", "Z" — UTC
+//   US: America/{New_York, Chicago, Denver, Los_Angeles,
+//       Anchorage, Honolulu, Phoenix}
+//   Europe: London, Dublin, Paris, Berlin, Madrid, Rome,
+//           Amsterdam, Moscow
+//   Asia: Tokyo, Shanghai, Hong_Kong, Singapore, Kolkata,
+//         Dubai, Bangkok
+//   Pacific: Auckland, Sydney, Melbourne, Honolulu
+//   Other: Africa/Cairo, America/Sao_Paulo, America/Toronto
+//
+// Returns None for any name not in this table. Future Phase
+// 5.x.x will load the IANA database (or a bundled subset)
+// from disk with proper DST handling.
+pub function timezone_iana(name: string): Option[TimeZone] {
+    // UTC aliases.
+    if (name == "UTC") { return Some(timezone_fixed_offset(0)); }
+    if (name == "GMT") { return Some(timezone_fixed_offset(0)); }
+    if (name == "Z") { return Some(timezone_fixed_offset(0)); }
+    // Etc/UTC aliases (POSIX form sometimes appears).
+    if (name == "Etc/UTC") { return Some(timezone_fixed_offset(0)); }
+    if (name == "Etc/GMT") { return Some(timezone_fixed_offset(0)); }
+    // North America — standard time (winter).
+    if (name == "America/New_York") { return Some(timezone_fixed_offset(0 - 5 * 3600)); }
+    if (name == "America/Toronto") { return Some(timezone_fixed_offset(0 - 5 * 3600)); }
+    if (name == "America/Chicago") { return Some(timezone_fixed_offset(0 - 6 * 3600)); }
+    if (name == "America/Denver") { return Some(timezone_fixed_offset(0 - 7 * 3600)); }
+    if (name == "America/Phoenix") { return Some(timezone_fixed_offset(0 - 7 * 3600)); }
+    if (name == "America/Los_Angeles") { return Some(timezone_fixed_offset(0 - 8 * 3600)); }
+    if (name == "America/Anchorage") { return Some(timezone_fixed_offset(0 - 9 * 3600)); }
+    if (name == "America/Honolulu") { return Some(timezone_fixed_offset(0 - 10 * 3600)); }
+    if (name == "America/Sao_Paulo") { return Some(timezone_fixed_offset(0 - 3 * 3600)); }
+    // Europe.
+    if (name == "Europe/London") { return Some(timezone_fixed_offset(0)); }
+    if (name == "Europe/Dublin") { return Some(timezone_fixed_offset(0)); }
+    if (name == "Europe/Paris") { return Some(timezone_fixed_offset(3600)); }
+    if (name == "Europe/Berlin") { return Some(timezone_fixed_offset(3600)); }
+    if (name == "Europe/Madrid") { return Some(timezone_fixed_offset(3600)); }
+    if (name == "Europe/Rome") { return Some(timezone_fixed_offset(3600)); }
+    if (name == "Europe/Amsterdam") { return Some(timezone_fixed_offset(3600)); }
+    if (name == "Europe/Moscow") { return Some(timezone_fixed_offset(3 * 3600)); }
+    // Africa / Middle East.
+    if (name == "Africa/Cairo") { return Some(timezone_fixed_offset(2 * 3600)); }
+    if (name == "Asia/Dubai") { return Some(timezone_fixed_offset(4 * 3600)); }
+    // Asia.
+    if (name == "Asia/Kolkata") { return Some(timezone_fixed_offset(5 * 3600 + 30 * 60)); }
+    if (name == "Asia/Bangkok") { return Some(timezone_fixed_offset(7 * 3600)); }
+    if (name == "Asia/Shanghai") { return Some(timezone_fixed_offset(8 * 3600)); }
+    if (name == "Asia/Hong_Kong") { return Some(timezone_fixed_offset(8 * 3600)); }
+    if (name == "Asia/Singapore") { return Some(timezone_fixed_offset(8 * 3600)); }
+    if (name == "Asia/Tokyo") { return Some(timezone_fixed_offset(9 * 3600)); }
+    // Pacific / Australasia.
+    if (name == "Australia/Sydney") { return Some(timezone_fixed_offset(10 * 3600)); }
+    if (name == "Australia/Melbourne") { return Some(timezone_fixed_offset(10 * 3600)); }
+    if (name == "Pacific/Honolulu") { return Some(timezone_fixed_offset(0 - 10 * 3600)); }
+    if (name == "Pacific/Auckland") { return Some(timezone_fixed_offset(12 * 3600)); }
+    return None;
+}

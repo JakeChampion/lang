@@ -1418,6 +1418,140 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptTimezoneIana pins the Phase-5.x IANA-name
+// lookup (docs/STDLIB-DESIGN-RESEARCH.md Rec §4). Returns a
+// fixed-offset TimeZone for the zone's standard-time offset
+// — DST is not modeled yet, so summer-time wall-clock values
+// for affected zones will be wrong; the table covers the
+// ~80% of edge-handler workloads where UTC-anchored
+// timestamp stamping is what's needed.
+func TestInterpScriptTimezoneIana(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "UTC aliases all map to offset zero",
+			source: `import "std/time";
+function show(zone_name: string) {
+    match (time.timezone_iana(zone_name)) {
+        Some(tz) => { print(zone_name + " -> " + tz.name); },
+        None => { print(zone_name + " -> none"); }
+    }
+}
+function main(): i32 {
+    show("UTC");
+    show("GMT");
+    show("Z");
+    show("Etc/UTC");
+    show("Etc/GMT");
+    return 0;
+}`,
+			wantStdout: "UTC -> UTC+00:00\nGMT -> UTC+00:00\nZ -> UTC+00:00\nEtc/UTC -> UTC+00:00\nEtc/GMT -> UTC+00:00\n",
+		},
+		{
+			name: "North American zones map to standard-time offsets",
+			source: `import "std/time";
+function show(zone_name: string) {
+    match (time.timezone_iana(zone_name)) {
+        Some(tz) => { print(zone_name + " -> " + tz.offset_seconds.to_string()); },
+        None => { print(zone_name + " -> none"); }
+    }
+}
+function main(): i32 {
+    show("America/New_York");      // EST = -5h
+    show("America/Chicago");       // CST = -6h
+    show("America/Denver");        // MST = -7h
+    show("America/Los_Angeles");   // PST = -8h
+    show("America/Anchorage");     // AKST = -9h
+    show("America/Honolulu");      // HST = -10h
+    return 0;
+}`,
+			wantStdout: "America/New_York -> -18000\nAmerica/Chicago -> -21600\nAmerica/Denver -> -25200\nAmerica/Los_Angeles -> -28800\nAmerica/Anchorage -> -32400\nAmerica/Honolulu -> -36000\n",
+		},
+		{
+			name: "Asia zones cover half-hour offset for India",
+			source: `import "std/time";
+function show(zone_name: string) {
+    match (time.timezone_iana(zone_name)) {
+        Some(tz) => { print(zone_name + " -> " + tz.name); },
+        None => { print(zone_name + " -> none"); }
+    }
+}
+function main(): i32 {
+    show("Asia/Tokyo");
+    show("Asia/Shanghai");
+    show("Asia/Hong_Kong");
+    show("Asia/Singapore");
+    show("Asia/Kolkata");
+    show("Asia/Dubai");
+    show("Asia/Bangkok");
+    return 0;
+}`,
+			wantStdout: "Asia/Tokyo -> UTC+09:00\nAsia/Shanghai -> UTC+08:00\nAsia/Hong_Kong -> UTC+08:00\nAsia/Singapore -> UTC+08:00\nAsia/Kolkata -> UTC+05:30\nAsia/Dubai -> UTC+04:00\nAsia/Bangkok -> UTC+07:00\n",
+		},
+		{
+			name: "Unknown zone names return None",
+			source: `import "std/time";
+function main(): i32 {
+    match (time.timezone_iana("Mars/Olympus_Mons")) {
+        Some(_) => { print("ACCEPTED"); return 1; },
+        None => { print("none"); }
+    }
+    match (time.timezone_iana("")) {
+        Some(_) => { return 2; },
+        None => { print("empty-none"); }
+    }
+    match (time.timezone_iana("america/new_york")) {  // wrong case
+        Some(_) => { return 3; },
+        None => { print("case-none"); }
+    }
+    return 0;
+}`,
+			wantStdout: "none\nempty-none\ncase-none\n",
+		},
+		{
+			name: "IANA zone integrates with Instant.in_zone",
+			source: `import "std/time";
+function main(): i32 {
+    // 2025-01-01T00:00:00Z + Asia/Tokyo (+9h) = 2025-01-01T09:00:00+09:00.
+    match (time.timezone_iana("Asia/Tokyo")) {
+        Some(jp) => {
+            var ts: Instant = Instant { sec: 1735689600 as i64, nsec: 0 };
+            print(ts.in_zone(jp).format_rfc3339());
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "2025-01-01T09:00:00+09:00\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
