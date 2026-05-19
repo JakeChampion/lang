@@ -2321,6 +2321,148 @@ func TestEmitMatchTagOnConstructedBox(t *testing.T) {
 	}
 }
 
+// TestEmitMakeSomeReturnPair — pair-form Option[i32] function.
+// Tag+payload returned via wasm multi-value (i32, i32). Two
+// caller helpers extract just the tag (0 for Some) and just the
+// payload (42) to verify both halves come back.
+func TestEmitMakeSomeReturnPair(t *testing.T) {
+	prog := &ir.Program{
+		Funcs: []*ir.Func{
+			{
+				Name:       "makesome",
+				ReturnType: i32(), // overridden by PairForm
+				Ops: []ir.Op{
+					{Kind: ir.OpConstI32, I32: 42},
+					{Kind: ir.OpMakeSomeI32},
+					{Kind: ir.OpReturnPair},
+				},
+			},
+			{
+				Name:       "tag",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpCallDirectPair, Str: "makesome"},
+					{Kind: ir.OpDrop}, // drop payload, leave tag
+				},
+			},
+			{
+				Name:         "payload",
+				ScratchTypes: []ast.Type{i32()},
+				ReturnType:   i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpCallDirectPair, Str: "makesome"},
+					{Kind: ir.OpStoreLocal, I32: 0}, // payload → scratch
+					{Kind: ir.OpDrop},               // drop tag
+					{Kind: ir.OpLoadLocal, I32: 0},
+				},
+			},
+		},
+		PairForm: map[string]bool{"makesome": true},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "tag"); got != "0" {
+		t.Fatalf("Some(42) tag = %q, want 0", got)
+	}
+	if got := runUnderWasmtime(t, bin, "payload"); got != "42" {
+		t.Fatalf("Some(42) payload = %q, want 42", got)
+	}
+}
+
+// TestEmitMakeNonePair — None's payload is forced to 0; tag is 1.
+func TestEmitMakeNonePair(t *testing.T) {
+	prog := &ir.Program{
+		Funcs: []*ir.Func{
+			{
+				Name:       "makenone",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpMakeNoneI32},
+					{Kind: ir.OpReturnPair},
+				},
+			},
+			{
+				Name:       "sum",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpCallDirectPair, Str: "makenone"},
+					{Kind: ir.OpAdd}, // 1 + 0 = 1
+				},
+			},
+		},
+		PairForm: map[string]bool{"makenone": true},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "sum"); got != "1" {
+		t.Fatalf("None (tag+payload) = %q, want 1", got)
+	}
+}
+
+// TestEmitMakeOkErrPair — Result[i32] with both arms.
+// combined = ok_tag*100 + ok_payload + err_tag*10 + err_payload
+// = 0*100 + 99 + 1*10 + 7 = 116
+func TestEmitMakeOkErrPair(t *testing.T) {
+	prog := &ir.Program{
+		Funcs: []*ir.Func{
+			{
+				Name:       "mk_ok",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpConstI32, I32: 99},
+					{Kind: ir.OpMakeOkI32},
+					{Kind: ir.OpReturnPair},
+				},
+			},
+			{
+				Name:       "mk_err",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpConstI32, I32: 7},
+					{Kind: ir.OpMakeErrI32},
+					{Kind: ir.OpReturnPair},
+				},
+			},
+			{
+				Name:         "combined",
+				ScratchTypes: []ast.Type{i32(), i32(), i32(), i32()},
+				ReturnType:   i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpCallDirectPair, Str: "mk_ok"},
+					{Kind: ir.OpStoreLocal, I32: 1},
+					{Kind: ir.OpStoreLocal, I32: 0},
+					{Kind: ir.OpCallDirectPair, Str: "mk_err"},
+					{Kind: ir.OpStoreLocal, I32: 3},
+					{Kind: ir.OpStoreLocal, I32: 2},
+					{Kind: ir.OpLoadLocal, I32: 0},
+					{Kind: ir.OpConstI32, I32: 100},
+					{Kind: ir.OpMul},
+					{Kind: ir.OpLoadLocal, I32: 1},
+					{Kind: ir.OpAdd},
+					{Kind: ir.OpLoadLocal, I32: 2},
+					{Kind: ir.OpConstI32, I32: 10},
+					{Kind: ir.OpMul},
+					{Kind: ir.OpAdd},
+					{Kind: ir.OpLoadLocal, I32: 3},
+					{Kind: ir.OpAdd},
+				},
+			},
+		},
+		PairForm: map[string]bool{"mk_ok": true, "mk_err": true},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "combined"); got != "116" {
+		t.Fatalf("combined = %q, want 116", got)
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpMakeClosure) and confirm we get a useful error
 // rather than emitting nonsense bytes. Regressions here would

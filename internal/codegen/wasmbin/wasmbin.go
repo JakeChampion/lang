@@ -264,9 +264,18 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("wasmbin: %s: %w", fn.Name, err)
 		}
-		results, err := resultValtypes(fn.ReturnType)
-		if err != nil {
-			return nil, fmt.Errorf("wasmbin: %s: %w", fn.Name, err)
+		var results []byte
+		if prog.PairForm[fn.Name] {
+			// Pair-form ABI: the wasm-level return type is the
+			// 2-i32 multi-value tuple (tag, payload), regardless
+			// of what IR ReturnType says. Callers reach this via
+			// OpCallDirectPair.
+			results = []byte{encode.ValtypeI32, encode.ValtypeI32}
+		} else {
+			results, err = resultValtypes(fn.ReturnType)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: %s: %w", fn.Name, err)
+			}
 		}
 
 		tIdx := addType(params, results)
@@ -476,6 +485,11 @@ func localValtypes(fn *ir.Func) ([]byte, error) {
 			out = append(out, encode.ValtypeI32)
 		}
 	}
+	if fnNeedsPairMakeScratch(fn) {
+		for i := 0; i < pairMakeScratchSlots; i++ {
+			out = append(out, encode.ValtypeI32)
+		}
+	}
 	return out, nil
 }
 
@@ -484,6 +498,12 @@ func localValtypes(fn *ir.Func) ([]byte, error) {
 // Layout (relative to strPairScratchBase): +0 addr, +1 data, +2 len.
 const strPairScratchSlots = 3
 
+// pairMakeScratchSlots is the count of extra wasm locals appended
+// when a function uses OpMakeSomeI32 / OpMakeOkI32 / OpMakeErrI32.
+// The single scratch holds the payload while we push the tag
+// "under" it (wasm has no swap instruction).
+const pairMakeScratchSlots = 1
+
 // fnNeedsStrPairScratch reports whether fn has any OpLoad / OpStore
 // op with Width == ir.WidthString — the two-word string ABI load/
 // store fan-out needs three i32 scratch locals to juggle stack
@@ -491,6 +511,19 @@ const strPairScratchSlots = 3
 func fnNeedsStrPairScratch(fn *ir.Func) bool {
 	for _, op := range fn.Ops {
 		if (op.Kind == ir.OpLoad || op.Kind == ir.OpStore) && op.Width == ir.WidthString {
+			return true
+		}
+	}
+	return false
+}
+
+// fnNeedsPairMakeScratch reports whether fn has any OpMakeSomeI32 /
+// OpMakeOkI32 / OpMakeErrI32. OpMakeNoneI32 doesn't need scratch
+// (no input value to preserve under the tag).
+func fnNeedsPairMakeScratch(fn *ir.Func) bool {
+	for _, op := range fn.Ops {
+		switch op.Kind {
+		case ir.OpMakeSomeI32, ir.OpMakeOkI32, ir.OpMakeErrI32:
 			return true
 		}
 	}
@@ -532,6 +565,11 @@ type emitCtx struct {
 	// uses OpLoad/OpStore WidthString. Layout: +0 addr, +1 data,
 	// +2 len. Zero when fnNeedsStrPairScratch(fn) is false.
 	strPairScratchBase uint32
+	// pairMakeScratchIdx is the wasm-slot index of the single
+	// i32 scratch local appended when fn uses OpMakeSomeI32 /
+	// OpMakeOkI32 / OpMakeErrI32. The scratch holds the payload
+	// while we push the tag underneath it. Zero when not needed.
+	pairMakeScratchIdx uint32
 }
 
 // slotType returns the ast.Type of an IR slot. Layout follows the
@@ -586,7 +624,17 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 	// fnNeedsStrPairScratch(fn) is true; otherwise it's unused.
 	lastIR := int32(len(fn.Params) + len(fn.Locals) + len(fn.ScratchTypes))
 	ctx.strPairScratchBase = wasmSlotIdx(fn, lastIR)
-	defer func() { ctx.fn = nil; ctx.strPairScratchBase = 0 }()
+	// pairMake scratch sits AFTER any str-pair scratch slots.
+	pairBase := ctx.strPairScratchBase
+	if fnNeedsStrPairScratch(fn) {
+		pairBase += strPairScratchSlots
+	}
+	ctx.pairMakeScratchIdx = pairBase
+	defer func() {
+		ctx.fn = nil
+		ctx.strPairScratchBase = 0
+		ctx.pairMakeScratchIdx = 0
+	}()
 
 	for opIdx, op := range fn.Ops {
 		body, err = emitOp(body, op, ctx)
@@ -1117,6 +1165,38 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		// back from there. op.I32 carries the tag value.
 		off := ctx.internEnumSentinel(op.I32)
 		return inst.InstI32Const(body, int32(off)), nil
+	// ---- Pair-return ABI ----
+	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
+		// Stack: [..., payload]. Want: [..., 0 (tag), payload].
+		// Wasm has no swap; stash payload then push (0, payload).
+		body = inst.InstLocalSet(body, ctx.pairMakeScratchIdx)
+		body = inst.InstI32Const(body, 0) // tag
+		body = inst.InstLocalGet(body, ctx.pairMakeScratchIdx)
+		return body, nil
+	case ir.OpMakeErrI32:
+		// Stack: [..., payload]. Want: [..., 1 (tag), payload].
+		body = inst.InstLocalSet(body, ctx.pairMakeScratchIdx)
+		body = inst.InstI32Const(body, 1) // tag
+		body = inst.InstLocalGet(body, ctx.pairMakeScratchIdx)
+		return body, nil
+	case ir.OpMakeNoneI32:
+		// Stack: [...]. Want: [..., 1 (tag), 0 (payload)].
+		body = inst.InstI32Const(body, 1)
+		body = inst.InstI32Const(body, 0)
+		return body, nil
+	case ir.OpReturnPair:
+		// Stack: [..., tag, payload]. wasm `return` unwinds with
+		// the multi-value pair on the stack matching the function's
+		// (i32, i32) result type.
+		return inst.InstReturn(body), nil
+	case ir.OpCallDirectPair:
+		// Same as OpCallDirect; the callee's wasm signature has
+		// (i32, i32) multi-value return per ip.PairForm gating.
+		idx, ok := ctx.funcIdx[op.Str]
+		if !ok {
+			return nil, fmt.Errorf("OpCallDirectPair: unknown callee %q", op.Str)
+		}
+		return inst.InstCall(body, idx), nil
 
 	// ---- String concatenation ----
 	case ir.OpStrConcat:
