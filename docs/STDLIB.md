@@ -420,7 +420,19 @@ function main(): i32 {
 - **Substring:** `assert_contains`, `assert_not_contains`,
   `assert_starts_with`, `assert_ends_with`
 - **Array assertions:** `assert_len_i32`, `assert_len_string`,
-  `assert_eq_i32_array`, `assert_eq_string_array`
+  `assert_eq_i32_array`, `assert_eq_string_array`,
+  `assert_eq_i64_array` / `_u32_array` / `_u64_array` —
+  wider-int element-wise compares (lang has no numeric-
+  array covariance so each width gets its own helper)
+- **Array membership:** `assert_array_contains_i32(arr,
+  needle)` / `_string`, `assert_array_not_contains_i32` /
+  `_string` — typed-array membership; failure embeds the
+  needle (positive) / index (negative). Empty arrays fail
+  the positive form vacuously
+- **Array cardinality:** `assert_count_i32(arr, pred, n)` /
+  `_string` — exactly `n` elements satisfy `pred`; sits
+  between `assert_all` (every) and `assert_any` (at least
+  one). Failure message embeds the observed count
 - **Process assertions** (paired with the `subprocess(...)`
   builtin): `assert_exit`, `assert_stdout_eq`,
   `assert_stderr_eq`, `assert_stdout_contains`,

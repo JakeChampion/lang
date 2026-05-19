@@ -976,6 +976,77 @@ pub function assert_eq_string_array(actual: string[], expected: string[]): Optio
     return None;
 }
 
+// `assert_eq_i64_array(actual, expected)` — element-wise
+// i64 array equality. The width-narrow `_i32_array` won't
+// implicitly accept i64 element types (lang has no
+// numeric-array covariance), so widening the test to i64
+// timestamps / sizes / process IDs needs this dedicated
+// helper rather than a cast at every call site.
+pub function assert_eq_i64_array(actual: i64[], expected: i64[]): Option[string] {
+    var an: i32 = len(actual);
+    var en: i32 = len(expected);
+    if (an != en) {
+        return Some("assert_eq_i64_array: length differs - expected " +
+                    en.to_string() + ", got " + an.to_string());
+    }
+    var i: i32 = 0;
+    while (i < an) {
+        if (actual[i] != expected[i]) {
+            return Some("assert_eq_i64_array: at index " + i.to_string() +
+                        " expected " + expected[i].to_string() +
+                        ", got " + actual[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_eq_u32_array(actual, expected)` — element-wise
+// unsigned i32 array equality. Distinct from `_i32_array`
+// because lang treats u32 / i32 as different types under
+// `==` for the array element check (and the failure
+// message's `to_string` dispatches to the unsigned
+// formatter).
+pub function assert_eq_u32_array(actual: u32[], expected: u32[]): Option[string] {
+    var an: i32 = len(actual);
+    var en: i32 = len(expected);
+    if (an != en) {
+        return Some("assert_eq_u32_array: length differs - expected " +
+                    en.to_string() + ", got " + an.to_string());
+    }
+    var i: i32 = 0;
+    while (i < an) {
+        if (actual[i] != expected[i]) {
+            return Some("assert_eq_u32_array: at index " + i.to_string() +
+                        " expected " + expected[i].to_string() +
+                        ", got " + actual[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_eq_u64_array(actual, expected)` — element-wise
+// u64 array equality.
+pub function assert_eq_u64_array(actual: u64[], expected: u64[]): Option[string] {
+    var an: i32 = len(actual);
+    var en: i32 = len(expected);
+    if (an != en) {
+        return Some("assert_eq_u64_array: length differs - expected " +
+                    en.to_string() + ", got " + an.to_string());
+    }
+    var i: i32 = 0;
+    while (i < an) {
+        if (actual[i] != expected[i]) {
+            return Some("assert_eq_u64_array: at index " + i.to_string() +
+                        " expected " + expected[i].to_string() +
+                        ", got " + actual[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
 // `assert_eq_f64_array_near(actual, expected, epsilon)` —
 // element-wise float array compare. Each pair must satisfy
 // `|actual[i] - expected[i]| <= epsilon`. NaN anywhere fails
@@ -2311,6 +2382,105 @@ pub function assert_any_string(arr: string[], pred: (string) => boolean): Option
     }
     return Some("assert_any_string: no element of " +
                 n.to_string() + " matched");
+}
+
+// =================== MEMBERSHIP / COUNT ASSERTIONS ===================
+//
+// Membership: does `needle` appear in `arr`. Same idea as
+// the existing `assert_contains(haystack: string, needle:
+// string)` but lifted to typed arrays so callers don't
+// have to roll their own loop or smuggle the value through
+// `assert_any_*` + a `== needle` lambda. The failure
+// message embeds the needle so the diagnostic is grep-able.
+
+// `assert_array_contains_i32(arr, needle)` — `needle`
+// appears at least once in `arr` (linear scan). Empty
+// arrays fail vacuously — there's no element to match.
+pub function assert_array_contains_i32(arr: i32[], needle: i32): Option[string] {
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (arr[i] == needle) { return None; }
+        i = i + 1;
+    }
+    return Some("assert_array_contains_i32: " +
+                needle.to_string() + " not found in array of length " +
+                len(arr).to_string());
+}
+
+// `assert_array_contains_string(arr, needle)` — same for
+// string elements. Empty array fails vacuously.
+pub function assert_array_contains_string(arr: string[], needle: string): Option[string] {
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (arr[i] == needle) { return None; }
+        i = i + 1;
+    }
+    return Some("assert_array_contains_string: \"" +
+                needle + "\" not found in array of length " +
+                len(arr).to_string());
+}
+
+// `assert_array_not_contains_i32(arr, needle)` — negative
+// membership; useful after a delete / filter operation.
+pub function assert_array_not_contains_i32(arr: i32[], needle: i32): Option[string] {
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (arr[i] == needle) {
+            return Some("assert_array_not_contains_i32: " +
+                        needle.to_string() +
+                        " unexpectedly present at index " + i.to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_array_not_contains_string(arr, needle)` — negative
+// membership for string arrays.
+pub function assert_array_not_contains_string(arr: string[], needle: string): Option[string] {
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (arr[i] == needle) {
+            return Some("assert_array_not_contains_string: \"" +
+                        needle +
+                        "\" unexpectedly present at index " + i.to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_count_i32(arr, pred, expected_count)` — exactly
+// `expected_count` elements of `arr` satisfy `pred`. Sits
+// between `assert_all` (every element) and `assert_any` (at
+// least one) — pin the exact cardinality. Failure message
+// embeds the observed count so the diff is obvious.
+pub function assert_count_i32(arr: i32[], pred: (i32) => boolean, expected_count: i32): Option[string] {
+    var hits: i32 = 0;
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (pred(arr[i])) { hits = hits + 1; }
+        i = i + 1;
+    }
+    if (hits == expected_count) { return None; }
+    return Some("assert_count_i32: expected " +
+                expected_count.to_string() + " matches, got " +
+                hits.to_string());
+}
+
+// `assert_count_string(arr, pred, expected_count)` — string-
+// typed mirror.
+pub function assert_count_string(arr: string[], pred: (string) => boolean, expected_count: i32): Option[string] {
+    var hits: i32 = 0;
+    var i: i32 = 0;
+    while (i < len(arr)) {
+        if (pred(arr[i])) { hits = hits + 1; }
+        i = i + 1;
+    }
+    if (hits == expected_count) { return None; }
+    return Some("assert_count_string: expected " +
+                expected_count.to_string() + " matches, got " +
+                hits.to_string());
 }
 
 // `assert_json_eq(actual, expected)` — both inputs are JSON
