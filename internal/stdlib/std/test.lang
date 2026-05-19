@@ -777,6 +777,51 @@ pub function assert_eq_f32_near(actual: f32, expected: f32, epsilon: f32): Optio
     return assert_eq_f64_near(actual as f64, expected as f64, epsilon as f64);
 }
 
+// `assert_eq_f64_rel(actual, expected, rel_tol)` — relative-
+// tolerance float compare. Passes when
+// `|actual - expected| / |expected| <= rel_tol`. Use this
+// when the scale of the expected value varies by many orders
+// of magnitude across test cases — an absolute epsilon that's
+// generous for `expected=1e6` is wildly too loose for
+// `expected=1e-6`. NaN inputs always fail. Falls back to
+// absolute compare when `expected == 0.0` (the rel formula
+// would divide by zero).
+pub function assert_eq_f64_rel(actual: f64, expected: f64, rel_tol: f64): Option[string] {
+    if (actual != actual) {
+        return Some("assert_eq_f64_rel: actual is NaN");
+    }
+    if (expected != expected) {
+        return Some("assert_eq_f64_rel: expected is NaN");
+    }
+    if (actual == expected) { return None; }
+    var diff: f64 = actual - expected;
+    if (diff < 0.0) { diff = 0.0 - diff; }
+    var denom: f64 = expected;
+    if (denom < 0.0) { denom = 0.0 - denom; }
+    // expected == 0 makes the ratio undefined — fall back to
+    // raw |diff| against `rel_tol` so callers don't have to
+    // special-case zero in their test data.
+    if (denom == 0.0) {
+        if (diff <= rel_tol) { return None; }
+        return Some("assert_eq_f64_rel: |" + actual.to_string() +
+                    " - 0| = " + diff.to_string() +
+                    " > rel_tol " + rel_tol.to_string());
+    }
+    var ratio: f64 = diff / denom;
+    if (ratio <= rel_tol) { return None; }
+    return Some("assert_eq_f64_rel: |" + actual.to_string() +
+                " - " + expected.to_string() + "| / |" + expected.to_string() +
+                "| = " + ratio.to_string() +
+                " > rel_tol " + rel_tol.to_string());
+}
+
+// `assert_eq_f32_rel(actual, expected, rel_tol)` — f32 mirror
+// of `assert_eq_f64_rel`. Same widen-to-f64 trick as
+// `assert_eq_f32_near` to avoid precision-loss surprises.
+pub function assert_eq_f32_rel(actual: f32, expected: f32, rel_tol: f32): Option[string] {
+    return assert_eq_f64_rel(actual as f64, expected as f64, rel_tol as f64);
+}
+
 // `assert_eq_f64_exact(actual, expected)` — bitwise-equal
 // floats. Use for f32_bits round-trip tests / canonical-NaN
 // checks where epsilons would smuggle bugs through. Most
@@ -1584,6 +1629,16 @@ pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () 
                                "us > budget " + max_us.to_string() + "us"));
     }
     return r.it(name, None);
+}
+
+// `(r) bench_max_ms(name, iterations, fn, max_ms)` —
+// millisecond-scale companion to `bench_max_us`. Use when
+// the budget is naturally expressed in ms (e.g. "rendering a
+// frame in under 16ms") so test authors don't have to
+// hand-multiply by 1000. Internally just delegates: 1 ms =
+// 1000 us.
+pub function (r: TestRunner) bench_max_ms(name: string, iterations: i32, fn: () => void, max_ms: i64): TestRunner {
+    return r.bench_max_us(name, iterations, fn, max_ms * (1000 as i64));
 }
 
 // =================== TIMING ASSERTIONS ===================
