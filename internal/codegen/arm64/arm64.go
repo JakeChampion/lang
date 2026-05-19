@@ -2091,7 +2091,13 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.emit("mov x10, #1000")
 	g.emit("mul x9, x9, x10")                  // sec * 1000
 	g.emit("ldr x11, [sp, #24]")               // tv_nsec (i64, always 0..1e9)
-	g.emit("mov x10, #1000000")
+	// 1_000_000 = 0xF4240 — 17 bits, doesn't fit a single
+	// `mov x10, #imm16` encoding. Use the literal-pool form
+	// (the `.ltorg` directive at the end of the runtime block
+	// emits the pool); same shape as the user-side
+	// `ldr x0, =1700000000` constants the regular codegen
+	// path produces.
+	g.emit("ldr x10, =1000000")
 	g.emit("udiv x11, x11, x10")               // nsec / 1_000_000
 	g.emit("add x0, x9, x11")                  // result
 	g.emit("ldp x29, x30, [sp], #32")
