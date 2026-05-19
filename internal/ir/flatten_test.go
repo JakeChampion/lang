@@ -182,6 +182,36 @@ func TestFlattenKeepsStructuredCFBalanced(t *testing.T) {
 	}
 }
 
+// Flatten must NOT fuse an if-then-return into an if-result when
+// the surrounding operand stack carries values pushed BEFORE the
+// if was opened. The classic failure shape is `?` propagation
+// embedded in an expression context: `(EXPR * (Some(x))?)` lowers
+// to `push EXPR; ...; if void { None; return; } load payload`
+// where the i32.mul that follows reads `EXPR` from below the
+// if-block's stack frame. Rewriting that as `if (result i32) {
+// None } else { load_payload; i32.mul; ... } return` is
+// unsound: wasm's `if (result T)` block can't reach the EXPR
+// value pushed before the if. The continuation Y's i32.mul
+// would then dip the simulated data depth below 0 — the
+// stack-effect guard skips the flatten and the original if-void
+// + payload-load shape stays.
+//
+// Caught in the wild by langsmith seed 3089; the offending
+// program nested `?` two deep inside `Some(...)`'s payload, and
+// the wasm validator surfaced it as "expected i32 but nothing
+// on stack at offset 547".
+func TestFlattenSkipsExpressionContextTryOp(t *testing.T) {
+	p := lowerSource(t, `function f(): Option[i32] {
+		return Some(2 * ((Some(7))?));
+	}`)
+	before := p.String()
+	FlattenBranches(p)
+	after := p.String()
+	if before != after {
+		t.Errorf("flatten should leave expression-context TryOp untouched:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 // Idempotent: a second pass produces the same op list.
 func TestFlattenIsIdempotent(t *testing.T) {
 	p := lowerSource(t, `function f(n: i32): i32 {

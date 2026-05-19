@@ -1198,6 +1198,88 @@ func isVariantLiteralExpr(e ast.Expr, names map[string]bool) bool {
 	return names[id.Name]
 }
 
+// emitPairFormPushValue lowers e into a (tag, payload) pair on
+// the operand stack — the shape OpReturnPair (and the `(result
+// i32 i32)` wasm signature) consumes. Accepts every expression
+// shape `isPairFormReturnExpr` reports as eligible:
+//
+//   - Variant literal: emits the matching OpMake* op with the
+//     payload (or no payload for nullary variants).
+//   - Pair-form tail call: emits the call under
+//     `suppressPairRebox` so the callee's (tag, payload) flows
+//     straight through instead of getting heap-boxed.
+//   - IfExpr with both arms eligible: opens an if/else block
+//     with the BlockTypeStringPair multi-value `(result i32
+//     i32)` shape — semantically a string pair but the wasm
+//     bytes are identical to a pair-form tag+payload — and
+//     recurses into each arm.
+//
+// Caller emits OpReturnPair after this returns successfully.
+func (b *builder) emitPairFormPushValue(e ast.Expr) error {
+	if isVariantLiteralExpr(e, b.pairVariants) {
+		variantName, payload := pairFormVariantOf(e)
+		payloadType := b.pairFormPayloadType(variantName)
+		payloadW := pairPayloadWidth(payloadType)
+		switch variantName {
+		case "Some":
+			if err := b.expr(payload); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
+		case "None":
+			b.emit(Op{Kind: OpMakeNoneI32})
+		case "Ok":
+			if err := b.expr(payload); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpMakeOkI32, Width: payloadW})
+		case "Err":
+			if err := b.expr(payload); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpMakeErrI32, Width: payloadW})
+		default:
+			// User enum variant: payload-carrying → tag 0
+			// (OpMakeSomeI32), nullary → tag 1 (OpMakeNoneI32).
+			// The canonical-order check in `pairFormVariantsFor`
+			// keeps this tag mapping aligned with the variant's
+			// declared order.
+			if payload != nil {
+				if err := b.expr(payload); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
+			} else {
+				b.emit(Op{Kind: OpMakeNoneI32})
+			}
+		}
+		return nil
+	}
+	if isPairFormTailCall(e, b.pairForm) {
+		save := b.suppressPairRebox
+		b.suppressPairRebox = true
+		err := b.expr(e)
+		b.suppressPairRebox = save
+		return err
+	}
+	if ie, ok := e.(*ast.IfExpr); ok {
+		if err := b.expr(ie.Cond); err != nil {
+			return err
+		}
+		b.openIf(BlockTypeStringPair)
+		if err := b.emitPairFormPushValue(ie.Then); err != nil {
+			return err
+		}
+		b.elseBranch()
+		if err := b.emitPairFormPushValue(ie.Else); err != nil {
+			return err
+		}
+		b.closeScope()
+		return nil
+	}
+	return fmt.Errorf("ir: emitPairFormPushValue: unrecognised shape %T (eligibility check / emitter out of sync)", e)
+}
+
 // builder is the per-function lowering state.
 type builder struct {
 	info *checker.Info
@@ -2324,81 +2406,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpReturnVoid})
 			return nil
 		}
-		// Pair-form return: this function was marked eligible for
-		// the (tag, payload) ABI by findPairFormFuncs, and the
-		// return value is one of the pair-form variant literals
-		// (`Some(EXPR)` / `None` for Option, `Ok(EXPR)` /
-		// `Err(EXPR)` for Result). Emit the matching OpMake*I32
-		// + OpReturnPair instead of the heap-box construction
-		// the generic path would emit. Defers fall back to the
-		// heap-box path — pair-form is scoped to the no-defer
-		// subset for now.
-		if b.thisIsPair && len(b.defers) == 0 && isVariantLiteralExpr(n.Value, b.pairVariants) {
-			variantName, payload := pairFormVariantOf(n.Value)
-			payloadType := b.pairFormPayloadType(variantName)
-			payloadW := pairPayloadWidth(payloadType)
-			// Built-in Option/Result variants keep their named
-			// ops for readability; user-defined two-variant
-			// enums reuse OpMakeSomeI32 / OpMakeNoneI32 for the
-			// payload-carrying / nullary variants since the
-			// backends treat all four maker ops as a single
-			// "push (tag, payload)" pair (tag=0 for the
-			// payload-carrying ones, tag=1 for nullary). The
-			// `Width` operand carries the payload width so
-			// native backends pick the right alloc size + store
-			// (4-byte at +4 for i32 payloads, 8-byte at +8 for
-			// pointer-shaped payloads).
-			switch variantName {
-			case "Some":
-				if err := b.expr(payload); err != nil {
-					return err
-				}
-				b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
-			case "None":
-				b.emit(Op{Kind: OpMakeNoneI32})
-			case "Ok":
-				if err := b.expr(payload); err != nil {
-					return err
-				}
-				b.emit(Op{Kind: OpMakeOkI32, Width: payloadW})
-			case "Err":
-				if err := b.expr(payload); err != nil {
-					return err
-				}
-				b.emit(Op{Kind: OpMakeErrI32, Width: payloadW})
-			default:
-				// User enum variant: payload-carrying → tag 0
-				// (OpMakeSomeI32), nullary → tag 1
-				// (OpMakeNoneI32). The canonical-order check
-				// in `pairFormVariantsFor` ensures the user's
-				// variant order matches this tag mapping.
-				if payload != nil {
-					if err := b.expr(payload); err != nil {
-						return err
-					}
-					b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
-				} else {
-					b.emit(Op{Kind: OpMakeNoneI32})
-				}
-			}
-			b.emit(Op{Kind: OpReturnPair})
-			return nil
-		}
-		// Tail-call to a pair-form callee inside a pair-form
-		// fn: forward the (tag, payload) pair through. Without
-		// `suppressPairRebox` the generic call lowering would
-		// rebox into a heap pointer, then OpReturn would return
-		// a single i32 — mismatching the wasm-side
-		// `(result i32 i32)` signature once it gates real
-		// multi-value returns on PairForm. Setting the flag
-		// keeps the pair on the operand stack so OpReturnPair
-		// handles it directly.
-		if b.thisIsPair && len(b.defers) == 0 && isPairFormTailCall(n.Value, b.pairForm) {
-			save := b.suppressPairRebox
-			b.suppressPairRebox = true
-			err := b.expr(n.Value)
-			b.suppressPairRebox = save
-			if err != nil {
+		// Pair-form return: this function was marked eligible
+		// for the (tag, payload) ABI by findPairFormFuncs.
+		// `emitPairFormPushValue` handles every shape the
+		// eligibility check accepts (variant literal, pair-form
+		// tail call, IfExpr whose arms are themselves eligible)
+		// by pushing (tag, payload) on the operand stack;
+		// OpReturnPair then matches the (i32, i32) wasm return
+		// signature. Defers fall back to the heap-box path —
+		// pair-form is scoped to the no-defer subset for now.
+		if b.thisIsPair && len(b.defers) == 0 && isPairFormReturnExpr(n.Value, b.pairVariants, b.pairForm) {
+			if err := b.emitPairFormPushValue(n.Value); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpReturnPair})
