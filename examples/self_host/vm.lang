@@ -461,6 +461,35 @@ function patch_jump(ops: Op[], idx: i32, target: i32): Op[] {
     return out;
 }
 
+// patch_loop_sentinels replaces break / continue sentinels
+// (OpJump(-1001) / OpJump(-1002)) emitted in ops[start..end]
+// with concrete jump targets. Called by the enclosing loop's
+// compile arm after its body finishes.
+function patch_loop_sentinels(ops: Op[], start: i32, exit_target: i32, continue_target: i32): Op[] {
+    var out: Op[] = [];
+    var i: i32 = 0;
+    while (i < len(ops)) {
+        if (i >= start) {
+            match (ops[i]) {
+                OpJump(o) => {
+                    if (o.target == 0 - 1001) {
+                        out = out.push(op_jump(exit_target));
+                    } else if (o.target == 0 - 1002) {
+                        out = out.push(op_jump(continue_target));
+                    } else {
+                        out = out.push(ops[i]);
+                    }
+                },
+                _ => { out = out.push(ops[i]); }
+            }
+        } else {
+            out = out.push(ops[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResult {
     match (st) {
         parser.StmtVar(v) => {
@@ -523,10 +552,17 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             ops = cr.ops; lt = cr.lt;
             var exit_idx: i32 = len(ops);
             ops = ops.push(op_jump_if_false(0 - 1));
+            // Record where the body starts so patch_loop_
+            // sentinels only touches ops emitted by THIS loop.
+            var body_start: i32 = len(ops);
             var br: CompileResult = compile_block(w.body, ops, lt);
             ops = br.ops; lt = br.lt;
             ops = ops.push(op_jump(loop_top));
             ops = patch_jump(ops, exit_idx, len(ops));
+            // Patch break / continue sentinels emitted in the
+            // body: break → exit (current len(ops)), continue
+            // → loop_top.
+            ops = patch_loop_sentinels(ops, body_start, len(ops), loop_top);
             return CompileResult { ops: ops, lt: lt };
         },
         parser.StmtMatch(m) => {
@@ -584,8 +620,23 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             }
             return CompileResult { ops: ops, lt: lt };
         },
-        parser.StmtBreak(_) => { return CompileResult { ops: ops, lt: lt }; },
-        parser.StmtContinue(_) => { return CompileResult { ops: ops, lt: lt }; },
+        parser.StmtBreak(_) => {
+            // Emit an OpJump with a sentinel target; the
+            // enclosing loop's compile arm sweeps body ops
+            // after the fact and patches both sentinels:
+            //   -1001 → loop exit  (break)
+            //   -1002 → loop top   (continue)
+            // Nested loops resolve correctly because the
+            // inner loop's sweep patches its own break /
+            // continue first, leaving outer-loop sentinels
+            // for the outer sweep to find.
+            ops = ops.push(op_jump(0 - 1001));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.StmtContinue(_) => {
+            ops = ops.push(op_jump(0 - 1002));
+            return CompileResult { ops: ops, lt: lt };
+        },
         parser.StmtFor(f) => {
             // Lowering: evaluate the iter expression into a
             // synthetic local, init an index local to 0, then
@@ -639,10 +690,17 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             ops = ops.push(op_index());
             ops = ops.push(op_store(var_idx));
 
-            // Body.
+            // Body. Track body_start so loop-sentinel patching
+            // only touches break/continue from this loop's body
+            // (not from a surrounding outer loop, if any).
+            var body_start: i32 = len(ops);
             var br: CompileResult = compile_block(f.body, ops, lt);
             ops = br.ops; lt = br.lt;
 
+            // Continue target: increment step. break sentinels
+            // skip ahead to past the back-jump, where the loop's
+            // exit lives.
+            var continue_target: i32 = len(ops);
             // index = index + 1.
             ops = ops.push(op_load(idx_local));
             ops = ops.push(op_push_int(1));
@@ -652,6 +710,7 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             // Jump back to top, patch exit to here.
             ops = ops.push(op_jump(loop_top));
             ops = patch_jump(ops, exit_idx, len(ops));
+            ops = patch_loop_sentinels(ops, body_start, len(ops), continue_target);
             return CompileResult { ops: ops, lt: lt };
         },
         parser.StmtUnknown(_) => { return CompileResult { ops: ops, lt: lt }; }
@@ -1774,6 +1833,38 @@ function main(): i32 {
     match (r47) {
         VErr(_) => { },
         _ => { return 470; }
+    }
+
+    // break inside while.
+    var src48: string = "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 10) { if (i == 3) { break; } s = s + i; i = i + 1; } return s; }";
+    var r48: Value = run_module(src48);
+    match (r48) {
+        VInt(i) => { if (i.v != 3) { return 480; } },
+        _ => { return 481; }
+    }
+
+    // continue inside while: skip odd, sum evens 0..4.
+    var src49: string = "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 5) { if (i % 2 == 1) { i = i + 1; continue; } s = s + i; i = i + 1; } return s; }";
+    var r49: Value = run_module(src49);
+    match (r49) {
+        VInt(i) => { if (i.v != 6) { return 490; } },
+        _ => { return 491; }
+    }
+
+    // for-in with break.
+    var src50: string = "function main(): i32 { var s: i32 = 0; for n in [1, 2, 10, 20] { if (n > 5) { break; } s = s + n; } return s; }";
+    var r50: Value = run_module(src50);
+    match (r50) {
+        VInt(i) => { if (i.v != 3) { return 500; } },
+        _ => { return 501; }
+    }
+
+    // for-in with continue (skips n == 3).
+    var src51: string = "function main(): i32 { var s: i32 = 0; for n in [1, 2, 3, 4, 5] { if (n == 3) { continue; } s = s + n; } return s; }";
+    var r51: Value = run_module(src51);
+    match (r51) {
+        VInt(i) => { if (i.v != 12) { return 510; } },
+        _ => { return 511; }
     }
 
     return 0;
