@@ -67,7 +67,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   var full: string = "http://example.local" + req.path;
   match (url.url_parse(full)) {
     None => {
-      return HttpResponse { status: 400, body: "bad URL\n" };
+      return http.http_response_bad_request("bad URL\n");
     },
     Some(u) => {
       // u.path is the scheme/host-stripped path; u.query
@@ -77,8 +77,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
       // same as json.json_encode(describe(...)). Pure parse-
       // time desugar — no runtime cost.
       var body: string = describe(u.path, q) |> json.json_encode;
-      return HttpResponse { status: 200, body: body };
+      return http.http_response_ok(body);
     }
   }
-  return HttpResponse { status: 500, body: "unreachable\n" };
+  return http.http_response_internal_error("unreachable\n");
 }

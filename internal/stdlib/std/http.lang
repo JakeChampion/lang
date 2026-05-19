@@ -76,43 +76,44 @@ pub function is_valid_http_status(code: i32): boolean {
 // Saves the `HttpResponse { status: 200, body: ... }` boiler-
 // plate at every handler call site.
 pub function http_response_ok(body: string): HttpResponse {
-    return HttpResponse { status: 200, body: body };
+    return HttpResponse { status: 200, body: body, headers: headers.header_map_new() };
 }
 
 pub function http_response_text(status: i32, body: string): HttpResponse {
-    return HttpResponse { status: status, body: body };
+    return HttpResponse { status: status, body: body, headers: headers.header_map_new() };
 }
 
 pub function http_response_not_found(): HttpResponse {
-    return HttpResponse { status: 404, body: "Not Found" };
+    return HttpResponse { status: 404, body: "Not Found", headers: headers.header_map_new() };
 }
 
 // `http_response_bad_request(body)` — 400 with the given
 // body. Common shape for validation-failure responses.
 pub function http_response_bad_request(body: string): HttpResponse {
-    return HttpResponse { status: 400, body: body };
+    return HttpResponse { status: 400, body: body, headers: headers.header_map_new() };
 }
 
 // `http_response_internal_error(body)` — 500. The default
 // body shape for unhandled / unexpected exceptions in a
 // handler.
 pub function http_response_internal_error(body: string): HttpResponse {
-    return HttpResponse { status: 500, body: body };
+    return HttpResponse { status: 500, body: body, headers: headers.header_map_new() };
 }
 
 // `http_response_redirect(location)` — 302 Found with the
-// redirect target in the body. Callers that serialize the
-// response can copy `body` into a `Location:` header.
-// Convention placeholder until HTTP headers are first-class.
+// redirect target both in the body (for clients that ignore
+// headers) and as a real `Location:` header.
 pub function http_response_redirect(location: string): HttpResponse {
-    return HttpResponse { status: 302, body: location };
+    var h: HeaderMap = headers.header_map_new();
+    h.set("Location", location);
+    return HttpResponse { status: 302, body: location, headers: h };
 }
 
 // `http_response_no_content()` — 204 No Content, empty
 // body. The standard "I handled it, nothing to say"
 // response for DELETE / PUT / etc.
 pub function http_response_no_content(): HttpResponse {
-    return HttpResponse { status: 204, body: "" };
+    return HttpResponse { status: 204, body: "", headers: headers.header_map_new() };
 }
 
 // `http_path_segments(path)` — split an HTTP path into
@@ -377,7 +378,20 @@ function __http_reason(code: i32): string {
 pub function http_serialize_response(resp: HttpResponse): string {
     var status_line: string = "HTTP/1.1 " + int.int_to_string(resp.status)
         + " " + __http_reason(resp.status) + "\r\n";
-    var hdr_block: string = "Content-Length: " + int.int_to_string(len(resp.body)) + "\r\n"
+    // User-supplied headers first; skip `content-length` and
+    // `connection` so the auto-block below stays authoritative.
+    // (Names in HeaderMap are case-folded on insert, so a direct
+    // string compare against the lowercase sentinel is correct.)
+    var hdr_block: string = "";
+    var i: i32 = 0;
+    while (i < len(resp.headers.names)) {
+        var hname: string = resp.headers.names[i];
+        if (hname != "content-length" && hname != "connection") {
+            hdr_block = hdr_block + hname + ": " + resp.headers.values[i] + "\r\n";
+        }
+        i = i + 1;
+    }
+    hdr_block = hdr_block + "Content-Length: " + int.int_to_string(len(resp.body)) + "\r\n"
         + "Connection: close\r\n"
         + "\r\n";
     return status_line + hdr_block + resp.body;
