@@ -384,7 +384,11 @@ function parse_primary(p: Par): ExprResult {
         },
         lexer.TokString(x) => {
             p = p.advance();
-            return ExprResult { par: p, expr: e_string(x.value) };
+            // Allow postfix chains on string literals — e.g.
+            // `"a,b,c".split(",")`. Without parse_postfix the
+            // `.split` would dangle and the surrounding caller
+            // would treat the literal as the whole expression.
+            return parse_postfix(p, e_string(x.value));
         },
         lexer.TokKeyword(x) => {
             if (x.name == "true") {

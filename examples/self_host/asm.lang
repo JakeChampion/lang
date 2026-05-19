@@ -466,6 +466,19 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                             && (rt == "array_i32" || rt == "array_string" || rt == "array")) {
                         return rt;
                     }
+                    // String methods that mirror existing builtins.
+                    if (rt == "string") {
+                        if (fa.field == "split") { return "array_string"; }
+                        if (fa.field == "contains") { return "bool"; }
+                        if (fa.field == "starts_with") { return "bool"; }
+                        if (fa.field == "ends_with") { return "bool"; }
+                        if (fa.field == "index_of") { return "i32"; }
+                        if (fa.field == "trim") { return "string"; }
+                        if (fa.field == "to_upper") { return "string"; }
+                        if (fa.field == "to_lower") { return "string"; }
+                        if (fa.field == "repeat") { return "string"; }
+                        if (fa.field == "replace") { return "string"; }
+                    }
                     if (rt == "string" || rt == "i32" || rt == "bool" || rt == "f64") {
                         var mi: i32 = 0;
                         while (mi < len(s.funcs)) {
@@ -1597,6 +1610,120 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.write("    pushq %rax\n");
                         s = s.mark_arr_push();
                         return s;
+                    }
+                    // Built-in string methods that mirror existing
+                    // free-function builtins. The free-function
+                    // dispatch below already knows the assembly
+                    // — we just route receiver-first form into
+                    // the same emit shape so users can write
+                    // `s.split(",")` instead of `str_split(s, ",")`.
+                    if (prim_recv == "string") {
+                        if (fa.field == "split" && len(c.args) == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rsi\n");
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_split\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            s = s.mark_heap();
+                            return s;
+                        }
+                        if (fa.field == "contains" && len(c.args) == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rsi\n");
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_index_of\n");
+                            s = s.write("    cmpq $0, %rax\n");
+                            s = s.write("    movq $0, %rax\n");
+                            s = s.write("    setge %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            return s;
+                        }
+                        if (fa.field == "starts_with" && len(c.args) == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rsi\n");
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_starts_with\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            return s;
+                        }
+                        if (fa.field == "ends_with" && len(c.args) == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rsi\n");
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_ends_with\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            return s;
+                        }
+                        if (fa.field == "index_of" && len(c.args) == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rsi\n");
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_index_of\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            return s;
+                        }
+                        if (fa.field == "trim" && len(c.args) == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_trim\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            s = s.mark_heap();
+                            return s;
+                        }
+                        if (fa.field == "to_upper" && len(c.args) == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_to_upper\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            s = s.mark_heap();
+                            return s;
+                        }
+                        if (fa.field == "to_lower" && len(c.args) == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_to_lower\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            s = s.mark_heap();
+                            return s;
+                        }
+                        if (fa.field == "repeat" && len(c.args) == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rsi\n");
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_repeat\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            s = s.mark_heap();
+                            return s;
+                        }
+                        if (fa.field == "replace" && len(c.args) == 2) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = emit_expr(c.args[1], s);
+                            s = s.write("    popq %rdx\n");
+                            s = s.write("    popq %rsi\n");
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __lang_str_replace\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_search();
+                            s = s.mark_heap();
+                            return s;
+                        }
                     }
                     if (prim_recv == "string" || prim_recv == "i32" || prim_recv == "bool" || prim_recv == "f64") {
                         var pmi: i32 = len(c.args) - 1;
