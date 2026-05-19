@@ -1172,6 +1172,40 @@ func TestRunnerWiderArrayContainsCountExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/one_of_none_of_test.lang` exercises
+// batch-23 additions:
+//   - `assert_one_of_i32(actual, allowed)` / `_string` —
+//     positive enumerated-set membership. Failure embeds
+//     both the actual value AND the full allowed set
+//     (rendered with appropriate quoting for the type).
+//   - `assert_none_of_i32(actual, forbidden)` / `_string`
+//     — negative enumerated-set check. Vacuously passes
+//     on an empty forbidden list.
+//
+// 13 cases.
+func TestRunnerOneOfNoneOfExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/one_of_none_of_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 5 - one_of_i32 missing renders set",
+		"ok 6 - one_of_i32 empty set always fails",
+		"ok 8 - one_of_string missing quotes both",
+		"ok 10 - none_of_i32 match reports value",
+		"ok 11 - none_of_i32 empty list vacuous",
+		"ok 13 - none_of_string match quoted",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

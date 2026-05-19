@@ -2483,6 +2483,94 @@ pub function assert_count_string(arr: string[], pred: (string) => boolean, expec
                 hits.to_string());
 }
 
+// =================== ENUMERATED-VALUE ASSERTIONS ===================
+//
+// Membership in an allowed set / absence from a forbidden
+// set. Common shape: "the response code is one of [200,
+// 201, 204]" or "the error class is NOT one of the
+// transient ones". Beats writing N OR'd assertions or
+// abusing `assert_any_*` with an equality lambda.
+
+// `assert_one_of_i32(actual, allowed)` — `actual ∈ allowed`
+// (linear scan on the allowed list — fine for the typical
+// 2–10 element allowed sets these helpers target).
+// Failure message embeds both the actual value AND the
+// full allowed list so the diagnostic carries enough
+// context to fix the call site without re-reading the
+// test source.
+pub function assert_one_of_i32(actual: i32, allowed: i32[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(allowed)) {
+        if (allowed[i] == actual) { return None; }
+        i = i + 1;
+    }
+    // Build a comma-separated rendering of the allowed set
+    // so the message reads like a normal failure diff.
+    var rendered: string = "[";
+    var j: i32 = 0;
+    while (j < len(allowed)) {
+        if (j > 0) { rendered = rendered + ", "; }
+        rendered = rendered + allowed[j].to_string();
+        j = j + 1;
+    }
+    rendered = rendered + "]";
+    return Some("assert_one_of_i32: " + actual.to_string() +
+                " not in allowed set " + rendered);
+}
+
+// `assert_one_of_string(actual, allowed)` — string-typed
+// mirror.
+pub function assert_one_of_string(actual: string, allowed: string[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(allowed)) {
+        if (allowed[i] == actual) { return None; }
+        i = i + 1;
+    }
+    var rendered: string = "[";
+    var j: i32 = 0;
+    while (j < len(allowed)) {
+        if (j > 0) { rendered = rendered + ", "; }
+        rendered = rendered + "\"" + allowed[j] + "\"";
+        j = j + 1;
+    }
+    rendered = rendered + "]";
+    return Some("assert_one_of_string: \"" + actual +
+                "\" not in allowed set " + rendered);
+}
+
+// `assert_none_of_i32(actual, forbidden)` — `actual ∉
+// forbidden`. Use for negative-list checks: "the
+// returned exit code is not any of these failure
+// sentinels". Failure message names the forbidden value
+// the actual matched against, so a refactor that
+// accidentally returns the bad value points at the right
+// case immediately.
+pub function assert_none_of_i32(actual: i32, forbidden: i32[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(forbidden)) {
+        if (forbidden[i] == actual) {
+            return Some("assert_none_of_i32: " + actual.to_string() +
+                        " matched forbidden value");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_none_of_string(actual, forbidden)` — string-typed
+// mirror.
+pub function assert_none_of_string(actual: string, forbidden: string[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(forbidden)) {
+        if (forbidden[i] == actual) {
+            return Some("assert_none_of_string: \"" + actual +
+                        "\" matched forbidden value");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
 // `assert_json_eq(actual, expected)` — both inputs are JSON
 // text. Parses each via `std/json`'s `json_parse`, walks the
 // resulting trees in order-independent fashion, and reports

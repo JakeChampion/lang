@@ -433,6 +433,15 @@ function main(): i32 {
   `_string` — exactly `n` elements satisfy `pred`; sits
   between `assert_all` (every) and `assert_any` (at least
   one). Failure message embeds the observed count
+- **Enumerated value:** `assert_one_of_i32(actual,
+  allowed)` / `_string` — positive set membership
+  (e.g., "exit code is one of [0, 1, 2]"). Empty allowed
+  set always fails. `assert_none_of_i32(actual,
+  forbidden)` / `_string` — negative membership
+  (e.g., "log level is not any of [error, fatal,
+  panic]"). Empty forbidden set vacuously passes.
+  Failure messages render the rejected actual value with
+  appropriate per-type quoting
 - **Process assertions** (paired with the `subprocess(...)`
   builtin): `assert_exit`, `assert_stdout_eq`,
   `assert_stderr_eq`, `assert_stdout_contains`,
