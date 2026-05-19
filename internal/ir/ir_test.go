@@ -380,6 +380,42 @@ func TestLowerSomeEmitsPairForm(t *testing.T) {
 	}
 }
 
+// `return if (c) { Ok(x) } else { Ok(y) };` keeps the function
+// pair-form-eligible: both arms are variant literals, so the
+// eligibility check accepts the IfExpr and the emitter lowers
+// each arm via OpMakeOkI32 inside an `(if (result i32 i32))`
+// block. The trailing OpReturnPair consumes the pair the block
+// leaves on the stack. Without this shape the IR fell back to
+// the generic heap-box path, which produced a single-i32 heap
+// pointer that mismatched the function's `(result i32 i32)`
+// wasm signature — wasmtime rejected the module at validation
+// time (the seed-1423 / seed-1480 emit gaps).
+func TestLowerReturnIfWithPairFormArmsStaysPair(t *testing.T) {
+	prog := lowerSource(t, `function f(c: boolean): Result[i32, i32] {
+		return if (c) { Ok(1) } else { Ok(2) };
+	}`)
+	mustContainOp(t, prog, "f", OpMakeOkI32)
+	mustContainOp(t, prog, "f", OpReturnPair)
+	fn := findFunc(prog, "f")
+	// The if-block must use the multi-value `(i32, i32)` blocktype
+	// (reused from BlockTypeStringPair); a plain `(if (result
+	// i32))` would mean one arm's pair fell back to a single
+	// pointer, which is exactly the wasm-side type mismatch the
+	// fix prevents.
+	sawPairIf := false
+	for _, op := range fn.Ops {
+		if op.Kind == OpIf && op.I32 == BlockTypeStringPair {
+			sawPairIf = true
+		}
+		if op.Kind == OpAlloc {
+			t.Fatalf("pair-form return with IfExpr should not OpAlloc:\n%s", prog)
+		}
+	}
+	if !sawPairIf {
+		t.Fatalf("expected `if (result i32 i32)` block in IfExpr-wrapped pair-form return:\n%s", prog)
+	}
+}
+
 // Option[<pointer-shaped>] is NOT pair-form-eligible — the
 // native fallback's i32 payload-store would truncate an
 // 8-byte heap pointer on arm64-darwin. Falls through to the
