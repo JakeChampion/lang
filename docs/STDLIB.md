@@ -391,7 +391,17 @@ function main(): i32 {
   that the test logic claims can't fire
 - **Map assertions:** `assert_map_len_i32_i32` / `_string_string`,
   `assert_map_has_i32_i32` / `_string_string`,
-  `assert_map_lacks_i32_i32` / `_string_string`
+  `assert_map_lacks_i32_i32` / `_string_string`,
+  `assert_eq_map_i32_i32(actual, expected)` /
+  `_string_string` — full map deep equality
+  (order-independent; walks `actual.keys()` so insertion-
+  order differences don't matter)
+- **Array predicates:** `assert_all_i32(arr, pred)` /
+  `assert_all_string` — ∀ predicate, vacuous pass on []
+  (failure names index + value). `assert_any_i32` /
+  `assert_any_string` — ∃ predicate, vacuous FAIL on []
+  (mathematical convention). Predicate signature is
+  `(T) => boolean`; pass a lambda inline or a named fn
 - **Golden files:** `assert_matches_golden(path, actual)`
   (bootstraps the file if missing — developer workflow) and
   `assert_matches_golden_strict(...)` (fails on missing — CI
