@@ -286,31 +286,25 @@ func exportExists(t *testing.T, bin []byte, want string) bool {
 }
 
 // TestBuildReportsUnsupported — a program that uses a feature
-// the binary backend doesn't yet handle (printing strings via
-// `print` — the allocator + WASI fd_write wiring) should fail
-// with a clear error. This pins the contract that gaps surface
-// as failures, not as silently-wrong output.
+// the binary backend doesn't yet handle should fail with a
+// clear error. This pins the contract that gaps surface as
+// failures, not as silently-wrong output.
+//
+// Today's example: Map operations. The IR lowers `Map { ... }`
+// into a chain of OpCallDirect targets (`map_new`, `map_set`,
+// etc.); none of those names are wired through callDirectAlias
+// to a wasmbin helper, so the call-site lookup fails. As Map
+// support lands, update this test to point at the next gap.
 func TestBuildReportsUnsupported(t *testing.T) {
-	// Closures with captures lower to OpMakeClosure / OpMakeEnv,
-	// neither of which is wired in wasmbin yet (the per-capture
-	// type info isn't carried at the IR layer). Compiling such a
-	// program must fail with a clear error rather than silently
-	// emitting nonsense bytes.
 	src := `import "core/no_prelude";
-function adder(n: i32): (i32) => i32 {
-    function add(x: i32): i32 {
-        return x + n;
-    }
-    return add;
-}
 function main(): i32 {
-    var f = adder(7);
-    return f(3);
+    var m: Map[i32, i32] = (Map { 1i32: 10i32 });
+    return m.get_or(1i32, 0i32);
 }
 `
 	_, err := buildFromSource(t, src)
 	if err == nil {
-		t.Fatal("expected an unsupported-op error for closure-with-capture; got nil")
+		t.Fatal("expected an unsupported error for Map; got nil")
 	}
 	if !strings.Contains(err.Error(), "wasmbin") &&
 		!strings.Contains(err.Error(), "unsupported") {
