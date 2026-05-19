@@ -3292,7 +3292,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
 			if i != len(n.Arms)-1 {
-				c.errf(arm.P, "wildcard `_` arm must be last in the match")
+				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
 			}
 			// Wildcard with a guard doesn't satisfy exhaustiveness
 			// because the guard might be false at runtime — only
@@ -3304,7 +3304,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			if arm.Guard != nil {
 				gt := c.checkExpr(arm.Guard, s)
 				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
-					c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
 			c.checkBlock(arm.Body, s)
@@ -3323,11 +3323,11 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		if arm.VariantModule != "" {
 			if _, qualIsEnum := c.info.Enums[arm.VariantModule]; qualIsEnum {
 				if arm.VariantModule != ed.Name {
-					c.errf(arm.P, "variant pattern qualifier %q does not match scrutinee enum %s",
+					c.errfCode(arm.P, "E029", "variant pattern qualifier %q does not match scrutinee enum %s",
 						arm.VariantModule, ed.Name)
 				}
 			} else if ed.SourceModule != "" && arm.VariantModule != ed.SourceModule {
-				c.errf(arm.P, "variant pattern qualifier names module %q, but enum %s lives in module %q",
+				c.errfCode(arm.P, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
 					arm.VariantModule, ed.Name, ed.SourceModule)
 			}
 		}
@@ -3347,7 +3347,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			continue
 		}
 		if covered[arm.VariantName] {
-			c.errf(arm.P, "variant %q already covered earlier in this match", arm.VariantName)
+			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
 		}
 		// Guarded arms don't fully cover the variant: the guard
 		// might be false at runtime, in which case the match
@@ -3381,7 +3381,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, armScope)
 			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
-				c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
 		c.checkBlock(arm.Body, armScope)
@@ -3389,7 +3389,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	if !sawWildcard {
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
-				c.errf(n.P, "match is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
+				c.errfCode(n.P, "E030", "match is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
 					v.Name, ed.Name)
 			}
 		}
@@ -3409,7 +3409,7 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
 			if i != len(n.Arms)-1 {
-				c.errf(arm.P, "wildcard `_` arm must be last in the match")
+				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
 			}
 			if arm.Guard == nil {
 				sawWildcard = true
@@ -3417,7 +3417,7 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 			if arm.Guard != nil {
 				gt := c.checkExpr(arm.Guard, s)
 				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
-					c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
 			c.checkBlock(arm.Body, s)
@@ -3439,13 +3439,13 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, s)
 			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
-				c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
 		c.checkBlock(arm.Body, s)
 	}
 	if !sawWildcard {
-		c.errf(n.P, "match on non-enum value is not exhaustive — add an unguarded `_` arm")
+		c.errfCode(n.P, "E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm")
 	}
 }
 
@@ -3475,7 +3475,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
 			if i != len(n.Arms)-1 {
-				c.errf(arm.P, "wildcard `_` arm must be last in the match")
+				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
 			}
 			if arm.Guard == nil {
 				sawWildcard = true
@@ -3483,7 +3483,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			if arm.Guard != nil {
 				gt := c.checkExpr(arm.Guard, s)
 				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
-					c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
 			unify(c.checkExpr(arm.Body, s), arm.P)
@@ -3504,13 +3504,13 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, s)
 			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
-				c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
 		unify(c.checkExpr(arm.Body, s), arm.P)
 	}
 	if !sawWildcard {
-		c.errf(n.P, "match on non-enum value is not exhaustive — add an unguarded `_` arm")
+		c.errfCode(n.P, "E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm")
 	}
 	return result
 }
@@ -3570,7 +3570,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
 			if i != len(n.Arms)-1 {
-				c.errf(arm.P, "wildcard `_` arm must be last in the match")
+				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
 			}
 			if arm.Guard == nil {
 				sawWildcard = true
@@ -3578,7 +3578,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			if arm.Guard != nil {
 				gt := c.checkExpr(arm.Guard, s)
 				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
-					c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
@@ -3586,7 +3586,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		}
 		// Same qualifier validation as the stmt-form arm loop above.
 		if arm.VariantModule != "" && ed.SourceModule != "" && arm.VariantModule != ed.SourceModule {
-			c.errf(arm.P, "variant pattern qualifier names module %q, but enum %s lives in module %q",
+			c.errfCode(arm.P, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
 				arm.VariantModule, ed.Name, ed.SourceModule)
 		}
 		varIdx := -1
@@ -3604,7 +3604,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			continue
 		}
 		if covered[arm.VariantName] {
-			c.errf(arm.P, "variant %q already covered earlier in this match", arm.VariantName)
+			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
 		}
 		if arm.Guard == nil {
 			covered[arm.VariantName] = true
@@ -3626,7 +3626,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, armScope)
 			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
-				c.errf(arm.Guard.Pos(), "match guard must be boolean, got %s", gt)
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
 		unify(c.checkExpr(arm.Body, armScope), arm.Body.Pos())
