@@ -31,10 +31,15 @@ func memInstMemoryGrow(buf []byte) []byte { return memory.InstMemoryGrow(buf) }
 // pre-built body. Bodies are produced lazily (the `body` closure)
 // so the heavy hand-crafted byte sequences only run when the
 // helper is actually used.
+//
+// Bodies that call sibling helpers (e.g. __str_eq → __lang_str_len
+// + __lang_str_byte) receive a name → funcidx map so the call
+// targets are resolved at module-assembly time without any
+// post-emission patching.
 type runtimeHelperSpec struct {
 	params  []byte
 	results []byte
-	body    func() []byte
+	body    func(helperIdxs map[string]uint32) []byte
 }
 
 // runtimeNeeds is the set of helpers a single Emit call needs,
@@ -67,6 +72,13 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 				needs.add("__lang_str_len")
 			case ir.OpAlloc:
 				needs.add("__lang_alloc")
+			case ir.OpStrEq:
+				// __str_eq's inline-side byte reads route
+				// through __lang_str_byte, and the length
+				// dispatch uses __lang_str_len.
+				needs.add("__lang_str_len")
+				needs.add("__lang_str_byte")
+				needs.add("__str_eq")
 			}
 		}
 	}
@@ -85,6 +97,18 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32}, // size
 		results: []byte{encode.ValtypeI32}, // pointer
 		body:    buildAllocBody,
+	},
+	"__lang_str_byte": {
+		// (data, len, i) → i32 byte; inline-or-heap aware.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStrByteBody,
+	},
+	"__str_eq": {
+		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStrEqBody,
 	},
 }
 
@@ -152,7 +176,7 @@ const allocMinStart = 64
 //	1: $ptr
 //	2: $end
 //	3: $need
-func buildAllocBody() []byte {
+func buildAllocBody(_ map[string]uint32) []byte {
 	var body []byte
 	// ptr = mem[40]
 	body = inst.InstI32Const(body, allocCursorAddr)
@@ -193,7 +217,175 @@ func buildAllocBody() []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-func buildStrLenBody() []byte {
+// buildStrByteBody assembles wasm bytes for __lang_str_byte.
+//
+// Signature: (param $data i32) (param $len i32) (param $i i32) (result i32)
+//
+// Logical:
+//
+//	if ($len & 0x80000000) != 0 {          // inline form
+//	    if $i < 4 { ($data >> ($i*8)) & 0xff }
+//	    else      { ($len  >> (($i-4)*8)) & 0xff }
+//	} else {                                // heap form
+//	    i32.load8_u at ($data + $i)
+//	}
+func buildStrByteBody(_ map[string]uint32) []byte {
+	var body []byte
+	// inline-vs-heap dispatch
+	body = inst.InstLocalGet(body, 1) // $len
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, encode.ValtypeI32)
+	{
+		// inline branch
+		body = inst.InstLocalGet(body, 2) // $i
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32LtU(body)
+		body = inst.InstIfStart(body, encode.ValtypeI32)
+		{
+			// ($data >> ($i * 8)) & 0xff
+			body = inst.InstLocalGet(body, 0) // $data
+			body = inst.InstLocalGet(body, 2) // $i
+			body = inst.InstI32Const(body, 8)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32ShrU(body)
+			body = inst.InstI32Const(body, 0xff)
+			body = numeric.InstI32And(body)
+		}
+		body = inst.InstElse(body)
+		{
+			// ($len >> (($i - 4) * 8)) & 0xff
+			body = inst.InstLocalGet(body, 1) // $len
+			body = inst.InstLocalGet(body, 2) // $i
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstI32Const(body, 8)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32ShrU(body)
+			body = inst.InstI32Const(body, 0xff)
+			body = numeric.InstI32And(body)
+		}
+		body = inst.InstEnd(body)
+	}
+	body = inst.InstElse(body)
+	{
+		// heap branch: i32.load8_u at ($data + $i)
+		body = inst.InstLocalGet(body, 0) // $data
+		body = inst.InstLocalGet(body, 2) // $i
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load8U(body, 0, 0)
+	}
+	body = inst.InstEnd(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildStrEqBody assembles wasm bytes for __str_eq.
+//
+// Signature: (param $a_data $a_len $b_data $b_len i32) (result i32)
+// Locals (after params): $la (4), $lb (5), $i (6).
+//
+// Strategy:
+//  1. Two-word pair equality fast path — identical (data, len)
+//     pairs → equal. Catches both heap (same pointer + same len)
+//     and inline (same bit-pattern) coincidences.
+//  2. If pair-eq failed and BOTH operands have the inline flag
+//     set, they must differ (inline encoding is deterministic).
+//  3. Otherwise compare lengths via __lang_str_len. Different
+//     lengths → not equal.
+//  4. Byte loop via __lang_str_byte (handles inline + heap on
+//     both sides transparently).
+func buildStrEqBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__lang_str_len"]
+	strByte := idxs["__lang_str_byte"]
+	var body []byte
+	// Step 1: pair-eq fast path.
+	body = inst.InstLocalGet(body, 0) // a_data
+	body = inst.InstLocalGet(body, 2) // b_data
+	body = numeric.InstI32Eq(body)
+	body = inst.InstLocalGet(body, 1) // a_len
+	body = inst.InstLocalGet(body, 3) // b_len
+	body = numeric.InstI32Eq(body)
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	// Step 2: both-inline distinct → return 0.
+	body = inst.InstLocalGet(body, 1) // a_len
+	body = inst.InstLocalGet(body, 3) // b_len
+	body = numeric.InstI32And(body)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	// Step 3: la = __lang_str_len(a); lb = __lang_str_len(b); if differ return 0.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 4) // $la
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 5) // $lb
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = numeric.InstI32Ne(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	// Step 4: byte loop.
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 6) // $i = 0
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// if $i >= $la: return 1.
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 4)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, 1)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		// if __str_byte(a, i) != __str_byte(b, i): return 0.
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, strByte)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, strByte)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		// $i = $i + 1; continue loop.
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 6)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	// Loop never falls through (every iteration ends in return
+	// or br 0), but wasm validation still wants a terminating
+	// instruction with the function's result type. `unreachable`
+	// satisfies the verifier without emitting a runtime const.
+	body = inst.InstUnreachable(body)
+
+	// Three i32 locals: $la, $lb, $i.
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+func buildStrLenBody(_ map[string]uint32) []byte {
 	var body []byte
 	// $len is wasm local 1; $data is local 0 (unused for length).
 	body = inst.InstLocalGet(body, 1)
