@@ -667,6 +667,27 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		{
+			"read-line-len",
+			"function main(): i32 { var s = read_line(); return len(s); }",
+			5,
+			"",
+			"hello\n",
+		},
+		{
+			"read-line-echo",
+			"function main(): i32 { var s = read_line(); print(s); return 0; }",
+			0,
+			"world",
+			"world\n",
+		},
+		{
+			"read-line-compare",
+			"function main(): i32 { var s = read_line(); if (s == \"yes\") { return 1; } return 0; }",
+			1,
+			"",
+			"yes\n",
+		},
 	}
 
 	for _, tc := range cases {
