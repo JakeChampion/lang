@@ -259,6 +259,9 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
             }
             return parser.StmtMatch { scrutinee: fold_expr(m.scrutinee), arms: arms };
         },
+        parser.StmtFor(f) => {
+            return parser.StmtFor { var_name: f.var_name, iter: fold_expr(f.iter), body: fold_block(f.body) };
+        },
         parser.StmtUnknown(_) => { return st; }
     }
     return st;

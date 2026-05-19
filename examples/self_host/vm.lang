@@ -543,6 +543,7 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             }
             return CompileResult { ops: ops, lt: lt };
         },
+        parser.StmtFor(_) => { return CompileResult { ops: ops, lt: lt }; },
         parser.StmtUnknown(_) => { return CompileResult { ops: ops, lt: lt }; }
     }
     return CompileResult { ops: ops, lt: lt };

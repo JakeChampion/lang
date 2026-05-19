@@ -200,6 +200,9 @@ function print_stmt(st: parser.Stmt, depth: i32): string {
         },
         parser.StmtAssign(a) => { return pad + a.target + " = " + print_expr(a.value) + ";\n"; },
         parser.StmtMatch(m) => { return print_match(m, depth); },
+        parser.StmtFor(f) => {
+            return pad + "for " + f.var_name + " in " + print_expr(f.iter) + " " + print_block(f.body, depth) + "\n";
+        },
         parser.StmtUnknown(u) => { return pad + "/*unknown-stmt:" + u.kind + "*/\n"; }
     }
     return pad + "/*unhandled-stmt*/\n";
