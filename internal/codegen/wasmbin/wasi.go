@@ -1,0 +1,160 @@
+// Imports + WASI-facing helpers for the wasmbin backend.
+//
+// The lang `print(s)` lowering eventually calls a synthetic
+// __lang_print helper. The helper takes a (data, len) string,
+// normalises it to a heap buffer (so inline-form strings work
+// via the SSO seam), writes a single iovec to a fixed scratch
+// region of linear memory, and invokes the imported WASI
+// preview-1 fd_write.
+
+package wasmbin
+
+import (
+	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/wasm/encode"
+	"github.com/jakechampion/lang/internal/wasm/inst"
+	"github.com/jakechampion/lang/internal/wasm/memory"
+	"github.com/jakechampion/lang/internal/wasm/numeric"
+)
+
+// importSpec describes one imported function.
+type importSpec struct {
+	module  string
+	name    string
+	params  []byte
+	results []byte
+}
+
+// importSpecs is the import registry. Each entry corresponds to
+// one wasi_snapshot_preview1 (or similar) imported function.
+var importSpecs = map[string]importSpec{
+	"wasi_fd_write": {
+		// (fd, iovs_ptr, iovs_count, nwritten_ptr) → errno
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_write",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+}
+
+// importNeeds is parallel to runtimeNeeds but for imports.
+type importNeeds struct {
+	order []string
+	set   map[string]bool
+}
+
+func (in *importNeeds) add(name string) {
+	if in.set == nil {
+		in.set = map[string]bool{}
+	}
+	if in.set[name] {
+		return
+	}
+	in.set[name] = true
+	in.order = append(in.order, name)
+}
+
+// scanImports decides which imports the module needs based on
+// the helpers in use (and direct IR-op references in a future
+// expansion). __lang_print pulls in wasi_fd_write.
+func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
+	var in importNeeds
+	if helpers.set["__lang_print"] {
+		in.add("wasi_fd_write")
+	}
+	return in
+}
+
+// printIovecAddr is the fixed scratch location in linear memory
+// where __lang_print writes the iovec (iov_base, iov_len) pair
+// before calling fd_write. 8 bytes total; lives outside the
+// allocator's region (which starts at 64 by default, here we
+// pick 48..56 in the reserved low-memory window before the
+// cursor at 40 and the runtime-reserved area up to 64).
+const printIovecAddr = 48
+
+// printRetAddr is the 4-byte scratch where fd_write writes the
+// nwritten result.
+const printRetAddr = 56
+
+// buildPrintBody assembles the wasm bytes for __lang_print.
+//
+// Signature: (param $data i32) (param $len i32) (result)
+//
+// Logical:
+//
+//	L   = __lang_str_len(data, len)
+//	dst = __lang_alloc(L)
+//	for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i)
+//	mem[48..52] = dst   ; iov_base
+//	mem[52..56] = L     ; iov_len
+//	wasi_fd_write(1, 48, 1, 56)
+//	drop result
+//
+// Wasm locals (after the two params):
+//
+//	2: $L
+//	3: $dst
+//	4: $i
+func buildPrintBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__lang_str_len"]
+	strByte := idxs["__lang_str_byte"]
+	alloc := idxs["__lang_alloc"]
+	fdWrite := idxs["wasi_fd_write"]
+	var body []byte
+	// L = __lang_str_len(data, len)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 2) // $L
+	// dst = __lang_alloc(L)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 3) // $dst
+	// Copy loop: for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i).
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 4) // $i = 0
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstLocalGet(body, 2)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1) // exit on $i >= $L
+		// mem[dst + i] = __lang_str_byte(data, len, i)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstCall(body, strByte)
+		body = memory.InstI32Store8(body, 0, 0)
+		// $i++
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 4)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	// mem[printIovecAddr] = dst (iov_base)
+	body = inst.InstI32Const(body, printIovecAddr)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Store(body, 2, 0)
+	// mem[printIovecAddr + 4] = L (iov_len)
+	body = inst.InstI32Const(body, printIovecAddr+4)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Store(body, 2, 0)
+	// wasi_fd_write(1, iovec_addr, 1, ret_addr); drop result.
+	body = inst.InstI32Const(body, 1) // stdout
+	body = inst.InstI32Const(body, printIovecAddr)
+	body = inst.InstI32Const(body, 1) // iovec count
+	body = inst.InstI32Const(body, printRetAddr)
+	body = inst.InstCall(body, fdWrite)
+	body = inst.InstDrop(body)
+	// Three i32 locals: $L, $dst, $i.
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}

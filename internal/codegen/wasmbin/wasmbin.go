@@ -57,6 +57,7 @@ import (
 	"github.com/jakechampion/lang/internal/langstring"
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
+	"github.com/jakechampion/lang/internal/wasm/imports"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
 	"github.com/jakechampion/lang/internal/wasm/module"
@@ -87,12 +88,23 @@ func Emit(prog *ir.Program) ([]byte, error) {
 	// numbering space; their entries land in this map once
 	// the runtime-needs scan below has decided which helpers
 	// the program actually uses.
-	funcIdx := make(map[string]uint32, len(prog.Funcs))
-	for i, fn := range prog.Funcs {
-		funcIdx[fn.Name] = uint32(i)
-	}
+	// Imports first: imported functions occupy funcidx 0..N-1
+	// in the module's funcidx namespace; user functions and
+	// synthetic helpers shift up by N. Today the only imports
+	// come from runtime needs (e.g. WASI fd_write for print).
 	helpers := scanRuntimeHelpers(prog)
-	nextFuncIdx := uint32(len(prog.Funcs))
+	importNeeds := scanImports(prog, helpers)
+
+	funcIdx := make(map[string]uint32, len(prog.Funcs)+len(helpers.order)+len(importNeeds.order))
+	nextFuncIdx := uint32(0)
+	for _, name := range importNeeds.order {
+		funcIdx[name] = nextFuncIdx
+		nextFuncIdx++
+	}
+	for i, fn := range prog.Funcs {
+		funcIdx[fn.Name] = uint32(int(nextFuncIdx) + i)
+	}
+	nextFuncIdx += uint32(len(prog.Funcs))
 	for _, name := range helpers.order {
 		funcIdx[name] = nextFuncIdx
 		nextFuncIdx++
@@ -221,14 +233,31 @@ func Emit(prog *ir.Program) ([]byte, error) {
 	// program in the funcref table at its declaration index —
 	// the simplest layout that lets OpCallIndirect dispatch by
 	// funcidx.
+	// Import section. Each entry already has its funcidx assigned
+	// (0..len(importNeeds.order)-1 above); we just need to emit
+	// the descriptors. Imported function types get added to the
+	// type-section dedup map up-front so the descriptor's typeidx
+	// is stable.
+	for _, name := range importNeeds.order {
+		spec := importSpecs[name]
+		tIdx := addType(spec.params, spec.results)
+		m.ImportModules = append(m.ImportModules, spec.module)
+		m.ImportNames = append(m.ImportNames, spec.name)
+		m.ImportKinds = append(m.ImportKinds, imports.ImportFunc)
+		m.ImportDescs = append(m.ImportDescs, imports.ImportDescFunc(tIdx))
+	}
+
 	if anyTableOp(prog) {
 		n := uint32(len(prog.Funcs))
 		m.TablePresent = true
 		m.TableMin = n
 		m.TableMax = -1
+		// Element segment funcidxs reference the function-table
+		// AFTER the imports shift. funcIdx already encodes this
+		// for each user function; reuse it.
 		idxs := make([]uint32, n)
-		for i := range idxs {
-			idxs[i] = uint32(i)
+		for i, fn := range prog.Funcs {
+			idxs[i] = funcIdx[fn.Name]
 		}
 		m.ElementOffsets = []int32{0}
 		m.ElementFuncidxs = [][]uint32{idxs}
@@ -282,7 +311,10 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, tIdx)
 		m.ExportNames = append(m.ExportNames, fn.Name)
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
-		m.ExportIdxs = append(m.ExportIdxs, uint32(fnIdx))
+		// Export funcidx must match the post-import shift —
+		// funcIdx[fn.Name] already encodes it.
+		m.ExportIdxs = append(m.ExportIdxs, funcIdx[fn.Name])
+		_ = fnIdx
 
 		body, locals, err := emitBody(fn, ctx)
 		if err != nil {

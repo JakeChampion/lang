@@ -73,6 +73,16 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 				needs.add("__lang_str_len")
 			case ir.OpAlloc:
 				needs.add("__lang_alloc")
+			case ir.OpCallDirect:
+				// Calls to the synthetic __lang_print helper
+				// drag in WASI fd_write transitively. Detect by
+				// name and chain through all the byte-copy deps.
+				if op.Str == "__lang_print" {
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__lang_alloc")
+					needs.add("__lang_print")
+				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
 				// through __lang_str_byte, and the length
@@ -114,6 +124,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildStrByteBody,
+	},
+	"__lang_print": {
+		// (data, len) → ()
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildPrintBody,
 	},
 	"__str_eq": {
 		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).
