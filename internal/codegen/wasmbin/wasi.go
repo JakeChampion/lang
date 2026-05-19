@@ -35,6 +35,15 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_proc_exit": {
+		// (exit_code: i32) → ! (never returns; the wasi spec
+		// marks this as a "trap-like" abrupt termination, but
+		// the wasm-level signature still says void return).
+		module:  "wasi_snapshot_preview1",
+		name:    "proc_exit",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -56,11 +65,15 @@ func (in *importNeeds) add(name string) {
 
 // scanImports decides which imports the module needs based on
 // the helpers in use (and direct IR-op references in a future
-// expansion). __lang_print pulls in wasi_fd_write.
+// expansion). Each helper that wraps a WASI call adds its import
+// here.
 func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	var in importNeeds
 	if helpers.set["__lang_print"] {
 		in.add("wasi_fd_write")
+	}
+	if helpers.set["__lang_exit"] {
+		in.add("wasi_proc_exit")
 	}
 	return in
 }
@@ -157,4 +170,21 @@ func buildPrintBody(idxs map[string]uint32) []byte {
 	// Three i32 locals: $L, $dst, $i.
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildExitBody assembles the wasm bytes for __lang_exit.
+//
+// Signature: (param $code i32) (result)
+//
+// Body is a single call to wasi_proc_exit, which never returns.
+// `unreachable` at the end satisfies the wasm verifier (every
+// function body must structurally end somewhere even when
+// execution can't actually reach it).
+func buildExitBody(idxs map[string]uint32) []byte {
+	procExit := idxs["wasi_proc_exit"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // $code
+	body = inst.InstCall(body, procExit)
+	body = inst.InstUnreachable(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }

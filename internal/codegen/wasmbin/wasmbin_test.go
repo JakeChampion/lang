@@ -2540,6 +2540,55 @@ func TestEmitPrintViaSourceNameAlias(t *testing.T) {
 	}
 }
 
+// TestEmitExit — call OpCallDirect "exit" with a specific code
+// and verify wasmtime's exit code matches. The alias routes to
+// __lang_exit which invokes wasi_proc_exit.
+func TestEmitExit(t *testing.T) {
+	for _, code := range []int{0, 7, 42} {
+		code := code
+		t.Run(fmt.Sprintf("code_%d", code), func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:       "_start",
+				ReturnType: void(),
+				Ops: []ir.Op{
+					{Kind: ir.OpConstI32, I32: int32(code)},
+					{Kind: ir.OpCallDirect, Str: "exit", I32: 1},
+					// Unreachable but satisfies the verifier.
+					{Kind: ir.OpReturnVoid},
+				},
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			if _, err := exec.LookPath("wasmtime"); err != nil {
+				t.Skip("wasmtime not on PATH")
+			}
+			dir := t.TempDir()
+			p := filepath.Join(dir, "prog.wasm")
+			if err := os.WriteFile(p, bin, 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", p)
+			if err := cmd.Run(); err != nil {
+				// wasmtime wraps non-zero exit codes in an
+				// *exec.ExitError; pull it out and compare.
+				exitErr, ok := err.(*exec.ExitError)
+				if !ok {
+					t.Fatalf("wasmtime: %v (not ExitError)", err)
+				}
+				if exitErr.ExitCode() != code {
+					t.Fatalf("exit code %d, want %d", exitErr.ExitCode(), code)
+				}
+				return
+			}
+			if code != 0 {
+				t.Fatalf("expected exit code %d, got 0", code)
+			}
+		})
+	}
+}
+
 // TestEmitPrintInlineLiteral — same as above but with a short
 // (inline-form) literal. The byte-by-byte copy through
 // __lang_str_byte handles the inline (data, len) packing.

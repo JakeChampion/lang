@@ -277,7 +277,7 @@ func Emit(prog *ir.Program) ([]byte, error) {
 	// that don't execute at runtime — wasm validation still
 	// requires memory 0 to exist). Memory layout matches the
 	// WAT path: 1 page (64 KiB) with no upper bound.
-	if anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] {
+	if anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] || len(importNeeds.order) > 0 {
 		m.MemoryPresent = true
 		m.MemoryMin = 1
 		m.MemoryMax = -1
@@ -1264,10 +1264,13 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 // helpers that actually implement them in wasmbin. Names not in
 // the map pass through unchanged.
 //
-// Today: `print(s)` → `__lang_print` (which calls fd_write under
-// the hood). Future entries cover `putchar`, `read_line`, etc.
+// Today: `print(s)` → `__lang_print` (fd_write), `exit(code)` →
+// `__lang_exit` (proc_exit). Future entries cover `putchar`,
+// `read_line`, etc.
 func callDirectAlias(name string) string {
 	switch name {
+	case "exit":
+		return "__lang_exit"
 	case "print":
 		return "__lang_print"
 	}
