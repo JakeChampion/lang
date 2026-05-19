@@ -359,7 +359,27 @@ func New() *Interp {
 	i.Builtins["arena_save"] = &Builtin{Fn: builtinArenaSave}
 	i.Builtins["arena_restore"] = &Builtin{Fn: builtinArenaRestore}
 	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
+	// `int_to_string` is the one Lang-defined stdlib function with
+	// an interp Go override (the body uses raw-memory primitives
+	// like `scratch as i32` that the interp can't model). Two
+	// keys cover both load paths:
+	//
+	//   - bare `int_to_string` — auto-prelude flat-load path, the
+	//     usual single-file case.
+	//   - mangled `int__int_to_string` — modload's name-mangling
+	//     prefix when the user (or a transitively-imported stdlib
+	//     module) explicitly `import`s a path that pulls in
+	//     core/int. modload's combine step prepends `<modname>__`
+	//     to non-receiver-method functions; `importLocalName` of
+	//     `stdlib://core/int.lang` is `int`, so the form is
+	//     `int__int_to_string`. Without the alias, the interp
+	//     would fall through to the Lang body and crash on the
+	//     `scratch as i32` cast.
+	//
+	// Add new aliases here whenever a stdlib function gains an
+	// interp Go override or moves to a new module path.
 	i.Builtins["int_to_string"] = &Builtin{Fn: builtinIntToString}
+	i.Builtins["int__int_to_string"] = &Builtin{Fn: builtinIntToString}
 	i.Builtins["tcp_listen"] = &Builtin{Fn: builtinTcpListen}
 	i.Builtins["tcp_accept"] = &Builtin{Fn: builtinTcpAccept}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}

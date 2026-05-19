@@ -186,6 +186,108 @@ func TestInterpScriptStringPrelude(t *testing.T) {
 	}
 }
 
+// A program that explicitly imports a stdlib module whose
+// transitive imports include `core/int` (or imports `core/int`
+// directly) hits the modload mangling path: the function name
+// becomes `int__int_to_string` instead of bare `int_to_string`.
+// The interp's Go override for that function is keyed under
+// the bare name, so without an alias the mangled call falls
+// through to the Lang body and crashes on the unrepresentable
+// `scratch as i32` cast.
+//
+// We exercise four shapes of the same bug so a regression
+// shows up wherever it surfaces:
+//
+//   1. Explicit `import "core/int";` + bare `(n).to_string()`
+//      — the smallest reproducer.
+//   2. Explicit `import "std/json";` — drags in core/int
+//      transitively without the user reaching for it directly.
+//      This is what tripped over the std/test PR review.
+//   3. Direct `int.int_to_string(n)` qualified call against
+//      the explicit `core/int` import — same mangling, but
+//      the call site is the user's own qualified reference
+//      rather than the receiver-method dispatch hoist.
+//   4. The auto-prelude path (no extra imports) — sanity
+//      check that the alias doesn't break the original
+//      flat-load route.
+//
+// Each shape writes a `.lang` file to a tempdir and runs
+// `lang -interp FILE` rather than piping over stdin: the
+// stdin path skips modload entirely (no imports), so it
+// wouldn't exercise the mangling code path the fix targets.
+func TestInterpScriptInteropIntToStringViaMangling(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source string
+	}{
+		{
+			name: "explicit core/int + method dispatch",
+			source: `import "core/int";
+
+function main(): i32 {
+    var x: i32 = 5;
+    print(x.to_string());
+    return 0;
+}`,
+		},
+		{
+			name: "transitive via std/json",
+			source: `import "std/json";
+
+function main(): i32 {
+    var x: i32 = 7;
+    print(x.to_string());
+    return 0;
+}`,
+		},
+		{
+			name: "qualified int.int_to_string call",
+			source: `import "core/int";
+
+function main(): i32 {
+    var s: string = int.int_to_string(11);
+    print(s);
+    return 0;
+}`,
+		},
+		{
+			name: "auto-prelude flat-load path (regression sanity)",
+			source: `function main(): i32 {
+    var x: i32 = 42;
+    print(x.to_string());
+    return 0;
+}`,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if strings.Contains(errb.String(), "interp.Array to i32") {
+				t.Fatalf("interp leaked the Array→i32 cast error:\nstderr: %s",
+					errb.String())
+			}
+			if out.Len() == 0 {
+				t.Errorf("expected `to_string` output on stdout, got empty\nstderr: %s",
+					errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
