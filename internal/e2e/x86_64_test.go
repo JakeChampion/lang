@@ -872,6 +872,25 @@ func TestX86_64HttpHandler(t *testing.T) {
 // Verifies the asm wires the right fd (1), length, and
 // newline behaviour: `print` adds one, `write` doesn't,
 // `putchar` writes a single byte.
+// `now_unix_ms()` on the x86_64 backend lowers to a
+// `clock_gettime(CLOCK_REALTIME, &ts)` syscall + a
+// `tv_sec * 1000 + tv_nsec / 1_000_000` reduction. Asserts
+// the returned ms value is in a plausible range — past a
+// sentinel epoch (2023) and before the i64 limit. Closes
+// docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2.x on this
+// backend.
+func TestX86_64InstantNow(t *testing.T) {
+	_, code := compileAndRunX86_64(t, `function main(): i32 {
+    var ts: Instant = instant_now();
+    if (ts.sec < (1700000000 as i64)) { return 1; }
+    if (ts.sec > (253402300800 as i64)) { return 2; }
+    return 0;
+}`)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+}
+
 func TestX86_64Print(t *testing.T) {
 	out, code := compileAndRunX86_64(t, `function main(): i32 {
     print("hello x86-64");

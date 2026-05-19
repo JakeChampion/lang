@@ -51,6 +51,10 @@ const (
 	sysBind      = 200
 	sysListen    = 201
 	sysAccept    = 202
+	// clock_gettime(2): asm-generic table syscall 113.
+	// Used by `__lang_now_unix_ms` for the wall-clock-now
+	// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
+	sysClockGettime = 113
 )
 
 // Darwin BSD syscall numbers (xnu/bsd/kern/syscalls.master).
@@ -109,8 +113,9 @@ var linuxDarwinSysno = map[string][2]int{
 // driver builds with `-target arm64-darwin` instead of
 // silently producing wrong asm.
 var linuxOnlySysno = map[string]int{
-	"fstat":     sysFstat,
-	"getrandom": sysGetrandom,
+	"fstat":          sysFstat,
+	"getrandom":      sysGetrandom,
+	"clock_gettime":  sysClockGettime,
 }
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
@@ -221,6 +226,16 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 					darwinIncompat = append(darwinIncompat, "read_file")
 					seenDarwinIncompat["read_file"] = true
 				}
+			case "now_unix_ms":
+				// `__lang_now_unix_ms` uses clock_gettime —
+				// Linux-only today (see linuxOnlySysno). Darwin
+				// would need libSystem stitching or the
+				// mach_absolute_time + mach_timebase_info pair.
+				if g.darwin && !seenDarwinIncompat["now_unix_ms"] {
+					darwinIncompat = append(darwinIncompat, "now_unix_ms")
+					seenDarwinIncompat["now_unix_ms"] = true
+				}
+				g.usesNowUnixMs = true
 			}
 		}
 	}
@@ -311,6 +326,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesExit {
 		g.emitExitRuntime()
+	}
+	if g.usesNowUnixMs {
+		g.emitNowUnixMsRuntime()
 	}
 	if g.usesArgs {
 		g.emitArgsRuntime()
@@ -2037,6 +2055,48 @@ func (g *generator) emitExitRuntime() {
 	g.syscallExit()
 	g.emit("ret")
 	g.sizeDirective("__lang_exit")
+	g.line(".ltorg")
+}
+
+// emitNowUnixMsRuntime emits `__lang_now_unix_ms()` — wall-
+// clock milliseconds since the Unix epoch. Calls Linux
+// `clock_gettime(CLOCK_REALTIME, &ts)` (asm-generic syscall
+// 113); the kernel writes a `struct timespec { i64 tv_sec;
+// i64 tv_nsec }` to the caller-provided pointer. We compute
+// `tv_sec * 1000 + tv_nsec / 1_000_000` and return it in x0.
+//
+// Stack frame: 32 bytes — 16 for the saved fp/lr pair, 16
+// for the timespec buffer. The buffer lives at sp+16 so the
+// frame pointer stays at sp.
+//
+// Errno is ignored: a failed `clock_gettime` (only realistic
+// failure modes are EFAULT or EINVAL, neither of which can
+// happen here — we control both the clock id and the
+// buffer) would write -errno to x0, which we'd then
+// arithmetic-massage into nonsense — preferable to forking
+// the calling convention to return an Option.
+func (g *generator) emitNowUnixMsRuntime() {
+	g.line("")
+	g.line(".global __lang_now_unix_ms")
+	g.typeDirective("__lang_now_unix_ms")
+	g.label("__lang_now_unix_ms")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	// timespec buffer at sp+16.
+	g.emit("add x1, sp, #16")
+	g.emit("mov x0, #0")                       // CLOCK_REALTIME
+	g.emit("mov x8, #%d", sysClockGettime)
+	g.emit("svc #0")
+	g.emit("ldr x9, [sp, #16]")                // tv_sec (i64)
+	g.emit("mov x10, #1000")
+	g.emit("mul x9, x9, x10")                  // sec * 1000
+	g.emit("ldr x11, [sp, #24]")               // tv_nsec (i64, always 0..1e9)
+	g.emit("mov x10, #1000000")
+	g.emit("udiv x11, x11, x10")               // nsec / 1_000_000
+	g.emit("add x0, x9, x11")                  // result
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__lang_now_unix_ms")
 	g.line(".ltorg")
 }
 
@@ -3830,6 +3890,16 @@ type generator struct {
 	// Result cached via `__lang_args_cache` so repeat calls are
 	// O(1).
 	usesArgs bool
+	// usesNowUnixMs pulls in `__lang_now_unix_ms()` —
+	// wall-clock-ms via the Linux `clock_gettime(CLOCK_REALTIME,
+	// &ts)` syscall (asm-generic table #113). Returns
+	// `tv_sec * 1000 + tv_nsec / 1_000_000` in x0 as i64.
+	// Backs `time.instant_now()` on the arm64-Linux target —
+	// without it, `now_unix_ms()` call sites dangle. Darwin
+	// gets caught by the pre-scan and reported as a clean
+	// "not yet ported" error (it would need libSystem
+	// stitching or mach_absolute_time + mach_timebase_info).
+	usesNowUnixMs bool
 	// usesArena pulls in `__lang_arena_save` / `__lang_arena_restore`
 	// — bump-cursor snapshot/rewind helpers. Two leaf functions,
 	// one ldr / str each. Cheap scope-bounded reclaim.
@@ -5865,6 +5935,13 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// call never comes back.
 			target = "__lang_exit"
 			g.usesExit = true
+		case "now_unix_ms":
+			// now_unix_ms(): wall-clock ms since the Unix
+			// epoch via clock_gettime(CLOCK_REALTIME, ...).
+			// Returns i64 in x0; `instant_now()` splits this
+			// into (sec, nsec) for `Instant`.
+			target = "__lang_now_unix_ms"
+			g.usesNowUnixMs = true
 		case "args":
 			// args(): returns a length-prefixed string[] of
 			// argv. Caches the result so repeat calls are O(1).
