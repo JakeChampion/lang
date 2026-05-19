@@ -650,15 +650,21 @@ function value_eq(a: Value, b: Value): boolean {
                 _ => { return false; }
             }
         },
-        VArr(_) => {
-            // Array equality isn't well-defined for the
-            // checker / interp's first cut. Surface as false so
-            // `==` on arrays never short-circuits incorrectly;
-            // the checker rules out `arr == arr` ahead of time
-            // by requiring matching types in `==` (both sides
-            // would resolve to TypeArray, which is rejected by
-            // the equality op anyway).
-            return false;
+        VArr(aa) => {
+            // Structural equality: same length, each element-pair
+            // structurally equal via the same value_eq path.
+            match (b) {
+                VArr(ba) => {
+                    if (len(aa.elements) != len(ba.elements)) { return false; }
+                    var ai: i32 = 0;
+                    while (ai < len(aa.elements)) {
+                        if (!value_eq(aa.elements[ai], ba.elements[ai])) { return false; }
+                        ai = ai + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
         },
         VStruct(_) => {
             // Struct equality not implemented yet — same
@@ -1601,6 +1607,27 @@ function main(): i32 {
     match (r74) {
         VBool(b) => { if (!b.v) { return 740; } },
         _ => { return 741; }
+    }
+
+    // Array structural equality.
+    var r75: Value = run_source("return [1, 2, 3] == [1, 2, 3];");
+    match (r75) {
+        VBool(b) => { if (!b.v) { return 750; } },
+        _ => { return 751; }
+    }
+
+    // Array inequality.
+    var r76: Value = run_source("return [1, 2, 3] == [1, 2, 4];");
+    match (r76) {
+        VBool(b) => { if (b.v) { return 760; } },
+        _ => { return 761; }
+    }
+
+    // Different lengths → not equal.
+    var r77: Value = run_source("return [1, 2] == [1, 2, 3];");
+    match (r77) {
+        VBool(b) => { if (b.v) { return 770; } },
+        _ => { return 771; }
     }
 
     return 0;

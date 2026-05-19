@@ -944,6 +944,20 @@ function value_eq_vm(a: Value, b: Value): boolean {
                 _ => { return false; }
             }
         },
+        VArr(aa) => {
+            match (b) {
+                VArr(ba) => {
+                    if (len(aa.elements) != len(ba.elements)) { return false; }
+                    var ai: i32 = 0;
+                    while (ai < len(aa.elements)) {
+                        if (!value_eq_vm(aa.elements[ai], ba.elements[ai])) { return false; }
+                        ai = ai + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
         _ => { return false; }
     }
     return false;
@@ -1925,6 +1939,20 @@ function main(): i32 {
     match (r54) {
         VBool(b) => { if (b.v) { return 540; } },
         _ => { return 541; }
+    }
+
+    // Array structural equality.
+    var r55: Value = run_source("return [1, 2, 3] == [1, 2, 3];");
+    match (r55) {
+        VBool(b) => { if (!b.v) { return 550; } },
+        _ => { return 551; }
+    }
+
+    // Array inequality.
+    var r56: Value = run_source("return [1, 2, 3] == [1, 2, 4];");
+    match (r56) {
+        VBool(b) => { if (b.v) { return 560; } },
+        _ => { return 561; }
     }
 
     return 0;
