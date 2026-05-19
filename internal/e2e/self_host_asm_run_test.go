@@ -1066,6 +1066,55 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"-=-=-=-=",
 			"",
 		},
+		{
+			"str-replace-basic",
+			"function main(): i32 { var r = str_replace(\"hello world\", \"world\", \"there\"); print(r); return len(r); }",
+			11,
+			"hello there",
+			"",
+		},
+		{
+			"str-replace-shorter",
+			"function main(): i32 { var r = str_replace(\"abcabc\", \"abc\", \"x\"); print(r); return len(r); }",
+			2,
+			"xx",
+			"",
+		},
+		{
+			"str-replace-longer",
+			"function main(): i32 { var r = str_replace(\"a-b\", \"-\", \"---\"); print(r); return len(r); }",
+			5,
+			"a---b",
+			"",
+		},
+		{
+			"str-replace-none",
+			"function main(): i32 { var r = str_replace(\"hello\", \"xyz\", \"---\"); print(r); return len(r); }",
+			5,
+			"hello",
+			"",
+		},
+		{
+			"str-replace-empty-old",
+			"function main(): i32 { var r = str_replace(\"abc\", \"\", \"xyz\"); print(r); return len(r); }",
+			3,
+			"abc",
+			"",
+		},
+		{
+			"str-replace-all-occurrences",
+			"function main(): i32 { var r = str_replace(\"banana\", \"a\", \"!\"); print(r); return len(r); }",
+			6,
+			"b!n!n!",
+			"",
+		},
+		{
+			"str-replace-empty-new",
+			"function main(): i32 { var r = str_replace(\"banana\", \"a\", \"\"); print(r); return len(r); }",
+			3,
+			"bnn",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
