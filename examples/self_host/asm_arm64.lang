@@ -370,7 +370,8 @@ pub struct EmitState {
     needs_i32_to_string: boolean,
     needs_str_to_i32: boolean,
     needs_eprint: boolean,
-    needs_str_search: boolean
+    needs_str_search: boolean,
+    needs_args: boolean
 }
 
 function new_state(): EmitState {
@@ -402,7 +403,8 @@ function new_state(): EmitState {
         needs_i32_to_string: false,
         needs_str_to_i32: false,
         needs_eprint: false,
-        needs_str_search: false
+        needs_str_search: false,
+        needs_args: false
     };
 }
 
@@ -429,7 +431,8 @@ function (s: EmitState) write(text: string): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -462,7 +465,8 @@ function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -490,7 +494,8 @@ function (s: EmitState) mark_str_concat(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -509,7 +514,8 @@ function (s: EmitState) mark_str_eq(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -528,7 +534,8 @@ function (s: EmitState) mark_str_print(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -547,7 +554,8 @@ function (s: EmitState) mark_str_cmp(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -566,7 +574,8 @@ function (s: EmitState) mark_str_read_line(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -585,7 +594,8 @@ function (s: EmitState) mark_i32_to_string(): EmitState {
         needs_i32_to_string: true,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -604,7 +614,8 @@ function (s: EmitState) mark_str_to_i32(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: true,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -623,7 +634,8 @@ function (s: EmitState) mark_eprint(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: true,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -642,7 +654,28 @@ function (s: EmitState) mark_str_search(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: true
+        needs_str_search: true,
+        needs_args: s.needs_args
+    };
+}
+
+function (s: EmitState) mark_args(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: true,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
+        needs_str_cmp: s.needs_str_cmp,
+        needs_str_read_line: s.needs_str_read_line,
+        needs_i32_to_string: s.needs_i32_to_string,
+        needs_str_to_i32: s.needs_str_to_i32,
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search,
+        needs_args: true
     };
 }
 
@@ -705,6 +738,8 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "str_replace") { return "string"; }
                     if (id.name == "chr") { return "string"; }
                     if (id.name == "exit") { return "i32"; }
+                    if (id.name == "args_count") { return "i32"; }
+                    if (id.name == "arg_at") { return "string"; }
                     var fi: i32 = 0;
                     while (fi < len(s.funcs)) {
                         if (s.funcs[fi].name == id.name && len(s.funcs[fi].receiver_type) == 0) {
@@ -769,7 +804,8 @@ function (s: EmitState) reset_locals(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -796,7 +832,8 @@ function (s: EmitState) enter_function(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -825,7 +862,8 @@ function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): Em
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -860,7 +898,8 @@ function (s: EmitState) pop_loop_labels(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -897,7 +936,8 @@ function (s: EmitState) leave_function(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -946,7 +986,8 @@ function fresh_label(s: EmitState): LabelOut {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
     return LabelOut { state: ns, name: name };
 }
@@ -1040,7 +1081,8 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -1068,7 +1110,8 @@ function (s: EmitState) mark_print_int(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -1095,7 +1138,8 @@ function (s: EmitState) mark_heap(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -1122,7 +1166,8 @@ function (s: EmitState) mark_read_int(): EmitState {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
 }
 
@@ -1355,7 +1400,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         needs_i32_to_string: s.needs_i32_to_string,
                         needs_str_to_i32: s.needs_str_to_i32,
                         needs_eprint: s.needs_eprint,
-                        needs_str_search: s.needs_str_search
+                        needs_str_search: s.needs_str_search,
+                        needs_args: s.needs_args
                     };
                     var fdi: i32 = 0;
                     while (fdi < len(s.funcs)) {
@@ -1504,6 +1550,22 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    svc #0\n");
                 s = s.write("    mov x0, #0\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
+            if (name == "args_count" && len(c.args) == 0) {
+                s = s.write("    adrp x0, __lang_argc\n");
+                s = s.write("    add x0, x0, :lo12:__lang_argc\n");
+                s = s.write("    ldr x0, [x0]\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_args();
+                return s;
+            }
+            if (name == "arg_at" && len(c.args) == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __lang_arg_at\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_args();
                 return s;
             }
             // read_int() — builtin no-arg call to the read_int
@@ -1851,7 +1913,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
                 needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search
+                needs_str_search: s.needs_str_search,
+                needs_args: s.needs_args
             };
             var di: i32 = 0;
             while (di < len(s.struct_decls)) {
@@ -1896,7 +1959,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         needs_i32_to_string: s.needs_i32_to_string,
                         needs_str_to_i32: s.needs_str_to_i32,
                         needs_eprint: s.needs_eprint,
-                        needs_str_search: s.needs_str_search
+                        needs_str_search: s.needs_str_search,
+                        needs_args: s.needs_args
                     };
                 }
                 di = di + 1;
@@ -1937,7 +2001,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
                 needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search
+                needs_str_search: s.needs_str_search,
+                needs_args: s.needs_args
             };
             var skip_lbl: string = ".Lskip_lambda_" + i32_to_string(lam_id);
             var body_lbl: string = ".Llambda_" + i32_to_string(lam_id);
@@ -2015,7 +2080,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
                 needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search
+                needs_str_search: s.needs_str_search,
+                needs_args: s.needs_args
             };
             s = s.write(skip_lbl + ":\n");
             // Allocate box: (1 + n_caps) * 8 bytes.
@@ -2192,7 +2258,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
                 needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search
+                needs_str_search: s.needs_str_search,
+                needs_args: s.needs_args
             };
             var ai: i32 = 0;
             while (ai < len(m.arms)) {
@@ -2220,7 +2287,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                     needs_i32_to_string: s.needs_i32_to_string,
                     needs_str_to_i32: s.needs_str_to_i32,
                     needs_eprint: s.needs_eprint,
-                    needs_str_search: s.needs_str_search
+                    needs_str_search: s.needs_str_search,
+                    needs_args: s.needs_args
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
@@ -2301,7 +2369,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 needs_i32_to_string: s.needs_i32_to_string,
                 needs_str_to_i32: s.needs_str_to_i32,
                 needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search
+                needs_str_search: s.needs_str_search,
+                needs_args: s.needs_args
             };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition.
@@ -2448,7 +2517,8 @@ pub function emit_module(mod: parser.Module): string {
         needs_i32_to_string: s.needs_i32_to_string,
         needs_str_to_i32: s.needs_str_to_i32,
         needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args
     };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
@@ -2461,6 +2531,17 @@ pub function emit_module(mod: parser.Module): string {
         fi = fi + 1;
     }
     s = s.write("_start:\n");
+    // Save argc + argv from initial stack BEFORE the frame push.
+    if (s.needs_args) {
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    adrp x1, __lang_argc\n");
+        s = s.write("    add x1, x1, :lo12:__lang_argc\n");
+        s = s.write("    str x0, [x1]\n");
+        s = s.write("    add x0, sp, #8\n");
+        s = s.write("    adrp x1, __lang_argv\n");
+        s = s.write("    add x1, x1, :lo12:__lang_argv\n");
+        s = s.write("    str x0, [x1]\n");
+    }
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     if (has_main(mod)) {
@@ -3301,6 +3382,39 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __lang_alloc, .-__lang_alloc\n");
+    }
+    // Command-line args. Mirror of asm.lang.
+    if (s.needs_args) {
+        s = s.write("    .section .bss\n");
+        s = s.write("    .align 8\n");
+        s = s.write("__lang_argc: .quad 0\n");
+        s = s.write("    .align 8\n");
+        s = s.write("__lang_argv: .quad 0\n");
+        s = s.write("    .section .text\n");
+        s = s.write("__lang_arg_at:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    adrp x1, __lang_argv\n");
+        s = s.write("    add x1, x1, :lo12:__lang_argv\n");
+        s = s.write("    ldr x1, [x1]\n");
+        s = s.write("    ldr x19, [x1, x0, lsl #3]\n");   // argv[i]
+        s = s.write("    mov x2, x19\n");
+        s = s.write("    mov x20, #0\n");
+        s = s.write(".Larg_strlen:\n");
+        s = s.write("    ldrb w0, [x2]\n");
+        s = s.write("    cbz w0, .Larg_done\n");
+        s = s.write("    add x2, x2, #1\n");
+        s = s.write("    add x20, x20, #1\n");
+        s = s.write("    b .Larg_strlen\n");
+        s = s.write(".Larg_done:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    str x19, [x0]\n");
+        s = s.write("    str x20, [x0, #8]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
     }
     return s.out;
 }
