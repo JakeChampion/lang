@@ -607,6 +607,20 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			"closure-captures-closure-i32",
+			"function main(): i32 { var inner = function (): i32 { return 42; }; var outer = function (): i32 { return inner(); }; return outer(); }",
+			42,
+			"",
+			"",
+		},
+		{
+			"closure-captures-string-closure",
+			"function main(): i32 { var hello = function (): string { return \"hi\"; }; var wrap = function (): string { return hello() + \"!\"; }; print(wrap()); return 0; }",
+			0,
+			"hi!",
+			"",
+		},
+		{
 			"closure-nested-three-deep",
 			"function main(): i32 { var k = 100; var a = function (): i32 { var b = function (): i32 { var c = function (): i32 { return k; }; return c(); }; return b(); }; return a(); }",
 			100,
