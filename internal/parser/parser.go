@@ -18,15 +18,17 @@ import (
 )
 
 type Error struct {
-	Pos  ast.Position
-	Msg  string
-	Path string // source file path; populated by modload, empty otherwise
+	Pos     ast.Position
+	Msg     string
+	Path    string // source file path; populated by modload, empty otherwise
+	ErrCode string // optional: stable error code (P001…); surfaces in the header + `lang explain` output
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("parse error at %s: %s", e.Pos, e.Msg) }
 func (e *Error) Position() ast.Position { return e.Pos }
 func (e *Error) File() string           { return e.Path }
 func (e *Error) setFile(p string)       { e.Path = p }
+func (e *Error) Code() string           { return e.ErrCode }
 
 // Parse turns source into a Program, lexing along the way. The parser
 // recovers from per-statement and per-function errors and continues so
@@ -156,6 +158,17 @@ func (p *parser) errorf(pos ast.Position, format string, args ...any) *Error {
 	return &Error{Pos: pos, Msg: fmt.Sprintf(format, args...)}
 }
 
+// errorfCode is the code-stamping sibling of errorf — assigns
+// a stable error code (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4)
+// to the parse error. P-prefixed codes line up with the
+// per-code catalogue under `internal/diag/explanations/`;
+// surfacing them in the header lets users search for the
+// error + look up the long-form explanation via
+// `lang explain CODE`.
+func (p *parser) errorfCode(pos ast.Position, code, format string, args ...any) *Error {
+	return &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), ErrCode: code}
+}
+
 func (p *parser) match(kind lexer.Kind, text string) bool {
 	t := p.peek()
 	return t.Kind == kind && (text == "" || t.Text == text)
@@ -175,7 +188,7 @@ func (p *parser) expect(kind lexer.Kind, text string) (lexer.Token, error) {
 		if want == "" {
 			want = kind.String()
 		}
-		return lexer.Token{}, p.errorf(t.Pos, "expected %q, got %q", want, t.Text)
+		return lexer.Token{}, p.errorfCode(t.Pos, "P001", "expected %q, got %q", want, t.Text)
 	}
 	return p.advance(), nil
 }
@@ -979,7 +992,7 @@ func (p *parser) parseType() (ast.Type, error) {
 			base = ast.StructType{Name: name}
 		}
 	default:
-		return nil, p.errorf(t.Pos, "expected type, got %q", t.Text)
+		return nil, p.errorfCode(t.Pos, "P001", "expected type, got %q", t.Text)
 	}
 	// Trailing `[]` makes it an array type, repeatable.
 	for {
@@ -1639,7 +1652,7 @@ func (p *parser) parseSwitch() (ast.Stmt, error) {
 			return sw, nil
 		}
 		if t.Kind != lexer.Keyword || (t.Text != "case" && t.Text != "default") {
-			return nil, p.errorf(t.Pos, "expected `case`, `default` or `}` in switch body")
+			return nil, p.errorfCode(t.Pos, "P001", "expected `case`, `default` or `}` in switch body")
 		}
 		caseKw := p.advance()
 		if caseKw.Text == "default" {
@@ -1857,7 +1870,7 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 			}
 		}
 	} else {
-		return nil, p.errorf(t.Pos, "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
+		return nil, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
 	}
 	// Optional guard: `<pattern> when <expr> => <body>`. The
 	// guard expression has bindings in scope (so a guard like
@@ -1976,7 +1989,7 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 			}
 		}
 	} else {
-		return nil, p.errorf(t.Pos, "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
+		return nil, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
 	}
 	if p.match(lexer.Keyword, "when") {
 		p.advance()
@@ -2388,7 +2401,7 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 		case *ast.Ident, *ast.Index, *ast.FieldAccess:
 			// fine
 		default:
-			return nil, p.errorf(eq.Pos, "left-hand side of assignment is not assignable")
+			return nil, p.errorfCode(eq.Pos, "P003", "left-hand side of assignment is not assignable")
 		}
 		return &ast.Assign{P: eq.Pos, Target: left, Value: rhs}, nil
 	}
@@ -2403,7 +2416,7 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 			case *ast.Ident, *ast.Index:
 				// fine
 			default:
-				return nil, p.errorf(tok.Pos, "left-hand side of assignment is not assignable")
+				return nil, p.errorfCode(tok.Pos, "P003", "left-hand side of assignment is not assignable")
 			}
 			binary := &ast.Binary{P: tok.Pos, Op: op, Left: left, Right: rhs}
 			return &ast.Assign{P: tok.Pos, Target: left, Value: binary}, nil
@@ -2816,7 +2829,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			lit.Width = 64
 			lit.IsUnsigned = true
 		default:
-			return nil, p.errorf(t.Pos, "unexpected numeric suffix %q on integer literal", t.Suffix)
+			return nil, p.errorfCode(t.Pos, "P002", "unexpected numeric suffix %q on integer literal", t.Suffix)
 		}
 		return lit, nil
 	case lexer.Float:
@@ -2825,7 +2838,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		// strconv.ParseFloat which handles both `42` and `1.5`.
 		f, err := strconv.ParseFloat(t.Text, 64)
 		if err != nil {
-			return nil, p.errorf(t.Pos, "invalid float literal %q: %v", t.Text, err)
+			return nil, p.errorfCode(t.Pos, "P002", "invalid float literal %q: %v", t.Text, err)
 		}
 		lit := &ast.FloatLit{P: t.Pos, Value: f}
 		switch t.Suffix {
@@ -2834,7 +2847,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		case "f64":
 			lit.Width = 64
 		default:
-			return nil, p.errorf(t.Pos, "unexpected numeric suffix %q on float literal", t.Suffix)
+			return nil, p.errorfCode(t.Pos, "P002", "unexpected numeric suffix %q on float literal", t.Suffix)
 		}
 		// Empty suffix → leave Width=0 so the checker can still
 		// settle to f64 from context. Non-empty `f32`/`f64` was
@@ -2977,5 +2990,5 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			return &ast.ArrayLit{P: open.Pos, Elems: elems}, nil
 		}
 	}
-	return nil, p.errorf(t.Pos, "unexpected token %q", t.Text)
+	return nil, p.errorfCode(t.Pos, "P001", "unexpected token %q", t.Text)
 }

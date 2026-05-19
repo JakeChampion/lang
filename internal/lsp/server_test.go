@@ -89,15 +89,17 @@ func TestRunDiagnostics_ErrorCodePopulated(t *testing.T) {
 	}
 }
 
-// Diagnostics from errors without a stable code (parser
-// errors, un-stamped checker errors) keep the field empty —
-// the `omitempty` json tag drops it from the wire payload.
-// Regression sentinel against the wrapper accidentally
-// stamping a synthetic code on every error.
+// Diagnostics from errors without a stable code keep the
+// field empty — the `omitempty` json tag drops it from the
+// wire payload. Regression sentinel against the wrapper
+// accidentally stamping a synthetic code on every error.
+//
+// As the catalogue grows, fewer error shapes remain
+// un-coded. This fixture uses an unterminated string
+// literal — the lexer-level error currently has no code
+// (lexer errors aren't yet plumbed through the catalogue).
 func TestRunDiagnostics_NoCodeWhenNoneAssigned(t *testing.T) {
-	// Parser errors don't carry codes today — unclosed brace
-	// is a pure parser-side reject.
-	src := `function main(): i32 { return 1;`
+	src := `function main(): i32 { return "unterminated;`
 	got := diagnosticsFor(src)
 	if len(got) == 0 {
 		t.Fatal("expected at least one diagnostic")
