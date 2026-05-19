@@ -448,6 +448,23 @@ pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
     };
 }
 
+// (r) log(msg) — emit a TAP comment (`# msg`) without
+// recording a test outcome. Useful for debug breadcrumbs in
+// long-running suites — TAP consumers ignore unknown comment
+// lines, humans grep for them. Returns the runner unchanged
+// so the call chains cleanly between `.it(...)` records:
+//
+//   r = r.log("about to spawn child");
+//   r = r.it("spawned", spawn_test());
+//
+// Newlines in `msg` get printed verbatim — multiple TAP
+// comment lines if `msg` contains `\n`. Lang's `print`
+// already handles the trailing newline.
+pub function (r: TestRunner) log(msg: string): TestRunner {
+    print("# " + msg);
+    return r;
+}
+
 // (r) finish() — print the TAP plan line + per-suite summary
 // and return the process exit code (0 = all passed, 1 = any
 // failed). Call this exactly once at the end of main().
@@ -1087,6 +1104,33 @@ pub function assert_eq_string_diff(actual: string, expected: string): Option[str
     return Some("assert_eq_string_diff: differ at line " + line_no.to_string() +
                 "\n  expected: " + expected_line +
                 "\n  actual:   " + actual_line);
+}
+
+// `assert_lines_eq(actual, expected_lines)` — split `actual`
+// on `\n` and compare line-by-line against `expected_lines`.
+// The expected side is an explicit string[], which reads
+// better in tests than wrapping the expected output in one
+// long backslash-escaped literal. Failure message names the
+// first differing line + its 1-based index + both values,
+// same shape as `assert_eq_string_diff`.
+pub function assert_lines_eq(actual: string, expected_lines: string[]): Option[string] {
+    var a_lines: string[] = actual.lines();
+    var an: i32 = len(a_lines);
+    var en: i32 = len(expected_lines);
+    if (an != en) {
+        return Some("assert_lines_eq: line count differs - expected " +
+                    en.to_string() + ", got " + an.to_string());
+    }
+    var i: i32 = 0;
+    while (i < an) {
+        if (a_lines[i] != expected_lines[i]) {
+            return Some("assert_lines_eq: differ at line " + (i + 1).to_string() +
+                        "\n  expected: " + expected_lines[i] +
+                        "\n  actual:   " + a_lines[i]);
+        }
+        i = i + 1;
+    }
+    return None;
 }
 
 // =================== NUMERIC RANGE ASSERTIONS ===================
