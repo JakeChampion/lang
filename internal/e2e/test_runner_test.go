@@ -1242,6 +1242,40 @@ func TestRunnerAllSubstringArrayExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/file_lines_and_timestamp_test.lang`
+// exercises batch-25 additions:
+//   - `assert_file_lines(path, expected_lines)` — read +
+//     line-by-line compare; delegates to `assert_lines_eq`.
+//   - `assert_file_line_count(path, n)` — line cardinality
+//     (no trailing-newline overcount).
+//   - `assert_close_to_now_ms(actual_ms, max_skew_ms)` —
+//     wall-clock timestamp recency, bidirectional skew.
+//
+// 9 cases.
+func TestRunnerFileLinesAndTimestampExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/file_lines_and_timestamp_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - file_lines exact match",
+		"ok 3 - file_lines no-trail match",
+		"ok 4 - file_lines mismatch named",
+		"ok 5 - count mismatch reports both",
+		"ok 6 - file_lines missing file",
+		"ok 8 - close_to_now_ms 1h-old fails",
+		"ok 9 - close_to_now_ms future-skew fails",
+		"# pass 9",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

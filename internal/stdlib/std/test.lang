@@ -1701,6 +1701,45 @@ pub function assert_file_contents(path: string, expected: string): Option[string
     return None;
 }
 
+// `assert_file_lines(path, expected_lines)` — read the file
+// and compare its line-decomposed contents to a string array.
+// Common shape: a subprocess writes N lines to its output
+// file, the test wants to pin each line WITHOUT escaping a
+// long multi-line string literal. Delegates to
+// `assert_lines_eq` so the line-by-line diff and failure
+// message wording stay identical to the in-memory version.
+pub function assert_file_lines(path: string, expected_lines: string[]): Option[string] {
+    match (read_file(path)) {
+        Ok(actual) => { return assert_lines_eq(actual, expected_lines); },
+        Err(_) => {
+            return Some("assert_file_lines: failed to read \"" + path + "\"");
+        }
+    }
+    return None;
+}
+
+// `assert_file_line_count(path, n)` — count lines in a file.
+// Uses the same definition of "line" as `lines()`: a final
+// trailing newline does NOT add an extra empty line. Use
+// when the contract is "produce N records" and the test
+// cares about cardinality more than content.
+pub function assert_file_line_count(path: string, n: i32): Option[string] {
+    match (read_file(path)) {
+        Ok(actual) => {
+            var got: i32 = len(actual.lines());
+            if (got == n) { return None; }
+            return Some("assert_file_line_count: \"" + path +
+                        "\" has " + got.to_string() +
+                        " lines, expected " + n.to_string());
+        },
+        Err(_) => {
+            return Some("assert_file_line_count: failed to read \"" +
+                        path + "\"");
+        }
+    }
+    return None;
+}
+
 // `assert_is_file(path)` / `assert_is_dir(path)` —
 // `stat`-backed type predicates. `assert_file_exists` (above)
 // goes through `read_file` which succeeds for regular files;
@@ -1979,6 +2018,26 @@ pub function assert_elapsed_lt_us(start_ns: i64, max_us: i64): Option[string] {
     if (elapsed_us < max_us) { return None; }
     return Some("assert_elapsed_lt_us: " + elapsed_us.to_string() +
                 "us elapsed, expected < " + max_us.to_string() + "us");
+}
+
+// `assert_close_to_now_ms(actual_ms, max_skew_ms)` —
+// compare a wall-clock timestamp against `now_unix_ms()`
+// with a tolerance. Used for tests that produce a "this
+// happened around now" timestamp (e.g., a log entry, a
+// session cookie's issued-at) and want to verify the
+// value is recent without pinning it exactly. The skew is
+// bidirectional — anything from `now - max_skew_ms` to
+// `now + max_skew_ms` passes. Failure message names the
+// observed skew (signed; negative means the actual is in
+// the future) and the bound.
+pub function assert_close_to_now_ms(actual_ms: i64, max_skew_ms: i64): Option[string] {
+    var now_ms: i64 = now_unix_ms();
+    var skew_ms: i64 = now_ms - actual_ms;
+    var abs_skew: i64 = skew_ms;
+    if (abs_skew < (0 as i64)) { abs_skew = (0 as i64) - abs_skew; }
+    if (abs_skew <= max_skew_ms) { return None; }
+    return Some("assert_close_to_now_ms: skew " + skew_ms.to_string() +
+                "ms exceeds bound " + max_skew_ms.to_string() + "ms");
 }
 
 // =================== JSON DEEP EQUALITY ===================
