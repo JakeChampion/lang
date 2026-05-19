@@ -43,14 +43,18 @@ pub struct VInt { v: i32 }
 pub struct VBool { v: boolean }
 pub struct VString { v: string }
 pub struct VArr { elements: Value[] }
+pub struct VStruct { type_name: string, field_names: string[], field_values: Value[] }
 pub struct VErr { msg: string }
 
-pub type Value = VInt | VBool | VString | VArr | VErr;
+pub type Value = VInt | VBool | VString | VArr | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
+function v_struct(type_name: string, names: string[], values: Value[]): Value {
+    return VStruct { type_name: type_name, field_names: names, field_values: values };
+}
 function v_err(msg: string): Value { return VErr { msg: msg }; }
 
 function is_err(v: Value): boolean {
@@ -99,6 +103,13 @@ pub struct OpLen { tag: i32 }
 // OpSlice pops (end, start, container) and pushes the sub-view.
 // Same semantics as ExprSlice — works on both VArr and VString.
 pub struct OpSlice { tag: i32 }
+// OpMakeStruct pops `len(field_names)` values from the stack
+// (in source order — first pushed = field 0) and pushes a
+// VStruct with the carried type_name + field_names.
+pub struct OpMakeStruct { type_name: string, field_names: string[] }
+// OpFieldGet pops a VStruct, looks up the named field, pushes
+// its value. Missing field → VErr.
+pub struct OpFieldGet { field_name: string }
 pub struct OpReturn { tag: i32 }
 
 pub type Op = OpPushInt | OpPushBool | OpPushStr
@@ -107,6 +118,7 @@ pub type Op = OpPushInt | OpPushBool | OpPushStr
             | OpJump | OpJumpIfFalse
             | OpPop | OpCall
             | OpMakeArray | OpIndex | OpLen | OpSlice
+            | OpMakeStruct | OpFieldGet
             | OpReturn;
 
 function op_push_int(n: i32): Op { return OpPushInt { v: n }; }
@@ -124,6 +136,10 @@ function op_make_array(n: i32): Op { return OpMakeArray { n: n }; }
 function op_index(): Op { return OpIndex { tag: 0 }; }
 function op_len(): Op { return OpLen { tag: 0 }; }
 function op_slice(): Op { return OpSlice { tag: 0 }; }
+function op_make_struct(type_name: string, field_names: string[]): Op {
+    return OpMakeStruct { type_name: type_name, field_names: field_names };
+}
+function op_field_get(field_name: string): Op { return OpFieldGet { field_name: field_name }; }
 function op_return(): Op { return OpReturn { tag: 0 }; }
 
 // =================== COMPILER ====================
@@ -285,12 +301,23 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = ops.push(op_slice());
             return CompileResult { ops: ops, lt: lt };
         },
-        parser.ExprStructLit(_) => {
-            ops = ops.push(op_push_str("__nostruct__"));
+        parser.ExprStructLit(sl) => {
+            // Compile each field value (in source order); the
+            // VM's OpMakeStruct pops them and assembles a
+            // VStruct with the carried type_name + field_names.
+            var i: i32 = 0;
+            while (i < len(sl.field_values)) {
+                var fr: CompileResult = compile_expr(sl.field_values[i], ops, lt);
+                ops = fr.ops; lt = fr.lt;
+                i = i + 1;
+            }
+            ops = ops.push(op_make_struct(sl.type_name, sl.field_names));
             return CompileResult { ops: ops, lt: lt };
         },
-        parser.ExprFieldAccess(_) => {
-            ops = ops.push(op_push_str("__nofield__"));
+        parser.ExprFieldAccess(fa) => {
+            var or: CompileResult = compile_expr(fa.obj, ops, lt);
+            ops = or.ops; lt = or.lt;
+            ops = ops.push(op_field_get(fa.field));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprUnknown(_) => {
@@ -898,6 +925,52 @@ pub function exec_program(prog: CompiledProgram): Value {
                 }
                 ip = ip + 1;
             },
+            OpMakeStruct(o) => {
+                // Pop `len(field_names)` values in reverse so
+                // the first field ends up at index 0. Build a
+                // VStruct with the carried metadata.
+                var nf: i32 = len(o.field_names);
+                if (len(stack) < nf) {
+                    stack = stack_push(stack, v_err("make_struct: stack underflow"));
+                    ip = ip + 1;
+                    continue;
+                }
+                var fvs: Value[] = [];
+                var start: i32 = len(stack) - nf;
+                var fi: i32 = 0;
+                while (fi < nf) {
+                    fvs = fvs.push(stack[start + fi]);
+                    fi = fi + 1;
+                }
+                var ns: Value[] = [];
+                var sj: i32 = 0;
+                while (sj < start) { ns = ns.push(stack[sj]); sj = sj + 1; }
+                stack = ns;
+                stack = stack_push(stack, v_struct(o.type_name, o.field_names, fvs));
+                ip = ip + 1;
+            },
+            OpFieldGet(o) => {
+                var p: PopResult = stack_pop(stack); stack = p.stack;
+                if (is_err(p.v)) { stack = stack_push(stack, p.v); ip = ip + 1; continue; }
+                match (p.v) {
+                    VStruct(sv) => {
+                        var found: boolean = false;
+                        var fi: i32 = 0;
+                        while (fi < len(sv.field_names) && !found) {
+                            if (sv.field_names[fi] == o.field_name) {
+                                stack = stack_push(stack, sv.field_values[fi]);
+                                found = true;
+                            }
+                            fi = fi + 1;
+                        }
+                        if (!found) {
+                            stack = stack_push(stack, v_err("struct " + sv.type_name + " has no field `" + o.field_name + "`"));
+                        }
+                    },
+                    _ => { stack = stack_push(stack, v_err("field_get: receiver not a struct")); }
+                }
+                ip = ip + 1;
+            },
             OpReturn(_) => {
                 if (len(stack) == 0) { return v_err("return: empty stack"); }
                 var ret_val: Value = stack[len(stack) - 1];
@@ -1133,6 +1206,34 @@ function main(): i32 {
     match (r22) {
         VInt(i) => { if (i.v != 20) { return 220; } },
         _ => { return 221; }
+    }
+
+    // Struct literal + field access: `Point { x: 3, y: 4 }.x` → 3.
+    var r23: Value = run_source("return Point { x: 3, y: 4 }.x;");
+    match (r23) {
+        VInt(i) => { if (i.v != 3) { return 230; } },
+        _ => { return 231; }
+    }
+
+    // Bound struct + chained field access.
+    var r24: Value = run_source("var p = Point { x: 7, y: 11 }; return p.x + p.y;");
+    match (r24) {
+        VInt(i) => { if (i.v != 18) { return 240; } },
+        _ => { return 241; }
+    }
+
+    // Nested struct field access.
+    var r25: Value = run_source("var b = Box { inner: Point { x: 5, y: 0 } }; return b.inner.x;");
+    match (r25) {
+        VInt(i) => { if (i.v != 5) { return 250; } },
+        _ => { return 251; }
+    }
+
+    // Missing field → VErr.
+    var r26: Value = run_source("return Point { x: 1, y: 2 }.z;");
+    match (r26) {
+        VErr(_) => { },
+        _ => { return 260; }
     }
 
     return 0;
