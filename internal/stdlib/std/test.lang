@@ -2630,6 +2630,179 @@ pub function assert_none_of_string(actual: string, forbidden: string[]): Option[
     return None;
 }
 
+// =================== OPTION RESULT ASSERTIONS ===================
+//
+// Wrap the canonical `match (opt) { Some(v) => ..., None
+// => fail(...) }` boilerplate that surrounds every test
+// of a `Option[T]`-returning function. Lang has no
+// generics over the Option payload, so the assertion has
+// to be specialised by element type — i32 and string cover
+// the bulk of practical Option usage; widen later as
+// needed.
+
+// `assert_is_some_i32(opt)` — Option must be `Some(_)`,
+// payload value is irrelevant (use `_eq` variant when
+// the value also matters).
+pub function assert_is_some_i32(opt: Option[i32]): Option[string] {
+    match (opt) {
+        Some(_) => { return None; },
+        None    => { return Some("assert_is_some_i32: got None"); }
+    }
+}
+
+// `assert_is_some_string(opt)` — string-typed mirror.
+pub function assert_is_some_string(opt: Option[string]): Option[string] {
+    match (opt) {
+        Some(_) => { return None; },
+        None    => { return Some("assert_is_some_string: got None"); }
+    }
+}
+
+// `assert_is_none_i32(opt)` — Option must be `None`.
+// Failure message embeds the unexpected payload so the
+// regression case has its bad value in the log.
+pub function assert_is_none_i32(opt: Option[i32]): Option[string] {
+    match (opt) {
+        Some(v) => {
+            return Some("assert_is_none_i32: got Some(" +
+                        v.to_string() + ")");
+        },
+        None => { return None; }
+    }
+}
+
+// `assert_is_none_string(opt)` — string-typed mirror.
+pub function assert_is_none_string(opt: Option[string]): Option[string] {
+    match (opt) {
+        Some(v) => {
+            return Some("assert_is_none_string: got Some(\"" +
+                        v + "\")");
+        },
+        None => { return None; }
+    }
+}
+
+// `assert_is_some_eq_i32(opt, expected)` — Option must be
+// `Some(expected)`. The single most common shape: a
+// function returns `Option[i32]` indicating "found" /
+// "not found", and the test wants to pin both the
+// found-ness AND the value. Distinguishes None failures
+// from value mismatches in the failure message.
+pub function assert_is_some_eq_i32(opt: Option[i32], expected: i32): Option[string] {
+    match (opt) {
+        Some(v) => {
+            if (v == expected) { return None; }
+            return Some("assert_is_some_eq_i32: got Some(" +
+                        v.to_string() + "), expected Some(" +
+                        expected.to_string() + ")");
+        },
+        None => {
+            return Some("assert_is_some_eq_i32: got None, expected Some(" +
+                        expected.to_string() + ")");
+        }
+    }
+}
+
+// `assert_is_some_eq_string(opt, expected)` — string-typed
+// mirror. Quotes both sides in the failure message.
+pub function assert_is_some_eq_string(opt: Option[string], expected: string): Option[string] {
+    match (opt) {
+        Some(v) => {
+            if (v == expected) { return None; }
+            return Some("assert_is_some_eq_string: got Some(\"" +
+                        v + "\"), expected Some(\"" +
+                        expected + "\")");
+        },
+        None => {
+            return Some("assert_is_some_eq_string: got None, expected Some(\"" +
+                        expected + "\")");
+        }
+    }
+}
+
+// =================== ARRAY SET-OPERATION ASSERTIONS ===================
+//
+// Set-relation properties between two arrays. Pair these
+// with `assert_set_eq_*` (full multiset equality) /
+// `assert_subset_*` (containment) — they fill out the
+// remaining standard set-relation tests:
+// "do these share any element" / "are these completely
+// disjoint".
+
+// `assert_array_intersects_i32(a, b)` — at least one
+// element of `a` also appears in `b`. Empty array on
+// either side always fails (intersection with empty is
+// empty). Linear-time `O(|a| * |b|)` scan — fine for
+// the typical short test arrays.
+pub function assert_array_intersects_i32(a: i32[], b: i32[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(a)) {
+        var j: i32 = 0;
+        while (j < len(b)) {
+            if (a[i] == b[j]) { return None; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return Some("assert_array_intersects_i32: no shared element between arrays of length " +
+                len(a).to_string() + " and " + len(b).to_string());
+}
+
+// `assert_array_intersects_string(a, b)` — string-typed
+// mirror.
+pub function assert_array_intersects_string(a: string[], b: string[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(a)) {
+        var j: i32 = 0;
+        while (j < len(b)) {
+            if (a[i] == b[j]) { return None; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return Some("assert_array_intersects_string: no shared element between arrays of length " +
+                len(a).to_string() + " and " + len(b).to_string());
+}
+
+// `assert_array_disjoint_i32(a, b)` — NO element of `a`
+// appears in `b`. The complementary test to `_intersects`;
+// either array empty vacuously passes (the intersection
+// of empty with anything is empty). Failure message names
+// the first shared element.
+pub function assert_array_disjoint_i32(a: i32[], b: i32[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(a)) {
+        var j: i32 = 0;
+        while (j < len(b)) {
+            if (a[i] == b[j]) {
+                return Some("assert_array_disjoint_i32: shared element " +
+                            a[i].to_string());
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_array_disjoint_string(a, b)` — string-typed
+// mirror.
+pub function assert_array_disjoint_string(a: string[], b: string[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(a)) {
+        var j: i32 = 0;
+        while (j < len(b)) {
+            if (a[i] == b[j]) {
+                return Some("assert_array_disjoint_string: shared element \"" +
+                            a[i] + "\"");
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
 // =================== STRING-ARRAY SUBSTRING ASSERTIONS ===================
 //
 // "Every line of output starts with TIMESTAMP" / "every

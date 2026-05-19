@@ -455,6 +455,19 @@ function main(): i32 {
   `_string` — exactly `n` elements satisfy `pred`; sits
   between `assert_all` (every) and `assert_any` (at least
   one). Failure message embeds the observed count
+- **Option result:** `assert_is_some_i32(opt)` /
+  `_string` — payload value irrelevant.
+  `assert_is_none_i32(opt)` / `_string` — failure embeds
+  the unexpected payload.
+  `assert_is_some_eq_i32(opt, expected)` / `_string` —
+  Some AND equal in one call; failure distinguishes None
+  from value-mismatch
+- **Array set relations:**
+  `assert_array_intersects_i32(a, b)` / `_string` — at
+  least one shared element (empty either side always
+  fails). `assert_array_disjoint_i32(a, b)` / `_string`
+  — no shared element (empty either side vacuously
+  passes; failure names the first shared element)
 - **Enumerated value:** `assert_one_of_i32(actual,
   allowed)` / `_string` — positive set membership
   (e.g., "exit code is one of [0, 1, 2]"). Empty allowed
