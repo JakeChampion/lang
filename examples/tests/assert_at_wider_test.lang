@@ -1,0 +1,142 @@
+// examples/tests/assert_at_wider_test.lang — batch 32
+// additions to std/test:
+//   * `assert_at_u32(arr, idx, expected)`,
+//     `assert_at_u64(arr, idx, expected)` — unsigned-int
+//     spot checks (parallel to `assert_at_i32` /
+//     `assert_at_i64` from batch 28).
+//   * `assert_at_f64(arr, idx, expected, epsilon)`,
+//     `assert_at_f32(arr, idx, expected, epsilon)` —
+//     float spot checks with tolerance (NaN inputs always
+//     fail; tolerance is mandatory).
+
+function test_at_u32_pass(): Option[string] {
+    var arr: u32[] = [10 as u32, 20 as u32, 30 as u32];
+    return assert_at_u32(arr, 1, 20 as u32);
+}
+
+function test_at_u32_wrong_value(): Option[string] {
+    var arr: u32[] = [10 as u32, 20 as u32];
+    match (assert_at_u32(arr, 0, 999 as u32)) {
+        None => { return fail("wrong-value should fail"); },
+        Some(msg) => {
+            if (!msg.contains("at index 0") ||
+                !msg.contains("expected 999") ||
+                !msg.contains("got 10")) {
+                return Some("expected idx + both values: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_at_u32_out_of_bounds(): Option[string] {
+    var arr: u32[] = [10 as u32];
+    match (assert_at_u32(arr, 5, 0 as u32)) {
+        None => { return fail("OOB should fail"); },
+        Some(msg) => {
+            if (!msg.contains("out of bounds")) {
+                return Some("expected 'out of bounds': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_at_u64_pass(): Option[string] {
+    var arr: u64[] = [100 as u64, 200 as u64, 300 as u64];
+    return assert_at_u64(arr, 2, 300 as u64);
+}
+
+function test_at_u64_wrong_value(): Option[string] {
+    var arr: u64[] = [42 as u64];
+    match (assert_at_u64(arr, 0, 99 as u64)) {
+        None => { return fail("expected mismatch"); },
+        Some(_) => { return None; }
+    }
+}
+
+function test_at_f64_pass_exact(): Option[string] {
+    return assert_at_f64([1.0, 2.0, 3.0], 1, 2.0, 0.001);
+}
+
+function test_at_f64_pass_within_tolerance(): Option[string] {
+    return assert_at_f64([1.0, 2.0001, 3.0], 1, 2.0, 0.001);
+}
+
+function test_at_f64_outside_tolerance(): Option[string] {
+    match (assert_at_f64([1.0, 5.0, 3.0], 1, 2.0, 0.1)) {
+        None => { return fail("outside-tolerance should fail"); },
+        Some(msg) => {
+            if (!msg.contains("at index 1") || !msg.contains("> epsilon 0.1")) {
+                return Some("expected idx + epsilon: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_at_f64_nan_actual_fails(): Option[string] {
+    var z: f64 = 0.0;
+    var nan: f64 = z / z;
+    match (assert_at_f64([1.0, nan, 3.0], 1, 2.0, 100.0)) {
+        None => { return fail("NaN element should fail"); },
+        Some(msg) => {
+            if (!msg.contains("actual is NaN")) {
+                return Some("expected 'actual is NaN': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_at_f64_nan_expected_fails(): Option[string] {
+    var z: f64 = 0.0;
+    var nan: f64 = z / z;
+    match (assert_at_f64([1.0, 2.0], 0, nan, 0.001)) {
+        None => { return fail("NaN expected should fail"); },
+        Some(_) => { return None; }
+    }
+}
+
+function test_at_f64_out_of_bounds(): Option[string] {
+    match (assert_at_f64([1.0, 2.0], 5, 0.0, 0.001)) {
+        None => { return fail("OOB should fail"); },
+        Some(msg) => {
+            if (!msg.contains("out of bounds")) {
+                return Some("expected 'out of bounds': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_at_f32_pass(): Option[string] {
+    var arr: f32[] = [(1.0 as f32), (2.0 as f32)];
+    return assert_at_f32(arr, 0, 1.0 as f32, 0.001 as f32);
+}
+
+function test_at_f32_outside_tolerance(): Option[string] {
+    var arr: f32[] = [(1.0 as f32), (5.0 as f32)];
+    match (assert_at_f32(arr, 1, 2.0 as f32, 0.1 as f32)) {
+        None => { return fail("outside-tolerance should fail"); },
+        Some(_) => { return None; }
+    }
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("assert_at wider widths");
+    r = r.it("at_u32 pass",                 test_at_u32_pass());
+    r = r.it("at_u32 wrong value diag",     test_at_u32_wrong_value());
+    r = r.it("at_u32 out of bounds",        test_at_u32_out_of_bounds());
+    r = r.it("at_u64 pass",                 test_at_u64_pass());
+    r = r.it("at_u64 wrong value",          test_at_u64_wrong_value());
+    r = r.it("at_f64 exact pass",           test_at_f64_pass_exact());
+    r = r.it("at_f64 within tolerance",     test_at_f64_pass_within_tolerance());
+    r = r.it("at_f64 outside tol + eps",    test_at_f64_outside_tolerance());
+    r = r.it("at_f64 NaN actual",           test_at_f64_nan_actual_fails());
+    r = r.it("at_f64 NaN expected",         test_at_f64_nan_expected_fails());
+    r = r.it("at_f64 out of bounds",        test_at_f64_out_of_bounds());
+    r = r.it("at_f32 pass",                 test_at_f32_pass());
+    r = r.it("at_f32 outside tolerance",    test_at_f32_outside_tolerance());
+    return r.finish();
+}

@@ -1073,6 +1073,93 @@ pub function assert_at_i64(arr: i64[], idx: i32, expected: i64): Option[string] 
                 ", got " + arr[idx].to_string());
 }
 
+// `assert_at_u32(arr, idx, expected)` — u32-element mirror.
+// Unsigned eq so callers don't have to cast at the call
+// site; failure message dispatches through `.to_string`
+// which respects the unsigned formatting.
+pub function assert_at_u32(arr: u32[], idx: i32, expected: u32): Option[string] {
+    var n: i32 = len(arr);
+    if (idx < 0 || idx >= n) {
+        return Some("assert_at_u32: index " + idx.to_string() +
+                    " out of bounds (length " + n.to_string() + ")");
+    }
+    if (arr[idx] == expected) { return None; }
+    return Some("assert_at_u32: at index " + idx.to_string() +
+                " expected " + expected.to_string() +
+                ", got " + arr[idx].to_string());
+}
+
+// `assert_at_u64(arr, idx, expected)` — u64-element mirror.
+pub function assert_at_u64(arr: u64[], idx: i32, expected: u64): Option[string] {
+    var n: i32 = len(arr);
+    if (idx < 0 || idx >= n) {
+        return Some("assert_at_u64: index " + idx.to_string() +
+                    " out of bounds (length " + n.to_string() + ")");
+    }
+    if (arr[idx] == expected) { return None; }
+    return Some("assert_at_u64: at index " + idx.to_string() +
+                " expected " + expected.to_string() +
+                ", got " + arr[idx].to_string());
+}
+
+// `assert_at_f64(arr, idx, expected, epsilon)` — f64
+// element with tolerance (mirrors `assert_eq_f64_near`'s
+// semantics). NaN inputs always fail. The `epsilon`
+// parameter is mandatory because exact float equality
+// is almost never what tests actually want.
+pub function assert_at_f64(arr: f64[], idx: i32, expected: f64, epsilon: f64): Option[string] {
+    var n: i32 = len(arr);
+    if (idx < 0 || idx >= n) {
+        return Some("assert_at_f64: index " + idx.to_string() +
+                    " out of bounds (length " + n.to_string() + ")");
+    }
+    var a: f64 = arr[idx];
+    if (a != a) {
+        return Some("assert_at_f64: at index " + idx.to_string() +
+                    " actual is NaN");
+    }
+    if (expected != expected) {
+        return Some("assert_at_f64: at index " + idx.to_string() +
+                    " expected is NaN");
+    }
+    if (a == expected) { return None; }
+    var diff: f64 = a - expected;
+    if (diff < 0.0) { diff = 0.0 - diff; }
+    if (diff <= epsilon) { return None; }
+    return Some("assert_at_f64: at index " + idx.to_string() +
+                " |" + a.to_string() + " - " + expected.to_string() +
+                "| = " + diff.to_string() +
+                " > epsilon " + epsilon.to_string());
+}
+
+// `assert_at_f32(arr, idx, expected, epsilon)` — f32
+// mirror. Widens both sides per-element to f64 for the
+// difference calc (same precision-safety trick as the
+// scalar `assert_eq_f32_near`).
+pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): Option[string] {
+    var n: i32 = len(arr);
+    if (idx < 0 || idx >= n) {
+        return Some("assert_at_f32: index " + idx.to_string() +
+                    " out of bounds (length " + n.to_string() + ")");
+    }
+    var a: f32 = arr[idx];
+    if (a != a) {
+        return Some("assert_at_f32: at index " + idx.to_string() +
+                    " actual is NaN");
+    }
+    if (expected != expected) {
+        return Some("assert_at_f32: at index " + idx.to_string() +
+                    " expected is NaN");
+    }
+    if (a == expected) { return None; }
+    var diff: f64 = (a as f64) - (expected as f64);
+    if (diff < 0.0) { diff = 0.0 - diff; }
+    if (diff <= (epsilon as f64)) { return None; }
+    return Some("assert_at_f32: at index " + idx.to_string() +
+                " |" + a.to_string() + " - " + expected.to_string() +
+                "| > epsilon " + epsilon.to_string());
+}
+
 // `assert_eq_i32_array(actual, expected)` — element-wise i32[]
 // equality. Returns the first mismatching index so the failure
 // localises a long array diff.
