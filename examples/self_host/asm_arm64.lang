@@ -374,7 +374,8 @@ pub struct EmitState {
     needs_args: boolean,
     needs_arr_push: boolean,
     needs_arr_slice: boolean,
-    needs_arr_i32_index_of: boolean
+    needs_arr_i32_index_of: boolean,
+    needs_arr_reverse: boolean
 }
 
 function new_state(): EmitState {
@@ -410,7 +411,8 @@ function new_state(): EmitState {
         needs_args: false,
         needs_arr_push: false,
         needs_arr_slice: false,
-        needs_arr_i32_index_of: false
+        needs_arr_i32_index_of: false,
+        needs_arr_reverse: false
     };
 }
 
@@ -441,7 +443,8 @@ function (s: EmitState) write(text: string): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -478,7 +481,8 @@ function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -510,7 +514,8 @@ function (s: EmitState) mark_str_concat(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -533,7 +538,8 @@ function (s: EmitState) mark_str_eq(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -556,7 +562,8 @@ function (s: EmitState) mark_str_print(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -579,7 +586,8 @@ function (s: EmitState) mark_str_cmp(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -602,7 +610,8 @@ function (s: EmitState) mark_str_read_line(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -625,7 +634,8 @@ function (s: EmitState) mark_i32_to_string(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -648,7 +658,8 @@ function (s: EmitState) mark_str_to_i32(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -671,7 +682,8 @@ function (s: EmitState) mark_eprint(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -694,7 +706,8 @@ function (s: EmitState) mark_str_search(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -717,7 +730,8 @@ function (s: EmitState) mark_args(): EmitState {
         needs_args: true,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -740,7 +754,8 @@ function (s: EmitState) mark_arr_push(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: true,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -763,7 +778,8 @@ function (s: EmitState) mark_arr_slice(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: true,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -786,7 +802,32 @@ function (s: EmitState) mark_arr_i32_index_of(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: true
+        needs_arr_i32_index_of: true,
+        needs_arr_reverse: s.needs_arr_reverse
+    };
+}
+
+function (s: EmitState) mark_arr_reverse(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: true,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
+        needs_str_cmp: s.needs_str_cmp,
+        needs_str_read_line: s.needs_str_read_line,
+        needs_i32_to_string: s.needs_i32_to_string,
+        needs_str_to_i32: s.needs_str_to_i32,
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args,
+        needs_arr_push: s.needs_arr_push,
+        needs_arr_slice: s.needs_arr_slice,
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: true
     };
 }
 
@@ -897,8 +938,8 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max")) {
                         return "i32";
                     }
-                    // `.push(x)` returns the same array type.
-                    if (fa.field == "push"
+                    // `.push(x)` / `.reverse()` return the same array type.
+                    if ((fa.field == "push" || fa.field == "reverse")
                             && (rt == "array_i32" || rt == "array_string" || rt == "array")) {
                         return rt;
                     }
@@ -977,7 +1018,8 @@ function (s: EmitState) reset_locals(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -1008,7 +1050,8 @@ function (s: EmitState) enter_function(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -1041,7 +1084,8 @@ function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): Em
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -1080,7 +1124,8 @@ function (s: EmitState) pop_loop_labels(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -1121,7 +1166,8 @@ function (s: EmitState) leave_function(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -1174,7 +1220,8 @@ function fresh_label(s: EmitState): LabelOut {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
     return LabelOut { state: ns, name: name };
 }
@@ -1272,7 +1319,8 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -1304,7 +1352,8 @@ function (s: EmitState) mark_print_int(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -1335,7 +1384,8 @@ function (s: EmitState) mark_heap(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -1366,7 +1416,8 @@ function (s: EmitState) mark_read_int(): EmitState {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
 }
 
@@ -1660,6 +1711,20 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.mark_arr_push();
                         return s;
                     }
+                    // Built-in `.reverse()` on arrays — returns
+                    // a fresh array with elements in opposite
+                    // order. Same 8-byte payload assumption as
+                    // `.push` / `.slice`; works for both i32[]
+                    // and string[].
+                    if (fa.field == "reverse" && len(c.args) == 0
+                            && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        s = s.write("    bl __lang_arr_reverse\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        s = s.mark_arr_reverse();
+                        return s;
+                    }
                     // Built-in `.index_of(x)` / `.contains(x)` on
                     // i32 arrays — linear search for `x`. Returns
                     // the index for `index_of`, the >= 0 test for
@@ -1846,7 +1911,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
                     };
                     var fdi: i32 = 0;
                     while (fdi < len(s.funcs)) {
@@ -2385,7 +2451,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
             };
             var di: i32 = 0;
             while (di < len(s.struct_decls)) {
@@ -2434,7 +2501,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
                     };
                 }
                 di = di + 1;
@@ -2479,7 +2547,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
             };
             var skip_lbl: string = ".Lskip_lambda_" + i32_to_string(lam_id);
             var body_lbl: string = ".Llambda_" + i32_to_string(lam_id);
@@ -2579,7 +2648,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
             };
             s = s.write(skip_lbl + ":\n");
             // Allocate box: (1 + n_caps) * 8 bytes.
@@ -2760,7 +2830,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
             };
             var ai: i32 = 0;
             while (ai < len(m.arms)) {
@@ -2792,7 +2863,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                     needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
@@ -2877,7 +2949,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
             };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition.
@@ -3028,7 +3101,8 @@ pub function emit_module(mod: parser.Module): string {
         needs_args: s.needs_args,
         needs_arr_push: s.needs_arr_push,
         needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse
     };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
@@ -4152,6 +4226,37 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b .Larr_slice_loop\n");
         s = s.write(".Larr_slice_done:\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_arr_reverse: x0 = src arr ptr. Returns a fresh
+    // array with elements in opposite order. Works on any
+    // 8-byte-payload array (i32[] or string[]).
+    if (s.needs_arr_reverse) {
+        s = s.write("__lang_arr_reverse:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // src
+        s = s.write("    ldr x20, [x19]\n");        // len
+        // alloc (len + 1) * 8 bytes
+        s = s.write("    add x0, x20, #1\n");
+        s = s.write("    lsl x0, x0, #3\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    str x20, [x0]\n");
+        // for i in 0..len: dst[i+1] = src[len - i]
+        s = s.write("    mov x1, #0\n");            // i
+        s = s.write(".Larr_rev_loop:\n");
+        s = s.write("    cmp x1, x20\n");
+        s = s.write("    b.ge .Larr_rev_done\n");
+        s = s.write("    sub x2, x20, x1\n");       // src idx = len - i
+        s = s.write("    ldr x3, [x19, x2, lsl #3]\n");
+        s = s.write("    add x4, x1, #1\n");
+        s = s.write("    str x3, [x0, x4, lsl #3]\n");
+        s = s.write("    add x1, x1, #1\n");
+        s = s.write("    b .Larr_rev_loop\n");
+        s = s.write(".Larr_rev_done:\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
