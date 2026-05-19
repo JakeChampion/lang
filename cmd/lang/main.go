@@ -48,6 +48,7 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/printer"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -113,15 +114,30 @@ func main() {
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	doCheck := flag.Bool("check", false, "type-check FILE.lang (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
+	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       lang -fmt [-w | -d] FILE.lang")
 		fmt.Fprintln(os.Stderr, "       lang -check FILE.lang | lang -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       lang -repl")
 		fmt.Fprintln(os.Stderr, "       lang -interp FILE.lang | lang -interp -    (read from stdin)")
+		fmt.Fprintln(os.Stderr, "       lang -targets                                (list supported targets + capabilities)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *listTargets {
+		for _, name := range platforms.Targets() {
+			d := platforms.ForTarget(name)
+			fmt.Println(d.String())
+			fmt.Printf("    capabilities: %v\n", d.Capabilities)
+			fmt.Printf("    handlers:     %v\n", d.HandlerKinds)
+			if len(d.Bindings) > 0 {
+				fmt.Printf("    bindings:     %v\n", d.Bindings)
+			}
+		}
+		return
+	}
 
 	if *repl {
 		if err := interp.REPL(os.Stdin, os.Stdout); err != nil {
