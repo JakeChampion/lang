@@ -410,6 +410,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "str_repeat") { return "string"; }
                     if (id.name == "str_replace") { return "string"; }
                     if (id.name == "chr") { return "string"; }
+                    if (id.name == "exit") { return "i32"; }
                     // Plain function call: look up ret_type.
                     var fi: i32 = 0;
                     while (fi < len(s.funcs)) {
@@ -1593,6 +1594,19 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq $0\n");
                 s = s.mark_i32_to_string();
                 s = s.mark_eprint();
+                return s;
+            }
+            // exit(n) — process exit with the given code.
+            // Lowers to sys_exit (#60 on x86_64). The push $0
+            // after the syscall is unreachable but keeps the
+            // rt-stack shape so a surrounding expression like
+            // `if (cond) { exit(7); }` doesn't desynchronise.
+            if (name == "exit" && len(c.args) == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");
+                s = s.write("    movq $60, %rax\n");
+                s = s.write("    syscall\n");
+                s = s.write("    pushq $0\n");
                 return s;
             }
             // read_int() — builtin no-arg call to the read_int helper.
