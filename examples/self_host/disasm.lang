@@ -270,5 +270,15 @@ function main(): i32 {
     if (!contains(d12, "CALL_METHOD")) { return 120; }
     if (!contains(d12, "area")) { return 121; }
 
+    // Float literal: emits PUSH_FLOAT (immediate stays `<f64>`
+    // because there's no in-language f64-to-string yet).
+    var d13: string = disassemble_source("return 3.14;");
+    if (!contains(d13, "PUSH_FLOAT")) { return 130; }
+
+    // Tuple literal: emits MAKE_TUPLE with the arity immediate.
+    var d14: string = disassemble_source("return (1, 2, 3);");
+    if (!contains(d14, "MAKE_TUPLE")) { return 140; }
+    if (!contains(d14, "3")) { return 141; }
+
     return 0;
 }
