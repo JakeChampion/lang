@@ -1281,6 +1281,183 @@ func parseDataSection(body []byte) [][]byte {
 	return segs
 }
 
+// strType is a shorthand for the ast.StringType used as a slot type.
+func strType() ast.Type { return ast.StringType{} }
+
+// TestEmitStringParam — a function with a string parameter sees
+// it as two wasm slots (data, len). The body of takelen drops
+// the data and returns the length. Calls into the function with
+// a heap-form OpConstStr should produce the literal's length.
+func TestEmitStringParam(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			// `function takelen(s: string): i32` — slot 0 is the
+			// string param (wasm slots 0+1), slot 1 is a scratch
+			// i32 (wasm slot 2) used to stash the len.
+			Name:         "takelen",
+			Params:       []ast.Param{{Name: "s", Type: strType()}},
+			ScratchTypes: []ast.Type{i32()},
+			ReturnType:   i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpLoadLocal, I32: 0}, // push (data, len)
+				{Kind: ir.OpStoreLocal, I32: 1}, // pop len → scratch
+				{Kind: ir.OpDrop},               // drop data
+				{Kind: ir.OpLoadLocal, I32: 1},  // push len back
+			},
+		},
+		{
+			// `function main(): i32 { return takelen("hello world long enough to be heap form") }`
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstStr, Str: "hello world long enough to be heap form"},
+				{Kind: ir.OpCallDirect, Str: "takelen", I32: 1},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "39" {
+		t.Fatalf("got %q, want 39 (length of literal)", got)
+	}
+}
+
+// TestEmitStringLocal — declared local of type string: tee it,
+// then load + extract len. Exercises OpStoreLocal/OpLoadLocal/
+// OpTeeLocal on string slots, plus the local-section preamble
+// emitting two valtypes per string slot.
+func TestEmitStringLocal(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name: "main",
+		Locals: []*ast.Var{
+			{Name: "s", Type: strType()},
+		},
+		ScratchTypes: []ast.Type{i32()}, // for stashing len after load
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "another long-enough string literal"},
+			// Tee into slot 0 (string local). Stack stays (data, len).
+			{Kind: ir.OpTeeLocal, I32: 0},
+			// Stash len.
+			{Kind: ir.OpStoreLocal, I32: 1},
+			// Drop the data from tee residue.
+			{Kind: ir.OpDrop},
+			// Load len back.
+			{Kind: ir.OpLoadLocal, I32: 1},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "34" {
+		t.Fatalf("got %q, want 34 (length of literal)", got)
+	}
+}
+
+// TestEmitStringReturn — function returning a string returns it
+// as a two-value `(i32, i32)` result. The caller receives both
+// words on the stack and can extract the len.
+func TestEmitStringReturn(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "make_hello",
+			ReturnType: strType(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstStr, Str: "hello world long enough to heap"},
+			},
+		},
+		{
+			// main() calls make_hello, drops data, returns len.
+			Name:         "main",
+			ScratchTypes: []ast.Type{i32()},
+			ReturnType:   i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpCallDirect, Str: "make_hello"},
+				// Stack now: (data, len). Save len.
+				{Kind: ir.OpStoreLocal, I32: 0},
+				{Kind: ir.OpDrop}, // data
+				{Kind: ir.OpLoadLocal, I32: 0},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "31" {
+		t.Fatalf("got %q, want 31", got)
+	}
+}
+
+// TestSlotIdxMixed — confirms wasm-slot indexing when string and
+// non-string slots are interleaved. Layout:
+//   IR slot 0: i32 param      → wasm slot 0
+//   IR slot 1: string param   → wasm slots 1, 2 (data, len)
+//   IR slot 2: i32 param      → wasm slot 3
+//   IR slot 3: string local   → wasm slots 4, 5
+//   IR slot 4: i32 scratch    → wasm slot 6
+// Body: store the len of the string param into the i32 scratch
+// via a tee-and-extract round-trip, then add the two i32 params.
+// Return scratch + a + c.
+func TestSlotIdxMixed(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name: "main",
+		Params: []ast.Param{
+			{Name: "a", Type: i32()},
+			{Name: "s", Type: strType()},
+			{Name: "c", Type: i32()},
+		},
+		Locals: []*ast.Var{
+			{Name: "t", Type: strType()},
+		},
+		ScratchTypes: []ast.Type{i32()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			// Read string param `s` (IR slot 1) — wasm slots 1, 2.
+			{Kind: ir.OpLoadLocal, I32: 1},
+			// Tee into local `t` (IR slot 3) — wasm slots 4, 5.
+			{Kind: ir.OpTeeLocal, I32: 3},
+			// Stash len into scratch (IR slot 4) — wasm slot 6.
+			{Kind: ir.OpStoreLocal, I32: 4},
+			// Drop residual data on stack.
+			{Kind: ir.OpDrop},
+			// Now compute scratch + a + c.
+			{Kind: ir.OpLoadLocal, I32: 4},  // scratch (len)
+			{Kind: ir.OpLoadLocal, I32: 0},  // a
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpLoadLocal, I32: 2},  // c
+			{Kind: ir.OpAdd},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// main(10, "long-enough literal here", 5) — len = 24 → 24+10+5 = 39.
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p,
+		"10", "0", "24", "5") // pass: a=10, s=(data=0, len=24), c=5
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "39" {
+		t.Fatalf("got %q, want 39", got)
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpStrLen) and confirm we get a useful error rather
 // than emitting nonsense bytes. Regressions here would silently
