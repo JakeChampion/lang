@@ -487,6 +487,13 @@ function parse_primary(p: Par): ExprResult {
                 var operand = parse_primary(p);
                 return ExprResult { par: operand.par, expr: e_unary(x.text, operand.expr) };
             }
+            // Unknown leading punct — advance past it so the
+            // surrounding parse loop can recover. Skipping the
+            // advance would loop forever in parse_program when
+            // a stmt has stray trailing punct (e.g. tuple-lit
+            // postfix that doesn't pair with the TokIdent's
+            // chain loop).
+            p = p.advance();
             return ExprResult { par: p, expr: e_unknown("punct:" + x.text) };
         },
         lexer.TokEof(_) => { return ExprResult { par: p, expr: e_unknown("eof") }; }
