@@ -90,9 +90,23 @@ pub struct StmtWhile { cond: Expr, body: Stmt[] }
 // the target is already bound and that types match; the interp
 // updates the env's slot in place.
 pub struct StmtAssign { target: string, value: Expr }
+// StmtMatch models `match (scrutinee) { Pat => { ... }, ... }`.
+// Arms are walked top-to-bottom; the first pattern that matches
+// runs its body. The checker enforces that the pattern variant
+// (e.g. `Circle(c)`) refers to a known struct that's a variant
+// of the scrutinee's union type. Wildcards (`_`) act as the
+// default catch-all. The body is a stmt list, mirroring
+// StmtIf / StmtWhile; expression-position match lives in a
+// later slice (ExprMatch).
+pub struct PatVariant { type_name: string, binding: string }
+pub struct PatWildcard { tag: i32 }
+pub type Pattern = PatVariant | PatWildcard;
+pub struct MatchArm { pattern: Pattern, body: Stmt[] }
+pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[] }
 pub struct StmtUnknown { kind: string }
 
-pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile | StmtAssign | StmtUnknown;
+pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
+              | StmtAssign | StmtMatch | StmtUnknown;
 
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
@@ -162,6 +176,13 @@ function s_while(cond: Expr, body: Stmt[]): Stmt {
 function s_assign(target: string, value: Expr): Stmt {
     return StmtAssign { target: target, value: value };
 }
+function s_match(scrutinee: Expr, arms: MatchArm[]): Stmt {
+    return StmtMatch { scrutinee: scrutinee, arms: arms };
+}
+function p_variant(type_name: string, binding: string): Pattern {
+    return PatVariant { type_name: type_name, binding: binding };
+}
+function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
 
 // Parser state. `toks` is the lexer's output; `pos` is the
@@ -439,8 +460,84 @@ function parse_block(p: Par): BlockResult {
     return BlockResult { par: p, body: body };
 }
 
+// parse_pattern reads a single match-arm pattern. Forms accepted:
+//   _                  — PatWildcard
+//   Name               — PatVariant { type_name: Name, binding: "" }
+//   Name(_)            — PatVariant { type_name: Name, binding: "_" }
+//   Name(ident)        — PatVariant { type_name: Name, binding: ident }
+// The lexer treats `_` as an identifier (underscore is a valid
+// alpha byte) so wildcards arrive here via peek_ident.
+pub struct PatternResult { par: Par, pattern: Pattern }
+
+function parse_pattern(p: Par): PatternResult {
+    var name: string = p.peek_ident();
+    if (name == "_") {
+        p = p.advance();
+        return PatternResult { par: p, pattern: p_wildcard() };
+    }
+    if (len(name) == 0) {
+        return PatternResult { par: p, pattern: p_variant("", "") };
+    }
+    p = p.advance();
+    var binding: string = "";
+    if (p.peek_punct() == "(") {
+        p = p.advance();
+        var inner: string = p.peek_ident();
+        if (len(inner) > 0) {
+            binding = inner;
+            p = p.advance();
+        }
+        if (p.peek_punct() == ")") { p = p.advance(); }
+    }
+    return PatternResult { par: p, pattern: p_variant(name, binding) };
+}
+
+// parse_match_stmt consumes `match (scrutinee) { arm, arm, … }`
+// starting from the `match` keyword. Arms separate with `,`
+// (trailing comma optional). Each arm is `Pat => { stmts… }`.
+// Malformed input recovers by yielding an empty-arm StmtMatch
+// — the surrounding parse_module loop continues at the next
+// token.
+pub struct MatchStmtResult { par: Par, stmt: Stmt }
+
+function parse_match_stmt(p: Par): MatchStmtResult {
+    p = p.advance();  // consume `match`
+    var empty_arms: MatchArm[] = [];
+    if (p.peek_punct() != "(") {
+        return MatchStmtResult { par: p, stmt: s_match(e_unknown("match: missing ("), empty_arms) };
+    }
+    p = p.advance();
+    var sr: ExprResult = parse_expr(p);
+    p = sr.par;
+    if (p.peek_punct() == ")") { p = p.advance(); }
+    if (p.peek_punct() != "{") {
+        return MatchStmtResult { par: p, stmt: s_match(sr.expr, empty_arms) };
+    }
+    p = p.advance();
+    var arms: MatchArm[] = [];
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        var pr: PatternResult = parse_pattern(p);
+        p = pr.par;
+        // `=>` arrives as a single punct token from the lexer.
+        if (p.peek_punct() == "=>") {
+            p = p.advance();
+        }
+        var bb: BlockResult = parse_block(p);
+        p = bb.par;
+        arms = arms.push(MatchArm { pattern: pr.pattern, body: bb.body });
+        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+        break;
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return MatchStmtResult { par: p, stmt: s_match(sr.expr, arms) };
+}
+
 function parse_stmt(p: Par): StmtResult {
     var kw: string = p.peek_keyword();
+    if (kw == "match") {
+        var mr: MatchStmtResult = parse_match_stmt(p);
+        return StmtResult { par: mr.par, stmt: mr.stmt };
+    }
     if (kw == "if") {
         p = p.advance();
         if (p.peek_punct() != "(") {
@@ -1088,6 +1185,65 @@ function main(): i32 {
     if (modTy2.aliases[0].name != "Id") { return 851; }
     if (len(modTy2.aliases[0].variants) != 1) { return 852; }
     if (modTy2.aliases[0].variants[0] != "Inner") { return 853; }
+
+    // Match statement: variant + wildcard arms with bindings.
+    //   match (e) {
+    //       Circle(c) => { return 1; },
+    //       Square(_) => { return 2; },
+    //       _ => { return 3; }
+    //   }
+    var srcMa: string = "match (e) { Circle(c) => { return 1; }, Square(_) => { return 2; }, _ => { return 3; } }";
+    var progMa: Stmt[] = parse_program(lexer.tokenize(srcMa));
+    if (len(progMa) != 1) { return 900; }
+    match (progMa[0]) {
+        StmtMatch(m) => {
+            match (m.scrutinee) {
+                ExprIdent(id) => { if (id.name != "e") { return 901; } },
+                _ => { return 902; }
+            }
+            if (len(m.arms) != 3) { return 903; }
+            // Arm 0: Circle(c) => { return 1; }
+            match (m.arms[0].pattern) {
+                PatVariant(pv) => {
+                    if (pv.type_name != "Circle") { return 904; }
+                    if (pv.binding != "c") { return 905; }
+                },
+                _ => { return 906; }
+            }
+            if (len(m.arms[0].body) != 1) { return 907; }
+            // Arm 1: Square(_) => { return 2; }
+            match (m.arms[1].pattern) {
+                PatVariant(pv) => {
+                    if (pv.type_name != "Square") { return 908; }
+                    if (pv.binding != "_") { return 909; }
+                },
+                _ => { return 910; }
+            }
+            // Arm 2: _ => { return 3; }
+            match (m.arms[2].pattern) {
+                PatWildcard(_) => { },
+                _ => { return 911; }
+            }
+        },
+        _ => { return 912; }
+    }
+
+    // Bare variant pattern (no parens, no binding): `Foo => { ... }`.
+    var srcMb: string = "match (x) { Foo => { return 1; }, _ => { return 0; } }";
+    var progMb: Stmt[] = parse_program(lexer.tokenize(srcMb));
+    match (progMb[0]) {
+        StmtMatch(m) => {
+            if (len(m.arms) != 2) { return 920; }
+            match (m.arms[0].pattern) {
+                PatVariant(pv) => {
+                    if (pv.type_name != "Foo") { return 921; }
+                    if (pv.binding != "") { return 922; }
+                },
+                _ => { return 923; }
+            }
+        },
+        _ => { return 924; }
+    }
 
     return 0;
 }

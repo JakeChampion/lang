@@ -570,6 +570,7 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             }
             return CheckResult { scope: s, ty: vt };
         },
+        parser.StmtMatch(_) => { return CheckResult { scope: s, ty: t_unknown("StmtMatch not implemented in checker") }; },
         parser.StmtUnknown(u) => { return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + u.kind) }; }
     }
     return CheckResult { scope: s, ty: t_unknown("unhandled Stmt variant") };
