@@ -1753,6 +1753,41 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/http_request_headers_migrated_test.lang`
+// — Lang port of `TestInterpScriptHttpRequestHeaders`.
+// Fourth migration in the runner-adoption campaign.
+// Original was 3 table-driven subprocess cases; migrated
+// to 5 in-process `r.it(...)` cases (split the
+// "parsed headers reachable" case into Content-Type-value
+// + header-count, and added a missing-header `get_all`
+// returns-empty-array case that the original didn't
+// pin).
+//
+// First migration that uses the larger `std/http`
+// surface — confirms `http.http_parse_request` works
+// cleanly through the runner's flat-namespace load
+// path.
+func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_request_headers_migrated_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HTTP request headers (migrated)",
+		"ok 1 - Content-Type reachable case-insensitively",
+		"ok 3 - duplicate Set-Cookie preserves insertion order",
+		"ok 4 - missing header returns None",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
