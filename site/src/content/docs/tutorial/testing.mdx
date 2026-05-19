@@ -190,6 +190,28 @@ The harness mutates with byte flip / drop / insert / unchanged.
 Failures stop the loop and report the input with non-printable
 bytes escaped to `\xNN` so the log doubles as a reproducer.
 
+### Shrinking
+
+`r.fuzz_shrink` runs the same loop but, on a failure,
+minimises the offending input via halving + single-byte drops
+before reporting. The failure message embeds both the raw
+input (what the mutator produced) and the shrunk form (the
+smallest still-failing variant the shrinker could find):
+
+```
+not ok 1 - detect
+  ---
+  message: seed[0]: forbidden
+  raw     (42 bytes): "lots of padding here BAD lots more padding"
+  shrunk  (3 bytes): "BAD"
+  ---
+```
+
+Use the shrink variant when the property's actual trigger is
+much smaller than the input the corpus + mutator produces —
+typical for parser fuzz targets where any single malformed
+byte breaks the property.
+
 ## Writing your own assertion
 
 A test function can run any logic that returns `Option[string]`
@@ -261,3 +283,7 @@ in the repo:
   range / file-state / `must_temp_dir` convenience helpers
 - `float_test.lang` — f32 / f64 tolerance + exact + NaN +
   f32_bits round-trip coverage
+- `fuzz_shrink_test.lang` — `r.fuzz_shrink` walkthrough on
+  three benign properties; the failure-path shrinking
+  contract is pinned by the Go-side
+  `TestRunnerFuzzShrinkSurfacesMinimisedInput` gate
