@@ -258,6 +258,26 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "body", Type: ast.StringType{}},
 			},
 		},
+		// ProcessResult — the return shape of `exec(cmd, args,
+		// stdin)`. The interp's Go-side implementation populates
+		// stdout / stderr / exit_code; the wasm + native backends
+		// don't lower exec today, so the type registration is
+		// here-only for the test-runner migration path that runs
+		// the migrated suites under `lang -interp`. Spawn failures
+		// (executable missing, permission denied) surface as
+		// `exit_code = 127` (POSIX `command not found` convention)
+		// with the OS error message in `stderr`, so callers can
+		// treat "didn't run" identically to "ran and failed" for
+		// the common case while still distinguishing via the
+		// sentinel when they care.
+		{
+			Name: "ProcessResult",
+			Fields: []ast.Param{
+				{Name: "stdout", Type: ast.StringType{}},
+				{Name: "stderr", Type: ast.StringType{}},
+				{Name: "exit_code", Type: ast.NumberType{}},
+			},
+		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
 		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
 		// (i32 keys, i32 values) for now; generic K / V comes in
@@ -860,6 +880,46 @@ func Check(prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["open_appender"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	// temp_dir(prefix): Result[string, IoError] — create a
+	// fresh empty directory and return its absolute path.
+	// `prefix` is appended to a random suffix so concurrent
+	// runs don't clash. Lang has no `remove_dir` yet — the
+	// caller's responsibility is OS-tier cleanup (system
+	// tmpfs scrubs on reboot, CI runners tear down between
+	// jobs). For test-runner use that's fine; long-lived
+	// servers should not lean on this.
+	c.info.FuncSigs["temp_dir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// subprocess(cmd, args, stdin): ProcessResult — spawn `cmd`
+	// with `args` (NOT including argv[0]), feed `stdin` to its
+	// standard input, capture stdout + stderr into the
+	// returned struct, and surface its exit code. Always
+	// returns a ProcessResult so the test-runner migration
+	// can write straight-line "expected exit / stdout" diffs;
+	// spawn failures surface as `exit_code = 127` with the
+	// OS error message in `stderr` (POSIX convention). The
+	// interp owns the only implementation today; native /
+	// wasm backends would surface their own "subprocess not
+	// supported on this target" error from codegen.
+	//
+	// Named `subprocess` rather than the obvious `exec` to
+	// stay clear of `examples/self_host/vm.lang`'s long-
+	// standing `pub function exec(ops: Op[]): Value` and any
+	// user code that wraps an interpreter.
+	procResult := ast.StructType{Name: "ProcessResult"}
+	c.info.FuncSigs["subprocess"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.ArrayType{Elem: ast.StringType{}},
+			ast.StringType{},
+		},
+		Result: procResult,
 	}
 	// stdin / stdout / stderr return Reader / Writer values
 	// wrapping the standard fds (0 / 1 / 2). They never fail

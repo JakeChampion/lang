@@ -545,3 +545,79 @@ pub function assert_eq_string_array(actual: string[], expected: string[]): Optio
     }
     return None;
 }
+
+// =================== PROCESS ASSERTIONS ===================
+//
+// The migrated e2e suite spawns the compiler binary under test
+// and asserts on a (stdout, stderr, exit_code) triple. The
+// `exec(cmd, args, stdin)` builtin returns a ProcessResult
+// struct; these helpers turn the most common assertions into
+// one-liners that fold cleanly into the runner's
+// Option[string] result shape.
+
+// assert_exit(actual: ProcessResult, expected: i32) — verify
+// the spawned process exited with the given code. Failure
+// message embeds stdout + stderr (truncated to keep CI logs
+// readable) so the diff against your fixture is one glance.
+pub function assert_exit(actual: ProcessResult, expected: i32): Option[string] {
+    if (actual.exit_code == expected) { return None; }
+    var tail: string = "";
+    if (len(actual.stdout) > 0) {
+        tail = tail + "\n  stdout: " + actual.stdout;
+    }
+    if (len(actual.stderr) > 0) {
+        tail = tail + "\n  stderr: " + actual.stderr;
+    }
+    return Some("assert_exit: expected " + expected.to_string() +
+                ", got " + actual.exit_code.to_string() + tail);
+}
+
+// assert_stdout_eq / assert_stderr_eq — exact-byte match
+// against the captured stream. Whitespace counts; trim the
+// inputs before calling if you want to ignore trailing
+// newlines.
+pub function assert_stdout_eq(actual: ProcessResult, expected: string): Option[string] {
+    if (actual.stdout == expected) { return None; }
+    return Some("assert_stdout_eq: expected \"" + expected +
+                "\", got \"" + actual.stdout + "\"");
+}
+
+pub function assert_stderr_eq(actual: ProcessResult, expected: string): Option[string] {
+    if (actual.stderr == expected) { return None; }
+    return Some("assert_stderr_eq: expected \"" + expected +
+                "\", got \"" + actual.stderr + "\"");
+}
+
+// assert_stdout_contains / assert_stderr_contains — substring
+// search. The expected-substring search is way friendlier
+// than exact equality for diagnostic output (where the wording
+// changes more often than the substantive content).
+pub function assert_stdout_contains(actual: ProcessResult, needle: string): Option[string] {
+    if (actual.stdout.contains(needle)) { return None; }
+    return Some("assert_stdout_contains: stdout does not contain \"" +
+                needle + "\"\n  stdout: " + actual.stdout);
+}
+
+pub function assert_stderr_contains(actual: ProcessResult, needle: string): Option[string] {
+    if (actual.stderr.contains(needle)) { return None; }
+    return Some("assert_stderr_contains: stderr does not contain \"" +
+                needle + "\"\n  stderr: " + actual.stderr);
+}
+
+// assert_process(actual, exit, stdout_substr) — fold the
+// common "exit + stdout-contains" triple into one helper so
+// the typical e2e shape stays a one-liner. `stdout_substr`
+// is treated as a substring search (the most-used direction);
+// callers wanting exact match should use
+// assert_stdout_eq separately.
+pub function assert_process(actual: ProcessResult, expected_exit: i32, stdout_substr: string): Option[string] {
+    if (actual.exit_code != expected_exit) {
+        return assert_exit(actual, expected_exit);
+    }
+    if (len(stdout_substr) > 0 && !actual.stdout.contains(stdout_substr)) {
+        return Some("assert_process: exit " + expected_exit.to_string() +
+                    " ok, but stdout missing \"" + stdout_substr +
+                    "\"\n  stdout: " + actual.stdout);
+    }
+    return None;
+}

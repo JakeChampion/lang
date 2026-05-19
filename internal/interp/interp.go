@@ -10,11 +10,13 @@
 package interp
 
 import (
+	"bytes"
 	cryptorand "crypto/rand"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -359,6 +361,17 @@ func New() *Interp {
 	i.Builtins["arena_save"] = &Builtin{Fn: builtinArenaSave}
 	i.Builtins["arena_restore"] = &Builtin{Fn: builtinArenaRestore}
 	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
+	// `temp_dir(prefix)` + `exec(cmd, args, stdin)` back the
+	// test-runner migration: ports of the Go-side e2e suite need
+	// somewhere to write fixture files and a way to spawn the
+	// compiler binary they're testing. Lang-the-language has
+	// neither today (per `docs/ROADMAP-AND-SELF-HOSTING.md`
+	// "Process spawning"), so these are interp-only — native /
+	// wasm backends would fail at codegen for now. That's the
+	// right trade for the migration: tests run under
+	// `lang -interp` regardless of which backend they exercise.
+	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
+	i.Builtins["subprocess"] = &Builtin{Fn: builtinSubprocess}
 	// `int_to_string` is the one Lang-defined stdlib function with
 	// an interp Go override (the body uses raw-memory primitives
 	// like `scratch as i32` that the interp can't model). Two
@@ -958,6 +971,100 @@ func builtinWriteFile(_ *Interp, args []Value) (Value, error) {
 		return optionSome(classifyIoError(string(path), err)), nil
 	}
 	return optionNone(), nil
+}
+
+// builtinTempDir creates a fresh temporary directory and
+// returns its absolute path inside `Result[string, IoError]`.
+// `prefix` is appended to a unique random suffix the OS picks
+// — `MkdirTemp` lays it out under `os.TempDir()` (`/tmp` on
+// Linux, the macOS equivalent on Darwin). No automatic
+// cleanup: callers are expected to either rely on OS-tier
+// scrubbing (CI runners, system tmpfs reboot purge) or to
+// build their own delete-on-finish flow once Lang grows a
+// `remove_dir` primitive.
+func builtinTempDir(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("temp_dir: expected 1 arg, got %d", len(args))
+	}
+	prefix, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("temp_dir: expected string prefix, got %T", args[0])
+	}
+	dir, err := os.MkdirTemp("", string(prefix)+"-*")
+	if err != nil {
+		return resultErr(classifyIoError(string(prefix), err)), nil
+	}
+	return resultOk(String(dir)), nil
+}
+
+// builtinSubprocess spawns `cmd` with `args` as its argv (NOT
+// including the executable name itself; the caller supplies
+// it separately as the first arg). `stdin_text` is fed to the
+// child's standard input — pass `""` when the child reads
+// nothing. Returns a ProcessResult struct populated with
+// captured stdout / stderr / exit_code; spawn failures
+// surface as exit_code=127 with the OS error in stderr.
+//
+// Output is captured in memory — there's no streaming API.
+// Tests that produce huge output should pipe to a file via
+// shell redirection and read it back through `read_file`.
+func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("subprocess: expected 3 args (cmd, args, stdin), got %d", len(args))
+	}
+	cmdStr, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("subprocess: expected string cmd, got %T", args[0])
+	}
+	argsArr, ok := args[1].(Array)
+	if !ok {
+		return nil, fmt.Errorf("subprocess: expected string[] args, got %T", args[1])
+	}
+	stdinText, ok := args[2].(String)
+	if !ok {
+		return nil, fmt.Errorf("subprocess: expected string stdin, got %T", args[2])
+	}
+	argv := make([]string, len(argsArr))
+	for i, a := range argsArr {
+		s, isStr := a.(String)
+		if !isStr {
+			return nil, fmt.Errorf("subprocess: args[%d] not a string (%T)", i, a)
+		}
+		argv[i] = string(s)
+	}
+	c := exec.Command(string(cmdStr), argv...)
+	if len(stdinText) > 0 {
+		c.Stdin = strings.NewReader(string(stdinText))
+	}
+	var outBuf, errBuf bytes.Buffer
+	c.Stdout = &outBuf
+	c.Stderr = &errBuf
+	runErr := c.Run()
+	exitCode := 0
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			// Spawn failure (binary not found, permission
+			// denied, etc). Use 127 — the POSIX shell "command
+			// not found" convention — plus the OS error
+			// message in stderr so callers that don't gate on
+			// the exact code still see the reason.
+			exitCode = 127
+			if errBuf.Len() > 0 {
+				errBuf.WriteByte('\n')
+			}
+			errBuf.WriteString(runErr.Error())
+		}
+	}
+	return &Struct{
+		TypeName: "ProcessResult",
+		Fields: map[string]Value{
+			"stdout":    String(outBuf.String()),
+			"stderr":    String(errBuf.String()),
+			"exit_code": Number(int64(exitCode)),
+		},
+	}, nil
 }
 
 // classifyIoError turns a Go error into the matching IoError
