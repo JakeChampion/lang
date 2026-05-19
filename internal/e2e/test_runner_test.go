@@ -1718,6 +1718,41 @@ func TestRunnerUnionsMigratedExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/header_map_migrated_test.lang` — Lang
+// port of `TestInterpScriptHeaderMap`. Third migration in
+// the runner-adoption campaign. The Go original was 5
+// table-driven subprocess cases; the migrated form folds
+// them into 6 in-process `r.it(...)` cases (splitting the
+// "set replaces in place" test into a size-check + value-
+// check pair since each is one extra `r.it(...)` line).
+//
+// First migration to need an explicit `import "std/foo"`
+// (std/headers isn't in the auto-prelude) — the runner +
+// modload survive the mangled-load path here, which
+// expands the corpus of tests confirmed safe under that
+// codepath.
+func TestRunnerHeaderMapMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/header_map_migrated_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HeaderMap (migrated)",
+		"ok 1 - case-insensitive get",
+		"ok 2 - get_all preserves insertion order",
+		"ok 3 - set replaces drops dupes (size=2)",
+		"ok 6 - get_all on missing name is empty",
+		"# pass 6",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
