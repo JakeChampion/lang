@@ -144,12 +144,19 @@ pub struct StructDecl { name: string, fields: StructFieldDecl[] }
 // from private decls.
 pub struct TypeAlias { name: string, variants: string[] }
 
+// Top-level import: `import "./path";`. The path is captured
+// verbatim (including the quotes-stripped value). Resolution
+// across files is a later milestone — for now the parser
+// just gathers them into the Module so the rest of the
+// pipeline can see what dependencies a source declares.
+pub struct Import { path: string }
+
 // A whole compilation unit: the funcs declared at top level and
 // any stmts that appear outside a function decl. The interp /
 // checker treat funcs first (build a signature table) and then
 // either dispatch to `main` if it exists or fall back to the
 // top-level stmt stream as the entry point.
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], top_stmts: Stmt[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: Stmt[] }
 
 // Helper wraps to satisfy the implicit-union-wrap return-position
 // rule. Same pattern lexer.lang uses for Token construction.
@@ -875,11 +882,31 @@ function parse_type_alias(p: Par): TypeAliasResult {
     return TypeAliasResult { par: p, alias: TypeAlias { name: name, variants: variants } };
 }
 
+// parse_import consumes `import "path";` starting from the
+// `import` keyword. The path string is captured verbatim; the
+// trailing semicolon is consumed when present. Malformed input
+// (missing string, etc.) yields an Import with empty path so
+// the surrounding loop can recover.
+pub struct ImportResult { par: Par, imp: Import }
+
+function parse_import(p: Par): ImportResult {
+    p = p.advance();  // consume `import`
+    var path: string = "";
+    var t: lexer.Token = p.peek();
+    match (t) {
+        lexer.TokString(s) => { path = s.value; p = p.advance(); },
+        _ => { }
+    }
+    if (p.peek_punct() == ";") { p = p.advance(); }
+    return ImportResult { par: p, imp: Import { path: path } };
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0 };
     var funcs: FuncDecl[] = [];
     var structs: StructDecl[] = [];
     var aliases: TypeAlias[] = [];
+    var imports: Import[] = [];
     var top_stmts: Stmt[] = [];
     while (!p.at_end()) {
         var kw: string = p.peek_keyword();
@@ -908,11 +935,17 @@ pub function parse_module(toks: lexer.Token[]): Module {
             aliases = aliases.push(tr.alias);
             continue;
         }
+        if (kw == "import") {
+            var ir: ImportResult = parse_import(p);
+            p = ir.par;
+            imports = imports.push(ir.imp);
+            continue;
+        }
         var stmtR: StmtResult = parse_stmt(p);
         p = stmtR.par;
         top_stmts = top_stmts.push(stmtR.stmt);
     }
-    return Module { funcs: funcs, structs: structs, aliases: aliases, top_stmts: top_stmts };
+    return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts };
 }
 
 // =================== VALIDATION ====================
@@ -1355,6 +1388,21 @@ function main(): i32 {
     if (modR0.funcs[0].receiver_name != "s") { return 982; }
     if (modR0.funcs[0].receiver_type != "Scope") { return 983; }
     if (len(modR0.funcs[0].params) != 0) { return 984; }
+
+    // Top-level imports: `import "./lexer"; import "./parser";`.
+    // Both get captured into mod.imports as Import entries.
+    var srcIm: string = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
+    var modIm: Module = parse_module(lexer.tokenize(srcIm));
+    if (len(modIm.imports) != 2) { return 990; }
+    if (modIm.imports[0].path != "./lexer") { return 991; }
+    if (modIm.imports[1].path != "./parser") { return 992; }
+    if (len(modIm.funcs) != 1) { return 993; }
+    if (modIm.funcs[0].name != "main") { return 994; }
+
+    // Module without imports — list stays empty.
+    var srcIp: string = "function main(): i32 { return 0; }";
+    var modIp: Module = parse_module(lexer.tokenize(srcIp));
+    if (len(modIp.imports) != 0) { return 1000; }
 
     return 0;
 }
