@@ -2,6 +2,7 @@ package wasmbin
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2208,6 +2209,115 @@ func TestEmitConstFuncTwoTargets(t *testing.T) {
 	}
 	if got := runUnderWasmtime(t, bin, "diff"); got != "-8" {
 		t.Fatalf("addr(b) - addr(a) = %q, want -8 (8 bytes apart)", got)
+	}
+}
+
+// TestEmitMatchTagOnSentinel — OpEnumSentinel pushes the heap
+// address of a static [tag=N] box; OpMatchTag's i32.load reads
+// the tag back from it. Verifies the round trip for several
+// tag values, including 0 (None / Ok) and a payloadless variant
+// with a larger tag.
+func TestEmitMatchTagOnSentinel(t *testing.T) {
+	for _, tag := range []int32{0, 1, 5, 42} {
+		tag := tag
+		t.Run(fmt.Sprintf("tag_%d", tag), func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:       "main",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpEnumSentinel, I32: tag},
+					{Kind: ir.OpMatchTag},
+				},
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			got := runUnderWasmtime(t, bin, "main")
+			want := fmt.Sprintf("%d", tag)
+			if got != want {
+				t.Fatalf("tag round-trip: got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestEmitEnumSentinelInterning — same tag used twice should map
+// to the same data-segment offset.
+func TestEmitEnumSentinelInterning(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "a",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpEnumSentinel, I32: 0},
+				{Kind: ir.OpMatchTag},
+			},
+		},
+		{
+			Name:       "b",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpEnumSentinel, I32: 1},
+				{Kind: ir.OpMatchTag},
+			},
+		},
+		{
+			Name:       "c",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpEnumSentinel, I32: 0}, // re-use tag 0
+				{Kind: ir.OpMatchTag},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	segs := dataSegments(t, bin)
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 data segment, got %d", len(segs))
+	}
+	if len(segs[0]) != 8 {
+		t.Fatalf("segment size = %d, want 8 (two unique cells)", len(segs[0]))
+	}
+	if got := runUnderWasmtime(t, bin, "a"); got != "0" {
+		t.Fatalf("a = %q, want 0", got)
+	}
+	if got := runUnderWasmtime(t, bin, "b"); got != "1" {
+		t.Fatalf("b = %q, want 1", got)
+	}
+	if got := runUnderWasmtime(t, bin, "c"); got != "0" {
+		t.Fatalf("c = %q, want 0", got)
+	}
+}
+
+// TestEmitMatchTagOnConstructedBox — alloc 4 bytes, store a tag,
+// OpMatchTag reads it back. Confirms OpMatchTag works on
+// dynamically-allocated boxes, not just static sentinels.
+func TestEmitMatchTagOnConstructedBox(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpAlloc},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 7},
+			{Kind: ir.OpStore},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpMatchTag},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "7" {
+		t.Fatalf("got %q, want 7", got)
 	}
 }
 
