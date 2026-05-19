@@ -119,7 +119,14 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
 // type names are captured as bare strings — full type-syntax
 // parsing (arrays / generics / unions) is a later milestone.
 pub struct ParamDecl { name: string, type_name: string }
-pub struct FuncDecl { name: string, params: ParamDecl[], ret_type: string, body: Stmt[] }
+// Receiver fields capture `function (recv: RecvType) name(…)`
+// — the self-host source uses them heavily for struct methods
+// like `function (p: Par) advance(): Par`. Both fields are
+// empty for plain functions. Downstream consumers treat
+// receiver methods as plain functions for now (the receiver
+// is conceptually a hidden first parameter — a later slice
+// can prepend it to `params` during method-call lowering).
+pub struct FuncDecl { name: string, receiver_name: string, receiver_type: string, params: ParamDecl[], ret_type: string, body: Stmt[] }
 
 // Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
 // Same simplifying assumption as FuncDecl: type names are
@@ -716,13 +723,35 @@ pub struct FuncResult { par: Par, func: FuncDecl }
 function parse_func_decl(p: Par): FuncResult {
     // Caller has already peeked the `function` keyword. Consume.
     p = p.advance();
+    var empty_params: ParamDecl[] = [];
+    var empty_body: Stmt[] = [];
+    // Optional receiver clause: `function (recv: RecvType) name(…)`.
+    // Distinguished from the param list by appearing before the
+    // method name. A `(` immediately after `function` triggers
+    // receiver-mode parsing.
+    var receiver_name: string = "";
+    var receiver_type: string = "";
+    if (p.peek_punct() == "(") {
+        p = p.advance();
+        receiver_name = p.peek_ident();
+        if (len(receiver_name) > 0) {
+            p = p.advance();
+            if (p.peek_punct() == ":") {
+                p = p.advance();
+                receiver_type = p.peek_ident();
+                if (len(receiver_type) == 0) { receiver_type = p.peek_keyword(); }
+                if (len(receiver_type) > 0) { p = p.advance(); }
+            }
+        }
+        if (p.peek_punct() == ")") { p = p.advance(); }
+    }
     var name: string = p.peek_ident();
     if (len(name) == 0) {
-        return FuncResult { par: p, func: FuncDecl { name: "", params: [], ret_type: "", body: [] } };
+        return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, params: empty_params, ret_type: "", body: empty_body } };
     }
     p = p.advance();
     if (p.peek_punct() != "(") {
-        return FuncResult { par: p, func: FuncDecl { name: name, params: [], ret_type: "", body: [] } };
+        return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, params: empty_params, ret_type: "", body: empty_body } };
     }
     p = p.advance();
     var params: ParamDecl[] = [];
@@ -745,7 +774,7 @@ function parse_func_decl(p: Par): FuncResult {
     }
     var blk: BlockResult = parse_block(p);
     p = blk.par;
-    return FuncResult { par: p, func: FuncDecl { name: name, params: params, ret_type: ret_type, body: blk.body } };
+    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, params: params, ret_type: ret_type, body: blk.body } };
 }
 
 // parse_module is the entry point that handles both function
@@ -1295,6 +1324,37 @@ function main(): i32 {
         },
         _ => { return 952; }
     }
+
+    // Receiver method — `function (p: Par) advance(): Par { … }`.
+    // Captures the receiver name + type alongside the method
+    // name; the param list and return type behave normally.
+    var srcRM: string = "function (p: Par) advance(n: i32): Par { return p; }";
+    var modRM: Module = parse_module(lexer.tokenize(srcRM));
+    if (len(modRM.funcs) != 1) { return 960; }
+    if (modRM.funcs[0].name != "advance") { return 961; }
+    if (modRM.funcs[0].receiver_name != "p") { return 962; }
+    if (modRM.funcs[0].receiver_type != "Par") { return 963; }
+    if (len(modRM.funcs[0].params) != 1) { return 964; }
+    if (modRM.funcs[0].params[0].name != "n") { return 965; }
+    if (modRM.funcs[0].ret_type != "Par") { return 966; }
+
+    // Plain function — receiver fields stay empty.
+    var srcRP: string = "function add(a: i32, b: i32): i32 { return a + b; }";
+    var modRP: Module = parse_module(lexer.tokenize(srcRP));
+    if (len(modRP.funcs) != 1) { return 970; }
+    if (modRP.funcs[0].name != "add") { return 971; }
+    if (modRP.funcs[0].receiver_name != "") { return 972; }
+    if (modRP.funcs[0].receiver_type != "") { return 973; }
+
+    // Receiver method with zero-arg param list — still parses
+    // cleanly. `function (s: Scope) is_empty(): bool { … }`.
+    var srcR0: string = "function (s: Scope) is_empty(): bool { return false; }";
+    var modR0: Module = parse_module(lexer.tokenize(srcR0));
+    if (len(modR0.funcs) != 1) { return 980; }
+    if (modR0.funcs[0].name != "is_empty") { return 981; }
+    if (modR0.funcs[0].receiver_name != "s") { return 982; }
+    if (modR0.funcs[0].receiver_type != "Scope") { return 983; }
+    if (len(modR0.funcs[0].params) != 0) { return 984; }
 
     return 0;
 }

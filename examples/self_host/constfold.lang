@@ -278,6 +278,8 @@ pub function fold_module(mod: parser.Module): parser.Module {
         var fd: parser.FuncDecl = mod.funcs[i];
         funcs = funcs.push(parser.FuncDecl {
             name: fd.name,
+            receiver_name: fd.receiver_name,
+            receiver_type: fd.receiver_type,
             params: fd.params,
             ret_type: fd.ret_type,
             body: fold_block(fd.body)
