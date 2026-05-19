@@ -1058,6 +1058,44 @@ func TestRunnerSortedUniqueRangeExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/float_array_strict_sort_test.lang`
+// exercises the batch-20 additions:
+//   - `assert_eq_f64_array_near` / `_f32_array_near` —
+//     element-wise float array compare with tolerance.
+//     NaN anywhere fails; length-mismatch is its own
+//     diagnostic; mismatched element reports the index.
+//   - `assert_sorted_desc_i32` / `_string` — descending
+//     order verification.
+//   - `assert_strictly_sorted_asc_i32` / `_string` —
+//     strict monotonic (sorted AND unique), rejecting
+//     equal adjacent pairs that the non-strict variant
+//     accepts.
+//
+// 15 cases.
+func TestRunnerFloatArrayStrictSortExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_array_strict_sort_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 3 - f64 array outside tolerance + idx",
+		"ok 4 - f64 array length mismatch",
+		"ok 5 - f64 array NaN fails",
+		"ok 6 - f32 array near pass",
+		"ok 9 - sorted_desc_i32 inversion + index",
+		"ok 12 - strict_asc_i32 rejects equal pair",
+		"ok 15 - strict_asc_string rejects equal",
+		"# pass 15",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
