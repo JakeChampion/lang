@@ -1,0 +1,175 @@
+// examples/tests/result_assertions_test.lang — batch 30
+// additions to std/test:
+//   * `assert_is_ok_string(res)` / `_array` — Result is
+//     Ok variant; payload irrelevant.
+//   * `assert_is_err_string(res)` / `_array` — Result is
+//     Err variant; payload of the Err irrelevant.
+//   * `assert_is_ok_eq_string(res, expected)` — Result is
+//     Ok AND the value matches.
+//
+// Result[T, IoError] is the canonical shape for fallible
+// I/O in the stdlib (read_file / read_dir / temp_dir /
+// fuzz_corpus_from_dir), which is what the helpers
+// specialise for.
+
+function test_is_ok_string_pass(r: TestRunner): TestRunner {
+    var (dir, rr) = must_temp_dir(r, "ok-string");
+    if (dir == "") { return rr; }
+    var path: string = dir + "/file.txt";
+    match (write_file(path, "hello")) {
+        Some(_) => { return rr.it("write fixture", fail("io")); },
+        None => {}
+    }
+    return rr.it("is_ok_string after successful read",
+                 assert_is_ok_string(read_file(path)));
+}
+
+function test_is_ok_string_err_fails(): Option[string] {
+    // Reading a path that definitely doesn't exist.
+    match (assert_is_ok_string(read_file(
+                "/tmp/lang-no-such-file-batch30-zztop"))) {
+        None => { return fail("Err result should fail is_ok"); },
+        Some(msg) => {
+            if (!msg.contains("got Err")) {
+                return Some("expected 'got Err' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_is_err_string_pass(): Option[string] {
+    // Reading a missing file should produce Err, which
+    // assert_is_err should accept.
+    return assert_is_err_string(read_file(
+        "/tmp/lang-no-such-file-batch30-zztop"));
+}
+
+function test_is_err_string_ok_fails_with_value(r: TestRunner): TestRunner {
+    var (dir, rr) = must_temp_dir(r, "err-on-ok");
+    if (dir == "") { return rr; }
+    var path: string = dir + "/file.txt";
+    match (write_file(path, "data")) {
+        Some(_) => { return rr.it("write fixture", fail("io")); },
+        None => {}
+    }
+    match (assert_is_err_string(read_file(path))) {
+        None => {
+            return rr.it("Ok should fail is_err", fail("missed"));
+        },
+        Some(msg) => {
+            // Diagnostic should embed the Ok payload so a
+            // regression has its bad value in the log.
+            if (!msg.contains("Ok(\"data\")")) {
+                return rr.it("expected 'Ok(\"data\")' in msg",
+                             fail("got: " + msg));
+            }
+            return rr.it("is_err on Ok embeds payload", None);
+        }
+    }
+}
+
+function test_is_ok_eq_string_pass(r: TestRunner): TestRunner {
+    var (dir, rr) = must_temp_dir(r, "ok-eq");
+    if (dir == "") { return rr; }
+    var path: string = dir + "/file.txt";
+    match (write_file(path, "exact-value")) {
+        Some(_) => { return rr.it("write fixture", fail("io")); },
+        None => {}
+    }
+    return rr.it("is_ok_eq_string matches",
+                 assert_is_ok_eq_string(read_file(path), "exact-value"));
+}
+
+function test_is_ok_eq_string_wrong_value(r: TestRunner): TestRunner {
+    var (dir, rr) = must_temp_dir(r, "ok-eq-wrong");
+    if (dir == "") { return rr; }
+    var path: string = dir + "/file.txt";
+    match (write_file(path, "actual")) {
+        Some(_) => { return rr.it("write fixture", fail("io")); },
+        None => {}
+    }
+    match (assert_is_ok_eq_string(read_file(path), "expected")) {
+        None => {
+            return rr.it("wrong-value should fail",
+                         fail("missed"));
+        },
+        Some(msg) => {
+            // Both sides should be in the failure.
+            if (!msg.contains("Ok(\"actual\")") ||
+                !msg.contains("Ok(\"expected\")")) {
+                return rr.it("wrong-value diag both sides",
+                             fail("got: " + msg));
+            }
+            return rr.it("is_ok_eq wrong value embeds both", None);
+        }
+    }
+}
+
+function test_is_ok_eq_string_err_distinct_diag(): Option[string] {
+    match (assert_is_ok_eq_string(read_file(
+                "/tmp/lang-no-such-file-batch30-zztop"),
+                                  "expected")) {
+        None => { return fail("Err should fail is_ok_eq"); },
+        Some(msg) => {
+            // Distinguishable from "Ok with wrong value":
+            // names "got Err" vs "got Ok(...)".
+            if (!msg.contains("got Err")) {
+                return Some("expected 'got Err': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_is_ok_string_array_pass(r: TestRunner): TestRunner {
+    var (dir, rr) = must_temp_dir(r, "ok-array");
+    if (dir == "") { return rr; }
+    return rr.it("is_ok_string_array on empty dir",
+                 assert_is_ok_string_array(read_dir(dir)));
+}
+
+function test_is_err_string_array_pass(): Option[string] {
+    return assert_is_err_string_array(read_dir(
+        "/tmp/lang-no-such-dir-batch30-zztop"));
+}
+
+function test_is_err_string_array_ok_embeds_length(r: TestRunner): TestRunner {
+    var (dir, rr) = must_temp_dir(r, "err-array-ok");
+    if (dir == "") { return rr; }
+    // Drop one file in so the Ok payload has a non-zero length.
+    match (write_file(dir + "/a.txt", "")) {
+        Some(_) => { return rr.it("write fixture", fail("io")); },
+        None => {}
+    }
+    match (assert_is_err_string_array(read_dir(dir))) {
+        None => { return rr.it("Ok-array should fail is_err",
+                                fail("missed")); },
+        Some(msg) => {
+            if (!msg.contains("length 1")) {
+                return rr.it("expected 'length 1' in msg",
+                             fail("got: " + msg));
+            }
+            return rr.it("is_err_array on Ok embeds length", None);
+        }
+    }
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("Result assertions");
+    r = test_is_ok_string_pass(r);
+    r = r.it("is_ok_string on Err fails",
+             test_is_ok_string_err_fails());
+    r = r.it("is_err_string on Err pass",
+             test_is_err_string_pass());
+    r = test_is_err_string_ok_fails_with_value(r);
+    r = test_is_ok_eq_string_pass(r);
+    r = test_is_ok_eq_string_wrong_value(r);
+    r = r.it("is_ok_eq Err distinct diag",
+             test_is_ok_eq_string_err_distinct_diag());
+    r = test_is_ok_string_array_pass(r);
+    r = r.it("is_err_string_array on Err pass",
+             test_is_err_string_array_pass());
+    r = test_is_err_string_array_ok_embeds_length(r);
+    return r.finish();
+}

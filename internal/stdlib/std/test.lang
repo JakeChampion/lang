@@ -2875,6 +2875,84 @@ pub function assert_is_some_eq_string(opt: Option[string], expected: string): Op
     }
 }
 
+// =================== RESULT ASSERTIONS ===================
+//
+// Wrap the canonical `match (res) { Ok(v) => ..., Err(e)
+// => fail("expected Ok") }` boilerplate that surrounds
+// every test of a `Result[T, IoError]`-returning function
+// (`read_file`, `read_dir`, `temp_dir`, `fuzz_corpus_from_
+// _dir`, etc.). Stdlib's Result error type is uniformly
+// `IoError`, so these helpers specialise on the Ok-type
+// only — string and string[] are the practical Ok shapes
+// today; widen later as the stdlib grows new fallible
+// Result-returning operations.
+
+// `assert_is_ok_string(res)` — Result must be `Ok(_)`,
+// payload string is irrelevant.
+pub function assert_is_ok_string(res: Result[string, IoError]): Option[string] {
+    match (res) {
+        Ok(_)  => { return None; },
+        Err(_) => { return Some("assert_is_ok_string: got Err"); }
+    }
+}
+
+// `assert_is_err_string(res)` — Result must be `Err(_)`.
+// Used after a negative-path operation (read a missing
+// file, parse invalid input) to confirm the failure
+// surfaced. Payload of the Err is irrelevant — pair with
+// a downstream substring check on the formatted error if
+// the test cares about the error message text.
+pub function assert_is_err_string(res: Result[string, IoError]): Option[string] {
+    match (res) {
+        Ok(v)  => {
+            return Some("assert_is_err_string: got Ok(\"" + v + "\")");
+        },
+        Err(_) => { return None; }
+    }
+}
+
+// `assert_is_ok_eq_string(res, expected)` — Result must be
+// `Ok(expected)`. The single most common shape: a function
+// returns `Result[string, IoError]` and the test wants to
+// pin both the success AND the value. Failure messages
+// distinguish "got Err when Ok expected" from "got Ok
+// with wrong value" so the regression mode is readable.
+pub function assert_is_ok_eq_string(res: Result[string, IoError], expected: string): Option[string] {
+    match (res) {
+        Ok(v) => {
+            if (v == expected) { return None; }
+            return Some("assert_is_ok_eq_string: got Ok(\"" +
+                        v + "\"), expected Ok(\"" +
+                        expected + "\")");
+        },
+        Err(_) => {
+            return Some("assert_is_ok_eq_string: got Err, expected Ok(\"" +
+                        expected + "\")");
+        }
+    }
+}
+
+// `assert_is_ok_string_array(res)` — string-array variant
+// (e.g., `read_dir` returns `Result[string[], IoError]`).
+pub function assert_is_ok_string_array(res: Result[string[], IoError]): Option[string] {
+    match (res) {
+        Ok(_)  => { return None; },
+        Err(_) => { return Some("assert_is_ok_string_array: got Err"); }
+    }
+}
+
+// `assert_is_err_string_array(res)` — Err variant for the
+// string-array shape.
+pub function assert_is_err_string_array(res: Result[string[], IoError]): Option[string] {
+    match (res) {
+        Ok(v)  => {
+            return Some("assert_is_err_string_array: got Ok of length " +
+                        len(v).to_string());
+        },
+        Err(_) => { return None; }
+    }
+}
+
 // =================== ARRAY SET-OPERATION ASSERTIONS ===================
 //
 // Set-relation properties between two arrays. Pair these

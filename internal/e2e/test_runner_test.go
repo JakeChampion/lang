@@ -1433,6 +1433,45 @@ func TestRunnerCIStringAndLogKVExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/result_assertions_test.lang` exercises
+// batch-30 additions:
+//   - `assert_is_ok_string(res)` / `_string_array` —
+//     Result must be Ok variant.
+//   - `assert_is_err_string(res)` / `_string_array` — Err
+//     variant; Ok-on-Err diagnostic embeds the payload
+//     (string value or array length) so a regression has
+//     its bad value in the log.
+//   - `assert_is_ok_eq_string(res, expected)` — Ok AND
+//     value matches; distinct diagnostic for the
+//     Err-when-Ok-expected case.
+//
+// Stdlib's Result error type is uniformly IoError, so the
+// helpers specialise on the Ok-type only.
+//
+// 10 cases.
+func TestRunnerResultAssertionsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/result_assertions_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - is_ok_string after successful read",
+		"ok 2 - is_ok_string on Err fails",
+		"ok 4 - is_err on Ok embeds payload",
+		"ok 6 - is_ok_eq wrong value embeds both",
+		"ok 7 - is_ok_eq Err distinct diag",
+		"ok 10 - is_err_array on Ok embeds length",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
