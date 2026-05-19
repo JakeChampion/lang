@@ -886,10 +886,15 @@ func TestEmitCallUnknownCallee(t *testing.T) {
 	}
 }
 
-// TestEmitCallIndirect — three functions of signature (i32) → i32
-// in the table, with the caller picking a funcidx by parameter and
-// dispatching via call_indirect. Exercises the table/element
-// section emission AND op.Sig → typeidx resolution.
+// TestEmitCallIndirect — two closure-target functions of source
+// signature (i32) → i32 in the funcref table. The caller picks a
+// target by name via OpConstFunc (producing the closure-pair
+// pointer) then dispatches via OpCallIndirect, which derefs the
+// pair into (env_ptr, fn_idx) before call_indirect.
+//
+// `double` and `negate` are closure targets (referenced by
+// OpConstFunc), so wasmbin appends env_ptr to their wasm
+// signature. Their bodies ignore the unused env_ptr.
 func TestEmitCallIndirect(t *testing.T) {
 	sigI32I32 := &ast.FuncType{
 		Params: []ast.Type{i32()},
@@ -904,32 +909,31 @@ func TestEmitCallIndirect(t *testing.T) {
 		}
 	}
 	prog := &ir.Program{Funcs: []*ir.Func{
-		// funcidx 0: double
 		mk("double", []ir.Op{
 			{Kind: ir.OpLoadLocal, I32: 0},
 			{Kind: ir.OpConstI32, I32: 2},
 			{Kind: ir.OpMul},
 		}),
-		// funcidx 1: negate
 		mk("negate", []ir.Op{
 			{Kind: ir.OpConstI32, I32: 0},
 			{Kind: ir.OpLoadLocal, I32: 0},
 			{Kind: ir.OpSub},
 		}),
-		// funcidx 2: dispatch — takes (funcidx, value) and
-		// calls the chosen function with value, returning the
-		// result. Stack on call: [value, funcidx]; we'll push
-		// in that order.
 		{
-			Name: "dispatch",
-			Params: []ast.Param{
-				{Name: "which", Type: i32()},
-				{Name: "v", Type: i32()},
-			},
+			Name:       "via_double",
 			ReturnType: i32(),
 			Ops: []ir.Op{
-				{Kind: ir.OpLoadLocal, I32: 1}, // v
-				{Kind: ir.OpLoadLocal, I32: 0}, // funcidx
+				{Kind: ir.OpConstI32, I32: 21},
+				{Kind: ir.OpConstFunc, Str: "double"},
+				{Kind: ir.OpCallIndirect, Sig: sigI32I32},
+			},
+		},
+		{
+			Name:       "via_negate",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 100},
+				{Kind: ir.OpConstFunc, Str: "negate"},
 				{Kind: ir.OpCallIndirect, Sig: sigI32I32},
 			},
 		},
@@ -938,45 +942,24 @@ func TestEmitCallIndirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
+	if got := runUnderWasmtime(t, bin, "via_double"); got != "42" {
+		t.Fatalf("via_double = %q, want 42", got)
 	}
-	dir := t.TempDir()
-	p := filepath.Join(dir, "prog.wasm")
-	if err := os.WriteFile(p, bin, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	for _, c := range []struct {
-		which, v, want string
-	}{
-		{"0", "21", "42"},  // double(21) = 42
-		{"1", "100", "-100"}, // negate(100) = -100
-	} {
-		cmd := exec.Command("wasmtime", "run", "--invoke", "dispatch", p, c.which, c.v)
-		var so, se bytes.Buffer
-		cmd.Stdout = &so
-		cmd.Stderr = &se
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("dispatch(%s,%s): %v\nstderr:%s", c.which, c.v, err, se.String())
-		}
-		if got := strings.TrimSpace(so.String()); got != c.want {
-			t.Fatalf("dispatch(%s,%s) = %q, want %q", c.which, c.v, got, c.want)
-		}
+	if got := runUnderWasmtime(t, bin, "via_negate"); got != "-100" {
+		t.Fatalf("via_negate = %q, want -100", got)
 	}
 }
 
 // TestEmitCallClosureDirect — OpCallClosureDirect is the
-// defunctionalised form: env_ptr is already on the stack as the
-// last arg, so it's a plain `call funcidx`. Verify it routes to
-// the named target.
+// defunctionalised form: caller pushes (args..., env_ptr) and
+// the callee's wasm signature has env_ptr appended (since the
+// callee appears as op.Str of OpCallClosureDirect, it's a
+// closure target). Body ignores the unused env_ptr param.
 func TestEmitCallClosureDirect(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{
 		{
-			Name: "doubled",
-			Params: []ast.Param{
-				{Name: "v", Type: i32()},
-				{Name: "env", Type: i32()},
-			},
+			Name:       "doubled",
+			Params:     []ast.Param{{Name: "v", Type: i32()}},
 			ReturnType: i32(),
 			Ops: []ir.Op{
 				{Kind: ir.OpLoadLocal, I32: 0},
