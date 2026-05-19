@@ -1964,6 +1964,167 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptStreamReader pins the Tier-C Rec §13 Phase 1
+// Reader-shape methods on Stream (docs/STDLIB-DESIGN-RESEARCH.md
+// Rec §5).
+func TestInterpScriptStreamReader(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "read_byte returns Some until exhausted",
+			source: `import "std/stream";
+function main(): i32 {
+    var s: Stream = stream.stream_from_string("ab");
+    match (s.read_byte()) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
+    match (s.read_byte()) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
+    match (s.read_byte()) { Some(_) => { print("UNEXPECTED"); }, None => { print("none"); } }
+    return 0;
+}`,
+			wantStdout: "97\n98\nnone\n",
+		},
+		{
+			name: "read_n caps at available bytes",
+			source: `import "std/stream";
+function main(): i32 {
+    var s: Stream = stream.stream_from_string("hello");
+    var first: u8[] = s.read_n(3);
+    print(len(first).to_string());
+    var rest: u8[] = s.read_n(99);
+    print(len(rest).to_string());
+    var empty: u8[] = s.read_n(1);
+    print(len(empty).to_string());
+    return 0;
+}`,
+			wantStdout: "3\n2\n0\n",
+		},
+		{
+			name: "read_line strips both LF and CRLF",
+			source: `import "std/stream";
+function main(): i32 {
+    var s: Stream = stream.stream_from_string("unix\nwindows\r\nfinal");
+    match (s.read_line()) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (s.read_line()) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (s.read_line()) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (s.read_line()) { Some(_) => { print("UNEXPECTED"); }, None => { print("eof"); } }
+    return 0;
+}`,
+			wantStdout: "unix\nwindows\nfinal\neof\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
+// TestInterpScriptBytesWriter pins the in-memory writer
+// (docs/STDLIB-DESIGN-RESEARCH.md Rec §5's MemoryWriter).
+func TestInterpScriptBytesWriter(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "write_string + into_string round-trips",
+			source: `import "std/io_buffered";
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    w.write_string("HTTP/1.1 200 OK\r\n");
+    w.write_string("\r\nhello");
+    print(w.size().to_string());
+    print(w.into_string());
+    return 0;
+}`,
+			wantStdout: "24\nHTTP/1.1 200 OK\r\n\r\nhello\n",
+		},
+		{
+			name: "write_byte appends single bytes",
+			source: `import "std/io_buffered";
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    w.write_byte(72);  // 'H'
+    w.write_byte(105); // 'i'
+    print(w.into_string());
+    return 0;
+}`,
+			wantStdout: "Hi\n",
+		},
+		{
+			name: "reset clears the buffer for reuse",
+			source: `import "std/io_buffered";
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    w.write_string("first");
+    if (w.size() != 5) { return 1; }
+    w.reset();
+    if (w.size() != 0) { return 2; }
+    if (!w.is_empty()) { return 3; }
+    w.write_string("second");
+    print(w.into_string());
+    return 0;
+}`,
+			wantStdout: "second\n",
+		},
+		{
+			name: "write_bytes for raw u8[] payloads",
+			source: `import "std/io_buffered";
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    var bs: u8[] = "binary".bytes();
+    w.write_bytes(bs);
+    if (w.size() != 6) { return 1; }
+    print(w.into_string());
+    return 0;
+}`,
+			wantStdout: "binary\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry

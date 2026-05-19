@@ -1,0 +1,103 @@
+// std/io_buffered — in-memory buffered writers + readers,
+// Tier-C Rec §13 Phase 1 (docs/STDLIB-DESIGN-RESEARCH.md
+// Rec §5).
+//
+// Lang doesn't yet have nominal interface types — the doc's
+// `interface Reader { read(buf): Result[i32, IoError] }`
+// surface is deferred. Phase 1 uses convention-based
+// polymorphism: BytesWriter shares the `.write_string()` /
+// `.write_bytes()` method shape with the fd-backed Writer
+// type, so generic code that calls those names works
+// against either.
+//
+// Intended use — build up an HTTP response body without
+// per-write socket calls:
+//
+//   var w: BytesWriter = bytes_writer_new();
+//   w.write_string("HTTP/1.1 200 OK\r\n");
+//   w.write_string("Content-Length: " + body.to_string() + "\r\n");
+//   w.write_string("\r\n");
+//   w.write_string(body);
+//   tcp_send(fd, w.into_string());
+//
+// Phase 2 (deferred):
+// - Nominal `Reader` / `Writer` interfaces. Once lang grows
+//   interface types, Stream, BytesWriter, fd-backed Reader /
+//   Writer all `impl Reader` / `impl Writer` and generic
+//   code accepts any of them via the interface.
+// - Buffered fd writers (`BufWriter`). Wraps a Writer with
+//   a flush threshold so per-write syscall overhead drops
+//   to per-batch.
+// - `LineReader` over Stream / fd Reader — yields one line
+//   per call without buffering the whole input.
+
+import "std/string";
+
+// `bytes_writer_new()` — fresh empty BytesWriter.
+pub function bytes_writer_new(): BytesWriter {
+    var empty: u8[] = [];
+    return BytesWriter { data: empty };
+}
+
+// `(w: BytesWriter).write_string(s)` — append a string's
+// bytes. Same call shape as the fd-backed Writer's write
+// method.
+pub function (w: BytesWriter) write_string(s: string) {
+    var bs: u8[] = s.bytes();
+    var i: i32 = 0;
+    while (i < len(bs)) {
+        w.data = w.data.push(bs[i]);
+        i = i + 1;
+    }
+}
+
+// `(w: BytesWriter).write_bytes(bs)` — append a byte slice
+// directly (no string round-trip).
+pub function (w: BytesWriter) write_bytes(bs: u8[]) {
+    var i: i32 = 0;
+    while (i < len(bs)) {
+        w.data = w.data.push(bs[i]);
+        i = i + 1;
+    }
+}
+
+// `(w: BytesWriter).write_byte(b)` — single-byte write.
+pub function (w: BytesWriter) write_byte(b: i32) {
+    w.data = w.data.push(b as u8);
+}
+
+// `(w: BytesWriter).size()` — total bytes written so far.
+// Named `size` rather than `len` to dodge the built-in
+// `len()` shadow inside the module's own bodies (same
+// workaround as HeaderMap.size + Stream.size).
+pub function (w: BytesWriter) size(): i32 {
+    return len(w.data);
+}
+
+// `(w: BytesWriter).is_empty()` — convenience over
+// `.size() == 0`.
+pub function (w: BytesWriter) is_empty(): boolean {
+    return len(w.data) == 0;
+}
+
+// `(w: BytesWriter).into_bytes()` — return the accumulated
+// buffer as a `u8[]`. Consumer-side; the BytesWriter remains
+// usable but callers typically discard it after this.
+pub function (w: BytesWriter) into_bytes(): u8[] {
+    return w.data;
+}
+
+// `(w: BytesWriter).into_string()` — same as into_bytes
+// followed by `string_from_bytes`. Convenience for the
+// common "build a string buffered" pattern.
+pub function (w: BytesWriter) into_string(): string {
+    return string_from_bytes(w.data);
+}
+
+// `(w: BytesWriter).reset()` — clear the buffer for reuse.
+// Useful in hot paths that want to amortise allocation across
+// many message round-trips.
+pub function (w: BytesWriter) reset() {
+    var empty: u8[] = [];
+    w.data = empty;
+}

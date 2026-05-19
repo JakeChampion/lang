@@ -101,3 +101,72 @@ pub function (s: Stream) read_all(): u8[] {
 pub function (s: Stream) read_all_string(): string {
     return string_from_bytes(s.read_all());
 }
+
+// ============================================================
+// Reader-shape methods — Tier-C Rec §13 Phase 1
+// (docs/STDLIB-DESIGN-RESEARCH.md Rec §5). Lang doesn't yet
+// have nominal interface types, so Reader / Writer
+// polymorphism is convention-based: concrete types that
+// share these method names (Stream, the fd-backed Reader,
+// future BufReader) compose against the same code.
+// ============================================================
+
+// `(s: Stream).read_byte()` — read a single byte from the
+// cursor, advancing it. Returns None when the Stream is
+// exhausted.
+pub function (s: Stream) read_byte(): Option[i32] {
+    if (s.pos >= len(s.data)) { return None; }
+    var b: i32 = s.data[s.pos] as i32;
+    s.pos = s.pos + 1;
+    return Some(b);
+}
+
+// `(s: Stream).read_n(n)` — read up to `n` bytes from the
+// cursor. Returns the actual bytes consumed (possibly fewer
+// than `n` at EOF). Empty array when the Stream is already
+// exhausted or `n <= 0`.
+pub function (s: Stream) read_n(n: i32): u8[] {
+    var out: u8[] = [];
+    if (n <= 0) { return out; }
+    var end: i32 = s.pos + n;
+    if (end > len(s.data)) { end = len(s.data); }
+    while (s.pos < end) {
+        out = out.push(s.data[s.pos]);
+        s.pos = s.pos + 1;
+    }
+    return out;
+}
+
+// `(s: Stream).read_line()` — read up to and including the
+// next `\n`, returning the line WITHOUT the trailing newline.
+// A trailing `\r` (Windows line endings) is also stripped.
+// Returns None when the Stream is exhausted at the start of
+// the call (signals EOF); a final unterminated line returns
+// Some(line) on its last call before transitioning to None
+// on the subsequent one.
+pub function (s: Stream) read_line(): Option[string] {
+    if (s.pos >= len(s.data)) { return None; }
+    var line_bytes: u8[] = [];
+    while (s.pos < len(s.data)) {
+        var b: i32 = s.data[s.pos] as i32;
+        s.pos = s.pos + 1;
+        if (b == 10) {
+            // \n — strip a trailing \r if present.
+            var n: i32 = len(line_bytes);
+            if (n > 0) {
+                if ((line_bytes[n - 1] as i32) == 13) {
+                    var stripped: u8[] = [];
+                    var i: i32 = 0;
+                    while (i < n - 1) {
+                        stripped = stripped.push(line_bytes[i]);
+                        i = i + 1;
+                    }
+                    return Some(string_from_bytes(stripped));
+                }
+            }
+            return Some(string_from_bytes(line_bytes));
+        }
+        line_bytes = line_bytes.push(b as u8);
+    }
+    return Some(string_from_bytes(line_bytes));
+}
