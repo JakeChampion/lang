@@ -718,6 +718,24 @@ func TestHttpWrapperPopulatesRequestHeaders(t *testing.T) {
 	mustContain(t, wat, `(func $__method_HeaderMap_append`)
 }
 
+// `now_unix_ms()` resolves to a wasi-preview2 `wasi:clocks/
+// wall-clock@0.2.0#now` import + a `$__lang_now_unix_ms` helper
+// that converts the (sec, nsec) datetime to milliseconds.
+// Anchors docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2 on the
+// wasm side; the lang surface (`instant_now()`) calls
+// `now_unix_ms()` and the alias map routes the codegen.
+func TestWasmNowUnixMsWallClock(t *testing.T) {
+	src := `function main(): i64 {
+		return now_unix_ms();
+	}`
+	wat := compileToWAT(t, src)
+	mustContain(t, wat, `"wasi:clocks/wall-clock@0.2.0"`)
+	mustContain(t, wat, `"now"`)
+	mustContain(t, wat, `(func $__lang_now_unix_ms (result i64)`)
+	mustContain(t, wat, `call $__wasi_wall_clock_now`)
+	mustContain(t, wat, `call $__lang_now_unix_ms`)
+}
+
 // Outbound symmetric: the wrapper walks `resp.headers` and
 // calls `fields.append` per entry into the outgoing-response's
 // fields handle before passing it to the outgoing-response
