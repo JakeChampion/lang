@@ -386,7 +386,10 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             }
             return "i32";
         },
-        parser.ExprUnary(_) => { return "i32"; },
+        parser.ExprUnary(u) => {
+            if (u.op == "!") { return "bool"; }
+            return "i32";
+        },
         parser.ExprCall(c) => {
             // `len(_)` always returns i32. Plain calls look up
             // the FuncDecl.ret_type. Method calls on primitive
@@ -1415,6 +1418,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(u.operand, s);
                 s = s.write("    popq %rax\n");
                 s = s.write("    negq %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
+            if (u.op == "!") {
+                // Boolean negation. Operand is in the
+                // `{0, 1}` normal form maintained by every
+                // bool-producing path (literal, comparison,
+                // short-circuit, str_*), so XOR with 1 flips
+                // it without needing to widen first.
+                s = emit_expr(u.operand, s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    xorq $1, %rax\n");
                 s = s.write("    pushq %rax\n");
                 return s;
             }
