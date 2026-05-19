@@ -780,6 +780,9 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                 },
                 parser.ExprFieldAccess(fa) => {
                     var rt: string = infer_expr_type(fa.obj, s);
+                    if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
+                        return "string";
+                    }
                     if (rt == "string" || rt == "i32" || rt == "bool" || rt == "f64") {
                         var mi: i32 = 0;
                         while (mi < len(s.funcs)) {
@@ -1424,6 +1427,23 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Primitive-receiver fast path: see
                     // asm.lang for rationale.
                     var prim_recv: string = infer_expr_type(fa.obj, s);
+                    // Built-in `.to_string()` on i32 and string —
+                    // i32 routes to the existing runtime helper,
+                    // string returns the receiver unchanged. The
+                    // generic path below would chase a
+                    // `__fn_i32.to_string` symbol that no FuncDecl
+                    // emits, producing a link error.
+                    if (fa.field == "to_string" && len(c.args) == 0
+                            && (prim_recv == "i32" || prim_recv == "string")) {
+                        s = emit_expr(fa.obj, s);
+                        if (prim_recv == "i32") {
+                            s = s.write("    ldr x0, [sp], #16\n");
+                            s = s.write("    bl __lang_i32_to_string\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                            s = s.mark_i32_to_string();
+                        }
+                        return s;
+                    }
                     if (prim_recv == "string" || prim_recv == "i32" || prim_recv == "bool" || prim_recv == "f64") {
                         var pmi: i32 = len(c.args) - 1;
                         while (pmi >= 0) {
