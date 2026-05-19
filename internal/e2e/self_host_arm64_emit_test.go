@@ -707,6 +707,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			1,
 			"",
 		},
+		{
+			"str-trim-spaces",
+			"function main(): i32 { var t = str_trim(\"   hello   \"); print(t); return len(t); }",
+			5,
+			"hello",
+		},
+		{
+			"str-trim-tabs-newlines",
+			"function main(): i32 { var t = str_trim(\"\\t\\n hi \\r\\n\"); print(t); return len(t); }",
+			2,
+			"hi",
+		},
+		{
+			"str-trim-no-whitespace",
+			"function main(): i32 { var t = str_trim(\"abc\"); print(t); return len(t); }",
+			3,
+			"abc",
+		},
+		{
+			"str-trim-empty",
+			"function main(): i32 { var t = str_trim(\"\"); return len(t); }",
+			0,
+			"",
+		},
+		{
+			"str-trim-all-whitespace",
+			"function main(): i32 { var t = str_trim(\"   \\n\\t \"); return len(t); }",
+			0,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
