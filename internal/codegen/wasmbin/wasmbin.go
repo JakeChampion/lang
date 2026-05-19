@@ -173,11 +173,31 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		return off
 	}
 
+	// Per-tag enum-sentinel pool. Each unique tag value gets one
+	// 4-byte cell in the data segment containing the tag as i32
+	// LE. OpMatchTag (i32.load at offset 0) reads the value
+	// directly, so the sentinel acts as a heap-allocated
+	// `[tag=N]` box without an actual heap allocation.
+	enumSentinels := map[int32]int{}
+	internEnumSentinel := func(tag int32) int {
+		if off, ok := enumSentinels[tag]; ok {
+			return off
+		}
+		off := stringNextOff
+		enumSentinels[tag] = off
+		// Append 4 LE bytes for the tag value.
+		dataBytes = append(dataBytes,
+			byte(tag), byte(tag>>8), byte(tag>>16), byte(tag>>24))
+		stringNextOff = off + 4
+		return off
+	}
+
 	ctx := &emitCtx{
-		funcIdx:        funcIdx,
-		internString:   internString,
-		internClosure:  internClosure,
-		closuresBaseAddr: closuresBase,
+		funcIdx:            funcIdx,
+		internString:       internString,
+		internClosure:      internClosure,
+		closuresBaseAddr:   closuresBase,
+		internEnumSentinel: internEnumSentinel,
 		addSigType: func(sig *ast.FuncType) (uint32, error) {
 			params := make([]byte, 0, len(sig.Params))
 			for _, pt := range sig.Params {
@@ -497,6 +517,11 @@ type emitCtx struct {
 	// cell address is closuresBaseAddr + 8*idx.
 	internClosure    func(string) (int, error)
 	closuresBaseAddr int
+	// internEnumSentinel reserves a 4-byte data-segment cell
+	// containing tag as i32 LE, interning per unique tag.
+	// Used by OpEnumSentinel — the returned offset is the
+	// "heap pointer" for a payloadless enum variant.
+	internEnumSentinel func(int32) int
 	// fn is the current function being walked. emitBody sets and
 	// clears it. Slot-aware ops (OpLoadLocal / OpStoreLocal /
 	// OpTeeLocal) consult slotType(fn, op.I32) to decide whether
@@ -1081,6 +1106,17 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 			return nil, fmt.Errorf("OpStrEq: __str_eq helper not registered (scanRuntimeHelpers gap)")
 		}
 		return inst.InstCall(body, idx), nil
+
+	// ---- Enum tag dispatch ----
+	case ir.OpMatchTag:
+		// Stack: [ptr]. Tag is at offset 0. Just an i32.load.
+		return memory.InstI32Load(body, 2, 0), nil
+	case ir.OpEnumSentinel:
+		// Push the address of the shared 4-byte cell holding
+		// this tag value. OpMatchTag's i32.load reads the tag
+		// back from there. op.I32 carries the tag value.
+		off := ctx.internEnumSentinel(op.I32)
+		return inst.InstI32Const(body, int32(off)), nil
 
 	// ---- String concatenation ----
 	case ir.OpStrConcat:
