@@ -316,6 +316,97 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "values", Type: ast.ArrayType{Elem: ast.StringType{}}},
 			},
 		},
+		// Date/time types (docs/STDLIB-DESIGN-RESEARCH.md
+		// Rec §4 — the jiff/NodaTime six-type shape).
+		// Phase 1: type registrations + a stub std/time
+		// module. Subsequent PRs land Instant.now() (needs
+		// clock_gettime per-target), Hinnant date arithmetic,
+		// RFC 3339 parser/formatter, IANA zone lookup, and
+		// the Span/Duration calendar-vs-absolute split.
+		//
+		// Each type is meaning-distinct:
+		//   Instant   — a point in physical time (UTC, ns).
+		//   Date      — civil (year, month, day); no zone.
+		//   Time      — civil wall-clock (h, m, s, ns); no zone.
+		//   DateTime  — pair of (Date, Time); no zone.
+		//   Zoned     — Instant + TimeZone (fully qualified).
+		//   Span      — calendar-flavoured interval (years,
+		//               months, days, …).
+		//   Duration  — absolute interval (sec + nsec).
+		//   TimeZone  — IANA name + offset cache.
+		//
+		// Conversions stay explicit per the doc: Date→Instant
+		// requires a TimeZone, Zoned→Date discards the zone,
+		// nothing coerces implicitly.
+		{
+			Name: "Instant",
+			Fields: []ast.Param{
+				{Name: "sec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "nsec", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "Date",
+			Fields: []ast.Param{
+				{Name: "year", Type: ast.NumberType{}},
+				{Name: "month", Type: ast.NumberType{}},
+				{Name: "day", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "Time",
+			Fields: []ast.Param{
+				{Name: "hour", Type: ast.NumberType{}},
+				{Name: "minute", Type: ast.NumberType{}},
+				{Name: "second", Type: ast.NumberType{}},
+				{Name: "nsec", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "DateTime",
+			Fields: []ast.Param{
+				{Name: "date", Type: ast.StructType{Name: "Date"}},
+				{Name: "time", Type: ast.StructType{Name: "Time"}},
+			},
+		},
+		{
+			Name: "TimeZone",
+			Fields: []ast.Param{
+				{Name: "name", Type: ast.StringType{}},
+				// `offset_seconds` is the cached offset from
+				// UTC for the period containing `Zoned.instant`.
+				// Future PRs populate it from tzdb; for now
+				// zero-init carries the UTC convention.
+				{Name: "offset_seconds", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "Zoned",
+			Fields: []ast.Param{
+				{Name: "instant", Type: ast.StructType{Name: "Instant"}},
+				{Name: "zone", Type: ast.StructType{Name: "TimeZone"}},
+			},
+		},
+		{
+			Name: "Span",
+			Fields: []ast.Param{
+				{Name: "years", Type: ast.NumberType{}},
+				{Name: "months", Type: ast.NumberType{}},
+				{Name: "weeks", Type: ast.NumberType{}},
+				{Name: "days", Type: ast.NumberType{}},
+				{Name: "hours", Type: ast.NumberType{}},
+				{Name: "minutes", Type: ast.NumberType{}},
+				{Name: "seconds", Type: ast.NumberType{}},
+				{Name: "nanos", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "Duration",
+			Fields: []ast.Param{
+				{Name: "sec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "nsec", Type: ast.NumberType{}},
+			},
+		},
 		// ProcessResult — the return shape of `exec(cmd, args,
 		// stdin)`. The interp's Go-side implementation populates
 		// stdout / stderr / exit_code; the wasm + native backends
@@ -593,8 +684,9 @@ func Check(prog *ast.Program) (*Info, error) {
 	}
 	// Same shape for the auto-injected structs (Reader,
 	// Writer, HttpRequest, HttpResponse, Platform, HeaderMap,
-	// Map, MapIter, Url) — same shadow-is-an-error policy, same
-	// monomorph-re-entry handling.
+	// Instant / Date / Time / DateTime / TimeZone / Zoned /
+	// Span / Duration, Map, MapIter, Url) — same shadow-is-an-
+	// error policy, same monomorph-re-entry handling.
 	var shadowedStructs []*ast.StructDecl
 	{
 		userStructs := map[string]*ast.StructDecl{}
