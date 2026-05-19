@@ -228,13 +228,29 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 				case "__lang_read_file":
 					// (path) → Result[string, IoError]. Pulls in
 					// __build_io_error for the error-path variant
-					// construction; the runtime body bytes call
-					// both. WASI imports (path_open / fd_read /
-					// fd_close) get added by scanImports below
-					// once this helper is in the needs set.
+					// construction; __lang_str_len / __lang_str_byte
+					// are needed to SSO-normalize the path argument
+					// before it reaches path_open. WASI imports
+					// (path_open / fd_read / fd_close) get added by
+					// scanImports below once this helper is in the
+					// needs set.
 					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__lang_read_file")
+				case "__lang_write_file":
+					// (path, content) → Option[IoError]. Same
+					// __build_io_error / __lang_str_len /
+					// __lang_str_byte chain as read_file plus
+					// the str-normalize loop reusing them; the
+					// scanRuntimeHelpers transitive close still
+					// pulls them in via `needs.add` here.
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__lang_write_file")
 				}
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).
@@ -649,6 +665,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadFileBody,
 	},
+	"__lang_write_file": {
+		// (path_data, path_len, content_data, content_len) →
+		// i32 — heap-form Option[IoError] pointer (None on
+		// success, Some(IoError) on error). Truncates the
+		// target via O_CREAT|O_TRUNC; same preopen-fd-3
+		// convention as __lang_read_file.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWriteFileBody,
+	},
 	"__str_idx": {
 		// (base_data, base_len, i) → i32 (byte address). For
 		// heap-form strings returns base_data + i directly. For
@@ -779,6 +805,19 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, allocCursorAddr)
 	body = memInstI32Load(body)
 	body = inst.InstLocalSet(body, 1) // $ptr
+	// Round size up to 4 — keeps the bump cursor word-aligned
+	// across all callers. Some helpers (path_open / fd_read /
+	// fd_write retptrs) pass alloc results to WASI imports that
+	// store u32 results there, and wasmtime enforces 4-byte
+	// alignment on those host writes. The slack (≤ 3 bytes per
+	// alloc) is bounded and the no-free arena means it doesn't
+	// fragment over time.
+	body = inst.InstLocalGet(body, 0) // $size
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, -4)
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalSet(body, 0)
 	// end = ptr + size
 	body = inst.InstLocalGet(body, 1) // $ptr
 	body = inst.InstLocalGet(body, 0) // $size
