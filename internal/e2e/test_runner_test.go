@@ -660,6 +660,42 @@ function main(): i32 {
 	}
 }
 
+// `examples/tests/batch7_test.lang` is the omnibus example
+// for the seventh test-runner-migration tranche: wider-int
+// relational asserts (lt / le / gt / ge on i64 / u32 / u64),
+// `f64_bits` / `f64_from_bits`, the `stat(...)` builtin +
+// file-state helpers (`assert_is_file` / `_is_dir` /
+// `_file_size`), and `assert_json_eq` for order-independent
+// JSON comparison.
+//
+// Nineteen cases — every helper exercised in both directions
+// where applicable. The JSON cases verify the key-order-
+// independence contract that's the main reason to reach for
+// `assert_json_eq` over a plain `assert_eq_string` on the
+// serialized output.
+func TestRunnerBatch7Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/batch7_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - i64 lt",
+		"ok 8 - f64_bits gives expected pattern",
+		"ok 10 - is_file true",
+		"ok 12 - file_size matches",
+		"ok 16 - json key order independent",
+		"ok 19 - json invalid actual fails",
+		"# pass 19",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

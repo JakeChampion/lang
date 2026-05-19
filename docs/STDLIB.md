@@ -287,6 +287,8 @@ function main(): i32 {
 - **Wider int assertions:** `assert_eq_i64`, `assert_neq_i64`,
   `assert_eq_u32`, `assert_neq_u32`, `assert_eq_u64`,
   `assert_neq_u64`
+- **Wider int relational:** `assert_lt_i64` / `_le_i64` /
+  `_gt_i64` / `_ge_i64` plus matching u32 / u64 variants
 - **Float assertions:** `assert_eq_f64_near(actual, expected,
   epsilon)`, `assert_eq_f32_near`, `assert_eq_f64_exact`,
   `assert_is_nan_f32`, `assert_is_nan_f64` — `_near` is the
@@ -302,8 +304,14 @@ function main(): i32 {
   + the two values; friendlier than the base `assert_eq_string`
   on multi-line stdout / generated source
 - **File state:** `assert_file_exists`, `assert_file_not_exists`,
-  `assert_file_contains`, `assert_file_contents` — backed by
-  the `read_file` builtin
+  `assert_file_contains`, `assert_file_contents`,
+  `assert_is_file`, `assert_is_dir`, `assert_file_size` —
+  the last three are `stat()`-backed and distinguish files
+  from directories
+- **JSON deep equality:** `assert_json_eq(actual, expected)` —
+  parses both sides via `std/json` and walks the value
+  trees in order-independent fashion (JObject key order
+  isn't observable)
 - **Tempdir convenience:** `must_temp_dir(r, prefix) ->
   (string, TestRunner)` — single-shot tempdir + cleanup
   registration with fallback to a recorded skip on failure

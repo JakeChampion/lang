@@ -69,6 +69,12 @@ import "std/u32";
 import "std/u64";
 import "std/array";
 import "std/string";
+// `assert_json_eq` parses both sides and walks the JsonValue
+// trees in order-independent fashion (JObject keys can come
+// out of `Map.keys()` in any order). Std/json is already on
+// the auto-prelude path, so the dependency is just an
+// in-stdlib link.
+import "std/json";
 
 // TestRunner — per-suite accumulator. Threaded through each
 // `.it(name, result)` call. `failures` keeps the formatted
@@ -553,6 +559,74 @@ pub function assert_neq_u64(actual: u64, expected: u64): Option[string] {
                 ", got " + actual.to_string());
 }
 
+// i64 / u32 / u64 relational assertions mirror the i32 family
+// (`assert_lt_i32` / `_le_i32` / `_gt_i32` / `_ge_i32`). The
+// migration's monotonic-counter / capacity-bound checks need
+// these on every numeric width — and writing them out
+// per-width is friendlier than burying the width in a runtime
+// tag arg, especially since the failure messages name the
+// width so a grep across CI logs surfaces the right helper.
+
+pub function assert_lt_i64(a: i64, b: i64): Option[string] {
+    if (a < b) { return None; }
+    return Some("assert_lt_i64: expected " + a.to_string() + " < " + b.to_string());
+}
+
+pub function assert_le_i64(a: i64, b: i64): Option[string] {
+    if (a <= b) { return None; }
+    return Some("assert_le_i64: expected " + a.to_string() + " <= " + b.to_string());
+}
+
+pub function assert_gt_i64(a: i64, b: i64): Option[string] {
+    if (a > b) { return None; }
+    return Some("assert_gt_i64: expected " + a.to_string() + " > " + b.to_string());
+}
+
+pub function assert_ge_i64(a: i64, b: i64): Option[string] {
+    if (a >= b) { return None; }
+    return Some("assert_ge_i64: expected " + a.to_string() + " >= " + b.to_string());
+}
+
+pub function assert_lt_u32(a: u32, b: u32): Option[string] {
+    if (a < b) { return None; }
+    return Some("assert_lt_u32: expected " + a.to_string() + " < " + b.to_string());
+}
+
+pub function assert_le_u32(a: u32, b: u32): Option[string] {
+    if (a <= b) { return None; }
+    return Some("assert_le_u32: expected " + a.to_string() + " <= " + b.to_string());
+}
+
+pub function assert_gt_u32(a: u32, b: u32): Option[string] {
+    if (a > b) { return None; }
+    return Some("assert_gt_u32: expected " + a.to_string() + " > " + b.to_string());
+}
+
+pub function assert_ge_u32(a: u32, b: u32): Option[string] {
+    if (a >= b) { return None; }
+    return Some("assert_ge_u32: expected " + a.to_string() + " >= " + b.to_string());
+}
+
+pub function assert_lt_u64(a: u64, b: u64): Option[string] {
+    if (a < b) { return None; }
+    return Some("assert_lt_u64: expected " + a.to_string() + " < " + b.to_string());
+}
+
+pub function assert_le_u64(a: u64, b: u64): Option[string] {
+    if (a <= b) { return None; }
+    return Some("assert_le_u64: expected " + a.to_string() + " <= " + b.to_string());
+}
+
+pub function assert_gt_u64(a: u64, b: u64): Option[string] {
+    if (a > b) { return None; }
+    return Some("assert_gt_u64: expected " + a.to_string() + " > " + b.to_string());
+}
+
+pub function assert_ge_u64(a: u64, b: u64): Option[string] {
+    if (a >= b) { return None; }
+    return Some("assert_ge_u64: expected " + a.to_string() + " >= " + b.to_string());
+}
+
 // Float equality with a tolerance, plus exact equality for
 // callers that want it. Naive `actual == expected` on floats
 // is almost never what you want — every textbook says use an
@@ -1021,6 +1095,61 @@ pub function assert_file_contents(path: string, expected: string): Option[string
     return None;
 }
 
+// `assert_is_file(path)` / `assert_is_dir(path)` —
+// `stat`-backed type predicates. `assert_file_exists` (above)
+// goes through `read_file` which succeeds for regular files;
+// these are the explicit pair for callers that need to
+// distinguish files from directories without inspecting the
+// raw FileStat themselves.
+pub function assert_is_file(path: string): Option[string] {
+    match (stat(path)) {
+        Ok(s) => {
+            if (s.is_file) { return None; }
+            if (s.is_dir) {
+                return Some("assert_is_file: \"" + path + "\" is a directory");
+            }
+            return Some("assert_is_file: \"" + path + "\" is not a regular file");
+        },
+        Err(_) => {
+            return Some("assert_is_file: \"" + path + "\" does not exist");
+        }
+    }
+    return None;
+}
+
+pub function assert_is_dir(path: string): Option[string] {
+    match (stat(path)) {
+        Ok(s) => {
+            if (s.is_dir) { return None; }
+            if (s.is_file) {
+                return Some("assert_is_dir: \"" + path + "\" is a regular file");
+            }
+            return Some("assert_is_dir: \"" + path + "\" is not a directory");
+        },
+        Err(_) => {
+            return Some("assert_is_dir: \"" + path + "\" does not exist");
+        }
+    }
+    return None;
+}
+
+// `assert_file_size(path, expected)` — match the file's byte
+// size against an i64 expectation. Useful for fixture tests
+// that copy / generate files of a known size.
+pub function assert_file_size(path: string, expected: i64): Option[string] {
+    match (stat(path)) {
+        Ok(s) => {
+            if (s.size == expected) { return None; }
+            return Some("assert_file_size: \"" + path + "\" is " +
+                        s.size.to_string() + " bytes, expected " + expected.to_string());
+        },
+        Err(_) => {
+            return Some("assert_file_size: \"" + path + "\" does not exist");
+        }
+    }
+    return None;
+}
+
 // `assert_file_contains(path, needle)` — file contents include
 // the given substring. Faster than `assert_file_contents` when
 // the test only cares that the output mentions something
@@ -1068,4 +1197,129 @@ pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) 
         }
     }
     return ("", r);
+}
+
+// =================== JSON DEEP EQUALITY ===================
+//
+// Structured-output tests (HTTP handlers emitting JSON,
+// diagnostic emitters with structured fields) want to assert
+// on the document shape rather than the exact byte-for-byte
+// serialization. JObject key order, whitespace, and JNumber
+// formatting all vary across emitters; `assert_json_eq`
+// parses both sides via `std/json` and walks the JsonValue
+// trees in order-independent fashion.
+
+// __json_value_eq compares two JsonValue trees recursively.
+// JObject is order-independent (Map iteration order isn't
+// observable); arrays, strings, numbers, booleans, null all
+// compare structurally. JNumber compares the textual payload
+// — the JSON spec doesn't fix precision, so two emitters
+// producing "1.0" vs "1" would diverge here; callers that
+// want numeric tolerance should parse + cast themselves.
+function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
+    match (a) {
+        JNull => {
+            match (b) {
+                JNull => { return true; },
+                _ => { return false; }
+            }
+        },
+        JBool(av) => {
+            match (b) {
+                JBool(bv) => { return av == bv; },
+                _ => { return false; }
+            }
+        },
+        JNumber(av) => {
+            match (b) {
+                JNumber(bv) => { return av == bv; },
+                _ => { return false; }
+            }
+        },
+        JString(av) => {
+            match (b) {
+                JString(bv) => { return av == bv; },
+                _ => { return false; }
+            }
+        },
+        JArray(av) => {
+            match (b) {
+                JArray(bv) => {
+                    if (len(av) != len(bv)) { return false; }
+                    var i: i32 = 0;
+                    while (i < len(av)) {
+                        if (!__json_value_eq(av[i], bv[i])) { return false; }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        JObject(am) => {
+            match (b) {
+                JObject(bm) => {
+                    if (am.len() != bm.len()) { return false; }
+                    var keys: string[] = am.keys();
+                    var i: i32 = 0;
+                    while (i < len(keys)) {
+                        var k: string = keys[i];
+                        match (am.get(k)) {
+                            None => { return false; },
+                            Some(av) => {
+                                match (bm.get(k)) {
+                                    None => { return false; },
+                                    Some(bv) => {
+                                        if (!__json_value_eq(av, bv)) { return false; }
+                                    }
+                                }
+                            }
+                        }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        }
+    }
+    return false;
+}
+
+// `assert_json_eq(actual, expected)` — both inputs are JSON
+// text. Parses each via `std/json`'s `json_parse`, walks the
+// resulting trees in order-independent fashion, and reports
+// a failure with both raw documents quoted when they differ.
+// Invalid JSON on either side surfaces as a failure with
+// the offender named so the diagnostic is unambiguous.
+//
+// Uses the qualified `json.json_parse(...)` form rather than
+// bare `json_parse(...)` so modload's rewriter routes the
+// call correctly under both the auto-prelude flat-load path
+// AND the user-side mangled-load path (where the user's own
+// `import "std/json";` would have already loaded json's
+// decls under the `json__` prefix; bare-name lookup would
+// miss them).
+pub function assert_json_eq(actual: string, expected: string): Option[string] {
+    var av: Option[JsonValue] = json.json_parse(actual);
+    var ev: Option[JsonValue] = json.json_parse(expected);
+    match (av) {
+        None => {
+            return Some("assert_json_eq: actual is not valid JSON: " + actual);
+        },
+        Some(a) => {
+            match (ev) {
+                None => {
+                    return Some("assert_json_eq: expected is not valid JSON: " + expected);
+                },
+                Some(e) => {
+                    if (__json_value_eq(a, e)) { return None; }
+                    return Some("assert_json_eq: documents differ\n" +
+                                "  expected: " + expected + "\n" +
+                                "  actual:   " + actual);
+                }
+            }
+        }
+    }
+    return None;
 }

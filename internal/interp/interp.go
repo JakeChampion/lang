@@ -394,6 +394,8 @@ func New() *Interp {
 	// math.Float32bits / math.Float32frombits at full precision.
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
+	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
+	i.Builtins["f64_from_bits"] = &Builtin{Fn: builtinF64FromBits}
 	// `temp_dir(prefix)` + `exec(cmd, args, stdin)` back the
 	// test-runner migration: ports of the Go-side e2e suite need
 	// somewhere to write fixture files and a way to spawn the
@@ -405,6 +407,7 @@ func New() *Interp {
 	// `lang -interp` regardless of which backend they exercise.
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
+	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
 	i.Builtins["subprocess"] = &Builtin{Fn: builtinSubprocess}
@@ -620,6 +623,33 @@ func builtinF32FromBits(_ *Interp, args []Value) (Value, error) {
 	bits := uint32(int32(int64(n)))
 	v := float64(math.Float32frombits(bits))
 	return Float{V: v, Width: 32}, nil
+}
+
+// builtinF64Bits / builtinF64FromBits — same shape as the
+// f32 pair but for double-precision. The bit pattern is a
+// signed 64-bit integer (lang's `i64`); negative-bit-13
+// quiet NaN payloads round-trip cleanly via Go's `math`
+// package which does the no-op bit transfer.
+func builtinF64Bits(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("f64_bits: expected 1 arg, got %d", len(args))
+	}
+	f, ok := args[0].(Float)
+	if !ok {
+		return nil, fmt.Errorf("f64_bits: expected float arg, got %T", args[0])
+	}
+	return Number(int64(math.Float64bits(f.V))), nil
+}
+
+func builtinF64FromBits(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("f64_from_bits: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("f64_from_bits: expected number arg, got %T", args[0])
+	}
+	return Float{V: math.Float64frombits(uint64(int64(n))), Width: 64}, nil
 }
 
 func builtinIntToString(_ *Interp, args []Value) (Value, error) {
@@ -1128,6 +1158,35 @@ func builtinReadDir(_ *Interp, args []Value) (Value, error) {
 		out[i] = String(e.Name())
 	}
 	return resultOk(out), nil
+}
+
+// builtinStat returns file metadata wrapped in `Result[FileStat,
+// IoError]`. `is_file` / `is_dir` distinguish regular files
+// from directories; `size` is the byte size for regular files
+// and (on POSIX) the directory-entry size for directories.
+// Symlinks resolve through `os.Stat` (follow), matching the
+// implicit contract of every other file-touching builtin.
+func builtinStat(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("stat: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("stat: expected string path, got %T", args[0])
+	}
+	info, err := os.Stat(string(path))
+	if err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	st := &Struct{
+		TypeName: "FileStat",
+		Fields: map[string]Value{
+			"is_file": Bool(info.Mode().IsRegular()),
+			"is_dir":  Bool(info.IsDir()),
+			"size":    Number(info.Size()),
+		},
+	}
+	return resultOk(st), nil
 }
 
 // builtinRemoveFile unlinks `path`. `Option[IoError]` mirrors

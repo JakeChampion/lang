@@ -278,6 +278,19 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "exit_code", Type: ast.NumberType{}},
 			},
 		},
+		// FileStat — `stat(path)` shape. Carries the minimum
+		// surface needed by test fixtures: the kind (file vs
+		// directory vs other) and the byte size. Mtime is a
+		// follow-up: lang has no Time type yet, and the
+		// migration's tests don't need it.
+		{
+			Name: "FileStat",
+			Fields: []ast.Param{
+				{Name: "is_file", Type: ast.BoolType{}},
+				{Name: "is_dir", Type: ast.BoolType{}},
+				{Name: "size", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
 		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
 		// (i32 keys, i32 values) for now; generic K / V comes in
@@ -775,6 +788,22 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.FloatType{Width: 32},
 	}
+	// f64_bits / f64_from_bits — same idea for 64-bit floats.
+	// The interp owns the only implementation today; the native
+	// + wasm backends route f64 / i64 through their own
+	// reinterpret instructions and don't need a builtin helper.
+	// Exposing the signature lets pure-Lang float-formatting
+	// code (std/float's `__float_to_string`, future hex-float
+	// emitters) extract the IEEE-754 fields without a runtime
+	// trip.
+	c.info.FuncSigs["f64_bits"] = &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 64}},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	c.info.FuncSigs["f64_from_bits"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.FloatType{Width: 64},
+	}
 	// arena_save(): number — snapshots the bump allocator's
 	// current cursor. Pair with arena_restore to free everything
 	// allocated in between in O(1). Designed for long-lived
@@ -903,6 +932,20 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.ArrayType{Elem: ast.StringType{}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// stat(path): Result[FileStat, IoError] — pull file
+	// metadata. `is_file` / `is_dir` distinguish the kind;
+	// `size` carries byte size for regular files (and the
+	// directory entry size on POSIX for `is_dir == true`,
+	// which is platform-defined but useful as a non-zero
+	// signal that the directory exists). Mtime is omitted
+	// pending a Time type in the language.
+	c.info.FuncSigs["stat"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "FileStat"},
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
