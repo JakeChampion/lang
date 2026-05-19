@@ -402,9 +402,20 @@ function parse_primary(p: Par): ExprResult {
                         base = e_index(base, idx.expr);
                     }
                 } else if (pk == ".") {
-                    // Field access `obj.field`.
+                    // Field access `obj.field`. Field can be an
+                    // ident (struct field) or an integer literal
+                    // (tuple index — `t.0`, `t.1`, …). The
+                    // tuple index is stored as the digit string
+                    // so the AST shape stays uniform; consumers
+                    // parse it to i32 as needed.
                     p = p.advance();
                     var fname: string = p.peek_ident();
+                    if (len(fname) == 0) {
+                        match (p.peek()) {
+                            lexer.TokNumber(n) => { fname = n.text; },
+                            _ => { }
+                        }
+                    }
                     if (len(fname) == 0) {
                         return ExprResult { par: p, expr: e_unknown("missing field name after .") };
                     }
