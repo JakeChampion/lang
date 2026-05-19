@@ -1318,6 +1318,45 @@ func TestRunnerOptionAndSetOpsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_prefix_suffix_subseq_test.lang`
+// exercises batch-27 additions:
+//   - `assert_array_starts_with_i32(arr, prefix)` /
+//     `_string` — `arr[0..len(prefix)] == prefix`.
+//   - `assert_array_ends_with_i32(arr, suffix)` /
+//     `_string` — same idea anchored at the tail; mismatch
+//     diagnostic uses array-coords indices so failures
+//     pinpoint the actual slot.
+//   - `assert_array_contains_subseq_i32(arr, needle)` /
+//     `_string` — contiguous-sub-array membership;
+//     order-sensitive (unlike `assert_subset_i32`).
+//
+// 20 cases (covering empty-vacuous, length-mismatch, full-
+// array-is-its-own-prefix, mismatch-at-index, the "retry
+// after partial match" scan corner of subseq).
+func TestRunnerArrayPrefixSuffixSubseqExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_prefix_suffix_subseq_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - starts_with_i32 empty vacuous",
+		"ok 4 - starts_with_i32 prefix too long",
+		"ok 5 - starts_with_i32 mismatch at index",
+		"ok 10 - ends_with_i32 arr-coords index",
+		"ok 13 - subseq_i32 at start",
+		"ok 17 - subseq_i32 order matters",
+		"ok 18 - subseq_i32 retries after partial",
+		"# pass 20",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
