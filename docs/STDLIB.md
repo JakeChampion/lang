@@ -347,6 +347,11 @@ function main(): i32 {
   `(r).bench_max_us(name, iter, fn, budget)` fails when the
   MEDIAN per-iteration time exceeds the budget — median (not
   mean) so a single GC pause doesn't tip a regression bound.
+- **Set equality (order-independent):** `assert_set_eq_i32`,
+  `assert_set_eq_string`, `assert_subset_i32`,
+  `assert_subset_string` — multiset semantics so duplicate
+  counts must match; failure message names the first
+  unmatched element
 - **Map assertions:** `assert_map_len_i32_i32` / `_string_string`,
   `assert_map_has_i32_i32` / `_string_string`,
   `assert_map_lacks_i32_i32` / `_string_string`

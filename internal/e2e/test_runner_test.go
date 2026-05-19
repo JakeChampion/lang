@@ -931,6 +931,35 @@ func TestRunnerArrayReductionsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/set_eq_test.lang` exercises the order-
+// independent (multiset) array assertions:
+// `assert_set_eq_i32` / `_string` and `assert_subset_i32` /
+// `_string`. Ten cases cover passing, reversed order,
+// duplicate-multiplicity requirements (multiset semantics),
+// length mismatches, and the vacuous "empty subset of X"
+// case.
+func TestRunnerSetEqExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/set_eq_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - set_eq i32 reversed",
+		"ok 3 - set_eq i32 multiset matches",
+		"ok 4 - set_eq i32 multiset mismatch fails",
+		"ok 8 - subset i32 multiplicity required",
+		"ok 10 - subset empty is vacuous",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
