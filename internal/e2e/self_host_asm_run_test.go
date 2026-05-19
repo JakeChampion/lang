@@ -485,6 +485,34 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		{
+			"lambda-no-capture",
+			"function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }",
+			42,
+			"",
+			"",
+		},
+		{
+			"lambda-no-args",
+			"function main(): i32 { var f = function (): i32 { return 7; }; return f(); }",
+			7,
+			"",
+			"",
+		},
+		{
+			"lambda-multi-args",
+			"function main(): i32 { var add = function (a: i32, b: i32): i32 { return a + b; }; return add(20, 22); }",
+			42,
+			"",
+			"",
+		},
+		{
+			"lambda-with-locals",
+			"function main(): i32 { var f = function (n: i32): i32 { var sq = n * n; var dbl = n + n; return sq + dbl; }; return f(5); }",
+			35,
+			"",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
