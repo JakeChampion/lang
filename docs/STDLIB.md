@@ -323,9 +323,9 @@ function main(): i32 {
   either too tight at large scales or too loose at small
   ones. Falls back to absolute compare when `expected == 0.0`
 - **Range:** `assert_in_range_i32`, `assert_in_range_i64`,
-  `assert_in_range_f64(v, lo, hi)` — inclusive bounds; the
-  f64 variant fails on NaN inputs (NaN never satisfies an
-  ordering compare)
+  `assert_in_range_f64(v, lo, hi)`, `assert_in_range_f32` —
+  inclusive bounds; the float variants fail on NaN inputs
+  (NaN never satisfies an ordering compare)
 - **Order:** `assert_sorted_asc_i32(arr)`,
   `assert_sorted_asc_string(arr)` — monotonically
   non-decreasing; empty / single-element arrays vacuously
@@ -445,7 +445,10 @@ function main(): i32 {
   `assert_eq_i32_array`, `assert_eq_string_array`,
   `assert_eq_i64_array` / `_u32_array` / `_u64_array` —
   wider-int element-wise compares (lang has no numeric-
-  array covariance so each width gets its own helper)
+  array covariance so each width gets its own helper).
+  Single-position spot check: `assert_at_i32(arr, idx,
+  expected)` / `_string` / `_i64` — bounds-checked,
+  failure distinguishes out-of-bounds from value mismatch
 - **Array membership:** `assert_array_contains_i32(arr,
   needle)` / `_string`, `assert_array_not_contains_i32` /
   `_string` — typed-array membership; failure embeds the
