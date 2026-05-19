@@ -220,11 +220,42 @@ func Emit(prog *ir.Program) ([]byte, error) {
 			m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
 			m.ExportIdxs = append(m.ExportIdxs, 0)
 		}
-		m.DataOffsets = []int32{int32(stringStart)}
-		m.DataInits = [][]byte{dataBytes}
+		m.DataOffsets = append(m.DataOffsets, int32(stringStart))
+		m.DataInits = append(m.DataInits, dataBytes)
+	}
+
+	// Seed the bump cursor at memory[40] when the allocator is in
+	// use. Cursor value = max(allocMinStart, end-of-string-pool)
+	// rounded up to 8 bytes — matches the WAT path's choice so
+	// canonical-ABI alignment expectations stay satisfied.
+	if helpers.set["__lang_alloc"] {
+		if !m.MemoryPresent {
+			m.MemoryPresent = true
+			m.MemoryMin = 1
+			m.MemoryMax = -1
+			m.ExportNames = append(m.ExportNames, "memory")
+			m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
+			m.ExportIdxs = append(m.ExportIdxs, 0)
+		}
+		start := stringNextOff
+		if start < allocMinStart {
+			start = allocMinStart
+		}
+		if start%8 != 0 {
+			start += 8 - (start % 8)
+		}
+		m.DataOffsets = append(m.DataOffsets, allocCursorAddr)
+		m.DataInits = append(m.DataInits, le32(int32(start)))
 	}
 
 	return module.Build(m), nil
+}
+
+// le32 returns the 4-byte little-endian representation of v —
+// the on-disk byte order for an i32 stored at a known offset.
+func le32(v int32) []byte {
+	u := uint32(v)
+	return []byte{byte(u), byte(u >> 8), byte(u >> 16), byte(u >> 24)}
 }
 
 // valtypeFor maps a single ast.Type to the wasm valtype byte used to
@@ -863,6 +894,16 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		idx, ok := ctx.funcIdx["__lang_str_len"]
 		if !ok {
 			return nil, fmt.Errorf("OpStrLen: __lang_str_len helper not registered (scanRuntimeHelpers gap)")
+		}
+		return inst.InstCall(body, idx), nil
+
+	// ---- Heap allocator ----
+	case ir.OpAlloc:
+		// Stack: (size). __lang_alloc bumps memory[40] and returns
+		// the OLD value as the i32 pointer.
+		idx, ok := ctx.funcIdx["__lang_alloc"]
+		if !ok {
+			return nil, fmt.Errorf("OpAlloc: __lang_alloc helper not registered (scanRuntimeHelpers gap)")
 		}
 		return inst.InstCall(body, idx), nil
 	}

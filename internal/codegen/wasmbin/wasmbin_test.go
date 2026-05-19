@@ -1636,15 +1636,144 @@ func functionSectionCount(t *testing.T, bin []byte) int {
 	return 0
 }
 
+// TestEmitAllocStoreLoadRoundtrip — alloc 4 bytes, store a value,
+// load it back. Proves the bump cursor at memory[40] is seeded
+// correctly and __lang_alloc returns a usable pointer.
+func TestEmitAllocStoreLoadRoundtrip(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32()}, // stash the alloc pointer
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpAlloc},
+			{Kind: ir.OpStoreLocal, I32: 0}, // ptr → scratch
+			// Store the value 12345 at *ptr.
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 12345},
+			{Kind: ir.OpStore},
+			// Load it back.
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoad},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "12345" {
+		t.Fatalf("got %q, want 12345", got)
+	}
+}
+
+// TestEmitAllocBumpsCursor — two successive allocs should return
+// distinct pointers, with the second one allocSize bytes past the
+// first. Proves the cursor bumps forward and doesn't reset.
+func TestEmitAllocBumpsCursor(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32(), i32()}, // p1, p2
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			// p1 = alloc(16)
+			{Kind: ir.OpConstI32, I32: 16},
+			{Kind: ir.OpAlloc},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			// p2 = alloc(16)
+			{Kind: ir.OpConstI32, I32: 16},
+			{Kind: ir.OpAlloc},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			// return p2 - p1 (expect 16)
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpSub},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "16" {
+		t.Fatalf("p2 - p1 = %q, want 16", got)
+	}
+}
+
+// TestEmitAllocSeedRespectsStringPool — when heap-form string
+// literals are present, the cursor must seed past them so allocs
+// don't clobber the data segment. Combines OpConstStr (which
+// reserves bytes in the data section starting at offset 1024)
+// with OpAlloc and confirms the alloc returns a pointer >= the
+// end of the string pool, 8-aligned.
+func TestEmitAllocSeedRespectsStringPool(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "ptr",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			// Push a heap-form literal of known length, drop the
+			// (data, len) we don't need; this reserves the bytes
+			// in the data segment.
+			{Kind: ir.OpConstStr, Str: "a 13-byte str"}, // 13 bytes
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpDrop},
+			// Allocate 1 byte and return the pointer.
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpAlloc},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	got := runUnderWasmtime(t, bin, "ptr")
+	// stringStart=1024, len 13 → ends at 1037; round up to 1040
+	// (next multiple of 8). The bump cursor starts there.
+	if got != "1040" {
+		t.Fatalf("alloc pointer = %q, want 1040 (string pool end rounded to 8)", got)
+	}
+}
+
+// TestEmitAllocHelperGated — confirm __lang_alloc + the cursor
+// seed segment are only emitted when OpAlloc appears.
+func TestEmitAllocHelperGated(t *testing.T) {
+	progNoAlloc := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 42}},
+	}}}
+	bin, err := Emit(progNoAlloc)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if functionSectionCount(t, bin) != 1 {
+		t.Fatal("alloc helper present in module without OpAlloc")
+	}
+
+	progAlloc := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpAlloc},
+		},
+	}}}
+	bin2, err := Emit(progAlloc)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if functionSectionCount(t, bin2) != 2 {
+		t.Fatal("alloc helper not present when OpAlloc is used")
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
-// cover (e.g. OpAlloc) and confirm we get a useful error rather
+// cover (e.g. OpStrEq) and confirm we get a useful error rather
 // than emitting nonsense bytes. Regressions here would silently
 // produce invalid wasm.
 func TestEmitUnsupportedOpReports(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "main",
 		ReturnType: i32(),
-		Ops:        []ir.Op{{Kind: ir.OpAlloc}},
+		Ops:        []ir.Op{{Kind: ir.OpStrEq}},
 	}}}
 	if _, err := Emit(prog); err == nil {
 		t.Fatalf("expected unsupported-op error, got nil")
