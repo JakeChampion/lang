@@ -1,0 +1,192 @@
+// std/fuzz — byte-stream fuzzing harness layered on `std/test`.
+//
+// A fuzz target is a function that takes a string of bytes
+// (the fuzz input) and returns Option[string] — same shape as
+// a regular test:
+//   None       — the input passed all the property checks
+//   Some(msg)  — a counter-example: `msg` describes the
+//                violation, the runner records both the
+//                message + the offending input (escaped) so
+//                the failure log doubles as a reproducer.
+//
+// Inputs are drawn from a seed corpus the caller supplies,
+// plus mutated variants of each seed (byte flip / byte
+// insert / byte delete). Iteration count is fixed per call
+// (`iterations` arg) — lang has no panic-recovery yet, so
+// a fuzz target that genuinely crashes (out-of-bounds index,
+// division by zero) aborts the whole run; that's the trade
+// for not needing a coroutine / fiber primitive. Real fuzzing
+// frameworks add coverage feedback (libFuzzer / AFL) — we
+// don't, but the API is shaped so coverage can layer in
+// later without a breaking change.
+//
+// Usage:
+//
+//   function check_no_panic(input: string): Option[string] {
+//       // try to parse `input`; return Some if a property
+//       // we care about doesn't hold.
+//       return None;
+//   }
+//
+//   function main(): i32 {
+//       var r: TestRunner = test_new("parser fuzz");
+//       r = r.fuzz("parse", ["function main(): i32 { return 0; }", ""],
+//                  100, check_no_panic);
+//       return r.finish();
+//   }
+//
+// `r.fuzz(name, seeds, iterations, target)` reports as one
+// TAP case ("ok N - <name>" or "not ok N - <name>"). The
+// counter-example input is included in the failure
+// diagnostics so CI logs preserve enough state to reproduce
+// locally without re-running the whole loop.
+
+import "std/i32";
+import "std/string";
+import "std/array";
+import "std/math";
+
+// fuzz_default_iterations — used by callers that want the
+// default loop count without pulling in a config constant
+// per call site. Tuned to land sub-second runs on the small
+// targets the migration uses; bigger property tests can pass
+// a larger explicit count.
+pub function fuzz_default_iterations(): i32 { return 200; }
+
+// __fuzz_pick_seed — round-robin a seed from the corpus.
+// Uses the iteration index modulo corpus length rather than
+// `random_int` so every seed gets touched at least once even
+// on small iteration counts. Random mutation is layered on
+// top by __fuzz_mutate.
+function __fuzz_pick_seed(seeds: string[], iter: i32): string {
+    var n: i32 = len(seeds);
+    if (n == 0) { return ""; }
+    return seeds[iter % n];
+}
+
+// __fuzz_mutate — produce a mutated copy of `seed`. One of:
+//   - byte flip  (replace seed[i] with a random byte)
+//   - byte drop  (concatenate seed[:i] + seed[i+1:])
+//   - byte insert(seed[:i] + random byte + seed[i:])
+//   - leave unchanged (returns `seed`)
+// The "unchanged" path is important: every iteration should
+// have a chance of running the seed verbatim so a buggy
+// seed isn't masked by mutations.
+function __fuzz_mutate(seed: string, mode: i32): string {
+    var n: i32 = len(seed);
+    if (n == 0 && mode != 2) { return seed; }
+    if (mode == 0) {
+        // flip
+        var i: i32 = random_int(0, n);
+        var b: i32 = random_int(0, 256);
+        return seed[0:i] + (b as i32).to_ascii_string() + seed[i + 1:n];
+    }
+    if (mode == 1) {
+        // drop
+        if (n == 0) { return seed; }
+        var i: i32 = random_int(0, n);
+        return seed[0:i] + seed[i + 1:n];
+    }
+    if (mode == 2) {
+        // insert
+        var i: i32 = random_int(0, n + 1);
+        var b: i32 = random_int(0, 256);
+        return seed[0:i] + (b as i32).to_ascii_string() + seed[i:n];
+    }
+    // verbatim
+    return seed;
+}
+
+// __fuzz_escape — render an arbitrary byte string for the
+// failure diagnostic. Non-printable bytes go to "\xNN", quote
+// + backslash get escaped, everything else passes through.
+// Caps output at 200 bytes with a trailing " ..." so a
+// pathological input doesn't blow up the log.
+function __fuzz_escape(s: string): string {
+    var n: i32 = len(s);
+    var cap: i32 = 200;
+    var trimmed: boolean = false;
+    if (n > cap) { n = cap; trimmed = true; }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 92) {
+            out = out + "\\\\";
+        } else if (b == 34) {
+            out = out + "\\\"";
+        } else if (b == 10) {
+            out = out + "\\n";
+        } else if (b == 13) {
+            out = out + "\\r";
+        } else if (b == 9) {
+            out = out + "\\t";
+        } else if (b >= 32 && b < 127) {
+            out = out + (b as i32).to_ascii_string();
+        } else {
+            out = out + "\\x" + b.to_hex().pad_start(2, "0");
+        }
+        i = i + 1;
+    }
+    if (trimmed) { out = out + " ..."; }
+    return out;
+}
+
+// fuzz_run(name, seeds, iterations, target) — run the
+// `target` function against `iterations` inputs drawn from
+// `seeds` + mutations. Returns:
+//   None              — every input passed
+//   Some(diagnostic)  — the first failing input, with the
+//                       target's message and the escaped
+//                       offending input embedded
+//
+// Use through `r.fuzz(...)` rather than calling directly;
+// the receiver-method form folds the result into the
+// runner's TAP stream.
+pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => Option[string]): Option[string] {
+    if (iterations <= 0) {
+        return Some("fuzz_run: iterations must be > 0, got " + iterations.to_string());
+    }
+    if (len(seeds) == 0) {
+        return Some("fuzz_run: at least one seed required");
+    }
+    // Always run every seed verbatim first so a regression
+    // in the trivial-input case isn't masked by mutation
+    // randomness. Then layer the mutated iterations.
+    var i: i32 = 0;
+    while (i < len(seeds)) {
+        match (target(seeds[i])) {
+            Some(msg) => {
+                return Some("seed[" + i.to_string() + "] = \"" +
+                            __fuzz_escape(seeds[i]) + "\": " + msg);
+            },
+            None => { },
+        }
+        i = i + 1;
+    }
+    // Mutation pass.
+    var iter: i32 = 0;
+    while (iter < iterations) {
+        var seed: string = __fuzz_pick_seed(seeds, iter);
+        var mode: i32 = random_int(0, 4);
+        var input: string = __fuzz_mutate(seed, mode);
+        match (target(input)) {
+            Some(msg) => {
+                return Some("iter " + iter.to_string() +
+                            " mode " + mode.to_string() +
+                            " input \"" + __fuzz_escape(input) + "\": " + msg);
+            },
+            None => { },
+        }
+        iter = iter + 1;
+    }
+    return None;
+}
+
+// (r) fuzz(name, seeds, iterations, target) — run a fuzz
+// target and report its outcome as a single TAP case.
+// Pass at most one fuzz target per `it`-equivalent line so
+// the failure attribution stays clean.
+pub function (r: TestRunner) fuzz(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): TestRunner {
+    return r.it(name, fuzz_run(seeds, iterations, target));
+}

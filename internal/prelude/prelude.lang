@@ -45,5 +45,6 @@ import "std/math";
 import "std/float";
 import "std/tcp";
 import "std/test";
+import "std/fuzz";
 import "core/int";
 import "core/map";

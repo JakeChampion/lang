@@ -69,12 +69,31 @@ import "std/string";
 // "<name>: <message>" line for every failing case so finish()
 // can repeat them at the bottom of the run (TAP consumers can
 // look at the per-line not-ok output; humans want a summary).
+//
+// `skipped` mirrors `failures` for cases that bailed out before
+// running their assertion — toolchain missing, OS-conditional,
+// etc. They print as `ok N - name # SKIP reason` per TAP-13,
+// stay counted separately from passes / fails, and don't affect
+// the exit code (skipping isn't a failure).
+//
+// `prefix` lets nested subsuites prepend "<parent> / " to each
+// case name without losing the flat TAP stream. The parent
+// runner threads a child through `(r) subsuite(name)` which
+// inherits the parent's counters by reference (via the
+// `child = parent` value copy + a merge at the end), then
+// `(parent) merge(child)` folds the child's counts back. The
+// flat stream makes the output legible under any TAP consumer
+// while the name prefix preserves the hierarchy.
 pub struct TestRunner {
     suite: string,
     passed: i32,
     failed: i32,
+    skipped: i32,
     failures: string[],
+    skip_reasons: string[],
     verbose: boolean,
+    prefix: string,
+    base_idx: i32,
 }
 
 // test_new(suite) — start a new run. `suite` labels the run in
@@ -87,8 +106,12 @@ pub function test_new(suite: string): TestRunner {
         suite: suite,
         passed: 0,
         failed: 0,
+        skipped: 0,
         failures: [],
+        skip_reasons: [],
         verbose: false,
+        prefix: "",
+        base_idx: 0,
     };
 }
 
@@ -103,8 +126,12 @@ pub function test_new_verbose(suite: string): TestRunner {
         suite: r.suite,
         passed: r.passed,
         failed: r.failed,
+        skipped: r.skipped,
         failures: r.failures,
+        skip_reasons: r.skip_reasons,
         verbose: true,
+        prefix: r.prefix,
+        base_idx: r.base_idx,
     };
 }
 
@@ -113,34 +140,167 @@ pub function test_new_verbose(suite: string): TestRunner {
 //   None       prints "ok N - name"
 //   Some(msg)  prints "not ok N - name" + the YAML-ish ---
 //              block TAP uses for diagnostic detail
+//
+// The displayed name is `r.prefix + name`, so a subsuite's
+// cases land as "parent / child / actual case" in the flat
+// TAP stream. The bare `name` is what surfaces in the
+// failures summary at the bottom of finish() — typically the
+// prefix duplicates the suite line so the bottom summary
+// stays scannable.
 pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunner {
-    var idx: i32 = r.passed + r.failed + 1;
+    var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
+    var display: string = r.prefix + name;
     match (result) {
         None => {
-            print("ok " + idx.to_string() + " - " + name);
+            print("ok " + idx.to_string() + " - " + display);
             return TestRunner {
                 suite: r.suite,
                 passed: r.passed + 1,
                 failed: r.failed,
+                skipped: r.skipped,
                 failures: r.failures,
+                skip_reasons: r.skip_reasons,
                 verbose: r.verbose,
+                prefix: r.prefix,
+                base_idx: r.base_idx,
             };
         },
         Some(msg) => {
-            print("not ok " + idx.to_string() + " - " + name);
+            print("not ok " + idx.to_string() + " - " + display);
             print("  ---");
             print("  message: " + msg);
             print("  ---");
-            var fs: string[] = r.failures.push(name + ": " + msg);
+            var fs: string[] = r.failures.push(display + ": " + msg);
             return TestRunner {
                 suite: r.suite,
                 passed: r.passed,
                 failed: r.failed + 1,
+                skipped: r.skipped,
                 failures: fs,
+                skip_reasons: r.skip_reasons,
                 verbose: r.verbose,
+                prefix: r.prefix,
+                base_idx: r.base_idx,
             };
         }
     }
+}
+
+// (r) skip(name, reason) — record a case that didn't run.
+// Emits TAP-13's `# SKIP <reason>` directive on the `ok` line
+// so consumers (`prove`, `tape`, jUnit converters) can
+// distinguish it from a real pass. The skipped count is
+// tracked separately and doesn't influence the exit code:
+// missing toolchains / OS-conditional cases shouldn't fail
+// CI on dev laptops that lack the optional dep.
+//
+// Typical use:
+//
+//   if (env("WASMTIME_PATH").is_none()) {
+//       r = r.skip("wasm e2e", "wasmtime not on $PATH");
+//   } else {
+//       r = r.it("wasm e2e", run_wasm_test());
+//   }
+pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
+    var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
+    var display: string = r.prefix + name;
+    print("ok " + idx.to_string() + " - " + display + " # SKIP " + reason);
+    var sr: string[] = r.skip_reasons.push(display + ": " + reason);
+    return TestRunner {
+        suite: r.suite,
+        passed: r.passed,
+        failed: r.failed,
+        skipped: r.skipped + 1,
+        failures: r.failures,
+        skip_reasons: sr,
+        verbose: r.verbose,
+        prefix: r.prefix,
+        base_idx: r.base_idx,
+    };
+}
+
+// (r) skip_if(cond, name, reason, result) — conditional run.
+// If `cond` is true, the case skips with `reason`; otherwise
+// `result` is recorded as usual. Lets callers keep the test
+// list flat without an `if`/`else` per gated case.
+//
+//   r = r.skip_if(env("CI").is_none(), "ci-only", "not CI", run_test());
+//
+// `result` is evaluated eagerly (lang has no lazy params), so
+// any setup the test does runs whether or not it's skipped.
+// For setup that's expensive or has side effects, branch on
+// `cond` yourself and use `skip` / `it` directly.
+pub function (r: TestRunner) skip_if(cond: boolean, name: string, reason: string, result: Option[string]): TestRunner {
+    if (cond) { return r.skip(name, reason); }
+    return r.it(name, result);
+}
+
+// (r) subsuite(name) — start a nested grouping. Returns a
+// fresh TestRunner that inherits the parent's prefix and
+// counts. After the subsuite's cases land via `child.it(...)`
+// / `child.skip(...)`, the parent calls `parent.merge(child)`
+// to fold the counters back. The child's case names print
+// with the combined prefix so the flat TAP stream stays
+// hierarchical:
+//
+//   r = r.it("standalone", run_standalone());
+//   var arm = r.subsuite("arm64");
+//   arm = arm.it("exit-code", run_arm64_exit());
+//   arm = arm.it("stdout",    run_arm64_stdout());
+//   r = r.merge(arm);
+//   r = r.it("after subsuite", run_after());
+//
+// The child runner does NOT print a `# Suite:` line — that's
+// reserved for top-level `test_new`. The prefix string is
+// the only nesting signal. Two-level nesting works too
+// (`arm.subsuite("regress")`) by chaining the prefixes.
+pub function (r: TestRunner) subsuite(name: string): TestRunner {
+    return TestRunner {
+        suite: r.suite,
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+        failures: [],
+        skip_reasons: [],
+        verbose: r.verbose,
+        prefix: r.prefix + name + " / ",
+        // Inherit the parent's running count so the subsuite's
+        // first case prints `ok N+1` rather than restarting at
+        // `ok 1`. TAP's plan line at the bottom assumes
+        // monotonic case numbering across the whole stream.
+        base_idx: r.base_idx + r.passed + r.failed + r.skipped,
+    };
+}
+
+// (r) merge(child) — fold a subsuite's counters and failure
+// notes back into the parent. The child's `passed / failed /
+// skipped` get added; its `failures` / `skip_reasons` get
+// concatenated. The parent's prefix and verbose flag are
+// preserved.
+pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
+    var fs: string[] = r.failures;
+    var i: i32 = 0;
+    while (i < len(child.failures)) {
+        fs = fs.push(child.failures[i]);
+        i = i + 1;
+    }
+    var sr: string[] = r.skip_reasons;
+    i = 0;
+    while (i < len(child.skip_reasons)) {
+        sr = sr.push(child.skip_reasons[i]);
+        i = i + 1;
+    }
+    return TestRunner {
+        suite: r.suite,
+        passed: r.passed + child.passed,
+        failed: r.failed + child.failed,
+        skipped: r.skipped + child.skipped,
+        failures: fs,
+        skip_reasons: sr,
+        verbose: r.verbose,
+        prefix: r.prefix,
+        base_idx: r.base_idx,
+    };
 }
 
 // (r) finish() — print the TAP plan line + per-suite summary
@@ -154,11 +314,22 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
 // Bottom-plan is permitted by TAP-13 and most consumers
 // (`prove`, `tape`) handle it.
 pub function (r: TestRunner) finish(): i32 {
-    var total: i32 = r.passed + r.failed;
+    var total: i32 = r.passed + r.failed + r.skipped;
     print("1.." + total.to_string());
     print("# tests " + total.to_string());
     print("# pass " + r.passed.to_string());
     print("# fail " + r.failed.to_string());
+    if (r.skipped > 0) {
+        print("# skip " + r.skipped.to_string());
+    }
+    if (r.skipped > 0) {
+        print("# skipped:");
+        var j: i32 = 0;
+        while (j < len(r.skip_reasons)) {
+            print("#   " + r.skip_reasons[j]);
+            j = j + 1;
+        }
+    }
     if (r.failed > 0) {
         print("# failures:");
         var i: i32 = 0;
