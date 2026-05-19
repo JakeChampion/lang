@@ -51,9 +51,13 @@ pub struct TypeString { tag: i32 }    // shape; the field is unused.
 // in inference contexts because it can't infer a concrete elem
 // type.
 pub struct TypeArray { elem: Type }
+// TypeStruct references a user-declared struct by name. The
+// full field list lives in the StructTable (built once per
+// module); this variant is just the nominal handle.
+pub struct TypeStruct { name: string }
 pub struct TypeUnknown { reason: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeArray | TypeUnknown;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeArray | TypeStruct | TypeUnknown;
 
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
@@ -63,6 +67,7 @@ function t_i32(): Type { return TypeI32 { tag: 0 }; }
 function t_bool(): Type { return TypeBool { tag: 0 }; }
 function t_string(): Type { return TypeString { tag: 0 }; }
 function t_array(elem: Type): Type { return TypeArray { elem: elem }; }
+function t_struct(name: string): Type { return TypeStruct { name: name }; }
 function t_unknown(reason: string): Type { return TypeUnknown { reason: reason }; }
 
 // type_eq: structural equality on the type union. Returns true
@@ -95,6 +100,12 @@ function type_eq(a: Type, b: Type): boolean {
                 _ => { return false; }
             }
         },
+        TypeStruct(an) => {
+            match (b) {
+                TypeStruct(bn) => { return an.name == bn.name; },
+                _ => { return false; }
+            }
+        },
         TypeUnknown(_) => { return false; }
     }
     return false;
@@ -121,29 +132,46 @@ function is_unknown(t: Type): boolean {
 // FuncDecl's params in declaration order.
 pub struct FuncSig { name: string, param_types: Type[], ret_type: Type }
 
-// A flat name → type map plus the function signature table.
-// Parallel arrays keep the implementation trivial; the lang-port
-// doesn't need a real hashmap until the program grows beyond
-// ~hundreds of bindings.
-pub struct Scope { names: string[], types: Type[], sigs: FuncSig[] }
+// StructSig: nominal handle for a declared struct. Parallel
+// arrays describe the field list in declaration order: each
+// index i holds (field_names[i], field_types[i]).
+pub struct StructSig { name: string, field_names: string[], field_types: Type[] }
+
+// A flat name → type map plus the function signature table
+// plus the struct-decl table. Parallel arrays keep the
+// implementation trivial.
+pub struct Scope {
+    names: string[],
+    types: Type[],
+    sigs: FuncSig[],
+    structs: StructSig[]
+}
 
 function new_scope(): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
     var fs: FuncSig[] = [];
-    return Scope { names: ns, types: ts, sigs: fs };
+    var ss: StructSig[] = [];
+    return Scope { names: ns, types: ts, sigs: fs, structs: ss };
 }
 
 function new_scope_with_sigs(sigs: FuncSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs };
+    var ss: StructSig[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs, structs: ss };
+}
+
+function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Scope {
+    var ns: string[] = [];
+    var ts: Type[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
     var ns: string[] = s.names.push(name);
     var ts: Type[] = s.types.push(t);
-    return Scope { names: ns, types: ts, sigs: s.sigs };
+    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -167,6 +195,18 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
     // tells callers the name isn't a function.
     var empty: Type[] = [];
     return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name) };
+}
+
+function (s: Scope) lookup_struct(name: string): StructSig {
+    var i: i32 = 0;
+    while (i < len(s.structs)) {
+        if (s.structs[i].name == name) { return s.structs[i]; }
+        i = i + 1;
+    }
+    // Sentinel: empty name signals "no such struct".
+    var empty_n: string[] = [];
+    var empty_t: Type[] = [];
+    return StructSig { name: "", field_names: empty_n, field_types: empty_t };
 }
 
 // type_from_name resolves a parser-side bare type-name string to
@@ -330,8 +370,51 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             return t_unknown("unreachable slice arm");
         },
-        parser.ExprStructLit(_) => { return t_unknown("struct literal typing not implemented yet"); },
-        parser.ExprFieldAccess(_) => { return t_unknown("field access typing not implemented yet"); },
+        parser.ExprStructLit(sl) => {
+            // Look up the struct decl. Verify the literal's
+            // fields cover the declared shape — same field
+            // names, in declaration order, with matching types.
+            var ssig: StructSig = s.lookup_struct(sl.type_name);
+            if (len(ssig.name) == 0) {
+                return t_unknown("undefined struct: " + sl.type_name);
+            }
+            if (len(sl.field_names) != len(ssig.field_names)) {
+                return t_unknown("struct " + sl.type_name + " field count mismatch");
+            }
+            var sli: i32 = 0;
+            while (sli < len(sl.field_names)) {
+                if (sl.field_names[sli] != ssig.field_names[sli]) {
+                    return t_unknown("struct " + sl.type_name + " field name mismatch at index " + sl.field_names[sli]);
+                }
+                var ft: Type = check_expr(sl.field_values[sli], s);
+                if (!type_eq(ft, ssig.field_types[sli])) {
+                    return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
+                }
+                sli = sli + 1;
+            }
+            return t_struct(sl.type_name);
+        },
+        parser.ExprFieldAccess(fa) => {
+            var ot: Type = check_expr(fa.obj, s);
+            match (ot) {
+                TypeStruct(sn) => {
+                    var fsig: StructSig = s.lookup_struct(sn.name);
+                    if (len(fsig.name) == 0) {
+                        return t_unknown("undefined struct: " + sn.name);
+                    }
+                    var fai: i32 = 0;
+                    while (fai < len(fsig.field_names)) {
+                        if (fsig.field_names[fai] == fa.field) {
+                            return fsig.field_types[fai];
+                        }
+                        fai = fai + 1;
+                    }
+                    return t_unknown("struct " + sn.name + " has no field `" + fa.field + "`");
+                },
+                _ => { return t_unknown("can only field-access a struct"); }
+            }
+            return t_unknown("unreachable field-access arm");
+        },
         parser.ExprUnknown(u) => { return t_unknown("parser-side unknown:" + u.kind); }
     }
     return t_unknown("unhandled Expr variant");
@@ -454,7 +537,7 @@ function check_program(prog: parser.Stmt[]): ProgramTypes {
 // to Types via type_from_name. The table is built in one pass and
 // then passed to check_module's per-function body walk so calls
 // (including recursive / mutually-recursive ones) can resolve.
-function collect_func_sigs(funcs: parser.FuncDecl[]): FuncSig[] {
+function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[]): FuncSig[] {
     var out: FuncSig[] = [];
     var i: i32 = 0;
     while (i < len(funcs)) {
@@ -462,13 +545,83 @@ function collect_func_sigs(funcs: parser.FuncDecl[]): FuncSig[] {
         var pts: Type[] = [];
         var j: i32 = 0;
         while (j < len(fd.params)) {
-            pts = pts.push(type_from_name(fd.params[j].type_name));
+            pts = pts.push(type_from_name_with_structs(fd.params[j].type_name, structs));
             j = j + 1;
         }
-        out = out.push(FuncSig { name: fd.name, param_types: pts, ret_type: type_from_name(fd.ret_type) });
+        out = out.push(FuncSig {
+            name: fd.name,
+            param_types: pts,
+            ret_type: type_from_name_with_structs(fd.ret_type, structs)
+        });
         i = i + 1;
     }
     return out;
+}
+
+// collect_struct_sigs builds the struct-decl table from the
+// module's StructDecls. Field types are resolved via the same
+// type_from_name path used for function params — bare strings
+// like "i32" / "bool" / "string", plus references to other
+// declared structs.
+function collect_struct_sigs(structs: parser.StructDecl[]): StructSig[] {
+    var out: StructSig[] = [];
+    // First pass: build a name-only table so type_from_name
+    // can resolve struct → struct references (e.g. a `Box`
+    // with an `inner: Point` field needs Point already known).
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < len(structs)) {
+        names = names.push(structs[i].name);
+        i = i + 1;
+    }
+    // Second pass: resolve fields with the full name set
+    // available. Struct-to-struct field references resolve via
+    // type_from_name_with_struct_names which knows about every
+    // declared struct.
+    var k: i32 = 0;
+    while (k < len(structs)) {
+        var sd: parser.StructDecl = structs[k];
+        var fnames: string[] = [];
+        var ftypes: Type[] = [];
+        var j: i32 = 0;
+        while (j < len(sd.fields)) {
+            fnames = fnames.push(sd.fields[j].name);
+            ftypes = ftypes.push(type_from_name_with_struct_names(sd.fields[j].type_name, names));
+            j = j + 1;
+        }
+        out = out.push(StructSig { name: sd.name, field_names: fnames, field_types: ftypes });
+        k = k + 1;
+    }
+    return out;
+}
+
+// type_from_name_with_structs / type_from_name_with_struct_names
+// extend type_from_name with struct-name resolution. The
+// `_with_struct_names` variant takes just the name set
+// (cheaper to build up-front); the `_with_structs` variant
+// takes the full StructSig[] for callers that already have it.
+function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
+    if (name == "i32") { return t_i32(); }
+    if (name == "bool" || name == "boolean") { return t_bool(); }
+    if (name == "string") { return t_string(); }
+    var i: i32 = 0;
+    while (i < len(structs)) {
+        if (structs[i].name == name) { return t_struct(name); }
+        i = i + 1;
+    }
+    return t_unknown("unrecognised type name: " + name);
+}
+
+function type_from_name_with_struct_names(name: string, struct_names: string[]): Type {
+    if (name == "i32") { return t_i32(); }
+    if (name == "bool" || name == "boolean") { return t_bool(); }
+    if (name == "string") { return t_string(); }
+    var i: i32 = 0;
+    while (i < len(struct_names)) {
+        if (struct_names[i] == name) { return t_struct(name); }
+        i = i + 1;
+    }
+    return t_unknown("unrecognised type name: " + name);
 }
 
 // check_func_body type-checks a function's body in a scope
@@ -477,11 +630,11 @@ function collect_func_sigs(funcs: parser.FuncDecl[]): FuncSig[] {
 // effects and don't return them yet. Returns true if every body
 // stmt type-checked (no TypeUnknown anywhere); the caller can
 // use that to count well-typed function bodies for diagnostics.
-function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[]): boolean {
-    var s: Scope = new_scope_with_sigs(sigs);
+function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[]): boolean {
+    var s: Scope = new_scope_with_sigs_structs(sigs, structs);
     var i: i32 = 0;
     while (i < len(fd.params)) {
-        s = s.bind(fd.params[i].name, type_from_name(fd.params[i].type_name));
+        s = s.bind(fd.params[i].name, type_from_name_with_structs(fd.params[i].type_name, structs));
         i = i + 1;
     }
     var ok: boolean = true;
@@ -507,14 +660,17 @@ function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[]): boolean {
 pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boolean }
 
 pub function check_module(mod: parser.Module): ModuleTypes {
-    var sigs: FuncSig[] = collect_func_sigs(mod.funcs);
+    // Collect struct decls first; func sigs use them to
+    // resolve struct-typed params / returns.
+    var structs: StructSig[] = collect_struct_sigs(mod.structs);
+    var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs);
     var well_typed: boolean = true;
     var i: i32 = 0;
     while (i < len(mod.funcs)) {
-        if (!check_func_body(mod.funcs[i], sigs)) { well_typed = false; }
+        if (!check_func_body(mod.funcs[i], sigs, structs)) { well_typed = false; }
         i = i + 1;
     }
-    var s: Scope = new_scope_with_sigs(sigs);
+    var s: Scope = new_scope_with_sigs_structs(sigs, structs);
     var top_tys: Type[] = [];
     var j: i32 = 0;
     while (j < len(mod.top_stmts)) {
@@ -647,6 +803,36 @@ function main(): i32 {
     var stmts13: parser.Stmt[] = parser.parse_program(lexer.tokenize(src13));
     var pt13: ProgramTypes = check_program(stmts13);
     if (!type_eq(pt13.tys[1], t_string())) { return 130; }
+
+    // Struct lit + field access well-typed.
+    var src14: string = "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; return p.x + p.y; }";
+    var mod14: parser.Module = parser.parse_module(lexer.tokenize(src14));
+    var mt14: ModuleTypes = check_module(mod14);
+    if (!mt14.all_well_typed) { return 140; }
+
+    // Wrong field type: y wants i32 but a string is passed.
+    var src15: string = "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 3, y: \"oops\" }; return 0; }";
+    var mod15: parser.Module = parser.parse_module(lexer.tokenize(src15));
+    var mt15: ModuleTypes = check_module(mod15);
+    if (mt15.all_well_typed) { return 150; }
+
+    // Missing field on access: Point has no `z`.
+    var src16: string = "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; return p.z; }";
+    var mod16: parser.Module = parser.parse_module(lexer.tokenize(src16));
+    var mt16: ModuleTypes = check_module(mod16);
+    if (mt16.all_well_typed) { return 160; }
+
+    // Field count mismatch: literal supplies only one field.
+    var src17: string = "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 3 }; return 0; }";
+    var mod17: parser.Module = parser.parse_module(lexer.tokenize(src17));
+    var mt17: ModuleTypes = check_module(mod17);
+    if (mt17.all_well_typed) { return 170; }
+
+    // Nested struct field type.
+    var src18: string = "struct Inner { v: i32 } struct Outer { i: Inner } function main(): i32 { var o = Outer { i: Inner { v: 5 } }; return o.i.v; }";
+    var mod18: parser.Module = parser.parse_module(lexer.tokenize(src18));
+    var mt18: ModuleTypes = check_module(mod18);
+    if (!mt18.all_well_typed) { return 180; }
 
     return 0;
 }
