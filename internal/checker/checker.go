@@ -3869,7 +3869,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		// surface here in practice but guard for safety).
 		switch t.(type) {
 		case ast.VoidType, ast.ParamType:
-			c.errf(fn.P, "captured variable %q has unsupported type %s", name, t)
+			c.errfCode(fn.P, "E044", "captured variable %q has unsupported type %s", name, t)
 		default:
 			captured[name] = t
 			captureOrder = append(captureOrder, name)
@@ -4871,7 +4871,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			switch t.(type) {
 			case ast.VoidType, ast.ParamType:
-				c.errf(n.P, "captured variable %q has unsupported type %s", name, t)
+				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			default:
 				captured[name] = t
 				captureOrder = append(captureOrder, name)
@@ -5091,7 +5091,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			case ast.NumberType, ast.StringType:
 				// fine
 			default:
-				c.errf(n.Entries[0].Key.Pos(), "map key type %s is not yet supported (use i32 or string)", keyType)
+				c.errfCode(n.Entries[0].Key.Pos(), "E045", "map key type %s is not yet supported (use i32 or string)", keyType)
 			}
 		}
 		// Re-check entries with the inferred K / V as the
@@ -5108,10 +5108,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			kt := postSettleType(ent.Key, keyType)
 			vt := postSettleType(ent.Value, valueType)
 			if kt != nil && !ast.Equal(kt, keyType) {
-				c.errf(ent.Key.Pos(), "map key type %s, expected %s", kt, keyType)
+				c.errfCode(ent.Key.Pos(), "E045", "map key type %s, expected %s", kt, keyType)
 			}
 			if vt != nil && !ast.Equal(vt, valueType) {
-				c.errf(ent.Value.Pos(), "map value type %s, expected %s", vt, valueType)
+				c.errfCode(ent.Value.Pos(), "E045", "map value type %s, expected %s", vt, valueType)
 			}
 		}
 		n.KeyType = keyType
@@ -5128,13 +5128,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if _, isEnum := c.info.Enums[tid.Name]; isEnum {
 				if vr, ok, _ := c.resolveVariant(n.Field, tid.Name); ok {
 					if len(vr.payloads) > 0 {
-						c.errf(n.P, "variant %s.%s expects %d payload argument(s); call it as %s.%s(...)",
+						c.errfCode(n.P, "E036", "variant %s.%s expects %d payload argument(s); call it as %s.%s(...)",
 							tid.Name, n.Field, len(vr.payloads), tid.Name, n.Field)
 						return nil
 					}
 					return ast.EnumType{Name: vr.enumName}
 				}
-				c.errf(n.P, "enum %s has no variant %q", tid.Name, n.Field)
+				c.errfCode(n.P, "E036", "enum %s has no variant %q", tid.Name, n.Field)
 				return nil
 			}
 		}
@@ -5147,11 +5147,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if tup, ok := tt.(ast.TupleType); ok {
 			idx, err := strconv.Atoi(n.Field)
 			if err != nil || idx < 0 {
-				c.errf(n.P, "tuple field access requires a numeric index, got %q", n.Field)
+				c.errfCode(n.P, "E046", "tuple field access requires a numeric index, got %q", n.Field)
 				return nil
 			}
 			if idx >= len(tup.Elems) {
-				c.errf(n.P, "tuple has %d elements; index %d is out of range", len(tup.Elems), idx)
+				c.errfCode(n.P, "E046", "tuple has %d elements; index %d is out of range", len(tup.Elems), idx)
 				return nil
 			}
 			return tup.Elems[idx]
@@ -5159,13 +5159,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		st, ok := tt.(ast.StructType)
 		if !ok {
 			if tt != nil {
-				c.errf(n.P, "field access on non-struct value of type %s", tt)
+				c.errfCode(n.P, "E043", "field access on non-struct value of type %s", tt)
 			}
 			return nil
 		}
 		sd := c.info.Structs[st.Name]
 		if sd == nil {
-			c.errf(n.P, "unknown struct type %q", st.Name)
+			c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
 			return nil
 		}
 		for _, f := range sd.Fields {
@@ -5185,7 +5185,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return f.Type
 			}
 		}
-		c.errf(n.P, "struct %s has no field %q", st.Name, n.Field)
+		c.errfCode(n.P, "E043", "struct %s has no field %q", st.Name, n.Field)
 		return nil
 	}
 	return nil
@@ -5193,7 +5193,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 
 func (c *checker) requireNumber(p ast.Position, t ast.Type, op string) {
 	if t != nil && !ast.Equal(t, ast.NumberType{}) {
-		c.errf(p, "operator %q requires i32, got %s", op, t)
+		c.errfCode(p, "E009", "operator %q requires i32, got %s", op, t)
 	}
 }
 
@@ -6085,7 +6085,7 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 			return
 		}
 		if lit.Value < min || lit.Value > max {
-			c.errf(lit.P, "literal %d does not fit in %s", lit.Value, t)
+			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", lit.Value, t)
 		}
 	} else {
 		var max uint64
@@ -6102,7 +6102,7 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 			return
 		}
 		if lit.Value < 0 || uint64(lit.Value) > max {
-			c.errf(lit.P, "literal %d does not fit in %s", lit.Value, t)
+			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", lit.Value, t)
 		}
 	}
 }
@@ -6223,7 +6223,7 @@ func (c *checker) requireFloat(p ast.Position, t ast.Type, op string) {
 		return
 	}
 	if _, ok := t.(ast.FloatType); !ok {
-		c.errf(p, "operator %q requires float, got %s", op, t)
+		c.errfCode(p, "E009", "operator %q requires float, got %s", op, t)
 	}
 }
 func isFloat(t ast.Type) bool {
@@ -6364,6 +6364,6 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 
 func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 	if t != nil && !ast.Equal(t, ast.BoolType{}) {
-		c.errf(p, "operator %q requires boolean, got %s", op, t)
+		c.errfCode(p, "E009", "operator %q requires boolean, got %s", op, t)
 	}
 }
