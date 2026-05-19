@@ -742,6 +742,42 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"xyz",
 		},
 		{
+			"arr-i32-first",
+			"function main(): i32 { var xs: i32[] = [10, 20, 30]; return xs.first(); }",
+			10,
+			"",
+		},
+		{
+			"arr-i32-last",
+			"function main(): i32 { var xs: i32[] = [10, 20, 30]; return xs.last(); }",
+			30,
+			"",
+		},
+		{
+			"arr-i32-first-single",
+			"function main(): i32 { var xs: i32[] = [99]; return xs.first(); }",
+			99,
+			"",
+		},
+		{
+			"arr-i32-last-single",
+			"function main(): i32 { var xs: i32[] = [99]; return xs.last(); }",
+			99,
+			"",
+		},
+		{
+			"arr-string-first",
+			"function main(): i32 { var xs: string[] = [\"hello\", \"world\"]; print(xs.first()); return 0; }",
+			0,
+			"hello",
+		},
+		{
+			"arr-string-last",
+			"function main(): i32 { var xs: string[] = [\"hello\", \"world\"]; print(xs.last()); return 0; }",
+			0,
+			"world",
+		},
+		{
 			"closure-uses-multiple-string-methods",
 			"function (s: string) bang(): string { return s + \"!\"; } function main(): i32 { var msg = \"hi\"; var f = function (): string { return msg.bang() + \"?\"; }; print(f()); return 0; }",
 			0,

@@ -986,6 +986,12 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                             && (rt == "array_i32" || rt == "array_string" || rt == "array")) {
                         return rt;
                     }
+                    // `.first()` / `.last()` return the element type.
+                    if ((fa.field == "first" || fa.field == "last")
+                            && (rt == "array_i32" || rt == "array_string")) {
+                        if (rt == "array_i32") { return "i32"; }
+                        return "string";
+                    }
                     // i32-array search methods.
                     if (rt == "array_i32") {
                         if (fa.field == "index_of") { return "i32"; }
@@ -1793,6 +1799,25 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.write("    bl __lang_arr_concat\n");
                         s = s.write("    str x0, [sp, #-16]!\n");
                         s = s.mark_arr_concat();
+                        return s;
+                    }
+                    // Built-in `.first()` / `.last()` on arrays —
+                    // O(1) element access. UB on empty arrays.
+                    if (fa.field == "first" && len(c.args) == 0
+                            && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        s = s.write("    ldr x0, [x0, #8]\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        return s;
+                    }
+                    if (fa.field == "last" && len(c.args) == 0
+                            && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        s = s.write("    ldr x1, [x0]\n");
+                        s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
                         return s;
                     }
                     // Built-in `.index_of(x)` / `.contains(x)` on
