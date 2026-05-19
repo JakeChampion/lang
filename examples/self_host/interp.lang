@@ -33,6 +33,10 @@ pub struct VString { v: string }
 // level would route through a future numeric coercion pass.
 pub struct VFloat { v: f64 }
 pub struct VArr { elements: Value[] }
+// VTuple holds an immutable fixed-arity sequence of values.
+// Each slot's runtime type stays whatever the source emitted;
+// `.0` / `.1` / … indices read positionally.
+pub struct VTuple { elements: Value[] }
 // VStruct holds a user-defined struct value. Parallel arrays
 // for field names and corresponding evaluated values.
 // type_name is the struct's declared name — useful for
@@ -44,13 +48,14 @@ pub struct VErr { msg: string }
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
 
-pub type Value = VInt | VBool | VString | VFloat | VArr | VStruct | VErr;
+pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
 function v_float(n: f64): Value { return VFloat { v: n }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
+function v_tuple(elements: Value[]): Value { return VTuple { elements: elements }; }
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
     return VStruct { type_name: type_name, field_names: names, field_values: values };
 }
@@ -372,11 +377,16 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return call_func(name, arg_vals, env.funcs);
         },
-        parser.ExprTuple(_) => {
-            // Tuple values aren't modeled in the Value lattice
-            // yet — a future slice would add VTuple. For now
-            // tuples surface as VErr at eval time.
-            return v_err("tuple value not implemented");
+        parser.ExprTuple(t) => {
+            var elems: Value[] = [];
+            var i: i32 = 0;
+            while (i < len(t.elements)) {
+                var ev: Value = eval_expr(t.elements[i], env);
+                if (is_err(ev)) { return ev; }
+                elems = elems.push(ev);
+                i = i + 1;
+            }
+            return v_tuple(elems);
         },
         parser.ExprArray(a) => {
             var elems: Value[] = [];
@@ -479,9 +489,11 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             return v_struct(sl.type_name, sl.field_names, fvs);
         },
         parser.ExprFieldAccess(fa) => {
-            // Evaluate the object, expect a VStruct, look up
-            // the field name. Linear scan over field_names —
-            // structs are typically small so this is fine.
+            // Evaluate the object. Field can be:
+            //   * struct field name (linear scan)
+            //   * tuple index `0` / `1` / … (string-of-digits)
+            // The parser stores both shapes as a bare string;
+            // we disambiguate on the receiver's runtime type.
             var ov: Value = eval_expr(fa.obj, env);
             if (is_err(ov)) { return ov; }
             match (ov) {
@@ -495,7 +507,14 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     }
                     return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
                 },
-                _ => { return v_err("can only field-access a struct"); }
+                VTuple(tv) => {
+                    var idx: i32 = str_to_i32(fa.field);
+                    if (idx < 0 || idx >= len(tv.elements)) {
+                        return v_err("tuple index `" + fa.field + "` out of range");
+                    }
+                    return tv.elements[idx];
+                },
+                _ => { return v_err("can only field-access a struct or tuple"); }
             }
             return v_err("unreachable field-access arm");
         },
@@ -630,6 +649,12 @@ function value_eq(a: Value, b: Value): boolean {
         VStruct(_) => {
             // Struct equality not implemented yet — same
             // rationale as arrays.
+            return false;
+        },
+        VTuple(_) => {
+            // Tuple equality not implemented yet either; the
+            // checker rules out direct tuple == tuple in the
+            // first cut anyway.
             return false;
         },
         VErr(_) => { return false; }
@@ -1406,6 +1431,41 @@ function main(): i32 {
     match (r60) {
         VErr(_) => { },
         _ => { return 600; }
+    }
+
+    // Tuple literal — evaluates to VTuple.
+    var r61: Value = run_source("var t = (1, 2, 3); return 0;");
+    match (r61) {
+        VInt(i) => { if (i.v != 0) { return 610; } },
+        _ => { return 611; }
+    }
+
+    // Tuple field access — `(10, 20, 30).0` → 10.
+    var r62: Value = run_source("var t = (10, 20, 30); return t.0;");
+    match (r62) {
+        VInt(i) => { if (i.v != 10) { return 620; } },
+        _ => { return 621; }
+    }
+
+    // Tuple index 1.
+    var r63: Value = run_source("var t = (10, 20, 30); return t.1;");
+    match (r63) {
+        VInt(i) => { if (i.v != 20) { return 630; } },
+        _ => { return 631; }
+    }
+
+    // Tuple index out of range → VErr.
+    var r64: Value = run_source("var t = (10, 20); return t.5;");
+    match (r64) {
+        VErr(_) => { },
+        _ => { return 640; }
+    }
+
+    // Heterogeneous tuple — int + string slot.
+    var r65: Value = run_source("var t = (42, \"hi\"); return t.0;");
+    match (r65) {
+        VInt(i) => { if (i.v != 42) { return 650; } },
+        _ => { return 651; }
     }
 
     return 0;
