@@ -751,3 +751,247 @@ pub function assert_process(actual: ProcessResult, expected_exit: i32, stdout_su
     }
     return None;
 }
+
+// =================== MULTI-SUBSTRING ASSERTIONS ===================
+//
+// Diagnostic-message tests typically want to check that a
+// compiler error mentions several relevant tokens — the offending
+// identifier, a "did you mean" hint, the source position. Doing
+// that with `assert_contains` per substring inflates the case
+// count and obscures the actual contract; these collapse the
+// check to one assertion with a substring vector.
+
+// `assert_contains_all(haystack, needles)` — every entry in
+// `needles` must appear somewhere in `haystack` (order is NOT
+// required; if order matters, use a sequence of substring
+// `index_of` checks). Empty needles list always passes.
+pub function assert_contains_all(haystack: string, needles: string[]): Option[string] {
+    var i: i32 = 0;
+    while (i < len(needles)) {
+        if (!haystack.contains(needles[i])) {
+            return Some("assert_contains_all: missing \"" + needles[i] +
+                        "\" in:\n  " + haystack);
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_contains_any(haystack, needles)` — at least one entry
+// in `needles` must appear. Useful for "the diagnostic mentions
+// EITHER X or Y" cases where the exact wording is incidental.
+// Empty needles list always fails (vacuously: nothing to match).
+pub function assert_contains_any(haystack: string, needles: string[]): Option[string] {
+    if (len(needles) == 0) {
+        return Some("assert_contains_any: empty needles list");
+    }
+    var i: i32 = 0;
+    while (i < len(needles)) {
+        if (haystack.contains(needles[i])) {
+            return None;
+        }
+        i = i + 1;
+    }
+    return Some("assert_contains_any: none of " + i.to_string() +
+                " needles matched in:\n  " + haystack);
+}
+
+// `assert_contains_in_order(haystack, needles)` — every needle
+// must appear AND the matches must be in the order given.
+// Useful for asserting on a structured diagnostic ("expected
+// X at line N, got Y") where the file/line/expected/actual
+// sequence is contractual.
+pub function assert_contains_in_order(haystack: string, needles: string[]): Option[string] {
+    var cursor: i32 = 0;
+    var i: i32 = 0;
+    while (i < len(needles)) {
+        var rest: string = haystack[cursor:len(haystack)];
+        var idx: i32 = rest.index_of(needles[i]);
+        if (idx < 0) {
+            return Some("assert_contains_in_order: \"" + needles[i] +
+                        "\" not found after byte " + cursor.to_string() +
+                        " in:\n  " + haystack);
+        }
+        cursor = cursor + idx + len(needles[i]);
+        i = i + 1;
+    }
+    return None;
+}
+
+// =================== STRING DIFF ===================
+//
+// `assert_eq_string` works fine on short values but produces
+// unreadable failure messages on multi-line strings — the
+// expected/actual blocks blur together and the eye can't find
+// the first mismatch. `assert_eq_string_diff` walks both sides
+// line-by-line and reports the first differing line with its
+// line number + surrounding context.
+
+// `__diff_lines(a, b)` — return the 1-based line number where
+// `a` and `b` first differ, or 0 if they match. Counts a length
+// difference past end-of-shorter as a difference at the
+// shorter's last+1 line.
+function __diff_lines(a: string, b: string): i32 {
+    var a_lines: string[] = a.lines();
+    var b_lines: string[] = b.lines();
+    var n: i32 = len(a_lines);
+    if (len(b_lines) < n) { n = len(b_lines); }
+    var i: i32 = 0;
+    while (i < n) {
+        if (a_lines[i] != b_lines[i]) { return i + 1; }
+        i = i + 1;
+    }
+    if (len(a_lines) != len(b_lines)) { return n + 1; }
+    return 0;
+}
+
+// `assert_eq_string_diff(actual, expected)` — exact equality but
+// the failure message reports the first differing line + its
+// line number + the values on each side. The diff is friendlier
+// than the plain `assert_eq_string` shape for multi-line stdout
+// or generated source.
+pub function assert_eq_string_diff(actual: string, expected: string): Option[string] {
+    if (actual == expected) { return None; }
+    var line_no: i32 = __diff_lines(expected, actual);
+    var a_lines: string[] = actual.lines();
+    var e_lines: string[] = expected.lines();
+    var actual_line: string = "<past end>";
+    var expected_line: string = "<past end>";
+    var ix: i32 = line_no - 1;
+    if (ix >= 0 && ix < len(a_lines)) { actual_line = a_lines[ix]; }
+    if (ix >= 0 && ix < len(e_lines)) { expected_line = e_lines[ix]; }
+    return Some("assert_eq_string_diff: differ at line " + line_no.to_string() +
+                "\n  expected: " + expected_line +
+                "\n  actual:   " + actual_line);
+}
+
+// =================== NUMERIC RANGE ASSERTIONS ===================
+//
+// Common in property tests: "the result must land between two
+// inclusive bounds". Equivalent to `assert_ge_i32(v, lo) +
+// assert_le_i32(v, hi)` but in one line, with a failure message
+// that names the violated side.
+
+// `assert_in_range_i32(v, lo, hi)` — `lo <= v <= hi`.
+pub function assert_in_range_i32(v: i32, lo: i32, hi: i32): Option[string] {
+    if (v < lo) {
+        return Some("assert_in_range_i32: " + v.to_string() +
+                    " < lower bound " + lo.to_string());
+    }
+    if (v > hi) {
+        return Some("assert_in_range_i32: " + v.to_string() +
+                    " > upper bound " + hi.to_string());
+    }
+    return None;
+}
+
+// `assert_in_range_i64(v, lo, hi)` — same for wider ints.
+pub function assert_in_range_i64(v: i64, lo: i64, hi: i64): Option[string] {
+    if (v < lo) {
+        return Some("assert_in_range_i64: " + v.to_string() +
+                    " < lower bound " + lo.to_string());
+    }
+    if (v > hi) {
+        return Some("assert_in_range_i64: " + v.to_string() +
+                    " > upper bound " + hi.to_string());
+    }
+    return None;
+}
+
+// =================== FILESYSTEM ASSERTIONS ===================
+//
+// File-state assertions for tests that build a fixture tree
+// then verify a subprocess produced the expected output files.
+// Layered on `read_file` / `read_dir` so they work under
+// `lang -interp`. Names are deliberately verbose
+// (`assert_file_exists` rather than `file_exists`) to keep them
+// clearly distinguishable from `read_file` itself in user code.
+
+// `assert_file_exists(path)` — the path must be a readable
+// file. The check goes through `read_file`, so a path that
+// exists but isn't readable surfaces as a failure too.
+pub function assert_file_exists(path: string): Option[string] {
+    match (read_file(path)) {
+        Ok(_) => { return None; },
+        Err(_) => {
+            return Some("assert_file_exists: \"" + path + "\" does not exist or is unreadable");
+        }
+    }
+    return None;
+}
+
+// `assert_file_not_exists(path)` — the path must NOT resolve
+// to a readable file. Useful for asserting that a cleanup
+// actually scrubbed something.
+pub function assert_file_not_exists(path: string): Option[string] {
+    match (read_file(path)) {
+        Ok(_) => {
+            return Some("assert_file_not_exists: \"" + path + "\" still exists");
+        },
+        Err(_) => { return None; }
+    }
+    return None;
+}
+
+// `assert_file_contents(path, expected)` — read the file and
+// compare its full contents (byte-exact) to `expected`. Routes
+// the long-string diff through `assert_eq_string_diff` so the
+// failure message localises the first differing line.
+pub function assert_file_contents(path: string, expected: string): Option[string] {
+    match (read_file(path)) {
+        Ok(actual) => { return assert_eq_string_diff(actual, expected); },
+        Err(_) => {
+            return Some("assert_file_contents: failed to read \"" + path + "\"");
+        }
+    }
+    return None;
+}
+
+// `assert_file_contains(path, needle)` — file contents include
+// the given substring. Faster than `assert_file_contents` when
+// the test only cares that the output mentions something
+// specific, not that it matches a full golden.
+pub function assert_file_contains(path: string, needle: string): Option[string] {
+    match (read_file(path)) {
+        Ok(actual) => {
+            if (actual.contains(needle)) { return None; }
+            return Some("assert_file_contains: \"" + path +
+                        "\" does not contain \"" + needle +
+                        "\"\n  contents: " + actual);
+        },
+        Err(_) => {
+            return Some("assert_file_contains: failed to read \"" + path + "\"");
+        }
+    }
+    return None;
+}
+
+// =================== TEMPDIR CONVENIENCE ===================
+//
+// `must_temp_dir(r, prefix)` — single-shot tempdir + cleanup
+// registration. Returns the path (empty string on failure) and
+// a runner with the cleanup hook already wired. Callers that
+// expect tempdir creation to always succeed (the typical
+// case — `/tmp` is writable on every supported platform) can
+// skip the match boilerplate.
+//
+//   var dir: string = "";
+//   var rr: TestRunner = r;
+//   match (must_temp_dir(rr, "my-fixture")) {
+//       (p, nr) => { dir = p; rr = nr; }
+//   }
+//
+// Returns a 2-tuple `(path, runner)`. When tempdir creation
+// fails the runner gets a `skip` recorded and the path is
+// empty — callers should check `dir != ""` before using it.
+pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) {
+    match (temp_dir(prefix)) {
+        Ok(dir) => {
+            return (dir, r.defer_cleanup(dir));
+        },
+        Err(_) => {
+            return ("", r.skip("temp_dir " + prefix, "tempdir creation failed"));
+        }
+    }
+    return ("", r);
+}
