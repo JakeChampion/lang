@@ -567,7 +567,7 @@ function main(): i32 {
 }`,
   strings: `function main(): i32 {
     var s: string = "  Hello, lang!  ";
-    print("len:        " + len(s).to_string());
+    print("len:        " + s.len().to_string());
     print("trim:       \\"" + s.trim() + "\\"");
     print("byte[2]:    " + s[2].to_string());
     var starts: string = "no";
@@ -579,19 +579,19 @@ function main(): i32 {
     var parts: string[] = "a,b,c,d".split(",");
     var i: i32 = 0;
     var joined: string = "";
-    while (i < len(parts)) {
+    while (i < parts.len()) {
         if (i > 0) { joined = joined + " | "; }
         joined = joined + parts[i];
         i = i + 1;
     }
     print("split:      " + joined);
     print("replace:    " + "hello world".replace("world", "lang"));
-    return len(parts);
+    return parts.len();
 }`,
   sort: `function join_i32s(arr: i32[]): string {
     var i: i32 = 0;
     var out: string = "";
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (i > 0) { out = out + ", "; }
         out = out + arr[i].to_string();
         i = i + 1;
@@ -606,7 +606,7 @@ function main(): i32 {
     print("sorted: [" + join_i32s(asc) + "]");
     var desc: i32[] = sort_i32_desc(xs);
     print("desc:   [" + join_i32s(desc) + "]");
-    return len(asc);
+    return asc.len();
 }`,
   union: `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -631,7 +631,7 @@ function main(): i32 {
   result: `struct ParseError { message: string, pos: i32 }
 
 function parse_int(s: string): Result[i32, ParseError] {
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     if (n == 0) {
         return Err(ParseError { message: "empty input", pos: 0 });
     }
@@ -666,7 +666,7 @@ type Expr = Num | BinOp;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -790,7 +790,7 @@ function main(): i32 {
     ];
 
     var i: i32 = 0;
-    while (i < len(people)) {
+    while (i < people.len()) {
         print(describe(people[i]));
         i = i + 1;
     }
