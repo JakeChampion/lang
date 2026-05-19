@@ -396,3 +396,51 @@ pub function http_serialize_response(resp: HttpResponse): string {
         + "\r\n";
     return status_line + hdr_block + resp.body;
 }
+
+// ============================================================
+// HttpRequest.body forward-compatibility shim — Tier-A Rec §1
+// per docs/STDLIB-DESIGN-RESEARCH.md. Today's
+// `HttpRequest.body: string` will migrate to
+// `body: Stream[bytes]` once the Stream / bytes type
+// primitives land. These methods let handler code use the
+// future call shape today; when the field type swaps, only
+// the method bodies change — `req.body_string()` /
+// `req.body_bytes()` / `len(req.body_string())` call sites
+// stay stable.
+//
+// Rationale per the doc:
+// > Today's handler code `req.body` becomes
+// > `req.body_string()?`. One-line diff per handler.
+//
+// Today no Result wrapping is needed (body is already a
+// string in memory); when the field becomes Stream[bytes]
+// the methods will grow `Result[T, IoError]` returns to
+// surface read errors. Callers using `match` on the result
+// today get a no-op trip through Some; tomorrow they get
+// real error paths.
+// ============================================================
+
+// `(r: HttpRequest).body_string()` — body as a UTF-8 string.
+// Forward-compatibility shim for the eventual Stream[bytes]
+// body shape.
+pub function (r: HttpRequest) body_string(): string {
+    return r.body;
+}
+
+// `(r: HttpRequest).body_bytes()` — body as a u8 array.
+// Same shape forward-compat as body_string; converts the
+// current string body through `s.bytes()`.
+pub function (r: HttpRequest) body_bytes(): u8[] {
+    return r.body.bytes();
+}
+
+// `(r: HttpRequest).body_len()` — body length in bytes.
+// Common shape (`len(req.body)`) that should also be
+// forward-compatible — once the field becomes Stream[bytes],
+// reading the length requires the stream to either be
+// fully consumed or to carry a Content-Length-derived
+// pre-known length. This shim returns the current
+// in-memory string's length.
+pub function (r: HttpRequest) body_len(): i32 {
+    return len(r.body);
+}

@@ -593,7 +593,7 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
         return http_response_ok("world");
     }
     if (req.method == "POST") {
-        return http_response_ok(req.body);
+        return http_response_ok(req.body_string());
     }
     return http_response_text(404, "not found");
 }

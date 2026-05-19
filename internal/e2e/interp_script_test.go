@@ -1552,6 +1552,48 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptHttpRequestBodyShim pins the Tier-A Rec §1
+// forward-compatibility shim
+// (docs/STDLIB-DESIGN-RESEARCH.md). Handler code uses
+// `req.body_string()` / `req.body_bytes()` / `req.body_len()`
+// instead of accessing `req.body` directly so the future
+// Stream[bytes] field migration is invisible to callers.
+func TestInterpScriptHttpRequestBodyShim(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := `import "std/http";
+
+function main(): i32 {
+    var wire: string = "POST /upload HTTP/1.1\r\nContent-Length: 11\r\n\r\nhello world";
+    match (http.http_parse_request(wire)) {
+        Some(req) => {
+            if (req.body_string() != "hello world") { return 1; }
+            if (req.body_len() != 11) { return 2; }
+            var bs: u8[] = req.body_bytes();
+            if (len(bs) != 11) { return 3; }
+            if (bs[0] != 104) { return 4; }  // 'h'
+            if (bs[10] != 100) { return 5; } // 'd'
+            return 0;
+        },
+        None => { return 99; }
+    }
+    return 0;
+}`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "prog.lang")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", srcPath)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+			code, out.String(), errb.String())
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
