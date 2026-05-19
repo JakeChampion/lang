@@ -396,6 +396,108 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptHttpRequestHeaders pins the HeaderMap →
+// HttpRequest wiring (docs/STDLIB-DESIGN-RESEARCH.md Rec §2).
+// `http_parse_request` populates `req.headers` from the wire
+// header block; the handler reads values back via the case-
+// insensitive `HeaderMap.get` surface introduced in #858.
+func TestInterpScriptHttpRequestHeaders(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+		wantExit                 int
+	}{
+		{
+			name: "parsed headers reachable on req.headers",
+			source: `import "std/http";
+
+function main(): i32 {
+    var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
+    match (http.http_parse_request(wire)) {
+        Some(req) => {
+            match (req.headers.get("content-type")) {
+                Some(v) => { print(v); },
+                None => { print("MISSING"); }
+            }
+            return req.headers.size();
+        },
+        None => {
+            print("PARSE_FAIL");
+            return 99;
+        }
+    }
+    return 0;
+}`,
+			wantStdout: "application/json\n",
+			wantExit:   3,
+		},
+		{
+			name: "duplicate header preserved in insertion order",
+			source: `import "std/http";
+
+function main(): i32 {
+    var wire: string = "GET / HTTP/1.1\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
+    match (http.http_parse_request(wire)) {
+        Some(req) => {
+            var all: string[] = req.headers.get_all("Set-Cookie");
+            var i: i32 = 0;
+            while (i < len(all)) {
+                print(all[i]);
+                i = i + 1;
+            }
+            return 0;
+        },
+        None => { return 99; }
+    }
+    return 0;
+}`,
+			wantStdout: "a=1\nb=2\n",
+		},
+		{
+			name: "missing header returns None",
+			source: `import "std/http";
+
+function main(): i32 {
+    var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
+    match (http.http_parse_request(wire)) {
+        Some(req) => {
+            match (req.headers.get("X-Absent")) {
+                Some(v) => { print(v); return 1; },
+                None => { print("none"); return 0; }
+            }
+        },
+        None => { return 99; }
+    }
+    return 0;
+}`,
+			wantStdout: "none\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.wantExit {
+				t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s",
+					code, tc.wantExit, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q, want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
