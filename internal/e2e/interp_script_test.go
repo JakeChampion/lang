@@ -288,6 +288,114 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptHeaderMap pins the HeaderMap surface from
+// `std/headers` — case-insensitive `.get` / `.get_all`,
+// duplicate-preserving `.append`, position-stable `.set` (drops
+// any extra duplicates of the same name), and `.size()` matching
+// total entries. Anchors docs/STDLIB-DESIGN-RESEARCH.md Rec §2
+// before the HttpRequest / HttpResponse integration lands.
+func TestInterpScriptHeaderMap(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+		wantExit                 int
+	}{
+		{
+			name: "case-insensitive get",
+			source: `import "std/headers";
+function main(): i32 {
+    var h: HeaderMap = headers.header_map_new();
+    h.set("Content-Type", "application/json");
+    match (h.get("CONTENT-TYPE")) {
+        Some(v) => { print(v); },
+        None => { print("MISSING"); }
+    }
+    return 0;
+}`,
+			wantStdout: "application/json\n",
+		},
+		{
+			name: "get_all preserves duplicates in insertion order",
+			source: `import "std/headers";
+function main(): i32 {
+    var h: HeaderMap = headers.header_map_new();
+    h.append("Set-Cookie", "a=1");
+    h.append("Set-Cookie", "b=2");
+    h.append("Set-Cookie", "c=3");
+    var all: string[] = h.get_all("set-cookie");
+    var i: i32 = 0;
+    while (i < len(all)) {
+        print(all[i]);
+        i = i + 1;
+    }
+    return 0;
+}`,
+			wantStdout: "a=1\nb=2\nc=3\n",
+		},
+		{
+			name: "set replaces in place and drops other duplicates",
+			source: `import "std/headers";
+function main(): i32 {
+    var h: HeaderMap = headers.header_map_new();
+    h.append("X", "first");
+    h.append("Y", "y1");
+    h.append("X", "second");
+    h.set("x", "replaced");
+    match (h.get("x")) {
+        Some(v) => { print(v); },
+        None => { print("MISSING"); }
+    }
+    return h.size();
+}`,
+			wantStdout: "replaced\n",
+			wantExit:   2,
+		},
+		{
+			name: "set on absent name appends",
+			source: `import "std/headers";
+function main(): i32 {
+    var h: HeaderMap = headers.header_map_new();
+    h.set("X-First", "1");
+    return h.size();
+}`,
+			wantExit: 1,
+		},
+		{
+			name: "get_all on missing name is empty",
+			source: `import "std/headers";
+function main(): i32 {
+    var h: HeaderMap = headers.header_map_new();
+    h.append("X", "1");
+    return len(h.get_all("Y"));
+}`,
+			wantExit: 0,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.wantExit {
+				t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s",
+					code, tc.wantExit, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q, want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry

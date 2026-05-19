@@ -1,0 +1,118 @@
+// std/headers — HTTP HeaderMap with case-insensitive lookup,
+// multi-valued entries, and insertion-ordered iteration.
+//
+// Backs the `headers: HeaderMap` field that's slated to land on
+// `HttpRequest` and `HttpResponse` (docs/STDLIB-DESIGN-RESEARCH.md
+// Rec §2). This PR lands the type + methods only; the HttpRequest
+// / HttpResponse wiring + the wasi-http canonical-ABI fields-
+// resource integration follow in their own reviewable units.
+//
+// Storage: two parallel arrays. `names` holds case-folded
+// (lowercase) header names so lookup compares against the same
+// form the caller passes through `to_lower()`; `values` holds
+// the raw value at the matching index in insertion order. Linear-
+// scan lookup is fine for the typical <20-header request, matches
+// the spirit of hyper's HeaderMap, and avoids the IndexMap
+// indexing-table overhead until profiling says otherwise.
+//
+// Invariants:
+//   - `len(h.names) == len(h.values)`.
+//   - `h.names[i]` is always lowercase ASCII.
+//   - Iteration / append order is insertion order; `.set`
+//     replaces in-place at the existing index and drops any
+//     additional duplicates further down.
+
+import "std/string";
+
+// `header_map_new()` — empty HeaderMap. Use when constructing
+// HttpRequest / HttpResponse from lang code (the wasi-http
+// wrapper + http_parse_request will populate one for you on the
+// inbound path once the integration PR lands).
+pub function header_map_new(): HeaderMap {
+    var names: string[] = [];
+    var values: string[] = [];
+    return HeaderMap { names: names, values: values };
+}
+
+// `.get(name)` — first value for `name`, case-insensitive. Returns
+// None when no entry matches; use `.get_all` when duplicates
+// matter (`Set-Cookie`, `Accept`, `Via`).
+pub function (h: HeaderMap) get(name: string): Option[string] {
+    var key: string = name.to_lower();
+    var i: i32 = 0;
+    while (i < len(h.names)) {
+        if (h.names[i] == key) {
+            return Some(h.values[i]);
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `.get_all(name)` — every value for `name` in insertion order.
+// Returns an empty array when no entry matches (callers
+// shouldn't need to special-case "missing" separately from
+// "present but empty list").
+pub function (h: HeaderMap) get_all(name: string): string[] {
+    var key: string = name.to_lower();
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < len(h.names)) {
+        if (h.names[i] == key) {
+            out = out.push(h.values[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `.append(name, value)` — add an entry without replacing
+// existing entries with the same name. The canonical "I want
+// duplicate-safe insertion" call (`headers.append("Set-Cookie",
+// "...")` keeps each cookie distinct).
+pub function (h: HeaderMap) append(name: string, value: string) {
+    h.names = h.names.push(name.to_lower());
+    h.values = h.values.push(value);
+}
+
+// `.set(name, value)` — replace any/all existing entries for
+// `name` with a single new entry. Position-stable: if `name`
+// already existed at index k, the new value lands at index k and
+// further duplicates are dropped; if `name` was absent, the new
+// entry appends.
+pub function (h: HeaderMap) set(name: string, value: string) {
+    var key: string = name.to_lower();
+    var new_names: string[] = [];
+    var new_values: string[] = [];
+    var inserted: boolean = false;
+    var i: i32 = 0;
+    while (i < len(h.names)) {
+        if (h.names[i] == key) {
+            if (!inserted) {
+                new_names = new_names.push(key);
+                new_values = new_values.push(value);
+                inserted = true;
+            }
+        } else {
+            new_names = new_names.push(h.names[i]);
+            new_values = new_values.push(h.values[i]);
+        }
+        i = i + 1;
+    }
+    if (!inserted) {
+        new_names = new_names.push(key);
+        new_values = new_values.push(value);
+    }
+    h.names = new_names;
+    h.values = new_values;
+}
+
+// `.size()` — total entries (duplicates counted separately).
+// `headers.set("Set-Cookie", "a"); headers.append("Set-Cookie",
+// "b"); headers.size()` is 2. Named `size` rather than `len` so
+// it doesn't shadow the built-in `len()` inside this module's
+// own method bodies (the parser would resolve `len(h.names)` to
+// this method otherwise).
+pub function (h: HeaderMap) size(): i32 {
+    return len(h.names);
+}

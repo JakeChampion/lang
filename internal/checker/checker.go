@@ -274,6 +274,28 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "version", Type: ast.NumberType{}},
 			},
 		},
+		// HeaderMap — case-insensitive, multi-valued, insertion-
+		// ordered header bag (docs/STDLIB-DESIGN-RESEARCH.md
+		// Rec §2). Storage is two parallel arrays — `names`
+		// holds the case-folded (lowercase) header name; `values`
+		// holds the raw value in insertion order. Lookups are
+		// linear scans through `names`, which is fine for the
+		// typical <20-header request and matches the spirit of
+		// hyper's HeaderMap without the indexing overhead.
+		// Methods (`get`, `get_all`, `set`, `append`, `len`)
+		// live in `internal/stdlib/std/headers.lang`; this PR
+		// lands the type + module only and defers the
+		// `headers: HeaderMap` integration into HttpRequest /
+		// HttpResponse to a follow-up so the wasi-http
+		// canonical-ABI fields-resource wiring can be its own
+		// reviewable unit.
+		{
+			Name: "HeaderMap",
+			Fields: []ast.Param{
+				{Name: "names", Type: ast.ArrayType{Elem: ast.StringType{}}},
+				{Name: "values", Type: ast.ArrayType{Elem: ast.StringType{}}},
+			},
+		},
 		// ProcessResult — the return shape of `exec(cmd, args,
 		// stdin)`. The interp's Go-side implementation populates
 		// stdout / stderr / exit_code; the wasm + native backends
@@ -550,9 +572,9 @@ func Check(prog *ast.Program) (*Info, error) {
 		}
 	}
 	// Same shape for the auto-injected structs (Reader,
-	// Writer, HttpRequest, HttpResponse, Map, MapIter, Url) —
-	// same shadow-is-an-error policy, same monomorph-re-entry
-	// handling.
+	// Writer, HttpRequest, HttpResponse, Platform, HeaderMap,
+	// Map, MapIter, Url) — same shadow-is-an-error policy, same
+	// monomorph-re-entry handling.
 	var shadowedStructs []*ast.StructDecl
 	{
 		userStructs := map[string]*ast.StructDecl{}
