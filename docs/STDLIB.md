@@ -399,6 +399,12 @@ function main(): i32 {
   halving + single-byte drops before reporting. Failure
   message embeds both the raw input and the shrunk form so
   the log doubles as a clean reproducer.
+- `fuzz_corpus_from_dir(path)` /
+  `fuzz_corpus_from_dir_or(path, fallback)` — load every
+  regular file under `path` as a seed (sorted by name,
+  dotfiles + `_`-prefixed metadata skipped). The `_or`
+  variant falls back to inline seeds when the directory
+  is missing or empty.
 - `fuzz_default_iterations()` — `200`; tuned for sub-second
   per-target runs in CI
 
