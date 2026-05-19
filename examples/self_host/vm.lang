@@ -431,6 +431,10 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = ops.push(op_field_get(fa.field));
             return CompileResult { ops: ops, lt: lt };
         },
+        parser.ExprLambda(_) => {
+            ops = ops.push(op_push_str("__lambda-not-implemented__"));
+            return CompileResult { ops: ops, lt: lt };
+        },
         parser.ExprUnknown(_) => {
             ops = ops.push(op_push_str("__exprunknown__"));
             return CompileResult { ops: ops, lt: lt };

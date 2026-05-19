@@ -135,6 +135,7 @@ function print_expr(e: parser.Expr): string {
             return out + " }";
         },
         parser.ExprFieldAccess(fa) => { return print_expr(fa.obj) + "." + fa.field; },
+        parser.ExprLambda(_) => { return "/*lambda*/"; },
         parser.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
     }
     return "/*unhandled-expr*/";

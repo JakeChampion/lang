@@ -45,6 +45,11 @@ pub struct ExprCall { callee: Expr, args: Expr[] }
 // the checker rejects an empty literal in inference contexts
 // because it can't infer the element type.
 pub struct ExprArray { elements: Expr[] }
+// ExprLambda is a function-valued expression: `function (a: T,
+// b: T): U { body }` — same shape as FuncDecl minus the name.
+// Capture semantics happen at the runtime layer; the parser
+// just builds the AST node.
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[] }
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is
 // fixed-arity / heterogeneous; arrays are homogeneous and
@@ -73,7 +78,8 @@ pub struct ExprUnknown { kind: string }
 pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
               | ExprBinary | ExprUnary | ExprCall
               | ExprArray | ExprTuple | ExprIndex | ExprSlice
-              | ExprStructLit | ExprFieldAccess | ExprUnknown;
+              | ExprStructLit | ExprFieldAccess | ExprLambda
+              | ExprUnknown;
 
 // Statement nodes.
 
@@ -203,6 +209,9 @@ function e_struct_lit(type_name: string, field_names: string[], field_values: Ex
 }
 function e_field_access(obj: Expr, field: string): Expr {
     return ExprFieldAccess { obj: obj, field: field };
+}
+function e_lambda(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
+    return ExprLambda { params: params, ret_type: ret_type, body: body };
 }
 function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
 
@@ -385,6 +394,38 @@ function parse_primary(p: Par): ExprResult {
             if (x.name == "false") {
                 p = p.advance();
                 return ExprResult { par: p, expr: e_bool(false) };
+            }
+            if (x.name == "function") {
+                // Anonymous function expression: `function (a:
+                // T, …): RT { body }`. Same grammar as the
+                // top-level FuncDecl minus the name and the
+                // optional receiver clause.
+                p = p.advance();  // consume `function`
+                if (p.peek_punct() != "(") {
+                    return ExprResult { par: p, expr: e_unknown("lambda: missing (") };
+                }
+                p = p.advance();
+                var params: ParamDecl[] = [];
+                if (p.peek_punct() != ")") {
+                    while (true) {
+                        var pr: ParamResult = parse_param(p);
+                        p = pr.par;
+                        params = params.push(pr.param);
+                        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                        break;
+                    }
+                }
+                if (p.peek_punct() == ")") { p = p.advance(); }
+                var lret: string = "";
+                if (p.peek_punct() == ":") {
+                    p = p.advance();
+                    lret = p.peek_ident();
+                    if (len(lret) == 0) { lret = p.peek_keyword(); }
+                    if (len(lret) > 0) { p = p.advance(); }
+                }
+                var lblk: BlockResult = parse_block(p);
+                p = lblk.par;
+                return parse_postfix(p, e_lambda(params, lret, lblk.body));
             }
             return ExprResult { par: p, expr: e_unknown("keyword:" + x.name) };
         },
@@ -1649,6 +1690,25 @@ function main(): i32 {
             }
         },
         _ => { return 1066; }
+    }
+
+    // Lambda expression: `function (x: i32): i32 { return x + 1; }`.
+    var srcLm: string = "var f = function (x: i32): i32 { return x + 1; }; return 0;";
+    var progLm: Stmt[] = parse_program(lexer.tokenize(srcLm));
+    match (progLm[0]) {
+        StmtVar(v) => {
+            match (v.init) {
+                ExprLambda(lm) => {
+                    if (len(lm.params) != 1) { return 1070; }
+                    if (lm.params[0].name != "x") { return 1071; }
+                    if (lm.params[0].type_name != "i32") { return 1072; }
+                    if (lm.ret_type != "i32") { return 1073; }
+                    if (len(lm.body) != 1) { return 1074; }
+                },
+                _ => { return 1075; }
+            }
+        },
+        _ => { return 1076; }
     }
 
     return 0;

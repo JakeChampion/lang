@@ -128,6 +128,13 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
         parser.ExprBool(_) => { return e; },
         parser.ExprString(_) => { return e; },
         parser.ExprIdent(_) => { return e; },
+        parser.ExprLambda(lm) => {
+            return parser.ExprLambda {
+                params: lm.params,
+                ret_type: lm.ret_type,
+                body: fold_block(lm.body)
+            };
+        },
         parser.ExprUnknown(_) => { return e; },
         parser.ExprBinary(b) => {
             var lhs: parser.Expr = fold_expr(b.left);

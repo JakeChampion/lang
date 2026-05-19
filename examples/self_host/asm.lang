@@ -489,6 +489,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    pushq $0\n");
             return s;
         },
+        parser.ExprLambda(_) => {
+            s = s.write("    # unsupported: lambda\n");
+            s = s.write("    pushq $0\n");
+            return s;
+        },
         parser.ExprUnknown(_) => {
             s = s.write("    # parser-side unknown\n");
             s = s.write("    pushq $0\n");
