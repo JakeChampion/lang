@@ -1,0 +1,84 @@
+// examples/tests/unions_migrated_test.lang —
+// Lang port of `TestInterpScriptUnions` from
+// `internal/e2e/interp_script_test.go`.
+//
+// The original Go test pinned the union-desugar +
+// match shape by piping a single-case program through
+// `lang -interp` and exit-coding 42. Migrated form
+// expands that single data point into a small table of
+// match arms — Add (binary), Lit (nullary), plus the
+// asymmetric Add(0, x) / Add(x, 0) identity cases —
+// because once the migration cost is paid the marginal
+// cost of more cases is one more `r.it(...)` line each.
+//
+// The union desugar lives in the checker (PRs #390 /
+// #392); by the time the AST reaches the interpreter
+// it's the synthesised enum form, so no special-case
+// interpreter path. We're pinning that semantic, not the
+// desugar itself — which is why we exercise both
+// variants and their interaction.
+
+struct Add { l: i32, r: i32 }
+struct Lit { v: i32 }
+type Expr = Add | Lit;
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Add(a) => { return a.l + a.r; },
+        Lit(l) => { return l.v; },
+    }
+}
+
+function test_add_two_positives(): Option[string] {
+    var e: Expr = Add { l: 10, r: 32 };
+    return assert_eq_i32(eval(e), 42);
+}
+
+function test_add_left_identity_zero(): Option[string] {
+    var e: Expr = Add { l: 0, r: 7 };
+    return assert_eq_i32(eval(e), 7);
+}
+
+function test_add_right_identity_zero(): Option[string] {
+    var e: Expr = Add { l: 7, r: 0 };
+    return assert_eq_i32(eval(e), 7);
+}
+
+function test_add_negatives_cancel(): Option[string] {
+    var e: Expr = Add { l: 5, r: 0 - 5 };
+    return assert_eq_i32(eval(e), 0);
+}
+
+function test_lit_positive(): Option[string] {
+    var e: Expr = Lit { v: 99 };
+    return assert_eq_i32(eval(e), 99);
+}
+
+function test_lit_zero(): Option[string] {
+    var e: Expr = Lit { v: 0 };
+    return assert_eq_i32(eval(e), 0);
+}
+
+function test_lit_negative(): Option[string] {
+    var e: Expr = Lit { v: 0 - 100 };
+    return assert_eq_i32(eval(e), 0 - 100);
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("unions + match (migrated)");
+    r = r.it("Add(10, 32) = 42",
+             test_add_two_positives());
+    r = r.it("Add(0, 7) = 7 (left identity)",
+             test_add_left_identity_zero());
+    r = r.it("Add(7, 0) = 7 (right identity)",
+             test_add_right_identity_zero());
+    r = r.it("Add(5, -5) = 0",
+             test_add_negatives_cancel());
+    r = r.it("Lit(99) = 99",
+             test_lit_positive());
+    r = r.it("Lit(0) = 0",
+             test_lit_zero());
+    r = r.it("Lit(-100) = -100",
+             test_lit_negative());
+    return r.finish();
+}
