@@ -1426,6 +1426,8 @@ func callDirectAlias(name string) string {
 		return "__lang_print"
 	case "random_i32":
 		return "__lang_random_i32"
+	case "now_ns":
+		return "__lang_now_ns"
 	}
 	return name
 }

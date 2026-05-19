@@ -2523,6 +2523,36 @@ func TestEmitPrintViaSourceNameAlias(t *testing.T) {
 	}
 }
 
+// TestEmitNowNs — call OpCallDirect "now_ns" twice, return the
+// i32-truncated difference. Two consecutive realtime samples
+// always differ by far less than 2^31 ns. Just sanity-checks
+// that the helper produces a runnable function under wasmtime.
+func TestEmitNowNs(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "diff_ns",
+		ScratchTypes: []ast.Type{i64(), i64()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "now_ns"},
+			{Kind: ir.OpStoreLocal, I32: 0}, // t0
+			{Kind: ir.OpCallDirect, Str: "now_ns"},
+			{Kind: ir.OpStoreLocal, I32: 1}, // t1
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpSub, Width: 64},
+			{Kind: ir.OpWrapI64}, // truncate to i32
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	got := runUnderWasmtime(t, bin, "diff_ns")
+	if got == "" {
+		t.Fatal("empty stdout from diff_ns")
+	}
+}
+
 // TestEmitExit — call OpCallDirect "exit" with a specific code
 // and verify wasmtime's exit code matches. The alias routes to
 // __lang_exit which invokes wasi_proc_exit.

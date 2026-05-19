@@ -53,6 +53,15 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_clock_time_get": {
+		// (clock_id i32, precision i64, time_ptr i32) → errno i32.
+		// Writes the current time as nanoseconds-since-epoch
+		// (u64 little-endian) at time_ptr.
+		module:  "wasi_snapshot_preview1",
+		name:    "clock_time_get",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -86,6 +95,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	}
 	if helpers.set["__lang_random_i32"] {
 		in.add("wasi_random_get")
+	}
+	if helpers.set["__lang_now_ns"] {
+		in.add("wasi_clock_time_get")
 	}
 	return in
 }
@@ -224,4 +236,42 @@ func buildRandomI32Body(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, randomBufAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildNowNsBody assembles the wasm bytes for __lang_now_ns.
+//
+// Signature: () → i64
+//
+// Body:
+//
+//	buf = __lang_alloc(8)
+//	wasi_clock_time_get(0 /* realtime */, 0 /* precision */, buf)
+//	drop errno
+//	return i64.load(buf)
+//
+// Allocates per call so the 8-byte target buffer doesn't clash
+// with any other fixed-address scratch. Each call leaks 8 bytes
+// (the bump allocator never frees) — acceptable for typical
+// benchmark / log-line usage; a fixed slot or i64 scratch would
+// avoid this but requires layout reshuffling against the
+// closure region.
+func buildNowNsBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	clockTime := idxs["wasi_clock_time_get"]
+	var body []byte
+	// buf = __lang_alloc(8)
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 0) // $buf
+	// wasi_clock_time_get(0, 0, buf); drop errno
+	body = inst.InstI32Const(body, 0) // clock_id = REALTIME
+	body = inst.InstI64Const(body, 0) // precision = 0
+	body = inst.InstLocalGet(body, 0) // $buf
+	body = inst.InstCall(body, clockTime)
+	body = inst.InstDrop(body) // ignore errno
+	// return i64.load(buf)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI64Load(body, 3, 0)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
