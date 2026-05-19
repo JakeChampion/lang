@@ -263,6 +263,45 @@ function main(): i32 {
 	}
 }
 
+// `examples/tests/process_assertions_test.lang` exercises the
+// `subprocess(cmd, args, stdin) -> ProcessResult` builtin and
+// the assert_exit / assert_stdout_eq / assert_process /
+// assert_stderr_contains family layered on top of it. The
+// fixture itself self-skips when `sh` isn't on $PATH (rare on
+// the Linux + macOS targets Lang supports, but possible in
+// stripped CI images) — so this gate accepts both the all-pass
+// outcome (POSIX tools available) and the all-skip outcome.
+//
+// The temp_dir + subprocess interplay case writes a fixture
+// to disk and runs `cat` against it, which is the smallest
+// end-to-end shape the e2e suite migration needs: spawn the
+// compiler binary, point it at a tempdir-built input, assert
+// on its output.
+func TestRunnerProcessAssertionsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/process_assertions_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if strings.Contains(out, "# SKIP sh / echo / cat not on $PATH") {
+		// CI image without POSIX shell — accept the skip, no
+		// further assertions to make.
+		return
+	}
+	for _, w := range []string{
+		"ok 1 - echo stdout eq",
+		"ok 6 - spawn missing binary",
+		"ok 7 - temp_dir writes + reads",
+		"# pass 7",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
