@@ -2761,6 +2761,117 @@ func TestEmitEnvAt(t *testing.T) {
 	}
 }
 
+// TestEmitReadByte — pipe stdin to wasmtime and expect the
+// first read_byte() call to return the ASCII code of the first
+// byte. Reading 'A' (0x41) should produce "65" on stdout.
+func TestEmitReadByte(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "read_byte"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+	cmd.Stdin = strings.NewReader("A")
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "65" {
+		t.Fatalf("read_byte first call = %q, want 65 (ASCII 'A')", got)
+	}
+}
+
+// TestEmitReadByteEOF — with empty stdin, the first read_byte
+// returns -1 (EOF).
+func TestEmitReadByteEOF(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "read_byte"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+	cmd.Stdin = strings.NewReader("") // immediate EOF
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "-1" {
+		t.Fatalf("read_byte EOF = %q, want -1", got)
+	}
+}
+
+// TestEmitReadByteSum — read 3 bytes and return their sum.
+// Exercises the scratch-region reuse across multiple calls.
+// Input "ABC" (65+66+67 = 198).
+func TestEmitReadByteSum(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "read_byte"},
+			{Kind: ir.OpCallDirect, Str: "read_byte"},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpCallDirect, Str: "read_byte"},
+			{Kind: ir.OpAdd},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+	cmd.Stdin = strings.NewReader("ABC")
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "198" {
+		t.Fatalf("3 read_bytes sum = %q, want 198 (65+66+67)", got)
+	}
+}
+
 // TestEmitExit — call OpCallDirect "exit" with a specific code
 // and verify wasmtime's exit code matches. The alias routes to
 // __lang_exit which invokes wasi_proc_exit.

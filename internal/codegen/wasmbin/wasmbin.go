@@ -1473,6 +1473,8 @@ func callDirectAlias(name string) string {
 		return "__lang_arg_at"
 	case "env_at":
 		return "__lang_env_at"
+	case "read_byte":
+		return "__lang_read_byte"
 	}
 	return name
 }
