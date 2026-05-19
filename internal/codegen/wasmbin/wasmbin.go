@@ -513,6 +513,13 @@ func le32(v int32) []byte {
 // valtypeFor maps a single ast.Type to the wasm valtype byte used to
 // hold it. Only single-slot types live here; strings (two-slot ABI)
 // fan out through slotValtypes / slotIsString instead.
+//
+// Pointer-shaped composite types (struct, enum, array, slice,
+// tuple, closure / *FuncType) reduce to a single i32 slot on
+// wasm32 — the value is the heap pointer. The IR uses OpAlloc +
+// OpStore / OpLoad to materialise these on the heap; codegen
+// just needs to thread the pointer through param / local /
+// return slots.
 func valtypeFor(t ast.Type) (byte, error) {
 	switch v := t.(type) {
 	case ast.NumberType:
@@ -527,8 +534,12 @@ func valtypeFor(t ast.Type) (byte, error) {
 			return encode.ValtypeF64, nil
 		}
 		return encode.ValtypeF32, nil
+	case ast.ArrayType, ast.SliceType, ast.TupleType, ast.StructType, ast.EnumType:
+		return encode.ValtypeI32, nil
+	case *ast.FuncType:
+		return encode.ValtypeI32, nil
 	}
-	return 0, fmt.Errorf("unsupported type %s (scalar i32/i64/f32/f64 + bool only at this seam)", t)
+	return 0, fmt.Errorf("unsupported type %s (scalar i32/i64/f32/f64 + bool + pointer-shaped composites only at this seam)", t)
 }
 
 // isStringType reports whether t uses the two-word `(data, len)`
