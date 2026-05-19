@@ -666,10 +666,25 @@ function value_eq(a: Value, b: Value): boolean {
                 _ => { return false; }
             }
         },
-        VStruct(_) => {
-            // Struct equality not implemented yet — same
-            // rationale as arrays.
-            return false;
+        VStruct(asv) => {
+            // Structural equality: same type_name + same field
+            // count + pairwise structural equality on each
+            // field value. Field names already match because
+            // the type_name match implies a common StructDecl
+            // and the field order is fixed at construction.
+            match (b) {
+                VStruct(bsv) => {
+                    if (asv.type_name != bsv.type_name) { return false; }
+                    if (len(asv.field_values) != len(bsv.field_values)) { return false; }
+                    var si: i32 = 0;
+                    while (si < len(asv.field_values)) {
+                        if (!value_eq(asv.field_values[si], bsv.field_values[si])) { return false; }
+                        si = si + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
         },
         VTuple(at) => {
             // Structural equality: same arity, each element-pair
@@ -1628,6 +1643,22 @@ function main(): i32 {
     match (r77) {
         VBool(b) => { if (b.v) { return 770; } },
         _ => { return 771; }
+    }
+
+    // Struct structural equality.
+    var src78: string = "struct Point { x: i32, y: i32 } function main(): i32 { var a = Point { x: 1, y: 2 }; var b = Point { x: 1, y: 2 }; if (a == b) { return 0; } return 1; }";
+    var r78: Value = run_module(src78);
+    match (r78) {
+        VInt(i) => { if (i.v != 0) { return 780; } },
+        _ => { return 781; }
+    }
+
+    // Struct inequality (one field differs).
+    var src79: string = "struct Point { x: i32, y: i32 } function main(): i32 { var a = Point { x: 1, y: 2 }; var b = Point { x: 1, y: 3 }; if (a == b) { return 1; } return 0; }";
+    var r79: Value = run_module(src79);
+    match (r79) {
+        VInt(i) => { if (i.v != 0) { return 790; } },
+        _ => { return 791; }
     }
 
     return 0;

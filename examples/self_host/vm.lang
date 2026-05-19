@@ -958,6 +958,21 @@ function value_eq_vm(a: Value, b: Value): boolean {
                 _ => { return false; }
             }
         },
+        VStruct(asv) => {
+            match (b) {
+                VStruct(bsv) => {
+                    if (asv.type_name != bsv.type_name) { return false; }
+                    if (len(asv.field_values) != len(bsv.field_values)) { return false; }
+                    var si: i32 = 0;
+                    while (si < len(asv.field_values)) {
+                        if (!value_eq_vm(asv.field_values[si], bsv.field_values[si])) { return false; }
+                        si = si + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
         _ => { return false; }
     }
     return false;
@@ -1953,6 +1968,22 @@ function main(): i32 {
     match (r56) {
         VBool(b) => { if (b.v) { return 560; } },
         _ => { return 561; }
+    }
+
+    // Struct structural equality.
+    var src57: string = "struct Point { x: i32, y: i32 } function main(): i32 { var a = Point { x: 1, y: 2 }; var b = Point { x: 1, y: 2 }; if (a == b) { return 0; } return 1; }";
+    var r57: Value = run_module(src57);
+    match (r57) {
+        VInt(i) => { if (i.v != 0) { return 570; } },
+        _ => { return 571; }
+    }
+
+    // Struct inequality (one field differs).
+    var src58: string = "struct Point { x: i32, y: i32 } function main(): i32 { var a = Point { x: 1, y: 2 }; var b = Point { x: 1, y: 3 }; if (a == b) { return 1; } return 0; }";
+    var r58: Value = run_module(src58);
+    match (r58) {
+        VInt(i) => { if (i.v != 0) { return 580; } },
+        _ => { return 581; }
     }
 
     return 0;
