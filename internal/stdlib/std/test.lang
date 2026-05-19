@@ -1350,6 +1350,101 @@ pub function assert_in_range_i64(v: i64, lo: i64, hi: i64): Option[string] {
     return None;
 }
 
+// `assert_in_range_f64(v, lo, hi)` — inclusive float range.
+// NaN inputs always fail (NaN never satisfies an ordering
+// comparison; pretending it's in-range would mask bugs).
+pub function assert_in_range_f64(v: f64, lo: f64, hi: f64): Option[string] {
+    if (v != v) {
+        return Some("assert_in_range_f64: value is NaN");
+    }
+    if (v < lo) {
+        return Some("assert_in_range_f64: " + v.to_string() +
+                    " < lower bound " + lo.to_string());
+    }
+    if (v > hi) {
+        return Some("assert_in_range_f64: " + v.to_string() +
+                    " > upper bound " + hi.to_string());
+    }
+    return None;
+}
+
+// =================== ORDER / UNIQUENESS ASSERTIONS ===================
+//
+// Properties that hold across an entire array:
+// monotonically non-decreasing (`assert_sorted_*`) and
+// no repeated elements (`assert_unique_*`). Pair with sort
+// / dedup helpers in production code so the test pins the
+// post-condition rather than the implementation detail.
+
+// `assert_sorted_asc_i32(arr)` — `arr[i] <= arr[i+1]` for
+// every adjacent pair. Empty / single-element arrays are
+// vacuously sorted. Failure message names the first
+// inversion + its index so the diagnostic is grep-able.
+pub function assert_sorted_asc_i32(arr: i32[]): Option[string] {
+    var i: i32 = 1;
+    while (i < len(arr)) {
+        if (arr[i - 1] > arr[i]) {
+            return Some("assert_sorted_asc_i32: inversion at index " +
+                        i.to_string() + ": " +
+                        arr[i - 1].to_string() + " > " + arr[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_sorted_asc_string(arr)` — lexicographic
+// non-decreasing order on strings. Delegates to the
+// `sort.string_cmp` ordering used elsewhere in the stdlib
+// so "sorted" here means the same thing as
+// `sort_strings_asc(arr)` would produce.
+pub function assert_sorted_asc_string(arr: string[]): Option[string] {
+    var i: i32 = 1;
+    while (i < len(arr)) {
+        if (sort.string_cmp(arr[i - 1], arr[i]) > 0) {
+            return Some("assert_sorted_asc_string: inversion at index " +
+                        i.to_string() + ": \"" + arr[i - 1] +
+                        "\" > \"" + arr[i] + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_unique_i32(arr)` — every element appears at most
+// once. Implementation sorts a copy then walks adjacent
+// pairs (O(n log n)) — simpler than a hash set and works
+// without any extra stdlib dependency. Failure message
+// names the first repeated value so the bug is grep-able.
+pub function assert_unique_i32(arr: i32[]): Option[string] {
+    if (len(arr) < 2) { return None; }
+    var sorted: i32[] = sort.sort_i32_asc(arr);
+    var i: i32 = 1;
+    while (i < len(sorted)) {
+        if (sorted[i - 1] == sorted[i]) {
+            return Some("assert_unique_i32: duplicate value " +
+                        sorted[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_unique_string(arr)` — same pattern for strings.
+pub function assert_unique_string(arr: string[]): Option[string] {
+    if (len(arr) < 2) { return None; }
+    var sorted: string[] = sort.sort_strings_asc(arr);
+    var i: i32 = 1;
+    while (i < len(sorted)) {
+        if (sorted[i - 1] == sorted[i]) {
+            return Some("assert_unique_string: duplicate value \"" +
+                        sorted[i] + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
 // =================== FILESYSTEM ASSERTIONS ===================
 //
 // File-state assertions for tests that build a fixture tree
