@@ -42,10 +42,25 @@ func langSrcAbs(t *testing.T, rel string) string {
 }
 
 // runLangInterp runs `lang -interp <src>` and returns the
-// exit code + stdout + stderr. Shared by the four runner
-// tests below.
+// exit code + stdout + stderr. Shared by every runner-
+// example gate in this file.
+//
+// Calls `t.Parallel()` up front so the ~40 TestRunner*
+// gates fan out across cores. Safe because:
+//   - `buildLangBinForInterp` caches the compiled binary
+//     in a package-lifetime tempdir (not `t.TempDir()`),
+//     so parallel callers all read the same path.
+//   - Each gate uses its own `*_test.lang` source file
+//     under `examples/tests/`; no shared writable state.
+//   - The lang binary is read-only at this point; the
+//     `lang -interp src` subprocess gets its own stdio
+//     buffers per `exec.Command`.
+//
+// On an 8-core host this drops the runner-suite wall
+// clock from ~25s to ~5s.
 func runLangInterp(t *testing.T, bin, src string) (int, string, string) {
 	t.Helper()
+	t.Parallel()
 	cmd := exec.Command(bin, "-interp", src)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out

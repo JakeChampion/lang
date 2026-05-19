@@ -6,22 +6,54 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
-// buildLangBinForInterp compiles cmd/lang to a temp binary the
-// `-interp` script-mode tests below invoke. Each test gets its
-// own t.TempDir() but the build is cheap enough (Go's incremental
-// build cache makes the second+ invocation a few-ms hit).
+// `buildLangBinForInterp` returns a path to a compiled
+// `cmd/lang` binary. Earlier this rebuilt per-call into
+// `t.TempDir()`; with ~60+ callsites across the runner-
+// example gates that meant 60 sequential `go build`s on
+// every run. Now the binary is built **once** per `go
+// test` process via `sync.Once` and shared across all
+// callers — drops the per-call cost to a single map
+// lookup and unblocks `t.Parallel()` in the dependent
+// tests (parallel runs no longer race on temp-dir
+// cleanup of a binary another test is mid-exec).
+//
+// The shared binary lives in `os.MkdirTemp` rather than
+// `t.TempDir()`: per-test temp dirs get auto-cleaned at
+// the END of THEIR test, which would yank the binary out
+// from under a parallel sibling that's still using it.
+// The package-level temp dir survives until the test
+// process exits; OS-level temp cleanup handles the rest.
+var (
+	langBinOnce sync.Once
+	langBinPath string
+	langBinErr  error
+)
+
 func buildLangBinForInterp(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
+	langBinOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "lang-e2e-bin-")
+		if err != nil {
+			langBinErr = err
+			return
+		}
+		bin := filepath.Join(dir, "lang")
+		build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+		if out, err := build.CombinedOutput(); err != nil {
+			langBinErr = err
+			t.Logf("go build lang failed:\n%s", out)
+			return
+		}
+		langBinPath = bin
+	})
+	if langBinErr != nil {
+		t.Fatalf("buildLangBinForInterp: %v", langBinErr)
 	}
-	return bin
+	return langBinPath
 }
 
 // `lang -interp FILE.lang` — script-mode end-to-end. The
