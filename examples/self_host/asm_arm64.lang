@@ -699,6 +699,8 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "str_contains") { return "bool"; }
                     if (id.name == "str_index_of") { return "i32"; }
                     if (id.name == "str_trim") { return "string"; }
+                    if (id.name == "str_to_upper") { return "string"; }
+                    if (id.name == "str_to_lower") { return "string"; }
                     var fi: i32 = 0;
                     while (fi < len(s.funcs)) {
                         if (s.funcs[fi].name == id.name && len(s.funcs[fi].receiver_type) == 0) {
@@ -1561,6 +1563,24 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_str_trim\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_str_search();
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "str_to_upper" && len(c.args) == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __lang_str_to_upper\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_str_search();
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "str_to_lower" && len(c.args) == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __lang_str_to_lower\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -2903,6 +2923,88 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    bl __lang_alloc\n");
         s = s.write("    str x19, [x0]\n");
         s = s.write("    str x20, [x0, #8]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        // __lang_str_to_upper / __lang_str_to_lower: ASCII
+        // case conversion. See asm.lang for the layout.
+        s = s.write("__lang_str_to_upper:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    ldr x19, [x0]\n");          // src data
+        s = s.write("    ldr x20, [x0, #8]\n");      // len
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.ne .Lupper_alloc\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write(".Lupper_alloc:\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    mov x21, x0\n");            // dst
+        s = s.write("    mov x1, x19\n");
+        s = s.write("    mov x2, x21\n");
+        s = s.write("    mov x3, x20\n");
+        s = s.write("    cbz x3, .Lupper_box\n");
+        s = s.write(".Lupper_loop:\n");
+        s = s.write("    ldrb w4, [x1]\n");
+        s = s.write("    cmp w4, #97\n");
+        s = s.write("    b.lt .Lupper_skip\n");
+        s = s.write("    cmp w4, #122\n");
+        s = s.write("    b.gt .Lupper_skip\n");
+        s = s.write("    sub w4, w4, #32\n");
+        s = s.write(".Lupper_skip:\n");
+        s = s.write("    strb w4, [x2]\n");
+        s = s.write("    add x1, x1, #1\n");
+        s = s.write("    add x2, x2, #1\n");
+        s = s.write("    subs x3, x3, #1\n");
+        s = s.write("    b.ne .Lupper_loop\n");
+        s = s.write(".Lupper_box:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    str x21, [x0]\n");
+        s = s.write("    str x20, [x0, #8]\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write("__lang_str_to_lower:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    ldr x19, [x0]\n");
+        s = s.write("    ldr x20, [x0, #8]\n");
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.ne .Llower_alloc\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write(".Llower_alloc:\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    mov x21, x0\n");
+        s = s.write("    mov x1, x19\n");
+        s = s.write("    mov x2, x21\n");
+        s = s.write("    mov x3, x20\n");
+        s = s.write("    cbz x3, .Llower_box\n");
+        s = s.write(".Llower_loop:\n");
+        s = s.write("    ldrb w4, [x1]\n");
+        s = s.write("    cmp w4, #65\n");
+        s = s.write("    b.lt .Llower_skip\n");
+        s = s.write("    cmp w4, #90\n");
+        s = s.write("    b.gt .Llower_skip\n");
+        s = s.write("    add w4, w4, #32\n");
+        s = s.write(".Llower_skip:\n");
+        s = s.write("    strb w4, [x2]\n");
+        s = s.write("    add x1, x1, #1\n");
+        s = s.write("    add x2, x2, #1\n");
+        s = s.write("    subs x3, x3, #1\n");
+        s = s.write("    b.ne .Llower_loop\n");
+        s = s.write(".Llower_box:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    str x21, [x0]\n");
+        s = s.write("    str x20, [x0, #8]\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
