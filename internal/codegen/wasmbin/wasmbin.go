@@ -204,12 +204,14 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		return off
 	}
 
+	closureTargets := closureTargetSet(prog)
 	ctx := &emitCtx{
 		funcIdx:            funcIdx,
 		internString:       internString,
 		internClosure:      internClosure,
 		closuresBaseAddr:   closuresBase,
 		internEnumSentinel: internEnumSentinel,
+		closureTargets:     closureTargets,
 		addSigType: func(sig *ast.FuncType) (uint32, error) {
 			params := make([]byte, 0, len(sig.Params))
 			for _, pt := range sig.Params {
@@ -219,6 +221,23 @@ func Emit(prog *ir.Program) ([]byte, error) {
 				}
 				params = append(params, vt)
 			}
+			results, err := resultValtypes(sig.Result)
+			if err != nil {
+				return 0, err
+			}
+			return addType(params, results), nil
+		},
+		addClosureSigType: func(sig *ast.FuncType) (uint32, error) {
+			params := make([]byte, 0, len(sig.Params)+1)
+			for _, pt := range sig.Params {
+				vt, err := valtypeFor(pt)
+				if err != nil {
+					return 0, err
+				}
+				params = append(params, vt)
+			}
+			// Closure-target ABI: env_ptr (i32) as last param.
+			params = append(params, encode.ValtypeI32)
 			results, err := resultValtypes(sig.Result)
 			if err != nil {
 				return 0, err
@@ -292,6 +311,13 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		params, err := paramValtypes(fn.Params)
 		if err != nil {
 			return nil, fmt.Errorf("wasmbin: %s: %w", fn.Name, err)
+		}
+		if closureTargets[fn.Name] {
+			// Closure-target ABI: append an i32 (env_ptr) as the
+			// last param. The body doesn't have to use it; the
+			// indirect-call deref always pushes one so the wasm
+			// signature must accept it.
+			params = append(params, encode.ValtypeI32)
 		}
 		var results []byte
 		if prog.PairForm[fn.Name] {
@@ -525,7 +551,23 @@ func localValtypes(fn *ir.Func) ([]byte, error) {
 	for i := 0; i < closureMakeScratchSlots(fn); i++ {
 		out = append(out, encode.ValtypeI32)
 	}
+	if fnNeedsCallIndirectScratch(fn) {
+		for i := 0; i < callIndirectScratchSlots; i++ {
+			out = append(out, encode.ValtypeI32)
+		}
+	}
 	return out, nil
+}
+
+const callIndirectScratchSlots = 1
+
+func fnNeedsCallIndirectScratch(fn *ir.Func) bool {
+	for _, op := range fn.Ops {
+		if op.Kind == ir.OpCallIndirect {
+			return true
+		}
+	}
+	return false
 }
 
 // strPairScratchSlots is the count of extra wasm locals appended
@@ -573,9 +615,12 @@ type emitCtx struct {
 	// emitted module. OpCallDirect / OpCallClosureDirect use it.
 	funcIdx map[string]uint32
 	// addSigType resolves a function-type signature to its
-	// typeidx, lazily inserting into the type section. Used by
-	// OpCallIndirect, whose op.Sig carries the static signature.
+	// typeidx, lazily inserting into the type section.
 	addSigType func(*ast.FuncType) (uint32, error)
+	// addClosureSigType is like addSigType but appends an i32
+	// (env_ptr) to params, matching the closure-target ABI
+	// every OpCallIndirect dispatches through.
+	addClosureSigType func(*ast.FuncType) (uint32, error)
 	// internString returns the data-segment offset for the
 	// heap-form bytes of s, interning so repeats share an
 	// address. Used by OpConstStr.
@@ -600,6 +645,15 @@ type emitCtx struct {
 	// uses OpLoad/OpStore WidthString. Layout: +0 addr, +1 data,
 	// +2 len. Zero when fnNeedsStrPairScratch(fn) is false.
 	strPairScratchBase uint32
+	// callIndirectScratchIdx is the wasm-slot index of the
+	// scratch i32 used by OpCallIndirect to stash closure_ptr
+	// while loading env_ptr + fn_idx from the pair cell.
+	callIndirectScratchIdx uint32
+	// closureTargets is the set of function names whose wasm
+	// signature has env_ptr (i32) appended as the last param.
+	// emitBody consults this when computing wasm-slot indices
+	// for scratch locals.
+	closureTargets map[string]bool
 	// pairMakeScratchIdx is the wasm-slot index of the single
 	// i32 scratch local appended when fn uses OpMakeSomeI32 /
 	// OpMakeOkI32 / OpMakeErrI32. The scratch holds the payload
@@ -664,6 +718,12 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 	// fnNeedsStrPairScratch(fn) is true; otherwise it's unused.
 	lastIR := int32(len(fn.Params) + len(fn.Locals) + len(fn.ScratchTypes))
 	ctx.strPairScratchBase = wasmSlotIdx(fn, lastIR)
+	// Closure-target functions get an extra wasm slot for the
+	// env_ptr param appended by the closure-target ABI. That
+	// shifts everything below.
+	if ctx.closureTargets[fn.Name] {
+		ctx.strPairScratchBase++
+	}
 	// pairMake scratch sits AFTER any str-pair scratch slots.
 	pairBase := ctx.strPairScratchBase
 	if fnNeedsStrPairScratch(fn) {
@@ -676,11 +736,15 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 		closureBase += pairMakeScratchSlots
 	}
 	ctx.closureMakeScratchBase = closureBase
+	// callIndirect scratch sits AFTER closureMake.
+	callIndBase := closureBase + uint32(closureMakeScratchSlots(fn))
+	ctx.callIndirectScratchIdx = callIndBase
 	defer func() {
 		ctx.fn = nil
 		ctx.strPairScratchBase = 0
 		ctx.pairMakeScratchIdx = 0
 		ctx.closureMakeScratchBase = 0
+		ctx.callIndirectScratchIdx = 0
 	}()
 
 	for opIdx, op := range fn.Ops {
@@ -1179,12 +1243,24 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		if op.Sig == nil {
 			return nil, fmt.Errorf("OpCallIndirect: missing op.Sig")
 		}
-		tIdx, err := ctx.addSigType(op.Sig)
+		// Closure-target ABI: callee signature has env_ptr (i32)
+		// appended. The typeidx we dispatch through must match —
+		// derive it from op.Sig + env_ptr.
+		tIdx, err := ctx.addClosureSigType(op.Sig)
 		if err != nil {
 			return nil, fmt.Errorf("OpCallIndirect: resolving signature: %w", err)
 		}
-		// table 0 (the only table in MVP); typeidx as the call
-		// signature. Stack at this point: [args..., funcidx].
+		// Stack: [args..., closure_ptr]. Deref the closure pair
+		// into [args..., env_ptr, fn_idx] for call_indirect.
+		// env_ptr lives at offset 4; fn_idx at offset 0.
+		idx := ctx.callIndirectScratchIdx
+		body = inst.InstLocalSet(body, idx) // pop closure_ptr → scratch
+		body = inst.InstLocalGet(body, idx)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load(body, 2, 0) // push env_ptr
+		body = inst.InstLocalGet(body, idx)
+		body = memory.InstI32Load(body, 2, 0) // push fn_idx
 		return inst.InstCallIndirect(body, tIdx, 0), nil
 
 	// ---- String runtime helpers ----
@@ -1296,6 +1372,31 @@ func callDirectAlias(name string) string {
 		return "__lang_print"
 	}
 	return name
+}
+
+// closureTargetSet returns the set of function names that act as
+// closure-call targets — appearing as op.Str of OpConstFunc,
+// OpMakeClosure, OpMakeEnv, or OpCallClosureDirect. These
+// functions get an extra `i32` (env_ptr) appended to their wasm
+// signature so the indirect-call seam can pass env through
+// uniformly.
+//
+// The lowering invariant is that a single function is EITHER
+// directly-called OR closure-target — never both — so plain
+// user functions called only via OpCallDirect stay unchanged.
+func closureTargetSet(prog *ir.Program) map[string]bool {
+	out := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		for _, op := range fn.Ops {
+			switch op.Kind {
+			case ir.OpConstFunc, ir.OpMakeClosure, ir.OpMakeEnv, ir.OpCallClosureDirect:
+				if op.Str != "" {
+					out[op.Str] = true
+				}
+			}
+		}
+	}
+	return out
 }
 
 // anyTableOp reports whether prog needs a table + element section.
