@@ -1336,6 +1336,38 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     return s;
                 }
             }
+            // Short-circuit boolean ops. The right operand's
+            // side effects must not run when the left already
+            // decides the result. `&&` short-circuits on false
+            // (left == 0 ⇒ result = 0); `||` short-circuits on
+            // true (left != 0 ⇒ result = 1). Otherwise the
+            // right operand becomes the result.
+            if (b.op == "&&" || b.op == "||") {
+                s = emit_expr(b.left, s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    testq %rax, %rax\n");
+                var short_l: LabelOut = fresh_label(s);
+                s = short_l.state;
+                var end_l: LabelOut = fresh_label(s);
+                s = end_l.state;
+                if (b.op == "&&") {
+                    s = s.write("    jz " + short_l.name + "\n");
+                } else {
+                    s = s.write("    jnz " + short_l.name + "\n");
+                }
+                s = emit_expr(b.right, s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    jmp " + end_l.name + "\n");
+                s = s.write(short_l.name + ":\n");
+                if (b.op == "&&") {
+                    s = s.write("    movq $0, %rax\n");
+                } else {
+                    s = s.write("    movq $1, %rax\n");
+                }
+                s = s.write(end_l.name + ":\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             s = emit_expr(b.left, s);
             s = emit_expr(b.right, s);
             s = s.write("    popq %rcx\n");        // rhs
