@@ -272,11 +272,21 @@ function main(): i32 {
   cases emit a TAP `# SKIP` directive; subsuites print with
   `parent / child` prefixes while keeping monotonic TAP
   numbering
+- **Cleanup hook:** `(r).defer_cleanup(path)` registers a
+  filesystem path for `remove_dir_all` at `finish()` time;
+  used with the `temp_dir(...)` builtin to scrub fixtures
+  regardless of test outcome.  Cleanup errors print as TAP
+  comments and bump the exit code to 2 (the "tests passed
+  but cleanup leaked" sentinel) so CI can distinguish from
+  a real test failure.
 - **Outcome constructors:** `pass()`, `fail(msg)`
 - **Boolean assertions:** `assert_true(cond)`, `assert_false(cond)`
 - **i32 assertions:** `assert_eq_i32`, `assert_neq_i32`,
   `assert_lt_i32`, `assert_le_i32`, `assert_gt_i32`,
   `assert_ge_i32`
+- **Wider int assertions:** `assert_eq_i64`, `assert_neq_i64`,
+  `assert_eq_u32`, `assert_neq_u32`, `assert_eq_u64`,
+  `assert_neq_u64`
 - **bool / string assertions:** `assert_eq_bool`,
   `assert_eq_string`, `assert_neq_string`, `assert_empty_string`,
   `assert_non_empty_string`
