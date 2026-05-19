@@ -395,7 +395,7 @@ func TestWASMHttpParseRequestPartial(t *testing.T) {
 // client would consume it.
 func TestWASMHttpSerializeResponse(t *testing.T) {
 	src := `function main(): i32 {
-    var resp: HttpResponse = HttpResponse { status: 200, body: "hi" };
+    var resp: HttpResponse = http_response_ok("hi");
     var wire: string = http_serialize_response(resp);
     var expected: string = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
     if (wire != expected) { return 1; }
@@ -410,7 +410,7 @@ func TestWASMHttpSerializeResponse(t *testing.T) {
 // status-code → reason-phrase table covers the common cases.
 func TestWASMHttpSerializeResponse404(t *testing.T) {
 	src := `function main(): i32 {
-    var resp: HttpResponse = HttpResponse { status: 404, body: "not found" };
+    var resp: HttpResponse = http_response_text(404, "not found");
     var wire: string = http_serialize_response(resp);
     if (!wire.starts_with("HTTP/1.1 404 Not Found\r\n")) { return 1; }
     return 42;

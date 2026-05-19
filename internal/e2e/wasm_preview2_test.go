@@ -595,7 +595,7 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
     if (req.method == "POST") {
         return http_response_ok(req.body);
     }
-    return http_response_not_found();
+    return http_response_text(404, "not found");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
