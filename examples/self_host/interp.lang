@@ -738,6 +738,17 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     _ => { return StepResult { env: env, ret: v_err("while cond not bool") }; }
                 }
                 var step: StepResult = eval_block(w.body, cur);
+                // break inside the loop exits immediately —
+                // discard the body's env, return noreturn so
+                // the surrounding stmt list continues.
+                if (is_break(step.ret)) {
+                    return StepResult { env: trim_env(step.env, base), ret: v_err("__noreturn__") };
+                }
+                // continue trims body-local bindings and loops.
+                if (is_continue(step.ret)) {
+                    cur = trim_env(step.env, base);
+                    continue;
+                }
                 if (!is_noreturn(step.ret)) {
                     // A return inside the loop short-circuits all
                     // remaining iterations.
@@ -837,6 +848,14 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             while (i < len(elems)) {
                 var iter_env: Env = cur.bind(f.var_name, elems[i]);
                 var step: StepResult = eval_block(f.body, iter_env);
+                if (is_break(step.ret)) {
+                    return StepResult { env: trim_env(step.env, base), ret: v_err("__noreturn__") };
+                }
+                if (is_continue(step.ret)) {
+                    cur = trim_env(step.env, base);
+                    i = i + 1;
+                    continue;
+                }
                 if (!is_noreturn(step.ret)) { return step; }
                 cur = trim_env(step.env, base);
                 i = i + 1;
@@ -890,6 +909,22 @@ function eval_block(body: parser.Stmt[], env: Env): StepResult {
 function is_noreturn(v: Value): boolean {
     match (v) {
         VErr(e) => { return e.msg == "__noreturn__"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function is_break(v: Value): boolean {
+    match (v) {
+        VErr(e) => { return e.msg == "__break__"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function is_continue(v: Value): boolean {
+    match (v) {
+        VErr(e) => { return e.msg == "__continue__"; },
         _ => { return false; }
     }
     return false;
@@ -1468,6 +1503,41 @@ function main(): i32 {
     match (r65) {
         VInt(i) => { if (i.v != 42) { return 650; } },
         _ => { return 651; }
+    }
+
+    // break inside a while exits the loop. The accumulator
+    // stops growing once i hits 3.
+    var src66: string = "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 10) { if (i == 3) { break; } s = s + i; i = i + 1; } return s; }";
+    var r66: Value = run_module(src66);
+    match (r66) {
+        VInt(i) => { if (i.v != 3) { return 660; } },
+        _ => { return 661; }
+    }
+
+    // continue skips the rest of the iter. `s` accumulates
+    // only the even values in 0..5: 0 + 2 + 4 = 6.
+    var src67: string = "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 5) { if (i % 2 == 1) { i = i + 1; continue; } s = s + i; i = i + 1; } return s; }";
+    var r67: Value = run_module(src67);
+    match (r67) {
+        VInt(i) => { if (i.v != 6) { return 670; } },
+        _ => { return 671; }
+    }
+
+    // for-in + break — sums [1, 2, 10, 20] only until 10 then
+    // stops: 1 + 2 = 3.
+    var src68: string = "function main(): i32 { var s: i32 = 0; for n in [1, 2, 10, 20] { if (n > 5) { break; } s = s + n; } return s; }";
+    var r68: Value = run_module(src68);
+    match (r68) {
+        VInt(i) => { if (i.v != 3) { return 680; } },
+        _ => { return 681; }
+    }
+
+    // for-in + continue — skips elements that match.
+    var src69: string = "function main(): i32 { var s: i32 = 0; for n in [1, 2, 3, 4, 5] { if (n == 3) { continue; } s = s + n; } return s; }";
+    var r69: Value = run_module(src69);
+    match (r69) {
+        VInt(i) => { if (i.v != 12) { return 690; } },
+        _ => { return 691; }
     }
 
     return 0;
