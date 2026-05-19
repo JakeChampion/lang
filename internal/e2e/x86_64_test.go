@@ -777,7 +777,7 @@ func TestX86_64HttpHandler(t *testing.T) {
 	probe.Close()
 
 	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http_response_ok("method=" + req.method + " path=" + req.path + " body-len=" + len(req.body).to_string());
+    return http_response_ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`
 
 	prog, err := parser.Parse(src)

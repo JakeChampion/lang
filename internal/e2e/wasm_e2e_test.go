@@ -456,7 +456,7 @@ func TestWASMHttpParseRequest(t *testing.T) {
         Some(req) => {
             if (req.method != "POST") { return 1; }
             if (req.path != "/todos") { return 2; }
-            if (req.body != "hello, world!") { return 3; }
+            if (req.body_string() != "hello, world!") { return 3; }
             return 42;
         },
         None => { return 99; }
@@ -476,7 +476,7 @@ func TestWASMHttpParseRequestNoBody(t *testing.T) {
         Some(req) => {
             if (req.method != "GET") { return 1; }
             if (req.path != "/hello?name=world") { return 2; }
-            if (len(req.body) != 0) { return 3; }
+            if (req.body_len() != 0) { return 3; }
             return 42;
         },
         None => { return 99; }
