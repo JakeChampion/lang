@@ -58,6 +58,10 @@ pub struct TypeArray { elem: Type }
 // full field list lives in the StructTable (built once per
 // module); this variant is just the nominal handle.
 pub struct TypeStruct { name: string }
+// TypeTuple carries a fixed-arity heterogeneous element-type
+// list. Field access via `.0` / `.1` / … reads the elem type
+// at that position; out-of-range indices surface unknown.
+pub struct TypeTuple { elements: Type[] }
 // TypeUnion references a user-declared type alias by name —
 // `pub type Shape = Circle | Square`. Variant resolution lives
 // in the UnionTable (parallel to StructTable). The checker uses
@@ -67,7 +71,7 @@ pub struct TypeStruct { name: string }
 pub struct TypeUnion { name: string }
 pub struct TypeUnknown { reason: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeUnion | TypeUnknown;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeUnion | TypeUnknown;
 
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
@@ -79,6 +83,24 @@ function t_string(): Type { return TypeString { tag: 0 }; }
 function t_float(): Type { return TypeFloat { tag: 0 }; }
 function t_array(elem: Type): Type { return TypeArray { elem: elem }; }
 function t_struct(name: string): Type { return TypeStruct { name: name }; }
+function t_tuple(elements: Type[]): Type { return TypeTuple { elements: elements }; }
+
+// digit_string_to_i32 parses a decimal-digit string. Returns
+// -1 on the empty string or any non-digit byte. Used only for
+// tuple-index field names like "0" / "1" / "42".
+function digit_string_to_i32(s: string): i32 {
+    var n: i32 = len(s);
+    if (n == 0) { return 0 - 1; }
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return 0 - 1; }
+        acc = acc * 10 + (b - 48);
+        i = i + 1;
+    }
+    return acc;
+}
 function t_union(name: string): Type { return TypeUnion { name: name }; }
 function t_unknown(reason: string): Type { return TypeUnknown { reason: reason }; }
 
@@ -121,6 +143,20 @@ function type_eq(a: Type, b: Type): boolean {
         TypeStruct(an) => {
             match (b) {
                 TypeStruct(bn) => { return an.name == bn.name; },
+                _ => { return false; }
+            }
+        },
+        TypeTuple(at) => {
+            match (b) {
+                TypeTuple(bt) => {
+                    if (len(at.elements) != len(bt.elements)) { return false; }
+                    var i: i32 = 0;
+                    while (i < len(at.elements)) {
+                        if (!type_eq(at.elements[i], bt.elements[i])) { return false; }
+                        i = i + 1;
+                    }
+                    return true;
+                },
                 _ => { return false; }
             }
         },
@@ -485,11 +521,14 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             return sig.ret_type;
         },
-        parser.ExprTuple(_) => {
-            // Tuples aren't yet modeled in the type lattice —
-            // surface as TypeUnknown so a future slice can add
-            // TypeTuple + element-type collection.
-            return t_unknown("tuple type not implemented");
+        parser.ExprTuple(t) => {
+            var elems: Type[] = [];
+            var i: i32 = 0;
+            while (i < len(t.elements)) {
+                elems = elems.push(check_expr(t.elements[i], s));
+                i = i + 1;
+            }
+            return t_tuple(elems);
         },
         parser.ExprArray(a) => {
             if (len(a.elements) == 0) {
@@ -578,7 +617,16 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                     }
                     return t_unknown("struct " + sn.name + " has no field `" + fa.field + "`");
                 },
-                _ => { return t_unknown("can only field-access a struct"); }
+                TypeTuple(tt) => {
+                    // Tuple field is `.0` / `.1` / … — parse the
+                    // digit string back to an i32 index.
+                    var idx: i32 = digit_string_to_i32(fa.field);
+                    if (idx < 0 || idx >= len(tt.elements)) {
+                        return t_unknown("tuple index `" + fa.field + "` out of range");
+                    }
+                    return tt.elements[idx];
+                },
+                _ => { return t_unknown("can only field-access a struct or tuple"); }
             }
             return t_unknown("unreachable field-access arm");
         },
@@ -1437,6 +1485,33 @@ function main(): i32 {
     var mod44: parser.Module = parser.parse_module(lexer.tokenize(src44));
     var mt44: ModuleTypes = check_module(mod44);
     if (mt44.all_well_typed) { return 440; }
+
+    // Tuple literal — type-checks as TypeTuple, field access
+    // via `.0` reads the elem type at that index.
+    var src45: string = "function main(): i32 { var t = (1, 2, 3); return t.0; }";
+    var mod45: parser.Module = parser.parse_module(lexer.tokenize(src45));
+    var mt45: ModuleTypes = check_module(mod45);
+    if (!mt45.all_well_typed) { return 450; }
+
+    // Heterogeneous tuple — `.0` returns i32, `.1` returns
+    // string. Both arms of the tuple type-check.
+    var src46: string = "function main(): i32 { var t = (42, \"hi\"); var s: string = t.1; return t.0; }";
+    var mod46: parser.Module = parser.parse_module(lexer.tokenize(src46));
+    var mt46: ModuleTypes = check_module(mod46);
+    if (!mt46.all_well_typed) { return 460; }
+
+    // Tuple field type-mismatch: `var s: string = t.0` where
+    // t.0 is i32 — rejected.
+    var src47: string = "function main(): i32 { var t = (42, 100); var s: string = t.0; return 0; }";
+    var mod47: parser.Module = parser.parse_module(lexer.tokenize(src47));
+    var mt47: ModuleTypes = check_module(mod47);
+    if (mt47.all_well_typed) { return 470; }
+
+    // Tuple index out of range — rejected.
+    var src48: string = "function main(): i32 { var t = (1, 2); return t.5; }";
+    var mod48: parser.Module = parser.parse_module(lexer.tokenize(src48));
+    var mt48: ModuleTypes = check_module(mod48);
+    if (mt48.all_well_typed) { return 480; }
 
     return 0;
 }
