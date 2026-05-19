@@ -93,7 +93,8 @@ pub struct EmitState {
     in_function: boolean,
     string_lits: string[],
     needs_print_int: boolean,
-    needs_read_int: boolean
+    needs_read_int: boolean,
+    needs_heap: boolean
 }
 
 function new_state(): EmitState {
@@ -106,7 +107,8 @@ function new_state(): EmitState {
         in_function: false,
         string_lits: sl,
         needs_print_int: false,
-        needs_read_int: false
+        needs_read_int: false,
+        needs_heap: false
     };
 }
 
@@ -118,7 +120,8 @@ function (s: EmitState) write(text: string): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap
     };
 }
 
@@ -131,7 +134,8 @@ function (s: EmitState) bind_local(name: string): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap
     };
 }
 
@@ -144,7 +148,8 @@ function (s: EmitState) reset_locals(): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap
     };
 }
 
@@ -156,7 +161,8 @@ function (s: EmitState) enter_function(): EmitState {
         in_function: true,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap
     };
 }
 
@@ -168,7 +174,8 @@ function (s: EmitState) leave_function(): EmitState {
         in_function: false,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap
     };
 }
 
@@ -183,7 +190,26 @@ function (s: EmitState) mark_print_int(): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: true,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap
+    };
+}
+
+// mark_heap flips the "this module needs the heap allocator"
+// flag. emit_module checks it after the body emit and appends
+// the `__lang_heap_ptr` bump-pointer + `__lang_alloc` helper
+// when true. Used by struct literals + array literals once the
+// asm backend grows real heap-backed value codegen.
+function (s: EmitState) mark_heap(): EmitState {
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int,
+        needs_heap: true
     };
 }
 
@@ -197,7 +223,8 @@ function (s: EmitState) mark_read_int(): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: true
+        needs_read_int: true,
+        needs_heap: s.needs_heap
     };
 }
 
@@ -215,7 +242,8 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         in_function: s.in_function,
         string_lits: sl,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -260,7 +288,8 @@ function fresh_label(s: EmitState): LabelOut {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap
     };
     return LabelOut { state: ns, name: name };
 }
@@ -853,6 +882,37 @@ pub function emit_module(mod: parser.Module): string {
             s = s.write(".S" + i32_to_string(li) + ": .ascii \"" + escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
+    }
+    // Heap allocator: a 1 MiB .bss buffer + bump pointer. The
+    // pointer starts at `__lang_heap` and advances by `size`
+    // each `__lang_alloc(size)` call. No deallocation — fine
+    // for the small validation programs that exercise structs.
+    if (s.needs_heap) {
+        s = s.write("    .section .bss\n");
+        s = s.write("    .align 8\n");
+        s = s.write("__lang_heap_ptr: .quad 0\n");
+        s = s.write("    .align 8\n");
+        s = s.write("__lang_heap: .skip 1048576\n");
+        s = s.write("    .section .text\n");
+        s = s.write(".globl __lang_alloc\n");
+        s = s.write(".type __lang_alloc, @function\n");
+        s = s.write("__lang_alloc:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        // Initialise __lang_heap_ptr on first call (lazy).
+        s = s.write("    movq __lang_heap_ptr(%rip), %rax\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jne .Lalloc_inited\n");
+        s = s.write("    leaq __lang_heap(%rip), %rax\n");
+        s = s.write("    movq %rax, __lang_heap_ptr(%rip)\n");
+        s = s.write(".Lalloc_inited:\n");
+        // Result = current ptr; advance ptr by %rdi (the size).
+        s = s.write("    movq __lang_heap_ptr(%rip), %rax\n");
+        s = s.write("    addq %rax, %rdi\n");
+        s = s.write("    movq %rdi, __lang_heap_ptr(%rip)\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __lang_alloc, .-__lang_alloc\n");
     }
     return s.out;
 }
