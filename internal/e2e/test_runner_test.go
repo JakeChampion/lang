@@ -756,6 +756,41 @@ func TestRunnerBatch8Example(t *testing.T) {
 	})
 }
 
+// `examples/tests/float_math_test.lang` exercises the f64
+// math primitives (sqrt / pow / abs / floor / ceil / round /
+// trunc / log / exp / sin / cos) added to std/float, plus
+// the IEEE-754 classification helpers (is_nan / is_finite /
+// is_inf) and min / max / clamp. The f32 receiver path also
+// gets a single round-trip case to confirm the
+// promote-to-f64 / apply / demote wrappers work.
+//
+// Eighteen cases — every method tested with at least one
+// concrete value + a "round-trip" / "identity" property
+// where applicable (exp(log(x))==x, sin^2+cos^2==1).
+func TestRunnerFloatMathExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/float_math_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - abs(negative)",
+		"ok 7 - sqrt(2)",
+		"ok 9 - exp(log(x)) round-trips",
+		"ok 12 - sin^2 + cos^2 = 1",
+		"ok 13 - is_nan",
+		"ok 15 - is_inf (both signs)",
+		"ok 18 - f32 sqrt round-trip",
+		"# pass 18",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

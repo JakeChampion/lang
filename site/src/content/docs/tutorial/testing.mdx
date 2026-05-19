@@ -340,3 +340,7 @@ in the repo:
 - `batch8_test.lang` — argv passthrough, `--filter PATTERN`
   selection, golden-file assertions, Map receiver
   assertions
+- `float_math_test.lang` — `(x: f64).sqrt()` / `.pow()` /
+  `.log()` etc., the IEEE-754 classification helpers, and
+  the round-trip property tests
+  (`exp(log(x)) == x`, `sin² + cos² = 1`)
