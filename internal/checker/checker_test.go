@@ -1503,3 +1503,97 @@ func TestCheckContextBackgroundBehavesLikeOldCheck(t *testing.T) {
 		t.Fatal("CheckContext returned nil info on a valid program")
 	}
 }
+
+// TestSynthesisedHandleMainRunsInitFirst pins the
+// docs/PLATFORM-RESEARCH.md Rec §3 init() ordering: when the
+// program defines both `handle` and `init`, the auto-main
+// synthesis prepends a call to `init()` BEFORE the
+// `tcp_serve` accept loop.
+func TestSynthesisedHandleMainRunsInitFirst(t *testing.T) {
+	prog, err := parser.Parse(`function init() { print("starting"); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	var main *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "main" && fn.IsSynthesisedHandlerMain {
+			main = fn
+			break
+		}
+	}
+	if main == nil {
+		t.Fatal("no synthesised main found")
+	}
+	if len(main.Body.Stmts) != 2 {
+		t.Fatalf("synth main has %d stmts, want 2 (init + tcp_serve return)", len(main.Body.Stmts))
+	}
+	es, ok := main.Body.Stmts[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("first stmt = %T, want *ast.ExprStmt (the init call)", main.Body.Stmts[0])
+	}
+	call, ok := es.Expr.(*ast.Call)
+	if !ok {
+		t.Fatalf("first stmt expression = %T, want *ast.Call", es.Expr)
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || id.Name != "init" {
+		t.Errorf("first stmt calls %v, want init", call.Callee)
+	}
+}
+
+// TestSynthesisedHandleMainNoInitElidesPrepend — backward
+// compat: programs without init() still get the original
+// single-stmt synth main (just the tcp_serve return).
+func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
+	prog, err := parser.Parse(`function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	var main *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "main" && fn.IsSynthesisedHandlerMain {
+			main = fn
+			break
+		}
+	}
+	if main == nil {
+		t.Fatal("no synthesised main found")
+	}
+	if len(main.Body.Stmts) != 1 {
+		t.Errorf("synth main has %d stmts, want 1 (just the tcp_serve return; no init prepended)", len(main.Body.Stmts))
+	}
+}
+
+// TestUserDefinedMainSkipsSynthEvenWithInit — when the user
+// writes their own main(), the synth-main path is skipped
+// entirely. User's main has the freedom to call init() (or
+// not) wherever they choose.
+func TestUserDefinedMainSkipsSynthEvenWithInit(t *testing.T) {
+	prog, err := parser.Parse(`function init() { print("starting"); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+}
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Name == "main" && fn.IsSynthesisedHandlerMain {
+			t.Fatalf("synth main was injected even though user defined main()")
+		}
+	}
+}

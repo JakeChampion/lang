@@ -6260,6 +6260,25 @@ func hasMainDecl(prog *ast.Program) bool {
 	return false
 }
 
+// hasInitDecl reports whether the program defines a top-level
+// `init` function — recognised by the auto-`main`-from-`handle`
+// synthesis as a one-shot startup entry that runs before the
+// per-request loop (docs/PLATFORM-RESEARCH.md Rec §3).
+//
+// `init()` returns are currently dropped — Phase 1 plumbing
+// only runs the function for its side effects (logging
+// "starting", pre-warming caches via state-block writes,
+// env-var reads). Phase 2 will thread the return value as a
+// `state: InitState` third argument to `handle`.
+func hasInitDecl(prog *ast.Program) bool {
+	for _, fn := range prog.Funcs {
+		if fn.Name == "init" {
+			return true
+		}
+	}
+	return false
+}
+
 // synthesiseHandleMain builds:
 //
 //	function main(): i32 {
@@ -6313,9 +6332,26 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 			&ast.Ident{P: pos, Name: "handle"},
 		},
 	}
-	body := &ast.Block{Stmts: []ast.Stmt{
-		&ast.Return{P: pos, Value: tcpServeCall},
-	}}
+	// Prepend an `init();` call when the user defined one
+	// (docs/PLATFORM-RESEARCH.md Rec §3). The return value is
+	// currently dropped — Phase 1 init() is side-effect-only;
+	// Phase 2 will thread the result as a `state` parameter
+	// to handle. `init` is the BARE name; if the user
+	// `import "core/no_prelude";`s and qualifies it, modload
+	// rewrites the call separately.
+	var stmts []ast.Stmt
+	if hasInitDecl(prog) {
+		stmts = append(stmts, &ast.ExprStmt{
+			P: pos,
+			Expr: &ast.Call{
+				P:      pos,
+				Callee: &ast.Ident{P: pos, Name: "init"},
+				Args:   nil,
+			},
+		})
+	}
+	stmts = append(stmts, &ast.Return{P: pos, Value: tcpServeCall})
+	body := &ast.Block{Stmts: stmts}
 	return &ast.FuncDecl{
 		P:                        pos,
 		Name:                     "main",
