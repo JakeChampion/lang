@@ -69,6 +69,43 @@ function i32_to_string(n: i32): string {
     return out;
 }
 
+// digits_to_i32 parses a decimal integer literal (optional
+// leading `-`). Stops at the first non-digit byte. Mirrors
+// the x86-64 backend helper of the same name.
+function digits_to_i32(s: string): i32 {
+    if (len(s) == 0) { return 0; }
+    var neg: boolean = false;
+    var start: i32 = 0;
+    if (s[0] == 45) { neg = true; start = 1; }
+    var acc: i32 = 0;
+    var i: i32 = start;
+    while (i < len(s)) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) {
+            if (neg) { return 0 - acc; }
+            return acc;
+        }
+        acc = acc * 10 + (b - 48);
+        i = i + 1;
+    }
+    if (neg) { return 0 - acc; }
+    return acc;
+}
+
+// is_all_digits returns true iff `s` is non-empty and every
+// byte is an ASCII digit. Used by ExprFieldAccess to detect
+// tuple-style numeric field names versus struct field names.
+function is_all_digits(s: string): boolean {
+    if (len(s) == 0) { return false; }
+    var i: i32 = 0;
+    while (i < len(s)) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // =================== EMIT STATE ====================
 
 // EmitState carries the running output text, a monotonic label
@@ -485,9 +522,28 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
-        parser.ExprTuple(_) => {
-            s = s.write("    // unsupported: tuple\n");
-            s = s.write("    mov x0, #0\n");
+        parser.ExprTuple(t) => {
+            // Layout: [val0, val1, …, val_(N-1)] — no shape
+            // pointer, same as the x86-64 backend; tuple field
+            // access uses numeric `.0` / `.1` / … spellings and
+            // resolves to a direct offset at the access site.
+            var n_elems: i32 = len(t.elements);
+            var ti: i32 = 0;
+            while (ti < n_elems) {
+                s = emit_expr(t.elements[ti], s);
+                ti = ti + 1;
+            }
+            var t_bytes: i32 = n_elems * 8;
+            if (n_elems == 0) { t_bytes = 8; }
+            s = s.write("    mov x0, #" + i32_to_string(t_bytes) + "\n");
+            s = s.write("    bl __lang_alloc\n");
+            s = s.mark_heap();
+            var tj: i32 = n_elems - 1;
+            while (tj >= 0) {
+                s = s.write("    ldr x1, [sp], #16\n");
+                s = s.write("    str x1, [x0, #" + i32_to_string(tj * 8) + "]\n");
+                tj = tj - 1;
+            }
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
@@ -540,6 +596,16 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprFieldAccess(fa) => {
+            // Numeric field name → tuple access (offset idx*8,
+            // no shape dispatch). See asm.lang for rationale.
+            if (is_all_digits(fa.field)) {
+                var tup_idx: i32 = digits_to_i32(fa.field);
+                s = emit_expr(fa.obj, s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    ldr x0, [x0, #" + i32_to_string(tup_idx * 8) + "]\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             s = emit_expr(fa.obj, s);
             s = s.write("    ldr x0, [sp], #16\n");
             var end_lbl: i32 = s.label_n;

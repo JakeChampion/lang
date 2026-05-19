@@ -93,6 +93,21 @@ function digits_to_i32(s: string): i32 {
     return acc;
 }
 
+// is_all_digits returns true iff `s` is non-empty and every
+// byte is an ASCII digit. Used by ExprFieldAccess to detect
+// tuple-style numeric field names (`.0`, `.1`, …) versus
+// struct field names.
+function is_all_digits(s: string): boolean {
+    if (len(s) == 0) { return false; }
+    var i: i32 = 0;
+    while (i < len(s)) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // =================== EMIT STATE ====================
 
 // EmitState bundles the running output text, a monotonic label
@@ -520,9 +535,39 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    pushq %rax\n");
             return s;
         },
-        parser.ExprTuple(_) => {
-            s = s.write("    # unsupported: tuple\n");
-            s = s.write("    pushq $0\n");
+        parser.ExprTuple(t) => {
+            // Layout: [val0, val1, …, val_(N-1)] — no shape
+            // pointer because tuple field access uses the
+            // numeric `.0` / `.1` / … spelling, and the offset
+            // is known at the access site without runtime
+            // dispatch.
+            //
+            // Steps:
+            //   1. Compile each element in source order
+            //      (push N values onto the rt-stack).
+            //   2. Allocate N*8 bytes on the heap.
+            //   3. Pop each element from the rt-stack into
+            //      [%rax + i*8] — descending i so the top-of-
+            //      stack lands in the LAST slot.
+            //   4. Push %rax (the tuple pointer).
+            var n_elems: i32 = len(t.elements);
+            var ti: i32 = 0;
+            while (ti < n_elems) {
+                s = emit_expr(t.elements[ti], s);
+                ti = ti + 1;
+            }
+            var t_bytes: i32 = n_elems * 8;
+            if (n_elems == 0) { t_bytes = 8; }
+            s = s.write("    movq $" + i32_to_string(t_bytes) + ", %rdi\n");
+            s = s.write("    call __lang_alloc\n");
+            s = s.mark_heap();
+            var tj: i32 = n_elems - 1;
+            while (tj >= 0) {
+                s = s.write("    popq %rcx\n");
+                s = s.write("    movq %rcx, " + i32_to_string(tj * 8) + "(%rax)\n");
+                tj = tj - 1;
+            }
+            s = s.write("    pushq %rax\n");
             return s;
         },
         parser.ExprArray(_) => {
@@ -581,6 +626,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprFieldAccess(fa) => {
+            // Numeric field name (`.0` / `.1` / …) → tuple
+            // access. Tuples are laid out without a shape
+            // pointer, so the offset is just idx*8 from the
+            // box pointer. No runtime dispatch needed.
+            if (is_all_digits(fa.field)) {
+                var tup_idx: i32 = digits_to_i32(fa.field);
+                s = emit_expr(fa.obj, s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    movq " + i32_to_string(tup_idx * 8) + "(%rax), %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             // Lowering: compile the receiver expression, pop
             // the struct pointer into %rax, dispatch on the
             // shape pointer at [%rax + 0]. For each struct

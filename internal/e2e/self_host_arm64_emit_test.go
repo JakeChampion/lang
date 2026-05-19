@@ -149,6 +149,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			0,
 			"2 3 5 7 11 13 17 19 23 29 \n",
 		},
+		{
+			"tuple-literal-access-zero",
+			"function main(): i32 { var t = (7, 11, 13); return t.0; }",
+			7,
+			"",
+		},
+		{
+			"tuple-literal-access-middle",
+			"function main(): i32 { var t = (7, 11, 13); return t.1; }",
+			11,
+			"",
+		},
+		{
+			"tuple-literal-access-last",
+			"function main(): i32 { var t = (7, 11, 13); return t.2; }",
+			13,
+			"",
+		},
+		{
+			"tuple-sum-fields",
+			"function main(): i32 { var t = (10, 20, 30); return t.0 + t.1 + t.2; }",
+			60,
+			"",
+		},
+		{
+			"tuple-of-expressions",
+			"function main(): i32 { var x = 5; var t = (x * 2, x + 1, x - 1); return t.0 + t.1 + t.2; }",
+			20,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
