@@ -383,6 +383,18 @@ function main(): i32 {
   `assert_json_object_size(json_text, n)` — cardinality.
   Each helper reports a distinct diagnostic for invalid
   JSON, wrong top-level type, and missing/extra entries
+- **JSON field extraction:**
+  `assert_json_eq_field_string(json_text, key, expected)`,
+  `assert_json_eq_field_i32(json_text, key, expected)`,
+  `assert_json_eq_field_bool(json_text, key, expected)`
+  — pin a single top-level field's value at a specific
+  type. The most common HTTP/RPC test shape ("response
+  has `user_id` equal to 'abc-123'"). Each variant
+  reports distinct diagnostics for the five failure
+  modes (invalid JSON / non-object top-level / missing
+  key / wrong type at key / value mismatch). The `_i32`
+  variant rejects non-i32-parseable JNumbers (decimals,
+  out-of-range) rather than silently truncating
 - **Timing:** `assert_elapsed_lt_ms(start_ns, max_ms)` /
   `assert_elapsed_lt_us(start_ns, max_us)` — pair with
   `monotonic_ns()` to stamp the start; failure message embeds
