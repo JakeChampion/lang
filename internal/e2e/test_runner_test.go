@@ -1822,6 +1822,46 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/fail_fast_test.lang` exercises the new
+// fail-fast mode added to std/test:
+//   - `test_new_fail_fast(suite)` constructor.
+//   - `(r).with_fail_fast()` post-init opt-in.
+//   - `parse_fail_fast_from_args(argv)` CLI lift.
+//
+// The contract: once any case fails, subsequent `it()`
+// calls auto-skip with reason "fail-fast: prior case
+// failed". The test exercises this by spinning up an
+// isolated child runner that deliberately fails, then
+// inspects its counters from the outer suite — keeps
+// the outer exit code clean while still pinning the
+// behaviour. The interleaved TAP output (child TAP +
+// outer TAP) is part of what we pin: the SKIP-line
+// wording shows up in the combined stream.
+func TestRunnerFailFastExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/fail_fast_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - c1 pass before fail",
+		"not ok 2 - c2 fail triggers fast",
+		"ok 3 - c3 should auto-skip after fail # SKIP fail-fast: prior case failed",
+		"ok 1 - fail-fast short-circuits post-fail",
+		"ok 2 - default mode runs every case",
+		"ok 3 - parse_fail_fast detects --fail-fast",
+		"ok 4 - parse_fail_fast no false-positive",
+		"ok 5 - with_fail_fast preserves filter",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
