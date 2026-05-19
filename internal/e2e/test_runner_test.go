@@ -163,6 +163,106 @@ function main(): i32 {
 	}
 }
 
+// `examples/tests/skip_and_subsuites_test.lang` covers the
+// skip / skip_if / subsuite / merge surface. Skips don't count
+// as failures (exit 0) and the TAP stream stays monotonic
+// across subsuite boundaries — the harness threads a base_idx
+// through the child runner so the first subsuite case prints
+// `ok 5` (not `ok 1` again) when the parent ran 4 cases first.
+func TestRunnerSkipAndSubsuitesExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/skip_and_subsuites_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	want := []string{
+		"ok 1 - top-level pass",
+		"ok 2 - wasmtime-only # SKIP wasmtime not on $PATH",
+		"ok 5 - arithmetic / addition",
+		"ok 7 - arithmetic / multiplication # SKIP out of scope for this slice",
+		"ok 10 - trailing top-level",
+		"# tests 10",
+		"# pass 7",
+		"# fail 0",
+		"# skip 3",
+	}
+	for _, w := range want {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/fuzz_example_test.lang` exercises the
+// `std/fuzz` harness on three benign properties (always-OK,
+// non-negative length, idempotent to_upper) and one transform
+// invariant (trim strips edge spaces). The seeds are arranged
+// so the mutation path actually exercises the property — eg
+// the to_upper-idempotent target includes mixed-case seeds so
+// byte flips into / out of the upper range get tested.
+func TestRunnerFuzzExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/fuzz_example_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - trivial",
+		"ok 2 - len is non-negative",
+		"ok 3 - to_upper idempotent",
+		"ok 4 - trim strips edge spaces",
+		"# pass 4",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// A fuzz target that detects a forbidden pattern in its
+// seeds (`BAD seed`) must surface the failure with the
+// offending input quoted so the failure log doubles as a
+// reproducer. Inline source keeps the assertion adjacent to
+// the target.
+func TestRunnerFuzzFailureSurfacesInputReproducer(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+function detect_bad(input: string): Option[string] {
+    if (input.contains("BAD")) { return Some("forbidden pattern"); }
+    return None;
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("fuzz-failure");
+    r = r.fuzz("detect", ["good", "BAD seed", "another"], 5, detect_bad);
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s",
+			code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	for _, w := range []string{
+		"not ok 1 - detect",
+		`seed[1] = "BAD seed"`,
+		"forbidden pattern",
+		"# fail 1",
+	} {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
