@@ -110,6 +110,12 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// 4 random bytes to the fixed scratch slot
 					// and returns them as an i32.
 					needs.add("__lang_random_i32")
+				case "__lang_random_bytes":
+					// (n) → (data, len) — wasi_random_get into
+					// a fresh n-byte heap allocation. Returns
+					// the (data, len) pair of the heap string.
+					needs.add("__lang_alloc")
+					needs.add("__lang_random_bytes")
 				case "__lang_now_ns":
 					// wasi_clock_time_get + alloc-per-call for
 					// the 8-byte output buffer.
@@ -311,6 +317,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildRandomI32Body,
+	},
+	"__lang_random_bytes": {
+		// (n) → (data, len) — heap-form string of n random
+		// bytes via wasi_random_get. Empty (n=0) → inline empty
+		// (0, 0x80000000).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildRandomBytesBody,
 	},
 	"__lang_now_ns": {
 		// () → i64 — nanoseconds since unix epoch from the
