@@ -479,5 +479,66 @@ function main(): i32 {
     if (rtC.imports[1].path != "./parser") { return 122; }
     if (len(rtC.funcs) != 1) { return 123; }
 
+    // For-in + break / continue + tuple all round-trip.
+    var srcD: string = "for n in [1, 2, 3] { if (n == 2) { break; } if (n == 1) { continue; } }";
+    var rtD: parser.Module = roundtrip_module(srcD);
+    if (len(rtD.top_stmts) != 1) { return 130; }
+    match (rtD.top_stmts[0]) {
+        parser.StmtFor(f) => {
+            if (f.var_name != "n") { return 131; }
+            if (len(f.body) != 2) { return 132; }
+            match (f.body[0]) {
+                parser.StmtIf(ifs) => {
+                    match (ifs.then_body[0]) {
+                        parser.StmtBreak(_) => { },
+                        _ => { return 133; }
+                    }
+                },
+                _ => { return 134; }
+            }
+            match (f.body[1]) {
+                parser.StmtIf(ifs) => {
+                    match (ifs.then_body[0]) {
+                        parser.StmtContinue(_) => { },
+                        _ => { return 135; }
+                    }
+                },
+                _ => { return 136; }
+            }
+        },
+        _ => { return 137; }
+    }
+
+    // Tuple round-trip via printer: a bound tuple plus a
+    // separate field-access expression survive emit + re-
+    // parse with the same shape. Postfix directly on a
+    // tuple literal (`(1,2,3).0`) isn't supported yet — the
+    // parser's postfix-chain is inside the TokIdent branch.
+    var srcE: string = "var t = (10, 20, 30); var x = t.0; return x;";
+    var rtE: parser.Module = roundtrip_module(srcE);
+    if (len(rtE.top_stmts) != 3) { return 140; }
+    match (rtE.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprTuple(t) => {
+                    if (len(t.elements) != 3) { return 141; }
+                },
+                _ => { return 142; }
+            }
+        },
+        _ => { return 143; }
+    }
+    match (rtE.top_stmts[1]) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "0") { return 144; }
+                },
+                _ => { return 145; }
+            }
+        },
+        _ => { return 146; }
+    }
+
     return 0;
 }
