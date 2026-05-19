@@ -144,6 +144,15 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             while (i < len(c.args)) { args = args.push(fold_expr(c.args[i])); i = i + 1; }
             return parser.ExprCall { callee: fold_expr(c.callee), args: args };
         },
+        parser.ExprTuple(t) => {
+            var elems: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < len(t.elements)) {
+                elems = elems.push(fold_expr(t.elements[i]));
+                i = i + 1;
+            }
+            return parser.ExprTuple { elements: elems };
+        },
         parser.ExprArray(a) => {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;

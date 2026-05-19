@@ -45,6 +45,12 @@ pub struct ExprCall { callee: Expr, args: Expr[] }
 // the checker rejects an empty literal in inference contexts
 // because it can't infer the element type.
 pub struct ExprArray { elements: Expr[] }
+// ExprTuple holds a parenthesised comma-separated list:
+// `(a, b, c)`. Distinct from arrays because tuple shape is
+// fixed-arity / heterogeneous; arrays are homogeneous and
+// dynamic. Field access in lang uses `.0`, `.1`, etc. but
+// that's a later milestone — this slice only adds parsing.
+pub struct ExprTuple { elements: Expr[] }
 // Postfix indexing `a[i]`. `a` can be any Expr that evaluates to
 // an array; `i` must type-check to i32. Out-of-range access at
 // runtime surfaces as VErr from the interp.
@@ -66,7 +72,7 @@ pub struct ExprUnknown { kind: string }
 
 pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
               | ExprBinary | ExprUnary | ExprCall
-              | ExprArray | ExprIndex | ExprSlice
+              | ExprArray | ExprTuple | ExprIndex | ExprSlice
               | ExprStructLit | ExprFieldAccess | ExprUnknown;
 
 // Statement nodes.
@@ -179,6 +185,7 @@ function e_binary(op: string, left: Expr, right: Expr): Expr {
 function e_unary(op: string, operand: Expr): Expr { return ExprUnary { op: op, operand: operand }; }
 function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args }; }
 function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements }; }
+function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements }; }
 function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index }; }
 function e_slice(array: Expr, start: Expr, end: Expr): Expr {
     return ExprSlice { array: array, start: start, end: end };
@@ -411,9 +418,27 @@ function parse_primary(p: Par): ExprResult {
         },
         lexer.TokPunct(x) => {
             if (x.text == "(") {
+                // `(expr)` — grouping. `(e0, e1, …)` — tuple
+                // literal. The first expr decides whether we're
+                // grouping or building a tuple: a `,` follow-up
+                // means tuple; anything else (`)`) means a plain
+                // parenthesized expression.
                 p = p.advance();
                 var inner = parse_expr(p);
                 p = inner.par;
+                if (p.peek_punct() == ",") {
+                    var elems: Expr[] = [];
+                    elems = elems.push(inner.expr);
+                    while (p.peek_punct() == ",") {
+                        p = p.advance();
+                        if (p.peek_punct() == ")") { break; }
+                        var er = parse_expr(p);
+                        p = er.par;
+                        elems = elems.push(er.expr);
+                    }
+                    if (p.peek_punct() == ")") { p = p.advance(); }
+                    return ExprResult { par: p, expr: e_tuple(elems) };
+                }
                 if (p.peek_punct() == ")") { p = p.advance(); }
                 return ExprResult { par: p, expr: inner.expr };
             }
@@ -1477,6 +1502,58 @@ function main(): i32 {
             }
         },
         _ => { return 1023; }
+    }
+
+    // Tuple literal: `(1, 2, 3)` parses as ExprTuple with 3
+    // elements. Single-arg paren stays grouping.
+    var srcTu: string = "var t = (1, 2, 3); return 0;";
+    var progTu: Stmt[] = parse_program(lexer.tokenize(srcTu));
+    match (progTu[0]) {
+        StmtVar(v) => {
+            match (v.init) {
+                ExprTuple(t) => {
+                    if (len(t.elements) != 3) { return 1030; }
+                    match (t.elements[0]) {
+                        ExprNumber(n) => { if (n.text != "1") { return 1031; } },
+                        _ => { return 1032; }
+                    }
+                },
+                _ => { return 1033; }
+            }
+        },
+        _ => { return 1034; }
+    }
+
+    // Grouping stays grouping when there's no comma.
+    var srcGr: string = "var g = (1 + 2); return 0;";
+    var progGr: Stmt[] = parse_program(lexer.tokenize(srcGr));
+    match (progGr[0]) {
+        StmtVar(v) => {
+            match (v.init) {
+                ExprBinary(b) => { if (b.op != "+") { return 1040; } },
+                _ => { return 1041; }
+            }
+        },
+        _ => { return 1042; }
+    }
+
+    // Tuple with heterogeneous elements (number + string).
+    var srcTH: string = "var t = (1, \"hi\"); return 0;";
+    var progTH: Stmt[] = parse_program(lexer.tokenize(srcTH));
+    match (progTH[0]) {
+        StmtVar(v) => {
+            match (v.init) {
+                ExprTuple(t) => {
+                    if (len(t.elements) != 2) { return 1050; }
+                    match (t.elements[1]) {
+                        ExprString(s) => { if (s.value != "hi") { return 1051; } },
+                        _ => { return 1052; }
+                    }
+                },
+                _ => { return 1053; }
+            }
+        },
+        _ => { return 1054; }
     }
 
     return 0;

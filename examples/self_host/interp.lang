@@ -372,6 +372,12 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return call_func(name, arg_vals, env.funcs);
         },
+        parser.ExprTuple(_) => {
+            // Tuple values aren't modeled in the Value lattice
+            // yet — a future slice would add VTuple. For now
+            // tuples surface as VErr at eval time.
+            return v_err("tuple value not implemented");
+        },
         parser.ExprArray(a) => {
             var elems: Value[] = [];
             var i: i32 = 0;
