@@ -658,6 +658,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             return t_unknown("unreachable field-access arm");
         },
+        parser.ExprLambda(_) => { return t_unknown("lambda type not implemented"); },
         parser.ExprUnknown(u) => { return t_unknown("parser-side unknown:" + u.kind); }
     }
     return t_unknown("unhandled Expr variant");

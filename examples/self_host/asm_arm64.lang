@@ -470,6 +470,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
+        parser.ExprLambda(_) => {
+            s = s.write("    // unsupported: lambda\n");
+            s = s.write("    mov x0, #0\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        },
         parser.ExprUnknown(_) => {
             s = s.write("    // parser-side unknown\n");
             s = s.write("    mov x0, #0\n");
