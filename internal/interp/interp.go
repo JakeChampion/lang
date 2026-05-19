@@ -371,6 +371,9 @@ func New() *Interp {
 	// right trade for the migration: tests run under
 	// `lang -interp` regardless of which backend they exercise.
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
+	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
+	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
+	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
 	i.Builtins["subprocess"] = &Builtin{Fn: builtinSubprocess}
 	// `int_to_string` is the one Lang-defined stdlib function with
 	// an interp Go override (the body uses raw-memory primitives
@@ -393,6 +396,13 @@ func New() *Interp {
 	// interp Go override or moves to a new module path.
 	i.Builtins["int_to_string"] = &Builtin{Fn: builtinIntToString}
 	i.Builtins["int__int_to_string"] = &Builtin{Fn: builtinIntToString}
+	// `__int_to_string_u64` is the i64 / u32 / u64 formatter the
+	// `(n).to_string()` method on each width dispatches to. Same
+	// "Lang body uses raw-memory ops the interp can't model"
+	// shape as int_to_string above, so it gets the same dual-key
+	// registration (bare + modload-mangled).
+	i.Builtins["__int_to_string_u64"] = &Builtin{Fn: builtinIntToStringU64}
+	i.Builtins["int____int_to_string_u64"] = &Builtin{Fn: builtinIntToStringU64}
 	i.Builtins["tcp_listen"] = &Builtin{Fn: builtinTcpListen}
 	i.Builtins["tcp_accept"] = &Builtin{Fn: builtinTcpAccept}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
@@ -554,6 +564,39 @@ func builtinIntToString(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("int_to_string: expected number arg, got %T", args[0])
 	}
 	return String(strconv.Itoa(int(n))), nil
+}
+
+// builtinIntToStringU64 formats the (mag i64, neg i32) shape
+// the std/i64 / std/u32 / std/u64 receiver-method `to_string`
+// dispatches into. `mag` is the absolute value; `neg` is the
+// sign flag (1 for negative, 0 for positive — accommodates
+// the INT64_MIN special case where two's-complement negation
+// wraps to itself, so the caller passes the unsigned u64
+// magnitude separately). Output is `"-" + decimal(mag)` when
+// `neg != 0`, plain decimal otherwise.
+//
+// Mirrors the Lang body in `core/int.lang` byte-for-byte;
+// only difference is the Lang version pokes raw memory which
+// the interp can't model, hence the Go override.
+func builtinIntToStringU64(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__int_to_string_u64: expected 2 args, got %d", len(args))
+	}
+	mag, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("__int_to_string_u64: expected number mag, got %T", args[0])
+	}
+	neg, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("__int_to_string_u64: expected number neg, got %T", args[1])
+	}
+	// `Number` is int64 under the hood; treat as unsigned for
+	// the u64 / u32 callers by re-reading the bits via uint64.
+	out := strconv.FormatUint(uint64(int64(mag)), 10)
+	if int64(neg) != 0 {
+		out = "-" + out
+	}
+	return String(out), nil
 }
 
 // builtinArenaSave / builtinArenaRestore are no-ops in the
@@ -995,6 +1038,67 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 		return resultErr(classifyIoError(string(prefix), err)), nil
 	}
 	return resultOk(String(dir)), nil
+}
+
+// builtinReadDir lists the immediate children of `path` —
+// base names only, no recursion, unsorted. Wraps Go's
+// `os.ReadDir` which is the same shape; the only translation
+// is wrapping the result in `Result[string[], IoError]`.
+func builtinReadDir(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("read_dir: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("read_dir: expected string path, got %T", args[0])
+	}
+	entries, err := os.ReadDir(string(path))
+	if err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	out := make(Array, len(entries))
+	for i, e := range entries {
+		out[i] = String(e.Name())
+	}
+	return resultOk(out), nil
+}
+
+// builtinRemoveFile unlinks `path`. `Option[IoError]` mirrors
+// `write_file`'s "None on success" shape. Removing a non-
+// existent file surfaces as `Some(NotFound(...))` — Go's
+// `os.Remove` errors on missing target, and we preserve that
+// so a typo doesn't silently succeed.
+func builtinRemoveFile(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("remove_file: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("remove_file: expected string path, got %T", args[0])
+	}
+	if err := os.Remove(string(path)); err != nil {
+		return optionSome(classifyIoError(string(path), err)), nil
+	}
+	return optionNone(), nil
+}
+
+// builtinRemoveDirAll recursively removes `path`. Mirrors
+// Go's `os.RemoveAll` semantics: missing target is silently
+// OK, permission / read-only-filesystem errors surface via
+// `Some(IoError)`. Used by tests to scrub `temp_dir` output
+// at the end of a run.
+func builtinRemoveDirAll(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("remove_dir_all: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("remove_dir_all: expected string path, got %T", args[0])
+	}
+	if err := os.RemoveAll(string(path)); err != nil {
+		return optionSome(classifyIoError(string(path), err)), nil
+	}
+	return optionNone(), nil
 }
 
 // builtinSubprocess spawns `cmd` with `args` as its argv (NOT

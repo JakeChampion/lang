@@ -884,15 +884,48 @@ func Check(prog *ast.Program) (*Info, error) {
 	// temp_dir(prefix): Result[string, IoError] — create a
 	// fresh empty directory and return its absolute path.
 	// `prefix` is appended to a random suffix so concurrent
-	// runs don't clash. Lang has no `remove_dir` yet — the
-	// caller's responsibility is OS-tier cleanup (system
-	// tmpfs scrubs on reboot, CI runners tear down between
-	// jobs). For test-runner use that's fine; long-lived
-	// servers should not lean on this.
+	// runs don't clash. Caller invokes `remove_dir_all`
+	// (or registers a cleanup hook on a TestRunner) to scrub
+	// when finished; system tmpfs scrub-on-reboot is the
+	// fallback safety net.
 	c.info.FuncSigs["temp_dir"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// read_dir(path): Result[string[], IoError] — list the
+	// non-recursive children of `path`. Entries are base names
+	// (no leading directory), unsorted. Use `std/sort` on the
+	// result if a deterministic order matters.
+	c.info.FuncSigs["read_dir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StringType{}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// remove_file(path): Option[IoError] — unlink the file.
+	// `None` on success, `Some(err)` on failure (mirrors
+	// `write_file`). Removing a non-existent file is an
+	// error — callers that don't care about that distinction
+	// should ignore the return value.
+	c.info.FuncSigs["remove_file"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// remove_dir_all(path): Option[IoError] — recursively
+	// remove `path` (mirrors POSIX `rm -rf`). Used by tests
+	// to scrub `temp_dir` output. Same `Option[IoError]`
+	// return shape as `remove_file` / `write_file`. Removing
+	// a non-existent directory is silently ignored — matches
+	// Go's `os.RemoveAll` semantics.
+	c.info.FuncSigs["remove_dir_all"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{
 			ast.EnumType{Name: "IoError"},
 		}},
 	}

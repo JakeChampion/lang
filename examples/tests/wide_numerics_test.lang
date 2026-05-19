@@ -1,0 +1,40 @@
+// examples/tests/wide_numerics_test.lang — i64 / u32 / u64
+// assertion family. The corresponding i32 helpers are
+// covered by `arithmetic_test.lang`; this file specifically
+// exercises the wider widths so a regression in the interp's
+// `__int_to_string_u64` override would surface here.
+
+function test_i64_addition(): Option[string] {
+    var a: i64 = 5000000000;
+    var b: i64 = 3000000000;
+    return assert_eq_i64(a + b, 8000000000);
+}
+
+function test_i64_max(): Option[string] {
+    var max: i64 = 9223372036854775807;
+    return assert_eq_i64(max, 9223372036854775807);
+}
+
+function test_u32_max(): Option[string] {
+    var max: u32 = 4294967295u32;
+    return assert_eq_u32(max, 4294967295u32);
+}
+
+function test_u64_max(): Option[string] {
+    var max: u64 = 18446744073709551615u64;
+    return assert_eq_u64(max, 18446744073709551615u64);
+}
+
+function test_u64_neq(): Option[string] {
+    return assert_neq_u64(0u64, 1u64);
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("wide-numerics");
+    r = r.it("i64 addition",  test_i64_addition());
+    r = r.it("i64 max",       test_i64_max());
+    r = r.it("u32 max",       test_u32_max());
+    r = r.it("u64 max",       test_u64_max());
+    r = r.it("u64 neq",       test_u64_neq());
+    return r.finish();
+}

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -299,6 +300,136 @@ func TestRunnerProcessAssertionsExample(t *testing.T) {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
+	}
+}
+
+// `examples/tests/wide_numerics_test.lang` covers the i64 /
+// u32 / u64 assertion family. The corresponding i32 helpers
+// are pinned by `arithmetic_test.lang`; this exercises the
+// wider widths so a regression in the interp's
+// `__int_to_string_u64` override (the one Lang code in
+// `core/int.lang` whose body the interp can't run) would
+// surface here.
+func TestRunnerWideNumericsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/wide_numerics_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - i64 addition",
+		"ok 3 - u32 max",
+		"ok 4 - u64 max",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/filesystem_ops_test.lang` exercises the
+// `read_dir` / `remove_file` / `remove_dir_all` builtins and
+// pins the matching semantics for each — particularly the
+// "missing target" cases where remove_file is an error
+// (matches Go's `os.Remove`) but remove_dir_all is silently
+// OK (matches `os.RemoveAll`).
+func TestRunnerFilesystemOpsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/filesystem_ops_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - temp_dir returns absolute path",
+		"ok 2 - read_dir lists what we wrote",
+		"ok 4 - remove_file on missing target errors",
+		"ok 5 - remove_dir_all on missing target is ok",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `defer_cleanup(path)` is the runner-level hook for the
+// `temp_dir(...)` lifecycle: register the path immediately,
+// run the test against it, and `finish()` calls
+// `remove_dir_all` on every registered path before the
+// process exits. We verify this end-to-end by:
+//   1. running an inline test program that creates a fresh
+//      temp dir, writes a file into it, registers the dir
+//      for cleanup, then runs an assertion against the file
+//   2. confirming exit=0 + the expected TAP output
+//   3. confirming the directory no longer exists on the host
+//      filesystem afterward (cleanup actually fired)
+//
+// We don't pin the exact tempdir path — `os.MkdirTemp`
+// picks a random suffix — but we DO grep the test output
+// for the printed path so the post-cleanup check has a
+// concrete target.
+func TestRunnerDeferCleanupRunsAtFinish(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+function main(): i32 {
+    var r: TestRunner = test_new("cleanup");
+    match (temp_dir("lang-cleanup-probe")) {
+        Ok(dir) => {
+            print("# tempdir: " + dir);
+            r = r.defer_cleanup(dir);
+            match (write_file(dir + "/x.txt", "x")) {
+                None => { },
+                Some(_) => { r = r.it("write", fail("write failed")); return r.finish(); }
+            }
+            match (read_file(dir + "/x.txt")) {
+                Ok(s) => { r = r.it("roundtrip", assert_eq_string(s, "x")); },
+                Err(_) => { r = r.it("roundtrip", fail("read failed")); }
+            }
+        },
+        Err(_) => { r = r.skip("setup", "temp_dir failed"); }
+    }
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+			code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	if !strings.Contains(gotOut, "ok 1 - roundtrip") {
+		t.Errorf("expected roundtrip case in output:\n%s", gotOut)
+	}
+	// Pull the printed tempdir path back out of the stream
+	// so we can probe the host filesystem after `finish()`
+	// returns. The line shape is "# tempdir: <abs path>\n".
+	const marker = "# tempdir: "
+	mi := strings.Index(gotOut, marker)
+	if mi < 0 {
+		t.Fatalf("could not locate `%s` marker in output:\n%s", marker, gotOut)
+	}
+	rest := gotOut[mi+len(marker):]
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	tempPath := strings.TrimSpace(rest)
+	if tempPath == "" {
+		t.Fatal("empty tempdir path parsed from output")
+	}
+	// Cleanup hook should have removed the directory before
+	// the lang process exited. Stat the path: a NotExist
+	// error is the success signal, anything else is a leak.
+	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
+		t.Errorf("defer_cleanup did not remove %q (stat err = %v)", tempPath, err)
 	}
 }
 

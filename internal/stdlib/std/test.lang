@@ -61,6 +61,12 @@
 // the prelude's transitive imports, so they get declared
 // explicitly.
 import "std/i32";
+// Wider int formatters for the i64 / u32 / u64 assertion
+// families. Each module exposes a `(n).to_string()` receiver
+// method dispatching through `__int_to_string_u64`.
+import "std/i64";
+import "std/u32";
+import "std/u64";
 import "std/array";
 import "std/string";
 
@@ -94,6 +100,14 @@ pub struct TestRunner {
     verbose: boolean,
     prefix: string,
     base_idx: i32,
+    // `cleanup_paths` is the list of paths to `remove_dir_all`
+    // when `finish()` runs. Registered via
+    // `(r) defer_cleanup(path)` — typically a tempdir from
+    // `temp_dir(...)`. The cleanup runs even when tests fail
+    // (it's the test-end behaviour, not the test-success
+    // behaviour) — failures still produce the non-zero exit
+    // code but the filesystem stays tidy.
+    cleanup_paths: string[],
 }
 
 // test_new(suite) — start a new run. `suite` labels the run in
@@ -112,6 +126,7 @@ pub function test_new(suite: string): TestRunner {
         verbose: false,
         prefix: "",
         base_idx: 0,
+        cleanup_paths: [],
     };
 }
 
@@ -132,6 +147,7 @@ pub function test_new_verbose(suite: string): TestRunner {
         verbose: true,
         prefix: r.prefix,
         base_idx: r.base_idx,
+        cleanup_paths: r.cleanup_paths,
     };
 }
 
@@ -163,6 +179,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
                 verbose: r.verbose,
                 prefix: r.prefix,
                 base_idx: r.base_idx,
+                cleanup_paths: r.cleanup_paths,
             };
         },
         Some(msg) => {
@@ -181,6 +198,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
                 verbose: r.verbose,
                 prefix: r.prefix,
                 base_idx: r.base_idx,
+                cleanup_paths: r.cleanup_paths,
             };
         }
     }
@@ -216,6 +234,7 @@ pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
         verbose: r.verbose,
         prefix: r.prefix,
         base_idx: r.base_idx,
+        cleanup_paths: r.cleanup_paths,
     };
 }
 
@@ -269,6 +288,11 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
         // `ok 1`. TAP's plan line at the bottom assumes
         // monotonic case numbering across the whole stream.
         base_idx: r.base_idx + r.passed + r.failed + r.skipped,
+        // Cleanup hooks registered on the child get returned
+        // to the parent via `merge` so finish() always runs
+        // them. Empty here — the child accumulates its own as
+        // tests register them.
+        cleanup_paths: [],
     };
 }
 
@@ -290,6 +314,12 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
         sr = sr.push(child.skip_reasons[i]);
         i = i + 1;
     }
+    var cl: string[] = r.cleanup_paths;
+    i = 0;
+    while (i < len(child.cleanup_paths)) {
+        cl = cl.push(child.cleanup_paths[i]);
+        i = i + 1;
+    }
     return TestRunner {
         suite: r.suite,
         passed: r.passed + child.passed,
@@ -300,6 +330,39 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
         verbose: r.verbose,
         prefix: r.prefix,
         base_idx: r.base_idx,
+        cleanup_paths: cl,
+    };
+}
+
+// (r) defer_cleanup(path) — register a filesystem path that
+// should be removed when `finish()` runs, regardless of test
+// outcome. Designed for the `temp_dir(...)` pattern: a test
+// creates a fresh directory, registers it for cleanup
+// immediately, then writes fixtures + spawns subprocesses
+// against it.
+//
+//   var dir: string = expect_ok(temp_dir("foo"));
+//   r = r.defer_cleanup(dir);
+//
+// Each registered path goes through `remove_dir_all` at
+// finish() time. Errors from cleanup are recorded as test
+// failures (so a bug that leaves the tmpfs unwritable
+// surfaces in CI), but they don't replace the test exit
+// code's "real" cause — fast-failing on a cleanup error
+// would hide the actual test failure.
+pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
+    var cl: string[] = r.cleanup_paths.push(path);
+    return TestRunner {
+        suite: r.suite,
+        passed: r.passed,
+        failed: r.failed,
+        skipped: r.skipped,
+        failures: r.failures,
+        skip_reasons: r.skip_reasons,
+        verbose: r.verbose,
+        prefix: r.prefix,
+        base_idx: r.base_idx,
+        cleanup_paths: cl,
     };
 }
 
@@ -330,6 +393,24 @@ pub function (r: TestRunner) finish(): i32 {
             j = j + 1;
         }
     }
+    // Run deferred cleanup hooks. Errors print as comments so
+    // a tmpfs that's gone read-only on us doesn't get
+    // silently swallowed, but they don't override the "real"
+    // test result. The exit code below still reflects whether
+    // the test assertions themselves passed.
+    var k: i32 = 0;
+    var cleanup_errored: boolean = false;
+    while (k < len(r.cleanup_paths)) {
+        var p: string = r.cleanup_paths[k];
+        match (remove_dir_all(p)) {
+            None => { },
+            Some(_) => {
+                print("# cleanup failed for " + p);
+                cleanup_errored = true;
+            },
+        }
+        k = k + 1;
+    }
     if (r.failed > 0) {
         print("# failures:");
         var i: i32 = 0;
@@ -338,6 +419,13 @@ pub function (r: TestRunner) finish(): i32 {
             i = i + 1;
         }
         return 1;
+    }
+    if (cleanup_errored) {
+        // No test failed but cleanup did — surface as exit
+        // code 2 so CI can tell the difference between "tests
+        // ran clean" (0), "tests failed" (1), and
+        // "tests passed but cleanup leaked" (2).
+        return 2;
     }
     return 0;
 }
@@ -421,6 +509,48 @@ pub function assert_gt_i32(a: i32, b: i32): Option[string] {
 pub function assert_ge_i32(a: i32, b: i32): Option[string] {
     if (a >= b) { return None; }
     return Some("assert_ge_i32: expected " + a.to_string() + " >= " + b.to_string());
+}
+
+// i64 / u32 / u64 equality assertions. Same shape as the i32
+// family, split per width because lang doesn't have a numeric
+// width-polymorphic generic at the function-signature level
+// today. A future `Eq` trait would collapse the entire family
+// to one helper per direction (eq / neq / lt / le / ...).
+
+pub function assert_eq_i64(actual: i64, expected: i64): Option[string] {
+    if (actual == expected) { return None; }
+    return Some("assert_eq_i64: expected " + expected.to_string() +
+                ", got " + actual.to_string());
+}
+
+pub function assert_neq_i64(actual: i64, expected: i64): Option[string] {
+    if (actual != expected) { return None; }
+    return Some("assert_neq_i64: expected != " + expected.to_string() +
+                ", got " + actual.to_string());
+}
+
+pub function assert_eq_u32(actual: u32, expected: u32): Option[string] {
+    if (actual == expected) { return None; }
+    return Some("assert_eq_u32: expected " + expected.to_string() +
+                ", got " + actual.to_string());
+}
+
+pub function assert_neq_u32(actual: u32, expected: u32): Option[string] {
+    if (actual != expected) { return None; }
+    return Some("assert_neq_u32: expected != " + expected.to_string() +
+                ", got " + actual.to_string());
+}
+
+pub function assert_eq_u64(actual: u64, expected: u64): Option[string] {
+    if (actual == expected) { return None; }
+    return Some("assert_eq_u64: expected " + expected.to_string() +
+                ", got " + actual.to_string());
+}
+
+pub function assert_neq_u64(actual: u64, expected: u64): Option[string] {
+    if (actual != expected) { return None; }
+    return Some("assert_neq_u64: expected != " + expected.to_string() +
+                ", got " + actual.to_string());
 }
 
 // `assert_eq_bool(actual, expected)` — boolean equality. Less
