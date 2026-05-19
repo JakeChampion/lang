@@ -132,6 +132,11 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		nextFuncIdx++
 	}
 
+	funcByName := make(map[string]*ir.Func, len(prog.Funcs))
+	for _, fn := range prog.Funcs {
+		funcByName[fn.Name] = fn
+	}
+
 	// Type-section dedup: same param-list + result-list → same
 	// typeidx. The string key joins valtype bytes; collisions
 	// are impossible since valtype bytes are in 0x7c..0x7f.
@@ -234,6 +239,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		closuresBaseAddr:   closuresBase,
 		internEnumSentinel: internEnumSentinel,
 		closureTargets:     closureTargets,
+		funcByName:         funcByName,
 		addSigType: func(sig *ast.FuncType) (uint32, error) {
 			params := make([]byte, 0, len(sig.Params))
 			for _, pt := range sig.Params {
@@ -576,7 +582,12 @@ func resultValtypes(t ast.Type) ([]byte, error) {
 // slots are appended for functions that load/store strings to
 // heap memory (OpLoad/OpStore with WidthString) — used by the
 // two-word ABI fan-out.
-func localValtypes(fn *ir.Func) ([]byte, error) {
+// localValtypes returns the wasm valtype vector for fn's
+// declared locals + scratch slots + closure-make scratch
+// derived from the program's funcByName map. The closure
+// scratch needs per-capture types so it's threaded through
+// funcByName rather than reading from fn alone.
+func localValtypes(fn *ir.Func, funcByName map[string]*ir.Func) ([]byte, error) {
 	var out []byte
 	for _, l := range fn.Locals {
 		vts, err := slotValtypes(l.Type)
@@ -602,9 +613,14 @@ func localValtypes(fn *ir.Func) ([]byte, error) {
 			out = append(out, encode.ValtypeI32)
 		}
 	}
-	for i := 0; i < closureMakeScratchSlots(fn); i++ {
-		out = append(out, encode.ValtypeI32)
+	// Closure-make scratch is typed per-capture; compute it via
+	// closureMakeSites so layout matches what emitMakeEnv /
+	// emitMakeClosure will use.
+	_, closureScratch, err := closureMakeSites(fn, funcByName, 0)
+	if err != nil {
+		return nil, err
 	}
+	out = append(out, closureScratch...)
 	if fnNeedsCallIndirectScratch(fn) {
 		for i := 0; i < callIndirectScratchSlots; i++ {
 			out = append(out, encode.ValtypeI32)
@@ -713,11 +729,17 @@ type emitCtx struct {
 	// OpMakeOkI32 / OpMakeErrI32. The scratch holds the payload
 	// while we push the tag underneath it. Zero when not needed.
 	pairMakeScratchIdx uint32
-	// closureMakeScratchBase is the wasm-slot index of the
-	// first of N+2 scratch i32 locals appended when fn uses
-	// OpMakeClosure / OpMakeEnv. Layout: N capture stashes,
-	// then env_ptr, then pair_ptr.
-	closureMakeScratchBase uint32
+	// closureSites is the per-function precomputed scratch
+	// layout for each OpMakeEnv / OpMakeClosure site, in the
+	// order they appear in fn.Ops. emitMakeEnv / emitMakeClosure
+	// step through this slice via closureSiteCursor as they
+	// encounter their respective ops.
+	closureSites      []closureMakeSite
+	closureSiteCursor int
+	// funcByName looks up an IR function by name (across the
+	// whole program). emitClosure-pre-pass uses this to read
+	// per-capture types from the target function.
+	funcByName map[string]*ir.Func
 }
 
 // slotType returns the ast.Type of an IR slot. Layout follows the
@@ -759,7 +781,7 @@ func wasmSlotIdx(fn *ir.Func, irIdx int32) uint32 {
 // inst.PutLocalsOneGroup-equivalent encoding for the declared local
 // valtypes).
 func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
-	lvts, err := localValtypes(fn)
+	lvts, err := localValtypes(fn, ctx.funcByName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -768,13 +790,11 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 	ctx.fn = fn
 	// The scratch base is the wasm-slot index just past every IR
 	// slot (params + locals + scratch types, accounting for string-
-	// typed slots taking 2 wasm slots each). Only meaningful when
-	// fnNeedsStrPairScratch(fn) is true; otherwise it's unused.
+	// typed slots taking 2 wasm slots each).
 	lastIR := int32(len(fn.Params) + len(fn.Locals) + len(fn.ScratchTypes))
 	ctx.strPairScratchBase = wasmSlotIdx(fn, lastIR)
 	// Closure-target functions get an extra wasm slot for the
-	// env_ptr param appended by the closure-target ABI. That
-	// shifts everything below.
+	// env_ptr param appended by the closure-target ABI.
 	if ctx.closureTargets[fn.Name] {
 		ctx.strPairScratchBase++
 	}
@@ -784,20 +804,27 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 		pairBase += strPairScratchSlots
 	}
 	ctx.pairMakeScratchIdx = pairBase
-	// closureMake scratch sits AFTER pairMake.
+	// closureMake scratch sits AFTER pairMake — populate per-
+	// site layout via closureMakeSites.
 	closureBase := pairBase
 	if fnNeedsPairMakeScratch(fn) {
 		closureBase += pairMakeScratchSlots
 	}
-	ctx.closureMakeScratchBase = closureBase
+	sites, closureScratch, err := closureMakeSites(fn, ctx.funcByName, closureBase)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx.closureSites = sites
+	ctx.closureSiteCursor = 0
 	// callIndirect scratch sits AFTER closureMake.
-	callIndBase := closureBase + uint32(closureMakeScratchSlots(fn))
+	callIndBase := closureBase + uint32(len(closureScratch))
 	ctx.callIndirectScratchIdx = callIndBase
 	defer func() {
 		ctx.fn = nil
 		ctx.strPairScratchBase = 0
 		ctx.pairMakeScratchIdx = 0
-		ctx.closureMakeScratchBase = 0
+		ctx.closureSites = nil
+		ctx.closureSiteCursor = 0
 		ctx.callIndirectScratchIdx = 0
 	}()
 
@@ -1479,10 +1506,141 @@ func anyTableOp(prog *ir.Program) bool {
 	return false
 }
 
+// captureSlotSize returns the env-block byte stride for a capture
+// of type t. Matches what closureconv assumes when computing
+// CaptureRef offsets in the body — keep the two in sync.
+//
+//   - i64 / u64 / f64 → 8 bytes
+//   - string         → 8 bytes (data + len, two i32 slots)
+//   - everything else → 4 bytes (i32 / f32 / bool / heap-pointer-
+//     shaped types, plus sub-i32 widths that pad to 4)
+func captureSlotSize(t ast.Type) int {
+	switch v := t.(type) {
+	case ast.NumberType:
+		if v.NormalWidth() == 64 {
+			return 8
+		}
+		return 4
+	case ast.FloatType:
+		if v.NormalWidth() == 64 {
+			return 8
+		}
+		return 4
+	case ast.StringType:
+		return 8
+	}
+	// Pointer-shaped: struct / enum / array / slice / func value /
+	// tuple — all i32 on wasm32.
+	return 4
+}
+
+// captureScratchValtypes returns the wasm-level valtype sequence
+// for one capture's tmp scratch slots. Each scalar capture takes
+// one slot of the matching wasm type; string captures fan out to
+// two i32 slots (data + len).
+func captureScratchValtypes(t ast.Type) []byte {
+	if _, isString := t.(ast.StringType); isString {
+		return []byte{encode.ValtypeI32, encode.ValtypeI32}
+	}
+	switch v := t.(type) {
+	case ast.NumberType:
+		if v.NormalWidth() == 64 {
+			return []byte{encode.ValtypeI64}
+		}
+		return []byte{encode.ValtypeI32}
+	case ast.FloatType:
+		if v.NormalWidth() == 64 {
+			return []byte{encode.ValtypeF64}
+		}
+		return []byte{encode.ValtypeF32}
+	}
+	return []byte{encode.ValtypeI32}
+}
+
+// captureStoreOp emits the wasm instruction to store one capture
+// value from the operand stack into memory[addr]. For string
+// captures the caller must have arranged TWO stores (data + len)
+// separately — this helper covers the scalar case.
+func captureStoreOp(body []byte, t ast.Type, offset uint32) []byte {
+	switch v := t.(type) {
+	case ast.NumberType:
+		if v.NormalWidth() == 64 {
+			return memory.InstI64Store(body, 3, offset)
+		}
+		return memory.InstI32Store(body, 2, offset)
+	case ast.FloatType:
+		if v.NormalWidth() == 64 {
+			return memory.InstF64Store(body, 3, offset)
+		}
+		return memory.InstF32Store(body, 2, offset)
+	}
+	return memory.InstI32Store(body, 2, offset)
+}
+
+// closureMakeSite collects the per-site scratch layout used by
+// emitMakeEnv / emitMakeClosure. Built once at function-emit time
+// (a pre-pass over fn.Ops) so each site knows its scratch base
+// without re-scanning.
+type closureMakeSite struct {
+	// captures is the target function's Captures (the source of
+	// per-capture types). May be nil for sites where no target
+	// is registered — those error out at emit time.
+	captures []ast.Param
+	// scratchBase is the wasm-slot index of this site's first
+	// scratch local. Slot count = sum(captureScratchValtypes)
+	// over captures; +1 env_ptr; +1 pair_ptr for closure.
+	scratchBase uint32
+}
+
+// closureMakeSites scans fn.Ops in order, looks up each
+// OpMakeEnv / OpMakeClosure target in funcByName, and produces
+// a slice of per-site layout descriptors plus the total scratch
+// valtype list to append to fn's locals.
+func closureMakeSites(fn *ir.Func, funcByName map[string]*ir.Func, base uint32) ([]closureMakeSite, []byte, error) {
+	var sites []closureMakeSite
+	var scratchValtypes []byte
+	for _, op := range fn.Ops {
+		if op.Kind != ir.OpMakeEnv && op.Kind != ir.OpMakeClosure {
+			continue
+		}
+		// Resolve per-capture types from the target function's
+		// Captures list. Two fallbacks for partially-typed IR
+		// (synthetic tests, legacy IR that pre-dates the Captures
+		// field): missing target or empty Captures list with a
+		// positive op.I32 → synthesize all-i32 captures, matching
+		// the legacy uniform-stride behavior.
+		target := funcByName[op.Str]
+		var caps []ast.Param
+		if target != nil {
+			caps = target.Captures
+		}
+		if len(caps) == 0 && op.I32 > 0 {
+			caps = make([]ast.Param, op.I32)
+			for i := range caps {
+				caps[i] = ast.Param{Type: ast.NumberType{Width: 32, Signed: true}}
+			}
+		} else if int(op.I32) != len(caps) {
+			return nil, nil, fmt.Errorf("%v %q: op.I32=%d but target has %d captures", op.Kind, op.Str, op.I32, len(caps))
+		}
+		site := closureMakeSite{
+			captures:    caps,
+			scratchBase: base + uint32(len(scratchValtypes)),
+		}
+		// One scratch slot tower per capture (variable size by
+		// type) plus 1 env_ptr + 1 pair_ptr (i32 each).
+		for _, c := range caps {
+			scratchValtypes = append(scratchValtypes, captureScratchValtypes(c.Type)...)
+		}
+		scratchValtypes = append(scratchValtypes, encode.ValtypeI32, encode.ValtypeI32)
+		sites = append(sites, site)
+	}
+	return sites, scratchValtypes, nil
+}
+
 // maxClosureCaptures returns the highest op.I32 (capture count)
-// across every OpMakeClosure / OpMakeEnv in fn. Used to size the
-// per-function scratch pool that holds captures during the
-// pop → store sequence.
+// across every OpMakeClosure / OpMakeEnv in fn. Used to gate
+// scratch-slot allocation; the actual layout comes from
+// closureMakeSites.
 func maxClosureCaptures(fn *ir.Func) int {
 	max := 0
 	for _, op := range fn.Ops {
@@ -1509,54 +1667,90 @@ func fnNeedsClosureMakeScratch(fn *ir.Func) bool {
 	return false
 }
 
-// closureMakeScratchSlots returns the count of extra wasm locals
-// the closure-make path needs for fn:
-//   - N slots for stashing the popped captures
-//   - 1 slot for env_ptr
-//   - 1 slot for pair_ptr (OpMakeClosure-only)
+// emitClosureMakeAlloc handles the common alloc-and-store body of
+// OpMakeEnv / OpMakeClosure. Pops captures (in reverse), allocs
+// env_size bytes, stores each capture at its type-aware offset,
+// and returns the env_ptr slot index for the caller to use.
 //
-// Returns 0 if fn doesn't use either op.
-func closureMakeScratchSlots(fn *ir.Func) int {
-	n := maxClosureCaptures(fn)
-	if n == 0 && !fnNeedsClosureMakeScratch(fn) {
-		return 0
-	}
-	return n + 2
-}
-
-// emitMakeEnv emits the wasm bytes for OpMakeEnv:
-//   - pop the N captures from the operand stack (in reverse) into
-//     scratch slots [closureCapBase .. closureCapBase+N-1];
-//   - alloc N*4 bytes;
-//   - store each capture into mem[env_ptr + 4*i];
-//   - push env_ptr (the result).
-//
-// All captures are treated as i32 (single-slot scalar). Programs
-// with string / i64 / f64 captures get wrong layout — the per-
-// capture type info isn't carried at the IR layer and would
-// require ast access to consult.
-func emitMakeEnv(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
+// site is this op's pre-computed scratch layout (see
+// closureMakeSites). siteIdx is its sequential index in the
+// function (0, 1, 2, …) — used to step through ctx.closureSites.
+func emitClosureMakeAlloc(body []byte, site closureMakeSite, ctx *emitCtx) ([]byte, uint32, uint32, error) {
 	allocIdx, ok := ctx.funcIdx["__lang_alloc"]
 	if !ok {
-		return nil, fmt.Errorf("OpMakeEnv: __lang_alloc helper not registered")
+		return nil, 0, 0, fmt.Errorf("__lang_alloc helper not registered")
 	}
-	n := int(op.I32)
-	capBase := ctx.closureMakeScratchBase
-	envSlot := capBase + uint32(n)
+	caps := site.captures
+	n := len(caps)
+	// Compute per-capture wasm-slot offsets and the total
+	// env-block byte size.
+	wasmSlotOffsets := make([]uint32, n)
+	envOffsets := make([]uint32, n)
+	envSize := uint32(0)
+	scratchOff := uint32(0)
+	for i, c := range caps {
+		wasmSlotOffsets[i] = site.scratchBase + scratchOff
+		envOffsets[i] = envSize
+		scratchOff += uint32(len(captureScratchValtypes(c.Type)))
+		envSize += uint32(captureSlotSize(c.Type))
+	}
+	envSlot := site.scratchBase + scratchOff
+	pairSlot := envSlot + 1
+	// Pop captures into typed scratch slots, in reverse so the
+	// stack drains top-down.
 	for i := n - 1; i >= 0; i-- {
-		body = inst.InstLocalSet(body, capBase+uint32(i))
+		c := caps[i]
+		if _, isString := c.Type.(ast.StringType); isString {
+			// Top of stack is len; below is data. Pop len then
+			// data into the two scratch slots in that order:
+			// scratch[off] = data, scratch[off+1] = len.
+			body = inst.InstLocalSet(body, wasmSlotOffsets[i]+1) // len
+			body = inst.InstLocalSet(body, wasmSlotOffsets[i])   // data
+		} else {
+			body = inst.InstLocalSet(body, wasmSlotOffsets[i])
+		}
 	}
-	body = inst.InstI32Const(body, int32(n*4))
+	// Allocate env_size bytes (0 is fine — bump allocator just
+	// returns the current cursor).
+	body = inst.InstI32Const(body, int32(envSize))
 	body = inst.InstCall(body, allocIdx)
 	body = inst.InstLocalSet(body, envSlot)
-	for i := 0; i < n; i++ {
-		body = inst.InstLocalGet(body, envSlot)
-		if i > 0 {
-			body = inst.InstI32Const(body, int32(4*i))
-			body = numeric.InstI32Add(body)
+	// Store each capture at env_ptr + envOffsets[i]. Address
+	// goes BEFORE value on the stack (store consumes both),
+	// hence the load-env_ptr then value pattern.
+	for i, c := range caps {
+		off := envOffsets[i]
+		if _, isString := c.Type.(ast.StringType); isString {
+			// Two i32.stores: data at off+0, len at off+4.
+			body = inst.InstLocalGet(body, envSlot)
+			body = inst.InstLocalGet(body, wasmSlotOffsets[i]) // data
+			body = memory.InstI32Store(body, 2, off)
+			body = inst.InstLocalGet(body, envSlot)
+			body = inst.InstLocalGet(body, wasmSlotOffsets[i]+1) // len
+			body = memory.InstI32Store(body, 2, off+4)
+			continue
 		}
-		body = inst.InstLocalGet(body, capBase+uint32(i))
-		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, envSlot)
+		body = inst.InstLocalGet(body, wasmSlotOffsets[i])
+		body = captureStoreOp(body, c.Type, off)
+	}
+	return body, envSlot, pairSlot, nil
+}
+
+// emitMakeEnv emits the wasm bytes for OpMakeEnv. Reads per-
+// capture types from the target function (looked up via
+// ctx.closureSites[ctx.closureSiteCursor]) so int / float / 64-
+// bit / string captures all land at the correct env-block offset.
+// Returns the env_ptr.
+func emitMakeEnv(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
+	if ctx.closureSiteCursor >= len(ctx.closureSites) {
+		return nil, fmt.Errorf("OpMakeEnv: site cursor exhausted (pre-pass mismatch)")
+	}
+	site := ctx.closureSites[ctx.closureSiteCursor]
+	ctx.closureSiteCursor++
+	body, envSlot, _, err := emitClosureMakeAlloc(body, site, ctx)
+	if err != nil {
+		return nil, fmt.Errorf("OpMakeEnv: %w", err)
 	}
 	body = inst.InstLocalGet(body, envSlot)
 	return body, nil
@@ -1576,31 +1770,14 @@ func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("OpMakeClosure: unknown target %q", op.Str)
 	}
-	n := int(op.I32)
-	capBase := ctx.closureMakeScratchBase
-	envSlot := capBase + uint32(n)
-	pairSlot := capBase + uint32(n) + 1
-	// Pop captures into scratch slots in reverse order.
-	for i := n - 1; i >= 0; i-- {
-		body = inst.InstLocalSet(body, capBase+uint32(i))
+	if ctx.closureSiteCursor >= len(ctx.closureSites) {
+		return nil, fmt.Errorf("OpMakeClosure: site cursor exhausted")
 	}
-	// envSize bytes. When n=0 we still alloc 0 bytes — the bump
-	// allocator handles that case by returning the current
-	// cursor. The pair's env_ptr field then equals whatever the
-	// next allocation would have returned, but it's never read
-	// for empty-env closures.
-	body = inst.InstI32Const(body, int32(n*4))
-	body = inst.InstCall(body, allocIdx)
-	body = inst.InstLocalSet(body, envSlot)
-	// Store each capture at env_ptr + 4*i.
-	for i := 0; i < n; i++ {
-		body = inst.InstLocalGet(body, envSlot)
-		if i > 0 {
-			body = inst.InstI32Const(body, int32(4*i))
-			body = numeric.InstI32Add(body)
-		}
-		body = inst.InstLocalGet(body, capBase+uint32(i))
-		body = memory.InstI32Store(body, 2, 0)
+	site := ctx.closureSites[ctx.closureSiteCursor]
+	ctx.closureSiteCursor++
+	body, envSlot, pairSlot, err := emitClosureMakeAlloc(body, site, ctx)
+	if err != nil {
+		return nil, fmt.Errorf("OpMakeClosure: %w", err)
 	}
 	// Pair cell: 8 bytes containing {fn_idx, env_ptr}.
 	body = inst.InstI32Const(body, 8)
@@ -1610,10 +1787,8 @@ func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	body = inst.InstI32Const(body, int32(fnIdx))
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, pairSlot)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, envSlot)
-	body = memory.InstI32Store(body, 2, 0)
+	body = memory.InstI32Store(body, 2, 4)
 	body = inst.InstLocalGet(body, pairSlot)
 	return body, nil
 }

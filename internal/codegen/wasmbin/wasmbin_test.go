@@ -2935,6 +2935,198 @@ func TestEmitMakeClosureZeroCaptures(t *testing.T) {
 	}
 }
 
+// TestEmitMakeEnvI64Capture — a target whose Captures list says
+// `i64` must store 8 bytes per capture; reading it back with
+// OpLoad Width=64 recovers the original i64 value.
+func TestEmitMakeEnvI64Capture(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "target",
+			Captures:   []ast.Param{{Name: "x", Type: i64()}},
+			ReturnType: i64(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI64, I64: 0}},
+		},
+		{
+			Name:         "main",
+			ScratchTypes: []ast.Type{i32()},
+			ReturnType:   i64(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI64, I64: 0x1234_5678_9abc_def0},
+				{Kind: ir.OpMakeEnv, I32: 1, Str: "target"},
+				{Kind: ir.OpStoreLocal, I32: 0}, // env_ptr -> local 0
+				{Kind: ir.OpLoadLocal, I32: 0},
+				{Kind: ir.OpLoad, Width: 64}, // read i64 at env+0
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	want := fmt.Sprintf("%d", int64(0x1234_5678_9abc_def0))
+	if got := runUnderWasmtime(t, bin, "main"); got != want {
+		t.Fatalf("i64 capture = %q, want %q", got, want)
+	}
+}
+
+// TestEmitMakeEnvF64Capture — f64 capture round-trips through the
+// env block via OpFLoad Width=64.
+func TestEmitMakeEnvF64Capture(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "target",
+			Captures:   []ast.Param{{Name: "x", Type: f64()}},
+			ReturnType: f64(),
+			Ops:        []ir.Op{{Kind: ir.OpConstF64, F64: 0}},
+		},
+		{
+			Name:         "main",
+			ScratchTypes: []ast.Type{i32()},
+			ReturnType:   f64(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstF64, F64: 3.14159},
+				{Kind: ir.OpMakeEnv, I32: 1, Str: "target"},
+				{Kind: ir.OpStoreLocal, I32: 0},
+				{Kind: ir.OpLoadLocal, I32: 0},
+				{Kind: ir.OpFLoad, Width: 64},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	got := runUnderWasmtime(t, bin, "main")
+	if !strings.HasPrefix(got, "3.14") {
+		t.Fatalf("f64 capture = %q, want stdout starting with 3.14", got)
+	}
+}
+
+// TestEmitMakeEnvStringCapture — string capture lays out as
+// two i32 slots (data at +0, len at +4). Reading the len back
+// confirms both halves landed.
+func TestEmitMakeEnvStringCapture(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "target",
+			Captures:   []ast.Param{{Name: "s", Type: strType()}},
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+		},
+		{
+			Name:         "main",
+			ScratchTypes: []ast.Type{i32()},
+			ReturnType:   i32(),
+			Ops: []ir.Op{
+				// Push the (data, len) pair of "hello". "hello" is
+				// 5 bytes ASCII so it lands in inline form: data
+				// = 'hell' packed, len = 0x8500006F (inline flag
+				// + length=5 at bits 24..26 + 'o' at bits 0..7).
+				{Kind: ir.OpConstStr, Str: "hello"},
+				{Kind: ir.OpMakeEnv, I32: 1, Str: "target"},
+				{Kind: ir.OpStoreLocal, I32: 0},
+				// Read len from env+4, then extract the byte-count
+				// field (bits 24..26): (len & 0x07000000) >> 24.
+				// Masking before the shift keeps the top bit
+				// (inline flag) and the byte-5 field out of the
+				// signed-shift result.
+				{Kind: ir.OpLoadLocal, I32: 0},
+				{Kind: ir.OpConstI32, I32: 4},
+				{Kind: ir.OpAdd},
+				{Kind: ir.OpLoad},
+				{Kind: ir.OpConstI32, I32: 0x07000000},
+				{Kind: ir.OpAnd},
+				{Kind: ir.OpConstI32, I32: 24},
+				{Kind: ir.OpShrS},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "5" {
+		t.Fatalf("string capture len = %q, want 5", got)
+	}
+}
+
+// TestEmitMakeEnvMixedCaptures — i32 + i64 + i32 in that order
+// must lay out at offsets 0, 4, 12 (4 + 8 stride). Reading each
+// back verifies the per-capture stride is honored.
+func TestEmitMakeEnvMixedCaptures(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name: "target",
+			Captures: []ast.Param{
+				{Name: "a", Type: i32()},
+				{Name: "b", Type: i64()},
+				{Name: "c", Type: i32()},
+			},
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+		},
+		{
+			Name:         "read_a",
+			ScratchTypes: []ast.Type{i32()},
+			ReturnType:   i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 11},
+				{Kind: ir.OpConstI64, I64: 22},
+				{Kind: ir.OpConstI32, I32: 33},
+				{Kind: ir.OpMakeEnv, I32: 3, Str: "target"},
+				{Kind: ir.OpStoreLocal, I32: 0},
+				{Kind: ir.OpLoadLocal, I32: 0},
+				{Kind: ir.OpLoad}, // env+0 = i32 a
+			},
+		},
+		{
+			Name:         "read_b",
+			ScratchTypes: []ast.Type{i32()},
+			ReturnType:   i64(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 11},
+				{Kind: ir.OpConstI64, I64: 22},
+				{Kind: ir.OpConstI32, I32: 33},
+				{Kind: ir.OpMakeEnv, I32: 3, Str: "target"},
+				{Kind: ir.OpStoreLocal, I32: 0},
+				{Kind: ir.OpLoadLocal, I32: 0},
+				{Kind: ir.OpConstI32, I32: 4},
+				{Kind: ir.OpAdd},
+				{Kind: ir.OpLoad, Width: 64}, // env+4 = i64 b
+			},
+		},
+		{
+			Name:         "read_c",
+			ScratchTypes: []ast.Type{i32()},
+			ReturnType:   i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 11},
+				{Kind: ir.OpConstI64, I64: 22},
+				{Kind: ir.OpConstI32, I32: 33},
+				{Kind: ir.OpMakeEnv, I32: 3, Str: "target"},
+				{Kind: ir.OpStoreLocal, I32: 0},
+				{Kind: ir.OpLoadLocal, I32: 0},
+				{Kind: ir.OpConstI32, I32: 12},
+				{Kind: ir.OpAdd},
+				{Kind: ir.OpLoad}, // env+12 = i32 c
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "read_a"); got != "11" {
+		t.Fatalf("read_a = %q, want 11", got)
+	}
+	if got := runUnderWasmtime(t, bin, "read_b"); got != "22" {
+		t.Fatalf("read_b = %q, want 22", got)
+	}
+	if got := runUnderWasmtime(t, bin, "read_c"); got != "33" {
+		t.Fatalf("read_c = %q, want 33", got)
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpMakeClosure) and confirm we get a useful error
 // rather than emitting nonsense bytes. Regressions here would
