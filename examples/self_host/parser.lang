@@ -293,6 +293,77 @@ function (p: Par) peek_ident(): string {
 struct ExprResult { par: Par, expr: Expr }
 struct StmtResult { par: Par, stmt: Stmt }
 
+// parse_postfix runs the chained-postfix loop on a base
+// expression. Handles call (`(args)`), index / slice (`[i]`,
+// `[i:j]`), and field access (`.name` / `.0`). Returns when
+// the next token isn't one of these. Used by parse_primary
+// to share the loop across multiple base shapes — ident
+// chains, parenthesised exprs, tuple / array literals.
+function parse_postfix(p: Par, base: Expr): ExprResult {
+    while (true) {
+        var pk: string = p.peek_punct();
+        if (pk == "(") {
+            p = p.advance();
+            var args: Expr[] = [];
+            if (p.peek_punct() != ")") {
+                while (true) {
+                    var ra = parse_expr(p);
+                    p = ra.par;
+                    args = args.push(ra.expr);
+                    if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                    break;
+                }
+            }
+            if (p.peek_punct() != ")") {
+                return ExprResult { par: p, expr: e_unknown("missing ) in call") };
+            }
+            p = p.advance();
+            base = e_call(base, args);
+        } else if (pk == "[") {
+            p = p.advance();
+            var idx = parse_expr(p);
+            p = idx.par;
+            if (p.peek_punct() == ":") {
+                p = p.advance();
+                var end = parse_expr(p);
+                p = end.par;
+                if (p.peek_punct() != "]") {
+                    return ExprResult { par: p, expr: e_unknown("missing ] in slice") };
+                }
+                p = p.advance();
+                base = e_slice(base, idx.expr, end.expr);
+            } else {
+                if (p.peek_punct() != "]") {
+                    return ExprResult { par: p, expr: e_unknown("missing ] in index") };
+                }
+                p = p.advance();
+                base = e_index(base, idx.expr);
+            }
+        } else if (pk == ".") {
+            // Field access `obj.field`. Field is either an
+            // ident (struct field) or a numeric literal
+            // (tuple index — `.0`, `.1`, …). Both shapes
+            // store the field name as a bare string.
+            p = p.advance();
+            var fname: string = p.peek_ident();
+            if (len(fname) == 0) {
+                match (p.peek()) {
+                    lexer.TokNumber(n) => { fname = n.text; },
+                    _ => { }
+                }
+            }
+            if (len(fname) == 0) {
+                return ExprResult { par: p, expr: e_unknown("missing field name after .") };
+            }
+            p = p.advance();
+            base = e_field_access(base, fname);
+        } else {
+            break;
+        }
+    }
+    return ExprResult { par: p, expr: base };
+}
+
 // parse_primary: number, ident (which may extend to call), string,
 // bool, parenthesised expr, unknown otherwise.
 function parse_primary(p: Par): ExprResult {
@@ -369,73 +440,7 @@ function parse_primary(p: Par): ExprResult {
                 p = p.advance();
                 base = e_struct_lit(x.name, fnames, fvals);
             }
-            // Postfix loop: chain call / index / slice / field
-            // access. Repeats so `f()[0].bar` works.
-            while (true) {
-                var pk: string = p.peek_punct();
-                if (pk == "(") {
-                    p = p.advance();
-                    var args: Expr[] = [];
-                    if (p.peek_punct() != ")") {
-                        while (true) {
-                            var ra = parse_expr(p);
-                            p = ra.par;
-                            args = args.push(ra.expr);
-                            if (p.peek_punct() == ",") { p = p.advance(); continue; }
-                            break;
-                        }
-                    }
-                    if (p.peek_punct() != ")") {
-                        return ExprResult { par: p, expr: e_unknown("missing ) in call") };
-                    }
-                    p = p.advance();
-                    base = e_call(base, args);
-                } else if (pk == "[") {
-                    // Indexing (`a[i]`) or slicing (`a[i:j]`).
-                    p = p.advance();
-                    var idx = parse_expr(p);
-                    p = idx.par;
-                    if (p.peek_punct() == ":") {
-                        p = p.advance();
-                        var end = parse_expr(p);
-                        p = end.par;
-                        if (p.peek_punct() != "]") {
-                            return ExprResult { par: p, expr: e_unknown("missing ] in slice") };
-                        }
-                        p = p.advance();
-                        base = e_slice(base, idx.expr, end.expr);
-                    } else {
-                        if (p.peek_punct() != "]") {
-                            return ExprResult { par: p, expr: e_unknown("missing ] in index") };
-                        }
-                        p = p.advance();
-                        base = e_index(base, idx.expr);
-                    }
-                } else if (pk == ".") {
-                    // Field access `obj.field`. Field can be an
-                    // ident (struct field) or an integer literal
-                    // (tuple index — `t.0`, `t.1`, …). The
-                    // tuple index is stored as the digit string
-                    // so the AST shape stays uniform; consumers
-                    // parse it to i32 as needed.
-                    p = p.advance();
-                    var fname: string = p.peek_ident();
-                    if (len(fname) == 0) {
-                        match (p.peek()) {
-                            lexer.TokNumber(n) => { fname = n.text; },
-                            _ => { }
-                        }
-                    }
-                    if (len(fname) == 0) {
-                        return ExprResult { par: p, expr: e_unknown("missing field name after .") };
-                    }
-                    p = p.advance();
-                    base = e_field_access(base, fname);
-                } else {
-                    break;
-                }
-            }
-            return ExprResult { par: p, expr: base };
+            return parse_postfix(p, base);
         },
         lexer.TokPunct(x) => {
             if (x.text == "(") {
@@ -443,7 +448,9 @@ function parse_primary(p: Par): ExprResult {
                 // literal. The first expr decides whether we're
                 // grouping or building a tuple: a `,` follow-up
                 // means tuple; anything else (`)`) means a plain
-                // parenthesized expression.
+                // parenthesized expression. Either way the
+                // result feeds through the postfix loop so
+                // `(a, b).0` and `(f(x)).y` both work.
                 p = p.advance();
                 var inner = parse_expr(p);
                 p = inner.par;
@@ -458,10 +465,10 @@ function parse_primary(p: Par): ExprResult {
                         elems = elems.push(er.expr);
                     }
                     if (p.peek_punct() == ")") { p = p.advance(); }
-                    return ExprResult { par: p, expr: e_tuple(elems) };
+                    return parse_postfix(p, e_tuple(elems));
                 }
                 if (p.peek_punct() == ")") { p = p.advance(); }
-                return ExprResult { par: p, expr: inner.expr };
+                return parse_postfix(p, inner.expr);
             }
             if (x.text == "[") {
                 // Array literal `[e1, e2, e3]`. Empty `[]` allowed.
@@ -480,7 +487,7 @@ function parse_primary(p: Par): ExprResult {
                     return ExprResult { par: p, expr: e_unknown("missing ] in array literal") };
                 }
                 p = p.advance();
-                return ExprResult { par: p, expr: e_array(elems) };
+                return parse_postfix(p, e_array(elems));
             }
             if (x.text == "-" || x.text == "!") {
                 p = p.advance();
@@ -1592,6 +1599,27 @@ function main(): i32 {
             }
         },
         _ => { return 1054; }
+    }
+
+    // Postfix on a tuple literal: `(1, 2, 3).0` parses as
+    // ExprFieldAccess(ExprTuple(…), "0"). The postfix loop is
+    // now shared across primary shapes so this round-trips.
+    var srcTp: string = "return (10, 20, 30).1;";
+    var progTp: Stmt[] = parse_program(lexer.tokenize(srcTp));
+    match (progTp[0]) {
+        StmtReturn(r) => {
+            match (r.value) {
+                ExprFieldAccess(fa) => {
+                    if (fa.field != "1") { return 1055; }
+                    match (fa.obj) {
+                        ExprTuple(t) => { if (len(t.elements) != 3) { return 1056; } },
+                        _ => { return 1057; }
+                    }
+                },
+                _ => { return 1058; }
+            }
+        },
+        _ => { return 1059; }
     }
 
     // break / continue stmts.
