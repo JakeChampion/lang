@@ -263,7 +263,14 @@ pub struct Scope {
     // loop_depth tracks nesting depth for break / continue
     // validation. Incremented inside StmtWhile / StmtFor
     // bodies. break / continue at depth 0 surface t_unknown.
-    loop_depth: i32
+    loop_depth: i32,
+    // ret_type is the declared return type of the enclosing
+    // function body. Populated by check_func_body before walking
+    // stmts; StmtReturn compares its value type against this
+    // to catch return-type mismatches. TypeUnknown means
+    // "no enclosing function" (top-level stmts) — returns there
+    // skip the check.
+    ret_type: Type
 }
 
 function new_scope(): Scope {
@@ -273,7 +280,7 @@ function new_scope(): Scope {
     var ss: StructSig[] = [];
     var us: UnionSig[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us, methods: ms, loop_depth: 0 };
+    return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
 }
 
 function new_scope_with_sigs(sigs: FuncSig[]): Scope {
@@ -282,7 +289,7 @@ function new_scope_with_sigs(sigs: FuncSig[]): Scope {
     var ss: StructSig[] = [];
     var us: UnionSig[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us, methods: ms, loop_depth: 0 };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
 }
 
 function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Scope {
@@ -290,30 +297,34 @@ function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Sco
     var ts: Type[] = [];
     var us: UnionSig[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us, methods: ms, loop_depth: 0 };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
 }
 
 function new_scope_with_sigs_structs_unions(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: ms, loop_depth: 0 };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
 }
 
 function new_scope_full(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: methods, loop_depth: 0 };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function") };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
     var ns: string[] = s.names.push(name);
     var ts: Type[] = s.types.push(t);
-    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth };
+    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type };
 }
 
 function (s: Scope) enter_loop(): Scope {
-    return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1 };
+    return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type };
+}
+
+function (s: Scope) with_ret_type(rt: Type): Scope {
+    return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: rt };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -791,8 +802,16 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                 pi = pi + 1;
             }
             var rt: Type = type_from_name_with_structs_unions(lm.ret_type, s.structs, s.unions);
-            // Walk the body for side-effect checks.
+            // Walk the body for side-effect checks. The body's
+            // returns are checked against the lambda's own
+            // ret_type (when one is declared), not the enclosing
+            // function's.
             var body_scope: Scope = s;
+            if (len(lm.ret_type) > 0) {
+                body_scope = body_scope.with_ret_type(rt);
+            } else {
+                body_scope = body_scope.with_ret_type(t_unknown("no enclosing function"));
+            }
             var bi: i32 = 0;
             while (bi < len(lm.params)) {
                 body_scope = body_scope.bind(lm.params[bi].name, pts[bi]);
@@ -837,6 +856,23 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
         },
         parser.StmtReturn(r) => {
             var t: Type = check_expr(r.value, s);
+            // Compare against the enclosing function's declared
+            // ret_type when one is set (top-level stmts have an
+            // "no enclosing function" sentinel and skip the
+            // check). If the declared ret_type itself is unknown
+            // (unresolved type name) we already surfaced that at
+            // the FuncSig collection step — skip the comparison
+            // to avoid double-reporting.
+            match (s.ret_type) {
+                TypeUnknown(_) => { return CheckResult { scope: s, ty: t }; },
+                _ => { }
+            }
+            if (is_unknown(t)) {
+                return CheckResult { scope: s, ty: t };
+            }
+            if (!type_assignable(t, s.ret_type, s.unions)) {
+                return CheckResult { scope: s, ty: t_unknown("return type doesn't match declaration") };
+            }
             return CheckResult { scope: s, ty: t };
         },
         parser.StmtExpr(x) => {
@@ -860,8 +896,11 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
                 check_block(ifs.else_body, s);
                 return CheckResult { scope: s, ty: t_unknown("if cond not bool") };
             }
-            check_block(ifs.then_body, s);
-            check_block(ifs.else_body, s);
+            var thenOk: boolean = check_block(ifs.then_body, s);
+            var elseOk: boolean = check_block(ifs.else_body, s);
+            if (!thenOk || !elseOk) {
+                return CheckResult { scope: s, ty: t_unknown("if: ill-typed branch") };
+            }
             return CheckResult { scope: s, ty: t_bool() };
         },
         parser.StmtWhile(w) => {
@@ -876,7 +915,10 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
                 check_block(w.body, body_scope);
                 return CheckResult { scope: s, ty: t_unknown("while cond not bool") };
             }
-            check_block(w.body, body_scope);
+            var bodyOk: boolean = check_block(w.body, body_scope);
+            if (!bodyOk) {
+                return CheckResult { scope: s, ty: t_unknown("while: ill-typed body") };
+            }
             return CheckResult { scope: s, ty: t_bool() };
         },
         parser.StmtAssign(a) => {
@@ -953,7 +995,7 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
                         }
                     }
                 }
-                check_block(arm.body, armScope);
+                if (!check_block(arm.body, armScope)) { ok = false; }
                 i = i + 1;
             }
             if (!ok) {
@@ -986,9 +1028,12 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
                 _ => { ok = false; }
             }
             var body_scope: Scope = s.enter_loop().bind(f.var_name, elem_ty);
-            check_block(f.body, body_scope);
+            var fOk: boolean = check_block(f.body, body_scope);
             if (!ok) {
                 return CheckResult { scope: s, ty: t_unknown("for-in: iter not array") };
+            }
+            if (!fOk) {
+                return CheckResult { scope: s, ty: t_unknown("for-in: ill-typed body") };
             }
             return CheckResult { scope: s, ty: t_bool() };
         },
@@ -1004,15 +1049,17 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
 // the offending statement, which a future "collect-errors" pass
 // could harvest. For this minimal cut we just walk for the side
 // effect of validating sub-expressions.
-function check_block(body: parser.Stmt[], s: Scope): i32 {
+function check_block(body: parser.Stmt[], s: Scope): boolean {
     var cur: Scope = s;
+    var ok: boolean = true;
     var i: i32 = 0;
     while (i < len(body)) {
         var r: CheckResult = check_stmt(body[i], cur);
         cur = r.scope;
+        if (is_unknown(r.ty)) { ok = false; }
         i = i + 1;
     }
-    return 0;
+    return ok;
 }
 
 // check_program threads the scope through every statement in
@@ -1299,6 +1346,12 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // use that to count well-typed function bodies for diagnostics.
 function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): boolean {
     var s: Scope = new_scope_full(sigs, structs, unions, methods);
+    // Tag the scope with the declared ret_type so StmtReturn
+    // arms inside the body (at any nesting depth) can compare
+    // their value type against it.
+    if (len(fd.ret_type) > 0) {
+        s = s.with_ret_type(type_from_name_with_structs_unions(fd.ret_type, structs, unions));
+    }
     // Receiver methods bind the receiver as a first scope entry
     // before walking params. The receiver's type is the
     // declared receiver_type (resolved via the same path as
@@ -1316,10 +1369,6 @@ function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSi
     while (j < len(fd.body)) {
         var r: CheckResult = check_stmt(fd.body[j], s);
         s = r.scope;
-        // We don't enforce return-type yet — a follow-up could
-        // walk StmtReturn arms and ensure their value type unifies
-        // with fd.ret_type. For now the body is "well-typed" if
-        // no stmt itself produced a TypeUnknown.
         if (is_unknown(r.ty)) { ok = false; }
         j = j + 1;
     }
@@ -1828,6 +1877,43 @@ function main(): i32 {
     var mod62: parser.Module = parser.parse_module(lexer.tokenize(src62));
     var mt62: ModuleTypes = check_module(mod62);
     if (!mt62.all_well_typed) { return 620; }
+
+    // Return-type matching: a `: i32` function returning a string
+    // is rejected.
+    var src63: string = "function f(): i32 { return \"hello\"; } function main(): i32 { return 0; }";
+    var mod63: parser.Module = parser.parse_module(lexer.tokenize(src63));
+    var mt63: ModuleTypes = check_module(mod63);
+    if (mt63.all_well_typed) { return 630; }
+
+    // Return-type matching: nested return inside if/while is also
+    // checked. `: i32` with `return true;` in the then-arm is a
+    // mismatch.
+    var src64: string = "function f(x: i32): i32 { if (x < 0) { return true; } return x; } function main(): i32 { return 0; }";
+    var mod64: parser.Module = parser.parse_module(lexer.tokenize(src64));
+    var mt64: ModuleTypes = check_module(mod64);
+    if (mt64.all_well_typed) { return 640; }
+
+    // Return-type matching: variant→union widening is allowed.
+    // A `: Shape` function returning a `Circle` is well-typed
+    // when Shape = Circle | Square.
+    var src65: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function f(): Shape { return Circle { r: 5 }; } function main(): i32 { return 0; }";
+    var mod65: parser.Module = parser.parse_module(lexer.tokenize(src65));
+    var mt65: ModuleTypes = check_module(mod65);
+    if (!mt65.all_well_typed) { return 650; }
+
+    // Return-type matching: returning a non-variant struct from
+    // a union-typed function is rejected.
+    var src66: string = "struct Circle { r: i32 } struct Triangle { b: i32 } pub type Shape = Circle; function f(): Shape { return Triangle { b: 3 }; } function main(): i32 { return 0; }";
+    var mod66: parser.Module = parser.parse_module(lexer.tokenize(src66));
+    var mt66: ModuleTypes = check_module(mod66);
+    if (mt66.all_well_typed) { return 660; }
+
+    // Return-type matching: methods are checked too. `(c: Circle)
+    // area(): bool { return c.r; }` declares bool but returns i32.
+    var src67: string = "struct Circle { r: i32 } function (c: Circle) area(): bool { return c.r; } function main(): i32 { return 0; }";
+    var mod67: parser.Module = parser.parse_module(lexer.tokenize(src67));
+    var mt67: ModuleTypes = check_module(mod67);
+    if (mt67.all_well_typed) { return 670; }
 
     return 0;
 }
