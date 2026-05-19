@@ -73,6 +73,11 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 				needs.add("__lang_str_len")
 			case ir.OpAlloc:
 				needs.add("__lang_alloc")
+			case ir.OpMakeClosure, ir.OpMakeEnv:
+				// Both ops call __lang_alloc to materialise
+				// the env block; OpMakeClosure also allocs
+				// a second 8-byte pair cell.
+				needs.add("__lang_alloc")
 			case ir.OpCallDirect:
 				// Source-language built-ins lower to OpCallDirect
 				// with the source name; the call-site lookup

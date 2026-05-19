@@ -522,6 +522,9 @@ func localValtypes(fn *ir.Func) ([]byte, error) {
 			out = append(out, encode.ValtypeI32)
 		}
 	}
+	for i := 0; i < closureMakeScratchSlots(fn); i++ {
+		out = append(out, encode.ValtypeI32)
+	}
 	return out, nil
 }
 
@@ -602,6 +605,11 @@ type emitCtx struct {
 	// OpMakeOkI32 / OpMakeErrI32. The scratch holds the payload
 	// while we push the tag underneath it. Zero when not needed.
 	pairMakeScratchIdx uint32
+	// closureMakeScratchBase is the wasm-slot index of the
+	// first of N+2 scratch i32 locals appended when fn uses
+	// OpMakeClosure / OpMakeEnv. Layout: N capture stashes,
+	// then env_ptr, then pair_ptr.
+	closureMakeScratchBase uint32
 }
 
 // slotType returns the ast.Type of an IR slot. Layout follows the
@@ -662,10 +670,17 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 		pairBase += strPairScratchSlots
 	}
 	ctx.pairMakeScratchIdx = pairBase
+	// closureMake scratch sits AFTER pairMake.
+	closureBase := pairBase
+	if fnNeedsPairMakeScratch(fn) {
+		closureBase += pairMakeScratchSlots
+	}
+	ctx.closureMakeScratchBase = closureBase
 	defer func() {
 		ctx.fn = nil
 		ctx.strPairScratchBase = 0
 		ctx.pairMakeScratchIdx = 0
+		ctx.closureMakeScratchBase = 0
 	}()
 
 	for opIdx, op := range fn.Ops {
@@ -1255,6 +1270,12 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 			return nil, fmt.Errorf("OpAlloc: __lang_alloc helper not registered (scanRuntimeHelpers gap)")
 		}
 		return inst.InstCall(body, idx), nil
+
+	// ---- Heap-allocated closures ----
+	case ir.OpMakeEnv:
+		return emitMakeEnv(body, op, ctx)
+	case ir.OpMakeClosure:
+		return emitMakeClosure(body, op, ctx)
 	}
 	return nil, fmt.Errorf("unsupported op %v", op.Kind)
 }
@@ -1290,6 +1311,145 @@ func anyTableOp(prog *ir.Program) bool {
 		}
 	}
 	return false
+}
+
+// maxClosureCaptures returns the highest op.I32 (capture count)
+// across every OpMakeClosure / OpMakeEnv in fn. Used to size the
+// per-function scratch pool that holds captures during the
+// pop → store sequence.
+func maxClosureCaptures(fn *ir.Func) int {
+	max := 0
+	for _, op := range fn.Ops {
+		switch op.Kind {
+		case ir.OpMakeClosure, ir.OpMakeEnv:
+			if int(op.I32) > max {
+				max = int(op.I32)
+			}
+		}
+	}
+	return max
+}
+
+// fnNeedsClosureMakeScratch reports whether fn has any
+// OpMakeClosure / OpMakeEnv. Used to gate scratch-slot allocation
+// for the env_ptr + pair_ptr + N capture stash.
+func fnNeedsClosureMakeScratch(fn *ir.Func) bool {
+	for _, op := range fn.Ops {
+		switch op.Kind {
+		case ir.OpMakeClosure, ir.OpMakeEnv:
+			return true
+		}
+	}
+	return false
+}
+
+// closureMakeScratchSlots returns the count of extra wasm locals
+// the closure-make path needs for fn:
+//   - N slots for stashing the popped captures
+//   - 1 slot for env_ptr
+//   - 1 slot for pair_ptr (OpMakeClosure-only)
+//
+// Returns 0 if fn doesn't use either op.
+func closureMakeScratchSlots(fn *ir.Func) int {
+	n := maxClosureCaptures(fn)
+	if n == 0 && !fnNeedsClosureMakeScratch(fn) {
+		return 0
+	}
+	return n + 2
+}
+
+// emitMakeEnv emits the wasm bytes for OpMakeEnv:
+//   - pop the N captures from the operand stack (in reverse) into
+//     scratch slots [closureCapBase .. closureCapBase+N-1];
+//   - alloc N*4 bytes;
+//   - store each capture into mem[env_ptr + 4*i];
+//   - push env_ptr (the result).
+//
+// All captures are treated as i32 (single-slot scalar). Programs
+// with string / i64 / f64 captures get wrong layout — the per-
+// capture type info isn't carried at the IR layer and would
+// require ast access to consult.
+func emitMakeEnv(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
+	allocIdx, ok := ctx.funcIdx["__lang_alloc"]
+	if !ok {
+		return nil, fmt.Errorf("OpMakeEnv: __lang_alloc helper not registered")
+	}
+	n := int(op.I32)
+	capBase := ctx.closureMakeScratchBase
+	envSlot := capBase + uint32(n)
+	for i := n - 1; i >= 0; i-- {
+		body = inst.InstLocalSet(body, capBase+uint32(i))
+	}
+	body = inst.InstI32Const(body, int32(n*4))
+	body = inst.InstCall(body, allocIdx)
+	body = inst.InstLocalSet(body, envSlot)
+	for i := 0; i < n; i++ {
+		body = inst.InstLocalGet(body, envSlot)
+		if i > 0 {
+			body = inst.InstI32Const(body, int32(4*i))
+			body = numeric.InstI32Add(body)
+		}
+		body = inst.InstLocalGet(body, capBase+uint32(i))
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstLocalGet(body, envSlot)
+	return body, nil
+}
+
+// emitMakeClosure is OpMakeEnv plus an 8-byte closure pair cell
+// {fn_idx, env_ptr}. Returns the pair pointer.
+func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
+	allocIdx, ok := ctx.funcIdx["__lang_alloc"]
+	if !ok {
+		return nil, fmt.Errorf("OpMakeClosure: __lang_alloc helper not registered")
+	}
+	if op.Str == "" {
+		return nil, fmt.Errorf("OpMakeClosure: missing target name")
+	}
+	fnIdx, ok := ctx.funcIdx[op.Str]
+	if !ok {
+		return nil, fmt.Errorf("OpMakeClosure: unknown target %q", op.Str)
+	}
+	n := int(op.I32)
+	capBase := ctx.closureMakeScratchBase
+	envSlot := capBase + uint32(n)
+	pairSlot := capBase + uint32(n) + 1
+	// Pop captures into scratch slots in reverse order.
+	for i := n - 1; i >= 0; i-- {
+		body = inst.InstLocalSet(body, capBase+uint32(i))
+	}
+	// envSize bytes. When n=0 we still alloc 0 bytes — the bump
+	// allocator handles that case by returning the current
+	// cursor. The pair's env_ptr field then equals whatever the
+	// next allocation would have returned, but it's never read
+	// for empty-env closures.
+	body = inst.InstI32Const(body, int32(n*4))
+	body = inst.InstCall(body, allocIdx)
+	body = inst.InstLocalSet(body, envSlot)
+	// Store each capture at env_ptr + 4*i.
+	for i := 0; i < n; i++ {
+		body = inst.InstLocalGet(body, envSlot)
+		if i > 0 {
+			body = inst.InstI32Const(body, int32(4*i))
+			body = numeric.InstI32Add(body)
+		}
+		body = inst.InstLocalGet(body, capBase+uint32(i))
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	// Pair cell: 8 bytes containing {fn_idx, env_ptr}.
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocIdx)
+	body = inst.InstLocalSet(body, pairSlot)
+	body = inst.InstLocalGet(body, pairSlot)
+	body = inst.InstI32Const(body, int32(fnIdx))
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, pairSlot)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, envSlot)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, pairSlot)
+	return body, nil
 }
 
 // anyMemoryOp reports whether prog needs a memory section. Any

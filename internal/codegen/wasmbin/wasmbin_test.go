@@ -2626,6 +2626,149 @@ func walkHasImportSection(t *testing.T, bin []byte) bool {
 	return false
 }
 
+// TestEmitMakeEnvSimple — OpMakeEnv with 3 i32 captures returns
+// a heap pointer; reading mem[env_ptr + 4*i] for each i gets the
+// original capture value back.
+func TestEmitMakeEnvSimple(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 10},
+			{Kind: ir.OpConstI32, I32: 20},
+			{Kind: ir.OpConstI32, I32: 30},
+			{Kind: ir.OpMakeEnv, I32: 3, Str: "_anon"},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			// env_ptr + 4 → cap[1]; load it (expect 20).
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpLoad},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "20" {
+		t.Fatalf("env[1] = %q, want 20", got)
+	}
+}
+
+// TestEmitMakeEnvAllCaptures — read every capture back from a
+// 4-capture env block; confirms the per-capture stride + ordering
+// matches the pop order.
+func TestEmitMakeEnvAllCaptures(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	for i := 0; i < 4; i++ {
+		i := i
+		t.Run(fmt.Sprintf("cap_%d", i), func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:         "main",
+				ScratchTypes: []ast.Type{i32()},
+				ReturnType:   i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpConstI32, I32: 100},
+					{Kind: ir.OpConstI32, I32: 200},
+					{Kind: ir.OpConstI32, I32: 300},
+					{Kind: ir.OpConstI32, I32: 400},
+					{Kind: ir.OpMakeEnv, I32: 4, Str: "_anon"},
+					{Kind: ir.OpStoreLocal, I32: 0},
+					{Kind: ir.OpLoadLocal, I32: 0},
+					{Kind: ir.OpConstI32, I32: int32(4 * i)},
+					{Kind: ir.OpAdd},
+					{Kind: ir.OpLoad},
+				},
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			want := fmt.Sprintf("%d", 100*(i+1))
+			if got := runUnderWasmtime(t, bin, "main"); got != want {
+				t.Fatalf("cap[%d] = %q, want %q", i, got, want)
+			}
+		})
+	}
+}
+
+// TestEmitMakeClosure — OpMakeClosure constructs an 8-byte pair
+// {fn_idx, env_ptr}. Loading mem[pair+0] gives the funcidx;
+// mem[pair+4] gives the env_ptr (which points at captures).
+func TestEmitMakeClosure(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "target",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+		},
+		{
+			Name:       "fnidx",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 7},
+				{Kind: ir.OpMakeClosure, I32: 1, Str: "target"},
+				{Kind: ir.OpLoad}, // fn_idx at pair+0
+			},
+		},
+		{
+			Name:       "envcap0",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 99},
+				{Kind: ir.OpMakeClosure, I32: 1, Str: "target"},
+				{Kind: ir.OpConstI32, I32: 4},
+				{Kind: ir.OpAdd},
+				{Kind: ir.OpLoad}, // env_ptr at pair+4
+				{Kind: ir.OpLoad}, // *env_ptr = cap[0] = 99
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	// target is a closure target (referenced by OpMakeClosure)
+	// so its wasm signature includes env_ptr. funcidx of
+	// `target` is 0 (no imports).
+	if got := runUnderWasmtime(t, bin, "fnidx"); got != "0" {
+		t.Fatalf("fnidx = %q, want 0", got)
+	}
+	if got := runUnderWasmtime(t, bin, "envcap0"); got != "99" {
+		t.Fatalf("envcap0 = %q, want 99", got)
+	}
+}
+
+// TestEmitMakeClosureZeroCaptures — n=0 produces a valid pair
+// with fn_idx readable; env_ptr is harmless.
+func TestEmitMakeClosureZeroCaptures(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "target",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+		},
+		{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpMakeClosure, I32: 0, Str: "target"},
+				{Kind: ir.OpLoad}, // fn_idx at pair+0
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "0" {
+		t.Fatalf("got %q, want 0", got)
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpMakeClosure) and confirm we get a useful error
 // rather than emitting nonsense bytes. Regressions here would
