@@ -1612,6 +1612,12 @@ var CallDirectAliases = map[string]string{
 	// String / bytes round-trip.
 	"string_from_bytes": "__lang_string_from_bytes",
 
+	// File I/O. Currently only `read_file` is wired; the open
+	// helpers + write side land in follow-up PRs as the
+	// WAT-backend retirement progresses (`write_file`,
+	// `open_reader` / `open_writer` / `open_appender`).
+	"read_file": "__lang_read_file",
+
 	// Map / MapIter generic-method dispatch — the lang doesn't yet
 	// support generic methods on a generic struct, so the prelude
 	// declares concrete `_impl` counterparts and call sites route

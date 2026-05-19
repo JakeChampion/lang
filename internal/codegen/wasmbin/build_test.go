@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -169,6 +170,120 @@ function main(): i32 { return fact(10); }
 	}
 	if got := strings.TrimSpace(so.String()); got != "3628800" {
 		t.Fatalf("fact(10) = %q, want 3628800", got)
+	}
+}
+
+// TestBuildReadFile — end-to-end read_file via wasmbin's
+// preview-1 path_open / fd_read / fd_close pipeline. Creates a
+// scratch file in a temp dir, runs the compiled program under
+// `wasmtime run --dir=. --invoke main`, and verifies the
+// returned len matches the file's byte count. Exercises the
+// path_open + fd_read loop + the heap-form Ok(string) result
+// construction — the success path of __lang_read_file. The
+// missing-file (NotFound) path lives in a separate test below.
+func TestBuildReadFile(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	src := `function main(): i32 {
+    match (read_file("greeting.txt")) {
+        Ok(s) => { return len(s); },
+        Err(_) => { return -1; }
+    }
+    return -2;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := Build(prog, info)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	const greeting = "hello from wasmbin read_file"
+	if err := os.WriteFile(filepath.Join(dir, "greeting.txt"), []byte(greeting), 0o644); err != nil {
+		t.Fatalf("write greeting: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--dir=.", "--invoke", "main", p)
+	cmd.Dir = dir
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	got := strings.TrimSpace(so.String())
+	want := strconv.Itoa(len(greeting))
+	if got != want {
+		t.Fatalf("read_file len = %q, want %q (greeting bytes)\nstderr: %s", got, want, se.String())
+	}
+}
+
+// TestBuildReadFileNotFound — the missing-file path. path_open
+// returns errno ENOENT=44, __build_io_error maps that to
+// IoError.NotFound(path) (tag 0), and the surrounding wrapper
+// produces Err. The program below pattern-matches and returns
+// the path length so we can verify the NotFound variant carries
+// the path through.
+func TestBuildReadFileNotFound(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	src := `function main(): i32 {
+    match (read_file("does_not_exist.txt")) {
+        Ok(_) => { return -1; },
+        Err(err) => {
+            match (err) {
+                NotFound(p) => { return len(p); },
+                PermissionDenied(_) => { return -10; },
+                AlreadyExists(_) => { return -11; },
+                InvalidUtf8(_) => { return -12; },
+                Interrupted => { return -13; },
+                Unsupported => { return -14; },
+                Other(_, _) => { return -15; }
+            }
+        }
+    }
+    return -3;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := Build(prog, info)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--dir=.", "--invoke", "main", p)
+	cmd.Dir = dir
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	got := strings.TrimSpace(so.String())
+	want := strconv.Itoa(len("does_not_exist.txt"))
+	if got != want {
+		t.Fatalf("NotFound path len = %q, want %q\nstderr: %s", got, want, se.String())
 	}
 }
 

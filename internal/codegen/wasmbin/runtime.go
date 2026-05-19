@@ -225,6 +225,16 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// fast-path for len ≤ 7, heap copy otherwise.
 					needs.add("__lang_alloc")
 					needs.add("__lang_string_from_bytes")
+				case "__lang_read_file":
+					// (path) → Result[string, IoError]. Pulls in
+					// __build_io_error for the error-path variant
+					// construction; the runtime body bytes call
+					// both. WASI imports (path_open / fd_read /
+					// fd_close) get added by scanImports below
+					// once this helper is in the needs set.
+					needs.add("__lang_alloc")
+					needs.add("__build_io_error")
+					needs.add("__lang_read_file")
 				}
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).
@@ -619,6 +629,25 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildMemsetBody,
+	},
+	"__build_io_error": {
+		// (errno, path_data, path_len) → i32 — translates a
+		// WASI preview-1 errno into a heap-form IoError
+		// variant; the address goes into Result.Err's payload
+		// slot. See wasi_fs.go for the errno-to-variant map.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildBuildIoErrorBody,
+	},
+	"__lang_read_file": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[string, IoError] pointer. path is interpreted
+		// relative to the preopen at fd 3 (the standard
+		// `wasmtime --dir=…` mapping). See wasi_fs.go for the
+		// streaming-read pipeline.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReadFileBody,
 	},
 	"__str_idx": {
 		// (base_data, base_len, i) → i32 (byte address). For
