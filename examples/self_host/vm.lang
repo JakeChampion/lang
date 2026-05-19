@@ -53,9 +53,12 @@ pub struct VStruct { type_name: string, field_names: string[], field_values: Val
 // top-level decls. A future slice can add `captures: Value[]`
 // + free-var analysis.
 pub struct VFunc { entry: i32, locals_count: i32 }
+// VMap mirrors interp's parallel-array storage. Linear-scan
+// lookup via value_eq_vm.
+pub struct VMap { keys: Value[], values: Value[] }
 pub struct VErr { msg: string }
 
-pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VStruct | VFunc | VErr;
+pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VStruct | VFunc | VMap | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
@@ -63,6 +66,84 @@ function v_string(s: string): Value { return VString { v: s }; }
 function v_float(n: f64): Value { return VFloat { v: n }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
 function v_tuple(elements: Value[]): Value { return VTuple { elements: elements }; }
+function v_map_new(): Value {
+    var ks: Value[] = [];
+    var vs: Value[] = [];
+    return VMap { keys: ks, values: vs };
+}
+
+// VMapMethodResult is the (stack, handled) pair returned by
+// vm_map_method. `handled` is false when the method name isn't
+// one of the built-in VMap operations — the caller falls back
+// to the FuncTable lookup in that case.
+pub struct VMapMethodResult { stack: Value[], handled: boolean }
+
+// vm_map_method dispatches the built-in VMap methods. The
+// receiver sits at stack[recv_idx]; args sit at recv_idx+1
+// .. recv_idx+argc. On a handled method, returns a new stack
+// with the receiver + args trimmed and the result pushed.
+function vm_map_method(m: VMap, name: string, argc: i32, stack: Value[], recv_idx: i32): VMapMethodResult {
+    var result: Value = v_err("__pending__");
+    var did_handle: boolean = false;
+    if (name == "set" && argc == 2) {
+        var sk: Value = stack[recv_idx + 1];
+        var sv: Value = stack[recv_idx + 2];
+        var found_i: i32 = 0 - 1;
+        var fi: i32 = 0;
+        while (fi < len(m.keys)) {
+            if (value_eq_vm(m.keys[fi], sk)) { found_i = fi; }
+            fi = fi + 1;
+        }
+        if (found_i >= 0) {
+            var nvs: Value[] = [];
+            var nj: i32 = 0;
+            while (nj < len(m.values)) {
+                if (nj == found_i) { nvs = nvs.push(sv); }
+                else { nvs = nvs.push(m.values[nj]); }
+                nj = nj + 1;
+            }
+            result = VMap { keys: m.keys, values: nvs };
+        } else {
+            result = VMap { keys: m.keys.push(sk), values: m.values.push(sv) };
+        }
+        did_handle = true;
+    }
+    if (name == "get_or" && argc == 2) {
+        var gk: Value = stack[recv_idx + 1];
+        var gd: Value = stack[recv_idx + 2];
+        var got: Value = gd;
+        var gi: i32 = 0;
+        while (gi < len(m.keys)) {
+            if (value_eq_vm(m.keys[gi], gk)) { got = m.values[gi]; }
+            gi = gi + 1;
+        }
+        result = got;
+        did_handle = true;
+    }
+    if (name == "has" && argc == 1) {
+        var hk: Value = stack[recv_idx + 1];
+        var h: boolean = false;
+        var hi: i32 = 0;
+        while (hi < len(m.keys)) {
+            if (value_eq_vm(m.keys[hi], hk)) { h = true; }
+            hi = hi + 1;
+        }
+        result = v_bool(h);
+        did_handle = true;
+    }
+    if (name == "len" && argc == 0) {
+        result = v_int(len(m.keys));
+        did_handle = true;
+    }
+    if (!did_handle) {
+        return VMapMethodResult { stack: stack, handled: false };
+    }
+    var ns: Value[] = [];
+    var nsi: i32 = 0;
+    while (nsi < recv_idx) { ns = ns.push(stack[nsi]); nsi = nsi + 1; }
+    ns = ns.push(result);
+    return VMapMethodResult { stack: ns, handled: true };
+}
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
     return VStruct { type_name: type_name, field_names: names, field_values: values };
 }
@@ -1043,6 +1124,7 @@ function value_eq_vm(a: Value, b: Value): boolean {
             }
         },
         VFunc(_) => { return false; },
+        VMap(_) => { return false; },
         VStruct(asv) => {
             match (b) {
                 VStruct(bsv) => {
@@ -1338,6 +1420,19 @@ pub function exec_program(prog: CompiledProgram): Value {
                 ip = ip + 1;
             },
             OpCall(o) => {
+                // Builtin: map_new(cap) — pop the capacity arg
+                // (ignored) and push an empty VMap. Pre-empts
+                // the FuncTable lookup.
+                if (o.name == "map_new") {
+                    var pop_i: i32 = 0;
+                    while (pop_i < o.argc) {
+                        var pp: PopResult = stack_pop(stack); stack = pp.stack;
+                        pop_i = pop_i + 1;
+                    }
+                    stack = stack_push(stack, v_map_new());
+                    ip = ip + 1;
+                    continue;
+                }
                 var fl: FuncLookup = lookup_func(funcs, o.name);
                 if (!fl.ok) { return v_err("undefined function: " + o.name); }
                 // Args sit on top of the stack — last pushed is
@@ -1358,6 +1453,20 @@ pub function exec_program(prog: CompiledProgram): Value {
                 }
                 var recv_idx: i32 = len(stack) - o.argc - 1;
                 var recv: Value = stack[recv_idx];
+                // Built-in VMap method dispatch — handled before
+                // the FuncTable lookup. Pull the receiver out
+                // and delegate to vm_map_method.
+                match (recv) {
+                    VMap(m) => {
+                        var mres: VMapMethodResult = vm_map_method(m, o.name, o.argc, stack, recv_idx);
+                        if (mres.handled) {
+                            stack = mres.stack;
+                            ip = ip + 1;
+                            continue;
+                        }
+                    },
+                    _ => { }
+                }
                 // Derive recv_type from the runtime value tag.
                 // VStruct nominates its declared type_name;
                 // primitive variants use their keyword spellings
@@ -1501,7 +1610,8 @@ pub function exec_program(prog: CompiledProgram): Value {
                 match (p.v) {
                     VArr(a) => { stack = stack_push(stack, v_int(len(a.elements))); },
                     VString(s) => { stack = stack_push(stack, v_int(len(s.v))); },
-                    _ => { stack = stack_push(stack, v_err("len: not array or string")); }
+                    VMap(m) => { stack = stack_push(stack, v_int(len(m.keys))); },
+                    _ => { stack = stack_push(stack, v_err("len: not array / string / map")); }
                 }
                 ip = ip + 1;
             },
@@ -2155,6 +2265,30 @@ function main(): i32 {
     match (r61) {
         VInt(i) => { if (i.v != 42) { return 610; } },
         _ => { return 611; }
+    }
+
+    // Map builtin: set + get_or via VM dispatch.
+    var src62: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); return m.get_or(\"b\", 0 - 1); }";
+    var r62: Value = run_module(src62);
+    match (r62) {
+        VInt(i) => { if (i.v != 2) { return 620; } },
+        _ => { return 621; }
+    }
+
+    // Map: get_or returns default on miss.
+    var src63: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); return m.get_or(\"x\", 99); }";
+    var r63: Value = run_module(src63);
+    match (r63) {
+        VInt(i) => { if (i.v != 99) { return 630; } },
+        _ => { return 631; }
+    }
+
+    // Map: len.
+    var src64: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); return m.len(); }";
+    var r64: Value = run_module(src64);
+    match (r64) {
+        VInt(i) => { if (i.v != 2) { return 640; } },
+        _ => { return 641; }
     }
 
     return 0;
