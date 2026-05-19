@@ -251,6 +251,19 @@ const strIdxScratchAddr = 64
 //	3: $dst
 //	4: $i
 func buildPrintBody(idxs map[string]uint32) []byte {
+	return buildPrintBodyFd(idxs, 1)
+}
+
+// buildEprintBody — (data, len) → (). Same shape as
+// buildPrintBody but writes to fd=2 (stderr) instead of fd=1.
+func buildEprintBody(idxs map[string]uint32) []byte {
+	return buildPrintBodyFd(idxs, 2)
+}
+
+// buildPrintBodyFd is the fd-parametrised shared implementation
+// of __lang_print / __lang_eprint. Same str-to-heap copy +
+// fd_write path; the fd value is the only delta.
+func buildPrintBodyFd(idxs map[string]uint32, fd int32) []byte {
 	strLen := idxs["__lang_str_len"]
 	strByte := idxs["__lang_str_byte"]
 	alloc := idxs["__lang_alloc"]
@@ -301,8 +314,8 @@ func buildPrintBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, printIovecAddr+4)
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Store(body, 2, 0)
-	// wasi_fd_write(1, iovec_addr, 1, ret_addr); drop result.
-	body = inst.InstI32Const(body, 1) // stdout
+	// wasi_fd_write(fd, iovec_addr, 1, ret_addr); drop result.
+	body = inst.InstI32Const(body, fd)
 	body = inst.InstI32Const(body, printIovecAddr)
 	body = inst.InstI32Const(body, 1) // iovec count
 	body = inst.InstI32Const(body, printRetAddr)

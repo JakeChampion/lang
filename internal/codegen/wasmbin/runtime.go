@@ -92,6 +92,12 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_str_byte")
 					needs.add("__lang_alloc")
 					needs.add("__lang_print")
+				case "__lang_eprint":
+					// Same shape as __lang_print but fd=2 (stderr).
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__lang_alloc")
+					needs.add("__lang_eprint")
 				case "__lang_exit":
 					// wasi_proc_exit under the hood; nothing
 					// else needed.
@@ -139,6 +145,24 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_alloc")
 					needs.add("__lang_read_byte")
 					needs.add("__lang_read_line")
+				case "__lang_stdin":
+					// () → i32 — constant sentinel Reader for
+					// stdin (wasmbin doesn't model TCP / file
+					// Readers yet).
+					needs.add("__lang_stdin")
+				case "__lang_reader_read_line":
+					// (r) → i32 — Reader.read_line(). Ignores
+					// the receiver and delegates to
+					// __lang_read_line (which reads from fd=0).
+					needs.add("__lang_alloc")
+					needs.add("__lang_read_byte")
+					needs.add("__lang_read_line")
+					needs.add("__lang_reader_read_line")
+				case "__lang_reader_close":
+					// (r) → () — no-op for the stdin-only Reader
+					// model. Real Reader.close (file fds, TCP)
+					// will need a discriminator-aware variant.
+					needs.add("__lang_reader_close")
 				case "__lang_string_from_bytes":
 					// (bs: u8[]) → (data, len) — copies the byte
 					// array's payload into a fresh string. Inline
@@ -252,6 +276,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildPrintBody,
 	},
+	"__lang_eprint": {
+		// (data, len) → () — same shape as __lang_print but
+		// writes to fd=2 (stderr) instead of fd=1.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildEprintBody,
+	},
 	"__lang_exit": {
 		// (code) → () — never returns, but the wasm signature
 		// still has a void result.
@@ -317,6 +348,31 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadLineBody,
+	},
+	"__lang_stdin": {
+		// () → i32 — constant sentinel Reader. wasmbin doesn't
+		// yet model TCP / file Readers (no `tcp_listen` / file
+		// preopens), so the value is opaque and only the
+		// stdin-specific Reader methods consume it.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildStdinBody,
+	},
+	"__lang_reader_read_line": {
+		// (r) → i32 — Reader.read_line(). For wasmbin's stdin-
+		// only Reader model, ignores the receiver and delegates
+		// to __lang_read_line.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderReadLineBody,
+	},
+	"__lang_reader_close": {
+		// (r) → () — no-op. Drops the receiver. Real Reader.close
+		// (file fds, TCP sockets) will need a discriminator-
+		// aware path once those Readers exist.
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+		body:    buildReaderCloseBody,
 	},
 	"__lang_string_from_bytes": {
 		// (bs) → (data, len) — copies bs's payload into a
@@ -1534,4 +1590,33 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildStdinBody — () → i32. Returns the constant 0 as the
+// stdin Reader sentinel. wasmbin only models the stdin Reader,
+// so the value's actual contents don't matter — every
+// Reader-method dispatch ignores its receiver and reads from
+// fd=0 directly.
+func buildStdinBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildReaderReadLineBody — (r) → i32. Delegates to
+// __lang_read_line, ignoring the receiver. Lives in the
+// helper registry so __method_Reader_read_line's IR call
+// site finds a real funcidx; once wasmbin grows TCP / file
+// Readers, this dispatches on the receiver's discriminator.
+func buildReaderReadLineBody(helperIdxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstCall(body, helperIdxs["__lang_read_line"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildReaderCloseBody — (r) → (). No-op: wasmbin's stdin
+// Reader doesn't own any resources, so close is just a drop.
+// Empty body.
+func buildReaderCloseBody(_ map[string]uint32) []byte {
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), nil)
 }
