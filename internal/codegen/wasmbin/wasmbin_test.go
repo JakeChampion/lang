@@ -3030,6 +3030,76 @@ func TestEmitStringFromBytesEmpty(t *testing.T) {
 	}
 }
 
+// TestEmitStrSliceHeap — slice a heap-form string. The slice
+// "world" from "hello world" (chars 6..11) should have length 5.
+// Heap-form goes through the memory.copy fast path.
+func TestEmitStrSliceHeap(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hello world"},
+			{Kind: ir.OpConstI32, I32: 6},
+			{Kind: ir.OpConstI32, I32: 11},
+			{Kind: ir.OpCallDirect, Str: "__str_slice"},
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "5" {
+		t.Fatalf("str_slice heap len = %q, want 5", got)
+	}
+}
+
+// TestEmitStrSliceInline — slice into the inline-form fast path.
+// "hi" sliced [1:2] is "i" — 1 char.
+func TestEmitStrSliceInline(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hi"},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpCallDirect, Str: "__str_slice"},
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "1" {
+		t.Fatalf("str_slice inline len = %q, want 1", got)
+	}
+}
+
+// TestEmitStrSliceEmpty — empty slice → inline empty (0, top-bit-set).
+// str_len reports 0.
+func TestEmitStrSliceEmpty(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hello"},
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpCallDirect, Str: "__str_slice"},
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "0" {
+		t.Fatalf("str_slice empty len = %q, want 0", got)
+	}
+}
+
 // TestEmitStrIdxHeap — heap-form string: __str_idx returns
 // base_data + i, OpLoadByte at that address reads the byte.
 // "hello" is too long for inline form on wasm32 (max 7 ASCII
