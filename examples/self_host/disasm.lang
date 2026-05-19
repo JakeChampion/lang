@@ -288,5 +288,28 @@ function main(): i32 {
     if (!contains(d14, "MAKE_TUPLE")) { return 140; }
     if (!contains(d14, "3")) { return 141; }
 
+    // Lambda WITHOUT captures: emits a JUMP-skip over the body,
+    // then MAKE_FUNC with entry + locals immediates so the
+    // surrounding code sees a VFunc on the stack.
+    var d15: string = disassemble_source(
+        "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }"
+    );
+    if (!contains(d15, "MAKE_FUNC")) { return 150; }
+    if (!contains(d15, "CALL_CLOSURE")) { return 151; }
+    if (!contains(d15, "entry=")) { return 152; }
+    if (!contains(d15, "locals=")) { return 153; }
+
+    // Lambda WITH a capture: free-var sweep finds `n` as a
+    // capture, so the lambda emits MAKE_CLOSURE (carrying the
+    // capture count) and the body reads `n` via LOAD_CAPTURE
+    // rather than LOAD_LOCAL.
+    var d16: string = disassemble_source(
+        "function main(): i32 { var n = 7; var f = function (x: i32): i32 { return x + n; }; return f(35); }"
+    );
+    if (!contains(d16, "MAKE_CLOSURE")) { return 160; }
+    if (!contains(d16, "LOAD_CAPTURE")) { return 161; }
+    if (!contains(d16, "caps=1")) { return 162; }
+    if (!contains(d16, "CALL_CLOSURE")) { return 163; }
+
     return 0;
 }
