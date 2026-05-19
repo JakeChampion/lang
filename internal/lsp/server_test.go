@@ -74,6 +74,38 @@ func TestRunDiagnostics_TypeError(t *testing.T) {
 	}
 }
 
+// `undefined identifier` is stamped E001 in the checker
+// (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4). The LSP frame
+// must carry that code in the `code` field so IDEs can
+// deep-link to `lang explain E001`.
+func TestRunDiagnostics_ErrorCodePopulated(t *testing.T) {
+	src := `function main(): i32 { return undeclared_name; }`
+	got := diagnosticsFor(src)
+	if len(got) == 0 {
+		t.Fatal("expected at least one diagnostic")
+	}
+	if got[0].Code != "E001" {
+		t.Errorf("diagnostic.Code = %q, want %q", got[0].Code, "E001")
+	}
+}
+
+// Diagnostics from errors without a stable code (parser
+// errors, un-stamped checker errors) keep the field empty —
+// the `omitempty` json tag drops it from the wire payload.
+// Regression sentinel against the wrapper accidentally
+// stamping a synthetic code on every error.
+func TestRunDiagnostics_NoCodeWhenNoneAssigned(t *testing.T) {
+	// Parser errors don't carry codes today.
+	src := `function main(): i32 { return ; }` // missing return value triggers parser error
+	got := diagnosticsFor(src)
+	if len(got) == 0 {
+		t.Fatal("expected at least one diagnostic")
+	}
+	if got[0].Code != "" {
+		t.Errorf("diagnostic.Code = %q, want empty (no code assigned)", got[0].Code)
+	}
+}
+
 func TestRunDiagnostics_PositionsAreZeroBased(t *testing.T) {
 	// Force a checker error on line 3.
 	src := "function main(): i32 {\n  var x: i32 = 1;\n  return undeclared;\n}\n"
