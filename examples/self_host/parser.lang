@@ -91,12 +91,19 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile | StmtAssig
 pub struct ParamDecl { name: string, type_name: string }
 pub struct FuncDecl { name: string, params: ParamDecl[], ret_type: string, body: Stmt[] }
 
+// Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
+// Same simplifying assumption as FuncDecl: type names are
+// captured as bare strings; full type syntax (arrays /
+// generics / unions) lands in a follow-up.
+pub struct StructFieldDecl { name: string, type_name: string }
+pub struct StructDecl { name: string, fields: StructFieldDecl[] }
+
 // A whole compilation unit: the funcs declared at top level and
 // any stmts that appear outside a function decl. The interp /
 // checker treat funcs first (build a signature table) and then
 // either dispatch to `main` if it exists or fall back to the
 // top-level stmt stream as the entry point.
-pub struct Module { funcs: FuncDecl[], top_stmts: Stmt[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], top_stmts: Stmt[] }
 
 // Helper wraps to satisfy the implicit-union-wrap return-position
 // rule. Same pattern lexer.lang uses for Token construction.
@@ -561,22 +568,86 @@ function parse_func_decl(p: Par): FuncResult {
 // decls and "loose" top-level stmts. Loose stmts are appended to
 // `top_stmts` in source order so a runner can use them as a
 // fallback entry point when there's no `main` function.
+// parse_struct_field consumes `name: type_name` and returns the
+// declared field. Same type-name model as parse_param: a bare
+// ident, no array / generic syntax for this cut.
+pub struct StructFieldResult { par: Par, field: StructFieldDecl }
+
+function parse_struct_field(p: Par): StructFieldResult {
+    var name: string = p.peek_ident();
+    if (len(name) == 0) {
+        return StructFieldResult { par: p, field: StructFieldDecl { name: "", type_name: "" } };
+    }
+    p = p.advance();
+    if (p.peek_punct() != ":") {
+        return StructFieldResult { par: p, field: StructFieldDecl { name: name, type_name: "" } };
+    }
+    p = p.advance();
+    var ty: string = p.peek_ident();
+    if (len(ty) == 0) { ty = p.peek_keyword(); }
+    if (len(ty) > 0) { p = p.advance(); }
+    return StructFieldResult { par: p, field: StructFieldDecl { name: name, type_name: ty } };
+}
+
+// parse_struct_decl consumes `struct Name { field, field, … }`
+// starting from the `struct` keyword. Fields may be separated
+// by `,` or terminated without one (last field's trailing `,`
+// is optional). Errors leave the parser at the offending token;
+// surrounding parse_module recovers via the StructDecl with
+// empty name.
+pub struct StructResult { par: Par, decl: StructDecl }
+
+function parse_struct_decl(p: Par): StructResult {
+    p = p.advance();  // consume `struct`
+    var name: string = p.peek_ident();
+    if (len(name) == 0) {
+        var empty: StructFieldDecl[] = [];
+        return StructResult { par: p, decl: StructDecl { name: "", fields: empty } };
+    }
+    p = p.advance();
+    if (p.peek_punct() != "{") {
+        var empty: StructFieldDecl[] = [];
+        return StructResult { par: p, decl: StructDecl { name: name, fields: empty } };
+    }
+    p = p.advance();
+    var fields: StructFieldDecl[] = [];
+    if (p.peek_punct() != "}") {
+        while (true) {
+            var fr: StructFieldResult = parse_struct_field(p);
+            p = fr.par;
+            fields = fields.push(fr.field);
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            break;
+        }
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return StructResult { par: p, decl: StructDecl { name: name, fields: fields } };
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0 };
     var funcs: FuncDecl[] = [];
+    var structs: StructDecl[] = [];
     var top_stmts: Stmt[] = [];
     while (!p.at_end()) {
-        if (p.peek_keyword() == "function") {
+        var kw: string = p.peek_keyword();
+        if (kw == "function") {
             var fr: FuncResult = parse_func_decl(p);
             p = fr.par;
             funcs = funcs.push(fr.func);
             continue;
         }
-        var sr: StmtResult = parse_stmt(p);
-        p = sr.par;
-        top_stmts = top_stmts.push(sr.stmt);
+        if (kw == "struct") {
+            var sr: StructResult = parse_struct_decl(p);
+            p = sr.par;
+            structs = structs.push(sr.decl);
+            continue;
+        }
+        var stmtR: StmtResult = parse_stmt(p);
+        p = stmtR.par;
+        top_stmts = top_stmts.push(stmtR.stmt);
     }
-    return Module { funcs: funcs, top_stmts: top_stmts };
+    return Module { funcs: funcs, structs: structs, top_stmts: top_stmts };
 }
 
 // =================== VALIDATION ====================
@@ -791,6 +862,20 @@ function main(): i32 {
     if (mod.funcs[1].name != "main") { return 708; }
     if (len(mod.funcs[1].params) != 0) { return 709; }
     if (mod.funcs[1].ret_type != "i32") { return 710; }
+
+    // parse_module: struct decls.
+    var srcSt: string = "struct Point { x: i32, y: i32 } struct Empty { } function main(): i32 { return 0; }";
+    var modSt: Module = parse_module(lexer.tokenize(srcSt));
+    if (len(modSt.structs) != 2) { return 720; }
+    if (modSt.structs[0].name != "Point") { return 721; }
+    if (len(modSt.structs[0].fields) != 2) { return 722; }
+    if (modSt.structs[0].fields[0].name != "x") { return 723; }
+    if (modSt.structs[0].fields[0].type_name != "i32") { return 724; }
+    if (modSt.structs[0].fields[1].name != "y") { return 725; }
+    if (modSt.structs[1].name != "Empty") { return 726; }
+    if (len(modSt.structs[1].fields) != 0) { return 727; }
+    if (len(modSt.funcs) != 1) { return 728; }
+    if (modSt.funcs[0].name != "main") { return 729; }
 
     return 0;
 }
