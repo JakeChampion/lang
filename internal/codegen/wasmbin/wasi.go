@@ -160,6 +160,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	if helpers.set["__lang_now_ns"] {
 		in.add("wasi_clock_time_get")
 	}
+	if helpers.set["__lang_now_unix_ms"] {
+		in.add("wasi_clock_time_get")
+	}
+	if helpers.set["__lang_monotonic_ns"] {
+		in.add("wasi_clock_time_get")
+	}
 	if helpers.set["__lang_env_count"] {
 		in.add("wasi_environ_sizes_get")
 	}
@@ -422,19 +428,43 @@ func buildRandomI32Body(idxs map[string]uint32) []byte {
 // Allocates per call so the 8-byte target buffer doesn't clash
 // with any other fixed-address scratch.
 func buildNowNsBody(idxs map[string]uint32) []byte {
+	return buildClockBody(idxs, 0, false)
+}
+
+// buildMonotonicNsBody — () → i64. Same as __lang_now_ns but
+// uses CLOCK_MONOTONIC (clock_id=1) so the reading is
+// monotonically non-decreasing across NTP adjustments.
+func buildMonotonicNsBody(idxs map[string]uint32) []byte {
+	return buildClockBody(idxs, 1, false)
+}
+
+// buildNowUnixMsBody — () → i64. Calls wasi_clock_time_get
+// (CLOCK_REALTIME) and divides by 1_000_000 to get milliseconds.
+func buildNowUnixMsBody(idxs map[string]uint32) []byte {
+	return buildClockBody(idxs, 0, true)
+}
+
+// buildClockBody is the shared core: alloc 8 bytes, call
+// wasi_clock_time_get(clockID, 0, buf), load i64, optionally
+// divide by 1_000_000 for the ms variant.
+func buildClockBody(idxs map[string]uint32, clockID int32, divideMs bool) []byte {
 	alloc := idxs["__lang_alloc"]
 	clockTime := idxs["wasi_clock_time_get"]
 	var body []byte
 	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 0) // $buf
-	body = inst.InstI32Const(body, 0) // clock_id = REALTIME
+	body = inst.InstI32Const(body, clockID)
 	body = inst.InstI64Const(body, 0) // precision = 0
-	body = inst.InstLocalGet(body, 0) // $buf
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, clockTime)
 	body = inst.InstDrop(body) // ignore errno
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI64Load(body, 3, 0)
+	if divideMs {
+		body = inst.InstI64Const(body, 1_000_000)
+		body = numeric.InstI64DivS(body)
+	}
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
