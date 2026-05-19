@@ -1653,6 +1653,41 @@ func TestRunnerStringCountAndDirListingExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/string_prelude_migrated_test.lang` is a
+// proof-of-concept Lang port of `TestInterpScriptStringPrelude`
+// in `interp_script_test.go`. Same 8-property surface, but
+// instead of piping an inline Lang program through
+// `lang -interp` and grepping the exit code + stdout, the
+// new test is the program — every property becomes its own
+// TAP case via `TestRunner.it`. Demonstrates the migration
+// pattern for tests that exercise user-language behaviour
+// without poking at compiler internals.
+//
+// Both versions stay live during the wider runner-adoption
+// effort: the Go test guards the subprocess + stdout
+// shape, the Lang test guards the in-process semantics
+// once `lang -interp` itself stops being a Go target.
+func TestRunnerStringPreludeMigratedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_prelude_migrated_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: string prelude (migrated)",
+		"ok 6 - s.to_upper() returns HELLO",
+		"ok 7 - s.to_lower() returns hello",
+		"ok 8 - string_from_bytes(s.bytes()) round-trips",
+		"# pass 8",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
