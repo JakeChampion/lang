@@ -320,6 +320,12 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
         if (!rt_match && recv_type == "bool" && s.methods[i].receiver_type == "boolean") {
             rt_match = true;
         }
+        // Union-receiver methods: a method declared on a union
+        // (e.g. `function (sh: Shape) area()`) matches when the
+        // receiver is one of the union's variant structs.
+        if (!rt_match && is_variant_of(recv_type, s.methods[i].receiver_type, s.unions)) {
+            rt_match = true;
+        }
         if (s.methods[i].name == name && rt_match) {
             return s.methods[i];
         }
@@ -1590,6 +1596,13 @@ function main(): i32 {
     var mod55: parser.Module = parser.parse_module(lexer.tokenize(src55));
     var mt55: ModuleTypes = check_module(mod55);
     if (mt55.all_well_typed) { return 550; }
+
+    // Union-receiver method: a method declared on a union
+    // type-checks when called on any of its variant structs.
+    var src56: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function (sh: Shape) tag(): i32 { return 1; } function main(): i32 { var c = Circle { r: 3 }; return c.tag(); }";
+    var mod56: parser.Module = parser.parse_module(lexer.tokenize(src56));
+    var mt56: ModuleTypes = check_module(mod56);
+    if (!mt56.all_well_typed) { return 560; }
 
     return 0;
 }
