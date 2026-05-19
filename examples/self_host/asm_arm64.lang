@@ -34,6 +34,21 @@ import "./parser";
 
 // =================== TEXT HELPERS ====================
 
+// sanitize_label rewrites `.` to `__` so qualified-name
+// function labels (e.g. `parser.parse_module`) survive GNU
+// as's label parsing. Same shape as the x86-64 backend.
+function sanitize_label(name: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < len(name)) {
+        var b: i32 = name[i];
+        if (b == 46) { out = out + "__"; }
+        else { out = out + name[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
 function i32_to_string(n: i32): string {
     if (n == 0) { return "0"; }
     var neg: boolean = false;
@@ -460,7 +475,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[i], s);
                 i = i - 1;
             }
-            s = s.write("    bl __fn_" + name + "\n");
+            s = s.write("    bl __fn_" + sanitize_label(name) + "\n");
             // Caller cleans up stack args.
             if (len(c.args) > 0) {
                 s = s.write("    add sp, sp, #" + i32_to_string(len(c.args) * 16) + "\n");
@@ -712,7 +727,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
 // local slot at [x29, #-8*(i+1)] so the body reads them
 // uniformly.
 function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
-    s = s.write("__fn_" + fd.name + ":\n");
+    s = s.write("__fn_" + sanitize_label(fd.name) + ":\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     var argc: i32 = len(fd.params);
