@@ -985,6 +985,43 @@ func TestRunnerEnvUnreachableExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/rel_tol_and_ms_bench_test.lang` exercises
+// the two batch-18 additions to std/test:
+//   - `assert_eq_f64_rel(actual, expected, rel_tol)` /
+//     `assert_eq_f32_rel` — relative-tolerance float
+//     compare, for test data whose magnitudes span many
+//     orders of magnitude.
+//   - `(r).bench_max_ms(name, iter, fn, budget_ms)` —
+//     millisecond-budget wrapper around `bench_max_us`.
+//
+// Nine assertion cases plus one ms-budget bench. We pin the
+// pass/fail counts and a couple of representative TAP lines
+// so a regression in either helper surfaces immediately.
+func TestRunnerRelTolAndMsBenchExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/rel_tol_and_ms_bench_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - rel_tol passes within ratio",
+		"ok 3 - rel_tol scale invariance",
+		"ok 4 - rel_tol zero expected falls back to abs",
+		"ok 6 - rel_tol NaN actual fails",
+		"ok 9 - rel_tol f32 mirror",
+		"# bench tiny loop under 1000ms budget",
+		"budget=1000000us",
+		"ok 10 - tiny loop under 1000ms budget",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

@@ -314,6 +314,14 @@ function main(): i32 {
   `assert_is_nan_f32`, `assert_is_nan_f64` — `_near` is the
   default; `_exact` is for f32_bits round-trips / NaN-payload
   canonicalisation tests
+- **Relative-tolerance float assertions:**
+  `assert_eq_f64_rel(actual, expected, rel_tol)`,
+  `assert_eq_f32_rel` — passes when
+  `|actual - expected| / |expected| <= rel_tol`. Reach for
+  this (over `_near`) when the test covers values spanning
+  many orders of magnitude — a fixed absolute epsilon is
+  either too tight at large scales or too loose at small
+  ones. Falls back to absolute compare when `expected == 0.0`
 - **Range:** `assert_in_range_i32`, `assert_in_range_i64`
 - **Multi-substring:** `assert_contains_all(haystack, needles[])`,
   `assert_contains_any`, `assert_contains_in_order` — the
@@ -347,6 +355,9 @@ function main(): i32 {
   `(r).bench_max_us(name, iter, fn, budget)` fails when the
   MEDIAN per-iteration time exceeds the budget — median (not
   mean) so a single GC pause doesn't tip a regression bound.
+  `(r).bench_max_ms(name, iter, fn, budget_ms)` is the
+  millisecond-budget companion (1 ms = 1000 us); use it
+  when the budget reads naturally in ms ("frame under 16 ms").
 - **Set equality (order-independent):** `assert_set_eq_i32`,
   `assert_set_eq_string`, `assert_subset_i32`,
   `assert_subset_string` — multiset semantics so duplicate
