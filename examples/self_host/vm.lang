@@ -46,9 +46,16 @@ pub struct VFloat { v: f64 }
 pub struct VArr { elements: Value[] }
 pub struct VTuple { elements: Value[] }
 pub struct VStruct { type_name: string, field_names: string[], field_values: Value[] }
+// VFunc represents a callable value (closure). `entry` is the
+// op index where the body begins; `locals_count` is the size
+// of the body's locals vector. Capture-by-value isn't modeled
+// yet — lambdas in this cut can only reference params and
+// top-level decls. A future slice can add `captures: Value[]`
+// + free-var analysis.
+pub struct VFunc { entry: i32, locals_count: i32 }
 pub struct VErr { msg: string }
 
-pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VStruct | VErr;
+pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VStruct | VFunc | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
@@ -103,6 +110,17 @@ pub struct OpCall { name: string, argc: i32 }
 // back to a plain function is NOT performed — methods and plain
 // funcs occupy distinct slots in the FuncTable.
 pub struct OpCallMethod { name: string, argc: i32 }
+// OpMakeFunc pushes a VFunc with the given body entry-ip and
+// locals_count. Emitted by compile_expr for ExprLambda — the
+// lambda body is laid out inline in the parent's bytecode with
+// a JUMP-skip over it, and OpMakeFunc captures the body's
+// entry index.
+pub struct OpMakeFunc { entry: i32, locals_count: i32 }
+// OpCallClosure pops `argc + 1` values (callee VFunc on the
+// bottom, args on top). Allocates a new locals vector, jumps
+// to the VFunc's entry ip. The body's prologue does the
+// descending OpStoreLocal pop just like a regular function.
+pub struct OpCallClosure { argc: i32 }
 // OpMakeArray pops `n` values off the stack and pushes a single
 // VArr holding them in source order — the LAST element pushed
 // sits at index n-1 (so we walk the stack top-to-bottom and
@@ -143,7 +161,7 @@ pub type Op = OpPushInt | OpPushBool | OpPushStr | OpPushFloat
             | OpLoadLocal | OpStoreLocal
             | OpBinary | OpUnary
             | OpJump | OpJumpIfFalse
-            | OpPop | OpCall | OpCallMethod
+            | OpPop | OpCall | OpCallMethod | OpMakeFunc | OpCallClosure
             | OpMakeArray | OpMakeTuple | OpIndex | OpLen | OpSlice
             | OpMakeStruct | OpFieldGet
             | OpDup | OpTypeNameEq
@@ -162,6 +180,8 @@ function op_jump_if_false(t: i32): Op { return OpJumpIfFalse { target: t }; }
 function op_pop(): Op { return OpPop { tag: 0 }; }
 function op_call(name: string, argc: i32): Op { return OpCall { name: name, argc: argc }; }
 function op_call_method(name: string, argc: i32): Op { return OpCallMethod { name: name, argc: argc }; }
+function op_make_func(entry: i32, locals_count: i32): Op { return OpMakeFunc { entry: entry, locals_count: locals_count }; }
+function op_call_closure(argc: i32): Op { return OpCallClosure { argc: argc }; }
 function op_make_array(n: i32): Op { return OpMakeArray { n: n }; }
 function op_make_tuple(n: i32): Op { return OpMakeTuple { n: n }; }
 function op_index(): Op { return OpIndex { tag: 0 }; }
@@ -331,9 +351,11 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprCall(c) => {
-            // ExprIdent callee → plain function. ExprFieldAccess
-            // callee → method call: compile the receiver first,
-            // then args, then OpCallMethod.
+            // ExprIdent callee → plain function call OR closure
+            // call (when the ident is a local var holding a
+            // VFunc). ExprFieldAccess callee → method call.
+            // Any other expression → eval as value, treat as
+            // VFunc (catches IIFE forms).
             match (c.callee) {
                 parser.ExprIdent(id) => {
                     // Builtin: `len(x)` lowers to OpLen.
@@ -341,6 +363,20 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                         var lar: CompileResult = compile_expr(c.args[0], ops, lt);
                         ops = lar.ops; lt = lar.lt;
                         ops = ops.push(op_len());
+                        return CompileResult { ops: ops, lt: lt };
+                    }
+                    // If the ident is a local var (idx_of >= 0),
+                    // treat as a closure call: load the local
+                    // (VFunc), then args, then OpCallClosure.
+                    if (lt.idx_of(id.name) >= 0) {
+                        ops = ops.push(op_load(lt.idx_of(id.name)));
+                        var cai: i32 = 0;
+                        while (cai < len(c.args)) {
+                            var car: CompileResult = compile_expr(c.args[cai], ops, lt);
+                            ops = car.ops; lt = car.lt;
+                            cai = cai + 1;
+                        }
+                        ops = ops.push(op_call_closure(len(c.args)));
                         return CompileResult { ops: ops, lt: lt };
                     }
                     var ai: i32 = 0;
@@ -366,7 +402,18 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                     return CompileResult { ops: ops, lt: lt };
                 },
                 _ => {
-                    ops = ops.push(op_push_str("__call-target-not-ident__"));
+                    // Any-expr callee — compile it, then args,
+                    // then OpCallClosure. The runtime checks
+                    // it's a VFunc.
+                    var ccr: CompileResult = compile_expr(c.callee, ops, lt);
+                    ops = ccr.ops; lt = ccr.lt;
+                    var cai2: i32 = 0;
+                    while (cai2 < len(c.args)) {
+                        var car2: CompileResult = compile_expr(c.args[cai2], ops, lt);
+                        ops = car2.ops; lt = car2.lt;
+                        cai2 = cai2 + 1;
+                    }
+                    ops = ops.push(op_call_closure(len(c.args)));
                     return CompileResult { ops: ops, lt: lt };
                 }
             }
@@ -431,8 +478,37 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = ops.push(op_field_get(fa.field));
             return CompileResult { ops: ops, lt: lt };
         },
-        parser.ExprLambda(_) => {
-            ops = ops.push(op_push_str("__lambda-not-implemented__"));
+        parser.ExprLambda(lm) => {
+            // Lowering: emit a JUMP over the body, lay the
+            // body inline (same prologue + epilogue shape as
+            // compile_func), patch the JUMP to skip past it,
+            // then emit OpMakeFunc(entry, locals_count) so
+            // the surrounding expression sees a VFunc.
+            //
+            // No capture analysis in this cut — the body can
+            // only reference its params + top-level decls.
+            var skip_idx: i32 = len(ops);
+            ops = ops.push(op_jump(0 - 1));
+            var entry: i32 = len(ops);
+            var ltc: LocalsTable = new_locals();
+            var bi: i32 = 0;
+            while (bi < len(lm.params)) {
+                ltc = ltc.bind(lm.params[bi].name);
+                bi = bi + 1;
+            }
+            var bj: i32 = len(lm.params) - 1;
+            while (bj >= 0) {
+                ops = ops.push(op_store(bj));
+                bj = bj - 1;
+            }
+            var br: CompileResult = compile_block(lm.body, ops, ltc);
+            ops = br.ops;
+            // Implicit return-0 if the body falls off the end.
+            ops = ops.push(op_push_int(0));
+            ops = ops.push(op_return());
+            var body_locals: i32 = len(br.lt.names);
+            ops = patch_jump(ops, skip_idx, len(ops));
+            ops = ops.push(op_make_func(entry, body_locals));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprUnknown(_) => {
@@ -966,6 +1042,7 @@ function value_eq_vm(a: Value, b: Value): boolean {
                 _ => { return false; }
             }
         },
+        VFunc(_) => { return false; },
         VStruct(asv) => {
             match (b) {
                 VStruct(bsv) => {
@@ -1306,6 +1383,42 @@ pub function exec_program(prog: CompiledProgram): Value {
                 frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals });
                 locals = new_vm_locals(ml.locals_count);
                 ip = ml.entry;
+            },
+            OpMakeFunc(o) => {
+                stack = stack_push(stack, VFunc { entry: o.entry, locals_count: o.locals_count });
+                ip = ip + 1;
+            },
+            OpCallClosure(o) => {
+                // VFunc sits beneath the args. Pop in two
+                // steps: first the args (kept in place at top
+                // of stack so the callee's prologue can pop
+                // them with descending OpStoreLocal), then
+                // the callee VFunc.
+                if (len(stack) < o.argc + 1) {
+                    return v_err("call_closure: stack underflow");
+                }
+                var fn_idx: i32 = len(stack) - o.argc - 1;
+                var fn_val: Value = stack[fn_idx];
+                var fn_entry: i32 = 0;
+                var fn_locals_count: i32 = 0;
+                match (fn_val) {
+                    VFunc(fv) => {
+                        fn_entry = fv.entry;
+                        fn_locals_count = fv.locals_count;
+                    },
+                    _ => { return v_err("call_closure: callee not a VFunc"); }
+                }
+                // Splice the VFunc out of the stack, leaving
+                // the args behind for the callee prologue.
+                var ns: Value[] = [];
+                var nsi: i32 = 0;
+                while (nsi < fn_idx) { ns = ns.push(stack[nsi]); nsi = nsi + 1; }
+                var nsj: i32 = fn_idx + 1;
+                while (nsj < len(stack)) { ns = ns.push(stack[nsj]); nsj = nsj + 1; }
+                stack = ns;
+                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals });
+                locals = new_vm_locals(fn_locals_count);
+                ip = fn_entry;
             },
             OpMakeArray(o) => {
                 // Pop `n` values off the stack. They were
@@ -2021,14 +2134,27 @@ function main(): i32 {
         _ => { return 581; }
     }
 
-    // Union-receiver method: a method declared on the union
-    // type `Shape` dispatches when the receiver is a variant
-    // struct (`Circle`).
     var src59: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function (sh: Shape) tag(): i32 { return 1; } function main(): i32 { var c = Circle { r: 3 }; return c.tag(); }";
     var r59: Value = run_module(src59);
     match (r59) {
         VInt(i) => { if (i.v != 1) { return 590; } },
         _ => { return 591; }
+    }
+
+    // Lambda + invocation through a local var.
+    var src60: string = "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }";
+    var r60: Value = run_module(src60);
+    match (r60) {
+        VInt(i) => { if (i.v != 42) { return 600; } },
+        _ => { return 601; }
+    }
+
+    // IIFE: function literal called immediately.
+    var src61: string = "function main(): i32 { return function (n: i32): i32 { return n * 2; }(21); }";
+    var r61: Value = run_module(src61);
+    match (r61) {
+        VInt(i) => { if (i.v != 42) { return 610; } },
+        _ => { return 611; }
     }
 
     return 0;
