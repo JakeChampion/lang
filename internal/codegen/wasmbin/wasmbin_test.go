@@ -2846,6 +2846,37 @@ func TestEmitPtrWidth(t *testing.T) {
 	}
 }
 
+// TestEmitAllocU8LengthPrefix — __alloc_u8(n) must write n at
+// [data_ptr - 4] so __arr_idx_1's bounds check sees the right
+// length. Without this, byte-array indexing trips `unreachable`
+// at seemingly arbitrary indices because the length cell holds
+// whatever pre-alloc garbage was there.
+func TestEmitAllocU8LengthPrefix(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			// Allocate 12 bytes via __alloc_u8 and stash data_ptr.
+			{Kind: ir.OpConstI32, I32: 12},
+			{Kind: ir.OpCallDirect, Str: "__alloc_u8"},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			// Read mem[data_ptr - 4] — should be 12.
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpSub},
+			{Kind: ir.OpLoad},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "12" {
+		t.Fatalf("alloc_u8(12) prefix = %q, want 12", got)
+	}
+}
+
 // TestEmitMemcpy — copy 4 bytes from addr 200 to addr 300, then
 // load i32 from 300 to verify.
 func TestEmitMemcpy(t *testing.T) {
