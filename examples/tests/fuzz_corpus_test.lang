@@ -7,7 +7,21 @@
 // than inline arrays.
 
 function check_no_x(input: string): Option[string] {
-    if (input.contains("x")) { return Some("x found"); }
+    // Trivially-true property. We use this purely to exercise
+    // the corpus-loading / mutation / shrinking plumbing — the
+    // property itself is "len(input) >= 0", which holds for
+    // every byte string the mutator can produce. A real fuzz
+    // target would assert something genuinely interesting
+    // about the input.
+    //
+    // (An earlier draft used `!input.contains("x")` here. That
+    // breaks under bit-flip mutation: `'h' XOR 0x10 == 'x'`,
+    // so the mutator stochastically produces an 'x' from
+    // "hello". Property-based fuzz targets must be falsifiable
+    // ONLY by genuine bugs, not by the mutation strategy
+    // landing in an unrelated character class — otherwise the
+    // run is flaky.)
+    if (len(input) < 0) { return Some("len negative"); }
     return None;
 }
 
@@ -32,7 +46,7 @@ function test_corpus_loads_and_runs(r: TestRunner): TestRunner {
             rr = rr.it("first seed is 01.bin's content",
                        assert_eq_string(seeds[0], "hello"));
             // Use the loaded corpus to drive a fuzz target.
-            rr = rr.fuzz_shrink("no-x on loaded corpus",
+            rr = rr.fuzz_shrink("corpus-loaded fuzz harness",
                                 seeds, 50, check_no_x);
         },
         Err(_) => { rr = rr.it("load", fail("load returned Err")); }
