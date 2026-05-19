@@ -1357,6 +1357,41 @@ func TestRunnerArrayPrefixSuffixSubseqExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_at_and_f32_range_test.lang`
+// exercises batch-28 additions:
+//   - `assert_at_i32(arr, idx, expected)` / `_string` /
+//     `_i64` — single-position spot check with a distinct
+//     diagnostic for out-of-bounds vs value-mismatch.
+//   - `assert_in_range_f32(v, lo, hi)` — f32 mirror
+//     of the existing range family; NaN inputs fail
+//     unconditionally.
+//
+// 15 cases.
+func TestRunnerArrayAtAndF32RangeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_at_and_f32_range_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 4 - at_i32 wrong value diag",
+		"ok 5 - at_i32 out-of-bounds high",
+		"ok 6 - at_i32 negative index",
+		"ok 7 - at_i32 empty array OOB",
+		"ok 9 - at_string quoted diff",
+		"ok 11 - at_i64 wrong value",
+		"ok 13 - in_range_f32 inclusive bounds",
+		"ok 15 - in_range_f32 NaN fails",
+		"# pass 15",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

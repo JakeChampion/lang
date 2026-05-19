@@ -936,6 +936,55 @@ pub function assert_len_string(arr: string[], n: i32): Option[string] {
                 ", got " + got.to_string());
 }
 
+// `assert_at_i32(arr, idx, expected)` — single-position
+// element compare. Use when the test only cares about a
+// specific slot of a long array (e.g., "the first emitted
+// opcode is OpLoad"). Beats writing a full
+// `assert_eq_i32_array` with placeholders, OR an
+// `assert_eq_i32(arr[idx], expected)` that won't bound-
+// check the index. Out-of-bounds `idx` reports the
+// problem distinctly from a value mismatch so the
+// regression mode is readable.
+pub function assert_at_i32(arr: i32[], idx: i32, expected: i32): Option[string] {
+    var n: i32 = len(arr);
+    if (idx < 0 || idx >= n) {
+        return Some("assert_at_i32: index " + idx.to_string() +
+                    " out of bounds (length " + n.to_string() + ")");
+    }
+    if (arr[idx] == expected) { return None; }
+    return Some("assert_at_i32: at index " + idx.to_string() +
+                " expected " + expected.to_string() +
+                ", got " + arr[idx].to_string());
+}
+
+// `assert_at_string(arr, idx, expected)` — string-typed
+// mirror. Quotes both sides of the diff in the failure
+// message.
+pub function assert_at_string(arr: string[], idx: i32, expected: string): Option[string] {
+    var n: i32 = len(arr);
+    if (idx < 0 || idx >= n) {
+        return Some("assert_at_string: index " + idx.to_string() +
+                    " out of bounds (length " + n.to_string() + ")");
+    }
+    if (arr[idx] == expected) { return None; }
+    return Some("assert_at_string: at index " + idx.to_string() +
+                " expected \"" + expected +
+                "\", got \"" + arr[idx] + "\"");
+}
+
+// `assert_at_i64(arr, idx, expected)` — i64-element mirror.
+pub function assert_at_i64(arr: i64[], idx: i32, expected: i64): Option[string] {
+    var n: i32 = len(arr);
+    if (idx < 0 || idx >= n) {
+        return Some("assert_at_i64: index " + idx.to_string() +
+                    " out of bounds (length " + n.to_string() + ")");
+    }
+    if (arr[idx] == expected) { return None; }
+    return Some("assert_at_i64: at index " + idx.to_string() +
+                " expected " + expected.to_string() +
+                ", got " + arr[idx].to_string());
+}
+
 // `assert_eq_i32_array(actual, expected)` — element-wise i32[]
 // equality. Returns the first mismatching index so the failure
 // localises a long array diff.
@@ -1505,6 +1554,24 @@ pub function assert_in_range_f64(v: f64, lo: f64, hi: f64): Option[string] {
     }
     if (v > hi) {
         return Some("assert_in_range_f64: " + v.to_string() +
+                    " > upper bound " + hi.to_string());
+    }
+    return None;
+}
+
+// `assert_in_range_f32(v, lo, hi)` — f32 mirror. Direct
+// implementation (not delegating to `_f64`) so the failure
+// message names this helper, keeping diagnostics greppable.
+pub function assert_in_range_f32(v: f32, lo: f32, hi: f32): Option[string] {
+    if (v != v) {
+        return Some("assert_in_range_f32: value is NaN");
+    }
+    if (v < lo) {
+        return Some("assert_in_range_f32: " + v.to_string() +
+                    " < lower bound " + lo.to_string());
+    }
+    if (v > hi) {
+        return Some("assert_in_range_f32: " + v.to_string() +
                     " > upper bound " + hi.to_string());
     }
     return None;
