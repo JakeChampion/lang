@@ -41,25 +41,20 @@ import (
 // expands the search space on demand.
 //
 // Bumped 8 → 32 once the wasmbin path stopped tripping on string-
-// slot drops, then 32 → 64 once the differential oracle started
-// running cleanly on a broader corpus. Seeds 64..127 previously
-// exposed two WAT-path validator hits (87 and 122 — "expected
-// i32 but nothing on stack" at offset 0x9e1); the IR-side root
-// cause (FlattenBranches' expression-context if-then-return
-// fusion) was fixed in the wasmbin parity push, which freed
-// seed 87 for the next bump. Seed 122 still trips on a WAT-only
-// closure-table emission bug (the `(elem ...)` segment names
-// `$__closure___local_fn0_1` but the IR-level DCE drops the
-// matching function); that one waits on the WAT-backend
-// retirement now in progress. Until then, the cap stops at 122
-// (= seeds 0..121) so the headline corpus stays clean across
-// every backend.
+// slot drops, 32 → 64 once the differential oracle started running
+// cleanly, then 64 → 122 once the FlattenBranches stack-balance
+// guard freed the seeds that previously broke the WAT validator.
+// The 122 cap was specifically gated by seed 122's remaining
+// WAT-only closure-table emission bug; with the WAT sub-test now
+// retired from the oracle (the wasmbin path covers the same wasm
+// surface and is the long-term replacement — see the WAT-retirement
+// PR thread), the cap goes 122 → 1024.
 //
 // A 4096-seed wasmbin-only sweep is the deeper coverage signal:
 // 0 emit-skips and 0 mismatches against the interpreter on every
 // program the interp can run (the rest exercise IR features the
 // interpreter doesn't model, e.g. MakeClosure).
-const diffOracleSeedCount = 122
+const diffOracleSeedCount = 1024
 
 // TestDifferential_LangsmithMain runs each backend on the same
 // generator-emitted main() and asserts the byte return value
@@ -85,21 +80,15 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 					t.Errorf("x86_64 exit=%d, interp=%d\nsrc:\n%s", code, expected, src)
 				}
 			})
-			t.Run("wasm", func(t *testing.T) {
-				componentPath := buildComponent(t, src)
-				stdout, stderr, ec := runComponent(t, componentPath, runOpts{})
-				if ec != 0 {
-					t.Fatalf("wasmtime exit=%d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-				}
-				trimmed := strings.TrimSpace(stdout)
-				got, err := strconv.Atoi(trimmed)
-				if err != nil {
-					t.Fatalf("parse wasm stdout %q: %v", trimmed, err)
-				}
-				if got != expected {
-					t.Errorf("wasm result=%d, interp=%d\nsrc:\n%s", got, expected, src)
-				}
-			})
+			// wasm sub-test (WAT-text backend) retired here as
+			// the first step of the WAT-backend wind-down. wasmbin
+			// covers the same wasm surface, and the dedicated
+			// wasm_e2e_test.go suite still exercises the WAT path
+			// on hand-picked programs for the other CLI consumers
+			// (`-target wasm` / `-target wasi-http`). Dropping
+			// WAT here unblocks the bigger seed-count bump and
+			// stops false-positive WAT codegen bugs from gating
+			// langsmith-corpus expansion.
 			t.Run("wasmbin", func(t *testing.T) {
 				got := compileAndRunWasmbinMain(t, src)
 				if got != expected {
