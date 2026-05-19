@@ -219,7 +219,11 @@ pub struct Scope {
     sigs: FuncSig[],
     structs: StructSig[],
     unions: UnionSig[],
-    methods: MethodSig[]
+    methods: MethodSig[],
+    // loop_depth tracks nesting depth for break / continue
+    // validation. Incremented inside StmtWhile / StmtFor
+    // bodies. break / continue at depth 0 surface t_unknown.
+    loop_depth: i32
 }
 
 function new_scope(): Scope {
@@ -229,7 +233,7 @@ function new_scope(): Scope {
     var ss: StructSig[] = [];
     var us: UnionSig[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us, methods: ms };
+    return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us, methods: ms, loop_depth: 0 };
 }
 
 function new_scope_with_sigs(sigs: FuncSig[]): Scope {
@@ -238,7 +242,7 @@ function new_scope_with_sigs(sigs: FuncSig[]): Scope {
     var ss: StructSig[] = [];
     var us: UnionSig[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us, methods: ms };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us, methods: ms, loop_depth: 0 };
 }
 
 function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Scope {
@@ -246,26 +250,30 @@ function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Sco
     var ts: Type[] = [];
     var us: UnionSig[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us, methods: ms };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us, methods: ms, loop_depth: 0 };
 }
 
 function new_scope_with_sigs_structs_unions(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
     var ms: MethodSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: ms };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: ms, loop_depth: 0 };
 }
 
 function new_scope_full(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: methods };
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: methods, loop_depth: 0 };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
     var ns: string[] = s.names.push(name);
     var ts: Type[] = s.types.push(t);
-    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods };
+    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth };
+}
+
+function (s: Scope) enter_loop(): Scope {
+    return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1 };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -695,15 +703,17 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
         },
         parser.StmtWhile(w) => {
             // Same shape as if: cond must be bool, body walks in a
-            // derived scope. Loop control flow has no static type;
-            // the checker surfaces TypeBool on success / TypeUnknown
-            // on a non-bool cond, matching the if path.
+            // derived scope. The body sees loop_depth+1 so any
+            // break / continue inside type-checks. Loop control
+            // flow has no static type; the checker surfaces
+            // TypeBool on success / TypeUnknown on a non-bool cond.
             var wt: Type = check_expr(w.cond, s);
+            var body_scope: Scope = s.enter_loop();
             if (!type_eq(wt, t_bool())) {
-                check_block(w.body, s);
+                check_block(w.body, body_scope);
                 return CheckResult { scope: s, ty: t_unknown("while cond not bool") };
             }
-            check_block(w.body, s);
+            check_block(w.body, body_scope);
             return CheckResult { scope: s, ty: t_bool() };
         },
         parser.StmtAssign(a) => {
@@ -788,14 +798,23 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             }
             return CheckResult { scope: s, ty: t_bool() };
         },
-        parser.StmtBreak(_) => { return CheckResult { scope: s, ty: t_bool() }; },
-        parser.StmtContinue(_) => { return CheckResult { scope: s, ty: t_bool() }; },
+        parser.StmtBreak(_) => {
+            if (s.loop_depth == 0) {
+                return CheckResult { scope: s, ty: t_unknown("break outside loop") };
+            }
+            return CheckResult { scope: s, ty: t_bool() };
+        },
+        parser.StmtContinue(_) => {
+            if (s.loop_depth == 0) {
+                return CheckResult { scope: s, ty: t_unknown("continue outside loop") };
+            }
+            return CheckResult { scope: s, ty: t_bool() };
+        },
         parser.StmtFor(f) => {
             // Iter expr must be a TypeArray. Walk the body in
             // a scope where var_name is bound to the array's
-            // elem type. Errors in iter or body flip well-typed
-            // but the loop itself surfaces t_bool() like the
-            // other control-flow stmts.
+            // elem type, and loop_depth+1 so inner break /
+            // continue type-check.
             var it: Type = check_expr(f.iter, s);
             var elem_ty: Type = t_unknown("for-in iter not an array");
             var ok: boolean = true;
@@ -803,7 +822,7 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
                 TypeArray(ta) => { elem_ty = ta.elem; },
                 _ => { ok = false; }
             }
-            var body_scope: Scope = s.bind(f.var_name, elem_ty);
+            var body_scope: Scope = s.enter_loop().bind(f.var_name, elem_ty);
             check_block(f.body, body_scope);
             if (!ok) {
                 return CheckResult { scope: s, ty: t_unknown("for-in: iter not array") };
@@ -1514,6 +1533,30 @@ function main(): i32 {
     var mod48: parser.Module = parser.parse_module(lexer.tokenize(src48));
     var mt48: ModuleTypes = check_module(mod48);
     if (mt48.all_well_typed) { return 480; }
+
+    // break inside a while is well-typed.
+    var src49: string = "function main(): i32 { var i: i32 = 0; while (i < 10) { if (i == 3) { break; } i = i + 1; } return i; }";
+    var mod49: parser.Module = parser.parse_module(lexer.tokenize(src49));
+    var mt49: ModuleTypes = check_module(mod49);
+    if (!mt49.all_well_typed) { return 490; }
+
+    // continue inside a for is well-typed.
+    var src50: string = "function main(): i32 { var s: i32 = 0; for n in [1, 2, 3] { if (n == 2) { continue; } s = s + n; } return s; }";
+    var mod50: parser.Module = parser.parse_module(lexer.tokenize(src50));
+    var mt50: ModuleTypes = check_module(mod50);
+    if (!mt50.all_well_typed) { return 500; }
+
+    // break outside any loop — rejected.
+    var src51: string = "function main(): i32 { break; return 0; }";
+    var mod51: parser.Module = parser.parse_module(lexer.tokenize(src51));
+    var mt51: ModuleTypes = check_module(mod51);
+    if (mt51.all_well_typed) { return 510; }
+
+    // continue outside any loop — rejected.
+    var src52: string = "function main(): i32 { continue; return 0; }";
+    var mod52: parser.Module = parser.parse_module(lexer.tokenize(src52));
+    var mt52: ModuleTypes = check_module(mod52);
+    if (mt52.all_well_typed) { return 520; }
 
     return 0;
 }
