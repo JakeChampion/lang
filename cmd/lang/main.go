@@ -115,6 +115,7 @@ func main() {
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	doCheck := flag.Bool("check", false, "type-check FILE.lang (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
+	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.lang [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       lang -fmt [-w | -d] FILE.lang")
@@ -136,6 +137,16 @@ func main() {
 				fmt.Printf("    bindings:     %v\n", d.Bindings)
 			}
 		}
+		return
+	}
+
+	if *explain != "" {
+		body := diag.Explain(*explain)
+		if body == "" {
+			fmt.Fprintf(os.Stderr, "unknown error code %q\navailable codes: %v\n", *explain, diag.AvailableCodes())
+			os.Exit(1)
+		}
+		fmt.Print(diag.FormatExplain(*explain, body))
 		return
 	}
 

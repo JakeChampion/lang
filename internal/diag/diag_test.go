@@ -252,3 +252,101 @@ func TestFormatLabeledIncludesFilenameOnSecondary(t *testing.T) {
 		t.Errorf("secondary missing filename prefix:\n%s", out)
 	}
 }
+
+// fakeCodedErr — pretends to be a checker error with a stable
+// code stamped. Exercises Coded interface + the header
+// `error[CODE]: msg` rendering.
+type fakeCodedErr struct {
+	fakeErr
+	code string
+}
+
+func (e *fakeCodedErr) Code() string { return e.code }
+
+func TestFormatRendersErrorCode(t *testing.T) {
+	src := "function f() { return x; }\n"
+	err := &fakeCodedErr{
+		fakeErr: fakeErr{
+			pos: ast.Position{Line: 1, Col: 23},
+			msg: "undefined identifier \"x\"",
+		},
+		code: "E001",
+	}
+	out := Format("", src, err)
+	if !strings.Contains(out, "1:23: error[E001]: undefined identifier") {
+		t.Errorf("missing coded header in:\n%s", out)
+	}
+}
+
+func TestFormatEmptyCodeFallsBackToPlainError(t *testing.T) {
+	src := "function f() { return x; }\n"
+	err := &fakeCodedErr{
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		code:    "",
+	}
+	out := Format("", src, err)
+	// Empty code shouldn't render `error[]:` — falls back to plain.
+	if strings.Contains(out, "error[]:") {
+		t.Errorf("empty Code() should not produce `error[]:`:\n%s", out)
+	}
+	if !strings.Contains(out, "1:23: error: undefined identifier") {
+		t.Errorf("missing plain header in:\n%s", out)
+	}
+}
+
+func TestExplainReturnsCatalogueBody(t *testing.T) {
+	body := Explain("E001")
+	if body == "" {
+		t.Fatal("Explain(\"E001\") returned empty — markdown not embedded?")
+	}
+	if !strings.Contains(body, "Undefined identifier") {
+		t.Errorf("Explain body missing canonical title:\n%s", body)
+	}
+}
+
+func TestExplainCaseInsensitive(t *testing.T) {
+	if Explain("e001") == "" {
+		t.Error("Explain(\"e001\") should match E001 case-insensitively")
+	}
+	if Explain("  E001  ") == "" {
+		t.Error("Explain should trim whitespace")
+	}
+}
+
+func TestExplainUnknownReturnsEmpty(t *testing.T) {
+	if Explain("E999") != "" {
+		t.Error("Explain(\"E999\") should return empty for unknown code")
+	}
+	if Explain("") != "" {
+		t.Error("Explain(\"\") should return empty")
+	}
+}
+
+func TestAvailableCodesEnumeratesCatalogue(t *testing.T) {
+	codes := AvailableCodes()
+	if len(codes) == 0 {
+		t.Fatal("AvailableCodes() returned empty — no markdown files found")
+	}
+	// Phase 1 catalogue: E001..E005.
+	wantSet := map[string]bool{"E001": true, "E002": true, "E003": true, "E004": true, "E005": true}
+	gotSet := map[string]bool{}
+	for _, c := range codes {
+		gotSet[c] = true
+	}
+	for c := range wantSet {
+		if !gotSet[c] {
+			t.Errorf("AvailableCodes() missing %q; got %v", c, codes)
+		}
+	}
+}
+
+func TestFormatExplainWrapsBody(t *testing.T) {
+	body := "explanation body\n"
+	got := FormatExplain("E001", body)
+	if !strings.HasPrefix(got, "error E001:") {
+		t.Errorf("FormatExplain prefix mismatch:\n%s", got)
+	}
+	if !strings.Contains(got, body) {
+		t.Errorf("FormatExplain dropped body:\n%s", got)
+	}
+}

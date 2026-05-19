@@ -55,6 +55,22 @@ type Filed interface {
 	File() string
 }
 
+// Coded is optionally satisfied by errors that carry a stable
+// error code (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4). The code
+// is rendered in the header — `error[E001]: …` — so users can
+// search for it and look up the long-form explanation via
+// `lang explain E001`. Codes are stable identifiers; the
+// rendered phrasing of the error message can evolve without
+// breaking the search.
+//
+// Empty Code() means "no stable code assigned" — the renderer
+// falls back to the plain `error:` prefix. Existing errors
+// stay unaffected until they opt in.
+type Coded interface {
+	error
+	Code() string
+}
+
 // LabelKind tags a Label's role in a multi-label diagnostic
 // (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §1).
 //
@@ -194,7 +210,17 @@ func Format(filename, src string, err error) string {
 		return err.Error()
 	}
 
-	header := fmt.Sprintf("%d:%d: error: %s", pos.Line, pos.Col, stripPrefix(pe.Error()))
+	// `error[E001]: …` shape when the error carries a stable
+	// code (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4). Plain
+	// `error: …` otherwise — keeps every non-Coded error
+	// rendering unchanged.
+	prefix := "error"
+	if cd, ok := err.(Coded); ok {
+		if code := cd.Code(); code != "" {
+			prefix = "error[" + code + "]"
+		}
+	}
+	header := fmt.Sprintf("%d:%d: %s: %s", pos.Line, pos.Col, prefix, stripPrefix(pe.Error()))
 	if filename != "" {
 		header = filename + ":" + header
 	}

@@ -38,11 +38,12 @@ function test_check_rejects_type_error(lang_bin: string): Option[string] {
         return Some("expected non-zero exit on type error, got 0");
     }
     // The diagnostic should mention the violation. We probe
-    // for "error:" rather than pinning the exact wording so
+    // for "error" rather than pinning the exact wording so
     // a small phrasing tweak ("type error" → "return type
-    // mismatch") doesn't break the test.
-    if (!r.stderr.contains("error:")) {
-        return Some("stderr missing `error:`:\n" + r.stderr);
+    // mismatch") doesn't break the test. Codes (`error[E002]:`)
+    // and the plain `error:` shape both match.
+    if (!r.stderr.contains("error")) {
+        return Some("stderr missing `error`:\n" + r.stderr);
     }
     return None;
 }
