@@ -98,6 +98,13 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_str_byte")
 					needs.add("__lang_alloc")
 					needs.add("__lang_eprint")
+				case "__lang_write":
+					// Same shape as __lang_print but no trailing
+					// newline (fd=1).
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__lang_alloc")
+					needs.add("__lang_write")
 				case "__lang_putchar":
 					// (b) → () — single-byte fd_write to stdout.
 					needs.add("__lang_putchar")
@@ -297,6 +304,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildEprintBody,
+	},
+	"__lang_write": {
+		// (data, len) → () — like __lang_print but without
+		// the trailing newline. The pair `print` / `write`
+		// mirrors Go's fmt.Println / fmt.Print.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildWriteBody,
 	},
 	"__lang_putchar": {
 		// (b) → () — fd_write a single byte to stdout. Uses

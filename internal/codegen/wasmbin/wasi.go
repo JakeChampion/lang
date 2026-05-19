@@ -142,6 +142,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	if helpers.set["__lang_eprint"] {
 		in.add("wasi_fd_write")
 	}
+	if helpers.set["__lang_write"] {
+		in.add("wasi_fd_write")
+	}
 	if helpers.set["__lang_putchar"] {
 		in.add("wasi_fd_write")
 	}
@@ -264,19 +267,28 @@ const strIdxScratchAddr = 64
 //	3: $dst
 //	4: $i
 func buildPrintBody(idxs map[string]uint32) []byte {
-	return buildPrintBodyFd(idxs, 1)
+	return buildPrintBodyFd(idxs, 1, true)
 }
 
 // buildEprintBody — (data, len) → (). Same shape as
 // buildPrintBody but writes to fd=2 (stderr) instead of fd=1.
+// Also appends a trailing newline, matching the WAT path's
+// fmt.Println-shaped pairing of print/eprint.
 func buildEprintBody(idxs map[string]uint32) []byte {
-	return buildPrintBodyFd(idxs, 2)
+	return buildPrintBodyFd(idxs, 2, true)
+}
+
+// buildWriteBody — (data, len) → (). Like buildPrintBody but
+// without the trailing newline (fd=1, no `\n` append).
+func buildWriteBody(idxs map[string]uint32) []byte {
+	return buildPrintBodyFd(idxs, 1, false)
 }
 
 // buildPrintBodyFd is the fd-parametrised shared implementation
-// of __lang_print / __lang_eprint. Same str-to-heap copy +
-// fd_write path; the fd value is the only delta.
-func buildPrintBodyFd(idxs map[string]uint32, fd int32) []byte {
+// of __lang_print / __lang_eprint / __lang_write. Same
+// str-to-heap copy + fd_write path; the fd and the optional
+// trailing-newline are the only deltas.
+func buildPrintBodyFd(idxs map[string]uint32, fd int32, withNewline bool) []byte {
 	strLen := idxs["__lang_str_len"]
 	strByte := idxs["__lang_str_byte"]
 	alloc := idxs["__lang_alloc"]
@@ -287,8 +299,14 @@ func buildPrintBodyFd(idxs map[string]uint32, fd int32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, 2) // $L
-	// dst = __lang_alloc(L)
+	// dst = __lang_alloc(L + (1 if withNewline else 0)). The
+	// trailing newline byte for print / eprint lives one byte
+	// past the copied string content; write() skips it.
 	body = inst.InstLocalGet(body, 2)
+	if withNewline {
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+	}
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 3) // $dst
 	// Copy loop: for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i).
@@ -319,6 +337,20 @@ func buildPrintBodyFd(idxs map[string]uint32, fd int32) []byte {
 	}
 	body = inst.InstEnd(body) // end loop
 	body = inst.InstEnd(body) // end block
+	if withNewline {
+		// mem[dst + L] = '\n'  (the byte we reserved at alloc).
+		// store8 takes (addr, value); push them in that order.
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 2)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, '\n')
+		body = memory.InstI32Store8(body, 0, 0)
+		// $L = L + 1 (so the iov_len covers the newline too)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 2)
+	}
 	// mem[printIovecAddr] = dst (iov_base)
 	body = inst.InstI32Const(body, printIovecAddr)
 	body = inst.InstLocalGet(body, 3)
