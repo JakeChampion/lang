@@ -588,7 +588,7 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "router.lang")
-	src := `function handle(req: HttpRequest): HttpResponse {
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
         return HttpResponse { status: 200, body: "world" };
     }

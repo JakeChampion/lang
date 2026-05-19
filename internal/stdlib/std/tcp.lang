@@ -1,7 +1,12 @@
 // std/tcp — HTTP/1.1 accept loop + handler-friendly env helper.
 //
 // `tcp_serve(port, handler)` runs an HTTP/1.1 accept loop on
-// `port`, calling `handler(req)` once per accepted connection.
+// `port`, calling `handler(req, plat)` once per accepted
+// connection. The `plat: Platform` capability bag is the seam
+// where future host-side effects (fetch / kv / secrets / log /
+// now) will be plumbed per docs/PLATFORM-RESEARCH.md Rec §1;
+// for Phase 1 it carries a single `version: i32` placeholder
+// and handler code typically ignores it.
 // Returns -errno when the listener can't be bound (e.g.
 // EADDRINUSE); on success the loop runs indefinitely until
 // the host kills the process (no clean-shutdown channel
@@ -33,7 +38,7 @@
 
 import "std/http";
 
-pub function tcp_serve(port: i32, handler: (HttpRequest) => HttpResponse): i32 {
+pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
     var listener: i32 = tcp_listen(port);
     if (listener < 0) {
         return listener;
@@ -104,7 +109,12 @@ pub function tcp_serve(port: i32, handler: (HttpRequest) => HttpResponse): i32 {
             }
         }
         if (have_request) {
-            var resp: HttpResponse = handler(req);
+            // Phase 1 Platform: empty placeholder threaded
+            // through the handler call. Future phases will
+            // populate capability fields (fetch / kv / log /
+            // now) per docs/PLATFORM-RESEARCH.md.
+            var plat: Platform = Platform { version: 1 };
+            var resp: HttpResponse = handler(req, plat);
             var wire: string = http.http_serialize_response(resp);
             tcp_send(fd, wire);
         }

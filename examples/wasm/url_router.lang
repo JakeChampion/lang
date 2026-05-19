@@ -61,7 +61,7 @@ function describe(path: string, q: Map[string, string[]]): JsonValue {
   return JObject(out);
 }
 
-function handle(req: HttpRequest): HttpResponse {
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
   // Build a "synthetic" full URL so url_parse has a host
   // to anchor against — req.path on its own is path+query.
   var full: string = "http://example.local" + req.path;

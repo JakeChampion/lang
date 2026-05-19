@@ -10461,9 +10461,11 @@ func TestArm64TcpListen(t *testing.T) {
 }
 
 // End-to-end arm64 HTTP handler. Compiles a program that only
-// defines `function handle(req: HttpRequest): HttpResponse` —
-// the checker synthesises `main()` from it as
-// `tcp_serve(__port_from_env("PORT", 8080), handle)`. The
+// defines `function handle(req: HttpRequest, plat: Platform):
+// HttpResponse` — the checker synthesises `main()` from it as
+// `tcp_serve(__port_from_env("PORT", 8080), handle)`, and
+// tcp_serve constructs a Platform per request before calling
+// the handler. The
 // resulting binary listens on the PORT env var, parses an
 // HTTP/1.1 request, calls the user handler, and writes the
 // serialised response back. Then this test sends two
@@ -10491,7 +10493,7 @@ func TestArm64HttpHandler(t *testing.T) {
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
 
-	src := `function handle(req: HttpRequest): HttpResponse {
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return HttpResponse {
         status: 200,
         body: "method=" + req.method + " path=" + req.path + " body-len=" + len(req.body).to_string()

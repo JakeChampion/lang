@@ -44,7 +44,7 @@ The parent `examples/` directory holds the cross-target basics
 | `word_freq.lang` | wasm | `Map[string, i32]` insertion-order iteration, `s.to_lower` + manual whitespace tokenisation, in-place array mutation through pointer-typed receivers |
 | `use_chain.lang` | wasm | Gleam-style `use` desugaring across fallible Option calls, the closure-factory pattern (`adder(7)` returns a closure) — defunctionalisation + inlining together erase the `call_indirect` from the final wat |
 | `shape_area.lang` | wasm | Tagged-union enums with mixed payloads, exhaustive `match` with payload destructuring, `match` guards, generic enums (`Result[T, E]`), wide payloads (`Cuboid(f64, f64, f64)` with 8-byte slot layout) |
-| `echo_handler.lang` | wasi-http | The minimal `function handle(req: HttpRequest): HttpResponse` shape; the implicit per-request arena reclaims every allocation at handler return |
+| `echo_handler.lang` | wasi-http | The minimal `function handle(req: HttpRequest, plat: Platform): HttpResponse` shape; the implicit per-request arena reclaims every allocation at handler return |
 | `todo_api.lang` | wasi-http | Method-tuple routing, `JsonValue` request body validation via nested `match`, structured error responses |
 | `url_router.lang` | wasi-http | `url_parse` returning the auto-injected `Url` struct, `query_parse` collecting multi-valued keys into `Map[string, string[]]`, the pipe operator for response building |
 
