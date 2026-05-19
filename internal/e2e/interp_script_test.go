@@ -1784,6 +1784,186 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptJsonGetters pins the Tier-C Rec §12 Phase 1
+// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §3). Schema-
+// directed `json_parse[T]` codegen is multi-week; Phase 1
+// ships typed-field extraction helpers that handler code
+// uses to walk a JsonValue DOM without manually pattern-
+// matching every level.
+func TestInterpScriptJsonGetters(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "json_get_string returns Some on match, None on miss",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"name\":\"Alice\"}")) {
+        Some(v) => {
+            match (json.json_get_string(v, "name")) {
+                Some(n) => { print(n); },
+                None => { print("none"); }
+            }
+            match (json.json_get_string(v, "missing")) {
+                Some(_) => { print("FOUND"); },
+                None => { print("absent"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "Alice\nabsent\n",
+		},
+		{
+			name: "json_get_i32 parses positive + negative integers",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"a\":42,\"b\":-7,\"c\":0}")) {
+        Some(v) => {
+            match (json.json_get_i32(v, "a")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
+            match (json.json_get_i32(v, "b")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
+            match (json.json_get_i32(v, "c")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "42\n-7\n0\n",
+		},
+		{
+			name: "json_get_bool extracts true / false correctly",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"yes\":true,\"no\":false}")) {
+        Some(v) => {
+            match (json.json_get_bool(v, "yes")) {
+                Some(b) => { if (b) { print("YES"); } else { print("no"); } },
+                None => { print("none"); }
+            }
+            match (json.json_get_bool(v, "no")) {
+                Some(b) => { if (b) { print("YES"); } else { print("no"); } },
+                None => { print("none"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "YES\nno\n",
+		},
+		{
+			name: "json_get_array returns the element list",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"tags\":[\"a\",\"b\",\"c\"]}")) {
+        Some(v) => {
+            match (json.json_get_array(v, "tags")) {
+                Some(arr) => { print(len(arr).to_string()); },
+                None => { print("none"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "3\n",
+		},
+		{
+			name: "json_get_object chains into nested objects",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"user\":{\"name\":\"Bob\"}}")) {
+        Some(v) => {
+            match (json.json_get_object(v, "user")) {
+                Some(inner) => {
+                    match (json.json_get_string(inner, "name")) {
+                        Some(n) => { print(n); },
+                        None => { print("none"); }
+                    }
+                },
+                None => { print("none"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "Bob\n",
+		},
+		{
+			name: "type mismatch returns None (not the wrong-shaped value)",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"age\":\"forty\"}")) {
+        Some(v) => {
+            // age is a string in the JSON; json_get_i32 must return None.
+            match (json.json_get_i32(v, "age")) {
+                Some(_) => { print("WRONG"); },
+                None => { print("rejected"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "rejected\n",
+		},
+		{
+			name: "json_is_null distinguishes null from absent / non-null",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"x\":null,\"y\":1}")) {
+        Some(v) => {
+            match (json.json_get(v, "x")) {
+                Some(xv) => { if (json.json_is_null(xv)) { print("null"); } else { print("not null"); } },
+                None => { print("missing"); }
+            }
+            match (json.json_get(v, "y")) {
+                Some(yv) => { if (json.json_is_null(yv)) { print("null"); } else { print("not null"); } },
+                None => { print("missing"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "null\nnot null\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
