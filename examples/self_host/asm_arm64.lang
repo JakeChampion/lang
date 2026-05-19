@@ -290,6 +290,12 @@ function count_locals_in_stmt(stmt: parser.Stmt): i32 {
             }
             return n;
         },
+        parser.StmtFor(f) => {
+            // +1 for the synthetic array-pointer slot, +1 for
+            // the loop counter, +1 for the bound element var,
+            // + body locals.
+            return 3 + count_locals(f.body);
+        },
         _ => { return 0; }
     }
     return 0;
@@ -908,7 +914,67 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.write(".Lmatch_end_" + i32_to_string(end_lbl) + ":\n");
             return s;
         },
-        parser.StmtFor(_) => { return s.write("    // unsupported: for-in\n"); },
+        parser.StmtFor(f) => {
+            // Mirror of the x86-64 StmtFor lowering in asm.lang.
+            // Desugar: `for x in arr { body }` →
+            //   __for_arr_N = arr; __for_i_N = 0;
+            //   while (__for_i_N < len(__for_arr_N)) {
+            //       x = __for_arr_N[__for_i_N]; body;
+            //       __for_i_N = __for_i_N + 1;
+            //   }
+            s = emit_expr(f.iter, s);
+            var arr_name: string = "__for_arr_" + i32_to_string(s.label_n);
+            s = s.bind_local(arr_name);
+            var arr_off: i32 = s.lookup_local(arr_name);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    str x0, [x29, #" + i32_to_string(arr_off) + "]\n");
+            var idx_name: string = "__for_i_" + i32_to_string(s.label_n);
+            s = s.bind_local(idx_name);
+            var idx_off: i32 = s.lookup_local(idx_name);
+            s = s.write("    mov x0, #0\n");
+            s = s.write("    str x0, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.bind_local(f.var_name);
+            var elem_off: i32 = s.lookup_local(f.var_name);
+            var top_lbl: i32 = s.label_n;
+            var end_lbl: i32 = s.label_n + 1;
+            s = EmitState {
+                out: s.out,
+                label_n: s.label_n + 2,
+                local_names: s.local_names,
+                in_function: s.in_function,
+                string_lits: s.string_lits,
+                needs_print_int: s.needs_print_int,
+                needs_read_int: s.needs_read_int,
+                needs_heap: s.needs_heap,
+                struct_decls: s.struct_decls
+            };
+            s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
+            // Condition.
+            s = s.write("    ldr x0, [x29, #" + i32_to_string(arr_off) + "]\n");
+            s = s.write("    ldr x1, [x0]\n");
+            s = s.write("    ldr x2, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.write("    cmp x2, x1\n");
+            s = s.write("    b.ge .Lfor_end_" + i32_to_string(end_lbl) + "\n");
+            // Bind element.
+            s = s.write("    ldr x0, [x29, #" + i32_to_string(arr_off) + "]\n");
+            s = s.write("    ldr x1, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.write("    add x1, x1, #1\n");
+            s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
+            s = s.write("    str x0, [x29, #" + i32_to_string(elem_off) + "]\n");
+            // Body.
+            var bi: i32 = 0;
+            while (bi < len(f.body)) {
+                s = emit_stmt(f.body[bi], s);
+                bi = bi + 1;
+            }
+            // i = i + 1; jump to top.
+            s = s.write("    ldr x0, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.write("    add x0, x0, #1\n");
+            s = s.write("    str x0, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.write("    b .Lfor_top_" + i32_to_string(top_lbl) + "\n");
+            s = s.write(".Lfor_end_" + i32_to_string(end_lbl) + ":\n");
+            return s;
+        },
         parser.StmtBreak(_) => { return s.write("    // unsupported: break\n"); },
         parser.StmtContinue(_) => { return s.write("    // unsupported: continue\n"); },
         parser.StmtUnknown(_) => { return s.write("    // unsupported: StmtUnknown\n"); }
