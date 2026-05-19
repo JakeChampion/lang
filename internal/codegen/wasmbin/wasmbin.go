@@ -6,17 +6,46 @@
 // here automatically once the corresponding op handler is wired.
 //
 // The aim is for this package to fully replace the WAT emitter and
-// the `wasm-tools parse` shell-out it depends on; each release lands
-// another slice of op coverage until every program the WAT path
-// compiles also compiles through this one.
+// the `wasm-tools parse` shell-out it depends on. Each PR lands
+// another slice of op coverage; the package is exercised via
+// `lang -target wasm-bin -o prog.wasm prog.lang` end-to-end.
 //
-// Slice 1 scope (this file): integer + float constants, integer +
-// float arithmetic / comparison / logical-not, locals (param +
-// declared + tee), drop, explicit return + return-void. Enough for
-// pure-arithmetic functions over single-slot scalar types. Strings,
-// control flow, calls, memory, allocator, closures, pairs, and the
-// preview-2 component wrapper are out of scope and return an
-// `unsupported op` error.
+// Current op coverage:
+//
+//   - Constants: i32 / i64 / f32 / f64 / string (inline + heap).
+//   - Integer arithmetic, bitwise, comparison (signed + unsigned).
+//   - Logical not (i32.eqz).
+//   - Float arithmetic + comparison.
+//   - Type conversions: extend / wrap / trunc / convert / sign-
+//     extend (post-MVP) / reinterpret / promote / demote.
+//   - Locals: param + declared + scratch, load / store / tee.
+//     String-typed slots fan out to two wasm slots via the
+//     two-word (data, len) ABI.
+//   - Control flow: block / loop / if / else / end / br / br_if.
+//   - Memory: linear-memory section gating, load / store across
+//     every width incl. sub-i32 signed / unsigned variants;
+//     two-word OpLoad / OpStore WidthString.
+//   - Function calls: direct, indirect (via funcref table),
+//     closure-direct (env_ptr already on stack). Static
+//     closure-pair pointers via OpConstFunc.
+//   - String runtime: __lang_str_len, __lang_str_byte (SSO
+//     seam), __str_eq, __str_concat.
+//   - Bump allocator: __lang_alloc, cursor at memory[40], pages
+//     grow on demand.
+//   - WASI: wasi_snapshot_preview1.fd_write import + a
+//     __lang_print helper that copies the string into a fresh
+//     buffer (inline-form aware) and writes one iovec.
+//   - Enum dispatch: OpEnumSentinel + OpMatchTag.
+//   - Pair-return ABI: OpReturnPair, OpMakeSomeI32 /
+//     OpMakeNoneI32 / OpMakeOkI32 / OpMakeErrI32, OpCallDirectPair.
+//
+// Still out of scope (returns an `unsupported op` error):
+//
+//   - OpMakeClosure / OpMakeEnv (heap-allocated closures with
+//     captures — the per-capture type info isn't carried at the
+//     IR layer, so wasmbin would need ast access).
+//   - Preview-2 component wrapping for the wasm-bin CLI target
+//     (currently emits raw core modules).
 package wasmbin
 
 import (
