@@ -772,6 +772,48 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"answer: 7",
 			"",
 		},
+		{
+			"str-to-i32-zero",
+			"function main(): i32 { return str_to_i32(\"0\"); }",
+			0,
+			"",
+			"",
+		},
+		{
+			"str-to-i32-positive",
+			"function main(): i32 { return str_to_i32(\"42\"); }",
+			42,
+			"",
+			"",
+		},
+		{
+			"str-to-i32-multi-digit",
+			"function main(): i32 { return str_to_i32(\"123\"); }",
+			123,
+			"",
+			"",
+		},
+		{
+			"str-to-i32-stops-at-non-digit",
+			"function main(): i32 { return str_to_i32(\"99xyz\"); }",
+			99,
+			"",
+			"",
+		},
+		{
+			"str-to-i32-from-read-line",
+			"function main(): i32 { var s = read_line(); var n = str_to_i32(s); return n + 1; }",
+			43,
+			"",
+			"42\n",
+		},
+		{
+			"str-to-i32-round-trip",
+			"function main(): i32 { var n = 73; var s = i32_to_string(n); var back = str_to_i32(s); return back; }",
+			73,
+			"",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
