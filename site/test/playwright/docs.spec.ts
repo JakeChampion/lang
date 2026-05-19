@@ -78,6 +78,29 @@ test("search modal opens via Ctrl/Cmd-K", async ({ page }) => {
 // emit `href="/foo/"` verbatim, which 404s under the `/lang/`
 // base path. Clicking each link surfaces the issue — the prior
 // suite navigated directly via page.goto so it missed this.
+//
+// Same bug bites Starlight's hero actions: the YAML `link:` is
+// passed verbatim to `<a href>` (no base prefix), so a bare
+// `/tutorial/install/` 404s. The hero-button click tests below
+// cover that path — toBeVisible() alone wouldn't catch it.
+test("home → hero Get started button navigates correctly", async ({ page }) => {
+  await page.goto("./");
+  await page.getByRole("link", { name: /Get started/i }).first().click();
+  await expect(page).toHaveURL(/\/lang\/tutorial\/install\/?$/);
+  await expect(page.locator("h1")).toContainText("Install");
+});
+
+test("home → hero Try in browser button targets the playground", async ({
+  page,
+}) => {
+  await page.goto("./");
+  const link = page.getByRole("link", { name: /Try in browser/i }).first();
+  // The playground bundle is a separate Astro `public/` drop-in,
+  // not a Starlight content page — asserting the href is enough
+  // (clicking would race the wasm boot and isn't worth the flake).
+  await expect(link).toHaveAttribute("href", /^\/lang\/playground\/?$/);
+});
+
 test("home → tutorial link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Tutorial$/ }).first().click();
