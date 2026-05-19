@@ -1,0 +1,89 @@
+// std/mock_platform — test-ergonomics helpers for Tier-C
+// Rec §11 (docs/PLATFORM-RESEARCH.md §6).
+//
+// Today's `Platform` is a one-field placeholder. Once Phase 2
+// adds capability fields (log / fetch / kv / now), MockPlatform
+// grows matching methods that intercept calls + return canned
+// responses. Phase 1 (this PR) ships the call-recording
+// infrastructure so tests can manually drive an effect log and
+// inspect it.
+//
+// Intended use (Phase 1):
+//
+//   var m: MockPlatform = mock_platform_new();
+//   m.record("fetch", "GET /users/42");
+//   m.record("kv_set", "user:42=Alice");
+//
+//   // Drive the handler manually:
+//   var req: HttpRequest = ...;
+//   var resp: HttpResponse = handle(req, Platform { version: 1 });
+//
+//   // Inspect the recorded call log:
+//   assert_eq_i32(m.call_count(), 2);
+//   assert_eq_string(m.calls[0].name, "fetch");
+//
+// Intended use (Phase 2 — once Platform grows capability
+// fields):
+//
+//   var m: MockPlatform = mock_platform_new();
+//   var plat: Platform = m.as_platform();
+//   plat.kv_set("user:42", "{ \"name\": \"Alice\" }");
+//   var resp: HttpResponse = handle(req, plat);
+//   assert_eq_string(m.calls[0].name, "kv_set");
+
+// `mock_platform_new()` — fresh MockPlatform with an empty
+// call log.
+pub function mock_platform_new(): MockPlatform {
+    var empty: MockCall[] = [];
+    return MockPlatform { calls: empty };
+}
+
+// `(m: MockPlatform).record(name, args)` — append a call
+// to the log. `args` is a free-form string; tests typically
+// stuff a comma-separated argument summary or a JSON-shaped
+// payload representation in there for assertion.
+pub function (m: MockPlatform) record(name: string, args: string) {
+    m.calls = m.calls.push(MockCall { name: name, args: args });
+}
+
+// `(m: MockPlatform).call_count()` — number of calls
+// recorded so far. Convenience for the common
+// `assert_eq_i32(m.call_count(), N)` shape.
+pub function (m: MockPlatform) call_count(): i32 {
+    return len(m.calls);
+}
+
+// `(m: MockPlatform).reset()` — clear the call log without
+// re-allocating the MockPlatform. Lets a single mock be
+// reused across multiple test cases without leaking state.
+pub function (m: MockPlatform) reset() {
+    var empty: MockCall[] = [];
+    m.calls = empty;
+}
+
+// `(m: MockPlatform).has_call(name)` — true iff any
+// recorded call matches `name`. Less precise than
+// inspecting `m.calls[N].name` directly but handy when the
+// test cares "did this side effect happen at all?"
+// regardless of position.
+pub function (m: MockPlatform) has_call(name: string): boolean {
+    var i: i32 = 0;
+    while (i < len(m.calls)) {
+        if (m.calls[i].name == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `(m: MockPlatform).find_call(name): Option[MockCall]` —
+// return the first call with the given name, or None.
+// Useful when the test wants to inspect the args of a
+// specific call without pinning its position in the log.
+pub function (m: MockPlatform) find_call(name: string): Option[MockCall] {
+    var i: i32 = 0;
+    while (i < len(m.calls)) {
+        if (m.calls[i].name == name) { return Some(m.calls[i]); }
+        i = i + 1;
+    }
+    return None;
+}

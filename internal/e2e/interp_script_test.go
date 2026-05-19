@@ -1684,6 +1684,106 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptMockPlatform pins the Tier-C Rec §11
+// test-ergonomics surface (docs/PLATFORM-RESEARCH.md §6).
+// Phase 1 mocks are manually driven (tests call .record()
+// themselves); Phase 2 will integrate with Platform's
+// capability fields so the mock intercepts calls
+// automatically.
+func TestInterpScriptMockPlatform(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "record + call_count + indexed access",
+			source: `import "std/mock_platform";
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.record("fetch", "GET /users/42");
+    m.record("kv_set", "user:42=Alice");
+    print(m.call_count().to_string());
+    print(m.calls[0].name);
+    print(m.calls[1].args);
+    return 0;
+}`,
+			wantStdout: "2\nfetch\nuser:42=Alice\n",
+		},
+		{
+			name: "has_call distinguishes present / absent",
+			source: `import "std/mock_platform";
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.record("fetch", "x");
+    if (m.has_call("fetch")) { print("yes-fetch"); } else { print("no-fetch"); }
+    if (m.has_call("write_file")) { print("yes-wf"); } else { print("no-wf"); }
+    return 0;
+}`,
+			wantStdout: "yes-fetch\nno-wf\n",
+		},
+		{
+			name: "find_call returns Some/None correctly",
+			source: `import "std/mock_platform";
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.record("fetch", "first");
+    m.record("kv_set", "second");
+    m.record("fetch", "third");
+    // find_call returns the FIRST match.
+    match (m.find_call("fetch")) {
+        Some(c) => { print(c.args); },
+        None => { print("missing"); }
+    }
+    match (m.find_call("unknown")) {
+        Some(_) => { print("FOUND"); },
+        None => { print("none"); }
+    }
+    return 0;
+}`,
+			wantStdout: "first\nnone\n",
+		},
+		{
+			name: "reset clears the log",
+			source: `import "std/mock_platform";
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.record("a", "1");
+    m.record("b", "2");
+    if (m.call_count() != 2) { return 1; }
+    m.reset();
+    if (m.call_count() != 0) { return 2; }
+    if (m.has_call("a")) { return 3; }
+    print("ok");
+    return 0;
+}`,
+			wantStdout: "ok\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
