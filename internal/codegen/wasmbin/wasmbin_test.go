@@ -448,16 +448,33 @@ func TestEmitLoopBr(t *testing.T) {
 	}
 }
 
-// TestEmitBlocktypeUnsupported — string-pair blocktype isn't
-// covered yet; confirm we report it rather than emitting bytes.
-func TestEmitBlocktypeUnsupported(t *testing.T) {
+// TestEmitBlocktypeStringPair — block with the BlockTypeStringPair
+// multi-value return: produces (i32 data, i32 len) on the stack at
+// `end`. The block body must produce two i32s. Returning just the
+// len verifies the multi-value blocktype encoded correctly and the
+// validator accepts the resulting bytes.
+func TestEmitBlocktypeStringPair(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
-		Name:       "f",
+		Name:       "main",
 		ReturnType: i32(),
-		Ops:        []ir.Op{{Kind: ir.OpBlock, I32: ir.BlockTypeStringPair}},
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeStringPair},
+			{Kind: ir.OpConstI32, I32: 7}, // data
+			{Kind: ir.OpConstI32, I32: 5}, // len
+			{Kind: ir.OpEnd},
+			// Stack: (7, 5). Drop the data, keep len → 5.
+			{Kind: ir.OpStoreLocal, I32: 0},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpLoadLocal, I32: 0},
+		},
+		ScratchTypes: []ast.Type{i32()},
 	}}}
-	if _, err := Emit(prog); err == nil {
-		t.Fatal("expected error for string-pair blocktype")
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "5" {
+		t.Fatalf("string-pair block result = %q, want 5", got)
 	}
 }
 
@@ -2880,6 +2897,73 @@ func TestEmitMemset(t *testing.T) {
 	}
 	if got := runUnderWasmtime(t, bin, "main"); got != "-1414812757" {
 		t.Fatalf("memset + load = %q, want -1414812757 (0xABABABAB)", got)
+	}
+}
+
+// TestEmitStringFromBytesShort — build a 3-element u8 array
+// ['h', 'i', '!'] at addr 200 (length prefix at 196), call
+// string_from_bytes(200), then assert the result's length is 3
+// via OpStrLen. Inline-fast-path (len ≤ 7).
+func TestEmitStringFromBytesShort(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			// mem[196] = 3 (length prefix)
+			{Kind: ir.OpConstI32, I32: 196},
+			{Kind: ir.OpConstI32, I32: 3},
+			{Kind: ir.OpCallDirect, Str: "__store_i32"},
+			// mem[200] = 'h' (0x68)
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpConstI32, I32: 'h'},
+			{Kind: ir.OpStoreI8},
+			// mem[201] = 'i' (0x69)
+			{Kind: ir.OpConstI32, I32: 201},
+			{Kind: ir.OpConstI32, I32: 'i'},
+			{Kind: ir.OpStoreI8},
+			// mem[202] = '!' (0x21)
+			{Kind: ir.OpConstI32, I32: 202},
+			{Kind: ir.OpConstI32, I32: '!'},
+			{Kind: ir.OpStoreI8},
+			// string_from_bytes(200) → (data, len)
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpCallDirect, Str: "string_from_bytes"},
+			// pop (data, len), then push back data + str_len → 3
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "3" {
+		t.Fatalf("string_from_bytes len = %q, want 3", got)
+	}
+}
+
+// TestEmitStringFromBytesEmpty — empty array → inline empty
+// `(0, 0x80000000)`. str_len reports 0.
+func TestEmitStringFromBytesEmpty(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			// mem[196] = 0 (length prefix)
+			{Kind: ir.OpConstI32, I32: 196},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpCallDirect, Str: "__store_i32"},
+			// string_from_bytes(200)
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpCallDirect, Str: "string_from_bytes"},
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "0" {
+		t.Fatalf("string_from_bytes empty len = %q, want 0", got)
 	}
 }
 
