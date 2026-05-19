@@ -305,6 +305,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			12,
 			"",
 		},
+		{
+			"method-area-no-args",
+			"struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { var k = Circle { r: 5 }; return k.area(); }",
+			25,
+			"",
+		},
+		{
+			"method-with-args",
+			"struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }",
+			12,
+			"",
+		},
+		{
+			"method-mixed-with-plain-func",
+			"struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { var k = Circle { r: 5 }; var m: i32 = area(); var n: i32 = k.area(); return m + n; }",
+			125,
+			"",
+		},
+		{
+			"method-multi-struct-dispatch",
+			"struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function (q: Square) area(): i32 { return q.s * q.s; } function main(): i32 { var k = Square { s: 6 }; return k.area(); }",
+			36,
+			"",
+		},
+		{
+			"method-three-args",
+			"struct P { x: i32 } function (p: P) f(a: i32, b: i32, c: i32): i32 { return p.x + a + b + c; } function main(): i32 { var p = P { x: 10 }; return p.f(1, 2, 3); }",
+			16,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
