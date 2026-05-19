@@ -2572,6 +2572,37 @@ func TestEmitExit(t *testing.T) {
 	}
 }
 
+// TestEmitRandomI32 — call OpCallDirect "random_i32" three times
+// and confirm at least two of the values differ (the host runs
+// wasi_random_get; the probability of three identical 32-bit
+// values is 2^-64). Returns via wasmtime stdout as the function
+// result.
+func TestEmitRandomI32(t *testing.T) {
+	mk := func(name string) *ir.Func {
+		return &ir.Func{
+			Name:       name,
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpCallDirect, Str: "random_i32"},
+			},
+		}
+	}
+	prog := &ir.Program{Funcs: []*ir.Func{
+		mk("r1"), mk("r2"), mk("r3"),
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	a := runUnderWasmtime(t, bin, "r1")
+	b := runUnderWasmtime(t, bin, "r2")
+	c := runUnderWasmtime(t, bin, "r3")
+	// All three identical means random_get isn't working.
+	if a == b && b == c {
+		t.Fatalf("three calls returned the same value %q — host random_get not active", a)
+	}
+}
+
 // TestEmitPrintInlineLiteral — same as above but with a short
 // (inline-form) literal. The byte-by-byte copy through
 // __lang_str_byte handles the inline (data, len) packing.

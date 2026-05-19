@@ -44,6 +44,15 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_random_get": {
+		// (buf_ptr, buf_len) → errno. Fills buf_ptr..+buf_len
+		// with cryptographically-strong random bytes (per the
+		// wasi spec; host may degrade in sandboxed environments).
+		module:  "wasi_snapshot_preview1",
+		name:    "random_get",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -75,6 +84,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	if helpers.set["__lang_exit"] {
 		in.add("wasi_proc_exit")
 	}
+	if helpers.set["__lang_random_i32"] {
+		in.add("wasi_random_get")
+	}
 	return in
 }
 
@@ -89,6 +101,11 @@ const printIovecAddr = 48
 // printRetAddr is the 4-byte scratch where fd_write writes the
 // nwritten result.
 const printRetAddr = 56
+
+// randomBufAddr is the 4-byte scratch where wasi_random_get
+// writes the random bytes consumed by __lang_random_i32. Lives
+// in the reserved low-memory window past printRetAddr.
+const randomBufAddr = 60
 
 // buildPrintBody assembles the wasm bytes for __lang_print.
 //
@@ -186,5 +203,25 @@ func buildExitBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0) // $code
 	body = inst.InstCall(body, procExit)
 	body = inst.InstUnreachable(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildRandomI32Body assembles the wasm bytes for __lang_random_i32.
+//
+// Signature: () → i32
+//
+// Body calls wasi_random_get(randomBufAddr, 4); ignores the
+// returned errno; reads back the 4 bytes as an i32. Uses a
+// fixed-address scratch instead of allocating to avoid leaking
+// memory when called in a loop (the bump allocator never frees).
+func buildRandomI32Body(idxs map[string]uint32) []byte {
+	randomGet := idxs["wasi_random_get"]
+	var body []byte
+	body = inst.InstI32Const(body, randomBufAddr)
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, randomGet)
+	body = inst.InstDrop(body) // ignore errno
+	body = inst.InstI32Const(body, randomBufAddr)
+	body = memory.InstI32Load(body, 2, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
