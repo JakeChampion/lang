@@ -718,6 +718,32 @@ func TestHttpWrapperPopulatesRequestHeaders(t *testing.T) {
 	mustContain(t, wat, `(func $__method_HeaderMap_append`)
 }
 
+// Outbound symmetric: the wrapper walks `resp.headers` and
+// calls `fields.append` per entry into the outgoing-response's
+// fields handle before passing it to the outgoing-response
+// constructor.
+func TestHttpWrapperEmitsResponseHeaders(t *testing.T) {
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+		return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+	}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	wat, err := EmitWithOptions(prog, info, EmitOptions{HttpHandler: true})
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	mustContain(t, wat, `"[method]fields.append"`)
+	mustContain(t, wat, `call $__wasi_http_fields_append`)
+	mustContain(t, wat, `(loop $resp_hm_loop`)
+	mustContain(t, wat, `(block $resp_hm_done`)
+}
+
 // `$__method_Reader_read_chunk` gains an inline-output fast
 // path for short reads (n ≤ 3). Catches one-byte status probes
 // + two-byte protocol tokens that otherwise allocate the same
