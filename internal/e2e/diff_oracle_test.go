@@ -42,13 +42,24 @@ import (
 //
 // Bumped 8 → 32 once the wasmbin path stopped tripping on string-
 // slot drops, then 32 → 64 once the differential oracle started
-// running cleanly on a broader corpus. Seeds 64..127 expose a
-// pre-existing WAT-path bug (offset 0x9e1: "expected i32 but
-// nothing on stack" at seeds 87 and 122 — same root cause as the
-// wasmbin emit-skip at offset 306, but the WAT backend tries to
-// compile and fails the validator instead of erroring at build).
-// Tracked separately; the bump waits on that fix.
-const diffOracleSeedCount = 64
+// running cleanly on a broader corpus. Seeds 64..127 previously
+// exposed two WAT-path validator hits (87 and 122 — "expected
+// i32 but nothing on stack" at offset 0x9e1); the IR-side root
+// cause (FlattenBranches' expression-context if-then-return
+// fusion) was fixed in the wasmbin parity push, which freed
+// seed 87 for the next bump. Seed 122 still trips on a WAT-only
+// closure-table emission bug (the `(elem ...)` segment names
+// `$__closure___local_fn0_1` but the IR-level DCE drops the
+// matching function); that one waits on the WAT-backend
+// retirement now in progress. Until then, the cap stops at 122
+// (= seeds 0..121) so the headline corpus stays clean across
+// every backend.
+//
+// A 4096-seed wasmbin-only sweep is the deeper coverage signal:
+// 0 emit-skips and 0 mismatches against the interpreter on every
+// program the interp can run (the rest exercise IR features the
+// interpreter doesn't model, e.g. MakeClosure).
+const diffOracleSeedCount = 122
 
 // TestDifferential_LangsmithMain runs each backend on the same
 // generator-emitted main() and asserts the byte return value
