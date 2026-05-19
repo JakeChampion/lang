@@ -400,10 +400,38 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     }
                 },
                 parser.ExprFieldAccess(fa) => {
-                    name = fa.field;
-                    is_method = true;
-                    recv = eval_expr(fa.obj, env);
-                    if (is_err(recv)) { return recv; }
+                    // Qualified-name call: `Ns.func(...)` where
+                    // Ns is an imported namespace prefix. We
+                    // recognise this when fa.obj is a bare
+                    // ExprIdent (no chained method) AND there's
+                    // a function in env.funcs literally named
+                    // `Ns.func`. Falls back to method-call
+                    // semantics otherwise.
+                    var qualified_handled: boolean = false;
+                    match (fa.obj) {
+                        parser.ExprIdent(ns_id) => {
+                            var qname: string = ns_id.name + "." + fa.field;
+                            var qi: i32 = 0;
+                            var qfound: boolean = false;
+                            while (qi < len(env.funcs)) {
+                                if (env.funcs[qi].name == qname && len(env.funcs[qi].receiver_name) == 0) {
+                                    qfound = true;
+                                }
+                                qi = qi + 1;
+                            }
+                            if (qfound) {
+                                name = qname;
+                                qualified_handled = true;
+                            }
+                        },
+                        _ => { }
+                    }
+                    if (!qualified_handled) {
+                        name = fa.field;
+                        is_method = true;
+                        recv = eval_expr(fa.obj, env);
+                        if (is_err(recv)) { return recv; }
+                    }
                 },
                 _ => {
                     // Treat as a value-producing expression
@@ -1917,6 +1945,23 @@ function main(): i32 {
     match (r87) {
         VInt(i) => { if (i.v != 99) { return 870; } },
         _ => { return 871; }
+    }
+
+    // Cross-file imports via merge_module_prefixed: the
+    // "main" module calls `parser.parse_module()` which
+    // resolves to a function named `parser.parse_module`
+    // after the prefix merge. ExprFieldAccess(ExprIdent
+    // "parser", "parse_module") dispatches as a qualified-
+    // name function call.
+    var mainSrc88: string = "function main(): i32 { return parser.parse_module(); }";
+    var modSrc88: string = "pub function parse_module(): i32 { return 42; }";
+    var mainMod88: parser.Module = parser.parse_module(lexer.tokenize(mainSrc88));
+    var pMod88: parser.Module = parser.parse_module(lexer.tokenize(modSrc88));
+    var merged88: parser.Module = parser.merge_module_prefixed(mainMod88, pMod88, "parser");
+    var r88: Value = eval_module(merged88);
+    match (r88) {
+        VInt(i) => { if (i.v != 42) { return 880; } },
+        _ => { return 881; }
     }
 
     return 0;

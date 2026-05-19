@@ -1159,6 +1159,49 @@ pub function merge_module(into: Module, from: Module): Module {
     };
 }
 
+// merge_module_prefixed adds `from`'s decls to `into` with
+// each decl's name renamed to `prefix + "." + name`. Models
+// flat-namespace cross-file imports — a call site like
+// `parser.parse_module(…)` resolves to a function literally
+// named `"parser.parse_module"` in the merged module.
+pub function merge_module_prefixed(into: Module, from: Module, prefix: string): Module {
+    var nfuncs: FuncDecl[] = into.funcs;
+    var fi: i32 = 0;
+    while (fi < len(from.funcs)) {
+        var fd: FuncDecl = from.funcs[fi];
+        nfuncs = nfuncs.push(FuncDecl {
+            name: prefix + "." + fd.name,
+            receiver_name: fd.receiver_name,
+            receiver_type: fd.receiver_type,
+            params: fd.params,
+            ret_type: fd.ret_type,
+            body: fd.body
+        });
+        fi = fi + 1;
+    }
+    var nstructs: StructDecl[] = into.structs;
+    var si: i32 = 0;
+    while (si < len(from.structs)) {
+        var sd: StructDecl = from.structs[si];
+        nstructs = nstructs.push(StructDecl { name: prefix + "." + sd.name, fields: sd.fields });
+        si = si + 1;
+    }
+    var naliases: TypeAlias[] = into.aliases;
+    var ai: i32 = 0;
+    while (ai < len(from.aliases)) {
+        var ad: TypeAlias = from.aliases[ai];
+        naliases = naliases.push(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants });
+        ai = ai + 1;
+    }
+    return Module {
+        funcs: nfuncs,
+        structs: nstructs,
+        aliases: naliases,
+        imports: into.imports,
+        top_stmts: into.top_stmts
+    };
+}
+
 // =================== VALIDATION ====================
 
 function main(): i32 {
@@ -1780,6 +1823,18 @@ function main(): i32 {
     if (merged.funcs[1].name != "hello") { return 1092; }
     // imports + top_stmts come from `into` only.
     if (len(merged.imports) != 1) { return 1093; }
+
+    // Prefixed merge — same imports but each decl renamed to
+    // `prefix.name`. Models cross-file flat-namespace
+    // resolution: `parser.parse_module` → function literally
+    // named "parser.parse_module".
+    var pSrc: string = "pub function parse_module(): i32 { return 1; } pub struct Token { v: i32 }";
+    var pMod: Module = parse_module(lexer.tokenize(pSrc));
+    var withImp: Module = merge_module_prefixed(mainMod, pMod, "parser");
+    if (len(withImp.funcs) != 2) { return 1094; }
+    if (withImp.funcs[1].name != "parser.parse_module") { return 1095; }
+    if (len(withImp.structs) != 1) { return 1096; }
+    if (withImp.structs[0].name != "parser.Token") { return 1097; }
 
     // Generic var-annotation.
     var srcGV: string = "var m: Map[string, i32] = a; return 0;";
