@@ -357,12 +357,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildAliasAllocBody,
 	},
 	"__alloc_u8": {
-		// (size) → i32 — same as __lang_alloc. Stdlib uses this
-		// for byte-aligned buffers (no special alignment needed
-		// on wasm).
+		// (n) → i32 — allocates a length-prefixed u8[] of
+		// length n. Layout: 4-byte i32 length prefix at
+		// [base - 4], then n bytes of payload starting at
+		// base. Returns the data pointer (base). The bump
+		// allocator zeroes fresh pages, so the payload starts
+		// out zero.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
-		body:    buildAliasAllocBody,
+		body:    buildAllocU8Body,
 	},
 	"__memcpy": {
 		// (dst, src, n) → () — wasm memory.copy.
@@ -870,12 +873,48 @@ func buildPtrWidthBody(_ map[string]uint32) []byte {
 }
 
 // buildAliasAllocBody — (size) → i32. Calls __lang_alloc; lets
-// stdlib reference `__alloc` / `__alloc_u8` by name.
+// stdlib reference `__alloc` by name. Raw allocator: no length
+// prefix, caller owns the layout (e.g. the Map runtime's mixed
+// bucket + entries buffer).
 func buildAliasAllocBody(helperIdxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, helperIdxs["__lang_alloc"])
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildAllocU8Body — (n) → i32. Allocates a length-prefixed
+// u8[] of length n. Layout: 4-byte i32 length prefix at
+// [data_ptr - 4], n bytes of payload at data_ptr.
+//
+//	base = __lang_alloc(n + 4) + 4
+//	mem[base - 4] = n
+//	return base
+//
+// Stdlib `arr.push` / `s[i]` / __arr_idx_* depend on the
+// length prefix being present at -4 for bounds checks. Calling
+// __lang_alloc directly (the previous behavior) would leave
+// random bytes there and trip the bounds check unpredictably.
+func buildAllocU8Body(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__lang_alloc"]
+	var body []byte
+	// base = __lang_alloc(n + 4) + 4
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalTee(body, 1) // $base
+	// mem[$base - 4] = n  (length prefix)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	// return $base
+	body = inst.InstLocalGet(body, 1)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildMemcpyBody — (dst, src, n) → (). Emits the wasm
