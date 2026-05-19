@@ -461,6 +461,9 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
+                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max")) {
+                        return "i32";
+                    }
                     // `.push(x)` returns the same array type.
                     if (fa.field == "push"
                             && (rt == "array_i32" || rt == "array_string" || rt == "array")) {
@@ -1642,6 +1645,46 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_i32_to_string();
                         }
                         return s;
+                    }
+                    // Built-in i32 numeric methods. Inline — no
+                    // runtime helper needed.
+                    if (prim_recv == "i32") {
+                        if (fa.field == "abs" && len(c.args) == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            // negate-via-cmov: keep %rax if >=0,
+                            // else replace with -%rax.
+                            s = s.write("    movq %rax, %rcx\n");
+                            s = s.write("    negq %rcx\n");
+                            s = s.write("    cmpq $0, %rax\n");
+                            s = s.write("    cmovsq %rcx, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "min" && len(c.args) == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rcx\n");
+                            s = s.write("    popq %rax\n");
+                            // If rcx < rax, swap rax with rcx so
+                            // rax ends up holding the smaller.
+                            s = s.write("    cmpq %rcx, %rax\n");
+                            s = s.write("    cmovgq %rcx, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "max" && len(c.args) == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rcx\n");
+                            s = s.write("    popq %rax\n");
+                            // Keep rax if it's the larger; else
+                            // pick rcx.
+                            s = s.write("    cmpq %rcx, %rax\n");
+                            s = s.write("    cmovlq %rcx, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
                     }
                     // Built-in `.push(x)` on arrays — append a
                     // single 8-byte payload (i32 or string-box
