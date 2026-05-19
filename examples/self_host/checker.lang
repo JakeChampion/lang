@@ -570,7 +570,71 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             }
             return CheckResult { scope: s, ty: vt };
         },
-        parser.StmtMatch(_) => { return CheckResult { scope: s, ty: t_unknown("StmtMatch not implemented in checker") }; },
+        parser.StmtMatch(m) => {
+            // Type-check the scrutinee. An ill-typed scrutinee
+            // surfaces as TypeUnknown and the whole match is
+            // marked unknown — we still walk arm bodies so a
+            // later "collect-errors" pass can harvest inner
+            // diagnostics.
+            var sct: Type = check_expr(m.scrutinee, s);
+            var ok: boolean = !is_unknown(sct);
+            // If the scrutinee is a TypeUnion, the union's
+            // variant list is the authoritative set; PatVariant
+            // arms must reference a member. If it's a TypeStruct,
+            // PatVariant arms must reference that struct name
+            // (anything else is a never-match).
+            var union_name: string = "";
+            var struct_name: string = "";
+            match (sct) {
+                TypeUnion(u) => { union_name = u.name; },
+                TypeStruct(sn) => { struct_name = sn.name; },
+                _ => { }
+            }
+            var i: i32 = 0;
+            while (i < len(m.arms)) {
+                var arm: parser.MatchArm = m.arms[i];
+                // Derived scope per arm — bindings die at the
+                // arm's close. The outer scope `s` is what we
+                // return after the match.
+                var armScope: Scope = s;
+                match (arm.pattern) {
+                    parser.PatWildcard(_) => { },
+                    parser.PatVariant(pv) => {
+                        var ss: StructSig = s.lookup_struct(pv.type_name);
+                        if (len(ss.name) == 0) {
+                            ok = false;
+                        } else {
+                            // Variant must be compatible with
+                            // the scrutinee's type. For a union
+                            // scrutinee: variant must be in the
+                            // union's variant list. For a struct
+                            // scrutinee: variant must match the
+                            // struct's name.
+                            if (len(union_name) > 0) {
+                                if (!is_variant_of(pv.type_name, union_name, s.unions)) {
+                                    ok = false;
+                                }
+                            } else if (len(struct_name) > 0) {
+                                if (struct_name != pv.type_name) { ok = false; }
+                            }
+                            // Bring the binding into the arm's
+                            // scope as the variant's TypeStruct.
+                            // Bare names and `_` bindings stay
+                            // out of scope.
+                            if (len(pv.binding) > 0 && pv.binding != "_") {
+                                armScope = armScope.bind(pv.binding, t_struct(pv.type_name));
+                            }
+                        }
+                    }
+                }
+                check_block(arm.body, armScope);
+                i = i + 1;
+            }
+            if (!ok) {
+                return CheckResult { scope: s, ty: t_unknown("match: ill-typed arm or scrutinee") };
+            }
+            return CheckResult { scope: s, ty: t_bool() };
+        },
         parser.StmtUnknown(u) => { return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + u.kind) }; }
     }
     return CheckResult { scope: s, ty: t_unknown("unhandled Stmt variant") };
@@ -1049,6 +1113,56 @@ function main(): i32 {
     var mod23: parser.Module = parser.parse_module(lexer.tokenize(src23));
     var mt23: ModuleTypes = check_module(mod23);
     if (!mt23.all_well_typed) { return 230; }
+
+    // Match scrutinee + variant patterns over a union — variant
+    // arms reference real members of Shape and the binding is
+    // typed as the variant's TypeStruct. Function-parameter
+    // type annotations are honoured by the parser; local `var`
+    // annotations are still dropped, so route the union through
+    // a parameter.
+    var src24: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function dispatch(sh: Shape): i32 { match (sh) { Circle(c) => { return c.r; }, Square(sq) => { return sq.s; } } return 0; } function main(): i32 { return dispatch(Circle { r: 3 }); }";
+    var mod24: parser.Module = parser.parse_module(lexer.tokenize(src24));
+    var mt24: ModuleTypes = check_module(mod24);
+    if (!mt24.all_well_typed) { return 240; }
+
+    // Match over a union with a wildcard catch-all is well-typed.
+    var src25: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function go(sh: Shape): i32 { match (sh) { Circle(_) => { return 1; }, _ => { return 0; } } return 0; } function main(): i32 { return go(Circle { r: 1 }); }";
+    var mod25: parser.Module = parser.parse_module(lexer.tokenize(src25));
+    var mt25: ModuleTypes = check_module(mod25);
+    if (!mt25.all_well_typed) { return 250; }
+
+    // Match over a union with a non-member variant arm is
+    // rejected. Triangle is a known struct but not a variant
+    // of Shape — flag it.
+    var src26: string = "struct Circle { r: i32 } struct Square { s: i32 } struct Triangle { b: i32 } pub type Shape = Circle | Square; function go(sh: Shape): i32 { match (sh) { Triangle(_) => { return 1; }, _ => { return 0; } } return 0; } function main(): i32 { return go(Circle { r: 1 }); }";
+    var mod26: parser.Module = parser.parse_module(lexer.tokenize(src26));
+    var mt26: ModuleTypes = check_module(mod26);
+    if (mt26.all_well_typed) { return 260; }
+
+    // Match arm body type-checks under the pattern binding.
+    // `c.r` is a known i32 field on Circle (accessed via the
+    // binding `c`), so the arm body is well-typed.
+    var src27: string = "struct Circle { r: i32 } pub type Shape = Circle; function go(sh: Shape): i32 { match (sh) { Circle(c) => { return c.r; } } return 0; } function main(): i32 { return go(Circle { r: 4 }); }";
+    var mod27: parser.Module = parser.parse_module(lexer.tokenize(src27));
+    var mt27: ModuleTypes = check_module(mod27);
+    if (!mt27.all_well_typed) { return 270; }
+
+    // Match against a struct (non-union) scrutinee: the only
+    // valid PatVariant target is the struct's own name. Anything
+    // else is a never-match and gets flagged.
+    var src28: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var c = Circle { r: 1 }; match (c) { Square(_) => { return 1; } } return 0; }";
+    var mod28: parser.Module = parser.parse_module(lexer.tokenize(src28));
+    var mt28: ModuleTypes = check_module(mod28);
+    if (mt28.all_well_typed) { return 280; }
+
+    // Pattern binding lifetime: the binding is in scope inside
+    // the arm body only. Referencing it outside the match is
+    // an undefined identifier — fold the StmtAssign approach by
+    // using c.r inside the arm and a separate var outside.
+    var src29: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 1 }; match (c) { Circle(x) => { return x.r; } } return 0; }";
+    var mod29: parser.Module = parser.parse_module(lexer.tokenize(src29));
+    var mt29: ModuleTypes = check_module(mod29);
+    if (!mt29.all_well_typed) { return 290; }
 
     return 0;
 }
