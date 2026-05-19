@@ -46,6 +46,7 @@ import (
 // elimination, which would otherwise drop the impls (their AST
 // callers only reference the source name).
 var codegenAliasMap = map[string]string{
+	"now_unix_ms":               "__lang_now_unix_ms",
 	"map_new":                   "map_new_impl",
 	"__method_Map_len":          "__map_len_impl",
 	"__method_Map_has":          "__map_has_impl",
@@ -288,6 +289,7 @@ type generator struct {
 	needsFileIO      bool // any `read_file` / `write_file` call — pulls in WASI path_open / fd_read / fd_close
 	needsStreamingIO bool // any open_reader / open_writer / Reader|Writer method call — extends needsFileIO with the streaming helpers
 	needsStdStreams  bool // any stdin() / stdout() / stderr() call — emits trivial constructors that wrap fd 0 / 1 / 2 in Reader / Writer
+	needsWallClock   bool // any `now_unix_ms()` call — pulls in wasi:clocks/wall-clock@0.2.0 + the unix-ms helper
 	stringPool    map[string]int // value → pointer in linear memory
 	stringEntries []stringEntry  // emission order (data segments)
 	stringOffset  int            // next free byte for a string entry
@@ -760,6 +762,14 @@ func (g *generator) scanForIOBuiltins(prog *ast.Program) {
 				case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
 					g.needsTcp = true
 					g.needsArrays = true
+					g.needsRuntime = true
+				case "now_unix_ms":
+					// docs/STDLIB-DESIGN-RESEARCH.md Rec §4
+					// Phase 2 — wall-clock now via wasi-preview2
+					// `wasi:clocks/wall-clock@0.2.0#now`. Routes
+					// through the `__lang_now_unix_ms` helper
+					// (alias map below).
+					g.needsWallClock = true
 					g.needsRuntime = true
 				case "map_new":
 					// Now lives in the lang prelude
@@ -2083,6 +2093,14 @@ func (g *generator) emitRuntimePreamble() {
 		// would land in 0.2.1+.
 		g.line(`(import "wasi_snapshot_preview1" "proc_exit" (func $__wasi_proc_exit (param i32)))`)
 	}
+	if g.needsWallClock {
+		// `wasi:clocks/wall-clock@0.2.0#now` returns a
+		// `datetime { seconds: u64, nanoseconds: u32 }` via retptr.
+		// 12-byte struct, alignment 8 (u64 dominates). The lang
+		// surface (`now_unix_ms`) wants milliseconds since the
+		// Unix epoch, so the helper below converts.
+		g.line(`(import "wasi:clocks/wall-clock@0.2.0" "now" (func $__wasi_wall_clock_now (param i32)))`)
+	}
 	// Preview-2 stdio: get-stdout / get-stderr / get-stdin return
 	// resource handles; output-stream.blocking-write-and-flush
 	// takes (handle, ptr, len, retptr) and flushes synchronously
@@ -3346,6 +3364,9 @@ func (g *generator) emitRuntimePreamble() {
 	}
 	if g.needsExit {
 		g.emitExitHelper()
+	}
+	if g.needsWallClock {
+		g.emitWallClockHelper()
 	}
 	if g.needsArena {
 		g.emitArenaHelpers()
@@ -6221,6 +6242,49 @@ func (g *generator) emitExitHelper() {
 	g.indent++
 	g.line(`local.get $code`)
 	g.line(`call $__wasi_proc_exit`)
+	g.indent--
+	g.line(`)`)
+}
+
+// emitWallClockHelper writes `$__lang_now_unix_ms` for the
+// docs/STDLIB-DESIGN-RESEARCH.md Rec §4 wall-clock surface
+// (`now_unix_ms(): i64` — milliseconds since the Unix epoch).
+//
+// Calls `wasi:clocks/wall-clock@0.2.0#now()` which returns a
+// `datetime { seconds: u64, nanoseconds: u32 }` via retptr.
+// Allocates 16 bytes for the retptr (12 needed; 16 keeps the
+// alignment shoulder explicit), loads sec at +0 (i64) and
+// nanos at +8 (i32, treated as u32), and computes
+// `sec * 1000 + nanos / 1_000_000` as the i64 result.
+//
+// Out-of-range Unix times (year > 292277026596 or pre-1970)
+// would overflow the i64 — practically unreachable, ignored.
+// NTP / leap-second adjustments are silently absorbed (clock
+// can move backwards on adjustment); callers needing
+// monotonic-non-decreasing should use `monotonic_ns` instead.
+func (g *generator) emitWallClockHelper() {
+	g.line(`(func $__lang_now_unix_ms (result i64)`)
+	g.indent++
+	g.line(`(local $buf i32)`)
+	g.line(`i32.const 16`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $buf`)
+	g.line(`local.get $buf`)
+	g.line(`call $__wasi_wall_clock_now`)
+	// sec * 1000 (i64)
+	g.line(`local.get $buf`)
+	g.line(`i64.load`)
+	g.line(`i64.const 1000`)
+	g.line(`i64.mul`)
+	// + ns / 1_000_000 (i32 load, widen, divide)
+	g.line(`local.get $buf`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`i64.extend_i32_u`)
+	g.line(`i64.const 1000000`)
+	g.line(`i64.div_u`)
+	g.line(`i64.add`)
 	g.indent--
 	g.line(`)`)
 }

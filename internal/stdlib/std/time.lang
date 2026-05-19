@@ -49,6 +49,27 @@ pub function instant_from_unix(sec: i64): Instant {
     return Instant { sec: sec, nsec: 0 };
 }
 
+// `instant_now()` — wall-clock now, UTC. Reads the system
+// real-time clock through `now_unix_ms()` (which delegates
+// to host-specific syscalls: wasi:clocks/wall-clock on the
+// wasm target, Go's time.Now() under the interp). Splits
+// the result into (sec, nsec) — `nsec` only carries
+// millisecond resolution since the underlying primitive
+// caps there; future Phase 2.x can swap to a nanosecond-
+// resolution call when the backends grow it.
+//
+// NTP-adjustable: subject to backward clock jumps when the
+// host adjusts time. Use `monotonic_ns` (also in this
+// module's future surface) for benchmark / elapsed-time
+// measurement.
+pub function instant_now(): Instant {
+    var ms: i64 = now_unix_ms();
+    var sec: i64 = ms / (1000 as i64);
+    var rem_ms: i64 = ms - sec * (1000 as i64);
+    var ns: i32 = (rem_ms as i32) * 1000000; // NANOS_PER_MILLI (see duration_millis)
+    return Instant { sec: sec, nsec: ns };
+}
+
 // `date_make(year, month, day)` — construct a civil Date.
 // Doesn't validate that the date is real (Feb 30 builds fine);
 // validation lands with the Hinnant arithmetic in Phase 3.
@@ -83,10 +104,17 @@ pub function duration_seconds(s: i64): Duration {
 // `duration_millis(ms)` — convert milliseconds to a Duration.
 // Splits whole-seconds + sub-second nsec so the storage
 // matches the (sec, nsec) shape callers see in struct fields.
+//
+// The `1000000` is `NANOS_PER_MILLI` inlined — modload's
+// flat-load path doesn't yet plumb constants across modules,
+// so references to the prelude-exposed const above resolve
+// only at the qualified-import call site, not from inside
+// the module's own bodies. Use the literal until the const
+// resolution gets fixed.
 pub function duration_millis(ms: i64): Duration {
     var s: i64 = ms / (1000 as i64);
     var rem_ms: i64 = ms - s * (1000 as i64);
-    var ns: i32 = (rem_ms as i32) * NANOS_PER_MILLI;
+    var ns: i32 = (rem_ms as i32) * 1000000;
     return Duration { sec: s, nsec: ns };
 }
 

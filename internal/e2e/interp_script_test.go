@@ -728,6 +728,48 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptInstantNow pins `std/time.instant_now()`
+// (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2). Reads the
+// current wall-clock time and asserts the seconds field is
+// in a plausible range — past a sentinel epoch second and
+// before a far-future bound. Catches accidental sign / unit
+// mistakes without baking in a brittle exact value.
+func TestInterpScriptInstantNow(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := `import "std/time";
+
+function main(): i32 {
+    var ts: Instant = time.instant_now();
+    // 1700000000 = 2023-11-14T22:13:20Z. Anything before is
+    // either a clock catastrophe or a sign-handling bug.
+    if (ts.sec < (1700000000 as i64)) { return 1; }
+    // Year 9999-ish upper bound; if we somehow returned
+    // micro/nanos instead of milliseconds-converted-to-
+    // seconds, we'd land past this.
+    if (ts.sec > (253402300800 as i64)) { return 2; }
+    // nsec carries millisecond precision today (the underlying
+    // primitive is now_unix_ms), so 0 <= nsec < 1e9 and
+    // divisible by 1e6.
+    if (ts.nsec < 0) { return 3; }
+    if (ts.nsec >= 1000000000) { return 4; }
+    return 0;
+}`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "prog.lang")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", srcPath)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+			code, out.String(), errb.String())
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
