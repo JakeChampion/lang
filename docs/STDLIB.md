@@ -354,7 +354,12 @@ function main(): i32 {
   — splits `actual` on `\n` and compares to a string array;
   reads better than escaping a long multi-line literal
 - **Logging:** `(r).log(msg)` — chainable TAP-comment emitter
-  (`# msg`) for debug breadcrumbs between cases
+  (`# msg`) for debug breadcrumbs between cases.
+  `(r).log_kv_string(key, value)` / `_i32` / `_i64` —
+  structured `# key=value` form (string values quoted,
+  numerics unquoted so `awk -F=` filters work); use when
+  the post-run log scraper wants to pick out specific
+  breadcrumbs
 - **File state:** `assert_file_exists`, `assert_file_not_exists`,
   `assert_file_contains`, `assert_file_contents`,
   `assert_is_file`, `assert_is_dir`, `assert_file_size` —
@@ -429,6 +434,12 @@ function main(): i32 {
   `assert_non_empty_string`
 - **Substring:** `assert_contains`, `assert_not_contains`,
   `assert_starts_with`, `assert_ends_with`
+- **Substring (case-insensitive):** `assert_eq_string_ci`,
+  `assert_neq_string_ci`, `assert_contains_ci`,
+  `assert_starts_with_ci`, `assert_ends_with_ci` — wrap
+  the ASCII case-fold methods from `std/string`. Failure
+  messages embed both raw values (no display-side case
+  folding) so the byte-level difference is visible
 - **Substring (multi-option):**
   `assert_starts_with_any(s, prefixes)` /
   `assert_ends_with_any(s, suffixes)` — single string

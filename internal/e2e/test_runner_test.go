@@ -1392,6 +1392,47 @@ func TestRunnerArrayAtAndF32RangeExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/ci_string_and_log_kv_test.lang`
+// exercises batch-29 additions:
+//   - Case-insensitive string assertions (`_eq_string_ci`,
+//     `_neq_string_ci`, `_contains_ci`, `_starts_with_ci`,
+//     `_ends_with_ci`) wrapping the existing CI methods
+//     on `std/string`.
+//   - Structured-breadcrumb log methods on TestRunner:
+//     `log_kv_string` quotes the value, `log_kv_i32` /
+//     `log_kv_i64` emit unquoted numerics so awk/grep
+//     numeric filters work without stripping quotes.
+//
+// 13 cases + 3 log_kv breadcrumbs whose exact rendering
+// we pin here so a regression in the key=value shape
+// surfaces immediately.
+func TestRunnerCIStringAndLogKVExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/ci_string_and_log_kv_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - eq_string_ci different case",
+		"ok 3 - eq_string_ci mismatch raw quoted",
+		"ok 5 - neq_string_ci matches CI fails",
+		"ok 7 - contains_ci subseq",
+		"ok 11 - ends_with_ci pass",
+		// The exact breadcrumb shape — quoted string,
+		// unquoted i32, unquoted i64.
+		"# session_id=\"abc-123\"",
+		"# retry_count=3",
+		"# bytes_seen=1234567890123",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
