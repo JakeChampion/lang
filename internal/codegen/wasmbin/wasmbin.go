@@ -1512,6 +1512,7 @@ var CallDirectAliases = map[string]string{
 	"arg_count":  "__lang_arg_count",
 	"arg_at":     "__lang_arg_at",
 	"env_at":     "__lang_env_at",
+	"args":       "__lang_args",
 	"read_byte":  "__lang_read_byte",
 	"read_line":  "__lang_read_line",
 

@@ -2643,6 +2643,87 @@ func TestEmitArgCount(t *testing.T) {
 	}
 }
 
+// TestEmitArgs — call OpCallDirect "args" under wasmtime and
+// check the length prefix at data-4 reflects argc. wasmtime
+// puts the module path at argv[0], so extra positional args
+// after the path each bump argc by one.
+func TestEmitArgs(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "args"},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpSub},
+			{Kind: ir.OpLoad},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p, "alpha", "beta")
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "3" {
+		t.Fatalf("len(args()) = %q, want 3 (path + 2 extra)", got)
+	}
+}
+
+// TestEmitArgsEntries — each args() entry is a 2-word (data, len)
+// pair at data + i*8. Read the len of args[1] (wasmtime sets
+// argv[1] to the first positional after the module path).
+func TestEmitArgsEntries(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "args"},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			// args[1] len lives at data + 1*8 + 4 = +12.
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 12},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpLoad},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p, "alpha", "beta")
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "5" {
+		t.Fatalf("len(args()[1]) = %q, want 5 (\"alpha\")", got)
+	}
+}
+
 // TestEmitArgAt — call OpCallDirect "arg_at" with i=1 under
 // wasmtime, return the string length of the result. argv[1] is
 // "alpha" (5 bytes) since wasmtime puts the module path at
