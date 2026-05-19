@@ -1458,15 +1458,193 @@ func TestSlotIdxMixed(t *testing.T) {
 	}
 }
 
+// TestEmitStrLenHeap — heap-form literal (>7 bytes) goes through
+// the else arm of __lang_str_len: top bit of $len is 0, so the
+// returned length is $len directly. Asserts the helper-call path
+// finds the canonical len without rounding through the data ptr.
+func TestEmitStrLenHeap(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hello, world"}, // 12 bytes → heap form
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "12" {
+		t.Fatalf("got %q, want 12", got)
+	}
+}
+
+// TestEmitStrLenInline — short ASCII literal (≤7 bytes) uses the
+// inline-form packing where the length lives in bits 24..26 of
+// the len word AND the top bit is set. Goes through the if-arm
+// of __lang_str_len: extract bits 24..26.
+func TestEmitStrLenInline(t *testing.T) {
+	cases := []struct {
+		s    string
+		want string
+	}{
+		{"", "0"},        // empty
+		{"a", "1"},       // 1 byte
+		{"ab", "2"},      // 2 bytes
+		{"abcdefg", "7"}, // 7 bytes (max inline)
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.s, func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:       "main",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpConstStr, Str: tc.s},
+					{Kind: ir.OpStrLen},
+				},
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			if got := runUnderWasmtime(t, bin, "main"); got != tc.want {
+				t.Fatalf("len(%q) = %q, want %q", tc.s, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmitStrLenAcrossInlineHeapBoundary — eight-byte literal is
+// the first one that forces heap-form (≤7 is inline). Confirms
+// the transition point: both branches of __lang_str_len give the
+// right answer for adjacent lengths.
+func TestEmitStrLenAcrossInlineHeapBoundary(t *testing.T) {
+	// 7 → inline, 8 → heap.
+	for _, tc := range []struct {
+		s    string
+		want string
+	}{
+		{"1234567", "7"},
+		{"12345678", "8"},
+	} {
+		tc := tc
+		t.Run(tc.s, func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:       "main",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpConstStr, Str: tc.s},
+					{Kind: ir.OpStrLen},
+				},
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			if got := runUnderWasmtime(t, bin, "main"); got != tc.want {
+				t.Fatalf("len(%q) = %q, want %q", tc.s, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStrLenHelperOnlyEmittedWhenNeeded — confirm the helper isn't
+// in the module's function section for a program that doesn't use
+// OpStrLen. Sanity check on the gating scan.
+func TestStrLenHelperOnlyEmittedWhenNeeded(t *testing.T) {
+	progNoStrLen := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 42}},
+	}}}
+	bin, err := Emit(progNoStrLen)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	// Walk to find the function section (id 3) and assert exactly
+	// 1 entry (just main).
+	count := functionSectionCount(t, bin)
+	if count != 1 {
+		t.Fatalf("function-section count = %d, want 1 (helper should be absent)", count)
+	}
+
+	progWithStrLen := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "x"},
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin2, err := Emit(progWithStrLen)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	count2 := functionSectionCount(t, bin2)
+	if count2 != 2 {
+		t.Fatalf("function-section count = %d, want 2 (main + __lang_str_len)", count2)
+	}
+}
+
+// functionSectionCount walks the section list and returns the
+// number of entries in the function section (count uleb at the
+// start of the section body). Returns 0 if no function section.
+func functionSectionCount(t *testing.T, bin []byte) int {
+	t.Helper()
+	if len(bin) < 8 {
+		return 0
+	}
+	i := 8
+	for i < len(bin) {
+		id := bin[i]
+		i++
+		size := 0
+		shift := 0
+		for {
+			if i >= len(bin) {
+				return 0
+			}
+			b := bin[i]
+			i++
+			size |= int(b&0x7f) << shift
+			if b&0x80 == 0 {
+				break
+			}
+			shift += 7
+		}
+		if id == encode.SectionFunction {
+			// Read the count uleb from the start of the body.
+			body := bin[i : i+size]
+			cnt := 0
+			shift = 0
+			j := 0
+			for {
+				b := body[j]
+				j++
+				cnt |= int(b&0x7f) << shift
+				if b&0x80 == 0 {
+					break
+				}
+				shift += 7
+			}
+			return cnt
+		}
+		i += size
+	}
+	return 0
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
-// cover (e.g. OpStrLen) and confirm we get a useful error rather
+// cover (e.g. OpAlloc) and confirm we get a useful error rather
 // than emitting nonsense bytes. Regressions here would silently
 // produce invalid wasm.
 func TestEmitUnsupportedOpReports(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "main",
 		ReturnType: i32(),
-		Ops:        []ir.Op{{Kind: ir.OpStrLen}},
+		Ops:        []ir.Op{{Kind: ir.OpAlloc}},
 	}}}
 	if _, err := Emit(prog); err == nil {
 		t.Fatalf("expected unsupported-op error, got nil")
