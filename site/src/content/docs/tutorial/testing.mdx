@@ -69,16 +69,94 @@ in the diagnostic block.
 Each helper returns `Option[string]`. The failure message names
 the predicate so a grep across CI logs finds the regression.
 
-| Family       | Helpers                                                                                               |
-| ------------ | ----------------------------------------------------------------------------------------------------- |
-| Boolean      | `assert_true`, `assert_false`                                                                          |
-| Integers     | `assert_eq_i32`, `assert_neq_i32`, `assert_lt_i32`, `assert_le_i32`, `assert_gt_i32`, `assert_ge_i32` |
-| Booleans     | `assert_eq_bool`                                                                                       |
-| Strings      | `assert_eq_string`, `assert_neq_string`, `assert_empty_string`, `assert_non_empty_string`              |
-| Substring    | `assert_contains`, `assert_not_contains`, `assert_starts_with`, `assert_ends_with`                     |
-| Array length | `assert_len_i32`, `assert_len_string`                                                                  |
-| Array eq     | `assert_eq_i32_array`, `assert_eq_string_array`                                                       |
-| Free-form    | `pass()`, `fail(msg)`                                                                                  |
+| Family       | Helpers                                                                                                              |
+| ------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Boolean      | `assert_true`, `assert_false`                                                                                         |
+| Integers     | `assert_eq_i32`, `assert_neq_i32`, `assert_lt_i32`, `assert_le_i32`, `assert_gt_i32`, `assert_ge_i32`                |
+| Booleans     | `assert_eq_bool`                                                                                                      |
+| Strings      | `assert_eq_string`, `assert_neq_string`, `assert_empty_string`, `assert_non_empty_string`                             |
+| Substring    | `assert_contains`, `assert_not_contains`, `assert_starts_with`, `assert_ends_with`                                    |
+| Array length | `assert_len_i32`, `assert_len_string`                                                                                 |
+| Array eq     | `assert_eq_i32_array`, `assert_eq_string_array`                                                                       |
+| Process      | `assert_exit`, `assert_stdout_eq`, `assert_stderr_eq`, `assert_stdout_contains`, `assert_stderr_contains`, `assert_process` |
+| Free-form    | `pass()`, `fail(msg)`                                                                                                 |
+
+## Skipping cases
+
+Toolchain-conditional cases (`wasmtime` missing, OS-specific
+behaviour, CI-only checks) skip with `(r).skip(name, reason)`.
+The TAP output emits `# SKIP` so consumers can distinguish a
+skip from a real pass; skipped cases don't influence the exit
+code.
+
+```lang
+function main(): i32 {
+    var r: TestRunner = test_new("backends");
+    r = r.skip_if(env("WASMTIME_PATH").is_none(),
+                  "wasm e2e", "wasmtime not on $PATH",
+                  run_wasm_test());
+    return r.finish();
+}
+```
+
+## Nested suites
+
+Group related cases with `r.subsuite(name)` + `r.merge(child)`.
+TAP stays flat (one stream, monotonically numbered) but case
+names print with `parent / child / case` so the hierarchy is
+visible in the log.
+
+```lang
+var arm: TestRunner = r.subsuite("arm64");
+arm = arm.it("exit code", run_arm64_exit());
+arm = arm.it("stdout",    run_arm64_stdout());
+r = r.merge(arm);   // fold counts back into parent
+```
+
+## Spawning subprocesses
+
+`subprocess(cmd, args, stdin)` runs an external program and
+returns a `ProcessResult { stdout, stderr, exit_code }`. The
+assertion family above (`assert_exit` / `assert_stdout_eq` /
+`assert_process`) operates on that struct.
+
+```lang
+function test_lang_hello(): Option[string] {
+    var r: ProcessResult = subprocess("./lang",
+        ["-interp", "/tmp/hello.lang"], "");
+    return assert_process(r, 0, "hello");
+}
+```
+
+Spawn failures (binary missing, permission denied) surface as
+`exit_code = 127` with the OS error in `stderr` so callers can
+write linear assertions without an extra `Result` unwrap.
+
+## Fuzzing
+
+A fuzz target is a `(string) => Option[string]` — same shape
+as a regular test, but called repeatedly with mutated inputs
+from a seed corpus.
+
+```lang
+function check_to_upper_idempotent(input: string): Option[string] {
+    if (input.to_upper().to_upper() == input.to_upper()) { return None; }
+    return Some("to_upper is not idempotent");
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("fuzz");
+    r = r.fuzz("to_upper idempotent",
+               ["", "abc", "Hello"],
+               fuzz_default_iterations(),
+               check_to_upper_idempotent);
+    return r.finish();
+}
+```
+
+The harness mutates with byte flip / drop / insert / unchanged.
+Failures stop the loop and report the input with non-printable
+bytes escaped to `\xNN` so the log doubles as a reproducer.
 
 ## Writing your own assertion
 
@@ -133,3 +211,9 @@ in the repo:
 - `strings_test.lang` — string-method coverage
 - `runner_self_test.lang` — the runner's meta-test (verifies
   every helper on both pass and fail paths)
+- `skip_and_subsuites_test.lang` — skip / skip_if / subsuite /
+  merge end-to-end
+- `process_assertions_test.lang` — `subprocess` + `temp_dir`
+  + the process assertion family (echo / cat / sh fixtures)
+- `fuzz_example_test.lang` — three benign property fuzzers
+  plus a trim-strips-spaces invariant
