@@ -2497,8 +2497,8 @@ func TestEmitPrintHeapLiteral(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
 	}
-	if got := so.String(); got != "hello, world\n" {
-		t.Fatalf("stdout = %q, want %q", got, "hello, world\n")
+	if got := so.String(); got != "hello, world\n\n" {
+		t.Fatalf("stdout = %q, want %q", got, "hello, world\n\n")
 	}
 }
 
@@ -2535,8 +2535,8 @@ func TestEmitPrintViaSourceNameAlias(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
 	}
-	if got := so.String(); got != "aliased!\n" {
-		t.Fatalf("stdout = %q, want %q", got, "aliased!\n")
+	if got := so.String(); got != "aliased!\n\n" {
+		t.Fatalf("stdout = %q, want %q", got, "aliased!\n\n")
 	}
 }
 
@@ -2679,6 +2679,44 @@ func TestEmitArgs(t *testing.T) {
 	}
 	if got := strings.TrimSpace(so.String()); got != "3" {
 		t.Fatalf("len(args()) = %q, want 3 (path + 2 extra)", got)
+	}
+}
+
+// TestEmitWrite — write(s) goes to stdout without appending a
+// newline (pairs with print() which DOES append). Send "hi"
+// twice; expect "hihi" without separators.
+func TestEmitWrite(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: void(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hi"},
+			{Kind: ir.OpCallDirect, Str: "write"},
+			{Kind: ir.OpConstStr, Str: "hi"},
+			{Kind: ir.OpCallDirect, Str: "write"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := so.String(); got != "hihi" {
+		t.Fatalf("write twice = %q, want \"hihi\"", got)
 	}
 }
 
@@ -2877,8 +2915,8 @@ func TestEmitArgAtPrint(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
 	}
-	if got := so.String(); got != "beta" {
-		t.Fatalf("arg_at(2) printed = %q, want \"beta\"", got)
+	if got := so.String(); got != "beta\n" {
+		t.Fatalf("arg_at(2) printed = %q, want \"beta\\n\" (print auto-appends newline)", got)
 	}
 }
 
@@ -2936,8 +2974,8 @@ func TestEmitEnvAt(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
 	}
-	if got := so.String(); got != "FOO=bar" {
-		t.Fatalf("env_at(0) = %q, want \"FOO=bar\"", got)
+	if got := so.String(); got != "FOO=bar\n" {
+		t.Fatalf("env_at(0) = %q, want \"FOO=bar\\n\" (print auto-appends newline)", got)
 	}
 }
 
@@ -3641,8 +3679,8 @@ func TestEmitPrintInlineLiteral(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
 	}
-	if got := so.String(); got != "hi\n" {
-		t.Fatalf("stdout = %q, want %q", got, "hi\n")
+	if got := so.String(); got != "hi\n\n" {
+		t.Fatalf("stdout = %q, want %q", got, "hi\n\n")
 	}
 }
 
