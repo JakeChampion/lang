@@ -172,6 +172,54 @@ function main(): i32 { return fact(10); }
 	}
 }
 
+// TestBuildPrintMainResult — BuildWithOptions(SynthStart +
+// PrintMainResult) wires `_start` to format main's i32 return
+// through `int_to_string` and flush it to stdout via
+// `__lang_print`. The WAT path's PrintMainResult mode is what
+// drives the wasm e2e suite's stdout-based result checks; this
+// is the wasmbin parity. Invokes _start under wasmtime (which
+// provides wasi_snapshot_preview1) and asserts the printed
+// decimal matches main's value.
+func TestBuildPrintMainResult(t *testing.T) {
+	src := `function main(): i32 { return 42; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := BuildWithOptions(prog, info, BuildOptions{
+		SynthStart:      true,
+		PrintMainResult: true,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// `wasmtime run prog.wasm` dispatches to `_start`; the
+	// wrapper calls main, formats 42 as "42", appends a
+	// newline, and writes it to stdout.
+	cmd := exec.Command("wasmtime", "run", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "42" {
+		t.Fatalf("PrintMainResult stdout = %q, want %q", got, "42")
+	}
+}
+
 // TestBuildPreview2Wrap — BuildWithOptions(ForceMemorySection +
 // SynthStart) produces bytes that wrap cleanly into a preview-2
 // component when fed through the WASI adapter. The synthesised

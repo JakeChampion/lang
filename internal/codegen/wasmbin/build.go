@@ -42,6 +42,19 @@ type BuildOptions struct {
 	// adapter's `wasi:cli/run.run` glue dispatches to `_start`
 	// as the command entry point.
 	SynthStart bool
+	// PrintMainResult routes main's i32 return through
+	// `int_to_string` + `__lang_print` inside the synthesised
+	// `_start` wrapper instead of dropping it. Used by e2e
+	// tests that observe main's value over the component's
+	// stdout — preview-2 hosts only surface 0/1 through
+	// `wasi:cli/exit`, so the printed decimal is the channel
+	// left for arbitrary-width result checks. Implies
+	// SynthStart and pins `int_to_string` (or the
+	// `int__int_to_string` modload-qualified variant) past
+	// every dead-function-elimination step so the wrapper's
+	// call resolves. No-op when main returns void; non-i32
+	// returns fall back to the plain SynthStart drop path.
+	PrintMainResult bool
 }
 
 // Build is BuildWithOptions with the default (zero-value) options.
@@ -51,7 +64,17 @@ func Build(prog *ast.Program, info *checker.Info) ([]byte, error) {
 
 // BuildWithOptions is the option-aware sibling of Build.
 func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) ([]byte, error) {
-	treeshake.Run(prog)
+	// PrintMainResult's _start wrapper calls int_to_string from
+	// a synthesised position that isn't an AST reference, so
+	// pin it (and its modload-qualified twin) past tree-shake.
+	// Either variant covers the auto-prelude case vs the
+	// explicit-`import "core/int"` case; the emitter picks
+	// whichever survives.
+	var treeshakeExtras []string
+	if opts.PrintMainResult {
+		treeshakeExtras = []string{"int_to_string", "int__int_to_string"}
+	}
+	treeshake.Run(prog, treeshakeExtras...)
 	ip, err := ir.LowerWith(prog, info, 4)
 	if err != nil {
 		return nil, fmt.Errorf("wasmbin: lower: %w", err)
@@ -81,7 +104,11 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// about emit-time rewrites — without this, a user-code
 	// `map_new` call wouldn't keep `map_new_impl` alive, and
 	// the call site would resolve to a culled function.
-	if live := ir.LiveFunctionsWithAliases(ip, CallDirectAliases); live != nil {
+	var liveExtras []string
+	if opts.PrintMainResult {
+		liveExtras = []string{"int_to_string", "int__int_to_string"}
+	}
+	if live := ir.LiveFunctionsWithAliases(ip, CallDirectAliases, liveExtras...); live != nil {
 		out := ip.Funcs[:0]
 		for _, irFn := range ip.Funcs {
 			if live[irFn.Name] {
@@ -93,5 +120,6 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	return EmitWithOptions(ip, EmitOptions{
 		ForceMemorySection: opts.ForceMemorySection,
 		SynthStart:         opts.SynthStart,
+		PrintMainResult:    opts.PrintMainResult,
 	})
 }

@@ -81,6 +81,13 @@ type EmitOptions struct {
 	// adapter dispatches to `_start` as the command entry, so
 	// preview-2 wrapping needs this on.
 	SynthStart bool
+	// PrintMainResult tunes the SynthStart wrapper to route
+	// main's i32 return through `int_to_string` + `__lang_print`
+	// instead of dropping it. Mirrors the WAT path's
+	// `EmitOptions.PrintMainResult` so e2e tests can observe
+	// main's value over stdout (preview-2 hosts only surface 0/1
+	// through `wasi:cli/exit`). No-op for non-i32 / void returns.
+	PrintMainResult bool
 }
 
 // Emit is EmitWithOptions with the zero-value options.
@@ -116,6 +123,18 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// synthetic helpers shift up by N. Today the only imports
 	// come from runtime needs (e.g. WASI fd_write for print).
 	helpers := scanRuntimeHelpers(prog)
+	if opts.PrintMainResult {
+		// The synthesised `_start` calls __lang_print to flush
+		// `int_to_string(main())` to stdout. If no user-emitted
+		// op already required __lang_print, the scan above would
+		// have left it out. Force-include it now (with its
+		// transitive deps) so the funcIdx table covers the
+		// SynthStart call site.
+		helpers.add("__lang_str_len")
+		helpers.add("__lang_str_byte")
+		helpers.add("__lang_alloc")
+		helpers.add("__lang_print")
+	}
 	importNeeds := scanImports(prog, helpers)
 
 	funcIdx := make(map[string]uint32, len(prog.Funcs)+len(helpers.order)+len(importNeeds.order))
@@ -489,6 +508,12 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// + `end`. Appended after all user functions + helpers so
 	// it lands at the highest funcidx; gets a fresh `() -> ()`
 	// typeidx + export.
+	//
+	// PrintMainResult turns the trailing drop into a
+	// `call $int_to_string` + `call $__lang_print` pair so
+	// main's i32 value lands on stdout. Mirrors the WAT path's
+	// PrintMainResult mode; same fallback shape (drop) when the
+	// program doesn't include an int_to_string variant.
 	if opts.SynthStart {
 		mainIdx, ok := funcIdx["main"]
 		if !ok {
@@ -506,8 +531,36 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		// FunctionTypeidxs[main_funcidx - len(imports)].
 		mainPosInFnSection := mainIdx - uint32(len(importNeeds.order))
 		mainResults := m.TypeResults[m.FunctionTypeidxs[mainPosInFnSection]]
-		for range mainResults {
-			body = inst.InstDrop(body)
+		printed := false
+		if opts.PrintMainResult && len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32 {
+			// `int_to_string` resolves to the auto-prelude bare
+			// name; `int__int_to_string` covers an explicit
+			// `import "core/int"` whose mangling pass appends
+			// the module name. Pick whichever survived
+			// tree-shake + dead-function elimination. If
+			// neither is present (no-prelude program without
+			// core/int) fall back to drop so the wrapper still
+			// links.
+			intToStrName := ""
+			if _, ok := funcIdx["int_to_string"]; ok {
+				intToStrName = "int_to_string"
+			} else if _, ok := funcIdx["int__int_to_string"]; ok {
+				intToStrName = "int__int_to_string"
+			}
+			if intToStrName != "" {
+				body = inst.InstCall(body, funcIdx[intToStrName])
+				printIdx, ok := funcIdx["__lang_print"]
+				if !ok {
+					return nil, fmt.Errorf("wasmbin: PrintMainResult: __lang_print helper not registered (scanRuntimeHelpers gap)")
+				}
+				body = inst.InstCall(body, printIdx)
+				printed = true
+			}
+		}
+		if !printed {
+			for range mainResults {
+				body = inst.InstDrop(body)
+			}
 		}
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, startTIdx)
 		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body))
