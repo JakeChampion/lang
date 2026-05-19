@@ -511,6 +511,44 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 	})
 }
 
+// `examples/tests/helpers_test.lang` covers the convenience
+// helpers layered on top of the base assertion family:
+// multi-substring (`contains_all` / `contains_any` /
+// `contains_in_order`), string-diff (`assert_eq_string_diff`
+// reports the first differing line + line number), numeric
+// range (`assert_in_range_i32` / `_i64`), file-state
+// (`assert_file_exists` / `_not_exists` / `_contents` /
+// `_contains`), and the tempdir-tuple combinator
+// `must_temp_dir(r, prefix)`.
+//
+// Every helper has a "passes when used right" case and an
+// "inverted" case that verifies the failure message embeds
+// the right context — e.g. `assert_contains_all` failure
+// names the FIRST missing needle, `assert_eq_string_diff`
+// names the line number where the values diverge.
+func TestRunnerHelpersExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/helpers_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - contains_all pass",
+		"ok 2 - contains_all names missing",
+		"ok 5 - contains_in_order rejects reorder",
+		"ok 8 - in_range_i32 below fails",
+		"ok 11 - string diff localises line",
+		"ok 15 - file contents eq",
+		"# pass 15",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
