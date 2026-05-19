@@ -3424,7 +3424,7 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 			continue
 		}
 		if arm.Literal == nil {
-			c.errf(arm.P, "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
+			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -3433,7 +3433,7 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 			c.settleNumeric(arm.Literal, tagT)
 			litT = postSettleType(arm.Literal, litT)
 			if !assignable(litT, tagT) {
-				c.errf(arm.P, "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
+				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
 			}
 		}
 		if arm.Guard != nil {
@@ -3490,7 +3490,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			continue
 		}
 		if arm.Literal == nil {
-			c.errf(arm.P, "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
+			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
 			continue
 		}
 		litT := c.checkExpr(arm.Literal, s)
@@ -3498,7 +3498,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			c.settleNumeric(arm.Literal, tagT)
 			litT = postSettleType(arm.Literal, litT)
 			if !assignable(litT, tagT) {
-				c.errf(arm.P, "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
+				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
 			}
 		}
 		if arm.Guard != nil {
@@ -4096,18 +4096,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// specific enum.
 		if vr, ok, multi := c.resolveVariant(n.Name, n.EnumName); ok {
 			if len(vr.payloads) > 0 {
-				c.errf(n.P, "variant %s expects %d payload argument(s); call it as %s(...)",
+				c.errfCode(n.P, "E036", "variant %s expects %d payload argument(s); call it as %s(...)",
 					n.Name, len(vr.payloads), n.Name)
 				return nil
 			}
 			n.EnumName = vr.enumName
 			return ast.EnumType{Name: vr.enumName}
 		} else if multi {
-			c.errf(n.P, "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s`",
+			c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s`",
 				n.Name, c.variantEnumList(n.Name), c.variantOf[n.Name][0].enumName, n.Name)
 			return nil
 		} else if n.EnumName != "" {
-			c.errf(n.P, "enum %s has no variant %q", n.EnumName, n.Name)
+			c.errfCode(n.P, "E036", "enum %s has no variant %q", n.EnumName, n.Name)
 			return nil
 		}
 		c.errIdent(n, s, "undefined identifier %q", n.Name)
@@ -4176,13 +4176,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if n.Low != nil {
 			lt := c.checkExpr(n.Low, s)
 			if lt != nil && !ast.Equal(lt, ast.NumberType{}) {
-				c.errf(n.Low.Pos(), "slice low bound must be i32, got %s", lt)
+				c.errfCode(n.Low.Pos(), "E037", "slice low bound must be i32, got %s", lt)
 			}
 		}
 		if n.High != nil {
 			ht := c.checkExpr(n.High, s)
 			if ht != nil && !ast.Equal(ht, ast.NumberType{}) {
-				c.errf(n.High.Pos(), "slice high bound must be i32, got %s", ht)
+				c.errfCode(n.High.Pos(), "E037", "slice high bound must be i32, got %s", ht)
 			}
 		}
 		if arr, ok := st.(ast.ArrayType); ok {
@@ -4199,7 +4199,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return ast.StringType{}
 		}
 		if st != nil {
-			c.errf(n.P, "cannot slice value of type %s", st)
+			c.errfCode(n.P, "E037", "cannot slice value of type %s", st)
 		}
 		return nil
 	case *ast.Call:
@@ -4244,13 +4244,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// gets a follow-up "undefined identifier" diag if the
 			// name resolves to nothing else.
 			if !isVar && vrMulti && id.EnumName == "" && !c.isUserFuncOrLocal(id.Name, s) {
-				c.errf(n.P, "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s(...)`",
+				c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s(...)`",
 					id.Name, c.variantEnumList(id.Name), c.variantOf[id.Name][0].enumName, id.Name)
 				return nil
 			}
 			if isVar {
 				if len(n.Args) != len(vr.payloads) {
-					c.errf(n.P, "variant %s expects %d argument(s), got %d",
+					c.errfCode(n.P, "E036", "variant %s expects %d argument(s), got %d",
 						id.Name, len(vr.payloads), len(n.Args))
 				}
 				id.EnumName = vr.enumName
@@ -4279,7 +4279,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						continue
 					}
 					if !c.unifyType(vr.payloads[i], at, sub) {
-						c.errf(a.Pos(), "variant %s payload %d type %s, expected %s",
+						c.errfCode(a.Pos(), "E036", "variant %s payload %d type %s, expected %s",
 							id.Name, i, at, substituteType(vr.payloads[i], sub))
 					}
 				}
@@ -4328,7 +4328,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// the union.
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "len" && !c.isUserFuncOrLocal(id.Name, s) {
 			if len(n.Args) != 1 {
-				c.errf(n.P, "len expects 1 argument, got %d", len(n.Args))
+				c.errfCode(n.P, "E039", "len expects 1 argument, got %d", len(n.Args))
 				return ast.NumberType{}
 			}
 			at := c.checkExpr(n.Args[0], s)
@@ -4337,7 +4337,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// fine
 			default:
 				if at != nil {
-					c.errf(n.Args[0].Pos(), "len: expected string, array, or slice, got %s", at)
+					c.errfCode(n.Args[0].Pos(), "E039", "len: expected string, array, or slice, got %s", at)
 				}
 			}
 			return ast.NumberType{}
@@ -4440,7 +4440,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		ft, ok := callee.(*ast.FuncType)
 		if !ok {
 			if callee != nil {
-				c.errf(n.P, "calling non-function value of type %s", callee)
+				c.errfCode(n.P, "E038", "calling non-function value of type %s", callee)
 			}
 			return nil
 		}
@@ -4514,7 +4514,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				sub = make(map[string]ast.Type, len(fn.TypeParams))
 				if len(n.TypeArgs) > 0 {
 					if len(n.TypeArgs) != len(fn.TypeParams) {
-						c.errf(n.P, "%s expects %d type argument(s), got %d",
+						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
 							fn.Name, len(fn.TypeParams), len(n.TypeArgs))
 					}
 					for i, tp := range fn.TypeParams {
@@ -4552,10 +4552,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				if sub != nil {
 					if !c.unifyType(expected, at, sub) {
-						c.errf(n.Args[i].Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
+						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
 					}
 				} else if !assignable(expected, at) {
-					c.errf(n.Args[i].Pos(), "argument %d: expected %s, got %s", i+1, expected, at)
+					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
 				}
 			}
 		}
@@ -4569,7 +4569,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if v, ok := sub[tp]; ok {
 					args[i] = v
 				} else {
-					c.errf(n.P, "could not infer type parameter %s for %s — explicit type args are not supported yet", tp, genericFn.Name)
+					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — explicit type args are not supported yet", tp, genericFn.Name)
 					complete = false
 				}
 			}
@@ -4619,7 +4619,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.IsFloat = true
 				common, ok := commonFloatWidth(lt, rt)
 				if !ok {
-					c.errf(n.P, "operator %q requires both operands to share a float type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share a float type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 					return ast.FloatType{}
 				}
 				c.settleNumeric(n.Left, common)
@@ -4727,7 +4727,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				rt = postSettleType(n.Right, rt)
 			}
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
-				c.errf(n.P, "cannot compare %s and %s", lt, rt)
+				c.errfCode(n.P, "E041", "cannot compare %s and %s", lt, rt)
 			}
 			// String-vs-string equality compares contents; flag so
 			// codegen lowers to a runtime call rather than i32.eq.
@@ -4762,7 +4762,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireBool(n.P, rt, n.Op)
 			return ast.BoolType{}
 		}
-		c.errf(n.P, "unknown binary operator %q", n.Op)
+		c.errfCode(n.P, "E041", "unknown binary operator %q", n.Op)
 		return nil
 	case *ast.Unary:
 		t := c.checkExpr(n.Operand, s)
@@ -4846,7 +4846,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		root := newScope(nil)
 		for _, p := range n.Params {
 			if _, dup := root.names[p.Name]; dup {
-				c.errf(n.P, "duplicate parameter %q", p.Name)
+				c.errfCode(n.P, "E018", "duplicate parameter %q", p.Name)
 			}
 			root.names[p.Name] = p.Type
 		}
@@ -4897,13 +4897,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.IfExpr:
 		ct := c.checkExpr(n.Cond, s)
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
-			c.errf(n.Cond.Pos(), "if-expression condition must be boolean, got %s", ct)
+			c.errfCode(n.Cond.Pos(), "E008", "if-expression condition must be boolean, got %s", ct)
 		}
 		tt := c.checkExpr(n.Then, s)
 		et := c.checkExpr(n.Else, s)
 		result := unifyIfArms(tt, et)
 		if tt != nil && et != nil && result == nil {
-			c.errf(n.P, "if-expression branches differ: %s vs %s", tt, et)
+			c.errfCode(n.P, "E031", "if-expression branches differ: %s vs %s", tt, et)
 			result = tt
 		}
 		if result == nil {
@@ -4932,24 +4932,24 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return nil
 		}
 		if c.current == nil {
-			c.errf(n.P, "`?` operator can only be used inside a function")
+			c.errfCode(n.P, "E042", "`?` operator can only be used inside a function")
 			return nil
 		}
 		ret := c.current.ReturnType
 		retEnum, retOK := ret.(ast.EnumType)
 		srcEnum, srcOK := inner.(ast.EnumType)
 		if !srcOK {
-			c.errf(n.P, "`?` operator requires an Option or Result value, got %s", inner)
+			c.errfCode(n.P, "E042", "`?` operator requires an Option or Result value, got %s", inner)
 			return nil
 		}
 		switch srcEnum.Name {
 		case "Option":
 			if len(srcEnum.Args) != 1 {
-				c.errf(n.P, "malformed Option type %s", inner)
+				c.errfCode(n.P, "E042", "malformed Option type %s", inner)
 				return nil
 			}
 			if !retOK || retEnum.Name != "Option" || len(retEnum.Args) != 1 {
-				c.errf(n.P, "`?` on Option requires the surrounding function to return Option[_], got %s", ret)
+				c.errfCode(n.P, "E042", "`?` on Option requires the surrounding function to return Option[_], got %s", ret)
 				return nil
 			}
 			n.Kind = ast.TryKindOption
@@ -4957,15 +4957,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return n.Type
 		case "Result":
 			if len(srcEnum.Args) != 2 {
-				c.errf(n.P, "malformed Result type %s", inner)
+				c.errfCode(n.P, "E042", "malformed Result type %s", inner)
 				return nil
 			}
 			if !retOK || retEnum.Name != "Result" || len(retEnum.Args) != 2 {
-				c.errf(n.P, "`?` on Result requires the surrounding function to return Result[_, E], got %s", ret)
+				c.errfCode(n.P, "E042", "`?` on Result requires the surrounding function to return Result[_, E], got %s", ret)
 				return nil
 			}
 			if !ast.Equal(srcEnum.Args[1], retEnum.Args[1]) {
-				c.errf(n.P, "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match",
+				c.errfCode(n.P, "E042", "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match",
 					srcEnum.Args[1], retEnum.Args[1])
 				return nil
 			}
@@ -4973,13 +4973,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.Type = srcEnum.Args[0]
 			return n.Type
 		default:
-			c.errf(n.P, "`?` operator requires an Option or Result value, got %s", inner)
+			c.errfCode(n.P, "E042", "`?` operator requires an Option or Result value, got %s", inner)
 			return nil
 		}
 	case *ast.StructLit:
 		sd, ok := c.info.Structs[n.TypeName]
 		if !ok {
-			c.errf(n.P, "unknown struct type %q", n.TypeName)
+			c.errfCode(n.P, "E043", "unknown struct type %q", n.TypeName)
 			return nil
 		}
 		// Each declared field must be initialised exactly once and
@@ -4999,7 +4999,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		for _, f := range n.Fields {
 			expected, present := fieldT[f.Name]
 			if !present {
-				c.errf(n.P, "struct %s has no field %q", sd.Name, f.Name)
+				c.errfCode(n.P, "E043", "struct %s has no field %q", sd.Name, f.Name)
 				continue
 			}
 			if seen[f.Name] {
@@ -5014,7 +5014,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			vt = postSettleType(f.Value, vt)
 			if sub != nil {
 				if !c.unifyType(expected, vt, sub) {
-					c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, expected, vt)
 				}
 			} else if !ast.Equal(vt, expected) {
 				// Allow the polymorphic / argless-enum vs
@@ -5024,7 +5024,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// to `Option` with empty Args). Same shape as
 				// the array-element widening from #541.
 				if unifyIfArms(expected, vt) == nil {
-					c.errf(f.Value.Pos(), "field %q: expected %s, got %s", f.Name, expected, vt)
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, expected, vt)
 				}
 			}
 		}
@@ -5040,7 +5040,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if v, ok := sub[tp]; ok {
 					args[i] = v
 				} else {
-					c.errf(n.P, "could not infer type parameter %s for struct %s — explicit type args are not supported yet", tp, sd.Name)
+					c.errfCode(n.P, "E040", "could not infer type parameter %s for struct %s — explicit type args are not supported yet", tp, sd.Name)
 					complete = false
 				}
 			}
