@@ -595,7 +595,58 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             }
             return StepResult { env: env.update(a.target, av), ret: v_err("__noreturn__") };
         },
-        parser.StmtMatch(_) => { return StepResult { env: env, ret: v_err("StmtMatch not implemented in interp") }; },
+        parser.StmtMatch(m) => {
+            // Evaluate the scrutinee. An error in the scrutinee
+            // propagates without running any arm.
+            var sv: Value = eval_expr(m.scrutinee, env);
+            if (is_err(sv)) { return StepResult { env: env, ret: sv }; }
+            // Walk arms top-to-bottom and run the first that
+            // matches. Variant patterns require a VStruct
+            // scrutinee whose type_name matches the pattern's
+            // type_name; PatWildcard always matches.
+            var i: i32 = 0;
+            while (i < len(m.arms)) {
+                var arm: parser.MatchArm = m.arms[i];
+                var matched: boolean = false;
+                var bind_name: string = "";
+                match (arm.pattern) {
+                    parser.PatWildcard(_) => { matched = true; },
+                    parser.PatVariant(pv) => {
+                        match (sv) {
+                            VStruct(vs) => {
+                                if (vs.type_name == pv.type_name) {
+                                    matched = true;
+                                    // Bare `Foo` and explicit
+                                    // `Foo(_)` both leave binding
+                                    // empty for the body env;
+                                    // only a named binding ends
+                                    // up in scope.
+                                    if (len(pv.binding) > 0 && pv.binding != "_") {
+                                        bind_name = pv.binding;
+                                    }
+                                }
+                            },
+                            _ => { }
+                        }
+                    }
+                }
+                if (matched) {
+                    // Arm-local bindings die at the close of the
+                    // arm body, same as branch-local `var`s in
+                    // StmtIf. Trim env back to the entry length
+                    // before returning so the surrounding scope
+                    // doesn't see the binding (or any nested
+                    // `var`s) leak out.
+                    var base: i32 = len(env.names);
+                    var bodyEnv: Env = env;
+                    if (len(bind_name) > 0) { bodyEnv = bodyEnv.bind(bind_name, sv); }
+                    var step: StepResult = eval_block(arm.body, bodyEnv);
+                    return StepResult { env: trim_env(step.env, base), ret: step.ret };
+                }
+                i = i + 1;
+            }
+            return StepResult { env: env, ret: v_err("non-exhaustive match") };
+        },
         parser.StmtUnknown(u) => { return StepResult { env: env, ret: v_err("parser-side unknown stmt: " + u.kind) }; }
     }
     return StepResult { env: env, ret: v_err("unhandled Stmt variant") };
@@ -1004,6 +1055,71 @@ function main(): i32 {
     match (r38) {
         VErr(_) => { },
         _ => { return 380; }
+    }
+
+    // StmtMatch — variant pattern binds the scrutinee and the
+    // body reads a field off it.
+    var src39: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return -1; } } return -2; }";
+    var r39: Value = run_module(src39);
+    match (r39) {
+        VInt(i) => { if (i.v != 5) { return 390; } },
+        _ => { return 391; }
+    }
+
+    // StmtMatch — second variant matches, first is skipped.
+    var src40: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var q = Square { s: 7 }; match (q) { Circle(_) => { return 1; }, Square(sq) => { return sq.s; }, _ => { return -1; } } return -2; }";
+    var r40: Value = run_module(src40);
+    match (r40) {
+        VInt(i) => { if (i.v != 7) { return 400; } },
+        _ => { return 401; }
+    }
+
+    // StmtMatch — wildcard catches when no variant matches.
+    var src41: string = "struct Circle { r: i32 } struct Square { s: i32 } struct Triangle { b: i32 } function main(): i32 { var t = Triangle { b: 3 }; match (t) { Circle(_) => { return 1; }, Square(_) => { return 2; }, _ => { return 99; } } return -1; }";
+    var r41: Value = run_module(src41);
+    match (r41) {
+        VInt(i) => { if (i.v != 99) { return 410; } },
+        _ => { return 411; }
+    }
+
+    // StmtMatch — bare variant pattern (no binding), arm body
+    // doesn't reference the value.
+    var src42: string = "struct Empty { } function main(): i32 { var e = Empty { }; match (e) { Empty => { return 42; }, _ => { return -1; } } return -2; }";
+    var r42: Value = run_module(src42);
+    match (r42) {
+        VInt(i) => { if (i.v != 42) { return 420; } },
+        _ => { return 421; }
+    }
+
+    // StmtMatch — non-exhaustive: scrutinee doesn't match any
+    // arm and there's no wildcard. v_err("non-exhaustive match")
+    // bubbles out as the function's return value.
+    var src43: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var c = Circle { r: 1 }; match (c) { Square(_) => { return 2; } } return -1; }";
+    var r43: Value = run_module(src43);
+    match (r43) {
+        VErr(_) => { },
+        _ => { return 430; }
+    }
+
+    // StmtMatch — arm body without `return` falls through to
+    // the stmt after the match. Verifies the no-return signal
+    // doesn't accidentally short-circuit.
+    var src44: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 8 }; var n: i32 = 0; match (c) { Circle(x) => { n = x.r; }, _ => { n = -1; } } return n; }";
+    var r44: Value = run_module(src44);
+    match (r44) {
+        VInt(i) => { if (i.v != 8) { return 440; } },
+        _ => { return 441; }
+    }
+
+    // StmtMatch — arm-local bindings die after the arm. After
+    // the match closes, the outer scope must NOT see `x`.
+    // Re-binding `x` in the surrounding scope to a different
+    // value verifies the inner binding was dropped.
+    var src45: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 1 }; match (c) { Circle(x) => { }, _ => { } } var x: i32 = 77; return x; }";
+    var r45: Value = run_module(src45);
+    match (r45) {
+        VInt(i) => { if (i.v != 77) { return 450; } },
+        _ => { return 451; }
     }
 
     return 0;
