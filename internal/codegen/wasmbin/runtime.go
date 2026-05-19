@@ -132,6 +132,13 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// the per-process scratch region.
 					needs.add("__lang_alloc")
 					needs.add("__lang_read_byte")
+				case "__lang_read_line":
+					// Reads bytes via __lang_read_byte until '\n'
+					// or EOF, accumulates into a growable buffer,
+					// then builds an Option[string] heap box.
+					needs.add("__lang_alloc")
+					needs.add("__lang_read_byte")
+					needs.add("__lang_read_line")
 				case "__lang_string_from_bytes":
 					// (bs: u8[]) → (data, len) — copies the byte
 					// array's payload into a fresh string. Inline
@@ -299,6 +306,17 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadByteBody,
+	},
+	"__lang_read_line": {
+		// () → i32 — heap pointer to an Option[string] box.
+		// Some(line) box layout (16 bytes): tag=0 at +0,
+		// data ptr at +8, len at +12 (Option[string] payload
+		// is aligned to 8). None box layout (4 bytes): tag=1
+		// at +0. Line includes the trailing '\n' if present;
+		// returns None on EOF before any byte was read.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildReadLineBody,
 	},
 	"__lang_string_from_bytes": {
 		// (bs) → (data, len) — copies bs's payload into a
@@ -1379,6 +1397,140 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
 	body = inst.InstLocalGet(body, 6)
+	body = inst.InstLocalGet(body, 5)
+	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildReadLineBody — () → i32. Reads bytes from stdin via
+// __lang_read_byte, accumulating into a growable u8 buffer
+// until '\n' (included) or EOF. Returns a heap pointer to an
+// Option[string] box.
+//
+// Layout (matches the IR's payloadLayout for Option[string]
+// on wasm32):
+//
+//	Some(line) box (16 bytes):
+//	  +0..3:   tag = 0
+//	  +4..7:   padding (8-byte alignment for the payload)
+//	  +8..11:  data pointer
+//	  +12..15: len (byte count, top bit clear → heap form)
+//
+//	None box (4 bytes):
+//	  +0..3:   tag = 1
+//
+// EOF before any byte → None. EOF mid-line → Some(partial).
+//
+// Locals (no params):
+//
+//	0: $buf    — current heap buffer base
+//	1: $cap    — current capacity in bytes
+//	2: $n      — bytes written so far
+//	3: $byte   — last byte read (or -1 for EOF)
+//	4: $newbuf — replacement buffer when growing
+//	5: $box    — Option box pointer for return
+//	6: $copy_i — byte-copy loop counter
+func buildReadLineBody(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__lang_alloc"]
+	readByte := helperIdxs["__lang_read_byte"]
+	var body []byte
+	// Initial buf: alloc(64), cap=64, n=0
+	body = inst.InstI32Const(body, 64)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 0)
+	body = inst.InstI32Const(body, 64)
+	body = inst.InstLocalSet(body, 1)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 2)
+	// Read loop.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// $byte = __lang_read_byte()
+		body = inst.InstCall(body, readByte)
+		body = inst.InstLocalSet(body, 3)
+		// if $byte == -1: break (EOF)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstI32Const(body, -1)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstBrIf(body, 1)
+		// Grow if $n == $cap: alloc(cap*2), memory.copy(new, buf, n), buf=new, cap*=2
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 1)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Shl(body)
+			body = inst.InstCall(body, alloc)
+			body = inst.InstLocalSet(body, 4) // $newbuf
+			// memory.copy($newbuf, $buf, $n)
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 2)
+			body = append(body, 0xFC, 0x0A, 0x00, 0x00)
+			// $buf = $newbuf; $cap *= 2
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstLocalSet(body, 0)
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Shl(body)
+			body = inst.InstLocalSet(body, 1)
+		}
+		body = inst.InstEnd(body)
+		// $buf[$n] = $byte; $n++
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 2)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 3)
+		body = memory.InstI32Store8(body, 0, 0)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 2)
+		// if $byte == '\n' (10): break (line complete)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstI32Const(body, 10)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstBrIf(body, 1)
+		// continue loop
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	// EOF-with-empty-buf → None: alloc(4), tag=1.
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 5)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Build Some(line) box: alloc(16), tag=0, data, len.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 5)
+	// tag = 0
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	// data at +8
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	// len at +12
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 5)
 	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)

@@ -3188,6 +3188,73 @@ func TestEmitArrIdx(t *testing.T) {
 	}
 }
 
+// TestEmitReadLine — pipe stdin to wasmtime and verify the
+// Option[string] heap box. Layout: tag at +0 (0=Some, 1=None),
+// data ptr at +8, len at +12. Each case loads the tag and (for
+// Some) the length, returning either the length or -1 (None).
+func TestEmitReadLine(t *testing.T) {
+	cases := []struct {
+		label, stdin string
+		want         string
+	}{
+		{"empty", "", "-1"},
+		{"two-bytes-eof", "hi", "2"},
+		{"one-line-newline", "hi\n", "3"},
+		{"first-of-multi", "alpha\nbeta", "6"},
+	}
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "read_line"},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoad}, // tag
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpEq},
+			{Kind: ir.OpIf, I32: ir.BlockTypeI32},
+			{Kind: ir.OpConstI32, I32: -1},
+			{Kind: ir.OpElse},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 12},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpLoad}, // len at +12
+			{Kind: ir.OpEnd},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.label, func(t *testing.T) {
+			cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+			cmd.Stdin = strings.NewReader(c.stdin)
+			var so, se bytes.Buffer
+			cmd.Stdout = &so
+			cmd.Stderr = &se
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+			}
+			lines := strings.Split(strings.TrimSpace(so.String()), "\n")
+			got := lines[len(lines)-1]
+			if got != c.want {
+				t.Fatalf("read_line(%q) = %q, want %q", c.stdin, got, c.want)
+			}
+		})
+	}
+}
+
 // TestEmitReadByte — pipe stdin to wasmtime and expect the
 // first read_byte() call to return the ASCII code of the first
 // byte. Reading 'A' (0x41) should produce "65" on stdout.
