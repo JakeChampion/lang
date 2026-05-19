@@ -76,7 +76,12 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// remaining callers. Critical for the binary path since
 	// the auto-injected stdlib drags in ~250 helpers most of
 	// which never get called from user code.
-	if live := ir.LiveFunctions(ip); live != nil {
+	//
+	// Pass CallDirectAliases so the reachability walker knows
+	// about emit-time rewrites — without this, a user-code
+	// `map_new` call wouldn't keep `map_new_impl` alive, and
+	// the call site would resolve to a culled function.
+	if live := ir.LiveFunctionsWithAliases(ip, CallDirectAliases); live != nil {
 		out := ip.Funcs[:0]
 		for _, irFn := range ip.Funcs {
 			if live[irFn.Name] {

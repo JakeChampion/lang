@@ -133,6 +133,35 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_alloc")
 					needs.add("__lang_read_byte")
 				}
+				// Low-level memory shims the stdlib calls directly
+				// (raw OpCallDirect, no callDirectAlias rewrite).
+				// Each is a one-instruction wrapper around a wasm
+				// load / store / bulk-memory op so stdlib `.lang`
+				// code can drop into raw memory without leaving the
+				// language.
+				switch op.Str {
+				case "__load_i32":
+					needs.add("__load_i32")
+				case "__store_i32":
+					needs.add("__store_i32")
+				case "__load_i64":
+					needs.add("__load_i64")
+				case "__store_i64":
+					needs.add("__store_i64")
+				case "__load_ptr":
+					needs.add("__load_ptr")
+				case "__store_ptr":
+					needs.add("__store_ptr")
+				case "__ptr_width":
+					needs.add("__ptr_width")
+				case "__alloc", "__alloc_u8":
+					needs.add("__lang_alloc")
+					needs.add(op.Str)
+				case "__memcpy":
+					needs.add("__memcpy")
+				case "__memset":
+					needs.add("__memset")
+				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
 				// through __lang_str_byte, and the length
@@ -235,6 +264,82 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadByteBody,
+	},
+	"__load_i32": {
+		// (addr) → i32 — i32.load wrapper. Stdlib uses this where
+		// the language doesn't expose raw memory ops directly.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildLoadI32Body,
+	},
+	"__store_i32": {
+		// (addr, v) → () — i32.store wrapper.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildStoreI32Body,
+	},
+	"__load_i64": {
+		// (addr) → i64 — i64.load wrapper. Map runtime uses this
+		// to dereference boxed wide-scalar keys.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI64},
+		body:    buildLoadI64Body,
+	},
+	"__store_i64": {
+		// (addr, v) → () — i64.store wrapper.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64},
+		results: nil,
+		body:    buildStoreI64Body,
+	},
+	"__load_ptr": {
+		// (addr) → i32 — same as __load_i32 on wasm32 (heap
+		// pointer = i32). Lives in the registry under its own
+		// name for parity with the stdlib alias.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildLoadI32Body,
+	},
+	"__store_ptr": {
+		// (addr, v) → () — same as __store_i32 on wasm32.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildStoreI32Body,
+	},
+	"__ptr_width": {
+		// () → i32 — 4 on wasm32. Stdlib uses this in size
+		// computations that vary between 4-byte and 8-byte
+		// targets (the same .lang code runs on arm64).
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildPtrWidthBody,
+	},
+	"__alloc": {
+		// (size) → i32 — same as __lang_alloc. Lives in the
+		// registry for stdlib parity.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildAliasAllocBody,
+	},
+	"__alloc_u8": {
+		// (size) → i32 — same as __lang_alloc. Stdlib uses this
+		// for byte-aligned buffers (no special alignment needed
+		// on wasm).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildAliasAllocBody,
+	},
+	"__memcpy": {
+		// (dst, src, n) → () — wasm memory.copy.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildMemcpyBody,
+	},
+	"__memset": {
+		// (dst, b, n) → () — wasm memory.fill. b is treated as
+		// a byte (low 8 bits of the i32).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildMemsetBody,
 	},
 	"__str_eq": {
 		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).
@@ -646,5 +751,83 @@ func buildStrLenBody(_ map[string]uint32) []byte {
 	body = inst.InstElse(body)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstEnd(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildLoadI32Body — i32 (addr) → i32. Single i32.load at offset 0.
+// Also used for __load_ptr on wasm32 (heap pointer = i32).
+func buildLoadI32Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildStoreI32Body — (addr, v) → (). Single i32.store at offset 0.
+// Also used for __store_ptr on wasm32.
+func buildStoreI32Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // addr
+	body = inst.InstLocalGet(body, 1) // v
+	body = memory.InstI32Store(body, 2, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildLoadI64Body — (addr) → i64. Single i64.load at offset 0.
+func buildLoadI64Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI64Load(body, 3, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildStoreI64Body — (addr, v) → (). Single i64.store at offset 0.
+func buildStoreI64Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // addr
+	body = inst.InstLocalGet(body, 1) // v (i64)
+	body = memory.InstI64Store(body, 3, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildPtrWidthBody — () → 4. wasm32's pointer width in bytes.
+func buildPtrWidthBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildAliasAllocBody — (size) → i32. Calls __lang_alloc; lets
+// stdlib reference `__alloc` / `__alloc_u8` by name.
+func buildAliasAllocBody(helperIdxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, helperIdxs["__lang_alloc"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildMemcpyBody — (dst, src, n) → (). Emits the wasm
+// `memory.copy` instruction (0xFC 0x0A 0x00 0x00). Spec:
+//
+//	https://webassembly.github.io/spec/core/binary/instructions.html#bulk-memory-instructions
+//
+// dst and src memory indices are both zero (single-memory wasm 1.0).
+func buildMemcpyBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // dst
+	body = inst.InstLocalGet(body, 1) // src
+	body = inst.InstLocalGet(body, 2) // n
+	body = append(body, 0xFC, 0x0A, 0x00, 0x00)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildMemsetBody — (dst, b, n) → (). Emits `memory.fill`
+// (0xFC 0x0B 0x00). b is treated as a byte (low 8 bits).
+func buildMemsetBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // dst
+	body = inst.InstLocalGet(body, 1) // b
+	body = inst.InstLocalGet(body, 2) // n
+	body = append(body, 0xFC, 0x0B, 0x00)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
