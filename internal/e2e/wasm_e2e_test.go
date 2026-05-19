@@ -23,10 +23,12 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
+	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/wasm/componenttype"
 	conv "github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
@@ -222,6 +224,118 @@ func finishComponent(t *testing.T, wat string) string {
 		t.Fatalf("wasm-tools component new: %v\n%s", err, out)
 	}
 	return componentPath
+}
+
+// buildComponentBin is the wasmbin-backed sibling of
+// buildComponent: parse → check → constfold → monomorph →
+// wasmbin.BuildWithOptions (ForceMemorySection + SynthStart +
+// PrintMainResult) → componenttype.Embed → wasm-tools component
+// new. Skips the WAT-text + `wasm-tools parse` round-trip the
+// original buildComponent ran. Used by tests migrating off the
+// WAT backend as part of its planned retirement; both helpers
+// produce a preview-2 component the existing runComponent +
+// invokeWasmtime wrappers can drive unchanged.
+//
+// Restricted to programs whose feature surface wasmbin already
+// covers (the diff oracle's 1024-seed corpus): no
+// `read_file` / `write_file` / `tcp_*` / HttpHandler.
+// Callers that need those keep using buildComponent (WAT) until
+// the helpers land on the wasmbin side.
+func buildComponentBin(t *testing.T, src string) string {
+	t.Helper()
+	skipIfPreview2Missing(t)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.lang")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		ForceMemorySection: true,
+		SynthStart:         true,
+		PrintMainResult:    true,
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+	return finishComponentFromCoreBytes(t, bin)
+}
+
+// finishComponentFromCoreBytes is the wasm-tools-parse-skipping
+// sibling of finishComponent: embeds the component-type custom
+// section directly (via internal/wasm/componenttype.Embed) and
+// runs `wasm-tools component new` to compose with the WASI
+// preview-1 adapter. Used by buildComponentBin where the input
+// is already binary core wasm out of wasmbin.
+func finishComponentFromCoreBytes(t *testing.T, core []byte) string {
+	t.Helper()
+	dir := t.TempDir()
+	embeddedBytes, err := componenttype.Embed(core, "lang")
+	if err != nil {
+		t.Fatalf("componenttype.Embed: %v", err)
+	}
+	embeddedPath := filepath.Join(dir, "prog.embedded.wasm")
+	if err := os.WriteFile(embeddedPath, embeddedBytes, 0o644); err != nil {
+		t.Fatalf("write embedded: %v", err)
+	}
+	componentPath := filepath.Join(dir, "prog.component.wasm")
+	if out, err := exec.Command("wasm-tools", "component", "new",
+		"--adapt", "wasi_snapshot_preview1="+os.Getenv("LANG_WASI_ADAPTER"),
+		embeddedPath, "-o", componentPath,
+	).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools component new: %v\n%s", err, out)
+	}
+	return componentPath
+}
+
+// invokeWasmtimeBin is the wasmbin-backed sibling of
+// invokeWasmtime. Same return shape (stdout, stderr); same
+// failure mode (Fatal on wasmtime exit != 0). Lets tests opt
+// into the wasmbin codegen path without touching invokeWasmtime.
+func invokeWasmtimeBin(t *testing.T, src string) (stdout, stderr string) {
+	t.Helper()
+	p := buildComponentBin(t, src)
+	s, e, ec := runComponent(t, p, runOpts{})
+	if ec != 0 {
+		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
+	}
+	return s, e
+}
+
+// runWasmBin is the wasmbin-backed sibling of runWasm. Reads
+// main's i32 result off the line `_start` prints via
+// `int_to_string + __lang_print` under wasmbin's PrintMainResult.
+func runWasmBin(t *testing.T, src string) int {
+	t.Helper()
+	stdout, _ := invokeWasmtimeBin(t, src)
+	for _, ln := range strings.Split(stdout, "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if i := strings.LastIndex(ln, " "); i >= 0 {
+			ln = ln[i+1:]
+		}
+		if n, err := strconv.Atoi(ln); err == nil {
+			return n
+		}
+	}
+	t.Fatalf("could not parse wasmtime output:\n%s", stdout)
+	return 0
 }
 
 // runComponent runs the component under wasmtime, returning the
@@ -689,7 +803,7 @@ func runWasm(t *testing.T, src string) int {
 }
 
 func TestWASMReturn42(t *testing.T) {
-	if got := runWasm(t, `function main(): i32 { return 42; }`); got != 42 {
+	if got := runWasmBin(t, `function main(): i32 { return 42; }`); got != 42 {
 		t.Errorf("got %d, want 42", got)
 	}
 }
@@ -707,7 +821,7 @@ function main(): i32 {
     if (z == 42) { return 0; }
     return 1;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (i64 arith mismatch)", got)
 	}
 }
@@ -729,7 +843,7 @@ function main(): i32 {
     if (c <= 0) { return 3; }
     return 0;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (polymorphic literal mismatch)", got)
 	}
 }
@@ -765,7 +879,7 @@ function main(): i32 {
     var n: usize = 21;
     return dbl(n) as i32;
 }`
-	if got := runWasm(t, src); got != 42 {
+	if got := runWasmBin(t, src); got != 42 {
 		t.Errorf("got %d, want 42 (usize on wasm32)", got)
 	}
 }
@@ -784,7 +898,7 @@ func TestWASMSubI32Widths(t *testing.T) {
     if (u32_form != 65000) { return 3; }
     return 0;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (sub-i32 width arithmetic)", got)
 	}
 }
@@ -816,7 +930,7 @@ func TestWASMU8Array(t *testing.T) {
     if (len(bytes) != 3) { return 4; }
     return 0;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (u8 array)", got)
 	}
 }
@@ -831,7 +945,7 @@ func TestWASMI8Array(t *testing.T) {
     if ((v[2] as i32) != 127) { return 3; }
     return 0;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (i8 array)", got)
 	}
 }
@@ -845,7 +959,7 @@ func TestWASMU16Array(t *testing.T) {
     if (v[2] != 32768) { return 3; }
     return 0;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (u16 array)", got)
 	}
 }
@@ -867,7 +981,7 @@ function main(): i32 {
     if (c.is_red()) { return 0; }
     return 1;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (enum method dispatch)", got)
 	}
 }
@@ -888,7 +1002,7 @@ function main(): i32 {
     if (n.unwrap_or(99) != 99) { return 2; }
     return 0;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (generic enum method)", got)
 	}
 }
@@ -933,7 +1047,7 @@ func TestWASMMapBasics(t *testing.T) {
     }
     return 0;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (map basic ops)", got)
 	}
 }
@@ -963,7 +1077,7 @@ func TestWASMMapResize(t *testing.T) {
     }
     return 0;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (map resize)", got)
 	}
 }
@@ -999,7 +1113,7 @@ func TestWASMMapKeysValues(t *testing.T) {
     if (sum != 600) { return 9; }
     return 0;
 }`
-	if got := runWasm(t, src); got != 0 {
+	if got := runWasmBin(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (map keys/values)", got)
 	}
 }
