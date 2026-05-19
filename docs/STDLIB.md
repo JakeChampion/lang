@@ -266,6 +266,12 @@ function main(): i32 {
 - **Runner:** `TestRunner` (struct), `test_new(suite)`,
   `test_new_verbose(suite)`, `(r).it(name, result)`,
   `(r).finish() -> i32`
+- **Skips & subsuites:** `(r).skip(name, reason)`,
+  `(r).skip_if(cond, name, reason, result)`,
+  `(r).subsuite(name)`, `(r).merge(child)` — toolchain-gated
+  cases emit a TAP `# SKIP` directive; subsuites print with
+  `parent / child` prefixes while keeping monotonic TAP
+  numbering
 - **Outcome constructors:** `pass()`, `fail(msg)`
 - **Boolean assertions:** `assert_true(cond)`, `assert_false(cond)`
 - **i32 assertions:** `assert_eq_i32`, `assert_neq_i32`,
@@ -278,10 +284,54 @@ function main(): i32 {
   `assert_starts_with`, `assert_ends_with`
 - **Array assertions:** `assert_len_i32`, `assert_len_string`,
   `assert_eq_i32_array`, `assert_eq_string_array`
+- **Process assertions** (paired with the `subprocess(...)`
+  builtin): `assert_exit`, `assert_stdout_eq`,
+  `assert_stderr_eq`, `assert_stdout_contains`,
+  `assert_stderr_contains`, `assert_process(result, exit,
+  stdout_substr)`
 
 Examples live under `examples/tests/`; the runner's own
 meta-test (`runner_self_test.lang`) walks every assertion
 helper on both pass and fail paths.
+
+### `std/fuzz`
+
+Byte-stream fuzzing harness layered on `std/test`. A fuzz
+target is a `(string) => Option[string]` function — same
+shape as a regular test — that gets called with each seed
+verbatim and then `iterations` mutated variants (byte flip /
+drop / insert / unchanged). The first failing input surfaces
+as the runner's failure message with the offending bytes
+escaped so the log doubles as a reproducer.
+
+```
+function check_to_upper_idempotent(input: string): Option[string] {
+    if (input.to_upper().to_upper() == input.to_upper()) { return None; }
+    return Some("to_upper is not idempotent");
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("fuzz");
+    r = r.fuzz("to_upper idempotent",
+               ["", "abc", "Hello"], 100,
+               check_to_upper_idempotent);
+    return r.finish();
+}
+```
+
+- `fuzz_run(seeds, iterations, target)` — raw entry point;
+  returns `Option[string]` with the reproducer on failure
+- `(r).fuzz(name, seeds, iterations, target)` — receiver-
+  method form that folds the outcome into the runner as one
+  TAP case
+- `fuzz_default_iterations()` — `200`; tuned for sub-second
+  per-target runs in CI
+
+Limitations: a target that crashes (out-of-bounds index,
+division by zero) aborts the whole run (lang has no panic
+recovery); the harness is uniform-random, not coverage-
+guided. The API is shaped so both can layer in later
+without breaking the surface.
 
 ## `core/`
 
