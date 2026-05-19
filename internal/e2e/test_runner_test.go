@@ -791,6 +791,34 @@ func TestRunnerFloatMathExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/timing_test.lang` exercises the time
+// builtins (`now_unix_ms`, `monotonic_ns`, `sleep_ms`) and
+// the elapsed-time assertion helpers (`assert_elapsed_lt_ms`
+// / `_us`). Six cases — the failure-message case verifies
+// the contract that the diagnostic embeds both the observed
+// elapsed time AND the deadline so a flaky-bench failure
+// preserves enough state to decide whether to bump the
+// bound.
+func TestRunnerTimingExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/timing_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - now_unix_ms advances",
+		"ok 3 - sleep_ms actually sleeps",
+		"ok 5 - elapsed failure embeds context",
+		"# pass 6",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

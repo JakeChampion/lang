@@ -1275,6 +1275,44 @@ pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) 
     return ("", r);
 }
 
+// =================== TIMING ASSERTIONS ===================
+//
+// Benchmark-shape assertions: "the operation under test
+// completed within N milliseconds". Pair with the
+// `monotonic_ns()` builtin to stamp the start time, then
+// pass the stamp + the deadline to one of these helpers.
+// The deadline is the upper bound — passes when elapsed
+// is strictly LESS than the deadline.
+//
+// Use `monotonic_ns` for the timestamps (not `now_unix_ms`)
+// so NTP-style wall-clock adjustments don't move the
+// goalposts mid-test.
+
+// `assert_elapsed_lt_ms(start_ns, max_ms)` — passes if the
+// elapsed time since `start_ns` (a `monotonic_ns()` stamp)
+// is below `max_ms`. The failure message embeds both the
+// observed elapsed and the deadline so a flaky-bench
+// failure logs enough context to decide whether to bump
+// the bound.
+pub function assert_elapsed_lt_ms(start_ns: i64, max_ms: i64): Option[string] {
+    var elapsed_ns: i64 = monotonic_ns() - start_ns;
+    var elapsed_ms: i64 = elapsed_ns / (1000000 as i64);
+    if (elapsed_ms < max_ms) { return None; }
+    return Some("assert_elapsed_lt_ms: " + elapsed_ms.to_string() +
+                "ms elapsed, expected < " + max_ms.to_string() + "ms");
+}
+
+// `assert_elapsed_lt_us(start_ns, max_us)` — finer-grained
+// for sub-millisecond budgets. Same shape as the `_ms`
+// variant; the failure message reports microseconds.
+pub function assert_elapsed_lt_us(start_ns: i64, max_us: i64): Option[string] {
+    var elapsed_ns: i64 = monotonic_ns() - start_ns;
+    var elapsed_us: i64 = elapsed_ns / (1000 as i64);
+    if (elapsed_us < max_us) { return None; }
+    return Some("assert_elapsed_lt_us: " + elapsed_us.to_string() +
+                "µs elapsed, expected < " + max_us.to_string() + "µs");
+}
+
 // =================== JSON DEEP EQUALITY ===================
 //
 // Structured-output tests (HTTP handlers emitting JSON,

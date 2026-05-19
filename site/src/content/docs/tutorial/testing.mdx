@@ -344,3 +344,6 @@ in the repo:
   `.log()` etc., the IEEE-754 classification helpers, and
   the round-trip property tests
   (`exp(log(x)) == x`, `sin² + cos² = 1`)
+- `timing_test.lang` — `monotonic_ns()` / `now_unix_ms()` /
+  `sleep_ms()` builtins + `assert_elapsed_lt_ms` for
+  benchmark-style "completes within N ms" assertions

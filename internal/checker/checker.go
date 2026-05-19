@@ -948,6 +948,38 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
 	}
+	// now_unix_ms(): i64 — wall-clock milliseconds since the
+	// Unix epoch (1970-01-01 00:00:00 UTC). Wraps Go's
+	// `time.Now().UnixMilli()`. Subject to NTP adjustments
+	// and intentional clock changes — DON'T use for benchmark
+	// timing; use `monotonic_ns()` for that. The use cases
+	// for this primitive are "stamp a log line with the
+	// current time" and "compute the date for a fixture file
+	// name".
+	c.info.FuncSigs["now_unix_ms"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// monotonic_ns(): i64 — nanoseconds since some fixed
+	// reference, monotonically non-decreasing. Wraps Go's
+	// `time.Now().UnixNano()` (which carries a monotonic
+	// reading on every platform Go supports). Use for
+	// benchmark timing — the elapsed time between two
+	// `monotonic_ns()` calls is the right answer regardless
+	// of wall-clock NTP jumps.
+	c.info.FuncSigs["monotonic_ns"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// sleep_ms(ms): void — best-effort sleep for the given
+	// duration. Useful in tests that want to wait for a
+	// timer / background process to make progress. Not
+	// designed for hard real-time guarantees — Go's runtime
+	// scheduler may delay wakeup under load.
+	c.info.FuncSigs["sleep_ms"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
 	// temp_dir(prefix): Result[string, IoError] — create a
 	// fresh empty directory and return its absolute path.
 	// `prefix` is appended to a random suffix so concurrent
