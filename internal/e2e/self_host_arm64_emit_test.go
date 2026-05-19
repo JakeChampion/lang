@@ -406,6 +406,24 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"plain-string-fn-result-print",
+			"function get(): string { return \"hi\"; } function main(): i32 { print(get()); return 0; }",
+			0,
+			"hi",
+		},
+		{
+			"closure-string-capture",
+			"function main(): i32 { var s = \"hi\"; var f = function (): string { return s; }; print(f()); return 0; }",
+			0,
+			"hi",
+		},
+		{
+			"closure-string-concat-capture",
+			"function main(): i32 { var prefix = \"hello-\"; var f = function (suf: string): string { return prefix + suf; }; print(f(\"world\")); return 0; }",
+			0,
+			"hello-world",
+		},
+		{
 			"closure-nested-three-deep",
 			"function main(): i32 { var k = 100; var a = function (): i32 { var b = function (): i32 { var c = function (): i32 { return k; }; return c(); }; return b(); }; return a(); }",
 			100,
