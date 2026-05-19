@@ -62,6 +62,16 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_environ_sizes_get": {
+		// (envc_ptr i32, env_buf_size_ptr i32) → errno.
+		// Writes the environment-variable count + the total
+		// byte size of the concatenated env strings into the
+		// two output pointers.
+		module:  "wasi_snapshot_preview1",
+		name:    "environ_sizes_get",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -98,6 +108,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	}
 	if helpers.set["__lang_now_ns"] {
 		in.add("wasi_clock_time_get")
+	}
+	if helpers.set["__lang_env_count"] {
+		in.add("wasi_environ_sizes_get")
 	}
 	return in
 }
@@ -272,6 +285,35 @@ func buildNowNsBody(idxs map[string]uint32) []byte {
 	// return i64.load(buf)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI64Load(body, 3, 0)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildEnvCountBody assembles the wasm bytes for __lang_env_count.
+//
+// Signature: () → i32 (envc)
+//
+// Body:
+//
+//	buf = __lang_alloc(8)               ; two i32 output slots
+//	wasi_environ_sizes_get(buf, buf + 4)
+//	drop errno
+//	return i32.load(buf)                ; envc lives at +0
+func buildEnvCountBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	envSizes := idxs["wasi_environ_sizes_get"]
+	var body []byte
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 0) // $buf
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, envSizes)
+	body = inst.InstDrop(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
