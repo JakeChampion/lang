@@ -85,6 +85,8 @@ const (
 	// needs `i32.reinterpret_f32` / `f32.reinterpret_i32`.
 	OpReinterpretI32F32 // (f32) → i32 (bits, IEEE-754 layout)
 	OpReinterpretF32I32 // (i32) → f32 (bits, IEEE-754 layout)
+	OpReinterpretI64F64 // (f64) → i64 (bits, IEEE-754 layout)
+	OpReinterpretF64I64 // (i64) → f64 (bits, IEEE-754 layout)
 
 	// Locals (parameter or var). Idx is the 0-based slot.
 	OpLoadLocal  // ()                → T
@@ -342,6 +344,10 @@ func (k OpKind) String() string {
 		return "i32.reinterpret_f32"
 	case OpReinterpretF32I32:
 		return "f32.reinterpret_i32"
+	case OpReinterpretI64F64:
+		return "i64.reinterpret_f64"
+	case OpReinterpretF64I64:
+		return "f64.reinterpret_i64"
 	case OpConstStr:
 		return "const.str"
 	case OpConstFunc:
@@ -5135,6 +5141,22 @@ func (b *builder) callBody(n *ast.Call) error {
 				b.emit(Op{Kind: OpReinterpretI32F32})
 			} else {
 				b.emit(Op{Kind: OpReinterpretF32I32})
+			}
+			return nil
+		}
+	}
+	// f64_bits / f64_from_bits: 64-bit cousin of the f32 pair.
+	// Same zero-cost reinterpret on natives; wasm needs the
+	// typed `i64.reinterpret_f64` / `f64.reinterpret_i64` op.
+	if (id.Name == "f64_bits" || id.Name == "f64_from_bits") && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			if err := b.expr(n.Args[0]); err != nil {
+				return err
+			}
+			if id.Name == "f64_bits" {
+				b.emit(Op{Kind: OpReinterpretI64F64})
+			} else {
+				b.emit(Op{Kind: OpReinterpretF64I64})
 			}
 			return nil
 		}

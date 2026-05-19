@@ -833,6 +833,10 @@ func (g *generator) emitOp(irFn *ir.Func, opIndex int) error {
 		g.line("i32.reinterpret_f32")
 	case ir.OpReinterpretF32I32:
 		g.line("f32.reinterpret_i32")
+	case ir.OpReinterpretI64F64:
+		g.line("i64.reinterpret_f64")
+	case ir.OpReinterpretF64I64:
+		g.line("f64.reinterpret_i64")
 	case ir.OpConstF32:
 		g.linef("f32.const %g", op.F32)
 	case ir.OpConstF64:
