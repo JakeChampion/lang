@@ -1620,6 +1620,39 @@ func TestRunnerJSONFieldEqExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/string_count_and_dir_listing_test.lang`
+// exercises batch-35 additions:
+//   - `assert_string_count(haystack, needle, n)` —
+//     non-overlapping occurrence count of `needle`.
+//   - `assert_eq_dir_listing(dir, expected_names)` —
+//     multiset compare of dir contents (readdir order
+//     not observable; sorts both sides then delegates to
+//     assert_eq_string_array).
+//
+// 10 cases.
+func TestRunnerStringCountAndDirListingExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_count_and_dir_listing_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 4 - string_count non-overlapping",
+		"ok 5 - string_count wrong reports both",
+		"ok 6 - string_count empty haystack",
+		"ok 7 - listing matches multiset (sorted)",
+		"ok 9 - extra file flagged via length diff",
+		"ok 10 - dir_listing missing dir",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
