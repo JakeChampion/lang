@@ -1862,6 +1862,57 @@ func TestRunnerFailFastExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/quiet_mode_test.lang` exercises the new
+// --quiet mode added to std/test:
+//   - `test_new_quiet(suite)` / `(r).with_quiet()` /
+//     `parse_quiet_from_args(argv)` — the constructor +
+//     fluent setter + CLI parser triple, matching the
+//     `--filter` / `--fail-fast` family shape.
+//   - The contract: `ok N - name` lines suppressed for
+//     passes + skips; `not ok` lines still print; the
+//     `1..N` plan + summary footer still print; counters
+//     are unaffected.
+//
+// 7 cases (isolated-child-runner pattern from
+// fail_fast_test.lang). The interleaved TAP output is
+// part of what we pin: child runners' `# Suite:` headers
+// still appear (those come from `test_new`, not quiet
+// mode), but their `ok N - p1` / `ok N - p2` per-case
+// lines are absent — proving quiet suppresses the
+// per-case prints.
+func TestRunnerQuietModeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/quiet_mode_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: quiet-counters",
+		"ok 1 - quiet preserves counters across passes",
+		"ok 7 - test_new_quiet enables flag",
+		"# pass 7",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+	// Negative check: the quiet child-runner cases (p1 /
+	// p2 / p3 inside test_quiet_preserves_counters) MUST
+	// NOT print their per-case lines. If they ever do, the
+	// suppression broke.
+	for _, suppressed := range []string{
+		"- p1",
+		"- p2",
+		"- p3",
+	} {
+		if strings.Contains(out, suppressed) {
+			t.Errorf("quiet mode failed to suppress %q in:\n%s", suppressed, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
