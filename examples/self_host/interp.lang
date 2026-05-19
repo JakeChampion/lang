@@ -27,18 +27,26 @@ pub struct VInt { v: i32 }
 pub struct VBool { v: boolean }
 pub struct VString { v: string }
 pub struct VArr { elements: Value[] }
+// VStruct holds a user-defined struct value. Parallel arrays
+// for field names and corresponding evaluated values.
+// type_name is the struct's declared name — useful for
+// diagnostics and (later) for struct-aware equality.
+pub struct VStruct { type_name: string, field_names: string[], field_values: Value[] }
 pub struct VErr { msg: string }
 
 // VErr is the bottom of the value lattice — it propagates
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
 
-pub type Value = VInt | VBool | VString | VArr | VErr;
+pub type Value = VInt | VBool | VString | VArr | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
+function v_struct(type_name: string, names: string[], values: Value[]): Value {
+    return VStruct { type_name: type_name, field_names: names, field_values: values };
+}
 function v_err(msg: string): Value { return VErr { msg: msg }; }
 
 function is_err(v: Value): boolean {
@@ -358,8 +366,42 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_err("unreachable slice arm");
         },
-        parser.ExprStructLit(_) => { return v_err("struct literals not implemented in interp yet"); },
-        parser.ExprFieldAccess(_) => { return v_err("field access not implemented in interp yet"); },
+        parser.ExprStructLit(sl) => {
+            // Evaluate each field's value in declaration order,
+            // propagating the first VErr. Field names are
+            // copied as-is from the parser; the runtime treats
+            // them as opaque strings for lookup.
+            var fvs: Value[] = [];
+            var i: i32 = 0;
+            while (i < len(sl.field_values)) {
+                var fv: Value = eval_expr(sl.field_values[i], env);
+                if (is_err(fv)) { return fv; }
+                fvs = fvs.push(fv);
+                i = i + 1;
+            }
+            return v_struct(sl.type_name, sl.field_names, fvs);
+        },
+        parser.ExprFieldAccess(fa) => {
+            // Evaluate the object, expect a VStruct, look up
+            // the field name. Linear scan over field_names —
+            // structs are typically small so this is fine.
+            var ov: Value = eval_expr(fa.obj, env);
+            if (is_err(ov)) { return ov; }
+            match (ov) {
+                VStruct(sv) => {
+                    var i: i32 = 0;
+                    while (i < len(sv.field_names)) {
+                        if (sv.field_names[i] == fa.field) {
+                            return sv.field_values[i];
+                        }
+                        i = i + 1;
+                    }
+                    return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
+                },
+                _ => { return v_err("can only field-access a struct"); }
+            }
+            return v_err("unreachable field-access arm");
+        },
         parser.ExprUnknown(u) => { return v_err("parser-side unknown: " + u.kind); }
     }
     return v_err("unhandled Expr variant");
@@ -439,6 +481,11 @@ function value_eq(a: Value, b: Value): boolean {
             // by requiring matching types in `==` (both sides
             // would resolve to TypeArray, which is rejected by
             // the equality op anyway).
+            return false;
+        },
+        VStruct(_) => {
+            // Struct equality not implemented yet — same
+            // rationale as arrays.
             return false;
         },
         VErr(_) => { return false; }
@@ -922,6 +969,40 @@ function main(): i32 {
     match (r34) {
         VInt(i) => { if (i.v != 6) { return 340; } },
         _ => { return 341; }
+    }
+
+    // Struct literal + field access: `Point { x: 3, y: 4 }.x` → 3.
+    var r35: Value = run_source("return Point { x: 3, y: 4 }.x;");
+    match (r35) {
+        VInt(i) => { if (i.v != 3) { return 350; } },
+        _ => { return 351; }
+    }
+
+    // Struct value bound to a var then field-accessed via the
+    // ident → recovers the original field.
+    var r36: Value = run_source(
+        "var p = Point { x: 7, y: 11 }; return p.x + p.y;"
+    );
+    match (r36) {
+        VInt(i) => { if (i.v != 18) { return 360; } },
+        _ => { return 361; }
+    }
+
+    // Nested struct: `Box { inner: Point { x: 5, y: 0 } }.inner.x`
+    // exercises field access on a struct-valued field.
+    var r37: Value = run_source(
+        "var b = Box { inner: Point { x: 5, y: 0 } }; return b.inner.x;"
+    );
+    match (r37) {
+        VInt(i) => { if (i.v != 5) { return 370; } },
+        _ => { return 371; }
+    }
+
+    // Missing field → VErr.
+    var r38: Value = run_source("return Point { x: 1, y: 2 }.z;");
+    match (r38) {
+        VErr(_) => { },
+        _ => { return 380; }
     }
 
     return 0;
