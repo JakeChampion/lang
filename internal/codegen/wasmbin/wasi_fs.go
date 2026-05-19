@@ -64,8 +64,18 @@ const (
 // RIGHT_FD_READ (and inheriting variant) for read_file; write
 // support adds RIGHT_FD_WRITE later.
 const (
-	wasiRightFdRead  int64 = 0x02
-	wasiRightFdSeek  int64 = 0x01
+	wasiRightFdRead    int64 = 0x02
+	wasiRightFdSeek    int64 = 0x01
+	wasiRightFdWrite   int64 = 0x40
+	wasiRightPathOpen  int64 = 0x2000
+	wasiRightFdAllRead = wasiRightFdRead | wasiRightFdSeek | wasiRightPathOpen
+	wasiRightFdAllWrite = wasiRightFdWrite | wasiRightFdSeek | wasiRightPathOpen
+)
+
+// WASI preview-1 `oflags` bits for path_open.
+const (
+	wasiOflagCreate    int32 = 0x01
+	wasiOflagTruncate  int32 = 0x08
 )
 
 // buildBuildIoErrorBody assembles __build_io_error.
@@ -204,7 +214,9 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 //	scratch[8..11]:  iov.len  for fd_read
 //	scratch[12..15]: fd_read output (nread)
 //
-// Path: alloc 16-byte scratch → path_open(fd=3, …, retptr) →
+// Path: alloc 16-byte scratch → normalize the path into a heap
+// buffer (SSO-safe; short paths are encoded inline by the
+// string runtime) → path_open(fd=3, …, retptr) →
 // errno-check → if open failed, wrap errno via
 // __build_io_error and return Err. Otherwise loop fd_read with
 // a 4 KiB doubling buffer, fd_close, materialise the string,
@@ -225,6 +237,9 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 //	10: $new_size           scratch for buffer doubling
 //	11: $strbuf             final string data heap ptr
 //	12: $result             heap-form Result pointer
+//	13: $path_buf           SSO-normalized path data (heap ptr)
+//	14: $path_byte_len      decoded byte length of the path
+//	15: $i_path             str-normalize loop counter
 func buildReadFileBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__lang_alloc"]
 	buildIoErr := idxs["__build_io_error"]
@@ -234,19 +249,27 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 
 	var body []byte
 
-	// scratch = alloc(16)
+	// Scratch FIRST — keeps the path_open retptr 4-byte aligned
+	// even after the str-normalize allocations consume a few
+	// arbitrary-size bytes off the bump cursor.
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 2)
 
-	// errno = path_open(dirfd=3, dirflags=1, path_data, path_len,
+	// Normalize the path so path_open sees a contiguous host-
+	// readable byte buffer (the IR's SSO encoding packs strings
+	// ≤ 7 bytes into the (data, len) bit pattern itself; that
+	// isn't a valid memory address).
+	body = emitStrNormalize(body, idxs, 0, 1, 13, 14, 15)
+
+	// errno = path_open(dirfd=3, dirflags=1, path_buf, path_byte_len,
 	//                    oflags=0, fs_rights_base=RIGHT_FD_READ,
 	//                    fs_rights_inheriting=RIGHT_FD_READ,
 	//                    fdflags=0, retptr=scratch)
 	body = inst.InstI32Const(body, preopenDirfd)        // dirfd
 	body = inst.InstI32Const(body, 1)                   // dirflags (symlink_follow)
-	body = inst.InstLocalGet(body, 0)                   // path_data
-	body = inst.InstLocalGet(body, 1)                   // path_len
+	body = inst.InstLocalGet(body, 13)                  // path_buf
+	body = inst.InstLocalGet(body, 14)                  // path_byte_len
 	body = inst.InstI32Const(body, 0)                   // oflags
 	body = inst.InstI64Const(body, wasiRightFdRead|wasiRightFdSeek) // fs_rights_base
 	body = inst.InstI64Const(body, wasiRightFdRead|wasiRightFdSeek) // fs_rights_inheriting
@@ -419,7 +442,253 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 
 	body = inst.InstLocalGet(body, 12)
 
-	// Locals declaration: 11 i32 locals (slots 2..12).
-	locals := inst.PutLocalsOneGroup(nil, 11, encode.ValtypeI32)
+	// Locals declaration: 14 i32 locals (slots 2..15) — the 11
+	// originals plus the path-normalize scratch trio.
+	locals := inst.PutLocalsOneGroup(nil, 14, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// emitStrNormalize copies an SSO-encoded `(data, len)` string
+// into a fresh heap buffer of its byte length, returning the
+// heap buffer pointer + byte length as two consecutive op
+// sequences. Caller supplies the two source locals (data, len)
+// + the per-call scratch locals (bufLocal, lenLocal, iLocal).
+// Leaves nothing on the operand stack on entry/exit; bufLocal
+// holds the heap pointer and lenLocal holds the byte length.
+//
+// Mirrors the SSO-aware copy loop in buildPrintBodyFd —
+// path_open's path argument must be a contiguous byte buffer
+// in linear memory, so inline-form strings (high bit on len)
+// can't be passed straight through.
+func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, bufLocal, byteLenLocal, iLocal uint32) []byte {
+	strLen := idxs["__lang_str_len"]
+	strByte := idxs["__lang_str_byte"]
+	alloc := idxs["__lang_alloc"]
+
+	// byteLen = __lang_str_len(data, len)
+	body = inst.InstLocalGet(body, dataLocal)
+	body = inst.InstLocalGet(body, lenLocal)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalTee(body, byteLenLocal)
+
+	// buf = alloc(byteLen)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, bufLocal)
+
+	// for i in 0..byteLen: mem[buf+i] = __lang_str_byte(data, len, i)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, iLocal)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstLocalGet(body, byteLenLocal)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1) // exit on i >= byteLen
+
+		body = inst.InstLocalGet(body, bufLocal)
+		body = inst.InstLocalGet(body, iLocal)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, dataLocal)
+		body = inst.InstLocalGet(body, lenLocal)
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstCall(body, strByte)
+		body = memory.InstI32Store8(body, 0, 0)
+
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, iLocal)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	return body
+}
+
+// buildWriteFileBody assembles __lang_write_file.
+//
+// Signature: (path_data, path_len, content_data, content_len) →
+// i32 (heap-form Option[IoError] pointer; None on success,
+// Some(IoError) on error).
+//
+// Pipeline:
+//
+//  1. Normalize path and content into heap buffers (SSO-safe).
+//  2. path_open with O_CREAT|O_TRUNC + write rights, fd=3
+//     preopen.
+//  3. On errno != 0: build IoError, wrap in Some(IoError),
+//     return.
+//  4. Loop fd_write until all content bytes drained.
+//  5. fd_close.
+//  6. Return None (4-byte alloc, tag = 1).
+//
+// Locals (after the four params 0..3):
+//
+//	4:  $scratch        (16-byte WASI ABI scratch)
+//	5:  $errno          (path_open / fd_write errno)
+//	6:  $fd             (opened file descriptor)
+//	7:  $path_buf       (heap-normalized path data)
+//	8:  $path_byte_len  (heap-normalized path length)
+//	9:  $i_path         (scratch loop counter for path normalize)
+//	10: $content_buf    (heap-normalized content data)
+//	11: $content_byte_len
+//	12: $i_content
+//	13: $cur            (bytes written so far)
+//	14: $nwritten       (bytes written this call)
+//	15: $err_ptr        (IoError pointer for Some wrapping)
+//	16: $result         (heap-form Option pointer)
+func buildWriteFileBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	buildIoErr := idxs["__build_io_error"]
+	pathOpen := idxs["wasi_path_open"]
+	fdWrite := idxs["wasi_fd_write"]
+	fdClose := idxs["wasi_fd_close"]
+
+	var body []byte
+
+	// Alloc the WASI ABI scratch FIRST so it lands on a 4-byte
+	// boundary. path_open writes the new fd as a u32 to the
+	// retptr we pass; wasmtime's host enforces 4-byte alignment
+	// on that write, and the bump cursor is only word-aligned at
+	// program entry. Doing the string-normalize allocations after
+	// (each of which advances the cursor by an arbitrary byte
+	// count) keeps the scratch retptr aligned even when the
+	// path / content bytes leave the cursor straddling a word.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 4)
+
+	// Normalize path: locals 0/1 → bufLocal=7, byteLenLocal=8, iLocal=9.
+	body = emitStrNormalize(body, idxs, 0, 1, 7, 8, 9)
+	// Normalize content: locals 2/3 → bufLocal=10, byteLenLocal=11, iLocal=12.
+	body = emitStrNormalize(body, idxs, 2, 3, 10, 11, 12)
+
+	// errno = path_open(dirfd=3, dirflags=1, path_buf, path_byte_len,
+	//                    oflags=CREATE|TRUNCATE, fs_rights_base=WRITE+seek,
+	//                    fs_rights_inheriting=WRITE+seek, fdflags=0,
+	//                    retptr=scratch)
+	body = inst.InstI32Const(body, preopenDirfd)
+	body = inst.InstI32Const(body, 1) // dirflags
+	body = inst.InstLocalGet(body, 7) // path_buf
+	body = inst.InstLocalGet(body, 8) // path_byte_len
+	body = inst.InstI32Const(body, wasiOflagCreate|wasiOflagTruncate)
+	body = inst.InstI64Const(body, wasiRightFdWrite|wasiRightFdSeek)
+	body = inst.InstI64Const(body, wasiRightFdWrite|wasiRightFdSeek)
+	body = inst.InstI32Const(body, 0) // fdflags
+	body = inst.InstLocalGet(body, 4) // retptr → scratch[0..3]
+	body = inst.InstCall(body, pathOpen)
+	body = inst.InstLocalTee(body, 5) // $errno
+
+	// if errno != 0 { build IoError → Some → return }
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 5) // errno
+		body = inst.InstLocalGet(body, 0) // path_data (original — keeps SSO bits)
+		body = inst.InstLocalGet(body, 1) // path_len
+		body = inst.InstCall(body, buildIoErr)
+		body = inst.InstLocalSet(body, 15) // $err_ptr
+
+		// Some(IoError) layout (Option pair-form NOT used here —
+		// runtime helpers return heap-form via OpCallDirect):
+		// 8 bytes, tag=0 @ +0, IoError ptr @ +4.
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalTee(body, 16) // $result
+		body = inst.InstI32Const(body, 0)  // tag = 0 (Some)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 16)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 15)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 16)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// fd = mem[scratch]
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 6)
+
+	// Write loop. iov at scratch+4..+11; nwritten at scratch+12.
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 13) // $cur = 0
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// if cur >= content_byte_len, break
+		body = inst.InstLocalGet(body, 13)
+		body = inst.InstLocalGet(body, 11)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1)
+
+		// iov.base = content_buf + cur
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstLocalGet(body, 13)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Store(body, 2, 0)
+
+		// iov.len = content_byte_len - cur
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 11)
+		body = inst.InstLocalGet(body, 13)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Store(body, 2, 0)
+
+		// fd_write(fd, scratch+4, 1, scratch+12)
+		body = inst.InstLocalGet(body, 6) // fd
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, 1)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 12)
+		body = numeric.InstI32Add(body)
+		body = inst.InstCall(body, fdWrite)
+		body = inst.InstDrop(body) // ignore errno mid-stream (matches WAT)
+
+		// nwritten = mem[scratch+12]
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 12)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalTee(body, 14)
+
+		// if nwritten == 0, break (avoid infinite loop on short writes).
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstBrIf(body, 1)
+
+		// cur += nwritten
+		body = inst.InstLocalGet(body, 13)
+		body = inst.InstLocalGet(body, 14)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 13)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+
+	// fd_close(fd) → drop errno
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstCall(body, fdClose)
+	body = inst.InstDrop(body)
+
+	// Return None (4-byte alloc, tag = 1).
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 16)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 16)
+
+	// 13 i32 locals after the 4 params (slots 4..16).
+	locals := inst.PutLocalsOneGroup(nil, 13, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

@@ -287,6 +287,114 @@ func TestBuildReadFileNotFound(t *testing.T) {
 	}
 }
 
+// TestBuildWriteFile — round-trip via wasmbin's preview-1
+// path_open(O_CREAT|O_TRUNC) + fd_write loop + fd_close. The
+// program writes a known string to a sandbox-relative path and
+// returns 0 on success. The harness reads the file back from
+// the host side and asserts the bytes match. Exercises the
+// success path of __lang_write_file (None return).
+func TestBuildWriteFile(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	const content = "wrote some bytes\n"
+	src := `function main(): i32 {
+    match (write_file("scratch_output.txt", "wrote some bytes\n")) {
+        Some(_) => { return 1; },
+        None => { return 0; }
+    }
+    return -1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := Build(prog, info)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--dir=.", "--invoke", "main", p)
+	cmd.Dir = dir
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	got := strings.TrimSpace(so.String())
+	if got != "0" {
+		t.Fatalf("write_file returned %q, want 0 (None / success)\nstderr: %s", got, se.String())
+	}
+	written, err := os.ReadFile(filepath.Join(dir, "scratch_output.txt"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(written) != content {
+		t.Errorf("write_file produced %q, want %q", written, content)
+	}
+}
+
+// TestBuildWriteFileRoundtrip — write then read the same file
+// from inside one program. Confirms write_file's bytes show up
+// on disk in a form __lang_read_file is happy to consume; both
+// helpers share the same WASI rights / preopen / scratch
+// conventions, so a regression in either surfaces here.
+func TestBuildWriteFileRoundtrip(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	src := `function main(): i32 {
+    match (write_file("roundtrip.txt", "round trip content")) {
+        Some(_) => { return -1; },
+        None => {}
+    }
+    match (read_file("roundtrip.txt")) {
+        Ok(s) => { return len(s); },
+        Err(_) => { return -2; }
+    }
+    return -3;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := Build(prog, info)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--dir=.", "--invoke", "main", p)
+	cmd.Dir = dir
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	got := strings.TrimSpace(so.String())
+	want := strconv.Itoa(len("round trip content"))
+	if got != want {
+		t.Fatalf("roundtrip len = %q, want %q\nstderr: %s", got, want, se.String())
+	}
+}
+
 // TestBuildPrintMainResult — BuildWithOptions(SynthStart +
 // PrintMainResult) wires `_start` to format main's i32 return
 // through `int_to_string` and flush it to stdout via

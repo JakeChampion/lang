@@ -228,6 +228,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 		in.add("wasi_fd_read")
 		in.add("wasi_fd_close")
 	}
+	if helpers.set["__lang_write_file"] {
+		in.add("wasi_path_open")
+		in.add("wasi_fd_write")
+		in.add("wasi_fd_close")
+	}
 	return in
 }
 
