@@ -202,23 +202,60 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_read_byte")
 					needs.add("__lang_read_line")
 				case "__lang_stdin":
-					// () → i32 — constant sentinel Reader for
-					// stdin (wasmbin doesn't model TCP / file
-					// Readers yet).
-					needs.add("__lang_stdin")
-				case "__lang_reader_read_line":
-					// (r) → i32 — Reader.read_line(). Ignores
-					// the receiver and delegates to
-					// __lang_read_line (which reads from fd=0).
+					// () → i32 — Reader struct with fd=0 (stdin).
+					// Backs `stdin()`; the `__method_Reader_*`
+					// helpers dispatch on r.fd so the same code
+					// path covers stdin and file Readers.
 					needs.add("__lang_alloc")
-					needs.add("__lang_read_byte")
-					needs.add("__lang_read_line")
-					needs.add("__lang_reader_read_line")
-				case "__lang_reader_close":
-					// (r) → () — no-op for the stdin-only Reader
-					// model. Real Reader.close (file fds, TCP)
-					// will need a discriminator-aware variant.
-					needs.add("__lang_reader_close")
+					needs.add("__lang_stdin")
+				case "__lang_reader_read_line_fd":
+					// (r) → i32 — heap-form Option[string]. Reads
+					// from r.fd byte-by-byte until '\n' / EOF.
+					needs.add("__lang_alloc")
+					needs.add("__lang_reader_read_line_fd")
+				case "__lang_reader_read_chunk":
+					// (r, n) → i32 — single fd_read of up to n
+					// bytes into a fresh n-byte heap buffer.
+					needs.add("__lang_alloc")
+					needs.add("__lang_reader_read_chunk")
+				case "__lang_reader_close_fd":
+					// (r) → i32 — fd_close on r.fd; returns
+					// Option[IoError].
+					needs.add("__lang_alloc")
+					needs.add("__build_io_error")
+					needs.add("__lang_reader_close_fd")
+				case "__lang_writer_close":
+					// Same shape as reader_close — Writer struct
+					// has identical { fd: i32 } layout.
+					needs.add("__lang_alloc")
+					needs.add("__build_io_error")
+					needs.add("__lang_writer_close")
+				case "__lang_writer_write":
+					// (w, s_data, s_len) → i32 — fd_write loop
+					// over the SSO-normalized content bytes.
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__lang_writer_write")
+				case "__lang_open_reader":
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__lang_open_reader")
+				case "__lang_open_writer":
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__lang_open_writer")
+				case "__lang_open_appender":
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__lang_open_appender")
 				case "__lang_string_from_bytes":
 					// (bs: u8[]) → (data, len) — copies the byte
 					// array's payload into a fresh string. Inline
@@ -674,6 +711,71 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriteFileBody,
+	},
+	"__lang_open_reader": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[Reader, IoError]. The Reader struct holds a
+		// preview-1 fd.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenReaderBody,
+	},
+	"__lang_open_writer": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[Writer, IoError]. Opens with CREATE|TRUNCATE.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenWriterBody,
+	},
+	"__lang_open_appender": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[Writer, IoError]. Opens with CREATE + APPEND.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenAppenderBody,
+	},
+	"__lang_reader_close_fd": {
+		// (r: i32) → i32 — heap-form Option[IoError]. Calls
+		// fd_close on the Reader's fd; returns None on success.
+		// Named `_fd` to distinguish from the existing
+		// `__lang_reader_close` which is the stdin-only stub.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderCloseFdBody,
+	},
+	"__lang_writer_close": {
+		// (w: i32) → i32 — same shape as the Reader close, with
+		// a dedicated name so the IR alias map can route
+		// `__method_Writer_close` here.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWriterCloseBody,
+	},
+	"__lang_writer_write": {
+		// (w, s_data, s_len) → i32 — heap-form
+		// Option[IoError]. Writes string bytes to w.fd via
+		// fd_write in a loop; returns None on success.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWriterWriteBody,
+	},
+	"__lang_reader_read_line_fd": {
+		// (r: i32) → i32 — heap-form Option[string]. Reads
+		// bytes one at a time until '\n' or EOF; returns None
+		// if EOF hit before any byte. Named `_fd` to distinguish
+		// from the legacy stdin-only `__lang_reader_read_line`
+		// (kept around so existing call sites compile while the
+		// alias map flips).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderReadLineFdBody,
+	},
+	"__lang_reader_read_chunk": {
+		// (r, n: i32) → i32 — heap-form Option[string].
+		// Single fd_read into an n-byte buffer.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderReadChunkBody,
 	},
 	"__str_idx": {
 		// (base_data, base_len, i) → i32 (byte address). For
@@ -1819,15 +1921,24 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildStdinBody — () → i32. Returns the constant 0 as the
-// stdin Reader sentinel. wasmbin only models the stdin Reader,
-// so the value's actual contents don't matter — every
-// Reader-method dispatch ignores its receiver and reads from
-// fd=0 directly.
-func buildStdinBody(_ map[string]uint32) []byte {
+// buildStdinBody — () → i32. Allocates a 4-byte Reader struct
+// `{ fd: i32 }` with fd=0 (stdin) and returns the pointer.
+// Generalises the previous "Reader == sentinel 0" stub so the
+// shared `__method_Reader_*` helpers (which dispatch on `r.fd`
+// since the file-Reader work in PR #ABC) can treat stdin
+// identically to file Readers — `fd_read(0, …)` is the kernel-
+// level read from stdin regardless of who's calling.
+func buildStdinBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
 	var body []byte
-	body = inst.InstI32Const(body, 0)
-	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 0)
+	body = inst.InstI32Const(body, 0) // fd = 0 (stdin)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildReaderReadLineBody — (r) → i32. Delegates to
