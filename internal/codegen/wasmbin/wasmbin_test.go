@@ -2846,6 +2846,38 @@ func TestEmitPtrWidth(t *testing.T) {
 	}
 }
 
+// TestEmitDropWidthString — OpDrop with Width=WidthString must
+// emit two wasm `drop`s, not one. copyprop rewrites a dead
+// OpStoreLocal on a string slot into OpDrop{Width: WidthString};
+// without this expansion the operand stack leaks one i32 (the
+// data half of the (data, len) pair) into whatever consumes
+// the next value.
+//
+// Regression for the seed=42 mismatch: a callee that built a
+// string local then returned an i32 had the data slot leaked
+// into the caller's arithmetic, producing wildly off-by results.
+func TestEmitDropWidthString(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			// Push a string pair (data, len) onto the stack.
+			{Kind: ir.OpConstStr, Str: "hello"},
+			// Drop it as a string (two-slot drop).
+			{Kind: ir.OpDrop, Width: ir.WidthString},
+			// Push 42 and return — should be 42, not leftover len.
+			{Kind: ir.OpConstI32, I32: 42},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "42" {
+		t.Fatalf("drop-width-string result = %q, want 42", got)
+	}
+}
+
 // TestEmitAllocU8LengthPrefix — __alloc_u8(n) must write n at
 // [data_ptr - 4] so __arr_idx_1's bounds check sees the right
 // length. Without this, byte-array indexing trips `unreachable`

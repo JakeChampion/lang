@@ -977,6 +977,14 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return inst.InstLocalTee(body, idx), nil
 
 	case ir.OpDrop:
+		// Width=WidthString means the dropped value is a two-slot
+		// (data, len) pair from the SSO string ABI — needs two
+		// wasm `drop`s. Set by copyprop when it rewrites a dead
+		// OpStoreLocal on a string slot. Default width drops one
+		// slot.
+		if op.Width == ir.WidthString {
+			body = inst.InstDrop(body)
+		}
 		return inst.InstDrop(body), nil
 	case ir.OpReturn:
 		return inst.InstReturn(body), nil
