@@ -1150,6 +1150,27 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		{
+			"eprint-int-zero-stdout-clean",
+			"function main(): i32 { eprint_int(0); return 0; }",
+			0,
+			"",
+			"",
+		},
+		{
+			"eprint-int-positive",
+			"function main(): i32 { eprint_int(42); return 0; }",
+			0,
+			"",
+			"",
+		},
+		{
+			"eprint-int-and-print",
+			"function main(): i32 { print(\"out=\"); print_int(1); print(\"\\n\"); eprint(\"err=\"); eprint_int(2); return 0; }",
+			0,
+			"out=1\n",
+			"",
+		},
 	}
 
 	for _, tc := range cases {

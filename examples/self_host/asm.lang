@@ -1581,6 +1581,20 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_print_int();
                 return s;
             }
+            // eprint_int(n) — stderr companion to print_int.
+            // Composed from __lang_i32_to_string + __lang_eprint_str
+            // so we don't need a third runtime helper.
+            if (name == "eprint_int" && len(c.args) == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __lang_i32_to_string\n");
+                s = s.write("    movq %rax, %rdi\n");
+                s = s.write("    call __lang_eprint_str\n");
+                s = s.write("    pushq $0\n");
+                s = s.mark_i32_to_string();
+                s = s.mark_eprint();
+                return s;
+            }
             // read_int() — builtin no-arg call to the read_int helper.
             // Reads up to 16 bytes from stdin, parses an optional
             // leading `-` followed by decimal digits, returns the
