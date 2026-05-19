@@ -95,8 +95,9 @@ func TestRunDiagnostics_ErrorCodePopulated(t *testing.T) {
 // Regression sentinel against the wrapper accidentally
 // stamping a synthetic code on every error.
 func TestRunDiagnostics_NoCodeWhenNoneAssigned(t *testing.T) {
-	// Parser errors don't carry codes today.
-	src := `function main(): i32 { return ; }` // missing return value triggers parser error
+	// Parser errors don't carry codes today — unclosed brace
+	// is a pure parser-side reject.
+	src := `function main(): i32 { return 1;`
 	got := diagnosticsFor(src)
 	if len(got) == 0 {
 		t.Fatal("expected at least one diagnostic")

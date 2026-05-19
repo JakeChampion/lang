@@ -2964,12 +2964,12 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			}
 		}
 		if variant == nil {
-			c.errf(n.P, "variant %q is not part of enum %s", n.VariantName, ed.Name)
+			c.errfCode(n.P, "E014", "variant %q is not part of enum %s", n.VariantName, ed.Name)
 			c.checkBlock(n.Else, s)
 			return
 		}
 		if len(n.Bindings) != len(variant.Payloads) {
-			c.errf(n.P, "variant %s has %d payload(s), got %d binding(s)",
+			c.errfCode(n.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
 				n.VariantName, len(variant.Payloads), len(n.Bindings))
 		}
 		// Bindings flow into the ENCLOSING scope so later
@@ -3034,7 +3034,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			}
 		}
 		if variant == nil {
-			c.errf(n.P, "variant %q is not part of enum %s", n.VariantName, ed.Name)
+			c.errfCode(n.P, "E014", "variant %q is not part of enum %s", n.VariantName, ed.Name)
 			c.checkStmt(n.Then, s)
 			if n.Else != nil {
 				c.checkStmt(n.Else, s)
@@ -3042,7 +3042,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			return
 		}
 		if len(n.Bindings) != len(variant.Payloads) {
-			c.errf(n.P, "variant %s has %d payload(s), got %d binding(s)",
+			c.errfCode(n.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
 				n.VariantName, len(variant.Payloads), len(n.Bindings))
 		}
 		thenScope := newScope(s)
@@ -3062,7 +3062,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 	case *ast.While:
 		t := c.checkExpr(n.Cond, s)
 		if t != nil && !ast.Equal(t, ast.BoolType{}) {
-			c.errf(n.Cond.Pos(), "while condition must be boolean, got %s", t)
+			c.errfCode(n.Cond.Pos(), "E008", "while condition must be boolean, got %s", t)
 		}
 		c.loopDepth++
 		c.checkStmt(n.Body, s)
@@ -3076,7 +3076,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		ct := c.checkExpr(n.Cond, inner)
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
-			c.errf(n.Cond.Pos(), "for condition must be boolean, got %s", ct)
+			c.errfCode(n.Cond.Pos(), "E008", "for condition must be boolean, got %s", ct)
 		}
 		c.loopDepth++
 		c.checkStmt(n.Body, inner)
@@ -3088,17 +3088,17 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// `break` is legal inside a `for`/`while` (exits the loop)
 		// or inside a `switch` case (exits the switch).
 		if c.loopDepth == 0 && c.switchDepth == 0 {
-			c.errf(n.P, "break outside of a loop or switch")
+			c.errfCode(n.P, "E011", "break outside of a loop or switch")
 		}
 	case *ast.Continue:
 		if c.loopDepth == 0 {
-			c.errf(n.P, "continue outside of a loop")
+			c.errfCode(n.P, "E011", "continue outside of a loop")
 		}
 	case *ast.Return:
 		want := c.current.ReturnType
 		if n.Value == nil {
 			if !ast.Equal(want, ast.VoidType{}) {
-				c.errf(n.P, "return without value in function returning %s", want)
+				c.errfCode(n.P, "E012", "return without value in function returning %s", want)
 			}
 			return
 		}
@@ -3134,7 +3134,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.checkBlock(n.Body, s)
 	case *ast.Var:
 		if _, dup := s.names[n.Name]; dup {
-			c.errf(n.P, "variable %q already declared in this scope", n.Name)
+			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
 		}
 		got := c.checkExpr(n.Init, s)
 		if n.Type != nil {
@@ -3207,7 +3207,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], tempVar)
 		for i, name := range n.Names {
 			if _, dup := s.names[name]; dup {
-				c.errf(n.P, "variable %q already declared in this scope", name)
+				c.errfCode(n.P, "E013", "variable %q already declared in this scope", name)
 				continue
 			}
 			elemT := tup.Elems[i]
@@ -3342,7 +3342,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			}
 		}
 		if varIdx < 0 {
-			c.errf(arm.P, "variant %q is not part of enum %s", arm.VariantName, ed.Name)
+			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s", arm.VariantName, ed.Name)
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -3359,7 +3359,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			covered[arm.VariantName] = true
 		}
 		if len(arm.Bindings) != len(variant.Payloads) {
-			c.errf(arm.P, "variant %s has %d payload(s), got %d binding(s)",
+			c.errfCode(arm.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
 				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
 		}
 		// Bind names in a fresh scope so they don't leak into
@@ -3599,7 +3599,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			}
 		}
 		if varIdx < 0 {
-			c.errf(arm.P, "variant %q is not part of enum %s", arm.VariantName, ed.Name)
+			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s", arm.VariantName, ed.Name)
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
 			continue
 		}
@@ -3610,7 +3610,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			covered[arm.VariantName] = true
 		}
 		if len(arm.Bindings) != len(variant.Payloads) {
-			c.errf(arm.P, "variant %s has %d payload(s), got %d binding(s)",
+			c.errfCode(arm.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
 				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
 		}
 		armScope := newScope(s)
