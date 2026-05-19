@@ -73,6 +73,7 @@ the predicate so a grep across CI logs finds the regression.
 | ------------ | -------------------------------------------------------------------------------------------------------------------- |
 | Boolean      | `assert_true`, `assert_false`                                                                                         |
 | Integers     | `assert_eq_i32`, `assert_neq_i32`, `assert_lt_i32`, `assert_le_i32`, `assert_gt_i32`, `assert_ge_i32`                |
+| Wider ints   | `assert_eq_i64`, `assert_neq_i64`, `assert_eq_u32`, `assert_neq_u32`, `assert_eq_u64`, `assert_neq_u64`              |
 | Booleans     | `assert_eq_bool`                                                                                                      |
 | Strings      | `assert_eq_string`, `assert_neq_string`, `assert_empty_string`, `assert_non_empty_string`                             |
 | Substring    | `assert_contains`, `assert_not_contains`, `assert_starts_with`, `assert_ends_with`                                    |
@@ -131,6 +132,32 @@ function test_lang_hello(): Option[string] {
 Spawn failures (binary missing, permission denied) surface as
 `exit_code = 127` with the OS error in `stderr` so callers can
 write linear assertions without an extra `Result` unwrap.
+
+## Tempdirs + cleanup hooks
+
+Tests that need a scratch directory call `temp_dir(prefix)`
+and register cleanup at the runner level:
+
+```lang
+match (temp_dir("my-fixture")) {
+    Ok(dir) => {
+        r = r.defer_cleanup(dir);
+        // ... write fixtures into `dir`, spawn subprocesses ...
+    },
+    Err(_) => { r = r.skip("setup", "temp_dir failed"); }
+}
+```
+
+`finish()` runs `remove_dir_all(dir)` on every registered
+path regardless of test outcome. Cleanup errors print as TAP
+comments and shift the exit code to `2` (a "tests passed but
+cleanup leaked" sentinel) so CI can distinguish from a real
+test failure.
+
+Companion filesystem builtins:
+`read_dir(path) -> Result[string[], IoError]` lists immediate
+children; `remove_file(path)` and `remove_dir_all(path)`
+return `Option[IoError]` (`None` on success).
 
 ## Fuzzing
 
@@ -217,3 +244,11 @@ in the repo:
   + the process assertion family (echo / cat / sh fixtures)
 - `fuzz_example_test.lang` — three benign property fuzzers
   plus a trim-strips-spaces invariant
+- `wide_numerics_test.lang` — i64 / u32 / u64 assertions
+- `filesystem_ops_test.lang` — read_dir / remove_file /
+  remove_dir_all builtins
+- `lang_binary_e2e_test.lang` — the canonical migration
+  shape: spawn the `lang` binary itself, drive it through
+  `-interp` / `-check` against tempdir fixtures, assert on
+  `(exit, stdout, stderr)`. Gated on `$LANG_BIN` being set
+  so dev laptops without the env var skip cleanly.

@@ -433,6 +433,84 @@ function main(): i32 {
 	}
 }
 
+// `examples/tests/lang_binary_e2e_test.lang` is the canonical
+// migration-pattern example: a Lang test file spawns the
+// `lang` binary itself (path read from `$LANG_BIN`), drives
+// it through `-interp` / `-check` against inline source +
+// tempdir fixtures, and asserts on the (exit, stdout,
+// stderr) triple. This is the shape the migrated Go-side
+// e2e suite will adopt.
+//
+// We exercise both paths the example handles:
+//   1. With `$LANG_BIN` pointing at a fresh build of the
+//      compiler — every case runs and passes.
+//   2. With `$LANG_BIN` unset — the suite skips cleanly
+//      rather than failing, so dev laptops without an
+//      explicit env setup don't see false negatives.
+func TestRunnerLangBinaryE2EExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/lang_binary_e2e_test.lang")
+
+	t.Run("with LANG_BIN set", func(t *testing.T) {
+		cmd := exec.Command(bin, "-interp", src)
+		cmd.Env = append(os.Environ(), "LANG_BIN="+bin)
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 0 {
+			t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+				code, out.String(), errb.String())
+		}
+		gotOut := out.String()
+		for _, w := range []string{
+			"ok 1 - interp returns exit code",
+			"ok 3 - check passes clean program",
+			"ok 4 - check rejects type error",
+			"ok 5 - interp reads a file",
+			"# pass 5",
+			"# fail 0",
+		} {
+			if !strings.Contains(gotOut, w) {
+				t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+			}
+		}
+	})
+
+	t.Run("without LANG_BIN — skips cleanly", func(t *testing.T) {
+		cmd := exec.Command(bin, "-interp", src)
+		// Drop LANG_BIN from the environment explicitly —
+		// the parent process may have it set.
+		env := []string{}
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "LANG_BIN=") {
+				env = append(env, kv)
+			}
+		}
+		cmd.Env = env
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 0 {
+			t.Fatalf("exit = %d, want 0 (skip, not fail)\nstdout: %s\nstderr: %s",
+				code, out.String(), errb.String())
+		}
+		gotOut := out.String()
+		for _, w := range []string{
+			"# SKIP LANG_BIN not set",
+			"# skip 1",
+		} {
+			if !strings.Contains(gotOut, w) {
+				t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+			}
+		}
+		if strings.Contains(gotOut, "# fail 1") {
+			t.Errorf("missing LANG_BIN should skip, not fail\noutput:\n%s", gotOut)
+		}
+	})
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
