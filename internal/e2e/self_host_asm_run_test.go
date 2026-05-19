@@ -555,6 +555,55 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		{
+			"string-len-literal",
+			"function main(): i32 { var s = \"hello\"; return len(s); }",
+			5,
+			"",
+			"",
+		},
+		{
+			"string-print-ident",
+			"function main(): i32 { var s = \"world\\n\"; print(s); return 0; }",
+			0,
+			"world\n",
+			"",
+		},
+		{
+			"string-byte-indexing",
+			"function main(): i32 { var s = \"abc\"; return s[1]; }",
+			98,
+			"",
+			"",
+		},
+		{
+			"string-concat",
+			"function main(): i32 { var a = \"hi \"; var b = \"there\"; var c = a + b; print(c); return len(c); }",
+			8,
+			"hi there",
+			"",
+		},
+		{
+			"string-eq-true",
+			"function main(): i32 { var a = \"foo\"; var b = \"foo\"; if (a == b) { return 1; } return 0; }",
+			1,
+			"",
+			"",
+		},
+		{
+			"string-eq-false",
+			"function main(): i32 { var a = \"foo\"; var b = \"bar\"; if (a == b) { return 1; } return 0; }",
+			0,
+			"",
+			"",
+		},
+		{
+			"string-slice",
+			"function main(): i32 { var s = \"hello world\"; var sub = s[6:11]; print(sub); return len(sub); }",
+			5,
+			"world",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
