@@ -143,6 +143,152 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+
+	// ---- wasi:sockets imports for the TCP helpers ----
+	//
+	// User-facing surface: tcp_listen / tcp_accept / tcp_recv /
+	// tcp_send / tcp_close. The listener / connection structs each
+	// live as a 12-byte heap allocation (tcp_socket, input_stream,
+	// output_stream); listener sockets zero the stream slots. The
+	// host doesn't need `wasmtime --tcp-listen=…` — the guest binds
+	// the port itself via wasi:sockets.
+	"wasi_sockets_instance_network": {
+		// () → network handle. Used once per program; the
+		// __network_handle accessor caches the result in low memory.
+		module:  "wasi:sockets/instance-network@0.2.0",
+		name:    "instance-network",
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_sockets_create_tcp_socket": {
+		// (family: i32, retptr: i32). family=0 → ipv4. retptr
+		// gets `result<tcp-socket, error-code>` (disc @ +0, payload
+		// at +4 — either the socket handle (Ok) or the error-code
+		// byte (Err)).
+		module:  "wasi:sockets/tcp-create-socket@0.2.0",
+		name:    "create-tcp-socket",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_tcp_start_bind": {
+		// start-bind takes the canonical-ABI flattening of
+		// `ip-socket-address` — a 1-i32 discriminant plus an
+		// 11-i32 max payload (ipv4 uses 5 slots, ipv6 needs 11,
+		// the variant joins them). Total params: self,
+		// borrow<network>, disc, 11 flat slots, retptr = 15 i32.
+		module: "wasi:sockets/tcp@0.2.0",
+		name:   "[method]tcp-socket.start-bind",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: nil,
+	},
+	"wasi_sockets_tcp_finish_bind": {
+		// (self, retptr) → (). Result<_, error-code> written at retptr.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.finish-bind",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_tcp_start_listen": {
+		// (self, retptr) → ().
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.start-listen",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_tcp_finish_listen": {
+		// (self, retptr) → ().
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.finish-listen",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_tcp_accept": {
+		// (self, retptr) → (). retptr holds
+		// `result<tuple<tcp-socket, input-stream, output-stream>,
+		// error-code>`: 1 disc byte at +0, 3 bytes pad, then the
+		// (sock, in, out) tuple at +4 (Ok) or the error-code byte
+		// at +4 (Err). Total payload area: 12 bytes; allocate 16.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.accept",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_tcp_subscribe": {
+		// (self) → pollable handle. Paired with pollable.block to
+		// wait until a connection is ready before calling accept.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.subscribe",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_sockets_tcp_socket_drop": {
+		// (handle) → (). Drops a tcp-socket. Must come AFTER any
+		// child input-stream / output-stream drops — the canonical
+		// ABI rejects parent-drop with live children.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[resource-drop]tcp-socket",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_io_pollable_block": {
+		// (pollable) → (). Synchronously waits for the pollable
+		// to become ready. Used by tcp_accept before invoking
+		// the non-blocking accept.
+		module:  "wasi:io/poll@0.2.0",
+		name:    "[method]pollable.block",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_io_pollable_drop": {
+		// (pollable) → (). Drops a pollable handle.
+		module:  "wasi:io/poll@0.2.0",
+		name:    "[resource-drop]pollable",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_io_input_stream_drop": {
+		// (handle) → (). Drops an input-stream resource. Required
+		// before dropping the parent tcp-socket (canonical-ABI
+		// resource-with-children rule).
+		module:  "wasi:io/streams@0.2.0",
+		name:    "[resource-drop]input-stream",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_io_output_stream_drop": {
+		// (handle) → (). Drops an output-stream resource. Same
+		// child-before-parent rule as input-stream.
+		module:  "wasi:io/streams@0.2.0",
+		name:    "[resource-drop]output-stream",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_io_blocking_read": {
+		// (handle: i32, len: u64, retptr: i32) → (). Reads up to
+		// `len` bytes. retptr holds result<list<u8>, stream-error>:
+		// 1 disc byte @ +0, 3 bytes pad, list-data ptr @ +4, list
+		// length @ +8. Allocate 12 bytes for the retptr.
+		module:  "wasi:io/streams@0.2.0",
+		name:    "[method]input-stream.blocking-read",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_io_blocking_write_and_flush": {
+		// (handle, ptr, len, retptr) → (). Writes `len` bytes from
+		// `ptr` and flushes. retptr holds result<_, stream-error>
+		// (disc byte @ +0). Wasmtime enforces a 4 KiB per-call cap
+		// — callers loop.
+		module:  "wasi:io/streams@0.2.0",
+		name:    "[method]output-stream.blocking-write-and-flush",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -249,6 +395,41 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 		helpers.set["__lang_writer_close"] {
 		in.add("wasi_fd_close")
 	}
+
+	// TCP helpers. Each user-facing builtin (tcp_listen / tcp_accept /
+	// tcp_recv / tcp_send / tcp_close) pulls in a different subset of
+	// the wasi:sockets + wasi:io imports; we union them here so the
+	// transitive close picks up everything needed.
+	//
+	// __network_handle (the lazy accessor over instance-network) is
+	// pulled in by tcp_listen since that's the only call site that
+	// needs the network borrow. The others reach for the cached
+	// handle slot directly through the accessor.
+	if helpers.set["__lang_tcp_listen"] {
+		in.add("wasi_sockets_instance_network")
+		in.add("wasi_sockets_create_tcp_socket")
+		in.add("wasi_sockets_tcp_start_bind")
+		in.add("wasi_sockets_tcp_finish_bind")
+		in.add("wasi_sockets_tcp_start_listen")
+		in.add("wasi_sockets_tcp_finish_listen")
+	}
+	if helpers.set["__lang_tcp_accept"] {
+		in.add("wasi_sockets_tcp_accept")
+		in.add("wasi_sockets_tcp_subscribe")
+		in.add("wasi_io_pollable_block")
+		in.add("wasi_io_pollable_drop")
+	}
+	if helpers.set["__lang_tcp_recv"] {
+		in.add("wasi_io_blocking_read")
+	}
+	if helpers.set["__lang_tcp_send"] {
+		in.add("wasi_io_blocking_write_and_flush")
+	}
+	if helpers.set["__lang_tcp_close"] {
+		in.add("wasi_sockets_tcp_socket_drop")
+		in.add("wasi_io_input_stream_drop")
+		in.add("wasi_io_output_stream_drop")
+	}
 	return in
 }
 
@@ -314,6 +495,22 @@ const readByteScratchAddr = 44
 // bypass the scratch entirely (returned address is base_data+i).
 // Lives at 64..71; closuresBase is set to 80 to leave this room.
 const strIdxScratchAddr = 64
+
+// networkHandleInitAddr / networkHandleAddr cache the
+// wasi:sockets/instance-network borrow consumed by tcp_listen's
+// start-bind step. The handle is an opaque i32 where 0 is a
+// valid value, so we need a separate init flag to detect "not
+// yet fetched". Lives at 72..79, the reserved-for-future window
+// between strIdxScratchAddr and closuresBase.
+//
+// Mirrors the WAT path which keeps the same cache in memory[124]
+// + bit 4 of the init-flags byte at memory[112]; the wasmbin
+// layout doesn't share the init-flags byte across helpers, so
+// the network cache owns its own 4-byte init slot.
+const (
+	networkHandleInitAddr = 72
+	networkHandleAddr     = 76
+)
 
 // buildPrintBody assembles the wasm bytes for __lang_print.
 //

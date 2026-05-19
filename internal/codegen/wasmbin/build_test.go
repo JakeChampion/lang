@@ -561,26 +561,68 @@ func exportExists(t *testing.T, bin []byte, want string) bool {
 // clear error. This pins the contract that gaps surface as
 // failures, not as silently-wrong output.
 //
-// Today's example: TCP. The wasi-sockets imports + the per-
-// preview-2 fd_read/fd_write/sock_close wiring aren't ported
-// to wasmbin yet, so any program that calls `tcp_listen` /
-// `tcp_accept` etc. surfaces an "unsupported" / "unknown
-// callee" failure. As TCP support lands, update this test to
-// point at the next gap.
+// Previously this used `tcp_listen`; TCP has since landed in
+// wasmbin (see wasi_tcp.go). The next remaining gap is
+// `subprocess` — wasi:cli/exec-process isn't wired into the
+// runtime helpers yet, so any program that spawns a child
+// surfaces an "unknown callee" / "unsupported" failure. As
+// each gap closes, update this test to point at the next.
 func TestBuildReportsUnsupported(t *testing.T) {
 	src := `import "core/no_prelude";
 function main(): i32 {
-    var srv = tcp_listen(8080);
-    return 0;
+    var r = subprocess("/bin/echo", [], "");
+    return r.exit_code;
 }
 `
 	_, err := buildFromSource(t, src)
 	if err == nil {
-		t.Fatal("expected an unsupported error for tcp_listen; got nil")
+		t.Fatal("expected an unsupported error for subprocess; got nil")
 	}
 	if !strings.Contains(err.Error(), "wasmbin") &&
 		!strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("error %q doesn't mention wasmbin or unsupported", err)
+	}
+}
+
+// TestBuildTcpHelpersCompile — pin the compile-time wiring of
+// the TCP helpers. A program touching every one of tcp_listen /
+// tcp_accept / tcp_recv / tcp_send / tcp_close must reach the
+// end of Build without surfacing "unsupported op" / "unknown
+// callee" — i.e. the call-direct alias map, the runtime-helper
+// specs (wasi_tcp.go), and the wasi:sockets + wasi:io import
+// specs (wasi.go) are all consistently registered. Pure
+// compile check; runtime exercise lives in the e2e suite under
+// `wasmtime serve`.
+func TestBuildTcpHelpersCompile(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var srv: i32 = tcp_listen(8080);
+    if (srv < 0) { return -1; }
+    var conn: i32 = tcp_accept(srv);
+    if (conn < 0) {
+        tcp_close(srv);
+        return -2;
+    }
+    var data: string = tcp_recv(conn, 4096i32);
+    var sent: i32 = tcp_send(conn, data);
+    tcp_close(conn);
+    tcp_close(srv);
+    return sent;
+}
+`
+	bin, err := buildFromSource(t, src)
+	if err != nil {
+		t.Fatalf("Build (tcp helpers): %v", err)
+	}
+	if len(bin) == 0 {
+		t.Fatal("Build returned empty module bytes")
+	}
+	// Wasm magic + version. The full structural validation comes
+	// from wasm-tools / wasmtime; checking the prefix here pins
+	// that Build at least produced a parseable header.
+	if len(bin) < 8 ||
+		bin[0] != 0x00 || bin[1] != 0x61 || bin[2] != 0x73 || bin[3] != 0x6d {
+		t.Fatalf("output doesn't start with the wasm magic; got % x", bin[:8])
 	}
 }
 
