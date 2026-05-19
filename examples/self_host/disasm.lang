@@ -90,6 +90,8 @@ function op_name(op: vm.Op): string {
         vm.OpIndex(_) => { return "INDEX"; },
         vm.OpLen(_) => { return "LEN"; },
         vm.OpSlice(_) => { return "SLICE"; },
+        vm.OpMakeStruct(_) => { return "MAKE_STRUCT"; },
+        vm.OpFieldGet(_) => { return "FIELD_GET"; },
         vm.OpReturn(_) => { return "RETURN"; }
     }
     return "???";
@@ -117,6 +119,8 @@ function op_immediate(op: vm.Op): string {
         vm.OpIndex(_) => { return ""; },
         vm.OpLen(_) => { return ""; },
         vm.OpSlice(_) => { return ""; },
+        vm.OpMakeStruct(o) => { return o.type_name + " (" + i32_to_string(len(o.field_names)) + " fields)"; },
+        vm.OpFieldGet(o) => { return o.field_name; },
         vm.OpReturn(_) => { return ""; }
     }
     return "";
