@@ -1,0 +1,66 @@
+// examples/tests/fuzz_shrink_test.lang — `r.fuzz_shrink`
+// walkthrough. Same shape as the base `r.fuzz` but on a
+// failure the harness minimises the offending input before
+// reporting, so the failure log shows a clean reproducer
+// rather than the wild mutated buffer that happened to fire.
+//
+// Properties here pass — the shrinker is exercised in the
+// failure-shape Go gate
+// (`TestRunnerFuzzShrinkSurfacesMinimisedInput`) and in
+// the dedicated reducer probes below.
+
+// Property that holds: every input that arrives is a string,
+// `len(input) >= 0` always. This shouldn't ever fire — the
+// shrinker still runs the mutation pass but never gets to
+// minimise anything.
+function check_len_nonneg(input: string): Option[string] {
+    if (len(input) >= 0) { return None; }
+    return Some("len returned negative");
+}
+
+// Property that holds: `s.reverse_bytes().reverse_bytes() == s`
+// — the round-trip identity. The fuzz_default_iterations
+// loop puts the byte-level mutator through its paces; if
+// the round-trip ever broke, the shrinker would localise
+// the trigger to a minimal byte sequence.
+function check_reverse_idempotent(input: string): Option[string] {
+    var twice: string = input.reverse_bytes().reverse_bytes();
+    if (twice == input) { return None; }
+    return Some("reverse_bytes is not idempotent");
+}
+
+// Property that holds: every byte in `to_lower(s)` is
+// outside the uppercase range [65, 90].
+function check_to_lower_no_upper(input: string): Option[string] {
+    var lowered: string = input.to_lower();
+    var i: i32 = 0;
+    while (i < len(lowered)) {
+        var b: i32 = lowered[i];
+        if (b >= 65 && b <= 90) {
+            return Some("uppercase byte " + b.to_string() +
+                        " at " + i.to_string() + " after to_lower");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("fuzz shrink");
+
+    r = r.fuzz_shrink("len non-negative",
+                      ["", "x", "abc"], 50,
+                      check_len_nonneg);
+
+    r = r.fuzz_shrink("reverse_bytes idempotent",
+                      ["", "a", "abc", "hello world"],
+                      fuzz_default_iterations(),
+                      check_reverse_idempotent);
+
+    r = r.fuzz_shrink("to_lower has no uppercase",
+                      ["", "Hello", "MIXED", "ALLCAPS"],
+                      100,
+                      check_to_lower_no_upper);
+
+    return r.finish();
+}

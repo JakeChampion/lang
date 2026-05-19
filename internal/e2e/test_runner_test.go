@@ -583,6 +583,83 @@ func TestRunnerFloatExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/fuzz_shrink_test.lang` exercises the
+// `r.fuzz_shrink` receiver method on three benign properties
+// (no failures expected) — the harness's mutation loop runs
+// each one through `fuzz_default_iterations()` mutated
+// variants. The shrinker only kicks in on a failure, so
+// this gate confirms the no-failure path stays clean +
+// returns exit 0.
+func TestRunnerFuzzShrinkExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/fuzz_shrink_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - len non-negative",
+		"ok 2 - reverse_bytes idempotent",
+		"ok 3 - to_lower has no uppercase",
+		"# pass 3",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// The contract that justifies the shrinking layer: when a
+// fuzz target fails on a wild input, the harness MUST
+// minimise the input to a small reproducer before reporting.
+// We give it a target that fails on "BAD" anywhere in the
+// input, seed it with a long string containing "BAD" buried
+// in padding, and check that the failure message reports
+// the minimised form ("BAD") alongside the raw failing
+// input (the padded original).
+//
+// The minimised form must be 3 bytes (`BAD`) — the
+// shrinker drops every other byte. If it doesn't reach
+// that minimum, the regression is in the
+// single-byte-drop / halving pass.
+func TestRunnerFuzzShrinkSurfacesMinimisedInput(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+function detect_bad(input: string): Option[string] {
+    if (input.contains("BAD")) { return Some("forbidden"); }
+    return None;
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("shrink-failure");
+    r = r.fuzz_shrink("detect",
+                      ["lots of padding here BAD lots more padding"],
+                      5, detect_bad);
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout: %s\nstderr: %s",
+			code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	for _, w := range []string{
+		"not ok 1 - detect",
+		"raw     (42 bytes)",
+		`shrunk  (3 bytes): "BAD"`,
+	} {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

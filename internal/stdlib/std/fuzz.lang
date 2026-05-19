@@ -190,3 +190,191 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => Opti
 pub function (r: TestRunner) fuzz(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): TestRunner {
     return r.it(name, fuzz_run(seeds, iterations, target));
 }
+
+// =================== SHRINKING ===================
+//
+// When a fuzz target finds a failing input, the raw bytes
+// are often much larger than the property's actual trigger.
+// Shrinking (a.k.a. delta debugging / minimisation) walks
+// the input looking for a smaller variant that still trips
+// the same property, so the failure log is a *minimal*
+// reproducer rather than the wild mutated buffer that
+// happened to fire first.
+//
+// We implement the two cheapest strategies that cover most
+// of the win:
+//   1. Halving — drop the first or second half; recurse if
+//      either still fails. O(log n) wins in the lucky case.
+//   2. Single-byte drops — try removing one byte at a time
+//      from the smallest still-failing input. O(n) per
+//      pass, repeated until a full pass yields no further
+//      reduction.
+//
+// Cap total `target(...)` calls during shrinking at
+// `__fuzz_shrink_budget` so a pathological input doesn't
+// stall the suite. The budget is small enough to keep a
+// failed run under a second on the migration's test sizes,
+// large enough to flatten typical 50-byte mutated buffers
+// down to the actual minimal trigger.
+function __fuzz_shrink_budget(): i32 { return 256; }
+
+// __fuzz_shrink_once tries every "drop one byte" position
+// against `seed` and returns the SHORTEST input that still
+// fails. Returns the original seed when no position drops
+// the failure (i.e. the input is already minimal under
+// single-byte deletes). Counts every call into `budget` and
+// stops returning new candidates when the budget is
+// exhausted.
+function __fuzz_shrink_once(seed: string, target: (string) => Option[string], budget: i32): (string, i32) {
+    var n: i32 = len(seed);
+    var best: string = seed;
+    var best_len: i32 = n;
+    var i: i32 = 0;
+    while (i < n && budget > 0) {
+        var candidate: string = seed[0:i] + seed[i + 1:n];
+        budget = budget - 1;
+        match (target(candidate)) {
+            Some(_) => {
+                if (len(candidate) < best_len) {
+                    best = candidate;
+                    best_len = len(candidate);
+                }
+            },
+            None => { },
+        }
+        i = i + 1;
+    }
+    return (best, budget);
+}
+
+// __fuzz_shrink_halve tries the "drop first half" and
+// "drop second half" candidates and recurses on whichever
+// still fails. Logarithmic win when the failure is
+// localised; falls through to __fuzz_shrink_once for
+// fine-grained minimisation.
+function __fuzz_shrink_halve(seed: string, target: (string) => Option[string], budget: i32): (string, i32) {
+    var n: i32 = len(seed);
+    if (n < 2 || budget <= 0) { return (seed, budget); }
+    var mid: i32 = n / 2;
+    var left: string = seed[0:mid];
+    var right: string = seed[mid:n];
+    // Try left half first — same lexicographic preference
+    // the seed-iteration order uses, so failures cluster
+    // toward the "obvious" minimal reproducer.
+    budget = budget - 1;
+    match (target(left)) {
+        Some(_) => {
+            return __fuzz_shrink_halve(left, target, budget);
+        },
+        None => { },
+    }
+    if (budget <= 0) { return (seed, budget); }
+    budget = budget - 1;
+    match (target(right)) {
+        Some(_) => {
+            return __fuzz_shrink_halve(right, target, budget);
+        },
+        None => { },
+    }
+    return (seed, budget);
+}
+
+// __fuzz_shrink drives both strategies. Halve until no
+// further halving wins, then single-byte-drop until a full
+// pass yields no reduction. Return the best (shortest)
+// failing input found.
+function __fuzz_shrink(seed: string, target: (string) => Option[string]): string {
+    var budget: i32 = __fuzz_shrink_budget();
+    var current: string = seed;
+    // Halving pass.
+    var (h, b) = __fuzz_shrink_halve(current, target, budget);
+    current = h;
+    budget = b;
+    // Single-byte-drop pass, repeating until a full pass
+    // doesn't shrink any further. Bounded by `budget`.
+    var stable: boolean = false;
+    while (!stable && budget > 0) {
+        var (s, b2) = __fuzz_shrink_once(current, target, budget);
+        if (len(s) < len(current)) {
+            current = s;
+            budget = b2;
+        } else {
+            stable = true;
+        }
+    }
+    return current;
+}
+
+// fuzz_run_shrink — run the regular fuzz loop, and on the
+// first failure shrink the offending input to a minimal
+// reproducer before returning. The diagnostic embeds both
+// the original failing input AND the minimised one when
+// they differ, so the log shows what the harness found
+// AND what survived shrinking.
+//
+// Counts shrink-time `target(...)` calls under a separate
+// budget that does NOT inflate the user-visible `iterations`
+// param — `iterations` is the mutation count, shrinking is
+// a post-process amortised against the first failure.
+pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) => Option[string]): Option[string] {
+    if (iterations <= 0) {
+        return Some("fuzz_run_shrink: iterations must be > 0, got " + iterations.to_string());
+    }
+    if (len(seeds) == 0) {
+        return Some("fuzz_run_shrink: at least one seed required");
+    }
+    // Pass 1: seeds verbatim.
+    var i: i32 = 0;
+    while (i < len(seeds)) {
+        match (target(seeds[i])) {
+            Some(msg) => {
+                var min: string = __fuzz_shrink(seeds[i], target);
+                return Some(__fuzz_format_failure(
+                    "seed[" + i.to_string() + "]", seeds[i], min, msg));
+            },
+            None => { },
+        }
+        i = i + 1;
+    }
+    // Pass 2: mutated iterations.
+    var iter: i32 = 0;
+    while (iter < iterations) {
+        var seed: string = __fuzz_pick_seed(seeds, iter);
+        var mode: i32 = random_int(0, 4);
+        var input: string = __fuzz_mutate(seed, mode);
+        match (target(input)) {
+            Some(msg) => {
+                var min: string = __fuzz_shrink(input, target);
+                return Some(__fuzz_format_failure(
+                    "iter " + iter.to_string() + " mode " + mode.to_string(),
+                    input, min, msg));
+            },
+            None => { },
+        }
+        iter = iter + 1;
+    }
+    return None;
+}
+
+// __fuzz_format_failure builds the diagnostic block. When
+// shrinking is a no-op (already minimal) the message omits
+// the redundant "shrunk to" line.
+function __fuzz_format_failure(origin: string, raw: string, minimised: string, msg: string): string {
+    if (raw == minimised) {
+        return origin + " input \"" + __fuzz_escape(raw) + "\" (" +
+               len(raw).to_string() + " bytes): " + msg;
+    }
+    return origin + ": " + msg +
+           "\n  raw     (" + len(raw).to_string() + " bytes): \"" +
+                __fuzz_escape(raw) + "\"" +
+           "\n  shrunk  (" + len(minimised).to_string() + " bytes): \"" +
+                __fuzz_escape(minimised) + "\"";
+}
+
+// (r) fuzz_shrink — receiver-method form. Reports as one
+// TAP case; on failure the case message embeds the
+// minimised counter-example so CI logs preserve a clean
+// reproducer.
+pub function (r: TestRunner) fuzz_shrink(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): TestRunner {
+    return r.it(name, fuzz_run_shrink(seeds, iterations, target));
+}

@@ -354,6 +354,11 @@ function main(): i32 {
 - `(r).fuzz(name, seeds, iterations, target)` — receiver-
   method form that folds the outcome into the runner as one
   TAP case
+- `fuzz_run_shrink` / `(r).fuzz_shrink` — same shape, but on
+  a failure the harness minimises the offending input via
+  halving + single-byte drops before reporting. Failure
+  message embeds both the raw input and the shrunk form so
+  the log doubles as a clean reproducer.
 - `fuzz_default_iterations()` — `200`; tuned for sub-second
   per-target runs in CI
 
