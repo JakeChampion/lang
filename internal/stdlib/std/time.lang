@@ -139,3 +139,166 @@ pub function span_hours(n: i32): Span {
         hours: n, minutes: 0, seconds: 0, nanos: 0,
     };
 }
+
+// ============================================================
+// Civil-date arithmetic — Howard Hinnant's algorithms (Phase 3
+// per docs/STDLIB-DESIGN-RESEARCH.md Rec §4). Reference impl:
+// https://hinnant.github.io/date_v2.html. Days-since-epoch
+// is a signed i32 (range ±5.8M years from 1970, plenty).
+// ============================================================
+
+// `__days_from_civil(y, m, d)` — serial day number relative to
+// 1970-01-01. Assumes the input is a valid civil date — Feb 30
+// produces a nonsense result rather than trapping; callers
+// should `.is_valid()` first if they're sanitising user input.
+//
+// The era trick (groups of 400 years = 146097 days) folds
+// negative-year arithmetic into the same closed form as
+// positive — no branchy "is this year before epoch" guards.
+function __days_from_civil(y_in: i32, m: i32, d: i32): i32 {
+    var y: i32 = y_in;
+    if (m <= 2) { y = y - 1; }
+    var era: i32 = 0;
+    if (y >= 0) {
+        era = y / 400;
+    } else {
+        era = (y - 399) / 400;
+    }
+    var yoe: i32 = y - era * 400;
+    var mp: i32 = 0;
+    if (m > 2) {
+        mp = m - 3;
+    } else {
+        mp = m + 9;
+    }
+    var doy: i32 = (153 * mp + 2) / 5 + d - 1;
+    var doe: i32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+// `__civil_from_days(z)` — inverse of `__days_from_civil`.
+// Returns a Date. Same era trick for the negative branch.
+function __civil_from_days(z_in: i32): Date {
+    var z: i32 = z_in + 719468;
+    var era: i32 = 0;
+    if (z >= 0) {
+        era = z / 146097;
+    } else {
+        era = (z - 146096) / 146097;
+    }
+    var doe: i32 = z - era * 146097;
+    var yoe: i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    var y: i32 = yoe + era * 400;
+    var doy: i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    var mp: i32 = (5 * doy + 2) / 153;
+    var d: i32 = doy - (153 * mp + 2) / 5 + 1;
+    var m: i32 = 0;
+    if (mp < 10) {
+        m = mp + 3;
+    } else {
+        m = mp - 9;
+    }
+    if (m <= 2) { y = y + 1; }
+    return Date { year: y, month: m, day: d };
+}
+
+// `is_leap_year(y)` — Gregorian leap-year rule. Divisible by 4,
+// except century years (divisible by 100) which must also be
+// divisible by 400. 2000 yes, 1900 no, 2024 yes, 2100 no.
+pub function is_leap_year(y: i32): boolean {
+    if (y % 4 != 0) { return false; }
+    if (y % 100 != 0) { return true; }
+    return y % 400 == 0;
+}
+
+// `days_in_month(y, m)` — calendar days for the given month.
+// Handles February's leap-year branch. Returns 0 for an
+// out-of-range month — callers should `.is_valid()` first if
+// they care.
+pub function days_in_month(y: i32, m: i32): i32 {
+    if (m == 1) { return 31; }
+    if (m == 2) {
+        if (is_leap_year(y)) { return 29; }
+        return 28;
+    }
+    if (m == 3) { return 31; }
+    if (m == 4) { return 30; }
+    if (m == 5) { return 31; }
+    if (m == 6) { return 30; }
+    if (m == 7) { return 31; }
+    if (m == 8) { return 31; }
+    if (m == 9) { return 30; }
+    if (m == 10) { return 31; }
+    if (m == 11) { return 30; }
+    if (m == 12) { return 31; }
+    return 0;
+}
+
+// `(d).is_valid()` — does the (year, month, day) triple name
+// a real Gregorian date? Year is unbounded (negative years are
+// "BCE", which Hinnant's algorithm handles); month must be
+// 1..12; day must be 1..days_in_month(year, month).
+pub function (d: Date) is_valid(): boolean {
+    if (d.month < 1) { return false; }
+    if (d.month > 12) { return false; }
+    if (d.day < 1) { return false; }
+    return d.day <= days_in_month(d.year, d.month);
+}
+
+// `(d).add_days(n)` — calendar-add `n` days. Negative `n` walks
+// backward. Round-trips through the serial day number so
+// month / year / leap-year boundaries handle themselves.
+pub function (d: Date) add_days(n: i32): Date {
+    var z: i32 = __days_from_civil(d.year, d.month, d.day);
+    return __civil_from_days(z + n);
+}
+
+// `(d).days_since(other)` — number of whole days from `other`
+// to `d`. Positive when `d` is after `other`; negative when
+// before. Subtracts serial day numbers — exact, no floating
+// point.
+pub function (d: Date) days_since(other: Date): i32 {
+    var a: i32 = __days_from_civil(d.year, d.month, d.day);
+    var b: i32 = __days_from_civil(other.year, other.month, other.day);
+    return a - b;
+}
+
+// `(d).weekday()` — 0..6 with Sunday=0 (Hinnant convention,
+// matches `strftime` `%w`). 1970-01-01 was a Thursday so
+// `__days_from_civil` returns 0 for that date; we offset by
+// 4 to land Thursday → 4. The `((x % 7) + 7) % 7` trick
+// makes the result non-negative even when `__days_from_civil`
+// returns a negative i32 (pre-1970 dates).
+pub function (d: Date) weekday(): i32 {
+    var z: i32 = __days_from_civil(d.year, d.month, d.day);
+    return ((z + 4) % 7 + 7) % 7;
+}
+
+// `(d).day_of_year()` — 1..366. Jan 1 returns 1. Computed
+// from Hinnant's intra-year offset; doesn't need the era
+// machinery since the value only depends on (month, day) plus
+// the leap-year flag.
+//
+// Hinnant's frame anchors at March 1 (so months map to mp =
+// {Mar→0, Apr→1, …, Feb→11}); Jan/Feb of year Y are framed in
+// year Y-1, so their frame-doy values 307..365 (+1 in leap)
+// map to Jan-based 1..59 (+1). Convert with two cases:
+//   m ≤ 2:  Jan-based = frame_doy - 306
+//   m > 2:  Jan-based = frame_doy + 59 + (is_leap_year(y) ? 1 : 0)
+// Mar 1 is day 60 in non-leap, 61 in leap; Dec 31 is 365 / 366.
+pub function (d: Date) day_of_year(): i32 {
+    var m: i32 = d.month;
+    var mp: i32 = 0;
+    if (m > 2) {
+        mp = m - 3;
+    } else {
+        mp = m + 9;
+    }
+    var doy: i32 = (153 * mp + 2) / 5 + d.day;
+    if (m <= 2) {
+        return doy - 306;
+    }
+    var add_for_leap: i32 = 0;
+    if (is_leap_year(d.year)) { add_for_leap = 1; }
+    return doy + 59 + add_for_leap;
+}
