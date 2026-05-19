@@ -74,10 +74,15 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 			case ir.OpAlloc:
 				needs.add("__lang_alloc")
 			case ir.OpCallDirect:
-				// Calls to the synthetic __lang_print helper
-				// drag in WASI fd_write transitively. Detect by
-				// name and chain through all the byte-copy deps.
-				if op.Str == "__lang_print" {
+				// Source-language built-ins lower to OpCallDirect
+				// with the source name; the call-site lookup
+				// goes through callDirectAlias which routes to
+				// the synthetic helper. The trigger here uses
+				// the same alias so the helper actually exists.
+				switch callDirectAlias(op.Str) {
+				case "__lang_print":
+					// fd_write under the hood; transitively
+					// pulls in the byte-copy + alloc helpers.
 					needs.add("__lang_str_len")
 					needs.add("__lang_str_byte")
 					needs.add("__lang_alloc")

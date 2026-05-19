@@ -178,20 +178,68 @@ function main(): i32 { return fact(10); }
 // with a clear error. This pins the contract that gaps surface
 // as failures, not as silently-wrong output.
 func TestBuildReportsUnsupported(t *testing.T) {
+	// Closures with captures lower to OpMakeClosure / OpMakeEnv,
+	// neither of which is wired in wasmbin yet (the per-capture
+	// type info isn't carried at the IR layer). Compiling such a
+	// program must fail with a clear error rather than silently
+	// emitting nonsense bytes.
 	src := `import "core/no_prelude";
+function adder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 {
+        return x + n;
+    }
+    return add;
+}
 function main(): i32 {
-    print("hello, world");
-    return 0;
+    var f = adder(7);
+    return f(3);
 }
 `
 	_, err := buildFromSource(t, src)
 	if err == nil {
-		t.Fatal("expected an unsupported-op error for print(); got nil")
+		t.Fatal("expected an unsupported-op error for closure-with-capture; got nil")
 	}
-	// The error message should mention wasmbin so the user knows
-	// which backend rejected it.
 	if !strings.Contains(err.Error(), "wasmbin") &&
 		!strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("error %q doesn't mention wasmbin or unsupported", err)
+	}
+}
+
+// TestBuildPrintReal — compile + run a real lang source program
+// that calls `print()`. With name aliasing (print → __lang_print)
+// + WASI fd_write import + the helper chain, end-to-end output
+// flows from `.lang` source to stdout.
+func TestBuildPrintReal(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    print("hello from wasmbin\n");
+    return 0;
+}
+`
+	bin, err := buildFromSource(t, src)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// `main` returns i32 but isn't `_start`; wasmtime needs an
+	// explicit `--invoke main` to call it, and that mode bypasses
+	// WASI command-mode initialisation. Print's fd_write still
+	// works under `wasmtime run --invoke main`.
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	if !strings.Contains(so.String(), "hello from wasmbin") {
+		t.Fatalf("stdout doesn't contain expected text: %q", so.String())
 	}
 }

@@ -1139,7 +1139,12 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 
 	// ---- Calls (slice 5) ----
 	case ir.OpCallDirect:
-		idx, ok := ctx.funcIdx[op.Str]
+		// Source-language built-ins (e.g. `print(s)`) get lowered
+		// to OpCallDirect with the source name. Map those names
+		// onto the synthetic runtime helpers that implement them.
+		// User functions and helpers without an alias map 1:1.
+		name := callDirectAlias(op.Str)
+		idx, ok := ctx.funcIdx[name]
 		if !ok {
 			return nil, fmt.Errorf("OpCallDirect: unknown callee %q", op.Str)
 		}
@@ -1252,6 +1257,21 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return inst.InstCall(body, idx), nil
 	}
 	return nil, fmt.Errorf("unsupported op %v", op.Kind)
+}
+
+// callDirectAlias maps source-language built-in names that the IR
+// lowering emits as OpCallDirect targets onto the synthetic runtime
+// helpers that actually implement them in wasmbin. Names not in
+// the map pass through unchanged.
+//
+// Today: `print(s)` → `__lang_print` (which calls fd_write under
+// the hood). Future entries cover `putchar`, `read_line`, etc.
+func callDirectAlias(name string) string {
+	switch name {
+	case "print":
+		return "__lang_print"
+	}
+	return name
 }
 
 // anyTableOp reports whether prog needs a table + element section.
