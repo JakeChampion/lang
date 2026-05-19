@@ -39,7 +39,15 @@ import (
 // diffOracleSeedCount keeps `go test ./...` fast by default; the
 // native FuzzGenerate_ExecutionAgrees harness in the same package
 // expands the search space on demand.
-const diffOracleSeedCount = 8
+//
+// Bumped from 8 → 32 in PR #781's follow-up: with the
+// __alloc_u8 length-prefix fix landing, 123 of the first 128
+// seeds compile and execute correctly through wasmbin, so the
+// extra 24 seeds are nearly free in CI time and meaningfully
+// expand the codegen surface the oracle covers (the langsmith
+// generator picks different IR shapes per seed — Map ops, Result
+// pair-returns, multi-arm matches, nested loops, etc.).
+const diffOracleSeedCount = 32
 
 // TestDifferential_LangsmithMain runs each backend on the same
 // generator-emitted main() and asserts the byte return value
