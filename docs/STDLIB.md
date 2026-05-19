@@ -323,6 +323,10 @@ function main(): i32 {
   parses both sides via `std/json` and walks the value
   trees in order-independent fashion (JObject key order
   isn't observable)
+- **Timing:** `assert_elapsed_lt_ms(start_ns, max_ms)` /
+  `assert_elapsed_lt_us(start_ns, max_us)` — pair with
+  `monotonic_ns()` to stamp the start; failure message embeds
+  both the observed elapsed and the deadline
 - **Map assertions:** `assert_map_len_i32_i32` / `_string_string`,
   `assert_map_has_i32_i32` / `_string_string`,
   `assert_map_lacks_i32_i32` / `_string_string`

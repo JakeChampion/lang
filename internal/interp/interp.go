@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jakechampion/lang/internal/ast"
 )
@@ -421,6 +422,9 @@ func New() *Interp {
 	// wasm backends would fail at codegen for now. That's the
 	// right trade for the migration: tests run under
 	// `lang -interp` regardless of which backend they exercise.
+	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
+	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
+	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
@@ -1164,6 +1168,45 @@ func builtinWriteFile(_ *Interp, args []Value) (Value, error) {
 		return optionSome(classifyIoError(string(path), err)), nil
 	}
 	return optionNone(), nil
+}
+
+// builtinNowUnixMS returns wall-clock milliseconds since
+// 1970-01-01 UTC. NTP-adjustable; use `monotonic_ns` for
+// timing. Wraps `time.Now().UnixMilli()`.
+func builtinNowUnixMS(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("now_unix_ms: expected 0 args, got %d", len(args))
+	}
+	return Number(time.Now().UnixMilli()), nil
+}
+
+// builtinMonotonicNS returns nanoseconds from a monotonic
+// clock. `time.Now()` in Go carries a monotonic reading on
+// every supported platform; `UnixNano` exposes the
+// monotonic-aware nanosecond timestamp. The exact reference
+// point isn't observable — only deltas between calls matter.
+func builtinMonotonicNS(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("monotonic_ns: expected 0 args, got %d", len(args))
+	}
+	return Number(time.Now().UnixNano()), nil
+}
+
+// builtinSleepMS pauses for the given duration (milliseconds).
+// Negative / zero inputs yield immediate return (no spurious
+// wakeup); Go's runtime may delay actual wakeup under load.
+func builtinSleepMS(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("sleep_ms: expected 1 arg, got %d", len(args))
+	}
+	ms, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("sleep_ms: expected number arg, got %T", args[0])
+	}
+	if int64(ms) > 0 {
+		time.Sleep(time.Duration(int64(ms)) * time.Millisecond)
+	}
+	return Void{}, nil
 }
 
 // builtinTempDir creates a fresh temporary directory and
