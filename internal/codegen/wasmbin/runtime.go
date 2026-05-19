@@ -127,6 +127,11 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// + alloc for the environ_ptrs table + buf.
 					needs.add("__lang_alloc")
 					needs.add("__lang_env_at")
+				case "__lang_read_byte":
+					// wasi_fd_read on stdin (fd=0) + alloc for
+					// the per-process scratch region.
+					needs.add("__lang_alloc")
+					needs.add("__lang_read_byte")
 				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
@@ -222,6 +227,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildEnvAtBody,
+	},
+	"__lang_read_byte": {
+		// () → i32 — one byte from stdin (0..255), or -1 on
+		// EOF/error. Lazily alloc()s a 16-byte scratch region
+		// for the iovec + nread out + the 1-byte read buffer.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildReadByteBody,
 	},
 	"__str_eq": {
 		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).

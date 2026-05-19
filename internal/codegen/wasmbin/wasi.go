@@ -100,6 +100,17 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_fd_read": {
+		// (fd, iovs_ptr, iovs_count, nread_ptr) → errno.
+		// Reads up to sum(iov_len) bytes into the iovs[i].base
+		// buffers. nread_ptr is written with the actual bytes
+		// read; short reads / EOF set nread to less than the
+		// requested total.
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_read",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -151,6 +162,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 		in.add("wasi_environ_sizes_get")
 		in.add("wasi_environ_get")
 	}
+	if helpers.set["__lang_read_byte"] {
+		in.add("wasi_fd_read")
+	}
 	return in
 }
 
@@ -201,6 +215,14 @@ const (
 	envSizesArgcAddr  = 32
 	envSizesBufAddr   = 36
 )
+
+// readByteScratchAddr holds the heap-pointer to __lang_read_byte's
+// per-call scratch region (iovec + 1-byte buffer + nread out). 0
+// means uninitialised; the helper allocs 16 bytes on first call
+// and writes the addr here so subsequent calls reuse the same
+// region. Lives at 44..47 — the last free slot in the 0..63
+// reserved low-memory window before closuresBase=64.
+const readByteScratchAddr = 44
 
 // buildPrintBody assembles the wasm bytes for __lang_print.
 //
@@ -602,5 +624,94 @@ func buildEnvAtBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstLocalGet(body, 6)
 	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildReadByteBody assembles __lang_read_byte.
+//
+// Signature: () → i32 — returns 0..255 for a byte read from
+// stdin, or -1 for EOF / error.
+//
+// First call alloc(16) for the scratch region and caches the
+// base addr in low memory (readByteScratchAddr). Layout within
+// the scratch region: iov.base (4), iov.len (4), nread out (4),
+// 1-byte buffer (rounded up to 4 = 4 bytes). Total 16 bytes.
+//
+//	scratch + 0..3:   iov.base (set per call to scratch+12)
+//	scratch + 4..7:   iov.len = 1
+//	scratch + 8..11:  nread output
+//	scratch + 12..15: byte buffer (only [12] used)
+//
+// Each call: write iov struct + invoke fd_read(0, scratch, 1,
+// scratch+8); on errno != 0 or nread == 0 → -1, otherwise load
+// the byte at scratch+12.
+//
+// Locals (no params):
+//
+//	0: $scratch
+//	1: $errno
+func buildReadByteBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	fdRead := idxs["wasi_fd_read"]
+	var body []byte
+	// $scratch = mem[readByteScratchAddr]
+	body = inst.InstI32Const(body, readByteScratchAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalTee(body, 0)
+	// If zero, alloc(16) and store the pointer back.
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 0)
+		body = inst.InstI32Const(body, readByteScratchAddr)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	// iov.base = scratch + 12 (the byte buffer slot)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Store(body, 2, 0)
+	// iov.len = 1
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	// fd_read(0 /* stdin */, scratch, 1, scratch+8)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, fdRead)
+	body = inst.InstLocalSet(body, 1) // $errno
+	// If errno != 0, return -1.
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// If nread == 0 (EOF), return -1.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Read byte at scratch+12.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load8U(body, 0, 0)
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
