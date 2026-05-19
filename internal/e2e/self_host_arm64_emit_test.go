@@ -778,6 +778,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"world",
 		},
 		{
+			"arr-string-index-of-found",
+			"function main(): i32 { var xs: string[] = [\"a\", \"b\", \"c\"]; return xs.index_of(\"b\"); }",
+			1,
+			"",
+		},
+		{
+			"arr-string-index-of-not-found",
+			"function main(): i32 { var xs: string[] = [\"a\", \"b\", \"c\"]; var r = xs.index_of(\"z\"); if (r < 0) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"arr-string-contains-true",
+			"function main(): i32 { var xs: string[] = [\"foo\", \"bar\"]; if (xs.contains(\"bar\")) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"arr-string-contains-false",
+			"function main(): i32 { var xs: string[] = [\"foo\", \"bar\"]; if (xs.contains(\"baz\")) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"arr-string-contains-content-equality",
+			"function main(): i32 { var x = \"hello\"; var y = \"hel\" + \"lo\"; var xs: string[] = [x]; if (xs.contains(y)) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
 			"closure-uses-multiple-string-methods",
 			"function (s: string) bang(): string { return s + \"!\"; } function main(): i32 { var msg = \"hi\"; var f = function (): string { return msg.bang() + \"?\"; }; print(f()); return 0; }",
 			0,
