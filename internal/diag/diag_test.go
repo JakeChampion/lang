@@ -327,12 +327,13 @@ func TestAvailableCodesEnumeratesCatalogue(t *testing.T) {
 	if len(codes) == 0 {
 		t.Fatal("AvailableCodes() returned empty — no markdown files found")
 	}
-	// Phase 1-4 catalogue: E001..E020.
+	// Phase 1-5 catalogue: E001..E025.
 	wantSet := map[string]bool{
 		"E001": true, "E002": true, "E003": true, "E004": true, "E005": true,
 		"E006": true, "E007": true, "E008": true, "E009": true, "E010": true,
 		"E011": true, "E012": true, "E013": true, "E014": true, "E015": true,
 		"E016": true, "E017": true, "E018": true, "E019": true, "E020": true,
+		"E021": true, "E022": true, "E023": true, "E024": true, "E025": true,
 	}
 	gotSet := map[string]bool{}
 	for _, c := range codes {

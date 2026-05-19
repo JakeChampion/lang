@@ -1559,13 +1559,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			switch rt := fn.Receiver.Type.(type) {
 			case ast.StructType:
 				if _, ok := c.info.Structs[rt.Name]; !ok {
-					c.errf(fn.P, "method receiver references unknown struct %q", rt.Name)
+					c.errfCode(fn.P, "E021", "method receiver references unknown struct %q", rt.Name)
 					continue
 				}
 				typeName = rt.Name
 			case ast.EnumType:
 				if _, ok := c.info.Enums[rt.Name]; !ok {
-					c.errf(fn.P, "method receiver references unknown enum %q", rt.Name)
+					c.errfCode(fn.P, "E021", "method receiver references unknown enum %q", rt.Name)
 					continue
 				}
 				typeName = rt.Name
@@ -1592,12 +1592,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 					typeName = "f32"
 				}
 			default:
-				c.errf(fn.P, "method receiver type must be a struct, enum, or built-in type, got %s", fn.Receiver.Type)
+				c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, or built-in type, got %s", fn.Receiver.Type)
 				continue
 			}
 			methodKey := typeName + "." + fn.Name
 			if _, dup := c.info.Methods[methodKey]; dup {
-				c.errf(fn.P, "method %q on %s redeclared", fn.Name, typeName)
+				c.errfCode(fn.P, "E006", "method %q on %s redeclared", fn.Name, typeName)
 				continue
 			}
 			mangled := "__method_" + typeName + "_" + fn.Name
@@ -2938,14 +2938,14 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		et, ok := st.(ast.EnumType)
 		if !ok {
 			if st != nil {
-				c.errf(n.Source.Pos(), "let-else source must be an enum value, got %s", st)
+				c.errfCode(n.Source.Pos(), "E022", "let-else source must be an enum value, got %s", st)
 			}
 			c.checkBlock(n.Else, s)
 			return
 		}
 		ed := c.info.Enums[et.Name]
 		if ed == nil {
-			c.errf(n.Source.Pos(), "unknown enum %q", et.Name)
+			c.errfCode(n.Source.Pos(), "E023", "unknown enum %q", et.Name)
 			c.checkBlock(n.Else, s)
 			return
 		}
@@ -2989,7 +2989,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// aren't available there — only on the match path).
 		c.checkBlock(n.Else, s)
 		if !blockDiverges(n.Else) {
-			c.errf(n.Else.P, "let-else: else branch must diverge (return / break / continue)")
+			c.errfCode(n.Else.P, "E022", "let-else: else branch must diverge (return / break / continue)")
 		}
 	case *ast.IfLet:
 		// Source must produce an enum whose variant list contains
@@ -2998,7 +2998,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		et, ok := st.(ast.EnumType)
 		if !ok {
 			if st != nil {
-				c.errf(n.Source.Pos(), "if-let source must be an enum value, got %s", st)
+				c.errfCode(n.Source.Pos(), "E022", "if-let source must be an enum value, got %s", st)
 			}
 			c.checkStmt(n.Then, s)
 			if n.Else != nil {
@@ -3008,7 +3008,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		ed := c.info.Enums[et.Name]
 		if ed == nil {
-			c.errf(n.Source.Pos(), "unknown enum %q", et.Name)
+			c.errfCode(n.Source.Pos(), "E023", "unknown enum %q", et.Name)
 			c.checkStmt(n.Then, s)
 			if n.Else != nil {
 				c.checkStmt(n.Else, s)
@@ -3187,12 +3187,12 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		tup, ok := got.(ast.TupleType)
 		if !ok {
 			if got != nil {
-				c.errf(n.P, "tuple destructure needs a tuple expression, got %s", got)
+				c.errfCode(n.P, "E024", "tuple destructure needs a tuple expression, got %s", got)
 			}
 			return
 		}
 		if len(tup.Elems) != len(n.Names) {
-			c.errf(n.P, "tuple has %d elements, but %d names given", len(tup.Elems), len(n.Names))
+			c.errfCode(n.P, "E024", "tuple has %d elements, but %d names given", len(tup.Elems), len(n.Names))
 			return
 		}
 		// Hidden temp holds the tuple pointer between the
@@ -3224,7 +3224,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// match" semantics aren't well-defined for. Reject them up
 		// front rather than letting WASM's f32.eq surprise us.
 		if tagT != nil && ast.Equal(tagT, ast.FloatType{}) {
-			c.errf(n.Tag.Pos(), "switch on float values is not supported")
+			c.errfCode(n.Tag.Pos(), "E025", "switch on float values is not supported")
 		}
 		// `break` inside case bodies should leave the switch but not
 		// abort an enclosing loop. `continue` falls straight through
@@ -3235,7 +3235,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			for _, v := range k.Values {
 				vt := c.checkExpr(v, s)
 				if tagT != nil && vt != nil && !ast.Equal(vt, tagT) {
-					c.errf(v.Pos(), "case value type %s, expected %s", vt, tagT)
+					c.errfCode(v.Pos(), "E025", "case value type %s, expected %s", vt, tagT)
 				}
 			}
 			c.checkBlock(k.Body, s)
@@ -3274,7 +3274,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 	ed, ok := c.info.Enums[et.Name]
 	if !ok {
-		c.errf(n.Tag.Pos(), "unknown enum %q", et.Name)
+		c.errfCode(n.Tag.Pos(), "E023", "unknown enum %q", et.Name)
 		return
 	}
 	// For generic enums, build a substitution map from the
@@ -3534,7 +3534,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	}
 	ed, ok := c.info.Enums[et.Name]
 	if !ok {
-		c.errf(n.Tag.Pos(), "unknown enum %q", et.Name)
+		c.errfCode(n.Tag.Pos(), "E023", "unknown enum %q", et.Name)
 		return nil
 	}
 	sub := map[string]ast.Type{}
