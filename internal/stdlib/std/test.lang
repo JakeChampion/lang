@@ -976,6 +976,77 @@ pub function assert_eq_string_array(actual: string[], expected: string[]): Optio
     return None;
 }
 
+// `assert_eq_f64_array_near(actual, expected, epsilon)` —
+// element-wise float array compare. Each pair must satisfy
+// `|actual[i] - expected[i]| <= epsilon`. NaN anywhere fails
+// (NaN never compares within tolerance). Use when a function
+// returns f64[] and the test wants to pin the whole vector;
+// the `_near` semantics mean cumulative rounding error in
+// vector ops doesn't fail the test spuriously.
+pub function assert_eq_f64_array_near(actual: f64[], expected: f64[], epsilon: f64): Option[string] {
+    var an: i32 = len(actual);
+    var en: i32 = len(expected);
+    if (an != en) {
+        return Some("assert_eq_f64_array_near: length differs - expected " +
+                    en.to_string() + ", got " + an.to_string());
+    }
+    var i: i32 = 0;
+    while (i < an) {
+        var a: f64 = actual[i];
+        var e: f64 = expected[i];
+        if (a != a || e != e) {
+            return Some("assert_eq_f64_array_near: NaN at index " +
+                        i.to_string());
+        }
+        if (a != e) {
+            var diff: f64 = a - e;
+            if (diff < 0.0) { diff = 0.0 - diff; }
+            if (diff > epsilon) {
+                return Some("assert_eq_f64_array_near: at index " +
+                            i.to_string() + " |" + a.to_string() +
+                            " - " + e.to_string() + "| = " + diff.to_string() +
+                            " > epsilon " + epsilon.to_string());
+            }
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_eq_f32_array_near(actual, expected, epsilon)` —
+// f32 mirror. Widens both sides per element to f64 for the
+// difference calc, same precision-safety trick as the
+// scalar `assert_eq_f32_near`.
+pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f32): Option[string] {
+    var an: i32 = len(actual);
+    var en: i32 = len(expected);
+    if (an != en) {
+        return Some("assert_eq_f32_array_near: length differs - expected " +
+                    en.to_string() + ", got " + an.to_string());
+    }
+    var i: i32 = 0;
+    while (i < an) {
+        var a: f32 = actual[i];
+        var e: f32 = expected[i];
+        if (a != a || e != e) {
+            return Some("assert_eq_f32_array_near: NaN at index " +
+                        i.to_string());
+        }
+        if (a != e) {
+            var diff: f64 = (a as f64) - (e as f64);
+            if (diff < 0.0) { diff = 0.0 - diff; }
+            if (diff > (epsilon as f64)) {
+                return Some("assert_eq_f32_array_near: at index " +
+                            i.to_string() + " |" + a.to_string() +
+                            " - " + e.to_string() + "| > epsilon " +
+                            epsilon.to_string());
+            }
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
 // =================== SET-EQUALITY ASSERTIONS ===================
 //
 // Order-independent multiset comparison for cases where the
@@ -1405,6 +1476,71 @@ pub function assert_sorted_asc_string(arr: string[]): Option[string] {
             return Some("assert_sorted_asc_string: inversion at index " +
                         i.to_string() + ": \"" + arr[i - 1] +
                         "\" > \"" + arr[i] + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_sorted_desc_i32(arr)` — strictly the inverse of
+// `_asc_i32`: every adjacent pair must satisfy
+// `arr[i-1] >= arr[i]`. Use this to pin `sort_i32_desc(...)`
+// output or any reverse-sorted-by-construction code path.
+pub function assert_sorted_desc_i32(arr: i32[]): Option[string] {
+    var i: i32 = 1;
+    while (i < len(arr)) {
+        if (arr[i - 1] < arr[i]) {
+            return Some("assert_sorted_desc_i32: inversion at index " +
+                        i.to_string() + ": " +
+                        arr[i - 1].to_string() + " < " + arr[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_sorted_desc_string(arr)` — descending lexicographic.
+pub function assert_sorted_desc_string(arr: string[]): Option[string] {
+    var i: i32 = 1;
+    while (i < len(arr)) {
+        if (sort.string_cmp(arr[i - 1], arr[i]) < 0) {
+            return Some("assert_sorted_desc_string: inversion at index " +
+                        i.to_string() + ": \"" + arr[i - 1] +
+                        "\" < \"" + arr[i] + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_strictly_sorted_asc_i32(arr)` — `arr[i-1] < arr[i]`
+// (strict). Use when the contract is "sorted AND unique" —
+// equal adjacent pairs are a violation here, unlike the
+// non-strict `_asc_i32`. Saves writing `assert_sorted_asc +
+// assert_unique` separately.
+pub function assert_strictly_sorted_asc_i32(arr: i32[]): Option[string] {
+    var i: i32 = 1;
+    while (i < len(arr)) {
+        if (arr[i - 1] >= arr[i]) {
+            return Some("assert_strictly_sorted_asc_i32: not strict at index " +
+                        i.to_string() + ": " +
+                        arr[i - 1].to_string() + " >= " + arr[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_strictly_sorted_asc_string(arr)` — strict
+// lexicographic order on strings (same "sorted + unique"
+// contract as the i32 variant).
+pub function assert_strictly_sorted_asc_string(arr: string[]): Option[string] {
+    var i: i32 = 1;
+    while (i < len(arr)) {
+        if (sort.string_cmp(arr[i - 1], arr[i]) >= 0) {
+            return Some("assert_strictly_sorted_asc_string: not strict at index " +
+                        i.to_string() + ": \"" + arr[i - 1] +
+                        "\" >= \"" + arr[i] + "\"");
         }
         i = i + 1;
     }

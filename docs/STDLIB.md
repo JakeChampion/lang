@@ -329,7 +329,16 @@ function main(): i32 {
 - **Order:** `assert_sorted_asc_i32(arr)`,
   `assert_sorted_asc_string(arr)` — monotonically
   non-decreasing; empty / single-element arrays vacuously
-  pass; failure embeds the inversion index
+  pass; failure embeds the inversion index.
+  `assert_sorted_desc_i32` / `_string` for descending
+  order (pair with `sort_*_desc` output).
+  `assert_strictly_sorted_asc_i32` / `_string` for the
+  "sorted AND unique" contract — equal adjacent pairs
+  are a violation here, unlike the non-strict variant
+- **Float array:** `assert_eq_f64_array_near(actual,
+  expected, epsilon)` / `assert_eq_f32_array_near` —
+  element-wise compare with tolerance; NaN anywhere fails;
+  mismatches name the index so long-vector diffs localise
 - **Uniqueness:** `assert_unique_i32(arr)`,
   `assert_unique_string(arr)` — every element appears at
   most once; sort-then-walk so input order doesn't matter
