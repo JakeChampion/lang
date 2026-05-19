@@ -1505,6 +1505,7 @@ var CallDirectAliases = map[string]string{
 	// Synthetic runtime helpers.
 	"exit":       "__lang_exit",
 	"print":      "__lang_print",
+	"eprint":     "__lang_eprint",
 	"random_i32": "__lang_random_i32",
 	"now_ns":     "__lang_now_ns",
 	"env_count":  "__lang_env_count",
@@ -1513,6 +1514,14 @@ var CallDirectAliases = map[string]string{
 	"env_at":     "__lang_env_at",
 	"read_byte":  "__lang_read_byte",
 	"read_line":  "__lang_read_line",
+
+	// Reader API. wasmbin only models the stdin Reader (no
+	// TCP / file Readers yet), so `stdin()` returns a constant
+	// sentinel and `r.read_line()` ignores its receiver and
+	// reads directly from fd=0 via __lang_read_line.
+	"stdin":                     "__lang_stdin",
+	"__method_Reader_read_line": "__lang_reader_read_line",
+	"__method_Reader_close":     "__lang_reader_close",
 
 	// String / bytes round-trip.
 	"string_from_bytes": "__lang_string_from_bytes",
