@@ -281,6 +281,30 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			29,
 			"",
 		},
+		{
+			"break-in-while",
+			"function main(): i32 { var i = 0; var s = 0; while (i < 100) { if (i == 5) { break; } s = s + i; i = i + 1; } return s; }",
+			10,
+			"",
+		},
+		{
+			"continue-in-while",
+			"function main(): i32 { var i = 0; var s = 0; while (i < 10) { i = i + 1; if (i == 5) { continue; } s = s + i; } return s; }",
+			50,
+			"",
+		},
+		{
+			"break-in-for",
+			"function main(): i32 { var a = [10, 20, 30, 40]; var s = 0; for x in a { if (x == 30) { break; } s = s + x; } return s; }",
+			30,
+			"",
+		},
+		{
+			"continue-in-for",
+			"function main(): i32 { var a = [1, 2, 3, 4, 5]; var s = 0; for x in a { if (x == 3) { continue; } s = s + x; } return s; }",
+			12,
+			"",
+		},
 	}
 
 	for _, tc := range cases {

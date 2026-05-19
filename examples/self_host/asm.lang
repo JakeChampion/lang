@@ -130,12 +130,23 @@ pub struct EmitState {
     // ExprStructLit + ExprFieldAccess to look up field
     // layout. Seeded from mod.structs at the start of
     // emit_module.
-    struct_decls: parser.StructDecl[]
+    struct_decls: parser.StructDecl[],
+    // loop_exit_labels / loop_cont_labels: stacks of jump
+    // targets for break + continue inside the currently-active
+    // loops. Pushed when entering a StmtWhile / StmtFor body,
+    // popped on the way out. break uses the top of
+    // loop_exit_labels; continue uses the top of
+    // loop_cont_labels (which for `for` points at the index-
+    // increment block, NOT the top of the loop).
+    loop_exit_labels: string[],
+    loop_cont_labels: string[]
 }
 
 function new_state(): EmitState {
     var ns: string[] = [];
     var sl: string[] = [];
+    var lex: string[] = [];
+    var lcn: string[] = [];
     return EmitState {
         out: "",
         label_n: 0,
@@ -145,7 +156,9 @@ function new_state(): EmitState {
         needs_print_int: false,
         needs_read_int: false,
         needs_heap: false,
-        struct_decls: []
+        struct_decls: [],
+        loop_exit_labels: lex,
+        loop_cont_labels: lcn
     };
 }
 
@@ -159,7 +172,9 @@ function (s: EmitState) write(text: string): EmitState {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
 }
 
@@ -174,7 +189,9 @@ function (s: EmitState) bind_local(name: string): EmitState {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
 }
 
@@ -189,7 +206,9 @@ function (s: EmitState) reset_locals(): EmitState {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
 }
 
@@ -203,8 +222,62 @@ function (s: EmitState) enter_function(): EmitState {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
+}
+
+function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): EmitState {
+    var nex: string[] = s.loop_exit_labels.push(exit_lbl);
+    var ncn: string[] = s.loop_cont_labels.push(cont_lbl);
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: nex,
+        loop_cont_labels: ncn
+    };
+}
+
+function (s: EmitState) pop_loop_labels(): EmitState {
+    var nex: string[] = [];
+    var ncn: string[] = [];
+    var i: i32 = 0;
+    while (i < len(s.loop_exit_labels) - 1) {
+        nex = nex.push(s.loop_exit_labels[i]);
+        ncn = ncn.push(s.loop_cont_labels[i]);
+        i = i + 1;
+    }
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: nex,
+        loop_cont_labels: ncn
+    };
+}
+
+function (s: EmitState) top_loop_exit(): string {
+    if (len(s.loop_exit_labels) == 0) { return ""; }
+    return s.loop_exit_labels[len(s.loop_exit_labels) - 1];
+}
+
+function (s: EmitState) top_loop_cont(): string {
+    if (len(s.loop_cont_labels) == 0) { return ""; }
+    return s.loop_cont_labels[len(s.loop_cont_labels) - 1];
 }
 
 function (s: EmitState) leave_function(): EmitState {
@@ -217,7 +290,9 @@ function (s: EmitState) leave_function(): EmitState {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
 }
 
@@ -234,7 +309,9 @@ function (s: EmitState) mark_print_int(): EmitState {
         needs_print_int: true,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
 }
 
@@ -253,7 +330,9 @@ function (s: EmitState) mark_heap(): EmitState {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: true,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
 }
 
@@ -269,7 +348,9 @@ function (s: EmitState) mark_read_int(): EmitState {
         needs_print_int: s.needs_print_int,
         needs_read_int: true,
         needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
 }
 
@@ -303,7 +384,9 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -350,7 +433,9 @@ function fresh_label(s: EmitState): LabelOut {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
     return LabelOut { state: ns, name: name };
 }
@@ -752,7 +837,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_print_int: s.needs_print_int,
                 needs_read_int: s.needs_read_int,
                 needs_heap: s.needs_heap,
-                struct_decls: s.struct_decls
+                struct_decls: s.struct_decls,
+                loop_exit_labels: s.loop_exit_labels,
+                loop_cont_labels: s.loop_cont_labels
             };
             // Walk each struct decl looking for the named
             // field. Emit a shape-pointer comparison arm for
@@ -786,7 +873,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         needs_print_int: s.needs_print_int,
                         needs_read_int: s.needs_read_int,
                         needs_heap: s.needs_heap,
-                        struct_decls: s.struct_decls
+                        struct_decls: s.struct_decls,
+                        loop_exit_labels: s.loop_exit_labels,
+                        loop_cont_labels: s.loop_cont_labels
                     };
                 }
                 di = di + 1;
@@ -871,6 +960,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             //            je <exit_lbl>
             //            <body>; jmp <top_lbl>
             // <exit_lbl>:
+            //
+            // break inside the body jumps to <exit_lbl>;
+            // continue jumps to <top_lbl> (re-evaluate cond).
             var top_l: LabelOut = fresh_label(s);
             s = top_l.state;
             var exit_l: LabelOut = fresh_label(s);
@@ -880,7 +972,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.write("    popq %rax\n");
             s = s.write("    cmpq $0, %rax\n");
             s = s.write("    je " + exit_l.name + "\n");
+            s = s.push_loop_labels(exit_l.name, top_l.name);
             s = emit_block(w.body, s);
+            s = s.pop_loop_labels();
             s = s.write("    jmp " + top_l.name + "\n");
             s = s.write(exit_l.name + ":\n");
             return s;
@@ -942,7 +1036,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 needs_print_int: s.needs_print_int,
                 needs_read_int: s.needs_read_int,
                 needs_heap: s.needs_heap,
-                struct_decls: s.struct_decls
+                struct_decls: s.struct_decls,
+                loop_exit_labels: s.loop_exit_labels,
+                loop_cont_labels: s.loop_cont_labels
             };
             var ai: i32 = 0;
             while (ai < len(m.arms)) {
@@ -957,7 +1053,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                     needs_print_int: s.needs_print_int,
                     needs_read_int: s.needs_read_int,
                     needs_heap: s.needs_heap,
-                    struct_decls: s.struct_decls
+                    struct_decls: s.struct_decls,
+                    loop_exit_labels: s.loop_exit_labels,
+                    loop_cont_labels: s.loop_cont_labels
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
@@ -1022,19 +1120,22 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.write("    movq $0, " + i32_to_string(idx_off) + "(%rbp)\n");
             s = s.bind_local(f.var_name);
             var elem_off: i32 = s.lookup_local(f.var_name);
-            // Loop labels.
+            // Loop labels: top (cond), cont (i++), end (exit).
             var top_lbl: i32 = s.label_n;
-            var end_lbl: i32 = s.label_n + 1;
+            var cont_lbl: i32 = s.label_n + 1;
+            var end_lbl: i32 = s.label_n + 2;
             s = EmitState {
                 out: s.out,
-                label_n: s.label_n + 2,
+                label_n: s.label_n + 3,
                 local_names: s.local_names,
                 in_function: s.in_function,
                 string_lits: s.string_lits,
                 needs_print_int: s.needs_print_int,
                 needs_read_int: s.needs_read_int,
                 needs_heap: s.needs_heap,
-                struct_decls: s.struct_decls
+                struct_decls: s.struct_decls,
+                loop_exit_labels: s.loop_exit_labels,
+                loop_cont_labels: s.loop_cont_labels
             };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition: __for_i_N < len(__for_arr_N).
@@ -1049,13 +1150,18 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.write("    incq %rcx\n");
             s = s.write("    movq (%rax,%rcx,8), %rax\n");
             s = s.write("    movq %rax, " + i32_to_string(elem_off) + "(%rbp)\n");
-            // Body.
+            // Body — break jumps to .Lfor_end; continue jumps
+            // to .Lfor_cont (the i++ block) so the loop still
+            // advances.
+            s = s.push_loop_labels(".Lfor_end_" + i32_to_string(end_lbl), ".Lfor_cont_" + i32_to_string(cont_lbl));
             var bi: i32 = 0;
             while (bi < len(f.body)) {
                 s = emit_stmt(f.body[bi], s);
                 bi = bi + 1;
             }
+            s = s.pop_loop_labels();
             // i = i + 1; jump to top.
+            s = s.write(".Lfor_cont_" + i32_to_string(cont_lbl) + ":\n");
             s = s.write("    movq " + i32_to_string(idx_off) + "(%rbp), %rax\n");
             s = s.write("    incq %rax\n");
             s = s.write("    movq %rax, " + i32_to_string(idx_off) + "(%rbp)\n");
@@ -1063,8 +1169,16 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.write(".Lfor_end_" + i32_to_string(end_lbl) + ":\n");
             return s;
         },
-        parser.StmtBreak(_) => { return s.write("    # unsupported: break\n"); },
-        parser.StmtContinue(_) => { return s.write("    # unsupported: continue\n"); },
+        parser.StmtBreak(_) => {
+            var lbl: string = s.top_loop_exit();
+            if (len(lbl) == 0) { return s.write("    # break outside loop\n"); }
+            return s.write("    jmp " + lbl + "\n");
+        },
+        parser.StmtContinue(_) => {
+            var lbl: string = s.top_loop_cont();
+            if (len(lbl) == 0) { return s.write("    # continue outside loop\n"); }
+            return s.write("    jmp " + lbl + "\n");
+        },
         parser.StmtUnknown(_) => { return s.write("    # unsupported: StmtUnknown\n"); }
     }
     return s;
@@ -1168,7 +1282,9 @@ pub function emit_module(mod: parser.Module): string {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: mod.structs
+        struct_decls: mod.structs,
+        loop_exit_labels: s.loop_exit_labels,
+        loop_cont_labels: s.loop_cont_labels
     };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
