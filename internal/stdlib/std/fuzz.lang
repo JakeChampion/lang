@@ -59,7 +59,7 @@ pub function fuzz_default_iterations(): i32 { return 200; }
 // on small iteration counts. Random mutation is layered on
 // top by __fuzz_mutate.
 function __fuzz_pick_seed(seeds: string[], iter: i32): string {
-    var n: i32 = len(seeds);
+    var n: i32 = seeds.len();
     if (n == 0) { return ""; }
     return seeds[iter % n];
 }
@@ -84,7 +84,7 @@ function __fuzz_pick_seed(seeds: string[], iter: i32): string {
 // have a chance of running the seed verbatim so a buggy
 // seed isn't masked by mutations.
 function __fuzz_mutate(seed: string, mode: i32): string {
-    var n: i32 = len(seed);
+    var n: i32 = seed.len();
     // Insert is the only strategy that can grow an empty
     // seed; every other strategy needs at least one byte.
     if (n == 0 && mode != 2) { return seed; }
@@ -142,7 +142,7 @@ function __fuzz_mutator_count(): i32 { return 8; }
 // Caps output at 200 bytes with a trailing " ..." so a
 // pathological input doesn't blow up the log.
 function __fuzz_escape(s: string): string {
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     var cap: i32 = 200;
     var trimmed: boolean = false;
     if (n > cap) { n = cap; trimmed = true; }
@@ -186,14 +186,14 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => Opti
     if (iterations <= 0) {
         return Some("fuzz_run: iterations must be > 0, got " + iterations.to_string());
     }
-    if (len(seeds) == 0) {
+    if (seeds.len() == 0) {
         return Some("fuzz_run: at least one seed required");
     }
     // Always run every seed verbatim first so a regression
     // in the trivial-input case isn't masked by mutation
     // randomness. Then layer the mutated iterations.
     var i: i32 = 0;
-    while (i < len(seeds)) {
+    while (i < seeds.len()) {
         match (target(seeds[i])) {
             Some(msg) => {
                 return Some("seed[" + i.to_string() + "] = \"" +
@@ -265,7 +265,7 @@ function __fuzz_shrink_budget(): i32 { return 256; }
 // stops returning new candidates when the budget is
 // exhausted.
 function __fuzz_shrink_once(seed: string, target: (string) => Option[string], budget: i32): (string, i32) {
-    var n: i32 = len(seed);
+    var n: i32 = seed.len();
     var best: string = seed;
     var best_len: i32 = n;
     var i: i32 = 0;
@@ -274,9 +274,9 @@ function __fuzz_shrink_once(seed: string, target: (string) => Option[string], bu
         budget = budget - 1;
         match (target(candidate)) {
             Some(_) => {
-                if (len(candidate) < best_len) {
+                if (candidate.len() < best_len) {
                     best = candidate;
-                    best_len = len(candidate);
+                    best_len = candidate.len();
                 }
             },
             None => { },
@@ -292,7 +292,7 @@ function __fuzz_shrink_once(seed: string, target: (string) => Option[string], bu
 // localised; falls through to __fuzz_shrink_once for
 // fine-grained minimisation.
 function __fuzz_shrink_halve(seed: string, target: (string) => Option[string], budget: i32): (string, i32) {
-    var n: i32 = len(seed);
+    var n: i32 = seed.len();
     if (n < 2 || budget <= 0) { return (seed, budget); }
     var mid: i32 = n / 2;
     var left: string = seed[0:mid];
@@ -334,7 +334,7 @@ function __fuzz_shrink(seed: string, target: (string) => Option[string]): string
     var stable: boolean = false;
     while (!stable && budget > 0) {
         var (s, b2) = __fuzz_shrink_once(current, target, budget);
-        if (len(s) < len(current)) {
+        if (s.len() < current.len()) {
             current = s;
             budget = b2;
         } else {
@@ -359,12 +359,12 @@ pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) 
     if (iterations <= 0) {
         return Some("fuzz_run_shrink: iterations must be > 0, got " + iterations.to_string());
     }
-    if (len(seeds) == 0) {
+    if (seeds.len() == 0) {
         return Some("fuzz_run_shrink: at least one seed required");
     }
     // Pass 1: seeds verbatim.
     var i: i32 = 0;
-    while (i < len(seeds)) {
+    while (i < seeds.len()) {
         match (target(seeds[i])) {
             Some(msg) => {
                 var min: string = __fuzz_shrink(seeds[i], target);
@@ -401,12 +401,12 @@ pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) 
 function __fuzz_format_failure(origin: string, raw: string, minimised: string, msg: string): string {
     if (raw == minimised) {
         return origin + " input \"" + __fuzz_escape(raw) + "\" (" +
-               len(raw).to_string() + " bytes): " + msg;
+               raw.len().to_string() + " bytes): " + msg;
     }
     return origin + ": " + msg +
-           "\n  raw     (" + len(raw).to_string() + " bytes): \"" +
+           "\n  raw     (" + raw.len().to_string() + " bytes): \"" +
                 __fuzz_escape(raw) + "\"" +
-           "\n  shrunk  (" + len(minimised).to_string() + " bytes): \"" +
+           "\n  shrunk  (" + minimised.len().to_string() + " bytes): \"" +
                 __fuzz_escape(minimised) + "\"";
 }
 
@@ -454,10 +454,10 @@ pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
             var sorted: string[] = sort.sort_strings_asc(names);
             var seeds: string[] = [];
             var i: i32 = 0;
-            while (i < len(sorted)) {
+            while (i < sorted.len()) {
                 var name: string = sorted[i];
                 // Skip dotfiles + underscored metadata.
-                if (len(name) > 0 && name[0] != 46 && name[0] != 95) {
+                if (name.len() > 0 && name[0] != 46 && name[0] != 95) {
                     var full: string = path + "/" + name;
                     match (stat(full)) {
                         Ok(s) => {
@@ -493,10 +493,10 @@ pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
 pub function fuzz_corpus_from_dir_or(path: string, fallback: string[]): string[] {
     match (fuzz_corpus_from_dir(path)) {
         Ok(loaded) => {
-            if (len(loaded) == 0) { return fallback; }
+            if (loaded.len() == 0) { return fallback; }
             var out: string[] = fallback;
             var i: i32 = 0;
-            while (i < len(loaded)) {
+            while (i < loaded.len()) {
                 out = out.push(loaded[i]);
                 i = i + 1;
             }

@@ -104,7 +104,7 @@ pub function __map_hash(k: i32, keyKind: i32): i32 {
     }
     h = 0 - 2128831035;                         // 0x811c9dc5 sign-flipped
     var s: string = k as string;
-    var sLen: i32 = len(s);
+    var sLen: i32 = s.len();
     var i: i32 = 0;
     while (i < sLen) {
         h = h ^ s[i];

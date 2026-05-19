@@ -64,7 +64,7 @@ function i32_to_string(n: i32): string {
 function sanitize_label(name: string): string {
     var out: string = "";
     var i: i32 = 0;
-    while (i < len(name)) {
+    while (i < name.len()) {
         var b: i32 = name[i];
         if (b == 46) { out = out + "__"; }
         else { out = out + name[i:i + 1]; }
@@ -74,13 +74,13 @@ function sanitize_label(name: string): string {
 }
 
 function digits_to_i32(s: string): i32 {
-    if (len(s) == 0) { return 0; }
+    if (s.len() == 0) { return 0; }
     var neg: boolean = false;
     var start: i32 = 0;
     if (s[0] == 45) { neg = true; start = 1; }
     var acc: i32 = 0;
     var i: i32 = start;
-    while (i < len(s)) {
+    while (i < s.len()) {
         var b: i32 = s[i];
         if (b < 48 || b > 57) {
             if (neg) { return 0 - acc; }
@@ -98,9 +98,9 @@ function digits_to_i32(s: string): i32 {
 // tuple-style numeric field names (`.0`, `.1`, …) versus
 // struct field names.
 function is_all_digits(s: string): boolean {
-    if (len(s) == 0) { return false; }
+    if (s.len() == 0) { return false; }
     var i: i32 = 0;
-    while (i < len(s)) {
+    while (i < s.len()) {
         var b: i32 = s[i];
         if (b < 48 || b > 57) { return false; }
         i = i + 1;
@@ -114,7 +114,7 @@ function is_all_digits(s: string): boolean {
 
 function has_str(xs: string[], s: string): boolean {
     var i: i32 = 0;
-    while (i < len(xs)) {
+    while (i < xs.len()) {
         if (xs[i] == s) { return true; }
         i = i + 1;
     }
@@ -135,7 +135,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         parser.ExprCall(c) => {
             acc = collect_idents_expr(c.callee, acc);
             var i: i32 = 0;
-            while (i < len(c.args)) {
+            while (i < c.args.len()) {
                 acc = collect_idents_expr(c.args[i], acc);
                 i = i + 1;
             }
@@ -143,7 +143,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < len(a.elements)) {
+            while (i < a.elements.len()) {
                 acc = collect_idents_expr(a.elements[i], acc);
                 i = i + 1;
             }
@@ -151,7 +151,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < len(t.elements)) {
+            while (i < t.elements.len()) {
                 acc = collect_idents_expr(t.elements[i], acc);
                 i = i + 1;
             }
@@ -168,7 +168,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         },
         parser.ExprStructLit(sl) => {
             var i: i32 = 0;
-            while (i < len(sl.field_values)) {
+            while (i < sl.field_values.len()) {
                 acc = collect_idents_expr(sl.field_values[i], acc);
                 i = i + 1;
             }
@@ -177,7 +177,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
         parser.ExprLambda(lm) => {
             var i: i32 = 0;
-            while (i < len(lm.body)) {
+            while (i < lm.body.len()) {
                 acc = collect_idents_stmt(lm.body[i], acc);
                 i = i + 1;
             }
@@ -196,12 +196,12 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtIf(i) => {
             acc = collect_idents_expr(i.cond, acc);
             var ti: i32 = 0;
-            while (ti < len(i.then_body)) {
+            while (ti < i.then_body.len()) {
                 acc = collect_idents_stmt(i.then_body[ti], acc);
                 ti = ti + 1;
             }
             var ei: i32 = 0;
-            while (ei < len(i.else_body)) {
+            while (ei < i.else_body.len()) {
                 acc = collect_idents_stmt(i.else_body[ei], acc);
                 ei = ei + 1;
             }
@@ -210,7 +210,7 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtWhile(w) => {
             acc = collect_idents_expr(w.cond, acc);
             var i: i32 = 0;
-            while (i < len(w.body)) {
+            while (i < w.body.len()) {
                 acc = collect_idents_stmt(w.body[i], acc);
                 i = i + 1;
             }
@@ -220,9 +220,9 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtMatch(m) => {
             acc = collect_idents_expr(m.scrutinee, acc);
             var ai: i32 = 0;
-            while (ai < len(m.arms)) {
+            while (ai < m.arms.len()) {
                 var bi: i32 = 0;
-                while (bi < len(m.arms[ai].body)) {
+                while (bi < m.arms[ai].body.len()) {
                     acc = collect_idents_stmt(m.arms[ai].body[bi], acc);
                     bi = bi + 1;
                 }
@@ -233,7 +233,7 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtFor(f) => {
             acc = collect_idents_expr(f.iter, acc);
             var i: i32 = 0;
-            while (i < len(f.body)) {
+            while (i < f.body.len()) {
                 acc = collect_idents_stmt(f.body[i], acc);
                 i = i + 1;
             }
@@ -253,12 +253,12 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtExpr(_) => { return acc; },
         parser.StmtIf(i) => {
             var ti: i32 = 0;
-            while (ti < len(i.then_body)) {
+            while (ti < i.then_body.len()) {
                 acc = collect_bound_stmt(i.then_body[ti], acc);
                 ti = ti + 1;
             }
             var ei: i32 = 0;
-            while (ei < len(i.else_body)) {
+            while (ei < i.else_body.len()) {
                 acc = collect_bound_stmt(i.else_body[ei], acc);
                 ei = ei + 1;
             }
@@ -266,7 +266,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
         },
         parser.StmtWhile(w) => {
             var i: i32 = 0;
-            while (i < len(w.body)) {
+            while (i < w.body.len()) {
                 acc = collect_bound_stmt(w.body[i], acc);
                 i = i + 1;
             }
@@ -275,15 +275,15 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtAssign(_) => { return acc; },
         parser.StmtMatch(m) => {
             var ai: i32 = 0;
-            while (ai < len(m.arms)) {
+            while (ai < m.arms.len()) {
                 match (m.arms[ai].pattern) {
                     parser.PatVariant(pv) => {
-                        if (len(pv.binding) > 0) { acc = acc.push(pv.binding); }
+                        if (pv.binding.len() > 0) { acc = acc.push(pv.binding); }
                     },
                     parser.PatWildcard(_) => { }
                 }
                 var bi: i32 = 0;
-                while (bi < len(m.arms[ai].body)) {
+                while (bi < m.arms[ai].body.len()) {
                     acc = collect_bound_stmt(m.arms[ai].body[bi], acc);
                     bi = bi + 1;
                 }
@@ -294,7 +294,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtFor(f) => {
             acc = acc.push(f.var_name);
             var i: i32 = 0;
-            while (i < len(f.body)) {
+            while (i < f.body.len()) {
                 acc = collect_bound_stmt(f.body[i], acc);
                 i = i + 1;
             }
@@ -314,24 +314,24 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
 function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
     var refs: string[] = [];
     var bi: i32 = 0;
-    while (bi < len(lm.body)) {
+    while (bi < lm.body.len()) {
         refs = collect_idents_stmt(lm.body[bi], refs);
         bi = bi + 1;
     }
     var bound: string[] = [];
     var pi: i32 = 0;
-    while (pi < len(lm.params)) {
+    while (pi < lm.params.len()) {
         bound = bound.push(lm.params[pi].name);
         pi = pi + 1;
     }
     var si: i32 = 0;
-    while (si < len(lm.body)) {
+    while (si < lm.body.len()) {
         bound = collect_bound_stmt(lm.body[si], bound);
         si = si + 1;
     }
     var caps: string[] = [];
     var ri: i32 = 0;
-    while (ri < len(refs)) {
+    while (ri < refs.len()) {
         var nm: string = refs[ri];
         if (!has_str(bound, nm) && !has_str(caps, nm) && outer.has_local(nm)) {
             caps = caps.push(nm);
@@ -360,7 +360,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             // string-aware dispatch. Empty arrays default to
             // plain "array"; the explicit `string[]` annotation
             // on a `var` declaration overrides.
-            if (len(a.elements) == 0) { return "array"; }
+            if (a.elements.len() == 0) { return "array"; }
             var et: string = infer_expr_type(a.elements[0], s);
             if (et == "string") { return "array_string"; }
             return "array";
@@ -444,8 +444,8 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     }
                     // Plain function call: look up ret_type.
                     var fi: i32 = 0;
-                    while (fi < len(s.funcs)) {
-                        if (s.funcs[fi].name == id.name && len(s.funcs[fi].receiver_type) == 0) {
+                    while (fi < s.funcs.len()) {
+                        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
                             return ret_tag_of(s.funcs[fi].ret_type);
                         }
                         fi = fi + 1;
@@ -509,7 +509,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     }
                     if (rt == "string" || rt == "i32" || rt == "bool" || rt == "f64") {
                         var mi: i32 = 0;
-                        while (mi < len(s.funcs)) {
+                        while (mi < s.funcs.len()) {
                             if (s.funcs[mi].name == fa.field && s.funcs[mi].receiver_type == rt) {
                                 return ret_tag_of(s.funcs[mi].ret_type);
                             }
@@ -553,7 +553,7 @@ function ret_tag_of(name: string): string {
     if (name == "string[]") { return "array_string"; }
     if (name == "i32[]") { return "array_i32"; }
     if (name == "bool[]" || name == "boolean[]") { return "array_i32"; }
-    if (len(name) > 0 && name[len(name) - 1] == 93) {
+    if (name.len() > 0 && name[name.len() - 1] == 93) {
         // Trailing `]` → other `T[]` shapes (struct[] etc.)
         // or Map[..]. Treat as plain array.
         return "array";
@@ -749,7 +749,7 @@ function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
 }
 
 function (s: EmitState) local_type_of(name: string): string {
-    var i: i32 = len(s.local_names) - 1;
+    var i: i32 = s.local_names.len() - 1;
     while (i >= 0) {
         if (s.local_names[i] == name) { return s.local_types[i]; }
         i = i - 1;
@@ -873,7 +873,7 @@ function (s: EmitState) pop_loop_labels(): EmitState {
     var nex: string[] = [];
     var ncn: string[] = [];
     var i: i32 = 0;
-    while (i < len(s.loop_exit_labels) - 1) {
+    while (i < s.loop_exit_labels.len() - 1) {
         nex = nex.push(s.loop_exit_labels[i]);
         ncn = ncn.push(s.loop_cont_labels[i]);
         i = i + 1;
@@ -914,13 +914,13 @@ function (s: EmitState) pop_loop_labels(): EmitState {
 }
 
 function (s: EmitState) top_loop_exit(): string {
-    if (len(s.loop_exit_labels) == 0) { return ""; }
-    return s.loop_exit_labels[len(s.loop_exit_labels) - 1];
+    if (s.loop_exit_labels.len() == 0) { return ""; }
+    return s.loop_exit_labels[s.loop_exit_labels.len() - 1];
 }
 
 function (s: EmitState) top_loop_cont(): string {
-    if (len(s.loop_cont_labels) == 0) { return ""; }
-    return s.loop_cont_labels[len(s.loop_cont_labels) - 1];
+    if (s.loop_cont_labels.len() == 0) { return ""; }
+    return s.loop_cont_labels[s.loop_cont_labels.len() - 1];
 }
 
 function (s: EmitState) leave_function(): EmitState {
@@ -1596,13 +1596,13 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
     // .S<N> labels resolve to different .rodata addresses and
     // string-pointer equality always fails.
     var i: i32 = 0;
-    while (i < len(s.string_lits)) {
+    while (i < s.string_lits.len()) {
         if (s.string_lits[i] == v) {
             return StringLitOut { state: s, idx: i };
         }
         i = i + 1;
     }
-    var idx: i32 = len(s.string_lits);
+    var idx: i32 = s.string_lits.len();
     var sl: string[] = s.string_lits.push(v);
     var ns: EmitState = EmitState {
         out: s.out,
@@ -1647,7 +1647,7 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
 function (s: EmitState) lookup_local(name: string): i32 {
     // Newest binding wins. Walk back-to-front so shadowing
     // resolves to the most-recent slot.
-    var i: i32 = len(s.local_names) - 1;
+    var i: i32 = s.local_names.len() - 1;
     while (i >= 0) {
         if (s.local_names[i] == name) {
             return 0 - 8 * (i + 1);
@@ -1659,7 +1659,7 @@ function (s: EmitState) lookup_local(name: string): i32 {
 
 function (s: EmitState) has_local(name: string): boolean {
     var i: i32 = 0;
-    while (i < len(s.local_names)) {
+    while (i < s.local_names.len()) {
         if (s.local_names[i] == name) { return true; }
         i = i + 1;
     }
@@ -1719,7 +1719,7 @@ function fresh_label(s: EmitState): LabelOut {
 function count_locals(body: parser.Stmt[]): i32 {
     var n: i32 = 0;
     var i: i32 = 0;
-    while (i < len(body)) {
+    while (i < body.len()) {
         n = n + count_locals_in_stmt(body[i]);
         i = i + 1;
     }
@@ -1737,10 +1737,10 @@ function count_locals_in_stmt(stmt: parser.Stmt): i32 {
             // counts. Wildcard arms add no binding.
             var n: i32 = 1;
             var i: i32 = 0;
-            while (i < len(m.arms)) {
+            while (i < m.arms.len()) {
                 match (m.arms[i].pattern) {
                     parser.PatVariant(pv) => {
-                        if (len(pv.binding) > 0 && pv.binding != "_") { n = n + 1; }
+                        if (pv.binding.len() > 0 && pv.binding != "_") { n = n + 1; }
                     },
                     parser.PatWildcard(_) => { }
                 }
@@ -1961,7 +1961,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.mark_heap();
             s = s.write("    leaq .S" + i32_to_string(lo.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
-            s = s.write("    movq $" + i32_to_string(len(sv.value)) + ", %rcx\n");
+            s = s.write("    movq $" + i32_to_string(sv.value.len()) + ", %rcx\n");
             s = s.write("    movq %rcx, 8(%rax)\n");
             s = s.write("    pushq %rax\n");
             return s;
@@ -1978,13 +1978,33 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // aren't heap-boxed with a shape ptr) and
                     // call `__fn_<type>__<method>` directly.
                     var prim_recv: string = infer_expr_type(fa.obj, s);
+                    // Built-in `.len()` on string / array values.
+                    // String boxes carry the byte-count at offset
+                    // 8; array boxes carry the element-count at
+                    // offset 0. Same inline load as the legacy
+                    // `len(x)` free-function form used to emit.
+                    if (fa.field == "len" && c.args.len() == 0
+                            && (prim_recv == "string"
+                                || prim_recv == "array"
+                                || prim_recv == "array_i32"
+                                || prim_recv == "array_string")) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    popq %rax\n");
+                        if (prim_recv == "string") {
+                            s = s.write("    movq 8(%rax), %rax\n");
+                        } else {
+                            s = s.write("    movq (%rax), %rax\n");
+                        }
+                        s = s.write("    pushq %rax\n");
+                        return s;
+                    }
                     // Built-in `.to_string()` on i32 and string —
                     // i32 routes to the existing runtime helper,
                     // string returns the receiver unchanged. The
                     // generic path below would chase a
                     // `__fn_i32.to_string` symbol that no FuncDecl
                     // emits, producing a link error.
-                    if (fa.field == "to_string" && len(c.args) == 0
+                    if (fa.field == "to_string" && c.args.len() == 0
                             && (prim_recv == "i32" || prim_recv == "string")) {
                         s = emit_expr(fa.obj, s);
                         if (prim_recv == "i32") {
@@ -2035,7 +2055,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Built-in i32 numeric methods. Inline — no
                     // runtime helper needed.
                     if (prim_recv == "i32") {
-                        if (fa.field == "abs" && len(c.args) == 0) {
+                        if (fa.field == "abs" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rax\n");
                             // negate-via-cmov: keep %rax if >=0,
@@ -2047,7 +2067,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    pushq %rax\n");
                             return s;
                         }
-                        if (fa.field == "min" && len(c.args) == 1) {
+                        if (fa.field == "min" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rcx\n");
@@ -2059,7 +2079,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    pushq %rax\n");
                             return s;
                         }
-                        if (fa.field == "max" && len(c.args) == 1) {
+                        if (fa.field == "max" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rcx\n");
@@ -2076,7 +2096,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // single 8-byte payload (i32 or string-box
                     // ptr; both are 8 bytes in the operand-stack
                     // representation). Returns a fresh array.
-                    if (fa.field == "push" && len(c.args) == 1
+                    if (fa.field == "push" && c.args.len() == 1
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
@@ -2089,7 +2109,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     }
                     // Built-in `.reverse()` on arrays — fresh
                     // array with elements in opposite order.
-                    if (fa.field == "reverse" && len(c.args) == 0
+                    if (fa.field == "reverse" && c.args.len() == 0
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rdi\n");
@@ -2100,7 +2120,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     }
                     // Built-in `.concat(other)` on arrays — fresh
                     // array of length `a.len + b.len`.
-                    if (fa.field == "concat" && len(c.args) == 1
+                    if (fa.field == "concat" && c.args.len() == 1
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
@@ -2181,7 +2201,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // the index for `index_of`, the >= 0 test for
                     // `contains`.
                     if ((fa.field == "index_of" || fa.field == "contains")
-                            && len(c.args) == 1 && prim_recv == "array_i32") {
+                            && c.args.len() == 1 && prim_recv == "array_i32") {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");
@@ -2204,7 +2224,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // the same emit shape so users can write
                     // `s.split(",")` instead of `str_split(s, ",")`.
                     if (prim_recv == "string") {
-                        if (fa.field == "split" && len(c.args) == 1) {
+                        if (fa.field == "split" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
@@ -2215,7 +2235,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "contains" && len(c.args) == 1) {
+                        if (fa.field == "contains" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
@@ -2229,7 +2249,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_search();
                             return s;
                         }
-                        if (fa.field == "starts_with" && len(c.args) == 1) {
+                        if (fa.field == "starts_with" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
@@ -2239,7 +2259,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_search();
                             return s;
                         }
-                        if (fa.field == "ends_with" && len(c.args) == 1) {
+                        if (fa.field == "ends_with" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
@@ -2249,7 +2269,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_search();
                             return s;
                         }
-                        if (fa.field == "index_of" && len(c.args) == 1) {
+                        if (fa.field == "index_of" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
@@ -2259,7 +2279,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_search();
                             return s;
                         }
-                        if (fa.field == "trim" && len(c.args) == 0) {
+                        if (fa.field == "trim" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
                             s = s.write("    call __lang_str_trim\n");
@@ -2268,7 +2288,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "to_upper" && len(c.args) == 0) {
+                        if (fa.field == "to_upper" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
                             s = s.write("    call __lang_str_to_upper\n");
@@ -2277,7 +2297,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "to_lower" && len(c.args) == 0) {
+                        if (fa.field == "to_lower" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
                             s = s.write("    call __lang_str_to_lower\n");
@@ -2286,7 +2306,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "repeat" && len(c.args) == 1) {
+                        if (fa.field == "repeat" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
@@ -2297,7 +2317,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "replace" && len(c.args) == 2) {
+                        if (fa.field == "replace" && c.args.len() == 2) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = emit_expr(c.args[1], s);
@@ -2312,14 +2332,14 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         }
                     }
                     if (prim_recv == "string" || prim_recv == "i32" || prim_recv == "bool" || prim_recv == "f64") {
-                        var pmi: i32 = len(c.args) - 1;
+                        var pmi: i32 = c.args.len() - 1;
                         while (pmi >= 0) {
                             s = emit_expr(c.args[pmi], s);
                             pmi = pmi - 1;
                         }
                         s = emit_expr(fa.obj, s);
                         s = s.write("    call __fn_" + sanitize_label(prim_recv + "." + fa.field) + "\n");
-                        s = s.write("    addq $" + i32_to_string((len(c.args) + 1) * 8) + ", %rsp\n");
+                        s = s.write("    addq $" + i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
                         s = s.write("    pushq %rax\n");
                         return s;
                     }
@@ -2329,7 +2349,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // and arg[0] at +24(%rbp) inside the
                     // callee). Then dispatch on the receiver's
                     // shape pointer.
-                    var mi: i32 = len(c.args) - 1;
+                    var mi: i32 = c.args.len() - 1;
                     while (mi >= 0) {
                         s = emit_expr(c.args[mi], s);
                         mi = mi - 1;
@@ -2379,9 +2399,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // compare arm. Walk in declaration order so
                     // the asm is deterministic.
                     var fdi: i32 = 0;
-                    while (fdi < len(s.funcs)) {
+                    while (fdi < s.funcs.len()) {
                         var fd_m: parser.FuncDecl = s.funcs[fdi];
-                        if (fd_m.name == fa.field && len(fd_m.receiver_type) > 0) {
+                        if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0) {
                             var arm_lit: StringLitOut = add_string_lit(s, fd_m.receiver_type);
                             s = arm_lit.state;
                             var next_l: LabelOut = fresh_label(s);
@@ -2391,7 +2411,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    jne " + next_l.name + "\n");
                             s = s.write("    call __fn_" + sanitize_label(fd_m.receiver_type + "." + fd_m.name) + "\n");
                             // Caller cleans up args + receiver.
-                            s = s.write("    addq $" + i32_to_string((len(c.args) + 1) * 8) + ", %rsp\n");
+                            s = s.write("    addq $" + i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
                             s = s.write("    pushq %rax\n");
                             s = s.write("    jmp .Lmethod_end_" + i32_to_string(m_end_lbl) + "\n");
                             s = s.write(next_l.name + ":\n");
@@ -2400,7 +2420,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     }
                     // Fallthrough: no matching method. Clean up
                     // args + receiver, push sentinel -1.
-                    s = s.write("    addq $" + i32_to_string((len(c.args) + 1) * 8) + ", %rsp\n");
+                    s = s.write("    addq $" + i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
                     s = s.write("    movq $-1, %rax\n");
                     s = s.write("    pushq %rax\n");
                     s = s.write(".Lmethod_end_" + i32_to_string(m_end_lbl) + ":\n");
@@ -2422,7 +2442,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // an array (a string arg would read random bytes);
             // a future slice with type info can route string
             // arguments through __lang_str_len.
-            if (name == "len" && len(c.args) == 1) {
+            if (name == "len" && c.args.len() == 1) {
                 // Dispatch on operand type: string → load
                 // box.len at offset 8; array → load len prefix
                 // at offset 0. Unknown defaults to array.
@@ -2437,7 +2457,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq %rax\n");
                 return s;
             }
-            if (name == "print" && len(c.args) == 1) {
+            if (name == "print" && c.args.len() == 1) {
                 var arg: parser.Expr = c.args[0];
                 match (arg) {
                     parser.ExprString(sv) => {
@@ -2447,7 +2467,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = lo.state;
                         s = s.write("    movq $1, %rdi\n");
                         s = s.write("    leaq .S" + i32_to_string(lo.idx) + "(%rip), %rsi\n");
-                        s = s.write("    movq $" + i32_to_string(len(sv.value)) + ", %rdx\n");
+                        s = s.write("    movq $" + i32_to_string(sv.value.len()) + ", %rdx\n");
                         s = s.write("    movq $1, %rax\n");
                         s = s.write("    syscall\n");
                         s = s.write("    pushq $0\n");
@@ -2470,7 +2490,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // eprint(s) — same as print but writes to stderr
             // (fd=2). Useful for error messages that shouldn't
             // mix with normal stdout output.
-            if (name == "eprint" && len(c.args) == 1) {
+            if (name == "eprint" && c.args.len() == 1) {
                 var earg: parser.Expr = c.args[0];
                 match (earg) {
                     parser.ExprString(esv) => {
@@ -2478,7 +2498,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = elo.state;
                         s = s.write("    movq $2, %rdi\n");
                         s = s.write("    leaq .S" + i32_to_string(elo.idx) + "(%rip), %rsi\n");
-                        s = s.write("    movq $" + i32_to_string(len(esv.value)) + ", %rdx\n");
+                        s = s.write("    movq $" + i32_to_string(esv.value.len()) + ", %rdx\n");
                         s = s.write("    movq $1, %rax\n");
                         s = s.write("    syscall\n");
                         s = s.write("    pushq $0\n");
@@ -2501,7 +2521,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // text and writes it to stdout. The helper is emitted
             // once at the end of the module if any print_int call
             // appears.
-            if (name == "print_int" && len(c.args) == 1) {
+            if (name == "print_int" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_print_int\n");
@@ -2512,7 +2532,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // eprint_int(n) — stderr companion to print_int.
             // Composed from __lang_i32_to_string + __lang_eprint_str
             // so we don't need a third runtime helper.
-            if (name == "eprint_int" && len(c.args) == 1) {
+            if (name == "eprint_int" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_i32_to_string\n");
@@ -2528,7 +2548,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // after the syscall is unreachable but keeps the
             // rt-stack shape so a surrounding expression like
             // `if (cond) { exit(7); }` doesn't desynchronise.
-            if (name == "exit" && len(c.args) == 1) {
+            if (name == "exit" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    movq $60, %rax\n");
@@ -2538,7 +2558,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // args_count() — returns argc (the number of command-
             // line arguments, including argv[0]).
-            if (name == "args_count" && len(c.args) == 0) {
+            if (name == "args_count" && c.args.len() == 0) {
                 s = s.write("    movq __lang_argc(%rip), %rax\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_args();
@@ -2547,7 +2567,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // arg_at(i) — returns argv[i] as a string box.
             // i is bounds-clamped by the user — out-of-range
             // reads through random memory.
-            if (name == "arg_at" && len(c.args) == 1) {
+            if (name == "arg_at" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_arg_at\n");
@@ -2557,7 +2577,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // str_split(s, sep) — returns string[] of substrings
             // separated by sep. Empty sep → [s]. No matches → [s].
-            if (name == "str_split" && len(c.args) == 2) {
+            if (name == "str_split" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
@@ -2573,7 +2593,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // leading `-` followed by decimal digits, returns the
             // result in %rax. Push it so the surrounding expression
             // sees it on the rt-stack.
-            if (name == "read_int" && len(c.args) == 0) {
+            if (name == "read_int" && c.args.len() == 0) {
                 s = s.write("    call __lang_read_int\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_read_int();
@@ -2584,7 +2604,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // a '\n', allocates a 16-byte box whose data ptr
             // points at the read bytes and whose len is the
             // byte count up to (but not including) the newline.
-            if (name == "read_line" && len(c.args) == 0) {
+            if (name == "read_line" && c.args.len() == 0) {
                 s = s.write("    call __lang_read_line\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_read_line();
@@ -2593,7 +2613,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // i32_to_string(n) — convert an i32 to its decimal
             // string box. Useful for composing numeric output
             // into a larger message: `"answer: " + i32_to_string(n)`.
-            if (name == "i32_to_string" && len(c.args) == 1) {
+            if (name == "i32_to_string" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_i32_to_string\n");
@@ -2604,7 +2624,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // str_to_i32(s) — parse a string box into an i32.
             // Leading whitespace not handled; optional leading
             // `-`, then decimal digits, stops at first non-digit.
-            if (name == "str_to_i32" && len(c.args) == 1) {
+            if (name == "str_to_i32" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_str_to_i32\n");
@@ -2614,7 +2634,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // str_starts_with(s, prefix) — bool. Checks first
             // len(prefix) bytes of s match prefix verbatim.
-            if (name == "str_starts_with" && len(c.args) == 2) {
+            if (name == "str_starts_with" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
@@ -2624,7 +2644,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_str_search();
                 return s;
             }
-            if (name == "str_ends_with" && len(c.args) == 2) {
+            if (name == "str_ends_with" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
@@ -2635,7 +2655,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 return s;
             }
             // str_contains(s, needle) — bool. Linear search.
-            if (name == "str_contains" && len(c.args) == 2) {
+            if (name == "str_contains" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
@@ -2651,7 +2671,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // str_index_of(s, needle) — i32. First match offset
             // or -1 if not found.
-            if (name == "str_index_of" && len(c.args) == 2) {
+            if (name == "str_index_of" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
@@ -2665,7 +2685,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // whitespace (space, tab, '\n', '\r'). Returns a
             // new 16-byte box pointing into the same char data
             // with adjusted ptr + len. Heap-allocs the new box.
-            if (name == "str_trim" && len(c.args) == 1) {
+            if (name == "str_trim" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_str_trim\n");
@@ -2678,7 +2698,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // conversion. Returns a new string box with newly
             // heap-allocated char data (the original bytes
             // aren't mutated).
-            if (name == "str_to_upper" && len(c.args) == 1) {
+            if (name == "str_to_upper" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_str_to_upper\n");
@@ -2687,7 +2707,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
-            if (name == "str_to_lower" && len(c.args) == 1) {
+            if (name == "str_to_lower" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_str_to_lower\n");
@@ -2698,7 +2718,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // str_repeat(s, n) — concat s with itself n times.
             // n <= 0 yields empty.
-            if (name == "str_repeat" && len(c.args) == 2) {
+            if (name == "str_repeat" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
@@ -2711,7 +2731,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // str_replace(s, old, new) — replace all occurrences
             // of `old` in `s` with `new`. Empty old → s unchanged.
-            if (name == "str_replace" && len(c.args) == 3) {
+            if (name == "str_replace" && c.args.len() == 3) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = emit_expr(c.args[2], s);
@@ -2727,7 +2747,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // chr(n) — convert an i32 byte value to a single-
             // char string box. Useful for building up strings
             // byte by byte (e.g. constructing escape sequences).
-            if (name == "chr" && len(c.args) == 1) {
+            if (name == "chr" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_chr\n");
@@ -2748,7 +2768,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // The callee body loads captures via the box and
             // shifts param offsets by +8.
             if (s.has_local(name)) {
-                var ci: i32 = len(c.args) - 1;
+                var ci: i32 = c.args.len() - 1;
                 while (ci >= 0) {
                     s = emit_expr(c.args[ci], s);
                     ci = ci - 1;
@@ -2761,7 +2781,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    movq (%rcx), %rdx\n");
                 s = s.write("    call *%rdx\n");
                 // Caller cleanup: args + box.
-                s = s.write("    addq $" + i32_to_string((len(c.args) + 1) * 8) + ", %rsp\n");
+                s = s.write("    addq $" + i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
                 s = s.write("    pushq %rax\n");
                 return s;
             }
@@ -2771,7 +2791,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // prologue copies args from those positive offsets
             // into local slots so the body reads them like any
             // other local.
-            var i: i32 = len(c.args) - 1;
+            var i: i32 = c.args.len() - 1;
             while (i >= 0) {
                 s = emit_expr(c.args[i], s);
                 i = i - 1;
@@ -2780,8 +2800,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // Caller cleans up stack args (System V style for
             // pure-stack args; we don't use the register-arg
             // path of the standard SysV ABI).
-            if (len(c.args) > 0) {
-                s = s.write("    addq $" + i32_to_string(len(c.args) * 8) + ", %rsp\n");
+            if (c.args.len() > 0) {
+                s = s.write("    addq $" + i32_to_string(c.args.len() * 8) + ", %rsp\n");
             }
             // Result is in %rax — push for the surrounding
             // expression's stack-machine semantics.
@@ -2803,7 +2823,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             //      [%rax + i*8] — descending i so the top-of-
             //      stack lands in the LAST slot.
             //   4. Push %rax (the tuple pointer).
-            var n_elems: i32 = len(t.elements);
+            var n_elems: i32 = t.elements.len();
             var ti: i32 = 0;
             while (ti < n_elems) {
                 s = emit_expr(t.elements[ti], s);
@@ -2839,7 +2859,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             //      [%rax + (i+1)*8] — descending i so the
             //      top-of-stack lands in the LAST slot.
             //   5. Push %rax (the array pointer).
-            var n_elems: i32 = len(a.elements);
+            var n_elems: i32 = a.elements.len();
             var ai: i32 = 0;
             while (ai < n_elems) {
                 s = emit_expr(a.elements[ai], s);
@@ -2954,7 +2974,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             //      [%rax + (i+1)*8] — descending i so the
             //      top-of-stack lands in the LAST field slot.
             //   5. Push %rax (the struct pointer).
-            var n_fields: i32 = len(sl.field_values);
+            var n_fields: i32 = sl.field_values.len();
             var i: i32 = 0;
             while (i < n_fields) {
                 s = emit_expr(sl.field_values[i], s);
@@ -3040,11 +3060,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // field. Emit a shape-pointer comparison arm for
             // each match.
             var di: i32 = 0;
-            while (di < len(s.struct_decls)) {
+            while (di < s.struct_decls.len()) {
                 var sd: parser.StructDecl = s.struct_decls[di];
                 var fi: i32 = 0;
                 var found_idx: i32 = 0 - 1;
-                while (fi < len(sd.fields)) {
+                while (fi < sd.fields.len()) {
                     if (sd.fields[fi].name == fa.field) { found_idx = fi; }
                     fi = fi + 1;
                 }
@@ -3128,7 +3148,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // Capture-less lambdas use the same shape with a
             // 1-slot box, keeping the call convention uniform.
             var caps: string[] = lambda_captures(lm, s);
-            var n_caps: i32 = len(caps);
+            var n_caps: i32 = caps.len();
             var lam_id: i32 = s.label_n;
             s = EmitState {
                 out: s.out,
@@ -3175,7 +3195,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var saved_locals: string[] = s.local_names;
             var saved_local_types: string[] = s.local_types;
             var saved_in_function: boolean = s.in_function;
-            var argc_l: i32 = len(lm.params);
+            var argc_l: i32 = lm.params.len();
             var n_body_locals_l: i32 = count_locals(lm.body);
             var total_locals_l: i32 = 1 + n_caps + argc_l + n_body_locals_l;
             if (total_locals_l > 0) {
@@ -3203,10 +3223,10 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             while (ci < n_caps) {
                 var cap_ty: string = "unknown";
                 var li: i32 = 0;
-                while (li < len(saved_locals)) {
+                while (li < saved_locals.len()) {
                     if (saved_locals[li] == caps[ci]) {
                         cap_ty = saved_local_types[li];
-                        li = len(saved_locals);
+                        li = saved_locals.len();
                     } else {
                         li = li + 1;
                     }
@@ -3231,7 +3251,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // Body.
             var bi_l: i32 = 0;
-            while (bi_l < len(lm.body)) {
+            while (bi_l < lm.body.len()) {
                 s = emit_stmt(lm.body[bi_l], s);
                 bi_l = bi_l + 1;
             }
@@ -3304,7 +3324,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
 
 function emit_block(body: parser.Stmt[], s: EmitState): EmitState {
     var i: i32 = 0;
-    while (i < len(body)) {
+    while (i < body.len()) {
         s = emit_stmt(body[i], s);
         i = i + 1;
     }
@@ -3344,7 +3364,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = else_l.state;
             s = s.write("    je " + else_l.name + "\n");
             s = emit_block(ifs.then_body, s);
-            if (len(ifs.else_body) > 0) {
+            if (ifs.else_body.len() > 0) {
                 var end_l: LabelOut = fresh_label(s);
                 s = end_l.state;
                 s = s.write("    jmp " + end_l.name + "\n");
@@ -3389,7 +3409,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             // the inference. bind_local_typed binds the name
             // BEFORE the lookup_local call resolves the slot.
             var ity: string = infer_expr_type(v.init, s);
-            if (len(v.type_name) > 0) {
+            if (v.type_name.len() > 0) {
                 ity = ret_tag_of(v.type_name);
             }
             s = emit_expr(v.init, s);
@@ -3470,7 +3490,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
         needs_arr_i32_sum: s.needs_arr_i32_sum
             };
             var ai: i32 = 0;
-            while (ai < len(m.arms)) {
+            while (ai < m.arms.len()) {
                 var arm: parser.MatchArm = m.arms[ai];
                 var next_lbl: i32 = s.label_n;
                 s = EmitState {
@@ -3517,7 +3537,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                         s = s.write("    cmpq %rdx, %rcx\n");
                         s = s.write("    jne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
                         // Match: bind variable if non-empty.
-                        if (len(pv.binding) > 0 && pv.binding != "_") {
+                        if (pv.binding.len() > 0 && pv.binding != "_") {
                             s = s.bind_local(pv.binding);
                             var bind_off: i32 = s.lookup_local(pv.binding);
                             s = s.write("    movq %rax, " + i32_to_string(bind_off) + "(%rbp)\n");
@@ -3529,7 +3549,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 }
                 // Emit the arm body.
                 var bi: i32 = 0;
-                while (bi < len(arm.body)) {
+                while (bi < arm.body.len()) {
                     s = emit_stmt(arm.body[bi], s);
                     bi = bi + 1;
                 }
@@ -3630,7 +3650,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             // advances.
             s = s.push_loop_labels(".Lfor_end_" + i32_to_string(end_lbl), ".Lfor_cont_" + i32_to_string(cont_lbl));
             var bi: i32 = 0;
-            while (bi < len(f.body)) {
+            while (bi < f.body.len()) {
                 s = emit_stmt(f.body[bi], s);
                 bi = bi + 1;
             }
@@ -3646,12 +3666,12 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
         },
         parser.StmtBreak(_) => {
             var lbl: string = s.top_loop_exit();
-            if (len(lbl) == 0) { return s.write("    # break outside loop\n"); }
+            if (lbl.len() == 0) { return s.write("    # break outside loop\n"); }
             return s.write("    jmp " + lbl + "\n");
         },
         parser.StmtContinue(_) => {
             var lbl: string = s.top_loop_cont();
-            if (len(lbl) == 0) { return s.write("    # continue outside loop\n"); }
+            if (lbl.len() == 0) { return s.write("    # continue outside loop\n"); }
             return s.write("    jmp " + lbl + "\n");
         },
         parser.StmtUnknown(_) => { return s.write("    # unsupported: StmtUnknown\n"); }
@@ -3675,14 +3695,14 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     // Plain funcs keep `__fn_<name>:` for source compat with the
     // earlier slices' call emitters.
     var label_name: string = fd.name;
-    if (len(fd.receiver_type) > 0) {
+    if (fd.receiver_type.len() > 0) {
         label_name = fd.receiver_type + "." + fd.name;
     }
     s = s.write("__fn_" + sanitize_label(label_name) + ":\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
-    var has_recv: boolean = len(fd.receiver_name) > 0;
-    var argc: i32 = len(fd.params);
+    var has_recv: boolean = fd.receiver_name.len() > 0;
+    var argc: i32 = fd.params.len();
     if (has_recv) { argc = argc + 1; }
     var n_body_locals: i32 = count_locals(fd.body);
     var total_locals: i32 = argc + n_body_locals;
@@ -3707,7 +3727,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     // slots. param[i] sits at +(16 + (i + recv_shift)*8)(%rbp).
     var recv_shift: i32 = 0;
     if (has_recv) { recv_shift = 1; }
-    var n_params: i32 = len(fd.params);
+    var n_params: i32 = fd.params.len();
     var i: i32 = 0;
     while (i < n_params) {
         s = s.bind_local_typed(fd.params[i].name, ret_tag_of(fd.params[i].type_name));
@@ -3720,7 +3740,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     // Body. Any StmtReturn inside lowers to leave + ret
     // (because in_function is set).
     var bi: i32 = 0;
-    while (bi < len(fd.body)) {
+    while (bi < fd.body.len()) {
         s = emit_stmt(fd.body[bi], s);
         bi = bi + 1;
     }
@@ -3737,7 +3757,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
 // has_main returns true if any FuncDecl in mod is named `main`.
 function has_main(mod: parser.Module): boolean {
     var i: i32 = 0;
-    while (i < len(mod.funcs)) {
+    while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") { return true; }
         i = i + 1;
     }
@@ -3750,7 +3770,7 @@ function has_main(mod: parser.Module): boolean {
 function escape_for_ascii(s: string): string {
     var out: string = "";
     var i: i32 = 0;
-    while (i < len(s)) {
+    while (i < s.len()) {
         var b: i32 = s[i];
         if (b == 34) { out = out + "\\\""; }
         else if (b == 92) { out = out + "\\\\"; }
@@ -3806,7 +3826,7 @@ pub function emit_module(mod: parser.Module): string {
     // (__fn_<name>:); _start dispatches into main() if it
     // exists.
     var fi: i32 = 0;
-    while (fi < len(mod.funcs)) {
+    while (fi < mod.funcs.len()) {
         s = emit_function(mod.funcs[fi], s);
         fi = fi + 1;
     }
@@ -3839,7 +3859,7 @@ pub function emit_module(mod: parser.Module): string {
             s = s.write("    subq $" + i32_to_string(bytes) + ", %rsp\n");
         }
         var i: i32 = 0;
-        while (i < len(mod.top_stmts)) {
+        while (i < mod.top_stmts.len()) {
             s = emit_stmt(mod.top_stmts[i], s);
             i = i + 1;
         }
@@ -4925,10 +4945,10 @@ pub function emit_module(mod: parser.Module): string {
     // sequences in the quoted string, so a `\n` byte in the
     // source string lands as a single LF in the resulting
     // .rodata bytes.
-    if (len(s.string_lits) > 0) {
+    if (s.string_lits.len() > 0) {
         s = s.write("    .section .rodata\n");
         var li: i32 = 0;
-        while (li < len(s.string_lits)) {
+        while (li < s.string_lits.len()) {
             s = s.write(".S" + i32_to_string(li) + ": .ascii \"" + escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
@@ -5343,11 +5363,11 @@ pub function emit_module(mod: parser.Module): string {
 // contains: trivial substring search, same shape as the
 // disasm validation harness.
 function contains(haystack: string, needle: string): boolean {
-    if (len(needle) == 0) { return true; }
-    if (len(haystack) < len(needle)) { return false; }
+    if (needle.len() == 0) { return true; }
+    if (haystack.len() < needle.len()) { return false; }
     var i: i32 = 0;
-    while (i <= len(haystack) - len(needle)) {
-        if (haystack[i:i + len(needle)] == needle) { return true; }
+    while (i <= haystack.len() - needle.len()) {
+        if (haystack[i:i + needle.len()] == needle) { return true; }
         i = i + 1;
     }
     return false;

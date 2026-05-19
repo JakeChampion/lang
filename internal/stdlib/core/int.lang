@@ -93,7 +93,7 @@ pub function __radix_char(d: i32): i32 {
 
 pub function parse_int_radix(s: string, base: i32): Option[i32] {
     if (base < 2 || base > 36) { return None; }
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     if (n == 0) { return None; }
     var neg: boolean = false;
     var i: i32 = 0;

@@ -37,7 +37,7 @@ import "std/string";
 // type error rather than a missing-method one.
 
 pub function __method_Array_sum(arr: i32[]): i32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var s: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -48,7 +48,7 @@ pub function __method_Array_sum(arr: i32[]): i32 {
 }
 
 pub function __method_Array_max(arr: i32[]): Option[i32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: i32 = arr[0];
     var i: i32 = 1;
@@ -60,7 +60,7 @@ pub function __method_Array_max(arr: i32[]): Option[i32] {
 }
 
 pub function __method_Array_min(arr: i32[]): Option[i32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: i32 = arr[0];
     var i: i32 = 1;
@@ -76,7 +76,7 @@ pub function __method_Array_min(arr: i32[]): Option[i32] {
 // silently; callers needing exact long-product should widen
 // to i64 first.
 pub function __method_Array_product(arr: i32[]): i32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var p: i32 = 1;
     var i: i32 = 0;
     while (i < n) {
@@ -91,7 +91,7 @@ pub function __method_Array_product(arr: i32[]): i32 {
 // long arrays + large values may overflow before division.
 // For exact arithmetic, callers should pre-sum into i64.
 pub function __method_Array_avg(arr: i32[]): Option[i32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     return Some(arr.sum() / n);
 }
@@ -100,7 +100,7 @@ pub function __method_Array_avg(arr: i32[]): Option[i32] {
 // data. Option[i32] None when empty. Single-element arrays
 // return Some(0). Useful as a quick variance proxy.
 pub function __method_Array_range(arr: i32[]): Option[i32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var lo: i32 = arr[0];
     var hi: i32 = arr[0];
@@ -117,7 +117,7 @@ pub function __method_Array_range(arr: i32[]): Option[i32] {
 // Linear scan; for repeated queries on big arrays a
 // pre-built frequency map is faster.
 pub function __method_Array_count(arr: i32[], v: i32): i32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var c: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -132,7 +132,7 @@ pub function __method_Array_count(arr: i32[], v: i32): i32 {
 // Some(arr[0].abs()). Negative inputs use their magnitude
 // (gcd is sign-invariant).
 pub function __method_Array_gcd_all(arr: i32[]): Option[i32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var g: i32 = arr[0].abs();
     var i: i32 = 1;
@@ -148,7 +148,7 @@ pub function __method_Array_gcd_all(arr: i32[]): Option[i32] {
 // callers handling unbounded ranges should pre-check or
 // widen to i64.
 pub function __method_Array_lcm_all(arr: i32[]): Option[i32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var l: i32 = arr[0].abs();
     var i: i32 = 1;
@@ -164,7 +164,7 @@ pub function __method_Array_lcm_all(arr: i32[]): Option[i32] {
 // to `arr.map(abs)` once first-class higher-order
 // methods land.
 pub function __method_Array_abs_each(arr: i32[]): i32[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -178,7 +178,7 @@ pub function __method_Array_abs_each(arr: i32[]): i32[] {
 // the first element equal to v. None if absent or empty.
 // Numeric companion to the existing string[] `index_of`.
 pub function __method_Array_first_index_of(arr: i32[], v: i32): Option[i32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
         if (arr[i] == v) { return Some(i); }
@@ -192,7 +192,7 @@ pub function __method_Array_first_index_of(arr: i32[], v: i32): Option[i32] {
 // max(len(arr) - 1, 0). Empty / singleton inputs return
 // empty. Useful for slope / delta computations on samples.
 pub function __method_Array_pairwise_diffs(arr: i32[]): i32[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: i32[] = [];
     if (n < 2) { return out; }
     var i: i32 = 1;
@@ -207,7 +207,7 @@ pub function __method_Array_pairwise_diffs(arr: i32[]): i32[] {
 // pass. Empty → None. Saves a second iteration when callers
 // need both bounds.
 pub function __method_Array_min_max(arr: i32[]): Option[(i32, i32)] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var lo: i32 = arr[0];
     var hi: i32 = arr[0];
@@ -224,7 +224,7 @@ pub function __method_Array_min_max(arr: i32[]): Option[(i32, i32)] {
 // to the existing string[] `reverse`. Both collapse to a
 // single `reversed()` once generic Array methods land.
 pub function __method_Array_reversed(arr: i32[]): i32[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: i32[] = [];
     var i: i32 = n - 1;
     while (i >= 0) {
@@ -238,7 +238,7 @@ pub function __method_Array_reversed(arr: i32[]): i32[] {
 // strictly positive (n > 0). Empty → true (vacuous). Useful
 // for input validation on count / size arrays.
 pub function __method_Array_every_positive(arr: i32[]): boolean {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
         if (arr[i] <= 0) { return false; }
@@ -264,7 +264,7 @@ pub function __method_Array_sorted_desc(arr: i32[]): i32[] {
 // of arr[0..=i]. Empty → empty. Overflow wraps silently.
 // Common shape for prefix-sum optimisations.
 pub function __method_Array_cumsum(arr: i32[]): i32[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: i32[] = [];
     var s: i32 = 0;
     var i: i32 = 0;
@@ -281,7 +281,7 @@ pub function __method_Array_cumsum(arr: i32[]): i32[] {
 // magnitude calculations. No overflow detection — squares
 // of larger ints will wrap.
 pub function __method_Array_sum_squared(arr: i32[]): i32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var s: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -296,7 +296,7 @@ pub function __method_Array_sum_squared(arr: i32[]): i32 {
 // (no float averaging since the result type is i32).
 // Option[i32] None on empty.
 pub function __method_Array_median(arr: i32[]): Option[i32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var sorted: i32[] = sort.sort_i32_asc(arr);
     return Some(sorted[(n - 1) / 2]);
@@ -308,7 +308,7 @@ pub function __method_Array_median(arr: i32[]): Option[i32] {
 // naive count; fine for the small-n use cases this
 // prelude targets.
 pub function __method_Array_mode(arr: i32[]): Option[i32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var best: i32 = arr[0];
     var best_count: i32 = 1;
@@ -338,7 +338,7 @@ pub function __method_Array_mode(arr: i32[]): Option[i32] {
 pub function __method_Array_join(arr: string[], sep: string): string {
     var out: string = "";
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (i > 0) { out = out + sep; }
         out = out + arr[i];
         i = i + 1;
@@ -352,7 +352,7 @@ pub function __method_Array_join(arr: string[], sep: string): string {
 // indexing) where arrays are bounded and small.
 pub function __method_Array_index_of(arr: string[], s: string): i32 {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (arr[i] == s) { return i; }
         i = i + 1;
     }
@@ -375,7 +375,7 @@ pub function __method_Array_contains(arr: string[], s: string): boolean {
 // model.
 pub function __method_Array_reverse(arr: string[]): string[] {
     var out: string[] = [];
-    var i: i32 = len(arr) - 1;
+    var i: i32 = arr.len() - 1;
     while (i >= 0) {
         out = out.push(arr[i]);
         i = i - 1;
@@ -388,11 +388,11 @@ pub function __method_Array_reverse(arr: string[]): string[] {
 // output of `split(sep)` when adjacent separators left empty
 // holes (e.g. `"a,,b".split(",")` → `["a", "", "b"]`).
 pub function __method_Array_filter_non_empty(arr: string[]): string[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        if (len(arr[i]) > 0) { out = out.push(arr[i]); }
+        if (arr[i].len() > 0) { out = out.push(arr[i]); }
         i = i + 1;
     }
     return out;
@@ -402,11 +402,11 @@ pub function __method_Array_filter_non_empty(arr: string[]): string[] {
 // entries. The "how many real values" counterpart to
 // filter_non_empty when callers only need the count.
 pub function __method_Array_count_non_empty(arr: string[]): i32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var c: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        if (len(arr[i]) > 0) { c = c + 1; }
+        if (arr[i].len() > 0) { c = c + 1; }
         i = i + 1;
     }
     return c;
@@ -417,7 +417,7 @@ pub function __method_Array_count_non_empty(arr: string[]): i32 {
 // O(n²) — fine for the small-list use cases (CLI flags,
 // sorted-keys dedup). For larger N use a Map-backed dedup.
 pub function __method_Array_distinct(arr: string[]): string[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -431,26 +431,26 @@ pub function __method_Array_distinct(arr: string[]): string[] {
 // elements. Same algorithm as distinct but skips building
 // the output array.
 pub function __method_Array_distinct_count(arr: string[]): i32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var seen: string[] = [];
     var i: i32 = 0;
     while (i < n) {
         if (seen.index_of(arr[i]) < 0) { seen = seen.push(arr[i]); }
         i = i + 1;
     }
-    return len(seen);
+    return seen.len();
 }
 
 // `(arr: string[]) max_by_len()` — element with the
 // longest length; Option[string] None on empty. Ties go to
 // the first occurrence.
 pub function __method_Array_max_by_len(arr: string[]): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var best: string = arr[0];
     var i: i32 = 1;
     while (i < n) {
-        if (len(arr[i]) > len(best)) { best = arr[i]; }
+        if (arr[i].len() > best.len()) { best = arr[i]; }
         i = i + 1;
     }
     return Some(best);
@@ -460,12 +460,12 @@ pub function __method_Array_max_by_len(arr: string[]): Option[string] {
 // shortest length; Option[string] None on empty. Ties go
 // to the first occurrence. Counterpart to max_by_len.
 pub function __method_Array_min_by_len(arr: string[]): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var best: string = arr[0];
     var i: i32 = 1;
     while (i < n) {
-        if (len(arr[i]) < len(best)) { best = arr[i]; }
+        if (arr[i].len() < best.len()) { best = arr[i]; }
         i = i + 1;
     }
     return Some(best);
@@ -475,11 +475,11 @@ pub function __method_Array_min_by_len(arr: string[]): Option[string] {
 // element. Useful for capacity-planning a join() output
 // buffer or reporting size statistics.
 pub function __method_Array_sum_lens(arr: string[]): i32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var s: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        s = s + len(arr[i]);
+        s = s + arr[i].len();
         i = i + 1;
     }
     return s;
@@ -491,7 +491,7 @@ pub function __method_Array_sum_lens(arr: string[]): i32 {
 pub function __method_Array_take(arr: string[], n: i32): string[] {
     var out: string[] = [];
     if (n <= 0) { return out; }
-    var alen: i32 = len(arr);
+    var alen: i32 = arr.len();
     var stop: i32 = n;
     if (stop > alen) { stop = alen; }
     var i: i32 = 0;
@@ -507,7 +507,7 @@ pub function __method_Array_take(arr: string[], n: i32): string[] {
 // empty.
 pub function __method_Array_drop(arr: string[], n: i32): string[] {
     var out: string[] = [];
-    var alen: i32 = len(arr);
+    var alen: i32 = arr.len();
     var start: i32 = n;
     if (start < 0) { start = 0; }
     if (start > alen) { return out; }
@@ -524,10 +524,10 @@ pub function __method_Array_drop(arr: string[], n: i32): string[] {
 // (vacuously — there are no empty entries). Useful for
 // post-split validation.
 pub function __method_Array_all_non_empty(arr: string[]): boolean {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
-        if (len(arr[i]) == 0) { return false; }
+        if (arr[i].len() == 0) { return false; }
         i = i + 1;
     }
     return true;
@@ -537,7 +537,7 @@ pub function __method_Array_all_non_empty(arr: string[]): boolean {
 // contains needle as a substring. Useful for searching a
 // list of values for a common token.
 pub function __method_Array_any_contains(arr: string[], needle: string): boolean {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
         if (arr[i].contains(needle)) { return true; }
@@ -551,7 +551,7 @@ pub function __method_Array_any_contains(arr: string[], needle: string): boolean
 // overload (the Array.X dispatch is name-keyed and can't
 // fan out on element type).
 pub function __method_Array_count_str(arr: string[], v: string): i32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var c: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -566,7 +566,7 @@ pub function __method_Array_count_str(arr: string[], v: string): i32 {
 // (vacuous). Empty prefix → true (every string starts
 // with "").
 pub function __method_Array_all_starts_with(arr: string[], prefix: string): boolean {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
         if (!arr[i].starts_with(prefix)) { return false; }
@@ -578,7 +578,7 @@ pub function __method_Array_all_starts_with(arr: string[], prefix: string): bool
 // `(arr: string[]) all_ends_with(suffix)` — true if every
 // element ends with `suffix`. Empty array → true.
 pub function __method_Array_all_ends_with(arr: string[], suffix: string): boolean {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
         if (!arr[i].ends_with(suffix)) { return false; }
@@ -606,7 +606,7 @@ pub function __method_Array_sorted_str_desc(arr: string[]): string[] {
 // single-element array → that element; two-element array
 // → joined with `last_sep` only.
 pub function __method_Array_join_with_last(arr: string[], sep: string, last_sep: string): string {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return ""; }
     if (n == 1) { return arr[0]; }
     if (n == 2) { return arr[0] + last_sep + arr[1]; }
@@ -623,7 +623,7 @@ pub function __method_Array_join_with_last(arr: string[], sep: string, last_sep:
 // Useful for L1 norm / "ignore sign, total magnitude" cases.
 // Empty → 0. Overflow wraps silently.
 pub function __method_Array_sum_abs(arr: i32[]): i32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var s: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -636,7 +636,7 @@ pub function __method_Array_sum_abs(arr: i32[]): i32 {
 // `(arr: i32[]) all_zero()` — true iff every element is 0.
 // Empty array → true (vacuously).
 pub function __method_Array_all_zero(arr: i32[]): boolean {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
         if (arr[i] != 0) { return false; }
@@ -648,7 +648,7 @@ pub function __method_Array_all_zero(arr: i32[]): boolean {
 // `(arr: string[]) all_eq_str(target)` — true iff every element
 // equals `target`. Empty array → true (vacuously).
 pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
         if (arr[i] != target) { return false; }
@@ -677,7 +677,7 @@ pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
 // needing exact long sums should widen the per-element type
 // first.
 pub function sum_i64(arr: i64[]): i64 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var s: i64 = 0 as i64;
     var i: i32 = 0;
     while (i < n) {
@@ -688,7 +688,7 @@ pub function sum_i64(arr: i64[]): i64 {
 }
 
 pub function max_i64(arr: i64[]): Option[i64] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: i64 = arr[0];
     var i: i32 = 1;
@@ -700,7 +700,7 @@ pub function max_i64(arr: i64[]): Option[i64] {
 }
 
 pub function min_i64(arr: i64[]): Option[i64] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: i64 = arr[0];
     var i: i32 = 1;
@@ -715,7 +715,7 @@ pub function min_i64(arr: i64[]): Option[i64] {
 // sums, toward zero for negative — Go's int64 division
 // semantics). Returns None on empty.
 pub function avg_i64(arr: i64[]): Option[i64] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     return Some(sum_i64(arr) / (n as i64));
 }
@@ -725,7 +725,7 @@ pub function avg_i64(arr: i64[]): Option[i64] {
 // sign-extension contamination).
 
 pub function sum_u32(arr: u32[]): u32 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var s: u32 = 0u32;
     var i: i32 = 0;
     while (i < n) {
@@ -736,7 +736,7 @@ pub function sum_u32(arr: u32[]): u32 {
 }
 
 pub function max_u32(arr: u32[]): Option[u32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: u32 = arr[0];
     var i: i32 = 1;
@@ -748,7 +748,7 @@ pub function max_u32(arr: u32[]): Option[u32] {
 }
 
 pub function min_u32(arr: u32[]): Option[u32] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: u32 = arr[0];
     var i: i32 = 1;
@@ -760,7 +760,7 @@ pub function min_u32(arr: u32[]): Option[u32] {
 }
 
 pub function sum_u64(arr: u64[]): u64 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var s: u64 = 0u64;
     var i: i32 = 0;
     while (i < n) {
@@ -771,7 +771,7 @@ pub function sum_u64(arr: u64[]): u64 {
 }
 
 pub function max_u64(arr: u64[]): Option[u64] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: u64 = arr[0];
     var i: i32 = 1;
@@ -783,7 +783,7 @@ pub function max_u64(arr: u64[]): Option[u64] {
 }
 
 pub function min_u64(arr: u64[]): Option[u64] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: u64 = arr[0];
     var i: i32 = 1;
@@ -804,7 +804,7 @@ pub function min_u64(arr: u64[]): Option[u64] {
 // should filter the input first.
 
 pub function sum_f64(arr: f64[]): f64 {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var s: f64 = 0.0;
     var i: i32 = 0;
     while (i < n) {
@@ -815,7 +815,7 @@ pub function sum_f64(arr: f64[]): f64 {
 }
 
 pub function max_f64(arr: f64[]): Option[f64] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: f64 = arr[0];
     var i: i32 = 1;
@@ -827,7 +827,7 @@ pub function max_f64(arr: f64[]): Option[f64] {
 }
 
 pub function min_f64(arr: f64[]): Option[f64] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     var m: f64 = arr[0];
     var i: i32 = 1;
@@ -839,7 +839,7 @@ pub function min_f64(arr: f64[]): Option[f64] {
 }
 
 pub function avg_f64(arr: f64[]): Option[f64] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (n == 0) { return None; }
     return Some(sum_f64(arr) / (n as f64));
 }
