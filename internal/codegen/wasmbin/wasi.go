@@ -111,6 +111,38 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_path_open": {
+		// (dirfd, dirflags, path_ptr, path_len, oflags,
+		//  fs_rights_base i64, fs_rights_inheriting i64,
+		//  fdflags, retptr_newfd) → errno.
+		// Opens a file under a preopened directory descriptor
+		// (`dirfd`); the path is interpreted relative to that
+		// descriptor. `retptr_newfd` is written with the new
+		// file descriptor on success.
+		module: "wasi_snapshot_preview1",
+		name:   "path_open",
+		params: []byte{
+			encode.ValtypeI32, // dirfd
+			encode.ValtypeI32, // dirflags
+			encode.ValtypeI32, // path_ptr
+			encode.ValtypeI32, // path_len
+			encode.ValtypeI32, // oflags
+			encode.ValtypeI64, // fs_rights_base
+			encode.ValtypeI64, // fs_rights_inheriting
+			encode.ValtypeI32, // fdflags
+			encode.ValtypeI32, // retptr_newfd
+		},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_fd_close": {
+		// (fd) → errno. Closes the file descriptor. Errors are
+		// typically ignored — there's nothing useful for the
+		// caller to do with them on close.
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_close",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -190,6 +222,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	}
 	if helpers.set["__lang_read_byte"] {
 		in.add("wasi_fd_read")
+	}
+	if helpers.set["__lang_read_file"] {
+		in.add("wasi_path_open")
+		in.add("wasi_fd_read")
+		in.add("wasi_fd_close")
 	}
 	return in
 }
