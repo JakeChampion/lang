@@ -220,9 +220,16 @@ const (
 // per-call scratch region (iovec + 1-byte buffer + nread out). 0
 // means uninitialised; the helper allocs 16 bytes on first call
 // and writes the addr here so subsequent calls reuse the same
-// region. Lives at 44..47 — the last free slot in the 0..63
-// reserved low-memory window before closuresBase=64.
+// region. Lives at 44..47.
 const readByteScratchAddr = 44
+
+// strIdxScratchAddr is the 8-byte spill region __str_idx uses
+// for inline-form strings: byte 0..3 hold base_data, byte 4..7
+// hold base_len, and __str_idx returns scratch+i so the caller's
+// OpLoadByte reads the correct content byte. Heap-form strings
+// bypass the scratch entirely (returned address is base_data+i).
+// Lives at 64..71; closuresBase is set to 80 to leave this room.
+const strIdxScratchAddr = 64
 
 // buildPrintBody assembles the wasm bytes for __lang_print.
 //

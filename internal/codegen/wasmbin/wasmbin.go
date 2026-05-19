@@ -164,7 +164,16 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// (before stringStart). Programs with up to 120 unique
 	// OpConstFunc targets fit without growing into the string
 	// pool.
-	const closuresBase = 64
+	// Low-memory layout (0..closuresBase):
+	//
+	//	0..47   args / env / read_byte cache (see wasi.go)
+	//	48..55  print iovec
+	//	56..59  print ret
+	//	60..63  random buf
+	//	64..71  __str_idx scratch (data, len) for inline-form strings
+	//	72..79  reserved for future per-helper scratch
+	//	80..    closure pair cells (8 bytes each)
+	const closuresBase = 80
 	const maxClosureCells = (1024 - closuresBase) / 8
 	closureTableIdx := map[string]int{}
 	var closureBytes []byte

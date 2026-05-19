@@ -290,21 +290,22 @@ func exportExists(t *testing.T, bin []byte, want string) bool {
 // clear error. This pins the contract that gaps surface as
 // failures, not as silently-wrong output.
 //
-// Today's example: Map operations. The IR lowers `Map { ... }`
-// into a chain of OpCallDirect targets (`map_new`, `map_set`,
-// etc.); none of those names are wired through callDirectAlias
-// to a wasmbin helper, so the call-site lookup fails. As Map
-// support lands, update this test to point at the next gap.
+// Today's example: TCP. The wasi-sockets imports + the per-
+// preview-2 fd_read/fd_write/sock_close wiring aren't ported
+// to wasmbin yet, so any program that calls `tcp_listen` /
+// `tcp_accept` etc. surfaces an "unsupported" / "unknown
+// callee" failure. As TCP support lands, update this test to
+// point at the next gap.
 func TestBuildReportsUnsupported(t *testing.T) {
 	src := `import "core/no_prelude";
 function main(): i32 {
-    var m: Map[i32, i32] = (Map { 1i32: 10i32 });
-    return m.get_or(1i32, 0i32);
+    var srv = tcp_listen(8080);
+    return 0;
 }
 `
 	_, err := buildFromSource(t, src)
 	if err == nil {
-		t.Fatal("expected an unsupported error for Map; got nil")
+		t.Fatal("expected an unsupported error for tcp_listen; got nil")
 	}
 	if !strings.Contains(err.Error(), "wasmbin") &&
 		!strings.Contains(err.Error(), "unsupported") {
@@ -348,5 +349,41 @@ function main(): i32 {
 	}
 	if !strings.Contains(so.String(), "hello from wasmbin") {
 		t.Fatalf("stdout doesn't contain expected text: %q", so.String())
+	}
+}
+
+// TestBuildMapReal — end-to-end Map[i32, i32]: build a 1-entry
+// map literal, then read the value back with `get_or`. Exercises
+// the full Map runtime chain: map_new_impl + __map_set_impl +
+// __map_get_or_impl + __map_hash (int key path) + the stdlib
+// load/store/alloc shims.
+func TestBuildMapReal(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var m: Map[i32, i32] = (Map { 1i32: 10i32 });
+    return m.get_or(1i32, 0i32);
+}
+`
+	bin, err := buildFromSource(t, src)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "10" {
+		t.Fatalf("map get_or = %q, want 10", got)
 	}
 }

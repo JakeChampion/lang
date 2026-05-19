@@ -161,6 +161,19 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__memcpy")
 				case "__memset":
 					needs.add("__memset")
+				case "__str_idx":
+					// Same byte-fetch SSO seam used by
+					// __lang_str_byte but returns a byte
+					// address that the caller's OpLoadByte
+					// dereferences. Used in __map_hash's
+					// string-key path.
+					needs.add("__lang_str_len")
+					needs.add("__str_idx")
+				case "__arr_idx":
+					// (base, i) → byte address of element i
+					// in a 4-byte-stride array. Length prefix
+					// at [base-4].
+					needs.add("__arr_idx")
 				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
@@ -340,6 +353,24 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildMemsetBody,
+	},
+	"__str_idx": {
+		// (base_data, base_len, i) → i32 (byte address). For
+		// heap-form strings returns base_data + i directly. For
+		// inline strings spills (data, len) to fixed scratch and
+		// returns scratch + i so the caller's OpLoadByte reads
+		// the correct content byte.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStrIdxBody,
+	},
+	"__arr_idx": {
+		// (base, i) → i32 (byte address of element i). 4-byte
+		// stride. Bounds-checks against the length prefix at
+		// [base - 4]; out-of-range traps via `unreachable`.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrIdxBody,
 	},
 	"__str_eq": {
 		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).
@@ -829,5 +860,101 @@ func buildMemsetBody(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1) // b
 	body = inst.InstLocalGet(body, 2) // n
 	body = append(body, 0xFC, 0x0B, 0x00)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildStrIdxBody — (base_data, base_len, i) → i32 (byte addr).
+// Mirrors the WAT path's $__str_idx: bounds-check against the
+// SSO-aware length, then dispatch on inline-vs-heap.
+//
+//	if i < 0: trap
+//	if i >= str_len(base_data, base_len): trap
+//	if base_len & 0x80000000:
+//	    mem[scratch+0] = base_data
+//	    mem[scratch+4] = base_len
+//	    return scratch + i
+//	else:
+//	    return base_data + i
+//
+// The inline branch spills the (data, len) pair to a fixed
+// scratch region so the caller can do a byte load at the
+// returned address — the inline content layout puts byte i at
+// scratch+i for i in 0..6 (low 4 in data, next 3 in len).
+func buildStrIdxBody(helperIdxs map[string]uint32) []byte {
+	strLen := helperIdxs["__lang_str_len"]
+	var body []byte
+	// if i < 0: trap
+	body = inst.InstLocalGet(body, 2) // $i
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// if i >= str_len(base_data, base_len): trap
+	body = inst.InstLocalGet(body, 2) // $i
+	body = inst.InstLocalGet(body, 0) // base_data
+	body = inst.InstLocalGet(body, 1) // base_len
+	body = inst.InstCall(body, strLen)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// inline-vs-heap dispatch on base_len's top bit.
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, encode.ValtypeI32)
+	{
+		// Spill (data, len) to scratch; return scratch + i.
+		body = inst.InstI32Const(body, strIdxScratchAddr)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, strIdxScratchAddr+4)
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, strIdxScratchAddr)
+		body = inst.InstLocalGet(body, 2)
+		body = numeric.InstI32Add(body)
+	}
+	body = inst.InstElse(body)
+	{
+		// Heap: return base_data + i.
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 2)
+		body = numeric.InstI32Add(body)
+	}
+	body = inst.InstEnd(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildArrIdxBody — (base, i) → i32 (byte addr of element i).
+// 4-byte stride. Bounds-check against the i32 length prefix at
+// [base-4]; out-of-range traps. Used by stdlib helpers that
+// iterate over `_impl`-managed arrays.
+func buildArrIdxBody(_ map[string]uint32) []byte {
+	var body []byte
+	// if i < 0: trap
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// if i >= mem[base-4]: trap
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// return base + i*4
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
