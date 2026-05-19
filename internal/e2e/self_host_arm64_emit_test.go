@@ -917,6 +917,18 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			0,
 			"",
 		},
+		{
+			"args-count-at-least-one",
+			"function main(): i32 { if (args_count() >= 1) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"args-at-zero-non-empty",
+			"function main(): i32 { var p = arg_at(0); if (len(p) > 0) { return 1; } return 0; }",
+			1,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
