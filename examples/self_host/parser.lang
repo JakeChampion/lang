@@ -110,10 +110,16 @@ pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
 pub struct MatchArm { pattern: Pattern, body: Stmt[] }
 pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[] }
+// StmtFor models `for VAR in EXPR { body }`. The iter expr
+// evaluates to an array (interp) / TypeArray (checker); the
+// loop binds `var_name` to each element in turn. break /
+// continue inside the body aren't modeled yet — a future
+// slice can add them as StmtBreak / StmtContinue.
+pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[] }
 pub struct StmtUnknown { kind: string }
 
 pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
-              | StmtAssign | StmtMatch | StmtUnknown;
+              | StmtAssign | StmtMatch | StmtFor | StmtUnknown;
 
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
@@ -195,6 +201,9 @@ function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
 }
 function s_while(cond: Expr, body: Stmt[]): Stmt {
     return StmtWhile { cond: cond, body: body };
+}
+function s_for(var_name: string, iter: Expr, body: Stmt[]): Stmt {
+    return StmtFor { var_name: var_name, iter: iter, body: body };
 }
 function s_assign(target: string, value: Expr): Stmt {
     return StmtAssign { target: target, value: value };
@@ -298,8 +307,23 @@ function parse_primary(p: Par): ExprResult {
             // when the base is still a bare ident (the struct
             // type's name). Consumes the whole construct;
             // subsequent postfixes (field access, etc.) can
-            // chain through the postfix loop.
+            // chain through the postfix loop. We disambiguate
+            // from `for x in Name { body }` (where `Name` is
+            // the iter, not a struct-lit type) by peeking two
+            // tokens ahead: a real struct-lit is either empty
+            // (`{}`) or starts with `Ident :`. Anything else
+            // means the `{` belongs to a surrounding block.
+            var struct_lit_ok: boolean = false;
             if (p.peek_punct() == "{") {
+                var look: Par = p.advance();
+                if (look.peek_punct() == "}") {
+                    struct_lit_ok = true;
+                } else if (len(look.peek_ident()) > 0) {
+                    var look2: Par = look.advance();
+                    if (look2.peek_punct() == ":") { struct_lit_ok = true; }
+                }
+            }
+            if (struct_lit_ok) {
                 p = p.advance();
                 var fnames: string[] = [];
                 var fvals: Expr[] = [];
@@ -601,6 +625,26 @@ function parse_stmt(p: Par): StmtResult {
         var wb: BlockResult = parse_block(p);
         p = wb.par;
         return StmtResult { par: p, stmt: s_while(wc.expr, wb.body) };
+    }
+    if (kw == "for") {
+        // `for VAR in EXPR { body }`. `in` arrives as a plain
+        // TokIdent (not in the lexer's keyword set), so peek
+        // it through peek_ident rather than peek_keyword.
+        p = p.advance();  // consume `for`
+        var fvar: string = p.peek_ident();
+        if (len(fvar) == 0) {
+            return StmtResult { par: p, stmt: s_unknown("missing for-var name") };
+        }
+        p = p.advance();
+        if (p.peek_ident() != "in") {
+            return StmtResult { par: p, stmt: s_unknown("missing `in` in for") };
+        }
+        p = p.advance();  // consume `in`
+        var fiter = parse_expr(p);
+        p = fiter.par;
+        var fb: BlockResult = parse_block(p);
+        p = fb.par;
+        return StmtResult { par: p, stmt: s_for(fvar, fiter.expr, fb.body) };
     }
     if (kw == "var") {
         p = p.advance();
@@ -1403,6 +1447,37 @@ function main(): i32 {
     var srcIp: string = "function main(): i32 { return 0; }";
     var modIp: Module = parse_module(lexer.tokenize(srcIp));
     if (len(modIp.imports) != 0) { return 1000; }
+
+    // For-in loop: `for x in arr { … }` parses as StmtFor with
+    // var_name + iter + body.
+    var srcFor: string = "for x in arr { var y = x + 1; }";
+    var progFor: Stmt[] = parse_program(lexer.tokenize(srcFor));
+    if (len(progFor) != 1) { return 1010; }
+    match (progFor[0]) {
+        StmtFor(fs) => {
+            if (fs.var_name != "x") { return 1011; }
+            match (fs.iter) {
+                ExprIdent(id) => { if (id.name != "arr") { return 1012; } },
+                _ => { return 1013; }
+            }
+            if (len(fs.body) != 1) { return 1014; }
+        },
+        _ => { return 1015; }
+    }
+
+    // For-in with array literal as iter.
+    var srcFor2: string = "for n in [1, 2, 3] { n; }";
+    var progFor2: Stmt[] = parse_program(lexer.tokenize(srcFor2));
+    match (progFor2[0]) {
+        StmtFor(fs) => {
+            if (fs.var_name != "n") { return 1020; }
+            match (fs.iter) {
+                ExprArray(a) => { if (len(a.elements) != 3) { return 1021; } },
+                _ => { return 1022; }
+            }
+        },
+        _ => { return 1023; }
+    }
 
     return 0;
 }

@@ -596,6 +596,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             return s;
         },
         parser.StmtMatch(_) => { return s.write("    # unsupported: match\n"); },
+        parser.StmtFor(_) => { return s.write("    # unsupported: for-in\n"); },
         parser.StmtUnknown(_) => { return s.write("    # unsupported: StmtUnknown\n"); }
     }
     return s;

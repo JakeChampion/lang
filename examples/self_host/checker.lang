@@ -734,6 +734,26 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             }
             return CheckResult { scope: s, ty: t_bool() };
         },
+        parser.StmtFor(f) => {
+            // Iter expr must be a TypeArray. Walk the body in
+            // a scope where var_name is bound to the array's
+            // elem type. Errors in iter or body flip well-typed
+            // but the loop itself surfaces t_bool() like the
+            // other control-flow stmts.
+            var it: Type = check_expr(f.iter, s);
+            var elem_ty: Type = t_unknown("for-in iter not an array");
+            var ok: boolean = true;
+            match (it) {
+                TypeArray(ta) => { elem_ty = ta.elem; },
+                _ => { ok = false; }
+            }
+            var body_scope: Scope = s.bind(f.var_name, elem_ty);
+            check_block(f.body, body_scope);
+            if (!ok) {
+                return CheckResult { scope: s, ty: t_unknown("for-in: iter not array") };
+            }
+            return CheckResult { scope: s, ty: t_bool() };
+        },
         parser.StmtUnknown(u) => { return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + u.kind) }; }
     }
     return CheckResult { scope: s, ty: t_unknown("unhandled Stmt variant") };
@@ -1398,6 +1418,19 @@ function main(): i32 {
     var mod42: parser.Module = parser.parse_module(lexer.tokenize(src42));
     var mt42: ModuleTypes = check_module(mod42);
     if (mt42.all_well_typed) { return 420; }
+
+    // For-in: iter is a TypeArray; body type-checks under a
+    // scope where the loop var has the array's elem type.
+    var src43: string = "function main(): i32 { var arr = [1, 2, 3]; var s: i32 = 0; for n in arr { s = s + n; } return s; }";
+    var mod43: parser.Module = parser.parse_module(lexer.tokenize(src43));
+    var mt43: ModuleTypes = check_module(mod43);
+    if (!mt43.all_well_typed) { return 430; }
+
+    // For-in iter not an array — rejected.
+    var src44: string = "function main(): i32 { for n in 7 { } return 0; }";
+    var mod44: parser.Module = parser.parse_module(lexer.tokenize(src44));
+    var mt44: ModuleTypes = check_module(mod44);
+    if (mt44.all_well_typed) { return 440; }
 
     return 0;
 }
