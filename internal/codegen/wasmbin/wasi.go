@@ -158,6 +158,10 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 		in.add("wasi_args_sizes_get")
 		in.add("wasi_args_get")
 	}
+	if helpers.set["__lang_args"] {
+		in.add("wasi_args_sizes_get")
+		in.add("wasi_args_get")
+	}
 	if helpers.set["__lang_env_at"] {
 		in.add("wasi_environ_sizes_get")
 		in.add("wasi_environ_get")

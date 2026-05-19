@@ -128,6 +128,12 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// One-shot init cached in low memory.
 					needs.add("__lang_alloc")
 					needs.add("__lang_arg_at")
+				case "__lang_args":
+					// Builds a string[] of all argv entries.
+					// Shares the wasi_args_* init path with
+					// __lang_arg_at via the low-memory cache.
+					needs.add("__lang_alloc")
+					needs.add("__lang_args")
 				case "__lang_env_at":
 					// wasi_environ_sizes_get + wasi_environ_get
 					// + alloc for the environ_ptrs table + buf.
@@ -322,6 +328,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildArgAtBody,
+	},
+	"__lang_args": {
+		// () → i32 — length-prefixed string[] of all argv
+		// entries. Returns the data pointer (length lives at
+		// data - 4). Each entry is a 2-word (data, len) pair
+		// in heap form (top bit of len clear). Cached after
+		// first build.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildArgsBody,
 	},
 	"__lang_env_at": {
 		// (i) → (data, len) — the i-th environ entry as a
@@ -1619,4 +1635,186 @@ func buildReaderReadLineBody(helperIdxs map[string]uint32) []byte {
 // Empty body.
 func buildReaderCloseBody(_ map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), nil)
+}
+
+// buildArgsBody — () → i32. Builds a length-prefixed string[]
+// of all argv entries. Returns the data pointer (one past the
+// length prefix). Each entry is a 2-word (data, len) pair in
+// heap form: data points into argv_buf, len is the strlen
+// (top bit clear).
+//
+// Shares the wasi_args_* init path with __lang_arg_at via the
+// low-memory cache (argsInitAddr / argsCountAddr / argsPtrsAddr).
+// After init, the wasi-output scratch slots (argsSizesArgcAddr,
+// argsSizesBufAddr) are dead — repurposed here as a cache for
+// the built-array data pointer + built-flag.
+//
+// Locals (no params):
+//
+//	0: $argc
+//	1: $bufsize
+//	2: $argv_ptrs
+//	3: $argv_buf
+//	4: $result_raw
+//	5: $result
+//	6: $i
+//	7: $cstr
+//	8: $len
+func buildArgsBody(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__lang_alloc"]
+	argsSizes := helperIdxs["wasi_args_sizes_get"]
+	argsGet := helperIdxs["wasi_args_get"]
+	var body []byte
+	// Lazy init: same shape as __lang_arg_at.
+	body = inst.InstI32Const(body, argsInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, argsSizesArgcAddr)
+		body = inst.InstI32Const(body, argsSizesBufAddr)
+		body = inst.InstCall(body, argsSizes)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, argsSizesArgcAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 0)
+		body = inst.InstI32Const(body, argsSizesBufAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 1)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 2)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 3)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstCall(body, argsGet)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, argsCountAddr)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, argsPtrsAddr)
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, argsInitAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		// Reset the built-flag slot (argsSizesBufAddr) to 0 so
+		// the cache check below doesn't see stale bufsize bits.
+		body = inst.InstI32Const(body, argsSizesBufAddr)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	// Cache check: if argsSizesBufAddr is 1, return cached array
+	// data ptr from argsSizesArgcAddr.
+	body = inst.InstI32Const(body, argsSizesBufAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, argsSizesArgcAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Build: result_raw = __lang_alloc(argc * 8 + 4)
+	body = inst.InstI32Const(body, argsCountAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 0) // $argc
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 4) // $result_raw
+	// mem[result_raw] = argc (length prefix)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	// $result = $result_raw + 4
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 5)
+	// argv_ptrs = mem[argsPtrsAddr]
+	body = inst.InstI32Const(body, argsPtrsAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 2)
+	// for i in 0..argc: build (data, len) at result + i*8
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 6) // $i
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// if $i >= $argc: break
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 0)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		// $cstr = mem[argv_ptrs + i*4]
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 7)
+		// $len = 0; while mem[cstr+len] != 0: len++
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 8)
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstLocalGet(body, 8)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load8U(body, 0, 0)
+			body = numeric.InstI32Eqz(body)
+			body = inst.InstBrIf(body, 1)
+			body = inst.InstLocalGet(body, 8)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 8)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body)
+		body = inst.InstEnd(body)
+		// Store (cstr, len) at result + i*8
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 7)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 8)
+		body = memory.InstI32Store(body, 2, 0)
+		// $i++
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 6)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	// Cache: argsSizesArgcAddr = $result, argsSizesBufAddr = 1
+	body = inst.InstI32Const(body, argsSizesArgcAddr)
+	body = inst.InstLocalGet(body, 5)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstI32Const(body, argsSizesBufAddr)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 5)
+	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
