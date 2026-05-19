@@ -538,6 +538,9 @@ function ret_tag_of(name: string): string {
     if (name == "i32" || name == "f64" || name == "f32") { return "i32"; }
     if (name == "bool" || name == "boolean") { return "bool"; }
     if (name == "string") { return "string"; }
+    if (name == "string[]") { return "array_string"; }
+    if (name == "i32[]") { return "array_i32"; }
+    if (name == "bool[]" || name == "boolean[]") { return "array_i32"; }
     if (len(name) > 0 && name[len(name) - 1] == 93) { return "array"; }
     return "unknown";
 }
@@ -547,7 +550,12 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
         parser.ExprNumber(_) => { return "i32"; },
         parser.ExprBool(_) => { return "bool"; },
         parser.ExprString(_) => { return "string"; },
-        parser.ExprArray(_) => { return "array"; },
+        parser.ExprArray(a) => {
+            if (len(a.elements) == 0) { return "array"; }
+            var et: string = infer_expr_type(a.elements[0], s);
+            if (et == "string") { return "array_string"; }
+            return "array";
+        },
         parser.ExprTuple(_) => { return "tuple"; },
         parser.ExprStructLit(_) => { return "struct"; },
         parser.ExprLambda(_) => { return "fn"; },
@@ -588,6 +596,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
         parser.ExprIndex(x) => {
             var at: string = infer_expr_type(x.array, s);
             if (at == "string") { return "i32"; }
+            if (at == "array_string") { return "string"; }
             return "i32";
         },
         parser.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
@@ -1855,6 +1864,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             //       x = __for_arr_N[__for_i_N]; body;
             //       __for_i_N = __for_i_N + 1;
             //   }
+            var iter_ty: string = infer_expr_type(f.iter, s);
+            var elem_ty: string = "i32";
+            if (iter_ty == "array_string") { elem_ty = "string"; }
             s = emit_expr(f.iter, s);
             var arr_name: string = "__for_arr_" + i32_to_string(s.label_n);
             s = s.bind_local(arr_name);
@@ -1866,7 +1878,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             var idx_off: i32 = s.lookup_local(idx_name);
             s = s.write("    mov x0, #0\n");
             s = s.write("    str x0, [x29, #" + i32_to_string(idx_off) + "]\n");
-            s = s.bind_local(f.var_name);
+            s = s.bind_local_typed(f.var_name, elem_ty);
             var elem_off: i32 = s.lookup_local(f.var_name);
             var top_lbl: i32 = s.label_n;
             var cont_lbl: i32 = s.label_n + 1;

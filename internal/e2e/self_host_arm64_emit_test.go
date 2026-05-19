@@ -491,6 +491,30 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			1,
 			"",
 		},
+		{
+			"string-array-literal-print",
+			"function main(): i32 { var arr = [\"hi\", \"bye\"]; print(arr[0]); print(\"\\n\"); print(arr[1]); print(\"\\n\"); return 0; }",
+			0,
+			"hi\nbye\n",
+		},
+		{
+			"string-array-len-and-index",
+			"function main(): i32 { var arr = [\"a\", \"bb\", \"ccc\"]; return len(arr[1]) + len(arr) * 10; }",
+			32,
+			"",
+		},
+		{
+			"string-array-for-in",
+			"function main(): i32 { var arr = [\"one\", \"two\", \"three\"]; for s in arr { print(s); print(\"\\n\"); } return 0; }",
+			0,
+			"one\ntwo\nthree\n",
+		},
+		{
+			"string-array-eq",
+			"function main(): i32 { var arr = [\"x\", \"y\", \"z\"]; if (arr[1] == \"y\") { return 1; } return 0; }",
+			1,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
