@@ -144,6 +144,16 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 				case "__lang_arena_restore":
 					// Writes mem[40] = handle.
 					needs.add("__lang_arena_restore")
+				case "__lang_sqrt_f64":
+					needs.add("__lang_sqrt_f64")
+				case "__lang_abs_f64":
+					needs.add("__lang_abs_f64")
+				case "__lang_floor_f64":
+					needs.add("__lang_floor_f64")
+				case "__lang_ceil_f64":
+					needs.add("__lang_ceil_f64")
+				case "__lang_trunc_f64":
+					needs.add("__lang_trunc_f64")
 				case "__lang_env_count":
 					// wasi_environ_sizes_get + alloc-per-call
 					// for the 8-byte output buffer.
@@ -402,6 +412,36 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 		body:    buildArenaRestoreBody,
+	},
+	"__lang_sqrt_f64": {
+		// (f64) → f64 — wasm-native f64.sqrt.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildSqrtF64Body,
+	},
+	"__lang_abs_f64": {
+		// (f64) → f64 — wasm-native f64.abs.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildAbsF64Body,
+	},
+	"__lang_floor_f64": {
+		// (f64) → f64 — wasm-native f64.floor.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildFloorF64Body,
+	},
+	"__lang_ceil_f64": {
+		// (f64) → f64 — wasm-native f64.ceil.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildCeilF64Body,
+	},
+	"__lang_trunc_f64": {
+		// (f64) → f64 — wasm-native f64.trunc.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildTruncF64Body,
 	},
 	"__lang_env_count": {
 		// () → i32 — count of environment variables (envc).
@@ -1940,5 +1980,48 @@ func buildArenaRestoreBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, allocCursorAddr)
 	body = inst.InstLocalGet(body, 0)
 	body = memInstI32Store(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildSqrtF64Body — (f64) → f64. Thin wrapper around the
+// wasm-native f64.sqrt instruction. Exposed via the source-
+// language method `(x: f64) sqrt()` in std/float.lang which
+// calls __sqrt_f64 directly.
+func buildSqrtF64Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstF64Sqrt(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildAbsF64Body — (f64) → f64 via wasm-native f64.abs.
+func buildAbsF64Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstF64Abs(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildFloorF64Body — (f64) → f64 via wasm-native f64.floor.
+func buildFloorF64Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstF64Floor(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildCeilF64Body — (f64) → f64 via wasm-native f64.ceil.
+func buildCeilF64Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstF64Ceil(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildTruncF64Body — (f64) → f64 via wasm-native f64.trunc.
+func buildTruncF64Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstF64Trunc(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
