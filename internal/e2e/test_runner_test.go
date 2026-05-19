@@ -1276,6 +1276,48 @@ func TestRunnerFileLinesAndTimestampExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/option_and_set_ops_test.lang` exercises
+// batch-26 additions:
+//   - Option result family: `assert_is_some_i32` /
+//     `_string`, `assert_is_none_i32` / `_string`, and the
+//     equality-paired `assert_is_some_eq_i32` /
+//     `assert_is_some_eq_string` (i32 and string cover the
+//     bulk of practical Option payload types; lang has no
+//     generics over the payload so each gets a typed
+//     helper).
+//   - Array set relations: `assert_array_intersects_i32`
+//     / `_string` (at least one shared element; empty
+//     either side fails) and `assert_array_disjoint_i32`
+//     / `_string` (no shared element; empty either side
+//     vacuously passes). Complement to the existing
+//     `assert_set_eq_*` / `assert_subset_*` family.
+//
+// 19 cases.
+func TestRunnerOptionAndSetOpsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/option_and_set_ops_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - is_some_i32 None fails",
+		"ok 4 - is_none_i32 Some fails with value",
+		"ok 6 - is_some_eq_i32 wrong value",
+		"ok 7 - is_some_eq_i32 None distinct msg",
+		"ok 11 - is_none_string quotes payload",
+		"ok 13 - intersects_i32 no overlap + lens",
+		"ok 17 - disjoint_i32 shared names value",
+		"ok 18 - disjoint_i32 empty vacuous",
+		"# pass 19",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
