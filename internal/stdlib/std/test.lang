@@ -3480,3 +3480,120 @@ pub function assert_json_eq(actual: string, expected: string): Option[string] {
     }
     return None;
 }
+
+// =================== NARROWER JSON ASSERTIONS ===================
+//
+// `assert_json_eq` is full-document compare. These helpers
+// pin narrower properties so tests don't have to commit to
+// pinning every field of a response.
+
+// `assert_json_has_key(json_text, key)` — top-level JObject
+// contains `key`. Fails if `json_text` doesn't parse OR
+// the top-level value isn't a JObject OR the key is
+// absent. Distinct diagnostics for each so the regression
+// case names the actual failure mode.
+pub function assert_json_has_key(json_text: string, key: string): Option[string] {
+    match (json.json_parse(json_text)) {
+        None => {
+            return Some("assert_json_has_key: not valid JSON: " + json_text);
+        },
+        Some(v) => {
+            match (v) {
+                JObject(m) => {
+                    if (m.has(key)) { return None; }
+                    return Some("assert_json_has_key: key \"" + key +
+                                "\" not present in object of size " +
+                                m.len().to_string());
+                },
+                JNull      => { return Some("assert_json_has_key: top-level value is null, not object"); },
+                JBool(_)   => { return Some("assert_json_has_key: top-level value is bool, not object"); },
+                JNumber(_) => { return Some("assert_json_has_key: top-level value is number, not object"); },
+                JString(_) => { return Some("assert_json_has_key: top-level value is string, not object"); },
+                JArray(_)  => { return Some("assert_json_has_key: top-level value is array, not object"); }
+            }
+        }
+    }
+    return None;
+}
+
+// `assert_json_lacks_key(json_text, key)` — top-level
+// JObject does NOT contain `key`. Use after a delete /
+// filter operation, or to assert a sensitive field
+// (e.g., "password_hash") was stripped from a response.
+pub function assert_json_lacks_key(json_text: string, key: string): Option[string] {
+    match (json.json_parse(json_text)) {
+        None => {
+            return Some("assert_json_lacks_key: not valid JSON: " + json_text);
+        },
+        Some(v) => {
+            match (v) {
+                JObject(m) => {
+                    if (!m.has(key)) { return None; }
+                    return Some("assert_json_lacks_key: key \"" + key +
+                                "\" unexpectedly present");
+                },
+                JNull      => { return Some("assert_json_lacks_key: top-level value is null, not object"); },
+                JBool(_)   => { return Some("assert_json_lacks_key: top-level value is bool, not object"); },
+                JNumber(_) => { return Some("assert_json_lacks_key: top-level value is number, not object"); },
+                JString(_) => { return Some("assert_json_lacks_key: top-level value is string, not object"); },
+                JArray(_)  => { return Some("assert_json_lacks_key: top-level value is array, not object"); }
+            }
+        }
+    }
+    return None;
+}
+
+// `assert_json_array_len(json_text, n)` — top-level
+// JArray has exactly `n` elements. Use when the test
+// cares about cardinality (e.g., "the endpoint returned
+// 5 records") without pinning each element.
+pub function assert_json_array_len(json_text: string, n: i32): Option[string] {
+    match (json.json_parse(json_text)) {
+        None => {
+            return Some("assert_json_array_len: not valid JSON: " + json_text);
+        },
+        Some(v) => {
+            match (v) {
+                JArray(arr) => {
+                    var got: i32 = len(arr);
+                    if (got == n) { return None; }
+                    return Some("assert_json_array_len: expected length " +
+                                n.to_string() + ", got " + got.to_string());
+                },
+                JNull      => { return Some("assert_json_array_len: top-level value is null, not array"); },
+                JBool(_)   => { return Some("assert_json_array_len: top-level value is bool, not array"); },
+                JNumber(_) => { return Some("assert_json_array_len: top-level value is number, not array"); },
+                JString(_) => { return Some("assert_json_array_len: top-level value is string, not array"); },
+                JObject(_) => { return Some("assert_json_array_len: top-level value is object, not array"); }
+            }
+        }
+    }
+    return None;
+}
+
+// `assert_json_object_size(json_text, n)` — top-level
+// JObject has exactly `n` keys. Cardinality complement to
+// `_array_len`.
+pub function assert_json_object_size(json_text: string, n: i32): Option[string] {
+    match (json.json_parse(json_text)) {
+        None => {
+            return Some("assert_json_object_size: not valid JSON: " + json_text);
+        },
+        Some(v) => {
+            match (v) {
+                JObject(m) => {
+                    var got: i32 = m.len();
+                    if (got == n) { return None; }
+                    return Some("assert_json_object_size: expected " +
+                                n.to_string() + " keys, got " + got.to_string());
+                },
+                JNull      => { return Some("assert_json_object_size: top-level value is null, not object"); },
+                JBool(_)   => { return Some("assert_json_object_size: top-level value is bool, not object"); },
+                JNumber(_) => { return Some("assert_json_object_size: top-level value is number, not object"); },
+                JString(_) => { return Some("assert_json_object_size: top-level value is string, not object"); },
+                JArray(_)  => { return Some("assert_json_object_size: top-level value is array, not object"); }
+            }
+        }
+    }
+    return None;
+}
