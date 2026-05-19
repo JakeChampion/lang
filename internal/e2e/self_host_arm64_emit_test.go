@@ -455,6 +455,42 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			3,
 			"hi!",
 		},
+		{
+			"string-lt-true",
+			"function main(): i32 { var a = \"apple\"; var b = \"banana\"; if (a < b) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"string-lt-false",
+			"function main(): i32 { var a = \"banana\"; var b = \"apple\"; if (a < b) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"string-lt-prefix",
+			"function main(): i32 { var a = \"app\"; var b = \"apple\"; if (a < b) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"string-le-equal",
+			"function main(): i32 { var a = \"abc\"; var b = \"abc\"; if (a <= b) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"string-gt-true",
+			"function main(): i32 { var a = \"zebra\"; var b = \"apple\"; if (a > b) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"string-ge-equal",
+			"function main(): i32 { var a = \"xy\"; var b = \"xy\"; if (a >= b) { return 1; } return 0; }",
+			1,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
