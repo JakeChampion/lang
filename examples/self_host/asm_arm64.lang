@@ -359,7 +359,12 @@ pub struct EmitState {
     loop_cont_labels: string[],
     // funcs: the module's FuncDecls — used by method dispatch
     // in ExprCall(ExprFieldAccess(...), args).
-    funcs: parser.FuncDecl[]
+    funcs: parser.FuncDecl[],
+    // local_types: parallel to local_names. See asm.lang.
+    local_types: string[],
+    needs_str_concat: boolean,
+    needs_str_eq: boolean,
+    needs_str_print: boolean
 }
 
 function new_state(): EmitState {
@@ -368,6 +373,7 @@ function new_state(): EmitState {
     var lex: string[] = [];
     var lcn: string[] = [];
     var fns: parser.FuncDecl[] = [];
+    var lts: string[] = [];
     return EmitState {
         out: "",
         label_n: 0,
@@ -380,7 +386,11 @@ function new_state(): EmitState {
         struct_decls: [],
         loop_exit_labels: lex,
         loop_cont_labels: lcn,
-        funcs: fns
+        funcs: fns,
+        local_types: lts,
+        needs_str_concat: false,
+        needs_str_eq: false,
+        needs_str_print: false
     };
 }
 
@@ -397,12 +407,21 @@ function (s: EmitState) write(text: string): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
 function (s: EmitState) bind_local(name: string): EmitState {
+    return s.bind_local_typed(name, "unknown");
+}
+
+function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
     var ln: string[] = s.local_names.push(name);
+    var lts: string[] = s.local_types.push(ty);
     return EmitState {
         out: s.out,
         label_n: s.label_n,
@@ -415,12 +434,127 @@ function (s: EmitState) bind_local(name: string): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: lts,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
+}
+
+function (s: EmitState) local_type_of(name: string): string {
+    var i: i32 = len(s.local_names) - 1;
+    while (i >= 0) {
+        if (s.local_names[i] == name) { return s.local_types[i]; }
+        i = i - 1;
+    }
+    return "unknown";
+}
+
+function (s: EmitState) mark_str_concat(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: true,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: true, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print
+    };
+}
+
+function (s: EmitState) mark_str_eq(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat, needs_str_eq: true, needs_str_print: s.needs_str_print
+    };
+}
+
+function (s: EmitState) mark_str_print(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: true
+    };
+}
+
+function ret_tag_of(name: string): string {
+    if (name == "i32" || name == "f64" || name == "f32") { return "i32"; }
+    if (name == "bool" || name == "boolean") { return "bool"; }
+    if (name == "string") { return "string"; }
+    if (len(name) > 0 && name[len(name) - 1] == 93) { return "array"; }
+    return "unknown";
+}
+
+function infer_expr_type(e: parser.Expr, s: EmitState): string {
+    match (e) {
+        parser.ExprNumber(_) => { return "i32"; },
+        parser.ExprBool(_) => { return "bool"; },
+        parser.ExprString(_) => { return "string"; },
+        parser.ExprArray(_) => { return "array"; },
+        parser.ExprTuple(_) => { return "tuple"; },
+        parser.ExprStructLit(_) => { return "struct"; },
+        parser.ExprLambda(_) => { return "fn"; },
+        parser.ExprIdent(id) => { return s.local_type_of(id.name); },
+        parser.ExprBinary(b) => {
+            if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
+                    || b.op == "==" || b.op == "!=" || b.op == "&&" || b.op == "||") {
+                return "bool";
+            }
+            if (b.op == "+") {
+                var lt: string = infer_expr_type(b.left, s);
+                var rt: string = infer_expr_type(b.right, s);
+                if (lt == "string" || rt == "string") { return "string"; }
+                return "i32";
+            }
+            return "i32";
+        },
+        parser.ExprUnary(_) => { return "i32"; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (id.name == "len") { return "i32"; }
+                    if (id.name == "read_int") { return "i32"; }
+                    var fi: i32 = 0;
+                    while (fi < len(s.funcs)) {
+                        if (s.funcs[fi].name == id.name && len(s.funcs[fi].receiver_type) == 0) {
+                            return ret_tag_of(s.funcs[fi].ret_type);
+                        }
+                        fi = fi + 1;
+                    }
+                    return "unknown";
+                },
+                _ => { return "unknown"; }
+            }
+            return "unknown";
+        },
+        parser.ExprIndex(x) => {
+            var at: string = infer_expr_type(x.array, s);
+            if (at == "string") { return "i32"; }
+            return "i32";
+        },
+        parser.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
+        parser.ExprFieldAccess(_) => { return "unknown"; },
+        parser.ExprUnknown(_) => { return "unknown"; }
+    }
+    return "unknown";
 }
 
 function (s: EmitState) reset_locals(): EmitState {
     var ln: string[] = [];
+    var lts: string[] = [];
     return EmitState {
         out: s.out,
         label_n: s.label_n,
@@ -433,7 +567,11 @@ function (s: EmitState) reset_locals(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: lts,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -450,7 +588,11 @@ function (s: EmitState) enter_function(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -469,7 +611,11 @@ function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): Em
         struct_decls: s.struct_decls,
         loop_exit_labels: nex,
         loop_cont_labels: ncn,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -494,7 +640,11 @@ function (s: EmitState) pop_loop_labels(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: nex,
         loop_cont_labels: ncn,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -521,7 +671,11 @@ function (s: EmitState) leave_function(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -560,7 +714,11 @@ function fresh_label(s: EmitState): LabelOut {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
     return LabelOut { state: ns, name: name };
 }
@@ -644,7 +802,11 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -662,7 +824,11 @@ function (s: EmitState) mark_print_int(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -679,7 +845,11 @@ function (s: EmitState) mark_heap(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -696,7 +866,11 @@ function (s: EmitState) mark_read_int(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -733,6 +907,37 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprBinary(b) => {
+            if (b.op == "+") {
+                var lt: string = infer_expr_type(b.left, s);
+                var rt: string = infer_expr_type(b.right, s);
+                if (lt == "string" || rt == "string") {
+                    s = emit_expr(b.left, s);
+                    s = emit_expr(b.right, s);
+                    s = s.write("    ldr x1, [sp], #16\n");
+                    s = s.write("    ldr x0, [sp], #16\n");
+                    s = s.write("    bl __lang_str_concat\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.mark_str_concat();
+                    return s;
+                }
+            }
+            if (b.op == "==" || b.op == "!=") {
+                var elt: string = infer_expr_type(b.left, s);
+                var ert: string = infer_expr_type(b.right, s);
+                if (elt == "string" || ert == "string") {
+                    s = emit_expr(b.left, s);
+                    s = emit_expr(b.right, s);
+                    s = s.write("    ldr x1, [sp], #16\n");
+                    s = s.write("    ldr x0, [sp], #16\n");
+                    s = s.write("    bl __lang_str_eq\n");
+                    if (b.op == "!=") {
+                        s = s.write("    eor x0, x0, #1\n");
+                    }
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.mark_str_eq();
+                    return s;
+                }
+            }
             s = emit_expr(b.left, s);
             s = emit_expr(b.right, s);
             s = s.write("    ldr x1, [sp], #16\n");   // rhs
@@ -804,9 +1009,19 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
-        parser.ExprString(_) => {
-            s = s.write("    // unsupported: string\n");
-            s = s.write("    mov x0, #0\n");
+        parser.ExprString(sv) => {
+            // String literal: intern bytes in .rodata, allocate
+            // 16-byte heap box [data_ptr, len], push box ptr.
+            var lo: StringLitOut = add_string_lit(s, sv.value);
+            s = lo.state;
+            s = s.write("    mov x0, #16\n");
+            s = s.write("    bl __lang_alloc\n");
+            s = s.mark_heap();
+            s = s.write("    adrp x1, .S" + i32_to_string(lo.idx) + "\n");
+            s = s.write("    add x1, x1, :lo12:.S" + i32_to_string(lo.idx) + "\n");
+            s = s.write("    str x1, [x0]\n");
+            s = s.write("    mov x1, #" + i32_to_string(len(sv.value)) + "\n");
+            s = s.write("    str x1, [x0, #8]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
@@ -842,7 +1057,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         struct_decls: s.struct_decls,
                         loop_exit_labels: s.loop_exit_labels,
                         loop_cont_labels: s.loop_cont_labels,
-                        funcs: s.funcs
+                        funcs: s.funcs,
+                        local_types: s.local_types,
+                        needs_str_concat: s.needs_str_concat,
+                        needs_str_eq: s.needs_str_eq,
+                        needs_str_print: s.needs_str_print
                     };
                     var fdi: i32 = 0;
                     while (fdi < len(s.funcs)) {
@@ -885,9 +1104,16 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // len(arr) — load the length prefix at offset 0.
             // Same semantics as the x86-64 backend.
             if (name == "len" && len(c.args) == 1) {
+                // Dispatch on operand type: string box → load
+                // len at +8; array box → load len at +0.
+                var lt: string = infer_expr_type(c.args[0], s);
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    ldr x0, [x0]\n");
+                if (lt == "string") {
+                    s = s.write("    ldr x0, [x0, #8]\n");
+                } else {
+                    s = s.write("    ldr x0, [x0]\n");
+                }
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
@@ -909,6 +1135,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         return s;
                     },
                     _ => { }
+                }
+                // Non-literal string argument → __lang_print_str.
+                var at: string = infer_expr_type(arg, s);
+                if (at == "string") {
+                    s = emit_expr(arg, s);
+                    s = s.write("    ldr x0, [sp], #16\n");
+                    s = s.write("    bl __lang_print_str\n");
+                    s = s.write("    mov x0, #0\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.mark_str_print();
+                    return s;
                 }
             }
             // print_int(i32_expr) — builtin lowering to a call into
@@ -1017,19 +1254,57 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprIndex(x) => {
-            // Compile array → push ptr; compile index → push i32;
-            // pop both into registers, load at offset (idx+1)*8.
+            // Dispatch on container type: string → byte load
+            // at box.data + i; array → 8-byte slot at +(i+1)*8.
+            var ct: string = infer_expr_type(x.array, s);
             s = emit_expr(x.array, s);
             s = emit_expr(x.index, s);
             s = s.write("    ldr x1, [sp], #16\n");
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    add x1, x1, #1\n");
-            s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
+            if (ct == "string") {
+                s = s.write("    ldr x0, [x0]\n");
+                s = s.write("    ldrb w0, [x0, x1]\n");
+            } else {
+                s = s.write("    add x1, x1, #1\n");
+                s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
+            }
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
-        parser.ExprSlice(_) => {
-            s = s.write("    // unsupported: slice\n");
+        parser.ExprSlice(sl) => {
+            // String slice: allocate new 16-byte box with
+            // data_ptr = src.data_ptr + start, len = end-start.
+            var st: string = infer_expr_type(sl.array, s);
+            if (st == "string") {
+                s = emit_expr(sl.array, s);
+                s = emit_expr(sl.start, s);
+                s = emit_expr(sl.end, s);
+                s = s.write("    ldr x3, [sp], #16\n");   // end
+                s = s.write("    ldr x4, [sp], #16\n");   // start
+                s = s.write("    ldr x5, [sp], #16\n");   // src box
+                // Save end/start/src across __lang_alloc call.
+                // x19, x20, x21 are callee-saved AAPCS regs.
+                s = s.write("    stp x19, x20, [sp, #-16]!\n");
+                s = s.write("    str x21, [sp, #-16]!\n");
+                s = s.write("    mov x19, x3\n");
+                s = s.write("    mov x20, x4\n");
+                s = s.write("    mov x21, x5\n");
+                s = s.write("    mov x0, #16\n");
+                s = s.write("    bl __lang_alloc\n");
+                s = s.mark_heap();
+                // box.data_ptr = src.data_ptr + start.
+                s = s.write("    ldr x1, [x21]\n");
+                s = s.write("    add x1, x1, x20\n");
+                s = s.write("    str x1, [x0]\n");
+                // box.len = end - start.
+                s = s.write("    sub x1, x19, x20\n");
+                s = s.write("    str x1, [x0, #8]\n");
+                s = s.write("    ldr x21, [sp], #16\n");
+                s = s.write("    ldp x19, x20, [sp], #16\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
+            s = s.write("    // unsupported: slice on non-string\n");
             s = s.write("    mov x0, #0\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
@@ -1090,7 +1365,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             var di: i32 = 0;
             while (di < len(s.struct_decls)) {
@@ -1125,7 +1404,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         struct_decls: s.struct_decls,
                         loop_exit_labels: s.loop_exit_labels,
                         loop_cont_labels: s.loop_cont_labels,
-                        funcs: s.funcs
+                        funcs: s.funcs,
+                        local_types: s.local_types,
+                        needs_str_concat: s.needs_str_concat,
+                        needs_str_eq: s.needs_str_eq,
+                        needs_str_print: s.needs_str_print
                     };
                 }
                 di = di + 1;
@@ -1156,7 +1439,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             var skip_lbl: string = ".Lskip_lambda_" + i32_to_string(lam_id);
             var body_lbl: string = ".Llambda_" + i32_to_string(lam_id);
@@ -1224,7 +1511,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             s = s.write(skip_lbl + ":\n");
             // Allocate box: (1 + n_caps) * 8 bytes.
@@ -1334,11 +1625,14 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             return s;
         },
         parser.StmtVar(v) => {
-            // Compile init, then pop to the new local's slot.
-            // bind_local first so lookup_local resolves to the
-            // correct offset.
+            // Infer init type for string-aware dispatch.
+            // Explicit annotation overrides inference.
+            var ity: string = infer_expr_type(v.init, s);
+            if (len(v.type_name) > 0) {
+                ity = ret_tag_of(v.type_name);
+            }
             s = emit_expr(v.init, s);
-            s = s.bind_local(v.name);
+            s = s.bind_local_typed(v.name, ity);
             var off: i32 = s.lookup_local(v.name);
             s = s.write("    ldr x0, [sp], #16\n");
             s = s.write("    str x0, [x29, #" + i32_to_string(off) + "]\n");
@@ -1388,7 +1682,11 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             var ai: i32 = 0;
             while (ai < len(m.arms)) {
@@ -1406,7 +1704,11 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                     struct_decls: s.struct_decls,
                     loop_exit_labels: s.loop_exit_labels,
                     loop_cont_labels: s.loop_cont_labels,
-                    funcs: s.funcs
+                    funcs: s.funcs,
+                    local_types: s.local_types,
+                    needs_str_concat: s.needs_str_concat,
+                    needs_str_eq: s.needs_str_eq,
+                    needs_str_print: s.needs_str_print
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
@@ -1474,7 +1776,11 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition.
@@ -1611,7 +1917,11 @@ pub function emit_module(mod: parser.Module): string {
         struct_decls: mod.structs,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: mod.funcs
+        funcs: mod.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
@@ -1745,6 +2055,89 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x0, x11\n");
         s = s.write("    mov sp, x29\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_print_str: x0 = box ptr. write(1, box.data, box.len).
+    if (s.needs_str_print) {
+        s = s.write("__lang_print_str:\n");
+        s = s.write("    ldr x1, [x0]\n");      // data ptr
+        s = s.write("    ldr x2, [x0, #8]\n");  // len
+        s = s.write("    mov x0, #1\n");        // fd
+        s = s.write("    mov x8, #64\n");       // sys_write
+        s = s.write("    svc #0\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_str_concat: x0 = box A, x1 = box B → x0 = new box.
+    if (s.needs_str_concat) {
+        s = s.write("__lang_str_concat:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // box A
+        s = s.write("    mov x20, x1\n");           // box B
+        s = s.write("    ldr x21, [x19, #8]\n");    // lenA
+        s = s.write("    ldr x22, [x20, #8]\n");    // lenB
+        // alloc lenA + lenB bytes.
+        s = s.write("    add x0, x21, x22\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    mov x23, x0\n");           // data ptr
+        // Copy A bytes.
+        s = s.write("    ldr x1, [x19]\n");
+        s = s.write("    mov x2, x23\n");
+        s = s.write("    mov x3, x21\n");
+        s = s.write("    cbz x3, .Lstrconcat_b\n");
+        s = s.write(".Lstrconcat_a_loop:\n");
+        s = s.write("    ldrb w4, [x1], #1\n");
+        s = s.write("    strb w4, [x2], #1\n");
+        s = s.write("    subs x3, x3, #1\n");
+        s = s.write("    b.ne .Lstrconcat_a_loop\n");
+        s = s.write(".Lstrconcat_b:\n");
+        // Copy B bytes.
+        s = s.write("    ldr x1, [x20]\n");
+        s = s.write("    mov x3, x22\n");
+        s = s.write("    cbz x3, .Lstrconcat_box\n");
+        s = s.write(".Lstrconcat_b_loop:\n");
+        s = s.write("    ldrb w4, [x1], #1\n");
+        s = s.write("    strb w4, [x2], #1\n");
+        s = s.write("    subs x3, x3, #1\n");
+        s = s.write("    b.ne .Lstrconcat_b_loop\n");
+        s = s.write(".Lstrconcat_box:\n");
+        // Allocate 16-byte box.
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    str x23, [x0]\n");
+        s = s.write("    add x1, x21, x22\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    ldp x23, x24, [sp], #16\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_str_eq: x0 = box A, x1 = box B → x0 = 1 / 0.
+    if (s.needs_str_eq) {
+        s = s.write("__lang_str_eq:\n");
+        s = s.write("    ldr x2, [x0, #8]\n");
+        s = s.write("    ldr x3, [x1, #8]\n");
+        s = s.write("    cmp x2, x3\n");
+        s = s.write("    b.ne .Lstreq_no\n");
+        s = s.write("    ldr x0, [x0]\n");
+        s = s.write("    ldr x1, [x1]\n");
+        s = s.write("    cbz x2, .Lstreq_yes\n");
+        s = s.write(".Lstreq_loop:\n");
+        s = s.write("    ldrb w3, [x0], #1\n");
+        s = s.write("    ldrb w4, [x1], #1\n");
+        s = s.write("    cmp w3, w4\n");
+        s = s.write("    b.ne .Lstreq_no\n");
+        s = s.write("    subs x2, x2, #1\n");
+        s = s.write("    b.ne .Lstreq_loop\n");
+        s = s.write(".Lstreq_yes:\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lstreq_no:\n");
+        s = s.write("    mov x0, #0\n");
         s = s.write("    ret\n");
     }
     // .rodata: emit each interned string literal as a

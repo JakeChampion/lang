@@ -341,6 +341,97 @@ function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
     return caps;
 }
 
+// infer_expr_type returns a coarse type tag for an expression
+// based on its syntactic shape + the current EmitState's
+// local_types. Used by ExprBinary / ExprIndex / etc. to
+// dispatch on operand types (e.g. string + string → concat,
+// i32 + i32 → addq). Tag values:
+//   "i32", "bool", "string", "array", "tuple", "struct",
+//   "fn", "unknown".
+function infer_expr_type(e: parser.Expr, s: EmitState): string {
+    match (e) {
+        parser.ExprNumber(_) => { return "i32"; },
+        parser.ExprBool(_) => { return "bool"; },
+        parser.ExprString(_) => { return "string"; },
+        parser.ExprArray(_) => { return "array"; },
+        parser.ExprTuple(_) => { return "tuple"; },
+        parser.ExprStructLit(_) => { return "struct"; },
+        parser.ExprLambda(_) => { return "fn"; },
+        parser.ExprIdent(id) => { return s.local_type_of(id.name); },
+        parser.ExprBinary(b) => {
+            // `+` propagates string when either side is string
+            // (string + string → string concat). Comparisons
+            // and logical ops return bool. Other arithmetic
+            // returns i32.
+            if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
+                    || b.op == "==" || b.op == "!=" || b.op == "&&" || b.op == "||") {
+                return "bool";
+            }
+            if (b.op == "+") {
+                var lt: string = infer_expr_type(b.left, s);
+                var rt: string = infer_expr_type(b.right, s);
+                if (lt == "string" || rt == "string") { return "string"; }
+                return "i32";
+            }
+            return "i32";
+        },
+        parser.ExprUnary(_) => { return "i32"; },
+        parser.ExprCall(c) => {
+            // `len(_)` always returns i32. Method calls are
+            // hard to infer without a method-return-type table.
+            // Plain calls: look up the FuncDecl.ret_type.
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (id.name == "len") { return "i32"; }
+                    if (id.name == "read_int") { return "i32"; }
+                    // Plain function call: look up ret_type.
+                    var fi: i32 = 0;
+                    while (fi < len(s.funcs)) {
+                        if (s.funcs[fi].name == id.name && len(s.funcs[fi].receiver_type) == 0) {
+                            return ret_tag_of(s.funcs[fi].ret_type);
+                        }
+                        fi = fi + 1;
+                    }
+                    return "unknown";
+                },
+                _ => { return "unknown"; }
+            }
+            return "unknown";
+        },
+        parser.ExprIndex(x) => {
+            // Index into a string yields i32 (byte).
+            // Otherwise array element type — we approximate as
+            // i32 (no element type tracking yet).
+            var at: string = infer_expr_type(x.array, s);
+            if (at == "string") { return "i32"; }
+            return "i32";
+        },
+        parser.ExprSlice(sl) => {
+            // Slice preserves the container type.
+            var at: string = infer_expr_type(sl.array, s);
+            return at;
+        },
+        parser.ExprFieldAccess(_) => { return "unknown"; },
+        parser.ExprUnknown(_) => { return "unknown"; }
+    }
+    return "unknown";
+}
+
+// ret_tag_of maps a parser-side type name string to one of
+// the infer_expr_type tag values. Unknown shapes (struct
+// names, generics, etc.) fall through to "unknown".
+function ret_tag_of(name: string): string {
+    if (name == "i32" || name == "f64" || name == "f32") { return "i32"; }
+    if (name == "bool" || name == "boolean") { return "bool"; }
+    if (name == "string") { return "string"; }
+    if (len(name) > 0 && name[len(name) - 1] == 93) {
+        // Trailing `]` → likely a Map[..] or Array shape, or
+        // `T[]`. Treat as array for indexing dispatch.
+        return "array";
+    }
+    return "unknown";
+}
+
 // =================== EMIT STATE ====================
 
 // EmitState bundles the running output text, a monotonic label
@@ -377,7 +468,20 @@ pub struct EmitState {
     // ExprFieldAccess callee (method call) to find every
     // struct that has a matching method, so the dispatch
     // chain can emit a shape-compare arm per matching struct.
-    funcs: parser.FuncDecl[]
+    funcs: parser.FuncDecl[],
+    // local_types: parallel to local_names — the inferred
+    // type of each local, populated at StmtVar binding time
+    // via infer_expr_type. Used by ExprBinary("+") / ExprIndex
+    // / `len()` etc. to dispatch on operand types (string vs
+    // i32 vs array). Tag values: "i32", "bool", "string",
+    // "array", "tuple", "struct", "fn", "unknown".
+    local_types: string[],
+    // needs_str_*: lazy-emit flags for the string runtime
+    // helpers (set by emit_expr when the helpers are
+    // referenced; checked at the end of emit_module).
+    needs_str_concat: boolean,
+    needs_str_eq: boolean,
+    needs_str_print: boolean
 }
 
 function new_state(): EmitState {
@@ -386,6 +490,7 @@ function new_state(): EmitState {
     var lex: string[] = [];
     var lcn: string[] = [];
     var fns: parser.FuncDecl[] = [];
+    var lts: string[] = [];
     return EmitState {
         out: "",
         label_n: 0,
@@ -398,7 +503,11 @@ function new_state(): EmitState {
         struct_decls: [],
         loop_exit_labels: lex,
         loop_cont_labels: lcn,
-        funcs: fns
+        funcs: fns,
+        local_types: lts,
+        needs_str_concat: false,
+        needs_str_eq: false,
+        needs_str_print: false
     };
 }
 
@@ -415,12 +524,21 @@ function (s: EmitState) write(text: string): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
 function (s: EmitState) bind_local(name: string): EmitState {
+    return s.bind_local_typed(name, "unknown");
+}
+
+function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
     var ln: string[] = s.local_names.push(name);
+    var lts: string[] = s.local_types.push(ty);
     return EmitState {
         out: s.out,
         label_n: s.label_n,
@@ -433,12 +551,26 @@ function (s: EmitState) bind_local(name: string): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: lts,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
+}
+
+function (s: EmitState) local_type_of(name: string): string {
+    var i: i32 = len(s.local_names) - 1;
+    while (i >= 0) {
+        if (s.local_names[i] == name) { return s.local_types[i]; }
+        i = i - 1;
+    }
+    return "unknown";
 }
 
 function (s: EmitState) reset_locals(): EmitState {
     var ln: string[] = [];
+    var lts: string[] = [];
     return EmitState {
         out: s.out,
         label_n: s.label_n,
@@ -451,7 +583,11 @@ function (s: EmitState) reset_locals(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: lts,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -468,7 +604,11 @@ function (s: EmitState) enter_function(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -487,7 +627,11 @@ function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): Em
         struct_decls: s.struct_decls,
         loop_exit_labels: nex,
         loop_cont_labels: ncn,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -512,7 +656,11 @@ function (s: EmitState) pop_loop_labels(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: nex,
         loop_cont_labels: ncn,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -539,7 +687,11 @@ function (s: EmitState) leave_function(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -559,7 +711,11 @@ function (s: EmitState) mark_print_int(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -581,7 +737,50 @@ function (s: EmitState) mark_heap(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
+    };
+}
+
+function (s: EmitState) mark_str_concat(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: true,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: true, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print
+    };
+}
+
+function (s: EmitState) mark_str_eq(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat, needs_str_eq: true, needs_str_print: s.needs_str_print
+    };
+}
+
+function (s: EmitState) mark_str_print(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: true
     };
 }
 
@@ -600,7 +799,11 @@ function (s: EmitState) mark_read_int(): EmitState {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
 }
 
@@ -637,7 +840,11 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -687,7 +894,11 @@ function fresh_label(s: EmitState): LabelOut {
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs
+        funcs: s.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
     return LabelOut { state: ns, name: name };
 }
@@ -753,6 +964,42 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprBinary(b) => {
+            // String-aware dispatch: `s + t` where either side
+            // is a string lowers to __lang_str_concat; `s == t`
+            // / `s != t` for strings lowers to __lang_str_eq.
+            // Type info comes from infer_expr_type on the
+            // operands — that walks the AST + local_types.
+            if (b.op == "+") {
+                var lt: string = infer_expr_type(b.left, s);
+                var rt: string = infer_expr_type(b.right, s);
+                if (lt == "string" || rt == "string") {
+                    s = emit_expr(b.left, s);
+                    s = emit_expr(b.right, s);
+                    s = s.write("    popq %rsi\n");      // rhs
+                    s = s.write("    popq %rdi\n");      // lhs
+                    s = s.write("    call __lang_str_concat\n");
+                    s = s.write("    pushq %rax\n");
+                    s = s.mark_str_concat();
+                    return s;
+                }
+            }
+            if (b.op == "==" || b.op == "!=") {
+                var elt: string = infer_expr_type(b.left, s);
+                var ert: string = infer_expr_type(b.right, s);
+                if (elt == "string" || ert == "string") {
+                    s = emit_expr(b.left, s);
+                    s = emit_expr(b.right, s);
+                    s = s.write("    popq %rsi\n");
+                    s = s.write("    popq %rdi\n");
+                    s = s.write("    call __lang_str_eq\n");
+                    if (b.op == "!=") {
+                        s = s.write("    xorq $1, %rax\n");
+                    }
+                    s = s.write("    pushq %rax\n");
+                    s = s.mark_str_eq();
+                    return s;
+                }
+            }
             s = emit_expr(b.left, s);
             s = emit_expr(b.right, s);
             s = s.write("    popq %rcx\n");        // rhs
@@ -826,9 +1073,22 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    pushq %rax\n");
             return s;
         },
-        parser.ExprString(_) => {
-            s = s.write("    # unsupported: string\n");
-            s = s.write("    pushq $0\n");
+        parser.ExprString(sv) => {
+            // String literal lowering: intern the bytes in
+            // .rodata, then allocate a 16-byte box on the heap
+            // `[data_ptr: 8, len: 8]` and push the box pointer.
+            // The box layout is shared with __lang_str_concat
+            // / _eq / _slice / _print runtime helpers.
+            var lo: StringLitOut = add_string_lit(s, sv.value);
+            s = lo.state;
+            s = s.write("    movq $16, %rdi\n");
+            s = s.write("    call __lang_alloc\n");
+            s = s.mark_heap();
+            s = s.write("    leaq .S" + i32_to_string(lo.idx) + "(%rip), %rcx\n");
+            s = s.write("    movq %rcx, (%rax)\n");
+            s = s.write("    movq $" + i32_to_string(len(sv.value)) + ", %rcx\n");
+            s = s.write("    movq %rcx, 8(%rax)\n");
+            s = s.write("    pushq %rax\n");
             return s;
         },
         parser.ExprCall(c) => {
@@ -866,7 +1126,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         struct_decls: s.struct_decls,
                         loop_exit_labels: s.loop_exit_labels,
                         loop_cont_labels: s.loop_cont_labels,
-                        funcs: s.funcs
+                        funcs: s.funcs,
+                        local_types: s.local_types,
+                        needs_str_concat: s.needs_str_concat,
+                        needs_str_eq: s.needs_str_eq,
+                        needs_str_print: s.needs_str_print
                     };
                     // For each func whose name matches and
                     // receiver_type is non-empty, emit a shape-
@@ -917,9 +1181,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // a future slice with type info can route string
             // arguments through __lang_str_len.
             if (name == "len" && len(c.args) == 1) {
+                // Dispatch on operand type: string → load
+                // box.len at offset 8; array → load len prefix
+                // at offset 0. Unknown defaults to array.
+                var lt: string = infer_expr_type(c.args[0], s);
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rax\n");
-                s = s.write("    movq (%rax), %rax\n");
+                if (lt == "string") {
+                    s = s.write("    movq 8(%rax), %rax\n");
+                } else {
+                    s = s.write("    movq (%rax), %rax\n");
+                }
                 s = s.write("    pushq %rax\n");
                 return s;
             }
@@ -927,6 +1199,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 var arg: parser.Expr = c.args[0];
                 match (arg) {
                     parser.ExprString(sv) => {
+                        // Fast path for literals — direct
+                        // syscall, no heap-box alloc.
                         var lo: StringLitOut = add_string_lit(s, sv.value);
                         s = lo.state;
                         s = s.write("    movq $1, %rdi\n");
@@ -938,6 +1212,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         return s;
                     },
                     _ => { }
+                }
+                // Non-literal string argument: eval as box ptr,
+                // route through __lang_print_str.
+                var at: string = infer_expr_type(arg, s);
+                if (at == "string") {
+                    s = emit_expr(arg, s);
+                    s = s.write("    popq %rdi\n");
+                    s = s.write("    call __lang_print_str\n");
+                    s = s.write("    pushq $0\n");
+                    s = s.mark_str_print();
+                    return s;
                 }
             }
             // print_int(i32_expr) — builtin lowering to a call into
@@ -1089,24 +1374,69 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprIndex(x) => {
-            // Lowering: compile array → push ptr; compile index
-            // → push i32; pop i32 into %rcx, pop ptr into %rax,
-            // load [%rax + (rcx+1)*8] into %rax, push.
+            // Dispatch on container type: string → load byte
+            // (zero-extended) at box.data_ptr + i. Array → load
+            // 8-byte slot at box[(i+1)*8].
             //
             // No bounds check in this first cut — out-of-range
             // produces undefined data, matching the wasm
             // backend's i32[] semantics today.
+            var ct: string = infer_expr_type(x.array, s);
             s = emit_expr(x.array, s);
             s = emit_expr(x.index, s);
             s = s.write("    popq %rcx\n");
             s = s.write("    popq %rax\n");
-            s = s.write("    incq %rcx\n");
-            s = s.write("    movq (%rax,%rcx,8), %rax\n");
+            if (ct == "string") {
+                // box[0] = data ptr; load byte at +rcx.
+                s = s.write("    movq (%rax), %rax\n");
+                s = s.write("    movzbq (%rax,%rcx,1), %rax\n");
+            } else {
+                s = s.write("    incq %rcx\n");
+                s = s.write("    movq (%rax,%rcx,8), %rax\n");
+            }
             s = s.write("    pushq %rax\n");
             return s;
         },
-        parser.ExprSlice(_) => {
-            s = s.write("    # unsupported: slice\n");
+        parser.ExprSlice(sl) => {
+            // String slice: allocate a new 16-byte box with
+            // data_ptr = src.data_ptr + start, len = end - start.
+            // No bounds check.
+            var st: string = infer_expr_type(sl.array, s);
+            if (st == "string") {
+                s = emit_expr(sl.array, s);
+                s = emit_expr(sl.start, s);
+                s = emit_expr(sl.end, s);
+                s = s.write("    popq %r8\n");          // end
+                s = s.write("    popq %rcx\n");         // start
+                s = s.write("    popq %rdx\n");         // src box
+                // Save end/start/src across __lang_alloc call.
+                // SysV: %rdi/rsi/rdx/rcx/r8/r9 are arg regs +
+                // caller-saved. Use callee-saved %r12 for end,
+                // %r13 for start, %r14 for src.
+                s = s.write("    pushq %r12\n");
+                s = s.write("    pushq %r13\n");
+                s = s.write("    pushq %r14\n");
+                s = s.write("    movq %r8, %r12\n");
+                s = s.write("    movq %rcx, %r13\n");
+                s = s.write("    movq %rdx, %r14\n");
+                s = s.write("    movq $16, %rdi\n");
+                s = s.write("    call __lang_alloc\n");
+                s = s.mark_heap();
+                // box.data_ptr = src.data_ptr + start.
+                s = s.write("    movq (%r14), %rcx\n");
+                s = s.write("    addq %r13, %rcx\n");
+                s = s.write("    movq %rcx, (%rax)\n");
+                // box.len = end - start.
+                s = s.write("    movq %r12, %rcx\n");
+                s = s.write("    subq %r13, %rcx\n");
+                s = s.write("    movq %rcx, 8(%rax)\n");
+                s = s.write("    popq %r14\n");
+                s = s.write("    popq %r13\n");
+                s = s.write("    popq %r12\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
+            s = s.write("    # unsupported: slice on non-string\n");
             s = s.write("    pushq $0\n");
             return s;
         },
@@ -1186,7 +1516,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             // Walk each struct decl looking for the named
             // field. Emit a shape-pointer comparison arm for
@@ -1223,7 +1557,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         struct_decls: s.struct_decls,
                         loop_exit_labels: s.loop_exit_labels,
                         loop_cont_labels: s.loop_cont_labels,
-                        funcs: s.funcs
+                        funcs: s.funcs,
+                        local_types: s.local_types,
+                        needs_str_concat: s.needs_str_concat,
+                        needs_str_eq: s.needs_str_eq,
+                        needs_str_print: s.needs_str_print
                     };
                 }
                 di = di + 1;
@@ -1275,7 +1613,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             var skip_lbl: string = ".Lskip_lambda_" + i32_to_string(lam_id);
             var body_lbl: string = ".Llambda_" + i32_to_string(lam_id);
@@ -1348,7 +1690,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             s = s.write(skip_lbl + ":\n");
             // Allocate box: (1 + n_caps) * 8 bytes.
@@ -1460,10 +1806,17 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
         },
         parser.StmtVar(v) => {
             // Compile init, then pop to the new local's slot.
-            // bind_local first so lookup_local resolves to the
-            // correct offset on the right-hand side.
+            // Infer init's type so the local carries it (used
+            // by string-aware dispatch in ExprBinary / len /
+            // print etc.). An explicit annotation overrides
+            // the inference. bind_local_typed binds the name
+            // BEFORE the lookup_local call resolves the slot.
+            var ity: string = infer_expr_type(v.init, s);
+            if (len(v.type_name) > 0) {
+                ity = ret_tag_of(v.type_name);
+            }
             s = emit_expr(v.init, s);
-            s = s.bind_local(v.name);
+            s = s.bind_local_typed(v.name, ity);
             var off: i32 = s.lookup_local(v.name);
             s = s.write("    popq %rax\n");
             s = s.write("    movq %rax, " + i32_to_string(off) + "(%rbp)\n");
@@ -1518,7 +1871,11 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             var ai: i32 = 0;
             while (ai < len(m.arms)) {
@@ -1536,7 +1893,11 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                     struct_decls: s.struct_decls,
                     loop_exit_labels: s.loop_exit_labels,
                     loop_cont_labels: s.loop_cont_labels,
-                    funcs: s.funcs
+                    funcs: s.funcs,
+                    local_types: s.local_types,
+                    needs_str_concat: s.needs_str_concat,
+                    needs_str_eq: s.needs_str_eq,
+                    needs_str_print: s.needs_str_print
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
@@ -1617,7 +1978,11 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
                 loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs
+                funcs: s.funcs,
+                local_types: s.local_types,
+                needs_str_concat: s.needs_str_concat,
+                needs_str_eq: s.needs_str_eq,
+                needs_str_print: s.needs_str_print
             };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition: __for_i_N < len(__for_arr_N).
@@ -1786,7 +2151,11 @@ pub function emit_module(mod: parser.Module): string {
         struct_decls: mod.structs,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
-        funcs: mod.funcs
+        funcs: mod.funcs,
+        local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat,
+        needs_str_eq: s.needs_str_eq,
+        needs_str_print: s.needs_str_print
     };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
@@ -1926,6 +2295,107 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lri_no_neg:\n");
         s = s.write("    movq %r9, %rax\n");
         s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_print_str: %rdi = string box ptr. Loads box.data
+    // and box.len, issues a write(1, ptr, len).
+    if (s.needs_str_print) {
+        s = s.write("__lang_print_str:\n");
+        s = s.write("    movq (%rdi), %rsi\n");
+        s = s.write("    movq 8(%rdi), %rdx\n");
+        s = s.write("    movq $1, %rdi\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_str_concat: %rdi = box A, %rsi = box B. Allocates
+    // (lenA+lenB) bytes for new char data, copies A then B,
+    // then allocates a 16-byte box pointing at it. Returns
+    // box ptr in %rax. Uses callee-saved registers to survive
+    // the alloc calls.
+    if (s.needs_str_concat) {
+        s = s.write("__lang_str_concat:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    movq %rdi, %r12\n");   // box A
+        s = s.write("    movq %rsi, %r13\n");   // box B
+        s = s.write("    movq 8(%r12), %r14\n");// lenA
+        s = s.write("    movq 8(%r13), %r15\n");// lenB
+        // Alloc lenA + lenB bytes for char data.
+        s = s.write("    movq %r14, %rdi\n");
+        s = s.write("    addq %r15, %rdi\n");
+        s = s.write("    call __lang_alloc\n");
+        s = s.write("    movq %rax, %rbx\n");
+        // Copy A bytes into [%rbx ..].
+        s = s.write("    movq (%r12), %rsi\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    movq %r14, %rcx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lstrconcat_b\n");
+        s = s.write(".Lstrconcat_a_loop:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdi)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lstrconcat_a_loop\n");
+        s = s.write(".Lstrconcat_b:\n");
+        // Copy B bytes after A.
+        s = s.write("    movq (%r13), %rsi\n");
+        s = s.write("    movq %r15, %rcx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lstrconcat_box\n");
+        s = s.write(".Lstrconcat_b_loop:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdi)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lstrconcat_b_loop\n");
+        s = s.write(".Lstrconcat_box:\n");
+        // Allocate 16-byte box.
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __lang_alloc\n");
+        s = s.write("    movq %rbx, (%rax)\n");
+        s = s.write("    movq %r14, %rcx\n");
+        s = s.write("    addq %r15, %rcx\n");
+        s = s.write("    movq %rcx, 8(%rax)\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_str_eq: %rdi = box A, %rsi = box B. Returns 1 in
+    // %rax if both have the same length and bytes, else 0.
+    if (s.needs_str_eq) {
+        s = s.write("__lang_str_eq:\n");
+        s = s.write("    movq 8(%rdi), %rcx\n");
+        s = s.write("    cmpq 8(%rsi), %rcx\n");
+        s = s.write("    jne .Lstreq_no\n");
+        s = s.write("    movq (%rdi), %rdi\n");
+        s = s.write("    movq (%rsi), %rsi\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lstreq_yes\n");
+        s = s.write(".Lstreq_loop:\n");
+        s = s.write("    movzbq (%rdi), %rax\n");
+        s = s.write("    movzbq (%rsi), %rdx\n");
+        s = s.write("    cmpq %rdx, %rax\n");
+        s = s.write("    jne .Lstreq_no\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lstreq_loop\n");
+        s = s.write(".Lstreq_yes:\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lstreq_no:\n");
+        s = s.write("    movq $0, %rax\n");
         s = s.write("    ret\n");
     }
     // .rodata: emit each interned string literal as a
