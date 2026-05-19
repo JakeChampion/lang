@@ -110,6 +110,15 @@ pub struct OpMakeStruct { type_name: string, field_names: string[] }
 // OpFieldGet pops a VStruct, looks up the named field, pushes
 // its value. Missing field → VErr.
 pub struct OpFieldGet { field_name: string }
+// OpDup peeks the top of the operand stack and pushes a copy.
+// Used by the StmtMatch lowering to test the scrutinee against
+// multiple arm patterns without recomputing the expression.
+pub struct OpDup { tag: i32 }
+// OpTypeNameEq pops a Value and pushes VBool(true) iff it's a
+// VStruct whose type_name matches the carried string. Other
+// Value variants always push VBool(false). Used as the arm-
+// guard in the StmtMatch lowering.
+pub struct OpTypeNameEq { type_name: string }
 pub struct OpReturn { tag: i32 }
 
 pub type Op = OpPushInt | OpPushBool | OpPushStr
@@ -119,6 +128,7 @@ pub type Op = OpPushInt | OpPushBool | OpPushStr
             | OpPop | OpCall
             | OpMakeArray | OpIndex | OpLen | OpSlice
             | OpMakeStruct | OpFieldGet
+            | OpDup | OpTypeNameEq
             | OpReturn;
 
 function op_push_int(n: i32): Op { return OpPushInt { v: n }; }
@@ -140,6 +150,8 @@ function op_make_struct(type_name: string, field_names: string[]): Op {
     return OpMakeStruct { type_name: type_name, field_names: field_names };
 }
 function op_field_get(field_name: string): Op { return OpFieldGet { field_name: field_name }; }
+function op_dup(): Op { return OpDup { tag: 0 }; }
+function op_type_name_eq(type_name: string): Op { return OpTypeNameEq { type_name: type_name }; }
 function op_return(): Op { return OpReturn { tag: 0 }; }
 
 // =================== COMPILER ====================
@@ -418,7 +430,61 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             ops = patch_jump(ops, exit_idx, len(ops));
             return CompileResult { ops: ops, lt: lt };
         },
-        parser.StmtMatch(_) => { return CompileResult { ops: ops, lt: lt }; },
+        parser.StmtMatch(m) => {
+            // Lowering: compile scrutinee, then for each arm
+            // emit a guard (OpDup; OpTypeNameEq T; OpJumpIfFalse
+            // next), a binding (OpStoreLocal idx) or a discard
+            // (OpPop), the arm body, and an unconditional OpJump
+            // to end. Wildcard arms skip the guard. After all
+            // arms, an extra OpPop handles the no-match-and-no-
+            // wildcard fall-through so the scrutinee doesn't
+            // leak onto the rest of the stack.
+            var cr: CompileResult = compile_expr(m.scrutinee, ops, lt);
+            ops = cr.ops; lt = cr.lt;
+            var end_idxs: i32[] = [];
+            var i: i32 = 0;
+            while (i < len(m.arms)) {
+                var arm: parser.MatchArm = m.arms[i];
+                var jif_idx: i32 = 0 - 1;
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        ops = ops.push(op_dup());
+                        ops = ops.push(op_type_name_eq(pv.type_name));
+                        jif_idx = len(ops);
+                        ops = ops.push(op_jump_if_false(0 - 1));
+                        if (len(pv.binding) > 0 && pv.binding != "_") {
+                            lt = lt.bind(pv.binding);
+                            var bidx: i32 = lt.idx_of(pv.binding);
+                            ops = ops.push(op_store(bidx));
+                        } else {
+                            ops = ops.push(op_pop());
+                        }
+                    },
+                    parser.PatWildcard(_) => {
+                        ops = ops.push(op_pop());
+                    }
+                }
+                var br: CompileResult = compile_block(arm.body, ops, lt);
+                ops = br.ops; lt = br.lt;
+                var je_idx: i32 = len(ops);
+                ops = ops.push(op_jump(0 - 1));
+                end_idxs = end_idxs.push(je_idx);
+                if (jif_idx >= 0) {
+                    ops = patch_jump(ops, jif_idx, len(ops));
+                }
+                i = i + 1;
+            }
+            // Fall-through cleanup — only reached if no PatVariant
+            // arm matched AND no wildcard caught.
+            ops = ops.push(op_pop());
+            // Patch every arm's `jump to end` to land here.
+            var e: i32 = 0;
+            while (e < len(end_idxs)) {
+                ops = patch_jump(ops, end_idxs[e], len(ops));
+                e = e + 1;
+            }
+            return CompileResult { ops: ops, lt: lt };
+        },
         parser.StmtUnknown(_) => { return CompileResult { ops: ops, lt: lt }; }
     }
     return CompileResult { ops: ops, lt: lt };
@@ -972,6 +1038,24 @@ pub function exec_program(prog: CompiledProgram): Value {
                 }
                 ip = ip + 1;
             },
+            OpDup(_) => {
+                if (len(stack) == 0) {
+                    stack = stack_push(stack, v_err("dup: empty stack"));
+                } else {
+                    stack = stack_push(stack, stack[len(stack) - 1]);
+                }
+                ip = ip + 1;
+            },
+            OpTypeNameEq(o) => {
+                var p: PopResult = stack_pop(stack); stack = p.stack;
+                var matched: boolean = false;
+                match (p.v) {
+                    VStruct(sv) => { matched = (sv.type_name == o.type_name); },
+                    _ => { matched = false; }
+                }
+                stack = stack_push(stack, v_bool(matched));
+                ip = ip + 1;
+            },
             OpReturn(_) => {
                 if (len(stack) == 0) { return v_err("return: empty stack"); }
                 var ret_val: Value = stack[len(stack) - 1];
@@ -1235,6 +1319,49 @@ function main(): i32 {
     match (r26) {
         VErr(_) => { },
         _ => { return 260; }
+    }
+
+    // StmtMatch — variant pattern binds the scrutinee, body
+    // reads a field via the binding.
+    var src27: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return 0 - 1; } } return 0 - 2; }";
+    var r27: Value = run_module(src27);
+    match (r27) {
+        VInt(i) => { if (i.v != 5) { return 270; } },
+        _ => { return 271; }
+    }
+
+    // StmtMatch — second variant matches, first is skipped.
+    var src28: string = "struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var q = Square { s: 7 }; match (q) { Circle(_) => { return 1; }, Square(sq) => { return sq.s; }, _ => { return 0 - 1; } } return 0 - 2; }";
+    var r28: Value = run_module(src28);
+    match (r28) {
+        VInt(i) => { if (i.v != 7) { return 280; } },
+        _ => { return 281; }
+    }
+
+    // StmtMatch — wildcard catches non-matching variants.
+    var src29: string = "struct Circle { r: i32 } struct Square { s: i32 } struct Triangle { b: i32 } function main(): i32 { var t = Triangle { b: 3 }; match (t) { Circle(_) => { return 1; }, Square(_) => { return 2; }, _ => { return 99; } } return 0 - 1; }";
+    var r29: Value = run_module(src29);
+    match (r29) {
+        VInt(i) => { if (i.v != 99) { return 290; } },
+        _ => { return 291; }
+    }
+
+    // StmtMatch — arm body without `return` falls through to
+    // the stmt after the match. n is set inside the matched arm
+    // and returned afterwards.
+    var src30: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 8 }; var n: i32 = 0; match (c) { Circle(x) => { n = x.r; }, _ => { n = 0 - 1; } } return n; }";
+    var r30: Value = run_module(src30);
+    match (r30) {
+        VInt(i) => { if (i.v != 8) { return 300; } },
+        _ => { return 301; }
+    }
+
+    // StmtMatch — bare variant pattern (no binding, no parens).
+    var src31: string = "struct Empty { } function main(): i32 { var e = Empty { }; match (e) { Empty => { return 42; }, _ => { return 0 - 1; } } return 0 - 2; }";
+    var r31: Value = run_module(src31);
+    match (r31) {
+        VInt(i) => { if (i.v != 42) { return 310; } },
+        _ => { return 311; }
     }
 
     return 0;
