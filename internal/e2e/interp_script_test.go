@@ -1111,6 +1111,146 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptZonedFixedOffset pins the Phase-5 fixed-
+// offset zone surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4):
+// TimeZone construction, Instant.in_zone, Zoned.to_datetime,
+// Zoned.format_rfc3339, and the zoned RFC 3339 parser.
+//
+// IANA tzdb lookup (with DST transition tables) is a separate
+// follow-up; these tests cover the fixed-offset path that
+// every wasi-http handler running in UTC or a known constant
+// offset needs today.
+func TestInterpScriptZonedFixedOffset(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "timezone_fixed_offset emits canonical UTC±HH:MM names",
+			source: `import "std/time";
+function main(): i32 {
+    print(time.timezone_fixed_offset(9 * 3600).name);
+    print(time.timezone_fixed_offset(-5 * 3600).name);
+    print(time.timezone_fixed_offset(0).name);
+    print(time.timezone_fixed_offset(5 * 3600 + 30 * 60).name);   // India +05:30
+    print(time.timezone_fixed_offset(-((9 * 3600) + (30 * 60))).name); // Marquesas -09:30
+    return 0;
+}`,
+			wantStdout: "UTC+09:00\nUTC-05:00\nUTC+00:00\nUTC+05:30\nUTC-09:30\n",
+		},
+		{
+			name: "Zoned shifts wall-clock by offset",
+			source: `import "std/time";
+function main(): i32 {
+    // Pick an arbitrary UTC instant. The wall-clock at the
+    // zone offsets is exactly UTC ± offset hours.
+    var ts: Instant = Instant { sec: 1735689600 as i64, nsec: 0 };  // 2025-01-01T00:00:00Z
+    print(ts.in_zone(time.timezone_utc()).format_rfc3339());
+    print(ts.in_zone(time.timezone_fixed_offset(9 * 3600)).format_rfc3339());
+    print(ts.in_zone(time.timezone_fixed_offset(-5 * 3600)).format_rfc3339());
+    print(ts.in_zone(time.timezone_fixed_offset(0)).format_rfc3339());  // still Z, offset 0 collapses
+    return 0;
+}`,
+			wantStdout: "2025-01-01T00:00:00Z\n2025-01-01T09:00:00+09:00\n2024-12-31T19:00:00-05:00\n2025-01-01T00:00:00Z\n",
+		},
+		{
+			name: "Zoned format preserves nanoseconds",
+			source: `import "std/time";
+function main(): i32 {
+    var ts: Instant = Instant { sec: 1735689600 as i64, nsec: 123456789 };
+    print(ts.in_zone(time.timezone_fixed_offset(9 * 3600)).format_rfc3339());
+    return 0;
+}`,
+			wantStdout: "2025-01-01T09:00:00.123456789+09:00\n",
+		},
+		{
+			name: "Zoned round-trip parse / format",
+			source: `import "std/time";
+function show(s: string) {
+    match (time.instant_zoned_parse_rfc3339(s)) {
+        Some(z) => { print(z.format_rfc3339()); },
+        None => { print("rejected"); }
+    }
+}
+function main(): i32 {
+    show("2026-05-19T14:30:00Z");
+    show("2026-05-19T14:30:00+09:00");
+    show("2026-05-19T14:30:00-05:00");
+    show("2026-05-19T14:30:00+05:30");          // half-hour offset
+    show("2026-05-19T14:30:00.500000000+09:00"); // with nsec
+    return 0;
+}`,
+			wantStdout: "2026-05-19T14:30:00Z\n2026-05-19T14:30:00+09:00\n2026-05-19T14:30:00-05:00\n2026-05-19T14:30:00+05:30\n2026-05-19T14:30:00.500000000+09:00\n",
+		},
+		{
+			name: "Parse computes correct UTC instant for an offset",
+			source: `import "std/time";
+function main(): i32 {
+    // "2026-05-19T14:30:00+09:00" means wall-clock 14:30 in
+    // a +9-hour zone, which is UTC 05:30 on the same date.
+    // The equivalent UTC RFC 3339 string parses to the same
+    // Instant.sec.
+    match (time.instant_zoned_parse_rfc3339("2026-05-19T14:30:00+09:00")) {
+        Some(zonedJp) => {
+            match (time.instant_parse_rfc3339("2026-05-19T05:30:00Z")) {
+                Some(utc) => {
+                    if (zonedJp.instant.sec == utc.sec) { print("match"); } else { print("mismatch"); }
+                },
+                None => { print("utc parse fail"); }
+            }
+        },
+        None => { print("jp parse fail"); }
+    }
+    return 0;
+}`,
+			wantStdout: "match\n",
+		},
+		{
+			name: "Parser rejects malformed zoned input",
+			source: `import "std/time";
+function show(s: string) {
+    match (time.instant_zoned_parse_rfc3339(s)) {
+        Some(_) => { print("ACCEPTED"); },
+        None => { print("rejected"); }
+    }
+}
+function main(): i32 {
+    show("2026-05-19T14:30:00");          // missing suffix
+    show("2026-05-19T14:30:00+0900");     // no colon in offset
+    show("2026-05-19T14:30:00+09");       // truncated offset
+    show("2026-05-19T14:30:00+09:00X");   // trailing junk
+    show("2026-05-19T14:30:00Z00:00");    // mixed Z + offset
+    show("2026-05-19T14:30:00+ab:cd");    // non-digit offset
+    return 0;
+}`,
+			wantStdout: "rejected\nrejected\nrejected\nrejected\nrejected\nrejected\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
