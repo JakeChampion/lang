@@ -351,11 +351,16 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("wasmbin: %s: %w", fn.Name, err)
 		}
-		if closureTargets[fn.Name] {
+		if closureTargets[fn.Name] && !hasEnvParam(fn.Params) {
 			// Closure-target ABI: append an i32 (env_ptr) as the
 			// last param. The body doesn't have to use it; the
 			// indirect-call deref always pushes one so the wasm
 			// signature must accept it.
+			//
+			// Skip the append when closureconv already added a
+			// `__env` IR param — that param IS the env_ptr and
+			// doubling up confuses every callee that does its
+			// own slot-index arithmetic on params.
 			params = append(params, encode.ValtypeI32)
 		}
 		var results []byte
@@ -1592,6 +1597,17 @@ func callDirectAlias(name string) string {
 // The lowering invariant is that a single function is EITHER
 // directly-called OR closure-target — never both — so plain
 // user functions called only via OpCallDirect stay unchanged.
+// hasEnvParam reports whether the IR params end with the
+// closureconv-added `__env` slot. When true, the closure-target
+// ABI's wasm-level env_ptr append is already covered by the IR
+// param and the codegen seam mustn't double it.
+func hasEnvParam(params []ast.Param) bool {
+	if len(params) == 0 {
+		return false
+	}
+	return params[len(params)-1].Name == "__env"
+}
+
 func closureTargetSet(prog *ir.Program) map[string]bool {
 	out := map[string]bool{}
 	for _, fn := range prog.Funcs {
