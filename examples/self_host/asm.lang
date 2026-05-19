@@ -388,9 +388,11 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
         },
         parser.ExprUnary(_) => { return "i32"; },
         parser.ExprCall(c) => {
-            // `len(_)` always returns i32. Method calls are
-            // hard to infer without a method-return-type table.
-            // Plain calls: look up the FuncDecl.ret_type.
+            // `len(_)` always returns i32. Plain calls look up
+            // the FuncDecl.ret_type. Method calls on primitive
+            // receivers also resolve via the FuncDecl table —
+            // for struct receivers the shape can vary at
+            // runtime, so we keep those as "unknown".
             match (c.callee) {
                 parser.ExprIdent(id) => {
                     if (id.name == "len") { return "i32"; }
@@ -403,6 +405,23 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                             return ret_tag_of(s.funcs[fi].ret_type);
                         }
                         fi = fi + 1;
+                    }
+                    return "unknown";
+                },
+                parser.ExprFieldAccess(fa) => {
+                    // Method call: only inferable when the
+                    // receiver has a known primitive type (so
+                    // we can find a single FuncDecl that
+                    // matches name + receiver_type).
+                    var rt: string = infer_expr_type(fa.obj, s);
+                    if (rt == "string" || rt == "i32" || rt == "bool" || rt == "f64") {
+                        var mi: i32 = 0;
+                        while (mi < len(s.funcs)) {
+                            if (s.funcs[mi].name == fa.field && s.funcs[mi].receiver_type == rt) {
+                                return ret_tag_of(s.funcs[mi].ret_type);
+                            }
+                            mi = mi + 1;
+                        }
                     }
                     return "unknown";
                 },
@@ -1202,6 +1221,25 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
                 parser.ExprFieldAccess(fa) => {
+                    // Primitive-receiver fast path: when the
+                    // receiver's inferred type is "string" /
+                    // "i32" / "bool" / "f64", skip the shape-
+                    // pointer dispatch chain (those values
+                    // aren't heap-boxed with a shape ptr) and
+                    // call `__fn_<type>__<method>` directly.
+                    var prim_recv: string = infer_expr_type(fa.obj, s);
+                    if (prim_recv == "string" || prim_recv == "i32" || prim_recv == "bool" || prim_recv == "f64") {
+                        var pmi: i32 = len(c.args) - 1;
+                        while (pmi >= 0) {
+                            s = emit_expr(c.args[pmi], s);
+                            pmi = pmi - 1;
+                        }
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    call __fn_" + sanitize_label(prim_recv + "." + fa.field) + "\n");
+                        s = s.write("    addq $" + i32_to_string((len(c.args) + 1) * 8) + ", %rsp\n");
+                        s = s.write("    pushq %rax\n");
+                        return s;
+                    }
                     // Method call: `obj.method(args)`. Push
                     // args right-to-left, then push the
                     // receiver (so receiver sits at +16(%rbp)

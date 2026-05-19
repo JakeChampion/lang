@@ -716,6 +716,34 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		{
+			"method-on-string-receiver",
+			"function (s: string) shout(): string { return s + \"!\"; } function main(): i32 { var msg = \"hi\"; var out = msg.shout(); print(out); return len(out); }",
+			3,
+			"hi!",
+			"",
+		},
+		{
+			"method-on-i32-receiver",
+			"function (n: i32) twice(): i32 { return n * 2; } function main(): i32 { var x = 21; return x.twice(); }",
+			42,
+			"",
+			"",
+		},
+		{
+			"method-on-string-arg",
+			"function (s: string) repeat3(): string { return s + s + s; } function main(): i32 { var m = \"ab\"; var out = m.repeat3(); print(out); return len(out); }",
+			6,
+			"ababab",
+			"",
+		},
+		{
+			"method-on-string-with-args",
+			"function (s: string) join_with(sep: string, other: string): string { return s + sep + other; } function main(): i32 { var a = \"foo\"; var b = \"bar\"; var out = a.join_with(\"-\", b); print(out); return 0; }",
+			0,
+			"foo-bar",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
