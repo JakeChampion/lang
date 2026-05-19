@@ -474,6 +474,16 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    pushq $0\n");
             return s;
         },
+        parser.ExprStructLit(_) => {
+            s = s.write("    # unsupported: struct literal\n");
+            s = s.write("    pushq $0\n");
+            return s;
+        },
+        parser.ExprFieldAccess(_) => {
+            s = s.write("    # unsupported: field access\n");
+            s = s.write("    pushq $0\n");
+            return s;
+        },
         parser.ExprUnknown(_) => {
             s = s.write("    # parser-side unknown\n");
             s = s.write("    pushq $0\n");

@@ -54,11 +54,20 @@ pub struct ExprIndex { array: Expr, index: Expr }
 // TypeString). `start` is inclusive, `end` is exclusive — same
 // shape as Python / Go / Rust slicing.
 pub struct ExprSlice { array: Expr, start: Expr, end: Expr }
+// Struct literal `Name { field: value, field: value }`. The
+// type_name is the struct's declared name; field_names and
+// field_values parallel-array the initializers in source
+// order. Empty struct lit `Name { }` is allowed (zero fields).
+pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[] }
+// Postfix field access `obj.field`. obj can be any Expr that
+// evaluates to a struct value.
+pub struct ExprFieldAccess { obj: Expr, field: string }
 pub struct ExprUnknown { kind: string }
 
 pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
               | ExprBinary | ExprUnary | ExprCall
-              | ExprArray | ExprIndex | ExprSlice | ExprUnknown;
+              | ExprArray | ExprIndex | ExprSlice
+              | ExprStructLit | ExprFieldAccess | ExprUnknown;
 
 // Statement nodes.
 
@@ -123,6 +132,12 @@ function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements
 function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index }; }
 function e_slice(array: Expr, start: Expr, end: Expr): Expr {
     return ExprSlice { array: array, start: start, end: end };
+}
+function e_struct_lit(type_name: string, field_names: string[], field_values: Expr[]): Expr {
+    return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values };
+}
+function e_field_access(obj: Expr, field: string): Expr {
+    return ExprFieldAccess { obj: obj, field: field };
 }
 function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
 
@@ -226,48 +241,93 @@ function parse_primary(p: Par): ExprResult {
         lexer.TokIdent(x) => {
             p = p.advance();
             var base: Expr = e_ident(x.name);
-            // Postfix `(`: function call.
-            if (p.peek_punct() == "(") {
+            // Struct literal: `Name { f: v, g: w }`. Only valid
+            // when the base is still a bare ident (the struct
+            // type's name). Consumes the whole construct;
+            // subsequent postfixes (field access, etc.) can
+            // chain through the postfix loop.
+            if (p.peek_punct() == "{") {
                 p = p.advance();
-                var args: Expr[] = [];
-                if (p.peek_punct() != ")") {
+                var fnames: string[] = [];
+                var fvals: Expr[] = [];
+                if (p.peek_punct() != "}") {
                     while (true) {
-                        var ra = parse_expr(p);
-                        p = ra.par;
-                        args = args.push(ra.expr);
+                        var fname: string = p.peek_ident();
+                        if (len(fname) == 0) {
+                            return ExprResult { par: p, expr: e_unknown("missing field name in struct lit") };
+                        }
+                        p = p.advance();
+                        if (p.peek_punct() != ":") {
+                            return ExprResult { par: p, expr: e_unknown("missing : in struct lit") };
+                        }
+                        p = p.advance();
+                        var fv = parse_expr(p);
+                        p = fv.par;
+                        fnames = fnames.push(fname);
+                        fvals = fvals.push(fv.expr);
                         if (p.peek_punct() == ",") { p = p.advance(); continue; }
                         break;
                     }
                 }
-                if (p.peek_punct() != ")") {
-                    return ExprResult { par: p, expr: e_unknown("missing ) in call") };
+                if (p.peek_punct() != "}") {
+                    return ExprResult { par: p, expr: e_unknown("missing } in struct lit") };
                 }
                 p = p.advance();
-                base = e_call(base, args);
+                base = e_struct_lit(x.name, fnames, fvals);
             }
-            // Postfix `[`: indexing (`a[i]`) or slicing
-            // (`a[i:j]`). After the first expr, peek for `:` to
-            // disambiguate. Repeats so `a[i][j]` and `s[1:5][0]`
-            // both chain.
-            while (p.peek_punct() == "[") {
-                p = p.advance();
-                var idx = parse_expr(p);
-                p = idx.par;
-                if (p.peek_punct() == ":") {
+            // Postfix loop: chain call / index / slice / field
+            // access. Repeats so `f()[0].bar` works.
+            while (true) {
+                var pk: string = p.peek_punct();
+                if (pk == "(") {
                     p = p.advance();
-                    var end = parse_expr(p);
-                    p = end.par;
-                    if (p.peek_punct() != "]") {
-                        return ExprResult { par: p, expr: e_unknown("missing ] in slice") };
+                    var args: Expr[] = [];
+                    if (p.peek_punct() != ")") {
+                        while (true) {
+                            var ra = parse_expr(p);
+                            p = ra.par;
+                            args = args.push(ra.expr);
+                            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                            break;
+                        }
+                    }
+                    if (p.peek_punct() != ")") {
+                        return ExprResult { par: p, expr: e_unknown("missing ) in call") };
                     }
                     p = p.advance();
-                    base = e_slice(base, idx.expr, end.expr);
+                    base = e_call(base, args);
+                } else if (pk == "[") {
+                    // Indexing (`a[i]`) or slicing (`a[i:j]`).
+                    p = p.advance();
+                    var idx = parse_expr(p);
+                    p = idx.par;
+                    if (p.peek_punct() == ":") {
+                        p = p.advance();
+                        var end = parse_expr(p);
+                        p = end.par;
+                        if (p.peek_punct() != "]") {
+                            return ExprResult { par: p, expr: e_unknown("missing ] in slice") };
+                        }
+                        p = p.advance();
+                        base = e_slice(base, idx.expr, end.expr);
+                    } else {
+                        if (p.peek_punct() != "]") {
+                            return ExprResult { par: p, expr: e_unknown("missing ] in index") };
+                        }
+                        p = p.advance();
+                        base = e_index(base, idx.expr);
+                    }
+                } else if (pk == ".") {
+                    // Field access `obj.field`.
+                    p = p.advance();
+                    var fname: string = p.peek_ident();
+                    if (len(fname) == 0) {
+                        return ExprResult { par: p, expr: e_unknown("missing field name after .") };
+                    }
+                    p = p.advance();
+                    base = e_field_access(base, fname);
                 } else {
-                    if (p.peek_punct() != "]") {
-                        return ExprResult { par: p, expr: e_unknown("missing ] in index") };
-                    }
-                    p = p.advance();
-                    base = e_index(base, idx.expr);
+                    break;
                 }
             }
             return ExprResult { par: p, expr: base };
@@ -876,6 +936,68 @@ function main(): i32 {
     if (len(modSt.structs[1].fields) != 0) { return 727; }
     if (len(modSt.funcs) != 1) { return 728; }
     if (modSt.funcs[0].name != "main") { return 729; }
+
+    // Struct literal: `var p = Point { x: 3, y: 4 };`
+    var srcL: string = "var p = Point { x: 3, y: 4 }; return 0;";
+    var progL: Stmt[] = parse_program(lexer.tokenize(srcL));
+    match (progL[0]) {
+        StmtVar(v) => {
+            if (v.name != "p") { return 800; }
+            match (v.init) {
+                ExprStructLit(sl) => {
+                    if (sl.type_name != "Point") { return 801; }
+                    if (len(sl.field_names) != 2) { return 802; }
+                    if (sl.field_names[0] != "x") { return 803; }
+                    if (sl.field_names[1] != "y") { return 804; }
+                    match (sl.field_values[0]) {
+                        ExprNumber(n) => { if (n.text != "3") { return 805; } },
+                        _ => { return 806; }
+                    }
+                },
+                _ => { return 807; }
+            }
+        },
+        _ => { return 808; }
+    }
+
+    // Field access: `p.x`
+    var srcF: string = "return p.x;";
+    var progF: Stmt[] = parse_program(lexer.tokenize(srcF));
+    match (progF[0]) {
+        StmtReturn(r) => {
+            match (r.value) {
+                ExprFieldAccess(fa) => {
+                    if (fa.field != "x") { return 810; }
+                    match (fa.obj) {
+                        ExprIdent(id) => { if (id.name != "p") { return 811; } },
+                        _ => { return 812; }
+                    }
+                },
+                _ => { return 813; }
+            }
+        },
+        _ => { return 814; }
+    }
+
+    // Chained: `Point { x: 1, y: 2 }.x` should parse as
+    // ExprFieldAccess { obj: ExprStructLit{...}, field: "x" }.
+    var srcCh: string = "return Point { x: 1, y: 2 }.x;";
+    var progCh: Stmt[] = parse_program(lexer.tokenize(srcCh));
+    match (progCh[0]) {
+        StmtReturn(r) => {
+            match (r.value) {
+                ExprFieldAccess(fa) => {
+                    if (fa.field != "x") { return 820; }
+                    match (fa.obj) {
+                        ExprStructLit(sl) => { if (sl.type_name != "Point") { return 821; } },
+                        _ => { return 822; }
+                    }
+                },
+                _ => { return 823; }
+            }
+        },
+        _ => { return 824; }
+    }
 
     return 0;
 }

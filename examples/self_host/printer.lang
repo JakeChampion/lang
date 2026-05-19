@@ -114,6 +114,17 @@ function print_expr(e: parser.Expr): string {
         parser.ExprSlice(sl) => {
             return print_expr(sl.array) + "[" + print_expr(sl.start) + ":" + print_expr(sl.end) + "]";
         },
+        parser.ExprStructLit(sl) => {
+            var out: string = sl.type_name + " {";
+            var i: i32 = 0;
+            while (i < len(sl.field_names)) {
+                if (i > 0) { out = out + ","; }
+                out = out + " " + sl.field_names[i] + ": " + print_expr(sl.field_values[i]);
+                i = i + 1;
+            }
+            return out + " }";
+        },
+        parser.ExprFieldAccess(fa) => { return print_expr(fa.obj) + "." + fa.field; },
         parser.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
     }
     return "/*unhandled-expr*/";

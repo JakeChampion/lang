@@ -452,6 +452,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
+        parser.ExprStructLit(_) => {
+            s = s.write("    // unsupported: struct literal\n");
+            s = s.write("    mov x0, #0\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        },
+        parser.ExprFieldAccess(_) => {
+            s = s.write("    // unsupported: field access\n");
+            s = s.write("    mov x0, #0\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        },
         parser.ExprUnknown(_) => {
             s = s.write("    // parser-side unknown\n");
             s = s.write("    mov x0, #0\n");
