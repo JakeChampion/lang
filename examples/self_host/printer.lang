@@ -255,10 +255,21 @@ function print_type_alias(a: parser.TypeAlias): string {
     return out + ";\n";
 }
 
+function print_import(im: parser.Import): string {
+    return "import " + quote_string(im.path) + ";\n";
+}
+
 pub function print_module(mod: parser.Module): string {
     var out: string = "";
-    // Struct decls first — the parser uses them to resolve
-    // struct-typed param / field names referenced later.
+    // Imports first — convention in the self-host source is to
+    // group them at the top of the file before any decls.
+    var ii: i32 = 0;
+    while (ii < len(mod.imports)) {
+        out = out + print_import(mod.imports[ii]);
+        ii = ii + 1;
+    }
+    // Struct decls — the parser uses them to resolve struct-
+    // typed param / field names referenced later.
     var i: i32 = 0;
     while (i < len(mod.structs)) {
         out = out + print_struct_decl(mod.structs[i]);
@@ -443,6 +454,15 @@ function main(): i32 {
     if (rtB.funcs[0].receiver_name != "p") { return 112; }
     if (rtB.funcs[0].receiver_type != "Par") { return 113; }
     if (rtB.funcs[1].receiver_name != "") { return 114; }
+
+    // Import round-trip — multiple imports survive emit + re-
+    // parse with the same path list.
+    var srcC: string = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
+    var rtC: parser.Module = roundtrip_module(srcC);
+    if (len(rtC.imports) != 2) { return 120; }
+    if (rtC.imports[0].path != "./lexer") { return 121; }
+    if (rtC.imports[1].path != "./parser") { return 122; }
+    if (len(rtC.funcs) != 1) { return 123; }
 
     return 0;
 }
