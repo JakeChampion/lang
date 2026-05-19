@@ -153,10 +153,39 @@ function print_block(body: parser.Stmt[], depth: i32): string {
     return out;
 }
 
+function print_pattern(pat: parser.Pattern): string {
+    match (pat) {
+        parser.PatWildcard(_) => { return "_"; },
+        parser.PatVariant(pv) => {
+            if (len(pv.binding) == 0) { return pv.type_name; }
+            return pv.type_name + "(" + pv.binding + ")";
+        }
+    }
+    return "_";
+}
+
+function print_match(m: parser.StmtMatch, depth: i32): string {
+    var pad: string = indent_str(depth);
+    var out: string = pad + "match (" + print_expr(m.scrutinee) + ") {\n";
+    var i: i32 = 0;
+    while (i < len(m.arms)) {
+        out = out + indent_str(depth + 1) + print_pattern(m.arms[i].pattern) + " => " + print_block(m.arms[i].body, depth + 1);
+        if (i + 1 < len(m.arms)) { out = out + ","; }
+        out = out + "\n";
+        i = i + 1;
+    }
+    out = out + pad + "}\n";
+    return out;
+}
+
 function print_stmt(st: parser.Stmt, depth: i32): string {
     var pad: string = indent_str(depth);
     match (st) {
-        parser.StmtVar(v) => { return pad + "var " + v.name + " = " + print_expr(v.init) + ";\n"; },
+        parser.StmtVar(v) => {
+            var ann: string = "";
+            if (len(v.type_name) > 0) { ann = ": " + v.type_name; }
+            return pad + "var " + v.name + ann + " = " + print_expr(v.init) + ";\n";
+        },
         parser.StmtReturn(r) => { return pad + "return " + print_expr(r.value) + ";\n"; },
         parser.StmtExpr(x) => { return pad + print_expr(x.value) + ";\n"; },
         parser.StmtIf(ifs) => {
@@ -170,7 +199,7 @@ function print_stmt(st: parser.Stmt, depth: i32): string {
             return pad + "while (" + print_expr(w.cond) + ") " + print_block(w.body, depth) + "\n";
         },
         parser.StmtAssign(a) => { return pad + a.target + " = " + print_expr(a.value) + ";\n"; },
-        parser.StmtMatch(_) => { return pad + "/*match-stmt*/\n"; },
+        parser.StmtMatch(m) => { return print_match(m, depth); },
         parser.StmtUnknown(u) => { return pad + "/*unknown-stmt:" + u.kind + "*/\n"; }
     }
     return pad + "/*unhandled-stmt*/\n";
@@ -179,7 +208,15 @@ function print_stmt(st: parser.Stmt, depth: i32): string {
 // =================== MODULE ====================
 
 function print_func_decl(fd: parser.FuncDecl): string {
-    var out: string = "function " + fd.name + "(";
+    var out: string = "function ";
+    // Receiver clause: `(recv: RecvType)` after `function` and
+    // before the method name. Both fields empty for plain funcs.
+    if (len(fd.receiver_name) > 0) {
+        out = out + "(" + fd.receiver_name;
+        if (len(fd.receiver_type) > 0) { out = out + ": " + fd.receiver_type; }
+        out = out + ") ";
+    }
+    out = out + fd.name + "(";
     var i: i32 = 0;
     while (i < len(fd.params)) {
         if (i > 0) { out = out + ", "; }
@@ -195,12 +232,47 @@ function print_func_decl(fd: parser.FuncDecl): string {
     return out;
 }
 
+function print_struct_decl(sd: parser.StructDecl): string {
+    var out: string = "struct " + sd.name + " {";
+    var i: i32 = 0;
+    while (i < len(sd.fields)) {
+        if (i > 0) { out = out + ","; }
+        out = out + " " + sd.fields[i].name + ": " + sd.fields[i].type_name;
+        i = i + 1;
+    }
+    if (len(sd.fields) > 0) { out = out + " "; }
+    return out + "}\n";
+}
+
+function print_type_alias(a: parser.TypeAlias): string {
+    var out: string = "type " + a.name + " = ";
+    var i: i32 = 0;
+    while (i < len(a.variants)) {
+        if (i > 0) { out = out + " | "; }
+        out = out + a.variants[i];
+        i = i + 1;
+    }
+    return out + ";\n";
+}
+
 pub function print_module(mod: parser.Module): string {
     var out: string = "";
+    // Struct decls first — the parser uses them to resolve
+    // struct-typed param / field names referenced later.
     var i: i32 = 0;
-    while (i < len(mod.funcs)) {
-        out = out + print_func_decl(mod.funcs[i]);
+    while (i < len(mod.structs)) {
+        out = out + print_struct_decl(mod.structs[i]);
         i = i + 1;
+    }
+    var ai: i32 = 0;
+    while (ai < len(mod.aliases)) {
+        out = out + print_type_alias(mod.aliases[ai]);
+        ai = ai + 1;
+    }
+    var fi: i32 = 0;
+    while (fi < len(mod.funcs)) {
+        out = out + print_func_decl(mod.funcs[fi]);
+        fi = fi + 1;
     }
     var j: i32 = 0;
     while (j < len(mod.top_stmts)) {
@@ -313,6 +385,64 @@ function main(): i32 {
         },
         _ => { return 61; }
     }
+
+    // Struct decls + struct literals round-trip.
+    var src7: string = "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; return p.x; }";
+    var rt7: parser.Module = roundtrip_module(src7);
+    if (len(rt7.structs) != 1) { return 70; }
+    if (rt7.structs[0].name != "Point") { return 71; }
+    if (len(rt7.structs[0].fields) != 2) { return 72; }
+    if (len(rt7.funcs) != 1) { return 73; }
+
+    // Type alias round-trip.
+    var src8: string = "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function main(): i32 { return 0; }";
+    var rt8: parser.Module = roundtrip_module(src8);
+    if (len(rt8.aliases) != 1) { return 80; }
+    if (rt8.aliases[0].name != "Shape") { return 81; }
+    if (len(rt8.aliases[0].variants) != 2) { return 82; }
+
+    // Match statement round-trip.
+    var src9: string = "var x = 0; match (x) { Foo(f) => { return 1; }, _ => { return 0; } }";
+    var rt9: parser.Module = roundtrip_module(src9);
+    if (len(rt9.top_stmts) != 2) { return 90; }
+    match (rt9.top_stmts[1]) {
+        parser.StmtMatch(m) => {
+            if (len(m.arms) != 2) { return 91; }
+            match (m.arms[0].pattern) {
+                parser.PatVariant(pv) => {
+                    if (pv.type_name != "Foo") { return 92; }
+                    if (pv.binding != "f") { return 93; }
+                },
+                _ => { return 94; }
+            }
+        },
+        _ => { return 95; }
+    }
+
+    // Var type annotation round-trip.
+    var srcA: string = "var n: i32 = 7; var sh: Shape = c; return n;";
+    var rtA: parser.Module = roundtrip_module(srcA);
+    match (rtA.top_stmts[0]) {
+        parser.StmtVar(v) => {
+            if (v.type_name != "i32") { return 100; }
+        },
+        _ => { return 101; }
+    }
+    match (rtA.top_stmts[1]) {
+        parser.StmtVar(v) => {
+            if (v.type_name != "Shape") { return 102; }
+        },
+        _ => { return 103; }
+    }
+
+    // Receiver method round-trip.
+    var srcB: string = "function (p: Par) advance(): Par { return p; } function main(): i32 { return 0; }";
+    var rtB: parser.Module = roundtrip_module(srcB);
+    if (len(rtB.funcs) != 2) { return 110; }
+    if (rtB.funcs[0].name != "advance") { return 111; }
+    if (rtB.funcs[0].receiver_name != "p") { return 112; }
+    if (rtB.funcs[0].receiver_type != "Par") { return 113; }
+    if (rtB.funcs[1].receiver_name != "") { return 114; }
 
     return 0;
 }
