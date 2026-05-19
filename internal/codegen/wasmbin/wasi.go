@@ -184,6 +184,10 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 		in.add("wasi_environ_sizes_get")
 		in.add("wasi_environ_get")
 	}
+	if helpers.set["__lang_env"] {
+		in.add("wasi_environ_sizes_get")
+		in.add("wasi_environ_get")
+	}
 	if helpers.set["__lang_read_byte"] {
 		in.add("wasi_fd_read")
 	}
@@ -895,5 +899,232 @@ func buildRandomBytesBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildEnvBody — (name_data, name_len) → i32 (Option[string]
+// box). Looks up an env variable by name in the cached
+// environ_ptrs. Returns Some(value) on match, None otherwise.
+//
+// Layout matches __lang_read_line's Option[string] box:
+//   Some(line): 16-byte alloc, tag=0 at +0, data at +8, len at +12.
+//   None:       4-byte alloc, tag=1 at +0.
+//
+// Algorithm:
+//   - Lazily init the env cache (shared with __lang_env_at).
+//   - For each i in 0..envc:
+//     - entry = environ_ptrs[i]  (NUL-terminated "KEY=VALUE")
+//     - Walk j from 0:
+//       - byte = mem[entry + j]
+//       - If j == name_len AND byte == '=': match found
+//       - If j == name_len OR byte != name[j]: no match, next i
+//     - When match: value_start = entry + j + 1
+//       value_len = strlen(value_start)
+//       Build Some(value).
+//   - If no entry matches: return None.
+//
+// Locals (after 2 params):
+//
+//	2: $i        — outer entry index
+//	3: $entry    — current environ_ptrs[i]
+//	4: $j        — byte offset within entry
+//	5: $entry_b  — byte at entry+j
+//	6: $name_b   — byte at name_data+j (looked up via __lang_str_byte)
+//	7: $value    — value-start pointer (entry + j + 1) on match
+//	8: $vlen     — value length (strlen)
+//	9: $box      — Option box pointer for return
+//	10: $name_real_len — strlen of name (via __lang_str_len)
+func buildEnvBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	strLen := idxs["__lang_str_len"]
+	strByte := idxs["__lang_str_byte"]
+	envSizes := idxs["wasi_environ_sizes_get"]
+	envGet := idxs["wasi_environ_get"]
+	var body []byte
+	// Lazy init env cache (same shape as __lang_env_at).
+	body = inst.InstI32Const(body, envInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, envSizesArgcAddr)
+		body = inst.InstI32Const(body, envSizesBufAddr)
+		body = inst.InstCall(body, envSizes)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, envSizesArgcAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 2) // reuse $i slot temporarily for envc
+		body = inst.InstI32Const(body, envSizesBufAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 3) // reuse $entry slot for bufsize
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 4) // env_ptrs (reuse $j)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 5) // env_buf (reuse $entry_b)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstCall(body, envGet)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, envCountAddr)
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, envPtrsAddr)
+		body = inst.InstLocalGet(body, 4)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, envInitAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	// $name_real_len = __lang_str_len(name_data, name_len)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 10)
+	// for i in 0..envc:
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // outer
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// if $i >= envc: break (no match)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, envCountAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		// $entry = mem[env_ptrs + i*4]
+		body = inst.InstI32Const(body, envPtrsAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 3)
+		// Compare prefix of entry with name. $j = 0.
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 4)
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // cmp block
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			// $entry_b = mem[entry + j]
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstLocalGet(body, 4)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load8U(body, 0, 0)
+			body = inst.InstLocalSet(body, 5)
+			// If $j == name_real_len: check entry_b == '='
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstLocalGet(body, 10)
+			body = numeric.InstI32Eq(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				// entry_b == '=' (61)?
+				body = inst.InstLocalGet(body, 5)
+				body = inst.InstI32Const(body, 61)
+				body = numeric.InstI32Eq(body)
+				body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+				{
+					// Match: build Some(value). value starts at
+					// entry + j + 1. strlen via NUL scan.
+					body = inst.InstLocalGet(body, 3)
+					body = inst.InstLocalGet(body, 4)
+					body = numeric.InstI32Add(body)
+					body = inst.InstI32Const(body, 1)
+					body = numeric.InstI32Add(body)
+					body = inst.InstLocalSet(body, 7) // $value
+					// $vlen = 0; while mem[value + vlen] != 0: vlen++
+					body = inst.InstI32Const(body, 0)
+					body = inst.InstLocalSet(body, 8)
+					body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+					body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+					{
+						body = inst.InstLocalGet(body, 7)
+						body = inst.InstLocalGet(body, 8)
+						body = numeric.InstI32Add(body)
+						body = memory.InstI32Load8U(body, 0, 0)
+						body = numeric.InstI32Eqz(body)
+						body = inst.InstBrIf(body, 1)
+						body = inst.InstLocalGet(body, 8)
+						body = inst.InstI32Const(body, 1)
+						body = numeric.InstI32Add(body)
+						body = inst.InstLocalSet(body, 8)
+						body = inst.InstBr(body, 0)
+					}
+					body = inst.InstEnd(body)
+					body = inst.InstEnd(body)
+					// Build Some box: alloc(16), tag=0, data, len.
+					body = inst.InstI32Const(body, 16)
+					body = inst.InstCall(body, alloc)
+					body = inst.InstLocalSet(body, 9)
+					body = inst.InstLocalGet(body, 9)
+					body = inst.InstI32Const(body, 0)
+					body = memory.InstI32Store(body, 2, 0)
+					body = inst.InstLocalGet(body, 9)
+					body = inst.InstI32Const(body, 8)
+					body = numeric.InstI32Add(body)
+					body = inst.InstLocalGet(body, 7)
+					body = memory.InstI32Store(body, 2, 0)
+					body = inst.InstLocalGet(body, 9)
+					body = inst.InstI32Const(body, 12)
+					body = numeric.InstI32Add(body)
+					body = inst.InstLocalGet(body, 8)
+					body = memory.InstI32Store(body, 2, 0)
+					body = inst.InstLocalGet(body, 9)
+					body = inst.InstReturn(body)
+				}
+				body = inst.InstEnd(body)
+				// Mismatch (name fully consumed but no '=' yet).
+				// Exit cmp loop, continue outer.
+				body = inst.InstBr(body, 2) // break out of inner block (cmp)
+			}
+			body = inst.InstEnd(body)
+			// If entry_b == 0 (premature NUL) or entry_b != name[j]:
+			// not a match.
+			body = inst.InstLocalGet(body, 5)
+			body = numeric.InstI32Eqz(body)
+			body = inst.InstBrIf(body, 1) // break cmp loop
+			// $name_b = __lang_str_byte(name_data, name_len, j)
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstCall(body, strByte)
+			body = inst.InstLocalSet(body, 6)
+			// If entry_b != name_b: break cmp loop
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 6)
+			body = numeric.InstI32Ne(body)
+			body = inst.InstBrIf(body, 1) // break cmp loop
+			// $j++
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 4)
+			body = inst.InstBr(body, 0) // continue cmp loop
+		}
+		body = inst.InstEnd(body) // end cmp loop
+		body = inst.InstEnd(body) // end cmp block
+		// Next entry.
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 2)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end outer loop
+	body = inst.InstEnd(body) // end outer block
+	// No match: return None. alloc(4), tag=1.
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 9)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 9)
+	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
