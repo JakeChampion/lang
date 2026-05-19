@@ -187,7 +187,7 @@ func TestBuildReadFile(t *testing.T) {
 	}
 	src := `function main(): i32 {
     match (read_file("greeting.txt")) {
-        Ok(s) => { return len(s); },
+        Ok(s) => { return s.len(); },
         Err(_) => { return -1; }
     }
     return -2;
@@ -243,7 +243,7 @@ func TestBuildReadFileNotFound(t *testing.T) {
         Ok(_) => { return -1; },
         Err(err) => {
             match (err) {
-                NotFound(p) => { return len(p); },
+                NotFound(p) => { return p.len(); },
                 PermissionDenied(_) => { return -10; },
                 AlreadyExists(_) => { return -11; },
                 InvalidUtf8(_) => { return -12; },
@@ -358,7 +358,7 @@ func TestBuildWriteFileRoundtrip(t *testing.T) {
         None => {}
     }
     match (read_file("roundtrip.txt")) {
-        Ok(s) => { return len(s); },
+        Ok(s) => { return s.len(); },
         Err(_) => { return -2; }
     }
     return -3;

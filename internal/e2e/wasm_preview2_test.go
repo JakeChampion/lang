@@ -327,7 +327,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
     }
     match (read_file("rwf.txt")) {
         Ok(s) => {
-            if (len(s) == len(content)) { print("match"); }
+            if (s.len() == content.len()) { print("match"); }
             else { print("mismatch"); }
         },
         Err(_) => { return 2; }

@@ -105,15 +105,15 @@ pub function module_new(): Module {
 pub function build(m: Module): u8[] {
     var bytes: u8[] = encode.put_module_header([]);
 
-    if (len(m.type_params) > 0) {
+    if (m.type_params.len() > 0) {
         bytes = sections.encode_type_section(bytes, m.type_params, m.type_results);
     }
 
-    if (len(m.import_modules) > 0) {
+    if (m.import_modules.len() > 0) {
         bytes = imports.encode_import_section(bytes, m.import_modules, m.import_names, m.import_kinds, m.import_descs);
     }
 
-    if (len(m.function_typeidxs) > 0) {
+    if (m.function_typeidxs.len() > 0) {
         bytes = sections.encode_function_section(bytes, m.function_typeidxs);
     }
 
@@ -123,11 +123,11 @@ pub function build(m: Module): u8[] {
         bytes = sections.encode_memory_section(bytes, m.memory_min, m.memory_max);
     }
 
-    if (len(m.global_valtypes) > 0) {
+    if (m.global_valtypes.len() > 0) {
         bytes = imports.encode_global_section(bytes, m.global_valtypes, m.global_muts, m.global_inits);
     }
 
-    if (len(m.export_names) > 0) {
+    if (m.export_names.len() > 0) {
         bytes = sections.encode_export_section(bytes, m.export_names, m.export_kinds, m.export_idxs);
     }
 
@@ -137,11 +137,11 @@ pub function build(m: Module): u8[] {
 
     // Element section (id 9) — intentionally skipped; no input.
 
-    if (len(m.code_bodies) > 0) {
+    if (m.code_bodies.len() > 0) {
         bytes = sections.encode_code_section(bytes, m.code_bodies);
     }
 
-    if (len(m.data_offsets) > 0) {
+    if (m.data_offsets.len() > 0) {
         bytes = sections.encode_data_section(bytes, m.data_offsets, m.data_inits);
     }
 

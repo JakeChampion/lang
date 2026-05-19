@@ -319,7 +319,14 @@ func New() *Interp {
 	i.Builtins["write"] = &Builtin{Fn: builtinWrite}
 	i.Builtins["eprint"] = &Builtin{Fn: builtinEprint}
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
-	i.Builtins["len"] = &Builtin{Fn: builtinLen}
+	// `x.len()` dispatches through three mangled names (one per
+	// receiver type the checker registers a method on); all three
+	// route to a single shared implementation that switches on the
+	// value's runtime tag. Slices in the interpreter are
+	// represented as Arrays, so the slice form joins the array path.
+	i.Builtins["__method_string_len"] = &Builtin{Fn: builtinLen}
+	i.Builtins["__method_Array_len"] = &Builtin{Fn: builtinLen}
+	i.Builtins["__method_slice_len"] = &Builtin{Fn: builtinLen}
 	i.Builtins["args"] = &Builtin{Fn: builtinArgs}
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
@@ -1690,7 +1697,7 @@ func builtinArgs(i *Interp, args []Value) (Value, error) {
 
 func builtinLen(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
-		return nil, fmt.Errorf("len: expected 1 arg, got %d", len(args))
+		return nil, fmt.Errorf(".len(): expected 1 arg (receiver), got %d", len(args))
 	}
 	switch v := args[0].(type) {
 	case String:
@@ -1698,7 +1705,7 @@ func builtinLen(_ *Interp, args []Value) (Value, error) {
 	case Array:
 		return Number(int64(len(v))), nil
 	}
-	return nil, fmt.Errorf("len: expected string or array, got %T", args[0])
+	return nil, fmt.Errorf(".len(): expected string, array, or slice receiver, got %T", args[0])
 }
 
 func builtinPrint(i *Interp, args []Value) (Value, error) {

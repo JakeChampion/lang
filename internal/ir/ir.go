@@ -5221,55 +5221,50 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 		}
 	}
-	// `len(x)` on a string, array, or slice is inlined. String and
-	// array layouts carry a 4-byte little-endian length prefix at
-	// `ptr - 4`; slice values carry the length at `slice + 4` after
-	// the data pointer. Strings now route through OpStrLen so a
-	// future small-string-optimisation pass can change the encoding
-	// in one place instead of patching every backend's open-coded
-	// `[ptr - 4]` load. Arrays keep the inline sub-4 / load shape
-	// because their layout may diverge from strings later.
-	//
-	// The checker doesn't declare `len` as a function signature, so
-	// the call falls here ahead of the FuncSigs / locals path.
-	if id.Name == "len" && len(n.Args) == 1 {
-		if _, isLocal := b.locals[id.Name]; !isLocal {
-			if _, isDeclared := b.info.FuncSigs[id.Name]; !isDeclared {
-				// Compile-time fold: when the arg is a literal whose
-				// length is statically known, collapse the whole
-				// runtime-load sequence to a single const. Saves the
-				// runtime alloc + prefix-load that the unfolded shape
-				// would force, and lets the const propagate into
-				// surrounding arithmetic.
-				switch lit := n.Args[0].(type) {
-				case *ast.StringLit:
-					b.emit(Op{Kind: OpConstI32, I32: int32(len(lit.Value))})
-					return nil
-				case *ast.ArrayLit:
-					b.emit(Op{Kind: OpConstI32, I32: int32(len(lit.Elems))})
-					return nil
-				}
-				if err := b.expr(n.Args[0]); err != nil {
-					return err
-				}
-				argT := b.exprType(n.Args[0])
-				if _, isSlice := argT.(ast.SliceType); isSlice {
-					b.emit(Op{Kind: OpConstI32, I32: 4})
-					b.emit(Op{Kind: OpAdd})
-					b.emit(Op{Kind: OpLoad})
-				} else if _, isStr := argT.(ast.StringType); isStr {
-					b.emit(Op{Kind: OpStrLen})
-				} else {
-					// Arrays (and the unknown / generic case) keep
-					// the open-coded `[ptr - 4]` load — their layout
-					// is decoupled from string SSO work.
-					b.emit(Op{Kind: OpConstI32, I32: 4})
-					b.emit(Op{Kind: OpSub})
-					b.emit(Op{Kind: OpLoad})
-				}
-				return nil
-			}
+	// `x.len()` on a string, array, or slice is inlined here off
+	// the mangled method names the checker rewrites the dispatch
+	// to. String and array layouts carry a 4-byte little-endian
+	// length prefix at `ptr - 4`; slice values carry the length
+	// at `slice + 4` after the data pointer. Strings route
+	// through OpStrLen so a future small-string-optimisation
+	// pass can change the encoding in one place instead of
+	// patching every backend's open-coded `[ptr - 4]` load.
+	// Arrays keep the inline sub-4 / load shape because their
+	// layout may diverge from strings later.
+	switch id.Name {
+	case "__method_string_len", "__method_Array_len", "__method_slice_len":
+		if len(n.Args) != 1 {
+			break
 		}
+		// Compile-time fold: when the receiver is a literal whose
+		// length is statically known, collapse the whole runtime-
+		// load sequence to a single const. Saves the runtime alloc
+		// + prefix-load that the unfolded shape would force, and
+		// lets the const propagate into surrounding arithmetic.
+		switch lit := n.Args[0].(type) {
+		case *ast.StringLit:
+			b.emit(Op{Kind: OpConstI32, I32: int32(len(lit.Value))})
+			return nil
+		case *ast.ArrayLit:
+			b.emit(Op{Kind: OpConstI32, I32: int32(len(lit.Elems))})
+			return nil
+		}
+		if err := b.expr(n.Args[0]); err != nil {
+			return err
+		}
+		switch id.Name {
+		case "__method_slice_len":
+			b.emit(Op{Kind: OpConstI32, I32: 4})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(Op{Kind: OpLoad})
+		case "__method_string_len":
+			b.emit(Op{Kind: OpStrLen})
+		default: // __method_Array_len
+			b.emit(Op{Kind: OpConstI32, I32: 4})
+			b.emit(Op{Kind: OpSub})
+			b.emit(Op{Kind: OpLoad})
+		}
+		return nil
 	}
 	// Map call-site boxing. Two axes:
 	//

@@ -37,7 +37,7 @@ import "./parser";
 function digits_to_i32(s: string): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
-    while (i < len(s)) {
+    while (i < s.len()) {
         var b: i32 = s[i];
         if (b < 48 || b > 57) { return acc; }
         acc = acc * 10 + (b - 48);
@@ -148,13 +148,13 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
         parser.ExprCall(c) => {
             var args: parser.Expr[] = [];
             var i: i32 = 0;
-            while (i < len(c.args)) { args = args.push(fold_expr(c.args[i])); i = i + 1; }
+            while (i < c.args.len()) { args = args.push(fold_expr(c.args[i])); i = i + 1; }
             return parser.ExprCall { callee: fold_expr(c.callee), args: args };
         },
         parser.ExprTuple(t) => {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;
-            while (i < len(t.elements)) {
+            while (i < t.elements.len()) {
                 elems = elems.push(fold_expr(t.elements[i]));
                 i = i + 1;
             }
@@ -163,7 +163,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
         parser.ExprArray(a) => {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;
-            while (i < len(a.elements)) { elems = elems.push(fold_expr(a.elements[i])); i = i + 1; }
+            while (i < a.elements.len()) { elems = elems.push(fold_expr(a.elements[i])); i = i + 1; }
             return parser.ExprArray { elements: elems };
         },
         parser.ExprIndex(x) => {
@@ -179,7 +179,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
         parser.ExprStructLit(sl) => {
             var fvs: parser.Expr[] = [];
             var i: i32 = 0;
-            while (i < len(sl.field_values)) {
+            while (i < sl.field_values.len()) {
                 fvs = fvs.push(fold_expr(sl.field_values[i]));
                 i = i + 1;
             }
@@ -269,7 +269,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
         parser.StmtMatch(m) => {
             var arms: parser.MatchArm[] = [];
             var i: i32 = 0;
-            while (i < len(m.arms)) {
+            while (i < m.arms.len()) {
                 arms = arms.push(parser.MatchArm { pattern: m.arms[i].pattern, body: fold_block(m.arms[i].body) });
                 i = i + 1;
             }
@@ -288,14 +288,14 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
 function fold_block(body: parser.Stmt[]): parser.Stmt[] {
     var out: parser.Stmt[] = [];
     var i: i32 = 0;
-    while (i < len(body)) { out = out.push(fold_stmt(body[i])); i = i + 1; }
+    while (i < body.len()) { out = out.push(fold_stmt(body[i])); i = i + 1; }
     return out;
 }
 
 pub function fold_module(mod: parser.Module): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
-    while (i < len(mod.funcs)) {
+    while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
         funcs = funcs.push(parser.FuncDecl {
             name: fd.name,
@@ -428,7 +428,7 @@ function main(): i32 {
 
     // Folds inside function-decl bodies too.
     var mod9: parser.Module = fold_source("function add(): i32 { return 1 + 2; } function main(): i32 { return add(); }");
-    if (len(mod9.funcs) != 2) { return 90; }
+    if (mod9.funcs.len() != 2) { return 90; }
     match (mod9.funcs[0].body[0]) {
         parser.StmtReturn(r) => {
             match (r.value) {

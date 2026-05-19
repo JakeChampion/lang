@@ -539,7 +539,7 @@ func TestWASMHttpSerializeResponse404(t *testing.T) {
 func TestWASMArgsBuiltin(t *testing.T) {
 	src := `function main(): i32 {
 		var a: string[] = args();
-		return len(a);
+		return a.len();
 	}`
 	stdout, _ := invokeWasmtimeWithArgs(t, src, "alpha", "beta")
 	got := 0
@@ -599,7 +599,7 @@ func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, st
 func TestWASMReadLineBuiltin(t *testing.T) {
 	src := `function main(): i32 {
 		match (stdin().read_line()) {
-			Some(line) => { write(line); return len(line); },
+			Some(line) => { write(line); return line.len(); },
 			None => { return -1; }
 		}
 		return -2;
@@ -927,7 +927,7 @@ func TestWASMU8Array(t *testing.T) {
     if (bytes[0] != 255) { return 1; }
     if (bytes[1] != 0) { return 2; }
     if (bytes[2] != 66) { return 3; }
-    if (len(bytes) != 3) { return 4; }
+    if (bytes.len() != 3) { return 4; }
     return 0;
 }`
 	if got := runWasmBin(t, src); got != 0 {
@@ -1094,8 +1094,8 @@ func TestWASMMapKeysValues(t *testing.T) {
     m.set(30, 300);
     var ks: i32[] = m.keys();
     var vs: i32[] = m.values();
-    if (len(ks) != 3) { return 1; }
-    if (len(vs) != 3) { return 2; }
+    if (ks.len() != 3) { return 1; }
+    if (vs.len() != 3) { return 2; }
     // Insertion order: ks == [10, 20, 30], vs == [100, 200, 300].
     if (ks[0] != 10) { return 3; }
     if (ks[1] != 20) { return 4; }
@@ -1106,7 +1106,7 @@ func TestWASMMapKeysValues(t *testing.T) {
     // Sum the values via a normal indexed loop.
     var i: i32 = 0;
     var sum: i32 = 0;
-    while (i < len(vs)) {
+    while (i < vs.len()) {
         sum = sum + vs[i];
         i = i + 1;
     }
@@ -1131,7 +1131,7 @@ func TestWASMMapValuesWideI64(t *testing.T) {
     m.set(2, 2000000000000i64);
     m.set(3, 3000000000000i64);
     var vs: i64[] = m.values();
-    if (len(vs) != 3) { return 1; }
+    if (vs.len() != 3) { return 1; }
     if (vs[0] != 1000000000000i64) { return 2; }
     if (vs[2] != 3000000000000i64) { return 3; }
     return 0;
@@ -1147,7 +1147,7 @@ func TestWASMMapValuesWideF64(t *testing.T) {
     m.set(1, 1.5f64);
     m.set(2, 2.5f64);
     var vs: f64[] = m.values();
-    if (len(vs) != 2) { return 1; }
+    if (vs.len() != 2) { return 1; }
     if (vs[0] != 1.5f64) { return 2; }
     if (vs[1] != 2.5f64) { return 3; }
     return 0;
@@ -1265,7 +1265,7 @@ func TestWASMWideKeyMapStringV(t *testing.T) {
 	src := `function main(): i32 {
     var m: Map[i64, string] = map_new(4);
     m.set(1i64, "hello");
-    return len(m.get_or(1i64, ""));
+    return (m.get_or(1i64, "")).len();
 }`
 	if got := runWasm(t, src); got != 5 {
 		t.Errorf("got %d, want 5 (len('hello'))", got)
@@ -1287,7 +1287,7 @@ func TestWASMWideKeyMapKeysSnapshot(t *testing.T) {
     m.set(1i64, 10);
     m.set(1000000000000i64, 20);
     var keys: i64[] = m.keys();
-    if (len(keys) != 2) { return 1; }
+    if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
     if (keys[1] != 1i64 && keys[1] != 1000000000000i64) { return 3; }
     if (keys[0] == keys[1]) { return 4; }
@@ -1456,20 +1456,20 @@ func TestWASMSubI32Slices(t *testing.T) {
 	src := `function main(): i32 {
     var bytes: u8[] = [10, 20, 30, 40, 50];
     var view: [u8] = bytes[1:4];
-    if (len(view) != 3) { return 1; }
+    if (view.len() != 3) { return 1; }
     if (view[0] != 20) { return 2; }
     if (view[1] != 30) { return 3; }
     if (view[2] != 40) { return 4; }
 
     var halves: u16[] = [1, 2, 3, 4];
     var hview: [u16] = halves[2:];
-    if (len(hview) != 2) { return 5; }
+    if (hview.len() != 2) { return 5; }
     if (hview[0] != 3) { return 6; }
     if (hview[1] != 4) { return 7; }
 
     var wide: i64[] = [(1 << 40), (1 << 41), (1 << 42)];
     var wview: [i64] = wide[1:3];
-    if (len(wview) != 2) { return 8; }
+    if (wview.len() != 2) { return 8; }
     if (wview[0] != (1 << 41)) { return 9; }
     if (wview[1] != (1 << 42)) { return 10; }
     return 0;
@@ -1519,9 +1519,9 @@ func TestWASMStringSlice(t *testing.T) {
     var hello: string = greeting[0:5];
     var world: string = greeting[6:11];
     var dot: string = greeting[5:6];
-    if (len(hello) != 5) { return 1; }
-    if (len(world) != 5) { return 2; }
-    if (len(dot) != 1) { return 3; }
+    if (hello.len() != 5) { return 1; }
+    if (world.len() != 5) { return 2; }
+    if (dot.len() != 1) { return 3; }
     if (hello != "hello") { return 4; }
     if (world != "world") { return 5; }
     if (dot != " ") { return 6; }
@@ -1532,7 +1532,7 @@ func TestWASMStringSlice(t *testing.T) {
     if (suffix != "world") { return 8; }
     // Empty slice.
     var empty: string = greeting[3:3];
-    if (len(empty) != 0) { return 9; }
+    if (empty.len() != 0) { return 9; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -1586,7 +1586,7 @@ func TestWASMStringMethodsExtra(t *testing.T) {
     var padded: string = "  hello   ";
     var trimmed: string = padded.trim();
     if (trimmed != "hello") { return 7; }
-    if (len(trimmed) != 5) { return 8; }
+    if (trimmed.len() != 5) { return 8; }
     var blank: string = "    ";
     if (blank.trim() != "") { return 9; }
     var nopad: string = "abc";
@@ -1610,7 +1610,7 @@ func TestWASMStringSplit(t *testing.T) {
 	src := `function main(): i32 {
     var s: string = "a,b,c,d";
     var parts: string[] = s.split(",");
-    if (len(parts) != 4) { return 1; }
+    if (parts.len() != 4) { return 1; }
     if (parts[0] != "a") { return 2; }
     if (parts[1] != "b") { return 3; }
     if (parts[2] != "c") { return 4; }
@@ -1618,27 +1618,27 @@ func TestWASMStringSplit(t *testing.T) {
 
     // No occurrence: single-element array holding the whole input.
     var none: string[] = "hello".split(",");
-    if (len(none) != 1) { return 6; }
+    if (none.len() != 1) { return 6; }
     if (none[0] != "hello") { return 7; }
 
     // Multi-byte separator.
     var s2: string = "alpha::beta::gamma";
     var p2: string[] = s2.split("::");
-    if (len(p2) != 3) { return 8; }
+    if (p2.len() != 3) { return 8; }
     if (p2[0] != "alpha") { return 9; }
     if (p2[1] != "beta") { return 10; }
     if (p2[2] != "gamma") { return 11; }
 
     // Empty separator splits into chars.
     var chars: string[] = "abc".split("");
-    if (len(chars) != 3) { return 12; }
+    if (chars.len() != 3) { return 12; }
     if (chars[0] != "a") { return 13; }
     if (chars[1] != "b") { return 14; }
     if (chars[2] != "c") { return 15; }
 
     // Empty pieces around separators are preserved.
     var trailing: string[] = ",a,b,".split(",");
-    if (len(trailing) != 4) { return 16; }
+    if (trailing.len() != 4) { return 16; }
     if (trailing[0] != "") { return 17; }
     if (trailing[3] != "") { return 18; }
     return 0;
@@ -1742,40 +1742,40 @@ func TestWASMStringLines(t *testing.T) {
 	src := `function main(): i32 {
     // LF-only.
     var lf: string[] = "a\nb\nc".lines();
-    if (len(lf) != 3) { return 1; }
+    if (lf.len() != 3) { return 1; }
     if (lf[0] != "a") { return 2; }
     if (lf[1] != "b") { return 3; }
     if (lf[2] != "c") { return 4; }
 
     // CRLF stripped.
     var crlf: string[] = "a\r\nb\r\nc".lines();
-    if (len(crlf) != 3) { return 5; }
+    if (crlf.len() != 3) { return 5; }
     if (crlf[0] != "a") { return 6; }
     if (crlf[1] != "b") { return 7; }
     if (crlf[2] != "c") { return 8; }
 
     // Trailing '\n' drops the phantom empty line.
     var trail: string[] = "a\nb\n".lines();
-    if (len(trail) != 2) { return 9; }
+    if (trail.len() != 2) { return 9; }
     if (trail[1] != "b") { return 10; }
 
     // Single "\n" → one empty line.
     var solo: string[] = "\n".lines();
-    if (len(solo) != 1) { return 11; }
+    if (solo.len() != 1) { return 11; }
     if (solo[0] != "") { return 12; }
 
     // Empty input → no lines at all.
     var empty: string[] = "".lines();
-    if (len(empty) != 0) { return 13; }
+    if (empty.len() != 0) { return 13; }
 
     // No trailing newline: partial line still emits.
     var partial: string[] = "abc".lines();
-    if (len(partial) != 1) { return 14; }
+    if (partial.len() != 1) { return 14; }
     if (partial[0] != "abc") { return 15; }
 
     // Mixed CRLF / LF.
     var mixed: string[] = "x\r\ny\nz".lines();
-    if (len(mixed) != 3) { return 16; }
+    if (mixed.len() != 3) { return 16; }
     if (mixed[0] != "x") { return 17; }
     if (mixed[1] != "y") { return 18; }
     if (mixed[2] != "z") { return 19; }
@@ -1784,7 +1784,7 @@ func TestWASMStringLines(t *testing.T) {
     // the line. Only the '\r' immediately before '\n' (the
     // CRLF tail) is stripped.
     var bareCR: string[] = "a\rb\nc".lines();
-    if (len(bareCR) != 2) { return 20; }
+    if (bareCR.len() != 2) { return 20; }
     if (bareCR[0] != "a\rb") { return 21; }
     if (bareCR[1] != "c") { return 22; }
 
@@ -1850,7 +1850,7 @@ func TestWASMStringBytes(t *testing.T) {
 	src := `function main(): i32 {
     var s: string = "hello";
     var bs: u8[] = s.bytes();
-    if (len(bs) != 5) { return 1; }
+    if (bs.len() != 5) { return 1; }
     if (bs[0] != 104) { return 2; }   // 'h'
     if (bs[1] != 101) { return 3; }   // 'e'
     if (bs[2] != 108) { return 4; }   // 'l'
@@ -1861,11 +1861,11 @@ func TestWASMStringBytes(t *testing.T) {
     if (s != "hello") { return 7; }
     var s2: string = string_from_bytes(bs);
     if (s2 != "Hello") { return 8; }
-    if (len(s2) != 5) { return 9; }
+    if (s2.len() != 5) { return 9; }
     // Empty string round-trip.
     var es: string = "";
     var ebs: u8[] = es.bytes();
-    if (len(ebs) != 0) { return 10; }
+    if (ebs.len() != 0) { return 10; }
     if (string_from_bytes(ebs) != "") { return 11; }
     return 0;
 }`
@@ -1883,23 +1883,23 @@ func TestWASMStringAsBytes(t *testing.T) {
 	src := `function main(): i32 {
     var s: string = "hello";
     var view: [u8] = s.as_bytes();
-    if (len(view) != 5) { return 1; }
+    if (view.len() != 5) { return 1; }
     if (view[0] != 104) { return 2; }   // 'h'
     if (view[4] != 111) { return 3; }   // 'o'
     // Sub-slicing the view should still alias the source.
     var tail: [u8] = view[1:5];
-    if (len(tail) != 4) { return 4; }
+    if (tail.len() != 4) { return 4; }
     if (tail[0] != 101) { return 5; }   // 'e'
 
     // Empty string -> zero-length view, no allocation drama.
     var es: string = "";
     var ev: [u8] = es.as_bytes();
-    if (len(ev) != 0) { return 6; }
+    if (ev.len() != 0) { return 6; }
 
     // Read parity with the copying bytes() variant.
     var copied: u8[] = s.bytes();
     var i: i32 = 0;
-    while (i < len(copied)) {
+    while (i < copied.len()) {
         if (copied[i] != view[i]) { return 7; }
         i = i + 1;
     }
@@ -1936,7 +1936,7 @@ func TestWASMStringIsEmptyAndRepeat(t *testing.T) {
 		if ("".repeat(7) != "") { return 40; }
 
 		// repeated len matches expectation
-		if (len("xy".repeat(4)) != 8) { return 50; }
+		if (("xy".repeat(4)).len() != 8) { return 50; }
 
 		return 0;
 	}`
@@ -3225,12 +3225,12 @@ func TestWASMSliceViews(t *testing.T) {
 	src := `function main(): i32 {
     var arr: i32[] = [10, 20, 30, 40, 50];
     var s: [i32] = arr[1:4];          // [20, 30, 40]
-    if (len(s) != 3) { return 1; }
+    if (s.len() != 3) { return 1; }
     if (s[0] != 20) { return 2; }
     if (s[1] != 30) { return 3; }
     if (s[2] != 40) { return 4; }
     var t = s[1:3];                   // [30, 40]
-    if (len(t) != 2) { return 5; }
+    if (t.len() != 2) { return 5; }
     if (t[0] != 30 || t[1] != 40) { return 6; }
     return 0;
 }`
@@ -3245,9 +3245,9 @@ func TestWASMSliceHalfBoundedForms(t *testing.T) {
 	src := `function main(): i32 {
     var arr: i32[] = [1, 2, 3, 4, 5];
     var head: [i32] = arr[:3];
-    if (len(head) != 3 || head[0] != 1 || head[2] != 3) { return 1; }
+    if (head.len() != 3 || head[0] != 1 || head[2] != 3) { return 1; }
     var tail: [i32] = arr[2:];
-    if (len(tail) != 3 || tail[0] != 3 || tail[2] != 5) { return 2; }
+    if (tail.len() != 3 || tail[0] != 3 || tail[2] != 5) { return 2; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -3310,7 +3310,7 @@ func TestWASMGenericStructMethodString(t *testing.T) {
 pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
 function main(): i32 {
     var b: Box[string] = Box { value: "hello" };
-    return len(b.unwrap());
+    return (b.unwrap()).len();
 }`
 	if got := runWasm(t, src); got != 5 {
 		t.Errorf("got %d, want 5", got)
@@ -3324,7 +3324,7 @@ pub function [A, B] (p: Pair[A, B]) first(): A { return p.a; }
 pub function [A, B] (p: Pair[A, B]) second(): B { return p.b; }
 function main(): i32 {
     var p: Pair[i32, string] = Pair { a: 42, b: "hello" };
-    return p.first() + len(p.second());
+    return p.first() + (p.second()).len();
 }`
 	if got := runWasm(t, src); got != 47 {
 		t.Errorf("got %d, want 47", got)
@@ -4191,7 +4191,7 @@ func TestWASMArrayPushI64(t *testing.T) {
     xs = xs.push(40i64);
     if (xs[0] != 10i64) { return 1; }
     if (xs[3] != 40i64) { return 2; }
-    if ((len(xs) as i64) != 4i64) { return 3; }
+    if ((xs.len() as i64) != 4i64) { return 3; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -4209,7 +4209,7 @@ func TestWASMArrayPushF64(t *testing.T) {
     xs = xs.push(3.5f64);
     xs = xs.push(4.5f64);
     if (xs[3] != 4.5f64) { return 1; }
-    if (len(xs) != 4) { return 2; }
+    if (xs.len() != 4) { return 2; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -4228,7 +4228,7 @@ func TestWASMArrayPushU8(t *testing.T) {
     xs = xs.push(255u8);
     if (xs[0] != 10u8) { return 1; }
     if (xs[2] != 255u8) { return 2; }
-    return len(xs);
+    return xs.len();
 }`
 	if got := runWasm(t, src); got != 3 {
 		t.Errorf("got %d, want 3 (3 u8 pushes)", got)
@@ -4245,7 +4245,7 @@ func TestWASMArrayPushU16(t *testing.T) {
     xs = xs.push(65535u16);
     if (xs[0] != 300u16) { return 1; }
     if (xs[1] != 65535u16) { return 2; }
-    return len(xs);
+    return xs.len();
 }`
 	if got := runWasm(t, src); got != 2 {
 		t.Errorf("got %d, want 2 (2 u16 pushes)", got)
@@ -4259,7 +4259,7 @@ func TestWASMArrayPushI64EmptyStart(t *testing.T) {
     var xs: i64[] = [];
     xs = xs.push(7i64);
     if (xs[0] != 7i64) { return 1; }
-    return len(xs);
+    return xs.len();
 }`
 	if got := runWasm(t, src); got != 1 {
 		t.Errorf("got %d, want 1 (single push from empty i64[])", got)
@@ -4273,7 +4273,7 @@ func TestWASMArrayPushI32(t *testing.T) {
     xs = xs.push(4);
     if (xs[0] != 1) { return 1; }
     if (xs[3] != 4) { return 2; }
-    return len(xs);
+    return xs.len();
 }`
 	if got := runWasm(t, src); got != 4 {
 		t.Errorf("got %d, want 4 (i32[] push)", got)
@@ -4289,12 +4289,12 @@ func TestWASMArrayPushEnum(t *testing.T) {
     xs = xs.push(JString("a"));
     xs = xs.push(JString("bb"));
     return match (xs[1]) {
-        JString(s) => len(s),
+        JString(s) => s.len(),
         _          => 0 - 1
     };
 }`
 	if got := runWasm(t, src); got != 2 {
-		t.Errorf("got %d, want 2 (len(\"bb\") after enum push)", got)
+		t.Errorf("got %d, want 2 ((\"bb\").len() after enum push)", got)
 	}
 }
 
@@ -4303,7 +4303,7 @@ func TestWASMArrayPushString(t *testing.T) {
     var xs: string[] = ["a", "b"];
     xs = xs.push("c");
     xs = xs.push("d");
-    return len(xs);
+    return xs.len();
 }`
 	if got := runWasm(t, src); got != 4 {
 		t.Errorf("got %d, want 4 (4 elements after pushes)", got)
@@ -4434,7 +4434,7 @@ func TestWASMCompoundAssign(t *testing.T) {
 }
 
 func TestWASMLenOfString(t *testing.T) {
-	src := `function main(): i32 { return len("hello"); }`
+	src := `function main(): i32 { return ("hello").len(); }`
 	if got := runWasm(t, src); got != 5 {
 		t.Errorf("got %d, want 5", got)
 	}
@@ -4489,7 +4489,7 @@ func TestWASMStringConcat(t *testing.T) {
 		var a: string = "hello, ";
 		var b: string = "world";
 		var c: string = a + b;
-		return len(c);
+		return c.len();
 	}`
 	if got := runWasm(t, src); got != 12 {
 		t.Errorf("got %d, want 12 (len of \"hello, world\")", got)
@@ -4526,7 +4526,7 @@ func TestWASMEmptyStringSentinelConcat(t *testing.T) {
 		var a: string = s[0:0];
 		var b: string = s[0:0];
 		var c: string = a + b;
-		return len(c);
+		return c.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (empty + empty)", got)
@@ -4537,7 +4537,7 @@ func TestWASMEmptyStringSentinelSlice(t *testing.T) {
 	src := `function main(): i32 {
 		var s: string = "abcd";
 		var empty: string = s[2:2];
-		return len(empty);
+		return empty.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (zero-width slice)", got)
@@ -4553,7 +4553,7 @@ func TestWASMEmptyStringSentinelSlice(t *testing.T) {
 func TestWASMEmptyU8Sentinel(t *testing.T) {
 	src := `function main(): i32 {
         var bs: u8[] = __alloc_u8(0);
-        return len(bs);
+        return bs.len();
     }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (len of __alloc_u8(0))", got)
@@ -4564,7 +4564,7 @@ func TestWASMEmptyStringSentinelFromBytes(t *testing.T) {
 	src := `function main(): i32 {
 		var bs: u8[] = __alloc_u8(0);
 		var s: string = string_from_bytes(bs);
-		return len(s);
+		return s.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (string_from_bytes of empty u8[])", got)
@@ -4579,7 +4579,7 @@ func TestWASMEmptyStringSentinelRoundtrip(t *testing.T) {
 		var s: string = "world";
 		var empty: string = s[0:0];
 		var greeting: string = "hello, " + empty + s;
-		return len(greeting);
+		return greeting.len();
 	}`
 	if got := runWasm(t, src); got != 12 {
 		t.Errorf("got %d, want 12 (\"hello, \" + \"\" + \"world\")", got)
@@ -4679,7 +4679,7 @@ func TestWASMClosureCapturesParamAndVar(t *testing.T) {
 
 func TestWASMClosureCapturesString(t *testing.T) {
 	src := `function outer(s: string): i32 {
-    function inner(): i32 { return len(s); }
+    function inner(): i32 { return s.len(); }
     return inner();
 }
 function main(): i32 { return outer("hello"); }`
@@ -4792,7 +4792,7 @@ function main(): i32 {
 // arithmetic for non-zero slot indexes.
 func TestWASMClosureCapturesMixedPointers(t *testing.T) {
 	src := `function outer(s: string, xs: i32[]): i32 {
-    function inner(): i32 { return len(s) + len(xs); }
+    function inner(): i32 { return s.len() + xs.len(); }
     return inner();
 }
 function main(): i32 {
@@ -5057,7 +5057,7 @@ func TestWASMLenOfClosureReturningString(t *testing.T) {
 }
 function main(): i32 {
     var f = makeReader();
-    return len(f());
+    return (f()).len();
 }`
 	if got := runWasm(t, src); got != 5 {
 		t.Errorf("got %d, want 5 (len of closure-returned string)", got)
@@ -5497,7 +5497,7 @@ func TestWASMEnumMatchDispatch(t *testing.T) {
 		function main(): i32 {
 			match (status()) {
 				Good => { return 0; },
-				Bad(msg) => { return len(msg); }
+				Bad(msg) => { return msg.len(); }
 			}
 			return -1;
 		}`
@@ -5556,7 +5556,7 @@ func TestWASMGenericResult(t *testing.T) {
 		function main(): i32 {
 			match (divide(20, 4)) {
 				Ok(v) => { return v; },
-				Err(msg) => { return len(msg); }
+				Err(msg) => { return msg.len(); }
 			}
 			return -1;
 		}`
@@ -5584,7 +5584,7 @@ func TestWASMArenaReset(t *testing.T) {
 		var afterRestore: i32 = arena_save();
 		if (afterAlloc <= saved) { return 1; }
 		if (afterRestore != saved) { return 2; }
-		if (len(a) != 5) { return 3; }
+		if (a.len() != 5) { return 3; }
 		return 0;
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -5606,7 +5606,7 @@ func TestWASMArenaScope(t *testing.T) {
 		var before: i32 = arena_save();
 		arena {
 			var a: i32[] = [1, 2, 3, 4, 5];
-			if (len(a) != 5) { return 1; }
+			if (a.len() != 5) { return 1; }
 		}
 		var after: i32 = arena_save();
 		if (before != after) { return 2; }
@@ -5620,11 +5620,11 @@ func TestWASMArenaScope(t *testing.T) {
 			if (midway <= outerStart) { return 3; }
 			arena {
 				var y: i32[] = [40, 50];
-				if (len(y) != 2) { return 4; }
+				if (y.len() != 2) { return 4; }
 			}
 			var afterInner: i32 = arena_save();
 			if (afterInner != midway) { return 5; }
-			if (len(x) != 3) { return 6; }
+			if (x.len() != 3) { return 6; }
 		}
 		var outerEnd: i32 = arena_save();
 		if (outerEnd != outerStart) { return 7; }
@@ -5643,8 +5643,8 @@ func TestWASMRandomBytes(t *testing.T) {
 	src := `function main(): i32 {
 		var a: string = random_bytes(16);
 		var b: string = random_bytes(16);
-		if (len(a) != 16) { return 1; }
-		if (len(b) != 16) { return 2; }
+		if (a.len() != 16) { return 1; }
+		if (b.len() != 16) { return 2; }
 		if (a == b) { return 3; }
 		return 0;
 	}`
@@ -5778,7 +5778,7 @@ func TestWASMReadWriteFileRoundtrip(t *testing.T) {
 			None => {}
 		}
 		match (read_file("rt.txt")) {
-			Ok(s) => { return len(s); },
+			Ok(s) => { return s.len(); },
 			Err(_) => { return 2; }
 		}
 		return -1;
@@ -5954,8 +5954,8 @@ func TestWASMTupleDestructure(t *testing.T) {
 func TestWASMHex(t *testing.T) {
 	src := `function main(): i32 {
 		// empty round-trips to empty
-		if (len(hex_encode("")) != 0) { return 1; }
-		if (len(hex_decode("")) != 0) { return 2; }
+		if ((hex_encode("")).len() != 0) { return 1; }
+		if ((hex_decode("")).len() != 0) { return 2; }
 
 		// "hi" -> "6869"
 		if (hex_encode("hi") != "6869") { return 3; }
@@ -6119,7 +6119,7 @@ func TestWASMQueryParse(t *testing.T) {
 		if (m.len() != 3) { return 1; }
 		match (m.get("a")) {
 			Some(arr) => {
-				if (len(arr) != 1) { return 2; }
+				if (arr.len() != 1) { return 2; }
 				if (arr[0] != "1") { return 3; }
 			},
 			None => { return 4; }
@@ -6143,7 +6143,7 @@ func TestWASMQueryParse(t *testing.T) {
 		if (m3.len() != 2) { return 20; }
 		match (m3.get("flag")) {
 			Some(arr) => {
-				if (len(arr) != 1) { return 21; }
+				if (arr.len() != 1) { return 21; }
 				if (arr[0] != "") { return 22; }
 			},
 			None => { return 23; }
@@ -6162,7 +6162,7 @@ func TestWASMQueryParse(t *testing.T) {
 		if (m6.len() != 1) { return 50; }
 		match (m6.get("tag")) {
 			Some(arr) => {
-				if (len(arr) != 3) { return 51; }
+				if (arr.len() != 3) { return 51; }
 				if (arr[0] != "a") { return 52; }
 				if (arr[1] != "b") { return 53; }
 				if (arr[2] != "c") { return 54; }
@@ -6175,7 +6175,7 @@ func TestWASMQueryParse(t *testing.T) {
 		if (m7.len() != 2) { return 60; }
 		match (m7.get("k")) {
 			Some(arr) => {
-				if (len(arr) != 2) { return 61; }
+				if (arr.len() != 2) { return 61; }
 				if (arr[0] != "1") { return 62; }
 				if (arr[1] != "2") { return 63; }
 			},
@@ -6183,7 +6183,7 @@ func TestWASMQueryParse(t *testing.T) {
 		}
 		match (m7.get("j")) {
 			Some(arr) => {
-				if (len(arr) != 1) { return 65; }
+				if (arr.len() != 1) { return 65; }
 				if (arr[0] != "x") { return 66; }
 			},
 			None => { return 67; }
@@ -6309,7 +6309,7 @@ func TestWASMJsonParse(t *testing.T) {
 		// Empty array.
 		match (json_parse("[]")) {
 			Some(v) => { match (v) {
-				JArray(arr) => { if (len(arr) != 0) { return 40; } },
+				JArray(arr) => { if (arr.len() != 0) { return 40; } },
 				JNull => { return 41; }, JBool(_) => { return 41; }, JNumber(_) => { return 41; }, JString(_) => { return 41; }, JObject(_) => { return 41; }
 			} },
 			None => { return 42; }
@@ -6318,7 +6318,7 @@ func TestWASMJsonParse(t *testing.T) {
 		match (json_parse("[1,\"two\",true,null]")) {
 			Some(v) => { match (v) {
 				JArray(arr) => {
-					if (len(arr) != 4) { return 50; }
+					if (arr.len() != 4) { return 50; }
 					match (arr[0]) { JNumber(n) => { if (n != "1") { return 51; } }, JNull => { return 52; }, JBool(_) => { return 52; }, JString(_) => { return 52; }, JArray(_) => { return 52; }, JObject(_) => { return 52; } }
 					match (arr[1]) { JString(s) => { if (s != "two") { return 53; } }, JNull => { return 54; }, JBool(_) => { return 54; }, JNumber(_) => { return 54; }, JArray(_) => { return 54; }, JObject(_) => { return 54; } }
 				},
@@ -6351,7 +6351,7 @@ func TestWASMJsonParse(t *testing.T) {
 		// Whitespace tolerance.
 		match (json_parse("  [ 1 , 2 ] ")) {
 			Some(v) => { match (v) {
-				JArray(arr) => { if (len(arr) != 2) { return 80; } },
+				JArray(arr) => { if (arr.len() != 2) { return 80; } },
 				JNull => { return 81; }, JBool(_) => { return 81; }, JNumber(_) => { return 81; }, JString(_) => { return 81; }, JObject(_) => { return 81; }
 			} },
 			None => { return 82; }
@@ -6379,7 +6379,7 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 		"    match (json_parse(\"\\\"\\\\uD83D\\\\uDE00\\\"\")) {\n" +
 		"        Some(v) => { match (v) {\n" +
 		"            JString(s) => {\n" +
-		"                if (len(s) != 4) { return 1; }\n" +
+		"                if (s.len() != 4) { return 1; }\n" +
 		"                if ((s[0] as i32) != 240) { return 2; }\n" +
 		"                if ((s[1] as i32) != 159) { return 3; }\n" +
 		"                if ((s[2] as i32) != 152) { return 4; }\n" +
@@ -6393,7 +6393,7 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 		"    match (json_parse(\"\\\"\\\\uD800x\\\"\")) {\n" +
 		"        Some(v) => { match (v) {\n" +
 		"            JString(s) => {\n" +
-		"                if (len(s) != 4) { return 8; }\n" +
+		"                if (s.len() != 4) { return 8; }\n" +
 		"                if ((s[0] as i32) != 239) { return 9; }\n" +
 		"                if ((s[1] as i32) != 191) { return 10; }\n" +
 		"                if ((s[2] as i32) != 189) { return 11; }\n" +
@@ -6407,7 +6407,7 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 		"    match (json_parse(\"\\\"\\\\uDC00\\\"\")) {\n" +
 		"        Some(v) => { match (v) {\n" +
 		"            JString(s) => {\n" +
-		"                if (len(s) != 3) { return 15; }\n" +
+		"                if (s.len() != 3) { return 15; }\n" +
 		"                if ((s[0] as i32) != 239) { return 16; }\n" +
 		"                if ((s[1] as i32) != 191) { return 17; }\n" +
 		"                if ((s[2] as i32) != 189) { return 18; }\n" +
@@ -6570,30 +6570,30 @@ function main(): i32 {
 
     // 0 -> [0x00]
     var b1: u8[] = leb128.uleb_u32(empty, 0u32);
-    if (len(b1) != 1) { return 1; }
+    if (b1.len() != 1) { return 1; }
     if (b1[0] != 0u8) { return 2; }
 
     // 127 -> [0x7F]
     var b2: u8[] = leb128.uleb_u32(empty, 127u32);
-    if (len(b2) != 1) { return 10; }
+    if (b2.len() != 1) { return 10; }
     if (b2[0] != 127u8) { return 11; }
 
     // 128 -> [0x80, 0x01]
     var b3: u8[] = leb128.uleb_u32(empty, 128u32);
-    if (len(b3) != 2) { return 20; }
+    if (b3.len() != 2) { return 20; }
     if (b3[0] != 128u8) { return 21; }
     if (b3[1] != 1u8) { return 22; }
 
     // 624485 -> [0xE5, 0x8E, 0x26]
     var b4: u8[] = leb128.uleb_u32(empty, 624485u32);
-    if (len(b4) != 3) { return 30; }
+    if (b4.len() != 3) { return 30; }
     if (b4[0] != 229u8) { return 31; }
     if (b4[1] != 142u8) { return 32; }
     if (b4[2] != 38u8) { return 33; }
 
     // u32 max -> [0xFF, 0xFF, 0xFF, 0xFF, 0x0F]
     var b5: u8[] = leb128.uleb_u32(empty, 4294967295u32);
-    if (len(b5) != 5) { return 40; }
+    if (b5.len() != 5) { return 40; }
     if (b5[0] != 255u8) { return 41; }
     if (b5[1] != 255u8) { return 42; }
     if (b5[2] != 255u8) { return 43; }
@@ -6603,7 +6603,7 @@ function main(): i32 {
     // Append preserves seed bytes.
     var seed: u8[] = [10u8, 20u8];
     var b6: u8[] = leb128.uleb_u32(seed, 128u32);
-    if (len(b6) != 4) { return 50; }
+    if (b6.len() != 4) { return 50; }
     if (b6[0] != 10u8) { return 51; }
     if (b6[1] != 20u8) { return 52; }
     if (b6[2] != 128u8) { return 53; }
@@ -6612,7 +6612,7 @@ function main(): i32 {
     // u64 path with a value above 2^32: 8589934592 (= 2^33).
     // Encoding: [0x80, 0x80, 0x80, 0x80, 0x20].
     var b7: u8[] = leb128.uleb_u64(empty, 8589934592u64);
-    if (len(b7) != 5) { return 60; }
+    if (b7.len() != 5) { return 60; }
     if (b7[0] != 128u8) { return 61; }
     if (b7[1] != 128u8) { return 62; }
     if (b7[2] != 128u8) { return 63; }
@@ -6639,39 +6639,39 @@ function main(): i32 {
 
     // 0 -> [0x00]
     var b1: u8[] = leb128.sleb_i32(empty, 0);
-    if (len(b1) != 1) { return 1; }
+    if (b1.len() != 1) { return 1; }
     if (b1[0] != 0u8) { return 2; }
 
     // -1 -> [0x7F]   (the canonical "all-ones" sleb terminator)
     var b2: u8[] = leb128.sleb_i32(empty, 0 - 1);
-    if (len(b2) != 1) { return 10; }
+    if (b2.len() != 1) { return 10; }
     if (b2[0] != 127u8) { return 11; }
 
     // 63 -> [0x3F]   (largest single-byte positive)
     var b3: u8[] = leb128.sleb_i32(empty, 63);
-    if (len(b3) != 1) { return 20; }
+    if (b3.len() != 1) { return 20; }
     if (b3[0] != 63u8) { return 21; }
 
     // 64 -> [0xC0, 0x00]   (bit-6 set forces a continuation byte)
     var b4: u8[] = leb128.sleb_i32(empty, 64);
-    if (len(b4) != 2) { return 30; }
+    if (b4.len() != 2) { return 30; }
     if (b4[0] != 192u8) { return 31; }
     if (b4[1] != 0u8) { return 32; }
 
     // -64 -> [0x40]   (smallest single-byte negative)
     var b5: u8[] = leb128.sleb_i32(empty, 0 - 64);
-    if (len(b5) != 1) { return 40; }
+    if (b5.len() != 1) { return 40; }
     if (b5[0] != 64u8) { return 41; }
 
     // -65 -> [0xBF, 0x7F]
     var b6: u8[] = leb128.sleb_i32(empty, 0 - 65);
-    if (len(b6) != 2) { return 50; }
+    if (b6.len() != 2) { return 50; }
     if (b6[0] != 191u8) { return 51; }
     if (b6[1] != 127u8) { return 52; }
 
     // -123456 -> [0xC0, 0xBB, 0x78]   (multi-byte negative)
     var b7: u8[] = leb128.sleb_i32(empty, 0 - 123456);
-    if (len(b7) != 3) { return 60; }
+    if (b7.len() != 3) { return 60; }
     if (b7[0] != 192u8) { return 61; }
     if (b7[1] != 187u8) { return 62; }
     if (b7[2] != 120u8) { return 63; }
@@ -6679,14 +6679,14 @@ function main(): i32 {
     // i64 wide value: 8589934592 (= 2^33).
     // Encoding: [0x80, 0x80, 0x80, 0x80, 0x20].
     var b8: u8[] = leb128.sleb_i64(empty, 8589934592i64);
-    if (len(b8) != 5) { return 70; }
+    if (b8.len() != 5) { return 70; }
     if (b8[0] != 128u8) { return 71; }
     if (b8[4] != 32u8) { return 75; }
 
     // i64 negative wide value: -8589934592.
     // Encoding: [0x80, 0x80, 0x80, 0x80, 0x60].
     var b9: u8[] = leb128.sleb_i64(empty, 0i64 - 8589934592i64);
-    if (len(b9) != 5) { return 80; }
+    if (b9.len() != 5) { return 80; }
     if (b9[0] != 128u8) { return 81; }
     if (b9[4] != 96u8) { return 85; }
 
@@ -6734,7 +6734,7 @@ function main(): i32 {
 
     // Module preamble: \0asm 0x01000000.
     var hdr: u8[] = encode.put_module_header(empty);
-    if (len(hdr) != 8) { return 1; }
+    if (hdr.len() != 8) { return 1; }
     if (hdr[0] != 0u8) { return 2; }
     if (hdr[1] != 97u8) { return 3; }    // 'a'
     if (hdr[2] != 115u8) { return 4; }   // 's'
@@ -6746,7 +6746,7 @@ function main(): i32 {
 
     // put_u32_le(0x12345678) — verifies byte order.
     var le: u8[] = encode.put_u32_le(empty, 305419896u32);
-    if (len(le) != 4) { return 20; }
+    if (le.len() != 4) { return 20; }
     if (le[0] != 120u8) { return 21; }   // 0x78
     if (le[1] != 86u8) { return 22; }    // 0x56
     if (le[2] != 52u8) { return 23; }    // 0x34
@@ -6755,7 +6755,7 @@ function main(): i32 {
     // put_u32_le on a seeded buffer appends, not replaces.
     var seed: u8[] = [255u8];
     var le2: u8[] = encode.put_u32_le(seed, 1u32);
-    if (len(le2) != 5) { return 30; }
+    if (le2.len() != 5) { return 30; }
     if (le2[0] != 255u8) { return 31; }
     if (le2[1] != 1u8) { return 32; }
     if (le2[2] != 0u8) { return 33; }
@@ -6781,26 +6781,26 @@ function main(): i32 {
 
     // Empty name: uleb(0) only.
     var n0: u8[] = encode.put_name(empty, "");
-    if (len(n0) != 1) { return 1; }
+    if (n0.len() != 1) { return 1; }
     if (n0[0] != 0u8) { return 2; }
 
     // "hi" -> [0x02, 'h', 'i']
     var n1: u8[] = encode.put_name(empty, "hi");
-    if (len(n1) != 3) { return 10; }
+    if (n1.len() != 3) { return 10; }
     if (n1[0] != 2u8) { return 11; }
     if (n1[1] != 104u8) { return 12; }   // 'h'
     if (n1[2] != 105u8) { return 13; }   // 'i'
 
     // Empty section body: id + uleb(0) = 2 bytes.
     var s0: u8[] = encode.put_section(empty, encode.section_type(), empty);
-    if (len(s0) != 2) { return 20; }
+    if (s0.len() != 2) { return 20; }
     if (s0[0] != 1u8) { return 21; }     // section_type id
     if (s0[1] != 0u8) { return 22; }     // size 0
 
     // Non-empty section body: id + uleb(2) + body.
     var body: u8[] = [170u8, 187u8];     // 0xAA 0xBB
     var s1: u8[] = encode.put_section(empty, encode.section_function(), body);
-    if (len(s1) != 4) { return 30; }
+    if (s1.len() != 4) { return 30; }
     if (s1[0] != 3u8) { return 31; }     // section_function id
     if (s1[1] != 2u8) { return 32; }     // size 2
     if (s1[2] != 170u8) { return 33; }
@@ -6852,7 +6852,7 @@ function main(): i32 {
     bytes = encode.put_section(bytes, encode.section_type(), type_body);
 
     // Expected: 16 bytes.
-    if (len(bytes) != 16) { return 1; }
+    if (bytes.len() != 16) { return 1; }
 
     // Preamble.
     if (bytes[0] != 0u8) { return 10; }
@@ -6881,7 +6881,7 @@ function main(): i32 {
     var ps: u8[] = [encode.valtype_i32(), encode.valtype_i64()];
     var rs: u8[] = [];
     ft2 = encode.put_func_type(ft2, ps, rs);
-    if (len(ft2) != 5) { return 40; }
+    if (ft2.len() != 5) { return 40; }
     if (ft2[0] != 96u8) { return 41; }
     if (ft2[1] != 2u8) { return 42; }
     if (ft2[2] != 127u8) { return 43; }      // i32
@@ -6907,14 +6907,14 @@ function main(): i32 {
 
     // i32.const 0 -> 0x41 0x00
     var c0: u8[] = inst.inst_i32_const(empty, 0);
-    if (len(c0) != 2) { return 1; }
+    if (c0.len() != 2) { return 1; }
     if (c0[0] != 65u8) { return 2; }
     if (c0[1] != 0u8) { return 3; }
 
     // i32.const 63 -> 0x41 0x3F (largest single-byte sleb positive
     // — bit-6 clear so no continuation needed).
     var c63: u8[] = inst.inst_i32_const(empty, 63);
-    if (len(c63) != 2) { return 10; }
+    if (c63.len() != 2) { return 10; }
     if (c63[0] != 65u8) { return 11; }
     if (c63[1] != 63u8) { return 12; }
 
@@ -6922,33 +6922,33 @@ function main(): i32 {
     // sleb form needs a continuation byte; otherwise [0x7F] would
     // decode to -1. This is the trap wasm hex dumps stumble into.
     var c127: u8[] = inst.inst_i32_const(empty, 127);
-    if (len(c127) != 3) { return 15; }
+    if (c127.len() != 3) { return 15; }
     if (c127[0] != 65u8) { return 16; }
     if (c127[1] != 255u8) { return 17; }
     if (c127[2] != 0u8) { return 18; }
 
     // i32.const -1 -> 0x41 0x7F (sleb 0x7F is the all-ones term)
     var cn1: u8[] = inst.inst_i32_const(empty, 0 - 1);
-    if (len(cn1) != 2) { return 20; }
+    if (cn1.len() != 2) { return 20; }
     if (cn1[1] != 127u8) { return 22; }
 
     // i32.const 128 -> 0x41 0x80 0x01 (sleb boundary)
     var c128: u8[] = inst.inst_i32_const(empty, 128);
-    if (len(c128) != 3) { return 30; }
+    if (c128.len() != 3) { return 30; }
     if (c128[0] != 65u8) { return 31; }
     if (c128[1] != 128u8) { return 32; }
     if (c128[2] != 1u8) { return 33; }
 
     // i64.const 42 -> 0x42 0x2A
     var ci64: u8[] = inst.inst_i64_const(empty, 42i64);
-    if (len(ci64) != 2) { return 40; }
+    if (ci64.len() != 2) { return 40; }
     if (ci64[0] != 66u8) { return 41; }
     if (ci64[1] != 42u8) { return 42; }
 
     // f32.const with bit pattern 0x3F800000 (= 1.0): 0x43 followed
     // by four LE bytes [0x00, 0x00, 0x80, 0x3F].
     var f1: u8[] = inst.inst_f32_const(empty, 1065353216u32);
-    if (len(f1) != 5) { return 50; }
+    if (f1.len() != 5) { return 50; }
     if (f1[0] != 67u8) { return 51; }
     if (f1[1] != 0u8) { return 52; }
     if (f1[2] != 0u8) { return 53; }
@@ -6958,7 +6958,7 @@ function main(): i32 {
     // f64.const with bit pattern 0x3FF0000000000000 (= 1.0): 0x44
     // followed by eight LE bytes ending in 0x3F.
     var f2: u8[] = inst.inst_f64_const(empty, 4607182418800017408u64);
-    if (len(f2) != 9) { return 60; }
+    if (f2.len() != 9) { return 60; }
     if (f2[0] != 68u8) { return 61; }
     if (f2[1] != 0u8) { return 62; }
     if (f2[7] != 240u8) { return 67; }  // 0xF0
@@ -6982,38 +6982,38 @@ function main(): i32 {
 
     // local.get 0 -> 0x20 0x00
     var lg0: u8[] = inst.inst_local_get(empty, 0u32);
-    if (len(lg0) != 2) { return 1; }
+    if (lg0.len() != 2) { return 1; }
     if (lg0[0] != 32u8) { return 2; }
     if (lg0[1] != 0u8) { return 3; }
 
     // local.set 5 -> 0x21 0x05
     var ls5: u8[] = inst.inst_local_set(empty, 5u32);
-    if (len(ls5) != 2) { return 10; }
+    if (ls5.len() != 2) { return 10; }
     if (ls5[0] != 33u8) { return 11; }
     if (ls5[1] != 5u8) { return 12; }
 
     // local.tee 1 -> 0x22 0x01
     var lt1: u8[] = inst.inst_local_tee(empty, 1u32);
-    if (len(lt1) != 2) { return 20; }
+    if (lt1.len() != 2) { return 20; }
     if (lt1[0] != 34u8) { return 21; }
     if (lt1[1] != 1u8) { return 22; }
 
     // local.get 130 -> 0x20 0x82 0x01 (uleb of 130)
     var lg130: u8[] = inst.inst_local_get(empty, 130u32);
-    if (len(lg130) != 3) { return 30; }
+    if (lg130.len() != 3) { return 30; }
     if (lg130[0] != 32u8) { return 31; }
     if (lg130[1] != 130u8) { return 32; }
     if (lg130[2] != 1u8) { return 33; }
 
     // global.get 7 -> 0x23 0x07
     var gg7: u8[] = inst.inst_global_get(empty, 7u32);
-    if (len(gg7) != 2) { return 40; }
+    if (gg7.len() != 2) { return 40; }
     if (gg7[0] != 35u8) { return 41; }
     if (gg7[1] != 7u8) { return 42; }
 
     // global.set 0 -> 0x24 0x00
     var gs0: u8[] = inst.inst_global_set(empty, 0u32);
-    if (len(gs0) != 2) { return 50; }
+    if (gs0.len() != 2) { return 50; }
     if (gs0[0] != 36u8) { return 51; }
     if (gs0[1] != 0u8) { return 52; }
 
@@ -7035,7 +7035,7 @@ function main(): i32 {
     var empty: u8[] = [];
 
     // Single-byte opcodes.
-    if (len(inst.inst_unreachable(empty)) != 1) { return 1; }
+    if ((inst.inst_unreachable(empty)).len() != 1) { return 1; }
     if (inst.inst_unreachable(empty)[0] != 0u8) { return 2; }
     if (inst.inst_nop(empty)[0] != 1u8) { return 3; }
     if (inst.inst_else(empty)[0] != 5u8) { return 4; }
@@ -7046,13 +7046,13 @@ function main(): i32 {
 
     // block bt=empty -> 0x02 0x40
     var bk: u8[] = inst.inst_block_start(empty, inst.blocktype_empty());
-    if (len(bk) != 2) { return 10; }
+    if (bk.len() != 2) { return 10; }
     if (bk[0] != 2u8) { return 11; }
     if (bk[1] != 64u8) { return 12; }
 
     // loop bt=i32 -> 0x03 0x7F
     var lp: u8[] = inst.inst_loop_start(empty, encode.valtype_i32());
-    if (len(lp) != 2) { return 20; }
+    if (lp.len() != 2) { return 20; }
     if (lp[0] != 3u8) { return 21; }
     if (lp[1] != 127u8) { return 22; }
 
@@ -7078,7 +7078,7 @@ function main(): i32 {
 
     // call_indirect typeidx=2 tableidx=0 -> 0x11 0x02 0x00
     var ci: u8[] = inst.inst_call_indirect(empty, 2u32, 0u32);
-    if (len(ci) != 3) { return 70; }
+    if (ci.len() != 3) { return 70; }
     if (ci[0] != 17u8) { return 71; }
     if (ci[1] != 2u8) { return 72; }
     if (ci[2] != 0u8) { return 73; }
@@ -7109,7 +7109,7 @@ function main(): i32 {
 
     // Expected inner bytes: 0x00 (locals=0), 0x41 0x2A (i32.const 42),
     // 0x0B (end). Wrapped: 0x04 (size=4) + the 4 inner bytes.
-    if (len(entry) != 5) { return 1; }
+    if (entry.len() != 5) { return 1; }
     if (entry[0] != 4u8) { return 2; }     // size
     if (entry[1] != 0u8) { return 3; }     // locals_vec(0)
     if (entry[2] != 65u8) { return 4; }    // i32.const
@@ -7118,7 +7118,7 @@ function main(): i32 {
 
     // Locals: one group of 3 i32s.
     var locals3: u8[] = inst.put_locals_one_group(empty, 3u32, encode.valtype_i32());
-    if (len(locals3) != 3) { return 10; }
+    if (locals3.len() != 3) { return 10; }
     if (locals3[0] != 1u8) { return 11; }      // num groups
     if (locals3[1] != 3u8) { return 12; }      // count
     if (locals3[2] != 127u8) { return 13; }    // i32 valtype
@@ -7129,7 +7129,7 @@ function main(): i32 {
     var entry2: u8[] = inst.put_function_body(empty, locals3, body2);
     // Inner: locals(3 bytes) + body(3 bytes) + end(1) = 7 bytes.
     // Wrapped: size_uleb(7) = 0x07, then the 7 inner bytes.
-    if (len(entry2) != 8) { return 20; }
+    if (entry2.len() != 8) { return 20; }
     if (entry2[0] != 7u8) { return 21; }      // size
     if (entry2[1] != 1u8) { return 22; }      // locals num groups
     if (entry2[2] != 3u8) { return 23; }      // group count
@@ -7296,7 +7296,7 @@ function main(): i32 {
     body = numeric.inst_i32_add(body);
 
     // Expected: [0x20, 0x00, 0x20, 0x01, 0x6A] = 5 bytes.
-    if (len(body) != 5) { return 1; }
+    if (body.len() != 5) { return 1; }
     if (body[0] != 32u8)  { return 2; }    // local.get
     if (body[1] != 0u8)   { return 3; }
     if (body[2] != 32u8)  { return 4; }    // local.get
@@ -7309,7 +7309,7 @@ function main(): i32 {
     body2 = inst.inst_local_get(body2, 0u32);
     body2 = numeric.inst_i32_eqz(body2);
     body2 = inst.inst_br_if(body2, 0u32);
-    if (len(body2) != 5) { return 10; }
+    if (body2.len() != 5) { return 10; }
     if (body2[0] != 32u8) { return 11; }   // local.get
     if (body2[1] != 0u8)  { return 12; }
     if (body2[2] != 69u8) { return 13; }   // i32.eqz
@@ -7335,14 +7335,14 @@ function main(): i32 {
 
     // i32.load align=2 offset=0 -> 0x28 0x02 0x00
     var l32: u8[] = memory.inst_i32_load(e, 2u32, 0u32);
-    if (len(l32) != 3)       { return 1; }
+    if (l32.len() != 3)       { return 1; }
     if (l32[0] != 40u8)      { return 2; }
     if (l32[1] != 2u8)       { return 3; }
     if (l32[2] != 0u8)       { return 4; }
 
     // i64.load align=3 offset=128 -> 0x29 0x03 0x80 0x01 (uleb 128)
     var l64: u8[] = memory.inst_i64_load(e, 3u32, 128u32);
-    if (len(l64) != 4)       { return 10; }
+    if (l64.len() != 4)       { return 10; }
     if (l64[0] != 41u8)      { return 11; }
     if (l64[1] != 3u8)       { return 12; }
     if (l64[2] != 128u8)     { return 13; }
@@ -7384,7 +7384,7 @@ function main(): i32 {
 
     // i32.store align=2 offset=4 -> 0x36 0x02 0x04
     var s32: u8[] = memory.inst_i32_store(e, 2u32, 4u32);
-    if (len(s32) != 3)  { return 1; }
+    if (s32.len() != 3)  { return 1; }
     if (s32[0] != 54u8) { return 2; }
     if (s32[1] != 2u8)  { return 3; }
     if (s32[2] != 4u8)  { return 4; }
@@ -7418,12 +7418,12 @@ function main(): i32 {
     var e: u8[] = [];
 
     var sz: u8[] = memory.inst_memory_size(e);
-    if (len(sz) != 2)  { return 1; }
+    if (sz.len() != 2)  { return 1; }
     if (sz[0] != 63u8) { return 2; }
     if (sz[1] != 0u8)  { return 3; }
 
     var gr: u8[] = memory.inst_memory_grow(e);
-    if (len(gr) != 2)  { return 10; }
+    if (gr.len() != 2)  { return 10; }
     if (gr[0] != 64u8) { return 11; }
     if (gr[1] != 0u8)  { return 12; }
 
@@ -7520,7 +7520,7 @@ function main(): i32 {
     // No functions: section id=3, size=1, body=[0x00] (vec count 0).
     var noidxs: u32[] = [];
     var s0: u8[] = sections.encode_function_section(empty, noidxs);
-    if (len(s0) != 3) { return 1; }
+    if (s0.len() != 3) { return 1; }
     if (s0[0] != 3u8) { return 2; }
     if (s0[1] != 1u8) { return 3; }
     if (s0[2] != 0u8) { return 4; }
@@ -7529,7 +7529,7 @@ function main(): i32 {
     // 0x01, 0x02]. Wrapped: [0x03, 0x04, 0x03, 0x00, 0x01, 0x02].
     var idxs: u32[] = [0u32, 1u32, 2u32];
     var s3: u8[] = sections.encode_function_section(empty, idxs);
-    if (len(s3) != 6) { return 10; }
+    if (s3.len() != 6) { return 10; }
     if (s3[0] != 3u8) { return 11; }    // section_function id
     if (s3[1] != 4u8) { return 12; }    // size = 4
     if (s3[2] != 3u8) { return 13; }    // vec count = 3
@@ -7541,7 +7541,7 @@ function main(): i32 {
     // count=1 + 0x80 0x01 = 3 bytes; wrapped = 5 bytes.
     var big: u32[] = [128u32];
     var s4: u8[] = sections.encode_function_section(empty, big);
-    if (len(s4) != 5)   { return 20; }
+    if (s4.len() != 5)   { return 20; }
     if (s4[0] != 3u8)   { return 21; }
     if (s4[1] != 3u8)   { return 22; }    // body size 3
     if (s4[2] != 1u8)   { return 23; }    // vec count 1
@@ -7565,7 +7565,7 @@ function main(): i32 {
 
     // start: id=8, size=1, body=[funcidx]. funcidx=0 -> [0x08, 0x01, 0x00].
     var ss: u8[] = sections.encode_start_section(empty, 0u32);
-    if (len(ss) != 3) { return 1; }
+    if (ss.len() != 3) { return 1; }
     if (ss[0] != 8u8) { return 2; }
     if (ss[1] != 1u8) { return 3; }
     if (ss[2] != 0u8) { return 4; }
@@ -7573,7 +7573,7 @@ function main(): i32 {
     // memory, no max: id=5, body=[count=1, flag=0, min=1]
     // -> wrapped 5 bytes.
     var mNoMax: u8[] = sections.encode_memory_section(empty, 1u32, 0 - 1);
-    if (len(mNoMax) != 5) { return 10; }
+    if (mNoMax.len() != 5) { return 10; }
     if (mNoMax[0] != 5u8) { return 11; }   // section_memory id
     if (mNoMax[1] != 3u8) { return 12; }   // size = 3
     if (mNoMax[2] != 1u8) { return 13; }   // count = 1
@@ -7583,7 +7583,7 @@ function main(): i32 {
     // memory, with max: id=5, body=[count=1, flag=1, min=1, max=2]
     // -> wrapped 6 bytes.
     var mWithMax: u8[] = sections.encode_memory_section(empty, 1u32, 2);
-    if (len(mWithMax) != 6) { return 20; }
+    if (mWithMax.len() != 6) { return 20; }
     if (mWithMax[0] != 5u8) { return 21; }
     if (mWithMax[1] != 4u8) { return 22; }   // size = 4
     if (mWithMax[2] != 1u8) { return 23; }   // count = 1
@@ -7614,7 +7614,7 @@ function main(): i32 {
     var s1: u8[] = sections.encode_export_section(empty, nms, ks, ixs);
     // Expected: [0x07, 0x08, 0x01, 0x04, 'm', 'a', 'i', 'n', 0x00, 0x00]
     // = 10 bytes.
-    if (len(s1) != 10) { return 1; }
+    if (s1.len() != 10) { return 1; }
     if (s1[0] != 7u8)   { return 2; }    // section_export
     if (s1[1] != 8u8)   { return 3; }    // body size 8
     if (s1[2] != 1u8)   { return 4; }    // count
@@ -7635,7 +7635,7 @@ function main(): i32 {
     //   "memory"=[6, m,e,m,o,r,y], kind=2, idx=0     -> 9 bytes
     //   "g"=[1, g], kind=3, idx=2                    -> 4 bytes
     // total body = 1 + 9 + 4 = 14. Wrapped = 16 bytes.
-    if (len(s2) != 16)  { return 20; }
+    if (s2.len() != 16)  { return 20; }
     if (s2[0] != 7u8)   { return 21; }
     if (s2[1] != 14u8)  { return 22; }
     if (s2[2] != 2u8)   { return 23; }
@@ -7673,7 +7673,7 @@ function main(): i32 {
     var rr: u8[][] = [r];
     var ts: u8[] = sections.encode_type_section(empty, pp, rr);
     // Expected: id=1, size=6, body=[count=1, 0x60, 1, 0x7F, 1, 0x7F] = 8 bytes.
-    if (len(ts) != 8) { return 1; }
+    if (ts.len() != 8) { return 1; }
     if (ts[0] != 1u8) { return 2; }
     if (ts[1] != 6u8) { return 3; }
     if (ts[2] != 1u8) { return 4; }
@@ -7693,7 +7693,7 @@ function main(): i32 {
     var cs: u8[] = sections.encode_code_section(empty, bodies);
     // Section body: count=1 (1 byte) + fn (5 bytes) = 6 bytes.
     // Wrapped: id (1) + size_uleb (1) + body (6) = 8 bytes.
-    if (len(cs) != 8)  { return 20; }
+    if (cs.len() != 8)  { return 20; }
     if (cs[0] != 10u8) { return 21; }    // section_code id
     if (cs[1] != 6u8)  { return 22; }    // body size 6
     if (cs[2] != 1u8)  { return 23; }    // body count 1
@@ -7734,7 +7734,7 @@ function main(): i32 {
     // = 7 bytes per segment.
     // Section body: count=1 (1) + 7 = 8 bytes. Wrapped: id + size + body
     // = 1 + 1 + 8 = 10 bytes.
-    if (len(ds) != 10) { return 1; }
+    if (ds.len() != 10) { return 1; }
     if (ds[0] != 11u8) { return 2; }    // section_data id
     if (ds[1] != 8u8)  { return 3; }    // body size 8
     if (ds[2] != 1u8)  { return 4; }    // segment count 1
@@ -7776,7 +7776,7 @@ function main(): i32 {
     //   kind=0x00 (1)
     //   desc = uleb(0) = [0] (1)
     // = 11 bytes. Wrapped: id(1) + size(1) + body(11) = 13 bytes.
-    if (len(s1) != 13) { return 1; }
+    if (s1.len() != 13) { return 1; }
     if (s1[0] != 2u8)  { return 2; }     // section_import id
     if (s1[1] != 11u8) { return 3; }     // body size 11
     if (s1[2] != 1u8)  { return 4; }     // count 1
@@ -7799,9 +7799,9 @@ function main(): i32 {
     var s2: u8[] = imports.encode_import_section(empty, mods2, nms2, ks2, descs2);
     // Spot-check the global descriptor at the tail: valtype + mut
     // are the last two bytes.
-    if (len(s2) < 20) { return 20; }
+    if (s2.len() < 20) { return 20; }
     if (s2[0] != 2u8) { return 21; }
-    var last: i32 = len(s2) - 1;
+    var last: i32 = s2.len() - 1;
     if (s2[last] != 1u8)       { return 22; }   // mut_var
     if (s2[last - 1] != 127u8) { return 23; }   // valtype_i32
 
@@ -7821,31 +7821,31 @@ import "std/wasm/encode";
 function main(): i32 {
     // import_desc_func(typeidx=5) -> [0x05]
     var df: u8[] = imports.import_desc_func(5u32);
-    if (len(df) != 1) { return 1; }
+    if (df.len() != 1) { return 1; }
     if (df[0] != 5u8) { return 2; }
 
     // import_desc_global(i32, const) -> [0x7F, 0x00]
     var dg: u8[] = imports.import_desc_global(encode.valtype_i32(), imports.mut_const());
-    if (len(dg) != 2)    { return 10; }
+    if (dg.len() != 2)    { return 10; }
     if (dg[0] != 127u8)  { return 11; }
     if (dg[1] != 0u8)    { return 12; }
 
     // import_desc_memory(min=1, no max) -> [0x00, 0x01]
     var dm1: u8[] = imports.import_desc_memory(1u32, 0 - 1);
-    if (len(dm1) != 2) { return 20; }
+    if (dm1.len() != 2) { return 20; }
     if (dm1[0] != 0u8) { return 21; }
     if (dm1[1] != 1u8) { return 22; }
 
     // import_desc_memory(min=1, max=2) -> [0x01, 0x01, 0x02]
     var dm2: u8[] = imports.import_desc_memory(1u32, 2);
-    if (len(dm2) != 3) { return 30; }
+    if (dm2.len() != 3) { return 30; }
     if (dm2[0] != 1u8) { return 31; }
     if (dm2[1] != 1u8) { return 32; }
     if (dm2[2] != 2u8) { return 33; }
 
     // import_desc_table(funcref, min=0, no max) -> [0x70, 0x00, 0x00]
     var dt: u8[] = imports.import_desc_table(imports.reftype_funcref(), 0u32, 0 - 1);
-    if (len(dt) != 3)   { return 40; }
+    if (dt.len() != 3)   { return 40; }
     if (dt[0] != 112u8) { return 41; }   // funcref 0x70
     if (dt[1] != 0u8)   { return 42; }   // flag no max
     if (dt[2] != 0u8)   { return 43; }   // min 0
@@ -7879,7 +7879,7 @@ function main(): i32 {
     var gs: u8[] = imports.encode_global_section(empty, vts, ms, inits);
     // Body: count=1 + valtype=0x7F + mut=0x01 + init(3) = 6 bytes
     // Wrapped: id(1) + size(1) + body(6) = 8 bytes
-    if (len(gs) != 8) { return 1; }
+    if (gs.len() != 8) { return 1; }
     if (gs[0] != 6u8) { return 2; }    // section_global id
     if (gs[1] != 6u8) { return 3; }    // body size
     if (gs[2] != 1u8) { return 4; }    // count
@@ -7904,7 +7904,7 @@ func TestWASMModuleEmpty(t *testing.T) {
 function main(): i32 {
     var m: module.Module = module.module_new();
     var bytes: u8[] = module.build(m);
-    if (len(bytes) != 8) { return 1; }
+    if (bytes.len() != 8) { return 1; }
     if (bytes[0] != 0u8)   { return 2; }
     if (bytes[1] != 97u8)  { return 3; }    // 'a'
     if (bytes[2] != 115u8) { return 4; }    // 's'
@@ -7961,7 +7961,7 @@ function main(): i32 {
 
     // Expected: 8 (preamble) + 7 (type) + 4 (function) + 10
     // (export) + 8 (code) = 37 bytes.
-    if (len(bytes) != 37) { return 1; }
+    if (bytes.len() != 37) { return 1; }
 
     // Preamble.
     if (bytes[0] != 0u8) { return 10; }
@@ -8084,8 +8084,8 @@ function main(): i32 {
     // each id comes uleb size + that many body bytes; repeat.
     var pos: i32 = 8;  // skip preamble
     var idx: i32 = 0;
-    while (idx < len(expected_ids)) {
-        if (pos >= len(bytes)) { return 100 + idx; }
+    while (idx < expected_ids.len()) {
+        if (pos >= bytes.len()) { return 100 + idx; }
         if (bytes[pos] != expected_ids[idx]) { return 1 + idx; }
         pos = pos + 1;
         // Read uleb size — small enough that bit-7 is clear here.
@@ -8097,7 +8097,7 @@ function main(): i32 {
     }
 
     // After the last section, pos should be at the end of bytes.
-    if (pos != len(bytes)) { return 50; }
+    if (pos != bytes.len()) { return 50; }
 
     return 0;
 }`
@@ -8157,7 +8157,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -8303,7 +8303,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -8352,7 +8352,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -8420,7 +8420,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -8446,7 +8446,7 @@ func TestWASMComponentHeader(t *testing.T) {
 function main(): i32 {
     var empty: u8[] = [];
     var hdr: u8[] = component.put_component_header(empty);
-    if (len(hdr) != 8) { return 1; }
+    if (hdr.len() != 8) { return 1; }
     if (hdr[0] != 0u8)   { return 2; }
     if (hdr[1] != 97u8)  { return 3; }   // 'a'
     if (hdr[2] != 115u8) { return 4; }   // 's'
@@ -8502,7 +8502,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(comp)) {
+    while (i < comp.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (comp[i] as i32).to_string();
         i = i + 1;
@@ -8586,7 +8586,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -8634,7 +8634,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -8700,7 +8700,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -8728,7 +8728,7 @@ function main(): i32 {
     // Wrapped: id(0) + uleb(6) + body = 8 bytes total.
     var payload: u8[] = [170u8, 187u8];
     var s: u8[] = sections.encode_custom_section(empty, "foo", payload);
-    if (len(s) != 8) { return 1; }
+    if (s.len() != 8) { return 1; }
     if (s[0] != 0u8)   { return 2; }    // section_custom id
     if (s[1] != 6u8)   { return 3; }    // body size
     if (s[2] != 3u8)   { return 4; }    // name length uleb
@@ -8740,7 +8740,7 @@ function main(): i32 {
 
     // Empty payload: just the name.
     var s2: u8[] = sections.encode_custom_section(empty, "x", empty);
-    if (len(s2) != 4)  { return 20; }
+    if (s2.len() != 4)  { return 20; }
     if (s2[0] != 0u8)  { return 21; }
     if (s2[1] != 2u8)  { return 22; }   // body size
     if (s2[2] != 1u8)  { return 23; }   // name length 1
@@ -8785,7 +8785,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(with_custom)) {
+    while (i < with_custom.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (with_custom[i] as i32).to_string();
         i = i + 1;
@@ -8862,7 +8862,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -8911,7 +8911,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -8959,7 +8959,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9005,7 +9005,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9049,7 +9049,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9098,7 +9098,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9143,7 +9143,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9189,7 +9189,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9236,7 +9236,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9283,7 +9283,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9327,7 +9327,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9393,7 +9393,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9444,7 +9444,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9486,7 +9486,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9554,7 +9554,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;
@@ -9619,7 +9619,7 @@ func TestWASMLebCrossValidates(t *testing.T) {
 function dump(bs: u8[]): string {
     var s: string = "";
     var i: i32 = 0;
-    while (i < len(bs)) {
+    while (i < bs.len()) {
         if (i > 0) { s = s + " "; }
         s = s + (bs[i] as i32).to_string();
         i = i + 1;
@@ -9866,7 +9866,7 @@ function main(): i32 {
 
     var output: string = "";
     var i: i32 = 0;
-    while (i < len(bytes)) {
+    while (i < bytes.len()) {
         if (i > 0) { output = output + " "; }
         output = output + (bytes[i] as i32).to_string();
         i = i + 1;

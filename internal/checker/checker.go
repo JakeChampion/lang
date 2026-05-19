@@ -1347,6 +1347,24 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.ArrayType{Elem: arrayElemParam},
 	}
+	// `arr.len()` — like push, the IR intercepts the rewritten
+	// `__method_Array_len(arr)` call and inlines the [ptr - 4]
+	// length-prefix load. One generic signature covers every
+	// element type.
+	c.info.Methods["Array.len"] = "__method_Array_len"
+	c.info.FuncSigs["__method_Array_len"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: arrayElemParam}},
+		Result: ast.NumberType{},
+	}
+	// `sl.len()` — slice length. The IR inlines a load of the
+	// 4-byte length field at `slice + 4` (after the data
+	// pointer). Generic over element type like Array.len.
+	sliceElemParam := ast.ParamType{Name: "T"}
+	c.info.Methods["slice.len"] = "__method_slice_len"
+	c.info.FuncSigs["__method_slice_len"] = &ast.FuncType{
+		Params: []ast.Type{ast.SliceType{Elem: sliceElemParam}},
+		Result: ast.NumberType{},
+	}
 
 	// Auto-discover the remaining Array methods from the
 	// `__method_Array_<name>` naming convention. Every prelude
@@ -1420,6 +1438,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// lifetime is fine under the bump allocator (the string's
 	// storage lives until the arena tears down).
 	registerStringMethod("as_bytes", nil, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}})
+	// `s.len()` — IR intercepts the rewritten
+	// `__method_string_len(s)` call and emits OpStrLen so a
+	// future SSO pass can change the encoding in one place.
+	registerStringMethod("len", nil, ast.NumberType{})
 	// `s.parse_int()` lives in the lang prelude
 	// (internal/prelude/prelude.lang). The receiver-hoisting
 	// + dispatch wires it through the same way as any
@@ -4340,26 +4362,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return ast.EnumType{Name: vr.enumName}
 			}
 		}
-		// `len(x)` is a generic builtin: it accepts any string or
-		// array and returns a number. We type-check it here rather
-		// than in FuncSigs because no monomorphic FuncType expresses
-		// the union.
-		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "len" && !c.isUserFuncOrLocal(id.Name, s) {
-			if len(n.Args) != 1 {
-				c.errfCode(n.P, "E039", "len expects 1 argument, got %d", len(n.Args))
-				return ast.NumberType{}
-			}
-			at := c.checkExpr(n.Args[0], s)
-			switch at.(type) {
-			case ast.StringType, ast.ArrayType, ast.SliceType:
-				// fine
-			default:
-				if at != nil {
-					c.errfCode(n.Args[0].Pos(), "E039", "len: expected string, array, or slice, got %s", at)
-				}
-			}
-			return ast.NumberType{}
-		}
 		// Method call dispatch: `target.method(args)` where target is a
 		// struct or enum value with a method of that name. We rewrite
 		// the Call node in place to `mangledName(target, args)` so the
@@ -4399,13 +4401,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					typeName = "f32"
 				}
 			case ast.ArrayType:
-				// Generic array methods (today: `push`). Treated
-				// as if Array were a one-type-param generic
-				// struct so the receiver-TypeArgs substitution
-				// path applies — `string[].push(v)` checks `v`
-				// as string, `JsonValue[].push(v)` as JsonValue.
+				// Generic array methods (today: `push`, `len`).
+				// Treated as if Array were a one-type-param
+				// generic struct so the receiver-TypeArgs
+				// substitution path applies — `string[].push(v)`
+				// checks `v` as string, `JsonValue[].push(v)` as
+				// JsonValue.
 				_ = t
 				typeName = "Array"
+			case ast.SliceType:
+				// Generic slice methods (today: `len`). Same
+				// one-type-param shape as Array — the element
+				// type flows through `n.TypeArgs` for any
+				// future per-T method.
+				_ = t
+				typeName = "slice"
 			}
 			if typeName != "" {
 				key := typeName + "." + fa.Field
@@ -4441,6 +4451,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// stride dispatch required here.
 					if at, ok := tt.(ast.ArrayType); ok {
 						n.TypeArgs = []ast.Type{at.Elem}
+					}
+					// Slice mirrors Array: single-element type
+					// param flows through TypeArgs.
+					if sl, ok := tt.(ast.SliceType); ok {
+						n.TypeArgs = []ast.Type{sl.Elem}
 					}
 					// Wide-V Map: `m.values()` is intercepted by
 					// the IR (emitMapValues) which dispatches by
@@ -4493,6 +4508,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// the one-element type-param list so the
 					// substitution path sees `T` and substitutes
 					// against the receiver's Elem type.
+					typeParams = []string{"T"}
+				} else if typeName == "slice" {
+					// `slice` mirrors `Array` — builtin
+					// `[T]` type-constructor with one
+					// synthetic type parameter.
 					typeParams = []string{"T"}
 				}
 				if len(typeParams) == len(n.TypeArgs) {

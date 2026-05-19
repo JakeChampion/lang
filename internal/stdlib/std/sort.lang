@@ -40,7 +40,7 @@
 import "std/string";
 
 pub function sort_i32_asc(arr: i32[]): i32[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -67,7 +67,7 @@ pub function sort_i32_asc(arr: i32[]): i32[] {
 // for every scalar element type.
 
 pub function sort_i64_asc(arr: i64[]): i64[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: i64[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -89,7 +89,7 @@ pub function sort_i64_asc(arr: i64[]): i64[] {
 }
 
 pub function sort_i64_desc(arr: i64[]): i64[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: i64[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -111,7 +111,7 @@ pub function sort_i64_desc(arr: i64[]): i64[] {
 }
 
 pub function sort_u32_asc(arr: u32[]): u32[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: u32[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -133,7 +133,7 @@ pub function sort_u32_asc(arr: u32[]): u32[] {
 }
 
 pub function sort_u64_asc(arr: u64[]): u64[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: u64[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -155,7 +155,7 @@ pub function sort_u64_asc(arr: u64[]): u64[] {
 }
 
 pub function sort_i32_desc(arr: i32[]): i32[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -182,8 +182,8 @@ pub function sort_i32_desc(arr: i32[]): i32[] {
 // comparator. Compares byte-by-byte up to the shorter
 // length, then breaks ties on length (shorter < longer).
 pub function string_cmp(a: string, b: string): i32 {
-    var n: i32 = len(a);
-    var m: i32 = len(b);
+    var n: i32 = a.len();
+    var m: i32 = b.len();
     var min: i32 = n;
     if (m < n) { min = m; }
     var i: i32 = 0;
@@ -203,7 +203,7 @@ pub function string_cmp(a: string, b: string): i32 {
 // small-list use cases (config keys, sorted output for
 // stable tests, alphabetised CLI flags).
 pub function sort_strings_asc(arr: string[]): string[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -225,7 +225,7 @@ pub function sort_strings_asc(arr: string[]): string[] {
 }
 
 pub function sort_strings_desc(arr: string[]): string[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
@@ -250,8 +250,8 @@ pub function sort_strings_desc(arr: string[]): string[] {
 // folded per byte. Useful as the ordering for case-insensitive
 // sort.
 pub function string_cmp_ci(a: string, b: string): i32 {
-    var n: i32 = len(a);
-    var m: i32 = len(b);
+    var n: i32 = a.len();
+    var m: i32 = b.len();
     var min: i32 = n;
     if (m < n) { min = m; }
     var i: i32 = 0;
@@ -271,7 +271,7 @@ pub function string_cmp_ci(a: string, b: string): i32 {
 // sort. Useful for user-facing alphabetical listings where
 // case shouldn't fragment the ordering.
 pub function sort_strings_asc_ci(arr: string[]): string[] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {

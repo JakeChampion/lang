@@ -49,14 +49,14 @@ pub function stream_empty(): Stream {
 // built-in `len()` inside the module's own bodies (same
 // workaround as HeaderMap.size).
 pub function (s: Stream) size(): i32 {
-    return len(s.data);
+    return s.data.len();
 }
 
 // `(s: Stream).remaining()` — bytes between the cursor and
 // the end of the buffer. Zero when the Stream is fully
 // consumed.
 pub function (s: Stream) remaining(): i32 {
-    var total: i32 = len(s.data);
+    var total: i32 = s.data.len();
     if (s.pos >= total) { return 0; }
     return total - s.pos;
 }
@@ -65,7 +65,7 @@ pub function (s: Stream) remaining(): i32 {
 // unread bytes left. The dual of `.remaining() == 0`;
 // reads better at call sites that gate on "any more data?"
 pub function (s: Stream) is_empty(): boolean {
-    return s.pos >= len(s.data);
+    return s.pos >= s.data.len();
 }
 
 // `(s: Stream).read_all()` — consume the remaining bytes
@@ -83,7 +83,7 @@ pub function (s: Stream) read_all(): u8[] {
     }
     var out: u8[] = [];
     var i: i32 = s.pos;
-    var end: i32 = len(s.data);
+    var end: i32 = s.data.len();
     while (i < end) {
         out = out.push(s.data[i]);
         i = i + 1;

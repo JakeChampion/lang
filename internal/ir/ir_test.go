@@ -514,7 +514,7 @@ function main(): i32 {
         Some(v) => v,
         None => ""
     };
-    return len(s);
+    return s.len();
 }`
 	// ptrW=4 (wasm). The two-word string ABI excludes string
 	// payloads from pair-form eligibility (only one i32 slot
@@ -534,7 +534,7 @@ function main(): i32 {
         Some(v) => v,
         None => ""
     };
-    return len(s);
+    return s.len();
 }`
 	// ptrW=8 (native). Pair-form Option[string] generic-position
 	// call reboxes into a 16-byte heap box, payload at +8 — the
@@ -1038,7 +1038,7 @@ func TestLowerOptionPointerPayloadIsPairFormOnNatives(t *testing.T) {
 }
 
 func TestLowerLenOnStringEmitsOpStrLen(t *testing.T) {
-	prog := lowerSource(t, `function f(s: string): i32 { return len(s); }`)
+	prog := lowerSource(t, `function f(s: string): i32 { return s.len(); }`)
 	mustContainOp(t, prog, "f", OpStrLen)
 	// The old inline shape (const 4; sub; load) must NOT appear
 	// for the string path — if it does, the rewrite slipped and
@@ -1062,13 +1062,13 @@ func TestLowerLenOnStringEmitsOpStrLen(t *testing.T) {
 // outputs cascade through `$string_from_bytes`'s inline path.
 // Pin the lowering here so the regression can't slip back in.
 func TestLowerLenOnStringCallEmitsOpStrLen(t *testing.T) {
-	prog := lowerSource(t, `function f(n: i32): i32 { return len(int_to_string(n)); }`)
+	prog := lowerSource(t, `function f(n: i32): i32 { return (int_to_string(n)).len(); }`)
 	mustContainOp(t, prog, "f", OpStrLen)
 	fn := findFunc(prog, "f")
 	for i := 0; i+2 < len(fn.Ops); i++ {
 		if fn.Ops[i].Kind == OpConstI32 && fn.Ops[i].I32 == 4 &&
 			fn.Ops[i+1].Kind == OpSub && fn.Ops[i+2].Kind == OpLoad {
-			t.Fatalf("len(call-returning-string) still emits the open-coded const-4/sub/load shape:\n%s", prog)
+			t.Fatalf("(call-returning-string).len() still emits the open-coded const-4/sub/load shape:\n%s", prog)
 		}
 	}
 }
@@ -1082,14 +1082,14 @@ func TestLowerLenOnStringCallEmitsOpStrLen(t *testing.T) {
 // `if cond { int_to_string(n) } else { s }`).
 func TestLowerLenOnStringIfExprEmitsOpStrLen(t *testing.T) {
 	prog := lowerSource(t, `function f(cond: boolean, s: string): i32 {
-		return len(if (cond) { s } else { "fallback" });
+		return (if (cond) { s } else { "fallback" }).len();
 	}`)
 	mustContainOp(t, prog, "f", OpStrLen)
 	fn := findFunc(prog, "f")
 	for i := 0; i+2 < len(fn.Ops); i++ {
 		if fn.Ops[i].Kind == OpConstI32 && fn.Ops[i].I32 == 4 &&
 			fn.Ops[i+1].Kind == OpSub && fn.Ops[i+2].Kind == OpLoad {
-			t.Fatalf("len(IfExpr-returning-string) still emits the open-coded const-4/sub/load shape:\n%s", prog)
+			t.Fatalf("(IfExpr-returning-string).len() still emits the open-coded const-4/sub/load shape:\n%s", prog)
 		}
 	}
 }
@@ -1106,7 +1106,7 @@ func TestLowerLenOnStringMatchExprEmitsOpStrLen(t *testing.T) {
 				B => "blu"
 			};
 		}
-		function f(c: Color): i32 { return len(pick(c)); }`
+		function f(c: Color): i32 { return (pick(c)).len(); }`
 	prog := lowerSource(t, src)
 	mustContainOp(t, prog, "f", OpStrLen)
 }
@@ -1114,7 +1114,7 @@ func TestLowerLenOnStringMatchExprEmitsOpStrLen(t *testing.T) {
 // `len(<string literal>)` is still folded to a compile-time const
 // — the OpStrLen path is only for non-literal strings.
 func TestLowerLenOnStringLiteralFolds(t *testing.T) {
-	prog := lowerSource(t, `function f(): i32 { return len("hello"); }`)
+	prog := lowerSource(t, `function f(): i32 { return ("hello").len(); }`)
 	fn := findFunc(prog, "f")
 	for _, op := range fn.Ops {
 		if op.Kind == OpStrLen {
@@ -1126,7 +1126,7 @@ func TestLowerLenOnStringLiteralFolds(t *testing.T) {
 			return
 		}
 	}
-	t.Errorf("expected const 5 for len(\"hello\"):\n%s", prog)
+	t.Errorf("expected const 5 for (\"hello\").len():\n%s", prog)
 }
 
 // `len(a[i])` where `a` is a string array must route through
@@ -1137,13 +1137,13 @@ func TestLowerLenOnStringLiteralFolds(t *testing.T) {
 // / $__str_concat. Pin the lowering here so the fallback can't
 // silently slip back in.
 func TestLowerLenOnStringArrayIndexEmitsOpStrLen(t *testing.T) {
-	prog := lowerSource(t, `function f(a: string[]): i32 { return len(a[0]); }`)
+	prog := lowerSource(t, `function f(a: string[]): i32 { return a[0].len(); }`)
 	mustContainOp(t, prog, "f", OpStrLen)
 	fn := findFunc(prog, "f")
 	for i := 0; i+2 < len(fn.Ops); i++ {
 		if fn.Ops[i].Kind == OpConstI32 && fn.Ops[i].I32 == 4 &&
 			fn.Ops[i+1].Kind == OpSub && fn.Ops[i+2].Kind == OpLoad {
-			t.Fatalf("len(string-array[i]) still emits the open-coded const-4/sub/load shape:\n%s", prog)
+			t.Fatalf("(string-array[i]).len() still emits the open-coded const-4/sub/load shape:\n%s", prog)
 		}
 	}
 }
@@ -1152,7 +1152,7 @@ func TestLowerLenOnStringArrayIndexEmitsOpStrLen(t *testing.T) {
 // from strings in a future layout change, and routing them
 // through OpStrLen would conflate the two.
 func TestLowerLenOnArrayKeepsInlineShape(t *testing.T) {
-	prog := lowerSource(t, `function f(xs: i32[]): i32 { return len(xs); }`)
+	prog := lowerSource(t, `function f(xs: i32[]): i32 { return xs.len(); }`)
 	if hasOp(prog, "f", OpStrLen) {
 		t.Errorf("array len() must not lower to OpStrLen:\n%s", prog)
 	}
@@ -1302,7 +1302,7 @@ func TestLowerNumScratchTracked(t *testing.T) {
 		return x;
 	}`)
 	if got := len(pPlain.Funcs[0].ScratchTypes); got != 0 {
-		t.Errorf("plain function: len(ScratchTypes) = %d, want 0", got)
+		t.Errorf("plain function: ScratchTypes.len() = %d, want 0", got)
 	}
 	// A program using array, struct, and switch helpers should report
 	// at least one scratch slot per helper kind.
@@ -1313,7 +1313,7 @@ func TestLowerNumScratchTracked(t *testing.T) {
 			switch (n) { case 0: return 0; default: return 1; }
 		}`)
 	if got := len(pHelpers.Funcs[0].ScratchTypes); got < 3 {
-		t.Errorf("helper-heavy function: len(ScratchTypes) = %d, want >= 3", got)
+		t.Errorf("helper-heavy function: ScratchTypes.len() = %d, want >= 3", got)
 	}
 }
 

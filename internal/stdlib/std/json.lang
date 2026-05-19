@@ -40,7 +40,7 @@ function __json_hex_lower(d: i32): i32 {
 
 function __json_escape(s: string): string {
     var out: string = "";
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i];
@@ -89,7 +89,7 @@ pub function json_encode(v: JsonValue): string {
         },
         JArray(arr) => {
             out = "[";
-            var n: i32 = len(arr);
+            var n: i32 = arr.len();
             while (i < n) {
                 if (i > 0) { out = out + ","; }
                 out = out + json_encode(arr[i]);
@@ -131,7 +131,7 @@ struct __JsonParser {
 }
 
 function __json_p_skip_ws(p: __JsonParser) {
-    var n: i32 = len(p.s);
+    var n: i32 = p.s.len();
     while (p.pos < n) {
         var b: i32 = p.s[p.pos];
         if (b != 32 && b != 9 && b != 10 && b != 13) { break; }
@@ -140,7 +140,7 @@ function __json_p_skip_ws(p: __JsonParser) {
 }
 
 function __json_p_byte(p: __JsonParser): i32 {
-    if (p.pos >= len(p.s)) { return 0; }
+    if (p.pos >= p.s.len()) { return 0; }
     return p.s[p.pos];
 }
 
@@ -153,7 +153,7 @@ function __json_hex_value(c: i32): i32 {
 
 function __json_p_number(p: __JsonParser): JsonValue {
     var start: i32 = p.pos;
-    var n: i32 = len(p.s);
+    var n: i32 = p.s.len();
     var b: i32 = 0;
     // Optional '-'
     if (__json_p_byte(p) == 45) { p.pos = p.pos + 1; }
@@ -230,7 +230,7 @@ function __json_emit_codepoint(out: string, cp: i32): string {
 // past-end-of-input. Does NOT consume the hex digits past
 // what it reads — it advances p.pos by 4 on success.
 function __json_p_uhex(p: __JsonParser): i32 {
-    if (p.pos + 4 > len(p.s)) { p.error = 1; return 0; }
+    if (p.pos + 4 > p.s.len()) { p.error = 1; return 0; }
     var u: i32 = 0;
     var i: i32 = 0;
     while (i < 4) {
@@ -247,7 +247,7 @@ function __json_p_string(p: __JsonParser): string {
     if (__json_p_byte(p) != 34) { p.error = 1; return ""; }
     p.pos = p.pos + 1;
     var out: string = "";
-    var n: i32 = len(p.s);
+    var n: i32 = p.s.len();
     var b: i32 = 0;
     while (true) {
         b = __json_p_byte(p);
@@ -383,7 +383,7 @@ function __json_p_value(p: __JsonParser): JsonValue {
     var b: i32 = __json_p_byte(p);
     if (b == 0) { p.error = 1; return JNull; }
     if (b == 110) {                                     // 'n' — null
-        if (p.pos + 4 > len(p.s)) { p.error = 1; return JNull; }
+        if (p.pos + 4 > p.s.len()) { p.error = 1; return JNull; }
         if (p.s[p.pos+1] != 117 || p.s[p.pos+2] != 108 || p.s[p.pos+3] != 108) {
             p.error = 1; return JNull;
         }
@@ -391,7 +391,7 @@ function __json_p_value(p: __JsonParser): JsonValue {
         return JNull;
     }
     if (b == 116) {                                     // 't' — true
-        if (p.pos + 4 > len(p.s)) { p.error = 1; return JNull; }
+        if (p.pos + 4 > p.s.len()) { p.error = 1; return JNull; }
         if (p.s[p.pos+1] != 114 || p.s[p.pos+2] != 117 || p.s[p.pos+3] != 101) {
             p.error = 1; return JNull;
         }
@@ -399,7 +399,7 @@ function __json_p_value(p: __JsonParser): JsonValue {
         return JBool(true);
     }
     if (b == 102) {                                     // 'f' — false
-        if (p.pos + 5 > len(p.s)) { p.error = 1; return JNull; }
+        if (p.pos + 5 > p.s.len()) { p.error = 1; return JNull; }
         if (p.s[p.pos+1] != 97 || p.s[p.pos+2] != 108 ||
             p.s[p.pos+3] != 115 || p.s[p.pos+4] != 101) {
             p.error = 1; return JNull;
@@ -425,6 +425,6 @@ pub function json_parse(s: string): Option[JsonValue] {
     var p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0 };
     var v: JsonValue = __json_p_value(p);
     __json_p_skip_ws(p);
-    if (p.error != 0 || p.pos < len(p.s)) { return None; }
+    if (p.error != 0 || p.pos < p.s.len()) { return None; }
     return Some(v);
 }

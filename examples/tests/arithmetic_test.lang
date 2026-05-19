@@ -36,7 +36,7 @@ function test_modulo_table(): Option[string] {
     var inputs: i32[] = [0, 1, 5, 10, 11, 100];
     var expected: i32[] = [0, 1, 5, 0, 1, 0];
     var i: i32 = 0;
-    while (i < len(inputs)) {
+    while (i < inputs.len()) {
         var got: i32 = inputs[i] % 10;
         if (got != expected[i]) {
             return fail("modulo table mismatch at " + i.to_string());

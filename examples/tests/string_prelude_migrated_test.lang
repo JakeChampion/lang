@@ -30,7 +30,7 @@
 function test_bytes_len_is_5(): Option[string] {
     var s: string = "Hello";
     var bs: u8[] = s.bytes();
-    return assert_eq_i32(len(bs), 5);
+    return assert_eq_i32(bs.len(), 5);
 }
 
 function test_bytes_first_byte_is_H(): Option[string] {
@@ -48,7 +48,7 @@ function test_bytes_last_byte_is_lowercase_o(): Option[string] {
 function test_as_bytes_len_is_5(): Option[string] {
     var s: string = "Hello";
     var ab: [u8] = s.as_bytes();
-    return assert_eq_i32(len(ab), 5);
+    return assert_eq_i32(ab.len(), 5);
 }
 
 function test_as_bytes_first_byte_is_H(): Option[string] {

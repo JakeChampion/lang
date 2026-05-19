@@ -29,7 +29,7 @@ function __b64_decode_char(c: i32): i32 {
 }
 
 pub function base64_encode(s: string): string {
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     if (n == 0) { return ""; }
     var out_len: i32 = ((n + 2) / 3) * 4;
     var buf: u8[] = __alloc_u8(out_len);
@@ -72,7 +72,7 @@ pub function base64_encode(s: string): string {
 }
 
 pub function base64_decode(s: string): string {
-    var sLen: i32 = len(s);
+    var sLen: i32 = s.len();
     // Walk forward to count consecutive valid base64 chars;
     // first non-base64 (eg `=` padding) terminates the input.
     var n: i32 = 0;
