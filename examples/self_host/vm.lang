@@ -748,7 +748,10 @@ pub struct FuncTable {
 // into exec(). The top-level entry point (where execution
 // starts) is always op 0, which the compiler emits as a JUMP
 // over the function bodies straight into top-level stmts.
-pub struct CompiledProgram { ops: Op[], funcs: FuncTable }
+// `aliases` carries the module's union type-alias decls so
+// OpCallMethod can dispatch a method declared on a union
+// when the receiver is a variant struct.
+pub struct CompiledProgram { ops: Op[], funcs: FuncTable, aliases: parser.TypeAlias[] }
 
 // compile_func compiles one FuncDecl into a self-contained
 // Op[] suffix. Params bind to locals 0..argc-1; the rest of the
@@ -837,7 +840,8 @@ pub function compile_program(mod: parser.Module): CompiledProgram {
     ops = ops.push(op_return());
     return CompiledProgram {
         ops: ops,
-        funcs: FuncTable { names: fn_names, entries: fn_entries, locals_counts: fn_locals, receiver_types: fn_recv_types }
+        funcs: FuncTable { names: fn_names, entries: fn_entries, locals_counts: fn_locals, receiver_types: fn_recv_types },
+        aliases: mod.aliases
     };
 }
 
@@ -1155,12 +1159,36 @@ function lookup_func(funcs: FuncTable, name: string): FuncLookup {
 // lookup_method matches by name + receiver type. The receiver
 // type is the runtime VStruct's type_name — exact string
 // equality decides the dispatch.
-function lookup_method(funcs: FuncTable, name: string, recv_type: string): FuncLookup {
+// is_variant_of_alias_vm: walk the alias list looking for
+// a union named union_name whose variant list contains
+// struct_name. Mirrors the interp's variant-check.
+function is_variant_of_alias_vm(struct_name: string, union_name: string, aliases: parser.TypeAlias[]): boolean {
+    var i: i32 = 0;
+    while (i < len(aliases)) {
+        if (aliases[i].name == union_name) {
+            var j: i32 = 0;
+            while (j < len(aliases[i].variants)) {
+                if (aliases[i].variants[j] == struct_name) { return true; }
+                j = j + 1;
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function lookup_method(funcs: FuncTable, name: string, recv_type: string, aliases: parser.TypeAlias[]): FuncLookup {
     var i: i32 = 0;
     while (i < len(funcs.names)) {
         var rt_match: boolean = funcs.receiver_types[i] == recv_type;
         // `bool` / `boolean` interchangeable spellings.
         if (!rt_match && recv_type == "bool" && funcs.receiver_types[i] == "boolean") {
+            rt_match = true;
+        }
+        // Union-receiver methods: receiver_type may be a union
+        // and recv_type its variant. Walk the alias list.
+        if (!rt_match && is_variant_of_alias_vm(recv_type, funcs.receiver_types[i], aliases)) {
             rt_match = true;
         }
         if (funcs.names[i] == name && rt_match) {
@@ -1174,6 +1202,7 @@ function lookup_method(funcs: FuncTable, name: string, recv_type: string): FuncL
 pub function exec_program(prog: CompiledProgram): Value {
     var ops: Op[] = prog.ops;
     var funcs: FuncTable = prog.funcs;
+    var aliases: parser.TypeAlias[] = prog.aliases;
     var stack: Value[] = [];
     var locals: VMLocals = new_vm_locals(max_local_idx(ops) + 1);
     var frames: Frame[] = [];
@@ -1261,7 +1290,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                     VFloat(_) => { recv_type = "f64"; },
                     _ => { return v_err("call_method: receiver not a typed value"); }
                 }
-                var ml: FuncLookup = lookup_method(funcs, o.name, recv_type);
+                var ml: FuncLookup = lookup_method(funcs, o.name, recv_type, aliases);
                 if (!ml.ok) {
                     return v_err("undefined method `" + o.name + "` on `" + recv_type + "`");
                 }
@@ -1511,9 +1540,11 @@ pub function exec(ops: Op[]): Value {
     var es: i32[] = [];
     var ls: i32[] = [];
     var rts: string[] = [];
+    var al: parser.TypeAlias[] = [];
     return exec_program(CompiledProgram {
         ops: ops,
-        funcs: FuncTable { names: ns, entries: es, locals_counts: ls, receiver_types: rts }
+        funcs: FuncTable { names: ns, entries: es, locals_counts: ls, receiver_types: rts },
+        aliases: al
     });
 }
 
@@ -1984,6 +2015,16 @@ function main(): i32 {
     match (r58) {
         VInt(i) => { if (i.v != 0) { return 580; } },
         _ => { return 581; }
+    }
+
+    // Union-receiver method: a method declared on the union
+    // type `Shape` dispatches when the receiver is a variant
+    // struct (`Circle`).
+    var src59: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function (sh: Shape) tag(): i32 { return 1; } function main(): i32 { var c = Circle { r: 3 }; return c.tag(); }";
+    var r59: Value = run_module(src59);
+    match (r59) {
+        VInt(i) => { if (i.v != 1) { return 590; } },
+        _ => { return 591; }
     }
 
     return 0;
