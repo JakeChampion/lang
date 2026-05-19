@@ -731,6 +731,25 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_read_int();
                 return s;
             }
+            // Closure call: callee ident resolves to a local
+            // var (not a top-level function). The local holds
+            // a function pointer (from a capture-less lambda).
+            // Push args, load fn ptr, indirect-call.
+            if (s.has_local(name)) {
+                var ci: i32 = len(c.args) - 1;
+                while (ci >= 0) {
+                    s = emit_expr(c.args[ci], s);
+                    ci = ci - 1;
+                }
+                var off: i32 = s.lookup_local(name);
+                s = s.write("    movq " + i32_to_string(off) + "(%rbp), %rax\n");
+                s = s.write("    call *%rax\n");
+                if (len(c.args) > 0) {
+                    s = s.write("    addq $" + i32_to_string(len(c.args) * 8) + ", %rsp\n");
+                }
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             // Generic user-function call. Push args RIGHT-to-LEFT
             // so the callee sees param[0] at +16(%rbp) (after
             // `pushq %rbp` + the return address). The callee
@@ -972,9 +991,93 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write(".Lfa_end_" + i32_to_string(end_lbl) + ":\n");
             return s;
         },
-        parser.ExprLambda(_) => {
-            s = s.write("    # unsupported: lambda\n");
-            s = s.write("    pushq $0\n");
+        parser.ExprLambda(lm) => {
+            // Lowering (capture-less first cut, matching the
+            // vm.lang and the early VM port):
+            //   jmp .Lskip_lambda_N
+            //   .Llambda_N:
+            //       <function-style prologue + params + body +
+            //        fallback epilogue>
+            //   .Lskip_lambda_N:
+            //   leaq .Llambda_N(%rip), %rax
+            //   pushq %rax
+            //
+            // The pushed value is the lambda's entry address.
+            // ExprCall on a local ident loads this and emits an
+            // indirect `call *%rax`. Captures aren't handled
+            // yet — a follow-up can box (fn_addr, captures) and
+            // pass the box ptr as a hidden first arg, mirroring
+            // the vm.lang OpMakeClosure path.
+            var lam_id: i32 = s.label_n;
+            s = EmitState {
+                out: s.out,
+                label_n: s.label_n + 2,
+                local_names: s.local_names,
+                in_function: s.in_function,
+                string_lits: s.string_lits,
+                needs_print_int: s.needs_print_int,
+                needs_read_int: s.needs_read_int,
+                needs_heap: s.needs_heap,
+                struct_decls: s.struct_decls,
+                loop_exit_labels: s.loop_exit_labels,
+                loop_cont_labels: s.loop_cont_labels,
+                funcs: s.funcs
+            };
+            var skip_lbl: string = ".Lskip_lambda_" + i32_to_string(lam_id);
+            var body_lbl: string = ".Llambda_" + i32_to_string(lam_id);
+            s = s.write("    jmp " + skip_lbl + "\n");
+            s = s.write(body_lbl + ":\n");
+            s = s.write("    pushq %rbp\n");
+            s = s.write("    movq %rsp, %rbp\n");
+            // Body locals: params + inner var declarations.
+            var saved_locals: string[] = s.local_names;
+            var saved_in_function: boolean = s.in_function;
+            var argc_l: i32 = len(lm.params);
+            var n_body_locals_l: i32 = count_locals(lm.body);
+            var total_locals_l: i32 = argc_l + n_body_locals_l;
+            if (total_locals_l > 0) {
+                var bytes_l: i32 = total_locals_l * 8;
+                if (bytes_l % 16 != 0) { bytes_l = bytes_l + 8; }
+                s = s.write("    subq $" + i32_to_string(bytes_l) + ", %rsp\n");
+            }
+            s = s.reset_locals();
+            s = s.enter_function();
+            var pi: i32 = 0;
+            while (pi < argc_l) {
+                s = s.bind_local(lm.params[pi].name);
+                var p_off: i32 = s.lookup_local(lm.params[pi].name);
+                var a_off: i32 = 16 + pi * 8;
+                s = s.write("    movq " + i32_to_string(a_off) + "(%rbp), %rax\n");
+                s = s.write("    movq %rax, " + i32_to_string(p_off) + "(%rbp) # param " + lm.params[pi].name + "\n");
+                pi = pi + 1;
+            }
+            var bi_l: i32 = 0;
+            while (bi_l < len(lm.body)) {
+                s = emit_stmt(lm.body[bi_l], s);
+                bi_l = bi_l + 1;
+            }
+            // Fallback implicit return 0.
+            s = s.write("    movq $0, %rax\n");
+            s = s.write("    leave\n");
+            s = s.write("    ret\n");
+            // Restore outer scope's locals + in_function flag.
+            s = EmitState {
+                out: s.out,
+                label_n: s.label_n,
+                local_names: saved_locals,
+                in_function: saved_in_function,
+                string_lits: s.string_lits,
+                needs_print_int: s.needs_print_int,
+                needs_read_int: s.needs_read_int,
+                needs_heap: s.needs_heap,
+                struct_decls: s.struct_decls,
+                loop_exit_labels: s.loop_exit_labels,
+                loop_cont_labels: s.loop_cont_labels,
+                funcs: s.funcs
+            };
+            s = s.write(skip_lbl + ":\n");
+            s = s.write("    leaq " + body_lbl + "(%rip), %rax\n");
+            s = s.write("    pushq %rax\n");
             return s;
         },
         parser.ExprUnknown(_) => {

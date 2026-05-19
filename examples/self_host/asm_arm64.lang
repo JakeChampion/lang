@@ -702,6 +702,23 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_read_int();
                 return s;
             }
+            // Closure call: callee ident resolves to a local
+            // holding a fn pointer (capture-less lambda).
+            if (s.has_local(name)) {
+                var ci: i32 = len(c.args) - 1;
+                while (ci >= 0) {
+                    s = emit_expr(c.args[ci], s);
+                    ci = ci - 1;
+                }
+                var off: i32 = s.lookup_local(name);
+                s = s.write("    ldr x0, [x29, #" + i32_to_string(off) + "]\n");
+                s = s.write("    blr x0\n");
+                if (len(c.args) > 0) {
+                    s = s.write("    add sp, sp, #" + i32_to_string(len(c.args) * 16) + "\n");
+                }
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             var i: i32 = len(c.args) - 1;
             while (i >= 0) {
                 s = emit_expr(c.args[i], s);
@@ -886,9 +903,78 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write(".Lfa_end_" + i32_to_string(end_lbl) + ":\n");
             return s;
         },
-        parser.ExprLambda(_) => {
-            s = s.write("    // unsupported: lambda\n");
+        parser.ExprLambda(lm) => {
+            // Capture-less first cut. Mirror of the x86-64
+            // ExprLambda lowering in asm.lang.
+            var lam_id: i32 = s.label_n;
+            s = EmitState {
+                out: s.out,
+                label_n: s.label_n + 2,
+                local_names: s.local_names,
+                in_function: s.in_function,
+                string_lits: s.string_lits,
+                needs_print_int: s.needs_print_int,
+                needs_read_int: s.needs_read_int,
+                needs_heap: s.needs_heap,
+                struct_decls: s.struct_decls,
+                loop_exit_labels: s.loop_exit_labels,
+                loop_cont_labels: s.loop_cont_labels,
+                funcs: s.funcs
+            };
+            var skip_lbl: string = ".Lskip_lambda_" + i32_to_string(lam_id);
+            var body_lbl: string = ".Llambda_" + i32_to_string(lam_id);
+            s = s.write("    b " + skip_lbl + "\n");
+            s = s.write(body_lbl + ":\n");
+            s = s.write("    stp x29, x30, [sp, #-16]!\n");
+            s = s.write("    mov x29, sp\n");
+            var saved_locals: string[] = s.local_names;
+            var saved_in_function: boolean = s.in_function;
+            var argc_l: i32 = len(lm.params);
+            var n_body_locals_l: i32 = count_locals(lm.body);
+            var total_locals_l: i32 = argc_l + n_body_locals_l;
+            if (total_locals_l > 0) {
+                var bytes_l: i32 = total_locals_l * 8;
+                if (bytes_l % 16 != 0) { bytes_l = bytes_l + 8; }
+                s = s.write("    sub sp, sp, #" + i32_to_string(bytes_l) + "\n");
+            }
+            s = s.reset_locals();
+            s = s.enter_function();
+            var pi: i32 = 0;
+            while (pi < argc_l) {
+                s = s.bind_local(lm.params[pi].name);
+                var p_off: i32 = s.lookup_local(lm.params[pi].name);
+                var a_off: i32 = 16 + pi * 16;
+                s = s.write("    ldr x0, [x29, #" + i32_to_string(a_off) + "]   // param " + lm.params[pi].name + "\n");
+                s = s.write("    str x0, [x29, #" + i32_to_string(p_off) + "]\n");
+                pi = pi + 1;
+            }
+            var bi_l: i32 = 0;
+            while (bi_l < len(lm.body)) {
+                s = emit_stmt(lm.body[bi_l], s);
+                bi_l = bi_l + 1;
+            }
+            // Fallback implicit return 0.
             s = s.write("    mov x0, #0\n");
+            s = s.write("    mov sp, x29\n");
+            s = s.write("    ldp x29, x30, [sp], #16\n");
+            s = s.write("    ret\n");
+            s = EmitState {
+                out: s.out,
+                label_n: s.label_n,
+                local_names: saved_locals,
+                in_function: saved_in_function,
+                string_lits: s.string_lits,
+                needs_print_int: s.needs_print_int,
+                needs_read_int: s.needs_read_int,
+                needs_heap: s.needs_heap,
+                struct_decls: s.struct_decls,
+                loop_exit_labels: s.loop_exit_labels,
+                loop_cont_labels: s.loop_cont_labels,
+                funcs: s.funcs
+            };
+            s = s.write(skip_lbl + ":\n");
+            s = s.write("    adrp x0, " + body_lbl + "\n");
+            s = s.write("    add x0, x0, :lo12:" + body_lbl + "\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
