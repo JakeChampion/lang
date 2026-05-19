@@ -2502,6 +2502,44 @@ func TestEmitPrintHeapLiteral(t *testing.T) {
 	}
 }
 
+// TestEmitPrintViaSourceNameAlias — calling OpCallDirect "print"
+// (the source-language built-in name) must alias to the synthetic
+// __lang_print helper. This is the path real lang programs take
+// since the IR lowering emits OpCallDirect with the source name.
+func TestEmitPrintViaSourceNameAlias(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "_start",
+		ReturnType: void(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "aliased!\n"},
+			{Kind: ir.OpCallDirect, Str: "print", I32: 1},
+			{Kind: ir.OpReturnVoid},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	if got := so.String(); got != "aliased!\n" {
+		t.Fatalf("stdout = %q, want %q", got, "aliased!\n")
+	}
+}
+
 // TestEmitPrintInlineLiteral — same as above but with a short
 // (inline-form) literal. The byte-by-byte copy through
 // __lang_str_byte handles the inline (data, len) packing.
