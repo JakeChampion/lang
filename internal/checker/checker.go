@@ -813,11 +813,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// nil so subsequent passes can't read it.
 	for _, ud := range prog.Unions {
 		if _, dup := c.info.Structs[ud.Name]; dup {
-			c.errf(ud.P, "union %q collides with a struct of the same name", ud.Name)
+			c.errfCode(ud.P, "E016", "union %q collides with a struct of the same name", ud.Name)
 			continue
 		}
 		if _, dup := c.info.Enums[ud.Name]; dup {
-			c.errf(ud.P, "union %q collides with an enum of the same name", ud.Name)
+			c.errfCode(ud.P, "E016", "union %q collides with an enum of the same name", ud.Name)
 			continue
 		}
 		variants := make([]ast.EnumVariant, 0, len(ud.Members))
@@ -825,19 +825,19 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		ok := true
 		for _, member := range ud.Members {
 			if seen[member] {
-				c.errf(ud.P, "duplicate member %q in union %s", member, ud.Name)
+				c.errfCode(ud.P, "E016", "duplicate member %q in union %s", member, ud.Name)
 				ok = false
 				continue
 			}
 			seen[member] = true
 			sd, isStruct := c.info.Structs[member]
 			if !isStruct {
-				c.errf(ud.P, "union %s member %q does not name a struct in scope", ud.Name, member)
+				c.errfCode(ud.P, "E016", "union %s member %q does not name a struct in scope", ud.Name, member)
 				ok = false
 				continue
 			}
 			if len(sd.TypeParams) > 0 {
-				c.errf(ud.P, "union %s member %q is generic; generic struct members in unions are not supported yet", ud.Name, member)
+				c.errfCode(ud.P, "E016", "union %s member %q is generic; generic struct members in unions are not supported yet", ud.Name, member)
 				ok = false
 				continue
 			}
@@ -877,7 +877,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		for i := range ed.Variants {
 			v := &ed.Variants[i]
 			if seen[v.Name] {
-				c.errf(v.P, "duplicate variant %q in enum %s", v.Name, ed.Name)
+				c.errfCode(v.P, "E017", "duplicate variant %q in enum %s", v.Name, ed.Name)
 				continue
 			}
 			seen[v.Name] = true
@@ -1988,7 +1988,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		}
 		if sd, ok := c.info.Structs[t.Name]; ok {
 			if len(sd.TypeParams) != len(args) {
-				c.errf(sd.P, "struct %s has %d type parameter(s), %d supplied",
+				c.errfCode(sd.P, "E019", "struct %s has %d type parameter(s), %d supplied",
 					t.Name, len(sd.TypeParams), len(args))
 			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
@@ -1996,7 +1996,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		}
 		if ed, ok := c.info.Enums[t.Name]; ok {
 			if len(ed.TypeParams) != len(args) {
-				c.errf(ed.P, "enum %s has %d type parameter(s), %d supplied",
+				c.errfCode(ed.P, "E019", "enum %s has %d type parameter(s), %d supplied",
 					t.Name, len(ed.TypeParams), len(args))
 			}
 		}
@@ -2646,7 +2646,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	root := newScope(nil)
 	for _, p := range fn.Params {
 		if _, dup := root.names[p.Name]; dup {
-			c.errf(fn.P, "duplicate parameter %q", p.Name)
+			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
 		root.names[p.Name] = p.Type
 	}
@@ -3163,7 +3163,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			// annotation error here rather than silently
 			// recording a nil-elem type.
 			if at, ok := got.(ast.ArrayType); ok && at.Elem == nil {
-				c.errf(n.P, "empty array literal needs a type annotation")
+				c.errfCode(n.P, "E020", "empty array literal needs a type annotation")
 				return
 			}
 			n.Type = got
@@ -3805,7 +3805,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	root := newScope(nil)
 	for _, p := range fn.Params {
 		if _, dup := root.names[p.Name]; dup {
-			c.errf(fn.P, "duplicate parameter %q", p.Name)
+			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
 		root.names[p.Name] = p.Type
 	}
