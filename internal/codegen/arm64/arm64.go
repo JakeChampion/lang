@@ -2091,7 +2091,10 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.emit("mov x10, #1000")
 	g.emit("mul x9, x9, x10")                  // sec * 1000
 	g.emit("ldr x11, [sp, #24]")               // tv_nsec (i64, always 0..1e9)
-	g.emit("mov x10, #1000000")
+	// 1_000_000 (0xF4240) is 20 bits — beyond `mov`'s 16-bit
+	// immediate range. Use the literal-pool form instead; the
+	// pool is flushed by the `.ltorg` at the function's end.
+	g.emit("ldr x10, =1000000")
 	g.emit("udiv x11, x11, x10")               // nsec / 1_000_000
 	g.emit("add x0, x9, x11")                  // result
 	g.emit("ldp x29, x30, [sp], #32")
