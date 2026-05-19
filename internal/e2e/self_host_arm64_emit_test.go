@@ -838,6 +838,48 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"x - y - z",
 		},
 		{
+			"str-method-len",
+			"function main(): i32 { var s = \"hello\"; return s.len(); }",
+			5,
+			"",
+		},
+		{
+			"str-method-is-empty-false",
+			"function main(): i32 { var s = \"hi\"; if (s.is_empty()) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"str-method-is-empty-true",
+			"function main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"arr-method-len",
+			"function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; return xs.len(); }",
+			4,
+			"",
+		},
+		{
+			"arr-method-is-empty-false",
+			"function main(): i32 { var xs: i32[] = [1]; if (xs.is_empty()) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"arr-method-is-empty-true",
+			"function main(): i32 { var xs: i32[] = []; if (xs.is_empty()) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"arr-string-method-len",
+			"function main(): i32 { var xs: string[] = [\"a\", \"b\"]; return xs.len(); }",
+			2,
+			"",
+		},
+		{
 			"closure-uses-multiple-string-methods",
 			"function (s: string) bang(): string { return s + \"!\"; } function main(): i32 { var msg = \"hi\"; var f = function (): string { return msg.bang() + \"?\"; }; print(f()); return 0; }",
 			0,

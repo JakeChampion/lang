@@ -1073,6 +1073,14 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max")) {
                         return "i32";
                     }
+                    if (fa.field == "len"
+                            && (rt == "string" || rt == "array_i32" || rt == "array_string" || rt == "array")) {
+                        return "i32";
+                    }
+                    if (fa.field == "is_empty"
+                            && (rt == "string" || rt == "array_i32" || rt == "array_string" || rt == "array")) {
+                        return "bool";
+                    }
                     // `.push(x)` / `.reverse()` / `.concat(b)` return the same array type.
                     if ((fa.field == "push" || fa.field == "reverse" || fa.field == "concat")
                             && (rt == "array_i32" || rt == "array_string" || rt == "array")) {
@@ -1834,6 +1842,41 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_i32_to_string();
                         }
+                        return s;
+                    }
+                    // Built-in `.len()` / `.is_empty()` on
+                    // strings and arrays. Inline — they read
+                    // the length word directly.
+                    if (fa.field == "len" && len(c.args) == 0
+                            && (prim_recv == "string"
+                                || prim_recv == "array_i32"
+                                || prim_recv == "array_string"
+                                || prim_recv == "array")) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        if (prim_recv == "string") {
+                            s = s.write("    ldr x0, [x0, #8]\n");
+                        } else {
+                            s = s.write("    ldr x0, [x0]\n");
+                        }
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        return s;
+                    }
+                    if (fa.field == "is_empty" && len(c.args) == 0
+                            && (prim_recv == "string"
+                                || prim_recv == "array_i32"
+                                || prim_recv == "array_string"
+                                || prim_recv == "array")) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        if (prim_recv == "string") {
+                            s = s.write("    ldr x0, [x0, #8]\n");
+                        } else {
+                            s = s.write("    ldr x0, [x0]\n");
+                        }
+                        s = s.write("    cmp x0, #0\n");
+                        s = s.write("    cset x0, eq\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
                         return s;
                     }
                     // Built-in i32 numeric methods. Inline — no
