@@ -562,6 +562,16 @@ pub function fail(msg: string): Option[string] {
     return Some(msg);
 }
 
+// `unreachable(label)` — sugar for `fail("unreachable: " +
+// label)`. Used in match-default arms / impossible-branch
+// dispatchers that the test logic claims can't fire. If the
+// branch DOES fire (a refactor expanded the input space), the
+// failure message names the label so the bug is grep-able in
+// CI logs.
+pub function unreachable(label: string): Option[string] {
+    return Some("unreachable: " + label);
+}
+
 // `assert_true(cond)` / `assert_false(cond)` — boolean
 // predicates. The failure message names which direction failed
 // so a glance at the log makes it obvious.
@@ -1753,6 +1763,58 @@ pub function assert_matches_golden_strict(path: string, actual: string): Option[
         },
         Err(_) => {
             return Some("assert_matches_golden_strict: golden file missing: " + path);
+        }
+    }
+    return None;
+}
+
+// =================== ENV-VAR ASSERTIONS ===================
+//
+// Wrap the `env(name)` builtin's Option[string] return in
+// `assert_*` form so tests don't have to write the match
+// boilerplate every time. Useful for verifying that a
+// subprocess inherited the expected environment, or that a
+// `setenv` shim took effect.
+
+// `assert_env_set(name)` — `env(name)` returns Some(_). The
+// value isn't checked; use `assert_env_eq` when the exact
+// content matters.
+pub function assert_env_set(name: string): Option[string] {
+    match (env(name)) {
+        Some(_) => { return None; },
+        None => {
+            return Some("assert_env_set: $" + name + " is not set");
+        }
+    }
+    return None;
+}
+
+// `assert_env_unset(name)` — the inverse. Useful for tests
+// that exercise the "use the default when env var missing"
+// fallback path.
+pub function assert_env_unset(name: string): Option[string] {
+    match (env(name)) {
+        Some(v) => {
+            return Some("assert_env_unset: $" + name + " is set to \"" + v + "\"");
+        },
+        None => { return None; }
+    }
+    return None;
+}
+
+// `assert_env_eq(name, expected)` — set AND equal to
+// `expected`. Failure message distinguishes "var missing"
+// from "var present but wrong value" so the diagnostic is
+// unambiguous.
+pub function assert_env_eq(name: string, expected: string): Option[string] {
+    match (env(name)) {
+        Some(v) => {
+            if (v == expected) { return None; }
+            return Some("assert_env_eq: $" + name + " = \"" + v +
+                        "\", expected \"" + expected + "\"");
+        },
+        None => {
+            return Some("assert_env_eq: $" + name + " is not set");
         }
     }
     return None;

@@ -960,6 +960,31 @@ func TestRunnerSetEqExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/env_unreachable_test.lang` exercises the
+// `assert_env_set` / `_unset` / `_eq` env-var assertion
+// family and `unreachable(label)`. Five cases — every
+// helper exercised in both directions where applicable,
+// plus the failure-message context checks.
+func TestRunnerEnvUnreachableExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/env_unreachable_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - PATH is set",
+		"ok 3 - env_set failure message names var",
+		"ok 5 - unreachable() embeds label + prefix",
+		"# pass 5",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

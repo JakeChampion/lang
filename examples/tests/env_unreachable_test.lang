@@ -1,0 +1,79 @@
+// examples/tests/env_unreachable_test.lang — exercises the
+// `assert_env_*` env-var assertion family and the
+// `unreachable(label)` convenience.
+//
+// `assert_env_set` / `_unset` / `_eq` wrap the `env(name)`
+// builtin's `Option[string]` return so tests don't have to
+// spell out the `match` boilerplate every time.
+//
+// `unreachable(label)` is sugar for `fail("unreachable: " +
+// label)`. Used in match-default arms that the test logic
+// claims can't fire — if a refactor expands the input space
+// and the branch DOES fire, the failure message names the
+// label so the diagnostic is grep-able.
+
+function test_path_is_set(): Option[string] {
+    // PATH is set on every POSIX-shaped OS lang targets. If a
+    // CI image somehow has it unset, this test will fail — but
+    // that's the diagnostic we want.
+    return assert_env_set("PATH");
+}
+
+function test_dummy_var_is_unset(): Option[string] {
+    // A clearly-fake name no rational caller would set in their
+    // shell. If a CI image happens to set this, that's the diff
+    // to surface.
+    return assert_env_unset("LANG_TEST_DUMMY_VAR_8329_NOT_REAL");
+}
+
+function test_env_set_failure_message(): Option[string] {
+    match (assert_env_set("LANG_TEST_DEFINITELY_MISSING_38247")) {
+        Some(msg) => {
+            if (!msg.contains("is not set")) {
+                return fail("failure msg missing reason: " + msg);
+            }
+            return None;
+        },
+        None => { return fail("expected env-not-set to fail"); }
+    }
+    return None;
+}
+
+function test_env_eq_distinguishes_missing_vs_wrong_value(): Option[string] {
+    // Missing var → distinct message.
+    match (assert_env_eq("LANG_TEST_NOT_SET_837642", "value")) {
+        Some(msg) => {
+            if (!msg.contains("is not set")) {
+                return fail("missing-var message wrong: " + msg);
+            }
+        },
+        None => { return fail("expected missing var to fail"); }
+    }
+    return None;
+}
+
+function test_unreachable_embeds_label(): Option[string] {
+    match (unreachable("dispatch hit default arm")) {
+        Some(msg) => {
+            if (!msg.contains("unreachable: ")) {
+                return fail("unreachable msg missing prefix: " + msg);
+            }
+            if (!msg.contains("dispatch hit default arm")) {
+                return fail("unreachable msg missing label: " + msg);
+            }
+            return None;
+        },
+        None => { return fail("unreachable must fail"); }
+    }
+    return None;
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("env + unreachable");
+    r = r.it("PATH is set",                          test_path_is_set());
+    r = r.it("fake var is unset",                    test_dummy_var_is_unset());
+    r = r.it("env_set failure message names var",    test_env_set_failure_message());
+    r = r.it("env_eq distinguishes missing",         test_env_eq_distinguishes_missing_vs_wrong_value());
+    r = r.it("unreachable() embeds label + prefix",  test_unreachable_embeds_label());
+    return r.finish();
+}
