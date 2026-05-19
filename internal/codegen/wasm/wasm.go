@@ -5315,7 +5315,7 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`(local $__arena_handle i32)`)
 	g.line(`(local $plat_struct i32)`)
 	g.line(`(local $req_headers i32) (local $hm_names i32) (local $hm_values i32)`)
-	g.line(`(local $req_fields i32) (local $entries_retptr i32)`)
+	g.line(`(local $req_fields i32)`)
 	g.line(`(local $entries_data i32) (local $entries_count i32) (local $entry_i i32) (local $entry_addr i32)`)
 	g.line(`(local $hdr_name_data i32) (local $hdr_name_len i32) (local $hdr_value_data i32) (local $hdr_value_len i32)`)
 
@@ -5504,6 +5504,18 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`local.set $path_str_len`)
 	g.line(`local.set $path_str_data`)
 
+	// Grab the headers fields handle BEFORE `consume()` — the
+	// wasi:http preview-2 host transitions the incoming-request
+	// state after consume and the headers accessor may trap
+	// post-consume. Headers ownership is independent of the
+	// request lifetime (the returned fields handle is owned and
+	// survives both the consume and the request drop below),
+	// so we capture it here and walk its entries after the
+	// HttpRequest struct is built.
+	g.line(`local.get $req`)
+	g.line(`call $__wasi_http_request_headers`)
+	g.line(`local.set $req_fields`)
+
 	// ============================================================
 	// Read body via consume + stream + bulk-read accumulator.
 	// ============================================================
@@ -5643,16 +5655,6 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.indent--
 	g.line(`end`) // consume-result branch
 
-	// Grab the headers fields handle BEFORE dropping the
-	// incoming-request resource — `headers()` borrows from
-	// the request and the returned fields handle outlives the
-	// request drop (the canonical-ABI fields resource is
-	// independently owned once handed back). We walk its
-	// entries below to populate the lang HeaderMap.
-	g.line(`local.get $req`)
-	g.line(`call $__wasi_http_request_headers`)
-	g.line(`local.set $req_fields`)
-
 	// Drop incoming-request.
 	g.line(`local.get $req`)
 	g.line(`call $__wasi_http_request_drop`)
@@ -5753,16 +5755,18 @@ func (g *generator) emitHttpHandlerWrapper() {
 	// memory shape) — header values are typically ASCII / ISO-
 	// 8859-1 and the lang stdlib doesn't currently enforce UTF-8
 	// on `string`.
-	g.line(`i32.const 8`)
-	g.line(`call $__lang_alloc`)
-	g.line(`local.set $entries_retptr`)
+	//
+	// Reuse the wrapper's 64-byte $retptr scratch (allocated at
+	// entry; contents from earlier method/path/consume calls are
+	// dead by now). Saves a fresh `__lang_alloc(8)` and keeps the
+	// alignment guaranteed by the cabi_realloc bump shape.
 	g.line(`local.get $req_fields`)
-	g.line(`local.get $entries_retptr`)
+	g.line(`local.get $retptr`)
 	g.line(`call $__wasi_http_fields_entries`)
-	g.line(`local.get $entries_retptr`)
+	g.line(`local.get $retptr`)
 	g.line(`i32.load`)
 	g.line(`local.set $entries_data`)
-	g.line(`local.get $entries_retptr`)
+	g.line(`local.get $retptr`)
 	g.line(`i32.const 4`)
 	g.line(`i32.add`)
 	g.line(`i32.load`)
