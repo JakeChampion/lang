@@ -1625,6 +1625,15 @@ var CallDirectAliases = map[string]string{
 	"open_writer":   "__lang_open_writer",
 	"open_appender": "__lang_open_appender",
 
+	// TCP. Each builtin maps to a runtime helper in wasi_tcp.go;
+	// the helpers wrap wasi:sockets + wasi:io directly. See
+	// `scanRuntimeHelpers` / `scanImports` for the dep wiring.
+	"tcp_listen": "__lang_tcp_listen",
+	"tcp_accept": "__lang_tcp_accept",
+	"tcp_recv":   "__lang_tcp_recv",
+	"tcp_send":   "__lang_tcp_send",
+	"tcp_close":  "__lang_tcp_close",
+
 	// Map / MapIter generic-method dispatch — the lang doesn't yet
 	// support generic methods on a generic struct, so the prelude
 	// declares concrete `_impl` counterparts and call sites route

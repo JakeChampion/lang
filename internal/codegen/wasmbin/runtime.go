@@ -288,6 +288,43 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__lang_write_file")
+				case "__lang_tcp_listen":
+					// (port) → i32 — heap pointer to a 12-byte
+					// listener struct (sock, 0, 0), or -errno
+					// on failure. Pulls in the __network_handle
+					// accessor that caches wasi:sockets/instance-
+					// network. WASI imports get added by
+					// scanImports below.
+					needs.add("__lang_alloc")
+					needs.add("__network_handle")
+					needs.add("__lang_tcp_listen")
+				case "__lang_tcp_accept":
+					// (listener) → i32 — heap pointer to a
+					// 12-byte connection struct (sock, instream,
+					// outstream), or -errno on failure.
+					needs.add("__lang_alloc")
+					needs.add("__lang_tcp_accept")
+				case "__lang_tcp_recv":
+					// (conn, max) → (data, len) — heap-form
+					// string with the bytes read. Empty on
+					// stream-error / EOF.
+					needs.add("__lang_alloc")
+					needs.add("__lang_tcp_recv")
+				case "__lang_tcp_send":
+					// (conn, data) → i32 — bytes sent, -1 on
+					// failure. SSO-normalizes the input string
+					// so inline-form data flows through the
+					// host's read of (ptr, len).
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__lang_tcp_send")
+				case "__lang_tcp_close":
+					// (conn) → i32 (always 0). Drops the
+					// streams (if non-zero) before the parent
+					// tcp-socket to satisfy the canonical-ABI
+					// resource-has-children rule.
+					needs.add("__lang_tcp_close")
 				}
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).
@@ -711,6 +748,53 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriteFileBody,
+	},
+	"__network_handle": {
+		// () → i32 — cached wasi:sockets/instance-network handle.
+		// Lazily fetched on first call; the init flag at
+		// networkHandleInitAddr disambiguates "not yet fetched"
+		// from a legitimate 0 handle. See wasi_tcp.go.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildNetworkHandleBody,
+	},
+	"__lang_tcp_listen": {
+		// (port: i32) → i32 — heap pointer to a 12-byte
+		// listener struct (tcp-socket, 0, 0) on success;
+		// -errno on failure. See wasi_tcp.go.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpListenBody,
+	},
+	"__lang_tcp_accept": {
+		// (listener: i32) → i32 — heap pointer to a 12-byte
+		// connection struct (tcp-socket, input-stream,
+		// output-stream); -errno on failure.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpAcceptBody,
+	},
+	"__lang_tcp_recv": {
+		// (conn: i32, max: i32) → (data, len) heap-form
+		// string. Empty pair (0, 0) on stream-error / EOF.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildTcpRecvBody,
+	},
+	"__lang_tcp_send": {
+		// (conn, data_data, data_len) → i32 — bytes sent on
+		// success, -1 on stream-error. Chunked at 4 KiB to
+		// match wasmtime's blocking-write-and-flush cap.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpSendBody,
+	},
+	"__lang_tcp_close": {
+		// (conn: i32) → i32 (always 0). Drops streams +
+		// tcp-socket in canonical child-before-parent order.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpCloseBody,
 	},
 	"__lang_open_reader": {
 		// (path_data, path_len) → i32 — heap-form
