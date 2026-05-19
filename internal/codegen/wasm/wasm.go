@@ -2175,6 +2175,14 @@ func (g *generator) emitRuntimePreamble() {
 		g.line(`(import "wasi:http/types@0.2.0" "[resource-drop]future-trailers" (func $__wasi_http_future_trailers_drop (param i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[constructor]fields" (func $__wasi_http_fields_new (result i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[method]fields.entries" (func $__wasi_http_fields_entries (param i32 i32)))`)
+		// fields.append returns `result<_, header-error>` where
+		// header-error is a 3-case unit variant. Flattens to
+		// (result_disc, error_disc) = 2 i32s — exceeds the
+		// canonical-ABI max-flat-results=1 threshold, so the
+		// result lands at the trailing retptr instead of the
+		// stack. Param order: self, name_data, name_len,
+		// value_data, value_len, retptr.
+		g.line(`(import "wasi:http/types@0.2.0" "[method]fields.append" (func $__wasi_http_fields_append (param i32 i32 i32 i32 i32 i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[resource-drop]fields" (func $__wasi_http_fields_drop (param i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[constructor]outgoing-response" (func $__wasi_http_response_new (param i32) (result i32)))`)
 		// set-status-code's `result<_, _>` returns the disc inline as
@@ -5318,6 +5326,9 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`(local $req_fields i32)`)
 	g.line(`(local $entries_data i32) (local $entries_count i32) (local $entry_i i32) (local $entry_addr i32)`)
 	g.line(`(local $hdr_name_data i32) (local $hdr_name_len i32) (local $hdr_value_data i32) (local $hdr_value_len i32)`)
+	g.line(`(local $resp_hm i32) (local $resp_hm_names i32) (local $resp_hm_values i32)`)
+	g.line(`(local $resp_hm_len i32) (local $resp_hm_i i32)`)
+	g.line(`(local $resp_name_addr i32) (local $resp_value_addr i32)`)
 
 	// Implicit per-request arena: save the bump cursor at
 	// entry, restore it before returning so every allocation
@@ -5874,6 +5885,96 @@ func (g *generator) emitHttpHandlerWrapper() {
 	// ============================================================
 	g.line(`call $__wasi_http_fields_new`)
 	g.line(`local.set $headers`)
+
+	// Populate outgoing fields from `resp.headers`. HeaderMap
+	// layout: names[] @ +0, values[] @ +4 (each a parallel
+	// `string[]`). Each `string[]` is length-prefixed at offset
+	// +4 with two-word string slots starting at offset +8
+	// (data@N, len@N+4, stride 8). Names in the HeaderMap are
+	// case-folded (lowercase) per the case-insensitive lookup
+	// contract — that's also what hits the wire, matching the
+	// tcp_serve path's http_serialize_response shape.
+	//
+	// fields.append errors (immutable / invalid-syntax /
+	// forbidden) get silently dropped here. The wasi-http spec
+	// gates `set-cookie` and other implementation-defined-
+	// header rejections on the host; for handler code the right
+	// answer is to fix the input, not to bubble back through
+	// the wrapper. Logging/tracing can land in a follow-up if
+	// it shows up in real workloads.
+	g.line(`local.get $resp_struct`)
+	g.line(`i32.const 16`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $resp_hm`)
+	g.line(`local.get $resp_hm`)
+	g.line(`i32.load`)
+	g.line(`local.set $resp_hm_names`)
+	g.line(`local.get $resp_hm`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $resp_hm_values`)
+	g.line(`local.get $resp_hm_names`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $resp_hm_len`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $resp_hm_i`)
+	g.line(`(block $resp_hm_done`)
+	g.indent++
+	g.line(`(loop $resp_hm_loop`)
+	g.indent++
+	g.line(`local.get $resp_hm_i`)
+	g.line(`local.get $resp_hm_len`)
+	g.line(`i32.ge_s`)
+	g.line(`br_if $resp_hm_done`)
+	// name_addr = names + 8 + i*8
+	g.line(`local.get $resp_hm_names`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $resp_hm_i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $resp_name_addr`)
+	// value_addr = values + 8 + i*8
+	g.line(`local.get $resp_hm_values`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`local.get $resp_hm_i`)
+	g.line(`i32.const 8`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $resp_value_addr`)
+	// fields.append(headers, name_data, name_len, value_data, value_len, retptr)
+	g.line(`local.get $headers`)
+	g.line(`local.get $resp_name_addr`)
+	g.line(`i32.load`)
+	g.line(`local.get $resp_name_addr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.get $resp_value_addr`)
+	g.line(`i32.load`)
+	g.line(`local.get $resp_value_addr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.get $retptr`)
+	g.line(`call $__wasi_http_fields_append`)
+	// i++
+	g.line(`local.get $resp_hm_i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $resp_hm_i`)
+	g.line(`br $resp_hm_loop`)
+	g.indent--
+	g.line(`)`)
+	g.indent--
+	g.line(`)`)
+
 	g.line(`local.get $headers`)
 	g.line(`call $__wasi_http_response_new`)
 	g.line(`local.set $resp_handle`)
