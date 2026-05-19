@@ -471,6 +471,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // intern it in `.rodata`, look up the offset, and emit the
             // syscall directly. Other string-typed args fall through
             // as unsupported.
+            // len(arr) — load the length prefix at offset 0
+            // of the array box. Today this assumes the arg is
+            // an array (a string arg would read random bytes);
+            // a future slice with type info can route string
+            // arguments through __lang_str_len.
+            if (name == "len" && len(c.args) == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    movq (%rax), %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             if (name == "print" && len(c.args) == 1) {
                 var arg: parser.Expr = c.args[0];
                 match (arg) {
@@ -570,14 +582,58 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    pushq %rax\n");
             return s;
         },
-        parser.ExprArray(_) => {
-            s = s.write("    # unsupported: array\n");
-            s = s.write("    pushq $0\n");
+        parser.ExprArray(a) => {
+            // Layout: [len: 8 bytes, val0, val1, …, val_(N-1)].
+            // The length prefix lets `len(a)` lower to a single
+            // load at offset 0 without dragging type info
+            // through the backend. ExprIndex shifts the index
+            // by +1 slot to skip the prefix.
+            //
+            // Steps:
+            //   1. Compile each element in source order
+            //      (push N values onto the rt-stack).
+            //   2. Allocate (N+1)*8 bytes on the heap.
+            //   3. Store the length at [%rax + 0].
+            //   4. Pop each element from the rt-stack into
+            //      [%rax + (i+1)*8] — descending i so the
+            //      top-of-stack lands in the LAST slot.
+            //   5. Push %rax (the array pointer).
+            var n_elems: i32 = len(a.elements);
+            var ai: i32 = 0;
+            while (ai < n_elems) {
+                s = emit_expr(a.elements[ai], s);
+                ai = ai + 1;
+            }
+            var a_bytes: i32 = (n_elems + 1) * 8;
+            s = s.write("    movq $" + i32_to_string(a_bytes) + ", %rdi\n");
+            s = s.write("    call __lang_alloc\n");
+            s = s.mark_heap();
+            s = s.write("    movq $" + i32_to_string(n_elems) + ", %rcx\n");
+            s = s.write("    movq %rcx, (%rax)\n");
+            var aj: i32 = n_elems - 1;
+            while (aj >= 0) {
+                s = s.write("    popq %rcx\n");
+                s = s.write("    movq %rcx, " + i32_to_string((aj + 1) * 8) + "(%rax)\n");
+                aj = aj - 1;
+            }
+            s = s.write("    pushq %rax\n");
             return s;
         },
-        parser.ExprIndex(_) => {
-            s = s.write("    # unsupported: index\n");
-            s = s.write("    pushq $0\n");
+        parser.ExprIndex(x) => {
+            // Lowering: compile array → push ptr; compile index
+            // → push i32; pop i32 into %rcx, pop ptr into %rax,
+            // load [%rax + (rcx+1)*8] into %rax, push.
+            //
+            // No bounds check in this first cut — out-of-range
+            // produces undefined data, matching the wasm
+            // backend's i32[] semantics today.
+            s = emit_expr(x.array, s);
+            s = emit_expr(x.index, s);
+            s = s.write("    popq %rcx\n");
+            s = s.write("    popq %rax\n");
+            s = s.write("    incq %rcx\n");
+            s = s.write("    movq (%rax,%rcx,8), %rax\n");
+            s = s.write("    pushq %rax\n");
             return s;
         },
         parser.ExprSlice(_) => {
