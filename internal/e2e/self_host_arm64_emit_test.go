@@ -383,6 +383,18 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			105,
 			"",
 		},
+		{
+			"closure-nested-recapture",
+			"function main(): i32 { var n = 7; var outer = function (): i32 { var inner = function (): i32 { return n; }; return inner(); }; return outer(); }",
+			7,
+			"",
+		},
+		{
+			"closure-nested-three-deep",
+			"function main(): i32 { var k = 100; var a = function (): i32 { var b = function (): i32 { var c = function (): i32 { return k; }; return c(); }; return b(); }; return a(); }",
+			100,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
