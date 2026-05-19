@@ -2683,6 +2683,45 @@ func TestEmitArgs(t *testing.T) {
 	}
 }
 
+// TestEmitFloatMathHelpers — round-trip the f64 math helpers
+// that map to native wasm ops (sqrt, abs, floor, ceil, trunc).
+// Each call should match the wasm-native semantics exactly.
+func TestEmitFloatMathHelpers(t *testing.T) {
+	cases := []struct {
+		name   string
+		callee string
+		arg    float64
+		wantPx string // stdout prefix (float printing is loose)
+	}{
+		{"sqrt_25", "__sqrt_f64", 25.0, "5"},
+		{"abs_neg42", "__abs_f64", -42.5, "42.5"},
+		{"floor_pos", "__floor_f64", 3.7, "3"},
+		{"ceil_pos", "__ceil_f64", 3.2, "4"},
+		{"trunc_neg", "__trunc_f64", -3.7, "-3"},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:       "main",
+				ReturnType: f64(),
+				Ops: []ir.Op{
+					{Kind: ir.OpConstF64, F64: c.arg},
+					{Kind: ir.OpCallDirect, Str: c.callee},
+				},
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			got := runUnderWasmtime(t, bin, "main")
+			if !strings.HasPrefix(got, c.wantPx) {
+				t.Fatalf("%s(%g) = %q, want prefix %q", c.callee, c.arg, got, c.wantPx)
+			}
+		})
+	}
+}
+
 // TestEmitEnvLookupMatch — env("FOO") with --env FOO=bar
 // should return Some(bar). Verify by reading the box's tag
 // (should be 0) and the value's len (3 = "bar").

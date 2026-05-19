@@ -1517,6 +1517,16 @@ var CallDirectAliases = map[string]string{
 	// Arena (bump-allocator) save / restore.
 	"arena_save":    "__lang_arena_save",
 	"arena_restore": "__lang_arena_restore",
+
+	// f64 math primitives that map to native wasm ops. sin /
+	// cos / log / exp / pow / round have no wasm-native shape
+	// and stay unimplemented in wasmbin for now (the WAT path
+	// is in the same state).
+	"__sqrt_f64":  "__lang_sqrt_f64",
+	"__abs_f64":   "__lang_abs_f64",
+	"__floor_f64": "__lang_floor_f64",
+	"__ceil_f64":  "__lang_ceil_f64",
+	"__trunc_f64": "__lang_trunc_f64",
 	"env_count":  "__lang_env_count",
 	"arg_count":  "__lang_arg_count",
 	"arg_at":     "__lang_arg_at",
