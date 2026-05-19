@@ -352,6 +352,48 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		{
+			"match-single-variant-binding",
+			"struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return 0 - 1; } } return 0 - 2; }",
+			5,
+			"",
+			"",
+		},
+		{
+			"match-two-variants-first-arm",
+			"struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var c = Circle { r: 3 }; match (c) { Circle(x) => { return x.r; }, Square(y) => { return y.s; } } return 0 - 1; }",
+			3,
+			"",
+			"",
+		},
+		{
+			"match-two-variants-second-arm",
+			"struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var q = Square { s: 7 }; match (q) { Circle(x) => { return x.r; }, Square(y) => { return y.s; } } return 0 - 1; }",
+			7,
+			"",
+			"",
+		},
+		{
+			"match-wildcard-fallback",
+			"struct Circle { r: i32 } struct Triangle { b: i32 } function main(): i32 { var t = Triangle { b: 9 }; match (t) { Circle(c) => { return c.r; }, _ => { return 42; } } return 0 - 1; }",
+			42,
+			"",
+			"",
+		},
+		{
+			"match-no-binding",
+			"struct Empty { } function main(): i32 { var e = Empty { }; match (e) { Empty => { return 11; }, _ => { return 0 - 1; } } return 0 - 2; }",
+			11,
+			"",
+			"",
+		},
+		{
+			"match-write-to-outer-var",
+			"struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 8 }; var n: i32 = 0; match (c) { Circle(x) => { n = x.r; }, _ => { n = 0 - 1; } } return n; }",
+			8,
+			"",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
