@@ -157,10 +157,13 @@ func Emit(prog *ir.Program) ([]byte, error) {
 
 	// Memory section is emitted iff any function in the program
 	// touches memory (load / store / sub-width variants / fN load
-	// or store). Slice-4 modules ship a single linear memory of
-	// 1 page (64 KiB) with no upper bound — same shape the WAT
-	// emitter produces for non-string programs.
-	if anyMemoryOp(prog) {
+	// or store) OR if any runtime helper that touches memory is
+	// pulled in (__lang_alloc grows memory; __lang_str_byte and
+	// transitively __str_eq emit i32.load8_u even in branches
+	// that don't execute at runtime — wasm validation still
+	// requires memory 0 to exist). Memory layout matches the
+	// WAT path: 1 page (64 KiB) with no upper bound.
+	if anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] {
 		m.MemoryPresent = true
 		m.MemoryMin = 1
 		m.MemoryMax = -1
@@ -198,12 +201,22 @@ func Emit(prog *ir.Program) ([]byte, error) {
 	// (no entry in m.ExportNames / Kinds / Idxs) so they stay
 	// private to the module. Same type-section / function-section
 	// / code-section assembly as user functions.
+	//
+	// Bodies receive a name → funcidx map for cross-helper calls
+	// (e.g. __str_eq → __lang_str_len + __lang_str_byte) so the
+	// call targets are resolved at module-assembly time. funcIdx
+	// already has every helper's index installed up-front by the
+	// pre-scan loop above.
+	helperIdxs := make(map[string]uint32, len(helpers.order))
+	for _, name := range helpers.order {
+		helperIdxs[name] = funcIdx[name]
+	}
 	for _, name := range helpers.order {
 		spec := runtimeHelperSpecs[name]
 		params, results := spec.params, spec.results
 		tIdx := addType(params, results)
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, tIdx)
-		m.CodeBodies = append(m.CodeBodies, spec.body())
+		m.CodeBodies = append(m.CodeBodies, spec.body(helperIdxs))
 	}
 
 	// Heap-form strings → data segment. Even if no other op used
@@ -960,6 +973,16 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		idx, ok := ctx.funcIdx["__lang_str_len"]
 		if !ok {
 			return nil, fmt.Errorf("OpStrLen: __lang_str_len helper not registered (scanRuntimeHelpers gap)")
+		}
+		return inst.InstCall(body, idx), nil
+
+	// ---- String equality ----
+	case ir.OpStrEq:
+		// Stack: (a_data, a_len, b_data, b_len). The __str_eq
+		// helper consumes all four and returns 0/1.
+		idx, ok := ctx.funcIdx["__str_eq"]
+		if !ok {
+			return nil, fmt.Errorf("OpStrEq: __str_eq helper not registered (scanRuntimeHelpers gap)")
 		}
 		return inst.InstCall(body, idx), nil
 
