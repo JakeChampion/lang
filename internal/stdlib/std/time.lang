@@ -493,3 +493,183 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
         + ((h * 3600 + mn * 60 + sc) as i64);
     return Some(Instant { sec: sec, nsec: nsec });
 }
+
+// ============================================================
+// TimeZone + Zoned — Phase 5 per docs/STDLIB-DESIGN-RESEARCH.md
+// Rec §4. Fixed-offset zones only in this PR — IANA tzdb
+// lookup (with DST transition tables) lands separately.
+// ============================================================
+
+// `timezone_fixed_offset(offset_seconds)` — construct a fixed-
+// offset TimeZone (no DST). Common use: `±09:00` (Japan),
+// `±05:00` (Eastern US in winter), `±00:00` (UTC alias).
+// The name field carries the canonical `UTC+HH:MM` /
+// `UTC-HH:MM` representation for display.
+//
+// Range: ±14:00:00 covers every real fixed offset (the IANA
+// extreme is +14:00 Kiribati / -12:00 Baker Island). Out-of-
+// range offsets get the same canonical-name treatment; we
+// don't reject them here.
+pub function timezone_fixed_offset(offset_seconds: i32): TimeZone {
+    var abs_sec: i32 = offset_seconds;
+    var sign: string = "+";
+    if (offset_seconds < 0) {
+        abs_sec = -offset_seconds;
+        sign = "-";
+    }
+    var h: i32 = abs_sec / 3600;
+    var m: i32 = (abs_sec - h * 3600) / 60;
+    var name: string = "UTC" + sign + __pad2(h) + ":" + __pad2(m);
+    return TimeZone { name: name, offset_seconds: offset_seconds };
+}
+
+// `(i: Instant).in_zone(z)` — pair this UTC instant with a
+// zone. Doesn't change the absolute time; the Zoned shows
+// the *wall-clock* time at the zone when subsequently
+// formatted or decomposed.
+pub function (i: Instant) in_zone(z: TimeZone): Zoned {
+    return Zoned { instant: i, zone: z };
+}
+
+// `(z: Zoned).to_datetime()` — split into the wall-clock
+// `DateTime` at the zone. Drops the zone — callers needing
+// the round-trip should hold onto the Zoned.
+pub function (z: Zoned) to_datetime(): DateTime {
+    var spd: i64 = 86400 as i64;
+    // Wall-clock seconds = UTC + offset (offset is positive
+    // east of UTC, so east-of-UTC zones get later wall-clock).
+    var local_sec: i64 = z.instant.sec + (z.zone.offset_seconds as i64);
+    var days: i64 = local_sec / spd;
+    var sec_in_day: i64 = local_sec - days * spd;
+    if (sec_in_day < (0 as i64)) {
+        sec_in_day = sec_in_day + spd;
+        days = days - (1 as i64);
+    }
+    var d: Date = __civil_from_days(days as i32);
+    var sid: i32 = sec_in_day as i32;
+    var h: i32 = sid / 3600;
+    var rem: i32 = sid - h * 3600;
+    var mn: i32 = rem / 60;
+    var s: i32 = rem - mn * 60;
+    return DateTime {
+        date: d,
+        time: Time { hour: h, minute: mn, second: s, nsec: z.instant.nsec },
+    };
+}
+
+// `(z: Zoned).format_rfc3339()` — emit
+// `YYYY-MM-DDTHH:MM:SS[.fraction]±HH:MM`. UTC zones (offset
+// zero) emit `Z` instead of `+00:00`, matching the canonical
+// form. Other zones emit the signed offset; mirrors the
+// shape `instant_zoned_parse_rfc3339` round-trips against.
+pub function (z: Zoned) format_rfc3339(): string {
+    var dt: DateTime = z.to_datetime();
+    var head: string = dt.date.format_iso() + "T"
+        + __pad2(dt.time.hour) + ":" + __pad2(dt.time.minute) + ":" + __pad2(dt.time.second);
+    var tail: string = "";
+    if (dt.time.nsec != 0) {
+        // Reuse the Instant fractional emitter logic via a
+        // surrogate Instant. Cheap — no syscalls.
+        var tmp: Instant = Instant { sec: 0 as i64, nsec: dt.time.nsec };
+        var s: string = tmp.format_rfc3339();
+        // tmp's format is "1970-01-01T00:00:00.<frac>Z" —
+        // splice the fractional segment (between '.' and 'Z').
+        var dot: i32 = s.index_of(".");
+        var z_idx: i32 = s.index_of("Z");
+        tail = s[dot:z_idx];
+    }
+    if (z.zone.offset_seconds == 0) {
+        return head + tail + "Z";
+    }
+    var off: i32 = z.zone.offset_seconds;
+    var sign: string = "+";
+    if (off < 0) {
+        off = -off;
+        sign = "-";
+    }
+    var oh: i32 = off / 3600;
+    var om: i32 = (off - oh * 3600) / 60;
+    return head + tail + sign + __pad2(oh) + ":" + __pad2(om);
+}
+
+// `instant_zoned_parse_rfc3339(s)` — parse the full RFC 3339
+// surface: `YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM)`.
+// Returns the parsed Zoned (instant in UTC; zone holds the
+// original offset). `Z` is a fixed-offset alias for `+00:00`
+// — the returned Zoned's zone.name is `"UTC"` for that case,
+// or `"UTC±HH:MM"` for explicit offsets.
+//
+// Lowercase `t`/`z` still rejected (same strictness as
+// `instant_parse_rfc3339`).
+pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
+    var n: i32 = len(s);
+    if (n < 20) { return None; }
+    if (s[4] != 45 || s[7] != 45) { return None; }
+    if (s[10] != 84) { return None; }
+    if (s[13] != 58 || s[16] != 58) { return None; }
+    var y: i32 = __parse_digits(s, 0, 4);
+    var mo: i32 = __parse_digits(s, 5, 7);
+    var d: i32 = __parse_digits(s, 8, 10);
+    var h: i32 = __parse_digits(s, 11, 13);
+    var mn: i32 = __parse_digits(s, 14, 16);
+    var sc: i32 = __parse_digits(s, 17, 19);
+    if (y < 0 || mo < 0 || d < 0 || h < 0 || mn < 0 || sc < 0) { return None; }
+    // After seconds: optional `.fraction`, then `Z` or `±HH:MM`.
+    var pos: i32 = 19;
+    var nsec: i32 = 0;
+    if (s[pos] == 46) {  // '.'
+        var frac_start: i32 = pos + 1;
+        var frac_end: i32 = -1;
+        var i: i32 = frac_start;
+        while (i < n) {
+            var b: i32 = s[i];
+            if (b == 90 || b == 43 || b == 45) {  // Z, +, -
+                frac_end = i;
+                i = n;
+            } else {
+                i = i + 1;
+            }
+        }
+        if (frac_end < 0) { return None; }
+        if (frac_end == frac_start) { return None; }
+        if (frac_end - frac_start > 9) { return None; }
+        var frac: i32 = __parse_digits(s, frac_start, frac_end);
+        if (frac < 0) { return None; }
+        var pad: i32 = 9 - (frac_end - frac_start);
+        while (pad > 0) { frac = frac * 10; pad = pad - 1; }
+        nsec = frac;
+        pos = frac_end;
+    }
+    // Now pos points at Z / + / -. Need at least 1 more byte
+    // for Z, or 6 more for ±HH:MM.
+    var offset_seconds: i32 = 0;
+    var zone_name: string = "";
+    if (s[pos] == 90) {  // Z
+        if (pos + 1 != n) { return None; }
+        zone_name = "UTC";
+    } else if (s[pos] == 43 || s[pos] == 45) {
+        if (pos + 6 != n) { return None; }
+        if (s[pos + 3] != 58) { return None; }  // colon
+        var oh: i32 = __parse_digits(s, pos + 1, pos + 3);
+        var om: i32 = __parse_digits(s, pos + 4, pos + 6);
+        if (oh < 0 || om < 0) { return None; }
+        offset_seconds = oh * 3600 + om * 60;
+        if (s[pos] == 45) { offset_seconds = -offset_seconds; }
+        var sign_str: string = "+";
+        if (s[pos] == 45) { sign_str = "-"; }
+        zone_name = "UTC" + sign_str + __pad2(oh) + ":" + __pad2(om);
+    } else {
+        return None;
+    }
+    // Compose: local sec from y/m/d/h/mn/sc, then subtract
+    // offset to get UTC sec.
+    var days: i32 = __days_from_civil(y, mo, d);
+    var spd: i64 = 86400 as i64;
+    var local_sec: i64 = (days as i64) * spd
+        + ((h * 3600 + mn * 60 + sc) as i64);
+    var utc_sec: i64 = local_sec - (offset_seconds as i64);
+    return Some(Zoned {
+        instant: Instant { sec: utc_sec, nsec: nsec },
+        zone: TimeZone { name: zone_name, offset_seconds: offset_seconds },
+    });
+}
