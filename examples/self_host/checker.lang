@@ -151,6 +151,13 @@ pub struct FuncSig { name: string, param_types: Type[], ret_type: Type }
 // index i holds (field_names[i], field_types[i]).
 pub struct StructSig { name: string, field_names: string[], field_types: Type[] }
 
+// MethodSig: nominal handle for a declared receiver method
+// `function (recv: RecvType) name(p1, p2): RT`. The receiver
+// is implicit at the call site (`obj.name(a, b)`) so it's
+// stored separately from param_types. Plain functions live
+// in the FuncSig table; the two tables don't overlap.
+pub struct MethodSig { name: string, receiver_type: string, param_types: Type[], ret_type: Type }
+
 // UnionSig: nominal handle for a declared type alias —
 // `pub type Shape = Circle | Square`. Variants are captured
 // as bare type-name strings; variant resolution lives in
@@ -165,7 +172,8 @@ pub struct Scope {
     types: Type[],
     sigs: FuncSig[],
     structs: StructSig[],
-    unions: UnionSig[]
+    unions: UnionSig[],
+    methods: MethodSig[]
 }
 
 function new_scope(): Scope {
@@ -174,7 +182,8 @@ function new_scope(): Scope {
     var fs: FuncSig[] = [];
     var ss: StructSig[] = [];
     var us: UnionSig[] = [];
-    return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us };
+    var ms: MethodSig[] = [];
+    return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us, methods: ms };
 }
 
 function new_scope_with_sigs(sigs: FuncSig[]): Scope {
@@ -182,26 +191,35 @@ function new_scope_with_sigs(sigs: FuncSig[]): Scope {
     var ts: Type[] = [];
     var ss: StructSig[] = [];
     var us: UnionSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us };
+    var ms: MethodSig[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us, methods: ms };
 }
 
 function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
     var us: UnionSig[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us };
+    var ms: MethodSig[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us, methods: ms };
 }
 
 function new_scope_with_sigs_structs_unions(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[]): Scope {
     var ns: string[] = [];
     var ts: Type[] = [];
-    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions };
+    var ms: MethodSig[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: ms };
+}
+
+function new_scope_full(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
+    var ns: string[] = [];
+    var ts: Type[] = [];
+    return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: methods };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
     var ns: string[] = s.names.push(name);
     var ts: Type[] = s.types.push(t);
-    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions };
+    return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -237,6 +255,18 @@ function (s: Scope) lookup_struct(name: string): StructSig {
     var empty_n: string[] = [];
     var empty_t: Type[] = [];
     return StructSig { name: "", field_names: empty_n, field_types: empty_t };
+}
+
+function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
+    var i: i32 = 0;
+    while (i < len(s.methods)) {
+        if (s.methods[i].name == name && s.methods[i].receiver_type == recv_type) {
+            return s.methods[i];
+        }
+        i = i + 1;
+    }
+    var empty_pt: Type[] = [];
+    return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method") };
 }
 
 function (s: Scope) lookup_union(name: string): UnionSig {
@@ -367,16 +397,29 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             return t_unknown("unknown unary op:" + u.op);
         },
         parser.ExprCall(c) => {
-            // Only bare-ident callees are supported.
+            // Bare-ident callee → plain function call.
+            // FieldAccess callee → method call: type-check the
+            // receiver, look up the method by (name, recv_type).
             var name: string = "";
+            var is_method: boolean = false;
+            var recv_type_name: string = "";
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
+                parser.ExprFieldAccess(fa) => {
+                    name = fa.field;
+                    is_method = true;
+                    var rt: Type = check_expr(fa.obj, s);
+                    match (rt) {
+                        TypeStruct(sn) => { recv_type_name = sn.name; },
+                        _ => { return t_unknown("method call: receiver isn't a struct"); }
+                    }
+                },
                 _ => { return t_unknown("call target is not an identifier"); }
             }
             // Builtins: `len(x)` returns i32 for any array or
             // string. Checked separately because the sig table
             // doesn't enumerate them.
-            if (name == "len") {
+            if (!is_method && name == "len") {
                 if (len(c.args) != 1) { return t_unknown("len takes 1 argument"); }
                 var at: Type = check_expr(c.args[0], s);
                 match (at) {
@@ -385,6 +428,24 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                     _ => { return t_unknown("len: argument must be array or string"); }
                 }
                 return t_unknown("unreachable len arm");
+            }
+            if (is_method) {
+                var msig: MethodSig = s.lookup_method(name, recv_type_name);
+                if (len(msig.name) == 0) {
+                    return t_unknown("undefined method `" + name + "` on `" + recv_type_name + "`");
+                }
+                if (len(c.args) != len(msig.param_types)) {
+                    return t_unknown("arity mismatch calling method `" + name + "`");
+                }
+                var mi: i32 = 0;
+                while (mi < len(c.args)) {
+                    var mat: Type = check_expr(c.args[mi], s);
+                    if (!type_assignable(mat, msig.param_types[mi], s.unions)) {
+                        return t_unknown("arg-type mismatch calling method `" + name + "`");
+                    }
+                    mi = mi + 1;
+                }
+                return msig.ret_type;
             }
             var sig: FuncSig = s.lookup_sig(name);
             if (len(sig.name) == 0) {
@@ -703,6 +764,8 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
     var i: i32 = 0;
     while (i < len(funcs)) {
         var fd: parser.FuncDecl = funcs[i];
+        // Skip receiver methods — they live in MethodSig table.
+        if (len(fd.receiver_name) > 0) { i = i + 1; continue; }
         var pts: Type[] = [];
         var j: i32 = 0;
         while (j < len(fd.params)) {
@@ -714,6 +777,34 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
             param_types: pts,
             ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions)
         });
+        i = i + 1;
+    }
+    return out;
+}
+
+// collect_method_sigs builds the method-sig table from the
+// module's FuncDecls — picking up only those with a non-empty
+// receiver_name. Param types resolve through the same
+// structs + unions tables as func sigs.
+function collect_method_sigs(funcs: parser.FuncDecl[], structs: StructSig[], unions: UnionSig[]): MethodSig[] {
+    var out: MethodSig[] = [];
+    var i: i32 = 0;
+    while (i < len(funcs)) {
+        var fd: parser.FuncDecl = funcs[i];
+        if (len(fd.receiver_name) > 0) {
+            var pts: Type[] = [];
+            var j: i32 = 0;
+            while (j < len(fd.params)) {
+                pts = pts.push(type_from_name_with_structs_unions(fd.params[j].type_name, structs, unions));
+                j = j + 1;
+            }
+            out = out.push(MethodSig {
+                name: fd.name,
+                receiver_type: fd.receiver_type,
+                param_types: pts,
+                ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions)
+            });
+        }
         i = i + 1;
     }
     return out;
@@ -883,8 +974,15 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // effects and don't return them yet. Returns true if every body
 // stmt type-checked (no TypeUnknown anywhere); the caller can
 // use that to count well-typed function bodies for diagnostics.
-function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[]): boolean {
-    var s: Scope = new_scope_with_sigs_structs_unions(sigs, structs, unions);
+function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): boolean {
+    var s: Scope = new_scope_full(sigs, structs, unions, methods);
+    // Receiver methods bind the receiver as a first scope entry
+    // before walking params. The receiver's type is the
+    // declared receiver_type (resolved via the same path as
+    // params + ret_type).
+    if (len(fd.receiver_name) > 0) {
+        s = s.bind(fd.receiver_name, type_from_name_with_structs_unions(fd.receiver_type, structs, unions));
+    }
     var i: i32 = 0;
     while (i < len(fd.params)) {
         s = s.bind(fd.params[i].name, type_from_name_with_structs_unions(fd.params[i].type_name, structs, unions));
@@ -924,12 +1022,13 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var well_typed: boolean = true;
     if (!validate_union_sigs(unions, struct_names)) { well_typed = false; }
     var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
+    var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
     var i: i32 = 0;
     while (i < len(mod.funcs)) {
-        if (!check_func_body(mod.funcs[i], sigs, structs, unions)) { well_typed = false; }
+        if (!check_func_body(mod.funcs[i], sigs, structs, unions, methods)) { well_typed = false; }
         i = i + 1;
     }
-    var s: Scope = new_scope_with_sigs_structs_unions(sigs, structs, unions);
+    var s: Scope = new_scope_full(sigs, structs, unions, methods);
     var top_tys: Type[] = [];
     var j: i32 = 0;
     while (j < len(mod.top_stmts)) {
@@ -1212,6 +1311,42 @@ function main(): i32 {
     var mod33: parser.Module = parser.parse_module(lexer.tokenize(src33));
     var mt33: ModuleTypes = check_module(mod33);
     if (mt33.all_well_typed) { return 330; }
+
+    // Receiver method call: `c.area()` type-checks via the
+    // method-sig table when the receiver is a TypeStruct
+    // matching the method's declared receiver_type.
+    var src34: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { var k: Circle = Circle { r: 5 }; return k.area(); }";
+    var mod34: parser.Module = parser.parse_module(lexer.tokenize(src34));
+    var mt34: ModuleTypes = check_module(mod34);
+    if (!mt34.all_well_typed) { return 340; }
+
+    // Method with an arg — arg type-checks against the
+    // method's param_types.
+    var src35: string = "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x: Box = Box { v: 4 }; return x.scale(3); }";
+    var mod35: parser.Module = parser.parse_module(lexer.tokenize(src35));
+    var mt35: ModuleTypes = check_module(mod35);
+    if (!mt35.all_well_typed) { return 350; }
+
+    // Method-args type mismatch: passing a string where i32
+    // is expected is rejected.
+    var src36: string = "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x: Box = Box { v: 4 }; return x.scale(\"oops\"); }";
+    var mod36: parser.Module = parser.parse_module(lexer.tokenize(src36));
+    var mt36: ModuleTypes = check_module(mod36);
+    if (mt36.all_well_typed) { return 360; }
+
+    // Method on wrong receiver type — no Square.area method.
+    var src37: string = "struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r; } function main(): i32 { var sq: Square = Square { s: 7 }; return sq.area(); }";
+    var mod37: parser.Module = parser.parse_module(lexer.tokenize(src37));
+    var mt37: ModuleTypes = check_module(mod37);
+    if (mt37.all_well_typed) { return 370; }
+
+    // Plain function name + method name don't collide. Both
+    // calls type-check independently — the plain `area()` and
+    // the method `k.area()` resolve to different sigs.
+    var src38: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { var k: Circle = Circle { r: 5 }; var m: i32 = area(); var n: i32 = k.area(); return m + n; }";
+    var mod38: parser.Module = parser.parse_module(lexer.tokenize(src38));
+    var mt38: ModuleTypes = check_module(mod38);
+    if (!mt38.all_well_typed) { return 380; }
 
     return 0;
 }
