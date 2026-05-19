@@ -498,6 +498,101 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptHttpResponseHeaders pins the HeaderMap →
+// HttpResponse wiring + http_serialize_response emission
+// behaviour (docs/STDLIB-DESIGN-RESEARCH.md Rec §2). Handlers
+// can `resp.headers.set/append` and those headers land in the
+// wire output ahead of the auto-emitted Content-Length /
+// Connection block. The auto block always wins for those two
+// names so a misconfigured handler can't ship a malformed
+// response.
+func TestInterpScriptHttpResponseHeaders(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+		wantExit                 int
+	}{
+		{
+			name: "user-set headers appear before the auto block",
+			source: `import "std/http";
+
+function main(): i32 {
+    var r: HttpResponse = http.http_response_ok("hello");
+    r.headers.set("X-Trace-Id", "abc123");
+    r.headers.set("Cache-Control", "no-store");
+    var wire: string = http.http_serialize_response(r);
+    print(wire);
+    return 0;
+}`,
+			wantStdout: "HTTP/1.1 200 OK\r\nx-trace-id: abc123\r\ncache-control: no-store\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello\n",
+		},
+		{
+			name: "redirect helper sets Location header",
+			source: `import "std/http";
+
+function main(): i32 {
+    var r: HttpResponse = http.http_response_redirect("/login");
+    match (r.headers.get("location")) {
+        Some(v) => { print(v); },
+        None => { print("MISSING"); }
+    }
+    return 0;
+}`,
+			wantStdout: "/login\n",
+		},
+		{
+			name: "user-set Content-Length is ignored in favor of auto",
+			source: `import "std/http";
+
+function main(): i32 {
+    var r: HttpResponse = http.http_response_ok("hi");
+    r.headers.set("Content-Length", "9999");
+    var wire: string = http.http_serialize_response(r);
+    print(wire);
+    return 0;
+}`,
+			wantStdout: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi\n",
+		},
+		{
+			name: "duplicate Set-Cookie via append both appear",
+			source: `import "std/http";
+
+function main(): i32 {
+    var r: HttpResponse = http.http_response_ok("hi");
+    r.headers.append("Set-Cookie", "a=1");
+    r.headers.append("Set-Cookie", "b=2");
+    var wire: string = http.http_serialize_response(r);
+    print(wire);
+    return 0;
+}`,
+			wantStdout: "HTTP/1.1 200 OK\r\nset-cookie: a=1\r\nset-cookie: b=2\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.wantExit {
+				t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s",
+					code, tc.wantExit, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q, want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry

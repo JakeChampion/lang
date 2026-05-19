@@ -35,5 +35,5 @@ import "std/i32";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
   var body: string = f"{req.method} {req.path} ({len(req.body)} bytes)\n\n{req.body}";
-  return HttpResponse { status: 200, body: body };
+  return http.http_response_ok(body);
 }

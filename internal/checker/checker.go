@@ -267,6 +267,15 @@ func builtinStructDecls() []*ast.StructDecl {
 			Fields: []ast.Param{
 				{Name: "status", Type: ast.NumberType{}},
 				{Name: "body", Type: ast.StringType{}},
+				// `headers` lands at the END so the wasi-http
+				// wrapper's hardcoded reads (status@+0,
+				// body@+8/+12) stay stable. http_serialize_response
+				// walks this map to emit the wire header block;
+				// Content-Length and Connection are auto-emitted
+				// after user headers (and de-duped against names
+				// the user already set so a manual
+				// `resp.headers.set("Connection", ...)` wins).
+				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
 		},
 		// Platform — the capability bag threaded as the second

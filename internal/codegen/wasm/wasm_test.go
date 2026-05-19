@@ -649,7 +649,7 @@ func TestArgsHelperHasInlineOutputFastPath(t *testing.T) {
 // user code.
 func TestHttpWrapperShortMethodPacksInline(t *testing.T) {
 	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
-		return HttpResponse { status: 200, body: "ok" };
+		return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
 	}`
 	prog, err := parser.Parse(src)
 	if err != nil {

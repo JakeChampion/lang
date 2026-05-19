@@ -590,12 +590,12 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	srcPath := filepath.Join(dir, "router.lang")
 	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        return HttpResponse { status: 200, body: "world" };
+        return http_response_ok("world");
     }
     if (req.method == "POST") {
-        return HttpResponse { status: 200, body: req.body };
+        return http_response_ok(req.body);
     }
-    return HttpResponse { status: 404, body: "not found" };
+    return http_response_not_found();
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
