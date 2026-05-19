@@ -1511,6 +1511,8 @@ var CallDirectAliases = map[string]string{
 	"random_i32":   "__lang_random_i32",
 	"random_bytes": "__lang_random_bytes",
 	"now_ns":       "__lang_now_ns",
+	"now_unix_ms":  "__lang_now_unix_ms",
+	"monotonic_ns": "__lang_monotonic_ns",
 	"env_count":  "__lang_env_count",
 	"arg_count":  "__lang_arg_count",
 	"arg_at":     "__lang_arg_at",

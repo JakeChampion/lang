@@ -128,6 +128,14 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// the 8-byte output buffer.
 					needs.add("__lang_alloc")
 					needs.add("__lang_now_ns")
+				case "__lang_now_unix_ms":
+					// Same as __lang_now_ns / 1_000_000.
+					needs.add("__lang_alloc")
+					needs.add("__lang_now_unix_ms")
+				case "__lang_monotonic_ns":
+					// CLOCK_MONOTONIC (1) variant of __lang_now_ns.
+					needs.add("__lang_alloc")
+					needs.add("__lang_monotonic_ns")
 				case "__lang_env_count":
 					// wasi_environ_sizes_get + alloc-per-call
 					// for the 8-byte output buffer.
@@ -347,6 +355,21 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 		body:    buildNowNsBody,
+	},
+	"__lang_now_unix_ms": {
+		// () → i64 — milliseconds since unix epoch. Calls
+		// wasi_clock_time_get (CLOCK_REALTIME) and divides by
+		// 1_000_000.
+		params:  nil,
+		results: []byte{encode.ValtypeI64},
+		body:    buildNowUnixMsBody,
+	},
+	"__lang_monotonic_ns": {
+		// () → i64 — monotonic nanoseconds via
+		// wasi_clock_time_get (CLOCK_MONOTONIC = 1).
+		params:  nil,
+		results: []byte{encode.ValtypeI64},
+		body:    buildMonotonicNsBody,
 	},
 	"__lang_env_count": {
 		// () → i32 — count of environment variables (envc).

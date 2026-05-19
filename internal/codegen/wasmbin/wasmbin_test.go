@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -2679,6 +2680,66 @@ func TestEmitArgs(t *testing.T) {
 	}
 	if got := strings.TrimSpace(so.String()); got != "3" {
 		t.Fatalf("len(args()) = %q, want 3 (path + 2 extra)", got)
+	}
+}
+
+// TestEmitNowUnixMs — call OpCallDirect "now_unix_ms" and
+// verify the result is non-zero and within a plausible recent
+// range. The exact value can't be asserted but we can check
+// it's a reasonable wall-clock ms reading.
+func TestEmitNowUnixMs(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i64(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "now_unix_ms"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	got := runUnderWasmtime(t, bin, "main")
+	if got == "" {
+		t.Fatal("empty stdout")
+	}
+	// Should be far past 2000-01-01 (in ms: ~9.46e11) and at
+	// most a few years in the future.
+	n, err := strconv.ParseInt(got, 10, 64)
+	if err != nil {
+		t.Fatalf("parse %q: %v", got, err)
+	}
+	if n < 946_684_800_000 || n > 4_000_000_000_000 {
+		t.Fatalf("now_unix_ms = %d, out of plausible range", n)
+	}
+}
+
+// TestEmitMonotonicNs — two monotonic_ns() readings should
+// produce a positive (non-negative) difference, since
+// CLOCK_MONOTONIC is non-decreasing.
+func TestEmitMonotonicNs(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i64()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "monotonic_ns"},
+			{Kind: ir.OpStoreLocal, I32: 0}, // t0
+			{Kind: ir.OpCallDirect, Str: "monotonic_ns"},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpSub, Width: 64},
+			// Compare diff >= 0: convert to i32 result via
+			// comparison (diff >= 0 → 1, else 0).
+			{Kind: ir.OpConstI64, I64: 0},
+			{Kind: ir.OpGeS, Width: 64},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "1" {
+		t.Fatalf("monotonic_ns diff >= 0 = %q, want 1", got)
 	}
 }
 
