@@ -322,7 +322,17 @@ function main(): i32 {
   many orders of magnitude — a fixed absolute epsilon is
   either too tight at large scales or too loose at small
   ones. Falls back to absolute compare when `expected == 0.0`
-- **Range:** `assert_in_range_i32`, `assert_in_range_i64`
+- **Range:** `assert_in_range_i32`, `assert_in_range_i64`,
+  `assert_in_range_f64(v, lo, hi)` — inclusive bounds; the
+  f64 variant fails on NaN inputs (NaN never satisfies an
+  ordering compare)
+- **Order:** `assert_sorted_asc_i32(arr)`,
+  `assert_sorted_asc_string(arr)` — monotonically
+  non-decreasing; empty / single-element arrays vacuously
+  pass; failure embeds the inversion index
+- **Uniqueness:** `assert_unique_i32(arr)`,
+  `assert_unique_string(arr)` — every element appears at
+  most once; sort-then-walk so input order doesn't matter
 - **Multi-substring:** `assert_contains_all(haystack, needles[])`,
   `assert_contains_any`, `assert_contains_in_order` — the
   failure message names which needle(s) didn't match so the

@@ -1022,6 +1022,42 @@ func TestRunnerRelTolAndMsBenchExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/sorted_unique_range_test.lang` exercises
+// the batch-19 additions to std/test:
+//   - `assert_in_range_f64(v, lo, hi)` — inclusive float
+//     range; NaN always fails
+//   - `assert_sorted_asc_i32` / `_string` — monotonically
+//     non-decreasing; empty / single-element arrays are
+//     vacuously sorted; failure embeds the inversion index
+//   - `assert_unique_i32` / `_string` — sort-then-walk
+//     uniqueness check; failure embeds the offending value
+//
+// 19 cases total covering inclusive bounds, NaN guards,
+// inversion-index reporting, multi-magnitude inputs, and
+// the vacuous empty / single-element cases.
+func TestRunnerSortedUniqueRangeExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/sorted_unique_range_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 4 - in_range_f64 below names bound",
+		"ok 6 - in_range_f64 NaN fails",
+		"ok 10 - sorted_asc_i32 equal runs ok",
+		"ok 11 - sorted_asc_i32 inversion + index",
+		"ok 15 - unique_i32 unsorted input",
+		"ok 18 - unique_string duplicate fails",
+		"# pass 19",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
