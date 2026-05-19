@@ -1660,7 +1660,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // the box ptr at +16).
             var pi2: i32 = 0;
             while (pi2 < argc_l) {
-                s = s.bind_local(lm.params[pi2].name);
+                s = s.bind_local_typed(lm.params[pi2].name, ret_tag_of(lm.params[pi2].type_name));
                 var p_off: i32 = s.lookup_local(lm.params[pi2].name);
                 var a_off: i32 = 24 + pi2 * 8;
                 s = s.write("    movq " + i32_to_string(a_off) + "(%rbp), %rax\n");
@@ -2070,7 +2070,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     // For methods, bind receiver first so it occupies local
     // slot 0 (at -8(%rbp)) and reads from +16(%rbp).
     if (has_recv) {
-        s = s.bind_local(fd.receiver_name);
+        s = s.bind_local_typed(fd.receiver_name, ret_tag_of(fd.receiver_type));
         var recv_off: i32 = s.lookup_local(fd.receiver_name);
         s = s.write("    movq 16(%rbp), %rax\n");
         s = s.write("    movq %rax, " + i32_to_string(recv_off) + "(%rbp) # recv " + fd.receiver_name + "\n");
@@ -2082,7 +2082,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     var n_params: i32 = len(fd.params);
     var i: i32 = 0;
     while (i < n_params) {
-        s = s.bind_local(fd.params[i].name);
+        s = s.bind_local_typed(fd.params[i].name, ret_tag_of(fd.params[i].type_name));
         var local_off: i32 = s.lookup_local(fd.params[i].name);
         var arg_off: i32 = 16 + (i + recv_shift) * 8;
         s = s.write("    movq " + i32_to_string(arg_off) + "(%rbp), %rax\n");
