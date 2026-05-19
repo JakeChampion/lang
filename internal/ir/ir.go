@@ -582,6 +582,11 @@ type Func struct {
 	ScratchTypes []ast.Type
 	ReturnType   ast.Type
 	Ops          []Op
+	// Captures lists the variables a hoisted closure target
+	// captures, in declaration order. Empty for non-closure
+	// functions. Used by codegen to size the env block + decide
+	// per-capture stride (i32 / i64 / 2-word string ABI).
+	Captures []ast.Param
 }
 
 // Program is the lowered form of an entire ast.Program.
@@ -1355,6 +1360,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		Params:     fn.Params,
 		Locals:     info.Locals[fn],
 		ReturnType: fn.ReturnType,
+		Captures:   fn.Captures,
 	}
 	b := &builder{
 		info:        info,
