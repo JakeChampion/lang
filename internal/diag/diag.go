@@ -55,6 +55,51 @@ type Filed interface {
 	File() string
 }
 
+// LabelKind tags a Label's role in a multi-label diagnostic
+// (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §1).
+//
+//   Primary   — the "error happens here" pointer; rendered with `^`.
+//   Secondary — context that informs the primary (e.g. "declared
+//               with this type" pointing at the original decl);
+//               rendered with `--` underline + "note:" prefix.
+//   Help      — actionable explanation or suggested fix; rendered
+//               with `--` + "help:" prefix. Distinct from
+//               Secondary so the IDE can surface help labels as
+//               CodeAction candidates while leaving Secondary as
+//               plain `relatedInformation`.
+type LabelKind int
+
+const (
+	LabelPrimary LabelKind = iota
+	LabelSecondary
+	LabelHelp
+)
+
+// Label is one source-location annotation in a multi-label
+// diagnostic. Spans use the (Position, Length) shape already
+// established by the Spanned interface — a length of 0 means
+// "single caret at the position."
+type Label struct {
+	Pos     ast.Position
+	Length  int
+	Message string
+	Kind    LabelKind
+}
+
+// Labeled is satisfied by errors that carry multiple source
+// annotations (typically primary-at-use plus secondary-at-decl).
+// The renderer falls back to the Positioned / Spanned single-
+// label path when an error implements only those.
+//
+// Convention: Labels() should return the primary label FIRST.
+// The renderer uses the primary's position for the header
+// `path:L:C: error: msg` line; secondary / help labels render
+// below with their own line/caret pair.
+type Labeled interface {
+	error
+	Labels() []Label
+}
+
 // WithFile walks err and stamps `filename` on every entry that
 // implements `error` and exposes a `*string` SetFile mutator (via
 // the unexported setFile interface concrete error types implement).
@@ -175,7 +220,59 @@ func Format(filename, src string, err error) string {
 			out += "\n    note: " + hint
 		}
 	}
+	// Multi-label diagnostic (docs/DIAGNOSTIC-UX-RESEARCH.md
+	// Rec §1). Labels()[0] is the primary; the header above
+	// already rendered it. Render the remaining labels with
+	// their own line/underline pair and a kind-tagged prefix.
+	if lb, ok := err.(Labeled); ok {
+		labels := lb.Labels()
+		for i, l := range labels {
+			if i == 0 {
+				continue
+			}
+			out += "\n" + renderSecondaryLabel(filename, src, l)
+		}
+	}
 	return out
+}
+
+// renderSecondaryLabel formats one Secondary/Help label below
+// the primary diagnostic. Each carries its own `file:L:C:`
+// header so cross-file labels (e.g. "declared in lib/foo.lang"
+// pointing at the original decl) route correctly under
+// workspace-mode LSP. The underline uses `--` instead of `^~`
+// to visually distinguish secondaries from the primary's
+// caret.
+func renderSecondaryLabel(filename, src string, l Label) string {
+	tag := "note: "
+	if l.Kind == LabelHelp {
+		tag = "help: "
+	}
+	line := pickLine(src, l.Pos.Line)
+	header := fmt.Sprintf("    %d:%d: %s%s", l.Pos.Line, l.Pos.Col, tag, l.Message)
+	if filename != "" {
+		header = "    " + filename + ":" + fmt.Sprintf("%d:%d: %s%s", l.Pos.Line, l.Pos.Col, tag, l.Message)
+	}
+	if line == "" {
+		return header
+	}
+	pad := strings.Repeat(" ", clamp(l.Pos.Col-1, 0, len(line)))
+	span := l.Length
+	if span < 1 {
+		span = 1
+	}
+	room := len(line) - (l.Pos.Col - 1)
+	if room < 0 {
+		room = 0
+	}
+	if span > room {
+		span = room
+	}
+	mark := strings.Repeat("-", span)
+	if mark == "" {
+		mark = "-"
+	}
+	return fmt.Sprintf("%s\n        %s\n        %s%s", header, line, pad, mark)
 }
 
 // stripPrefix removes any "<kind> error at L:C: " prefix that the
