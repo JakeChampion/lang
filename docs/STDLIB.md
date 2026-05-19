@@ -375,6 +375,14 @@ function main(): i32 {
   parses both sides via `std/json` and walks the value
   trees in order-independent fashion (JObject key order
   isn't observable)
+- **JSON detail (narrower than `_eq`):**
+  `assert_json_has_key(json_text, key)` /
+  `assert_json_lacks_key(json_text, key)` — top-level
+  JObject key presence.
+  `assert_json_array_len(json_text, n)` /
+  `assert_json_object_size(json_text, n)` — cardinality.
+  Each helper reports a distinct diagnostic for invalid
+  JSON, wrong top-level type, and missing/extra entries
 - **Timing:** `assert_elapsed_lt_ms(start_ns, max_ms)` /
   `assert_elapsed_lt_us(start_ns, max_us)` — pair with
   `monotonic_ns()` to stamp the start; failure message embeds

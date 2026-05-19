@@ -1541,6 +1541,45 @@ func TestRunnerAssertAtWiderExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/json_detail_test.lang` exercises batch-33
+// additions — narrower JSON assertions:
+//   - `assert_json_has_key` / `assert_json_lacks_key` —
+//     top-level JObject key presence checks.
+//   - `assert_json_array_len` / `assert_json_object_size`
+//     — cardinality checks.
+//
+// All four parse via `std/json` and report distinct
+// diagnostics for invalid JSON, wrong top-level type
+// (`null` / bool / number / string / array / object — the
+// helper names what was found vs what was expected), and
+// missing/extra entries.
+//
+// 14 cases.
+func TestRunnerJSONDetailExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/json_detail_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - has_key missing names size",
+		"ok 3 - has_key invalid JSON diag",
+		"ok 4 - has_key array top-level rejected",
+		"ok 5 - has_key null top-level rejected",
+		"ok 7 - lacks_key present fails",
+		"ok 10 - array_len wrong shows both",
+		"ok 11 - array_len object rejected",
+		"ok 14 - object_size wrong shows both",
+		"# pass 14",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
