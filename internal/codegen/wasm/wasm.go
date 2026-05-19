@@ -117,6 +117,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	if opts.PrintMainResult {
 		extras = append(extras, "int_to_string", "int__int_to_string")
 	}
+	// Wasi-http wrapper walks the canonical-ABI `fields.entries`
+	// result and calls `HeaderMap.append` per entry to populate
+	// `req.headers`. The call lives in a codegen-emitted WAT
+	// snippet that the treeshake walker can't see, so list the
+	// method's mangled symbol as an extra entry point. Same shape
+	// as the printMainResult bootstrap above.
+	if opts.HttpHandler {
+		extras = append(extras, "__method_HeaderMap_append")
+	}
 	// Wasi-http target uses the user's `handle()` directly via
 	// the `wasi:http/incoming-handler.handle` export wrapper —
 	// the auto-synthesised `main()` (which calls tcp_serve and
@@ -206,6 +215,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts EmitOptions) (s
 	deadFuncExtras := []string(nil)
 	if opts.PrintMainResult {
 		deadFuncExtras = append(deadFuncExtras, "int_to_string", "int__int_to_string")
+	}
+	// Wasi-http wrapper calls __method_HeaderMap_append per
+	// canonical-ABI fields entry via a codegen-emitted WAT
+	// snippet — the IR-level call walker can't see it, so the
+	// LiveFunctions analysis would otherwise drop it after
+	// AST-level treeshake handed it through. Mirror the
+	// PrintMainResult / int_to_string shape above.
+	if opts.HttpHandler {
+		deadFuncExtras = append(deadFuncExtras, "__method_HeaderMap_append")
 	}
 	if live := ir.LiveFunctionsWithAliases(ip, codegenAliasMap, deadFuncExtras...); live != nil {
 		out := ip.Funcs[:0]
@@ -2149,12 +2167,15 @@ func (g *generator) emitRuntimePreamble() {
 		// emitHttpHandlerWrapper for the call ordering.
 		g.line(`(import "wasi:http/types@0.2.0" "[method]incoming-request.method" (func $__wasi_http_request_method (param i32 i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[method]incoming-request.path-with-query" (func $__wasi_http_request_path_with_query (param i32 i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[method]incoming-request.headers" (func $__wasi_http_request_headers (param i32) (result i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[method]incoming-request.consume" (func $__wasi_http_request_consume (param i32 i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[resource-drop]incoming-request" (func $__wasi_http_request_drop (param i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[method]incoming-body.stream" (func $__wasi_http_incoming_body_stream (param i32 i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[static]incoming-body.finish" (func $__wasi_http_incoming_body_finish (param i32) (result i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[resource-drop]future-trailers" (func $__wasi_http_future_trailers_drop (param i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[constructor]fields" (func $__wasi_http_fields_new (result i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[method]fields.entries" (func $__wasi_http_fields_entries (param i32 i32)))`)
+		g.line(`(import "wasi:http/types@0.2.0" "[resource-drop]fields" (func $__wasi_http_fields_drop (param i32)))`)
 		g.line(`(import "wasi:http/types@0.2.0" "[constructor]outgoing-response" (func $__wasi_http_response_new (param i32) (result i32)))`)
 		// set-status-code's `result<_, _>` returns the disc inline as
 		// a single i32 (no retptr, since both Ok and Err carry no
@@ -5294,6 +5315,9 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`(local $__arena_handle i32)`)
 	g.line(`(local $plat_struct i32)`)
 	g.line(`(local $req_headers i32) (local $hm_names i32) (local $hm_values i32)`)
+	g.line(`(local $req_fields i32) (local $entries_retptr i32)`)
+	g.line(`(local $entries_data i32) (local $entries_count i32) (local $entry_i i32) (local $entry_addr i32)`)
+	g.line(`(local $hdr_name_data i32) (local $hdr_name_len i32) (local $hdr_value_data i32) (local $hdr_value_len i32)`)
 
 	// Implicit per-request arena: save the bump cursor at
 	// entry, restore it before returning so every allocation
@@ -5619,6 +5643,16 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.indent--
 	g.line(`end`) // consume-result branch
 
+	// Grab the headers fields handle BEFORE dropping the
+	// incoming-request resource — `headers()` borrows from
+	// the request and the returned fields handle outlives the
+	// request drop (the canonical-ABI fields resource is
+	// independently owned once handed back). We walk its
+	// entries below to populate the lang HeaderMap.
+	g.line(`local.get $req`)
+	g.line(`call $__wasi_http_request_headers`)
+	g.line(`local.set $req_fields`)
+
 	// Drop incoming-request.
 	g.line(`local.get $req`)
 	g.line(`call $__wasi_http_request_drop`)
@@ -5672,12 +5706,13 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`local.get $body_str_len`)
 	g.line(`i32.store`)
 
-	// Empty HeaderMap inline. Layout: two array-pointer slots
-	// (names @ +0, values @ +4). Each array allocation is the
-	// 8-byte empty-string-array shape `lang_alloc` emits for
-	// `var x: string[] = []` (length=0 at offset +4); the bytes
-	// at offset 0 of each array header stay zero from the bump
-	// allocator's zero-initialised page.
+	// HeaderMap. Start with empty parallel string[] arrays + an
+	// 8-byte struct holding their pointers, then walk the
+	// canonical-ABI `fields.entries` result and call
+	// `__method_HeaderMap_append` for each (name, value) pair.
+	// The arrays grow under each append (lang `arr.push(...)`
+	// allocates fresh storage); the array-pointer fields in the
+	// HeaderMap struct get rewritten in place by the method.
 	g.line(`i32.const 8`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $hm_names`)
@@ -5707,6 +5742,93 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`i32.add`)
 	g.line(`local.get $req_headers`)
 	g.line(`i32.store`)
+
+	// Populate from incoming-request headers. `fields.entries()`
+	// returns `list<tuple<field-name, field-value>>` via canonical-
+	// ABI list return: 8-byte retptr area holds `(data_ptr,
+	// count)`. Each entry is 16 bytes: name string slot
+	// (data@+0, len@+4) + value bytes slot (data@+8, len@+12).
+	// `field-value` is `list<u8>` at the WIT level; we treat its
+	// byte range as the lang-side string (same length-prefixed
+	// memory shape) — header values are typically ASCII / ISO-
+	// 8859-1 and the lang stdlib doesn't currently enforce UTF-8
+	// on `string`.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.set $entries_retptr`)
+	g.line(`local.get $req_fields`)
+	g.line(`local.get $entries_retptr`)
+	g.line(`call $__wasi_http_fields_entries`)
+	g.line(`local.get $entries_retptr`)
+	g.line(`i32.load`)
+	g.line(`local.set $entries_data`)
+	g.line(`local.get $entries_retptr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $entries_count`)
+	g.line(`i32.const 0`)
+	g.line(`local.set $entry_i`)
+	g.line(`(block $entries_done`)
+	g.indent++
+	g.line(`(loop $entries_loop`)
+	g.indent++
+	g.line(`local.get $entry_i`)
+	g.line(`local.get $entries_count`)
+	g.line(`i32.ge_s`)
+	g.line(`br_if $entries_done`)
+	// entry_addr = entries_data + entry_i * 16
+	g.line(`local.get $entries_data`)
+	g.line(`local.get $entry_i`)
+	g.line(`i32.const 16`)
+	g.line(`i32.mul`)
+	g.line(`i32.add`)
+	g.line(`local.set $entry_addr`)
+	// name_data = *(entry_addr + 0)
+	g.line(`local.get $entry_addr`)
+	g.line(`i32.load`)
+	g.line(`local.set $hdr_name_data`)
+	// name_len = *(entry_addr + 4)
+	g.line(`local.get $entry_addr`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $hdr_name_len`)
+	// value_data = *(entry_addr + 8)
+	g.line(`local.get $entry_addr`)
+	g.line(`i32.const 8`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $hdr_value_data`)
+	// value_len = *(entry_addr + 12)
+	g.line(`local.get $entry_addr`)
+	g.line(`i32.const 12`)
+	g.line(`i32.add`)
+	g.line(`i32.load`)
+	g.line(`local.set $hdr_value_len`)
+	// __method_HeaderMap_append(req_headers, name_data, name_len, value_data, value_len)
+	g.line(`local.get $req_headers`)
+	g.line(`local.get $hdr_name_data`)
+	g.line(`local.get $hdr_name_len`)
+	g.line(`local.get $hdr_value_data`)
+	g.line(`local.get $hdr_value_len`)
+	g.line(`call $__method_HeaderMap_append`)
+	// entry_i++
+	g.line(`local.get $entry_i`)
+	g.line(`i32.const 1`)
+	g.line(`i32.add`)
+	g.line(`local.set $entry_i`)
+	g.line(`br $entries_loop`)
+	g.indent--
+	g.line(`)`)
+	g.indent--
+	g.line(`)`)
+
+	// Drop the fields handle. We could keep it around for
+	// future canonical-ABI re-reads but the lang HeaderMap is
+	// now self-contained.
+	g.line(`local.get $req_fields`)
+	g.line(`call $__wasi_http_fields_drop`)
 
 	// ============================================================
 	// Construct Platform capability bag (Phase 1 placeholder per

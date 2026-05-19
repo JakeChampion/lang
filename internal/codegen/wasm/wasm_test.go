@@ -683,6 +683,41 @@ func TestHttpWrapperShortMethodPacksInline(t *testing.T) {
 	mustNotContain(t, wat, `\07\00\00\00CONNECT`)
 }
 
+// `wasi-http/incoming-request.headers` lands in the wrapper +
+// its entries get walked into the lang HeaderMap via
+// `__method_HeaderMap_append`. Locks docs/STDLIB-DESIGN-
+// RESEARCH.md Rec §2's wasi-http canonical-ABI path.
+func TestHttpWrapperPopulatesRequestHeaders(t *testing.T) {
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+		return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+	}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	wat, err := EmitWithOptions(prog, info, EmitOptions{HttpHandler: true})
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	// New canonical-ABI imports.
+	mustContain(t, wat, `"[method]incoming-request.headers"`)
+	mustContain(t, wat, `"[method]fields.entries"`)
+	mustContain(t, wat, `"[resource-drop]fields"`)
+	// Wrapper actually invokes them + the HeaderMap.append
+	// method per entry.
+	mustContain(t, wat, `call $__wasi_http_request_headers`)
+	mustContain(t, wat, `call $__wasi_http_fields_entries`)
+	mustContain(t, wat, `call $__method_HeaderMap_append`)
+	mustContain(t, wat, `call $__wasi_http_fields_drop`)
+	// The lang method must survive treeshake — i.e. its
+	// definition appears in the emitted module.
+	mustContain(t, wat, `(func $__method_HeaderMap_append`)
+}
+
 // `$__method_Reader_read_chunk` gains an inline-output fast
 // path for short reads (n ≤ 3). Catches one-byte status probes
 // + two-byte protocol tokens that otherwise allocate the same
