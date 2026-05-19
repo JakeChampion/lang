@@ -851,6 +851,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			3,
 			"bnn",
 		},
+		{
+			"chr-uppercase-a",
+			"function main(): i32 { var c = chr(65); print(c); return len(c); }",
+			1,
+			"A",
+		},
+		{
+			"chr-newline",
+			"function main(): i32 { var c = chr(10); print(\"before\"); print(c); print(\"after\"); return 0; }",
+			0,
+			"before\nafter",
+		},
+		{
+			"chr-zero",
+			"function main(): i32 { var c = chr(0); return len(c); }",
+			1,
+			"",
+		},
+		{
+			"chr-concat-build-string",
+			"function main(): i32 { var msg = chr(72) + chr(105) + chr(33); print(msg); return len(msg); }",
+			3,
+			"Hi!",
+		},
+		{
+			"chr-index-of-result",
+			"function main(): i32 { var c = chr(98); if (c == \"b\") { return 1; } return 0; }",
+			1,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
