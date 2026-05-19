@@ -1688,16 +1688,34 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 	b.emit(Op{Kind: OpStore})
 	for i, a := range args {
-		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-		b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
-		b.emit(Op{Kind: OpAdd})
-		if err := b.expr(a); err != nil {
-			return err
-		}
+		// Emit the arg expression first, into a scratch slot.
+		// Pushing `base+offset` BEFORE evaluating the expression
+		// is unsafe on wasm: if the expression contains an
+		// if-block-with-result, the (addr, value) pair the store
+		// expects would straddle the if-block's local stack scope
+		// — the validator rejects loads / stores in a branch that
+		// would consume values pushed outside it.
+		//
+		// Stash-then-restore lets the expression be a full
+		// arbitrary control-flow shape; the (addr, value) pair
+		// for OpStore lands on the operand stack only after the
+		// expression's stack effects have settled.
 		var pt ast.Type
 		if i < len(payloadTypes) {
 			pt = payloadTypes[i]
 		}
+		if err := b.expr(a); err != nil {
+			return err
+		}
+		valSlot := b.allocSlot()
+		if pt != nil {
+			b.scratchType[valSlot] = pt
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
+		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 		b.emit(payloadStoreOpFor(pt, b.ptrW))
 	}
 	// Push the result pointer.
