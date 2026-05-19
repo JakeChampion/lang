@@ -162,6 +162,8 @@ Free helpers — random, ranges, numeric constants, RGB packing.
 Free sort / compare helpers (insertion-sort).
 
 - `sort_i32_asc(arr)`, `sort_i32_desc(arr)`
+- `sort_i64_asc(arr)`, `sort_i64_desc(arr)`
+- `sort_u32_asc(arr)`, `sort_u64_asc(arr)`
 - `sort_strings_asc(arr)`, `sort_strings_desc(arr)`,
   `sort_strings_asc_ci(arr)`
 - `string_cmp(a, b)`, `string_cmp_ci(a, b)`
