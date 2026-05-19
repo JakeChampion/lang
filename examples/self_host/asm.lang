@@ -407,6 +407,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "str_trim") { return "string"; }
                     if (id.name == "str_to_upper") { return "string"; }
                     if (id.name == "str_to_lower") { return "string"; }
+                    if (id.name == "str_repeat") { return "string"; }
                     // Plain function call: look up ret_type.
                     var fi: i32 = 0;
                     while (fi < len(s.funcs)) {
@@ -1701,6 +1702,19 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_str_to_lower\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_str_search();
+                s = s.mark_heap();
+                return s;
+            }
+            // str_repeat(s, n) — concat s with itself n times.
+            // n <= 0 yields empty.
+            if (name == "str_repeat" && len(c.args) == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    popq %rsi\n");
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __lang_str_repeat\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3367,6 +3381,68 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    call __lang_alloc\n");
         s = s.write("    movq %r14, (%rax)\n");
         s = s.write("    movq %r13, 8(%rax)\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+        // __lang_str_repeat: %rdi = string box, %rsi = i32 n.
+        // Allocates n * len(s) bytes, copies s n times, then
+        // boxes. n <= 0 → empty string box.
+        s = s.write("__lang_str_repeat:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    movq (%rdi), %r12\n");      // src data
+        s = s.write("    movq 8(%rdi), %r13\n");     // src len
+        s = s.write("    movq %rsi, %r14\n");        // n
+        s = s.write("    cmpq $0, %r14\n");
+        s = s.write("    jg .Lrep_compute\n");
+        // n <= 0 → empty box.
+        s = s.write("    movq $0, %r13\n");
+        s = s.write("    movq $0, %r14\n");
+        s = s.write(".Lrep_compute:\n");
+        // total = r13 * r14
+        s = s.write("    movq %r13, %rax\n");
+        s = s.write("    imulq %r14, %rax\n");
+        s = s.write("    movq %rax, %r15\n");        // total len
+        s = s.write("    movq %r15, %rdi\n");
+        s = s.write("    cmpq $0, %rdi\n");
+        s = s.write("    jne .Lrep_alloc\n");
+        s = s.write("    movq $1, %rdi\n");          // alloc 1 if zero
+        s = s.write(".Lrep_alloc:\n");
+        s = s.write("    call __lang_alloc\n");
+        // %rax = dst buf. Copy src into dst n times.
+        s = s.write("    movq %rax, %rdi\n");        // dst cursor
+        s = s.write("    movq %rax, %r8\n");         // saved dst
+        s = s.write("    cmpq $0, %r14\n");
+        s = s.write("    je .Lrep_box\n");
+        s = s.write(".Lrep_outer:\n");
+        s = s.write("    movq %r12, %rsi\n");
+        s = s.write("    movq %r13, %rcx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lrep_next\n");
+        s = s.write(".Lrep_inner:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdi)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lrep_inner\n");
+        s = s.write(".Lrep_next:\n");
+        s = s.write("    decq %r14\n");
+        s = s.write("    cmpq $0, %r14\n");
+        s = s.write("    jne .Lrep_outer\n");
+        s = s.write(".Lrep_box:\n");
+        s = s.write("    movq %r8, %r12\n");         // dst buf
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __lang_alloc\n");
+        s = s.write("    movq %r12, (%rax)\n");
+        s = s.write("    movq %r15, 8(%rax)\n");
+        s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
         s = s.write("    popq %r13\n");
         s = s.write("    popq %r12\n");

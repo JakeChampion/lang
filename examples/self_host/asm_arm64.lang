@@ -701,6 +701,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "str_trim") { return "string"; }
                     if (id.name == "str_to_upper") { return "string"; }
                     if (id.name == "str_to_lower") { return "string"; }
+                    if (id.name == "str_repeat") { return "string"; }
                     var fi: i32 = 0;
                     while (fi < len(s.funcs)) {
                         if (s.funcs[fi].name == id.name && len(s.funcs[fi].receiver_type) == 0) {
@@ -1581,6 +1582,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_str_to_lower\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_str_search();
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "str_repeat" && len(c.args) == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    ldr x1, [sp], #16\n");
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __lang_str_repeat\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3004,6 +3016,54 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    bl __lang_alloc\n");
         s = s.write("    str x21, [x0]\n");
         s = s.write("    str x20, [x0, #8]\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        // __lang_str_repeat: x0 = string box, x1 = n. See
+        // asm.lang for rationale.
+        s = s.write("__lang_str_repeat:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    ldr x19, [x0]\n");          // src data
+        s = s.write("    ldr x20, [x0, #8]\n");      // src len
+        s = s.write("    mov x21, x1\n");            // n
+        s = s.write("    cmp x21, #0\n");
+        s = s.write("    b.gt .Lrep_compute\n");
+        s = s.write("    mov x20, #0\n");
+        s = s.write("    mov x21, #0\n");
+        s = s.write(".Lrep_compute:\n");
+        s = s.write("    mul x22, x20, x21\n");      // total len
+        s = s.write("    mov x0, x22\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.ne .Lrep_alloc\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write(".Lrep_alloc:\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    mov x23, x0\n");            // dst buf
+        s = s.write("    mov x2, x0\n");             // dst cursor
+        s = s.write("    cbz x21, .Lrep_box\n");
+        s = s.write(".Lrep_outer:\n");
+        s = s.write("    mov x1, x19\n");
+        s = s.write("    mov x3, x20\n");
+        s = s.write("    cbz x3, .Lrep_next\n");
+        s = s.write(".Lrep_inner:\n");
+        s = s.write("    ldrb w4, [x1], #1\n");
+        s = s.write("    strb w4, [x2], #1\n");
+        s = s.write("    subs x3, x3, #1\n");
+        s = s.write("    b.ne .Lrep_inner\n");
+        s = s.write(".Lrep_next:\n");
+        s = s.write("    subs x21, x21, #1\n");
+        s = s.write("    b.ne .Lrep_outer\n");
+        s = s.write(".Lrep_box:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    str x23, [x0]\n");
+        s = s.write("    str x22, [x0, #8]\n");
+        s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
