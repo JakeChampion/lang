@@ -74,11 +74,13 @@ the predicate so a grep across CI logs finds the regression.
 | Boolean      | `assert_true`, `assert_false`                                                                                         |
 | Integers     | `assert_eq_i32`, `assert_neq_i32`, `assert_lt_i32`, `assert_le_i32`, `assert_gt_i32`, `assert_ge_i32`                |
 | Wider ints   | `assert_eq_i64`, `assert_neq_i64`, `assert_eq_u32`, `assert_neq_u32`, `assert_eq_u64`, `assert_neq_u64`              |
+| Wider relational | `assert_lt_i64` / `_le_i64` / `_gt_i64` / `_ge_i64` plus matching `_u32` / `_u64` variants                        |
 | Floats       | `assert_eq_f32_near`, `assert_eq_f64_near`, `assert_eq_f64_exact`, `assert_is_nan_f32`, `assert_is_nan_f64`           |
 | Range        | `assert_in_range_i32`, `assert_in_range_i64`                                                                          |
 | Multi-substr | `assert_contains_all`, `assert_contains_any`, `assert_contains_in_order`                                              |
 | String diff  | `assert_eq_string_diff` — reports first differing line                                                                |
-| File state   | `assert_file_exists`, `assert_file_not_exists`, `assert_file_contains`, `assert_file_contents`                        |
+| File state   | `assert_file_exists`, `assert_file_not_exists`, `assert_file_contains`, `assert_file_contents`, `assert_is_file`, `assert_is_dir`, `assert_file_size` |
+| JSON         | `assert_json_eq` — parses both sides + walks the trees, JObject key order independent                                  |
 | Booleans     | `assert_eq_bool`                                                                                                      |
 | Strings      | `assert_eq_string`, `assert_neq_string`, `assert_empty_string`, `assert_non_empty_string`                             |
 | Substring    | `assert_contains`, `assert_not_contains`, `assert_starts_with`, `assert_ends_with`                                    |
@@ -287,3 +289,6 @@ in the repo:
   three benign properties; the failure-path shrinking
   contract is pinned by the Go-side
   `TestRunnerFuzzShrinkSurfacesMinimisedInput` gate
+- `batch7_test.lang` — wider-int relational, `f64_bits`
+  round-trips, `stat()` + file-state helpers, and
+  `assert_json_eq` order-independent JSON equality
