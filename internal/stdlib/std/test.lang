@@ -126,6 +126,15 @@ pub struct TestRunner {
     // (prefix + name) don't contain the filter substring get
     // converted to skips with reason "filtered out".
     filter: string,
+    // `fail_fast` short-circuits subsequent `it()` calls into
+    // skips once any case has failed. Use for long suites
+    // where you want to fix the first failure before learning
+    // about the next 50. Off by default (the full TAP stream
+    // is usually more useful in CI). Set via
+    // `test_new_fail_fast(suite)` or
+    // `parse_fail_fast_from_args(args())` so a test program
+    // can accept `lang -interp test.lang -- --fail-fast`.
+    fail_fast: boolean,
 }
 
 // test_new(suite) — start a new run. `suite` labels the run in
@@ -146,6 +155,7 @@ pub function test_new(suite: string): TestRunner {
         base_idx: 0,
         cleanup_paths: [],
         filter: "",
+        fail_fast: false,
     };
 }
 
@@ -169,6 +179,7 @@ pub function test_new_filtered(suite: string, filter: string): TestRunner {
         base_idx: r.base_idx,
         cleanup_paths: r.cleanup_paths,
         filter: filter,
+        fail_fast: r.fail_fast,
     };
 }
 
@@ -199,6 +210,60 @@ pub function parse_filter_from_args(argv: string[]): string {
     return "";
 }
 
+// test_new_fail_fast(suite) — same as test_new but enables
+// fail-fast mode. Once any case fails, subsequent `it()`
+// calls auto-skip with the reason "fail-fast: prior case
+// failed" rather than running. Use for long suites where
+// you want to fix the first failure before learning
+// about the next 50.
+//
+// Pair with `parse_fail_fast_from_args(args())` to lift the
+// setting from a `--fail-fast` command-line flag:
+//
+//   var r: TestRunner = test_new("my suite");
+//   if (parse_fail_fast_from_args(args())) { r = r.with_fail_fast(); }
+pub function test_new_fail_fast(suite: string): TestRunner {
+    var r: TestRunner = test_new(suite);
+    return r.with_fail_fast();
+}
+
+// `(r).with_fail_fast()` — flips fail-fast mode on for an
+// existing runner. Lets a test that already constructed
+// `r` via `test_new(...)` opt into fail-fast based on a
+// CLI flag without having to discard the runner.
+pub function (r: TestRunner) with_fail_fast(): TestRunner {
+    return TestRunner {
+        suite: r.suite,
+        passed: r.passed,
+        failed: r.failed,
+        skipped: r.skipped,
+        failures: r.failures,
+        skip_reasons: r.skip_reasons,
+        verbose: r.verbose,
+        prefix: r.prefix,
+        base_idx: r.base_idx,
+        cleanup_paths: r.cleanup_paths,
+        filter: r.filter,
+        fail_fast: true,
+    };
+}
+
+// `parse_fail_fast_from_args(argv)` — true iff `--fail-fast`
+// appears anywhere in `argv`. Use with `with_fail_fast()`:
+//
+//   var r: TestRunner = test_new("my suite");
+//   if (parse_fail_fast_from_args(args())) {
+//       r = r.with_fail_fast();
+//   }
+pub function parse_fail_fast_from_args(argv: string[]): boolean {
+    var i: i32 = 0;
+    while (i < len(argv)) {
+        if (argv[i] == "--fail-fast") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // test_new_verbose(suite) — same as test_new but flags the
 // runner for future verbose output. Currently identical to
 // test_new because TAP-13 already prints every case; the flag
@@ -218,6 +283,7 @@ pub function test_new_verbose(suite: string): TestRunner {
         base_idx: r.base_idx,
         cleanup_paths: r.cleanup_paths,
         filter: r.filter,
+        fail_fast: r.fail_fast,
     };
 }
 
@@ -242,6 +308,15 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
     if (len(r.filter) > 0 && !display.contains(r.filter)) {
         return r.skip(name, "filtered out (--filter=" + r.filter + ")");
     }
+    // Fail-fast short-circuit. Once any case has failed in
+    // this run, convert subsequent `it()` calls into skips.
+    // We still emit a TAP line so the case appears in the
+    // plan — same handling as a filter skip; the
+    // distinguishing wording in the SKIP reason is what
+    // tells the reader what cut the run short.
+    if (r.fail_fast && r.failed > 0) {
+        return r.skip(name, "fail-fast: prior case failed");
+    }
     var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
     match (result) {
         None => {
@@ -258,6 +333,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
                 base_idx: r.base_idx,
                 cleanup_paths: r.cleanup_paths,
                 filter: r.filter,
+                fail_fast: r.fail_fast,
             };
         },
         Some(msg) => {
@@ -278,6 +354,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
                 base_idx: r.base_idx,
                 cleanup_paths: r.cleanup_paths,
                 filter: r.filter,
+                fail_fast: r.fail_fast,
             };
         }
     }
@@ -315,6 +392,7 @@ pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
         base_idx: r.base_idx,
         cleanup_paths: r.cleanup_paths,
         filter: r.filter,
+        fail_fast: r.fail_fast,
     };
 }
 
@@ -377,6 +455,7 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
         // `--filter PATTERN` applied at the top level applies
         // to every nested case too.
         filter: r.filter,
+        fail_fast: r.fail_fast,
     };
 }
 
@@ -416,6 +495,7 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
         base_idx: r.base_idx,
         cleanup_paths: cl,
         filter: r.filter,
+        fail_fast: r.fail_fast,
     };
 }
 
@@ -449,6 +529,7 @@ pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
         base_idx: r.base_idx,
         cleanup_paths: cl,
         filter: r.filter,
+        fail_fast: r.fail_fast,
     };
 }
 

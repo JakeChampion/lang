@@ -452,6 +452,13 @@ function main(): i32 {
   (prefix + name) don't contain the filter substring
   convert to skips with reason "filtered out". Pair with
   `lang -interp test.lang -- --filter foo` on the CLI.
+- **`--fail-fast` short-circuit:** `test_new_fail_fast(suite)`
+  / `(r).with_fail_fast()` + `parse_fail_fast_from_args(args())`
+  — once any case fails, subsequent `it()` calls auto-skip
+  with reason "fail-fast: prior case failed". Each skipped
+  case still emits a TAP line so the plan stays faithful.
+  Off by default (the full TAP stream is usually more useful
+  in CI). Pair with `lang -interp test.lang -- --fail-fast`.
 - **Tempdir convenience:** `must_temp_dir(r, prefix) ->
   (string, TestRunner)` — single-shot tempdir + cleanup
   registration with fallback to a recorded skip on failure
