@@ -808,6 +808,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"arr-string-join-basic",
+			"function main(): i32 { var xs: string[] = [\"a\", \"b\", \"c\"]; print(xs.join(\",\")); return 0; }",
+			0,
+			"a,b,c",
+		},
+		{
+			"arr-string-join-empty",
+			"function main(): i32 { var xs: string[] = []; var r = xs.join(\",\"); print(\"[\"); print(r); print(\"]\"); return len(r); }",
+			0,
+			"[]",
+		},
+		{
+			"arr-string-join-single",
+			"function main(): i32 { var xs: string[] = [\"solo\"]; print(xs.join(\",\")); return 0; }",
+			0,
+			"solo",
+		},
+		{
+			"arr-string-join-empty-sep",
+			"function main(): i32 { var xs: string[] = [\"a\", \"b\", \"c\"]; print(xs.join(\"\")); return 0; }",
+			0,
+			"abc",
+		},
+		{
+			"arr-string-join-multi-char-sep",
+			"function main(): i32 { var xs: string[] = [\"x\", \"y\", \"z\"]; print(xs.join(\" - \")); return 0; }",
+			0,
+			"x - y - z",
+		},
+		{
 			"closure-uses-multiple-string-methods",
 			"function (s: string) bang(): string { return s + \"!\"; } function main(): i32 { var msg = \"hi\"; var f = function (): string { return msg.bang() + \"?\"; }; print(f()); return 0; }",
 			0,
