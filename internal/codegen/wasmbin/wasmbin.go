@@ -65,15 +65,37 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/sections"
 )
 
-// Emit produces a wasm core module's bytes for the given IR program.
-// Every function in prog.Funcs is added to the module and exported
-// under its IR name (so `wasmtime run --invoke <name>` can reach it).
-// Function order is preserved — callers downstream rely on funcidx
-// being assigned in declaration order.
+// EmitOptions tunes module-level structure. The zero value matches
+// what Emit produced before these knobs were added.
+type EmitOptions struct {
+	// ForceMemorySection unconditionally emits the linear memory
+	// + its export. Default behaviour gates memory on actual use
+	// (anyMemoryOp || alloc-helper-needed). Callers that intend
+	// to wrap the bytes in a preview-2 component set this true
+	// so the WASI adapter's env::memory import is satisfied.
+	ForceMemorySection bool
+	// SynthStart synthesises a `_start` wrapper that calls
+	// `main`, drops any i32 result, and is exported as
+	// `_start`. Preview-1's `wasi:cli/run.run` glue in the
+	// adapter dispatches to `_start` as the command entry, so
+	// preview-2 wrapping needs this on.
+	SynthStart bool
+}
+
+// Emit is EmitWithOptions with the zero-value options.
+func Emit(prog *ir.Program) ([]byte, error) {
+	return EmitWithOptions(prog, EmitOptions{})
+}
+
+// EmitWithOptions produces a wasm core module's bytes for the
+// given IR program. Every function in prog.Funcs is added to the
+// module and exported under its IR name. Function order is
+// preserved — callers downstream rely on funcidx being assigned
+// in declaration order.
 //
 // Returns an error if any function uses an op or operand type the
 // current slice doesn't support.
-func Emit(prog *ir.Program) ([]byte, error) {
+func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	m := module.New()
 
 	// Build a name → funcidx map so OpCallDirect can resolve
@@ -296,7 +318,7 @@ func Emit(prog *ir.Program) ([]byte, error) {
 	// that don't execute at runtime — wasm validation still
 	// requires memory 0 to exist). Memory layout matches the
 	// WAT path: 1 page (64 KiB) with no upper bound.
-	if anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] || len(importNeeds.order) > 0 {
+	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] || len(importNeeds.order) > 0 {
 		m.MemoryPresent = true
 		m.MemoryMin = 1
 		m.MemoryMax = -1
@@ -428,6 +450,38 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		}
 		m.DataOffsets = append(m.DataOffsets, allocCursorAddr)
 		m.DataInits = append(m.DataInits, le32(int32(start)))
+	}
+
+	// Synth `_start` wrapper when requested. The body is just
+	// `call $main` + optional `drop` (when main has a result)
+	// + `end`. Appended after all user functions + helpers so
+	// it lands at the highest funcidx; gets a fresh `() -> ()`
+	// typeidx + export.
+	if opts.SynthStart {
+		mainIdx, ok := funcIdx["main"]
+		if !ok {
+			return nil, fmt.Errorf("wasmbin: SynthStart needs a `main` function")
+		}
+		startTIdx := addType(nil, nil) // () -> ()
+		startFuncIdx := nextFuncIdx
+		nextFuncIdx++
+		var body []byte
+		body = inst.InstCall(body, mainIdx)
+		// If main returns anything, drop it. Look up its result
+		// shape via the typeidx; safer than re-inferring from
+		// ip.PairForm / ReturnType here. The TypeResults slice
+		// is in declaration order; main's typeidx is
+		// FunctionTypeidxs[main_funcidx - len(imports)].
+		mainPosInFnSection := mainIdx - uint32(len(importNeeds.order))
+		mainResults := m.TypeResults[m.FunctionTypeidxs[mainPosInFnSection]]
+		for range mainResults {
+			body = inst.InstDrop(body)
+		}
+		m.FunctionTypeidxs = append(m.FunctionTypeidxs, startTIdx)
+		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body))
+		m.ExportNames = append(m.ExportNames, "_start")
+		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+		m.ExportIdxs = append(m.ExportIdxs, startFuncIdx)
 	}
 
 	return module.Build(m), nil

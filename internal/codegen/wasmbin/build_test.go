@@ -172,6 +172,119 @@ function main(): i32 { return fact(10); }
 	}
 }
 
+// TestBuildPreview2Wrap — BuildWithOptions(ForceMemorySection +
+// SynthStart) produces bytes that wrap cleanly into a preview-2
+// component when fed through the WASI adapter. The synthesised
+// `_start` makes `wasm-tools component new` happy; the forced
+// memory section satisfies the adapter's env::memory import.
+// Test gates on the adapter being present at LANG_WASI_ADAPTER.
+func TestBuildPreview2Wrap(t *testing.T) {
+	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("LANG_WASI_ADAPTER not set")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "core/no_prelude";
+function main(): i32 { return 0; }
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := BuildWithOptions(prog, info, BuildOptions{
+		ForceMemorySection: true,
+		SynthStart:         true,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	// Walk to confirm the synthesised _start export exists.
+	if !exportExists(t, bin, "_start") {
+		t.Fatal("module missing _start export after SynthStart=true")
+	}
+	if !exportExists(t, bin, "memory") {
+		t.Fatal("module missing memory export after ForceMemorySection=true")
+	}
+}
+
+// exportExists walks the export section, returning true if a
+// function or memory export with the given name is present.
+func exportExists(t *testing.T, bin []byte, want string) bool {
+	t.Helper()
+	if len(bin) < 8 {
+		return false
+	}
+	i := 8
+	for i < len(bin) {
+		id := bin[i]
+		i++
+		size := 0
+		shift := 0
+		for {
+			if i >= len(bin) {
+				return false
+			}
+			b := bin[i]
+			i++
+			size |= int(b&0x7f) << shift
+			if b&0x80 == 0 {
+				break
+			}
+			shift += 7
+		}
+		if id == 0x07 { // export section
+			body := bin[i : i+size]
+			// count uleb
+			j := 0
+			cnt := 0
+			sh := 0
+			for {
+				b := body[j]
+				j++
+				cnt |= int(b&0x7f) << sh
+				if b&0x80 == 0 {
+					break
+				}
+				sh += 7
+			}
+			for k := 0; k < cnt; k++ {
+				// name length uleb
+				nl := 0
+				sh = 0
+				for {
+					b := body[j]
+					j++
+					nl |= int(b&0x7f) << sh
+					if b&0x80 == 0 {
+						break
+					}
+					sh += 7
+				}
+				name := string(body[j : j+nl])
+				j += nl
+				j++ // kind byte
+				// idx uleb
+				for body[j]&0x80 != 0 {
+					j++
+				}
+				j++
+				if name == want {
+					return true
+				}
+			}
+			return false
+		}
+		i += size
+	}
+	return false
+}
+
 // TestBuildReportsUnsupported — a program that uses a feature
 // the binary backend doesn't yet handle (printing strings via
 // `print` — the allocator + WASI fd_write wiring) should fail
