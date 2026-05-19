@@ -712,6 +712,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"cba",
 		},
 		{
+			"arr-i32-concat-len",
+			"function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [3, 4, 5]; var c = a.concat(b); return len(c); }",
+			5,
+			"",
+		},
+		{
+			"arr-i32-concat-content",
+			"function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [10, 20]; var c = a.concat(b); return c[0] + c[1] + c[2] + c[3]; }",
+			33,
+			"",
+		},
+		{
+			"arr-i32-concat-empty-lhs",
+			"function main(): i32 { var a: i32[] = []; var b: i32[] = [1, 2, 3]; var c = a.concat(b); return c[0] + c[1] + c[2]; }",
+			6,
+			"",
+		},
+		{
+			"arr-i32-concat-empty-rhs",
+			"function main(): i32 { var a: i32[] = [4, 5]; var b: i32[] = []; var c = a.concat(b); return c[0] + c[1]; }",
+			9,
+			"",
+		},
+		{
+			"arr-string-concat",
+			"function main(): i32 { var a: string[] = [\"x\", \"y\"]; var b: string[] = [\"z\"]; var c = a.concat(b); for s in c { print(s); } return len(c); }",
+			3,
+			"xyz",
+		},
+		{
 			"closure-uses-multiple-string-methods",
 			"function (s: string) bang(): string { return s + \"!\"; } function main(): i32 { var msg = \"hi\"; var f = function (): string { return msg.bang() + \"?\"; }; print(f()); return 0; }",
 			0,
