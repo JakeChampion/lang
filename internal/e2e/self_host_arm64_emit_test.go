@@ -437,6 +437,24 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			5,
 			"world",
 		},
+		{
+			"string-param-print",
+			"function greet(s: string): i32 { print(s); return 0; } function main(): i32 { greet(\"hi!\\n\"); return 0; }",
+			0,
+			"hi!\n",
+		},
+		{
+			"string-param-len",
+			"function strlen(s: string): i32 { return len(s); } function main(): i32 { return strlen(\"abcdef\"); }",
+			6,
+			"",
+		},
+		{
+			"string-param-concat",
+			"function shout(s: string): string { return s + \"!\"; } function main(): i32 { var out = shout(\"hi\"); print(out); return len(out); }",
+			3,
+			"hi!",
+		},
 	}
 
 	for _, tc := range cases {
