@@ -61,6 +61,99 @@ pub function sort_i32_asc(arr: i32[]): i32[] {
     return out;
 }
 
+// i64 / u32 / u64 variants. Same insertion-sort shape as
+// sort_i32_asc; copies into a fresh buffer + sorts in place
+// via the in-bounds index-assign that lang's arrays support
+// for every scalar element type.
+
+pub function sort_i64_asc(arr: i64[]): i64[] {
+    var n: i32 = len(arr);
+    var out: i64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: i64 = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && out[j] > key) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
+pub function sort_i64_desc(arr: i64[]): i64[] {
+    var n: i32 = len(arr);
+    var out: i64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: i64 = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && out[j] < key) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
+pub function sort_u32_asc(arr: u32[]): u32[] {
+    var n: i32 = len(arr);
+    var out: u32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: u32 = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && out[j] > key) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
+pub function sort_u64_asc(arr: u64[]): u64[] {
+    var n: i32 = len(arr);
+    var out: u64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(arr[i]);
+        i = i + 1;
+    }
+    var k: i32 = 1;
+    while (k < n) {
+        var key: u64 = out[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && out[j] > key) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = key;
+        k = k + 1;
+    }
+    return out;
+}
+
 pub function sort_i32_desc(arr: i32[]): i32[] {
     var n: i32 = len(arr);
     var out: i32[] = [];

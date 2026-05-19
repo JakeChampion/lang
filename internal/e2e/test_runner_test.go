@@ -874,6 +874,32 @@ func TestRunnerFuzzCorpusExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/sort_wider_test.lang` exercises the new
+// wider-int sort helpers in std/sort: `sort_i64_asc` /
+// `sort_i64_desc` / `sort_u32_asc` / `sort_u64_asc`. Six
+// cases — every helper plus the edge cases (empty input,
+// singleton, near-u64-max values where unsigned compare
+// must dominate).
+func TestRunnerSortWiderExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/sort_wider_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - sort_i64_asc",
+		"ok 4 - sort_u64_asc near u64-max",
+		"ok 5 - sort_i64_asc empty input",
+		"# pass 6",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
