@@ -880,6 +880,30 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"arr-i32-sum",
+			"function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5]; return xs.sum(); }",
+			15,
+			"",
+		},
+		{
+			"arr-i32-sum-empty",
+			"function main(): i32 { var xs: i32[] = []; return xs.sum(); }",
+			0,
+			"",
+		},
+		{
+			"arr-i32-sum-single",
+			"function main(): i32 { var xs: i32[] = [42]; return xs.sum(); }",
+			42,
+			"",
+		},
+		{
+			"arr-i32-sum-negatives",
+			"function main(): i32 { var xs: i32[] = [10, 0 - 3, 0 - 2, 5]; return xs.sum(); }",
+			10,
+			"",
+		},
+		{
 			"closure-uses-multiple-string-methods",
 			"function (s: string) bang(): string { return s + \"!\"; } function main(): i32 { var msg = \"hi\"; var f = function (): string { return msg.bang() + \"?\"; }; print(f()); return 0; }",
 			0,
