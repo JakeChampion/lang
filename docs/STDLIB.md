@@ -360,6 +360,12 @@ function main(): i32 {
   `assert_is_file`, `assert_is_dir`, `assert_file_size` —
   the last three are `stat()`-backed and distinguish files
   from directories
+- **File lines:** `assert_file_lines(path, expected_lines:
+  string[])` — read + split + compare line-by-line
+  (delegates to `assert_lines_eq` so the diff messaging is
+  identical to the in-memory version).
+  `assert_file_line_count(path, n)` — line cardinality
+  (trailing newline doesn't overcount)
 - **JSON deep equality:** `assert_json_eq(actual, expected)` —
   parses both sides via `std/json` and walks the value
   trees in order-independent fashion (JObject key order
@@ -367,7 +373,11 @@ function main(): i32 {
 - **Timing:** `assert_elapsed_lt_ms(start_ns, max_ms)` /
   `assert_elapsed_lt_us(start_ns, max_us)` — pair with
   `monotonic_ns()` to stamp the start; failure message embeds
-  both the observed elapsed and the deadline
+  both the observed elapsed and the deadline.
+  `assert_close_to_now_ms(actual_ms, max_skew_ms)` —
+  wall-clock timestamp recency (bidirectional skew bound;
+  failure names the observed signed skew so future-skewed
+  vs old timestamps are distinguishable)
 - **Benchmarks:** `(r).bench(name, iter, fn)` runs `fn`
   repeatedly and emits a TAP comment with min / median /
   mean / max microseconds; always passes.
