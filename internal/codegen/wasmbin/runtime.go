@@ -189,6 +189,13 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 				case "__arr_idx_8":
 					// Stride-8 i64 / f64 array indexing.
 					needs.add("__arr_idx_8")
+				case "__str_slice":
+					// (base_data, base_len, low, high) → (data, len)
+					// — copy bytes [low..high] into a fresh string.
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__lang_alloc")
+					needs.add("__str_slice")
 				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
@@ -415,6 +422,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrIdx8Body,
+	},
+	"__str_slice": {
+		// (base_data, base_len, low, high) → (data, len). Builds
+		// a fresh string from a slice of the source. Mirrors the
+		// WAT path's $__str_slice: bounds-check, inline-fast-path
+		// for new_len ≤ 7, heap copy via memory.copy otherwise.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildStrSliceBody,
 	},
 	"__str_eq": {
 		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).
@@ -1208,5 +1224,162 @@ func buildStringFromBytesBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 1)
 	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildStrSliceBody — (base_data, base_len, low, high) → (data, len).
+// Mirrors the WAT path's $__str_slice. Bounds-checked slice into a
+// fresh string. Inline-fast-path for new_len ≤ 7, heap copy
+// otherwise.
+//
+// Layout: 3 bounds traps (low<0, high>src_len, low>high), then
+// new_len = high - low. If 0 → return inline empty. If ≤7 → pack
+// inline. Else → alloc + memory.copy.
+//
+// Locals (after the 4 params):
+//
+//	4: $src_len
+//	5: $new_len
+//	6: $out
+//	7: $i
+//	8: $data (inline pack)
+//	9: $len  (inline pack)
+//	10: $byte
+func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
+	strLen := helperIdxs["__lang_str_len"]
+	strByte := helperIdxs["__lang_str_byte"]
+	alloc := helperIdxs["__lang_alloc"]
+	var body []byte
+	// $src_len = __lang_str_len(base_data, base_len)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 4)
+	// low < 0: trap
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// high > src_len: trap
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// low > high: trap
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = numeric.InstI32GtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
+	// $new_len = high - low
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, 5)
+	// if new_len == 0: return (0, 0x80000000)
+	body = inst.InstLocalGet(body, 5)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// if new_len <= 7: build inline-packed.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 7)
+	body = numeric.InstI32LeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 8) // $data = 0
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 9) // $len = 0
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 7) // $i = 0
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstLocalGet(body, 5)
+			body = numeric.InstI32GeU(body)
+			body = inst.InstBrIf(body, 1)
+			// $byte = __lang_str_byte(base_data, base_len, low + i)
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstLocalGet(body, 7)
+			body = numeric.InstI32Add(body)
+			body = inst.InstCall(body, strByte)
+			body = inst.InstLocalSet(body, 10) // $byte
+			// pack
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32LtU(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				body = inst.InstLocalGet(body, 10) // $byte
+				body = inst.InstLocalGet(body, 7)
+				body = inst.InstI32Const(body, 8)
+				body = numeric.InstI32Mul(body)
+				body = numeric.InstI32Shl(body)
+				body = inst.InstLocalGet(body, 8)
+				body = numeric.InstI32Or(body)
+				body = inst.InstLocalSet(body, 8)
+			}
+			body = inst.InstElse(body)
+			{
+				body = inst.InstLocalGet(body, 10) // $byte
+				body = inst.InstLocalGet(body, 7)
+				body = inst.InstI32Const(body, 4)
+				body = numeric.InstI32Sub(body)
+				body = inst.InstI32Const(body, 8)
+				body = numeric.InstI32Mul(body)
+				body = numeric.InstI32Shl(body)
+				body = inst.InstLocalGet(body, 9)
+				body = numeric.InstI32Or(body)
+				body = inst.InstLocalSet(body, 9)
+			}
+			body = inst.InstEnd(body)
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 7)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body) // end loop
+		body = inst.InstEnd(body) // end block
+		// $len |= new_len << 24 | 0x80000000
+		body = inst.InstLocalGet(body, 9)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstI32Const(body, 24)
+		body = numeric.InstI32Shl(body)
+		body = numeric.InstI32Or(body)
+		body = inst.InstI32Const(body, int32(-0x80000000))
+		body = numeric.InstI32Or(body)
+		body = inst.InstLocalSet(body, 9)
+		// return ($data, $len)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 9)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+	// Heap form: $out = alloc($new_len); memory.copy($out, base_data + low, $new_len)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 6) // $out
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 5)
+	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstLocalGet(body, 5)
+	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
