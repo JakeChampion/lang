@@ -352,6 +352,13 @@ function main(): i32 {
   `assert_subset_string` — multiset semantics so duplicate
   counts must match; failure message names the first
   unmatched element
+- **Env-var:** `assert_env_set(name)`, `assert_env_unset(name)`,
+  `assert_env_eq(name, expected)` — wrap the `env(name)`
+  builtin's `Option[string]` return; failure messages
+  distinguish "missing" from "wrong value"
+- **Unreachable branch:** `unreachable(label)` — sugar for
+  `fail("unreachable: " + label)`. Use in match-default arms
+  that the test logic claims can't fire
 - **Map assertions:** `assert_map_len_i32_i32` / `_string_string`,
   `assert_map_has_i32_i32` / `_string_string`,
   `assert_map_lacks_i32_i32` / `_string_string`
