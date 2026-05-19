@@ -1,0 +1,113 @@
+// std/time — six-type date/time module, jiff/NodaTime shape.
+//
+// Backs the seven time types registered as built-ins:
+// `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
+// `Duration`, plus `TimeZone`. Each is meaning-distinct
+// (docs/STDLIB-DESIGN-RESEARCH.md Rec §4):
+//
+//   Instant   — point in physical time, UTC, ns precision.
+//   Date      — civil (year, month, day); no time, no zone.
+//   Time      — civil wall-clock (h, m, s, ns); no date, no zone.
+//   DateTime  — pair of (Date, Time); no zone.
+//   Zoned     — Instant + TimeZone, fully qualified.
+//   Span      — calendar-flavoured interval (years, months, …).
+//   Duration  — absolute interval (sec + nsec).
+//
+// Conversions stay explicit:
+//   Date → Instant requires a TimeZone.
+//   Zoned → Date discards the zone.
+//   Span ↔ Duration only round-trips in the no-DST-shift case.
+//
+// Phase 1 (this PR): constants + the simplest constructors.
+// Phase 2: Instant.now() via clock_gettime, basic arithmetic.
+// Phase 3: Hinnant civil-date algorithms (add_days, weekday).
+// Phase 4: RFC 3339 parse + format.
+// Phase 5: TimeZone.iana(name) + Zoned operations.
+// Phase 6: Span vs Duration calendar arithmetic.
+
+import "core/int";
+
+// Unit conversion constants — used everywhere; pull them out
+// so callers don't repeat magic numbers.
+pub const NANOS_PER_SECOND: i32 = 1000000000;
+pub const NANOS_PER_MILLI: i32 = 1000000;
+pub const NANOS_PER_MICRO: i32 = 1000;
+pub const SECONDS_PER_MINUTE: i32 = 60;
+pub const SECONDS_PER_HOUR: i32 = 3600;
+pub const SECONDS_PER_DAY: i32 = 86400;
+pub const MINUTES_PER_HOUR: i32 = 60;
+pub const HOURS_PER_DAY: i32 = 24;
+pub const DAYS_PER_WEEK: i32 = 7;
+
+// `instant_from_unix(sec)` — build an Instant from a Unix
+// epoch second count. Sub-second precision is left at zero;
+// callers needing nanoseconds use the struct literal directly.
+//
+// Negative `sec` is accepted (pre-1970 instants) and the
+// nsec stays non-negative — same shape as `clock_gettime`.
+pub function instant_from_unix(sec: i64): Instant {
+    return Instant { sec: sec, nsec: 0 };
+}
+
+// `date_make(year, month, day)` — construct a civil Date.
+// Doesn't validate that the date is real (Feb 30 builds fine);
+// validation lands with the Hinnant arithmetic in Phase 3.
+pub function date_make(year: i32, month: i32, day: i32): Date {
+    return Date { year: year, month: month, day: day };
+}
+
+// `time_make(hour, minute, second)` — construct a Time at
+// second precision. Use the struct literal directly when you
+// need nanosecond precision.
+pub function time_make(hour: i32, minute: i32, second: i32): Time {
+    return Time { hour: hour, minute: minute, second: second, nsec: 0 };
+}
+
+// `datetime_make(d, t)` — pair a Date with a Time, no zone.
+pub function datetime_make(d: Date, t: Time): DateTime {
+    return DateTime { date: d, time: t };
+}
+
+// `timezone_utc()` — the UTC zone constant. Offset zero.
+// IANA zone lookup (`timezone_iana(name)`) lands in Phase 5.
+pub function timezone_utc(): TimeZone {
+    return TimeZone { name: "UTC", offset_seconds: 0 };
+}
+
+// `duration_seconds(s)` — absolute interval of `s` seconds.
+// Negative is allowed (start-after-end durations).
+pub function duration_seconds(s: i64): Duration {
+    return Duration { sec: s, nsec: 0 };
+}
+
+// `duration_millis(ms)` — convert milliseconds to a Duration.
+// Splits whole-seconds + sub-second nsec so the storage
+// matches the (sec, nsec) shape callers see in struct fields.
+pub function duration_millis(ms: i64): Duration {
+    var s: i64 = ms / (1000 as i64);
+    var rem_ms: i64 = ms - s * (1000 as i64);
+    var ns: i32 = (rem_ms as i32) * NANOS_PER_MILLI;
+    return Duration { sec: s, nsec: ns };
+}
+
+// `span_days(n)` — calendar-flavoured interval of n days.
+// Convenience for the common "tomorrow" / "yesterday" use
+// case (`today.add_span(span_days(1))` once Phase 3 lands).
+pub function span_days(n: i32): Span {
+    return Span {
+        years: 0, months: 0, weeks: 0, days: n,
+        hours: 0, minutes: 0, seconds: 0, nanos: 0,
+    };
+}
+
+// `span_hours(n)` — calendar-flavoured interval of n hours.
+// Distinct from `duration_seconds(n * 3600)` — `span_hours(24)`
+// is "same wall-clock time tomorrow," not "exactly 86400
+// seconds later," and the two diverge across DST boundaries
+// (once TimeZone arithmetic lands).
+pub function span_hours(n: i32): Span {
+    return Span {
+        years: 0, months: 0, weeks: 0, days: 0,
+        hours: n, minutes: 0, seconds: 0, nanos: 0,
+    };
+}

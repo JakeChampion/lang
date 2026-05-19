@@ -593,6 +593,141 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptTimeTypes pins the type registrations + the
+// Phase-1 constructors from std/time
+// (docs/STDLIB-DESIGN-RESEARCH.md Rec §4). Each subtest exercises
+// one of the seven date/time types as a struct literal + a
+// stdlib constructor, then reads a field back. Anchors the
+// shape against accidental regressions while the rest of the
+// module (now(), arithmetic, RFC 3339, IANA zones) lands in
+// follow-up PRs.
+func TestInterpScriptTimeTypes(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+		wantExit                 int
+	}{
+		{
+			name: "Instant from unix seconds",
+			source: `import "std/time";
+function main(): i32 {
+    var ts: Instant = time.instant_from_unix(1700000000 as i64);
+    print(ts.sec.to_string());
+    return ts.nsec;
+}`,
+			wantStdout: "1700000000\n",
+		},
+		{
+			name: "Date struct fields round-trip",
+			source: `import "std/time";
+function main(): i32 {
+    var d: Date = time.date_make(2026, 5, 19);
+    print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
+    return d.day;
+}`,
+			wantStdout: "2026-5-19\n",
+			wantExit:   19,
+		},
+		{
+			name: "Time at second precision (nsec zero)",
+			source: `import "std/time";
+function main(): i32 {
+    var t: Time = time.time_make(14, 30, 45);
+    print(t.hour.to_string() + ":" + t.minute.to_string() + ":" + t.second.to_string());
+    return t.nsec;
+}`,
+			wantStdout: "14:30:45\n",
+		},
+		{
+			name: "DateTime composes Date + Time",
+			source: `import "std/time";
+function main(): i32 {
+    var dt: DateTime = time.datetime_make(time.date_make(2026, 1, 1), time.time_make(0, 0, 0));
+    print((dt.date.year - dt.time.hour).to_string());
+    return 0;
+}`,
+			wantStdout: "2026\n",
+		},
+		{
+			name: "Duration milliseconds splits sec + nsec",
+			source: `import "std/time";
+function main(): i32 {
+    var d: Duration = time.duration_millis(2500 as i64);
+    print(d.sec.to_string());
+    print(d.nsec.to_string());
+    return 0;
+}`,
+			wantStdout: "2\n500000000\n",
+		},
+		{
+			name: "Span days vs hours are distinct fields",
+			source: `import "std/time";
+function main(): i32 {
+    var dz: Span = time.span_days(7);
+    var hr: Span = time.span_hours(24);
+    print((dz.days * 100 + hr.hours).to_string());
+    return 0;
+}`,
+			wantStdout: "724\n",
+		},
+		{
+			name: "TimeZone UTC carries name + zero offset",
+			source: `import "std/time";
+function main(): i32 {
+    var utc: TimeZone = time.timezone_utc();
+    print(utc.name);
+    return utc.offset_seconds;
+}`,
+			wantStdout: "UTC\n",
+		},
+		{
+			name: "Zoned struct composes Instant + TimeZone",
+			source: `import "std/time";
+function main(): i32 {
+    var z: Zoned = Zoned {
+        instant: time.instant_from_unix(0 as i64),
+        zone: time.timezone_utc(),
+    };
+    print(z.zone.name);
+    return z.instant.nsec;
+}`,
+			wantStdout: "UTC\n",
+		},
+		{
+			name: "Constants exposed for callers",
+			source: `import "std/time";
+function main(): i32 {
+    print((time.SECONDS_PER_HOUR + time.MINUTES_PER_HOUR + time.HOURS_PER_DAY + time.DAYS_PER_WEEK).to_string());
+    return 0;
+}`,
+			wantStdout: "3691\n", // 3600 + 60 + 24 + 7
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.wantExit {
+				t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s",
+					code, tc.wantExit, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q, want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
