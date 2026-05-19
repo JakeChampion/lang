@@ -5857,7 +5857,7 @@ func TestWASMStreamingRoundtrip(t *testing.T) {
 		}
 		return -1;
 	}`
-	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	stdout, _, _, _ := runWasmInDirBin(t, src, nil)
 	if !strings.Contains(stdout, "line 1\n") || !strings.Contains(stdout, "line 2\n") {
 		t.Errorf("stdout missing both lines; got %q", stdout)
 	}
@@ -5894,7 +5894,7 @@ func TestWASMReaderReadChunk(t *testing.T) {
 		}
 		return -1;
 	}`
-	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	stdout, _, _, _ := runWasmInDirBin(t, src, nil)
 	if !strings.Contains(stdout, "hello: world") {
 		t.Errorf("stdout should contain `hello: world`; got %q", stdout)
 	}
@@ -5925,7 +5925,7 @@ func TestWASMOpenAppender(t *testing.T) {
 		}
 		return -1;
 	}`
-	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	stdout, _, _, _ := runWasmInDirBin(t, src, nil)
 	if !strings.Contains(stdout, "first-second") {
 		t.Errorf("stdout should contain `first-second`; got %q", stdout)
 	}
