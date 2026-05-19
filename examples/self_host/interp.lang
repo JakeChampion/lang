@@ -665,11 +665,21 @@ function value_eq(a: Value, b: Value): boolean {
             // rationale as arrays.
             return false;
         },
-        VTuple(_) => {
-            // Tuple equality not implemented yet either; the
-            // checker rules out direct tuple == tuple in the
-            // first cut anyway.
-            return false;
+        VTuple(at) => {
+            // Structural equality: same arity, each element-pair
+            // structurally equal via the same value_eq path.
+            match (b) {
+                VTuple(bt) => {
+                    if (len(at.elements) != len(bt.elements)) { return false; }
+                    var ti: i32 = 0;
+                    while (ti < len(at.elements)) {
+                        if (!value_eq(at.elements[ti], bt.elements[ti])) { return false; }
+                        ti = ti + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
         },
         VErr(_) => { return false; }
     }
@@ -1570,6 +1580,27 @@ function main(): i32 {
     match (r71) {
         VInt(i) => { if (i.v != 42) { return 710; } },
         _ => { return 711; }
+    }
+
+    // Tuple structural equality.
+    var r72: Value = run_source("return (1, 2, 3) == (1, 2, 3);");
+    match (r72) {
+        VBool(b) => { if (!b.v) { return 720; } },
+        _ => { return 721; }
+    }
+
+    // Tuple inequality (one element differs).
+    var r73: Value = run_source("return (1, 2, 3) == (1, 2, 4);");
+    match (r73) {
+        VBool(b) => { if (b.v) { return 730; } },
+        _ => { return 731; }
+    }
+
+    // Heterogeneous tuple equality.
+    var r74: Value = run_source("return (1, \"hi\") == (1, \"hi\");");
+    match (r74) {
+        VBool(b) => { if (!b.v) { return 740; } },
+        _ => { return 741; }
     }
 
     return 0;
