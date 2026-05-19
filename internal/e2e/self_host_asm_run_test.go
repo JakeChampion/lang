@@ -831,6 +831,20 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			"i32-dot-to-string-in-closure",
+			"function main(): i32 { var n = 5; var f = function (): string { return n.to_string(); }; print(f()); return 0; }",
+			0,
+			"5",
+			"",
+		},
+		{
+			"i32-dot-to-string-concat",
+			"function main(): i32 { var n: i32 = 99; var msg: string = \"value=\" + n.to_string(); print(msg); return 0; }",
+			0,
+			"value=99",
+			"",
+		},
+		{
 			"i32-dot-to-string-zero",
 			"function main(): i32 { var n: i32 = 0; var s = n.to_string(); print(s); return len(s); }",
 			1,
