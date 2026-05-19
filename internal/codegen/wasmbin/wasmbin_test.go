@@ -2082,6 +2082,135 @@ func TestEmitStrConcatRoundTripsThroughStrEq(t *testing.T) {
 	}
 }
 
+// TestEmitConstFuncAddress — OpConstFunc pushes a static closure-
+// pair cell pointer. The cell holds (fn_idx, env_ptr=0); the test
+// verifies the cell's bytes via i32.load at offset 0 (gets the
+// fn_idx).
+func TestEmitConstFuncAddress(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "target",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 99}},
+		},
+		{
+			Name:       "fn_idx_of_target",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstFunc, Str: "target"},
+				{Kind: ir.OpLoad}, // load fn_idx at +0
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	// target is prog.Funcs[0] → funcidx 0.
+	if got := runUnderWasmtime(t, bin, "fn_idx_of_target"); got != "0" {
+		t.Fatalf("fn_idx_of_target = %q, want 0", got)
+	}
+}
+
+// TestEmitConstFuncEnvIsZero — confirms env_ptr at offset 4 is 0.
+func TestEmitConstFuncEnvIsZero(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "target",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+		},
+		{
+			Name:       "env_of_target",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstFunc, Str: "target"},
+				{Kind: ir.OpConstI32, I32: 4},
+				{Kind: ir.OpAdd},
+				{Kind: ir.OpLoad},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "env_of_target"); got != "0" {
+		t.Fatalf("env_of_target = %q, want 0", got)
+	}
+}
+
+// TestEmitConstFuncInterning — same target gives the same cell.
+func TestEmitConstFuncInterning(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "target",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+		},
+		{
+			Name:       "ptr1",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstFunc, Str: "target"}},
+		},
+		{
+			Name:       "ptr2",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstFunc, Str: "target"}},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	a := runUnderWasmtime(t, bin, "ptr1")
+	b := runUnderWasmtime(t, bin, "ptr2")
+	if a != b {
+		t.Fatalf("ptr1 = %q, ptr2 = %q — expected same address (interning failed)", a, b)
+	}
+	if a != "64" {
+		t.Fatalf("ptr = %q, want 64 (closuresBase)", a)
+	}
+}
+
+// TestEmitConstFuncTwoTargets — two distinct targets get
+// adjacent 8-byte cells.
+func TestEmitConstFuncTwoTargets(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "a",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+		},
+		{
+			Name:       "b",
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+		},
+		{
+			// diff = address_of("b") - address_of("a"). With "b"
+			// interned first (cell 0, addr 64) and "a" interned
+			// second (cell 1, addr 72), the result is 64-72 = -8.
+			// Equivalent fact: distinct targets get distinct cells
+			// 8 bytes apart.
+			Name:       "diff",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstFunc, Str: "b"},
+				{Kind: ir.OpConstFunc, Str: "a"},
+				{Kind: ir.OpSub},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "diff"); got != "-8" {
+		t.Fatalf("addr(b) - addr(a) = %q, want -8 (8 bytes apart)", got)
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpMakeClosure) and confirm we get a useful error
 // rather than emitting nonsense bytes. Regressions here would
