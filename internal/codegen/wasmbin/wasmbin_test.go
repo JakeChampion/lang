@@ -2682,6 +2682,49 @@ func TestEmitArgs(t *testing.T) {
 	}
 }
 
+// TestEmitRandomBytes — random_bytes(8) returns a (data, len)
+// pair. len should be 8 (heap form, top bit clear). The
+// actual bytes are unpredictable; just verify the length.
+func TestEmitRandomBytes(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 8},
+			{Kind: ir.OpCallDirect, Str: "random_bytes"},
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "8" {
+		t.Fatalf("len(random_bytes(8)) = %q, want 8", got)
+	}
+}
+
+// TestEmitRandomBytesEmpty — random_bytes(0) returns the
+// inline empty sentinel (0, 0x80000000). str_len → 0.
+func TestEmitRandomBytesEmpty(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpCallDirect, Str: "random_bytes"},
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "0" {
+		t.Fatalf("len(random_bytes(0)) = %q, want 0", got)
+	}
+}
+
 // TestEmitPutchar — call OpCallDirect "putchar" twice with
 // 'A' (65) and 'B' (66) and verify stdout is "AB". Exercises
 // the single-byte fd_write path that uses printIovecAddr +

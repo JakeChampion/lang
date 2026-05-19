@@ -151,6 +151,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	if helpers.set["__lang_random_i32"] {
 		in.add("wasi_random_get")
 	}
+	if helpers.set["__lang_random_bytes"] {
+		in.add("wasi_random_get")
+	}
 	if helpers.set["__lang_now_ns"] {
 		in.add("wasi_clock_time_get")
 	}
@@ -792,4 +795,43 @@ func buildPutcharBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, fdWrite)
 	body = inst.InstDrop(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildRandomBytesBody — (n) → (data, len). Allocates an
+// n-byte heap buffer and fills it with cryptographic-quality
+// random bytes via wasi_random_get. Returns the (data, len)
+// pair in heap form (top bit of len clear).
+//
+//	n == 0:  return inline empty (0, 0x80000000).
+//	n > 0:   data = alloc(n); random_get(data, n); return (data, n).
+//
+// Locals (after the one param):
+//
+//	1: $buf
+func buildRandomBytesBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	randomGet := idxs["wasi_random_get"]
+	var body []byte
+	// if n == 0: return inline empty (0, 0x80000000)
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// $buf = __lang_alloc(n)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 1)
+	// wasi_random_get($buf, n); drop errno.
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, randomGet)
+	body = inst.InstDrop(body)
+	// Return ($buf, n)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
