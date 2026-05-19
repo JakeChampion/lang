@@ -788,6 +788,44 @@ func Check(prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.FloatType{Width: 32},
 	}
+	// Float math primitives. These are checker builtins because
+	// the interp / native / wasm backends all have access to
+	// hardware-precise implementations (Go's `math` package
+	// for the interp; wasm's f64.{sqrt,floor,…} ops for the
+	// wasm backend; libm-style sequences on arm64 / x86 for
+	// the native backends). Wrapping each in Lang code (eg
+	// Newton iteration for sqrt) would be slower AND less
+	// precise, which is bad both for performance and for
+	// property-based tests that compare against an external
+	// reference.
+	//
+	// The user-facing surface is the receiver methods in
+	// `std/float` (`(x: f64).sqrt()`, `(x: f64).floor()`, …)
+	// which dispatch to these primitives. Native / wasm
+	// codegen support follows the same path as `f32_bits` —
+	// for now interp-only is the right scope (the test-runner
+	// migration uses these via `lang -interp`).
+	f64ToF64Builtin := &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 64}},
+		Result: ast.FloatType{Width: 64},
+	}
+	c.info.FuncSigs["__sqrt_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__floor_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__ceil_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__round_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__trunc_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__abs_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__log_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__exp_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__sin_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__cos_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__pow_f64"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.FloatType{Width: 64},
+			ast.FloatType{Width: 64},
+		},
+		Result: ast.FloatType{Width: 64},
+	}
 	// f64_bits / f64_from_bits — same idea for 64-bit floats.
 	// The interp owns the only implementation today; the native
 	// + wasm backends route f64 / i64 through their own

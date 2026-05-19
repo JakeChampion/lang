@@ -396,6 +396,22 @@ func New() *Interp {
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
 	i.Builtins["f64_from_bits"] = &Builtin{Fn: builtinF64FromBits}
+	// f64 math primitives. The Go-side implementation routes
+	// through `math.*` for hardware-precise results. User code
+	// reaches these through receiver methods in `std/float`
+	// (`(x).sqrt()`, `.floor()`, …); the underscore-prefixed
+	// bare names are the IR-level entry points.
+	i.Builtins["__sqrt_f64"] = mkUnaryF64Builtin("__sqrt_f64", math.Sqrt)
+	i.Builtins["__floor_f64"] = mkUnaryF64Builtin("__floor_f64", math.Floor)
+	i.Builtins["__ceil_f64"] = mkUnaryF64Builtin("__ceil_f64", math.Ceil)
+	i.Builtins["__round_f64"] = mkUnaryF64Builtin("__round_f64", math.Round)
+	i.Builtins["__trunc_f64"] = mkUnaryF64Builtin("__trunc_f64", math.Trunc)
+	i.Builtins["__abs_f64"] = mkUnaryF64Builtin("__abs_f64", math.Abs)
+	i.Builtins["__log_f64"] = mkUnaryF64Builtin("__log_f64", math.Log)
+	i.Builtins["__exp_f64"] = mkUnaryF64Builtin("__exp_f64", math.Exp)
+	i.Builtins["__sin_f64"] = mkUnaryF64Builtin("__sin_f64", math.Sin)
+	i.Builtins["__cos_f64"] = mkUnaryF64Builtin("__cos_f64", math.Cos)
+	i.Builtins["__pow_f64"] = &Builtin{Fn: builtinPowF64}
 	// `temp_dir(prefix)` + `exec(cmd, args, stdin)` back the
 	// test-runner migration: ports of the Go-side e2e suite need
 	// somewhere to write fixture files and a way to spawn the
@@ -650,6 +666,43 @@ func builtinF64FromBits(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("f64_from_bits: expected number arg, got %T", args[0])
 	}
 	return Float{V: math.Float64frombits(uint64(int64(n))), Width: 64}, nil
+}
+
+// mkUnaryF64Builtin packages a unary `f64 -> f64` Go function
+// as an interpreter `Builtin`. Used to register the f64 math
+// primitives — `__sqrt_f64`, `__floor_f64`, etc. — which all
+// share this shape. Width is preserved at 64; NaN / ±Inf
+// propagate naturally via the underlying Go math.* call.
+func mkUnaryF64Builtin(name string, fn func(float64) float64) *Builtin {
+	return &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
+		}
+		f, ok := args[0].(Float)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected float arg, got %T", name, args[0])
+		}
+		return Float{V: fn(f.V), Width: 64}, nil
+	}}
+}
+
+// builtinPowF64 is the one binary f64 math primitive — the
+// rest fit `unaryF64`'s shape. Mirrors `math.Pow` semantics,
+// including the IEEE-754 special cases (pow(NaN, 0) == 1,
+// pow(±0, negative) == ±Inf, etc.).
+func builtinPowF64(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__pow_f64: expected 2 args, got %d", len(args))
+	}
+	x, ok := args[0].(Float)
+	if !ok {
+		return nil, fmt.Errorf("__pow_f64: expected float arg 0, got %T", args[0])
+	}
+	y, ok := args[1].(Float)
+	if !ok {
+		return nil, fmt.Errorf("__pow_f64: expected float arg 1, got %T", args[1])
+	}
+	return Float{V: math.Pow(x.V, y.V), Width: 64}, nil
 }
 
 func builtinIntToString(_ *Interp, args []Value) (Value, error) {

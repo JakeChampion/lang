@@ -67,3 +67,134 @@ pub function (n: f32) to_string(): string {
 pub function (n: f64) to_string(): string {
     return __float_to_string(n, 15);
 }
+
+// f64 math methods — receiver-syntax wrappers around the
+// checker-injected builtins. Each method's body is a single
+// call into the matching `__<op>_f64` primitive, so codegen
+// can inline them away entirely on every backend that
+// supports float ops natively (every backend except the
+// interp, which goes through the builtin's Go-side
+// implementation).
+//
+// All methods follow IEEE-754 semantics: NaN / ±Inf
+// propagate, division-by-zero yields ±Inf or NaN per the
+// usual rules, no integer-style traps. Callers building
+// numerically-sensitive code (`x.sqrt()` on x close to 0,
+// `x.log()` on negative x) should compare results against
+// the textbook formula for the edge cases — std/float
+// doesn't guard.
+
+pub function (x: f64) abs(): f64 { return __abs_f64(x); }
+pub function (x: f64) floor(): f64 { return __floor_f64(x); }
+pub function (x: f64) ceil(): f64 { return __ceil_f64(x); }
+// `round(x)` follows the "round half away from zero"
+// convention (matches Go's `math.Round`). Tests that need
+// banker's rounding (round half to even) should reach
+// into the bit-pattern themselves.
+pub function (x: f64) round(): f64 { return __round_f64(x); }
+// `trunc(x)` is round-toward-zero, equivalent to
+// `(x as i64) as f64` for values that fit in the i64 range.
+// The primitive form handles ±Inf / NaN that the cast
+// version would reject.
+pub function (x: f64) trunc(): f64 { return __trunc_f64(x); }
+pub function (x: f64) sqrt(): f64 { return __sqrt_f64(x); }
+pub function (x: f64) log(): f64 { return __log_f64(x); }
+pub function (x: f64) exp(): f64 { return __exp_f64(x); }
+pub function (x: f64) sin(): f64 { return __sin_f64(x); }
+pub function (x: f64) cos(): f64 { return __cos_f64(x); }
+// `pow(x, y)` — two-argument form; method receiver is the
+// base. Use `(b).pow(e)` for `b ^ e`.
+pub function (x: f64) pow(y: f64): f64 { return __pow_f64(x, y); }
+
+// `is_nan(x)` / `is_inf(x)` / `is_finite(x)` — IEEE-754
+// classification. The NaN predicate uses the textbook
+// "x != x" pattern; `is_inf` checks both ±Inf by squaring
+// (Inf * 2 == Inf, finite * 2 grows), `is_finite` is the
+// negation. Helpers so test code doesn't have to spell out
+// the textbook patterns every time.
+pub function (x: f64) is_nan(): boolean { return x != x; }
+pub function (x: f64) is_finite(): boolean {
+    if (x != x) { return false; }
+    if (x != 0.0 && x * 2.0 == x) { return false; }
+    return true;
+}
+pub function (x: f64) is_inf(): boolean {
+    if (x != x) { return false; }
+    if (x == 0.0) { return false; }
+    return x * 2.0 == x;
+}
+
+// `min(x, y)` / `max(x, y)` — return the smaller / larger
+// value. NaN inputs are infectious (any NaN in → NaN out),
+// matching Go's `math.Min` / `math.Max` semantics. Float
+// comparisons with NaN are well-defined as "always false",
+// which is what the inline check below relies on.
+pub function (x: f64) min(y: f64): f64 {
+    if (x != x) { return x; }
+    if (y != y) { return y; }
+    if (x < y) { return x; }
+    return y;
+}
+pub function (x: f64) max(y: f64): f64 {
+    if (x != x) { return x; }
+    if (y != y) { return y; }
+    if (x > y) { return x; }
+    return y;
+}
+
+// `clamp(x, lo, hi)` — restrict to `[lo, hi]`. Implemented
+// as `max(lo, min(hi, x))`; preserves NaN if any input is
+// NaN.
+pub function (x: f64) clamp(lo: f64, hi: f64): f64 {
+    return lo.max(x.min(hi));
+}
+
+// f32 mirror methods. Lang's float literals default to f32
+// (`3.14` is `f32`, not `f64`), so callers writing
+// `(3.14).sqrt()` reach for the f32 receiver method. Each
+// wraps the f64 primitive — promote to f64, apply, demote
+// back. Float precision in the final answer is bounded by
+// the f32 input + the operation's f64-domain accuracy;
+// the demotion-to-f32 rounds the result to the nearest f32.
+
+pub function (x: f32) abs(): f32 { return __abs_f64(x as f64) as f32; }
+pub function (x: f32) floor(): f32 { return __floor_f64(x as f64) as f32; }
+pub function (x: f32) ceil(): f32 { return __ceil_f64(x as f64) as f32; }
+pub function (x: f32) round(): f32 { return __round_f64(x as f64) as f32; }
+pub function (x: f32) trunc(): f32 { return __trunc_f64(x as f64) as f32; }
+pub function (x: f32) sqrt(): f32 { return __sqrt_f64(x as f64) as f32; }
+pub function (x: f32) log(): f32 { return __log_f64(x as f64) as f32; }
+pub function (x: f32) exp(): f32 { return __exp_f64(x as f64) as f32; }
+pub function (x: f32) sin(): f32 { return __sin_f64(x as f64) as f32; }
+pub function (x: f32) cos(): f32 { return __cos_f64(x as f64) as f32; }
+pub function (x: f32) pow(y: f32): f32 {
+    return __pow_f64(x as f64, y as f64) as f32;
+}
+
+pub function (x: f32) is_nan(): boolean { return x != x; }
+pub function (x: f32) is_finite(): boolean {
+    if (x != x) { return false; }
+    if (x != (0.0 as f32) && x * (2.0 as f32) == x) { return false; }
+    return true;
+}
+pub function (x: f32) is_inf(): boolean {
+    if (x != x) { return false; }
+    if (x == (0.0 as f32)) { return false; }
+    return x * (2.0 as f32) == x;
+}
+
+pub function (x: f32) min(y: f32): f32 {
+    if (x != x) { return x; }
+    if (y != y) { return y; }
+    if (x < y) { return x; }
+    return y;
+}
+pub function (x: f32) max(y: f32): f32 {
+    if (x != x) { return x; }
+    if (y != y) { return y; }
+    if (x > y) { return x; }
+    return y;
+}
+pub function (x: f32) clamp(lo: f32, hi: f32): f32 {
+    return lo.max(x.min(hi));
+}

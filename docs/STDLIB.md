@@ -64,8 +64,19 @@ Receiver methods on i32 / byte values.
 
 ### `std/float`
 
-`(n: f32) to_string()`, `(n: f64) to_string()` (up to 7 / 15
-fractional digits, trailing zeros trimmed, NaN / ±Inf handled).
+- **String:** `(n: f32) to_string()`, `(n: f64) to_string()` —
+  up to 7 / 15 fractional digits, trailing zeros trimmed, NaN
+  / ±Inf handled
+- **Math primitives** (on both f32 and f64; f32 wrappers
+  promote to f64, apply, demote): `abs`, `floor`, `ceil`,
+  `round`, `trunc`, `sqrt`, `pow(y)`, `log`, `exp`, `sin`,
+  `cos`. Routed through the checker-injected
+  `__<op>_f64` builtins so every backend can use its
+  hardware-precise op.
+- **IEEE-754 classification:** `is_nan`, `is_finite`, `is_inf`
+- **Combinators:** `min(y)`, `max(y)`, `clamp(lo, hi)` — NaN
+  propagates (any NaN input → NaN output), matching Go's
+  `math.Min` / `math.Max` semantics
 
 ### `std/string`
 
