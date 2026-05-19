@@ -1206,6 +1206,42 @@ func TestRunnerOneOfNoneOfExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/all_substring_array_test.lang` exercises
+// batch-24 additions:
+//   - `assert_all_starts_with(arr, prefix)` /
+//     `assert_all_ends_with` / `assert_all_contain` —
+//     substring property held across every element of a
+//     string array (∀ over substring relation). Failure
+//     embeds the first violation's index + value.
+//   - `assert_starts_with_any(s, prefixes)` /
+//     `assert_ends_with_any(s, suffixes)` — single-string
+//     matches at least one of the supplied options.
+//
+// 13 cases.
+func TestRunnerAllSubstringArrayExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/all_substring_array_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - all_starts_with empty vacuous",
+		"ok 3 - all_starts_with first violation",
+		"ok 5 - all_ends_with violation",
+		"ok 7 - all_contain violation",
+		"ok 10 - starts_with_any no match + count",
+		"ok 11 - starts_with_any empty list fails",
+		"ok 13 - ends_with_any no match",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

@@ -1,0 +1,147 @@
+// examples/tests/all_substring_array_test.lang — batch 24
+// additions to std/test:
+//   * `assert_all_starts_with(arr, prefix)` /
+//     `assert_all_ends_with(arr, suffix)` /
+//     `assert_all_contain(arr, needle)` — substring
+//     property must hold across every element of the
+//     string array.
+//   * `assert_starts_with_any(s, prefixes)` /
+//     `assert_ends_with_any(s, suffixes)` — single string
+//     matches at least one of the supplied options.
+
+function test_all_starts_with_pass(): Option[string] {
+    return assert_all_starts_with(
+        ["[INFO] starting", "[INFO] ready", "[INFO] done"],
+        "[INFO]");
+}
+
+function test_all_starts_with_empty_array_vacuous(): Option[string] {
+    var empty: string[] = [];
+    return assert_all_starts_with(empty, "anything");
+}
+
+function test_all_starts_with_first_violation_reports(): Option[string] {
+    match (assert_all_starts_with(
+        ["[INFO] ok", "[WARN] bad", "[INFO] still ok"],
+        "[INFO]")) {
+        None => { return fail("violation missed"); },
+        Some(msg) => {
+            // First non-matching index is 1.
+            if (!msg.contains("index 1")) {
+                return Some("expected 'index 1' in failure: " + msg);
+            }
+            // Failure should also embed the offending value
+            // so the test reader can pinpoint the bad line.
+            if (!msg.contains("[WARN] bad")) {
+                return Some("expected '[WARN] bad' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_all_ends_with_pass(): Option[string] {
+    return assert_all_ends_with(
+        ["main.lang", "test.lang", "util.lang"],
+        ".lang");
+}
+
+function test_all_ends_with_violation(): Option[string] {
+    match (assert_all_ends_with(
+        ["a.lang", "b.txt"], ".lang")) {
+        None => { return fail("violation missed"); },
+        Some(msg) => {
+            if (!msg.contains("index 1") || !msg.contains("b.txt")) {
+                return Some("expected 'index 1' + 'b.txt': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_all_contain_pass(): Option[string] {
+    return assert_all_contain(
+        ["trace=abc op=read", "trace=abc op=write", "trace=abc op=close"],
+        "trace=abc");
+}
+
+function test_all_contain_violation(): Option[string] {
+    match (assert_all_contain(
+        ["ok one", "ok two", "bad three"], "ok")) {
+        None => { return fail("violation missed"); },
+        Some(msg) => {
+            if (!msg.contains("index 2") || !msg.contains("bad three")) {
+                return Some("expected 'index 2' + 'bad three': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_starts_with_any_pass(): Option[string] {
+    return assert_starts_with_any("https://example.com/foo",
+                                  ["http://", "https://"]);
+}
+
+function test_starts_with_any_first_option(): Option[string] {
+    return assert_starts_with_any("alpha-1",
+                                  ["alpha-", "beta-", "gamma-"]);
+}
+
+function test_starts_with_any_no_match_reports(): Option[string] {
+    match (assert_starts_with_any("ftp://example.com",
+                                  ["http://", "https://"])) {
+        None => { return fail("no-match should fail"); },
+        Some(msg) => {
+            if (!msg.contains("ftp://example.com")) {
+                return Some("expected value in failure: " + msg);
+            }
+            // The failure renders "matches none of N prefixes"
+            // — locking in the count rendering so a regression
+            // would surface immediately.
+            if (!msg.contains("none of 2")) {
+                return Some("expected 'none of 2' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_starts_with_any_empty_options_fails(): Option[string] {
+    var empty: string[] = [];
+    match (assert_starts_with_any("anything", empty)) {
+        None => { return fail("empty options should fail"); },
+        Some(_) => { return None; }
+    }
+}
+
+function test_ends_with_any_pass(): Option[string] {
+    return assert_ends_with_any("main.lang",
+                                [".lang", ".ll", ".s"]);
+}
+
+function test_ends_with_any_no_match(): Option[string] {
+    match (assert_ends_with_any("README",
+                                [".md", ".txt", ".rst"])) {
+        None => { return fail("README has no extension match"); },
+        Some(_) => { return None; }
+    }
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("all-substring + multi-option substring");
+    r = r.it("all_starts_with pass",            test_all_starts_with_pass());
+    r = r.it("all_starts_with empty vacuous",   test_all_starts_with_empty_array_vacuous());
+    r = r.it("all_starts_with first violation", test_all_starts_with_first_violation_reports());
+    r = r.it("all_ends_with pass",              test_all_ends_with_pass());
+    r = r.it("all_ends_with violation",         test_all_ends_with_violation());
+    r = r.it("all_contain pass",                test_all_contain_pass());
+    r = r.it("all_contain violation",           test_all_contain_violation());
+    r = r.it("starts_with_any second matches",  test_starts_with_any_pass());
+    r = r.it("starts_with_any first matches",   test_starts_with_any_first_option());
+    r = r.it("starts_with_any no match + count", test_starts_with_any_no_match_reports());
+    r = r.it("starts_with_any empty list fails", test_starts_with_any_empty_options_fails());
+    r = r.it("ends_with_any pass",              test_ends_with_any_pass());
+    r = r.it("ends_with_any no match",          test_ends_with_any_no_match());
+    return r.finish();
+}
