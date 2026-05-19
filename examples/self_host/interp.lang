@@ -77,25 +77,37 @@ function is_err(v: Value): boolean {
 // Env carries both the value scope and the immutable function
 // table (so ExprCall can dispatch from anywhere a value lives in
 // scope). bind / update / trim preserve `funcs` unchanged.
-pub struct Env { names: string[], values: Value[], funcs: parser.FuncDecl[] }
+// aliases carries the module's `pub type X = A | B` decls so
+// call_method can dispatch a method declared on a union (e.g.
+// `function (sh: Shape) area()`) when the receiver is one of
+// the union's variant structs.
+pub struct Env { names: string[], values: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[] }
 
 function new_env(): Env {
     var ns: string[] = [];
     var vs: Value[] = [];
     var fs: parser.FuncDecl[] = [];
-    return Env { names: ns, values: vs, funcs: fs };
+    var al: parser.TypeAlias[] = [];
+    return Env { names: ns, values: vs, funcs: fs, aliases: al };
 }
 
 function new_env_with_funcs(fs: parser.FuncDecl[]): Env {
     var ns: string[] = [];
     var vs: Value[] = [];
-    return Env { names: ns, values: vs, funcs: fs };
+    var al: parser.TypeAlias[] = [];
+    return Env { names: ns, values: vs, funcs: fs, aliases: al };
+}
+
+function new_env_with_funcs_aliases(fs: parser.FuncDecl[], al: parser.TypeAlias[]): Env {
+    var ns: string[] = [];
+    var vs: Value[] = [];
+    return Env { names: ns, values: vs, funcs: fs, aliases: al };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
     var ns: string[] = e.names.push(name);
     var vs: Value[] = e.values.push(v);
-    return Env { names: ns, values: vs, funcs: e.funcs };
+    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases };
 }
 
 function (e: Env) lookup(name: string): Value {
@@ -142,7 +154,7 @@ function (e: Env) update(name: string, v: Value): Env {
         }
         j = j + 1;
     }
-    return Env { names: ns, values: vs, funcs: e.funcs };
+    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases };
 }
 
 // =================== INTEGER PARSE ====================
@@ -373,9 +385,9 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 i = i + 1;
             }
             if (is_method) {
-                return call_method(recv, name, arg_vals, env.funcs);
+                return call_method(recv, name, arg_vals, env.funcs, env.aliases);
             }
-            return call_func(name, arg_vals, env.funcs);
+            return call_func(name, arg_vals, env.funcs, env.aliases);
         },
         parser.ExprTuple(t) => {
             var elems: Value[] = [];
@@ -535,7 +547,27 @@ function eval_expr(e: parser.Expr, env: Env): Value {
 // `(c: Circle)` matches a VStruct whose type_name is "Circle").
 // The receiver is bound to `receiver_name` first, then the
 // remaining args follow in declaration order.
-function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[]): Value {
+// is_variant_of_alias_interp checks whether struct_name is a
+// listed variant of union_name in aliases. Used by call_method
+// to dispatch methods declared on a union receiver type when
+// the runtime receiver is one of its variant structs.
+function is_variant_of_alias_interp(struct_name: string, union_name: string, aliases: parser.TypeAlias[]): boolean {
+    var i: i32 = 0;
+    while (i < len(aliases)) {
+        if (aliases[i].name == union_name) {
+            var j: i32 = 0;
+            while (j < len(aliases[i].variants)) {
+                if (aliases[i].variants[j] == struct_name) { return true; }
+                j = j + 1;
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): Value {
     // Derive the receiver-type name from the runtime Value
     // variant. VStruct uses its declared type_name; primitive
     // variants map to the language's primitive type-keywords
@@ -558,11 +590,17 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (!rt_match && recv_type == "bool" && fd.receiver_type == "boolean") {
             rt_match = true;
         }
+        // Union-receiver methods: a method declared on a union
+        // (`function (sh: Shape) area()`) matches when recv's
+        // struct type_name is in the union's variant list.
+        if (!rt_match && is_variant_of_alias_interp(recv_type, fd.receiver_type, aliases)) {
+            rt_match = true;
+        }
         if (fd.name == name && len(fd.receiver_name) > 0 && rt_match) {
             if (len(args) != len(fd.params)) {
                 return v_err("arity mismatch calling method `" + name + "`");
             }
-            var env: Env = new_env_with_funcs(funcs);
+            var env: Env = new_env_with_funcs_aliases(funcs, aliases);
             env = env.bind(fd.receiver_name, recv);
             var j: i32 = 0;
             while (j < len(fd.params)) {
@@ -580,7 +618,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     return v_err("undefined method `" + name + "` on `" + recv_type + "`");
 }
 
-function call_func(name: string, args: Value[], funcs: parser.FuncDecl[]): Value {
+function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): Value {
     // Builtin: `len(a)` on an array → i32. Special-cased here
     // because the parser doesn't model builtins separately and
     // the interp has no Go-side host functions yet.
@@ -602,7 +640,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[]): Value
             if (len(args) != len(fd.params)) {
                 return v_err("arity mismatch calling `" + name + "`");
             }
-            var env: Env = new_env_with_funcs(funcs);
+            var env: Env = new_env_with_funcs_aliases(funcs, aliases);
             var j: i32 = 0;
             while (j < len(fd.params)) {
                 env = env.bind(fd.params[j].name, args[j]);
@@ -926,7 +964,7 @@ function trim_env(e: Env, base: i32): Env {
         vs = vs.push(e.values[i]);
         i = i + 1;
     }
-    return Env { names: ns, values: vs, funcs: e.funcs };
+    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases };
 }
 
 // eval_block walks a body, threading env forward through every
@@ -999,11 +1037,11 @@ pub function eval_module(mod: parser.Module): Value {
     while (i < len(mod.funcs)) {
         if (mod.funcs[i].name == "main") {
             var empty_args: Value[] = [];
-            return call_func("main", empty_args, mod.funcs);
+            return call_func("main", empty_args, mod.funcs, mod.aliases);
         }
         i = i + 1;
     }
-    var env: Env = new_env_with_funcs(mod.funcs);
+    var env: Env = new_env_with_funcs_aliases(mod.funcs, mod.aliases);
     var j: i32 = 0;
     while (j < len(mod.top_stmts)) {
         var r: StepResult = eval_stmt(mod.top_stmts[j], env);
@@ -1659,6 +1697,16 @@ function main(): i32 {
     match (r79) {
         VInt(i) => { if (i.v != 0) { return 790; } },
         _ => { return 791; }
+    }
+
+    // Union-receiver method: a method declared on a union
+    // (`function (sh: Shape) tag(): i32`) dispatches when the
+    // receiver is one of the union's variant structs.
+    var src80: string = "struct Circle { r: i32 } struct Square { s: i32 } pub type Shape = Circle | Square; function (sh: Shape) tag(): i32 { return 1; } function main(): i32 { var c = Circle { r: 3 }; return c.tag(); }";
+    var r80: Value = run_module(src80);
+    match (r80) {
+        VInt(i) => { if (i.v != 1) { return 800; } },
+        _ => { return 801; }
     }
 
     return 0;
