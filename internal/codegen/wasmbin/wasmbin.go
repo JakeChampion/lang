@@ -85,6 +85,40 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		return idx
 	}
 
+	// Static closure-pair pool for OpConstFunc. Each unique
+	// function name referenced via OpConstFunc gets an 8-byte
+	// cell at closuresBase + 8*tableIdx: { fn_idx (i32 LE),
+	// env_ptr=0 (i32 LE) }. OpConstFunc emits an i32.const
+	// pointing at the cell; OpCallIndirect on that pointer
+	// would dereference to recover (fn_idx, env_ptr).
+	//
+	// Cells live in the reserved low-memory window 64..1024
+	// (before stringStart). Programs with up to 120 unique
+	// OpConstFunc targets fit without growing into the string
+	// pool.
+	const closuresBase = 64
+	const maxClosureCells = (1024 - closuresBase) / 8
+	closureTableIdx := map[string]int{}
+	var closureBytes []byte
+	internClosure := func(name string) (int, error) {
+		if idx, ok := closureTableIdx[name]; ok {
+			return idx, nil
+		}
+		idx := len(closureTableIdx)
+		if idx >= maxClosureCells {
+			return 0, fmt.Errorf("OpConstFunc: closure-cell pool exhausted (>%d unique targets)", maxClosureCells)
+		}
+		closureTableIdx[name] = idx
+		// Cell bytes: fn_idx LE + env_ptr=0 LE. fn_idx is the
+		// post-import-shifted funcidx, which equals funcIdx[name]
+		// here since the import shift is uniform.
+		fnIdx := funcIdx[name]
+		closureBytes = append(closureBytes,
+			byte(fnIdx), byte(fnIdx>>8), byte(fnIdx>>16), byte(fnIdx>>24),
+			0, 0, 0, 0)
+		return idx, nil
+	}
+
 	// String interning state for OpConstStr's heap-form path.
 	// Inline-form strings (≤7 bytes via langstring.FitsInlineWasm)
 	// pack into the two i32.consts directly and don't visit the
@@ -111,8 +145,10 @@ func Emit(prog *ir.Program) ([]byte, error) {
 	}
 
 	ctx := &emitCtx{
-		funcIdx:       funcIdx,
-		internString:  internString,
+		funcIdx:        funcIdx,
+		internString:   internString,
+		internClosure:  internClosure,
+		closuresBaseAddr: closuresBase,
 		addSigType: func(sig *ast.FuncType) (uint32, error) {
 			params := make([]byte, 0, len(sig.Params))
 			for _, pt := range sig.Params {
@@ -217,6 +253,23 @@ func Emit(prog *ir.Program) ([]byte, error) {
 		tIdx := addType(params, results)
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, tIdx)
 		m.CodeBodies = append(m.CodeBodies, spec.body(helperIdxs))
+	}
+
+	// OpConstFunc closure-pair cells → data segment at the
+	// reserved low-memory window (closuresBase=64). When present,
+	// also force the memory section so the data segment has a
+	// target.
+	if len(closureBytes) > 0 {
+		if !m.MemoryPresent {
+			m.MemoryPresent = true
+			m.MemoryMin = 1
+			m.MemoryMax = -1
+			m.ExportNames = append(m.ExportNames, "memory")
+			m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
+			m.ExportIdxs = append(m.ExportIdxs, 0)
+		}
+		m.DataOffsets = append(m.DataOffsets, int32(closuresBase))
+		m.DataInits = append(m.DataInits, closureBytes)
 	}
 
 	// Heap-form strings → data segment. Even if no other op used
@@ -410,6 +463,11 @@ type emitCtx struct {
 	// heap-form bytes of s, interning so repeats share an
 	// address. Used by OpConstStr.
 	internString func(string) int
+	// internClosure reserves a closure-pair cell for the
+	// named function and returns its table-slot index. The
+	// cell address is closuresBaseAddr + 8*idx.
+	internClosure    func(string) (int, error)
+	closuresBaseAddr int
 	// fn is the current function being walked. emitBody sets and
 	// clears it. Slot-aware ops (OpLoadLocal / OpStoreLocal /
 	// OpTeeLocal) consult slotType(fn, op.I32) to decide whether
@@ -527,6 +585,15 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return inst.InstF32Const(body, math.Float32bits(op.F32)), nil
 	case ir.OpConstF64:
 		return inst.InstF64Const(body, math.Float64bits(op.F64)), nil
+
+	case ir.OpConstFunc:
+		// Push the address of the static closure-pair cell for
+		// op.Str. The cell contains {fn_idx, env_ptr=0}.
+		tableIdx, err := ctx.internClosure(op.Str)
+		if err != nil {
+			return nil, err
+		}
+		return inst.InstI32Const(body, int32(ctx.closuresBaseAddr+8*tableIdx)), nil
 
 	case ir.OpConstStr:
 		// Two-word string ABI: every OpConstStr pushes `(data, len)`
