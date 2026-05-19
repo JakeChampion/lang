@@ -336,7 +336,10 @@ func resultValtypes(t ast.Type) ([]byte, error) {
 // localValtypes returns the wasm valtype vector for an IR function's
 // declared locals + scratch slots — exactly what the local-section
 // preamble of the function body needs. String-typed slots fan out
-// to two i32 slots `(data, len)`.
+// to two i32 slots `(data, len)`. Three additional i32 scratch
+// slots are appended for functions that load/store strings to
+// heap memory (OpLoad/OpStore with WidthString) — used by the
+// two-word ABI fan-out.
 func localValtypes(fn *ir.Func) ([]byte, error) {
 	var out []byte
 	for _, l := range fn.Locals {
@@ -353,7 +356,30 @@ func localValtypes(fn *ir.Func) ([]byte, error) {
 		}
 		out = append(out, vts...)
 	}
+	if fnNeedsStrPairScratch(fn) {
+		for i := 0; i < strPairScratchSlots; i++ {
+			out = append(out, encode.ValtypeI32)
+		}
+	}
 	return out, nil
+}
+
+// strPairScratchSlots is the count of extra wasm locals appended
+// to a function body when it uses OpLoad/OpStore with WidthString.
+// Layout (relative to strPairScratchBase): +0 addr, +1 data, +2 len.
+const strPairScratchSlots = 3
+
+// fnNeedsStrPairScratch reports whether fn has any OpLoad / OpStore
+// op with Width == ir.WidthString — the two-word string ABI load/
+// store fan-out needs three i32 scratch locals to juggle stack
+// values without losing data.
+func fnNeedsStrPairScratch(fn *ir.Func) bool {
+	for _, op := range fn.Ops {
+		if (op.Kind == ir.OpLoad || op.Kind == ir.OpStore) && op.Width == ir.WidthString {
+			return true
+		}
+	}
+	return false
 }
 
 // emitCtx bundles per-program lookups shared across every op
@@ -376,6 +402,11 @@ type emitCtx struct {
 	// OpTeeLocal) consult slotType(fn, op.I32) to decide whether
 	// to fan out into the two-word string ABI.
 	fn *ir.Func
+	// strPairScratchBase is the wasm-slot index of the first of
+	// three scratch i32 locals appended to fn's locals when fn
+	// uses OpLoad/OpStore WidthString. Layout: +0 addr, +1 data,
+	// +2 len. Zero when fnNeedsStrPairScratch(fn) is false.
+	strPairScratchBase uint32
 }
 
 // slotType returns the ast.Type of an IR slot. Layout follows the
@@ -424,7 +455,14 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 	locals = encodeLocals(lvts)
 
 	ctx.fn = fn
-	defer func() { ctx.fn = nil }()
+	// The scratch base is the wasm-slot index just past every IR
+	// slot (params + locals + scratch types, accounting for string-
+	// typed slots taking 2 wasm slots each). Only meaningful when
+	// fnNeedsStrPairScratch(fn) is true; otherwise it's unused.
+	lastIR := int32(len(fn.Params) + len(fn.Locals) + len(fn.ScratchTypes))
+	ctx.strPairScratchBase = wasmSlotIdx(fn, lastIR)
+	defer func() { ctx.fn = nil; ctx.strPairScratchBase = 0 }()
+
 	for opIdx, op := range fn.Ops {
 		body, err = emitOp(body, op, ctx)
 		if err != nil {
@@ -820,10 +858,20 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		}
 		// Width=0 / 32 / WidthPtr (-1) all collapse to i32 on
 		// wasm32 — WidthPtr is only meaningful on 64-bit native
-		// targets. WidthString (-2) is the two-word string ABI
-		// and stays out of scope until the string slice.
+		// targets. WidthString (-2) fans out into two i32 loads
+		// (data at +0, len at +4) via a scratch local for the
+		// shared base address.
 		if op.Width == ir.WidthString {
-			return nil, fmt.Errorf("OpLoad WidthString (two-word string ABI) not yet supported")
+			// Stack: [..., addr]. Need to keep addr around to
+			// read both data (+0) and len (+4) without losing it.
+			addrIdx := ctx.strPairScratchBase + 0
+			body = inst.InstLocalTee(body, addrIdx) // stack: [addr], scratch=addr
+			body = memory.InstI32Load(body, 2, 0)   // load data; stack: [data]
+			body = inst.InstLocalGet(body, addrIdx) // [data, addr]
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Add(body)         // [data, addr+4]
+			body = memory.InstI32Load(body, 2, 0)   // [data, len]
+			return body, nil
 		}
 		return memory.InstI32Load(body, 2, 0), nil
 	case ir.OpStore:
@@ -831,7 +879,25 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 			return memory.InstI64Store(body, 3, 0), nil
 		}
 		if op.Width == ir.WidthString {
-			return nil, fmt.Errorf("OpStore WidthString (two-word string ABI) not yet supported")
+			// Stack: [..., addr, data, len]. Pop into scratch
+			// then re-emit two i32.stores at +0 and +4.
+			addrIdx := ctx.strPairScratchBase + 0
+			dataIdx := ctx.strPairScratchBase + 1
+			lenIdx := ctx.strPairScratchBase + 2
+			body = inst.InstLocalSet(body, lenIdx)  // pop len
+			body = inst.InstLocalSet(body, dataIdx) // pop data
+			body = inst.InstLocalSet(body, addrIdx) // pop addr
+			// Write data at addr+0.
+			body = inst.InstLocalGet(body, addrIdx)
+			body = inst.InstLocalGet(body, dataIdx)
+			body = memory.InstI32Store(body, 2, 0)
+			// Write len at addr+4.
+			body = inst.InstLocalGet(body, addrIdx)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalGet(body, lenIdx)
+			body = memory.InstI32Store(body, 2, 0)
+			return body, nil
 		}
 		return memory.InstI32Store(body, 2, 0), nil
 	case ir.OpFLoad:
