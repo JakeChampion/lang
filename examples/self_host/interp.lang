@@ -37,6 +37,12 @@ pub struct VArr { elements: Value[] }
 // Each slot's runtime type stays whatever the source emitted;
 // `.0` / `.1` / … indices read positionally.
 pub struct VTuple { elements: Value[] }
+// VFunc is a first-class callable value (a closure). It captures
+// the lambda's body / params / ret_type plus the scope at the
+// point of construction so free identifiers in the body resolve
+// against the enclosing function's bindings rather than the
+// caller's.
+pub struct VFunc { params: parser.ParamDecl[], ret_type: string, body: parser.Stmt[], captured_names: string[], captured_values: Value[] }
 // VStruct holds a user-defined struct value. Parallel arrays
 // for field names and corresponding evaluated values.
 // type_name is the struct's declared name — useful for
@@ -48,7 +54,7 @@ pub struct VErr { msg: string }
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
 
-pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VStruct | VErr;
+pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VFunc | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
@@ -359,21 +365,45 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             return v_err("unknown unary op: " + u.op);
         },
         parser.ExprCall(c) => {
-            // Bare-ident callee → plain function call.
-            // FieldAccess callee → method call: evaluate the
-            // receiver, dispatch on its struct type_name.
+            // Bare-ident callee → plain function call OR
+            // closure call when the name is bound to a VFunc.
+            // FieldAccess callee → method call.
+            // Any other expression evaluates to a callee value
+            // — VFunc → closure call, else error.
             var name: string = "";
             var is_method: boolean = false;
+            var is_closure: boolean = false;
             var recv: Value = v_err("__noreceiver__");
+            var closure_val: Value = v_err("__noclosure__");
             match (c.callee) {
-                parser.ExprIdent(id) => { name = id.name; },
+                parser.ExprIdent(id) => {
+                    // If the name is bound in scope to a VFunc,
+                    // it's a closure call. Plain function names
+                    // shadow ident bindings via call_func's
+                    // walk, but a `var f = function (...) {…}`
+                    // binding is observable here.
+                    var bound: Value = env.lookup(id.name);
+                    match (bound) {
+                        VFunc(_) => { is_closure = true; closure_val = bound; },
+                        _ => { name = id.name; }
+                    }
+                },
                 parser.ExprFieldAccess(fa) => {
                     name = fa.field;
                     is_method = true;
                     recv = eval_expr(fa.obj, env);
                     if (is_err(recv)) { return recv; }
                 },
-                _ => { return v_err("call target is not an identifier"); }
+                _ => {
+                    // Treat as a value-producing expression
+                    // (e.g. immediate `function () { … }()`).
+                    var cv: Value = eval_expr(c.callee, env);
+                    if (is_err(cv)) { return cv; }
+                    match (cv) {
+                        VFunc(_) => { is_closure = true; closure_val = cv; },
+                        _ => { return v_err("call target is not callable"); }
+                    }
+                }
             }
             // Evaluate args in order, propagating the first VErr.
             var arg_vals: Value[] = [];
@@ -386,6 +416,9 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             if (is_method) {
                 return call_method(recv, name, arg_vals, env.funcs, env.aliases);
+            }
+            if (is_closure) {
+                return call_closure(closure_val, arg_vals, env.funcs, env.aliases);
             }
             return call_func(name, arg_vals, env.funcs, env.aliases);
         },
@@ -530,7 +563,19 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_err("unreachable field-access arm");
         },
-        parser.ExprLambda(_) => { return v_err("lambda value not implemented"); },
+        parser.ExprLambda(lm) => {
+            // Capture the lexical environment by snapshotting
+            // env.names / env.values. The body resolves free
+            // idents against this snapshot first; the call
+            // site re-binds params on top.
+            return VFunc {
+                params: lm.params,
+                ret_type: lm.ret_type,
+                body: lm.body,
+                captured_names: env.names,
+                captured_values: env.values
+            };
+        },
         parser.ExprUnknown(u) => { return v_err("parser-side unknown: " + u.kind); }
     }
     return v_err("unhandled Expr variant");
@@ -566,6 +611,32 @@ function is_variant_of_alias_interp(struct_name: string, union_name: string, ali
         i = i + 1;
     }
     return false;
+}
+
+// call_closure runs a VFunc with the given args. The closure's
+// captured names + values seed the body's env so free idents in
+// the lambda body resolve against the enclosing function's
+// scope. Args bind on top in declaration order.
+function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): Value {
+    var fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [] };
+    match (cv) {
+        VFunc(v) => { fv = v; },
+        _ => { return v_err("call_closure: not a VFunc"); }
+    }
+    if (len(args) != len(fv.params)) {
+        return v_err("arity mismatch calling closure");
+    }
+    var env: Env = Env { names: fv.captured_names, values: fv.captured_values, funcs: funcs, aliases: aliases };
+    var j: i32 = 0;
+    while (j < len(fv.params)) {
+        env = env.bind(fv.params[j].name, args[j]);
+        j = j + 1;
+    }
+    var step: StepResult = eval_block(fv.body, env);
+    if (is_noreturn(step.ret)) {
+        return v_err("closure reached end without `return`");
+    }
+    return step.ret;
 }
 
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): Value {
@@ -705,6 +776,7 @@ function value_eq(a: Value, b: Value): boolean {
                 _ => { return false; }
             }
         },
+        VFunc(_) => { return false; },
         VStruct(asv) => {
             // Structural equality: same type_name + same field
             // count + pairwise structural equality on each
@@ -1708,6 +1780,30 @@ function main(): i32 {
     match (r80) {
         VInt(i) => { if (i.v != 1) { return 800; } },
         _ => { return 801; }
+    }
+
+    // Lambda expression bound to a var, then called.
+    var src81: string = "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }";
+    var r81: Value = run_module(src81);
+    match (r81) {
+        VInt(i) => { if (i.v != 42) { return 810; } },
+        _ => { return 811; }
+    }
+
+    // Closure captures an outer local var.
+    var src82: string = "function main(): i32 { var k: i32 = 10; var f = function (x: i32): i32 { return x + k; }; return f(5); }";
+    var r82: Value = run_module(src82);
+    match (r82) {
+        VInt(i) => { if (i.v != 15) { return 820; } },
+        _ => { return 821; }
+    }
+
+    // Immediate-invoked function expression.
+    var src83: string = "function main(): i32 { return function (n: i32): i32 { return n * 2; }(21); }";
+    var r83: Value = run_module(src83);
+    match (r83) {
+        VInt(i) => { if (i.v != 42) { return 830; } },
+        _ => { return 831; }
     }
 
     return 0;
