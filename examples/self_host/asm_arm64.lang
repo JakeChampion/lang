@@ -740,6 +740,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "exit") { return "i32"; }
                     if (id.name == "args_count") { return "i32"; }
                     if (id.name == "arg_at") { return "string"; }
+                    if (id.name == "str_split") { return "array_string"; }
                     var fi: i32 = 0;
                     while (fi < len(s.funcs)) {
                         if (s.funcs[fi].name == id.name && len(s.funcs[fi].receiver_type) == 0) {
@@ -1566,6 +1567,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    bl __lang_arg_at\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_args();
+                return s;
+            }
+            if (name == "str_split" && len(c.args) == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    ldr x1, [sp], #16\n");
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __lang_str_split\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_str_search();
+                s = s.mark_heap();
                 return s;
             }
             // read_int() — builtin no-arg call to the read_int
@@ -3334,6 +3346,140 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    str x20, [x0]\n");
         s = s.write("    mov x1, #1\n");
         s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        // __lang_str_split: x0 = haystack box, x1 = sep box.
+        // Returns string[] of segments. Empty sep → [haystack].
+        // x19 = haystack box, x20 = sep box, x21 = count,
+        // x22 = array ptr, x23 = write_idx, x24 = seg_start.
+        s = s.write("__lang_str_split:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x20, x1\n");
+        s = s.write("    mov x21, #0\n");
+        s = s.write("    ldr x2, [x20, #8]\n");
+        s = s.write("    cbz x2, .Lsplit_single\n");
+        // First pass.
+        s = s.write("    ldr x4, [x19]\n");          // hd
+        s = s.write("    ldr x5, [x19, #8]\n");      // hl
+        s = s.write("    ldr x6, [x20]\n");          // sd
+        s = s.write("    ldr x7, [x20, #8]\n");      // sl
+        s = s.write("    mov x8, #0\n");             // i
+        s = s.write(".Lsplit_cl:\n");
+        s = s.write("    add x9, x8, x7\n");
+        s = s.write("    cmp x9, x5\n");
+        s = s.write("    b.gt .Lsplit_count_done\n");
+        s = s.write("    mov x9, #0\n");             // j
+        s = s.write(".Lsplit_clm:\n");
+        s = s.write("    cmp x9, x7\n");
+        s = s.write("    b.eq .Lsplit_match\n");
+        s = s.write("    add x10, x4, x8\n");
+        s = s.write("    add x10, x10, x9\n");
+        s = s.write("    ldrb w11, [x10]\n");
+        s = s.write("    add x10, x6, x9\n");
+        s = s.write("    ldrb w12, [x10]\n");
+        s = s.write("    cmp w11, w12\n");
+        s = s.write("    b.ne .Lsplit_clnomatch\n");
+        s = s.write("    add x9, x9, #1\n");
+        s = s.write("    b .Lsplit_clm\n");
+        s = s.write(".Lsplit_match:\n");
+        s = s.write("    add x21, x21, #1\n");
+        s = s.write("    add x8, x8, x7\n");
+        s = s.write("    b .Lsplit_cl\n");
+        s = s.write(".Lsplit_clnomatch:\n");
+        s = s.write("    add x8, x8, #1\n");
+        s = s.write("    b .Lsplit_cl\n");
+        s = s.write(".Lsplit_count_done:\n");
+        // Allocate array: 8 + (count+1)*8 bytes.
+        s = s.write("    add x0, x21, #1\n");
+        s = s.write("    lsl x0, x0, #3\n");
+        s = s.write("    add x0, x0, #8\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    mov x22, x0\n");
+        s = s.write("    add x1, x21, #1\n");
+        s = s.write("    str x1, [x22]\n");
+        s = s.write("    mov x23, #0\n");
+        s = s.write("    mov x24, #0\n");
+        s = s.write("    ldr x4, [x19]\n");
+        s = s.write("    ldr x5, [x19, #8]\n");
+        s = s.write("    ldr x6, [x20]\n");
+        s = s.write("    ldr x7, [x20, #8]\n");
+        s = s.write("    mov x8, #0\n");
+        s = s.write(".Lsplit_walk:\n");
+        s = s.write("    add x9, x8, x7\n");
+        s = s.write("    cmp x9, x5\n");
+        s = s.write("    b.gt .Lsplit_tail\n");
+        s = s.write("    mov x9, #0\n");
+        s = s.write(".Lsplit_chk:\n");
+        s = s.write("    cmp x9, x7\n");
+        s = s.write("    b.eq .Lsplit_segend\n");
+        s = s.write("    add x10, x4, x8\n");
+        s = s.write("    add x10, x10, x9\n");
+        s = s.write("    ldrb w11, [x10]\n");
+        s = s.write("    add x10, x6, x9\n");
+        s = s.write("    ldrb w12, [x10]\n");
+        s = s.write("    cmp w11, w12\n");
+        s = s.write("    b.ne .Lsplit_chknomatch\n");
+        s = s.write("    add x9, x9, #1\n");
+        s = s.write("    b .Lsplit_chk\n");
+        s = s.write(".Lsplit_segend:\n");
+        // Emit segment [seg_start, i).
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    ldr x1, [x19]\n");
+        s = s.write("    add x1, x1, x24\n");
+        s = s.write("    str x1, [x0]\n");
+        s = s.write("    sub x1, x8, x24\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    add x10, x23, #1\n");
+        s = s.write("    str x0, [x22, x10, lsl #3]\n");
+        s = s.write("    add x23, x23, #1\n");
+        s = s.write("    add x8, x8, x7\n");
+        s = s.write("    mov x24, x8\n");
+        // Reload regs in case alloc disturbed them.
+        s = s.write("    ldr x4, [x19]\n");
+        s = s.write("    ldr x5, [x19, #8]\n");
+        s = s.write("    ldr x6, [x20]\n");
+        s = s.write("    ldr x7, [x20, #8]\n");
+        s = s.write("    b .Lsplit_walk\n");
+        s = s.write(".Lsplit_chknomatch:\n");
+        s = s.write("    add x8, x8, #1\n");
+        s = s.write("    b .Lsplit_walk\n");
+        s = s.write(".Lsplit_tail:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    ldr x1, [x19]\n");
+        s = s.write("    add x1, x1, x24\n");
+        s = s.write("    str x1, [x0]\n");
+        s = s.write("    ldr x1, [x19, #8]\n");
+        s = s.write("    sub x1, x1, x24\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    add x10, x23, #1\n");
+        s = s.write("    str x0, [x22, x10, lsl #3]\n");
+        s = s.write("    mov x0, x22\n");
+        s = s.write("    b .Lsplit_exit\n");
+        s = s.write(".Lsplit_single:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    mov x22, x0\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x22]\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    ldr x1, [x19]\n");
+        s = s.write("    str x1, [x0]\n");
+        s = s.write("    ldr x1, [x19, #8]\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    str x0, [x22, #8]\n");
+        s = s.write("    mov x0, x22\n");
+        s = s.write(".Lsplit_exit:\n");
+        s = s.write("    ldp x23, x24, [sp], #16\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
