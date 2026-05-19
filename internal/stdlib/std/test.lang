@@ -1456,6 +1456,59 @@ pub function assert_process(actual: ProcessResult, expected_exit: i32, stdout_su
     return None;
 }
 
+// `assert_exit_zero(actual)` — sugar for `assert_exit(..,
+// 0)`. By far the most common shape (the "successful CLI
+// invocation" path), and naming it explicitly reads
+// better in a test summary than `assert_exit(_, 0)`.
+pub function assert_exit_zero(actual: ProcessResult): Option[string] {
+    return assert_exit(actual, 0);
+}
+
+// `assert_exit_nonzero(actual)` — must have exited with
+// some non-zero code (the "expected failure" path).
+// Doesn't pin a specific code; use `assert_exit(_, N)`
+// when the test cares which non-zero code surfaced.
+pub function assert_exit_nonzero(actual: ProcessResult): Option[string] {
+    if (actual.exit_code != 0) { return None; }
+    return Some("assert_exit_nonzero: process exited 0, expected non-zero");
+}
+
+// `assert_stdout_lines(actual, expected_lines)` — split
+// the captured stdout on `\n` and compare to a string
+// array. Delegates to `assert_lines_eq` so the failure
+// message names the first differing line (same wording
+// as the file-side / in-memory variants); a trailing
+// newline does NOT count as an extra empty line.
+pub function assert_stdout_lines(actual: ProcessResult, expected_lines: string[]): Option[string] {
+    return assert_lines_eq(actual.stdout, expected_lines);
+}
+
+// `assert_stderr_lines(actual, expected_lines)` — stderr
+// mirror.
+pub function assert_stderr_lines(actual: ProcessResult, expected_lines: string[]): Option[string] {
+    return assert_lines_eq(actual.stderr, expected_lines);
+}
+
+// `assert_stdout_line_count(actual, n)` — line cardinality
+// on stdout. Use when the contract is "produce N records"
+// and the lines themselves vary too much to pin exactly
+// (timestamps, random ids, etc.). Same line definition as
+// `.lines()` — trailing newline doesn't overcount.
+pub function assert_stdout_line_count(actual: ProcessResult, n: i32): Option[string] {
+    var got: i32 = len(actual.stdout.lines());
+    if (got == n) { return None; }
+    return Some("assert_stdout_line_count: got " + got.to_string() +
+                " lines, expected " + n.to_string());
+}
+
+// `assert_stderr_line_count(actual, n)` — stderr mirror.
+pub function assert_stderr_line_count(actual: ProcessResult, n: i32): Option[string] {
+    var got: i32 = len(actual.stderr.lines());
+    if (got == n) { return None; }
+    return Some("assert_stderr_line_count: got " + got.to_string() +
+                " lines, expected " + n.to_string());
+}
+
 // =================== MULTI-SUBSTRING ASSERTIONS ===================
 //
 // Diagnostic-message tests typically want to check that a

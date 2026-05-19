@@ -1472,6 +1472,42 @@ func TestRunnerResultAssertionsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/process_output_shortcuts_test.lang`
+// exercises batch-31 process-result shortcuts:
+//   - `assert_exit_zero(proc)` /
+//     `assert_exit_nonzero(proc)` — sugar for the most
+//     common exit-code patterns; failure message names
+//     the actual code.
+//   - `assert_stdout_lines(proc, lines[])` /
+//     `assert_stderr_lines` — multi-line compare via
+//     `assert_lines_eq` (same "line N" failure wording).
+//   - `assert_stdout_line_count(proc, n)` /
+//     `assert_stderr_line_count` — line cardinality
+//     without pinning content.
+//
+// 10 cases.
+func TestRunnerProcessOutputShortcutsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/process_output_shortcuts_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 2 - exit_zero on non-zero fails",
+		"ok 4 - exit_nonzero on 0 names code",
+		"ok 6 - stdout_lines mismatch line N",
+		"ok 9 - stdout_line_count wrong reports",
+		"ok 10 - stderr_line_count pass",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
