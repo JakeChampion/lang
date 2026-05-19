@@ -139,6 +139,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	if helpers.set["__lang_print"] {
 		in.add("wasi_fd_write")
 	}
+	if helpers.set["__lang_eprint"] {
+		in.add("wasi_fd_write")
+	}
+	if helpers.set["__lang_putchar"] {
+		in.add("wasi_fd_write")
+	}
 	if helpers.set["__lang_exit"] {
 		in.add("wasi_proc_exit")
 	}
@@ -738,4 +744,52 @@ func buildReadByteBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildPutcharBody — (b) → (). Writes the low byte of b to
+// stdout via wasi_fd_write. Uses the print iovec scratch
+// region (printIovecAddr=48..55) as a 1-byte buffer at
+// printIovecAddr+0 with iovec base=printIovecAddr+0 (the
+// next 4 bytes hold the byte) and iov_len=1; the iovec
+// descriptor reuses printIovecAddr/+4. Reads back the same
+// nwritten slot at printRetAddr.
+//
+// Memory layout per call:
+//
+//	mem[48..51]: iov_base = 52
+//	mem[52]:     the byte (one byte; we use a 4-byte slot for alignment)
+//	mem[56..59]: iov_len = 1 (overlaps printRetAddr — we overwrite
+//	             after fd_write reads it)
+//
+// To avoid the iov_base/iov_len-overlap-with-the-byte-slot issue,
+// shift the byte buffer to a dedicated slot inside the existing
+// scratch region. We write the byte at printRetAddr (since the
+// fd_write result is dropped anyway), iov_base=printRetAddr, iov_len=1,
+// stored at printIovecAddr/+4.
+func buildPutcharBody(idxs map[string]uint32) []byte {
+	fdWrite := idxs["wasi_fd_write"]
+	var body []byte
+	// mem[printRetAddr] = b (low byte; we only read one)
+	body = inst.InstI32Const(body, printRetAddr)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store8(body, 0, 0)
+	// mem[printIovecAddr] = printRetAddr (iov_base)
+	body = inst.InstI32Const(body, printIovecAddr)
+	body = inst.InstI32Const(body, printRetAddr)
+	body = memory.InstI32Store(body, 2, 0)
+	// mem[printIovecAddr + 4] = 1 (iov_len)
+	body = inst.InstI32Const(body, printIovecAddr+4)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	// wasi_fd_write(1, iovec_addr, 1, ret_addr); drop result.
+	// Note: ret_addr overlaps the byte buffer; that's fine since
+	// we never read the byte back, and fd_write writes nwritten
+	// after reading iov_base/iov_len.
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstI32Const(body, printIovecAddr)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstI32Const(body, printRetAddr)
+	body = inst.InstCall(body, fdWrite)
+	body = inst.InstDrop(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
