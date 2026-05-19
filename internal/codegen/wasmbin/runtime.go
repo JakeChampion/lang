@@ -136,6 +136,14 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// CLOCK_MONOTONIC (1) variant of __lang_now_ns.
 					needs.add("__lang_alloc")
 					needs.add("__lang_monotonic_ns")
+				case "__lang_arena_save":
+					// Reads the bump-allocator cursor at mem[40].
+					// No alloc dependency; the cursor lives in
+					// reserved low memory regardless.
+					needs.add("__lang_arena_save")
+				case "__lang_arena_restore":
+					// Writes mem[40] = handle.
+					needs.add("__lang_arena_restore")
 				case "__lang_env_count":
 					// wasi_environ_sizes_get + alloc-per-call
 					// for the 8-byte output buffer.
@@ -370,6 +378,22 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 		body:    buildMonotonicNsBody,
+	},
+	"__lang_arena_save": {
+		// () → i32 — snapshot of the bump-allocator cursor.
+		// Pair with __lang_arena_restore to free everything
+		// allocated since the save in one pointer-store.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildArenaSaveBody,
+	},
+	"__lang_arena_restore": {
+		// (handle) → () — rewinds the bump cursor to handle.
+		// Pointers into the freed region are no longer valid;
+		// caller discipline enforces non-use.
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+		body:    buildArenaRestoreBody,
 	},
 	"__lang_env_count": {
 		// () → i32 — count of environment variables (envc).
@@ -1879,4 +1903,25 @@ func buildArgsBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildArenaSaveBody — () → i32. Returns mem[allocCursorAddr]
+// (the bump-allocator cursor). Used by lang's `arena_save()`
+// to snapshot the heap before a transient allocation phase.
+func buildArenaSaveBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, allocCursorAddr)
+	body = memInstI32Load(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildArenaRestoreBody — (handle) → (). Writes mem[allocCursorAddr]
+// = handle. Effectively rewinds the bump cursor to the value an
+// earlier arena_save returned.
+func buildArenaRestoreBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, allocCursorAddr)
+	body = inst.InstLocalGet(body, 0)
+	body = memInstI32Store(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }

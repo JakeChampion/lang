@@ -335,7 +335,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// that don't execute at runtime — wasm validation still
 	// requires memory 0 to exist). Memory layout matches the
 	// WAT path: 1 page (64 KiB) with no upper bound.
-	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] || helpers.set["__load_i32"] || helpers.set["__store_i32"] || helpers.set["__load_i64"] || helpers.set["__store_i64"] || helpers.set["__load_ptr"] || helpers.set["__store_ptr"] || helpers.set["__memcpy"] || helpers.set["__memset"] || len(importNeeds.order) > 0 {
+	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] || helpers.set["__load_i32"] || helpers.set["__store_i32"] || helpers.set["__load_i64"] || helpers.set["__store_i64"] || helpers.set["__load_ptr"] || helpers.set["__store_ptr"] || helpers.set["__memcpy"] || helpers.set["__memset"] || helpers.set["__lang_arena_save"] || helpers.set["__lang_arena_restore"] || len(importNeeds.order) > 0 {
 		m.MemoryPresent = true
 		m.MemoryMin = 1
 		m.MemoryMax = -1
@@ -1513,6 +1513,10 @@ var CallDirectAliases = map[string]string{
 	"now_ns":       "__lang_now_ns",
 	"now_unix_ms":  "__lang_now_unix_ms",
 	"monotonic_ns": "__lang_monotonic_ns",
+
+	// Arena (bump-allocator) save / restore.
+	"arena_save":    "__lang_arena_save",
+	"arena_restore": "__lang_arena_restore",
 	"env_count":  "__lang_env_count",
 	"arg_count":  "__lang_arg_count",
 	"arg_at":     "__lang_arg_at",
