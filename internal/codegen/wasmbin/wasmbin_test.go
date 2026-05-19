@@ -2523,6 +2523,41 @@ func TestEmitPrintViaSourceNameAlias(t *testing.T) {
 	}
 }
 
+// TestEmitEnvCount — call OpCallDirect "env_count" under
+// wasmtime. wasmtime sandboxes env vars by default (returns 0)
+// but the helper must execute without erroring.
+func TestEmitEnvCount(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "env_count"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got == "" {
+		t.Fatalf("env_count: empty stdout")
+	}
+}
+
 // TestEmitNowNs — call OpCallDirect "now_ns" twice, return the
 // i32-truncated difference. Two consecutive realtime samples
 // always differ by far less than 2^31 ns. Just sanity-checks

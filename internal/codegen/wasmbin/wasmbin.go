@@ -1428,6 +1428,8 @@ func callDirectAlias(name string) string {
 		return "__lang_random_i32"
 	case "now_ns":
 		return "__lang_now_ns"
+	case "env_count":
+		return "__lang_env_count"
 	}
 	return name
 }
