@@ -106,6 +106,235 @@ function is_all_digits(s: string): boolean {
     return true;
 }
 
+// =================== FREE-VAR WALKER ====================
+// Used by ExprLambda capture analysis. Same shape as the
+// walker in vm.lang's #824 / asm.lang's port.
+
+function has_str(xs: string[], s: string): boolean {
+    var i: i32 = 0;
+    while (i < len(xs)) {
+        if (xs[i] == s) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { return acc.push(id.name); },
+        parser.ExprNumber(_) => { return acc; },
+        parser.ExprString(_) => { return acc; },
+        parser.ExprBool(_) => { return acc; },
+        parser.ExprBinary(b) => {
+            acc = collect_idents_expr(b.left, acc);
+            return collect_idents_expr(b.right, acc);
+        },
+        parser.ExprUnary(u) => { return collect_idents_expr(u.operand, acc); },
+        parser.ExprCall(c) => {
+            acc = collect_idents_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < len(c.args)) {
+                acc = collect_idents_expr(c.args[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < len(a.elements)) {
+                acc = collect_idents_expr(a.elements[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < len(t.elements)) {
+                acc = collect_idents_expr(t.elements[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = collect_idents_expr(x.array, acc);
+            return collect_idents_expr(x.index, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = collect_idents_expr(sl.array, acc);
+            acc = collect_idents_expr(sl.start, acc);
+            return collect_idents_expr(sl.end, acc);
+        },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < len(sl.field_values)) {
+                acc = collect_idents_expr(sl.field_values[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < len(lm.body)) {
+                acc = collect_idents_stmt(lm.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
+        parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
+        parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
+        parser.StmtIf(i) => {
+            acc = collect_idents_expr(i.cond, acc);
+            var ti: i32 = 0;
+            while (ti < len(i.then_body)) {
+                acc = collect_idents_stmt(i.then_body[ti], acc);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < len(i.else_body)) {
+                acc = collect_idents_stmt(i.else_body[ei], acc);
+                ei = ei + 1;
+            }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = collect_idents_expr(w.cond, acc);
+            var i: i32 = 0;
+            while (i < len(w.body)) {
+                acc = collect_idents_stmt(w.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtAssign(a) => { return collect_idents_expr(a.value, acc); },
+        parser.StmtMatch(m) => {
+            acc = collect_idents_expr(m.scrutinee, acc);
+            var ai: i32 = 0;
+            while (ai < len(m.arms)) {
+                var bi: i32 = 0;
+                while (bi < len(m.arms[ai].body)) {
+                    acc = collect_idents_stmt(m.arms[ai].body[bi], acc);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = collect_idents_expr(f.iter, acc);
+            var i: i32 = 0;
+            while (i < len(f.body)) {
+                acc = collect_idents_stmt(f.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => { return acc.push(v.name); },
+        parser.StmtReturn(_) => { return acc; },
+        parser.StmtExpr(_) => { return acc; },
+        parser.StmtIf(i) => {
+            var ti: i32 = 0;
+            while (ti < len(i.then_body)) {
+                acc = collect_bound_stmt(i.then_body[ti], acc);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < len(i.else_body)) {
+                acc = collect_bound_stmt(i.else_body[ei], acc);
+                ei = ei + 1;
+            }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            var i: i32 = 0;
+            while (i < len(w.body)) {
+                acc = collect_bound_stmt(w.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtAssign(_) => { return acc; },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < len(m.arms)) {
+                match (m.arms[ai].pattern) {
+                    parser.PatVariant(pv) => {
+                        if (len(pv.binding) > 0) { acc = acc.push(pv.binding); }
+                    },
+                    parser.PatWildcard(_) => { }
+                }
+                var bi: i32 = 0;
+                while (bi < len(m.arms[ai].body)) {
+                    acc = collect_bound_stmt(m.arms[ai].body[bi], acc);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = acc.push(f.var_name);
+            var i: i32 = 0;
+            while (i < len(f.body)) {
+                acc = collect_bound_stmt(f.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
+    var refs: string[] = [];
+    var bi: i32 = 0;
+    while (bi < len(lm.body)) {
+        refs = collect_idents_stmt(lm.body[bi], refs);
+        bi = bi + 1;
+    }
+    var bound: string[] = [];
+    var pi: i32 = 0;
+    while (pi < len(lm.params)) {
+        bound = bound.push(lm.params[pi].name);
+        pi = pi + 1;
+    }
+    var si: i32 = 0;
+    while (si < len(lm.body)) {
+        bound = collect_bound_stmt(lm.body[si], bound);
+        si = si + 1;
+    }
+    var caps: string[] = [];
+    var ri: i32 = 0;
+    while (ri < len(refs)) {
+        var nm: string = refs[ri];
+        if (!has_str(bound, nm) && !has_str(caps, nm) && outer.has_local(nm)) {
+            caps = caps.push(nm);
+        }
+        ri = ri + 1;
+    }
+    return caps;
+}
+
 // =================== EMIT STATE ====================
 
 // EmitState carries the running output text, a monotonic label
@@ -703,7 +932,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 return s;
             }
             // Closure call: callee ident resolves to a local
-            // holding a fn pointer (capture-less lambda).
+            // holding a closure box ptr. See asm.lang for the
+            // calling convention rationale.
             if (s.has_local(name)) {
                 var ci: i32 = len(c.args) - 1;
                 while (ci >= 0) {
@@ -712,10 +942,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 }
                 var off: i32 = s.lookup_local(name);
                 s = s.write("    ldr x0, [x29, #" + i32_to_string(off) + "]\n");
-                s = s.write("    blr x0\n");
-                if (len(c.args) > 0) {
-                    s = s.write("    add sp, sp, #" + i32_to_string(len(c.args) * 16) + "\n");
-                }
+                s = s.write("    str x0, [sp, #-16]!\n");
+                // Peek box ptr, load fn_addr.
+                s = s.write("    ldr x1, [sp]\n");
+                s = s.write("    ldr x2, [x1]\n");
+                s = s.write("    blr x2\n");
+                s = s.write("    add sp, sp, #" + i32_to_string((len(c.args) + 1) * 16) + "\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
@@ -904,8 +1136,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprLambda(lm) => {
-            // Capture-less first cut. Mirror of the x86-64
-            // ExprLambda lowering in asm.lang.
+            // Always-box lowering mirror of asm.lang. The box
+            // layout is [fn_addr, cap0, cap1, …] and the call
+            // convention puts the box at the lowest positive
+            // offset above the saved fp (callee sees it at
+            // +16(x29), then args at +32, +48, …).
+            var caps: string[] = lambda_captures(lm, s);
+            var n_caps: i32 = len(caps);
             var lam_id: i32 = s.label_n;
             s = EmitState {
                 out: s.out,
@@ -931,7 +1168,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var saved_in_function: boolean = s.in_function;
             var argc_l: i32 = len(lm.params);
             var n_body_locals_l: i32 = count_locals(lm.body);
-            var total_locals_l: i32 = argc_l + n_body_locals_l;
+            var total_locals_l: i32 = 1 + n_caps + argc_l + n_body_locals_l;
             if (total_locals_l > 0) {
                 var bytes_l: i32 = total_locals_l * 8;
                 if (bytes_l % 16 != 0) { bytes_l = bytes_l + 8; }
@@ -939,14 +1176,31 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             s = s.reset_locals();
             s = s.enter_function();
-            var pi: i32 = 0;
-            while (pi < argc_l) {
-                s = s.bind_local(lm.params[pi].name);
-                var p_off: i32 = s.lookup_local(lm.params[pi].name);
-                var a_off: i32 = 16 + pi * 16;
-                s = s.write("    ldr x0, [x29, #" + i32_to_string(a_off) + "]   // param " + lm.params[pi].name + "\n");
+            // Bind __closure_box (slot 0), load from +16(x29).
+            var box_name: string = "__closure_box";
+            s = s.bind_local(box_name);
+            var box_off: i32 = s.lookup_local(box_name);
+            s = s.write("    ldr x0, [x29, #16]\n");
+            s = s.write("    str x0, [x29, #" + i32_to_string(box_off) + "]\n");
+            // Bind each capture, load from box[+(i+1)*8].
+            var ci: i32 = 0;
+            while (ci < n_caps) {
+                s = s.bind_local(caps[ci]);
+                var c_off: i32 = s.lookup_local(caps[ci]);
+                s = s.write("    ldr x1, [x29, #" + i32_to_string(box_off) + "]\n");
+                s = s.write("    ldr x0, [x1, #" + i32_to_string((ci + 1) * 8) + "]\n");
+                s = s.write("    str x0, [x29, #" + i32_to_string(c_off) + "]   // capture " + caps[ci] + "\n");
+                ci = ci + 1;
+            }
+            // Bind params; args at +32, +48, … (shifted by box).
+            var pi2: i32 = 0;
+            while (pi2 < argc_l) {
+                s = s.bind_local(lm.params[pi2].name);
+                var p_off: i32 = s.lookup_local(lm.params[pi2].name);
+                var a_off: i32 = 32 + pi2 * 16;
+                s = s.write("    ldr x0, [x29, #" + i32_to_string(a_off) + "]   // param " + lm.params[pi2].name + "\n");
                 s = s.write("    str x0, [x29, #" + i32_to_string(p_off) + "]\n");
-                pi = pi + 1;
+                pi2 = pi2 + 1;
             }
             var bi_l: i32 = 0;
             while (bi_l < len(lm.body)) {
@@ -973,8 +1227,23 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 funcs: s.funcs
             };
             s = s.write(skip_lbl + ":\n");
-            s = s.write("    adrp x0, " + body_lbl + "\n");
-            s = s.write("    add x0, x0, :lo12:" + body_lbl + "\n");
+            // Allocate box: (1 + n_caps) * 8 bytes.
+            var box_bytes: i32 = (1 + n_caps) * 8;
+            s = s.write("    mov x0, #" + i32_to_string(box_bytes) + "\n");
+            s = s.write("    bl __lang_alloc\n");
+            s = s.mark_heap();
+            // Store fn_addr at box[0].
+            s = s.write("    adrp x1, " + body_lbl + "\n");
+            s = s.write("    add x1, x1, :lo12:" + body_lbl + "\n");
+            s = s.write("    str x1, [x0]\n");
+            // Store captures.
+            var oi: i32 = 0;
+            while (oi < n_caps) {
+                var outer_off: i32 = s.lookup_local(caps[oi]);
+                s = s.write("    ldr x1, [x29, #" + i32_to_string(outer_off) + "]\n");
+                s = s.write("    str x1, [x0, #" + i32_to_string((oi + 1) * 8) + "]\n");
+                oi = oi + 1;
+            }
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },

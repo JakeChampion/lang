@@ -513,6 +513,34 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		{
+			"closure-single-capture",
+			"function main(): i32 { var n = 5; var f = function (x: i32): i32 { return x + n; }; return f(7); }",
+			12,
+			"",
+			"",
+		},
+		{
+			"closure-multi-capture",
+			"function main(): i32 { var a = 10; var b = 20; var f = function (): i32 { return a + b; }; return f(); }",
+			30,
+			"",
+			"",
+		},
+		{
+			"closure-capture-by-value",
+			"function main(): i32 { var n = 5; var f = function (): i32 { return n; }; n = 99; return f(); }",
+			5,
+			"",
+			"",
+		},
+		{
+			"closure-capture-and-arg",
+			"function main(): i32 { var k = 100; var g = function (x: i32, y: i32): i32 { return x + y + k; }; return g(2, 3); }",
+			105,
+			"",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
