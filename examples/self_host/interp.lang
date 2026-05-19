@@ -358,6 +358,8 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             return v_err("unreachable slice arm");
         },
+        parser.ExprStructLit(_) => { return v_err("struct literals not implemented in interp yet"); },
+        parser.ExprFieldAccess(_) => { return v_err("field access not implemented in interp yet"); },
         parser.ExprUnknown(u) => { return v_err("parser-side unknown: " + u.kind); }
     }
     return v_err("unhandled Expr variant");

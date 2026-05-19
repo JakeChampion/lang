@@ -330,6 +330,8 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             return t_unknown("unreachable slice arm");
         },
+        parser.ExprStructLit(_) => { return t_unknown("struct literal typing not implemented yet"); },
+        parser.ExprFieldAccess(_) => { return t_unknown("field access typing not implemented yet"); },
         parser.ExprUnknown(u) => { return t_unknown("parser-side unknown:" + u.kind); }
     }
     return t_unknown("unhandled Expr variant");

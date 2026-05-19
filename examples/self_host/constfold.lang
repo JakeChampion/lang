@@ -159,6 +159,18 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
                 start: fold_expr(sl.start),
                 end: fold_expr(sl.end)
             };
+        },
+        parser.ExprStructLit(sl) => {
+            var fvs: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < len(sl.field_values)) {
+                fvs = fvs.push(fold_expr(sl.field_values[i]));
+                i = i + 1;
+            }
+            return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: fvs };
+        },
+        parser.ExprFieldAccess(fa) => {
+            return parser.ExprFieldAccess { obj: fold_expr(fa.obj), field: fa.field };
         }
     }
     return e;

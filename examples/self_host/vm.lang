@@ -285,6 +285,14 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = ops.push(op_slice());
             return CompileResult { ops: ops, lt: lt };
         },
+        parser.ExprStructLit(_) => {
+            ops = ops.push(op_push_str("__nostruct__"));
+            return CompileResult { ops: ops, lt: lt };
+        },
+        parser.ExprFieldAccess(_) => {
+            ops = ops.push(op_push_str("__nofield__"));
+            return CompileResult { ops: ops, lt: lt };
+        },
         parser.ExprUnknown(_) => {
             ops = ops.push(op_push_str("__exprunknown__"));
             return CompileResult { ops: ops, lt: lt };
