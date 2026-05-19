@@ -55,6 +55,7 @@ type Diagnostic struct {
 	Range    Range  `json:"range"`
 	Severity int    `json:"severity,omitempty"` // 1 = Error, 2 = Warning, 3 = Info, 4 = Hint
 	Source   string `json:"source,omitempty"`
+	Code     string `json:"code,omitempty"`     // stable error code (e.g. "E001") — see internal/diag/explanations/
 	Message  string `json:"message"`
 }
 

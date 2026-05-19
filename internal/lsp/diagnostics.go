@@ -54,6 +54,14 @@ func toDiagnostic(err error) Diagnostic {
 			}
 		}
 	}
+	// Stable error code per docs/DIAGNOSTIC-UX-RESEARCH.md
+	// Rec §4. Surfaced as `diagnostic.code` in the LSP frame
+	// so IDEs can deep-link to the catalogue (`lang explain
+	// CODE`). Empty Code() falls through with no field — the
+	// `omitempty` JSON tag drops it from the wire payload.
+	if c, ok := err.(diag.Coded); ok {
+		d.Code = c.Code()
+	}
 	return d
 }
 
