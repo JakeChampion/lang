@@ -773,6 +773,42 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			0,
 			"abcd",
 		},
+		{
+			"str-repeat-basic",
+			"function main(): i32 { var r = str_repeat(\"ab\", 3); print(r); return len(r); }",
+			6,
+			"ababab",
+		},
+		{
+			"str-repeat-once",
+			"function main(): i32 { var r = str_repeat(\"hi\", 1); print(r); return len(r); }",
+			2,
+			"hi",
+		},
+		{
+			"str-repeat-zero",
+			"function main(): i32 { var r = str_repeat(\"foo\", 0); return len(r); }",
+			0,
+			"",
+		},
+		{
+			"str-repeat-negative",
+			"function main(): i32 { var r = str_repeat(\"foo\", 0 - 3); return len(r); }",
+			0,
+			"",
+		},
+		{
+			"str-repeat-empty-source",
+			"function main(): i32 { var r = str_repeat(\"\", 5); return len(r); }",
+			0,
+			"",
+		},
+		{
+			"str-repeat-many",
+			"function main(): i32 { var r = str_repeat(\"-=\", 4); print(r); return len(r); }",
+			8,
+			"-=-=-=-=",
+		},
 	}
 
 	for _, tc := range cases {
