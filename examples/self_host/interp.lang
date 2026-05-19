@@ -263,11 +263,20 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             return v_err("unknown unary op: " + u.op);
         },
         parser.ExprCall(c) => {
-            // Only bare-ident callees are supported — pull the
-            // function name out of the parsed ExprIdent.
+            // Bare-ident callee → plain function call.
+            // FieldAccess callee → method call: evaluate the
+            // receiver, dispatch on its struct type_name.
             var name: string = "";
+            var is_method: boolean = false;
+            var recv: Value = v_err("__noreceiver__");
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
+                parser.ExprFieldAccess(fa) => {
+                    name = fa.field;
+                    is_method = true;
+                    recv = eval_expr(fa.obj, env);
+                    if (is_err(recv)) { return recv; }
+                },
                 _ => { return v_err("call target is not an identifier"); }
             }
             // Evaluate args in order, propagating the first VErr.
@@ -278,6 +287,9 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 if (is_err(av)) { return av; }
                 arg_vals = arg_vals.push(av);
                 i = i + 1;
+            }
+            if (is_method) {
+                return call_method(recv, name, arg_vals, env.funcs);
             }
             return call_func(name, arg_vals, env.funcs);
         },
@@ -412,6 +424,44 @@ function eval_expr(e: parser.Expr, env: Env): Value {
 // evals the body. A missing function or arity mismatch surfaces
 // as VErr. The callee runs with its own scope — caller bindings
 // are NOT visible (no closures yet).
+// call_method dispatches on the receiver's struct type_name.
+// Searches funcs for a method-shaped FuncDecl whose name and
+// receiver_type both match — VStruct receivers nominate
+// receiver_type by exact name (so a method declared on
+// `(c: Circle)` matches a VStruct whose type_name is "Circle").
+// The receiver is bound to `receiver_name` first, then the
+// remaining args follow in declaration order.
+function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[]): Value {
+    var recv_type: string = "";
+    match (recv) {
+        VStruct(sv) => { recv_type = sv.type_name; },
+        _ => { return v_err("method dispatch: receiver not a struct value"); }
+    }
+    var i: i32 = 0;
+    while (i < len(funcs)) {
+        var fd: parser.FuncDecl = funcs[i];
+        if (fd.name == name && len(fd.receiver_name) > 0 && fd.receiver_type == recv_type) {
+            if (len(args) != len(fd.params)) {
+                return v_err("arity mismatch calling method `" + name + "`");
+            }
+            var env: Env = new_env_with_funcs(funcs);
+            env = env.bind(fd.receiver_name, recv);
+            var j: i32 = 0;
+            while (j < len(fd.params)) {
+                env = env.bind(fd.params[j].name, args[j]);
+                j = j + 1;
+            }
+            var step: StepResult = eval_block(fd.body, env);
+            if (is_noreturn(step.ret)) {
+                return v_err("method `" + name + "` reached end without `return`");
+            }
+            return step.ret;
+        }
+        i = i + 1;
+    }
+    return v_err("undefined method `" + name + "` on `" + recv_type + "`");
+}
+
 function call_func(name: string, args: Value[], funcs: parser.FuncDecl[]): Value {
     // Builtin: `len(a)` on an array → i32. Special-cased here
     // because the parser doesn't model builtins separately and
@@ -426,7 +476,10 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[]): Value
     }
     var i: i32 = 0;
     while (i < len(funcs)) {
-        if (funcs[i].name == name) {
+        // Skip receiver methods — they're dispatched via
+        // call_method only. A plain function call must match
+        // a non-method (receiver_name empty) of the same name.
+        if (funcs[i].name == name && len(funcs[i].receiver_name) == 0) {
             var fd: parser.FuncDecl = funcs[i];
             if (len(args) != len(fd.params)) {
                 return v_err("arity mismatch calling `" + name + "`");
@@ -1120,6 +1173,43 @@ function main(): i32 {
     match (r45) {
         VInt(i) => { if (i.v != 77) { return 450; } },
         _ => { return 451; }
+    }
+
+    // Receiver method on a struct: `c.area()` dispatches to
+    // the method whose receiver_type matches the struct type
+    // (Circle). The method body reads the receiver via its
+    // bound name and returns a derived value.
+    var src46: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { var k = Circle { r: 5 }; return k.area(); }";
+    var r46: Value = run_module(src46);
+    match (r46) {
+        VInt(i) => { if (i.v != 25) { return 460; } },
+        _ => { return 461; }
+    }
+
+    // Method takes an arg. `b.scale(3)` binds c=b and n=3.
+    var src47: string = "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }";
+    var r47: Value = run_module(src47);
+    match (r47) {
+        VInt(i) => { if (i.v != 12) { return 470; } },
+        _ => { return 471; }
+    }
+
+    // Method name and plain function name don't collide. Plain
+    // call resolves to the non-method (receiver_name empty).
+    var src48: string = "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { var k = Circle { r: 5 }; var m: i32 = area(); var n: i32 = k.area(); return m + n; }";
+    var r48: Value = run_module(src48);
+    match (r48) {
+        VInt(i) => { if (i.v != 125) { return 480; } },
+        _ => { return 481; }
+    }
+
+    // Method on wrong receiver type → VErr. Circle has an
+    // `area` method; Square does not.
+    var src49: string = "struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r; } function main(): i32 { var sq = Square { s: 7 }; return sq.area(); }";
+    var r49: Value = run_module(src49);
+    match (r49) {
+        VErr(_) => { },
+        _ => { return 490; }
     }
 
     return 0;
