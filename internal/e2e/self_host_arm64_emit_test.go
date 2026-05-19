@@ -568,6 +568,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"HIHI",
 		},
 		{
+			"arr-i32-slice-len",
+			"function main(): i32 { var xs: i32[] = [10, 20, 30, 40, 50]; var ys = xs[1:4]; return len(ys); }",
+			3,
+			"",
+		},
+		{
+			"arr-i32-slice-content",
+			"function main(): i32 { var xs: i32[] = [10, 20, 30, 40, 50]; var ys = xs[1:4]; return ys[0] + ys[1] + ys[2]; }",
+			90,
+			"",
+		},
+		{
+			"arr-i32-slice-empty",
+			"function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys = xs[1:1]; return len(ys); }",
+			0,
+			"",
+		},
+		{
+			"arr-i32-slice-full",
+			"function main(): i32 { var xs: i32[] = [7, 8, 9]; var ys = xs[0:3]; return ys[0] + ys[1] + ys[2]; }",
+			24,
+			"",
+		},
+		{
+			"arr-string-slice",
+			"function main(): i32 { var xs: string[] = [\"a\", \"b\", \"c\", \"d\"]; var ys = xs[1:3]; for s in ys { print(s); } return len(ys); }",
+			2,
+			"bc",
+		},
+		{
 			"closure-uses-multiple-string-methods",
 			"function (s: string) bang(): string { return s + \"!\"; } function main(): i32 { var msg = \"hi\"; var f = function (): string { return msg.bang() + \"?\"; }; print(f()); return 0; }",
 			0,
