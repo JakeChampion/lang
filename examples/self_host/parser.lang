@@ -1132,6 +1132,33 @@ pub function parse_module(toks: lexer.Token[]): Module {
     return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts };
 }
 
+// merge_module flat-concatenates `into`'s decls with `from`'s:
+// funcs + structs + aliases are appended. top_stmts and the
+// imports list of `into` are preserved unchanged — top-level
+// stmts from imported modules don't run, and resolved imports
+// don't replicate. Used by callers that want to feed a multi-
+// source build through the rest of the pipeline as a single
+// Module (a stand-in for real cross-file namespace resolution
+// until that lands).
+pub function merge_module(into: Module, from: Module): Module {
+    var nfuncs: FuncDecl[] = into.funcs;
+    var fi: i32 = 0;
+    while (fi < len(from.funcs)) { nfuncs = nfuncs.push(from.funcs[fi]); fi = fi + 1; }
+    var nstructs: StructDecl[] = into.structs;
+    var si: i32 = 0;
+    while (si < len(from.structs)) { nstructs = nstructs.push(from.structs[si]); si = si + 1; }
+    var naliases: TypeAlias[] = into.aliases;
+    var ai: i32 = 0;
+    while (ai < len(from.aliases)) { naliases = naliases.push(from.aliases[ai]); ai = ai + 1; }
+    return Module {
+        funcs: nfuncs,
+        structs: nstructs,
+        aliases: naliases,
+        imports: into.imports,
+        top_stmts: into.top_stmts
+    };
+}
+
 // =================== VALIDATION ====================
 
 function main(): i32 {
@@ -1739,6 +1766,20 @@ function main(): i32 {
     var modGS: Module = parse_module(lexer.tokenize(srcGS));
     if (len(modGS.structs) != 1) { return 1084; }
     if (modGS.structs[0].fields[0].type_name != "Map[string, i32]") { return 1085; }
+
+    // Module merge — flat-concatenate decls from a "main"
+    // module with an "imported" module's decls.
+    var mainSrc: string = "import \"./greet\"; function main(): i32 { return hello(); }";
+    var greetSrc: string = "pub function hello(): i32 { return 42; }";
+    var mainMod: Module = parse_module(lexer.tokenize(mainSrc));
+    var greetMod: Module = parse_module(lexer.tokenize(greetSrc));
+    var merged: Module = merge_module(mainMod, greetMod);
+    if (len(merged.funcs) != 2) { return 1090; }
+    // Order: mainMod.funcs first, then greetMod.funcs appended.
+    if (merged.funcs[0].name != "main") { return 1091; }
+    if (merged.funcs[1].name != "hello") { return 1092; }
+    // imports + top_stmts come from `into` only.
+    if (len(merged.imports) != 1) { return 1093; }
 
     // Generic var-annotation.
     var srcGV: string = "var m: Map[string, i32] = a; return 0;";
