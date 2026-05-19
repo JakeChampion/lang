@@ -673,3 +673,139 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
         zone: TimeZone { name: zone_name, offset_seconds: offset_seconds },
     });
 }
+
+// ============================================================
+// Span + Duration arithmetic — Phase 6 per docs/STDLIB-DESIGN-
+// RESEARCH.md Rec §4. Span carries calendar fields (years,
+// months, weeks, days); Duration carries absolute fields
+// (sec, nsec). Adding a Span to a Date snaps to month-end when
+// the day overflows ("Jan 31 + 1 month = Feb 28/29"). Adding
+// a Duration to an Instant is straight sec/nsec arithmetic.
+//
+// The two fall back to the same value in the no-calendar-edge
+// case (`span_days(1)` and `duration_seconds(86400)` both move
+// you 24 hours forward when no DST / month boundary
+// intervenes), but they're distinct types so the calendar /
+// absolute intent stays visible at the call site.
+// ============================================================
+
+// Span constructors for the remaining unit grains. `span_days`
+// and `span_hours` already exist (Phase 1). `span_seconds`,
+// `span_minutes`, `span_weeks`, `span_months`, `span_years`
+// round out the surface.
+pub function span_seconds(n: i32): Span {
+    return Span {
+        years: 0, months: 0, weeks: 0, days: 0,
+        hours: 0, minutes: 0, seconds: n, nanos: 0,
+    };
+}
+pub function span_minutes(n: i32): Span {
+    return Span {
+        years: 0, months: 0, weeks: 0, days: 0,
+        hours: 0, minutes: n, seconds: 0, nanos: 0,
+    };
+}
+pub function span_weeks(n: i32): Span {
+    return Span {
+        years: 0, months: 0, weeks: n, days: 0,
+        hours: 0, minutes: 0, seconds: 0, nanos: 0,
+    };
+}
+pub function span_months(n: i32): Span {
+    return Span {
+        years: 0, months: n, weeks: 0, days: 0,
+        hours: 0, minutes: 0, seconds: 0, nanos: 0,
+    };
+}
+pub function span_years(n: i32): Span {
+    return Span {
+        years: n, months: 0, weeks: 0, days: 0,
+        hours: 0, minutes: 0, seconds: 0, nanos: 0,
+    };
+}
+
+// `(d: Date).add_span(s)` — calendar-add. Years and months
+// shift the year/month fields with month-overflow rollover,
+// then the day clamps to `days_in_month(new_year, new_month)`
+// to handle "Jan 31 + 1 month = Feb 28/29" and similar
+// month-end-clamping cases. Weeks + days add as serial-day-
+// number offsets (no calendar clamping; March 30 + 7 days =
+// April 6).
+//
+// Time fields (hours/minutes/seconds/nanos) on a `Date` are
+// ignored — Date has no time component. Use the Phase 6
+// Instant.add_duration path for sub-day shifts.
+pub function (d: Date) add_span(s: Span): Date {
+    // Step 1: total months (years*12 + months) added to
+    // (year*12 + month-1) in serial-month form.
+    var serial_month: i32 = d.year * 12 + (d.month - 1) + s.years * 12 + s.months;
+    var new_year: i32 = 0;
+    var new_month_zero: i32 = 0;
+    // Floor division on negatives: same era trick as
+    // __days_from_civil — adjust before the divide.
+    if (serial_month >= 0) {
+        new_year = serial_month / 12;
+        new_month_zero = serial_month - new_year * 12;
+    } else {
+        // serial_month is negative; convert to floor-div.
+        new_year = (serial_month - 11) / 12;
+        new_month_zero = serial_month - new_year * 12;
+    }
+    var new_month: i32 = new_month_zero + 1;
+    // Step 2: clamp day to the new month's length.
+    var max_day: i32 = days_in_month(new_year, new_month);
+    var clamped_day: i32 = d.day;
+    if (clamped_day > max_day) { clamped_day = max_day; }
+    var anchor: Date = Date { year: new_year, month: new_month, day: clamped_day };
+    // Step 3: add weeks + days as straight serial-day offset.
+    var total_days: i32 = s.weeks * 7 + s.days;
+    if (total_days == 0) { return anchor; }
+    return anchor.add_days(total_days);
+}
+
+// `(i: Instant).add_duration(d)` — absolute-add. Sums the
+// (sec, nsec) pairs with nsec-overflow carry into sec. Negative
+// durations (`Duration { sec: -10, nsec: 0 }`) walk backward.
+pub function (i: Instant) add_duration(d: Duration): Instant {
+    var sec: i64 = i.sec + d.sec;
+    var nsec: i32 = i.nsec + d.nsec;
+    var nps: i32 = 1000000000;
+    if (nsec >= nps) {
+        nsec = nsec - nps;
+        sec = sec + (1 as i64);
+    } else if (nsec < 0) {
+        nsec = nsec + nps;
+        sec = sec - (1 as i64);
+    }
+    return Instant { sec: sec, nsec: nsec };
+}
+
+// `(i: Instant).duration_since(other)` — absolute interval
+// between two instants. Returns `i - other`. Positive when `i`
+// is after `other`; negative otherwise. The nsec field is
+// kept non-negative by borrow / carry, even for negative
+// total durations.
+pub function (i: Instant) duration_since(other: Instant): Duration {
+    var sec: i64 = i.sec - other.sec;
+    var nsec: i32 = i.nsec - other.nsec;
+    var nps: i32 = 1000000000;
+    if (nsec < 0) {
+        nsec = nsec + nps;
+        sec = sec - (1 as i64);
+    } else if (nsec >= nps) {
+        nsec = nsec - nps;
+        sec = sec + (1 as i64);
+    }
+    return Duration { sec: sec, nsec: nsec };
+}
+
+// `(d: Date).days_until(other)` — days from `d` to `other`.
+// The Span counterpart to `days_since`; the returned Span
+// carries the result in the `days` field with all other
+// fields zero. Year/month decomposition is a separate
+// follow-up (it's ambiguous — "1 month minus 3 days" could
+// represent the same 28-day delta two ways).
+pub function (d: Date) days_until(other: Date): Span {
+    var delta: i32 = other.days_since(d);
+    return span_days(delta);
+}
