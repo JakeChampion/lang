@@ -1765,6 +1765,103 @@ func TestEmitAllocHelperGated(t *testing.T) {
 	}
 }
 
+// TestEmitStoreLoadStringRoundtrip — store a string literal into
+// 8 bytes of allocated memory, then load it back and return the
+// len. Exercises the two-word OpStore/OpLoad WidthString fan-out
+// end-to-end with the allocator and OpStrLen helpers cooperating.
+func TestEmitStoreLoadStringRoundtrip(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32()}, // alloc ptr
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			// p = alloc(8)
+			{Kind: ir.OpConstI32, I32: 8},
+			{Kind: ir.OpAlloc},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			// Store "hello, world" (12 bytes, heap form) at *p.
+			// Stack: [p, data, len].
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstStr, Str: "hello, world"},
+			{Kind: ir.OpStore, Width: ir.WidthString},
+			// Load back. Stack ops:
+			//   load p; OpLoad WidthString → (data, len)
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoad, Width: ir.WidthString},
+			// Call __lang_str_len to extract the canonical len.
+			{Kind: ir.OpStrLen},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "12" {
+		t.Fatalf("got %q, want 12", got)
+	}
+}
+
+// TestEmitStoreLoadStringFirstByte — after store + load, read the
+// first byte from the data pointer. Confirms the data half of
+// the (data, len) pair survives store + load with the correct
+// pointer value (and that the bytes really live at the offset
+// data points at).
+func TestEmitStoreLoadStringFirstByte(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 8},
+			{Kind: ir.OpAlloc},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstStr, Str: "hello, world"},
+			{Kind: ir.OpStore, Width: ir.WidthString},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoad, Width: ir.WidthString},
+			// Stack: [data, len]. Drop len.
+			{Kind: ir.OpDrop},
+			// Load the byte at *data.
+			{Kind: ir.OpLoadByte},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "104" { // 'h'
+		t.Fatalf("got %q, want 104", got)
+	}
+}
+
+// TestEmitStrPairScratchOnlyWhenUsed — confirm the 3 extra
+// scratch wasm locals only appear in functions that load/store
+// strings to memory. Functions without WidthString loads/stores
+// keep the smaller local section.
+func TestEmitStrPairScratchOnlyWhenUsed(t *testing.T) {
+	fnNoStrMem := &ir.Func{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+	}
+	if fnNeedsStrPairScratch(fnNoStrMem) {
+		t.Fatal("no-WidthString function should not need scratch")
+	}
+	fnWithStrMem := &ir.Func{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpLoad, Width: ir.WidthString},
+			{Kind: ir.OpDrop},
+		},
+	}
+	if !fnNeedsStrPairScratch(fnWithStrMem) {
+		t.Fatal("WidthString-using function should need scratch")
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpStrEq) and confirm we get a useful error rather
 // than emitting nonsense bytes. Regressions here would silently
