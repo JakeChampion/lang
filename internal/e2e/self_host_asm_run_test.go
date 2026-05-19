@@ -814,6 +814,34 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		{
+			"eprint-literal-exits-clean",
+			"function main(): i32 { eprint(\"error msg\\n\"); return 7; }",
+			7,
+			"",
+			"",
+		},
+		{
+			"eprint-ident-string",
+			"function main(): i32 { var msg = \"oops\\n\"; eprint(msg); return 42; }",
+			42,
+			"",
+			"",
+		},
+		{
+			"eprint-no-stdout-emitted",
+			"function main(): i32 { eprint(\"stderr only\"); return 0; }",
+			0,
+			"",
+			"",
+		},
+		{
+			"eprint-and-print-coexist",
+			"function main(): i32 { print(\"out\\n\"); eprint(\"err\\n\"); return 0; }",
+			0,
+			"out\n",
+			"",
+		},
 	}
 
 	for _, tc := range cases {
