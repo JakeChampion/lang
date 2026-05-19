@@ -59,6 +59,7 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/imports"
 	"github.com/jakechampion/lang/internal/wasm/inst"
+	"github.com/jakechampion/lang/internal/wasm/leb128"
 	"github.com/jakechampion/lang/internal/wasm/memory"
 	"github.com/jakechampion/lang/internal/wasm/module"
 	"github.com/jakechampion/lang/internal/wasm/numeric"
@@ -249,6 +250,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		internEnumSentinel: internEnumSentinel,
 		closureTargets:     closureTargets,
 		funcByName:         funcByName,
+		addRawType:         addType,
 		addSigType: func(sig *ast.FuncType) (uint32, error) {
 			params := make([]byte, 0, len(sig.Params))
 			for _, pt := range sig.Params {
@@ -721,6 +723,11 @@ type emitCtx struct {
 	// (env_ptr) to params, matching the closure-target ABI
 	// every OpCallIndirect dispatches through.
 	addClosureSigType func(*ast.FuncType) (uint32, error)
+	// addRawType registers a wasm-level (params, results) type
+	// directly and returns its typeidx. Used for multi-value
+	// block types where the IR has the valtype bytes already
+	// and bypasses the AST-level addSigType seam.
+	addRawType func(params, results []byte) uint32
 	// internString returns the data-segment offset for the
 	// heap-form bytes of s, interning so repeats share an
 	// address. Used by OpConstStr.
@@ -977,23 +984,26 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return inst.InstReturn(body), nil
 
 	case ir.OpBlock:
-		bt, err := blocktypeByte(op.I32)
+		btEnc, err := blocktypeEnc(op.I32, ctx)
 		if err != nil {
 			return nil, err
 		}
-		return inst.InstBlockStart(body, bt), nil
+		body = append(body, 0x02)
+		return append(body, btEnc...), nil
 	case ir.OpLoop:
-		bt, err := blocktypeByte(op.I32)
+		btEnc, err := blocktypeEnc(op.I32, ctx)
 		if err != nil {
 			return nil, err
 		}
-		return inst.InstLoopStart(body, bt), nil
+		body = append(body, 0x03)
+		return append(body, btEnc...), nil
 	case ir.OpIf:
-		bt, err := blocktypeByte(op.I32)
+		btEnc, err := blocktypeEnc(op.I32, ctx)
 		if err != nil {
 			return nil, err
 		}
-		return inst.InstIfStart(body, bt), nil
+		body = append(body, 0x04)
+		return append(body, btEnc...), nil
 	case ir.OpElse:
 		return inst.InstElse(body), nil
 	case ir.OpEnd:
@@ -1495,6 +1505,9 @@ var CallDirectAliases = map[string]string{
 	"env_at":     "__lang_env_at",
 	"read_byte":  "__lang_read_byte",
 
+	// String / bytes round-trip.
+	"string_from_bytes": "__lang_string_from_bytes",
+
 	// Map / MapIter generic-method dispatch — the lang doesn't yet
 	// support generic methods on a generic struct, so the prelude
 	// declares concrete `_impl` counterparts and call sites route
@@ -1875,30 +1888,36 @@ func anyMemoryOp(prog *ir.Program) bool {
 	return false
 }
 
-// blocktypeByte maps an ir.BlockType* constant to the single-byte
-// blocktype encoding wasm 1.0 uses for `block` / `loop` / `if`
-// when the block's result is empty or a single valtype.
+// blocktypeEnc maps an ir.BlockType* constant to the encoded
+// bytes for the wasm 1.0 blocktype immediate on `block` /
+// `loop` / `if`. Single-valtype blocks emit a 1-byte short
+// form (0x40 for void, or the valtype byte). Multi-value
+// blocks emit the SLEB128 of a typeidx — wasm 1.0 reuses the
+// function-type space for block types and references it by
+// signed leb (non-negative typeidxs are encoded the same as
+// their unsigned value when ≤ 63, longer otherwise).
 //
-// Multi-value blocks (string-pair, struct unpacks, etc.) need a
-// typeidx reference here instead — they're out of scope for the
-// control-flow slice and return an error so the missing case is
-// loud.
-func blocktypeByte(bt int32) (byte, error) {
+// Today the only multi-value blocktype is BlockTypeStringPair
+// (two i32s: data + len). Adding more (struct unpacks, enum
+// destructures) is just another case here registering the
+// right (params, results) pair via ctx.addRawType.
+func blocktypeEnc(bt int32, ctx *emitCtx) ([]byte, error) {
 	switch bt {
 	case ir.BlockTypeVoid:
-		return inst.BlocktypeEmpty, nil
+		return []byte{inst.BlocktypeEmpty}, nil
 	case ir.BlockTypeI32:
-		return encode.ValtypeI32, nil
+		return []byte{encode.ValtypeI32}, nil
 	case ir.BlockTypeI64:
-		return encode.ValtypeI64, nil
+		return []byte{encode.ValtypeI64}, nil
 	case ir.BlockTypeF32:
-		return encode.ValtypeF32, nil
+		return []byte{encode.ValtypeF32}, nil
 	case ir.BlockTypeF64:
-		return encode.ValtypeF64, nil
+		return []byte{encode.ValtypeF64}, nil
 	case ir.BlockTypeStringPair:
-		return 0, fmt.Errorf("blocktype string-pair (multi-value) not yet supported")
+		tIdx := ctx.addRawType(nil, []byte{encode.ValtypeI32, encode.ValtypeI32})
+		return leb128.SlebI32(nil, int32(tIdx)), nil
 	}
-	return 0, fmt.Errorf("unknown blocktype %d", bt)
+	return nil, fmt.Errorf("unknown blocktype %d", bt)
 }
 
 // appendUleb appends `v` as a uleb128 to `buf`. Duplicated from

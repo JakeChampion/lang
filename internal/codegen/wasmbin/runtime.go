@@ -132,6 +132,12 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// the per-process scratch region.
 					needs.add("__lang_alloc")
 					needs.add("__lang_read_byte")
+				case "__lang_string_from_bytes":
+					// (bs: u8[]) → (data, len) — copies the byte
+					// array's payload into a fresh string. Inline
+					// fast-path for len ≤ 7, heap copy otherwise.
+					needs.add("__lang_alloc")
+					needs.add("__lang_string_from_bytes")
 				}
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).
@@ -286,6 +292,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadByteBody,
+	},
+	"__lang_string_from_bytes": {
+		// (bs) → (data, len) — copies bs's payload into a
+		// fresh string. Empty array → inline empty; ≤7 bytes →
+		// inline-packed; >7 bytes → heap copy via memory.copy.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildStringFromBytesBody,
 	},
 	"__load_i32": {
 		// (addr) → i32 — i32.load wrapper. Stdlib uses this where
@@ -1022,3 +1036,138 @@ func buildArrIdxStride(stride int32) func(map[string]uint32) []byte {
 func buildArrIdx1Body(idxs map[string]uint32) []byte { return buildArrIdxStride(1)(idxs) }
 func buildArrIdx2Body(idxs map[string]uint32) []byte { return buildArrIdxStride(2)(idxs) }
 func buildArrIdx8Body(idxs map[string]uint32) []byte { return buildArrIdxStride(8)(idxs) }
+
+// buildStringFromBytesBody — (bs) → (data, len). bs is a u8[]
+// heap pointer; length lives at [bs-4]. Output is the two-word
+// string ABI:
+//
+//	bLen == 0:  (0, 0x80000000)               inline empty
+//	bLen <= 7:  inline-packed (data, len)     no alloc
+//	bLen >  7:  heap-form (out, bLen)         alloc + memory.copy
+//
+// Mirrors the WAT path's $string_from_bytes structure.
+//
+// Locals (after the one param):
+//
+//	1: $bLen
+//	2: $data (inline pack)
+//	3: $len  (inline pack)
+//	4: $out  (heap dst)
+//	5: $i    (loop counter)
+//	6: $byte (per-iteration byte stash — wasm if-blocks can't
+//	         read values pushed outside their local scope, so
+//	         we save the byte to a local before the if-dispatch)
+func buildStringFromBytesBody(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__lang_alloc"]
+	var body []byte
+	// $bLen = mem[bs - 4]
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 1) // $bLen
+	// if bLen == 0: return (0, 0x80000000)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// if bLen <= 7: build inline-packed (data, len).
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 7)
+	body = numeric.InstI32LeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// Initialise $data = 0, $len = 0; loop i from 0..bLen
+		// packing byte i into the appropriate slot.
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 2) // $data = 0
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 3) // $len = 0
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 5) // $i = 0
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			// if $i >= $bLen: break
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32GeU(body)
+			body = inst.InstBrIf(body, 1)
+			// $byte = mem[bs + i]
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 5)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load8U(body, 0, 0)
+			body = inst.InstLocalSet(body, 6) // $byte
+			// pack: if i < 4: data |= byte << (i*8); else: len |= byte << ((i-4)*8)
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32LtU(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				// $data |= $byte << (i * 8).
+				body = inst.InstLocalGet(body, 6) // $byte
+				body = inst.InstLocalGet(body, 5)
+				body = inst.InstI32Const(body, 8)
+				body = numeric.InstI32Mul(body)
+				body = numeric.InstI32Shl(body)
+				body = inst.InstLocalGet(body, 2)
+				body = numeric.InstI32Or(body)
+				body = inst.InstLocalSet(body, 2)
+			}
+			body = inst.InstElse(body)
+			{
+				// $len |= $byte << ((i - 4) * 8).
+				body = inst.InstLocalGet(body, 6) // $byte
+				body = inst.InstLocalGet(body, 5)
+				body = inst.InstI32Const(body, 4)
+				body = numeric.InstI32Sub(body)
+				body = inst.InstI32Const(body, 8)
+				body = numeric.InstI32Mul(body)
+				body = numeric.InstI32Shl(body)
+				body = inst.InstLocalGet(body, 3)
+				body = numeric.InstI32Or(body)
+				body = inst.InstLocalSet(body, 3)
+			}
+			body = inst.InstEnd(body)
+			// $i++
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 5)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body) // end loop
+		body = inst.InstEnd(body) // end block
+		// $len |= bLen << 24 | 0x80000000 (inline flag).
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 24)
+		body = numeric.InstI32Shl(body)
+		body = numeric.InstI32Or(body)
+		body = inst.InstI32Const(body, int32(-0x80000000))
+		body = numeric.InstI32Or(body)
+		body = inst.InstLocalSet(body, 3)
+		// return ($data, $len)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+	// Heap form: $out = alloc($bLen); memory.copy($out, $bs, $bLen).
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 4) // $out
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	// return ($out, $bLen)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 1)
+	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
