@@ -3862,6 +3862,13 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// closure body asks "what struct/tuple is this?" for
 		// field-access offset resolution.
 		return x.Type
+	case *ast.FString:
+		// f-strings always produce a string. The arms of a
+		// MatchExpr returning f-strings need to mark the
+		// result slot as StringType so the codegen allocates
+		// the two-word (data, len) slot pair on wasm32.
+		_ = x
+		return ast.StringType{}
 	case *ast.SliceExpr:
 		// A slice expression's static type follows the source:
 		// `string[a:b]` is still a string (handled by __str_slice

@@ -836,8 +836,11 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 	lastIR := int32(len(fn.Params) + len(fn.Locals) + len(fn.ScratchTypes))
 	ctx.strPairScratchBase = wasmSlotIdx(fn, lastIR)
 	// Closure-target functions get an extra wasm slot for the
-	// env_ptr param appended by the closure-target ABI.
-	if ctx.closureTargets[fn.Name] {
+	// env_ptr param appended by the closure-target ABI, BUT only
+	// when the IR didn't already include __env as a param (post
+	// closureconv). With __env in IR.Params, lastIR + wasmSlotIdx
+	// already covers it.
+	if ctx.closureTargets[fn.Name] && !hasEnvParam(fn.Params) {
 		ctx.strPairScratchBase++
 	}
 	// pairMake scratch sits AFTER any str-pair scratch slots.
