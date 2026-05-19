@@ -40,6 +40,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/wasm"
+	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
@@ -361,6 +362,28 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
 
+	if target == "wasm-bin" {
+		// Experimental binary backend (internal/codegen/wasmbin).
+		// Emits a raw wasm core module — no preview-2 component
+		// wrapping yet. Many ops the WAT path supports (allocator,
+		// closure pair-cell init, string runtime helpers, the
+		// component wrapper itself) aren't yet covered, so most
+		// real programs error with "unsupported op X in function
+		// Y". Used to exercise the new path end-to-end while it
+		// grows toward parity.
+		bin, err := wasmbin.Build(prog, info)
+		if err != nil {
+			return 1, err
+		}
+		if outPath == "" {
+			return 1, fmt.Errorf("-target wasm-bin requires -o OUTPUT")
+		}
+		if err := os.WriteFile(outPath, bin, 0o644); err != nil {
+			return 1, err
+		}
+		return 0, nil
+	}
+
 	if target == "wasm" || target == "wasi-http" {
 		opts := wasm.EmitOptions{}
 		world := "lang"
@@ -385,7 +408,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 	}
 
 	if target != "arm64" && target != "arm64-darwin" && target != "x86-64" {
-		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, x86-64, wasm, or wasi-http)", target)
+		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, x86-64, wasm, wasm-bin, or wasi-http)", target)
 	}
 
 	darwin := target == "arm64-darwin"
