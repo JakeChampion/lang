@@ -26,10 +26,31 @@ import (
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
-// Build runs the same lowering + optimisation pipeline as the
-// WAT backend's EmitWithOptions, then emits binary bytes via Emit.
-// Returns the module bytes on success.
+// BuildOptions tweaks the module-level structure produced by
+// Build. Defaults match what the raw `lang -target wasm-bin`
+// CLI flow emits.
+type BuildOptions struct {
+	// ForceMemorySection makes Emit unconditionally include a
+	// linear memory + export it under the canonical name
+	// "memory". Needed when the resulting bytes will be wrapped
+	// in a preview-2 component — the WASI preview-1 adapter
+	// imports `env::memory` and refuses to compose if no memory
+	// is present.
+	ForceMemorySection bool
+	// SynthStart emits a `_start` wrapper that calls `main` and
+	// drops any return value, then exports it. The preview-1
+	// adapter's `wasi:cli/run.run` glue dispatches to `_start`
+	// as the command entry point.
+	SynthStart bool
+}
+
+// Build is BuildWithOptions with the default (zero-value) options.
 func Build(prog *ast.Program, info *checker.Info) ([]byte, error) {
+	return BuildWithOptions(prog, info, BuildOptions{})
+}
+
+// BuildWithOptions is the option-aware sibling of Build.
+func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) ([]byte, error) {
 	treeshake.Run(prog)
 	ip, err := ir.LowerWith(prog, info, 4)
 	if err != nil {
@@ -64,5 +85,8 @@ func Build(prog *ast.Program, info *checker.Info) ([]byte, error) {
 		}
 		ip.Funcs = out
 	}
-	return Emit(ip)
+	return EmitWithOptions(ip, EmitOptions{
+		ForceMemorySection: opts.ForceMemorySection,
+		SynthStart:         opts.SynthStart,
+	})
 }

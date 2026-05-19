@@ -363,22 +363,37 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 	}
 
 	if target == "wasm-bin" {
-		// Experimental binary backend (internal/codegen/wasmbin).
-		// Emits a raw wasm core module — no preview-2 component
-		// wrapping yet. Many ops the WAT path supports (allocator,
-		// closure pair-cell init, string runtime helpers, the
-		// component wrapper itself) aren't yet covered, so most
-		// real programs error with "unsupported op X in function
-		// Y". Used to exercise the new path end-to-end while it
-		// grows toward parity.
-		bin, err := wasmbin.Build(prog, info)
-		if err != nil {
-			return 1, err
-		}
+		// Binary backend (internal/codegen/wasmbin) — produces
+		// wasm core module bytes directly, no `wasm-tools parse`
+		// shell-out.
+		//
+		// Output mode:
+		//   - no `-wasi-adapter`: write the raw core module to
+		//     outPath. Runnable via `wasmtime run --invoke <fn>`.
+		//   - `-wasi-adapter PATH`: wrap in a preview-2 component
+		//     matching the `lang` world, composing with the
+		//     adapter. Runnable via `wasmtime run` and deployable
+		//     to any preview-2 host.
 		if outPath == "" {
 			return 1, fmt.Errorf("-target wasm-bin requires -o OUTPUT")
 		}
-		if err := os.WriteFile(outPath, bin, 0o644); err != nil {
+		// Pre-wrap mode forces the memory section so the WASI
+		// preview-1 adapter's env::memory import is satisfied
+		// during `wasm-tools component new`.
+		bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+			ForceMemorySection: wasiAdapter != "",
+			SynthStart:         wasiAdapter != "",
+		})
+		if err != nil {
+			return 1, err
+		}
+		if wasiAdapter == "" {
+			if err := os.WriteFile(outPath, bin, 0o644); err != nil {
+				return 1, err
+			}
+			return 0, nil
+		}
+		if err := emitPreview2ComponentFromCoreBytes(bin, outPath, wasiAdapter, "lang"); err != nil {
 			return 1, err
 		}
 		return 0, nil
@@ -595,9 +610,6 @@ func emitPreview2ComponentWorld(wat, outPath, adapterPath, world string) error {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		return fmt.Errorf("wasm-tools not found on PATH (install from https://github.com/bytecodealliance/wasm-tools): %w", err)
 	}
-	if _, err := os.Stat(adapterPath); err != nil {
-		return fmt.Errorf("wasi-preview1-component-adapter not readable at %q: %w", adapterPath, err)
-	}
 	tmpDir, err := os.MkdirTemp("", "lang-component-*")
 	if err != nil {
 		return err
@@ -616,6 +628,28 @@ func emitPreview2ComponentWorld(wat, outPath, adapterPath, world string) error {
 	if err != nil {
 		return fmt.Errorf("read core module: %w", err)
 	}
+	return emitPreview2ComponentFromCoreBytes(coreBytes, outPath, adapterPath, world)
+}
+
+// emitPreview2ComponentFromCoreBytes is the WAT-skipping sibling of
+// emitPreview2ComponentWorld: it takes already-binary core wasm
+// bytes (e.g. from wasmbin.Build) and runs steps 3+4 of the
+// pipeline. wasm-tools parse is unnecessary because the input is
+// already binary. wasm-tools component new is still required for
+// the adapter composition step.
+func emitPreview2ComponentFromCoreBytes(coreBytes []byte, outPath, adapterPath, world string) error {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		return fmt.Errorf("wasm-tools not found on PATH (install from https://github.com/bytecodealliance/wasm-tools): %w", err)
+	}
+	if _, err := os.Stat(adapterPath); err != nil {
+		return fmt.Errorf("wasi-preview1-component-adapter not readable at %q: %w", adapterPath, err)
+	}
+	tmpDir, err := os.MkdirTemp("", "lang-component-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
 	embeddedBytes, err := componenttype.Embed(coreBytes, world)
 	if err != nil {
 		return fmt.Errorf("embed component-type section: %w", err)
