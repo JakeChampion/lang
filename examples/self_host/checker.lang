@@ -67,6 +67,12 @@ pub struct TypeTuple { elements: Type[] }
 // captures the declared parameter types in order; ret_type is
 // the body's declared return type.
 pub struct TypeFunc { param_types: Type[], ret_type: Type }
+// TypeMap models `Map[K, V]` — a runtime hash-map keyed by K
+// values yielding V values. The actual runtime + method
+// dispatch is a follow-up; the checker only knows enough to
+// give a Map-typed binding a structural identity and route
+// `==` comparisons / type assignability.
+pub struct TypeMap { key: Type, value: Type }
 // TypeUnion references a user-declared type alias by name —
 // `pub type Shape = Circle | Square`. Variant resolution lives
 // in the UnionTable (parallel to StructTable). The checker uses
@@ -76,7 +82,7 @@ pub struct TypeFunc { param_types: Type[], ret_type: Type }
 pub struct TypeUnion { name: string }
 pub struct TypeUnknown { reason: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeUnion | TypeUnknown;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeUnknown;
 
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
@@ -91,6 +97,9 @@ function t_struct(name: string): Type { return TypeStruct { name: name }; }
 function t_tuple(elements: Type[]): Type { return TypeTuple { elements: elements }; }
 function t_func(param_types: Type[], ret_type: Type): Type {
     return TypeFunc { param_types: param_types, ret_type: ret_type };
+}
+function t_map(key: Type, value: Type): Type {
+    return TypeMap { key: key, value: value };
 }
 
 // digit_string_to_i32 parses a decimal-digit string. Returns
@@ -179,6 +188,14 @@ function type_eq(a: Type, b: Type): boolean {
                         fi = fi + 1;
                     }
                     return true;
+                },
+                _ => { return false; }
+            }
+        },
+        TypeMap(am) => {
+            match (b) {
+                TypeMap(bm) => {
+                    return type_eq(am.key, bm.key) && type_eq(am.value, bm.value);
                 },
                 _ => { return false; }
             }
@@ -1092,6 +1109,21 @@ function type_from_name_with_structs_unions(name: string, structs: StructSig[], 
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    // Generic-instantiated `Map[K, V]` arrives as a single
+    // string spelling from parse_type_name. Strip the prefix
+    // / suffix, split on the first top-level `,`, and recurse
+    // on each arg.
+    if (len(name) > 4 && name[0:4] == "Map[" && name[len(name) - 1] == 93) {
+        var inner: string = name[4:len(name) - 1];
+        var sp: i32 = split_top_comma(inner);
+        if (sp > 0) {
+            var k_name: string = trim_spaces(inner[0:sp]);
+            var v_name: string = trim_spaces(inner[sp + 1:len(inner)]);
+            var k_ty: Type = type_from_name_with_structs_unions(k_name, structs, unions);
+            var v_ty: Type = type_from_name_with_structs_unions(v_name, structs, unions);
+            return t_map(k_ty, v_ty);
+        }
+    }
     var i: i32 = 0;
     while (i < len(structs)) {
         if (structs[i].name == name) { return t_struct(name); }
@@ -1103,6 +1135,31 @@ function type_from_name_with_structs_unions(name: string, structs: StructSig[], 
         j = j + 1;
     }
     return t_unknown("unrecognised type name: " + name);
+}
+
+// split_top_comma returns the byte index of the first `,` not
+// inside a nested `[…]`. Returns -1 if no top-level comma.
+function split_top_comma(s: string): i32 {
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    while (i < len(s)) {
+        var b: i32 = s[i];
+        if (b == 91) { depth = depth + 1; }
+        else if (b == 93) { depth = depth - 1; }
+        else if (b == 44 && depth == 0) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// trim_spaces removes leading + trailing space (byte 32) chars.
+function trim_spaces(s: string): string {
+    var n: i32 = len(s);
+    var lo: i32 = 0;
+    while (lo < n && s[lo] == 32) { lo = lo + 1; }
+    var hi: i32 = n;
+    while (hi > lo && s[hi - 1] == 32) { hi = hi - 1; }
+    return s[lo:hi];
 }
 
 function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): Type {
@@ -1685,6 +1742,14 @@ function main(): i32 {
     var mod58: parser.Module = parser.parse_module(lexer.tokenize(src58));
     var mt58: ModuleTypes = check_module(mod58);
     if (mt58.all_well_typed) { return 580; }
+
+    // Generic Map[K, V] param annotation type-checks as a
+    // TypeMap. The function body is type-unaware of map ops
+    // (no method dispatch), so we just return 0.
+    var src59: string = "function lookup(m: Map[string, i32], k: string): i32 { return 0; } function main(): i32 { return 0; }";
+    var mod59: parser.Module = parser.parse_module(lexer.tokenize(src59));
+    var mt59: ModuleTypes = check_module(mod59);
+    if (!mt59.all_well_typed) { return 590; }
 
     return 0;
 }
