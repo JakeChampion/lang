@@ -289,6 +289,164 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+
+	// ---- wasi:http imports for the wasi:http/incoming-handler
+	// wrapper. The wrapper marshals canonical-ABI incoming-request
+	// → user's HttpRequest, calls handle(), then streams the
+	// HttpResponse back through outgoing-body. See wasi_http.go.
+	"wasi_http_request_method": {
+		// (self, retptr) → (). Variant `method` written at retptr:
+		// disc@+0 (0..8 for canonical verbs, 9 = OTHER), payload
+		// string at +4/+8 (OTHER only; named verbs leave the slot
+		// empty, but some hosts fill it with the canonical text).
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]incoming-request.method",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_request_path_with_query": {
+		// (self, retptr) → (). option<string> at retptr: disc@+0,
+		// string ptr@+4, len@+8.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]incoming-request.path-with-query",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_request_headers": {
+		// (self) → i32 (fields handle). Snapshot of the request
+		// headers; the wrapper walks `fields.entries` on this and
+		// populates the lang HeaderMap, then drops the fields.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]incoming-request.headers",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_http_request_consume": {
+		// (self, retptr) → (). result<incoming-body, _>: disc@+0,
+		// body handle@+4 on Ok. Transfers body ownership to caller.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]incoming-request.consume",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_request_drop": {
+		// (self) → (). Drops the incoming-request resource. Must
+		// happen after every borrowing accessor + after consume's
+		// returned body has been finished.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[resource-drop]incoming-request",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_incoming_body_stream": {
+		// (self, retptr) → (). result<input-stream, _>: disc@+0,
+		// stream handle@+4 on Ok.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]incoming-body.stream",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_incoming_body_finish": {
+		// (this) → future-trailers handle. Consumes the body,
+		// returns the trailers future. We drop the future
+		// immediately — trailers aren't surfaced to user handlers
+		// yet.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[static]incoming-body.finish",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_http_future_trailers_drop": {
+		// (handle) → (). Drops the future-trailers without
+		// polling it.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[resource-drop]future-trailers",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_fields_new": {
+		// () → i32 (fresh fields resource handle).
+		module:  "wasi:http/types@0.2.0",
+		name:    "[constructor]fields",
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_http_fields_entries": {
+		// (self, retptr) → (). list<tuple<field-name, field-value>>
+		// landed at retptr: (data_ptr, count) = 8 bytes. Each entry
+		// is 16 bytes: name@+0/+4, value@+8/+12.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]fields.entries",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_fields_append": {
+		// (self, name_data, name_len, value_data, value_len,
+		// retptr) → (). result<_, header-error>: 1 disc + 1
+		// header-error disc = 2 i32s, lands at retptr (exceeds the
+		// canonical max-flat-results=1 threshold for inline-result
+		// returns).
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]fields.append",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_fields_drop": {
+		// (handle) → (). Drops a fields resource. The incoming-
+		// request headers fields gets dropped after the lang
+		// HeaderMap is populated; outgoing-response takes ownership
+		// of its construction-arg fields so no manual drop there.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[resource-drop]fields",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_response_new": {
+		// (headers) → outgoing-response handle. Consumes the
+		// fields argument.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[constructor]outgoing-response",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_http_response_set_status": {
+		// (self, status) → disc. result<_, _>: payload-less on
+		// both arms, flattens to a single discriminant slot the
+		// host returns inline (no retptr).
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]outgoing-response.set-status-code",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_http_response_body": {
+		// (self, retptr) → (). result<outgoing-body, _>: disc@+0,
+		// body handle@+4 on Ok.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]outgoing-response.body",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_outgoing_body_write": {
+		// (self, retptr) → (). result<output-stream, _>: disc@+0,
+		// stream handle@+4.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[method]outgoing-body.write",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_http_response_outparam_set": {
+		// (outparam, disc, payload[7 slots, slot 2 = i64]) → ().
+		// 9 params total: the response-outparam handle + the
+		// flattened `result<outgoing-response, error-code>`.
+		// Slot 2 of the payload is i64 because an error-code
+		// case carries `option<u64>` (HTTP body-size) and the
+		// canonical-ABI joins the variant width up to the wider
+		// type.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[static]response-outparam.set",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -427,6 +585,35 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	}
 	if helpers.set["__lang_tcp_close"] {
 		in.add("wasi_sockets_tcp_socket_drop")
+		in.add("wasi_io_input_stream_drop")
+		in.add("wasi_io_output_stream_drop")
+	}
+
+	// wasi:http wrapper. The single __http_entry helper pulls in
+	// the full preview-2 wasi:http/types surface + the wasi:io
+	// stream drop/read/write imports it needs for body marshalling.
+	// Note: cabi_realloc is exported as a function (the host calls
+	// it back for list<u8> allocations); we don't import it.
+	if helpers.set["__http_entry"] {
+		in.add("wasi_http_request_method")
+		in.add("wasi_http_request_path_with_query")
+		in.add("wasi_http_request_headers")
+		in.add("wasi_http_request_consume")
+		in.add("wasi_http_request_drop")
+		in.add("wasi_http_incoming_body_stream")
+		in.add("wasi_http_incoming_body_finish")
+		in.add("wasi_http_future_trailers_drop")
+		in.add("wasi_http_fields_new")
+		in.add("wasi_http_fields_entries")
+		in.add("wasi_http_fields_append")
+		in.add("wasi_http_fields_drop")
+		in.add("wasi_http_response_new")
+		in.add("wasi_http_response_set_status")
+		in.add("wasi_http_response_body")
+		in.add("wasi_http_outgoing_body_write")
+		in.add("wasi_http_response_outparam_set")
+		in.add("wasi_io_blocking_read")
+		in.add("wasi_io_blocking_write_and_flush")
 		in.add("wasi_io_input_stream_drop")
 		in.add("wasi_io_output_stream_drop")
 	}
