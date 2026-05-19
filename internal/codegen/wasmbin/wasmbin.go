@@ -986,6 +986,17 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		}
 		return inst.InstCall(body, idx), nil
 
+	// ---- String concatenation ----
+	case ir.OpStrConcat:
+		// Stack: (a_data, a_len, b_data, b_len). The __str_concat
+		// helper consumes all four and returns a new (data, len)
+		// heap-form pair via wasm multi-value return.
+		idx, ok := ctx.funcIdx["__str_concat"]
+		if !ok {
+			return nil, fmt.Errorf("OpStrConcat: __str_concat helper not registered (scanRuntimeHelpers gap)")
+		}
+		return inst.InstCall(body, idx), nil
+
 	// ---- Heap allocator ----
 	case ir.OpAlloc:
 		// Stack: (size). __lang_alloc bumps memory[40] and returns

@@ -1972,15 +1972,125 @@ func TestStrEqHelperPulledIn(t *testing.T) {
 	}
 }
 
+// TestEmitStrConcatLen — concatenate two literals and verify the
+// resulting length via __lang_str_len. Spans the inline-heap
+// combinations: inline+inline, heap+heap, mixed.
+func TestEmitStrConcatLen(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want string
+	}{
+		{"inline_plus_inline", "abc", "def", "6"},
+		{"heap_plus_heap", "hello, world", " - and more!", "24"},
+		{"heap_plus_inline", "hello, world", "!", "13"},
+		{"inline_plus_heap", "!", "hello, world", "13"},
+		{"empty_plus_short", "", "abc", "3"},
+		{"short_plus_empty", "abc", "", "3"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:       "main",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					{Kind: ir.OpConstStr, Str: tc.a},
+					{Kind: ir.OpConstStr, Str: tc.b},
+					{Kind: ir.OpStrConcat},
+					{Kind: ir.OpStrLen},
+				},
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			if got := runUnderWasmtime(t, bin, "main"); got != tc.want {
+				t.Fatalf("len(%q + %q) = %q, want %q", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmitStrConcatByteContents — concatenate two strings, then
+// read each byte of the result and assert it matches the expected
+// concatenation. Confirms the byte copy from both operands lands
+// at the right offsets.
+func TestEmitStrConcatByteContents(t *testing.T) {
+	a := "hello"
+	b := "world"
+	want := a + b // "helloworld"
+	for i, expected := range []byte(want) {
+		expected := expected
+		i := i
+		t.Run(string(rune(expected)), func(t *testing.T) {
+			prog := &ir.Program{Funcs: []*ir.Func{{
+				Name:       "main",
+				ReturnType: i32(),
+				Ops: []ir.Op{
+					// Build (data, len) of "hello" + "world"
+					{Kind: ir.OpConstStr, Str: a},
+					{Kind: ir.OpConstStr, Str: b},
+					{Kind: ir.OpStrConcat},
+					// Drop len, keep data.
+					{Kind: ir.OpDrop},
+					// data + i, load8_u.
+					{Kind: ir.OpConstI32, I32: int32(i)},
+					{Kind: ir.OpAdd},
+					{Kind: ir.OpLoadByte},
+				},
+			}}}
+			bin, err := Emit(prog)
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			got := runUnderWasmtime(t, bin, "main")
+			gotInt := 0
+			for _, c := range got {
+				gotInt = gotInt*10 + int(c-'0')
+			}
+			if byte(gotInt) != expected {
+				t.Fatalf("byte[%d] = %d, want %d (%c)", i, gotInt, expected, expected)
+			}
+		})
+	}
+}
+
+// TestEmitStrConcatRoundTripsThroughStrEq — concat result must be
+// byte-equal to a heap-form literal of the same content. Closes
+// the loop: alloc + copy + str_eq all the way through.
+func TestEmitStrConcatRoundTripsThroughStrEq(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			// "foo" + "bar baz" = "foobar baz" (10 bytes, heap form).
+			{Kind: ir.OpConstStr, Str: "foo"},
+			{Kind: ir.OpConstStr, Str: "bar baz"},
+			{Kind: ir.OpStrConcat}, // → (data, len) of "foobar baz"
+			// Compare to "foobar baz" heap literal.
+			{Kind: ir.OpConstStr, Str: "foobar baz"},
+			{Kind: ir.OpStrEq},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "1" {
+		t.Fatalf("concat result not equal to expected literal: got %q, want 1", got)
+	}
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
-// cover (e.g. OpStrConcat) and confirm we get a useful error
+// cover (e.g. OpMakeClosure) and confirm we get a useful error
 // rather than emitting nonsense bytes. Regressions here would
 // silently produce invalid wasm.
 func TestEmitUnsupportedOpReports(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "main",
 		ReturnType: i32(),
-		Ops:        []ir.Op{{Kind: ir.OpStrConcat}},
+		Ops:        []ir.Op{{Kind: ir.OpMakeClosure}},
 	}}}
 	if _, err := Emit(prog); err == nil {
 		t.Fatalf("expected unsupported-op error, got nil")

@@ -79,6 +79,16 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 				needs.add("__lang_str_len")
 				needs.add("__lang_str_byte")
 				needs.add("__str_eq")
+			case ir.OpStrConcat:
+				// __str_concat allocates a buffer sized by
+				// the sum of the two operand lengths, then
+				// copies bytes one-at-a-time via the SSO-
+				// aware byte fetch. Returns the new (data,
+				// len) pair as a heap-form string.
+				needs.add("__lang_str_len")
+				needs.add("__lang_str_byte")
+				needs.add("__lang_alloc")
+				needs.add("__str_concat")
 			}
 		}
 	}
@@ -109,6 +119,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildStrEqBody,
+	},
+	"__str_concat": {
+		// (a_data, a_len, b_data, b_len) → (data, len). Multi-
+		// value return for the two-word ABI.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildStrConcatBody,
 	},
 }
 
@@ -382,6 +399,113 @@ func buildStrEqBody(idxs map[string]uint32) []byte {
 
 	// Three i32 locals: $la, $lb, $i.
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildStrConcatBody assembles wasm bytes for __str_concat.
+//
+// Signature: (param $a_data $a_len $b_data $b_len i32) (result i32 i32)
+// Locals (after params): $la (4), $lb (5), $dst (6), $i (7).
+//
+// Logical:
+//
+//	la  = __lang_str_len(a)
+//	lb  = __lang_str_len(b)
+//	dst = __lang_alloc(la + lb)
+//	for i in 0..la: mem[dst+i]     = __lang_str_byte(a, i)
+//	for i in 0..lb: mem[dst+la+i]  = __lang_str_byte(b, i)
+//	return (dst, la + lb)
+//
+// Result is heap-form (top bit of len clear) regardless of input
+// forms; the bytes always land in memory at `dst`.
+func buildStrConcatBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__lang_str_len"]
+	strByte := idxs["__lang_str_byte"]
+	alloc := idxs["__lang_alloc"]
+	var body []byte
+	// la = __lang_str_len(a)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 4) // $la
+	// lb = __lang_str_len(b)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 5) // $lb
+	// dst = __lang_alloc(la + lb)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 6) // $dst
+	// Loop 1: i in 0..la — copy a's bytes into mem[dst + i].
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 7) // $i = 0
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// if $i >= $la: break (br to enclosing block, label 1).
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstLocalGet(body, 4)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1)
+		// mem[dst + i] = __lang_str_byte(a, i)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 7)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstCall(body, strByte)
+		body = memory.InstI32Store8(body, 0, 0)
+		// $i = $i + 1; continue loop.
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 7)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	// Loop 2: i in 0..lb — copy b's bytes into mem[dst + la + i].
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 7) // $i = 0
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstLocalGet(body, 5)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1)
+		// addr = dst + la + i
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 7)
+		body = numeric.InstI32Add(body)
+		// byte = __lang_str_byte(b, i)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstCall(body, strByte)
+		body = memory.InstI32Store8(body, 0, 0)
+		// $i++
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 7)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	// Return (dst, la + lb) as the multi-value result.
+	body = inst.InstLocalGet(body, 6) // dst (data)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = numeric.InstI32Add(body) // total (len)
+	// Four i32 locals: $la, $lb, $dst, $i.
+	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
