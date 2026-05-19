@@ -520,22 +520,24 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             var name: string = "";
             var is_method: boolean = false;
             var recv_type_name: string = "";
+            var recv_ty: Type = t_unknown("__noreceiver__");
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
                 parser.ExprFieldAccess(fa) => {
                     name = fa.field;
                     is_method = true;
-                    var rt: Type = check_expr(fa.obj, s);
+                    recv_ty = check_expr(fa.obj, s);
                     // Receiver type-name comes from the receiver
                     // expression's static type. Primitive types
                     // use their type-keyword spelling so methods
                     // declared on them dispatch correctly.
-                    match (rt) {
+                    match (recv_ty) {
                         TypeStruct(sn) => { recv_type_name = sn.name; },
                         TypeString(_) => { recv_type_name = "string"; },
                         TypeI32(_) => { recv_type_name = "i32"; },
                         TypeBool(_) => { recv_type_name = "bool"; },
                         TypeFloat(_) => { recv_type_name = "f64"; },
+                        TypeMap(_) => { recv_type_name = "Map"; },
                         _ => { return t_unknown("method call: receiver isn't a typed value"); }
                     }
                 },
@@ -550,11 +552,49 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                 match (at) {
                     TypeArray(_) => { return t_i32(); },
                     TypeString(_) => { return t_i32(); },
-                    _ => { return t_unknown("len: argument must be array or string"); }
+                    TypeMap(_) => { return t_i32(); },
+                    _ => { return t_unknown("len: argument must be array, string, or map"); }
                 }
                 return t_unknown("unreachable len arm");
             }
+            // map_new(cap) builtin — returns a TypeMap with
+            // TypeUnknown key/value types since the call site
+            // has no inference for them. The surrounding
+            // type-annotation (e.g. `var m: Map[K, V] = …`)
+            // pins them via assignability.
+            if (!is_method && name == "map_new") {
+                return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
+            }
+            // Built-in VMap method dispatch — handled ahead of
+            // the user MethodSig lookup.
             if (is_method) {
+                match (recv_ty) {
+                    TypeMap(mt) => {
+                        if (name == "set") {
+                            if (len(c.args) != 2) { return t_unknown("map.set: 2 args"); }
+                            return recv_ty;
+                        }
+                        if (name == "get_or") {
+                            if (len(c.args) != 2) { return t_unknown("map.get_or: 2 args"); }
+                            return mt.value;
+                        }
+                        if (name == "has") {
+                            if (len(c.args) != 1) { return t_unknown("map.has: 1 arg"); }
+                            return t_bool();
+                        }
+                        if (name == "delete") {
+                            if (len(c.args) != 1) { return t_unknown("map.delete: 1 arg"); }
+                            return recv_ty;
+                        }
+                        if (name == "len") {
+                            if (len(c.args) != 0) { return t_unknown("map.len: 0 args"); }
+                            return t_i32();
+                        }
+                        if (name == "keys") { return t_array(mt.key); }
+                        if (name == "values") { return t_array(mt.value); }
+                    },
+                    _ => { }
+                }
                 var msig: MethodSig = s.lookup_method(name, recv_type_name);
                 if (len(msig.name) == 0) {
                     return t_unknown("undefined method `" + name + "` on `" + recv_type_name + "`");
@@ -1750,6 +1790,26 @@ function main(): i32 {
     var mod59: parser.Module = parser.parse_module(lexer.tokenize(src59));
     var mt59: ModuleTypes = check_module(mod59);
     if (!mt59.all_well_typed) { return 590; }
+
+    // Map method dispatch — `.get_or(k, default)` on `Map[K, V]`
+    // returns V. The body's `var s = m.get_or(...)` resolves
+    // to i32 via TypeMap value.
+    var src60: string = "function lookup(m: Map[string, i32], k: string): i32 { return m.get_or(k, 0 - 1); } function main(): i32 { return 0; }";
+    var mod60: parser.Module = parser.parse_module(lexer.tokenize(src60));
+    var mt60: ModuleTypes = check_module(mod60);
+    if (!mt60.all_well_typed) { return 600; }
+
+    // Map method `.has(k)` returns bool.
+    var src61: string = "function check(m: Map[string, i32], k: string): bool { return m.has(k); } function main(): i32 { return 0; }";
+    var mod61: parser.Module = parser.parse_module(lexer.tokenize(src61));
+    var mt61: ModuleTypes = check_module(mod61);
+    if (!mt61.all_well_typed) { return 610; }
+
+    // Map method `.len()` returns i32.
+    var src62: string = "function size(m: Map[string, i32]): i32 { return m.len(); } function main(): i32 { return 0; }";
+    var mod62: parser.Module = parser.parse_module(lexer.tokenize(src62));
+    var mt62: ModuleTypes = check_module(mod62);
+    if (!mt62.all_well_typed) { return 620; }
 
     return 0;
 }
