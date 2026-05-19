@@ -899,6 +899,56 @@ function max_local_idx(ops: Op[]): i32 {
 // Binary op evaluation on the value stack. Pops rhs then lhs,
 // pushes result. Mirrors the interp's eval_expr binary arm so
 // the VM and the tree-walker agree on semantics.
+// value_eq_vm: structural equality across Value variants.
+// Primitives compare by raw value. VTuple compares pairwise on
+// elements (same arity required). VArr / VStruct still return
+// false in this cut — array / struct equality semantics aren't
+// modeled. Mixed-variant pairs return false.
+function value_eq_vm(a: Value, b: Value): boolean {
+    match (a) {
+        VInt(ai) => {
+            match (b) {
+                VInt(bi) => { return ai.v == bi.v; },
+                _ => { return false; }
+            }
+        },
+        VBool(ab) => {
+            match (b) {
+                VBool(bb) => { return ab.v == bb.v; },
+                _ => { return false; }
+            }
+        },
+        VString(av) => {
+            match (b) {
+                VString(bv) => { return av.v == bv.v; },
+                _ => { return false; }
+            }
+        },
+        VFloat(af) => {
+            match (b) {
+                VFloat(bf) => { return af.v == bf.v; },
+                _ => { return false; }
+            }
+        },
+        VTuple(at) => {
+            match (b) {
+                VTuple(bt) => {
+                    if (len(at.elements) != len(bt.elements)) { return false; }
+                    var ti: i32 = 0;
+                    while (ti < len(at.elements)) {
+                        if (!value_eq_vm(at.elements[ti], bt.elements[ti])) { return false; }
+                        ti = ti + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function apply_binary(op: string, lhs: Value, rhs: Value): Value {
     if (is_err(lhs)) { return lhs; }
     if (is_err(rhs)) { return rhs; }
@@ -989,34 +1039,7 @@ function apply_binary(op: string, lhs: Value, rhs: Value): Value {
         }
     }
     if (op == "==" || op == "!=") {
-        var eq: boolean = false;
-        match (lhs) {
-            VInt(li) => {
-                match (rhs) {
-                    VInt(ri) => { eq = li.v == ri.v; },
-                    _ => { }
-                }
-            },
-            VBool(lb) => {
-                match (rhs) {
-                    VBool(rb) => { eq = lb.v == rb.v; },
-                    _ => { }
-                }
-            },
-            VString(ls) => {
-                match (rhs) {
-                    VString(rs) => { eq = ls.v == rs.v; },
-                    _ => { }
-                }
-            },
-            VFloat(lf) => {
-                match (rhs) {
-                    VFloat(rf) => { eq = lf.v == rf.v; },
-                    _ => { }
-                }
-            },
-            _ => { }
-        }
+        var eq: boolean = value_eq_vm(lhs, rhs);
         if (op == "==") { return v_bool(eq); }
         return v_bool(!eq);
     }
@@ -1888,6 +1911,20 @@ function main(): i32 {
     match (r52) {
         VInt(i) => { if (i.v != 42) { return 520; } },
         _ => { return 521; }
+    }
+
+    // Tuple structural equality.
+    var r53: Value = run_source("return (1, 2, 3) == (1, 2, 3);");
+    match (r53) {
+        VBool(b) => { if (!b.v) { return 530; } },
+        _ => { return 531; }
+    }
+
+    // Tuple inequality (one element differs).
+    var r54: Value = run_source("return (1, 2, 3) == (1, 2, 4);");
+    match (r54) {
+        VBool(b) => { if (b.v) { return 540; } },
+        _ => { return 541; }
     }
 
     return 0;
