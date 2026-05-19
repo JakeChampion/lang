@@ -42,15 +42,17 @@ import "./parser";
 pub struct VInt { v: i32 }
 pub struct VBool { v: boolean }
 pub struct VString { v: string }
+pub struct VFloat { v: f64 }
 pub struct VArr { elements: Value[] }
 pub struct VStruct { type_name: string, field_names: string[], field_values: Value[] }
 pub struct VErr { msg: string }
 
-pub type Value = VInt | VBool | VString | VArr | VStruct | VErr;
+pub type Value = VInt | VBool | VString | VFloat | VArr | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
+function v_float(n: f64): Value { return VFloat { v: n }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
     return VStruct { type_name: type_name, field_names: names, field_values: values };
@@ -76,6 +78,7 @@ function is_err(v: Value): boolean {
 pub struct OpPushInt { v: i32 }
 pub struct OpPushBool { v: boolean }
 pub struct OpPushStr { v: string }
+pub struct OpPushFloat { v: f64 }
 pub struct OpLoadLocal { idx: i32 }
 pub struct OpStoreLocal { idx: i32 }
 pub struct OpBinary { op: string }
@@ -129,7 +132,7 @@ pub struct OpDup { tag: i32 }
 pub struct OpTypeNameEq { type_name: string }
 pub struct OpReturn { tag: i32 }
 
-pub type Op = OpPushInt | OpPushBool | OpPushStr
+pub type Op = OpPushInt | OpPushBool | OpPushStr | OpPushFloat
             | OpLoadLocal | OpStoreLocal
             | OpBinary | OpUnary
             | OpJump | OpJumpIfFalse
@@ -142,6 +145,7 @@ pub type Op = OpPushInt | OpPushBool | OpPushStr
 function op_push_int(n: i32): Op { return OpPushInt { v: n }; }
 function op_push_bool(b: boolean): Op { return OpPushBool { v: b }; }
 function op_push_str(s: string): Op { return OpPushStr { v: s }; }
+function op_push_float(n: f64): Op { return OpPushFloat { v: n }; }
 function op_load(i: i32): Op { return OpLoadLocal { idx: i }; }
 function op_store(i: i32): Op { return OpStoreLocal { idx: i }; }
 function op_binary(op: string): Op { return OpBinary { op: op }; }
@@ -213,6 +217,37 @@ function digits_to_i32(s: string): i32 {
     return acc;
 }
 
+// digits_to_f64 parses a decimal float literal (`[-]d[.d]`).
+// Mirrors interp.str_to_f64; the bytecode constant pool stores
+// the parsed f64 directly so the runtime push is constant-time.
+function digits_to_f64(s: string): f64 {
+    var n: i32 = len(s);
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (n > 0 && s[0] == 45) { neg = true; i = 1; }
+    var int_part: f64 = 0.0;
+    var frac_part: f64 = 0.0;
+    var divisor: f64 = 1.0;
+    var seen_dot: boolean = false;
+    while (i < n) {
+        var b: i32 = s[i];
+        if (b == 46) { seen_dot = true; i = i + 1; continue; }
+        if (b < 48 || b > 57) { break; }
+        var d: i32 = b - 48;
+        var df: f64 = (d as f64);
+        if (seen_dot) {
+            divisor = divisor * 10.0;
+            frac_part = frac_part + (df / divisor);
+        } else {
+            int_part = int_part * 10.0 + df;
+        }
+        i = i + 1;
+    }
+    var v: f64 = int_part + frac_part;
+    if (neg) { v = 0.0 - v; }
+    return v;
+}
+
 // CompileResult bundles the ops and the threaded LocalsTable so
 // the caller can sequence multiple compile_* calls. The
 // threading mirrors the interp's StepResult shape: input state
@@ -223,7 +258,11 @@ pub struct CompileResult { ops: Op[], lt: LocalsTable }
 function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult {
     match (e) {
         parser.ExprNumber(n) => {
-            ops = ops.push(op_push_int(digits_to_i32(n.text)));
+            if (n.is_float) {
+                ops = ops.push(op_push_float(digits_to_f64(n.text)));
+            } else {
+                ops = ops.push(op_push_int(digits_to_i32(n.text)));
+            }
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprBool(b) => {
@@ -707,6 +746,12 @@ function apply_binary(op: string, lhs: Value, rhs: Value): Value {
                     _ => { return v_err("`+` rhs type"); }
                 }
             },
+            VFloat(lf) => {
+                match (rhs) {
+                    VFloat(rf) => { return v_float(lf.v + rf.v); },
+                    _ => { return v_err("`+` rhs type"); }
+                }
+            },
             _ => { return v_err("`+` lhs type"); }
         }
     }
@@ -727,6 +772,22 @@ function apply_binary(op: string, lhs: Value, rhs: Value): Value {
                     _ => { return v_err("arith rhs type"); }
                 }
             },
+            VFloat(lf) => {
+                match (rhs) {
+                    VFloat(rf) => {
+                        if (op == "-") { return v_float(lf.v - rf.v); }
+                        if (op == "*") { return v_float(lf.v * rf.v); }
+                        if (op == "/") {
+                            if (rf.v == 0.0) { return v_err("float div by 0"); }
+                            return v_float(lf.v / rf.v);
+                        }
+                        // `%` on floats isn't supported (matches
+                        // the interp behaviour).
+                        return v_err("`%` on f64 unsupported");
+                    },
+                    _ => { return v_err("arith rhs type"); }
+                }
+            },
             _ => { return v_err("arith lhs type"); }
         }
     }
@@ -739,6 +800,17 @@ function apply_binary(op: string, lhs: Value, rhs: Value): Value {
                         if (op == "<=") { return v_bool(li.v <= ri.v); }
                         if (op == ">") { return v_bool(li.v > ri.v); }
                         return v_bool(li.v >= ri.v);
+                    },
+                    _ => { return v_err("cmp rhs type"); }
+                }
+            },
+            VFloat(lf) => {
+                match (rhs) {
+                    VFloat(rf) => {
+                        if (op == "<") { return v_bool(lf.v < rf.v); }
+                        if (op == "<=") { return v_bool(lf.v <= rf.v); }
+                        if (op == ">") { return v_bool(lf.v > rf.v); }
+                        return v_bool(lf.v >= rf.v);
                     },
                     _ => { return v_err("cmp rhs type"); }
                 }
@@ -764,6 +836,12 @@ function apply_binary(op: string, lhs: Value, rhs: Value): Value {
             VString(ls) => {
                 match (rhs) {
                     VString(rs) => { eq = ls.v == rs.v; },
+                    _ => { }
+                }
+            },
+            VFloat(lf) => {
+                match (rhs) {
+                    VFloat(rf) => { eq = lf.v == rf.v; },
                     _ => { }
                 }
             },
@@ -794,6 +872,7 @@ function apply_unary(op: string, v: Value): Value {
     if (op == "-") {
         match (v) {
             VInt(i) => { return v_int(0 - i.v); },
+            VFloat(f) => { return v_float(0.0 - f.v); },
             _ => { return v_err("unary `-` type"); }
         }
     }
@@ -877,6 +956,7 @@ pub function exec_program(prog: CompiledProgram): Value {
         match (op) {
             OpPushInt(o) => { stack = stack_push(stack, v_int(o.v)); ip = ip + 1; },
             OpPushBool(o) => { stack = stack_push(stack, v_bool(o.v)); ip = ip + 1; },
+            OpPushFloat(o) => { stack = stack_push(stack, v_float(o.v)); ip = ip + 1; },
             OpPushStr(o) => {
                 // Magic "__undef:..." prefix → surface as VErr.
                 if (len(o.v) >= 8 && o.v[0:8] == "__undef:") {
@@ -1471,6 +1551,48 @@ function main(): i32 {
     match (r35) {
         VErr(_) => { },
         _ => { return 350; }
+    }
+
+    // Float literal → VFloat.
+    var r36: Value = run_source("return 3.14;");
+    match (r36) {
+        VFloat(f) => { if (f.v < 3.13 || f.v > 3.15) { return 360; } },
+        _ => { return 361; }
+    }
+
+    // Float arithmetic — `1.5 + 2.5` → 4.0.
+    var r37: Value = run_source("return 1.5 + 2.5;");
+    match (r37) {
+        VFloat(f) => { if (f.v < 3.99 || f.v > 4.01) { return 370; } },
+        _ => { return 371; }
+    }
+
+    // Float comparison — `2.5 > 1.5` → true.
+    var r38: Value = run_source("return 2.5 > 1.5;");
+    match (r38) {
+        VBool(b) => { if (!b.v) { return 380; } },
+        _ => { return 381; }
+    }
+
+    // Float equality — `3.14 == 3.14` → true.
+    var r39: Value = run_source("return 3.14 == 3.14;");
+    match (r39) {
+        VBool(b) => { if (!b.v) { return 390; } },
+        _ => { return 391; }
+    }
+
+    // Mixed-numeric `+` → VErr.
+    var r40: Value = run_source("return 1 + 2.5;");
+    match (r40) {
+        VErr(_) => { },
+        _ => { return 400; }
+    }
+
+    // Float division — `10.0 / 4.0` → 2.5.
+    var r41: Value = run_source("return 10.0 / 4.0;");
+    match (r41) {
+        VFloat(f) => { if (f.v < 2.49 || f.v > 2.51) { return 410; } },
+        _ => { return 411; }
     }
 
     return 0;

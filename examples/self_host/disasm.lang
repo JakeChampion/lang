@@ -78,6 +78,7 @@ function op_name(op: vm.Op): string {
         vm.OpPushInt(_) => { return "PUSH_INT"; },
         vm.OpPushBool(_) => { return "PUSH_BOOL"; },
         vm.OpPushStr(_) => { return "PUSH_STR"; },
+        vm.OpPushFloat(_) => { return "PUSH_FLOAT"; },
         vm.OpLoadLocal(_) => { return "LOAD_LOCAL"; },
         vm.OpStoreLocal(_) => { return "STORE_LOCAL"; },
         vm.OpBinary(_) => { return "BINARY"; },
@@ -110,6 +111,7 @@ function op_immediate(op: vm.Op): string {
             return "false";
         },
         vm.OpPushStr(o) => { return "\"" + o.v + "\""; },
+        vm.OpPushFloat(_) => { return "<f64>"; },
         vm.OpLoadLocal(o) => { return i32_to_string(o.idx); },
         vm.OpStoreLocal(o) => { return i32_to_string(o.idx); },
         vm.OpBinary(o) => { return o.op; },
