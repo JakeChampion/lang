@@ -238,5 +238,33 @@ function main(): i32 {
     if (!contains(d9, "INDEX")) { return 91; }
     if (!contains(d9, "LEN")) { return 92; }
 
+    // Struct literal + field access: emits MAKE_STRUCT,
+    // FIELD_GET with the struct + field names as immediates.
+    var d10: string = disassemble_source(
+        "struct Point { x: i32, y: i32 } var p = Point { x: 1, y: 2 }; return p.x;"
+    );
+    if (!contains(d10, "MAKE_STRUCT")) { return 100; }
+    if (!contains(d10, "Point")) { return 101; }
+    if (!contains(d10, "FIELD_GET")) { return 102; }
+    if (!contains(d10, "x")) { return 103; }
+
+    // Match statement: emits DUP + TYPE_NAME_EQ for variant
+    // patterns, plus the standard JUMP_IF_FALSE.
+    var d11: string = disassemble_source(
+        "struct Circle { r: i32 } var c = Circle { r: 3 }; match (c) { Circle(_) => { return 1; }, _ => { return 0; } }"
+    );
+    if (!contains(d11, "DUP")) { return 110; }
+    if (!contains(d11, "TYPE_NAME_EQ")) { return 111; }
+    if (!contains(d11, "Circle")) { return 112; }
+    if (!contains(d11, "JUMP_IF_FALSE")) { return 113; }
+
+    // Method call dispatch: emits CALL_METHOD with the
+    // method name + argc.
+    var d12: string = disassemble_source(
+        "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } var k = Circle { r: 5 }; return k.area();"
+    );
+    if (!contains(d12, "CALL_METHOD")) { return 120; }
+    if (!contains(d12, "area")) { return 121; }
+
     return 0;
 }
