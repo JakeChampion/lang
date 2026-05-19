@@ -2588,6 +2588,44 @@ func TestEmitNowNs(t *testing.T) {
 	}
 }
 
+// TestEmitArgCount — call OpCallDirect "arg_count" under
+// wasmtime. wasmtime --invoke passes the module path itself as
+// argv[0], so argc ≥ 1 always. Passing extra args after the
+// path increments argc.
+func TestEmitArgCount(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "arg_count"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// Two extra args → argc = 3 (path + 2). wasmtime puts the
+	// module-path argv[0] in the wasi cli's argv.
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p, "alpha", "beta")
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "3" {
+		t.Fatalf("arg_count = %q, want 3 (path + 2 extra)", got)
+	}
+}
+
 // TestEmitExit — call OpCallDirect "exit" with a specific code
 // and verify wasmtime's exit code matches. The alias routes to
 // __lang_exit which invokes wasi_proc_exit.

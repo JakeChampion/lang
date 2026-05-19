@@ -111,6 +111,11 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// for the 8-byte output buffer.
 					needs.add("__lang_alloc")
 					needs.add("__lang_env_count")
+				case "__lang_arg_count":
+					// wasi_args_sizes_get + alloc-per-call
+					// for the 8-byte output buffer.
+					needs.add("__lang_alloc")
+					needs.add("__lang_arg_count")
 				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
@@ -185,6 +190,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildEnvCountBody,
+	},
+	"__lang_arg_count": {
+		// () → i32 — count of command-line args (argc).
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildArgCountBody,
 	},
 	"__str_eq": {
 		// (a_data, a_len, b_data, b_len) → i32 (0 or 1).

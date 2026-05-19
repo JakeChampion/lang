@@ -1430,6 +1430,8 @@ func callDirectAlias(name string) string {
 		return "__lang_now_ns"
 	case "env_count":
 		return "__lang_env_count"
+	case "arg_count":
+		return "__lang_arg_count"
 	}
 	return name
 }
