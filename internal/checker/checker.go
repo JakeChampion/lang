@@ -336,6 +336,29 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "pos", Type: ast.NumberType{}},
 			},
 		},
+		// MockCall + MockPlatform — test-ergonomics helpers for
+		// Tier-C Rec §11 (docs/PLATFORM-RESEARCH.md §6). Today's
+		// Platform is a one-field placeholder; once Phase 2 adds
+		// capability fields (log / fetch / kv / now), MockPlatform
+		// grows matching methods that intercept calls. Phase 1
+		// ships the call-recording infrastructure: tests
+		// instantiate MockPlatform, perform some flow that
+		// records `MockCall { name, args }` entries, then
+		// inspect `(m).calls()` to assert effect ordering /
+		// payload shape.
+		{
+			Name: "MockCall",
+			Fields: []ast.Param{
+				{Name: "name", Type: ast.StringType{}},
+				{Name: "args", Type: ast.StringType{}},
+			},
+		},
+		{
+			Name: "MockPlatform",
+			Fields: []ast.Param{
+				{Name: "calls", Type: ast.ArrayType{Elem: ast.StructType{Name: "MockCall"}}},
+			},
+		},
 		// Date/time types (docs/STDLIB-DESIGN-RESEARCH.md
 		// Rec §4 — the jiff/NodaTime six-type shape).
 		// Phase 1: type registrations + a stub std/time
@@ -727,10 +750,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	// Same shape for the auto-injected structs (Reader,
 	// Writer, HttpRequest, HttpResponse, Platform, HeaderMap,
-	// Stream, Instant / Date / Time / DateTime / TimeZone /
-	// Zoned / Span / Duration, Map, MapIter, Url) — same
-	// shadow-is-an-error policy, same monomorph-re-entry
-	// handling.
+	// Stream, MockCall, MockPlatform, Instant / Date / Time /
+	// DateTime / TimeZone / Zoned / Span / Duration, Map,
+	// MapIter, Url) — same shadow-is-an-error policy, same
+	// monomorph-re-entry handling.
 	var shadowedStructs []*ast.StructDecl
 	{
 		userStructs := map[string]*ast.StructDecl{}
