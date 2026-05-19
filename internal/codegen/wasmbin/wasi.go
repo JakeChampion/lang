@@ -72,6 +72,16 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_args_sizes_get": {
+		// (argc_ptr i32, argv_buf_size_ptr i32) → errno.
+		// Writes argv-count + total byte length of the
+		// concatenated argv strings (NUL-separated) into the
+		// two output pointers.
+		module:  "wasi_snapshot_preview1",
+		name:    "args_sizes_get",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -111,6 +121,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	}
 	if helpers.set["__lang_env_count"] {
 		in.add("wasi_environ_sizes_get")
+	}
+	if helpers.set["__lang_arg_count"] {
+		in.add("wasi_args_sizes_get")
 	}
 	return in
 }
@@ -263,26 +276,19 @@ func buildRandomI32Body(idxs map[string]uint32) []byte {
 //	return i64.load(buf)
 //
 // Allocates per call so the 8-byte target buffer doesn't clash
-// with any other fixed-address scratch. Each call leaks 8 bytes
-// (the bump allocator never frees) — acceptable for typical
-// benchmark / log-line usage; a fixed slot or i64 scratch would
-// avoid this but requires layout reshuffling against the
-// closure region.
+// with any other fixed-address scratch.
 func buildNowNsBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__lang_alloc"]
 	clockTime := idxs["wasi_clock_time_get"]
 	var body []byte
-	// buf = __lang_alloc(8)
 	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 0) // $buf
-	// wasi_clock_time_get(0, 0, buf); drop errno
 	body = inst.InstI32Const(body, 0) // clock_id = REALTIME
 	body = inst.InstI64Const(body, 0) // precision = 0
 	body = inst.InstLocalGet(body, 0) // $buf
 	body = inst.InstCall(body, clockTime)
 	body = inst.InstDrop(body) // ignore errno
-	// return i64.load(buf)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI64Load(body, 3, 0)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
@@ -311,6 +317,35 @@ func buildEnvCountBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Add(body)
 	body = inst.InstCall(body, envSizes)
+	body = inst.InstDrop(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildArgCountBody assembles the wasm bytes for __lang_arg_count.
+//
+// Signature: () → i32 (argc)
+//
+// Body:
+//
+//	buf = __lang_alloc(8)               ; two i32 output slots
+//	wasi_args_sizes_get(buf, buf + 4)
+//	drop errno
+//	return i32.load(buf)                ; argc lives at +0
+func buildArgCountBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	argsSizes := idxs["wasi_args_sizes_get"]
+	var body []byte
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 0) // $buf
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, argsSizes)
 	body = inst.InstDrop(body)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
