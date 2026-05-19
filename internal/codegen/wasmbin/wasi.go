@@ -82,6 +82,24 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_environ_get": {
+		// (environ_ptr i32, environ_buf i32) → errno. Writes
+		// argc i32 pointers into environ_ptr, followed by the
+		// NUL-terminated "KEY=VALUE" strings into environ_buf.
+		module:  "wasi_snapshot_preview1",
+		name:    "environ_get",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_args_get": {
+		// (argv_ptr i32, argv_buf i32) → errno. Writes argc i32
+		// pointers into argv_ptr, followed by the NUL-terminated
+		// argv strings into argv_buf.
+		module:  "wasi_snapshot_preview1",
+		name:    "args_get",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 }
 
 // importNeeds is parallel to runtimeNeeds but for imports.
@@ -125,6 +143,14 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 	if helpers.set["__lang_arg_count"] {
 		in.add("wasi_args_sizes_get")
 	}
+	if helpers.set["__lang_arg_at"] {
+		in.add("wasi_args_sizes_get")
+		in.add("wasi_args_get")
+	}
+	if helpers.set["__lang_env_at"] {
+		in.add("wasi_environ_sizes_get")
+		in.add("wasi_environ_get")
+	}
 	return in
 }
 
@@ -144,6 +170,37 @@ const printRetAddr = 56
 // writes the random bytes consumed by __lang_random_i32. Lives
 // in the reserved low-memory window past printRetAddr.
 const randomBufAddr = 60
+
+// Cache for __lang_arg_at / __lang_env_at. Both helpers lazily
+// initialise on first call: ask the host for sizes, alloc the
+// pointer table + string buffer, call args_get / environ_get,
+// store the (count, table_ptr) in the cache. Subsequent calls
+// short-circuit on the init flag and walk the cached table.
+// Lives in the low-memory window 0..39 which was previously
+// unused (allocCursorAddr starts at 40).
+//
+//	 0..3   args_init flag (0 / 1)
+//	 4..7   args count (i32)
+//	 8..11  argv_ptrs heap pointer
+//	12..15  args sizes scratch slot 0 (argc out from args_sizes_get)
+//	16..19  args sizes scratch slot 1 (bufsize out from args_sizes_get)
+//	20..23  env_init flag (0 / 1)
+//	24..27  env count (i32)
+//	28..31  environ_ptrs heap pointer
+//	32..35  env sizes scratch slot 0
+//	36..39  env sizes scratch slot 1
+const (
+	argsInitAddr      = 0
+	argsCountAddr     = 4
+	argsPtrsAddr      = 8
+	argsSizesArgcAddr = 12
+	argsSizesBufAddr  = 16
+	envInitAddr       = 20
+	envCountAddr      = 24
+	envPtrsAddr       = 28
+	envSizesArgcAddr  = 32
+	envSizesBufAddr   = 36
+)
 
 // buildPrintBody assembles the wasm bytes for __lang_print.
 //
@@ -350,5 +407,200 @@ func buildArgCountBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildArgAtBody assembles __lang_arg_at.
+//
+// Signature: (param $i i32) (result i32 i32) — (data, len) pair.
+//
+// Logic: lazily call wasi_args_sizes_get + wasi_args_get on first
+// call, caching (count, argv_ptrs) in low memory. Each call walks
+// argv_ptrs[i] until the NUL byte to recover the length, then
+// returns (cstr, len) as a heap-form string (top bit of len = 0).
+//
+// Out-of-range i (signed-negative or i >= argc) returns (0, 0).
+//
+// Locals (after the one param):
+//
+//	1: $argc
+//	2: $bufsize
+//	3: $argv_ptrs
+//	4: $argv_buf
+//	5: $cstr
+//	6: $len
+func buildArgAtBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	argsSizes := idxs["wasi_args_sizes_get"]
+	argsGet := idxs["wasi_args_get"]
+	var body []byte
+	body = inst.InstI32Const(body, argsInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, argsSizesArgcAddr)
+		body = inst.InstI32Const(body, argsSizesBufAddr)
+		body = inst.InstCall(body, argsSizes)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, argsSizesArgcAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 1) // $argc
+		body = inst.InstI32Const(body, argsSizesBufAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 2) // $bufsize
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 3) // $argv_ptrs
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 4) // $argv_buf
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstCall(body, argsGet)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, argsCountAddr)
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, argsPtrsAddr)
+		body = inst.InstLocalGet(body, 3)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, argsInitAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	// Bounds check via unsigned compare: rejects negatives + overshoot.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, argsCountAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// cstr = mem[args_ptrs + i*4]
+	body = inst.InstI32Const(body, argsPtrsAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 5) // $cstr
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 6) // $len = 0
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 6)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 6)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 6)
+	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildEnvAtBody — mirror of buildArgAtBody, routed through
+// wasi_environ_sizes_get + wasi_environ_get. Each returned
+// (data, len) covers a full "KEY=VALUE" entry; user code splits
+// on '=' if needed.
+func buildEnvAtBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	envSizes := idxs["wasi_environ_sizes_get"]
+	envGet := idxs["wasi_environ_get"]
+	var body []byte
+	body = inst.InstI32Const(body, envInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, envSizesArgcAddr)
+		body = inst.InstI32Const(body, envSizesBufAddr)
+		body = inst.InstCall(body, envSizes)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, envSizesArgcAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 1)
+		body = inst.InstI32Const(body, envSizesBufAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 2)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 3)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 4)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstCall(body, envGet)
+		body = inst.InstDrop(body)
+		body = inst.InstI32Const(body, envCountAddr)
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, envPtrsAddr)
+		body = inst.InstLocalGet(body, 3)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, envInitAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, envCountAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstI32Const(body, envPtrsAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 5)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 6)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 6)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 6)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 6)
+	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
