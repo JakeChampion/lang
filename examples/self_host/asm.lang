@@ -595,6 +595,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.write("    popq %rax\n");
             return s;
         },
+        parser.StmtMatch(_) => { return s.write("    # unsupported: match\n"); },
         parser.StmtUnknown(_) => { return s.write("    # unsupported: StmtUnknown\n"); }
     }
     return s;

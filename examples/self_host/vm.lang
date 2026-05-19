@@ -418,6 +418,7 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             ops = patch_jump(ops, exit_idx, len(ops));
             return CompileResult { ops: ops, lt: lt };
         },
+        parser.StmtMatch(_) => { return CompileResult { ops: ops, lt: lt }; },
         parser.StmtUnknown(_) => { return CompileResult { ops: ops, lt: lt }; }
     }
     return CompileResult { ops: ops, lt: lt };

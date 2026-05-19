@@ -170,6 +170,7 @@ function print_stmt(st: parser.Stmt, depth: i32): string {
             return pad + "while (" + print_expr(w.cond) + ") " + print_block(w.body, depth) + "\n";
         },
         parser.StmtAssign(a) => { return pad + a.target + " = " + print_expr(a.value) + ";\n"; },
+        parser.StmtMatch(_) => { return pad + "/*match-stmt*/\n"; },
         parser.StmtUnknown(u) => { return pad + "/*unknown-stmt:" + u.kind + "*/\n"; }
     }
     return pad + "/*unhandled-stmt*/\n";

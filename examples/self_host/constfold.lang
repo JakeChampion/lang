@@ -250,6 +250,15 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
         parser.StmtWhile(w) => {
             return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body) };
         },
+        parser.StmtMatch(m) => {
+            var arms: parser.MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < len(m.arms)) {
+                arms = arms.push(parser.MatchArm { pattern: m.arms[i].pattern, body: fold_block(m.arms[i].body) });
+                i = i + 1;
+            }
+            return parser.StmtMatch { scrutinee: fold_expr(m.scrutinee), arms: arms };
+        },
         parser.StmtUnknown(_) => { return st; }
     }
     return st;

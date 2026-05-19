@@ -595,6 +595,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             }
             return StepResult { env: env.update(a.target, av), ret: v_err("__noreturn__") };
         },
+        parser.StmtMatch(_) => { return StepResult { env: env, ret: v_err("StmtMatch not implemented in interp") }; },
         parser.StmtUnknown(u) => { return StepResult { env: env, ret: v_err("parser-side unknown stmt: " + u.kind) }; }
     }
     return StepResult { env: env, ret: v_err("unhandled Stmt variant") };
