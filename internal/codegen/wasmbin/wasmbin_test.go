@@ -2463,6 +2463,131 @@ func TestEmitMakeOkErrPair(t *testing.T) {
 	}
 }
 
+// TestEmitPrintHeapLiteral — call __lang_print with a heap-form
+// literal. The helper allocates, copies bytes, writes an iovec
+// to the fixed scratch slot, and invokes wasi_snapshot_preview1
+// fd_write. Run under wasmtime with WASI command-mode entry and
+// grep stdout.
+func TestEmitPrintHeapLiteral(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "_start",
+		ReturnType: void(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hello, world\n"},
+			{Kind: ir.OpCallDirect, Str: "__lang_print", I32: 1},
+			{Kind: ir.OpReturnVoid},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	if got := so.String(); got != "hello, world\n" {
+		t.Fatalf("stdout = %q, want %q", got, "hello, world\n")
+	}
+}
+
+// TestEmitPrintInlineLiteral — same as above but with a short
+// (inline-form) literal. The byte-by-byte copy through
+// __lang_str_byte handles the inline (data, len) packing.
+func TestEmitPrintInlineLiteral(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "_start",
+		ReturnType: void(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hi\n"},
+			{Kind: ir.OpCallDirect, Str: "__lang_print", I32: 1},
+			{Kind: ir.OpReturnVoid},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s\nstdout:%s", err, se.String(), so.String())
+	}
+	if got := so.String(); got != "hi\n" {
+		t.Fatalf("stdout = %q, want %q", got, "hi\n")
+	}
+}
+
+// TestImportSectionOnlyWhenPrintUsed — pure-arithmetic program
+// must not include an import section; section id 2 should be
+// absent.
+func TestImportSectionOnlyWhenPrintUsed(t *testing.T) {
+	progNoPrint := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 42}},
+	}}}
+	bin, err := Emit(progNoPrint)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if walkHasImportSection(t, bin) {
+		t.Fatal("import section present in pure-arithmetic module")
+	}
+}
+
+func walkHasImportSection(t *testing.T, bin []byte) bool {
+	t.Helper()
+	if len(bin) < 8 {
+		return false
+	}
+	i := 8
+	for i < len(bin) {
+		id := bin[i]
+		i++
+		size := 0
+		shift := 0
+		for {
+			if i >= len(bin) {
+				return false
+			}
+			b := bin[i]
+			i++
+			size |= int(b&0x7f) << shift
+			if b&0x80 == 0 {
+				break
+			}
+			shift += 7
+		}
+		if id == encode.SectionImport {
+			return true
+		}
+		i += size
+	}
+	return false
+}
+
 // TestEmitUnsupportedOpReports — pass an op the slice doesn't
 // cover (e.g. OpMakeClosure) and confirm we get a useful error
 // rather than emitting nonsense bytes. Regressions here would
