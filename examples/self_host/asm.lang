@@ -401,6 +401,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "i32_to_string") { return "string"; }
                     if (id.name == "str_to_i32") { return "i32"; }
                     if (id.name == "str_starts_with") { return "bool"; }
+                    if (id.name == "str_ends_with") { return "bool"; }
                     if (id.name == "str_contains") { return "bool"; }
                     if (id.name == "str_index_of") { return "i32"; }
                     // Plain function call: look up ret_type.
@@ -1626,6 +1627,16 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    popq %rsi\n");
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __lang_str_starts_with\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_str_search();
+                return s;
+            }
+            if (name == "str_ends_with" && len(c.args) == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    popq %rsi\n");
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __lang_str_ends_with\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 return s;
@@ -3094,6 +3105,35 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq $1, %rax\n");
         s = s.write("    ret\n");
         s = s.write(".Lsw_no:\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    ret\n");
+        // __lang_str_ends_with: %rdi = s, %rsi = suffix.
+        // Compares the last len(suffix) bytes of s against
+        // suffix. Empty suffix → 1. Suffix longer than s → 0.
+        s = s.write("__lang_str_ends_with:\n");
+        s = s.write("    movq 8(%rsi), %rcx\n");      // lenP
+        s = s.write("    movq 8(%rdi), %rax\n");      // lenS
+        s = s.write("    cmpq %rcx, %rax\n");
+        s = s.write("    jl .Lew_no\n");
+        s = s.write("    subq %rcx, %rax\n");         // offset = lenS - lenP
+        s = s.write("    movq (%rdi), %rdi\n");
+        s = s.write("    addq %rax, %rdi\n");
+        s = s.write("    movq (%rsi), %rsi\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lew_yes\n");
+        s = s.write(".Lew_loop:\n");
+        s = s.write("    movzbq (%rdi), %rax\n");
+        s = s.write("    movzbq (%rsi), %rdx\n");
+        s = s.write("    cmpq %rdx, %rax\n");
+        s = s.write("    jne .Lew_no\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lew_loop\n");
+        s = s.write(".Lew_yes:\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lew_no:\n");
         s = s.write("    movq $0, %rax\n");
         s = s.write("    ret\n");
         // __lang_str_index_of.

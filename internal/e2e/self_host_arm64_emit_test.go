@@ -677,6 +677,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			0,
 			"",
 		},
+		{
+			"str-ends-with-true",
+			"function main(): i32 { if (str_ends_with(\"hello world\", \"world\")) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"str-ends-with-false",
+			"function main(): i32 { if (str_ends_with(\"hello world\", \"hello\")) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"str-ends-with-empty-suffix",
+			"function main(): i32 { if (str_ends_with(\"abc\", \"\")) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"str-ends-with-longer-suffix",
+			"function main(): i32 { if (str_ends_with(\"hi\", \"hello\")) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"str-ends-with-whole",
+			"function main(): i32 { if (str_ends_with(\"abc\", \"abc\")) { return 1; } return 0; }",
+			1,
+			"",
+		},
 	}
 
 	for _, tc := range cases {
