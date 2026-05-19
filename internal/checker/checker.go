@@ -249,6 +249,17 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "method", Type: ast.StringType{}},
 				{Name: "path", Type: ast.StringType{}},
 				{Name: "body", Type: ast.StringType{}},
+				// `headers` lands at the END of the layout so the
+				// pre-headers byte offsets the wasi-http wrapper
+				// hardcodes (method@+0/+4, path@+8/+12,
+				// body@+16/+20) stay stable. HeaderMap is a 4-byte
+				// pointer slot on wasm32, total HttpRequest size
+				// 28 bytes. Inbound population: http_parse_request
+				// on the tcp_serve path parses the header block
+				// into the map; the wasi-http wrapper inlines an
+				// empty HeaderMap (canonical-ABI fields-resource
+				// integration is the next follow-up PR).
+				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
 		},
 		{

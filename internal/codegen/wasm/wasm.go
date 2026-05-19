@@ -5293,6 +5293,7 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`(local $out_body i32) (local $out_stream i32)`)
 	g.line(`(local $__arena_handle i32)`)
 	g.line(`(local $plat_struct i32)`)
+	g.line(`(local $req_headers i32) (local $hm_names i32) (local $hm_values i32)`)
 
 	// Implicit per-request arena: save the bump cursor at
 	// entry, restore it before returning so every allocation
@@ -5624,15 +5625,23 @@ func (g *generator) emitHttpHandlerWrapper() {
 
 	// ============================================================
 	// Build HttpRequest struct. Two-word ABI: each string field
-	// is 8 bytes (data@N, len@N+4). Layout for `{ method: string,
-	// path: string, body: string }` via `structFieldLayout`:
-	//   method @ +0 / len @ +4
-	//   path   @ +8 / len @ +12
-	//   body   @ +16 / len @ +20
-	// Total: 24 bytes (8-byte slots are naturally aligned from
-	// offset 0).
+	// is 8 bytes (data@N, len@N+4). Layout for
+	// `{ method: string, path: string, body: string,
+	//    headers: HeaderMap }` via `structFieldLayout`:
+	//   method  @ +0  / len @ +4
+	//   path    @ +8  / len @ +12
+	//   body    @ +16 / len @ +20
+	//   headers @ +24                (HeaderMap struct ptr)
+	// Total: 28 bytes (string slots are 8-byte aligned;
+	// the trailing struct-ptr field is 4 bytes).
+	//
+	// Headers are populated as an empty HeaderMap inline —
+	// canonical-ABI fields-resource integration
+	// (wasi:http/types fields entries + append+get on the
+	// incoming-request side, plus the response-side
+	// reverse path) is the next follow-up PR.
 	// ============================================================
-	g.line(`i32.const 24`)
+	g.line(`i32.const 28`)
 	g.line(`call $__lang_alloc`)
 	g.line(`local.tee $req_struct`)
 	g.line(`local.get $method_str_data`)
@@ -5661,6 +5670,42 @@ func (g *generator) emitHttpHandlerWrapper() {
 	g.line(`i32.const 20`)
 	g.line(`i32.add`)
 	g.line(`local.get $body_str_len`)
+	g.line(`i32.store`)
+
+	// Empty HeaderMap inline. Layout: two array-pointer slots
+	// (names @ +0, values @ +4). Each array allocation is the
+	// 8-byte empty-string-array shape `lang_alloc` emits for
+	// `var x: string[] = []` (length=0 at offset +4); the bytes
+	// at offset 0 of each array header stay zero from the bump
+	// allocator's zero-initialised page.
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $hm_names`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $hm_values`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`i32.const 0`)
+	g.line(`i32.store`)
+	g.line(`i32.const 8`)
+	g.line(`call $__lang_alloc`)
+	g.line(`local.tee $req_headers`)
+	g.line(`local.get $hm_names`)
+	g.line(`i32.store`)
+	g.line(`local.get $req_headers`)
+	g.line(`i32.const 4`)
+	g.line(`i32.add`)
+	g.line(`local.get $hm_values`)
+	g.line(`i32.store`)
+	g.line(`local.get $req_struct`)
+	g.line(`i32.const 24`)
+	g.line(`i32.add`)
+	g.line(`local.get $req_headers`)
 	g.line(`i32.store`)
 
 	// ============================================================

@@ -37,6 +37,9 @@
 // docs/PRELUDE-TO-MODULES.md.
 
 import "std/http";
+// std/headers — the placeholder HttpRequest before parse-success
+// uses header_map_new for the headers field.
+import "std/headers";
 
 pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
     var listener: i32 = tcp_listen(port);
@@ -75,7 +78,12 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
         // succeeds or we hit a hard cap / EOF.
         var buf: string = "";
         var have_request: boolean = false;
-        var req: HttpRequest = HttpRequest { method: "", path: "", body: "" };
+        var req: HttpRequest = HttpRequest {
+            method: "",
+            path: "",
+            body: "",
+            headers: headers.header_map_new(),
+        };
         while (true) {
             var chunk: string = tcp_recv(fd, 4096);
             if (len(chunk) == 0) {
