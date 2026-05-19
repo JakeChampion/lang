@@ -469,6 +469,39 @@ pub function (r: TestRunner) log(msg: string): TestRunner {
     return r;
 }
 
+// `(r).log_kv_string(key, value)` — formatted key=value
+// TAP comment. Quotes the value so embedded spaces /
+// special chars stay visually separable from the key.
+//
+//   r = r.log_kv_string("session_id", id);
+//   # session_id="abc-123"
+//
+// Use over plain `r.log(...)` when emitting a structured
+// breadcrumb the post-run log scraper might want to parse
+// (e.g., "what tempdir did this test use", "what trace id
+// did the subprocess produce") — the key=value shape is
+// `grep | awk -F=` friendly.
+pub function (r: TestRunner) log_kv_string(key: string, value: string): TestRunner {
+    print("# " + key + "=\"" + value + "\"");
+    return r;
+}
+
+// `(r).log_kv_i32(key, value)` — integer-valued breadcrumb.
+// Value rendered unquoted so numeric grep / awk filters
+// (e.g., `awk -F= '$1=="bytes" && $2>1024'`) work without
+// stripping quotes.
+pub function (r: TestRunner) log_kv_i32(key: string, value: i32): TestRunner {
+    print("# " + key + "=" + value.to_string());
+    return r;
+}
+
+// `(r).log_kv_i64(key, value)` — wider-int breadcrumb. Use
+// for byte counts, timestamps, anything beyond i32 range.
+pub function (r: TestRunner) log_kv_i64(key: string, value: i64): TestRunner {
+    print("# " + key + "=" + value.to_string());
+    return r;
+}
+
 // (r) finish() — print the TAP plan line + per-suite summary
 // and return the process exit code (0 = all passed, 1 = any
 // failed). Call this exactly once at the end of main().
@@ -904,6 +937,61 @@ pub function assert_starts_with(s: string, prefix: string): Option[string] {
 pub function assert_ends_with(s: string, suffix: string): Option[string] {
     if (s.ends_with(suffix)) { return None; }
     return Some("assert_ends_with: \"" + s + "\" does not end with \"" + suffix + "\"");
+}
+
+// =================== CASE-INSENSITIVE STRING ASSERTIONS ===================
+//
+// Strings whose casing isn't observable: HTTP headers,
+// environment variable names, file extensions on case-
+// insensitive filesystems, user-supplied identifiers
+// where the production layer normalised the case.
+// std/string already exposes `.eq_ignore_ascii_case`,
+// `.contains_ci`, `.starts_with_ci`, `.ends_with_ci` as
+// receiver methods; these helpers wrap them in the
+// assertion shape (`Option[string]` failure) and quote
+// both sides in the diagnostic so a case-mismatch
+// failure is unambiguous.
+
+// `assert_eq_string_ci(actual, expected)` — ASCII case-
+// insensitive equality. Failure embeds both raw values
+// (no case-folding applied for display) so the reader
+// sees exactly which bytes differ.
+pub function assert_eq_string_ci(actual: string, expected: string): Option[string] {
+    if (actual.eq_ignore_ascii_case(expected)) { return None; }
+    return Some("assert_eq_string_ci: expected \"" + expected +
+                "\" (case-insensitive), got \"" + actual + "\"");
+}
+
+// `assert_neq_string_ci(actual, expected)` — must differ
+// even after case-folding.
+pub function assert_neq_string_ci(actual: string, expected: string): Option[string] {
+    if (!actual.eq_ignore_ascii_case(expected)) { return None; }
+    return Some("assert_neq_string_ci: \"" + actual +
+                "\" matches \"" + expected + "\" (case-insensitive)");
+}
+
+// `assert_contains_ci(haystack, needle)` — case-
+// insensitive substring search.
+pub function assert_contains_ci(haystack: string, needle: string): Option[string] {
+    if (haystack.contains_ci(needle)) { return None; }
+    return Some("assert_contains_ci: \"" + haystack +
+                "\" does not contain \"" + needle + "\" (case-insensitive)");
+}
+
+// `assert_starts_with_ci(s, prefix)` — case-insensitive
+// prefix check.
+pub function assert_starts_with_ci(s: string, prefix: string): Option[string] {
+    if (s.starts_with_ci(prefix)) { return None; }
+    return Some("assert_starts_with_ci: \"" + s +
+                "\" does not start with \"" + prefix + "\" (case-insensitive)");
+}
+
+// `assert_ends_with_ci(s, suffix)` — case-insensitive
+// suffix check.
+pub function assert_ends_with_ci(s: string, suffix: string): Option[string] {
+    if (s.ends_with_ci(suffix)) { return None; }
+    return Some("assert_ends_with_ci: \"" + s +
+                "\" does not end with \"" + suffix + "\" (case-insensitive)");
 }
 
 // `assert_empty_string(s)` — sugar for assert_eq_i32(len(s), 0)
