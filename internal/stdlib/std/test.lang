@@ -2803,6 +2803,177 @@ pub function assert_array_disjoint_string(a: string[], b: string[]): Option[stri
     return None;
 }
 
+// =================== ARRAY PREFIX / SUFFIX / SUBSEQ ===================
+//
+// Order-sensitive contiguous-region relations. Different
+// shape from `assert_set_eq_*` / `assert_subset_*` (which
+// ignore order). Common test target: "the result array
+// begins with the same header rows", "the buffer ends in
+// the EOF sentinel", "the emitted opcodes contain this
+// sequence somewhere".
+
+// `assert_array_starts_with_i32(arr, prefix)` —
+// `arr[0..len(prefix)] == prefix` (element-wise). Empty
+// prefix vacuously passes (every array starts with the
+// empty prefix). Failure either reports too-short OR
+// names the first non-matching index.
+pub function assert_array_starts_with_i32(arr: i32[], prefix: i32[]): Option[string] {
+    var pn: i32 = len(prefix);
+    if (pn > len(arr)) {
+        return Some("assert_array_starts_with_i32: array length " +
+                    len(arr).to_string() + " < prefix length " +
+                    pn.to_string());
+    }
+    var i: i32 = 0;
+    while (i < pn) {
+        if (arr[i] != prefix[i]) {
+            return Some("assert_array_starts_with_i32: at index " +
+                        i.to_string() + " expected " +
+                        prefix[i].to_string() + ", got " +
+                        arr[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_array_starts_with_string(arr, prefix)` — string-
+// typed mirror.
+pub function assert_array_starts_with_string(arr: string[], prefix: string[]): Option[string] {
+    var pn: i32 = len(prefix);
+    if (pn > len(arr)) {
+        return Some("assert_array_starts_with_string: array length " +
+                    len(arr).to_string() + " < prefix length " +
+                    pn.to_string());
+    }
+    var i: i32 = 0;
+    while (i < pn) {
+        if (arr[i] != prefix[i]) {
+            return Some("assert_array_starts_with_string: at index " +
+                        i.to_string() + " expected \"" +
+                        prefix[i] + "\", got \"" + arr[i] + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_array_ends_with_i32(arr, suffix)` —
+// `arr[len(arr)-len(suffix)..] == suffix`. Empty suffix
+// vacuously passes. Failure reports too-short or names
+// the first mismatching index (offset into `arr`).
+pub function assert_array_ends_with_i32(arr: i32[], suffix: i32[]): Option[string] {
+    var sn: i32 = len(suffix);
+    var an: i32 = len(arr);
+    if (sn > an) {
+        return Some("assert_array_ends_with_i32: array length " +
+                    an.to_string() + " < suffix length " +
+                    sn.to_string());
+    }
+    var off: i32 = an - sn;
+    var i: i32 = 0;
+    while (i < sn) {
+        if (arr[off + i] != suffix[i]) {
+            return Some("assert_array_ends_with_i32: at index " +
+                        (off + i).to_string() + " expected " +
+                        suffix[i].to_string() + ", got " +
+                        arr[off + i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `assert_array_ends_with_string(arr, suffix)` — string-
+// typed mirror.
+pub function assert_array_ends_with_string(arr: string[], suffix: string[]): Option[string] {
+    var sn: i32 = len(suffix);
+    var an: i32 = len(arr);
+    if (sn > an) {
+        return Some("assert_array_ends_with_string: array length " +
+                    an.to_string() + " < suffix length " +
+                    sn.to_string());
+    }
+    var off: i32 = an - sn;
+    var i: i32 = 0;
+    while (i < sn) {
+        if (arr[off + i] != suffix[i]) {
+            return Some("assert_array_ends_with_string: at index " +
+                        (off + i).to_string() + " expected \"" +
+                        suffix[i] + "\", got \"" + arr[off + i] + "\"");
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `__match_subseq_i32` — true iff `needle` appears as a
+// contiguous sub-array of `arr` starting at any offset.
+// Plain O(N*M) scan; fine for the typical short arrays in
+// tests.
+function __match_subseq_i32(arr: i32[], needle: i32[]): boolean {
+    var nn: i32 = len(needle);
+    if (nn == 0) { return true; }
+    var an: i32 = len(arr);
+    if (nn > an) { return false; }
+    var start: i32 = 0;
+    while (start <= an - nn) {
+        var matched: boolean = true;
+        var i: i32 = 0;
+        while (i < nn) {
+            if (arr[start + i] != needle[i]) { matched = false; i = nn; }
+            else { i = i + 1; }
+        }
+        if (matched) { return true; }
+        start = start + 1;
+    }
+    return false;
+}
+
+// `assert_array_contains_subseq_i32(arr, needle)` —
+// `needle` appears anywhere in `arr` as a contiguous
+// sub-array (order matters). Empty needle vacuously
+// passes. Failure message just notes the absence (the
+// offending side is the needle, already given to the
+// helper — embedding `arr` would bloat the diagnostic
+// without adding signal).
+pub function assert_array_contains_subseq_i32(arr: i32[], needle: i32[]): Option[string] {
+    if (__match_subseq_i32(arr, needle)) { return None; }
+    return Some("assert_array_contains_subseq_i32: needle of length " +
+                len(needle).to_string() +
+                " not found in array of length " +
+                len(arr).to_string());
+}
+
+function __match_subseq_string(arr: string[], needle: string[]): boolean {
+    var nn: i32 = len(needle);
+    if (nn == 0) { return true; }
+    var an: i32 = len(arr);
+    if (nn > an) { return false; }
+    var start: i32 = 0;
+    while (start <= an - nn) {
+        var matched: boolean = true;
+        var i: i32 = 0;
+        while (i < nn) {
+            if (arr[start + i] != needle[i]) { matched = false; i = nn; }
+            else { i = i + 1; }
+        }
+        if (matched) { return true; }
+        start = start + 1;
+    }
+    return false;
+}
+
+// `assert_array_contains_subseq_string(arr, needle)` —
+// string-typed mirror.
+pub function assert_array_contains_subseq_string(arr: string[], needle: string[]): Option[string] {
+    if (__match_subseq_string(arr, needle)) { return None; }
+    return Some("assert_array_contains_subseq_string: needle of length " +
+                len(needle).to_string() +
+                " not found in array of length " +
+                len(arr).to_string());
+}
+
 // =================== STRING-ARRAY SUBSTRING ASSERTIONS ===================
 //
 // "Every line of output starts with TIMESTAMP" / "every

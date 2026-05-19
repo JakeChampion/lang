@@ -468,6 +468,18 @@ function main(): i32 {
   fails). `assert_array_disjoint_i32(a, b)` / `_string`
   — no shared element (empty either side vacuously
   passes; failure names the first shared element)
+- **Array order-sensitive relations:**
+  `assert_array_starts_with_i32(arr, prefix)` /
+  `_string` — `arr` begins with `prefix` element-wise
+  (empty prefix vacuously passes; failure either reports
+  too-short or names first mismatching index).
+  `assert_array_ends_with_i32(arr, suffix)` / `_string`
+  — same anchored at the tail; failure index is in
+  array coords so the bad slot is locatable.
+  `assert_array_contains_subseq_i32(arr, needle)` /
+  `_string` — `needle` appears as a contiguous
+  sub-array of `arr` (order-sensitive complement to
+  `assert_subset_i32`)
 - **Enumerated value:** `assert_one_of_i32(actual,
   allowed)` / `_string` — positive set membership
   (e.g., "exit code is one of [0, 1, 2]"). Empty allowed
