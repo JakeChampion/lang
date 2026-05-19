@@ -302,3 +302,194 @@ pub function (d: Date) day_of_year(): i32 {
     if (is_leap_year(d.year)) { add_for_leap = 1; }
     return doy + 59 + add_for_leap;
 }
+
+// ============================================================
+// RFC 3339 / ISO 8601 parsing + formatting — Phase 4 per
+// docs/STDLIB-DESIGN-RESEARCH.md Rec §4.
+//
+// Surface today: ISO date (YYYY-MM-DD) and UTC RFC 3339 instant
+// (YYYY-MM-DDTHH:MM:SS[.fraction]Z). DateTime + zoned-offset
+// forms (`+01:00`) land with TimeZone in Phase 5.
+// ============================================================
+
+// `__pad2(n)` — zero-pad an i32 to two digits. Assumes 0 ≤ n ≤ 99.
+function __pad2(n: i32): string {
+    if (n < 10) {
+        return "0" + int.int_to_string(n);
+    }
+    return int.int_to_string(n);
+}
+
+// `__pad4(n)` — zero-pad a non-negative i32 to four digits.
+// Years past 9999 stretch beyond four; ISO 8601 allows them
+// (with a leading `+` sign on extended-year form) but Phase 4
+// emits the natural decimal representation for those — RFC
+// 3339 parsers in practice tolerate the extra digit.
+function __pad4(n: i32): string {
+    if (n < 10) { return "000" + int.int_to_string(n); }
+    if (n < 100) { return "00" + int.int_to_string(n); }
+    if (n < 1000) { return "0" + int.int_to_string(n); }
+    return int.int_to_string(n);
+}
+
+// `__parse_digits(s, start, end)` — parse the [start, end) slice
+// of `s` as a decimal integer. Returns -1 on any non-digit byte
+// — callers use this as a sentinel for malformed input. Doesn't
+// handle leading sign; date components are all non-negative.
+function __parse_digits(s: string, start: i32, end: i32): i32 {
+    if (start >= end) { return -1; }
+    var acc: i32 = 0;
+    var i: i32 = start;
+    while (i < end) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return -1; }
+        acc = acc * 10 + (b - 48);
+        i = i + 1;
+    }
+    return acc;
+}
+
+// `(d: Date).format_iso()` — emit `YYYY-MM-DD`. Doesn't
+// validate; callers should `.is_valid()` first if the date
+// came from arithmetic that could produce nonsense.
+pub function (d: Date) format_iso(): string {
+    return __pad4(d.year) + "-" + __pad2(d.month) + "-" + __pad2(d.day);
+}
+
+// `date_parse_iso(s)` — parse `YYYY-MM-DD`. Returns None on
+// any deviation from the exact shape: wrong length, missing
+// hyphens at offsets 4 and 7, or non-digit bytes in the
+// year/month/day slices. Doesn't check that the resulting
+// date is calendar-valid (Feb 30 parses); callers use
+// `.is_valid()` afterward.
+pub function date_parse_iso(s: string): Option[Date] {
+    if (len(s) != 10) { return None; }
+    if (s[4] != 45 || s[7] != 45) { return None; }   // '-' = 45
+    var y: i32 = __parse_digits(s, 0, 4);
+    var m: i32 = __parse_digits(s, 5, 7);
+    var d: i32 = __parse_digits(s, 8, 10);
+    if (y < 0 || m < 0 || d < 0) { return None; }
+    return Some(Date { year: y, month: m, day: d });
+}
+
+// `(i: Instant).format_rfc3339()` — emit
+// `YYYY-MM-DDTHH:MM:SSZ` (UTC). When `i.nsec > 0`, includes a
+// fractional-seconds component `.nnnnnnnnn` (always 9 digits;
+// callers wanting trimmed trailing zeros can post-process).
+//
+// Built from the civil-date arithmetic: `sec / 86400` →
+// serial days → `__civil_from_days` → Y/M/D. Remainder gives
+// H/M/S. nsec passes through unchanged.
+//
+// Negative `i.sec` (pre-1970) works via the era trick in
+// `__civil_from_days`; the day-rem-and-sec-rem math below
+// uses floor division on negatives by adjusting when the
+// remainder would otherwise come back negative.
+pub function (i: Instant) format_rfc3339(): string {
+    var sec: i64 = i.sec;
+    var spd: i64 = 86400 as i64;
+    var days: i64 = sec / spd;
+    var sec_in_day: i64 = sec - days * spd;
+    if (sec_in_day < (0 as i64)) {
+        sec_in_day = sec_in_day + spd;
+        days = days - (1 as i64);
+    }
+    var d: Date = __civil_from_days(days as i32);
+    var sid: i32 = sec_in_day as i32;
+    var h: i32 = sid / 3600;
+    var rem: i32 = sid - h * 3600;
+    var mn: i32 = rem / 60;
+    var s: i32 = rem - mn * 60;
+    var head: string = d.format_iso() + "T" + __pad2(h) + ":" + __pad2(mn) + ":" + __pad2(s);
+    if (i.nsec == 0) {
+        return head + "Z";
+    }
+    // 9-digit fractional. Build manually to preserve leading
+    // zeros — int_to_string(123) is "123", which would
+    // misrepresent ".000000123" as ".123".
+    var ns: i32 = i.nsec;
+    var div: i32 = 100000000;
+    var frac: string = "";
+    while (div >= 1) {
+        var digit: i32 = (ns / div) - (ns / (div * 10)) * 10;
+        // Bytes 48..57 = '0'..'9'. We append each digit as a
+        // 1-char string via index → __char_to_string trick:
+        // emitting the literal digit chars via switch is the
+        // cleanest path that doesn't need a char helper.
+        if (digit == 0) { frac = frac + "0"; }
+        else if (digit == 1) { frac = frac + "1"; }
+        else if (digit == 2) { frac = frac + "2"; }
+        else if (digit == 3) { frac = frac + "3"; }
+        else if (digit == 4) { frac = frac + "4"; }
+        else if (digit == 5) { frac = frac + "5"; }
+        else if (digit == 6) { frac = frac + "6"; }
+        else if (digit == 7) { frac = frac + "7"; }
+        else if (digit == 8) { frac = frac + "8"; }
+        else { frac = frac + "9"; }
+        if (div == 1) { div = 0; } else { div = div / 10; }
+    }
+    return head + "." + frac + "Z";
+}
+
+// `instant_parse_rfc3339(s)` — parse the UTC form
+// `YYYY-MM-DDTHH:MM:SS[.fraction]Z`. Returns None on any
+// deviation. Doesn't accept the lowercase `t` / `z` variants
+// (RFC 3339 §5.6 allows them, but the canonical form
+// dominates in the wild and accepting both invites
+// case-mismatch bugs in callers comparing strings).
+//
+// Zone offsets `+HH:MM` / `-HH:MM` land in Phase 5 with
+// TimeZone.
+pub function instant_parse_rfc3339(s: string): Option[Instant] {
+    var n: i32 = len(s);
+    // 20 = "YYYY-MM-DDTHH:MM:SSZ" minimum. Beyond that there's
+    // an optional ".fraction" before the trailing Z.
+    if (n < 20) { return None; }
+    if (s[4] != 45 || s[7] != 45) { return None; }    // hyphens
+    if (s[10] != 84) { return None; }                  // 'T' = 84
+    if (s[13] != 58 || s[16] != 58) { return None; }  // colons
+    var y: i32 = __parse_digits(s, 0, 4);
+    var mo: i32 = __parse_digits(s, 5, 7);
+    var d: i32 = __parse_digits(s, 8, 10);
+    var h: i32 = __parse_digits(s, 11, 13);
+    var mn: i32 = __parse_digits(s, 14, 16);
+    var sc: i32 = __parse_digits(s, 17, 19);
+    if (y < 0 || mo < 0 || d < 0 || h < 0 || mn < 0 || sc < 0) { return None; }
+    // Fraction (optional) + trailing Z.
+    var nsec: i32 = 0;
+    if (s[19] == 46) {  // '.' = 46
+        // Find Z; everything between '.' and 'Z' is digits.
+        var z_idx: i32 = -1;
+        var i: i32 = 20;
+        while (i < n) {
+            if (s[i] == 90) {   // 'Z' = 90
+                z_idx = i;
+                i = n;
+            } else {
+                i = i + 1;
+            }
+        }
+        if (z_idx < 0) { return None; }
+        if (z_idx == 20) { return None; }   // empty fraction
+        if (z_idx - 20 > 9) { return None; } // too many digits (>nsec)
+        var frac: i32 = __parse_digits(s, 20, z_idx);
+        if (frac < 0) { return None; }
+        // Pad to 9 digits: each missing digit multiplies by 10.
+        var pad: i32 = 9 - (z_idx - 20);
+        while (pad > 0) {
+            frac = frac * 10;
+            pad = pad - 1;
+        }
+        nsec = frac;
+    } else if (s[19] == 90) {
+        // Bare Z directly after seconds; nsec stays 0.
+    } else {
+        return None;
+    }
+    // Compose Instant: seconds = days_from_civil(y,m,d)*86400 + h*3600 + mn*60 + sc.
+    var days: i32 = __days_from_civil(y, mo, d);
+    var spd: i64 = 86400 as i64;
+    var sec: i64 = (days as i64) * spd
+        + ((h * 3600 + mn * 60 + sc) as i64);
+    return Some(Instant { sec: sec, nsec: nsec });
+}

@@ -933,6 +933,152 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptRfc3339 pins the Phase-4 parse + format
+// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4): ISO date
+// (`YYYY-MM-DD`) for `Date`, RFC 3339 UTC instant
+// (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`) for `Instant`.
+// Zoned offsets `+HH:MM` land with Phase 5.
+func TestInterpScriptRfc3339(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "Date.format_iso zero-pads month + day",
+			source: `import "std/time";
+function main(): i32 {
+    print(time.date_make(2026, 5, 19).format_iso());
+    print(time.date_make(2024, 1, 1).format_iso());
+    print(time.date_make(2024, 12, 31).format_iso());
+    print(time.date_make(99, 3, 7).format_iso());
+    return 0;
+}`,
+			wantStdout: "2026-05-19\n2024-01-01\n2024-12-31\n0099-03-07\n",
+		},
+		{
+			name: "date_parse_iso accepts canonical form",
+			source: `import "std/time";
+function show(opt: Option[Date]) {
+    match (opt) {
+        Some(d) => { print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string()); },
+        None => { print("none"); }
+    }
+}
+function main(): i32 {
+    show(time.date_parse_iso("2026-05-19"));
+    show(time.date_parse_iso("2024-02-29"));   // leap-year day
+    show(time.date_parse_iso("0099-03-07"));   // zero-padded year
+    return 0;
+}`,
+			wantStdout: "2026-5-19\n2024-2-29\n99-3-7\n",
+		},
+		{
+			name: "date_parse_iso rejects malformed input",
+			source: `import "std/time";
+function show(s: string) {
+    match (time.date_parse_iso(s)) {
+        Some(_) => { print("ACCEPTED " + s); },
+        None => { print("rejected " + s); }
+    }
+}
+function main(): i32 {
+    show("");
+    show("2026/05/19");        // wrong separator
+    show("2026-05-19T00");     // too long
+    show("2026-13-01");        // checker doesn't validate range
+    show("abcd-05-19");        // non-digits
+    show("2026-05-XX");
+    show("2026-5-19");         // single-digit month
+    return 0;
+}`,
+			// 2026-13-01 still PARSES (caller uses .is_valid() to
+			// catch out-of-range month); the others all reject.
+			wantStdout: "rejected \nrejected 2026/05/19\nrejected 2026-05-19T00\nACCEPTED 2026-13-01\nrejected abcd-05-19\nrejected 2026-05-XX\nrejected 2026-5-19\n",
+		},
+		{
+			name: "Instant.format_rfc3339 emits canonical Z form",
+			source: `import "std/time";
+function main(): i32 {
+    // Epoch.
+    print((Instant { sec: 0 as i64, nsec: 0 }).format_rfc3339());
+    // 2025-01-01T00:00:00Z: epoch sec = 55 years * 365.25 * 86400 ≈ 1735689600.
+    print((Instant { sec: 1735689600 as i64, nsec: 0 }).format_rfc3339());
+    // With ns fraction.
+    print((Instant { sec: 0 as i64, nsec: 123456789 }).format_rfc3339());
+    print((Instant { sec: 0 as i64, nsec: 1 }).format_rfc3339());
+    // Pre-epoch (negative sec).
+    print((Instant { sec: (0 as i64) - (1 as i64), nsec: 0 }).format_rfc3339());
+    return 0;
+}`,
+			wantStdout: "1970-01-01T00:00:00Z\n2025-01-01T00:00:00Z\n1970-01-01T00:00:00.123456789Z\n1970-01-01T00:00:00.000000001Z\n1969-12-31T23:59:59Z\n",
+		},
+		{
+			name: "instant_parse_rfc3339 round-trips through format",
+			source: `import "std/time";
+function show(s: string) {
+    match (time.instant_parse_rfc3339(s)) {
+        Some(p) => { print(p.format_rfc3339()); },
+        None => { print("rejected"); }
+    }
+}
+function main(): i32 {
+    show("2026-05-19T14:30:00Z");
+    show("1970-01-01T00:00:00Z");
+    show("2024-02-29T23:59:59Z");
+    show("2026-05-19T14:30:00.500Z");           // 3-digit fraction → nsec=5e8
+    show("2026-05-19T14:30:00.123456789Z");
+    return 0;
+}`,
+			wantStdout: "2026-05-19T14:30:00Z\n1970-01-01T00:00:00Z\n2024-02-29T23:59:59Z\n2026-05-19T14:30:00.500000000Z\n2026-05-19T14:30:00.123456789Z\n",
+		},
+		{
+			name: "instant_parse_rfc3339 rejects malformed input",
+			source: `import "std/time";
+function show(s: string) {
+    match (time.instant_parse_rfc3339(s)) {
+        Some(_) => { print("ACCEPTED"); },
+        None => { print("rejected"); }
+    }
+}
+function main(): i32 {
+    show("");
+    show("2026-05-19");                          // date only
+    show("2026-05-19T14:30:00");                  // missing Z
+    show("2026-05-19t14:30:00z");                 // lowercase
+    show("2026-05-19 14:30:00Z");                 // space instead of T
+    show("2026-05-19T14:30:00+00:00");            // offset form (Phase 5)
+    show("2026-05-19T14:30:00.Z");                // empty fraction
+    show("2026-05-19T14:30:00.1234567890Z");      // 10-digit fraction
+    return 0;
+}`,
+			wantStdout: "rejected\nrejected\nrejected\nrejected\nrejected\nrejected\nrejected\nrejected\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
