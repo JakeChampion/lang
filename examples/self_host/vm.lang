@@ -470,6 +470,32 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                     return CompileResult { ops: ops, lt: lt };
                 },
                 parser.ExprFieldAccess(fa) => {
+                    // Detect qualified-name call: `Ns.func(…)`
+                    // where Ns is a bare ident. If the runtime
+                    // FuncTable has `Ns.func`, dispatch as a
+                    // plain call; otherwise fall through to
+                    // method semantics. We can't disambiguate
+                    // at compile time (no type info), so we
+                    // emit OpCall for the qualified shape and
+                    // let the runtime route either path.
+                    var ns_hint: string = "";
+                    match (fa.obj) {
+                        parser.ExprIdent(ns_id) => { ns_hint = ns_id.name; },
+                        _ => { }
+                    }
+                    if (len(ns_hint) > 0 && lt.idx_of(ns_hint) < 0) {
+                        // Bare ident that isn't a local — likely
+                        // a namespace prefix. Emit args + a plain
+                        // OpCall("ns.field", argc).
+                        var qcai: i32 = 0;
+                        while (qcai < len(c.args)) {
+                            var qcar: CompileResult = compile_expr(c.args[qcai], ops, lt);
+                            ops = qcar.ops; lt = qcar.lt;
+                            qcai = qcai + 1;
+                        }
+                        ops = ops.push(op_call(ns_hint + "." + fa.field, len(c.args)));
+                        return CompileResult { ops: ops, lt: lt };
+                    }
                     // Receiver onto stack first, then args.
                     var rr: CompileResult = compile_expr(fa.obj, ops, lt);
                     ops = rr.ops; lt = rr.lt;
@@ -2289,6 +2315,20 @@ function main(): i32 {
     match (r64) {
         VInt(i) => { if (i.v != 2) { return 640; } },
         _ => { return 641; }
+    }
+
+    // Cross-file imports through the VM: merge "main" + a
+    // prefixed "parser" module; main calls parser.parse_module()
+    // and the VM dispatches via the qualified-name OpCall path.
+    var mainSrc65: string = "function main(): i32 { return parser.parse_module(); }";
+    var modSrc65: string = "pub function parse_module(): i32 { return 42; }";
+    var mainMod65: parser.Module = parser.parse_module(lexer.tokenize(mainSrc65));
+    var pMod65: parser.Module = parser.parse_module(lexer.tokenize(modSrc65));
+    var merged65: parser.Module = parser.merge_module_prefixed(mainMod65, pMod65, "parser");
+    var r65: Value = exec_program(compile_program(merged65));
+    match (r65) {
+        VInt(i) => { if (i.v != 42) { return 650; } },
+        _ => { return 651; }
     }
 
     return 0;

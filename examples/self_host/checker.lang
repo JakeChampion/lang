@@ -524,21 +524,39 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
                 parser.ExprFieldAccess(fa) => {
-                    name = fa.field;
-                    is_method = true;
-                    recv_ty = check_expr(fa.obj, s);
-                    // Receiver type-name comes from the receiver
-                    // expression's static type. Primitive types
-                    // use their type-keyword spelling so methods
-                    // declared on them dispatch correctly.
-                    match (recv_ty) {
-                        TypeStruct(sn) => { recv_type_name = sn.name; },
-                        TypeString(_) => { recv_type_name = "string"; },
-                        TypeI32(_) => { recv_type_name = "i32"; },
-                        TypeBool(_) => { recv_type_name = "bool"; },
-                        TypeFloat(_) => { recv_type_name = "f64"; },
-                        TypeMap(_) => { recv_type_name = "Map"; },
-                        _ => { return t_unknown("method call: receiver isn't a typed value"); }
+                    // Qualified-name call: `Ns.func(…)` resolves
+                    // to a plain function named "Ns.func" when
+                    // such a sig exists. Otherwise fall through
+                    // to method-dispatch semantics.
+                    var qhandled: boolean = false;
+                    match (fa.obj) {
+                        parser.ExprIdent(ns_id) => {
+                            var qname: string = ns_id.name + "." + fa.field;
+                            var qsig: FuncSig = s.lookup_sig(qname);
+                            if (len(qsig.name) > 0) {
+                                name = qname;
+                                qhandled = true;
+                            }
+                        },
+                        _ => { }
+                    }
+                    if (!qhandled) {
+                        name = fa.field;
+                        is_method = true;
+                        recv_ty = check_expr(fa.obj, s);
+                        // Receiver type-name comes from the receiver
+                        // expression's static type. Primitive types
+                        // use their type-keyword spelling so methods
+                        // declared on them dispatch correctly.
+                        match (recv_ty) {
+                            TypeStruct(sn) => { recv_type_name = sn.name; },
+                            TypeString(_) => { recv_type_name = "string"; },
+                            TypeI32(_) => { recv_type_name = "i32"; },
+                            TypeBool(_) => { recv_type_name = "bool"; },
+                            TypeFloat(_) => { recv_type_name = "f64"; },
+                            TypeMap(_) => { recv_type_name = "Map"; },
+                            _ => { return t_unknown("method call: receiver isn't a typed value"); }
+                        }
                     }
                 },
                 _ => { return t_unknown("call target is not an identifier"); }
