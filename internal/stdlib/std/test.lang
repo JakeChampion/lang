@@ -135,6 +135,15 @@ pub struct TestRunner {
     // `parse_fail_fast_from_args(args())` so a test program
     // can accept `lang -interp test.lang -- --fail-fast`.
     fail_fast: boolean,
+    // `quiet` suppresses the per-case `ok N - name` line for
+    // passes + skips so the user sees only the failures (and
+    // the summary). Trade-off: TAP consumers that rely on the
+    // case list reconstruct from the `1..N` plan line at the
+    // bottom; humans get a short failure-focused report.
+    // Off by default — full TAP is the better default for CI
+    // log scrapers. Set via `test_new_quiet(suite)` /
+    // `(r).with_quiet()` / `parse_quiet_from_args(args())`.
+    quiet: boolean,
 }
 
 // test_new(suite) — start a new run. `suite` labels the run in
@@ -156,6 +165,7 @@ pub function test_new(suite: string): TestRunner {
         cleanup_paths: [],
         filter: "",
         fail_fast: false,
+        quiet: false,
     };
 }
 
@@ -180,6 +190,7 @@ pub function test_new_filtered(suite: string, filter: string): TestRunner {
         cleanup_paths: r.cleanup_paths,
         filter: filter,
         fail_fast: r.fail_fast,
+        quiet: r.quiet,
     };
 }
 
@@ -245,6 +256,7 @@ pub function (r: TestRunner) with_fail_fast(): TestRunner {
         cleanup_paths: r.cleanup_paths,
         filter: r.filter,
         fail_fast: true,
+        quiet: r.quiet,
     };
 }
 
@@ -259,6 +271,64 @@ pub function parse_fail_fast_from_args(argv: string[]): boolean {
     var i: i32 = 0;
     while (i < len(argv)) {
         if (argv[i] == "--fail-fast") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `test_new_quiet(suite)` — same as test_new but enables
+// quiet mode. In quiet mode, the per-case `ok N - name`
+// line is suppressed for passes + skips; only failures
+// emit per-case detail. The `1..N` plan line and the
+// summary at the bottom still print, so TAP consumers
+// that need the case count reconstruct it from there.
+//
+// Use for the developer loop where seeing every passing
+// test is more noise than signal. CI logs are usually
+// better off WITHOUT this (full TAP makes regressions
+// easier to triage).
+//
+// Pair with `parse_quiet_from_args(args())` to lift the
+// setting from a `--quiet` command-line flag:
+//
+//   var r = test_new("my suite");
+//   if (parse_quiet_from_args(args())) { r = r.with_quiet(); }
+pub function test_new_quiet(suite: string): TestRunner {
+    var r: TestRunner = test_new(suite);
+    return r.with_quiet();
+}
+
+// `(r).with_quiet()` — flips quiet mode on for an existing
+// runner. Lets a test that already constructed `r` via
+// `test_new(...)` opt into quiet based on a CLI flag
+// without having to discard the runner.
+pub function (r: TestRunner) with_quiet(): TestRunner {
+    return TestRunner {
+        suite: r.suite,
+        passed: r.passed,
+        failed: r.failed,
+        skipped: r.skipped,
+        failures: r.failures,
+        skip_reasons: r.skip_reasons,
+        verbose: r.verbose,
+        prefix: r.prefix,
+        base_idx: r.base_idx,
+        cleanup_paths: r.cleanup_paths,
+        filter: r.filter,
+        fail_fast: r.fail_fast,
+        quiet: true,
+    };
+}
+
+// `parse_quiet_from_args(argv)` — true iff `--quiet`
+// appears anywhere in `argv`. Use with `with_quiet()`:
+//
+//   var r = test_new("my suite");
+//   if (parse_quiet_from_args(args())) { r = r.with_quiet(); }
+pub function parse_quiet_from_args(argv: string[]): boolean {
+    var i: i32 = 0;
+    while (i < len(argv)) {
+        if (argv[i] == "--quiet") { return true; }
         i = i + 1;
     }
     return false;
@@ -284,6 +354,7 @@ pub function test_new_verbose(suite: string): TestRunner {
         cleanup_paths: r.cleanup_paths,
         filter: r.filter,
         fail_fast: r.fail_fast,
+        quiet: r.quiet,
     };
 }
 
@@ -320,7 +391,12 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
     var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
     match (result) {
         None => {
-            print("ok " + idx.to_string() + " - " + display);
+            // Suppress the per-case line in quiet mode —
+            // failures still print below (they always
+            // print, regardless of mode).
+            if (!r.quiet) {
+                print("ok " + idx.to_string() + " - " + display);
+            }
             return TestRunner {
                 suite: r.suite,
                 passed: r.passed + 1,
@@ -334,6 +410,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
                 cleanup_paths: r.cleanup_paths,
                 filter: r.filter,
                 fail_fast: r.fail_fast,
+                quiet: r.quiet,
             };
         },
         Some(msg) => {
@@ -355,6 +432,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
                 cleanup_paths: r.cleanup_paths,
                 filter: r.filter,
                 fail_fast: r.fail_fast,
+                quiet: r.quiet,
             };
         }
     }
@@ -378,7 +456,9 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
 pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
     var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
     var display: string = r.prefix + name;
-    print("ok " + idx.to_string() + " - " + display + " # SKIP " + reason);
+    if (!r.quiet) {
+        print("ok " + idx.to_string() + " - " + display + " # SKIP " + reason);
+    }
     var sr: string[] = r.skip_reasons.push(display + ": " + reason);
     return TestRunner {
         suite: r.suite,
@@ -393,6 +473,7 @@ pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
         cleanup_paths: r.cleanup_paths,
         filter: r.filter,
         fail_fast: r.fail_fast,
+        quiet: r.quiet,
     };
 }
 
@@ -456,6 +537,7 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
         // to every nested case too.
         filter: r.filter,
         fail_fast: r.fail_fast,
+        quiet: r.quiet,
     };
 }
 
@@ -496,6 +578,7 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
         cleanup_paths: cl,
         filter: r.filter,
         fail_fast: r.fail_fast,
+        quiet: r.quiet,
     };
 }
 
@@ -530,6 +613,7 @@ pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
         cleanup_paths: cl,
         filter: r.filter,
         fail_fast: r.fail_fast,
+        quiet: r.quiet,
     };
 }
 

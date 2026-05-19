@@ -459,6 +459,15 @@ function main(): i32 {
   case still emits a TAP line so the plan stays faithful.
   Off by default (the full TAP stream is usually more useful
   in CI). Pair with `lang -interp test.lang -- --fail-fast`.
+- **`--quiet` output mode:** `test_new_quiet(suite)` /
+  `(r).with_quiet()` + `parse_quiet_from_args(args())` —
+  suppresses the per-case `ok N - name` line for passes
+  and skips; `not ok` lines + diagnostic blocks still
+  print, as does the `1..N` plan + summary footer.
+  Counters are unaffected (it's a print-suppression
+  switch only). Use for the developer loop where seeing
+  every passing test is noise; CI logs usually want the
+  full TAP stream for triage.
 - **Tempdir convenience:** `must_temp_dir(r, prefix) ->
   (string, TestRunner)` — single-shot tempdir + cleanup
   registration with fallback to a recorded skip on failure
