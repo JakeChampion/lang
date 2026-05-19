@@ -919,6 +919,37 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildStrConcatBody,
 	},
+	"__http_entry": {
+		// (req, out) → () — wasi:http/incoming-handler wrapper.
+		// Marshals the canonical-ABI incoming-request into the
+		// user's HttpRequest struct, calls handle(), then streams
+		// the HttpResponse back. Exported under the canonical
+		// `wasi:http/incoming-handler@0.2.0#handle` name from the
+		// emit-time export-renaming layer in wasmbin.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildHttpEntryBody,
+	},
+	"__bytes_to_lang_string": {
+		// (host_ptr, host_len) → (data, len) — heap-form lang
+		// string built by memcpy'ing the host bytes. Used by the
+		// http_entry wrapper to materialise method / path / body
+		// strings from the canonical-ABI return areas.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildBytesToLangStringBody,
+	},
+	"cabi_realloc": {
+		// (orig_ptr, orig_size, align, new_size) → i32 — the
+		// canonical-ABI allocator the host invokes to materialise
+		// dynamically-sized return values (e.g. list<u8> for
+		// header names / values) in our linear memory. Aligns
+		// the bump cursor before forwarding to __lang_alloc.
+		// Exported by name (the host looks it up); see wasmbin.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCabiReallocBody,
+	},
 }
 
 // allocCursorAddr is the memory offset where the bump cursor lives.
