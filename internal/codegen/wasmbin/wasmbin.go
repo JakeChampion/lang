@@ -52,9 +52,21 @@ func Emit(prog *ir.Program) ([]byte, error) {
 	// every function is also exported by name. Imports would
 	// shift this offset; the binary path doesn't emit imports
 	// yet (the WASI / preview-2 wiring lives in a later slice).
+	//
+	// Synthetic runtime-helper functions (e.g. __lang_str_len)
+	// get appended after the user functions in the same
+	// numbering space; their entries land in this map once
+	// the runtime-needs scan below has decided which helpers
+	// the program actually uses.
 	funcIdx := make(map[string]uint32, len(prog.Funcs))
 	for i, fn := range prog.Funcs {
 		funcIdx[fn.Name] = uint32(i)
+	}
+	helpers := scanRuntimeHelpers(prog)
+	nextFuncIdx := uint32(len(prog.Funcs))
+	for _, name := range helpers.order {
+		funcIdx[name] = nextFuncIdx
+		nextFuncIdx++
 	}
 
 	// Type-section dedup: same param-list + result-list → same
@@ -180,6 +192,18 @@ func Emit(prog *ir.Program) ([]byte, error) {
 			return nil, fmt.Errorf("wasmbin: %s: %w", fn.Name, err)
 		}
 		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+	}
+
+	// Append runtime-helper functions. These don't get exported
+	// (no entry in m.ExportNames / Kinds / Idxs) so they stay
+	// private to the module. Same type-section / function-section
+	// / code-section assembly as user functions.
+	for _, name := range helpers.order {
+		spec := runtimeHelperSpecs[name]
+		params, results := spec.params, spec.results
+		tIdx := addType(params, results)
+		m.FunctionTypeidxs = append(m.FunctionTypeidxs, tIdx)
+		m.CodeBodies = append(m.CodeBodies, spec.body())
 	}
 
 	// Heap-form strings → data segment. Even if no other op used
@@ -831,6 +855,16 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		// table 0 (the only table in MVP); typeidx as the call
 		// signature. Stack at this point: [args..., funcidx].
 		return inst.InstCallIndirect(body, tIdx, 0), nil
+
+	// ---- String runtime helpers ----
+	case ir.OpStrLen:
+		// Stack: (data, len). The synthetic __lang_str_len helper
+		// consumes both and returns the SSO-aware byte length.
+		idx, ok := ctx.funcIdx["__lang_str_len"]
+		if !ok {
+			return nil, fmt.Errorf("OpStrLen: __lang_str_len helper not registered (scanRuntimeHelpers gap)")
+		}
+		return inst.InstCall(body, idx), nil
 	}
 	return nil, fmt.Errorf("unsupported op %v", op.Kind)
 }
