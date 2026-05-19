@@ -1251,6 +1251,173 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptSpanDurationArith pins the Phase-6 calendar-
+// vs-absolute arithmetic split (docs/STDLIB-DESIGN-RESEARCH.md
+// Rec §4): Span on Date snaps to month-end ("Jan 31 + 1 month
+// = Feb 28/29"), Duration on Instant is straight sec/nsec
+// arithmetic. They diverge precisely on month boundaries and
+// (once Phase 5.x lands IANA tzdb) on DST transitions.
+func TestInterpScriptSpanDurationArith(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "add_span months clamps day-end overflow",
+			source: `import "std/time";
+function show(d: Date) {
+    print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
+}
+function main(): i32 {
+    // Jan 31 + 1 month = Feb 28 (2026 non-leap) or Feb 29 (2024 leap).
+    show(time.date_make(2026, 1, 31).add_span(time.span_months(1)));
+    show(time.date_make(2024, 1, 31).add_span(time.span_months(1)));
+    // Mar 31 + 1 month = Apr 30 (Apr has 30 days).
+    show(time.date_make(2026, 3, 31).add_span(time.span_months(1)));
+    // May 31 + 1 month = Jun 30. + 3 months = Aug 31 (Aug has 31).
+    show(time.date_make(2026, 5, 31).add_span(time.span_months(1)));
+    show(time.date_make(2026, 5, 31).add_span(time.span_months(3)));
+    return 0;
+}`,
+			wantStdout: "2026-2-28\n2024-2-29\n2026-4-30\n2026-6-30\n2026-8-31\n",
+		},
+		{
+			name: "add_span years clamps Feb 29 in non-leap target",
+			source: `import "std/time";
+function show(d: Date) {
+    print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
+}
+function main(): i32 {
+    // Feb 29 2024 + 1 year = Feb 28 2025 (non-leap).
+    show(time.date_make(2024, 2, 29).add_span(time.span_years(1)));
+    // Feb 29 2024 + 4 years = Feb 29 2028 (next leap).
+    show(time.date_make(2024, 2, 29).add_span(time.span_years(4)));
+    // Feb 29 2024 + 100 years = Feb 28 2124 (every 4th year is
+    // leap unless century without 400 — 2124 is leap).
+    show(time.date_make(2024, 2, 29).add_span(time.span_years(100)));
+    return 0;
+}`,
+			wantStdout: "2025-2-28\n2028-2-29\n2124-2-29\n",
+		},
+		{
+			name: "add_span composes months + days",
+			source: `import "std/time";
+function show(d: Date) {
+    print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
+}
+function main(): i32 {
+    show(time.date_make(2026, 1, 15).add_span(Span {
+        years: 1, months: 2, weeks: 0, days: 5,
+        hours: 0, minutes: 0, seconds: 0, nanos: 0,
+    }));
+    // Weeks + days add as serial-day offset (no clamping).
+    show(time.date_make(2026, 3, 30).add_span(time.span_weeks(2)));
+    // Mixed weeks + days.
+    show(time.date_make(2026, 1, 1).add_span(Span {
+        years: 0, months: 0, weeks: 1, days: 3,
+        hours: 0, minutes: 0, seconds: 0, nanos: 0,
+    }));
+    return 0;
+}`,
+			wantStdout: "2027-3-20\n2026-4-13\n2026-1-11\n",
+		},
+		{
+			name: "add_span with negative months walks backward",
+			source: `import "std/time";
+function show(d: Date) {
+    print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
+}
+function main(): i32 {
+    show(time.date_make(2026, 3, 15).add_span(time.span_months(-1)));
+    show(time.date_make(2026, 1, 15).add_span(time.span_months(-1)));
+    show(time.date_make(2026, 1, 15).add_span(time.span_months(-13)));
+    return 0;
+}`,
+			wantStdout: "2026-2-15\n2025-12-15\n2024-12-15\n",
+		},
+		{
+			name: "Instant.add_duration handles nsec carry",
+			source: `import "std/time";
+function main(): i32 {
+    // 1000.5 + 5.75 = 1006.25 (carry: 500e6 + 750e6 = 1.25e9 → +1 sec, 250e6 ns).
+    var t1: Instant = Instant { sec: 1000 as i64, nsec: 500000000 };
+    var sum: Instant = t1.add_duration(Duration { sec: 5 as i64, nsec: 750000000 });
+    print(sum.sec.to_string() + "." + sum.nsec.to_string());
+
+    // Exact 1-second carry: 999_999_999 + 1 = 1_000_000_000 → +1 sec.
+    var edge: Instant = (Instant { sec: 0 as i64, nsec: 999999999 }).add_duration(Duration { sec: 0 as i64, nsec: 1 });
+    print(edge.sec.to_string() + "." + edge.nsec.to_string());
+    return 0;
+}`,
+			wantStdout: "1006.250000000\n1.0\n",
+		},
+		{
+			name: "Instant.add_duration with negative shifts backward",
+			source: `import "std/time";
+function main(): i32 {
+    var t: Instant = Instant { sec: 1000 as i64, nsec: 0 };
+    var back: Instant = t.add_duration(Duration { sec: (0 as i64) - (10 as i64), nsec: 0 });
+    print(back.sec.to_string());
+    return 0;
+}`,
+			wantStdout: "990\n",
+		},
+		{
+			name: "Instant.duration_since computes signed delta with borrow",
+			source: `import "std/time";
+function main(): i32 {
+    var a: Instant = Instant { sec: 1000 as i64, nsec: 200000000 };
+    var b: Instant = Instant { sec: 1005 as i64, nsec: 700000000 };
+    // b - a = 5.5s
+    var fwd: Duration = b.duration_since(a);
+    print(fwd.sec.to_string() + "+" + fwd.nsec.to_string());
+    // Borrow case: a - b should produce nsec >= 0 by adjustment.
+    // a.nsec(200M) - b.nsec(700M) = -500M → borrow 1 sec, nsec = 500M.
+    var rev: Duration = a.duration_since(b);
+    print(rev.sec.to_string() + "+" + rev.nsec.to_string());
+    return 0;
+}`,
+			wantStdout: "5+500000000\n-6+500000000\n",
+		},
+		{
+			name: "days_until is the Span counterpart to days_since",
+			source: `import "std/time";
+function main(): i32 {
+    var a: Date = time.date_make(2026, 1, 1);
+    var b: Date = time.date_make(2026, 12, 31);
+    var s: Span = a.days_until(b);
+    print(s.days.to_string());          // 364
+    print(b.days_until(a).days.to_string());  // -364
+    return 0;
+}`,
+			wantStdout: "364\n-364\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
