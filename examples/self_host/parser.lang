@@ -855,6 +855,48 @@ pub function parse_program(toks: lexer.Token[]): Stmt[] {
 // no array / generic / union syntax.
 pub struct ParamResult { par: Par, param: ParamDecl }
 
+// parse_type_name reads a (possibly generic) type spelling and
+// returns it as a single concatenated string. Recognises:
+//   * `Name`                     — `Map` or `i32`
+//   * `Name[T1, T2, …]`          — `Map[string, i32]`
+// Nested generics (`Map[Map[…], …]`) aren't unrolled; the
+// inner `[…]` substring is captured verbatim by counting the
+// matching `]`. Returns (par, name) — empty name means
+// the parser saw nothing useful.
+pub struct TypeNameResult { par: Par, name: string }
+
+function parse_type_name(p: Par): TypeNameResult {
+    var base: string = p.peek_ident();
+    if (len(base) == 0) { base = p.peek_keyword(); }
+    if (len(base) == 0) {
+        return TypeNameResult { par: p, name: "" };
+    }
+    p = p.advance();
+    if (p.peek_punct() != "[") {
+        return TypeNameResult { par: p, name: base };
+    }
+    // Consume `[T1, T2, …]` by tracking bracket depth so nested
+    // generics survive verbatim. Token text reconstructed from
+    // the same peek_* family — type-name args are restricted
+    // to idents / keywords / `,` / `[` / `]`.
+    p = p.advance();  // consume opening `[`
+    var inner: string = "";
+    var depth: i32 = 1;
+    while (depth > 0 && !p.at_end()) {
+        var pk: string = p.peek_punct();
+        if (pk == "[") { depth = depth + 1; inner = inner + "["; p = p.advance(); continue; }
+        if (pk == "]") { depth = depth - 1; if (depth == 0) { break; } inner = inner + "]"; p = p.advance(); continue; }
+        if (pk == ",") { inner = inner + ", "; p = p.advance(); continue; }
+        var seg: string = p.peek_ident();
+        if (len(seg) == 0) { seg = p.peek_keyword(); }
+        if (len(seg) == 0) { break; }
+        inner = inner + seg;
+        p = p.advance();
+    }
+    if (p.peek_punct() == "]") { p = p.advance(); }
+    return TypeNameResult { par: p, name: base + "[" + inner + "]" };
+}
+
 function parse_param(p: Par): ParamResult {
     var name: string = p.peek_ident();
     if (len(name) == 0) {
@@ -865,14 +907,8 @@ function parse_param(p: Par): ParamResult {
         return ParamResult { par: p, param: ParamDecl { name: name, type_name: "" } };
     }
     p = p.advance();
-    var ty: string = p.peek_ident();
-    if (len(ty) == 0) {
-        // Keyword-shaped type names (`i32`, `bool`, `string`) come
-        // through as TokKeyword. Fall back to peek_keyword for those.
-        ty = p.peek_keyword();
-    }
-    if (len(ty) > 0) { p = p.advance(); }
-    return ParamResult { par: p, param: ParamDecl { name: name, type_name: ty } };
+    var tr: TypeNameResult = parse_type_name(p);
+    return ParamResult { par: tr.par, param: ParamDecl { name: name, type_name: tr.name } };
 }
 
 // parse_func_decl consumes `function name(params): ret_type { body }`
@@ -1691,6 +1727,14 @@ function main(): i32 {
         },
         _ => { return 1066; }
     }
+
+    // Generic type-name parsing — `Map[K, V]` in a param
+    // captures the full spelling as a single string.
+    var srcGT: string = "function lookup(m: Map[string, i32], k: string): i32 { return 0; }";
+    var modGT: Module = parse_module(lexer.tokenize(srcGT));
+    if (len(modGT.funcs) != 1) { return 1080; }
+    if (modGT.funcs[0].params[0].type_name != "Map[string, i32]") { return 1081; }
+    if (modGT.funcs[0].params[1].type_name != "string") { return 1082; }
 
     // Lambda expression: `function (x: i32): i32 { return x + 1; }`.
     var srcLm: string = "var f = function (x: i32): i32 { return x + 1; }; return 0;";
