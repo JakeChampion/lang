@@ -371,6 +371,12 @@ function main(): i32 {
   identical to the in-memory version).
   `assert_file_line_count(path, n)` — line cardinality
   (trailing newline doesn't overcount)
+- **Directory listing:** `assert_eq_dir_listing(dir,
+  expected_names: string[])` — list the directory,
+  sort both sides, compare element-wise (readdir order
+  isn't observable). Pair with `must_temp_dir` + fixture
+  creation to pin "the operation produced exactly these
+  files"
 - **JSON deep equality:** `assert_json_eq(actual, expected)` —
   parses both sides via `std/json` and walks the value
   trees in order-independent fashion (JObject key order
@@ -465,6 +471,11 @@ function main(): i32 {
   `assert_ends_with_any(s, suffixes)` — single string
   matches at least one of the supplied options; empty
   options list always fails
+- **Substring count:** `assert_string_count(haystack,
+  needle, n)` — `needle` appears exactly `n` times in
+  `haystack` (non-overlapping; delegates to
+  `std/string`'s `.count(sub)`). Failure embeds both the
+  observed and expected counts
 - **String-array substring:**
   `assert_all_starts_with(arr, prefix)` /
   `assert_all_ends_with(arr, suffix)` /

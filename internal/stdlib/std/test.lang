@@ -1006,6 +1006,23 @@ pub function assert_non_empty_string(s: string): Option[string] {
     return Some("assert_non_empty_string: string was empty");
 }
 
+// `assert_string_count(haystack, needle, n)` — `needle`
+// appears exactly `n` times (non-overlapping) in
+// `haystack`. Use when the test cares about cardinality
+// (e.g., "the log has 3 ERROR lines", "the output has
+// exactly one newline") without committing to where the
+// occurrences sit.
+// Delegates to `std/string`'s `.count(sub)` receiver
+// method so the "non-overlapping" semantics stay
+// consistent with other string library callers.
+pub function assert_string_count(haystack: string, needle: string, n: i32): Option[string] {
+    var got: i32 = haystack.count(needle);
+    if (got == n) { return None; }
+    return Some("assert_string_count: \"" + needle +
+                "\" appears " + got.to_string() +
+                " times, expected " + n.to_string());
+}
+
 // `assert_len_i32(arr, n)` / `assert_len_string(arr, n)` —
 // array length checks. Split per element type because lang
 // doesn't have a `T[]` generic at the function-signature
@@ -2085,6 +2102,33 @@ pub function assert_file_size(path: string, expected: i64): Option[string] {
         },
         Err(_) => {
             return Some("assert_file_size: \"" + path + "\" does not exist");
+        }
+    }
+    return None;
+}
+
+// `assert_eq_dir_listing(dir, expected_names)` — list the
+// directory and verify its contents (file/subdir names,
+// not paths) form the same multiset as `expected_names`.
+// `readdir` order isn't observable, so the helper compares
+// by sorting both sides and delegating to
+// `assert_eq_string_array` — the failure message
+// localises the first mismatching name + its index in
+// sorted order.
+//
+// Pair with `must_temp_dir(r, prefix)` + a fixture-
+// creation step to pin "the operation produced exactly
+// these files".
+pub function assert_eq_dir_listing(dir: string, expected_names: string[]): Option[string] {
+    match (read_dir(dir)) {
+        Ok(names) => {
+            var actual_sorted: string[] = sort.sort_strings_asc(names);
+            var expected_sorted: string[] = sort.sort_strings_asc(expected_names);
+            return assert_eq_string_array(actual_sorted, expected_sorted);
+        },
+        Err(_) => {
+            return Some("assert_eq_dir_listing: failed to read \"" +
+                        dir + "\"");
         }
     }
     return None;
