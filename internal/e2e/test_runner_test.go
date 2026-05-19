@@ -696,6 +696,66 @@ func TestRunnerBatch7Example(t *testing.T) {
 	}
 }
 
+// `examples/tests/batch8_test.lang` exercises the additions
+// from the eighth tranche: argv passthrough,
+// `--filter PATTERN` selection via `parse_filter_from_args` +
+// `test_new_filtered`, golden-file assertions, and Map
+// receiver assertions.
+//
+// Two t.Run subtests pin both the unfiltered path (all nine
+// cases run + pass) and the filtered path (only the map-
+// related cases run, the others convert to skips with reason
+// "filtered out").
+func TestRunnerBatch8Example(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/batch8_test.lang")
+
+	t.Run("unfiltered", func(t *testing.T) {
+		code, out, errOut := runLangInterp(t, bin, src)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+				code, out, errOut)
+		}
+		for _, w := range []string{
+			"ok 1 - argv populated",
+			"ok 5 - map has i32-i32",
+			"# golden file bootstrapped at",
+			"ok 7 - bootstrap golden",
+			"ok 9 - strict missing fails",
+			"# pass 9",
+			"# fail 0",
+		} {
+			if !strings.Contains(out, w) {
+				t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+			}
+		}
+	})
+
+	t.Run("filtered to map cases", func(t *testing.T) {
+		cmd := exec.Command(bin, "-interp", src, "--", "--filter", "map")
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 0 {
+			t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+				code, out.String(), errb.String())
+		}
+		gotOut := out.String()
+		for _, w := range []string{
+			"argv populated # SKIP filtered out (--filter=map)",
+			"ok 5 - map has i32-i32",
+			"strict missing fails # SKIP filtered out (--filter=map)",
+			"# pass 5",
+			"# skip 4",
+		} {
+			if !strings.Contains(gotOut, w) {
+				t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+			}
+		}
+	})
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

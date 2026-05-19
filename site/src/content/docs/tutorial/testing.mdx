@@ -81,6 +81,8 @@ the predicate so a grep across CI logs finds the regression.
 | String diff  | `assert_eq_string_diff` — reports first differing line                                                                |
 | File state   | `assert_file_exists`, `assert_file_not_exists`, `assert_file_contains`, `assert_file_contents`, `assert_is_file`, `assert_is_dir`, `assert_file_size` |
 | JSON         | `assert_json_eq` — parses both sides + walks the trees, JObject key order independent                                  |
+| Map          | `assert_map_len_*`, `assert_map_has_*`, `assert_map_lacks_*` for (i32, i32) + (string, string) K/V pairs               |
+| Golden files | `assert_matches_golden(path, actual)` (auto-bootstrap) / `assert_matches_golden_strict(...)` (CI strict)               |
 | Booleans     | `assert_eq_bool`                                                                                                      |
 | Strings      | `assert_eq_string`, `assert_neq_string`, `assert_empty_string`, `assert_non_empty_string`                             |
 | Substring    | `assert_contains`, `assert_not_contains`, `assert_starts_with`, `assert_ends_with`                                    |
@@ -192,6 +194,49 @@ The harness mutates with byte flip / drop / insert / unchanged.
 Failures stop the loop and report the input with non-printable
 bytes escaped to `\xNN` so the log doubles as a reproducer.
 
+## Filtering test cases
+
+For dev-loop iteration, run a single case (or a substring
+match) via the runner's built-in `--filter` flag:
+
+```bash
+lang -interp my_test.lang -- --filter addition
+```
+
+The example file lifts the pattern off `args()`:
+
+```lang
+function main(): i32 {
+    var f: string = parse_filter_from_args(args());
+    var r: TestRunner = test_new_filtered("my suite", f);
+    r = r.it("addition basic",    test_a());
+    r = r.it("subtraction basic", test_b());
+    return r.finish();
+}
+```
+
+Non-matching cases convert to skips with reason
+`"filtered out"` so the TAP stream stays a faithful record
+of the test list.
+
+## Golden-file testing
+
+For tests whose expected output is too verbose to inline,
+compare against a saved file on disk:
+
+```lang
+r = r.it("renderer matches golden",
+         assert_matches_golden("testdata/render.golden",
+                               render(input)));
+```
+
+`assert_matches_golden` bootstraps the file when it doesn't
+exist (writes `actual` to `path`, passes, prints a comment
+naming the bootstrap) — convenient for the developer
+"approve by running" loop. Run `assert_matches_golden_strict`
+in CI to catch missing-golden cases that would silently
+self-approve.
+
 ### Shrinking
 
 `r.fuzz_shrink` runs the same loop but, on a failure,
@@ -292,3 +337,6 @@ in the repo:
 - `batch7_test.lang` — wider-int relational, `f64_bits`
   round-trips, `stat()` + file-state helpers, and
   `assert_json_eq` order-independent JSON equality
+- `batch8_test.lang` — argv passthrough, `--filter PATTERN`
+  selection, golden-file assertions, Map receiver
+  assertions

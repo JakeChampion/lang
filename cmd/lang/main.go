@@ -133,12 +133,26 @@ func main() {
 
 	if *doInterp {
 		path := ""
+		var interpArgs []string
 		if flag.NArg() >= 1 {
 			path = flag.Arg(0)
+			// Anything after the source path is forwarded to the
+			// program through `args()`. Mirrors the compile-and-
+			// run path's flag.Args()[1:] behaviour so test runners
+			// can do `lang -interp test.lang -- --filter foo`
+			// without going through env vars. Strip a literal `--`
+			// separator if present — Go's `flag` package doesn't
+			// consume it, but conventional `program -- args`
+			// invocations expect it to disappear.
+			rest := flag.Args()[1:]
+			if len(rest) > 0 && rest[0] == "--" {
+				rest = rest[1:]
+			}
+			interpArgs = rest
 		} else {
 			path = "-"
 		}
-		code, err := runInterp(path)
+		code, err := runInterp(path, interpArgs)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -231,7 +245,7 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 // supported in the stdin case because modload reads files from disk
 // — a file at path "-" doesn't exist. File-path callers go through
 // the full modload pipeline.
-func runInterp(srcPath string) (int, error) {
+func runInterp(srcPath string, argv []string) (int, error) {
 	var prog *ast.Program
 	var src string
 	if srcPath == "-" {
@@ -265,6 +279,11 @@ func runInterp(srcPath string) (int, error) {
 	}
 
 	ip := interp.New()
+	// argv[0] is conventionally the program path so `args()`
+	// matches the C / Go shape. Subsequent entries are the
+	// user's own arguments, passed after `--` on the lang
+	// command line.
+	ip.Args = append([]string{srcPath}, argv...)
 	for _, ed := range prog.Enums {
 		ip.RegisterEnum(ed)
 	}

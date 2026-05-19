@@ -312,6 +312,18 @@ function main(): i32 {
   parses both sides via `std/json` and walks the value
   trees in order-independent fashion (JObject key order
   isn't observable)
+- **Map assertions:** `assert_map_len_i32_i32` / `_string_string`,
+  `assert_map_has_i32_i32` / `_string_string`,
+  `assert_map_lacks_i32_i32` / `_string_string`
+- **Golden files:** `assert_matches_golden(path, actual)`
+  (bootstraps the file if missing — developer workflow) and
+  `assert_matches_golden_strict(...)` (fails on missing — CI
+  workflow)
+- **`--filter PATTERN` selection:** `test_new_filtered(suite,
+  pattern)` + `parse_filter_from_args(args())` — cases whose
+  (prefix + name) don't contain the filter substring
+  convert to skips with reason "filtered out". Pair with
+  `lang -interp test.lang -- --filter foo` on the CLI.
 - **Tempdir convenience:** `must_temp_dir(r, prefix) ->
   (string, TestRunner)` — single-shot tempdir + cleanup
   registration with fallback to a recorded skip on failure
