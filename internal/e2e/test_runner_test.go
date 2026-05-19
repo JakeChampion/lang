@@ -1096,6 +1096,44 @@ func TestRunnerFloatArrayStrictSortExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/map_eq_and_predicates_test.lang` exercises
+// batch-21 additions:
+//   - `assert_eq_map_i32_i32` / `_string_string` — full
+//     map deep equality (length + key-with-matching-value
+//     in one direction; pigeonhole gives the reverse). Map
+//     iteration order isn't observable so walks
+//     `actual.keys()` rather than `iter`.
+//   - `assert_all_i32` / `_string` — ∀ predicate; vacuous
+//     pass on empty array. Failure names index + value.
+//   - `assert_any_i32` / `_string` — ∃ predicate; vacuous
+//     FAIL on empty array (mathematical convention). The
+//     test takes a `(T) => boolean` lambda or named fn.
+//
+// 16 cases total.
+func TestRunnerMapEqAndPredicatesExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/map_eq_and_predicates_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - map i32 eq pass (order-indep)",
+		"ok 3 - map i32 eq value mismatch + key",
+		"ok 4 - map i32 eq disjoint same-len fails",
+		"ok 9 - all_i32 inline lambda",
+		"ok 10 - all_i32 fail names index + value",
+		"ok 11 - all_i32 empty vacuous",
+		"ok 14 - any_i32 empty fails",
+		"# pass 16",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.
