@@ -139,7 +139,12 @@ pub struct EmitState {
     // loop_cont_labels (which for `for` points at the index-
     // increment block, NOT the top of the loop).
     loop_exit_labels: string[],
-    loop_cont_labels: string[]
+    loop_cont_labels: string[],
+    // funcs: the module's FuncDecls — used by ExprCall on an
+    // ExprFieldAccess callee (method call) to find every
+    // struct that has a matching method, so the dispatch
+    // chain can emit a shape-compare arm per matching struct.
+    funcs: parser.FuncDecl[]
 }
 
 function new_state(): EmitState {
@@ -147,6 +152,7 @@ function new_state(): EmitState {
     var sl: string[] = [];
     var lex: string[] = [];
     var lcn: string[] = [];
+    var fns: parser.FuncDecl[] = [];
     return EmitState {
         out: "",
         label_n: 0,
@@ -158,7 +164,8 @@ function new_state(): EmitState {
         needs_heap: false,
         struct_decls: [],
         loop_exit_labels: lex,
-        loop_cont_labels: lcn
+        loop_cont_labels: lcn,
+        funcs: fns
     };
 }
 
@@ -174,7 +181,8 @@ function (s: EmitState) write(text: string): EmitState {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
 }
 
@@ -191,7 +199,8 @@ function (s: EmitState) bind_local(name: string): EmitState {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
 }
 
@@ -208,7 +217,8 @@ function (s: EmitState) reset_locals(): EmitState {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
 }
 
@@ -224,7 +234,8 @@ function (s: EmitState) enter_function(): EmitState {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
 }
 
@@ -242,7 +253,8 @@ function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): Em
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: nex,
-        loop_cont_labels: ncn
+        loop_cont_labels: ncn,
+        funcs: s.funcs
     };
 }
 
@@ -266,7 +278,8 @@ function (s: EmitState) pop_loop_labels(): EmitState {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: nex,
-        loop_cont_labels: ncn
+        loop_cont_labels: ncn,
+        funcs: s.funcs
     };
 }
 
@@ -292,7 +305,8 @@ function (s: EmitState) leave_function(): EmitState {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
 }
 
@@ -311,7 +325,8 @@ function (s: EmitState) mark_print_int(): EmitState {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
 }
 
@@ -332,7 +347,8 @@ function (s: EmitState) mark_heap(): EmitState {
         needs_heap: true,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
 }
 
@@ -350,7 +366,8 @@ function (s: EmitState) mark_read_int(): EmitState {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
 }
 
@@ -386,7 +403,8 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -435,7 +453,8 @@ function fresh_label(s: EmitState): LabelOut {
         needs_heap: s.needs_heap,
         struct_decls: s.struct_decls,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs
     };
     return LabelOut { state: ns, name: name };
 }
@@ -583,6 +602,71 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var name: string = "";
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
+                parser.ExprFieldAccess(fa) => {
+                    // Method call: `obj.method(args)`. Push
+                    // args right-to-left, then push the
+                    // receiver (so receiver sits at +16(%rbp)
+                    // and arg[0] at +24(%rbp) inside the
+                    // callee). Then dispatch on the receiver's
+                    // shape pointer.
+                    var mi: i32 = len(c.args) - 1;
+                    while (mi >= 0) {
+                        s = emit_expr(c.args[mi], s);
+                        mi = mi - 1;
+                    }
+                    s = emit_expr(fa.obj, s);
+                    // Peek receiver pointer (top of stack) to
+                    // read its shape pointer; load shape into
+                    // %rcx without consuming the receiver.
+                    s = s.write("    movq (%rsp), %rax\n");
+                    s = s.write("    movq (%rax), %rcx\n");
+                    var m_end_lbl: i32 = s.label_n;
+                    s = EmitState {
+                        out: s.out,
+                        label_n: s.label_n + 1,
+                        local_names: s.local_names,
+                        in_function: s.in_function,
+                        string_lits: s.string_lits,
+                        needs_print_int: s.needs_print_int,
+                        needs_read_int: s.needs_read_int,
+                        needs_heap: s.needs_heap,
+                        struct_decls: s.struct_decls,
+                        loop_exit_labels: s.loop_exit_labels,
+                        loop_cont_labels: s.loop_cont_labels,
+                        funcs: s.funcs
+                    };
+                    // For each func whose name matches and
+                    // receiver_type is non-empty, emit a shape-
+                    // compare arm. Walk in declaration order so
+                    // the asm is deterministic.
+                    var fdi: i32 = 0;
+                    while (fdi < len(s.funcs)) {
+                        var fd_m: parser.FuncDecl = s.funcs[fdi];
+                        if (fd_m.name == fa.field && len(fd_m.receiver_type) > 0) {
+                            var arm_lit: StringLitOut = add_string_lit(s, fd_m.receiver_type);
+                            s = arm_lit.state;
+                            var next_l: LabelOut = fresh_label(s);
+                            s = next_l.state;
+                            s = s.write("    leaq .S" + i32_to_string(arm_lit.idx) + "(%rip), %rdx\n");
+                            s = s.write("    cmpq %rdx, %rcx\n");
+                            s = s.write("    jne " + next_l.name + "\n");
+                            s = s.write("    call __fn_" + sanitize_label(fd_m.receiver_type + "." + fd_m.name) + "\n");
+                            // Caller cleans up args + receiver.
+                            s = s.write("    addq $" + i32_to_string((len(c.args) + 1) * 8) + ", %rsp\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.write("    jmp .Lmethod_end_" + i32_to_string(m_end_lbl) + "\n");
+                            s = s.write(next_l.name + ":\n");
+                        }
+                        fdi = fdi + 1;
+                    }
+                    // Fallthrough: no matching method. Clean up
+                    // args + receiver, push sentinel -1.
+                    s = s.write("    addq $" + i32_to_string((len(c.args) + 1) * 8) + ", %rsp\n");
+                    s = s.write("    movq $-1, %rax\n");
+                    s = s.write("    pushq %rax\n");
+                    s = s.write(".Lmethod_end_" + i32_to_string(m_end_lbl) + ":\n");
+                    return s;
+                },
                 _ => {
                     s = s.write("    # call target not ident\n");
                     s = s.write("    pushq $0\n");
@@ -839,7 +923,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 needs_heap: s.needs_heap,
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
-                loop_cont_labels: s.loop_cont_labels
+                loop_cont_labels: s.loop_cont_labels,
+                funcs: s.funcs
             };
             // Walk each struct decl looking for the named
             // field. Emit a shape-pointer comparison arm for
@@ -875,7 +960,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         needs_heap: s.needs_heap,
                         struct_decls: s.struct_decls,
                         loop_exit_labels: s.loop_exit_labels,
-                        loop_cont_labels: s.loop_cont_labels
+                        loop_cont_labels: s.loop_cont_labels,
+                        funcs: s.funcs
                     };
                 }
                 di = di + 1;
@@ -1038,7 +1124,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 needs_heap: s.needs_heap,
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
-                loop_cont_labels: s.loop_cont_labels
+                loop_cont_labels: s.loop_cont_labels,
+                funcs: s.funcs
             };
             var ai: i32 = 0;
             while (ai < len(m.arms)) {
@@ -1055,7 +1142,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                     needs_heap: s.needs_heap,
                     struct_decls: s.struct_decls,
                     loop_exit_labels: s.loop_exit_labels,
-                    loop_cont_labels: s.loop_cont_labels
+                    loop_cont_labels: s.loop_cont_labels,
+                    funcs: s.funcs
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
@@ -1135,7 +1223,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 needs_heap: s.needs_heap,
                 struct_decls: s.struct_decls,
                 loop_exit_labels: s.loop_exit_labels,
-                loop_cont_labels: s.loop_cont_labels
+                loop_cont_labels: s.loop_cont_labels,
+                funcs: s.funcs
             };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition: __for_i_N < len(__for_arr_N).
@@ -1195,10 +1284,20 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
 // address); the prologue copies them into the function's
 // own local slots so the body reads them uniformly.
 function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
-    s = s.write("__fn_" + sanitize_label(fd.name) + ":\n");
+    // Methods get `__fn_<RecvType>__<method>:` so multiple
+    // structs can have the same method name without colliding.
+    // Plain funcs keep `__fn_<name>:` for source compat with the
+    // earlier slices' call emitters.
+    var label_name: string = fd.name;
+    if (len(fd.receiver_type) > 0) {
+        label_name = fd.receiver_type + "." + fd.name;
+    }
+    s = s.write("__fn_" + sanitize_label(label_name) + ":\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
+    var has_recv: boolean = len(fd.receiver_name) > 0;
     var argc: i32 = len(fd.params);
+    if (has_recv) { argc = argc + 1; }
     var n_body_locals: i32 = count_locals(fd.body);
     var total_locals: i32 = argc + n_body_locals;
     if (total_locals > 0) {
@@ -1210,15 +1309,24 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     // monotonic label_n + in_function flag.
     s = s.reset_locals();
     s = s.enter_function();
+    // For methods, bind receiver first so it occupies local
+    // slot 0 (at -8(%rbp)) and reads from +16(%rbp).
+    if (has_recv) {
+        s = s.bind_local(fd.receiver_name);
+        var recv_off: i32 = s.lookup_local(fd.receiver_name);
+        s = s.write("    movq 16(%rbp), %rax\n");
+        s = s.write("    movq %rax, " + i32_to_string(recv_off) + "(%rbp) # recv " + fd.receiver_name + "\n");
+    }
     // Bind params + copy from caller-stack offsets into local
-    // slots. param[i] sits at +(16 + i*8)(%rbp) at entry; we
-    // bind in declaration order so local slots are also
-    // -8(%rbp), -16(%rbp), … in order.
+    // slots. param[i] sits at +(16 + (i + recv_shift)*8)(%rbp).
+    var recv_shift: i32 = 0;
+    if (has_recv) { recv_shift = 1; }
+    var n_params: i32 = len(fd.params);
     var i: i32 = 0;
-    while (i < argc) {
+    while (i < n_params) {
         s = s.bind_local(fd.params[i].name);
         var local_off: i32 = s.lookup_local(fd.params[i].name);
-        var arg_off: i32 = 16 + i * 8;
+        var arg_off: i32 = 16 + (i + recv_shift) * 8;
         s = s.write("    movq " + i32_to_string(arg_off) + "(%rbp), %rax\n");
         s = s.write("    movq %rax, " + i32_to_string(local_off) + "(%rbp) # param " + fd.params[i].name + "\n");
         i = i + 1;
@@ -1284,7 +1392,8 @@ pub function emit_module(mod: parser.Module): string {
         needs_heap: s.needs_heap,
         struct_decls: mod.structs,
         loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels
+        loop_cont_labels: s.loop_cont_labels,
+        funcs: mod.funcs
     };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
