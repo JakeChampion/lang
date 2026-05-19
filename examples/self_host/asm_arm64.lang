@@ -69,7 +69,9 @@ pub struct EmitState {
     in_function: boolean,
     string_lits: string[],
     needs_print_int: boolean,
-    needs_read_int: boolean
+    needs_read_int: boolean,
+    needs_heap: boolean,
+    struct_decls: parser.StructDecl[]
 }
 
 function new_state(): EmitState {
@@ -82,7 +84,9 @@ function new_state(): EmitState {
         in_function: false,
         string_lits: sl,
         needs_print_int: false,
-        needs_read_int: false
+        needs_read_int: false,
+        needs_heap: false,
+        struct_decls: []
     };
 }
 
@@ -94,7 +98,9 @@ function (s: EmitState) write(text: string): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls
     };
 }
 
@@ -107,7 +113,9 @@ function (s: EmitState) bind_local(name: string): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls
     };
 }
 
@@ -120,7 +128,9 @@ function (s: EmitState) reset_locals(): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls
     };
 }
 
@@ -132,7 +142,9 @@ function (s: EmitState) enter_function(): EmitState {
         in_function: true,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls
     };
 }
 
@@ -144,7 +156,9 @@ function (s: EmitState) leave_function(): EmitState {
         in_function: false,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls
     };
 }
 
@@ -178,7 +192,9 @@ function fresh_label(s: EmitState): LabelOut {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls
     };
     return LabelOut { state: ns, name: name };
 }
@@ -224,7 +240,9 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         in_function: s.in_function,
         string_lits: sl,
         needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -237,7 +255,23 @@ function (s: EmitState) mark_print_int(): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: true,
-        needs_read_int: s.needs_read_int
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls
+    };
+}
+
+function (s: EmitState) mark_heap(): EmitState {
+    return EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int,
+        needs_heap: true,
+        struct_decls: s.struct_decls
     };
 }
 
@@ -249,7 +283,9 @@ function (s: EmitState) mark_read_int(): EmitState {
         in_function: s.in_function,
         string_lits: s.string_lits,
         needs_print_int: s.needs_print_int,
-        needs_read_int: true
+        needs_read_int: true,
+        needs_heap: s.needs_heap,
+        struct_decls: s.struct_decls
     };
 }
 
@@ -458,16 +494,89 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
-        parser.ExprStructLit(_) => {
-            s = s.write("    // unsupported: struct literal\n");
-            s = s.write("    mov x0, #0\n");
+        parser.ExprStructLit(sl) => {
+            // Layout: [shape_ptr, val0, val1, …, val_(N-1)].
+            // Same shape as the x86-64 backend; see asm.lang
+            // for the rationale.
+            var n_fields: i32 = len(sl.field_values);
+            var i: i32 = 0;
+            while (i < n_fields) {
+                s = emit_expr(sl.field_values[i], s);
+                i = i + 1;
+            }
+            var slot_bytes: i32 = (n_fields + 1) * 8;
+            s = s.write("    mov x0, #" + i32_to_string(slot_bytes) + "\n");
+            s = s.write("    bl __lang_alloc\n");
+            s = s.mark_heap();
+            // x0 now holds the struct pointer.
+            var nameLit: StringLitOut = add_string_lit(s, sl.type_name);
+            s = nameLit.state;
+            s = s.write("    adrp x1, .S" + i32_to_string(nameLit.idx) + "\n");
+            s = s.write("    add x1, x1, :lo12:.S" + i32_to_string(nameLit.idx) + "\n");
+            s = s.write("    str x1, [x0]\n");
+            // Pop field values into [x0 + (j+1)*8].
+            var j: i32 = n_fields - 1;
+            while (j >= 0) {
+                s = s.write("    ldr x1, [sp], #16\n");
+                s = s.write("    str x1, [x0, #" + i32_to_string((j + 1) * 8) + "]\n");
+                j = j - 1;
+            }
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
-        parser.ExprFieldAccess(_) => {
-            s = s.write("    // unsupported: field access\n");
-            s = s.write("    mov x0, #0\n");
+        parser.ExprFieldAccess(fa) => {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            var end_lbl: i32 = s.label_n;
+            s = EmitState {
+                out: s.out,
+                label_n: s.label_n + 1,
+                local_names: s.local_names,
+                in_function: s.in_function,
+                string_lits: s.string_lits,
+                needs_print_int: s.needs_print_int,
+                needs_read_int: s.needs_read_int,
+                needs_heap: s.needs_heap,
+                struct_decls: s.struct_decls
+            };
+            var di: i32 = 0;
+            while (di < len(s.struct_decls)) {
+                var sd: parser.StructDecl = s.struct_decls[di];
+                var fi: i32 = 0;
+                var found_idx: i32 = 0 - 1;
+                while (fi < len(sd.fields)) {
+                    if (sd.fields[fi].name == fa.field) { found_idx = fi; }
+                    fi = fi + 1;
+                }
+                if (found_idx >= 0) {
+                    var arm_lit: StringLitOut = add_string_lit(s, sd.name);
+                    s = arm_lit.state;
+                    s = s.write("    ldr x1, [x0]\n");
+                    s = s.write("    adrp x2, .S" + i32_to_string(arm_lit.idx) + "\n");
+                    s = s.write("    add x2, x2, :lo12:.S" + i32_to_string(arm_lit.idx) + "\n");
+                    s = s.write("    cmp x1, x2\n");
+                    s = s.write("    b.ne .Lfa_next_" + i32_to_string(s.label_n) + "\n");
+                    s = s.write("    ldr x0, [x0, #" + i32_to_string((found_idx + 1) * 8) + "]\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.write("    b .Lfa_end_" + i32_to_string(end_lbl) + "\n");
+                    s = s.write(".Lfa_next_" + i32_to_string(s.label_n) + ":\n");
+                    s = EmitState {
+                        out: s.out,
+                        label_n: s.label_n + 1,
+                        local_names: s.local_names,
+                        in_function: s.in_function,
+                        string_lits: s.string_lits,
+                        needs_print_int: s.needs_print_int,
+                        needs_read_int: s.needs_read_int,
+                        needs_heap: s.needs_heap,
+                        struct_decls: s.struct_decls
+                    };
+                }
+                di = di + 1;
+            }
+            s = s.write("    mov x0, #-1\n");
             s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write(".Lfa_end_" + i32_to_string(end_lbl) + ":\n");
             return s;
         },
         parser.ExprLambda(_) => {
@@ -652,6 +761,19 @@ function has_main(mod: parser.Module): boolean {
 
 pub function emit_module(mod: parser.Module): string {
     var s: EmitState = new_state();
+    // Seed the struct-decl table for ExprStructLit /
+    // ExprFieldAccess.
+    s = EmitState {
+        out: s.out,
+        label_n: s.label_n,
+        local_names: s.local_names,
+        in_function: s.in_function,
+        string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int,
+        needs_read_int: s.needs_read_int,
+        needs_heap: s.needs_heap,
+        struct_decls: mod.structs
+    };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
     // Emit each function body first. Each gets its own
@@ -798,6 +920,38 @@ pub function emit_module(mod: parser.Module): string {
             s = s.write(".S" + i32_to_string(li) + ": .ascii \"" + escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
+    }
+    // Heap allocator (arm64): 1 MiB .bss buffer + bump pointer.
+    // Same shape as the x86-64 backend; instructions translated
+    // to aarch64. Sets x0 = old ptr (return), advances the
+    // ptr by x0 (the size arg).
+    if (s.needs_heap) {
+        s = s.write("    .bss\n");
+        s = s.write("    .align 3\n");
+        s = s.write("__lang_heap_ptr: .quad 0\n");
+        s = s.write("    .align 3\n");
+        s = s.write("__lang_heap: .skip 1048576\n");
+        s = s.write("    .text\n");
+        s = s.write(".globl __lang_alloc\n");
+        s = s.write(".type __lang_alloc, %function\n");
+        s = s.write("__lang_alloc:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    adrp x1, __lang_heap_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__lang_heap_ptr\n");
+        s = s.write("    ldr x2, [x1]\n");
+        s = s.write("    cbnz x2, .Lalloc_inited\n");
+        s = s.write("    adrp x2, __lang_heap\n");
+        s = s.write("    add x2, x2, :lo12:__lang_heap\n");
+        s = s.write("    str x2, [x1]\n");
+        s = s.write(".Lalloc_inited:\n");
+        s = s.write("    ldr x2, [x1]\n");
+        s = s.write("    add x3, x2, x0\n");
+        s = s.write("    str x3, [x1]\n");
+        s = s.write("    mov x0, x2\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __lang_alloc, .-__lang_alloc\n");
     }
     return s.out;
 }
