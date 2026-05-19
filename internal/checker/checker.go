@@ -3470,7 +3470,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			result = armT
 			return
 		}
-		c.errf(p, "match arms have incompatible types: %s vs %s", result, armT)
+		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
 	}
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
@@ -3564,7 +3564,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			return
 		}
 		if !ast.Equal(result, armT) {
-			c.errf(p, "match-expression arms differ: %s vs %s", result, armT)
+			c.errfCode(p, "E031", "match-expression arms differ: %s vs %s", result, armT)
 		}
 	}
 	for i, arm := range n.Arms {
@@ -3634,7 +3634,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	if !sawWildcard {
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
-				c.errf(n.P, "match-expression is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
+				c.errfCode(n.P, "E030", "match-expression is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
 					v.Name, ed.Name)
 			}
 		}
@@ -3677,7 +3677,7 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 	}
 	id, ok := src.Callee.(*ast.Ident)
 	if !ok {
-		c.errf(fn.P, "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation")
+		c.errfCode(fn.P, "E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation")
 		return
 	}
 	sig, ok := c.info.FuncSigs[id.Name]
@@ -3690,17 +3690,17 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 		}
 	}
 	if sig == nil || len(sig.Params) == 0 {
-		c.errf(fn.P, "use: callee %q has no signature; add an explicit `: TYPE` annotation", id.Name)
+		c.errfCode(fn.P, "E032", "use: callee %q has no signature; add an explicit `: TYPE` annotation", id.Name)
 		return
 	}
 	last := sig.Params[len(sig.Params)-1]
 	cbSig, isFunc := last.(*ast.FuncType)
 	if !isFunc {
-		c.errf(fn.P, "use: callee %q's last parameter isn't a function — add an explicit `: TYPE` annotation", id.Name)
+		c.errfCode(fn.P, "E032", "use: callee %q's last parameter isn't a function — add an explicit `: TYPE` annotation", id.Name)
 		return
 	}
 	if len(cbSig.Params) == 0 {
-		c.errf(fn.P, "use: callee %q's callback takes no arguments — there's nothing to bind", id.Name)
+		c.errfCode(fn.P, "E032", "use: callee %q's callback takes no arguments — there's nothing to bind", id.Name)
 		return
 	}
 	bindType := cbSig.Params[0]
@@ -3722,7 +3722,7 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 		}
 		resolved := substituteType(bindType, sub)
 		if containsParamType(resolved) {
-			c.errf(fn.P, "use: could not infer binding type for %q from its arguments — add an explicit `: TYPE` annotation", id.Name)
+			c.errfCode(fn.P, "E032", "use: could not infer binding type for %q from its arguments — add an explicit `: TYPE` annotation", id.Name)
 			return
 		}
 		bindType = resolved
@@ -3990,7 +3990,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if assignable(n.Target, inner) {
 			return n.Target
 		}
-		c.errf(n.P, "cannot cast %s to %s; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", inner, n.Target)
+		c.errfCode(n.P, "E033", "cannot cast %s to %s; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", inner, n.Target)
 		return n.Target
 	case *ast.BoolLit:
 		return ast.BoolType{}
@@ -4143,7 +4143,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				elemT = unified
 				continue
 			}
-			c.errf(el.Pos(), "array element type %s, expected %s", t, elemT)
+			c.errfCode(el.Pos(), "E034", "array element type %s, expected %s", t, elemT)
 		}
 		n.ElemType = elemT
 		return ast.ArrayType{Elem: elemT}
@@ -4151,7 +4151,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		at := c.checkExpr(n.Array, s)
 		it := c.checkExpr(n.Idx, s)
 		if it != nil && !ast.Equal(it, ast.NumberType{}) {
-			c.errf(n.Idx.Pos(), "index must be an integer, got %s", it)
+			c.errfCode(n.Idx.Pos(), "E034", "index must be an integer, got %s", it)
 		}
 		if arr, ok := at.(ast.ArrayType); ok {
 			n.ElemType = arr.Elem
@@ -4168,7 +4168,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return ast.NumberType{}
 		}
 		if at != nil {
-			c.errf(n.P, "indexing non-array value of type %s", at)
+			c.errfCode(n.P, "E034", "indexing non-array value of type %s", at)
 		}
 		return nil
 	case *ast.SliceExpr:
