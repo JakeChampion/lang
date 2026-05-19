@@ -263,7 +263,7 @@ pub function fold_module(mod: parser.Module): parser.Module {
         });
         i = i + 1;
     }
-    return parser.Module { funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
+    return parser.Module { funcs: funcs, structs: mod.structs, top_stmts: fold_block(mod.top_stmts) };
 }
 
 // =================== VALIDATION ====================
