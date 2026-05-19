@@ -272,6 +272,24 @@ function count_locals_in_stmt(stmt: parser.Stmt): i32 {
         parser.StmtVar(_) => { return 1; },
         parser.StmtIf(ifs) => { return count_locals(ifs.then_body) + count_locals(ifs.else_body); },
         parser.StmtWhile(w) => { return count_locals(w.body); },
+        parser.StmtMatch(m) => {
+            // +1 for the synthetic scrutinee local + one per
+            // non-empty PatVariant binding + the recursive body
+            // counts. Wildcard arms add no binding.
+            var n: i32 = 1;
+            var i: i32 = 0;
+            while (i < len(m.arms)) {
+                match (m.arms[i].pattern) {
+                    parser.PatVariant(pv) => {
+                        if (len(pv.binding) > 0 && pv.binding != "_") { n = n + 1; }
+                    },
+                    parser.PatWildcard(_) => { }
+                }
+                n = n + count_locals(m.arms[i].body);
+                i = i + 1;
+            }
+            return n;
+        },
         _ => { return 0; }
     }
     return 0;
@@ -283,6 +301,15 @@ function count_locals_in_stmt(stmt: parser.Stmt): i32 {
 // end-of-module.
 struct StringLitOut { state: EmitState, idx: i32 }
 function add_string_lit(s: EmitState, v: string): StringLitOut {
+    // Dedup: load-bearing for shape-pointer dispatch in
+    // ExprFieldAccess + StmtMatch. See asm.lang for rationale.
+    var i: i32 = 0;
+    while (i < len(s.string_lits)) {
+        if (s.string_lits[i] == v) {
+            return StringLitOut { state: s, idx: i };
+        }
+        i = i + 1;
+    }
     var idx: i32 = len(s.string_lits);
     var sl: string[] = s.string_lits.push(v);
     var ns: EmitState = EmitState {
@@ -809,7 +836,78 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.write("    ldr x0, [sp], #16\n");  // drop result
             return s;
         },
-        parser.StmtMatch(_) => { return s.write("    // unsupported: match\n"); },
+        parser.StmtMatch(m) => {
+            // Mirror of the x86-64 lowering in asm.lang. Eval
+            // scrutinee, save into a fresh local slot, then for
+            // each arm:
+            //   PatVariant: load shape ptr from [scrut], cmp
+            //   against the interned struct name, b.ne next arm;
+            //   on match, bind `binding` to the scrutinee and
+            //   emit the body.
+            //   PatWildcard: always match.
+            s = emit_expr(m.scrutinee, s);
+            var scrut_name: string = "__match_scrut_" + i32_to_string(s.label_n);
+            s = s.bind_local(scrut_name);
+            var scrut_off: i32 = s.lookup_local(scrut_name);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    str x0, [x29, #" + i32_to_string(scrut_off) + "]\n");
+            var end_lbl: i32 = s.label_n;
+            s = EmitState {
+                out: s.out,
+                label_n: s.label_n + 1,
+                local_names: s.local_names,
+                in_function: s.in_function,
+                string_lits: s.string_lits,
+                needs_print_int: s.needs_print_int,
+                needs_read_int: s.needs_read_int,
+                needs_heap: s.needs_heap,
+                struct_decls: s.struct_decls
+            };
+            var ai: i32 = 0;
+            while (ai < len(m.arms)) {
+                var arm: parser.MatchArm = m.arms[ai];
+                var next_lbl: i32 = s.label_n;
+                s = EmitState {
+                    out: s.out,
+                    label_n: s.label_n + 1,
+                    local_names: s.local_names,
+                    in_function: s.in_function,
+                    string_lits: s.string_lits,
+                    needs_print_int: s.needs_print_int,
+                    needs_read_int: s.needs_read_int,
+                    needs_heap: s.needs_heap,
+                    struct_decls: s.struct_decls
+                };
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        s = s.write("    ldr x0, [x29, #" + i32_to_string(scrut_off) + "]\n");
+                        s = s.write("    ldr x1, [x0]\n");
+                        var nameLit: StringLitOut = add_string_lit(s, pv.type_name);
+                        s = nameLit.state;
+                        s = s.write("    adrp x2, .S" + i32_to_string(nameLit.idx) + "\n");
+                        s = s.write("    add x2, x2, :lo12:.S" + i32_to_string(nameLit.idx) + "\n");
+                        s = s.write("    cmp x1, x2\n");
+                        s = s.write("    b.ne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
+                        if (len(pv.binding) > 0 && pv.binding != "_") {
+                            s = s.bind_local(pv.binding);
+                            var bind_off: i32 = s.lookup_local(pv.binding);
+                            s = s.write("    str x0, [x29, #" + i32_to_string(bind_off) + "]\n");
+                        }
+                    },
+                    parser.PatWildcard(_) => { }
+                }
+                var bi: i32 = 0;
+                while (bi < len(arm.body)) {
+                    s = emit_stmt(arm.body[bi], s);
+                    bi = bi + 1;
+                }
+                s = s.write("    b .Lmatch_end_" + i32_to_string(end_lbl) + "\n");
+                s = s.write(".Lmatch_next_" + i32_to_string(next_lbl) + ":\n");
+                ai = ai + 1;
+            }
+            s = s.write(".Lmatch_end_" + i32_to_string(end_lbl) + ":\n");
+            return s;
+        },
         parser.StmtFor(_) => { return s.write("    // unsupported: for-in\n"); },
         parser.StmtBreak(_) => { return s.write("    // unsupported: break\n"); },
         parser.StmtContinue(_) => { return s.write("    // unsupported: continue\n"); },
