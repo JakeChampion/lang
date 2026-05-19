@@ -2,15 +2,20 @@
 title: lang
 description: A small, fast-startup language with native arm64 / x86-64 / wasm backends.
 template: splash
+# Hero `link:` values are passed verbatim to `<a href>` by
+# Starlight's Hero / LinkButton — base path is NOT auto-prepended
+# (unlike the sidebar). Bake the `/lang/` base in so the buttons
+# resolve to `/lang/tutorial/install/` etc. instead of 404-ing
+# at the apex `/tutorial/install/`.
 hero:
   tagline: A small, fast-startup language for CLI tools and edge-function HTTP servers.
   actions:
     - text: Get started
-      link: /tutorial/install/
+      link: /lang/tutorial/install/
       icon: right-arrow
       variant: primary
     - text: Try in browser
-      link: /playground/
+      link: /lang/playground/
       icon: external
     - text: Source on GitHub
       link: https://github.com/JakeChampion/lang
