@@ -334,6 +334,12 @@ function main(): i32 {
   `assert_elapsed_lt_us(start_ns, max_us)` — pair with
   `monotonic_ns()` to stamp the start; failure message embeds
   both the observed elapsed and the deadline
+- **Benchmarks:** `(r).bench(name, iter, fn)` runs `fn`
+  repeatedly and emits a TAP comment with min / median /
+  mean / max microseconds; always passes.
+  `(r).bench_max_us(name, iter, fn, budget)` fails when the
+  MEDIAN per-iteration time exceeds the budget — median (not
+  mean) so a single GC pause doesn't tip a regression bound.
 - **Map assertions:** `assert_map_len_i32_i32` / `_string_string`,
   `assert_map_has_i32_i32` / `_string_string`,
   `assert_map_lacks_i32_i32` / `_string_string`
