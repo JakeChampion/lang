@@ -847,6 +847,33 @@ func TestRunnerLinesLogExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/fuzz_corpus_test.lang` exercises the
+// `fuzz_corpus_from_dir` + `fuzz_corpus_from_dir_or` helpers
+// that load seed corpora from disk. Six cases cover the
+// loaded-seeds path, the fallback paths (missing directory
+// + empty directory), and a smoke test for the new fuzz
+// mutators (bit flip / byte duplicate / byte zero / byte max).
+func TestRunnerFuzzCorpusExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/fuzz_corpus_test.lang")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - loads three seeds (skips _-prefixed)",
+		"ok 4 - missing corpus dir falls back",
+		"ok 5 - empty corpus falls back",
+		"ok 6 - new mutators don't crash",
+		"# pass 6",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // An empty-suite run still produces well-formed TAP — the
 // `1..0` plan line and a `# tests 0` summary. Useful for
 // scaffolding a new test file before the first case lands.

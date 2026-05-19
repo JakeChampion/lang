@@ -64,38 +64,77 @@ function __fuzz_pick_seed(seeds: string[], iter: i32): string {
     return seeds[iter % n];
 }
 
-// __fuzz_mutate — produce a mutated copy of `seed`. One of:
-//   - byte flip  (replace seed[i] with a random byte)
-//   - byte drop  (concatenate seed[:i] + seed[i+1:])
-//   - byte insert(seed[:i] + random byte + seed[i:])
-//   - leave unchanged (returns `seed`)
+// __fuzz_mutate — produce a mutated copy of `seed`. Eight
+// strategies, sampled uniformly:
+//   0 byte flip      replace seed[i] with a random byte
+//   1 byte drop      concatenate seed[:i] + seed[i+1:]
+//   2 byte insert    seed[:i] + random byte + seed[i:]
+//   3 bit flip       toggle one bit at a random byte
+//   4 byte duplicate seed[:i] + seed[i] + seed[i] + seed[i+1:]
+//   5 byte zero      replace seed[i] with 0x00
+//   6 byte max       replace seed[i] with 0xFF
+//   7 leave unchanged (run the seed verbatim)
+//
+// The bit-flip / byte-zero / byte-max strategies are
+// borrowed from AFL — they're useful for fishing for
+// boundary-conditions bugs that random-byte flips would
+// miss (e.g. parsers that special-case 0x00 or 0xFF).
+//
 // The "unchanged" path is important: every iteration should
 // have a chance of running the seed verbatim so a buggy
 // seed isn't masked by mutations.
 function __fuzz_mutate(seed: string, mode: i32): string {
     var n: i32 = len(seed);
+    // Insert is the only strategy that can grow an empty
+    // seed; every other strategy needs at least one byte.
     if (n == 0 && mode != 2) { return seed; }
     if (mode == 0) {
-        // flip
         var i: i32 = random_int(0, n);
         var b: i32 = random_int(0, 256);
         return seed[0:i] + (b as i32).to_ascii_string() + seed[i + 1:n];
     }
     if (mode == 1) {
-        // drop
-        if (n == 0) { return seed; }
         var i: i32 = random_int(0, n);
         return seed[0:i] + seed[i + 1:n];
     }
     if (mode == 2) {
-        // insert
         var i: i32 = random_int(0, n + 1);
         var b: i32 = random_int(0, 256);
         return seed[0:i] + (b as i32).to_ascii_string() + seed[i:n];
     }
-    // verbatim
+    if (mode == 3) {
+        // bit flip — pick a byte, XOR with a single-bit mask.
+        var i: i32 = random_int(0, n);
+        var bit: i32 = random_int(0, 8);
+        var orig: i32 = seed[i];
+        var flipped: i32 = orig ^ (1 << bit);
+        return seed[0:i] + (flipped as i32).to_ascii_string() + seed[i + 1:n];
+    }
+    if (mode == 4) {
+        // byte duplicate
+        var i: i32 = random_int(0, n);
+        return seed[0:i] + seed[i:i + 1] + seed[i:n];
+    }
+    if (mode == 5) {
+        // byte zero
+        var i: i32 = random_int(0, n);
+        return seed[0:i] + (0 as i32).to_ascii_string() + seed[i + 1:n];
+    }
+    if (mode == 6) {
+        // byte max (0xFF)
+        var i: i32 = random_int(0, n);
+        return seed[0:i] + (255 as i32).to_ascii_string() + seed[i + 1:n];
+    }
+    // verbatim (mode 7 or higher)
     return seed;
 }
+
+// __fuzz_mutator_count is the upper bound passed to
+// `random_int` when picking a mutation strategy. Bump when
+// adding new modes above; tests don't directly assert on
+// the constant, but `__fuzz_mutate`'s implicit contract is
+// that every mode 0..count-1 returns a valid mutation.
+function __fuzz_mutator_count(): i32 { return 8; }
 
 // __fuzz_escape — render an arbitrary byte string for the
 // failure diagnostic. Non-printable bytes go to "\xNN", quote
@@ -168,7 +207,7 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => Opti
     var iter: i32 = 0;
     while (iter < iterations) {
         var seed: string = __fuzz_pick_seed(seeds, iter);
-        var mode: i32 = random_int(0, 4);
+        var mode: i32 = random_int(0, __fuzz_mutator_count());
         var input: string = __fuzz_mutate(seed, mode);
         match (target(input)) {
             Some(msg) => {
@@ -340,7 +379,7 @@ pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) 
     var iter: i32 = 0;
     while (iter < iterations) {
         var seed: string = __fuzz_pick_seed(seeds, iter);
-        var mode: i32 = random_int(0, 4);
+        var mode: i32 = random_int(0, __fuzz_mutator_count());
         var input: string = __fuzz_mutate(seed, mode);
         match (target(input)) {
             Some(msg) => {
@@ -377,4 +416,93 @@ function __fuzz_format_failure(origin: string, raw: string, minimised: string, m
 // reproducer.
 pub function (r: TestRunner) fuzz_shrink(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): TestRunner {
     return r.it(name, fuzz_run_shrink(seeds, iterations, target));
+}
+
+// =================== CORPUS LOADING ===================
+//
+// Larger fuzz campaigns want their seed corpus on disk so
+// that interesting inputs accumulated over time can be
+// committed to the repo as `testdata/fuzz_corpus/*.bin`
+// — same shape Go's testing.F+`-fuzz` uses.
+//
+// `fuzz_corpus_from_dir(path)` reads every file under
+// `path` (non-recursive) and returns each file's contents
+// as a seed. Files are sorted by name so the verbatim
+// pass — which runs every seed first — has a deterministic
+// order regardless of the OS-level directory enumeration
+// order. Hidden / `_`-prefixed entries are skipped so
+// scratch metadata doesn't get treated as fuzz input.
+
+import "std/sort";
+
+// fuzz_corpus_from_dir(path) — load every regular file under
+// `path` as a seed string. Returns the seeds via Result so
+// the caller can fall back to inline seeds when the corpus
+// directory isn't present (typical pattern: ship a small
+// inline corpus + grow it on disk over time).
+pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
+    match (read_dir(path)) {
+        Err(e) => { return Err(e); },
+        Ok(names) => {
+            // Stable order so the verbatim-seed pass + the
+            // mutation pass both walk the corpus the same
+            // way each run. Qualified `sort.sort_strings_asc`
+            // call so modload's rewriter routes correctly
+            // under the user-side mangled-load path too
+            // (the auto-prelude flat-load path would resolve
+            // the bare name).
+            var sorted: string[] = sort.sort_strings_asc(names);
+            var seeds: string[] = [];
+            var i: i32 = 0;
+            while (i < len(sorted)) {
+                var name: string = sorted[i];
+                // Skip dotfiles + underscored metadata.
+                if (len(name) > 0 && name[0] != 46 && name[0] != 95) {
+                    var full: string = path + "/" + name;
+                    match (stat(full)) {
+                        Ok(s) => {
+                            if (s.is_file) {
+                                match (read_file(full)) {
+                                    Ok(content) => { seeds = seeds.push(content); },
+                                    Err(_) => { },
+                                }
+                            }
+                        },
+                        Err(_) => { },
+                    }
+                }
+                i = i + 1;
+            }
+            return Ok(seeds);
+        }
+    }
+    return Ok([]);
+}
+
+// fuzz_corpus_from_dir_or(path, fallback) — convenience for
+// the typical "use the on-disk corpus when present, else
+// fall back to inline seeds" pattern:
+//
+//   var seeds: string[] = fuzz_corpus_from_dir_or(
+//       "testdata/parser_corpus",
+//       ["", "function main(): i32 { return 0; }"]);
+//
+// Concatenates the on-disk seeds AFTER the fallback so the
+// inline ones are guaranteed to run even if the disk
+// corpus is empty.
+pub function fuzz_corpus_from_dir_or(path: string, fallback: string[]): string[] {
+    match (fuzz_corpus_from_dir(path)) {
+        Ok(loaded) => {
+            if (len(loaded) == 0) { return fallback; }
+            var out: string[] = fallback;
+            var i: i32 = 0;
+            while (i < len(loaded)) {
+                out = out.push(loaded[i]);
+                i = i + 1;
+            }
+            return out;
+        },
+        Err(_) => { return fallback; }
+    }
+    return fallback;
 }
