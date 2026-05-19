@@ -1106,7 +1106,12 @@ function lookup_func(funcs: FuncTable, name: string): FuncLookup {
 function lookup_method(funcs: FuncTable, name: string, recv_type: string): FuncLookup {
     var i: i32 = 0;
     while (i < len(funcs.names)) {
-        if (funcs.names[i] == name && funcs.receiver_types[i] == recv_type) {
+        var rt_match: boolean = funcs.receiver_types[i] == recv_type;
+        // `bool` / `boolean` interchangeable spellings.
+        if (!rt_match && recv_type == "bool" && funcs.receiver_types[i] == "boolean") {
+            rt_match = true;
+        }
+        if (funcs.names[i] == name && rt_match) {
             return FuncLookup { entry: funcs.entries[i], locals_count: funcs.locals_counts[i], ok: true };
         }
         i = i + 1;
@@ -1191,10 +1196,18 @@ pub function exec_program(prog: CompiledProgram): Value {
                 }
                 var recv_idx: i32 = len(stack) - o.argc - 1;
                 var recv: Value = stack[recv_idx];
+                // Derive recv_type from the runtime value tag.
+                // VStruct nominates its declared type_name;
+                // primitive variants use their keyword spellings
+                // so `function (s: string) name()` etc. dispatch.
                 var recv_type: string = "";
                 match (recv) {
                     VStruct(sv) => { recv_type = sv.type_name; },
-                    _ => { return v_err("call_method: receiver not a struct"); }
+                    VString(_) => { recv_type = "string"; },
+                    VInt(_) => { recv_type = "i32"; },
+                    VBool(_) => { recv_type = "bool"; },
+                    VFloat(_) => { recv_type = "f64"; },
+                    _ => { return v_err("call_method: receiver not a typed value"); }
                 }
                 var ml: FuncLookup = lookup_method(funcs, o.name, recv_type);
                 if (!ml.ok) {
@@ -1865,6 +1878,16 @@ function main(): i32 {
     match (r51) {
         VInt(i) => { if (i.v != 12) { return 510; } },
         _ => { return 511; }
+    }
+
+    // Primitive-receiver method on i32 — VM dispatches via
+    // the runtime tag now that lookup_method matches by
+    // recv variant's keyword spelling.
+    var src52: string = "function (n: i32) twice(): i32 { return n * 2; } function main(): i32 { var x: i32 = 21; return x.twice(); }";
+    var r52: Value = run_module(src52);
+    match (r52) {
+        VInt(i) => { if (i.v != 42) { return 520; } },
+        _ => { return 521; }
     }
 
     return 0;
