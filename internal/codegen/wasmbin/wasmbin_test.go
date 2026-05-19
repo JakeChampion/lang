@@ -2152,8 +2152,8 @@ func TestEmitConstFuncInterning(t *testing.T) {
 	if a != b {
 		t.Fatalf("ptr1 = %q, ptr2 = %q — expected same address (interning failed)", a, b)
 	}
-	if a != "64" {
-		t.Fatalf("ptr = %q, want 64 (closuresBase)", a)
+	if a != "80" {
+		t.Fatalf("ptr = %q, want 80 (closuresBase)", a)
 	}
 }
 
@@ -2173,8 +2173,8 @@ func TestEmitConstFuncTwoTargets(t *testing.T) {
 		},
 		{
 			// diff = address_of("b") - address_of("a"). With "b"
-			// interned first (cell 0, addr 64) and "a" interned
-			// second (cell 1, addr 72), the result is 64-72 = -8.
+			// interned first (cell 0, addr 80) and "a" interned
+			// second (cell 1, addr 88), the result is 80-88 = -8.
 			// Equivalent fact: distinct targets get distinct cells
 			// 8 bytes apart.
 			Name:       "diff",
@@ -2880,6 +2880,94 @@ func TestEmitMemset(t *testing.T) {
 	}
 	if got := runUnderWasmtime(t, bin, "main"); got != "-1414812757" {
 		t.Fatalf("memset + load = %q, want -1414812757 (0xABABABAB)", got)
+	}
+}
+
+// TestEmitStrIdxHeap — heap-form string: __str_idx returns
+// base_data + i, OpLoadByte at that address reads the byte.
+// "hello" is too long for inline form on wasm32 (max 7 ASCII
+// bytes is supported, "hello" is 5 — inline applies!)... so
+// pick a longer string to force heap form: "abcdefghi" (9 bytes).
+func TestEmitStrIdxHeap(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "abcdefghi"},
+			{Kind: ir.OpConstI32, I32: 4}, // 'e'
+			{Kind: ir.OpCallDirect, Str: "__str_idx"},
+			{Kind: ir.OpLoadByte},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "101" {
+		t.Fatalf("str_idx heap = %q, want 101 ('e')", got)
+	}
+}
+
+// TestEmitStrIdxInline — inline-form string (≤7 ASCII bytes):
+// __str_idx spills (data, len) to the fixed scratch and returns
+// scratch + i, so the caller's OpLoadByte reads the spilled byte.
+func TestEmitStrIdxInline(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hi"},
+			{Kind: ir.OpConstI32, I32: 1}, // 'i'
+			{Kind: ir.OpCallDirect, Str: "__str_idx"},
+			{Kind: ir.OpLoadByte},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "105" {
+		t.Fatalf("str_idx inline = %q, want 105 ('i')", got)
+	}
+}
+
+// TestEmitArrIdx — set up a length-prefixed 3-element i32 array
+// at a known address, then __arr_idx(base, 1) returns base+4;
+// load that to recover element 1.
+func TestEmitArrIdx(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			// Length prefix: mem[196] = 3 (3 elements)
+			{Kind: ir.OpConstI32, I32: 196},
+			{Kind: ir.OpConstI32, I32: 3},
+			{Kind: ir.OpCallDirect, Str: "__store_i32"},
+			// Element 0 at 200: 10
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpConstI32, I32: 10},
+			{Kind: ir.OpCallDirect, Str: "__store_i32"},
+			// Element 1 at 204: 20
+			{Kind: ir.OpConstI32, I32: 204},
+			{Kind: ir.OpConstI32, I32: 20},
+			{Kind: ir.OpCallDirect, Str: "__store_i32"},
+			// Element 2 at 208: 30
+			{Kind: ir.OpConstI32, I32: 208},
+			{Kind: ir.OpConstI32, I32: 30},
+			{Kind: ir.OpCallDirect, Str: "__store_i32"},
+			// arr_idx(200, 1) → 204; load → 20
+			{Kind: ir.OpConstI32, I32: 200},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpCallDirect, Str: "__arr_idx"},
+			{Kind: ir.OpCallDirect, Str: "__load_i32"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "20" {
+		t.Fatalf("arr_idx[1] = %q, want 20", got)
 	}
 }
 
