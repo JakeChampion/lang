@@ -1,10 +1,11 @@
 // Synthetic runtime-helper functions appended to the module after
-// the user functions. These exist to implement IR ops (OpStrLen,
-// later: OpAlloc / OpStrEq / OpStrConcat) without forcing every
-// caller to inline the same code sequence.
+// the user functions. These exist to implement IR ops (OpAlloc,
+// OpStrLen, OpStrEq, OpStrConcat, OpStrLen-byte, the __lang_print
+// WASI wrapper, etc.) without forcing every caller to inline the
+// same code sequence.
 //
 // Each helper is gated by a usage scan over prog.Funcs — programs
-// that never call OpStrLen pay zero bytes for the str_len helper.
+// that never need a helper pay zero bytes for its body.
 // runtimeHelperSpecs keeps the names + bodies + signatures in one
 // place so adding a new helper is one entry.
 
