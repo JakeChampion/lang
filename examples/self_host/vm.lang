@@ -44,16 +44,18 @@ pub struct VBool { v: boolean }
 pub struct VString { v: string }
 pub struct VFloat { v: f64 }
 pub struct VArr { elements: Value[] }
+pub struct VTuple { elements: Value[] }
 pub struct VStruct { type_name: string, field_names: string[], field_values: Value[] }
 pub struct VErr { msg: string }
 
-pub type Value = VInt | VBool | VString | VFloat | VArr | VStruct | VErr;
+pub type Value = VInt | VBool | VString | VFloat | VArr | VTuple | VStruct | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
 function v_float(n: f64): Value { return VFloat { v: n }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
+function v_tuple(elements: Value[]): Value { return VTuple { elements: elements }; }
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
     return VStruct { type_name: type_name, field_names: names, field_values: values };
 }
@@ -114,6 +116,11 @@ pub struct OpLen { tag: i32 }
 // OpSlice pops (end, start, container) and pushes the sub-view.
 // Same semantics as ExprSlice — works on both VArr and VString.
 pub struct OpSlice { tag: i32 }
+// OpMakeTuple pops `n` values off the stack (in source order)
+// and pushes a single VTuple. Mirrors OpMakeArray but the
+// resulting Value uses VTuple, so field access via OpFieldGet
+// dispatches on tuple semantics.
+pub struct OpMakeTuple { n: i32 }
 // OpMakeStruct pops `len(field_names)` values from the stack
 // (in source order — first pushed = field 0) and pushes a
 // VStruct with the carried type_name + field_names.
@@ -137,7 +144,7 @@ pub type Op = OpPushInt | OpPushBool | OpPushStr | OpPushFloat
             | OpBinary | OpUnary
             | OpJump | OpJumpIfFalse
             | OpPop | OpCall | OpCallMethod
-            | OpMakeArray | OpIndex | OpLen | OpSlice
+            | OpMakeArray | OpMakeTuple | OpIndex | OpLen | OpSlice
             | OpMakeStruct | OpFieldGet
             | OpDup | OpTypeNameEq
             | OpReturn;
@@ -156,6 +163,7 @@ function op_pop(): Op { return OpPop { tag: 0 }; }
 function op_call(name: string, argc: i32): Op { return OpCall { name: name, argc: argc }; }
 function op_call_method(name: string, argc: i32): Op { return OpCallMethod { name: name, argc: argc }; }
 function op_make_array(n: i32): Op { return OpMakeArray { n: n }; }
+function op_make_tuple(n: i32): Op { return OpMakeTuple { n: n }; }
 function op_index(): Op { return OpIndex { tag: 0 }; }
 function op_len(): Op { return OpLen { tag: 0 }; }
 function op_slice(): Op { return OpSlice { tag: 0 }; }
@@ -364,8 +372,14 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             }
             return CompileResult { ops: ops, lt: lt };
         },
-        parser.ExprTuple(_) => {
-            ops = ops.push(op_push_str("__tuple-not-implemented__"));
+        parser.ExprTuple(t) => {
+            var ti: i32 = 0;
+            while (ti < len(t.elements)) {
+                var tr: CompileResult = compile_expr(t.elements[ti], ops, lt);
+                ops = tr.ops; lt = tr.lt;
+                ti = ti + 1;
+            }
+            ops = ops.push(op_make_tuple(len(t.elements)));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprArray(a) => {
@@ -1155,6 +1169,22 @@ pub function exec_program(prog: CompiledProgram): Value {
                 stack = stack_push(stack, v_arr(elems));
                 ip = ip + 1;
             },
+            OpMakeTuple(o) => {
+                if (len(stack) < o.n) { return v_err("make_tuple: stack underflow"); }
+                var elems: Value[] = [];
+                var start: i32 = len(stack) - o.n;
+                var i: i32 = 0;
+                while (i < o.n) {
+                    elems = elems.push(stack[start + i]);
+                    i = i + 1;
+                }
+                var ns: Value[] = [];
+                var j: i32 = 0;
+                while (j < start) { ns = ns.push(stack[j]); j = j + 1; }
+                stack = ns;
+                stack = stack_push(stack, v_tuple(elems));
+                ip = ip + 1;
+            },
             OpIndex(_) => {
                 var pi: PopResult = stack_pop(stack); stack = pi.stack;
                 var pa: PopResult = stack_pop(stack); stack = pa.stack;
@@ -1284,7 +1314,15 @@ pub function exec_program(prog: CompiledProgram): Value {
                             stack = stack_push(stack, v_err("struct " + sv.type_name + " has no field `" + o.field_name + "`"));
                         }
                     },
-                    _ => { stack = stack_push(stack, v_err("field_get: receiver not a struct")); }
+                    VTuple(tv) => {
+                        var tidx: i32 = digits_to_i32(o.field_name);
+                        if (tidx < 0 || tidx >= len(tv.elements)) {
+                            stack = stack_push(stack, v_err("tuple index `" + o.field_name + "` out of range"));
+                        } else {
+                            stack = stack_push(stack, tv.elements[tidx]);
+                        }
+                    },
+                    _ => { stack = stack_push(stack, v_err("field_get: receiver not a struct or tuple")); }
                 }
                 ip = ip + 1;
             },
@@ -1713,6 +1751,27 @@ function main(): i32 {
     match (r44) {
         VInt(i) => { if (i.v != 23) { return 440; } },
         _ => { return 441; }
+    }
+
+    // Tuple field access — `(10, 20, 30).0` → 10.
+    var r45: Value = run_source("var t = (10, 20, 30); return t.0;");
+    match (r45) {
+        VInt(i) => { if (i.v != 10) { return 450; } },
+        _ => { return 451; }
+    }
+
+    // Tuple index 2.
+    var r46: Value = run_source("var t = (10, 20, 30); return t.2;");
+    match (r46) {
+        VInt(i) => { if (i.v != 30) { return 460; } },
+        _ => { return 461; }
+    }
+
+    // Tuple out-of-range → VErr.
+    var r47: Value = run_source("var t = (1, 2); return t.5;");
+    match (r47) {
+        VErr(_) => { },
+        _ => { return 470; }
     }
 
     return 0;
