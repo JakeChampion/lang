@@ -204,9 +204,8 @@ func Emit(prog *ir.Program) ([]byte, error) {
 }
 
 // valtypeFor maps a single ast.Type to the wasm valtype byte used to
-// hold it. Only single-slot scalar types are supported in slice 1;
-// strings (two-slot ABI) and compound heap-pointer types come in
-// later slices.
+// hold it. Only single-slot types live here; strings (two-slot ABI)
+// fan out through slotValtypes / slotIsString instead.
 func valtypeFor(t ast.Type) (byte, error) {
 	switch v := t.(type) {
 	case ast.NumberType:
@@ -222,32 +221,27 @@ func valtypeFor(t ast.Type) (byte, error) {
 		}
 		return encode.ValtypeF32, nil
 	}
-	return 0, fmt.Errorf("unsupported type %s (slice 1 covers scalar i32/i64/f32/f64 + bool only)", t)
+	return 0, fmt.Errorf("unsupported type %s (scalar i32/i64/f32/f64 + bool only at this seam)", t)
 }
 
-// paramValtypes returns the wasm param valtype vector for an IR
-// function's parameter list. Each param maps to exactly one wasm
-// slot in slice 1 (no strings).
-func paramValtypes(params []ast.Param) ([]byte, error) {
-	out := make([]byte, 0, len(params))
-	for _, p := range params {
-		vt, err := valtypeFor(p.Type)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, vt)
-	}
-	return out, nil
-}
-
-// resultValtypes returns the wasm result valtype vector for an IR
-// function's return type. Void → empty; scalar → one slot.
-func resultValtypes(t ast.Type) ([]byte, error) {
+// isStringType reports whether t uses the two-word `(data, len)`
+// ABI — i.e. needs 2 wasm slots when used as a param / local /
+// result. Currently only ast.StringType.
+func isStringType(t ast.Type) bool {
 	if t == nil {
-		return nil, nil
+		return false
 	}
-	if _, isVoid := t.(ast.VoidType); isVoid {
-		return nil, nil
+	_, ok := t.(ast.StringType)
+	return ok
+}
+
+// slotValtypes returns the wasm valtype sequence for an ast.Type
+// used as a slot (param / local / result). Strings fan out to
+// `[i32, i32]` for the two-word ABI; everything else maps to a
+// single valtype via valtypeFor.
+func slotValtypes(t ast.Type) ([]byte, error) {
+	if isStringType(t) {
+		return []byte{encode.ValtypeI32, encode.ValtypeI32}, nil
 	}
 	vt, err := valtypeFor(t)
 	if err != nil {
@@ -256,24 +250,53 @@ func resultValtypes(t ast.Type) ([]byte, error) {
 	return []byte{vt}, nil
 }
 
+// paramValtypes returns the wasm param valtype vector for an IR
+// function's parameter list. String params fan out to two wasm
+// slots; everything else maps 1:1.
+func paramValtypes(params []ast.Param) ([]byte, error) {
+	var out []byte
+	for _, p := range params {
+		vts, err := slotValtypes(p.Type)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vts...)
+	}
+	return out, nil
+}
+
+// resultValtypes returns the wasm result valtype vector for an IR
+// function's return type. Void → empty; scalar → one slot;
+// string → two slots (multi-value return for the (data, len) pair).
+func resultValtypes(t ast.Type) ([]byte, error) {
+	if t == nil {
+		return nil, nil
+	}
+	if _, isVoid := t.(ast.VoidType); isVoid {
+		return nil, nil
+	}
+	return slotValtypes(t)
+}
+
 // localValtypes returns the wasm valtype vector for an IR function's
 // declared locals + scratch slots — exactly what the local-section
-// preamble of the function body needs.
+// preamble of the function body needs. String-typed slots fan out
+// to two i32 slots `(data, len)`.
 func localValtypes(fn *ir.Func) ([]byte, error) {
-	out := make([]byte, 0, len(fn.Locals)+len(fn.ScratchTypes))
+	var out []byte
 	for _, l := range fn.Locals {
-		vt, err := valtypeFor(l.Type)
+		vts, err := slotValtypes(l.Type)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, vt)
+		out = append(out, vts...)
 	}
 	for _, s := range fn.ScratchTypes {
-		vt, err := valtypeFor(s)
+		vts, err := slotValtypes(s)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, vt)
+		out = append(out, vts...)
 	}
 	return out, nil
 }
@@ -293,6 +316,45 @@ type emitCtx struct {
 	// heap-form bytes of s, interning so repeats share an
 	// address. Used by OpConstStr.
 	internString func(string) int
+	// fn is the current function being walked. emitBody sets and
+	// clears it. Slot-aware ops (OpLoadLocal / OpStoreLocal /
+	// OpTeeLocal) consult slotType(fn, op.I32) to decide whether
+	// to fan out into the two-word string ABI.
+	fn *ir.Func
+}
+
+// slotType returns the ast.Type of an IR slot. Layout follows the
+// IR convention: params first, then declared locals, then the
+// scratch slots the lowering pass conjured.
+func slotType(fn *ir.Func, irIdx int32) ast.Type {
+	i := int(irIdx)
+	if i < len(fn.Params) {
+		return fn.Params[i].Type
+	}
+	i -= len(fn.Params)
+	if i < len(fn.Locals) {
+		return fn.Locals[i].Type
+	}
+	i -= len(fn.Locals)
+	if i < len(fn.ScratchTypes) {
+		return fn.ScratchTypes[i]
+	}
+	return nil
+}
+
+// wasmSlotIdx translates an IR slot index to the wasm local index.
+// String slots fan out to two adjacent wasm locals (data at the
+// computed index, len at +1), so every preceding string slot
+// shifts the result by an extra +1.
+func wasmSlotIdx(fn *ir.Func, irIdx int32) uint32 {
+	wasm := 0
+	for j := int32(0); j < irIdx; j++ {
+		wasm++
+		if isStringType(slotType(fn, j)) {
+			wasm++
+		}
+	}
+	return uint32(wasm)
 }
 
 // emitBody walks fn.Ops and returns the function's body bytes plus
@@ -306,6 +368,8 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 	}
 	locals = encodeLocals(lvts)
 
+	ctx.fn = fn
+	defer func() { ctx.fn = nil }()
 	for opIdx, op := range fn.Ops {
 		body, err = emitOp(body, op, ctx)
 		if err != nil {
@@ -377,11 +441,36 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return body, nil
 
 	case ir.OpLoadLocal:
-		return inst.InstLocalGet(body, uint32(op.I32)), nil
+		idx := wasmSlotIdx(ctx.fn, op.I32)
+		if isStringType(slotType(ctx.fn, op.I32)) {
+			// Two-word ABI: push (data, len) in low-to-high
+			// order so the stack mirrors a fresh OpConstStr.
+			body = inst.InstLocalGet(body, idx)
+			body = inst.InstLocalGet(body, idx+1)
+			return body, nil
+		}
+		return inst.InstLocalGet(body, idx), nil
 	case ir.OpStoreLocal:
-		return inst.InstLocalSet(body, uint32(op.I32)), nil
+		idx := wasmSlotIdx(ctx.fn, op.I32)
+		if isStringType(slotType(ctx.fn, op.I32)) {
+			// Stack: [..., data, len]. Pop len first (top of
+			// stack), then data, into adjacent locals.
+			body = inst.InstLocalSet(body, idx+1)
+			body = inst.InstLocalSet(body, idx)
+			return body, nil
+		}
+		return inst.InstLocalSet(body, idx), nil
 	case ir.OpTeeLocal:
-		return inst.InstLocalTee(body, uint32(op.I32)), nil
+		idx := wasmSlotIdx(ctx.fn, op.I32)
+		if isStringType(slotType(ctx.fn, op.I32)) {
+			// Same as store-then-load: pop len, tee data
+			// (leaves data on stack), push len back.
+			body = inst.InstLocalSet(body, idx+1)
+			body = inst.InstLocalTee(body, idx)
+			body = inst.InstLocalGet(body, idx+1)
+			return body, nil
+		}
+		return inst.InstLocalTee(body, idx), nil
 
 	case ir.OpDrop:
 		return inst.InstDrop(body), nil
