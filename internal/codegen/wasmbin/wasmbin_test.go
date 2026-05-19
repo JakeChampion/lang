@@ -2683,6 +2683,78 @@ func TestEmitArgs(t *testing.T) {
 	}
 }
 
+// TestEmitEnvLookupMatch — env("FOO") with --env FOO=bar
+// should return Some(bar). Verify by reading the box's tag
+// (should be 0) and the value's len (3 = "bar").
+func TestEmitEnvLookupMatch(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:         "main",
+		ScratchTypes: []ast.Type{i32()},
+		ReturnType:   i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "FOO"},
+			{Kind: ir.OpCallDirect, Str: "env"},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			// tag at +0; if Some (tag=0), return len at +12; else -1.
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoad},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpEq},
+			{Kind: ir.OpIf, I32: ir.BlockTypeI32},
+			{Kind: ir.OpConstI32, I32: -1},
+			{Kind: ir.OpElse},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 12},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpLoad},
+			{Kind: ir.OpEnd},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--env", "FOO=bar", "--invoke", "main", p)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:%s", err, se.String())
+	}
+	if got := strings.TrimSpace(so.String()); got != "3" {
+		t.Fatalf("env(\"FOO\") = %q, want 3 (len(\"bar\"))", got)
+	}
+}
+
+// TestEmitEnvLookupMiss — env("NOPE") with no matching env
+// returns None (tag=1).
+func TestEmitEnvLookupMiss(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "NOPE"},
+			{Kind: ir.OpCallDirect, Str: "env"},
+			{Kind: ir.OpLoad}, // tag
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "main"); got != "1" {
+		t.Fatalf("env(\"NOPE\") tag = %q, want 1 (None)", got)
+	}
+}
+
 // TestEmitArenaSaveRestore — arena_save snapshots the bump
 // cursor; an intervening alloc moves the cursor; arena_restore
 // rewinds it. Verify by saving, allocating, restoring, then
