@@ -770,6 +770,169 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptCivilDateArith pins the Phase-3 Hinnant
+// civil-date helpers (docs/STDLIB-DESIGN-RESEARCH.md Rec §4):
+// add_days, weekday, day_of_year, days_since, is_valid,
+// is_leap_year, days_in_month. Pure-function arithmetic
+// — no system clock involved, so the tests pin exact values
+// across month / year / leap-year / pre-epoch boundaries.
+func TestInterpScriptCivilDateArith(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "add_days crosses month + year boundaries",
+			source: `import "std/time";
+function show(d: Date) {
+    print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
+}
+function main(): i32 {
+    show(time.date_make(2026, 1, 31).add_days(1));
+    show(time.date_make(2026, 12, 31).add_days(1));
+    show(time.date_make(2026, 1, 1).add_days(-1));
+    return 0;
+}`,
+			wantStdout: "2026-2-1\n2027-1-1\n2025-12-31\n",
+		},
+		{
+			name: "add_days respects leap years",
+			source: `import "std/time";
+function show(d: Date) {
+    print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
+}
+function main(): i32 {
+    show(time.date_make(2024, 2, 28).add_days(1));
+    show(time.date_make(2024, 2, 29).add_days(1));
+    show(time.date_make(2025, 2, 28).add_days(1));
+    return 0;
+}`,
+			wantStdout: "2024-2-29\n2024-3-1\n2025-3-1\n",
+		},
+		{
+			name: "weekday matches known calendar dates (Sun=0)",
+			source: `import "std/time";
+function main(): i32 {
+    // 1970-01-01 was a Thursday.
+    print(time.date_make(1970, 1, 1).weekday().to_string());
+    // 2024-01-01 was a Monday.
+    print(time.date_make(2024, 1, 1).weekday().to_string());
+    // 2025-12-25 was a Thursday.
+    print(time.date_make(2025, 12, 25).weekday().to_string());
+    // 2026-05-19 (today's date per CLAUDE.md) was a Tuesday.
+    print(time.date_make(2026, 5, 19).weekday().to_string());
+    return 0;
+}`,
+			wantStdout: "4\n1\n4\n2\n",
+		},
+		{
+			name: "day_of_year handles Jan / Feb / Mar / Dec in leap + non-leap",
+			source: `import "std/time";
+function main(): i32 {
+    print(time.date_make(2026, 1, 1).day_of_year().to_string());    // 1
+    print(time.date_make(2026, 2, 28).day_of_year().to_string());   // 59
+    print(time.date_make(2026, 3, 1).day_of_year().to_string());    // 60
+    print(time.date_make(2026, 12, 31).day_of_year().to_string());  // 365
+    print(time.date_make(2024, 2, 29).day_of_year().to_string());   // 60
+    print(time.date_make(2024, 3, 1).day_of_year().to_string());    // 61
+    print(time.date_make(2024, 12, 31).day_of_year().to_string());  // 366
+    return 0;
+}`,
+			wantStdout: "1\n59\n60\n365\n60\n61\n366\n",
+		},
+		{
+			name: "days_since for various intervals",
+			source: `import "std/time";
+function main(): i32 {
+    // Same day.
+    print(time.date_make(2026, 5, 19).days_since(time.date_make(2026, 5, 19)).to_string());
+    // 2026 is non-leap, so one year = 365 days.
+    print(time.date_make(2027, 1, 1).days_since(time.date_make(2026, 1, 1)).to_string());
+    // 2024 is leap, so one year = 366 days.
+    print(time.date_make(2025, 1, 1).days_since(time.date_make(2024, 1, 1)).to_string());
+    // Negative (other is after).
+    print(time.date_make(2026, 1, 1).days_since(time.date_make(2026, 1, 8)).to_string());
+    return 0;
+}`,
+			wantStdout: "0\n365\n366\n-7\n",
+		},
+		{
+			name: "is_valid rejects bad month/day/feb-30",
+			source: `import "std/time";
+function show_v(d: Date) {
+    if (d.is_valid()) { print("valid"); } else { print("invalid"); }
+}
+function main(): i32 {
+    show_v(time.date_make(2026, 1, 1));
+    show_v(time.date_make(2026, 13, 1));     // bad month
+    show_v(time.date_make(2026, 2, 30));     // Feb 30
+    show_v(time.date_make(2024, 2, 29));     // Feb 29 in leap
+    show_v(time.date_make(2025, 2, 29));     // Feb 29 in non-leap
+    show_v(time.date_make(2026, 0, 1));      // month 0
+    show_v(time.date_make(2026, 5, 0));      // day 0
+    show_v(time.date_make(2026, 4, 31));     // Apr has 30 days
+    return 0;
+}`,
+			wantStdout: "valid\ninvalid\ninvalid\nvalid\ninvalid\ninvalid\ninvalid\ninvalid\n",
+		},
+		{
+			name: "leap year rule (4 / 100 / 400)",
+			source: `import "std/time";
+function show(y: i32) {
+    if (time.is_leap_year(y)) { print(y.to_string() + " leap"); } else { print(y.to_string() + " no"); }
+}
+function main(): i32 {
+    show(2024);   // div 4, not 100  -> leap
+    show(2025);   // not div 4       -> no
+    show(2000);   // div 400         -> leap
+    show(1900);   // div 100, not 400 -> no
+    show(2100);   // div 100, not 400 -> no
+    show(1600);   // div 400         -> leap
+    return 0;
+}`,
+			wantStdout: "2024 leap\n2025 no\n2000 leap\n1900 no\n2100 no\n1600 leap\n",
+		},
+		{
+			name: "pre-epoch dates round-trip through add_days",
+			source: `import "std/time";
+function show(d: Date) {
+    print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
+}
+function main(): i32 {
+    // Walk back 1 day from 1970-01-01 → 1969-12-31.
+    show(time.date_make(1970, 1, 1).add_days(-1));
+    // Walk back exactly one (non-leap) year from 1970-01-01.
+    show(time.date_make(1970, 1, 1).add_days(-365));
+    return 0;
+}`,
+			wantStdout: "1969-12-31\n1969-1-1\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q, want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry
