@@ -3094,3 +3094,33 @@ function main(): i32 {
 		t.Errorf("got exit %d, want 0 (obj.mat[i][j]=v with shared inner must copy)", code)
 	}
 }
+
+// Mirror of TestArm64ArraySetSelfAssign.
+func TestX86_64ArraySetSelfAssign(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    xs = xs.set(1, 999);
+    if (xs[0] != 10) { return 1; }
+    if (xs[1] != 999) { return 2; }
+    if (xs[2] != 30) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (xs = xs.set(1, 999))", code)
+	}
+}
+
+// Mirror of TestArm64ArraySetAliasedCopies.
+func TestX86_64ArraySetAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var ys = xs;
+    ys = ys.set(0, 999);
+    if (xs[0] != 10) { return 1; }
+    if (ys[0] != 999) { return 2; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased arr.set must copy)", code)
+	}
+}

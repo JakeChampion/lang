@@ -5355,6 +5355,16 @@ func (b *builder) callBody(n *ast.Call) error {
 	if id.Name == "__method_Array_push" && len(n.Args) == 2 && len(n.TypeArgs) == 1 {
 		return b.emitArrayPush(n)
 	}
+	// `arr.set(i, v)` — Phase 2b's value-returning sister. The
+	// IR-level CoW desugar for `arr[i] = v` covers most
+	// targets, but `arr.set` is the explicit API users can
+	// call from anywhere (params, expression position, method
+	// chains) and get value semantics. Internally calls
+	// `__lang_arr_cow_inplace`, writes the element, returns
+	// the (possibly new) buffer pointer.
+	if id.Name == "__method_Array_set" && len(n.Args) == 3 && len(n.TypeArgs) == 1 {
+		return b.emitArraySet(n)
+	}
 	// f32_bits / f32_from_bits: bit-level reinterpret between
 	// i32 and f32. On native backends the bits stay put on the
 	// operand stack so OpReinterpret* compiles to zero
@@ -6912,6 +6922,106 @@ func outerArrIdxHelper(stride int32) string {
 	default:
 		return "__arr_idx"
 	}
+}
+
+// emitArraySet lowers `arr.set(i, v)` inline — Phase 2b's
+// explicit value-returning sister to `arr[i] = v`. Same shape
+// as the IR-level CoW desugar but expression-position: leaves
+// the (possibly new) buffer pointer on the operand stack as
+// the call's result. Useful for callers that need value
+// semantics in shapes the `arr[i] = v` desugar doesn't cover
+// (param targets today, plus expression chaining like
+// `arr.set(0, x).set(1, y)`).
+func (b *builder) emitArraySet(n *ast.Call) error {
+	elemType := n.TypeArgs[0]
+	stride := int32(ast.ElemSizeBytesFor(elemType, b.ptrW))
+	if stride == 0 {
+		stride = 4
+	}
+	storeOp, storeWidth := arraySetStoreOp(elemType, b.ptrW)
+	idxHelper := "__arr_idx"
+	switch stride {
+	case 1:
+		idxHelper = "__arr_idx_1"
+	case 2:
+		idxHelper = "__arr_idx_2"
+	case 8:
+		idxHelper = "__arr_idx_8"
+	case 16:
+		idxHelper = "__arr_idx_16"
+	}
+	// Stash v in a typed scratch so the tail store picks the
+	// right width on the wasm side.
+	vSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__set_v_%d", vSlot)] = vSlot
+	b.scratchType[vSlot] = elemType
+	if err := b.expr(n.Args[2]); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: vSlot})
+	// Stash i in a scratch so we can use it after the helper
+	// call (the helper consumes the operand stack).
+	iSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__set_i_%d", iSlot)] = iSlot
+	if err := b.expr(n.Args[1]); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: iSlot})
+	// buf = __lang_arr_cow_inplace(arr, stride)
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_cow_inplace", I32: 2})
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__set_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	// Element address: buf + i*stride via the per-stride
+	// bounds-check helper.
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	// Element value.
+	b.emit(Op{Kind: OpLoadLocal, I32: vSlot})
+	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	// Result: buf pointer (the array value).
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	return nil
+}
+
+// arraySetStoreOp picks the right store op + width for an
+// element of type `t` on a target with pointer width `ptrW`.
+// Mirrors the inline selection done in `b.assign`'s Index
+// target — extracted here so emitArraySet can reuse it.
+func arraySetStoreOp(t ast.Type, ptrW int) (OpKind, int) {
+	storeOp := OpStore
+	storeWidth := 0
+	if t == nil {
+		return storeOp, storeWidth
+	}
+	if nt, ok := t.(ast.NumberType); ok {
+		switch nt.NormalWidth() {
+		case 8:
+			storeOp = OpStoreI8
+		case 16:
+			storeOp = OpStoreI16
+		case 64:
+			storeWidth = 64
+		}
+	}
+	if ast.IsPointerType(t) {
+		storeWidth = WidthPtr
+	}
+	if ft, ok := t.(ast.FloatType); ok {
+		storeOp = OpFStore
+		if ft.NormalWidth() == 64 {
+			storeWidth = 64
+		}
+	}
+	if _, isString := t.(ast.StringType); isString && ast.UseTwoWordStrings(ptrW) {
+		storeWidth = WidthString
+	}
+	return storeOp, storeWidth
 }
 
 func (b *builder) emitArrayPush(n *ast.Call) error {

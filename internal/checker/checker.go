@@ -1435,6 +1435,23 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.ArrayType{Elem: arrayElemParam},
 	}
+	// `arr.set(i, v)` — Phase 2b's value-returning sister to
+	// `arr[i] = v`. The IR intercepts the rewritten
+	// `__method_Array_set(arr, i, v)` call and emits the
+	// `__lang_arr_cow_inplace` shape inline (see emitArraySet).
+	// Useful when callers want explicit value semantics in
+	// shapes the `arr[i] = v` desugar doesn't yet cover
+	// (parameter targets, slice writes, expression-position
+	// chaining like `m = m.set(k, v).set(k2, v2)`).
+	c.info.Methods["Array.set"] = "__method_Array_set"
+	c.info.FuncSigs["__method_Array_set"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			ast.NumberType{},
+			arrayElemParam,
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
 	// `arr.len()` — like push, the IR intercepts the rewritten
 	// `__method_Array_len(arr)` call and inlines the [ptr - 4]
 	// length-prefix load. One generic signature covers every

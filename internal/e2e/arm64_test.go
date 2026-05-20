@@ -13072,6 +13072,39 @@ function main(): i32 {
 	}
 }
 
+// Phase 2b: explicit value-returning `arr.set(i, v)` method.
+// Self-assign idiom — same shape as the `arr[i] = v` desugar
+// would emit, but expression-position so it composes.
+func TestArm64ArraySetSelfAssign(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    xs = xs.set(1, 999);
+    if (xs[0] != 10) { return 1; }
+    if (xs[1] != 999) { return 2; }
+    if (xs[2] != 30) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (xs = xs.set(1, 999))", code)
+	}
+}
+
+// Phase 2b: aliased `arr.set` must copy. The original holder
+// stays unchanged.
+func TestArm64ArraySetAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var ys = xs;                    // Phase 1d-i: xs.rc = 2
+    ys = ys.set(0, 999);            // rc>1 → copy. xs unchanged.
+    if (xs[0] != 10) { return 1; }
+    if (ys[0] != 999) { return 2; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased arr.set must copy)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
