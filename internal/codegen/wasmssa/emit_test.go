@@ -312,19 +312,79 @@ func TestEmitRejectsUnknownCFG(t *testing.T) {
 	}
 }
 
+// TestEmitSelfRecursiveFactorial — `factorial(n)` lowered as
+// an if-else diamond with the recursive call in the else arm:
+//
+//	if (n <= 1) return 1; else return n * factorial(n-1)
+//
+// Exercises OpCall (self-recursion) inside a diamond. EmitModule
+// emits a wasm module where func 0 calls func 0 (itself).
+func TestEmitSelfRecursiveFactorial(t *testing.T) {
+	f := ssa.NewFunc("factorial")
+	n := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+
+	one := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 1
+	cond := f.AddOp(entry, ssa.OpLe, n, one)
+	f.SetBrIf(entry, cond, thenB, elseB)
+
+	tOne := f.AddOp(thenB, ssa.OpConstInt)
+	thenB.Ops[0].Imm = 1
+	f.SetBr(thenB, merge)
+
+	eOne := f.AddOp(elseB, ssa.OpConstInt)
+	elseB.Ops[0].Imm = 1
+	subOne := f.AddOp(elseB, ssa.OpSub, n, eOne)
+	recur := f.AddOp(elseB, ssa.OpCall, subOne)
+	elseB.Ops[2].Str = "factorial"
+	prod := f.AddOp(elseB, ssa.OpMul, n, recur)
+	f.SetBr(elseB, merge)
+
+	phi := f.AddPhi(merge, tOne, prod)
+	f.SetRet(merge, phi)
+
+	mod, err := EmitModule(f, "factorial")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	if len(mod) < 8 {
+		t.Fatalf("module too short: %d bytes", len(mod))
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitRejectsExternalCall — OpCall whose callee name
+// doesn't match the function's own name is rejected.
+func TestEmitRejectsExternalCall(t *testing.T) {
+	f := ssa.NewFunc("main")
+	entry := f.NewBlock()
+	r := f.AddOp(entry, ssa.OpCall)
+	entry.Ops[0].Str = "other"
+	f.SetRet(entry, r)
+
+	_, err := EmitModule(f, "main")
+	if err == nil {
+		t.Fatal("expected error for non-self OpCall")
+	}
+}
+
 // TestEmitRejectsUnsupportedOp — an unsupported op kind
-// (e.g. OpCall) surfaces a clear error.
+// (e.g. OpLoad) surfaces a clear error.
 func TestEmitRejectsUnsupportedOp(t *testing.T) {
 	f := ssa.NewFunc("main")
 	entry := f.NewBlock()
 	c := f.AddOp(entry, ssa.OpConstInt)
 	entry.Ops[0].Imm = 0
-	f.AddOp(entry, ssa.OpCall)
+	f.AddOp(entry, ssa.OpLoad, c)
 	f.SetRet(entry, c)
 
 	_, err := EmitModule(f, "main")
 	if err == nil {
-		t.Fatal("expected error for unsupported OpCall")
+		t.Fatal("expected error for unsupported OpLoad")
 	}
 }
 

@@ -34,13 +34,15 @@
 //     OpXor, OpShl, OpShr, OpShrU, OpDiv, OpDivU, OpRem, OpRemU,
 //     OpEq, OpNe, OpLt, OpLtU, OpLe, OpLeU, OpGt, OpGtU, OpGe,
 //     OpGeU, OpNeg, OpNot, OpPhi (in if-else merges + loop
-//     headers)
+//     headers), OpCall (self-recursion only — callee name must
+//     match f.Name)
 //
 // Not yet supported (returns an unsupportedOp error):
 //
 //   - Other multi-block CFG shapes (nested loops, switch, etc.)
 //   - i64 / f32 / f64 / string values
-//   - Function calls, memory ops, alloc
+//   - Calls to external/imported functions
+//   - Memory ops, alloc
 //   - Pair-return
 //
 // EmitModule writes the function under the export name passed in
@@ -150,6 +152,15 @@ func paramCount(f *ssa.Func) int { return len(realParams(f)) }
 //     `br_if` form with phi locals carrying loop state.
 //   - Anything else → unsupported error.
 func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
+	// Validate OpCall callees: only self-recursion supported.
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if op.Kind == ssa.OpCall && op.Str != f.Name {
+				return nil, nil, fmt.Errorf("wasmssa: OpCall to %q; only self-recursion (callee == %q) supported",
+					op.Str, f.Name)
+			}
+		}
+	}
 	valueToLocal := map[int32]uint32{}
 	nextLocal := uint32(0)
 	for _, p := range realParams(f) {
@@ -718,6 +729,16 @@ func emitOp(body []byte, op *ssa.Op, valueToLocal map[int32]uint32) ([]byte, err
 		// not x → i32.eqz x (returns 1 if x == 0 else 0).
 		body = pushValue(body, op.Args[0], valueToLocal)
 		body = append(body, 0x45) // i32.eqz
+		return storeResult(body, op, valueToLocal), nil
+	case ssa.OpCall:
+		// Self-recursive call only: op.Str must match the
+		// emitting func's name (which we don't carry into
+		// emitOp; emitFunc validates it). All args are i32;
+		// callee returns i32.
+		for _, a := range op.Args {
+			body = pushValue(body, a, valueToLocal)
+		}
+		body = inst.InstCall(body, 0) // single-func module → func idx 0
 		return storeResult(body, op, valueToLocal), nil
 	}
 	// Binary i32 ops.

@@ -182,6 +182,83 @@ func TestRuntimeWhileLoopCounter(t *testing.T) {
 	}
 }
 
+// TestRuntimeFactorial — self-recursive factorial through
+// the SSA → wasm path. Verifies that OpCall lowers correctly
+// to `call 0` (the func referring to itself) and that the
+// recursion bottoms out at n <= 1.
+func TestRuntimeFactorial(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("factorial")
+		n := f.AddParam()
+		entry := f.NewBlock()
+		thenB := f.NewBlock()
+		elseB := f.NewBlock()
+		merge := f.NewBlock()
+		one := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[0].Imm = 1
+		cond := f.AddOp(entry, ssa.OpLe, n, one)
+		f.SetBrIf(entry, cond, thenB, elseB)
+		tOne := f.AddOp(thenB, ssa.OpConstInt)
+		thenB.Ops[0].Imm = 1
+		f.SetBr(thenB, merge)
+		eOne := f.AddOp(elseB, ssa.OpConstInt)
+		elseB.Ops[0].Imm = 1
+		subOne := f.AddOp(elseB, ssa.OpSub, n, eOne)
+		recur := f.AddOp(elseB, ssa.OpCall, subOne)
+		elseB.Ops[2].Str = "factorial"
+		prod := f.AddOp(elseB, ssa.OpMul, n, recur)
+		f.SetBr(elseB, merge)
+		phi := f.AddPhi(merge, tOne, prod)
+		f.SetRet(merge, phi)
+		return f
+	}
+	cases := []struct {
+		n, want int
+	}{
+		{0, 1}, {1, 1}, {2, 2}, {3, 6}, {4, 24}, {5, 120}, {6, 720}, {10, 3628800},
+	}
+	for _, c := range cases {
+		got := runWasmtimeNamed(t, build(), "factorial", strconv.Itoa(c.n))
+		if got != c.want {
+			t.Errorf("factorial(%d) = %d, want %d", c.n, got, c.want)
+		}
+	}
+}
+
+// runWasmtimeNamed is like runWasmtime but uses `funcName` as
+// the wasmtime --invoke target (not just "main"). The export
+// also uses `funcName`.
+func runWasmtimeNamed(t *testing.T, f *ssa.Func, funcName string, args ...string) int {
+	t.Helper()
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping runtime e2e")
+	}
+	mod, err := EmitModule(f, funcName)
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "mod.wasm")
+	if err := os.WriteFile(p, mod, 0o644); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
+	cmdArgs := append([]string{"run", "--invoke", funcName, p}, args...)
+	cmd := exec.Command(wasmtime, cmdArgs...)
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:\n%s", err, se.String())
+	}
+	out := strings.TrimSpace(so.String())
+	v, err := strconv.Atoi(out)
+	if err != nil {
+		t.Fatalf("parse wasmtime stdout %q: %v", out, err)
+	}
+	return v
+}
+
 // TestRuntimeArithSweep — checks every supported binary op
 // produces the value Go's int32 op produces. Keeps the test
 // matrix small (one pair of operands).
