@@ -170,6 +170,56 @@ func TestEmitIfElseDiamondWithOps(t *testing.T) {
 	validateModule(t, mod)
 }
 
+// TestEmitIfOnlyTrueArmIsBody — `function(c, a, b) { x = b; if (c) { x = a; } return x; }`
+// shape: entry's True branch goes to body, False falls
+// straight through to merge.
+func TestEmitIfOnlyTrueArmIsBody(t *testing.T) {
+	f := ssa.NewFunc("main")
+	c := f.AddParam()
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	body := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, body, merge)
+	f.SetBr(body, merge)
+	phi := f.AddPhi(merge, b, a) // preds order: [entry, body]; phi args [b, a]
+	f.SetRet(merge, phi)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	if len(mod) < 8 {
+		t.Fatalf("module too short: %d bytes", len(mod))
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitIfOnlyFalseArmIsBody — flipped: entry's False goes
+// to body, True falls through to merge. cond gets i32.eqz'd
+// inside the emitter so the wasm `if` runs when the original
+// False arm should.
+func TestEmitIfOnlyFalseArmIsBody(t *testing.T) {
+	f := ssa.NewFunc("main")
+	c := f.AddParam()
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	body := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, merge, body)
+	f.SetBr(body, merge)
+	phi := f.AddPhi(merge, a, b) // preds order: [entry, body]; phi args [a, b]
+	f.SetRet(merge, phi)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+}
+
 // TestEmitWhileLoop — a canonical while-loop CFG emits a
 // valid module. Shape: entry → header → (body → header) /
 // done.
