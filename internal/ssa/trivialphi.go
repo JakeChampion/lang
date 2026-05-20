@@ -15,9 +15,14 @@ package ssa
 //     usually has the self-ref as one arg). Treated as
 //     trivial when, ignoring self-refs, only one distinct
 //     Value remains.
+//   - `phi c1, c2` where c1 and c2 are distinct const Ops with
+//     identical immediate (e.g. two separate `const_int 7`
+//     defs on different incoming edges). Result aliases to the
+//     first const. Saves an iteration vs. waiting for CSE to
+//     dedup the constants first.
 //
 // Phis whose surviving args span ≥2 distinct non-self Values
-// are not trivial and stay.
+// (and aren't all the same constant) are not trivial and stay.
 //
 // Single-pass: the substitution map is built once by walking
 // every phi, then applySubstitutions resolves chains
@@ -29,6 +34,14 @@ func TrivialPhis(f *Func) {
 	if f == nil {
 		return
 	}
+	defs := map[int32]*Op{}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if op.Result.IsValid() {
+				defs[op.Result.ID] = op
+			}
+		}
+	}
 	sub := map[int32]Value{}
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
@@ -38,17 +51,76 @@ func TrivialPhis(f *Func) {
 			if !op.Result.IsValid() || len(op.Args) == 0 {
 				continue
 			}
-			surviving, ok := trivialPhiTarget(op)
-			if !ok {
+			if surviving, ok := trivialPhiTarget(op); ok {
+				sub[op.Result.ID] = surviving
 				continue
 			}
-			sub[op.Result.ID] = surviving
+			if surviving, ok := constArgsTarget(op, defs); ok {
+				sub[op.Result.ID] = surviving
+			}
 		}
 	}
 	if len(sub) == 0 {
 		return
 	}
 	applySubstitutions(f, sub)
+}
+
+// constArgsTarget reports whether every non-self-ref arg of
+// `op` (assumed OpPhi) resolves to a const Op carrying the
+// same immediate value. Returns the first such arg if so —
+// aliasing the phi to either const works since they hold the
+// same value. Returns false if any arg isn't a const, or the
+// const kinds/values don't all match.
+//
+// Distinct from trivialPhiTarget: this handles the case where
+// the args are different SSA Values but represent the same
+// compile-time constant. CSE eventually dedups the constants
+// and lets trivialPhiTarget pick it up on the next iteration,
+// but doing it here saves a fixed-point round-trip.
+func constArgsTarget(op *Op, defs map[int32]*Op) (Value, bool) {
+	var first Value
+	var firstDef *Op
+	for _, a := range op.Args {
+		if !a.IsValid() {
+			return Value{}, false
+		}
+		if a == op.Result {
+			continue
+		}
+		def, ok := defs[a.ID]
+		if !ok || !IsConst(def.Kind) {
+			return Value{}, false
+		}
+		if !first.IsValid() {
+			first = a
+			firstDef = def
+			continue
+		}
+		if def.Kind != firstDef.Kind {
+			return Value{}, false
+		}
+		switch def.Kind {
+		case OpConstInt, OpConstBool:
+			if def.Imm != firstDef.Imm {
+				return Value{}, false
+			}
+		case OpConstFloat:
+			if def.F64 != firstDef.F64 {
+				return Value{}, false
+			}
+		case OpConstString:
+			if def.Str != firstDef.Str {
+				return Value{}, false
+			}
+		default:
+			return Value{}, false
+		}
+	}
+	if !first.IsValid() {
+		return Value{}, false
+	}
+	return first, true
 }
 
 // trivialPhiTarget reports whether `op` (assumed OpPhi) is

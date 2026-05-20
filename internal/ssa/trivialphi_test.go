@@ -193,6 +193,169 @@ func TestTrivialPhiInOptimizePipeline(t *testing.T) {
 	}
 }
 
+// TestTrivialPhiConstIntArgsCollapse — two const_int 7 defs
+// on different incoming edges still let the phi collapse,
+// without waiting for CSE.
+func TestTrivialPhiConstIntArgsCollapse(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	v1 := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[0].Imm = 7
+	f.SetBr(thenB, merge)
+	v2 := f.AddOp(elseB, OpConstInt)
+	elseB.Ops[0].Imm = 7 // same value, distinct Op
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, v1, v2)
+	_ = f.AddOp(merge, OpAdd, phi, phi)
+	f.SetRet(merge, merge.Ops[1].Result)
+
+	TrivialPhis(f)
+
+	// Phi.Result must be aliased — `use` now reads v1 directly.
+	useOp := merge.Ops[1]
+	if useOp.Args[0] != v1 || useOp.Args[1] != v1 {
+		t.Errorf("use.Args = %v, want [%v, %v] (phi aliased to v1)",
+			useOp.Args, v1, v1)
+	}
+}
+
+// TestTrivialPhiConstBoolArgs — same trick on OpConstBool.
+func TestTrivialPhiConstBoolArgs(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	v1 := f.AddOp(thenB, OpConstBool)
+	thenB.Ops[0].Imm = 1
+	f.SetBr(thenB, merge)
+	v2 := f.AddOp(elseB, OpConstBool)
+	elseB.Ops[0].Imm = 1
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, v1, v2)
+	f.SetRet(merge, phi)
+
+	TrivialPhis(f)
+
+	if merge.Term.Value != v1 {
+		t.Errorf("Term.Value = %v, want %v (const_bool phi collapsed)",
+			merge.Term.Value, v1)
+	}
+}
+
+// TestTrivialPhiConstFloatArgs — and on OpConstFloat.
+func TestTrivialPhiConstFloatArgs(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	v1 := f.AddOp(thenB, OpConstFloat)
+	thenB.Ops[0].F64 = 3.14
+	f.SetBr(thenB, merge)
+	v2 := f.AddOp(elseB, OpConstFloat)
+	elseB.Ops[0].F64 = 3.14
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, v1, v2)
+	f.SetRet(merge, phi)
+
+	TrivialPhis(f)
+
+	if merge.Term.Value != v1 {
+		t.Errorf("Term.Value = %v, want %v (const_float phi collapsed)",
+			merge.Term.Value, v1)
+	}
+}
+
+// TestTrivialPhiConstStringArgs — and on OpConstString.
+func TestTrivialPhiConstStringArgs(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	v1 := f.AddOp(thenB, OpConstString)
+	thenB.Ops[0].Str = "hi"
+	f.SetBr(thenB, merge)
+	v2 := f.AddOp(elseB, OpConstString)
+	elseB.Ops[0].Str = "hi"
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, v1, v2)
+	f.SetRet(merge, phi)
+
+	TrivialPhis(f)
+
+	if merge.Term.Value != v1 {
+		t.Errorf("Term.Value = %v, want %v (const_string phi collapsed)",
+			merge.Term.Value, v1)
+	}
+}
+
+// TestTrivialPhiConstArgsDifferingValuesKept — phi of two
+// const_int with DIFFERENT immediates is NOT trivial.
+func TestTrivialPhiConstArgsDifferingValuesKept(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	one := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[0].Imm = 1
+	f.SetBr(thenB, merge)
+	two := f.AddOp(elseB, OpConstInt)
+	elseB.Ops[0].Imm = 2 // distinct value, must NOT collapse
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, one, two)
+	f.SetRet(merge, phi)
+
+	TrivialPhis(f)
+
+	if merge.Ops[0].Kind != OpPhi {
+		t.Errorf("phi gone; expected to survive with distinct const values")
+	}
+}
+
+// TestTrivialPhiConstArgsDifferingKindsKept — phi of one
+// const_int and one const_float must NOT collapse even if
+// they hold the "same" numeric value; cross-kind aliasing is
+// unsound.
+func TestTrivialPhiConstArgsDifferingKindsKept(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	iv := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[0].Imm = 1
+	f.SetBr(thenB, merge)
+	fv := f.AddOp(elseB, OpConstFloat)
+	elseB.Ops[0].F64 = 1.0
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, iv, fv)
+	f.SetRet(merge, phi)
+
+	TrivialPhis(f)
+
+	if merge.Ops[0].Kind != OpPhi {
+		t.Errorf("phi gone; cross-kind const args must NOT collapse")
+	}
+}
+
 // TestTrivialPhiNilFunc — defensive nil-input.
 func TestTrivialPhiNilFunc(t *testing.T) {
 	defer func() {
