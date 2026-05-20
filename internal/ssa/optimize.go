@@ -42,6 +42,7 @@ func Optimize(f *Func) int {
 		Canonicalize(f)
 		FoldBranches(f)
 		PruneUnreachable(f)
+		MergeTrivialBlocks(f)
 		TrivialPhis(f)
 		CSE(f)
 		DCE(f)
