@@ -9080,6 +9080,87 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentCanonLowersTwo covers
+// put_canon_section_lowers_no_opts in its multi-entry shape:
+// imports two component-level funcs and lowers both in a single
+// canon section. Confirms the canon section can pack multiple
+// lower entries the way a real WASI-world wrap does (one lower
+// per host import).
+func TestWASMComponentCanonLowersTwo(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    // One functype: () -> u32. Both imports re-use it.
+    var no_names: string[] = [];
+    var no_valtypes: u8[] = [];
+    var imp_names: string[] = ["h0", "h1"];
+    var imp_types: u32[] = [0u32, 0u32];
+
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+    comp = component.put_import_section_funcs(comp, imp_names, imp_types);
+
+    // Lower both imported funcs in one canon section.
+    var lower_funcs: u32[] = [0u32, 1u32];
+    comp = component.put_canon_section_lowers_no_opts(comp, lower_funcs);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	// Both lower declarations should appear.
+	if strings.Count(watStr, "canon lower") < 2 {
+		t.Errorf("expected at least 2 `canon lower` declarations, got:\n%s", watStr)
+	}
+	for _, want := range []string{
+		"\"h0\"",
+		"\"h1\"",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentImportLoweredIntoCoreModule covers the
 // other half of the canonical-ABI boundary: a host-imported function
 // is lowered into a core function and threaded down as a core

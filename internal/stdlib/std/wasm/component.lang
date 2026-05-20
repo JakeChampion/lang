@@ -359,41 +359,54 @@ pub function put_alias_section_core_export_func(buf: u8[], core_instance_idx: u3
     return encode.put_bytes(out, body);
 }
 
-// put_canon_section_lift_no_opts — emit a canon section containing
-// a single `canon lift` entry that turns a core function (already
-// referenceable via an alias or import) into a component-level
-// function with the given type signature. `opts` is left empty —
-// no `memory`, `realloc`, `post-return`, or non-default string
-// encoding. That's sufficient for callee functions whose signature
-// only mentions scalar valtypes (no strings, no lists, no
-// resources).
+// put_canon_section_lifts_no_opts — emit a canon section containing
+// N `canon lift` entries with `opts = []`. Lifts a vec of core
+// functions into the component-level function space, each with its
+// own signature given by its typeidx. The two parallel arrays must
+// have equal length.
+//
+// `opts = []`: no `memory`, `realloc`, `post-return`, or non-default
+// string encoding. Sufficient for callee functions whose signature
+// only mentions scalar valtypes (no strings, no lists, no resources).
 //
 // Spec (Binary.md):
 //   canon ::= 0x00 0x00 f:<core-func-idx> opts:vec(<canonopt>) ft:<typeidx>  -- lift
-//           | 0x01 0x00 f:<func-idx>      opts:vec(<canonopt>) ct:<core-typeidx> -- lower
+//           | 0x01 0x00 f:<func-idx>      opts:vec(<canonopt>)                 -- lower
 //           | 0x02 rt:<typeidx>           -- resource.new
 //           ... etc.
 //
-// Encoded body for one canon-lift entry:
+// Encoded body for N canon-lift entries:
 //
-//   01                  // vec(1) canon entries
-//   00 00               // discriminator: lift, function-lift sub-tag
-//   <core-func-idx:uleb>
-//   00                  // opts vec count = 0
-//   <typeidx:uleb>
-pub function put_canon_section_lift_no_opts(buf: u8[], core_func_idx: u32, typeidx: u32): u8[] {
+//   <N:uleb>            // vec(N) canon entries
+//   (00 00 <core-func-idx:uleb> 00 <typeidx:uleb>)*
+pub function put_canon_section_lifts_no_opts(buf: u8[], core_func_idxs: u32[], typeidxs: u32[]): u8[] {
     var body: u8[] = [];
-    body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(0u8);                       // canon-lift
-    body = body.push(0u8);                       // function-lift sub-tag
-    body = leb128.uleb_u32(body, core_func_idx);
-    body = leb128.uleb_u32(body, 0u32);          // no opts
-    body = leb128.uleb_u32(body, typeidx);
+    var n: i32 = core_func_idxs.len();
+    body = leb128.uleb_u32(body, n as u32);      // vec(N)
+    var i: i32 = 0;
+    while (i < n) {
+        body = body.push(0u8);                   // canon-lift
+        body = body.push(0u8);                   // function-lift sub-tag
+        body = leb128.uleb_u32(body, core_func_idxs[i]);
+        body = leb128.uleb_u32(body, 0u32);      // no opts
+        body = leb128.uleb_u32(body, typeidxs[i]);
+        i = i + 1;
+    }
 
     var out: u8[] = buf;
     out = out.push(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
+}
+
+// put_canon_section_lift_no_opts — convenience wrapper over
+// put_canon_section_lifts_no_opts for the single-lift case.
+// Existing call sites in the e2e tests use this; new multi-lift
+// code should reach for put_canon_section_lifts_no_opts directly.
+pub function put_canon_section_lift_no_opts(buf: u8[], core_func_idx: u32, typeidx: u32): u8[] {
+    var core_idxs: u32[] = [core_func_idx];
+    var type_idxs: u32[] = [typeidx];
+    return put_canon_section_lifts_no_opts(buf, core_idxs, type_idxs);
 }
 
 // put_import_section_one_func — emit a component-level import
@@ -478,44 +491,44 @@ pub function put_import_section_one_func(buf: u8[], name: string, typeidx: u32):
     return put_import_section_funcs(buf, names, typeidxs);
 }
 
-// put_canon_section_lower_no_opts — emit a canon section containing
-// a single `canon lower` entry that turns a component-level function
-// (typically an import) into a core-level function suitable for use
-// as a core-module import. The mirror of `canon lift`.
+// put_canon_section_lowers_no_opts — emit a canon section containing
+// N `canon lower` entries with `opts = []`. Lowers a vec of
+// component-level functions (typically imports) into the core
+// function space. Unlike canon-lift, the lower form carries NO
+// trailing typeidx — the core function's signature is derived from
+// the component-level function's signature via the canonical-ABI
+// lowering rules. The caller has to ensure each component-level
+// signature only mentions types the no-opts lowering supports
+// (scalar valtypes; no strings, no lists, no resources).
 //
-// `opts = []`: no `memory`, `realloc`, `post-return`, or non-default
-// string encoding. Sufficient for callee functions whose signature
-// only mentions scalar valtypes (no strings, no lists, no
-// resources).
+// Encoded body for N canon-lower entries:
 //
-// Unlike canon-lift, the lower form carries NO trailing typeidx —
-// the core function's signature is derived from the component-level
-// function's signature by the canonical-ABI lowering rules. The
-// caller has to ensure the component-level signature only mentions
-// types the no-opts lowering supports.
-//
-// Spec (Binary.md):
-//   canon ::= 0x00 0x00 f:<core-func-idx> opts:vec(<canonopt>) ft:<typeidx>   -- lift
-//           | 0x01 0x00 f:<func-idx>      opts:vec(<canonopt>)                 -- lower
-//
-// Encoded body for one canon-lower entry:
-//
-//   01                  // vec(1)
-//   01 00               // discriminator: lower (0x01), function sub-tag (0x00)
-//   <func-idx:uleb>
-//   00                  // opts vec count = 0
-pub function put_canon_section_lower_no_opts(buf: u8[], func_idx: u32): u8[] {
+//   <N:uleb>            // vec(N) canon entries
+//   (01 00 <func-idx:uleb> 00)*   // each: lower + sub-tag + idx + no opts
+pub function put_canon_section_lowers_no_opts(buf: u8[], func_idxs: u32[]): u8[] {
     var body: u8[] = [];
-    body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(1u8);                       // canon-lower
-    body = body.push(0u8);                       // function-lower sub-tag
-    body = leb128.uleb_u32(body, func_idx);
-    body = leb128.uleb_u32(body, 0u32);          // no opts
+    var n: i32 = func_idxs.len();
+    body = leb128.uleb_u32(body, n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = body.push(1u8);                   // canon-lower
+        body = body.push(0u8);                   // function-lower sub-tag
+        body = leb128.uleb_u32(body, func_idxs[i]);
+        body = leb128.uleb_u32(body, 0u32);      // no opts
+        i = i + 1;
+    }
 
     var out: u8[] = buf;
     out = out.push(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
+}
+
+// put_canon_section_lower_no_opts — convenience wrapper over
+// put_canon_section_lowers_no_opts for the single-lower case.
+pub function put_canon_section_lower_no_opts(buf: u8[], func_idx: u32): u8[] {
+    var func_idxs: u32[] = [func_idx];
+    return put_canon_section_lowers_no_opts(buf, func_idxs);
 }
 
 // put_export_section_one_func — emit a component-level export
