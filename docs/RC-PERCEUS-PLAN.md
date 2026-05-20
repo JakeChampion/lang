@@ -382,7 +382,7 @@ to return Map fixes the API and the semantics in one go.
 
 | Today | Target | Phase | Notes |
 |-------|--------|-------|-------|
-| `m.set(k, v): void` | `m.set(k, v): Map[K, V]` | 2 | Caller writes `m = m.set(k, v)`. |
+| `m.set(k, v): void` | `m.set(k, v): Map[K, V]` | 2 | **SHIPPED** — value-returning, callers can write `m = m.set(k, v)`. Still mutates in place underneath; the rc-check + copy path lands together with full Map CoW in Phase 2c. |
 | `m.delete(k): bool` | `m.delete(k): (Map[K, V], bool)` | 2 | Returns the (possibly new) map plus the present-before flag. |
 | `m.clear(): void` | `m.clear(): Map[K, V]` | 2 | Empties; returns a fresh empty map (or recycles via drop-reuse). |
 

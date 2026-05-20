@@ -1407,7 +1407,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	registerMapMethod("len", nil, ast.NumberType{})
 	registerMapMethod("has", []ast.Type{keyParam}, ast.BoolType{})
 	registerMapMethod("get", []ast.Type{keyParam}, optionV)
-	registerMapMethod("set", []ast.Type{keyParam, valueParam}, ast.VoidType{})
+	registerMapMethod("set", []ast.Type{keyParam, valueParam}, mapKV)
 	registerMapMethod("keys", nil, ast.ArrayType{Elem: keyParam})
 	registerMapMethod("values", nil, ast.ArrayType{Elem: valueParam})
 	registerMapMethod("delete", []ast.Type{keyParam}, ast.BoolType{})

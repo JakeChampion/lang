@@ -3861,6 +3861,11 @@ func (b *builder) expr(e ast.Expr) error {
 				return err
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
+			// __method_Map_set now returns the map (Phase 2c
+			// API audit). MapLit's per-entry call discards the
+			// return — the map's address didn't change, we
+			// re-use the stashed slot below.
+			b.emit(Op{Kind: OpDrop})
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
 	case *ast.TupleLit:
