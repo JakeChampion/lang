@@ -41,6 +41,14 @@ func LICM(f *Func) int {
 	if len(loops) == 0 {
 		return 0
 	}
+	// Sort loops by header ID so the hoist result is stable
+	// across runs (Loops() returns from a map; iteration order
+	// is randomised in Go).
+	for i := 1; i < len(loops); i++ {
+		for j := i; j > 0 && loops[j-1].Header.ID > loops[j].Header.ID; j-- {
+			loops[j-1], loops[j] = loops[j], loops[j-1]
+		}
+	}
 
 	blockOf := buildBlockOf(f)
 	hoisted := 0
@@ -98,11 +106,21 @@ func findPreheader(lp *Loop) *Block {
 
 // hoistLoop sweeps the loop body until no more invariant
 // ops can be lifted. Returns the count of ops moved.
+//
+// Iterates the loop body in deterministic Block.ID order so
+// the result is stable across Clone() + Optimize() runs
+// (map iteration order in Go is intentionally randomised).
 func hoistLoop(lp *Loop, preheader *Block, blockOf map[int32]*Block) int {
+	body := make([]*Block, 0, len(lp.Body))
+	for b := range lp.Body {
+		body = append(body, b)
+	}
+	sortBlocksByID(body)
+
 	hoisted := 0
 	for {
 		didHoist := false
-		for b := range lp.Body {
+		for _, b := range body {
 			i := 0
 			for i < len(b.Ops) {
 				op := b.Ops[i]
@@ -130,6 +148,17 @@ func hoistLoop(lp *Loop, preheader *Block, blockOf map[int32]*Block) int {
 		}
 	}
 	return hoisted
+}
+
+// sortBlocksByID sorts a Block slice by ID ascending.
+// In-place insertion sort — the slices here are tiny (loop
+// bodies in real code rarely exceed a few blocks).
+func sortBlocksByID(bs []*Block) {
+	for i := 1; i < len(bs); i++ {
+		for j := i; j > 0 && bs[j-1].ID > bs[j].ID; j-- {
+			bs[j-1], bs[j] = bs[j], bs[j-1]
+		}
+	}
 }
 
 // isLoopInvariant reports whether `op` (in some block of lp)
