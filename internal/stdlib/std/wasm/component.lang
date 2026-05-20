@@ -582,6 +582,49 @@ pub function canonopt_memory(): u8                       { return 3u8; }
 pub function canonopt_realloc(): u8                      { return 4u8; }
 pub function canonopt_post_return(): u8                  { return 5u8; }
 
+// put_canon_section_lower_mem_realloc — emit a canon section with
+// one `canon lower` entry carrying the two most common opts:
+// `(memory $mem)` and `(realloc (func $alloc))`. Default utf8
+// string encoding is left implicit. The mirror of
+// `put_canon_section_lift_mem_realloc`.
+//
+// This is the lower shape needed any time the lowered host
+// function takes a string or list parameter — the canonical-ABI
+// has to materialise those into core memory before the core can
+// see them, and `realloc` is the growth helper. Most preview-2
+// WASI imports (those that take strings: `print`, `write-file`,
+// the HTTP request handler's body, …) lower through this shape.
+//
+// Spec: see `put_canon_section_lower_no_opts` for the no-opts
+// counterpart; lower with N opts just bumps the opts vec count
+// and appends the encoded opts.
+//
+// Encoded body:
+//
+//   01                  // vec(1) canon entries
+//   01 00               // canon-lower + function sub-tag
+//   <func-idx:uleb>
+//   02                  // opts vec count = 2
+//   03 <mem-idx:uleb>     // memory option
+//   04 <realloc-idx:uleb> // realloc option
+pub function put_canon_section_lower_mem_realloc(buf: u8[], func_idx: u32, mem_idx: u32, realloc_func_idx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(1u8);                       // canon-lower
+    body = body.push(0u8);                       // function-lower sub-tag
+    body = leb128.uleb_u32(body, func_idx);
+    body = leb128.uleb_u32(body, 2u32);          // opts vec count = 2
+    body = body.push(canonopt_memory());
+    body = leb128.uleb_u32(body, mem_idx);
+    body = body.push(canonopt_realloc());
+    body = leb128.uleb_u32(body, realloc_func_idx);
+
+    var out: u8[] = buf;
+    out = out.push(section_canon());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_lift_mem_realloc — emit a canon section with
 // one `canon lift` entry carrying the two most common opts:
 // `(memory $mem)` and `(realloc (func $realloc))`. Default string
