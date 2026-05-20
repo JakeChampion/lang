@@ -431,6 +431,53 @@ pub function put_type_section_one_func_no_param(buf: u8[], result_valtype: u8): 
     return put_type_section_one_func(buf, no_names, no_valtypes, result_valtype);
 }
 
+// put_type_section_one_func_no_result — emit a component-level type
+// section that defines a single functype with the given parameter
+// list and NO result (`() -> ()`-shaped). The existing single- and
+// multi-functype composers always emit the "single anonymous
+// result" form (resultlist tag 0x00 + valtype); this composer emits
+// the alternative "named results" form with an empty vec
+// (resultlist tag 0x01 + vec(0)), which the component-model spec
+// uses to represent absence of any result.
+//
+// Needed for WASI functions that don't return anything — e.g.
+// `wasi:cli/exit::exit(status: u32)`, `wasi:io/streams::write(...)`
+// in some shapes. Without this, real WASI worlds can't be expressed.
+//
+// Spec (Binary.md):
+//   functype   ::= 0x40 ps:vec(<paramname valtype>) rs:resultlist
+//   resultlist ::= 0x00 t:<valtype>          -- single anonymous result
+//                | 0x01 lts:vec(<labelvaltype>) -- named results
+//
+// Encoded body for one no-result functype with N params:
+//
+//   01                  // vec(1) types
+//   40                  // functype form
+//   <N:uleb>            // params vec count
+//   (<name> <valtype>)* // N pairs
+//   01                  // resultlist tag: named results
+//   00                  // vec(0) labels = no results
+pub function put_type_section_one_func_no_result(buf: u8[], param_names: string[], param_valtypes: u8[]): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1) of types
+    body = body.push(64u8);                       // functype form (0x40)
+    var n: i32 = param_names.len();
+    body = leb128.uleb_u32(body, n as u32);      // params vec count
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, param_names[i]);
+        body = body.push(param_valtypes[i]);
+        i = i + 1;
+    }
+    body = body.push(1u8);                        // resultlist tag: named
+    body = leb128.uleb_u32(body, 0u32);          // vec(0) named results
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_type_section_one_resource — emit a component-level type
 // section that defines a single resource type with the given
 // representation valtype and no destructor. Resources are the

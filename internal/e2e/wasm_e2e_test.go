@@ -10280,6 +10280,81 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentTypeFuncNoResult covers
+// put_type_section_one_func_no_result: declares
+// `(func (param "status" u32))` — no result — and verifies
+// wasm-tools surfaces the no-result shape (which appears as
+// `(param "status" u32)` with no `(result ...)` form in the
+// printed WAT).
+//
+// Without this composer, the existing single-anon-result functype
+// API can't express WASI functions like `wasi:cli/exit::exit` or
+// `wasi:io/streams::blocking-flush` that return nothing.
+func TestWASMComponentTypeFuncNoResult(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    var names: string[] = ["status"];
+    var valtypes: u8[] = [component.cvaltype_u32()];
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_one_func_no_result(comp, names, valtypes);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "\"status\"") {
+		t.Errorf("expected \"status\" param in printed component, got:\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "u32") {
+		t.Errorf("expected u32 param valtype, got:\n%s", watStr)
+	}
+	// No `(result ...)` form should appear — the function returns
+	// nothing. The printed WAT has the param but no result clause.
+	if strings.Contains(watStr, "(result ") {
+		t.Errorf("unexpected (result ...) for a no-result functype:\n%s", watStr)
+	}
+}
+
 // TestWASMComponentResourceNewRep covers
 // put_canon_section_resource_new + put_canon_section_resource_rep.
 // Declares a resource type then emits both resource.new and
