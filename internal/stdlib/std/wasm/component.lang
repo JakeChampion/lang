@@ -185,19 +185,60 @@ pub function core_sort_instance(): u8 { return 18u8; }    // 0x12
 //   <name>       // uleb-prefixed UTF-8
 //   00           // core-sort = func
 //   <func-idx>   // uleb
-pub function put_core_instance_section_from_one_func_export(buf: u8[], export_name: string, core_func_idx: u32): u8[] {
+// put_core_instance_section_from_func_exports — emit a core-
+// instance section containing one "instance-from-exports" entry
+// that packages N core functions into a single core instance,
+// each surfaced under its own export name. Generalises
+// `put_core_instance_section_from_one_func_export` for the case
+// where many lowered host funcs need to be bundled together —
+// typically every preview-2 WASI import after `canon lower` runs,
+// since the core module imports them via a single instance under
+// names like "stdout", "exit", "random-get", etc.
+//
+// Spec (Binary.md, `core:instance` production, second form):
+//   core-instance ::= 0x01 e:vec(core-instance-export)
+//   core-instance-export ::= n:<name> i:<core-sortidx>
+//   core-sortidx ::= s:<core-sort> i:<u32>
+//
+// All exports are of core-sort = func. (Memory / table / global
+// exports inside one instance would require a multi-sort variant;
+// not needed for WASI-world wrapping today.)
+//
+// Encoded body for one instance with N func exports:
+//
+//   01           // vec(1) instance entries
+//   01           // tag = 0x01 (instance-from-exports)
+//   <N:uleb>     // vec(N) exports
+//   (<name> 00 <core-func-idx:uleb>)*  // each: name + core-sort func + idx
+pub function put_core_instance_section_from_func_exports(buf: u8[], export_names: string[], core_func_idxs: u32[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) instances
     body = body.push(1u8);                       // form: from-exports
-    body = leb128.uleb_u32(body, 1u32);          // vec(1) exports
-    body = encode.put_name(body, export_name);
-    body = body.push(core_sort_func());
-    body = leb128.uleb_u32(body, core_func_idx);
+    var n: i32 = export_names.len();
+    body = leb128.uleb_u32(body, n as u32);      // vec(N) exports
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, export_names[i]);
+        body = body.push(core_sort_func());
+        body = leb128.uleb_u32(body, core_func_idxs[i]);
+        i = i + 1;
+    }
 
     var out: u8[] = buf;
     out = out.push(section_core_instance());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
+}
+
+// put_core_instance_section_from_one_func_export — convenience
+// wrapper over put_core_instance_section_from_func_exports for the
+// single-export case. Existing call sites in the e2e tests use
+// this; new multi-export code should reach for the funcs variant
+// directly.
+pub function put_core_instance_section_from_one_func_export(buf: u8[], export_name: string, core_func_idx: u32): u8[] {
+    var names: string[] = [export_name];
+    var idxs: u32[] = [core_func_idx];
+    return put_core_instance_section_from_func_exports(buf, names, idxs);
 }
 
 // put_core_instance_section_instantiate_with_one_instance_arg —
