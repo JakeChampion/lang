@@ -4574,6 +4574,32 @@ function main(): i32 { return outer("hello"); }`
 	}
 }
 
+// Mirror of TestArm64LambdaWithBodyLocals. Anonymous lambdas
+// used to compile fine without body-locals but panic with
+// "var X has no slot (compiler bug)" the moment the lambda
+// declared `var sq = ...` or similar — the checker stored those
+// Var nodes against a throwaway synthetic FuncDecl pointer that
+// closureconv never re-keyed onto the hoisted lambda.
+func TestWASMLambdaWithBodyLocals(t *testing.T) {
+	src := `function main(): i32 {
+    var greet = "hi";
+    var f = function (n: i32): i32 {
+        var sq = n * n;
+        var tag = greet + "!";
+        print(tag);
+        return sq;
+    };
+    return f(6);
+}`
+	stdout, _ := invokeWasmtime(t, src)
+	if !strings.Contains(stdout, "hi!") {
+		t.Errorf("stdout missing %q:\n%s", "hi!", stdout)
+	}
+	if !strings.Contains(stdout, "36") {
+		t.Errorf("stdout missing %q:\n%s", "36", stdout)
+	}
+}
+
 func TestWASMClosureCapturesArray(t *testing.T) {
 	src := `function outer(xs: i32[]): i32 {
     function inner(i: i32): i32 { return xs[i]; }

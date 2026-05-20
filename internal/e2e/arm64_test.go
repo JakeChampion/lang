@@ -11381,6 +11381,56 @@ function main(): i32 {
 	}
 }
 
+// Two anonymous lambdas hoisted in the same converter session.
+// Both arrive at closureconv with origin name "lambda"; the
+// freshName counter used to key off `len(c.hoisted)` so both
+// hoists produced `__closure_lambda_1` and the assembler died
+// with "symbol already defined". Per-origin counting fixes it.
+func TestArm64NestedLambdaUniqueNames(t *testing.T) {
+	src := `function main(): i32 {
+    var outer = function (): i32 {
+        var inner = function (): i32 {
+            var x = 21;
+            return x * 2;
+        };
+        var y = inner();
+        return y;
+    };
+    return outer();
+}`
+	if _, code := compileAndRunArm64(t, src); code != 42 {
+		t.Errorf("got %d, want 42", code)
+	}
+}
+
+// Anonymous lambda with body-local vars. Regression for the
+// "var X has no slot (compiler bug)" the IR panicked with
+// when checker stored the body's Var nodes against a synthetic
+// FuncDecl pointer that closureconv never re-keyed onto the
+// hoisted lambda. Cover takes a scalar local (`sq`) and a
+// string-typed local (`tag`) — the latter exercises the
+// pointer-width slot the original failure surfaced inside
+// closures that captured strings.
+func TestArm64LambdaWithBodyLocals(t *testing.T) {
+	src := `function main(): i32 {
+    var greet = "hi";
+    var f = function (n: i32): i32 {
+        var sq = n * n;
+        var tag = greet + "!";
+        print(tag);
+        return sq;
+    };
+    return f(6);
+}`
+	stdout, code := compileAndRunArm64(t, src)
+	if code != 36 {
+		t.Errorf("got exit %d, want 36", code)
+	}
+	if stdout != "hi!\n" {
+		t.Errorf("got stdout %q, want %q", stdout, "hi!\n")
+	}
+}
+
 // Multi-capture closure: two i32 captures laid out at offsets 0
 // and 4 in the env block. Verifies the running-offset
 // arithmetic in emitMakeClosureOrEnv.
