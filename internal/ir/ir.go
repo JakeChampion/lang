@@ -1442,6 +1442,60 @@ func (b *builder) emitDeferCleanup() error {
 	return nil
 }
 
+// emitRcDecLocalsAtExit emits __lang_rc_dec for every
+// array-typed parameter and local in the current function.
+// Phase 1d-v balances the inc emissions from Phase 1d-i
+// through 1d-iv: each alias-bind / call-arg / reassignment
+// bumped the rc on the underlying buffer, and the function
+// exit returns those references to the caller.
+//
+// Phase 1d-v doesn't special-case the returned value yet:
+// if the function returns a local of array type, that
+// local's rc drops to 0 at the exit, but no free happens
+// (the bump allocator in Phase 1 doesn't reclaim). The
+// caller-side rc is tracked independently via the call-arg
+// inc emitted in Phase 1d-iv, so the caller's reference
+// stays consistent.
+//
+// Phase 2's freelist + mutate-or-copy rc check will need an
+// "owned return" pass to keep the returned value's rc at 1
+// instead of 0 — that lands together with `arr.push`'s
+// mutate-in-place fast path. For now, the rc just goes
+// briefly to zero on the returned ptr, harmless under the
+// no-free regime.
+func (b *builder) emitRcDecLocalsAtExit() {
+	emitDec := func(slot int32) {
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_dec", I32: 1})
+		// __lang_rc_dec is a void-returning runtime helper but
+		// OpCallDirect's codegen always pushes the call's
+		// return-value register (x0/rax) onto the operand
+		// stack. Drop the bogus push to keep the stack
+		// balanced.
+		b.emit(Op{Kind: OpDrop})
+	}
+	for _, p := range b.fn.Params {
+		if _, isArr := p.Type.(ast.ArrayType); !isArr {
+			continue
+		}
+		slot, ok := b.locals[p.Name]
+		if !ok {
+			continue
+		}
+		emitDec(slot)
+	}
+	for _, v := range b.info.Locals[b.fn] {
+		if _, isArr := v.Type.(ast.ArrayType); !isArr {
+			continue
+		}
+		slot, ok := b.locals[v.Name]
+		if !ok {
+			continue
+		}
+		emitDec(slot)
+	}
+}
+
 func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
@@ -1522,6 +1576,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		}
 		switch {
 		case isVoid(fn.ReturnType):
+			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnVoid})
 		case b.thisIsPair:
 			// Pair-form fns return (tag, payload). The
@@ -1532,9 +1587,11 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 			// validation passes.
 			b.emit(Op{Kind: OpConstI32, I32: 0})
 			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnPair})
 		case isFloat(fn.ReturnType):
 			b.emit(Op{Kind: OpConstF32, F32: 0})
+			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturn})
 		default:
 			// String-typed return on wasm32 fans to two i32
@@ -1545,9 +1602,11 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 			if _, isString := fn.ReturnType.(ast.StringType); isString && b.twoWordStrings() {
 				b.emit(Op{Kind: OpConstI32, I32: 0})
 				b.emit(Op{Kind: OpConstI32, I32: 0})
+				b.emitRcDecLocalsAtExit()
 				b.emit(Op{Kind: OpReturn})
 			} else {
 				b.emit(Op{Kind: OpConstI32, I32: 0})
+				b.emitRcDecLocalsAtExit()
 				b.emit(Op{Kind: OpReturn})
 			}
 		}
@@ -2403,6 +2462,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitDeferCleanup(); err != nil {
 				return err
 			}
+			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnVoid})
 			return nil
 		}
@@ -2419,6 +2479,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitPairFormPushValue(n.Value); err != nil {
 				return err
 			}
+			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnPair})
 			return nil
 		}
@@ -2436,6 +2497,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 		}
+		b.emitRcDecLocalsAtExit()
 		b.emit(Op{Kind: OpReturn})
 	case *ast.Defer:
 		// Find this Defer's index in the pre-collected list
