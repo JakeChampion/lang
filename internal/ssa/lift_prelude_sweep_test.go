@@ -43,3 +43,39 @@ func TestLiftAllPreludeFunctions(t *testing.T) {
 		})
 	}
 }
+
+// TestOptimizeAllPreludeFunctions runs the Optimize pipeline
+// on every prelude function and re-verifies the result.
+// Catches any pass that breaks SSA structural invariants on
+// real code shapes. Independent from the lift-only sweep so
+// a regression here is distinguishable from a lift regression.
+func TestOptimizeAllPreludeFunctions(t *testing.T) {
+	src := `function main(): i32 { return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	irProg, err := ir.LowerWith(prog, info, 8)
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+
+	for _, fn := range irProg.Funcs {
+		t.Run(fn.Name, func(t *testing.T) {
+			f, err := ssa.LiftFromIR(fn)
+			if err != nil {
+				t.Errorf("LiftFromIR: %v", err)
+				return
+			}
+			ssa.Optimize(f)
+			if err := ssa.Verify(f); err != nil {
+				t.Errorf("Verify after Optimize: %v", err)
+				return
+			}
+		})
+	}
+}
