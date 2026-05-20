@@ -63,6 +63,12 @@ type BuildOptions struct {
 	// `__method_HeaderMap_append` past every dead-function-
 	// elimination step so the wrapper's calls resolve.
 	HttpHandler bool
+	// Preview2WASI emits preview-2-named WASI imports in place
+	// of preview-1. Currently scoped to proc_exit
+	// (wasi_snapshot_preview1.proc_exit → wasi:cli/exit@0.2.0.exit);
+	// other imports stay on preview-1 until their own migrations
+	// land. Forwarded to EmitOptions.Preview2WASI.
+	Preview2WASI bool
 }
 
 // Build is BuildWithOptions with the default (zero-value) options.
@@ -155,5 +161,6 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		SynthStart:         opts.SynthStart,
 		PrintMainResult:    opts.PrintMainResult,
 		HttpHandler:        opts.HttpHandler,
+		Preview2WASI:       opts.Preview2WASI,
 	})
 }
