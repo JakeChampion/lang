@@ -1048,6 +1048,30 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"str-first-byte",
+			"function main(): i32 { var s = \"abc\"; return s.first_byte(); }",
+			97,
+			"",
+		},
+		{
+			"str-last-byte",
+			"function main(): i32 { var s = \"abc\"; return s.last_byte(); }",
+			99,
+			"",
+		},
+		{
+			"str-first-byte-uppercase",
+			"function main(): i32 { var s = \"Hello\"; return s.first_byte(); }",
+			72,
+			"",
+		},
+		{
+			"str-last-byte-symbol",
+			"function main(): i32 { var s = \"hi!\"; return s.last_byte(); }",
+			33,
+			"",
+		},
+		{
 			"str-reverse-basic",
 			"function main(): i32 { var s = \"hello\"; print(s.reverse()); return 0; }",
 			0,
