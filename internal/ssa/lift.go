@@ -83,6 +83,13 @@ import (
 //     ops up to the matching OpEnd are unreachable and skipped
 //     by the per-handler `if cur == nil` guard.
 //
+//   Phase 10:
+//   - OpBrIf to an enclosing OpBlock scope. The current block's
+//     terminator becomes `brif cond, target.postB, fallthrough`;
+//     a new fallthrough block becomes the active cur. The branch
+//     source captures slots at the OpBrIf site for the merge phi
+//     at scope close.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -430,6 +437,37 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		})
 		l.out.SetBr(l.cur, target.postB)
 		l.cur = nil
+	case ir.OpBrIf:
+		depth := int(op.I32)
+		if depth < 0 || depth >= len(l.scopes) {
+			return fmt.Errorf("ssa.LiftFromIR: OpBrIf at op[%d] depth %d out of range (have %d scopes)",
+				i, depth, len(l.scopes))
+		}
+		target := &l.scopes[len(l.scopes)-1-depth]
+		if target.kind != ir.OpBlock {
+			return fmt.Errorf("ssa.LiftFromIR: OpBrIf at op[%d] targets scope kind %v; only OpBlock supported",
+				i, target.kind)
+		}
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpBrIf at op[%d] needs cond", i)
+		}
+		cond := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		var stackTop Value
+		if target.blockType != ir.BlockTypeVoid {
+			if len(l.stack) < 1 {
+				return fmt.Errorf("ssa.LiftFromIR: OpBrIf at op[%d] needs 1 value (target is non-void scope)", i)
+			}
+			stackTop = l.stack[len(l.stack)-1]
+		}
+		fallthroughB := l.out.NewBlock()
+		target.brSources = append(target.brSources, brSource{
+			block:    l.cur,
+			slots:    append([]Value(nil), l.slots...),
+			stackTop: stackTop,
+		})
+		l.out.SetBrIf(l.cur, cond, target.postB, fallthroughB)
+		l.cur = fallthroughB
 	case ir.OpReturn:
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpReturn at op[%d] needs 1 operand", i)
