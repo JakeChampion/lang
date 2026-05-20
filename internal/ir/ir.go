@@ -5403,6 +5403,20 @@ func (b *builder) callBody(n *ast.Call) error {
 		if err := b.expr(a); err != nil {
 			return err
 		}
+		// Phase 1d-iv: function-call arg pass is an aliasing
+		// site. The caller still owns its reference after the
+		// call returns (value semantics — the callee gets a
+		// fresh alias of the same buffer). Splice in
+		// __lang_rc_inc so the rc reflects the new co-owner.
+		// __lang_rc_inc returns the input pointer, so it
+		// passes through the operand stack without a temp.
+		// Same gating as the Var / Assign sites: only fires
+		// for alias-shaped expressions of array type. The
+		// matching dec on the callee's parameter at function
+		// exit lands in a later slice (Phase 1d-v).
+		if needsRcIncOnAlias(a, b) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+		}
 	}
 	argCount := int32(len(n.Args))
 	// `map_new(cap)` is a generic builtin: the runtime helper

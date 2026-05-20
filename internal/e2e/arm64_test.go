@@ -12658,6 +12658,25 @@ function main(): i32 {
 	}
 }
 
+// Phase 1d-iv: passing an array as a function-call argument
+// is an aliasing site — the callee receives a fresh reference
+// of the same buffer. The inc fires before the call. Phase
+// 1d-v will add the matching dec on the callee's parameter
+// at function exit; until then, every call leaks an rc, but
+// the assertion captures the pre-Phase-1d-v expected count.
+func TestArm64RcAliasIncCallArg(t *testing.T) {
+	src := `import "core/no_prelude";
+function f(arr: u8[]): i32 { return 0; }
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var _: i32 = f(arr);
+    return __rc_get(arr) - 2;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (call-arg should bump rc to 2)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
