@@ -184,7 +184,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	if opts.ForceMemorySection {
 		helpers.add("cabi_realloc")
 	}
-	importNeeds := scanImports(prog, helpers)
+	importNeeds := scanImports(prog, helpers, opts)
 
 	funcIdx := make(map[string]uint32, len(prog.Funcs)+len(helpers.order)+len(importNeeds.order))
 	nextFuncIdx := uint32(0)
@@ -519,7 +519,13 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		params, results := spec.params, spec.results
 		tIdx := addType(params, results)
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, tIdx)
-		m.CodeBodies = append(m.CodeBodies, spec.body(helperIdxs))
+		bodyFn := spec.body
+		if opts.Preview2WASI {
+			if alt, ok := preview2HelperBodyOverrides[name]; ok {
+				bodyFn = alt
+			}
+		}
+		m.CodeBodies = append(m.CodeBodies, bodyFn(helperIdxs))
 	}
 
 	// HttpHandler-specific export: `__http_entry` surfaced under

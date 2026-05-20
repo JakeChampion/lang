@@ -137,8 +137,22 @@ func PutTypeSectionOneInstanceOneFuncNoResultExport(buf []byte, exportName strin
 // referencing it by inner-typeidx 0, and an export of the
 // functype at inner-typeidx 1.
 func PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport(buf []byte, innerTypes [][]byte, exportName string, paramNames []string, paramValtypes []byte) []byte {
+	return PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf, innerTypes, exportName, paramNames, paramValtypes, nil)
+}
+
+// PutTypeSectionInstanceWithInnerTypesAndOneFuncExport is the
+// result-aware generalisation. `resultValtypes` may be nil/empty
+// (no result, "named-results vec(0)" wire form) or contain
+// exactly one byte (single anonymous result of that valtype).
+// Multi-result functions aren't supported yet — pass a typeidx
+// reference for compound results via the inner-types channel
+// instead.
+func PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf []byte, innerTypes [][]byte, exportName string, paramNames []string, paramValtypes []byte, resultValtypes []byte) []byte {
 	if len(paramNames) != len(paramValtypes) {
 		panic("component: paramNames and paramValtypes must have equal length")
+	}
+	if len(resultValtypes) > 1 {
+		panic("component: multi-result functions not yet supported")
 	}
 	body := []byte{}
 	body = leb128.UlebU64(body, 1)                            // vec(1) type entries
@@ -159,8 +173,13 @@ func PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport(buf []byte, in
 		body = putName(body, paramNames[i])
 		body = append(body, paramValtypes[i])
 	}
-	body = append(body, 0x01)      // resultlist: named
-	body = leb128.UlebU64(body, 0)
+	if len(resultValtypes) == 0 {
+		body = append(body, 0x01)      // resultlist: named
+		body = leb128.UlebU64(body, 0) // vec(0) results
+	} else {
+		body = append(body, 0x00)            // resultlist: single anonymous
+		body = append(body, resultValtypes[0]) // valtype byte
+	}
 
 	// Export decl referencing the functype at inner-typeidx N.
 	body = append(body, 0x04) // export decl

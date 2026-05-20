@@ -404,6 +404,22 @@ End-to-end exit code 42 demo (covered by
     paths) and `TestCmdLangComponentWrapCliWithExit` (Lang
     `exit(0)` → wasi:cli/exit::exit + wasi:cli/run::run shapes
     in one component → wasmtime run + exit 0).
+  - **`random_get` migration.** Lang's `random_i32()` (newly
+    surfaced as a checker built-in) now routes through
+    `wasi:random/random@0.2.0::get-random-u64() -> u64` under
+    `EmitOptions.Preview2WASI`. The preview-2 import returns a
+    scalar instead of filling a host-side buffer, so the
+    `__lang_random_i32` body becomes just `call get-random-u64;
+    i32.wrap_i64`. Selected via the new
+    `preview2HelperBodyOverrides` map in wasi.go — a clean way
+    to register per-helper body overrides without disturbing the
+    default preview-1 path. Result-valued WASI imports are now
+    expressible: `WasiImport.ResultValtypes` (a single-byte
+    optional anonymous result) threads through the wrap
+    pipeline; the generalised
+    `PutTypeSectionInstanceWithInnerTypesAndOneFuncExport`
+    handles both no-result and one-result functions. End-to-end
+    test: `TestCmdLangComponentWrapCliWithRandom`.
   - **Still to do:** migrate the remaining preview-1 imports
     (`fd_write`, `fd_read`, `random_get`, `clock_time_get`,
     `environ_*`, `args_*`, `path_*`). HTTP body / file I/O

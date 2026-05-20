@@ -11,6 +11,7 @@ package wasmbin
 
 import (
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
@@ -52,6 +53,18 @@ var importSpecs = map[string]importSpec{
 		name:    "random_get",
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_random_get_u64_p2": {
+		// Preview-2 variant: wasi:random/random::get-random-u64
+		// () → u64. Same canonical-ABI shape as `() → i64` at
+		// the core wasm level. Returns a single cryptographically-
+		// strong random u64 instead of filling a host-side
+		// buffer. Replaces wasi_random_get for the
+		// __lang_random_i32 helper under EmitOptions.Preview2WASI.
+		module:  "wasi:random/random@0.2.0",
+		name:    "get-random-u64",
+		params:  nil,
+		results: []byte{encode.ValtypeI64},
 	},
 	"wasi_clock_time_get": {
 		// (clock_id i32, precision i64, time_ptr i32) → errno i32.
@@ -481,7 +494,7 @@ func (in *importNeeds) add(name string) {
 // the helpers in use (and direct IR-op references in a future
 // expansion). Each helper that wraps a WASI call adds its import
 // here.
-func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
+func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) importNeeds {
 	var in importNeeds
 	if helpers.set["__lang_print"] {
 		in.add("wasi_fd_write")
@@ -499,7 +512,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 		in.add("wasi_proc_exit")
 	}
 	if helpers.set["__lang_random_i32"] {
-		in.add("wasi_random_get")
+		if opts.Preview2WASI {
+			in.add("wasi_random_get_u64_p2")
+		} else {
+			in.add("wasi_random_get")
+		}
 	}
 	if helpers.set["__lang_random_bytes"] {
 		in.add("wasi_random_get")
@@ -869,6 +886,34 @@ func buildRandomI32Body(idxs map[string]uint32) []byte {
 	body = inst.InstDrop(body) // ignore errno
 	body = inst.InstI32Const(body, randomBufAddr)
 	body = memory.InstI32Load(body, 2, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// preview2HelperBodyOverrides maps helper names whose body bytecode
+// changes under EmitOptions.Preview2WASI to the preview-2 variant.
+// The override is selected at module-assembly time in
+// EmitWithOptions; helpers not in the map keep their default
+// body. Each override has the same (params, results) signature as
+// the helper's runtimeHelperSpec — only the bytecode differs.
+var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
+	"__lang_random_i32": buildRandomI32BodyP2,
+}
+
+// buildRandomI32BodyP2 is the preview-2 variant of buildRandomI32Body.
+//
+// Signature: () → i32
+//
+// Body calls `wasi:random/random@0.2.0::get-random-u64()` which
+// returns a u64 (i64 at the core-wasm level), then truncates to
+// i32 with i32.wrap_i64. No scratch buffer, no errno.
+//
+// Used in place of buildRandomI32Body when EmitOptions.Preview2WASI
+// is on. Selected via preview2HelperBodyOverrides.
+func buildRandomI32BodyP2(idxs map[string]uint32) []byte {
+	randomU64 := idxs["wasi_random_get_u64_p2"]
+	var body []byte
+	body = inst.InstCall(body, randomU64)
+	body = convert.InstI32WrapI64(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

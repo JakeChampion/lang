@@ -1145,6 +1145,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.StringType{},
 	}
+	// random_i32(): i32 — returns a single cryptographic-quality
+	// random i32. Backed by the kernel CSPRNG (or
+	// `wasi:random/random::get-random-u64` on preview-2 WASM,
+	// truncated to i32). Use when you need a single small random
+	// value without the heap-allocation overhead of random_bytes.
+	c.info.FuncSigs["random_i32"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
 	// `int_to_string(n)` migrated to the lang prelude
 	// (internal/prelude/prelude.lang); its signature is
 	// registered via the prelude's FuncDecl.
