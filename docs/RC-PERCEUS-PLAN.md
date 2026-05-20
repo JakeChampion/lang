@@ -319,6 +319,107 @@ call site based on the element type.
 Same shape. Check rc. If unique, mutate in place. Else copy then
 mutate.
 
+## User-facing API audit
+
+The Roc-style "immutable surface, mutate underneath" only works
+if the surface IS immutable everywhere a user reaches. Today's
+lang surface is mostly there but has rough edges where the syntax
+or method name implies mutation, which would mislead readers
+once Phase 2 lands. The cleanup is allowed to break API: callers
+update at the same time we flip the implementation.
+
+Categories below. Each entry shows current → target, with the
+phase where the rename lands.
+
+### Already immutable-looking (no change)
+
+- `arr.push(v)` → returns the new array. Today this LOOKS
+  immutable and the user idiomatically writes `arr = arr.push(v)`.
+  Phase 2 makes the common rc==1 case O(1) without changing the
+  signature. **No rename.**
+- `arr.sorted_asc()` / `arr.sorted_desc()` / `arr.sorted_str_*` →
+  returns a fresh sorted array. **No rename**, but see the
+  inconsistency note below.
+- `arr.reversed()` (i32[]) → returns a fresh reversed array.
+  **No rename.**
+- `arr.abs_each()` / `arr.cumsum()` / `arr.pairwise_diffs()` →
+  all return new arrays. **No rename.**
+- `s.repeat(n)` / `s.capitalize()` / `s.snake_case()` etc. — every
+  string method is already pure-return. **No change.**
+
+### Inconsistency to fix
+
+- `arr.reverse()` (string[]) returns a string[] but the name reads
+  as in-place. The i32[] variant is `reversed`, which is the
+  right shape. **Action**: rename string[]'s `reverse` →
+  `reversed` for consistency. Phase 1e (when strings get rc) is
+  a natural moment because the API surface is already being
+  touched.
+
+### Mutating-looking syntax to keep (with new semantics)
+
+- `arr[i] = v` is syntactically a mutation. Today it's lowered as
+  an in-place store into the underlying buffer — which is the same
+  bug Phase 2 fixes for `push` (corrupts aliases). Two paths:
+  1. **Keep the syntax**, change the lowering: `arr[i] = v`
+     desugars to `arr = arr.set(i, v)` where `set` is a method
+     that checks rc and either mutates in place (rc==1) or copies
+     (rc>1). The current writer-target gets reassigned. Phase 2.
+  2. **Remove the syntax**, force callers to write
+     `arr = arr.set(i, v)` explicitly. More surgery, more honest.
+  Recommend (1) — preserves existing code, and the mental model
+  ("array indexing is sugar for a copy-on-write set") matches Roc.
+  Implementation note: this is the assignment side of the IR's
+  `*ast.Index` target in `b.assign` (currently emits
+  `__arr_idx_*` + a raw store).
+
+### Mutating-looking methods to rename
+
+The Map API is the loudest case — it's void-returning today
+(real in-place mutation under a single-owner assumption), and
+that mutation IS the source of subtle aliasing bugs. Rewriting
+to return Map fixes the API and the semantics in one go.
+
+| Today | Target | Phase | Notes |
+|-------|--------|-------|-------|
+| `m.set(k, v): void` | `m.set(k, v): Map[K, V]` | 2 | Caller writes `m = m.set(k, v)`. |
+| `m.delete(k): bool` | `m.delete(k): (Map[K, V], bool)` | 2 | Returns the (possibly new) map plus the present-before flag. |
+| `m.clear(): void` | `m.clear(): Map[K, V]` | 2 | Empties; returns a fresh empty map (or recycles via drop-reuse). |
+
+Migration sequence:
+
+1. Add the new return-typed variants alongside the existing
+   void ones under names like `set_returning` / `delete_pair`
+   (Phase 2 entry).
+2. Migrate all in-tree callers to the new names.
+3. Delete the void variants and rename `set_returning` → `set`
+   (still Phase 2, end of the PR series).
+4. Document the API in `docs/COLLECTIONS.md` once the migration
+   settles (Phase 6).
+
+### Considered and rejected
+
+- **`s += t` for string concat as syntactic sugar.** Adding it
+  would imply mutation. Keep `s = s + t` (or a future
+  `s.concat(t)`).
+- **`arr.append!(v)` / `arr.set!(i, v)` with bang-suffix.**
+  Imports an OCaml/Ruby convention that doesn't earn its keep
+  here — the rc check is the same on every call site, no need
+  for a syntactic marker.
+- **Two variants per method (`sort` mutating + `sorted` pure).**
+  Doubles the API surface for no real gain once Phase 2 lands.
+
+### Out of scope
+
+- File I/O (`write_string`, `BytesWriter.write_bytes`), TCP
+  (`tcp_send`), and Stream — these are inherently effectful
+  (the side effect IS the point) and don't model as
+  immutable-returning. They stay as-is.
+- The reader/writer protocols already thread state via the
+  return value (e.g. `reader_read_line` returns `(reader,
+  Option[string])` in the upcoming refactor). No further
+  audit needed.
+
 ## Perceus
 
 Perceus is a follow-up *optimisation pass* that elides redundant
@@ -393,10 +494,17 @@ frees (rc going negative).
 ### Phase 2: rc check in mutating ops
 
 PR: `__lang_arr_push` and friends check rc. rc==1 path mutates in
-place; rc>1 path keeps the copy semantics.
+place; rc>1 path keeps the copy semantics. The user-facing API
+audit (see above) lands in the same phase — Map's void-returning
+`set` / `delete` / `clear` become value-returning, and
+`arr[i] = v` rewires to desugar through a copy-on-write `set`
+method. Callers update in-tree at the same time the
+implementation flips.
 
 Effect: the self-host parser + asm.lang push loops become O(N).
-This is the payoff phase.
+This is the payoff phase. After Phase 2, no method's signature
+implies in-place mutation; every collection looks immutable to
+the user.
 
 ### Phase 3: real allocator
 
