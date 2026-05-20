@@ -57,7 +57,10 @@ func TestShiftOutOfRangeNotFolded(t *testing.T) {
 	}
 }
 
-// TestShiftSimplifyZero — `x << 0` and `x >> 0` alias to `x`.
+// TestShiftSimplifyZero — `x << 0`, `x >> 0`, `x >>u 0` all
+// alias to `x`. The signed/unsigned distinction matters for
+// the shift's runtime semantics; the zero-count identity
+// holds for all three.
 func TestShiftSimplifyZero(t *testing.T) {
 	f := NewFunc("f")
 	x := f.AddParam()
@@ -66,7 +69,8 @@ func TestShiftSimplifyZero(t *testing.T) {
 	entry.Ops[0].Imm = 0
 	shl := f.AddOp(entry, OpShl, x, zero)
 	shr := f.AddOp(entry, OpShr, shl, zero)
-	f.SetRet(entry, shr)
+	shrU := f.AddOp(entry, OpShrU, shr, zero)
+	f.SetRet(entry, shrU)
 
 	Simplify(f)
 	if entry.Term.Value != x {
