@@ -18,6 +18,8 @@ package ssa
 //	-1 | x  ⇒ const_int -1
 //	x % 1   ⇒ const_int 0        (signed remainder by 1 is always 0)
 //	x %u 1  ⇒ const_int 0        (unsigned remainder by 1 is always 0)
+//	x + (-x) ⇒ const_int 0       (where -x is OpNeg of x)
+//	(-x) + x ⇒ const_int 0
 //
 // Integer self-comparison identities (Phase 2):
 //
@@ -119,6 +121,16 @@ func StrengthReduce(f *Func) {
 				if rImm, rOK := constInt(op.Args[1], defs); rOK && rImm == 1 {
 					rewriteInt(op, 0)
 				}
+			case OpAdd:
+				// x + (-x) ⇒ 0. Walk the args to see if one side
+				// is OpNeg(other side).
+				if len(op.Args) != 2 {
+					continue
+				}
+				if isNegOf(op.Args[1], op.Args[0], defs) ||
+					isNegOf(op.Args[0], op.Args[1], defs) {
+					rewriteInt(op, 0)
+				}
 			case OpEq, OpLe, OpLeU, OpGe, OpGeU:
 				// x == x, x <= x, x >= x ⇒ true.
 				if len(op.Args) == 2 && op.Args[0].IsValid() && op.Args[0] == op.Args[1] {
@@ -132,4 +144,18 @@ func StrengthReduce(f *Func) {
 			}
 		}
 	}
+}
+
+// isNegOf reports whether `maybeNeg` is defined by `OpNeg`
+// whose single arg equals `x`. Used to recognise the
+// `x + (-x)` shape regardless of operand order.
+func isNegOf(maybeNeg, x Value, defs map[int32]*Op) bool {
+	if !maybeNeg.IsValid() || !x.IsValid() {
+		return false
+	}
+	def, ok := defs[maybeNeg.ID]
+	if !ok || def.Kind != OpNeg || len(def.Args) != 1 {
+		return false
+	}
+	return def.Args[0] == x
 }
