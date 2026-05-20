@@ -265,6 +265,64 @@ func TestSimplifyXorNoCancel(t *testing.T) {
 	}
 }
 
+// TestSimplifyExtend8SIdempotent — `extend8s(extend8s(x))`
+// aliases to the inner extend. Sign-extending a value that's
+// already sign-extended changes nothing.
+func TestSimplifyExtend8SIdempotent(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpExtend8S, x)
+	outer := f.AddOp(entry, OpExtend8S, inner)
+	f.SetRet(entry, outer)
+
+	Simplify(f)
+
+	if entry.Term.Value != inner {
+		t.Errorf("Term.Value = %v, want %v (outer aliases inner)",
+			entry.Term.Value, inner)
+	}
+}
+
+// TestSimplifyExtend16SIdempotent — same idempotence for the
+// halfword extender.
+func TestSimplifyExtend16SIdempotent(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpExtend16S, x)
+	outer := f.AddOp(entry, OpExtend16S, inner)
+	f.SetRet(entry, outer)
+
+	Simplify(f)
+
+	if entry.Term.Value != inner {
+		t.Errorf("Term.Value = %v, want %v (outer aliases inner)",
+			entry.Term.Value, inner)
+	}
+}
+
+// TestSimplifyExtendDifferentKindNotCollapsed — mixed extend
+// kinds (e.g. extend16s of extend8s) are NOT idempotent.
+// `extend16s(extend8s(x))` sign-extends low byte THEN low
+// halfword; that's different from just doing one of them.
+// Verify the safe behavior — outer stays.
+func TestSimplifyExtendDifferentKindNotCollapsed(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpExtend8S, x)
+	outer := f.AddOp(entry, OpExtend16S, inner)
+	f.SetRet(entry, outer)
+
+	Simplify(f)
+
+	if entry.Term.Value != outer {
+		t.Errorf("Term.Value = %v, want %v (mixed extends must stay)",
+			entry.Term.Value, outer)
+	}
+}
+
 // TestSimplifyNilFunc — defensive: nil input is a no-op.
 func TestSimplifyNilFunc(t *testing.T) {
 	defer func() {
