@@ -39,6 +39,9 @@ import (
 //     a future pass that consults callee signatures can prune
 //     the dead Result if it ever becomes worthwhile.
 //
+//   Phase 5:
+//   - OpConstStr → OpConstString with Str = string literal.
+//
 // Anything else returns an `unsupported op` error. Locals
 // beyond the param prefix, OpStoreLocal, branches, indirect
 // calls, and floats land in follow-up PRs.
@@ -76,6 +79,10 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 		case ir.OpConstI64:
 			v := out.AddOp(entry, OpConstInt)
 			entry.Ops[len(entry.Ops)-1].Imm = op.I64
+			stack = append(stack, v)
+		case ir.OpConstStr:
+			v := out.AddOp(entry, OpConstString)
+			entry.Ops[len(entry.Ops)-1].Str = op.Str
 			stack = append(stack, v)
 		case ir.OpLoadLocal:
 			idx := int(op.I32)
