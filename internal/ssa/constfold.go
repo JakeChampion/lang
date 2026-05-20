@@ -113,6 +113,66 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		}
 		rewriteInt(op, int64(int16(v)))
 		return
+	case OpFPromote:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constFloat(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteFloat(op, v) // lossless
+		return
+	case OpFDemote:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constFloat(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteFloat(op, float64(float32(v))) // lossy: round to f32 precision
+		return
+	case OpIToFS:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteFloat(op, float64(v))
+		return
+	case OpIToFU:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteFloat(op, float64(uint64(v)))
+		return
+	case OpFToIS:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constFloat(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, int64(v))
+		return
+	case OpFToIU:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constFloat(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, int64(uint64(v)))
+		return
 	case OpFNeg:
 		if len(op.Args) != 1 {
 			return

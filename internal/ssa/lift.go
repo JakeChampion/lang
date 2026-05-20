@@ -124,6 +124,13 @@ import (
 //       OpSignExtend8  → OpExtend8S
 //       OpSignExtend16 → OpExtend16S
 //
+//   Phase 14:
+//   - Float width + int↔float conversions:
+//       OpFPromoteF32 → OpFPromote
+//       OpFDemoteF64  → OpFDemote
+//       OpFConvertI32/I64 → OpIToFS or OpIToFU (per Unsigned)
+//       OpITruncF32/F64   → OpFToIS or OpFToIU (per Unsigned)
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -356,7 +363,10 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		v := l.out.AddOp(l.cur, OpFNeg, arg)
 		l.stack = append(l.stack, v)
 	case ir.OpExtendI32S, ir.OpExtendI32U, ir.OpWrapI64,
-		ir.OpSignExtend8, ir.OpSignExtend16:
+		ir.OpSignExtend8, ir.OpSignExtend16,
+		ir.OpFPromoteF32, ir.OpFDemoteF64,
+		ir.OpFConvertI32, ir.OpFConvertI64,
+		ir.OpITruncF32, ir.OpITruncF64:
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs 1 operand", op.Kind, i)
 		}
@@ -374,6 +384,22 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			kind = OpExtend8S
 		case ir.OpSignExtend16:
 			kind = OpExtend16S
+		case ir.OpFPromoteF32:
+			kind = OpFPromote
+		case ir.OpFDemoteF64:
+			kind = OpFDemote
+		case ir.OpFConvertI32, ir.OpFConvertI64:
+			if op.Unsigned {
+				kind = OpIToFU
+			} else {
+				kind = OpIToFS
+			}
+		case ir.OpITruncF32, ir.OpITruncF64:
+			if op.Unsigned {
+				kind = OpFToIU
+			} else {
+				kind = OpFToIS
+			}
 		}
 		v := l.out.AddOp(l.cur, kind, arg)
 		l.stack = append(l.stack, v)

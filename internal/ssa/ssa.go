@@ -96,11 +96,26 @@ const (
 	// truncation, sign-/zero-extension, and sub-i32 sign-
 	// extension so backend codegen can emit the right
 	// instruction.
-	OpTrunc      // i64 → i32, keep low 32 bits (sign-aware: int64(int32(v)))
-	OpExtendS    // i32 → i64, sign-extend
-	OpExtendU    // i32 → i64, zero-extend
-	OpExtend8S   // i32 → i32, sign-extend low byte
-	OpExtend16S  // i32 → i32, sign-extend low halfword
+	OpTrunc     // i64 → i32, keep low 32 bits (sign-aware: int64(int32(v)))
+	OpExtendS   // i32 → i64, sign-extend
+	OpExtendU   // i32 → i64, zero-extend
+	OpExtend8S  // i32 → i32, sign-extend low byte
+	OpExtend16S // i32 → i32, sign-extend low halfword
+
+	// Float width conversions. Internally SSA stores all floats
+	// as f64; OpFPromote / OpFDemote let backend codegen emit
+	// the precision-changing wasm/arm64/x86 instruction.
+	OpFPromote // f32 → f64 (lossless)
+	OpFDemote  // f64 → f32 (lossy — round to f32 precision)
+
+	// Int ↔ float conversions. Signed/unsigned distinction is
+	// encoded in the OpKind (S vs U). The float side is f64
+	// in SSA; backend codegen decides f32 vs f64 from the
+	// upcoming type-tagging story.
+	OpIToFS // int64 → float64 (signed integer)
+	OpIToFU // int64 → float64 (unsigned integer)
+	OpFToIS // float64 → int64 (signed truncation)
+	OpFToIU // float64 → int64 (unsigned truncation)
 
 	// Unary logical — boolean negation. Args[0] is a bool
 	// Value; result is the flipped bool.
@@ -209,6 +224,18 @@ func (k OpKind) String() string {
 		return "extend8_s"
 	case OpExtend16S:
 		return "extend16_s"
+	case OpFPromote:
+		return "f_promote"
+	case OpFDemote:
+		return "f_demote"
+	case OpIToFS:
+		return "i_to_f_s"
+	case OpIToFU:
+		return "i_to_f_u"
+	case OpFToIS:
+		return "f_to_i_s"
+	case OpFToIU:
+		return "f_to_i_u"
 	case OpNot:
 		return "not"
 	case OpSelect:
