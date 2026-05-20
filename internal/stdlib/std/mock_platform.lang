@@ -50,7 +50,7 @@ pub function (m: MockPlatform) record(name: string, args: string) {
 // recorded so far. Convenience for the common
 // `assert_eq_i32(m.call_count(), N)` shape.
 pub function (m: MockPlatform) call_count(): i32 {
-    return len(m.calls);
+    return m.calls.len();
 }
 
 // `(m: MockPlatform).reset()` — clear the call log without
@@ -68,7 +68,7 @@ pub function (m: MockPlatform) reset() {
 // regardless of position.
 pub function (m: MockPlatform) has_call(name: string): boolean {
     var i: i32 = 0;
-    while (i < len(m.calls)) {
+    while (i < m.calls.len()) {
         if (m.calls[i].name == name) { return true; }
         i = i + 1;
     }
@@ -81,7 +81,7 @@ pub function (m: MockPlatform) has_call(name: string): boolean {
 // specific call without pinning its position in the log.
 pub function (m: MockPlatform) find_call(name: string): Option[MockCall] {
     var i: i32 = 0;
-    while (i < len(m.calls)) {
+    while (i < m.calls.len()) {
         if (m.calls[i].name == name) { return Some(m.calls[i]); }
         i = i + 1;
     }

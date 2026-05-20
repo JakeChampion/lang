@@ -815,7 +815,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"arr-string-join-empty",
-			"function main(): i32 { var xs: string[] = []; var r = xs.join(\",\"); print(\"[\"); print(r); print(\"]\"); return len(r); }",
+			"function main(): i32 { var xs: string[] = []; var r = xs.join(\",\"); print(\"[\"); print(r); print(\"]\"); return r.len(); }",
 			0,
 			"[]",
 		},

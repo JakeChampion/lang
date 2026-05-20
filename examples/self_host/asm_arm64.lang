@@ -1909,7 +1909,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Built-in `.len()` / `.is_empty()` on
                     // strings and arrays. Inline — they read
                     // the length word directly.
-                    if (fa.field == "len" && len(c.args) == 0
+                    if (fa.field == "len" && c.args.len() == 0
                             && (prim_recv == "string"
                                 || prim_recv == "array_i32"
                                 || prim_recv == "array_string"
@@ -1924,7 +1924,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.write("    str x0, [sp, #-16]!\n");
                         return s;
                     }
-                    if (fa.field == "is_empty" && len(c.args) == 0
+                    if (fa.field == "is_empty" && c.args.len() == 0
                             && (prim_recv == "string"
                                 || prim_recv == "array_i32"
                                 || prim_recv == "array_string"
@@ -2023,7 +2023,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     }
                     // Built-in `.first()` / `.last()` on arrays —
                     // O(1) element access. UB on empty arrays.
-                    if (fa.field == "first" && len(c.args) == 0
+                    if (fa.field == "first" && c.args.len() == 0
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
@@ -2031,7 +2031,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.write("    str x0, [sp, #-16]!\n");
                         return s;
                     }
-                    if (fa.field == "last" && len(c.args) == 0
+                    if (fa.field == "last" && c.args.len() == 0
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
@@ -2044,7 +2044,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // concatenates all elements with `sep` between
                     // them. Empty array → empty string. Single
                     // element → that element.
-                    if (fa.field == "join" && len(c.args) == 1
+                    if (fa.field == "join" && c.args.len() == 1
                             && prim_recv == "array_string") {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
@@ -2060,7 +2060,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // element so content equality matches even
                     // when the .rodata slots differ.
                     if ((fa.field == "index_of" || fa.field == "contains")
-                            && len(c.args) == 1 && prim_recv == "array_string") {
+                            && c.args.len() == 1 && prim_recv == "array_string") {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    ldr x1, [sp], #16\n");
@@ -2076,7 +2076,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     }
                     // Built-in `.sum()` on i32 arrays — returns
                     // the sum of all elements (0 if empty).
-                    if (fa.field == "sum" && len(c.args) == 0
+                    if (fa.field == "sum" && c.args.len() == 0
                             && prim_recv == "array_i32") {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");

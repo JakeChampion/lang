@@ -115,7 +115,7 @@ pub function (s: Stream) read_all_string(): string {
 // cursor, advancing it. Returns None when the Stream is
 // exhausted.
 pub function (s: Stream) read_byte(): Option[i32] {
-    if (s.pos >= len(s.data)) { return None; }
+    if (s.pos >= s.data.len()) { return None; }
     var b: i32 = s.data[s.pos] as i32;
     s.pos = s.pos + 1;
     return Some(b);
@@ -129,7 +129,7 @@ pub function (s: Stream) read_n(n: i32): u8[] {
     var out: u8[] = [];
     if (n <= 0) { return out; }
     var end: i32 = s.pos + n;
-    if (end > len(s.data)) { end = len(s.data); }
+    if (end > s.data.len()) { end = s.data.len(); }
     while (s.pos < end) {
         out = out.push(s.data[s.pos]);
         s.pos = s.pos + 1;
@@ -145,14 +145,14 @@ pub function (s: Stream) read_n(n: i32): u8[] {
 // Some(line) on its last call before transitioning to None
 // on the subsequent one.
 pub function (s: Stream) read_line(): Option[string] {
-    if (s.pos >= len(s.data)) { return None; }
+    if (s.pos >= s.data.len()) { return None; }
     var line_bytes: u8[] = [];
-    while (s.pos < len(s.data)) {
+    while (s.pos < s.data.len()) {
         var b: i32 = s.data[s.pos] as i32;
         s.pos = s.pos + 1;
         if (b == 10) {
             // \n — strip a trailing \r if present.
-            var n: i32 = len(line_bytes);
+            var n: i32 = line_bytes.len();
             if (n > 0) {
                 if ((line_bytes[n - 1] as i32) == 13) {
                     var stripped: u8[] = [];

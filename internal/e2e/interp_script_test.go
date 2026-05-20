@@ -1863,7 +1863,7 @@ function main(): i32 {
     match (json.json_parse("{\"tags\":[\"a\",\"b\",\"c\"]}")) {
         Some(v) => {
             match (json.json_get_array(v, "tags")) {
-                Some(arr) => { print(len(arr).to_string()); },
+                Some(arr) => { print(arr.len().to_string()); },
                 None => { print("none"); }
             }
             return 0;
@@ -1990,11 +1990,11 @@ function main(): i32 {
 function main(): i32 {
     var s: Stream = stream.stream_from_string("hello");
     var first: u8[] = s.read_n(3);
-    print(len(first).to_string());
+    print(first.len().to_string());
     var rest: u8[] = s.read_n(99);
-    print(len(rest).to_string());
+    print(rest.len().to_string());
     var empty: u8[] = s.read_n(1);
-    print(len(empty).to_string());
+    print(empty.len().to_string());
     return 0;
 }`,
 			wantStdout: "3\n2\n0\n",
