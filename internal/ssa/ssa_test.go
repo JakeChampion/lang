@@ -163,6 +163,7 @@ func TestOpKindString(t *testing.T) {
 		want string
 	}{
 		{OpAdd, "add"}, {OpSub, "sub"}, {OpMul, "mul"},
+		{OpAnd, "and"}, {OpOr, "or"}, {OpXor, "xor"},
 		{OpEq, "eq"}, {OpLt, "lt"}, {OpGe, "ge"},
 		{OpConstInt, "const_int"}, {OpCall, "call"},
 		{OpInvalid, "invalid"},

@@ -9,8 +9,11 @@ package ssa
 // Identities handled (Phase 1):
 //
 //	x - x   ⇒ const_int 0
+//	x ^ x   ⇒ const_int 0
 //	x * 0   ⇒ const_int 0
 //	0 * x   ⇒ const_int 0
+//	x & 0   ⇒ const_int 0
+//	0 & x   ⇒ const_int 0
 //
 // Not yet handled (would need a "definitely non-zero" check
 // on x that we don't track yet):
@@ -41,11 +44,11 @@ func StrengthReduce(f *Func) {
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			switch op.Kind {
-			case OpSub:
+			case OpSub, OpXor:
 				if len(op.Args) == 2 && op.Args[0].IsValid() && op.Args[0] == op.Args[1] {
 					rewriteInt(op, 0)
 				}
-			case OpMul:
+			case OpMul, OpAnd:
 				if len(op.Args) != 2 {
 					continue
 				}

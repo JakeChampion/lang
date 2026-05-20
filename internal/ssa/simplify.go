@@ -125,6 +125,37 @@ func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 		if rhsConst && rhsImm == 1 {
 			return lhs, true
 		}
+	case OpAnd:
+		// x & x → x; x & -1 → x (-1 is all-bits set); 0 & x not
+		// here (synthesised by StrengthReduce).
+		if lhs == rhs {
+			return lhs, true
+		}
+		if rhsConst && rhsImm == -1 {
+			return lhs, true
+		}
+		if lhsConst && lhsImm == -1 {
+			return rhs, true
+		}
+	case OpOr:
+		// x | 0 → x; x | x → x.
+		if lhs == rhs {
+			return lhs, true
+		}
+		if rhsConst && rhsImm == 0 {
+			return lhs, true
+		}
+		if lhsConst && lhsImm == 0 {
+			return rhs, true
+		}
+	case OpXor:
+		// x ^ 0 → x (x ^ x ⇒ 0 belongs in StrengthReduce).
+		if rhsConst && rhsImm == 0 {
+			return lhs, true
+		}
+		if lhsConst && lhsImm == 0 {
+			return rhs, true
+		}
 	}
 	return Value{}, false
 }

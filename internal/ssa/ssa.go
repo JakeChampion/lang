@@ -71,6 +71,11 @@ const (
 	OpDiv
 	OpRem
 
+	// Bitwise — integer (i32 / i64).
+	OpAnd
+	OpOr
+	OpXor
+
 	// Comparison — produces a boolean Value.
 	OpEq
 	OpNe
@@ -117,6 +122,12 @@ func (k OpKind) String() string {
 		return "div"
 	case OpRem:
 		return "rem"
+	case OpAnd:
+		return "and"
+	case OpOr:
+		return "or"
+	case OpXor:
+		return "xor"
 	case OpEq:
 		return "eq"
 	case OpNe:
