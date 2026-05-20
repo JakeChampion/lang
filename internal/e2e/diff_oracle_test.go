@@ -25,13 +25,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
+	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/langsmith"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -56,6 +60,224 @@ import (
 // thousand from `?` propagation alone). The wasmbin path stayed
 // 0 emit-skips / 0 mismatches across the same range.
 const diffOracleSeedCount = 2048
+
+// diffOracleArtifactDir returns the directory where the
+// differential oracle stashes asm + binary artifacts on
+// failure. The CI workflow uploads this path via
+// actions/upload-artifact; locally it just accumulates on
+// the filesystem (tests SetUp / TearDown don't touch it).
+// Defaults to /tmp/lang-diff-failures; override with
+// DIFF_ORACLE_ARTIFACT_DIR for sandboxed environments.
+func diffOracleArtifactDir() string {
+	if d := os.Getenv("DIFF_ORACLE_ARTIFACT_DIR"); d != "" {
+		return d
+	}
+	return "/tmp/lang-diff-failures"
+}
+
+// diagInfo is the bundle of post-mortem details a diff-oracle
+// failure needs: the captured stdout+stderr, the exit code,
+// a human-readable signal name (empty when the process exited
+// normally), and the path to the asm artifact for later
+// inspection. Helpers below fill it out.
+type diagInfo struct {
+	out      string
+	code     int
+	signal   string // e.g. "SIGSEGV" — empty if exited normally
+	asmPath  string
+	binPath  string
+}
+
+// describeSignal turns a Go ExitError's WaitStatus into a
+// short signal description (e.g. "signal 11 / segmentation
+// fault"). Returns the empty string when the process wasn't
+// signal-killed.
+func describeSignal(ps *os.ProcessState) string {
+	if ps == nil {
+		return ""
+	}
+	ws, ok := ps.Sys().(syscall.WaitStatus)
+	if !ok {
+		return ""
+	}
+	if !ws.Signaled() {
+		return ""
+	}
+	sig := ws.Signal()
+	return fmt.Sprintf("signal %d / %s", int(sig), sig.String())
+}
+
+// runArm64Diag is the diagnostic-aware sibling of
+// compileAndRunArm64. Returns enough post-mortem info to
+// recover from a CI failure: the captured combined output,
+// the exit code, the signal name (when the binary was killed
+// by a signal, e.g. SIGSEGV on a bad pointer deref), and the
+// paths to the asm + binary so a follow-up `objdump -d` or
+// `qemu-aarch64 -d ...` can pin down the failing instruction.
+//
+// Skips the test (via the shared `arm64Tooling` helper) when
+// no aarch64 toolchain is available.
+func runArm64Diag(t *testing.T, src string) diagInfo {
+	t.Helper()
+	gcc, qemu := arm64Tooling(t)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.lang")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	asm, err := arm64codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+	cmd := runArm64Bin(qemu, binPath)
+	out, _ := cmd.CombinedOutput()
+	return diagInfo{
+		out:     string(out),
+		code:    cmd.ProcessState.ExitCode(),
+		signal:  describeSignal(cmd.ProcessState),
+		asmPath: asmPath,
+		binPath: binPath,
+	}
+}
+
+// runX86_64Diag mirrors runArm64Diag for the x86_64 backend.
+// Same Go pipeline (modload → checker → monomorph → emit →
+// gcc → run), same post-mortem fields. x86_64 prefers native
+// exec on amd64 hosts and falls back to qemu-x86_64 elsewhere
+// — `x86_64Tooling` already encodes that policy.
+func runX86_64Diag(t *testing.T, src string) diagInfo {
+	t.Helper()
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.lang")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
+	}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(binPath)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
+	}
+	out, _ := cmd.CombinedOutput()
+	return diagInfo{
+		out:     string(out),
+		code:    cmd.ProcessState.ExitCode(),
+		signal:  describeSignal(cmd.ProcessState),
+		asmPath: asmPath,
+		binPath: binPath,
+	}
+}
+
+// preserveDiagArtifacts copies the asm + binary out of the
+// per-test t.TempDir (which is rm-rf'd on test exit) into the
+// stable artifact directory so CI can upload them and a
+// developer can post-mortem locally. Source is also dumped so
+// the whole crash is reproducible from artifacts alone.
+//
+// Best-effort: errors from the copy aren't propagated. The
+// in-message `t.Errorf` text is the primary failure surface;
+// the artifact path is a bonus.
+func preserveDiagArtifacts(t *testing.T, label string, src string, d diagInfo) string {
+	t.Helper()
+	dest := filepath.Join(diffOracleArtifactDir(), label)
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return ""
+	}
+	_ = os.WriteFile(filepath.Join(dest, "main.lang"), []byte(src), 0o644)
+	if d.asmPath != "" {
+		if b, err := os.ReadFile(d.asmPath); err == nil {
+			_ = os.WriteFile(filepath.Join(dest, "prog.s"), b, 0o644)
+		}
+	}
+	if d.binPath != "" {
+		if b, err := os.ReadFile(d.binPath); err == nil {
+			_ = os.WriteFile(filepath.Join(dest, "prog"), b, 0o755)
+		}
+	}
+	return dest
+}
+
+// asmExcerpt reads the asm file at path and returns a head +
+// tail slice suitable for inlining in a test failure log. The
+// excerpt covers main's prologue (first N lines) and main's
+// epilogue / .data sections (last N lines). Empty string on
+// any read error — the failure message degrades gracefully.
+func asmExcerpt(path string) string {
+	if path == "" {
+		return ""
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	const headTail = 80
+	lines := strings.Split(string(b), "\n")
+	if len(lines) <= 2*headTail {
+		return string(b)
+	}
+	var sb strings.Builder
+	for _, l := range lines[:headTail] {
+		sb.WriteString(l)
+		sb.WriteByte('\n')
+	}
+	sb.WriteString(fmt.Sprintf("...<%d more lines>...\n", len(lines)-2*headTail))
+	for _, l := range lines[len(lines)-headTail:] {
+		sb.WriteString(l)
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
 
 // TestDifferential_LangsmithMain runs each backend on the same
 // generator-emitted main() and asserts the byte return value
@@ -89,15 +311,27 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 			expected := runInterpByte(t, src)
 
 			t.Run("arm64", func(t *testing.T) {
-				_, code := compileAndRunArm64(t, src)
-				if code != expected {
-					t.Errorf("arm64 exit=%d, interp=%d\nsrc:\n%s", code, expected, src)
+				d := runArm64Diag(t, src)
+				if d.code != expected {
+					art := preserveDiagArtifacts(t, fmt.Sprintf("seed=%d/arm64", seed), src, d)
+					sig := d.signal
+					if sig == "" {
+						sig = "<normal exit>"
+					}
+					t.Errorf("arm64 exit=%d (signal=%s), interp=%d\nbinary output (stdout+stderr):\n%s\nartifact dir: %s\nasm (head+tail):\n%s\nsrc:\n%s",
+						d.code, sig, expected, d.out, art, asmExcerpt(d.asmPath), src)
 				}
 			})
 			t.Run("x86_64", func(t *testing.T) {
-				_, code := compileAndRunX86_64(t, src)
-				if code != expected {
-					t.Errorf("x86_64 exit=%d, interp=%d\nsrc:\n%s", code, expected, src)
+				d := runX86_64Diag(t, src)
+				if d.code != expected {
+					art := preserveDiagArtifacts(t, fmt.Sprintf("seed=%d/x86_64", seed), src, d)
+					sig := d.signal
+					if sig == "" {
+						sig = "<normal exit>"
+					}
+					t.Errorf("x86_64 exit=%d (signal=%s), interp=%d\nbinary output (stdout+stderr):\n%s\nartifact dir: %s\nasm (head+tail):\n%s\nsrc:\n%s",
+						d.code, sig, expected, d.out, art, asmExcerpt(d.asmPath), src)
 				}
 			})
 			// wasm sub-test (WAT-text backend) retired here as

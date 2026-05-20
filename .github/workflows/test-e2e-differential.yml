@@ -47,4 +47,19 @@ jobs:
       - name: go test (differential shard ${{ matrix.shard }}/4)
         env:
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
+          # Per-shard artifact dir so multiple shards on the
+          # same runner don't clobber each other's failed-
+          # program asm. `diffOracleArtifactDir()` reads this.
+          DIFF_ORACLE_ARTIFACT_DIR: "${{ runner.temp }}/lang-diff-failures"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestDifferential' ./internal/e2e/
+
+      - name: Upload failing-seed artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          # Disambiguate per matrix cell so the upload doesn't
+          # collide across the 8-job matrix on the same PR.
+          name: diff-oracle-failures-${{ matrix.host.name }}-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/lang-diff-failures
+          if-no-files-found: ignore
+          retention-days: 7

@@ -20,9 +20,19 @@
 // negation `n = 0 - n` is unsigned-safe for INT_MIN because
 // we then read the result as u32 for the divmod chain, and
 // -INT_MIN's unsigned value is exactly `2^31`.
+//
+// scratch_ptr is usize, not i32: native arm64 (and any
+// 64-bit target) places mmap regions at addresses that won't
+// fit in i32 (kernel ASLR + the mmap region typically lands
+// above 0x4_0000_0000). Truncating with `as i32` worked
+// only on qemu-aarch64's address-space-constrained user-mode
+// emulation, which honors the 0x1000_0000 hint; native arm64
+// runners (GitHub Actions ubuntu-24.04-arm = Ampere Altra)
+// hand back a high address and the truncated low 32 bits
+// point at unmapped memory → SIGSEGV inside __memcpy.
 pub function int_to_string(n: i32): string {
     var scratch: u8[] = __alloc_u8(16);
-    var scratch_ptr: i32 = scratch as i32;
+    var scratch_ptr: usize = scratch as usize;
     var end: i32 = 16;
     var neg: boolean = false;
     if (n < 0) {
@@ -46,7 +56,7 @@ pub function int_to_string(n: i32): string {
     }
     var n_bytes: i32 = 16 - end;
     var buf: u8[] = __alloc_u8(n_bytes);
-    __memcpy(buf as i32, scratch_ptr + end, n_bytes);
+    __memcpy(buf as usize, scratch_ptr + end, n_bytes);
     return string_from_bytes(buf);
 }
 
@@ -55,9 +65,13 @@ pub function int_to_string(n: i32): string {
 // for the i64-min path where the wrapped subtraction
 // produces a u64 magnitude that's exact). The method
 // wrappers in std/i64 / std/u32 / std/u64 dispatch here.
+//
+// Same usize-not-i32 contract as int_to_string above — see
+// that comment for the native-arm64 high-mmap-address
+// rationale.
 pub function __int_to_string_u64(mag: i64, neg: i32): string {
     var scratch: u8[] = __alloc_u8(24);
-    var scratch_ptr: i32 = scratch as i32;
+    var scratch_ptr: usize = scratch as usize;
     var end: i32 = 24;
     if (mag == (0 as i64)) {
         end = end - 1;
@@ -75,7 +89,7 @@ pub function __int_to_string_u64(mag: i64, neg: i32): string {
     }
     var n_bytes: i32 = 24 - end;
     var buf: u8[] = __alloc_u8(n_bytes);
-    __memcpy(buf as i32, scratch_ptr + end, n_bytes);
+    __memcpy(buf as usize, scratch_ptr + end, n_bytes);
     return string_from_bytes(buf);
 }
 
