@@ -677,12 +677,23 @@ func emitDualReturn(body []byte, d dualReturn, ctx *emitCtx) ([]byte, error) {
 // while-loop CFG shape.
 type whileLoop struct {
 	entry, header, body, done *ssa.Block
+	// bodyOnTrueArm is true when the header's `brif True`
+	// target is `body` (loop while cond), false when the
+	// True target is `done` (exit when cond — emit needs to
+	// flip via i32.eqz so the wasm `br_if $exit` triggers
+	// on the right polarity).
+	bodyOnTrueArm bool
 }
 
 // classifyWhileLoop detects the canonical while-loop shape:
 //
 //	entry ─br─→ header ─brif─→ body ─br─→ header (back-edge)
 //	                       └─→ done ─ret
+//
+// Accepts either brif arrangement — body may be on the True
+// arm (loop while cond) or the False arm (loop while !cond,
+// the optimizer can flip the comparison via CmpFlip + remove
+// not's leaving the exit on True).
 //
 // Returns the recognised shape + true on a match.
 func classifyWhileLoop(f *ssa.Func) (whileLoop, bool) {
@@ -697,15 +708,23 @@ func classifyWhileLoop(f *ssa.Func) (whileLoop, bool) {
 	if header == nil || header.Term.Kind != ssa.TermBrIf {
 		return whileLoop{}, false
 	}
-	body, done := header.Term.True, header.Term.False
-	if body == nil || done == nil || body == done {
+	t, fb := header.Term.True, header.Term.False
+	if t == nil || fb == nil || t == fb {
 		return whileLoop{}, false
 	}
-	// body's only pred is header; body ends with br back to header.
-	if len(body.Preds) != 1 || body.Preds[0] != header {
-		return whileLoop{}, false
-	}
-	if body.Term.Kind != ssa.TermBr || body.Term.Target != header {
+	// Figure out which arm holds the body (sole pred = header,
+	// terminator = br back to header) and which holds done
+	// (sole pred = header, terminator = ret).
+	var body, done *ssa.Block
+	bodyOnTrueArm := false
+	switch {
+	case isLoopBody(t, header) && isLoopDone(fb, header):
+		body, done = t, fb
+		bodyOnTrueArm = true
+	case isLoopBody(fb, header) && isLoopDone(t, header):
+		body, done = fb, t
+		bodyOnTrueArm = false
+	default:
 		return whileLoop{}, false
 	}
 	// header's preds are {entry, body} in some order.
@@ -719,14 +738,32 @@ func classifyWhileLoop(f *ssa.Func) (whileLoop, bool) {
 	if !found[entry] || !found[body] {
 		return whileLoop{}, false
 	}
-	// done's only pred is header; done ends with ret.
-	if len(done.Preds) != 1 || done.Preds[0] != header {
-		return whileLoop{}, false
+	return whileLoop{entry: entry, header: header, body: body, done: done, bodyOnTrueArm: bodyOnTrueArm}, true
+}
+
+// isLoopBody reports whether `b` has the shape of a while-
+// loop body: only pred is `header`, terminator is `br
+// header`.
+func isLoopBody(b, header *ssa.Block) bool {
+	if b == nil {
+		return false
 	}
-	if done.Term.Kind != ssa.TermRet {
-		return whileLoop{}, false
+	if len(b.Preds) != 1 || b.Preds[0] != header {
+		return false
 	}
-	return whileLoop{entry: entry, header: header, body: body, done: done}, true
+	return b.Term.Kind == ssa.TermBr && b.Term.Target == header
+}
+
+// isLoopDone reports whether `b` has the shape of a while-
+// loop done block: only pred is `header`, terminator is ret.
+func isLoopDone(b, header *ssa.Block) bool {
+	if b == nil {
+		return false
+	}
+	if len(b.Preds) != 1 || b.Preds[0] != header {
+		return false
+	}
+	return b.Term.Kind == ssa.TermRet
 }
 
 // emitWhileLoop emits the wasm `block`/`loop`/`br_if` shape
@@ -765,12 +802,18 @@ func emitWhileLoop(body []byte, lp whileLoop, ctx *emitCtx) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	//     push cond; eqz; br_if 1 (to $exit)
+	//     push cond; br_if $exit. When the body sits on the
+	//     True arm, the loop continues if cond is true → exit
+	//     if cond is false → emit i32.eqz. When body is on the
+	//     False arm, the loop continues if cond is false →
+	//     exit if cond is true → no flip.
 	if !lp.header.Term.Cond.IsValid() {
 		return nil, fmt.Errorf("wasmssa: while-loop header has invalid brif cond")
 	}
 	body = pushValue(body, lp.header.Term.Cond, ctx)
-	body = append(body, 0x45) // i32.eqz — exit when cond is false
+	if lp.bodyOnTrueArm {
+		body = append(body, 0x45) // i32.eqz — exit when cond is false
+	}
 	body = inst.InstBrIf(body, 1)
 	//     body ops
 	body, err = emitStraightBlock(body, lp.body, ctx)

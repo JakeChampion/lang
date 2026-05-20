@@ -289,6 +289,41 @@ func TestEmitWhileLoop(t *testing.T) {
 	validateModule(t, mod)
 }
 
+// TestEmitWhileLoopBodyOnFalseArm — same loop shape but with
+// the brif arrangement the optimizer often produces after
+// flipping the cond: True target is `done`, False target is
+// `body`. The emitter has to drop the i32.eqz it would
+// otherwise prepend to the cond.
+func TestEmitWhileLoopBodyOnFalseArm(t *testing.T) {
+	f := ssa.NewFunc("main")
+	n := f.AddParam()
+	entry := f.NewBlock()
+	header := f.NewBlock()
+	body := f.NewBlock()
+	done := f.NewBlock()
+	zero := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 0
+	f.SetBr(entry, header)
+	phiRes := f.NewValue()
+	phiOp := &ssa.Op{Kind: ssa.OpPhi, Result: phiRes, Args: []ssa.Value{zero, ssa.Value{}}}
+	header.Ops = append(header.Ops, phiOp)
+	// cond = i >= n; loop while NOT cond (i.e. while i < n).
+	cond := f.AddOp(header, ssa.OpGe, phiRes, n)
+	f.SetBrIf(header, cond, done, body) // exit on True, body on False
+	one := f.AddOp(body, ssa.OpConstInt)
+	body.Ops[0].Imm = 1
+	inc := f.AddOp(body, ssa.OpAdd, phiRes, one)
+	phiOp.Args[1] = inc
+	f.SetBr(body, header)
+	f.SetRet(done, phiRes)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+}
+
 // TestEmitRejectsUnknownCFG — a CFG that doesn't match any
 // recognised shape (e.g. 5 blocks with arbitrary edges)
 // returns a clear error.
