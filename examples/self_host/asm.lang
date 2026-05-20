@@ -461,7 +461,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
-                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max")) {
+                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp")) {
                         return "i32";
                     }
                     if (fa.field == "len"
@@ -2418,6 +2418,22 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             // pick rcx.
                             s = s.write("    cmpq %rcx, %rax\n");
                             s = s.write("    cmovlq %rcx, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "clamp" && c.args.len() == 2) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = emit_expr(c.args[1], s);
+                            s = s.write("    popq %rdx\n");   // hi
+                            s = s.write("    popq %rcx\n");   // lo
+                            s = s.write("    popq %rax\n");   // n
+                            // n = max(n, lo)
+                            s = s.write("    cmpq %rcx, %rax\n");
+                            s = s.write("    cmovlq %rcx, %rax\n");
+                            // n = min(n, hi)
+                            s = s.write("    cmpq %rdx, %rax\n");
+                            s = s.write("    cmovgq %rdx, %rax\n");
                             s = s.write("    pushq %rax\n");
                             return s;
                         }
