@@ -483,6 +483,15 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				//     WrapWasiImportedAsCliRun.
 				//   - Anything else → error pointing at
 				//     -component-wrap / -wasi-adapter.
+				//
+				// The wasi:cli/run::run lift expects the core
+				// `main` to return i32 (which canon-lifts to
+				// result<_, _>). Catch a void-returning main up
+				// front rather than producing an invalid
+				// component the validator rejects.
+				if err := checkMainReturnsI32ForCliRun(prog); err != nil {
+					return 1, err
+				}
 				wasiImports, unknown := classifyPreview2Imports(bin)
 				if len(unknown) > 0 {
 					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
@@ -817,6 +826,32 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 //     `WrapWasiImportedWithExport`.
 //   - unknown: the "module.name" string returned so the driver
 //     can surface a useful error pointing at -wasi-adapter.
+// checkMainReturnsI32ForCliRun ensures that `function main`
+// declares an i32 return type. `-component-wrap-cli` lifts the
+// core `main` export as wasi:cli/run::run, whose canonical-ABI
+// lowered signature is `() -> i32` (the result<_, _> tag). A
+// void main produces a `() -> ()` core export, which wasmtime
+// rejects at validation time with the cryptic "lowered result
+// types do not match" error. Catching it here gives a clearer
+// message.
+//
+// Programs without a `main` function (e.g. library-shaped
+// modules) are accepted by this check — the wrap helper will
+// fail later when it can't find the named export. That failure
+// is rare and its error message is already specific.
+func checkMainReturnsI32ForCliRun(prog *ast.Program) error {
+	for _, fn := range prog.Funcs {
+		if fn.Name != "main" {
+			continue
+		}
+		if _, ok := fn.ReturnType.(ast.VoidType); ok {
+			return fmt.Errorf("-component-wrap-cli requires `function main(): i32`; got a void main. wasi:cli/run::run lifts main's i32 to result<_, _>: 0 = ok, non-zero = err. Add `: i32` and `return 0;` to your main.")
+		}
+		return nil
+	}
+	return nil
+}
+
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
 	pairs := coreModuleImportPairs(bin)
 	var wasi []component.WasiImport
