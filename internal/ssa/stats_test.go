@@ -187,6 +187,86 @@ func TestStatsReachableEqualsBlocksOnHealthyFunc(t *testing.T) {
 	}
 }
 
+// TestStatsSub — scalar delta of two Stats subtracts each
+// field. Negative results allowed when `s < other`.
+func TestStatsSub(t *testing.T) {
+	before := Stats{Blocks: 5, Reachable: 5, Ops: 20, Phis: 2, Consts: 3, Params: 1, MaxBlockOps: 8}
+	after := Stats{Blocks: 3, Reachable: 3, Ops: 12, Phis: 1, Consts: 4, Params: 1, MaxBlockOps: 5}
+	d := before.Sub(after)
+	cases := []struct {
+		got, want int
+		field     string
+	}{
+		{d.Blocks, 2, "Blocks"},
+		{d.Reachable, 2, "Reachable"},
+		{d.Ops, 8, "Ops"},
+		{d.Phis, 1, "Phis"},
+		{d.Consts, -1, "Consts"}, // grew by 1; delta negative
+		{d.Params, 0, "Params"},
+		{d.MaxBlockOps, 3, "MaxBlockOps"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("delta.%s = %d, want %d", c.field, c.got, c.want)
+		}
+	}
+}
+
+// TestStatsSubMaps — Terminators / OpKinds subtract per-key.
+// Absent keys on either side default to zero.
+func TestStatsSubMaps(t *testing.T) {
+	before := Stats{
+		Terminators: map[TermKind]int{TermBr: 3, TermRet: 1},
+		OpKinds:     map[OpKind]int{OpAdd: 4, OpMul: 2},
+	}
+	after := Stats{
+		Terminators: map[TermKind]int{TermBr: 1, TermBrIf: 1}, // gained BrIf, dropped Ret
+		OpKinds:     map[OpKind]int{OpAdd: 2, OpSub: 1},       // gained Sub, dropped Mul
+	}
+	d := before.Sub(after)
+
+	if d.Terminators[TermBr] != 2 {
+		t.Errorf("Terminators[TermBr] delta = %d, want 2", d.Terminators[TermBr])
+	}
+	if d.Terminators[TermRet] != 1 {
+		t.Errorf("Terminators[TermRet] delta = %d, want 1 (after had 0)", d.Terminators[TermRet])
+	}
+	if d.Terminators[TermBrIf] != -1 {
+		t.Errorf("Terminators[TermBrIf] delta = %d, want -1 (before had 0)", d.Terminators[TermBrIf])
+	}
+	if d.OpKinds[OpAdd] != 2 {
+		t.Errorf("OpKinds[OpAdd] delta = %d, want 2", d.OpKinds[OpAdd])
+	}
+	if d.OpKinds[OpMul] != 2 {
+		t.Errorf("OpKinds[OpMul] delta = %d, want 2", d.OpKinds[OpMul])
+	}
+	if d.OpKinds[OpSub] != -1 {
+		t.Errorf("OpKinds[OpSub] delta = %d, want -1", d.OpKinds[OpSub])
+	}
+}
+
+// TestStatsSubMatchesOptimizeDelta — end-to-end on a real
+// Func. `before - after = ops removed by Optimize`.
+func TestStatsSubMatchesOptimizeDelta(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	a := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 2
+	b := f.AddOp(entry, OpConstInt)
+	entry.Ops[1].Imm = 3
+	sum := f.AddOp(entry, OpAdd, a, b)
+	f.SetRet(entry, sum)
+
+	before := f.Stats()
+	Optimize(f)
+	after := f.Stats()
+	d := before.Sub(after)
+
+	if d.Ops <= 0 {
+		t.Errorf("delta.Ops = %d, want > 0 (Optimize should reduce ops)", d.Ops)
+	}
+}
+
 // TestStatsNilFunc — defensive.
 func TestStatsNilFunc(t *testing.T) {
 	var f *Func

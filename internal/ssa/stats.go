@@ -69,3 +69,50 @@ func (s Stats) String() string {
 	return fmt.Sprintf("blocks=%d reachable=%d ops=%d phis=%d consts=%d params=%d max_block_ops=%d",
 		s.Blocks, s.Reachable, s.Ops, s.Phis, s.Consts, s.Params, s.MaxBlockOps)
 }
+
+// Sub returns a Stats whose scalar fields are `s` minus
+// `other`, component-wise. Useful for benchmarking pass
+// effectiveness:
+//
+//	before := f.Stats()
+//	Optimize(f)
+//	delta := before.Sub(f.Stats())
+//	// delta.Ops > 0 → Optimize removed that many ops
+//
+// MaxBlockOps subtracts directly even though "delta of max"
+// isn't a max — it's the more useful signed delta of the
+// two snapshots' values.
+//
+// The Terminators and OpKinds maps subtract per-key; absent
+// keys default to zero (so `delta.OpKinds[OpAdd]` always
+// reads `before - after`, even if `after` had no Add ops).
+func (s Stats) Sub(other Stats) Stats {
+	out := Stats{
+		Blocks:      s.Blocks - other.Blocks,
+		Reachable:   s.Reachable - other.Reachable,
+		Ops:         s.Ops - other.Ops,
+		Phis:        s.Phis - other.Phis,
+		Consts:      s.Consts - other.Consts,
+		Params:      s.Params - other.Params,
+		MaxBlockOps: s.MaxBlockOps - other.MaxBlockOps,
+		Terminators: map[TermKind]int{},
+		OpKinds:     map[OpKind]int{},
+	}
+	for k, v := range s.Terminators {
+		out.Terminators[k] = v - other.Terminators[k]
+	}
+	for k, v := range other.Terminators {
+		if _, seen := s.Terminators[k]; !seen {
+			out.Terminators[k] = -v
+		}
+	}
+	for k, v := range s.OpKinds {
+		out.OpKinds[k] = v - other.OpKinds[k]
+	}
+	for k, v := range other.OpKinds {
+		if _, seen := s.OpKinds[k]; !seen {
+			out.OpKinds[k] = -v
+		}
+	}
+	return out
+}
