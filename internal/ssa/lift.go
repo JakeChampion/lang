@@ -171,6 +171,11 @@ import (
 //   - OpReturnPair → SSA TermRetPair. Pops (tag, payload),
 //     terminates the active block with the pair return.
 //
+//   Phase 21:
+//   - OpCallDirectPair → SSA OpCallPair with Str = callee,
+//     Args = popped arguments, Result + Result2 = the
+//     (tag, payload) pair pushed back onto the stack.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -539,6 +544,19 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.stack = l.stack[:len(l.stack)-1]
 		v := l.out.AddOp(l.cur, OpLoad, addr)
 		l.stack = append(l.stack, v)
+	case ir.OpCallDirectPair:
+		// Pair-returning direct call. I32 = arg count; pushes
+		// (tag, payload) back onto the stack.
+		argc := int(op.I32)
+		if len(l.stack) < argc {
+			return fmt.Errorf("ssa.LiftFromIR: OpCallDirectPair at op[%d] needs %d args, stack has %d",
+				i, argc, len(l.stack))
+		}
+		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
+		l.stack = l.stack[:len(l.stack)-argc]
+		tag, payload := l.out.AddCallPair(l.cur, args...)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		l.stack = append(l.stack, tag, payload)
 	case ir.OpCallClosureDirect:
 		// (args..., env_ptr) — I32 is the total arg count
 		// including env_ptr. Lift like OpCallDirect.

@@ -67,14 +67,20 @@ func Verify(f *Func) error {
 	}
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
-			if !op.Result.IsValid() {
-				continue
+			if op.Result.IsValid() {
+				if site, dup := defs[op.Result.ID]; dup {
+					return fmt.Errorf("func %q: value %s defined twice (%s and block %d %s)",
+						f.Name, op.Result, site, b.ID, op.Kind)
+				}
+				defs[op.Result.ID] = fmt.Sprintf("block %d %s", b.ID, op.Kind)
 			}
-			if site, dup := defs[op.Result.ID]; dup {
-				return fmt.Errorf("func %q: value %s defined twice (%s and block %d %s)",
-					f.Name, op.Result, site, b.ID, op.Kind)
+			if op.Result2.IsValid() {
+				if site, dup := defs[op.Result2.ID]; dup {
+					return fmt.Errorf("func %q: value %s defined twice (%s and block %d %s second result)",
+						f.Name, op.Result2, site, b.ID, op.Kind)
+				}
+				defs[op.Result2.ID] = fmt.Sprintf("block %d %s (second)", b.ID, op.Kind)
 			}
-			defs[op.Result.ID] = fmt.Sprintf("block %d %s", b.ID, op.Kind)
 		}
 	}
 
@@ -109,6 +115,9 @@ func Verify(f *Func) error {
 		for i, op := range b.Ops {
 			if op.Result.IsValid() {
 				defSites[op.Result.ID] = defSite{block: b, index: i}
+			}
+			if op.Result2.IsValid() {
+				defSites[op.Result2.ID] = defSite{block: b, index: i}
 			}
 		}
 	}
