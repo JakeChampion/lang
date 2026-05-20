@@ -385,6 +385,10 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_arr_push_grow")
 					needs.add("__lang_alloc")
 					needs.add("__memcpy")
+				case "__lang_arr_cow_inplace":
+					needs.add("__lang_arr_cow_inplace")
+					needs.add("__lang_alloc")
+					needs.add("__memcpy")
 				case "__str_idx":
 					// Same byte-fetch SSO seam used by
 					// __lang_str_byte but returns a byte
@@ -763,6 +767,22 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrPushGrowBody,
+	},
+	"__lang_arr_cow_inplace": {
+		// (arr, stride) → new_data. Phase 2b mutate-or-copy
+		// helper for `arr[i] = v`. Internalises the rc
+		// bookkeeping so the IR-side emit doesn't have to
+		// coordinate with __lang_rc_dec's low-address guard
+		// (which short-circuits on raw wasm where heap
+		// addresses sit below 0x10000):
+		//   - rc == 1 → return arr unchanged.
+		//   - rc >  1 → alloc fresh buffer with the same
+		//     cap+len, memcpy the payload, dec arr's rc
+		//     (skipping if static sentinel), return new data.
+		// See buildArrCowInPlaceBody + docs/RC-PERCEUS-PLAN.md.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrCowInPlaceBody,
 	},
 	"__alloc_u8": {
 		// (n) → i32 — allocates a length-prefixed u8[] of
@@ -1759,6 +1779,112 @@ func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstCall(body, memcpy)
 	// return base
 	body = inst.InstLocalGet(body, 6)
+	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildArrCowInPlaceBody — (arr, stride) → new_data. Wasm32
+// counterpart of arm64.go's emitArrCowInPlaceRuntime + x86_64's.
+// Internalises rc bookkeeping so the IR-side emit avoids the
+// __lang_rc_dec low-address guard pitfall (heap addresses sit
+// below 0x10000 on raw wasm so the guard would skip every dec).
+//
+// Locals: 0=arr, 1=stride (params); 2=len, 3=cap,
+// 4=headerBytes, 5=base.
+func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__lang_alloc"]
+	memcpy := helperIdxs["__memcpy"]
+	var body []byte
+	// Fast path: rc == 1 → return arr.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Copy path. Decrement arr's rc inline (skip if static
+	// sentinel — high bit set). Load rc word, check high bit,
+	// store rc-1 if not sentinel.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstEnd(body)
+	// len = mem[arr - 4]
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 2)
+	// cap = mem[arr - 12]
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 3)
+	// headerBytes = max(16, stride)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstSelect(body)
+	body = inst.InstLocalSet(body, 4)
+	// allocSize = headerBytes + cap * stride
+	// base = __lang_alloc(allocSize) + headerBytes
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalGet(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 5)
+	// mem[base - 12] = cap
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Store(body, 2, 0)
+	// mem[base - 8] = 1 (new buffer, rc=1)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	// mem[base - 4] = len
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Store(body, 2, 0)
+	// memcpy(base, arr, len * stride)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstCall(body, memcpy)
+	body = inst.InstLocalGet(body, 5)
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

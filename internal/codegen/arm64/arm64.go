@@ -298,6 +298,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrPushGrow {
 		g.emitArrPushGrowRuntime()
 	}
+	if g.usesArrCowInPlace {
+		g.emitArrCowInPlaceRuntime()
+	}
 	if g.usesRcDec {
 		g.emitRcDecRuntime()
 	}
@@ -891,6 +894,89 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
 	g.sizeDirective("__lang_arr_push_grow")
+	g.line(".ltorg")
+}
+
+// emitArrCowInPlaceRuntime emits `__lang_arr_cow_inplace(arr,
+// stride) -> buf` — the Phase 2b helper for `arr[i] = v`. The
+// helper internalises the rc bookkeeping so the IR-level emit
+// doesn't have to coordinate with the `__lang_rc_dec`
+// low-address guard (which short-circuits on raw wasm where
+// heap addresses sit below 0x10000):
+//
+//   - rc == 1 → return arr unchanged (no rc change).
+//   - rc >  1 → allocate a fresh buffer with the SAME cap+len,
+//     memcpy the payload, write rc=1 on the new header, and
+//     decrement arr's rc by 1 (skipping if arr is a static
+//     sentinel — high bit of rc word set). Return the new
+//     data pointer.
+//
+// Inputs: x0 = arr, x1 = stride. Returns the new data pointer
+// in x0. See docs/RC-PERCEUS-PLAN.md "Phase 2".
+func (g *generator) emitArrCowInPlaceRuntime() {
+	g.line("")
+	g.line(".global __lang_arr_cow_inplace")
+	g.typeDirective("__lang_arr_cow_inplace")
+	g.label("__lang_arr_cow_inplace")
+	// Fast path: rc == 1 → return arr.
+	g.emit("ldur w2, [x0, #-8]")
+	g.emit("cmp w2, #1")
+	g.emit("b.ne .Lcow_slow")
+	g.emit("ret")
+	g.label(".Lcow_slow")
+	// Copy path. Frame: x29/x30 (+0), x19/x20 (+16: arr/stride),
+	// x21/x22 (+32: len/cap), x23/x24 (+48: hdr/new_data).
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0")          // x19 = arr
+	g.emit("mov w20, w1")          // w20 = stride
+	g.emit("ldur w21, [x0, #-4]")  // w21 = len
+	g.emit("ldur w22, [x0, #-12]") // w22 = cap
+	// Decrement arr's rc (we're taking the caller's reference
+	// as we copy). Skip when the rc word has its high bit set
+	// — that's the static-sentinel marker `.LArr_Empty` uses.
+	g.emit("ldur w0, [x19, #-8]")
+	g.emit("tbnz w0, #31, .Lcow_skip_dec")
+	g.emit("sub w0, w0, #1")
+	g.emit("stur w0, [x19, #-8]")
+	g.label(".Lcow_skip_dec")
+	// headerBytes = max(16, stride).
+	g.emit("mov w23, #16")
+	g.emit("cmp w20, w23")
+	g.emit("csel w23, w20, w23, ge")
+	// allocSize = headerBytes + cap * stride.
+	g.emit("mul w0, w22, w20")
+	g.emit("add w0, w0, w23")
+	g.emit("bl __lang_alloc")
+	g.emit("add x24, x0, x23") // x24 = new_data = base + headerBytes
+	// [base + headerBytes - 12] = cap
+	g.emit("sub w1, w23, #12")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w22, [x2]")
+	// [base + headerBytes - 8] = 1 (new buffer, rc=1)
+	g.emit("sub w1, w23, #8")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("mov w3, #1")
+	g.emit("str w3, [x2]")
+	// [base + headerBytes - 4] = len
+	g.emit("sub w1, w23, #4")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w21, [x2]")
+	// memcpy(new_data, arr, len * stride)
+	g.emit("mov x0, x24")
+	g.emit("mov x1, x19")
+	g.emit("mul w2, w21, w20")
+	g.emit("bl __lang_memcpy")
+	g.emit("mov x0, x24")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__lang_arr_cow_inplace")
 	g.line(".ltorg")
 }
 
@@ -4273,6 +4359,13 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md "Phase 2" + `internal/ir/ir.go`'s
 	// emitArrayPush.
 	usesArrPushGrow bool
+	// usesArrCowInPlace gates `__lang_arr_cow_inplace` — the
+	// Phase 2b helper called by the IR's `arr[i] = v` lowering
+	// for local-ident array targets. Returns the buffer the
+	// caller should write into: same arr on rc==1 (no rc
+	// change), fresh memcpy'd copy on rc>1 (with arr's rc
+	// pre-dec'd inline so the caller doesn't double-dec).
+	usesArrCowInPlace bool
 	// usesPuts / usesWrite / usesPutchar pull in the stdout
 	// builtins:
 	//   print(s)   → __lang_puts    (string + newline, two write()s)
@@ -6232,6 +6325,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRcDec = true
 		case "__lang_arr_push_grow":
 			g.usesArrPushGrow = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		case "__lang_arr_cow_inplace":
+			g.usesArrCowInPlace = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
 		case "__lang_strcat":

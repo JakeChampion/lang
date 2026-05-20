@@ -586,13 +586,43 @@ non-self-assign callers — see the helper's preamble in
 walkthrough. Tests on every backend cover both paths plus the
 "aliased rc>1 must copy" semantics.
 
-#### Phase 2b: remaining work (NOT YET STARTED)
+#### Phase 2b: arr[i] = v copy-on-write (SHIPPED)
+
+`__lang_arr_cow_inplace(arr, stride) → buf` — runtime helper
+called from the IR's Index-assign lowering for writable local-
+ident array targets. Semantics:
+
+  - rc == 1 → return arr unchanged (in-place mutation).
+  - rc >  1 → allocate a fresh buffer with the SAME cap+len,
+    memcpy the payload, decrement arr's rc (skipping when the
+    rc word's high bit is set — static-sentinel marker), set
+    rc=1 on the new header. Return new data pointer.
+
+The IR emit shrinks to: call the helper, write the element at
+`[buf + i*stride]` via the existing per-stride bounds-check
+helper (`__arr_idx_<n>`), and store buf back into the ident's
+slot. The helper internalises ALL rc bookkeeping — keeping the
+Phase 1d-vi dec-on-overwrite would mis-coordinate on raw wasm
+where heap addresses sit below 0x10000 and the
+`__lang_rc_dec` low-address guard short-circuits (so the
+bump-then-dec design from Phase 2a's first attempt didn't
+work for the Index-assign site). Limitation: only simple
+`arr[i] = v` ident targets route through CoW today. Complex
+shapes (`obj.field[i] = v`, `m[k][i] = v`, slice writes) keep
+the legacy in-place emit — follow-up PRs widen coverage.
+
+Tests on every backend cover both paths plus the
+"aliased rc>1 must copy" semantics + a u8-stride regression
+guard for the int_to_string scratch[i] pattern that surfaced
+the wasm raw-_start `__lang_rc_dec` guard issue.
+
+#### Phase 2c: remaining work (NOT YET STARTED)
 
 The user-facing API audit (see above) — Map's void-returning
-`set` / `delete` / `clear` become value-returning, and
-`arr[i] = v` rewires to desugar through a copy-on-write `set`
-method. Callers update in-tree at the same time the
-implementation flips.
+`set` / `delete` / `clear` become value-returning. Callers
+update in-tree at the same time the implementation flips.
+The `arr[i] = v` widening (slices + complex targets) lives
+here too.
 
 Effect: the self-host parser + asm.lang push loops become O(N).
 This is the payoff phase. After Phase 2, no method's signature
@@ -610,8 +640,9 @@ Prerequisites that landed during Phase 2-prep:
     The payoff numbers in the doc above ("self-host parser +
     asm.lang push loops become O(N)") only fully realise once
     Phase 3 lets the rc==0 path actually reclaim storage;
-    Phase 2a alone gives the algorithmic win on the rc==1
-    path (one bumped rc + len write, no alloc / memcpy).
+    Phase 2a + 2b give the algorithmic win on the rc==1 path
+    (one bumped rc + len write OR no rc change, no alloc /
+    memcpy).
 
 ### Phase 3: real allocator
 

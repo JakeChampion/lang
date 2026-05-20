@@ -5826,6 +5826,25 @@ func (b *builder) assign(n *ast.Assign) error {
 				helper = "__arr_idx"
 			}
 		}
+		// Phase 2b: `arr[i] = v` for a writable local-ident
+		// array routes through `__lang_arr_cow_inplace(arr,
+		// stride) → buf`. The helper returns the same arr on
+		// rc==1 (mutate in place) and a memcpy'd copy on rc>1
+		// (decrementing arr's rc as it takes over the
+		// caller-side reference). Caller writes the element
+		// into the returned buffer and stores it back into the
+		// slot. Slices (which write through to the parent
+		// storage) and complex Index targets (`obj.field[i] =
+		// v`, `m[k][i] = v`, etc.) keep the legacy in-place
+		// emit for now; follow-up PRs widen CoW to cover them.
+		// See docs/RC-PERCEUS-PLAN.md "Phase 2".
+		if !t.IsSlice {
+			if arrIdent, ok := t.Array.(*ast.Ident); ok {
+				if slot, isLocal := b.locals[arrIdent.Name]; isLocal && isArrayTypeOfLocal(arrIdent.Name, b) && !isParamName(arrIdent.Name, b) {
+					return b.emitArrayIndexAssignCoW(arrIdent, slot, t, n, stride, storeOp, storeWidth, helper)
+				}
+			}
+		}
 		if err := b.expr(t.Array); err != nil {
 			return err
 		}
@@ -5943,6 +5962,24 @@ func isArrayTypeOfLocal(name string, b *builder) bool {
 		if v.Name == name {
 			_, isArr := v.Type.(ast.ArrayType)
 			return isArr
+		}
+	}
+	return false
+}
+
+// isParamName reports whether `name` resolves to a function
+// parameter (as opposed to a declared local). Phase 2b's
+// `arr[i] = v` copy-on-write desugar skips params for now —
+// existing callers rely on the "mutate the caller's array
+// through the parameter" idiom (e.g. `function update(arr,
+// idx) { arr[idx] = ...; }`), which the CoW path would break
+// once the param's rc bumps to ≥ 2 from the call-arg inc.
+// Phase 2c will widen the desugar after migrating the in-tree
+// callers off the shared-mutation pattern.
+func isParamName(name string, b *builder) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			return true
 		}
 	}
 	return false
@@ -6614,6 +6651,50 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 // The element type is `n.TypeArgs[0]`, stamped by the checker's
 // array.push dispatch — used by `arrayElemStoreOpFor` to pick
 // the right store width.
+// emitArrayIndexAssignCoW lowers `arr[i] = v` for a writable
+// local-ident array. The helper `__lang_arr_cow_inplace`
+// internalises all rc bookkeeping for this site:
+//
+//   - rc == 1 → return arr unchanged; caller writes into the
+//     existing buffer.
+//   - rc >  1 → allocate a fresh buffer with the same cap+len,
+//     memcpy the payload, decrement arr's rc (skipping when
+//     arr is a static sentinel), return the new ptr.
+//
+// The IR emit therefore does NOT need a separate dec-on-
+// overwrite step — keeping that step would either double-dec,
+// or skip-dec on raw wasm where heap addresses sit below
+// 0x10000 (the `__lang_rc_dec` low-address guard short-
+// circuits there). The helper is the sole rc-management point
+// for this site.
+func (b *builder) emitArrayIndexAssignCoW(arrIdent *ast.Ident, arrSlot int32, t *ast.Index, n *ast.Assign, stride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
+	// buf = __lang_arr_cow_inplace(arr, stride)
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_cow_inplace", I32: 2})
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	// Element address via the per-stride bounds-check helper.
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	if err := b.expr(t.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	// Element value.
+	if err := b.expr(n.Value); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	// Write the (possibly new) buffer pointer back into the
+	// ident's slot. The helper already dec'd the old buffer
+	// when it had to copy; in the in-place case buf == arr and
+	// the store is a no-op semantically.
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(Op{Kind: OpStoreLocal, I32: arrSlot})
+	return nil
+}
+
 func (b *builder) emitArrayPush(n *ast.Call) error {
 	elemType := n.TypeArgs[0]
 	stride := int32(ast.ElemSizeBytesFor(elemType, b.ptrW))

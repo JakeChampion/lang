@@ -206,6 +206,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrPushGrow {
 		g.emitArrPushGrowRuntime()
 	}
+	if g.usesArrCowInPlace {
+		g.emitArrCowInPlaceRuntime()
+	}
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
@@ -417,6 +420,10 @@ type generator struct {
 	// buffer (rc>1 OR cap exhausted). See
 	// docs/RC-PERCEUS-PLAN.md "Phase 2".
 	usesArrPushGrow bool
+	// usesArrCowInPlace gates `__lang_arr_cow_inplace` — the
+	// Phase 2b helper called by the IR's `arr[i] = v` lowering
+	// for local-ident array targets. See arm64's mirror.
+	usesArrCowInPlace bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__lang_io_error(errno, path) → IoError box` helper.
@@ -445,6 +452,10 @@ func (g *generator) recordUse(target string) {
 		g.usesRcDec = true
 	case "__lang_arr_push_grow":
 		g.usesArrPushGrow = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+	case "__lang_arr_cow_inplace":
+		g.usesArrCowInPlace = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
 	case "__alloc":
@@ -2800,6 +2811,93 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_arr_push_grow, .-__lang_arr_push_grow")
+}
+
+// emitArrCowInPlaceRuntime emits `__lang_arr_cow_inplace(arr,
+// stride) -> buf` — System V counterpart of arm64's helper.
+// Inputs: rdi=arr, esi=stride. Returns new data ptr in rax.
+// See arm64.go's emitArrCowInPlaceRuntime + docs/RC-PERCEUS-PLAN.md
+// for the contract (helper internalises rc bookkeeping so the
+// IR-side emit doesn't have to coordinate with the
+// __lang_rc_dec low-address guard).
+func (g *generator) emitArrCowInPlaceRuntime() {
+	g.line("")
+	g.line(".globl __lang_arr_cow_inplace")
+	g.line(".type __lang_arr_cow_inplace, @function")
+	g.label("__lang_arr_cow_inplace")
+	// Fast path: rc == 1 → return arr.
+	g.emit("mov eax, dword ptr [rdi - 8]")
+	g.emit("cmp eax, 1")
+	g.emit("jne .Lcow_slow")
+	g.emit("mov rax, rdi")
+	g.emit("ret")
+	g.label(".Lcow_slow")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("push r15")
+	g.emit("sub rsp, 8") // pad to 16-byte align
+	g.emit("mov rbx, rdi")                   // rbx = arr
+	g.emit("mov r12d, esi")                  // r12d = stride
+	g.emit("mov r13d, dword ptr [rdi - 4]")  // r13d = len
+	g.emit("mov r14d, dword ptr [rdi - 12]") // r14d = cap
+	// Decrement arr's rc (taking the caller's reference as we
+	// copy). Skip when the rc word has its high bit set
+	// (static-sentinel marker).
+	g.emit("mov eax, dword ptr [rbx - 8]")
+	g.emit("test eax, eax")
+	g.emit("js .Lcow_skip_dec")
+	g.emit("sub eax, 1")
+	g.emit("mov dword ptr [rbx - 8], eax")
+	g.label(".Lcow_skip_dec")
+	// headerBytes = max(16, stride) in r15d.
+	g.emit("mov r15d, 16")
+	g.emit("cmp r12d, 16")
+	g.emit("jle .Lcow_hdr_set")
+	g.emit("mov r15d, r12d")
+	g.label(".Lcow_hdr_set")
+	// allocSize = headerBytes + cap * stride
+	g.emit("mov eax, r14d")
+	g.emit("imul eax, r12d")
+	g.emit("add eax, r15d")
+	g.emit("mov edi, eax")
+	g.emit("call __lang_alloc")
+	// rax = base. new_data = base + headerBytes (in r15d → rcx).
+	g.emit("mov ecx, r15d")
+	g.emit("lea r11, [rax + rcx]")
+	// Store cap at [base + headerBytes - 12]
+	g.emit("lea rdx, [rax + rcx - 12]")
+	g.emit("mov dword ptr [rdx], r14d")
+	// Store rc = 1 at [base + headerBytes - 8]
+	g.emit("lea rdx, [rax + rcx - 8]")
+	g.emit("mov dword ptr [rdx], 1")
+	// Store len at [base + headerBytes - 4]
+	g.emit("lea rdx, [rax + rcx - 4]")
+	g.emit("mov dword ptr [rdx], r13d")
+	// memcpy(new_data, arr, len * stride). Stash new_data in
+	// the 8-byte pad slot so memcpy doesn't lose it.
+	g.emit("mov rdi, r11")
+	g.emit("mov rsi, rbx")
+	g.emit("mov eax, r13d")
+	g.emit("imul eax, r12d")
+	g.emit("mov edx, eax")
+	g.emit("mov qword ptr [rsp], r11")
+	g.emit("call __lang_memcpy")
+	g.emit("mov rax, qword ptr [rsp]")
+	// Tear down. Mirror emitArrPushGrowRuntime: free the 8-byte
+	// pad above r15 before popping callee-saves.
+	g.emit("add rsp, 8")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_arr_cow_inplace, .-__lang_arr_cow_inplace")
 }
 
 // emitStrcatRuntime emits `__lang_strcat(a, b)` — concat two
