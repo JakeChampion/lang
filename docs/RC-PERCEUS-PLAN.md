@@ -491,6 +491,71 @@ every codegen site is fiddly. Tests will catch leaks (rc>0 at
 program exit on a value that should have been freed) and double-
 frees (rc going negative).
 
+#### Phase 1d: array-only sub-phases (SHIPPED)
+
+Phase 1 turned out to be tractable only when sliced per
+type-category. Phase 1d covers ARRAYS only — strings, structs,
+enums, closures join in Phase 1e once their layout grows an rc
+slot. Eight slices, all merged:
+
+  - 1d-i  (#1069): inc on `var y = x;` ident-RHS
+  - 1d-ii (#1073): inc on `var y = h.items;` / `var y = m[i];`
+  - 1d-iii (#1079): inc on `y = x;` ident reassignment
+  - 1d-iv (#1081): inc on `f(arr)` call-arg pass
+  - 1d-v  (#1085, #1088): dec on every array-typed param +
+    local at every function-exit path
+  - 1d-vi (#1088): dec on the OLD value of `y` before `y = x;`
+    overwrites the slot
+  - 1d-vii (#1091): inc on closure capture
+    `function f() { return arr; }`
+  - 1d-viii (#1095): inc on lit-element / field-init
+    `Holder { items: arr }` / `[arr]` / `(arr, n)`
+
+Two safety-net helpers landed alongside the alias machinery:
+
+  - `b.locals[name]`-resolved zero-init at function entry, so
+    dec-sweep visits to array slots whose Var decl was skipped
+    (e.g. inside a never-taken `if` branch) hit a NULL the
+    helper short-circuits on.
+  - Low-address guard (< 0x10000 = `mmap_min_addr`) inside
+    `__lang_rc_dec` on every backend, so a slot that holds a
+    non-pointer value (enum tag, small i32 literal, stack
+    garbage that doesn't look pointer-shaped) is treated as
+    "not a heap object, don't touch" instead of dereferencing
+    it. The runtime guard lets the IR layer skip control-flow-
+    sensitive liveness analysis under the Phase 1 contract;
+    Phase 2's mutate-in-place check will sharpen the contract
+    per call site and the guard can shrink to just the NULL
+    check.
+
+Race fix: `ast.CodegenMu` (PR #1080) serialises arm64 + x86_64
+`Emit` calls so the package-level `TwoWordOverride` toggle
+they share doesn't race under parallel-seed differential
+testing. Pre-existing bug surfaced by Phase 1's growing test
+volume.
+
+#### Phase 1e: widen to strings / structs / enums / closures
+
+NOT YET STARTED. Each non-array type category needs:
+
+  - Layout migration (Phase 0-style) adding the rc slot.
+  - rc=1 init at every alloc site.
+  - inc emissions at every alias site (mostly the same
+    `needsRcIncOnAlias`-shape predicate, just with the type
+    check widened from `ArrayType` to also accept
+    `StringType`, `StructType`, `EnumType`, closure values).
+  - dec emissions at function exit + reassignment overwrite.
+  - Per-type drop handlers for the eventual real allocator
+    (Phase 3): the handler walks the value's pointer-shaped
+    fields and dec's each before returning the storage to the
+    freelist.
+
+Closures are the trickiest: their captures hold mixed-type
+pointers, so the drop handler must traverse the env-block
+field types. The IR's `closureconv` pass already records
+per-capture types on the hoisted function; the drop handler
+emit can consume that side-table.
+
 ### Phase 2: rc check in mutating ops
 
 PR: `__lang_arr_push` and friends check rc. rc==1 path mutates in
@@ -505,6 +570,28 @@ Effect: the self-host parser + asm.lang push loops become O(N).
 This is the payoff phase. After Phase 2, no method's signature
 implies in-place mutation; every collection looks immutable to
 the user.
+
+Prerequisites (gate items that NEED to land first):
+
+  - **Capacity field in array header.** Today `arr.push`
+    always allocates a fresh buffer of exactly `oldLen + 1`
+    elements; there's no spare room for "mutate the
+    underlying storage in place." Phase 2's fast path needs
+    `cap >= len + 1` to hold the new element. Layout
+    migration is a Phase-0-style PR: shift `headerBytes`
+    from 8 to 16, write `cap` at `data - 12` alongside the
+    existing `rc` at `data - 8` and `len` at `data - 4`. Then
+    `emitArrayLit` / `emitArrayPush` initialise `cap` to
+    `max(initial, 2 * len)` and the runtime can reuse spare
+    capacity on subsequent pushes.
+  - **Real allocator (Phase 3 below).** Without a freelist,
+    mutate-in-place wins only the copy cost — the alloc
+    itself is already O(1) under the bump allocator. The
+    payoff numbers in the doc above ("self-host parser +
+    asm.lang push loops become O(N)") only fully realise
+    once Phase 3 lets the rc==0 path actually reclaim
+    storage; Phase 2 alone gives the algorithmic win on the
+    rc==1 path.
 
 ### Phase 3: real allocator
 
