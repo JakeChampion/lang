@@ -390,6 +390,61 @@ func TestLiftCmpAndOptimize(t *testing.T) {
 	}
 }
 
+// TestLiftConstStr — string literal lowers to OpConstString.
+func TestLiftConstStr(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hello"},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	op := out.Blocks[0].Ops[0]
+	if op.Kind != OpConstString {
+		t.Errorf("Kind = %v, want OpConstString", op.Kind)
+	}
+	if op.Str != "hello" {
+		t.Errorf("Str = %q, want %q", op.Str, "hello")
+	}
+}
+
+// TestLiftStringConcatCall — `concat("hello", "world")`.
+// Strings flow through OpCallDirect to a runtime helper.
+func TestLiftStringConcatCall(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstStr, Str: "hello "},
+			{Kind: ir.OpConstStr, Str: "world"},
+			{Kind: ir.OpCallDirect, Str: "__str_concat", I32: 2},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(out.Blocks[0].Ops) != 3 {
+		t.Fatalf("Ops = %d, want 3", len(out.Blocks[0].Ops))
+	}
+	call := out.Blocks[0].Ops[2]
+	if call.Kind != OpCall || call.Str != "__str_concat" {
+		t.Errorf("call = {%v %q}, want {OpCall __str_concat}", call.Kind, call.Str)
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
