@@ -464,7 +464,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign")) {
                         return "i32";
                     }
-                    if (rt == "i32" && (fa.field == "is_even" || fa.field == "is_odd")) {
+                    if (rt == "i32" && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative")) {
                         return "bool";
                     }
                     if (fa.field == "len"
@@ -2548,6 +2548,36 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rax\n");
                             s = s.write("    andq $1, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "is_zero" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    cmpq $0, %rax\n");
+                            s = s.write("    movq $0, %rax\n");
+                            s = s.write("    sete %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "is_positive" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    cmpq $0, %rax\n");
+                            s = s.write("    movq $0, %rax\n");
+                            s = s.write("    setg %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "is_negative" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    cmpq $0, %rax\n");
+                            s = s.write("    movq $0, %rax\n");
+                            s = s.write("    setl %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
                             s = s.write("    pushq %rax\n");
                             return s;
                         }

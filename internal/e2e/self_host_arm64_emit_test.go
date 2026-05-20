@@ -616,6 +616,48 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"i32-is-zero-true",
+			"function main(): i32 { var n: i32 = 0; if (n.is_zero()) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"i32-is-zero-false",
+			"function main(): i32 { var n: i32 = 5; if (n.is_zero()) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"i32-is-positive-true",
+			"function main(): i32 { var n: i32 = 5; if (n.is_positive()) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"i32-is-positive-false-zero",
+			"function main(): i32 { var n: i32 = 0; if (n.is_positive()) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"i32-is-positive-false-negative",
+			"function main(): i32 { var n: i32 = 0 - 5; if (n.is_positive()) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"i32-is-negative-true",
+			"function main(): i32 { var n: i32 = 0 - 5; if (n.is_negative()) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"i32-is-negative-false-zero",
+			"function main(): i32 { var n: i32 = 0; if (n.is_negative()) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
 			"i32-is-even-true",
 			"function main(): i32 { var n: i32 = 4; if (n.is_even()) { return 1; } return 0; }",
 			1,

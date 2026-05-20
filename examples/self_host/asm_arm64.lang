@@ -1458,7 +1458,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign")) {
                         return "i32";
                     }
-                    if (rt == "i32" && (fa.field == "is_even" || fa.field == "is_odd")) {
+                    if (rt == "i32" && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative")) {
                         return "bool";
                     }
                     if (fa.field == "len"
@@ -2428,6 +2428,30 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
                             s = s.write("    and x0, x0, #1\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                            return s;
+                        }
+                        if (fa.field == "is_zero" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    ldr x0, [sp], #16\n");
+                            s = s.write("    cmp x0, #0\n");
+                            s = s.write("    cset x0, eq\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                            return s;
+                        }
+                        if (fa.field == "is_positive" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    ldr x0, [sp], #16\n");
+                            s = s.write("    cmp x0, #0\n");
+                            s = s.write("    cset x0, gt\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                            return s;
+                        }
+                        if (fa.field == "is_negative" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    ldr x0, [sp], #16\n");
+                            s = s.write("    cmp x0, #0\n");
+                            s = s.write("    cset x0, lt\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             return s;
                         }
