@@ -9246,6 +9246,37 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliRejectsVoidMain confirms the
+// driver surfaces a clear error when a Lang program's `main`
+// returns void. Without the up-front check the produced
+// component would fail wasm-tools validation with a cryptic
+// "lowered result types do not match" error — the helper here
+// asserts that we instead get the user-targeted message
+// pointing at the fix.
+func TestCmdLangComponentWrapCliRejectsVoidMain(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "void.lang")
+	src := []byte(`function main() {
+    var t: i64 = monotonic_ns();
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "void.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected void-main rejection, got success: %s", out)
+	}
+	if !strings.Contains(string(out), "requires `function main(): i32`") {
+		t.Errorf("expected void-main error message, got:\n%s", out)
+	}
+}
+
 // TestCmdLangComponentWrapCliWithRandomInt drives a Lang program
 // that calls the stdlib `random_int(lo, hi)` helper (from
 // std/math) through `-component-wrap-cli`. random_int internally
