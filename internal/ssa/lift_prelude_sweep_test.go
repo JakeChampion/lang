@@ -120,6 +120,43 @@ func TestOptimizeNonPessimizingOnPrelude(t *testing.T) {
 	}
 }
 
+// TestCloneOptimizeEquivalentOnPrelude — Clone produces an
+// independent copy whose Optimize result matches the
+// original's. Catches any Op-field or Terminator-field
+// Clone missed — e.g., if a future PR adds Result3 to Op
+// and forgets to extend Clone, this would diverge.
+func TestCloneOptimizeEquivalentOnPrelude(t *testing.T) {
+	src := `function main(): i32 { return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	irProg, err := ir.LowerWith(prog, info, 8)
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+
+	for _, fn := range irProg.Funcs {
+		t.Run(fn.Name, func(t *testing.T) {
+			f, err := ssa.LiftFromIR(fn)
+			if err != nil {
+				t.Errorf("LiftFromIR: %v", err)
+				return
+			}
+			c := f.Clone()
+			ssa.Optimize(f)
+			ssa.Optimize(c)
+			if f.String() != c.String() {
+				t.Errorf("Optimize(orig) != Optimize(clone) — Clone may be missing a field")
+			}
+		})
+	}
+}
+
 // TestOptimizeIdempotentOnPrelude — Optimize must converge to a
 // fixed point. After one Optimize pass, the function's String()
 // form should be stable across additional Optimize calls. A
