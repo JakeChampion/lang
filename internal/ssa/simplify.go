@@ -25,6 +25,10 @@ package ssa
 //
 //	not(not(x))                 ⇒ x
 //
+// OpXor self-inverse identity:
+//
+//	xor(xor(x, y), y)           ⇒ x   (any operand-position combo)
+//
 // OpNeg / OpFNeg identities:
 //
 //	neg(neg(x))                 ⇒ x
@@ -215,12 +219,43 @@ func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 		if lhsConst && lhsImm == 0 {
 			return rhs, true
 		}
+		// xor(xor(x, y), y) → x. XOR is its own inverse, so the
+		// outer xor cancels the inner one when the outer's other
+		// operand matches one of the inner's args. Covers all
+		// four operand-position combos (xor commutes).
+		if v, ok := xorCancel(lhs, rhs, defs); ok {
+			return v, true
+		}
+		if v, ok := xorCancel(rhs, lhs, defs); ok {
+			return v, true
+		}
 	case OpShl, OpShr, OpShrU:
 		// x << 0 → x ; x >> 0 → x ; x >>u 0 → x. Shift count
 		// on the right only; no commutative form.
 		if rhsConst && rhsImm == 0 {
 			return lhs, true
 		}
+	}
+	return Value{}, false
+}
+
+// xorCancel returns the inner Value when `inner` is defined
+// by an OpXor with the same `cancellor` as one of its args.
+// Used by the xor-self-inverse rewrite. Order-agnostic: the
+// inner Xor's args may be [x, cancellor] or [cancellor, x].
+func xorCancel(inner, cancellor Value, defs map[int32]*Op) (Value, bool) {
+	if !inner.IsValid() || !cancellor.IsValid() {
+		return Value{}, false
+	}
+	def, ok := defs[inner.ID]
+	if !ok || def.Kind != OpXor || len(def.Args) != 2 {
+		return Value{}, false
+	}
+	if def.Args[0] == cancellor {
+		return def.Args[1], true
+	}
+	if def.Args[1] == cancellor {
+		return def.Args[0], true
 	}
 	return Value{}, false
 }

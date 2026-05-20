@@ -188,6 +188,83 @@ func TestSimplifyBrIfCond(t *testing.T) {
 	}
 }
 
+// TestSimplifyXorCancelInnerRight — `xor(xor(x, y), y)`
+// aliases directly to x. The inner xor's args may be in
+// either order ([x,y] or [y,x]) — both are handled.
+func TestSimplifyXorCancelInnerRight(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	y := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpXor, x, y)
+	outer := f.AddOp(entry, OpXor, inner, y)
+	f.SetRet(entry, outer)
+
+	Simplify(f)
+
+	if entry.Term.Value != x {
+		t.Errorf("Term.Value = %v, want %v (xor(xor(x,y),y) → x)",
+			entry.Term.Value, x)
+	}
+}
+
+// TestSimplifyXorCancelInnerLeft — `xor(xor(y, x), y)` also
+// aliases to x (inner-left case, x as inner.Args[1]).
+func TestSimplifyXorCancelInnerLeft(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	y := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpXor, y, x) // args swapped vs first test
+	outer := f.AddOp(entry, OpXor, inner, y)
+	f.SetRet(entry, outer)
+
+	Simplify(f)
+
+	if entry.Term.Value != x {
+		t.Errorf("Term.Value = %v, want %v (xor(xor(y,x),y) → x)",
+			entry.Term.Value, x)
+	}
+}
+
+// TestSimplifyXorCancelOuterLeft — `xor(y, xor(x, y))` aliases
+// to x (outer-left case, cancellor on outer.Args[0]).
+func TestSimplifyXorCancelOuterLeft(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	y := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpXor, x, y)
+	outer := f.AddOp(entry, OpXor, y, inner) // cancellor first
+	f.SetRet(entry, outer)
+
+	Simplify(f)
+
+	if entry.Term.Value != x {
+		t.Errorf("Term.Value = %v, want %v (xor(y,xor(x,y)) → x)",
+			entry.Term.Value, x)
+	}
+}
+
+// TestSimplifyXorNoCancel — three distinct values, no cancel.
+func TestSimplifyXorNoCancel(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	y := f.AddParam()
+	z := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpXor, x, y)
+	f.AddOp(entry, OpXor, inner, z)
+	f.SetRet(entry, Value{})
+
+	Simplify(f)
+
+	if entry.Ops[1].Kind != OpXor {
+		t.Errorf("Kind = %v, want OpXor (z ≠ x and z ≠ y, no cancel)",
+			entry.Ops[1].Kind)
+	}
+}
+
 // TestSimplifyNilFunc — defensive: nil input is a no-op.
 func TestSimplifyNilFunc(t *testing.T) {
 	defer func() {
