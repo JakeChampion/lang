@@ -259,6 +259,64 @@ func runWasmtimeNamed(t *testing.T, f *ssa.Func, funcName string, args ...string
 	return v
 }
 
+// TestRuntimeExtend8S — sign-extend the low byte. For
+// x=0x80 (-128 as signed byte) the result must be -128 as
+// i32 (0xffffff80, i.e. -128). For x=0x7f (127) it stays
+// 127.
+func TestRuntimeExtend8S(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		x := f.AddParam()
+		entry := f.NewBlock()
+		r := f.AddOp(entry, ssa.OpExtend8S, x)
+		f.SetRet(entry, r)
+		return f
+	}
+	cases := []struct {
+		in, want int32
+	}{
+		{0x7f, 127},
+		{0x80, -128},
+		{0xff, -1},
+		{0, 0},
+		{0x100, 0},    // high bits dropped, low byte 0
+		{0x180, -128}, // high bits dropped, low byte 0x80
+	}
+	for _, c := range cases {
+		got := runWasmtime(t, build(), strconv.Itoa(int(c.in)))
+		if int32(got) != c.want {
+			t.Errorf("extend8s(0x%x) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+// TestRuntimeExtend16S — sign-extend the low halfword.
+func TestRuntimeExtend16S(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		x := f.AddParam()
+		entry := f.NewBlock()
+		r := f.AddOp(entry, ssa.OpExtend16S, x)
+		f.SetRet(entry, r)
+		return f
+	}
+	cases := []struct {
+		in, want int32
+	}{
+		{0x7fff, 32767},
+		{0x8000, -32768},
+		{0xffff, -1},
+		{0, 0},
+		{0x10000, 0},
+	}
+	for _, c := range cases {
+		got := runWasmtime(t, build(), strconv.Itoa(int(c.in)))
+		if int32(got) != c.want {
+			t.Errorf("extend16s(0x%x) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
 // TestRuntimeArithSweep — checks every supported binary op
 // produces the value Go's int32 op produces. Keeps the test
 // matrix small (one pair of operands).

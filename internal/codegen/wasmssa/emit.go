@@ -33,10 +33,10 @@
 //   - Op kinds: OpConstInt, OpAdd, OpSub, OpMul, OpAnd, OpOr,
 //     OpXor, OpShl, OpShr, OpShrU, OpDiv, OpDivU, OpRem, OpRemU,
 //     OpEq, OpNe, OpLt, OpLtU, OpLe, OpLeU, OpGt, OpGtU, OpGe,
-//     OpGeU, OpNeg, OpNot, OpPhi (in if-else merges + loop
-//     headers), OpCall (self-recursion + calls to declared
-//     imports — callee name must match either f.Name or an
-//     Import.Name passed to EmitModule).
+//     OpGeU, OpNeg, OpNot, OpExtend8S, OpExtend16S, OpPhi (in
+//     if-else merges + loop headers), OpCall (self-recursion +
+//     calls to declared imports — callee name must match either
+//     f.Name or an Import.Name passed to EmitModule).
 //   - Imports: the variadic Import args to EmitModule add
 //     host-provided functions to the module's import section;
 //     OpCall.Str = Import.Name lowers to `call <import idx>`.
@@ -856,6 +856,18 @@ func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 		// not x → i32.eqz x (returns 1 if x == 0 else 0).
 		body = pushValue(body, op.Args[0], ctx)
 		body = append(body, 0x45) // i32.eqz
+		return storeResult(body, op, ctx), nil
+	case ssa.OpExtend8S:
+		// Sign-extend the low byte of x. i32.extend8_s = 0xc0
+		// (sign-extension-ops feature, supported by every wasm
+		// 1.x runtime since wasm 1.1 / 2020).
+		body = pushValue(body, op.Args[0], ctx)
+		body = append(body, 0xc0)
+		return storeResult(body, op, ctx), nil
+	case ssa.OpExtend16S:
+		// Sign-extend the low halfword. i32.extend16_s = 0xc1.
+		body = pushValue(body, op.Args[0], ctx)
+		body = append(body, 0xc1)
 		return storeResult(body, op, ctx), nil
 	case ssa.OpCall:
 		// Callee is either an import (use its declared func
