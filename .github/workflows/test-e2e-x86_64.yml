@@ -1,0 +1,31 @@
+name: Test e2e x86_64
+
+# `TestX86_64*` — the x86-64 Linux ELF backend's end-to-end suite.
+# Mirror of test-e2e-arm64.yml on the x86 lane.
+#
+# Only scheduled on `ubuntu-latest` (x86_64). On the arm64 runner
+# every test here would SKIP because `qemu-x86_64` isn't installed
+# and we don't ship an x86 cross-gcc. Pinning to the native host
+# keeps the lane finishing in ~90s instead of paying a no-op
+# 30-second skip pass on the other arch.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test-e2e-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+        with:
+          gotestsum: "true"
+      - name: go test (x86_64 e2e)
+        # `^TestX86_64` covers internal/e2e/x86_64_test.go +
+        # cross_module_variant_test.go's X86_64 subset. The
+        # trailing underscore is in the test names themselves
+        # (TestX86_64ExitCode, etc) so the regex is unambiguous
+        # against TestX86 prefixes.
+        run: gotestsum --format pkgname-and-test-fails -- -run '^TestX86_64' ./internal/e2e/

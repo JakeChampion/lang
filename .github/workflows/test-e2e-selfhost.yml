@@ -1,0 +1,35 @@
+name: Test e2e self-host
+
+# `TestSelfHost*` — the self-hosting pipeline suite under
+# internal/e2e/self_host_*.go. Covers the bootstrap chain
+# (lexer → parser → checker → constfold → printer → disasm → asm →
+# VM → cross-validation → self-compile). Each test runs the
+# current `lang` binary against the in-tree self-host sources and
+# diffs the output against the reference.
+#
+# Matrix per arch because individual tests are split per backend
+# (TestSelfHostAsmX86_64, TestSelfHostAsmArm64, etc.) — running on
+# both runners means each backend-specific test exercises its
+# native toolchain rather than skipping for lack of qemu /
+# cross-gcc.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    name: test-e2e-selfhost-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+        with:
+          gotestsum: "true"
+      - run: gotestsum --format pkgname-and-test-fails -- -run '^TestSelfHost' ./internal/e2e/

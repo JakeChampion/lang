@@ -1,0 +1,33 @@
+name: Test e2e arm64
+
+# `TestArm64*` — the arm64-Linux ELF backend's end-to-end suite.
+# Runs binaries via the native arm64 runner (no qemu involved).
+# Only scheduled on `ubuntu-24.04-arm`; on an x86 host every test
+# in this prefix would SKIP because `aarch64-linux-gnu-gcc` +
+# `qemu-aarch64` aren't installed, so the x86 lane would just be a
+# 30-second no-op.
+#
+# The legacy combined CI workflow ran this alongside x86 + wasm +
+# self-host on a single 10-minute box. Splitting it out lets the
+# arm64 lane finish in ~90 seconds and surface as its own status
+# check.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test-e2e-arm64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+        with:
+          gotestsum: "true"
+      - name: go test (arm64 e2e)
+        # `^TestArm64` covers internal/e2e/arm64_test.go +
+        # cross_module_variant_test.go's Arm64 subset. Anchored at
+        # the top so it doesn't pick up `TestX86_64`-named tests
+        # that happen to mention arm64 in subtest names.
+        run: gotestsum --format pkgname-and-test-fails -- -run '^TestArm64' ./internal/e2e/

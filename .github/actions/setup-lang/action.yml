@@ -1,0 +1,96 @@
+name: Setup lang toolchain
+description: >
+  Shared setup for the lang CI workflows. Sets up Go (no module
+  cache — the repo has no external deps) and, on demand, the
+  wasmtime + wasm-tools + adapter triple and gotestsum. Each
+  optional dependency is cached on a (host arch, version) key so
+  the second-and-onward run skips the network fetch.
+
+inputs:
+  wasmtime:
+    description: >
+      Install wasmtime + wasm-tools + the WASI preview1 adapter and
+      wire LANG_WASI_ADAPTER. Set to 'true' for any workflow that
+      runs the wasm e2e suite.
+    required: false
+    default: "false"
+  gotestsum:
+    description: >
+      Install gotestsum and put it on PATH. Set to 'true' for
+      workflows that want the compact `pkgname-and-test-fails`
+      formatter.
+    required: false
+    default: "false"
+
+# Pinned versions — bump together with the corresponding entry in
+# any workflow that overrides them. Kept here so a single edit
+# updates every consumer.
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.24"
+        # No go.sum (no external deps) → setup-go's default cache
+        # attempt complains. Disable.
+        cache: false
+
+    - name: Detect host wasm-tools arch
+      if: inputs.wasmtime == 'true'
+      id: wasm-arch
+      shell: bash
+      run: |
+        case "$(uname -m)" in
+          x86_64)  echo "arch=x86_64-linux"  >> "$GITHUB_OUTPUT" ;;
+          aarch64) echo "arch=aarch64-linux" >> "$GITHUB_OUTPUT" ;;
+          *) echo "unsupported host arch: $(uname -m)" >&2; exit 1 ;;
+        esac
+
+    - name: Cache wasmtime + wasm-tools + adapter
+      if: inputs.wasmtime == 'true'
+      id: cache-wasm
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.wasmtime
+          ~/wasm-tools-1.225.0-${{ steps.wasm-arch.outputs.arch }}
+          ~/wasi-adapter
+        key: wasm-${{ runner.arch }}-1.225.0-v34.0.1
+
+    - name: Install wasmtime + wasm-tools + adapter (cache miss)
+      if: inputs.wasmtime == 'true' && steps.cache-wasm.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        curl https://wasmtime.dev/install.sh -sSf | bash
+        curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v1.225.0/wasm-tools-1.225.0-${{ steps.wasm-arch.outputs.arch }}.tar.gz" \
+          | tar -xz -C "$HOME"
+        mkdir -p "$HOME/wasi-adapter"
+        curl -sSfL -o "$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" \
+          "https://github.com/bytecodealliance/wasmtime/releases/download/v34.0.1/wasi_snapshot_preview1.command.wasm"
+
+    - name: Wire wasmtime PATH + adapter env
+      if: inputs.wasmtime == 'true'
+      shell: bash
+      run: |
+        echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+        echo "$HOME/wasm-tools-1.225.0-${{ steps.wasm-arch.outputs.arch }}" >> "$GITHUB_PATH"
+        echo "LANG_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
+
+    - name: Cache gotestsum binary
+      if: inputs.gotestsum == 'true'
+      id: cache-gotestsum
+      uses: actions/cache@v4
+      with:
+        path: ~/go/bin/gotestsum
+        key: gotestsum-${{ runner.os }}-${{ runner.arch }}-v1.13.0
+
+    - name: Install gotestsum (cache miss)
+      if: inputs.gotestsum == 'true' && steps.cache-gotestsum.outputs.cache-hit != 'true'
+      shell: bash
+      run: go install gotest.tools/gotestsum@v1.13.0
+
+    - name: Wire gotestsum PATH
+      if: inputs.gotestsum == 'true'
+      shell: bash
+      run: echo "$HOME/go/bin" >> "$GITHUB_PATH"

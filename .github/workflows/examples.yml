@@ -1,0 +1,47 @@
+name: Examples
+
+# Compile every `examples/*.lang` for the arm64-Linux target. The
+# legacy combined CI workflow ran this as a tail step on its
+# 10-minute test job; pulled out here so it gates independently
+# (and so a codegen regression on the example surface fails its
+# own check rather than being buried under "go test").
+#
+#   x86_64 lane (ubuntu-latest)    — driver emits arm64 .s only;
+#                                    no link / run (no cross-gcc
+#                                    installed to keep the lane
+#                                    fast).
+#   aarch64 lane (ubuntu-24.04-arm) — driver emits arm64 .s, gcc
+#                                    statically links it, the
+#                                    binary is actually executed.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  compile:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    name: examples-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+      - name: Compile every example (arm64 target)
+        run: |
+          go build -o bin/lang ./cmd/lang
+          mkdir -p build
+          for f in examples/*.lang; do
+            name=$(basename "$f" .lang)
+            ./bin/lang -target arm64 "$f" > "build/$name.s"
+            if [ "${{ matrix.host }}" = "aarch64" ]; then
+              gcc -static -nostdlib "build/$name.s" -o "build/$name"
+              echo "::group::run $name"
+              ./build/$name || echo "(exited $?)"
+              echo "::endgroup::"
+            fi
+          done

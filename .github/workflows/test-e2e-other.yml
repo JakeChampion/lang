@@ -1,0 +1,66 @@
+name: Test e2e other
+
+# Catch-all for internal/e2e tests not claimed by a more specific
+# test-e2e-* workflow. Implemented as `go test -skip <other
+# prefixes>` rather than an enumerated `-run`, so any future test
+# whose name doesn't match the dedicated prefixes is picked up
+# automatically rather than silently skipped from CI.
+#
+# Excluded (covered elsewhere):
+#   ^TestArm64        → test-e2e-arm64.yml
+#   ^TestX86_64       → test-e2e-x86_64.yml
+#   ^TestWASM|Wasm    → test-e2e-wasm.yml
+#   ^TestSelfHost     → test-e2e-selfhost.yml
+#   ^TestDifferential → test-e2e-differential.yml
+#
+# What this lane actually exercises today:
+#   - test_runner_test.go     (TestRunner*)
+#   - interp_script_test.go   (TestInterpScript*)
+#   - check_test.go           (TestCheck*)
+#   - cross_module_variant_test.go (TestCrossModule*; the arch
+#     siblings SKIP on the foreign runner via toolchain detection,
+#     so the matrix-per-arch fan-out gives us native coverage of
+#     both.)
+#   - float_semantics_test.go (TestFloat*)
+#   (TestDifferential* lives in its own workflow —
+#    test-e2e-differential.yml — because the 2048-seed sweep is
+#    the single heaviest test in the suite.)
+#   - the misc checker-style tests that happen to live inside
+#     wasm_e2e_test.go but neither parse-only nor wasm-runtime
+#     dependent (TestF32F64MixRejected, TestI64ImplicitWidening
+#     Accepted, TestMixedSignednessRejected, TestPolymorphicLiteral
+#     I32Overflow, TestSubI32LiteralOverflow, TestU32SignedMix
+#     Rejected, TestUnionUnknownMemberErrors).
+#
+# Matrix per arch because the interp + checker paths are
+# arch-independent but TestRunner pulls in the stdlib (which has
+# arch-tagged unit tests transitively).
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    name: test-e2e-other-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+        with:
+          gotestsum: "true"
+      - name: go test (e2e — non-backend-specific)
+        # `-skip` (Go 1.20+) is the negation lever the `-run`
+        # alternation lacks. Anything not matching the listed
+        # prefixes runs here, so adding a new uncategorised test
+        # is automatically gated on this lane.
+        run: |
+          gotestsum --format pkgname-and-test-fails -- \
+            -skip '^Test(Arm64|X86_64|WASM|Wasm|SelfHost|Differential)' \
+            ./internal/e2e/

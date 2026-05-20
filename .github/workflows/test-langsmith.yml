@@ -1,0 +1,31 @@
+name: Test langsmith
+
+# `internal/langsmith` carries the wasm-smith-style generator + its
+# scratch tests. Locally it's a ~56s run — long enough that
+# folding it into test-units would dominate that workflow's wall
+# clock. Its own workflow keeps the fan-out balanced.
+#
+# Matrix per arch because the generator emits programs that the
+# diff oracle (the related fuzz workflow) runs through every
+# backend on the host; arm64-only quirks have surfaced here before.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    name: test-langsmith-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+        with:
+          gotestsum: "true"
+      - run: gotestsum --format pkgname-and-test-fails -- ./internal/langsmith/...
