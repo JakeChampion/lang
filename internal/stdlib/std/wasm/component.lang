@@ -596,6 +596,44 @@ pub function put_type_section_one_result_ok_err(buf: u8[], ok_valtype: u8, err_v
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_enum — emit a component-level type section
+// that defines a single `enum` type with the given case labels.
+// Enums are "tag-only" variants — each case has a name and no
+// payload, like Rust's `enum Color { Red, Green, Blue }` (or this
+// language's bare-tag enum variants).
+//
+// WASI uses enums for status codes (`wasi:filesystem/types::error-code`)
+// and small finite-set selectors.
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x6d ls:vec(<label>)          -- enum
+//
+// Each <label> is a uleb-prefixed UTF-8 string.
+//
+// Encoded body for an N-case enum:
+//
+//   01           // vec(1) defvaltype entries
+//   6d           // enum form (0x6d)
+//   <N:uleb>     // vec(N) labels
+//   <label0> <label1> …    // N uleb-prefixed UTF-8 names
+pub function put_type_section_one_enum(buf: u8[], labels: string[]): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(109u8);                      // enum form (0x6d)
+    var n: i32 = labels.len();
+    body = leb128.uleb_u32(body, n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, labels[i]);
+        i = i + 1;
+    }
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
