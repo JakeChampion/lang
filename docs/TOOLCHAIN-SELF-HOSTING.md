@@ -14,15 +14,17 @@ is the plan for the people who want to do it the hard way anyway.
 
 ## Current shell-outs (the honest map)
 
-Every backend currently emits **text** (assembly or WAT) and shells
-out to an external tool to turn it into a runnable artifact:
+Updated 2026-05-20 — the wasm row has shrunk since the initial draft,
+because the Go-side wasmbin landing already replaced several
+`wasm-tools` calls inside the compiler (see "Go-side baseline" below).
+Linux + Darwin rows are unchanged.
 
 | Target          | Driver fn                | External tool(s)                  | What it does                                  |
 |-----------------|--------------------------|-----------------------------------|-----------------------------------------------|
 | `arm64-linux`   | `link` @ `cmd/lang/main.go:528`        | `aarch64-linux-gnu-gcc` (→ `as` + `ld`) | Assemble `.s`, link static ELF                |
 | `x86_64-linux`  | `link` @ `cmd/lang/main.go:528`        | `x86_64-linux-gnu-gcc` (→ `as` + `ld`)  | Same, for x86-64                              |
 | `arm64-darwin`  | `linkDarwin` @ `cmd/lang/main.go:460`  | `clang` (+ `lld` on Linux hosts)        | Assemble `.s`, link Mach-O, ad-hoc codesign   |
-| `wasm`          | `emitPreview2ComponentWorld` @ `cmd/lang/main.go:581` | `wasm-tools` (`parse` + `component embed` + `component new --adapt`) | WAT → core wasm → component-model binary |
+| `wasm`          | `emitPreview2ComponentFromCoreBytes` @ `cmd/lang/main.go:651` | `wasm-tools component new --adapt` | Splice preview-1 → preview-2 adapter into a Component-Model envelope around the (already-binary) core module |
 
 So the "replace clang / lld / wasm-tools" framing in the prior chat
 undersold the work: the Linux backends also depend on an external
@@ -30,6 +32,27 @@ toolchain (`gcc`, which is itself a frontend for `as` + `ld`). To be
 *truly* free-standing we need replacements for **all five** roles:
 ARM64 assembler, x86-64 assembler, ELF linker, Mach-O linker
 (with codesigning), WAT-to-binary encoder + Component Model writer.
+
+### Go-side baseline (already shipped)
+
+Independent of this doc's Lang-stdlib plan, a Go-side wasm pipeline
+landed inside the compiler that's already retired several
+`wasm-tools` calls:
+
+- `internal/codegen/wasmbin` walks codegen IR straight to core-wasm
+  binary bytes — no WAT text, no `wasm-tools parse` round-trip. The
+  old WAT backend (`internal/codegen/wasm/`) was deleted.
+- `internal/wasm/componenttype.Embed` writes the `component-type`
+  custom section for the `lang` and `http` worlds, replacing
+  `wasm-tools component embed`.
+- Supporting Go packages: `internal/wasm/{leb128,inst,module,
+  encode,imports,memory,numeric,convert,sections}`.
+
+This is parallel to the Lang-stdlib effort the rest of the doc
+tracks; it doesn't *satisfy* Phase 1's "Lang-native" goal but it
+does shrink the day-to-day external-tool dependency to a single
+remaining shell-out (the row above). When the Lang-stdlib Phase 1
+lands, the Go-side path becomes the fallback / debugging tool.
 
 ## Order of attack (smallest → largest)
 
@@ -278,18 +301,55 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
 
 Scope: replace `wasm-tools component embed` and `wasm-tools component
 new --adapt …` (lines 608 and 613 of `cmd/lang/main.go`) with a Lang
-implementation.
+implementation. As of 2026-05-20, `component embed` is *already*
+replaced on the Go side (`internal/wasm/componenttype.Embed`); the
+last remaining external call is `component new --adapt` at
+`cmd/lang/main.go:651` inside `emitPreview2ComponentFromCoreBytes`.
+Phase 2's job is to take that last call out.
+
+### Direction: skip the adapter entirely (preview-2 native)
+
+Two options for dropping `component new --adapt`:
+
+1. **Adapter composition.** Re-implement `component new --adapt`:
+   bundle the preview-1 adapter (`wasi_snapshot_preview1.command.wasm`
+   / `…reactor.wasm`) into the compiler binary, then write a
+   two-module Component-Model envelope that wires the adapter's
+   preview-2 exports up to wasmbin's preview-1 imports. wasmbin
+   keeps emitting `wasi_snapshot_preview1.*` imports; the envelope
+   writer hides them.
+2. **Preview-2 native.** Replace every preview-1 import in
+   `internal/codegen/wasmbin/wasi.go` (`fd_write`, `path_open`,
+   `fd_close`, `proc_exit`, `random_get`, `clock_time_get`,
+   `args_get`, `environ_get`) with the preview-2 equivalent
+   (`wasi:cli/std{in,out,err}` + `wasi:io/streams`,
+   `wasi:filesystem/types`, `wasi:cli/exit`, `wasi:random/random`,
+   `wasi:clocks/{wall,monotonic}-clock`, `wasi:cli/environment`,
+   …). The TCP and HTTP code already does this for
+   `wasi:sockets/tcp@0.2.0` / `wasi:http/types@0.2.0` /
+   `wasi:io/streams@0.2.0` so the canonical-ABI pattern is in tree.
+   The Component-Model envelope still has to be written, but it's
+   a *single-module* envelope — no adapter, no instance-section
+   wiring of preview-1 → preview-2, no `-wasi-adapter` flag.
+
+**Chosen direction: option 2 (preview-2 native).** Bigger ABI work
+up front but the cleanest end state: every WASI call goes to
+preview-2 directly, no preview-1 indirection, no adapter blob to
+bundle. The Lang-stdlib component-section work already in flight
+(see "Progress" above) feeds straight into 2's envelope writer.
 
 ### Spec
 
 - Component Model binary format:
   <https://github.com/WebAssembly/component-model/blob/main/design/mvp/Binary.md>
-- WIT text format (only needed if we parse WIT ourselves — see
-  "shortcut" below):
+- Canonical ABI (for the lift/lower marshalling of strings, lists,
+  variants, resources — needed by every preview-2 import):
+  <https://github.com/WebAssembly/component-model/blob/main/design/mvp/CanonicalABI.md>
+- Preview-2 WASI worlds:
+  <https://github.com/WebAssembly/WASI/tree/main/wasip2>
+- WIT text format (only needed for cross-checking against the
+  precomputed `componenttype` blobs):
   <https://github.com/WebAssembly/component-model/blob/main/design/mvp/WIT.md>
-- Preview-1 → preview-2 adapter: we consume the pre-built
-  `wasi_snapshot_preview1.command.wasm` (and `…reactor.wasm` for the
-  HTTP world). No need to *build* the adapter — just splice it in.
 
 ### What the two `wasm-tools` calls actually do
 
@@ -297,13 +357,16 @@ implementation.
    and writes a custom section `component-type` into the module
    containing the encoded world type. This is the only thing it does
    to the module; the core wasm bytes are otherwise untouched.
+   (Already replaced Go-side; the Lang-stdlib version repeats the
+   same trick.)
 2. **`component new --adapt`** wraps the embedded core module
    together with the adapter module into a Component Model envelope:
    a `component` section containing two core modules (ours +
    adapter), an instance section that instantiates the adapter and
    wires its exports to our preview-1 imports, and an exports
    section that re-exports our `handle` (for the HTTP world) as a
-   component-level export.
+   component-level export. Under option 2 there is no adapter
+   module to splice in — the envelope holds just our core module.
 
 ### Shortcut: skip WIT parsing
 
