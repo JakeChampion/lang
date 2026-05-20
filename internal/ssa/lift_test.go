@@ -636,9 +636,10 @@ func TestLiftTeeLocal(t *testing.T) {
 	}
 }
 
-// TestLiftLoadUninitialisedLocal — reading a local before any
-// store fails clean.
-func TestLiftLoadUninitialisedLocal(t *testing.T) {
+// TestLiftLoadUninitialisedLocalDefaultZero — reading a local
+// before any store materialises a lazy const_int 0 default
+// (matches legacy IR semantics: locals start at zero).
+func TestLiftLoadUninitialisedLocalDefaultZero(t *testing.T) {
 	in := &ir.Func{
 		Name:   "f",
 		Locals: []*ast.Var{{Name: "x"}},
@@ -647,12 +648,18 @@ func TestLiftLoadUninitialisedLocal(t *testing.T) {
 			{Kind: ir.OpReturn},
 		},
 	}
-	_, err := LiftFromIR(in)
-	if err == nil {
-		t.Fatal("expected error for uninitialised local read")
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
 	}
-	if !strings.Contains(err.Error(), "uninitialised") {
-		t.Errorf("error %q doesn't mention uninitialised", err)
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(out.Blocks[0].Ops) != 1 {
+		t.Fatalf("Ops = %d, want 1 (lazy default zero)", len(out.Blocks[0].Ops))
+	}
+	if op := out.Blocks[0].Ops[0]; op.Kind != OpConstInt || op.Imm != 0 {
+		t.Errorf("default = {%v %d}, want {OpConstInt 0}", op.Kind, op.Imm)
 	}
 }
 

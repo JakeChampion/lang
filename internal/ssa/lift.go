@@ -226,7 +226,11 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 	// locals + scratches — these start uninitialised (the
 	// initial Value is the zero sentinel) and get filled in by
 	// OpStoreLocal / OpTeeLocal as the lift walks the op list.
-	// Reading an uninitialised slot is a hard error.
+	// Reading a slot that's never been stored materialises a
+	// lazy const_int 0 default (legacy IR semantics — locals
+	// start at 0 / 0.0; the bit pattern 0 also serves as
+	// +0.0 in IEEE-754 so float locals work without per-slot
+	// type info).
 	totalSlots := len(in.Params) + len(in.Locals) + len(in.ScratchTypes)
 	l.slots = make([]Value, totalSlots)
 	for i := range in.Params {
@@ -368,7 +372,14 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		v := l.slots[idx]
 		if !v.IsValid() {
-			return fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] reads uninitialised slot %d", i, idx)
+			// Materialise a default-zero on demand — matches the
+			// legacy IR's "locals start at zero" semantics. We
+			// don't pre-emit zero ops at function entry because
+			// most slots are stored before they're read; emitting
+			// here keeps the entry block uncluttered.
+			v = l.out.AddOp(l.cur, OpConstInt)
+			l.cur.Ops[len(l.cur.Ops)-1].Imm = 0
+			l.slots[idx] = v
 		}
 		l.stack = append(l.stack, v)
 	case ir.OpStoreLocal:
