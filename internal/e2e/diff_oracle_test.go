@@ -318,8 +318,8 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 					if sig == "" {
 						sig = "<normal exit>"
 					}
-					t.Errorf("arm64 exit=%d (signal=%s), interp=%d\nbinary output (stdout+stderr):\n%s\nartifact dir: %s\nsrc:\n%s",
-						d.code, sig, expected, d.out, art, src)
+					t.Errorf("arm64 exit=%d (signal=%s), interp=%d\nbinary output (stdout+stderr):\n%s\nartifact dir: %s\nasm (head+tail):\n%s\nsrc:\n%s",
+						d.code, sig, expected, d.out, art, asmExcerpt(d.asmPath), src)
 				}
 			})
 			t.Run("x86_64", func(t *testing.T) {
@@ -330,8 +330,8 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 					if sig == "" {
 						sig = "<normal exit>"
 					}
-					t.Errorf("x86_64 exit=%d (signal=%s), interp=%d\nbinary output (stdout+stderr):\n%s\nartifact dir: %s\nsrc:\n%s",
-						d.code, sig, expected, d.out, art, src)
+					t.Errorf("x86_64 exit=%d (signal=%s), interp=%d\nbinary output (stdout+stderr):\n%s\nartifact dir: %s\nasm (head+tail):\n%s\nsrc:\n%s",
+						d.code, sig, expected, d.out, art, asmExcerpt(d.asmPath), src)
 				}
 			})
 			// wasm sub-test (WAT-text backend) retired here as
