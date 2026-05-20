@@ -10180,6 +10180,106 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentCanonLiftUtf16 covers
+// put_canon_section_lift_mem_realloc_encoding with the
+// string-encoding-utf16 canonopt. Verifies the explicit-encoding
+// variant emits a canon section where `wasm-tools print` surfaces
+// `string-encoding=utf16` alongside memory + realloc.
+func TestWASMComponentCanonLiftUtf16(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/component";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    // Core module exports: f (() -> i32), alloc (4xi32 -> i32), mem.
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    var p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
+    var r1: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0, p1];
+    m.type_results = [r0, r1];
+    m.function_typeidxs = [0u32, 1u32];
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.export_names = ["f", "alloc", "mem"];
+    m.export_kinds = [sections.export_func(), sections.export_func(), sections.export_memory()];
+    m.export_idxs = [0u32, 1u32, 0u32];
+    var body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
+    var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
+    m.code_bodies = [body_f, body_alloc];
+    var core_bytes: u8[] = module.build(m);
+
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_core_module_section(comp, core_bytes);
+    comp = component.put_core_instance_section_instantiate(comp, 0u32);
+
+    var sorts: u8[] = [component.core_sort_func(), component.core_sort_memory(), component.core_sort_func()];
+    var instance_idxs: u32[] = [0u32, 0u32, 0u32];
+    var alias_names: string[] = ["f", "mem", "alloc"];
+    comp = component.put_alias_section_core_exports(comp, sorts, instance_idxs, alias_names);
+
+    var no_names: string[] = [];
+    var no_valtypes: u8[] = [];
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_string());
+
+    // canon-lift with utf16 string encoding + mem + realloc.
+    comp = component.put_canon_section_lift_mem_realloc_encoding(comp, 0u32, 0u32, 0u32, 1u32, component.canonopt_string_encoding_utf16());
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools print failed: %v\nbytes:\n%s\nout:\n%s", err, hexBytes, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"canon lift",
+		"string-encoding=utf16",
+		"memory",
+		"realloc",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentBuildHelperRunnable exercises the high-level
 // `build_lifted_export_component` helper end-to-end: given core
 // bytes that export a no-param func, the helper produces a complete
