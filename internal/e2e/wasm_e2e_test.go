@@ -8754,6 +8754,128 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentWasiExitFullPipeline covers
+// put_alias_section_instance_export_func by exercising the full
+// WASI-style "import an interface, extract its function, lower
+// into core, instantiate core module" pipeline:
+//
+//   1. type section: instance type { exit(code: u32) }
+//   2. import section: wasi:cli/exit@0.2.0 (instance 0)
+//   3. alias section: alias instance 0's "exit" export as
+//      component-level func 0
+//   4. canon section: lower func 0 into core func 0
+//   5. core-instance section: wrap core func 0 as a
+//      `(export "exit" (func 0))` core instance (instance 0)
+//   6. core-module section: a core module that imports
+//      "wasi" "exit" : (i32) -> ()
+//   7. core-instance section: instantiate the core module
+//      passing instance 0 as the "wasi" arg
+//
+// This is structurally exactly what `wasm-tools component new
+// --adapt` produces for a CLI-world component using only one WASI
+// import. The component validates under wasm-tools, demonstrating
+// that std/wasm/component can produce the full WASI-CLI shape.
+func TestWASMComponentWasiExitFullPipeline(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/component";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+import "std/wasm/imports";
+function main(): i32 {
+    // Core module: imports "wasi" "exit" : (i32) -> () then
+    // calls it with 0 (or some constant).
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [encode.valtype_i32()];
+    var r0: u8[] = [];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.import_modules = ["wasi"];
+    m.import_names = ["exit"];
+    m.import_kinds = [imports.import_func()];
+    m.import_descs = [imports.import_desc_func(0u32)];
+    m.function_typeidxs = [];
+    m.code_bodies = [];
+    var core_bytes: u8[] = module.build(m);
+
+    // Component build.
+    var pnames: string[] = ["code"];
+    var pvals: u8[] = [component.cvaltype_u32()];
+
+    var comp: u8[] = component.put_component_header([]);
+    // Type 0: instance { export exit(code: u32) }
+    comp = component.put_type_section_one_instance_one_func_export(comp, "exit", pnames, pvals);
+    // Import "wasi:cli/exit@0.2.0" of type 0.
+    comp = component.put_import_section_one_instance(comp, "wasi:cli/exit@0.2.0", 0u32);
+    // Alias "exit" out of instance 0 -> component-level func 0.
+    comp = component.put_alias_section_instance_export_func(comp, 0u32, "exit");
+    // Lower component-level func 0 -> core func 0.
+    comp = component.put_canon_section_lower_no_opts(comp, 0u32);
+    // Package core func 0 under "exit" as core instance 0.
+    comp = component.put_core_instance_section_from_one_func_export(comp, "exit", 0u32);
+    // Embed the core module.
+    comp = component.put_core_module_section(comp, core_bytes);
+    // Instantiate it with "wasi" -> core instance 0.
+    comp = component.put_core_instance_section_instantiate_with_one_instance_arg(comp, 0u32, "wasi", 0u32);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"wasi:cli/exit@0.2.0",
+		"alias export",
+		"canon lower",
+		"(core instance",
+		"(core module",
+		"with \"wasi\"",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentWasiStdMultiExport covers
 // put_type_section_one_instance_with_func_exports. Builds an
 // instance type with two no-result func exports, like
