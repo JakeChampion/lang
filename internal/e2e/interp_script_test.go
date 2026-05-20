@@ -323,7 +323,7 @@ function main(): i32 {
 // TestInterpScriptHeaderMap pins the HeaderMap surface from
 // `std/headers` — case-insensitive `.get` / `.get_all`,
 // duplicate-preserving `.append`, position-stable `.set` (drops
-// any extra duplicates of the same name), and `.size()` matching
+// any extra duplicates of the same name), and `.len()` matching
 // total entries. Anchors docs/STDLIB-DESIGN-RESEARCH.md Rec §2
 // before the HttpRequest / HttpResponse integration lands.
 func TestInterpScriptHeaderMap(t *testing.T) {
@@ -377,7 +377,7 @@ function main(): i32 {
         Some(v) => { print(v); },
         None => { print("MISSING"); }
     }
-    return h.size();
+    return h.len();
 }`,
 			wantStdout: "replaced\n",
 			wantExit:   2,
@@ -388,7 +388,7 @@ function main(): i32 {
 function main(): i32 {
     var h: HeaderMap = headers.header_map_new();
     h.set("X-First", "1");
-    return h.size();
+    return h.len();
 }`,
 			wantExit: 1,
 		},
@@ -451,7 +451,7 @@ function main(): i32 {
                 Some(v) => { print(v); },
                 None => { print("MISSING"); }
             }
-            return req.headers.size();
+            return req.headers.len();
         },
         None => {
             print("PARSE_FAIL");
@@ -1609,7 +1609,7 @@ func TestInterpScriptStreamPrimitive(t *testing.T) {
 			source: `import "std/stream";
 function main(): i32 {
     var s: Stream = stream.stream_from_string("hello world");
-    print(s.size().to_string());
+    print(s.len().to_string());
     print(s.read_all_string());
     if (s.is_empty()) { print("done"); }
     return 0;
@@ -1638,7 +1638,7 @@ function main(): i32 {
     print(s.remaining().to_string());
     var _ : u8[] = s.read_all();
     print(s.remaining().to_string());
-    print(s.size().to_string());
+    print(s.len().to_string());
     return 0;
 }`,
 			wantStdout: "3\n0\n3\n",
@@ -1648,7 +1648,7 @@ function main(): i32 {
 			source: `import "std/stream";
 function main(): i32 {
     var s: Stream = stream.stream_empty();
-    if (s.size() != 0) { return 1; }
+    if (s.len() != 0) { return 1; }
     if (s.remaining() != 0) { return 2; }
     if (!s.is_empty()) { return 3; }
     var bs: u8[] = s.read_all();
@@ -2052,7 +2052,7 @@ function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
     w.write_string("HTTP/1.1 200 OK\r\n");
     w.write_string("\r\nhello");
-    print(w.size().to_string());
+    print(w.len().to_string());
     print(w.into_string());
     return 0;
 }`,
@@ -2076,9 +2076,9 @@ function main(): i32 {
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
     w.write_string("first");
-    if (w.size() != 5) { return 1; }
+    if (w.len() != 5) { return 1; }
     w.reset();
-    if (w.size() != 0) { return 2; }
+    if (w.len() != 0) { return 2; }
     if (!w.is_empty()) { return 3; }
     w.write_string("second");
     print(w.into_string());
@@ -2093,7 +2093,7 @@ function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
     var bs: u8[] = "binary".bytes();
     w.write_bytes(bs);
-    if (w.size() != 6) { return 1; }
+    if (w.len() != 6) { return 1; }
     print(w.into_string());
     return 0;
 }`,

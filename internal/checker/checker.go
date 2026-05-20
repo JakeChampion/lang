@@ -2685,10 +2685,10 @@ func (c *checker) collectNames(s *scope) []string {
 	return out
 }
 
-// isUserFuncOrLocal reports whether name shadows the implicit `len`
-// builtin via a user-declared function or in-scope variable. Callers
-// use it to decide whether to apply the builtin's special typing
-// rules — a user that explicitly defines `len` wins.
+// isUserFuncOrLocal reports whether `name` is bound by an in-scope
+// variable or a user-declared (or prelude-injected) function. Callers
+// use it to disambiguate bare identifiers from same-named enum
+// variants — a user-defined `Red` should win over `Color.Red`.
 func (c *checker) isUserFuncOrLocal(name string, s *scope) bool {
 	if _, ok := s.lookup(name); ok {
 		return true
