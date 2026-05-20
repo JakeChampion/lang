@@ -91,6 +91,17 @@ const (
 	// Unary arithmetic — integer negation.
 	OpNeg
 
+	// Integer width conversions. SSA Values are stored as
+	// int64 internally; these ops let the IR distinguish
+	// truncation, sign-/zero-extension, and sub-i32 sign-
+	// extension so backend codegen can emit the right
+	// instruction.
+	OpTrunc      // i64 → i32, keep low 32 bits (sign-aware: int64(int32(v)))
+	OpExtendS    // i32 → i64, sign-extend
+	OpExtendU    // i32 → i64, zero-extend
+	OpExtend8S   // i32 → i32, sign-extend low byte
+	OpExtend16S  // i32 → i32, sign-extend low halfword
+
 	// Unary logical — boolean negation. Args[0] is a bool
 	// Value; result is the flipped bool.
 	OpNot
@@ -188,6 +199,16 @@ func (k OpKind) String() string {
 		return "shr_u"
 	case OpNeg:
 		return "neg"
+	case OpTrunc:
+		return "trunc"
+	case OpExtendS:
+		return "extend_s"
+	case OpExtendU:
+		return "extend_u"
+	case OpExtend8S:
+		return "extend8_s"
+	case OpExtend16S:
+		return "extend16_s"
 	case OpNot:
 		return "not"
 	case OpSelect:

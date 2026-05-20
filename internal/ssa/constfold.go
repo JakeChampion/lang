@@ -63,6 +63,56 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		}
 		rewriteInt(op, -v)
 		return
+	case OpTrunc:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, int64(int32(v)))
+		return
+	case OpExtendS:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, int64(int32(v)))
+		return
+	case OpExtendU:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, int64(uint32(v)))
+		return
+	case OpExtend8S:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, int64(int8(v)))
+		return
+	case OpExtend16S:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, int64(int16(v)))
+		return
 	case OpFNeg:
 		if len(op.Args) != 1 {
 			return
