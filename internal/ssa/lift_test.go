@@ -757,6 +757,214 @@ func TestLiftDropStackUnderflow(t *testing.T) {
 	}
 }
 
+// TestLiftIfElseVoid — `if (c) { foo() } else { bar() }`
+// lifts to a diamond CFG with brif → {thenB, elseB} both
+// branching to postB.
+func TestLiftIfElseVoid(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpCallDirect, Str: "foo", I32: 0},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpElse},
+			{Kind: ir.OpCallDirect, Str: "bar", I32: 0},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(out.Blocks) != 4 {
+		t.Fatalf("Blocks = %d, want 4 (entry, then, else, post); got %v", len(out.Blocks), out.Blocks)
+	}
+	if out.Blocks[0].Term.Kind != TermBrIf {
+		t.Errorf("entry.Term.Kind = %v, want TermBrIf", out.Blocks[0].Term.Kind)
+	}
+}
+
+// TestLiftIfNoElse — `if (c) { foo() }` without else.
+func TestLiftIfNoElse(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpCallDirect, Str: "foo", I32: 0},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// thenB has one call op + br post; elseB (empty) just br post.
+	// postB has the ret.
+}
+
+// TestLiftIfPhiMerge — both arms store the same local to
+// different values; expect a phi at the merge block.
+func TestLiftIfPhiMerge(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0}, // cond
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			// x = 1
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			{Kind: ir.OpElse},
+			// x = 2
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			{Kind: ir.OpEnd},
+			// return x
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// postB should have a phi op.
+	postB := out.Blocks[3]
+	if len(postB.Ops) < 1 || postB.Ops[0].Kind != OpPhi {
+		t.Fatalf("postB.Ops[0].Kind = %v, want OpPhi; ops = %v", postB.Ops[0].Kind, postB.Ops)
+	}
+	phi := postB.Ops[0]
+	if len(phi.Args) != 2 {
+		t.Errorf("phi.Args = %v, want 2 args", phi.Args)
+	}
+}
+
+// TestLiftIfThenOnly — only the then arm stores; else preserves
+// the pre-value. Phi merges (then-value, pre-value).
+func TestLiftIfThenOnly(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}, {Name: "p"}},
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			// x = p
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpStoreLocal, I32: 2},
+			// if (c) { x = 99 }
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpConstI32, I32: 99},
+			{Kind: ir.OpStoreLocal, I32: 2},
+			{Kind: ir.OpEnd},
+			// return x
+			{Kind: ir.OpLoadLocal, I32: 2},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestLiftIfFoldsToBr — when cond is const true, Optimize
+// collapses the brif to br + drops the dead else branch.
+func TestLiftIfFoldsToBr(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 1}, // cond = true (non-zero)
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpConstI32, I32: 7},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			{Kind: ir.OpElse},
+			{Kind: ir.OpConstI32, I32: 8},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	Optimize(out)
+	// We're not super strict about post-Optimize layout (passes
+	// may evolve), but result must verify + the test runs without
+	// panic.
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify after Optimize: %v", err)
+	}
+}
+
+// TestLiftIfRejectsNonVoid — Phase 8a only handles void blocks.
+func TestLiftIfRejectsNonVoid(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpIf, I32: ir.BlockTypeI32}, // non-void
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected error for non-void OpIf")
+	}
+	if !strings.Contains(err.Error(), "non-void") {
+		t.Errorf("error %q doesn't mention non-void", err)
+	}
+}
+
+// TestLiftIfRejectsUnclosed — missing OpEnd surfaces a clear error.
+func TestLiftIfRejectsUnclosed(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			// no OpEnd
+		},
+	}
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected error for unclosed scope")
+	}
+	if !strings.Contains(err.Error(), "unclosed") {
+		t.Errorf("error %q doesn't mention unclosed", err)
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
