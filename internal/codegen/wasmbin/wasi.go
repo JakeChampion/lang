@@ -530,7 +530,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__lang_random_bytes"] {
-		in.add("wasi_random_get")
+		if opts.Preview2WASI {
+			in.add("wasi_random_get_u64_p2")
+		} else {
+			in.add("wasi_random_get")
+		}
 	}
 	if helpers.set["__lang_now_ns"] {
 		in.add("wasi_clock_time_get")
@@ -913,6 +917,79 @@ func buildRandomI32Body(idxs map[string]uint32) []byte {
 var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__lang_random_i32":   buildRandomI32BodyP2,
 	"__lang_monotonic_ns": buildMonotonicNsBodyP2,
+	"__lang_random_bytes": buildRandomBytesBodyP2,
+}
+
+// buildRandomBytesBodyP2 is the preview-2 variant of
+// buildRandomBytesBody.
+//
+// Signature: (n) → (data, len)
+//
+// Body:
+//
+//	if n == 0: return inline empty (0, 0x80000000)
+//	padded = (n + 7) & ~7    -- round up to a multiple of 8
+//	buf    = __lang_alloc(padded)
+//	i      = 0
+//	loop:
+//	  if i >= padded: break
+//	  i64.store(buf + i, get-random-u64())
+//	  i += 8
+//	return (buf, n)
+//
+// Allocates `padded` bytes (≤7 extra) so the trailing u64 store
+// never spills past the allocation. The returned length is the
+// original n — readers see exactly n bytes.
+//
+// Locals (after the n param):
+//
+//	1: $buf
+//	2: $padded
+//	3: $i
+func buildRandomBytesBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	randomU64 := idxs["wasi_random_get_u64_p2"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 7)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, int32(-8))
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 1)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 3)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 3)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, randomU64)
+	body = memory.InstI64Store(body, 0, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 3)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildMonotonicNsBodyP2 is the preview-2 variant of
