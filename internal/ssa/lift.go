@@ -65,6 +65,15 @@ import (
 //     onto the operand stack. Requires both arms (no
 //     OpElse-less form for non-void blocks).
 //
+//   Phase 9:
+//   - OpBlock (BlockTypeVoid only) opens a forward-only labelled
+//     scope; OpEnd closes it. Without an OpBr inside, the lift
+//     emits `br fall-through-block` and switches cur to it —
+//     functionally a no-op CFG-wise but establishes the
+//     scope-stack machinery that OpBr/OpBrIf will use to find
+//     their target. Non-void OpBlock + OpBr/OpBrIf land in
+//     follow-up PRs.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -301,6 +310,18 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			stackHeight: len(l.stack),
 		})
 		l.cur = thenB
+	case ir.OpBlock:
+		if op.I32 != ir.BlockTypeVoid {
+			return fmt.Errorf("ssa.LiftFromIR: OpBlock at op[%d] non-void BlockType %d not yet supported", i, op.I32)
+		}
+		postB := l.out.NewBlock()
+		l.scopes = append(l.scopes, scope{
+			kind:        ir.OpBlock,
+			postB:       postB,
+			preSlots:    append([]Value(nil), l.slots...),
+			blockType:   op.I32,
+			stackHeight: len(l.stack),
+		})
 	case ir.OpElse:
 		if len(l.scopes) == 0 {
 			return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] with no open scope", i)
@@ -338,6 +359,8 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			if err := l.endIfScope(top); err != nil {
 				return err
 			}
+		case ir.OpBlock:
+			l.endBlockScope(top)
 		default:
 			return fmt.Errorf("ssa.LiftFromIR: OpEnd at op[%d] for unsupported scope kind %v", i, top.kind)
 		}
@@ -423,6 +446,16 @@ func (l *lifter) endIfScope(top scope) error {
 
 	l.cur = top.postB
 	return nil
+}
+
+// endBlockScope closes an OpBlock scope. Without any OpBr from
+// inside, this is just a linear pass-through: br cur → postB,
+// cur = postB. Future PRs add the multi-pred merge case once
+// OpBr is implemented; for now postB only has one pred (the
+// fall-through) so no phi insertion is needed.
+func (l *lifter) endBlockScope(top scope) {
+	l.out.SetBr(l.cur, top.postB)
+	l.cur = top.postB
 }
 
 func mapBinaryArith(k ir.OpKind) OpKind {
