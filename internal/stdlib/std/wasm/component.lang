@@ -86,6 +86,41 @@ pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
     return encode.put_bytes(out, core_bytes);
 }
 
+// put_component_type_section — append a `component-type` custom
+// section carrying the given precomputed payload bytes. This is
+// the same operation `wasm-tools component embed -w <world>`
+// performs on a core module: write a section with id 0x00, name
+// "component-type", and the world's encoded type payload. The
+// section is opaque to the wasm validator — engines that don't
+// know about the Component Model just skip it as a custom section.
+//
+// The payload bytes are deterministic per WIT world and
+// independent of the surrounding component. Generating them
+// requires walking a WIT world; that's out of scope for std/wasm
+// (and the production driver already ships precomputed payloads
+// in internal/wasm/componenttype/{lang,http}.bin). This composer
+// just wraps whatever payload the caller hands in.
+//
+// Spec: custom sections in components share the same wire shape
+// as in core wasm — section id 0x00 + uleb size + uleb name length
+// + UTF-8 name + raw payload bytes.
+//
+// Encoded body:
+//
+//   00 <size>           // section id 0 (custom)
+//   <name-len:uleb>     // 14 = strlen("component-type")
+//   "component-type"
+//   <payload bytes...>
+pub function put_component_type_section(buf: u8[], payload: u8[]): u8[] {
+    var body: u8[] = encode.put_name([], "component-type");
+    body = encode.put_bytes(body, payload);
+
+    var out: u8[] = buf;
+    out = out.push(0u8);                         // section id 0 (custom)
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_core_instance_section_instantiate — emit a core-instance
 // section that contains a single "instantiate" entry: instantiate
 // a core module by index, with no `instantiation-arg`s. This is
