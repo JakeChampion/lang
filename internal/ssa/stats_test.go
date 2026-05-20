@@ -136,14 +136,54 @@ func TestStatsBeforeAndAfterOptimize(t *testing.T) {
 // TestStatsString — Stats.String renders the expected
 // single-line summary form.
 func TestStatsString(t *testing.T) {
-	s := Stats{Blocks: 3, Ops: 7, Phis: 1, Consts: 2, Params: 1, MaxBlockOps: 4}
+	s := Stats{Blocks: 3, Reachable: 2, Ops: 7, Phis: 1, Consts: 2, Params: 1, MaxBlockOps: 4}
 	got := s.String()
 	for _, want := range []string{
-		"blocks=3", "ops=7", "phis=1", "consts=2", "params=1", "max_block_ops=4",
+		"blocks=3", "reachable=2", "ops=7", "phis=1", "consts=2", "params=1", "max_block_ops=4",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Stats.String() = %q missing %q", got, want)
 		}
+	}
+}
+
+// TestStatsReachableUnderInOrphan — a Block disconnected from
+// Entry (so unreachable) bumps Blocks but not Reachable.
+// PruneUnreachable would drop it next, but Stats reports the
+// pre-prune snapshot.
+func TestStatsReachableUnderInOrphan(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	orphan := f.NewBlock() // never reached from entry
+	f.SetRet(entry, Value{})
+	f.SetRet(orphan, Value{})
+
+	s := f.Stats()
+	if s.Blocks != 2 {
+		t.Errorf("Blocks = %d, want 2", s.Blocks)
+	}
+	if s.Reachable != 1 {
+		t.Errorf("Reachable = %d, want 1 (orphan excluded)", s.Reachable)
+	}
+}
+
+// TestStatsReachableEqualsBlocksOnHealthyFunc — for a normal
+// well-formed function with no orphans, Reachable == Blocks.
+func TestStatsReachableEqualsBlocksOnHealthyFunc(t *testing.T) {
+	f := NewFunc("f")
+	a := f.AddParam()
+	entry := f.NewBlock()
+	mid := f.NewBlock()
+	f.SetBr(entry, mid)
+	f.SetRet(mid, a)
+
+	s := f.Stats()
+	if s.Reachable != s.Blocks {
+		t.Errorf("Reachable=%d, Blocks=%d; want equal on healthy func",
+			s.Reachable, s.Blocks)
+	}
+	if s.Reachable != 2 {
+		t.Errorf("Reachable = %d, want 2", s.Reachable)
 	}
 }
 
