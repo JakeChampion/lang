@@ -12,6 +12,7 @@ import "fmt"
 // snapshot — Stats doesn't auto-update when the Func mutates.
 type Stats struct {
 	Blocks      int              // total Block count in f.Blocks
+	Reachable   int              // count of Blocks reachable from f.Entry (≤ Blocks)
 	Ops         int              // total Op count across all Blocks
 	Phis        int              // OpPhi count (subset of Ops)
 	Consts      int              // ConstInt/Bool/String count (subset of Ops)
@@ -31,6 +32,9 @@ func (f *Func) Stats() Stats {
 		return s
 	}
 	s.Blocks = len(f.Blocks)
+	if reachable := Reachable(f); len(reachable) > 0 {
+		s.Reachable = len(reachable)
+	}
 	for _, p := range f.Params {
 		if p.IsValid() {
 			s.Params++
@@ -56,9 +60,12 @@ func (f *Func) Stats() Stats {
 }
 
 // String renders a Stats in a single-line summary form
-// (`blocks=3 ops=14 phis=2 consts=1 params=2`). Useful for
-// log lines and benchmark output.
+// (`blocks=3 reachable=3 ops=14 phis=2 consts=1 params=2`).
+// Useful for log lines and benchmark output. `reachable` is
+// distinct from `blocks` whenever PruneUnreachable hasn't run
+// yet (or skipped a block); a healthy post-Optimize function
+// has reachable==blocks.
 func (s Stats) String() string {
-	return fmt.Sprintf("blocks=%d ops=%d phis=%d consts=%d params=%d max_block_ops=%d",
-		s.Blocks, s.Ops, s.Phis, s.Consts, s.Params, s.MaxBlockOps)
+	return fmt.Sprintf("blocks=%d reachable=%d ops=%d phis=%d consts=%d params=%d max_block_ops=%d",
+		s.Blocks, s.Reachable, s.Ops, s.Phis, s.Consts, s.Params, s.MaxBlockOps)
 }
