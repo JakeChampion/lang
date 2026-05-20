@@ -292,3 +292,24 @@ func PutExportSectionOneFunc(buf []byte, name string, funcIdx uint32) []byte {
 	body = append(body, 0x00) // no externdesc
 	return wrapSection(buf, SectionExport, body)
 }
+
+// PutComponentTypeSection appends a `component-type` custom
+// section carrying the given precomputed payload bytes. Mirrors
+// the Lang stdlib `put_component_type_section` and the existing
+// `internal/wasm/componenttype.Embed` (but at the component level
+// rather than embedded in a core module).
+//
+// Custom sections in components share the same wire shape as in
+// core wasm — section id 0x00 + uleb size + uleb name length +
+// UTF-8 name + raw payload bytes.
+//
+// The payload bytes are deterministic per WIT world and
+// independent of the surrounding component; the production driver
+// ships precomputed payloads in `internal/wasm/componenttype/
+// {lang,http}.bin`. This composer just wraps whatever payload the
+// caller hands in.
+func PutComponentTypeSection(buf []byte, payload []byte) []byte {
+	body := putName(nil, "component-type")
+	body = append(body, payload...)
+	return wrapSection(buf, SectionCustom, body)
+}
