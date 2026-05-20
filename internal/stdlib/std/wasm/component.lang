@@ -625,6 +625,53 @@ pub function put_canon_section_lower_mem_realloc(buf: u8[], func_idx: u32, mem_i
     return encode.put_bytes(out, body);
 }
 
+// put_canon_section_lift_mem_realloc_post_return — emit a canon
+// section with one `canon lift` entry carrying three opts:
+// `(memory $mem)`, `(realloc (func $alloc))`, and
+// `(post-return (func $cleanup))`. Adds post-return to the
+// mem+realloc shape — needed when the lifted function returns a
+// string or list backed by memory the canonical-ABI shouldn't
+// keep around past the call (the host invokes post-return on the
+// canonical-ABI handle after copying out, freeing the core-side
+// storage).
+//
+// post-return signature is `(<flat result types>) -> ()` —
+// receives the lowered return value (e.g. pointer + length for a
+// string) and is responsible for freeing whatever the lift
+// returned. The compiler that emits the core module owns the
+// post-return implementation.
+//
+// Encoded body:
+//
+//   01                  // vec(1) canon entries
+//   00 00               // canon-lift + function sub-tag
+//   <core-func-idx:uleb>
+//   03                  // opts vec count = 3
+//   03 <mem-idx:uleb>     // memory option
+//   04 <realloc-idx:uleb> // realloc option
+//   05 <post-return-idx:uleb> // post-return option
+//   <typeidx:uleb>
+pub function put_canon_section_lift_mem_realloc_post_return(buf: u8[], core_func_idx: u32, typeidx: u32, mem_idx: u32, realloc_func_idx: u32, post_return_func_idx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(0u8);                       // canon-lift
+    body = body.push(0u8);                       // function-lift sub-tag
+    body = leb128.uleb_u32(body, core_func_idx);
+    body = leb128.uleb_u32(body, 3u32);          // opts vec count = 3
+    body = body.push(canonopt_memory());
+    body = leb128.uleb_u32(body, mem_idx);
+    body = body.push(canonopt_realloc());
+    body = leb128.uleb_u32(body, realloc_func_idx);
+    body = body.push(canonopt_post_return());
+    body = leb128.uleb_u32(body, post_return_func_idx);
+    body = leb128.uleb_u32(body, typeidx);
+
+    var out: u8[] = buf;
+    out = out.push(section_canon());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_lift_mem_realloc — emit a canon section with
 // one `canon lift` entry carrying the two most common opts:
 // `(memory $mem)` and `(realloc (func $realloc))`. Default string
