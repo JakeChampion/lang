@@ -88,6 +88,52 @@ func TestSelectPrints(t *testing.T) {
 	}
 }
 
+// TestSelectBoolPassthrough — `select(c, true, false)` aliases
+// to `c` directly. Both branch operands must be const_bool with
+// the matching values; anything else (e.g. const_bool true/true
+// or const_int 1/const_int 0) falls through to other rules.
+func TestSelectBoolPassthrough(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	tv := f.AddOp(entry, OpConstBool)
+	entry.Ops[0].Imm = 1
+	fv := f.AddOp(entry, OpConstBool)
+	entry.Ops[1].Imm = 0
+	sel := f.AddOp(entry, OpSelect, c, tv, fv)
+	f.SetRet(entry, sel)
+	_ = sel
+
+	Simplify(f)
+
+	if entry.Term.Value != c {
+		t.Errorf("Term.Value = %v, want %v (select(c, true, false) → c)",
+			entry.Term.Value, c)
+	}
+}
+
+// TestSelectBoolPassthroughInverted — `select(c, false, true)`
+// is NOT yet handled (would need to mint an OpNot). Verify the
+// safe behaviour — the OpSelect is left alone.
+func TestSelectBoolPassthroughInverted(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	fv := f.AddOp(entry, OpConstBool)
+	entry.Ops[0].Imm = 0
+	tv := f.AddOp(entry, OpConstBool)
+	entry.Ops[1].Imm = 1
+	sel := f.AddOp(entry, OpSelect, c, fv, tv)
+	f.SetRet(entry, sel)
+
+	Simplify(f)
+
+	if entry.Ops[2].Kind != OpSelect {
+		t.Errorf("Kind = %v, want OpSelect (false/true case not yet rewritten)",
+			entry.Ops[2].Kind)
+	}
+}
+
 // TestSelectInOptimizePipeline — `select(const_bool true, x, y)`
 // goes away via Simplify + DCE.
 func TestSelectInOptimizePipeline(t *testing.T) {

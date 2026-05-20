@@ -14,6 +14,17 @@ package ssa
 //	1 * x  ⇒ x
 //	x / 1  ⇒ x
 //
+// OpSelect identities:
+//
+//	select(c,  x, x)            ⇒ x
+//	select(true,  a, b)         ⇒ a
+//	select(false, a, b)         ⇒ b
+//	select(c,  true, false)     ⇒ c
+//
+// OpNot identity:
+//
+//	not(not(x))                 ⇒ x
+//
 // "Synthesising" identities (x - x ⇒ 0, x * 0 ⇒ 0, x / x ⇒ 1)
 // need a fresh OpConstInt op to materialise the answer; that
 // shape lands in a future pass alongside the IR-→SSA lift,
@@ -121,6 +132,15 @@ func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 				return op.Args[1], true
 			}
 			return op.Args[2], true
+		}
+		// select(c, true, false) → c. Front-ends emit this shape
+		// when lowering `if (cond) true else false` literally;
+		// real programs in this codebase do it via the bool-cast
+		// idiom in the prelude.
+		if tv, tok := constBool(op.Args[1], defs); tok && tv {
+			if fv, fok := constBool(op.Args[2], defs); fok && !fv {
+				return op.Args[0], true
+			}
 		}
 		return Value{}, false
 	}
