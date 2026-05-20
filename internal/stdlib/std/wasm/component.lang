@@ -462,6 +462,37 @@ pub function put_type_section_one_resource(buf: u8[], rep_valtype: u8): u8[] {
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_list — emit a component-level type section
+// that defines a single `list<elem>` type. Lists are heavily used
+// in WASI for byte buffers (`list<u8>`), environment variables
+// (`list<tuple<string, string>>`), HTTP headers, etc.
+//
+// `elem_valtype` is either a primitive cvaltype byte (0x73..0x7f
+// for string / char / floats / ints / bool) or a uleb-encoded
+// typeidx referencing a previously-declared component-level type
+// (uleb values for small typeidxs are single bytes 0x00..0x7f
+// that don't collide with the primitive byte range).
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x70 t:<valtype>          -- list
+//
+// Encoded body:
+//
+//   01           // vec(1) defvaltype entries
+//   70           // list form
+//   <elem>       // valtype byte
+pub function put_type_section_one_list(buf: u8[], elem_valtype: u8): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(112u8);                      // list form (0x70)
+    body = body.push(elem_valtype);
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
