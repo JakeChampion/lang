@@ -1499,6 +1499,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                         if (fa.field == "lines") { return "array_string"; }
                         if (fa.field == "bytes") { return "array_i32"; }
                         if (fa.field == "reverse") { return "string"; }
+                        if (fa.field == "first_byte" || fa.field == "last_byte") { return "i32"; }
                         if (fa.field == "contains") { return "bool"; }
                         if (fa.field == "starts_with") { return "bool"; }
                         if (fa.field == "ends_with") { return "bool"; }
@@ -2643,6 +2644,24 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    bl __lang_str_reverse\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_reverse();
+                            return s;
+                        }
+                        if (fa.field == "first_byte" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    ldr x0, [sp], #16\n");
+                            s = s.write("    ldr x0, [x0]\n");
+                            s = s.write("    ldrb w0, [x0]\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                            return s;
+                        }
+                        if (fa.field == "last_byte" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    ldr x0, [sp], #16\n");
+                            s = s.write("    ldr x1, [x0, #8]\n");
+                            s = s.write("    ldr x0, [x0]\n");
+                            s = s.write("    sub x1, x1, #1\n");
+                            s = s.write("    ldrb w0, [x0, x1]\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
                             return s;
                         }
                         if (fa.field == "lines" && c.args.len() == 0) {
