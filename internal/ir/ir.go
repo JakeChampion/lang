@@ -5190,6 +5190,38 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __rc_inc / __rc_dec — refcount helpers exposed as Lang
+	// builtins. Lower to OpCallDirect with the runtime-side
+	// name so backends pick up the matching gate flag. Both
+	// accept a u8[] today; Phase 1e will widen to strings /
+	// structs / enums / closures. See docs/RC-PERCEUS-PLAN.md.
+	if (id.Name == "__rc_inc" || id.Name == "__rc_dec") && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			if err := b.expr(n.Args[0]); err != nil {
+				return err
+			}
+			target := "__lang_rc_inc"
+			if id.Name == "__rc_dec" {
+				target = "__lang_rc_dec"
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: target, I32: 1})
+			return nil
+		}
+	}
+	// __rc_get(arr): i32 — read the rc word at [arr - 8].
+	// Lowered inline rather than as a runtime call so the
+	// load can const-fold / inline in the backends.
+	if id.Name == "__rc_get" && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			if err := b.expr(n.Args[0]); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpConstI32, I32: 8})
+			b.emit(Op{Kind: OpSub})
+			b.emit(Op{Kind: OpLoad})
+			return nil
+		}
+	}
 	// f64_bits / f64_from_bits: 64-bit cousin of the f32 pair.
 	// Same zero-cost reinterpret on natives; wasm needs the
 	// typed `i64.reinterpret_f64` / `f64.reinterpret_i64` op.

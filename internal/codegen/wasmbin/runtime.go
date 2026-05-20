@@ -377,6 +377,10 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__memcpy")
 				case "__memset":
 					needs.add("__memset")
+				case "__lang_rc_inc":
+					needs.add("__lang_rc_inc")
+				case "__lang_rc_dec":
+					needs.add("__lang_rc_dec")
 				case "__str_idx":
 					// Same byte-fetch SSO seam used by
 					// __lang_str_byte but returns a byte
@@ -720,12 +724,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildAliasAllocBody,
 	},
 	"__lang_rc_inc": {
-		// (ptr) → () — refcount inc helper. NULL-safe and
+		// (ptr) → ptr — refcount inc helper. Returns the input
+		// pointer so IR codegen can splice an inc into an
+		// expression evaluation chain. NULL-safe and
 		// sentinel-aware (high bit of rc word = "static, never
 		// touch"). See buildRcIncBody +
 		// docs/RC-PERCEUS-PLAN.md.
 		params:  []byte{encode.ValtypeI32},
-		results: nil,
+		results: []byte{encode.ValtypeI32},
 		body:    buildRcIncBody,
 	},
 	"__lang_rc_dec": {
@@ -1510,22 +1516,26 @@ func buildAliasAllocBody(helperIdxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
-// buildRcIncBody — (ptr) → (). Refcount inc helper. NULL-safe
+// buildRcIncBody — (ptr) → ptr. Refcount inc helper. NULL-safe
 // and sentinel-aware (high bit of rc word = "static, never
-// touch"). See arm64 emitRcIncRuntime for the canonical
-// implementation + docs/RC-PERCEUS-PLAN.md for the rollout.
+// touch"). Returns the input pointer unchanged so IR codegen
+// can splice an inc into an expression evaluation chain.
+// See arm64 emitRcIncRuntime for the canonical implementation
+// + docs/RC-PERCEUS-PLAN.md for the rollout.
 //
-//	if ptr == 0: return
+//	if ptr == 0: return ptr
 //	rcaddr = ptr - 8
 //	rc = mem[rcaddr]
-//	if rc & 0x80000000: return    ; static sentinel
+//	if rc & 0x80000000: return ptr ; static sentinel
 //	mem[rcaddr] = rc + 1
+//	return ptr
 func buildRcIncBody(_ map[string]uint32) []byte {
 	var body []byte
-	// Short-circuit on NULL.
+	// Short-circuit on NULL: leave ptr (= 0) on the stack and return.
 	body = inst.InstLocalGet(body, 0)
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	// $rcaddr = ptr - 8.
@@ -1540,6 +1550,7 @@ func buildRcIncBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, int32(-0x80000000))
 	body = numeric.InstI32And(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	// mem[$rcaddr] = $rc + 1.
@@ -1548,6 +1559,8 @@ func buildRcIncBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Store(body, 2, 0)
+	// Return the input pointer.
+	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
