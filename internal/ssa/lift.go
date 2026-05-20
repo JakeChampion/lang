@@ -24,9 +24,16 @@ import (
 //   - OpLoadLocal for param slots only (non-param locals
 //     still rejected — they need phi insertion)
 //
+//   Phase 3a:
+//   - OpDivS / OpRemS → OpDiv / OpRem
+//   - OpAnd / OpOr / OpXor → matching SSA op
+//   - OpShl / OpShrS → OpShl / OpShr
+//   - OpNot → OpNot
+//   - OpEq / OpNe / OpLtS / OpLeS / OpGtS / OpGeS → matching SSA cmp
+//
 // Anything else returns an `unsupported op` error. Locals
 // beyond the param prefix, OpStoreLocal, branches, calls, and
-// the full op surface land in follow-up PRs.
+// floats land in follow-up PRs.
 //
 // The legacy IR is a stack-machine encoding: every Op consumes
 // its operand-stack inputs and pushes its result. The lift
@@ -69,7 +76,12 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 					i, idx, len(slots))
 			}
 			stack = append(stack, slots[idx])
-		case ir.OpAdd, ir.OpSub, ir.OpMul:
+		case ir.OpAdd, ir.OpSub, ir.OpMul,
+			ir.OpDivS, ir.OpRemS,
+			ir.OpAnd, ir.OpOr, ir.OpXor,
+			ir.OpShl, ir.OpShrS,
+			ir.OpEq, ir.OpNe,
+			ir.OpLtS, ir.OpLeS, ir.OpGtS, ir.OpGeS:
 			if len(stack) < 2 {
 				return nil, fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs 2 operands, stack has %d",
 					op.Kind, i, len(stack))
@@ -79,6 +91,14 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 			stack = stack[:len(stack)-2]
 			kind := mapBinaryArith(op.Kind)
 			v := out.AddOp(entry, kind, lhs, rhs)
+			stack = append(stack, v)
+		case ir.OpNot:
+			if len(stack) < 1 {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpNot at op[%d] needs 1 operand", i)
+			}
+			arg := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			v := out.AddOp(entry, OpNot, arg)
 			stack = append(stack, v)
 		case ir.OpReturn:
 			if len(stack) < 1 {
@@ -108,6 +128,32 @@ func mapBinaryArith(k ir.OpKind) OpKind {
 		return OpSub
 	case ir.OpMul:
 		return OpMul
+	case ir.OpDivS:
+		return OpDiv
+	case ir.OpRemS:
+		return OpRem
+	case ir.OpAnd:
+		return OpAnd
+	case ir.OpOr:
+		return OpOr
+	case ir.OpXor:
+		return OpXor
+	case ir.OpShl:
+		return OpShl
+	case ir.OpShrS:
+		return OpShr
+	case ir.OpEq:
+		return OpEq
+	case ir.OpNe:
+		return OpNe
+	case ir.OpLtS:
+		return OpLt
+	case ir.OpLeS:
+		return OpLe
+	case ir.OpGtS:
+		return OpGt
+	case ir.OpGeS:
+		return OpGe
 	}
 	return OpInvalid
 }
