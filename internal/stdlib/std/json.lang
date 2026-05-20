@@ -504,7 +504,7 @@ pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
                     var n: i32 = 0;
                     var i: i32 = 0;
                     var sign: i32 = 1;
-                    var nlen: i32 = len(s);
+                    var nlen: i32 = s.len();
                     if (nlen == 0) { return None; }
                     if (s[0] == 45) { sign = -1; i = 1; }
                     if (i >= nlen) { return None; }
