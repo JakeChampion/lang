@@ -56,6 +56,9 @@ import (
 //     Reading a slot that's never been written (uninitialised
 //     local) is rejected with a clear error rather than
 //     fabricating a default-zero op.
+//   - OpDrop pops the top stack value without emitting an SSA
+//     op. The dropped Value just becomes unused; DCE picks up
+//     the producer if no one else consumes it.
 //
 // Anything else returns an `unsupported op` error. Branches,
 // indirect calls, and the conversion ops land in follow-up PRs.
@@ -178,6 +181,11 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 			stack = stack[:len(stack)-1]
 			v := out.AddOp(entry, OpFNeg, arg)
 			stack = append(stack, v)
+		case ir.OpDrop:
+			if len(stack) < 1 {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpDrop at op[%d] needs 1 operand", i)
+			}
+			stack = stack[:len(stack)-1]
 		case ir.OpCallDirect:
 			argc := int(op.I32)
 			if len(stack) < argc {

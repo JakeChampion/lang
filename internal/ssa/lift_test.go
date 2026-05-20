@@ -694,6 +694,69 @@ func TestLiftLocalArithmetic(t *testing.T) {
 	}
 }
 
+// TestLiftDrop — OpDrop pops one stack value. The producer Op
+// is left in place; DCE reclaims it later if no one else uses it.
+func TestLiftDrop(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 42}, // pushed
+			{Kind: ir.OpDrop},              // popped, discarded
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// const_int 42 is still emitted (the producer); ret is void.
+	if len(out.Blocks[0].Ops) != 1 {
+		t.Fatalf("Ops = %d, want 1", len(out.Blocks[0].Ops))
+	}
+	if out.Blocks[0].Term.Kind != TermRet || out.Blocks[0].Term.Value.IsValid() {
+		t.Errorf("Term = %+v, want void Ret", out.Blocks[0].Term)
+	}
+}
+
+// TestLiftDropThenOptimize — after Optimize/DCE, an unused
+// const+drop pair both disappear.
+func TestLiftDropThenOptimize(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 42},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	Optimize(out)
+	if len(out.Blocks[0].Ops) != 0 {
+		t.Errorf("Ops after Optimize = %d, want 0 (dropped const should die)", len(out.Blocks[0].Ops))
+	}
+}
+
+// TestLiftDropStackUnderflow — OpDrop with empty stack fails.
+func TestLiftDropStackUnderflow(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops:  []ir.Op{{Kind: ir.OpDrop}, {Kind: ir.OpReturnVoid}},
+	}
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected stack-underflow error")
+	}
+	if !strings.Contains(err.Error(), "needs 1 operand") {
+		t.Errorf("error %q doesn't mention operand count", err)
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
