@@ -44,6 +44,7 @@ func Fold(f *Func) {
 func tryFold(op *Op, defs map[int32]*Op) {
 	switch op.Kind {
 	case OpAdd, OpSub, OpMul, OpDiv, OpRem,
+		OpAnd, OpOr, OpXor,
 		OpEq, OpNe, OpLt, OpLe, OpGt, OpGe:
 	default:
 		return
@@ -74,6 +75,12 @@ func tryFold(op *Op, defs map[int32]*Op) {
 			return
 		}
 		rewriteInt(op, lhs%rhs)
+	case OpAnd:
+		rewriteInt(op, lhs&rhs)
+	case OpOr:
+		rewriteInt(op, lhs|rhs)
+	case OpXor:
+		rewriteInt(op, lhs^rhs)
 	case OpEq:
 		rewriteBool(op, lhs == rhs)
 	case OpNe:

@@ -10,6 +10,7 @@ package ssa
 //
 // Commutative ops:
 //   - OpAdd, OpMul          (algebraic)
+//   - OpAnd, OpOr, OpXor    (bitwise)
 //   - OpEq, OpNe            (equality predicates)
 //
 // Notably NOT commutative (operand swap would change
@@ -51,7 +52,7 @@ func Canonicalize(f *Func) {
 
 func isCommutative(k OpKind) bool {
 	switch k {
-	case OpAdd, OpMul, OpEq, OpNe:
+	case OpAdd, OpMul, OpAnd, OpOr, OpXor, OpEq, OpNe:
 		return true
 	default:
 		return false
