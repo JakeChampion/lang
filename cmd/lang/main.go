@@ -772,6 +772,7 @@ type preview2ImportSpec struct {
 	paramValtypes    []byte
 	coreImportModule string
 	innerTypes       [][]byte
+	resultValtypes   []byte
 }
 
 // knownPreview2Imports is the registry of (core-module, core-name)
@@ -790,6 +791,14 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 		paramValtypes:    []byte{0x00},
 		coreImportModule: "wasi:cli/exit@0.2.0",
 		innerTypes:       [][]byte{component.InnerTypeResultEmpty},
+	},
+	{"wasi:random/random@0.2.0", "get-random-u64"}: {
+		interfaceName:    "wasi:random/random@0.2.0",
+		paramNames:       nil,
+		paramValtypes:    nil,
+		coreImportModule: "wasi:random/random@0.2.0",
+		innerTypes:       nil,
+		resultValtypes:   []byte{component.CValtypeU64},
 	},
 }
 
@@ -817,6 +826,7 @@ func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
 			ParamValtypes:    spec.paramValtypes,
 			CoreImportModule: spec.coreImportModule,
 			InnerTypes:       spec.innerTypes,
+			ResultValtypes:   spec.resultValtypes,
 		})
 	}
 	return wasi, unknown
