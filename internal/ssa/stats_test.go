@@ -171,6 +171,59 @@ func TestStatsImpureCountsCalls(t *testing.T) {
 	}
 }
 
+// TestStatsBlocksWithPhi — counts blocks that contain ≥1
+// OpPhi. Blocks with multiple phis still count once.
+func TestStatsBlocksWithPhi(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	end := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	one := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[0].Imm = 1
+	two := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[1].Imm = 2
+	f.SetBr(thenB, merge)
+	three := f.AddOp(elseB, OpConstInt)
+	elseB.Ops[0].Imm = 3
+	four := f.AddOp(elseB, OpConstInt)
+	elseB.Ops[1].Imm = 4
+	f.SetBr(elseB, merge)
+	// merge has two phis — should count as 1 block w/ phi.
+	phi1 := f.AddPhi(merge, one, three)
+	phi2 := f.AddPhi(merge, two, four)
+	_ = phi2
+	f.SetBr(merge, end)
+	// end has no phi.
+	f.SetRet(end, phi1)
+
+	s := f.Stats()
+	if s.Phis != 2 {
+		t.Errorf("Phis = %d, want 2", s.Phis)
+	}
+	if s.BlocksWithPhi != 1 {
+		t.Errorf("BlocksWithPhi = %d, want 1 (merge has both phis)",
+			s.BlocksWithPhi)
+	}
+}
+
+// TestStatsBlocksWithPhiZero — a phi-free function reports 0.
+func TestStatsBlocksWithPhiZero(t *testing.T) {
+	f := NewFunc("f")
+	a := f.AddParam()
+	entry := f.NewBlock()
+	f.AddOp(entry, OpAdd, a, a)
+	f.SetRet(entry, Value{})
+
+	s := f.Stats()
+	if s.BlocksWithPhi != 0 {
+		t.Errorf("BlocksWithPhi = %d, want 0", s.BlocksWithPhi)
+	}
+}
+
 // TestStatsImpureZeroOnPureFunc — a function with only pure
 // ops reports Impure=0.
 func TestStatsImpureZeroOnPureFunc(t *testing.T) {
