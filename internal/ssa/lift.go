@@ -57,6 +57,14 @@ import (
 //     scope stack handles them. OpReturn inside either arm is
 //     also fine — the arm just doesn't flow into the merge.
 //
+//   Phase 8b:
+//   - OpIf with BlockTypeI32 / BlockTypeI64 / BlockTypeF32 /
+//     BlockTypeF64 — the if is an expression. Both arms push
+//     exactly one value before their closing OpElse/OpEnd; the
+//     two values are merged via a phi at postB and pushed back
+//     onto the operand stack. Requires both arms (no
+//     OpElse-less form for non-void blocks).
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -147,6 +155,14 @@ type scope struct {
 	preSlots  []Value // slots state entering the scope
 	thenSlots []Value // captured at OpElse; slots after the then arm
 	sawElse   bool
+
+	// Value semantics. If blockType != BlockTypeVoid, the if is
+	// an expression: each arm must push one value at its end,
+	// merged via a phi at postB. thenStackTop is captured at
+	// OpElse; the else's top is read at OpEnd.
+	blockType    int32
+	thenStackTop Value
+	stackHeight  int // entry stack height (used to slice off the arm's pushed value)
 }
 
 func (l *lifter) handle(i int, op ir.Op) error {
@@ -259,8 +275,12 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
 		l.stack = append(l.stack, result)
 	case ir.OpIf:
-		if op.I32 != ir.BlockTypeVoid {
-			return fmt.Errorf("ssa.LiftFromIR: OpIf at op[%d] with non-void result not yet supported", i)
+		switch op.I32 {
+		case ir.BlockTypeVoid,
+			ir.BlockTypeI32, ir.BlockTypeI64,
+			ir.BlockTypeF32, ir.BlockTypeF64:
+		default:
+			return fmt.Errorf("ssa.LiftFromIR: OpIf at op[%d] unknown BlockType %d", i, op.I32)
 		}
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpIf at op[%d] needs cond", i)
@@ -272,11 +292,13 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		postB := l.out.NewBlock()
 		l.out.SetBrIf(l.cur, cond, thenB, elseB)
 		l.scopes = append(l.scopes, scope{
-			kind:     ir.OpIf,
-			thenB:    thenB,
-			elseB:    elseB,
-			postB:    postB,
-			preSlots: append([]Value(nil), l.slots...),
+			kind:        ir.OpIf,
+			thenB:       thenB,
+			elseB:       elseB,
+			postB:       postB,
+			preSlots:    append([]Value(nil), l.slots...),
+			blockType:   op.I32,
+			stackHeight: len(l.stack),
 		})
 		l.cur = thenB
 	case ir.OpElse:
@@ -289,6 +311,16 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		if top.sawElse {
 			return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] is the second else for this if", i)
+		}
+		// For value-producing ifs, snapshot the then-arm's pushed
+		// value and pop it off the stack before resetting.
+		if top.blockType != ir.BlockTypeVoid {
+			if len(l.stack) != top.stackHeight+1 {
+				return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] then-arm produced %d values, want 1",
+					i, len(l.stack)-top.stackHeight)
+			}
+			top.thenStackTop = l.stack[len(l.stack)-1]
+			l.stack = l.stack[:len(l.stack)-1]
 		}
 		l.out.SetBr(l.cur, top.postB)
 		top.thenSlots = append([]Value(nil), l.slots...)
@@ -303,7 +335,9 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.scopes = l.scopes[:len(l.scopes)-1]
 		switch top.kind {
 		case ir.OpIf:
-			l.endIfScope(top)
+			if err := l.endIfScope(top); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("ssa.LiftFromIR: OpEnd at op[%d] for unsupported scope kind %v", i, top.kind)
 		}
@@ -326,11 +360,16 @@ func (l *lifter) handle(i int, op ir.Op) error {
 // has the current arm's final state — terminate it with a br
 // to postB, build any required phis at postB to merge slot
 // values from the then + else arms, then switch l.cur to
-// postB.
-func (l *lifter) endIfScope(top scope) {
+// postB. For value-producing ifs (blockType != Void), also
+// snap the arm's pushed value and emit a phi pushing it back
+// onto the stack.
+func (l *lifter) endIfScope(top scope) error {
 	// Terminate the active arm.
 	thenSlots, elseSlots := top.thenSlots, l.slots
 	if !top.sawElse {
+		if top.blockType != ir.BlockTypeVoid {
+			return fmt.Errorf("ssa.LiftFromIR: OpIf with BlockType %d requires OpElse", top.blockType)
+		}
 		// No OpElse — current arm is the then-arm. The else-side
 		// is the empty elseB; terminate it with a br to postB.
 		thenSlots = append([]Value(nil), l.slots...)
@@ -341,10 +380,7 @@ func (l *lifter) endIfScope(top scope) {
 		l.out.SetBr(l.cur, top.postB)
 	}
 
-	// Build phi nodes for any slot that differs between the two
-	// merge sources. Preds order at postB is [first SetBr caller,
-	// second SetBr caller, …] — which matches the order we
-	// emitted them above (then-end before else-end).
+	// Slot phi merges.
 	for i := range l.slots {
 		var tv, ev Value
 		if i < len(thenSlots) {
@@ -360,9 +396,6 @@ func (l *lifter) endIfScope(top scope) {
 			continue
 		}
 		if !tv.IsValid() || !ev.IsValid() {
-			// Only one arm initialised the slot; keep whichever is
-			// valid. A later load on the un-init path would re-trip
-			// the uninit-check.
 			if tv.IsValid() {
 				l.slots[i] = tv
 			} else {
@@ -374,7 +407,22 @@ func (l *lifter) endIfScope(top scope) {
 		l.slots[i] = phi
 	}
 
+	// Value-producing if: pop the else-arm's pushed value, emit
+	// phi merging it with the then-arm's value (captured at OpElse),
+	// push the phi result onto the stack.
+	if top.blockType != ir.BlockTypeVoid {
+		if len(l.stack) != top.stackHeight+1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpEnd: else-arm produced %d values, want 1",
+				len(l.stack)-top.stackHeight)
+		}
+		elseTop := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		phi := l.out.AddPhi(top.postB, top.thenStackTop, elseTop)
+		l.stack = append(l.stack, phi)
+	}
+
 	l.cur = top.postB
+	return nil
 }
 
 func mapBinaryArith(k ir.OpKind) OpKind {

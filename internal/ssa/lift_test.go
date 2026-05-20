@@ -925,23 +925,64 @@ func TestLiftIfFoldsToBr(t *testing.T) {
 	}
 }
 
-// TestLiftIfRejectsNonVoid — Phase 8a only handles void blocks.
-func TestLiftIfRejectsNonVoid(t *testing.T) {
+// TestLiftIfRejectsNonVoidNoElse — value-producing OpIf
+// requires both arms (no OpElse-less form).
+func TestLiftIfRejectsNonVoidNoElse(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
 			{Kind: ir.OpConstI32, I32: 1},
-			{Kind: ir.OpIf, I32: ir.BlockTypeI32}, // non-void
-			{Kind: ir.OpEnd},
+			{Kind: ir.OpIf, I32: ir.BlockTypeI32}, // expression form
+			{Kind: ir.OpConstI32, I32: 7},
+			{Kind: ir.OpEnd}, // missing OpElse
 			{Kind: ir.OpReturnVoid},
 		},
 	}
 	_, err := LiftFromIR(in)
 	if err == nil {
-		t.Fatal("expected error for non-void OpIf")
+		t.Fatal("expected error for non-void if without else")
 	}
-	if !strings.Contains(err.Error(), "non-void") {
-		t.Errorf("error %q doesn't mention non-void", err)
+	if !strings.Contains(err.Error(), "requires OpElse") {
+		t.Errorf("error %q doesn't mention OpElse requirement", err)
+	}
+}
+
+// TestLiftIfExpressionMergesValue — value-producing if: both
+// arms push a const; the lift emits a phi at postB that's
+// pushed onto the stack for the next consumer.
+func TestLiftIfExpressionMergesValue(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpIf, I32: ir.BlockTypeI32},
+			{Kind: ir.OpConstI32, I32: 7},
+			{Kind: ir.OpElse},
+			{Kind: ir.OpConstI32, I32: 9},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	postB := out.Blocks[3]
+	if len(postB.Ops) < 1 || postB.Ops[0].Kind != OpPhi {
+		t.Fatalf("postB first Op = %v, want OpPhi", postB.Ops[0].Kind)
+	}
+	phi := postB.Ops[0]
+	if len(phi.Args) != 2 {
+		t.Errorf("phi.Args = %v, want 2", phi.Args)
+	}
+	// The phi's result is what `ret` consumes.
+	if postB.Term.Value != phi.Result {
+		t.Errorf("Term.Value = %v, want %v (phi result)", postB.Term.Value, phi.Result)
 	}
 }
 
