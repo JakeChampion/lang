@@ -151,7 +151,31 @@ func Verify(f *Func) error {
 	}
 
 	for _, b := range f.Blocks {
+		sawNonPhi := false
 		for i, op := range b.Ops {
+			if op.Kind == OpPhi {
+				if sawNonPhi {
+					return fmt.Errorf("func %q: block %d has phi at index %d after a non-phi Op; phis must lead the block",
+						f.Name, b.ID, i)
+				}
+				if len(op.Args) != len(b.Preds) {
+					return fmt.Errorf("func %q: block %d phi %s has %d args but block has %d preds",
+						f.Name, b.ID, op.Result, len(op.Args), len(b.Preds))
+				}
+				// Phi-operand dominance: Args[j] is the value
+				// flowing in from Preds[j]. Its def must dominate
+				// the END of Preds[j], not this block. We model
+				// "end of P" as a use at index len(P.Ops) (the
+				// terminator slot) within P.
+				for j, arg := range op.Args {
+					pred := b.Preds[j]
+					if err := check(arg, pred, len(pred.Ops), "phi"); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			sawNonPhi = true
 			for _, arg := range op.Args {
 				if err := check(arg, b, i, op.Kind.String()); err != nil {
 					return err

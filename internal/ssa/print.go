@@ -61,7 +61,7 @@ func writeBlock(b *strings.Builder, blk *Block) {
 	fmt.Fprintf(b, "  block %d:\n", blk.ID)
 	for _, op := range blk.Ops {
 		b.WriteString("    ")
-		writeOp(b, op)
+		writeOp(b, op, blk)
 		b.WriteByte('\n')
 	}
 	b.WriteString("    ")
@@ -69,7 +69,7 @@ func writeBlock(b *strings.Builder, blk *Block) {
 	b.WriteByte('\n')
 }
 
-func writeOp(b *strings.Builder, op *Op) {
+func writeOp(b *strings.Builder, op *Op, blk *Block) {
 	if op == nil {
 		b.WriteString("<nil op>")
 		return
@@ -80,6 +80,22 @@ func writeOp(b *strings.Builder, op *Op) {
 	}
 	b.WriteString(op.Kind.String())
 	switch op.Kind {
+	case OpPhi:
+		// `phi v1 [block 2], v2 [block 3]` — pair each arg
+		// with its pred-block per the parallel slice contract.
+		for i, a := range op.Args {
+			if i == 0 {
+				b.WriteByte(' ')
+			} else {
+				b.WriteString(", ")
+			}
+			b.WriteString(a.String())
+			if blk != nil && i < len(blk.Preds) {
+				fmt.Fprintf(b, " [block %d]", blk.Preds[i].ID)
+			} else {
+				b.WriteString(" [block ?]")
+			}
+		}
 	case OpConstInt, OpConstBool:
 		b.WriteByte(' ')
 		b.WriteString(strconv.FormatInt(op.Imm, 10))

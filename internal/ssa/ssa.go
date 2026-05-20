@@ -94,6 +94,12 @@ const (
 	// struct-field-access, etc. resolve to these.
 	OpLoad
 	OpStore
+
+	// Phi — SSA merge. In a block B with predecessors
+	// P[0..n-1], a Phi op's Args[i] is the Value flowing in
+	// from P[i]. Phi ops MUST appear at the top of B before
+	// any non-phi op; Verify enforces this.
+	OpPhi
 )
 
 // String renders the OpKind for dumps + error messages.
@@ -135,6 +141,8 @@ func (k OpKind) String() string {
 		return "load"
 	case OpStore:
 		return "store"
+	case OpPhi:
+		return "phi"
 	default:
 		return fmt.Sprintf("op(%d)", int(k))
 	}
@@ -291,6 +299,30 @@ func (f *Func) AddOpNoResult(b *Block, kind OpKind, args ...Value) *Op {
 	op := &Op{Kind: kind, Args: args}
 	b.Ops = append(b.Ops, op)
 	return op
+}
+
+// AddPhi prepends a Phi Op to block `b` and returns the
+// freshly-minted Value. `args` MUST be in the same order as
+// `b.Preds` — Args[i] is the Value flowing in from Preds[i].
+// Phi Ops live at the top of the block (Verify rejects them
+// in any other position), so this method splices the new Op
+// in BEFORE any existing non-phi Op.
+//
+// Callers building a block bottom-up (terminator first, then
+// body, then phis) get the placement right for free; callers
+// building top-down can also use this since it preserves the
+// invariant by splicing at the first non-phi index.
+func (f *Func) AddPhi(b *Block, args ...Value) Value {
+	result := f.NewValue()
+	op := &Op{Kind: OpPhi, Result: result, Args: append([]Value(nil), args...)}
+	insert := 0
+	for insert < len(b.Ops) && b.Ops[insert].Kind == OpPhi {
+		insert++
+	}
+	b.Ops = append(b.Ops, nil)
+	copy(b.Ops[insert+1:], b.Ops[insert:])
+	b.Ops[insert] = op
+	return result
 }
 
 // SetBr sets `b`'s terminator to an unconditional branch
