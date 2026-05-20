@@ -347,6 +347,61 @@ func TestStrengthZeroSubLHSNotConst(t *testing.T) {
 	}
 }
 
+// TestStrengthAddNegRight — `x + (-x)` synthesises const_int 0.
+// `-x` here is the OpNeg op; the def-lookup in StrengthReduce
+// recognises the shape regardless of which side x sits on.
+func TestStrengthAddNegRight(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	negX := f.AddOp(entry, OpNeg, x)
+	r := f.AddOp(entry, OpAdd, x, negX)
+	f.SetRet(entry, r)
+
+	StrengthReduce(f)
+
+	if entry.Ops[1].Kind != OpConstInt || entry.Ops[1].Imm != 0 {
+		t.Errorf("Op = {%v %d}, want {OpConstInt 0}",
+			entry.Ops[1].Kind, entry.Ops[1].Imm)
+	}
+}
+
+// TestStrengthAddNegLeft — `(-x) + x` also synthesises 0.
+func TestStrengthAddNegLeft(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	negX := f.AddOp(entry, OpNeg, x)
+	r := f.AddOp(entry, OpAdd, negX, x)
+	f.SetRet(entry, r)
+
+	StrengthReduce(f)
+
+	if entry.Ops[1].Kind != OpConstInt || entry.Ops[1].Imm != 0 {
+		t.Errorf("Op = {%v %d}, want {OpConstInt 0}",
+			entry.Ops[1].Kind, entry.Ops[1].Imm)
+	}
+}
+
+// TestStrengthAddNegDistinct — `x + neg(y)` (different operands)
+// must NOT be folded.
+func TestStrengthAddNegDistinct(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	y := f.AddParam()
+	entry := f.NewBlock()
+	negY := f.AddOp(entry, OpNeg, y)
+	f.AddOp(entry, OpAdd, x, negY)
+	f.SetRet(entry, Value{})
+
+	StrengthReduce(f)
+
+	if entry.Ops[1].Kind != OpAdd {
+		t.Errorf("Kind = %v, want OpAdd (neg of different var, unchanged)",
+			entry.Ops[1].Kind)
+	}
+}
+
 // TestStrengthNilFunc — defensive.
 func TestStrengthNilFunc(t *testing.T) {
 	defer func() {
