@@ -13923,3 +13923,44 @@ func TestWASMRcDecOnOverwrite(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (arr2 rc=1, arr3 rc=2, sum=3)", got)
 	}
 }
+
+// Phase 2: arr.push mutates in place when rc==1 and cap > len.
+// First push of [10, 20] copies (cap=2=len, no spare); the
+// copy bumps cap to max(2*newLen, 4) = 6, so the second push
+// hits the fast path and returns the same pointer.
+func TestWASMArrayPushInPlaceFastPath(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20];
+    xs = xs.push(30);
+    var addr_before: usize = xs as usize;
+    xs = xs.push(40);
+    var addr_after: usize = xs as usize;
+    if (addr_before != addr_after) { return 1; }
+    if (xs.len() != 4) { return 2; }
+    if (xs[3] != 40) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (in-place fast path should reuse buffer)", got)
+	}
+}
+
+// Phase 2: aliased rc>1 forces copy semantics even with spare
+// cap — otherwise the other holder's view of the array would
+// silently extend.
+func TestWASMArrayPushAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20];
+    xs = xs.push(30);
+    var ys = xs;
+    ys = ys.push(40);
+    if (xs.len() != 3) { return 1; }
+    if (xs[0] != 10) { return 2; }
+    if (ys.len() != 4) { return 3; }
+    if (ys[3] != 40) { return 4; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (aliased push must copy)", got)
+	}
+}

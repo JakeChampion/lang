@@ -12813,6 +12813,50 @@ function main(): i32 {
 	}
 }
 
+// Phase 2: arr.push(v) checks rc + cap. When rc==1 and cap >
+// len, the helper mutates in place — the returned pointer
+// equals the input pointer. First push of a 3-element literal
+// must copy (cap=3, oldLen=3, no spare cap); the SECOND push
+// goes through the in-place path because the copy bumped cap
+// to max(2*newLen, 4) = 8 and only 1 element is occupied beyond
+// the original 3.
+func TestArm64ArrayPushInPlaceFastPath(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20];
+    xs = xs.push(30);          // copy: cap=2, len=2, no spare
+    var addr_before: usize = xs as usize;
+    xs = xs.push(40);          // in-place: cap=6, len=3, spare!
+    var addr_after: usize = xs as usize;
+    if (addr_before != addr_after) { return 1; }
+    if (xs.len() != 4) { return 2; }
+    if (xs[3] != 40) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (in-place fast path should reuse buffer)", code)
+	}
+}
+
+// Phase 2: aliased arrays force the copy path even when cap is
+// available. The shared rc>1 means a mutate-in-place would
+// corrupt the other holder's view.
+func TestArm64ArrayPushAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20];
+    xs = xs.push(30);          // copy, cap now 6
+    var ys = xs;               // alias, rc=2
+    ys = ys.push(40);          // must COPY (rc>1)
+    if (xs.len() != 3) { return 1; }   // xs unchanged
+    if (xs[0] != 10) { return 2; }
+    if (ys.len() != 4) { return 3; }
+    if (ys[3] != 40) { return 4; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased push must copy)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

@@ -6590,42 +6590,40 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	return nil
 }
 
-// emitArrayPush lowers `arr.push(v)` inline. Shape mirrors the
-// pre-refactor lang-prelude `__array_append_*` family —
+// emitArrayPush lowers `arr.push(v)` inline. Phase 2: hand off
+// the rc check + mutate-or-copy decision to a runtime helper so
+// the per-call-site emit stays straight-line (avoids the SSA
+// Lift dominance trap that bit the OpIf-in-IR attempt). The IR
+// only does what's stride-aware: the width-correct tail store
+// for the new element.
 //
-//	hdr  = __alloc(4 + (oldLen+1) * stride)
-//	*hdr = oldLen + 1                     // length prefix
-//	data = hdr + 4
-//	memcpy(data, arr, oldLen * stride)    // copy existing
-//	*(data + oldLen * stride) = v         // append the new tail
-//	return data
+//	buf = __lang_arr_push_grow(arr, oldLen, stride)  ;; helper
+//	*(buf + oldLen * stride) = v                     ;; tail store
+//	return buf                                       ;; array value
 //
-// — but emits the IR ops directly so a single block of code
-// covers every stride class (1 / 2 / 4 / 8 bytes), removing
-// the per-stride prelude duplication. The element type is
-// `n.TypeArgs[0]`, stamped by the checker's array.push
-// dispatch.
+// The helper itself (one per backend, in arm64.go / x86_64.go /
+// wasmbin/runtime.go) checks `[arr-8] == 1 && [arr-12] > oldLen`
+// to decide whether it can mutate `arr` in place. On the fast
+// path it bumps rc to 2 and writes len, returning the same
+// pointer; the surrounding Phase 1d-vi dec-on-overwrite then
+// drops rc back to 1, leaving the caller's slot owning rc=1 of
+// a freshly extended array. On the slow path the helper allocs
+// a new buffer, copies the old payload, sets new rc=1, len, cap,
+// and returns the new pointer.
+//
+// The element type is `n.TypeArgs[0]`, stamped by the checker's
+// array.push dispatch — used by `arrayElemStoreOpFor` to pick
+// the right store width.
 func (b *builder) emitArrayPush(n *ast.Call) error {
 	elemType := n.TypeArgs[0]
 	stride := int32(ast.ElemSizeBytesFor(elemType, b.ptrW))
 	if stride == 0 {
 		stride = 4
 	}
-	// Same alignment rule as the array literal lowering:
-	// length prefix is always at `data - 4`, refcount slot at
-	// `data - 8`, capacity at `data - 12` (Phase 2-prep — see
-	// `docs/RC-PERCEUS-PLAN.md`); the FIRST element must be
-	// stride-aligned when stride > 16 so Apple Silicon's strict
-	// alignment for SIMD-shaped LDR/STR sequences is satisfied.
-	headerBytes := int32(16)
-	if stride > 16 {
-		headerBytes = stride
-	}
 
-	// Stash v in a typed scratch so the tail store can pick the
-	// right load width (i64 / f64 vs i32). Without this the
-	// `local.get` would have to know whether to push an i64 or
-	// i32 — typed scratches make that automatic.
+	// Stash v in a typed scratch so the tail store picks the
+	// right load width (i64 / f64 vs i32). Typed scratch makes
+	// the `local.get` automatic on the wasm side.
 	vSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_v_%d", vSlot)] = vSlot
 	b.scratchType[vSlot] = elemType
@@ -6634,8 +6632,8 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: vSlot})
 
-	// Stash arr (i32 heap pointer). Used twice — for the
-	// length prefix lookup (arr - 4) and as memcpy source.
+	// Stash arr (heap pointer). The helper needs it; the tail
+	// store also reads from the returned buffer pointer.
 	arrSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_arr_%d", arrSlot)] = arrSlot
 	if err := b.expr(n.Args[0]); err != nil {
@@ -6652,73 +6650,17 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.emit(Op{Kind: OpLoad})
 	b.emit(Op{Kind: OpStoreLocal, I32: oldLenSlot})
 
-	// allocSize = headerBytes + (oldLen + 1) * stride
-	b.emit(Op{Kind: OpConstI32, I32: headerBytes})
-	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 1})
-	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpMul})
-	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpAlloc})
-	hdrSlot := b.allocSlot()
-	b.locals[fmt.Sprintf("__push_hdr_%d", hdrSlot)] = hdrSlot
-	b.emit(Op{Kind: OpStoreLocal, I32: hdrSlot})
-
-	// *(hdr + headerBytes - 12) = oldLen + 1 — capacity slot.
-	// Initial cap matches the final len. Phase 2's mutate-in-
-	// place fast path will need this on subsequent pushes.
-	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
-	if headerBytes != 12 {
-		b.emit(Op{Kind: OpConstI32, I32: headerBytes - 12})
-		b.emit(Op{Kind: OpAdd})
-	}
-	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 1})
-	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpStore})
-
-	// *(hdr + headerBytes - 8) = 1 — refcount slot. New array
-	// is uniquely owned by the catching variable. See phase 1
-	// of docs/RC-PERCEUS-PLAN.md.
-	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
-	if headerBytes != 8 {
-		b.emit(Op{Kind: OpConstI32, I32: headerBytes - 8})
-		b.emit(Op{Kind: OpAdd})
-	}
-	b.emit(Op{Kind: OpConstI32, I32: 1})
-	b.emit(Op{Kind: OpStore})
-
-	// *(hdr + headerBytes - 4) = oldLen + 1 — length prefix
-	// always lives at `data - 4` regardless of padding.
-	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
-	if headerBytes != 4 {
-		b.emit(Op{Kind: OpConstI32, I32: headerBytes - 4})
-		b.emit(Op{Kind: OpAdd})
-	}
-	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 1})
-	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpStore})
-
-	// data = hdr + headerBytes
-	dataSlot := b.allocSlot()
-	b.locals[fmt.Sprintf("__push_data_%d", dataSlot)] = dataSlot
-	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
-	b.emit(Op{Kind: OpConstI32, I32: headerBytes})
-	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
-
-	// memcpy(data, arr, oldLen * stride)
-	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	// buf = __lang_arr_push_grow(arr, oldLen, stride)
 	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpMul})
-	b.emit(Op{Kind: OpCallDirect, Str: "__memcpy", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_push_grow", I32: 3})
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__push_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
 
-	// *(data + oldLen * stride) = v   (width-correct store)
-	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	// *(buf + oldLen * stride) = v   (width-correct store)
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: stride})
 	b.emit(Op{Kind: OpMul})
@@ -6726,8 +6668,8 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.emit(Op{Kind: OpLoadLocal, I32: vSlot})
 	b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
 
-	// Result: data pointer (the array value).
-	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	// Result: buf pointer (the array value).
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
 	return nil
 }
 

@@ -558,9 +558,37 @@ emit can consume that side-table.
 
 ### Phase 2: rc check in mutating ops
 
-PR: `__lang_arr_push` and friends check rc. rc==1 path mutates in
-place; rc>1 path keeps the copy semantics. The user-facing API
-audit (see above) lands in the same phase — Map's void-returning
+#### Phase 2a: arr.push fast path (SHIPPED)
+
+`__lang_arr_push_grow(arr, oldLen, stride) → new_data` —
+runtime helper called from IR-level `emitArrayPush`. Reads
+rc at `[arr-8]` and cap at `[arr-12]`:
+
+  - rc == 1 AND oldLen < cap → mutate in place. Bump rc to
+    2 (so the Phase 1d-vi dec-on-overwrite at the assign
+    site drops it back to 1) and write `[arr-4] = oldLen+1`.
+    Return arr.
+  - else → allocate a new buffer with
+    cap = max(2*newLen, 4), memcpy the old payload, set
+    new rc=1, len, cap. Return new data pointer.
+
+The IR-side `emitArrayPush` shrinks to: call the helper,
+then a width-correct tail store at `[new_data + oldLen*stride]`.
+The OpIf-in-IR approach the earlier attempt tried failed the
+SSA Lift dominance check; moving the branch into a runtime
+helper sidesteps the structural issue and keeps the IR
+straight-line.
+
+The rc=2 bump on the in-place path keeps the Phase 1d-vi
+dec-on-overwrite uniform across in-place, copy, var-decl, and
+non-self-assign callers — see the helper's preamble in
+`arm64.go:emitArrPushGrowRuntime` for the per-caller
+walkthrough. Tests on every backend cover both paths plus the
+"aliased rc>1 must copy" semantics.
+
+#### Phase 2b: remaining work (NOT YET STARTED)
+
+The user-facing API audit (see above) — Map's void-returning
 `set` / `delete` / `clear` become value-returning, and
 `arr[i] = v` rewires to desugar through a copy-on-write `set`
 method. Callers update in-tree at the same time the
@@ -571,27 +599,19 @@ This is the payoff phase. After Phase 2, no method's signature
 implies in-place mutation; every collection looks immutable to
 the user.
 
-Prerequisites (gate items that NEED to land first):
+Prerequisites that landed during Phase 2-prep:
 
-  - **Capacity field in array header.** Today `arr.push`
-    always allocates a fresh buffer of exactly `oldLen + 1`
-    elements; there's no spare room for "mutate the
-    underlying storage in place." Phase 2's fast path needs
-    `cap >= len + 1` to hold the new element. Layout
-    migration is a Phase-0-style PR: shift `headerBytes`
-    from 8 to 16, write `cap` at `data - 12` alongside the
-    existing `rc` at `data - 8` and `len` at `data - 4`. Then
-    `emitArrayLit` / `emitArrayPush` initialise `cap` to
-    `max(initial, 2 * len)` and the runtime can reuse spare
-    capacity on subsequent pushes.
-  - **Real allocator (Phase 3 below).** Without a freelist,
-    mutate-in-place wins only the copy cost — the alloc
-    itself is already O(1) under the bump allocator. The
-    payoff numbers in the doc above ("self-host parser +
-    asm.lang push loops become O(N)") only fully realise
-    once Phase 3 lets the rc==0 path actually reclaim
-    storage; Phase 2 alone gives the algorithmic win on the
-    rc==1 path.
+  - **Capacity field in array header.** Shipped — array
+    layout is now `[pad:4, cap:4, rc:4, len:4 | data]` with
+    cap at `data - 12`, rc at `data - 8`, len at `data - 4`.
+  - **Real allocator (Phase 3 below).** Still gated. Without a
+    freelist, mutate-in-place wins only the copy cost — the
+    alloc itself is already O(1) under the bump allocator.
+    The payoff numbers in the doc above ("self-host parser +
+    asm.lang push loops become O(N)") only fully realise once
+    Phase 3 lets the rc==0 path actually reclaim storage;
+    Phase 2a alone gives the algorithmic win on the rc==1
+    path (one bumped rc + len write, no alloc / memcpy).
 
 ### Phase 3: real allocator
 
