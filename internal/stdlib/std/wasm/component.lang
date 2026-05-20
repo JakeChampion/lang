@@ -120,6 +120,62 @@ pub function put_core_instance_section_instantiate(buf: u8[], module_idx: u32): 
     return encode.put_bytes(out, body);
 }
 
+// Component primitive valtype bytes. Distinct numbering from the
+// core wasm valtypes (which live in std/wasm/encode); core i32 is
+// 0x7f whereas component bool is also 0x7f. Each space is parsed
+// independently — the same byte means different things inside a
+// core type section vs a component type section.
+//
+// The numbering counts down from 0x7f. Bytes confirmed against
+// `wasm-tools parse` output for `(component (type (func (result X))))`
+// across every variant below.
+pub function cvaltype_bool(): u8   { return 127u8; }   // 0x7f
+pub function cvaltype_s8(): u8     { return 126u8; }   // 0x7e
+pub function cvaltype_u8(): u8     { return 125u8; }   // 0x7d
+pub function cvaltype_s16(): u8    { return 124u8; }   // 0x7c
+pub function cvaltype_u16(): u8    { return 123u8; }   // 0x7b
+pub function cvaltype_s32(): u8    { return 122u8; }   // 0x7a
+pub function cvaltype_u32(): u8    { return 121u8; }   // 0x79
+pub function cvaltype_s64(): u8    { return 120u8; }   // 0x78
+pub function cvaltype_u64(): u8    { return 119u8; }   // 0x77
+pub function cvaltype_f32(): u8    { return 118u8; }   // 0x76
+pub function cvaltype_f64(): u8    { return 117u8; }   // 0x75
+pub function cvaltype_char(): u8   { return 116u8; }   // 0x74
+pub function cvaltype_string(): u8 { return 115u8; }   // 0x73
+
+// put_type_section_one_func_no_param — emit a component-level type
+// section that defines a single functype with no parameters and one
+// anonymous result of the given valtype. This is the minimal type-
+// section shape: typeidx 0 = `(func (result T))`.
+//
+// Spec (Binary.md):
+//   functype   ::= 0x40 ps:vec(<paramname valtype>) rs:resultlist
+//   resultlist ::= 0x00 t:<valtype>          -- single anonymous result
+//                | 0x01 lts:vec(<labelvaltype>) -- named results
+//
+// Encoded body:
+//
+//   01           // vec(1) of types
+//   40           // functype form
+//   00           // params vec count 0
+//   00           // resultlist tag = 0x00 (single anonymous)
+//   <valtype>    // the result type byte
+//
+// Section header: `id=7 + uleb size + body`.
+pub function put_type_section_one_func_no_param(buf: u8[], result_valtype: u8): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);   // vec(1) of types
+    body = body.push(64u8);                // functype form (0x40)
+    body = body.push(0u8);                 // params vec count 0
+    body = body.push(0u8);                 // resultlist tag: single anon
+    body = body.push(result_valtype);      // result valtype byte
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_alias_section_core_export_func — emit an alias section
 // containing one entry that surfaces a core function export of a
 // core instance as a top-level core-sort func. After this alias
