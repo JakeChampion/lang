@@ -424,6 +424,38 @@ func TestEmitRejectsDuplicateImportName(t *testing.T) {
 // file just for this one byte.
 const encodeValtypeI32 = 0x7f
 
+// TestEmitExtend8S — `(x) → extend8s(x)`. Module validates
+// and runtime check (when wasmtime available) exercises both
+// the sign-extension path (negative low byte) and the
+// no-change path (small positive value).
+func TestEmitExtend8S(t *testing.T) {
+	f := ssa.NewFunc("main")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	r := f.AddOp(entry, ssa.OpExtend8S, x)
+	f.SetRet(entry, r)
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitExtend16S — `(x) → extend16s(x)`. Same shape as
+// Extend8S but for the low halfword.
+func TestEmitExtend16S(t *testing.T) {
+	f := ssa.NewFunc("main")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	r := f.AddOp(entry, ssa.OpExtend16S, x)
+	f.SetRet(entry, r)
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+}
+
 // TestEmitRejectsUnsupportedOp — an unsupported op kind
 // (e.g. OpLoad) surfaces a clear error.
 func TestEmitRejectsUnsupportedOp(t *testing.T) {
