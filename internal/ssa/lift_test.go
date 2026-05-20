@@ -1006,6 +1006,78 @@ func TestLiftIfRejectsUnclosed(t *testing.T) {
 	}
 }
 
+// TestLiftBlockLinear — OpBlock + OpEnd with no OpBr inside
+// works as a linear pass-through. The block boundary creates
+// a new SSA block but PruneUnreachable / DCE-friendly enough
+// to optimize away.
+func TestLiftBlockLinear(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpConstI32, I32: 42},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// 2 blocks: entry (with the const) + postB (with the ret).
+	if len(out.Blocks) != 2 {
+		t.Fatalf("Blocks = %d, want 2", len(out.Blocks))
+	}
+}
+
+// TestLiftBlockNestedInIf — sanity: OpBlock inside an if arm
+// works.
+func TestLiftBlockNestedInIf(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpBlock, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpCallDirect, Str: "foo", I32: 0},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpEnd}, // close block
+			{Kind: ir.OpEnd}, // close if
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestLiftBlockRejectsNonVoid — Phase 9 only handles void blocks.
+func TestLiftBlockRejectsNonVoid(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeI32},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected error for non-void OpBlock")
+	}
+	if !strings.Contains(err.Error(), "non-void BlockType") {
+		t.Errorf("error %q doesn't mention non-void BlockType", err)
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
