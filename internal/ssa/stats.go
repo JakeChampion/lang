@@ -11,18 +11,22 @@ import "fmt"
 // O(N) cost. Build a fresh Stats whenever you need a
 // snapshot — Stats doesn't auto-update when the Func mutates.
 type Stats struct {
-	Blocks       int // total Block count in f.Blocks
-	Ops          int // total Op count across all Blocks
-	Phis         int // OpPhi count (subset of Ops)
-	Consts       int // ConstInt/Bool/String count (subset of Ops)
-	Params       int // len(f.Params), excluding the zero sentinel
-	MaxBlockOps  int // length of the longest Block's Ops list
-	Terminators  map[TermKind]int // distribution by kind
+	Blocks      int              // total Block count in f.Blocks
+	Ops         int              // total Op count across all Blocks
+	Phis        int              // OpPhi count (subset of Ops)
+	Consts      int              // ConstInt/Bool/String count (subset of Ops)
+	Params      int              // len(f.Params), excluding the zero sentinel
+	MaxBlockOps int              // length of the longest Block's Ops list
+	Terminators map[TermKind]int // distribution by kind
+	OpKinds     map[OpKind]int   // distribution by Op.Kind
 }
 
 // Stats walks `f` and returns a Stats snapshot.
 func (f *Func) Stats() Stats {
-	s := Stats{Terminators: map[TermKind]int{}}
+	s := Stats{
+		Terminators: map[TermKind]int{},
+		OpKinds:     map[OpKind]int{},
+	}
 	if f == nil {
 		return s
 	}
@@ -38,6 +42,7 @@ func (f *Func) Stats() Stats {
 		}
 		s.Ops += len(b.Ops)
 		for _, op := range b.Ops {
+			s.OpKinds[op.Kind]++
 			switch op.Kind {
 			case OpPhi:
 				s.Phis++

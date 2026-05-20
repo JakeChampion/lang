@@ -73,6 +73,36 @@ func TestStatsPhiAndConst(t *testing.T) {
 	}
 }
 
+// TestStatsOpKindsHistogram — counts ops bucketed by OpKind.
+// Useful for tracking which kinds an optimization pass
+// reduces.
+func TestStatsOpKindsHistogram(t *testing.T) {
+	f := NewFunc("f")
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	f.AddOp(entry, OpAdd, a, b)
+	f.AddOp(entry, OpAdd, a, b)
+	f.AddOp(entry, OpMul, a, b)
+	c := f.AddOp(entry, OpConstInt)
+	entry.Ops[3].Imm = 7
+	f.SetRet(entry, c)
+
+	s := f.Stats()
+	if s.OpKinds[OpAdd] != 2 {
+		t.Errorf("OpKinds[OpAdd] = %d, want 2", s.OpKinds[OpAdd])
+	}
+	if s.OpKinds[OpMul] != 1 {
+		t.Errorf("OpKinds[OpMul] = %d, want 1", s.OpKinds[OpMul])
+	}
+	if s.OpKinds[OpConstInt] != 1 {
+		t.Errorf("OpKinds[OpConstInt] = %d, want 1", s.OpKinds[OpConstInt])
+	}
+	if s.OpKinds[OpSub] != 0 {
+		t.Errorf("OpKinds[OpSub] = %d, want 0 (no such op)", s.OpKinds[OpSub])
+	}
+}
+
 // TestStatsBeforeAndAfterOptimize — Optimize should reduce
 // the op count for a constant-arithmetic chain.
 func TestStatsBeforeAndAfterOptimize(t *testing.T) {
