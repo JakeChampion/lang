@@ -20,6 +20,10 @@
 //     └────────────────────↗
 //     The else arm is empty; entry's other brif target IS
 //     the merge.
+//   - Dual-return diamond:
+//     entry ─brif─→ T ─ret
+//     └─→ F ─ret
+//     No merge — both arms return directly.
 //   - While loop shape:
 //     entry ─br─→ header ─brif─→ body ─br─→ header (back-edge)
 //     └─→ done ─ret
@@ -140,6 +144,8 @@ func paramCount(f *ssa.Func) int { return len(realParams(f)) }
 //     `end` form with phi-write into shared locals.
 //   - 3 blocks shaped as one-armed if → wasm `if`/`else`/`end`
 //     with the body in one arm and an empty other arm.
+//   - 3 blocks shaped as dual-return diamond → wasm `if`/`else`/
+//     `end` with `return` in each arm, followed by `unreachable`.
 //   - 4 blocks shaped as while loop → wasm `block`/`loop`/
 //     `br_if` form with phi locals carrying loop state.
 //   - Anything else → unsupported error.
@@ -201,6 +207,15 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 		return body, valueToLocal, nil
 	}
 
+	// Dual-return diamond — both arms ret, no merge.
+	if shape, ok := classifyDualReturn(f); ok {
+		body, err := emitDualReturn(nil, shape, valueToLocal)
+		if err != nil {
+			return nil, nil, err
+		}
+		return body, valueToLocal, nil
+	}
+
 	// While loop case.
 	if lp, ok := classifyWhileLoop(f); ok {
 		body, err := emitWhileLoop(nil, lp, valueToLocal)
@@ -210,7 +225,7 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 		return body, valueToLocal, nil
 	}
 
-	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only linear chains, if-else diamonds, one-armed ifs, and while loops handled",
+	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only linear chains, if-else diamonds, one-armed ifs, dual-return diamonds, and while loops handled",
 		len(f.Blocks))
 }
 
@@ -485,6 +500,81 @@ func emitIfOnly(body []byte, s ifOnly, valueToLocal map[int32]uint32) ([]byte, e
 		return nil, err
 	}
 	body = emitRet(body, s.merge.Term, valueToLocal)
+	return body, nil
+}
+
+// dualReturn captures a 3-block CFG where entry brifs to two
+// arms, both ending in TermRet — no merge.
+type dualReturn struct {
+	entry, t, f *ssa.Block
+}
+
+// classifyDualReturn detects:
+//
+//	entry ─brif─→ T ─ret
+//	        └─→ F ─ret
+//
+// T and F are independent return paths; both have entry as
+// their sole pred.
+func classifyDualReturn(f *ssa.Func) (dualReturn, bool) {
+	if len(f.Blocks) != 3 || f.Entry == nil {
+		return dualReturn{}, false
+	}
+	entry := f.Entry
+	if entry.Term.Kind != ssa.TermBrIf {
+		return dualReturn{}, false
+	}
+	t, fb := entry.Term.True, entry.Term.False
+	if t == nil || fb == nil || t == fb {
+		return dualReturn{}, false
+	}
+	if len(t.Preds) != 1 || t.Preds[0] != entry {
+		return dualReturn{}, false
+	}
+	if len(fb.Preds) != 1 || fb.Preds[0] != entry {
+		return dualReturn{}, false
+	}
+	if t.Term.Kind != ssa.TermRet || fb.Term.Kind != ssa.TermRet {
+		return dualReturn{}, false
+	}
+	return dualReturn{entry: entry, t: t, f: fb}, true
+}
+
+// emitDualReturn emits a wasm `if`/`else`/`end` where each
+// arm executes its block's ops, pushes its ret value, and
+// emits `return`. After the `if/end` the function body is
+// unreachable; we emit a trailing `unreachable` + an i32.const 0
+// to keep the stack-balance check happy.
+func emitDualReturn(body []byte, d dualReturn, valueToLocal map[int32]uint32) ([]byte, error) {
+	body, err := emitStraightBlock(body, d.entry, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	body = pushValue(body, d.entry.Term.Cond, valueToLocal)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+
+	body, err = emitStraightBlock(body, d.t, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	body = emitRet(body, d.t.Term, valueToLocal)
+
+	body = inst.InstElse(body)
+
+	body, err = emitStraightBlock(body, d.f, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	body = emitRet(body, d.f.Term, valueToLocal)
+
+	body = inst.InstEnd(body) // end if
+
+	// Both arms `return`, so the fallthrough after the if/end
+	// can never execute. `unreachable` puts the wasm validator
+	// in stack-polymorphic mode, which satisfies the function
+	// body's result-type requirement without us needing to push
+	// a placeholder value.
+	body = inst.InstUnreachable(body)
 	return body, nil
 }
 
