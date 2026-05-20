@@ -3,30 +3,89 @@
 //
 // Spec: https://github.com/WebAssembly/component-model/blob/main/design/mvp/Binary.md
 //
-// First slice of Phase 2 of docs/TOOLCHAIN-SELF-HOSTING.md. The
-// std/wasm/* modules so far cover the Core 1.0 binary format —
-// every byte the production compiler used to feed `wasm-tools
-// parse`. Phase 2 is the layer above: wrapping a core module in
-// the Component Model envelope so it can run under preview-2
-// hosts (the production driver's current need, fulfilled today
-// by `wasm-tools component embed` + `wasm-tools component new`).
+// Phase 2 of docs/TOOLCHAIN-SELF-HOSTING.md. The std/wasm/* modules
+// cover the Core 1.0 binary format that the production compiler
+// used to feed `wasm-tools parse`; this module is the layer above —
+// wrapping a core module in the Component Model envelope (the
+// production driver's current need, fulfilled today by
+// `wasm-tools component embed` + `wasm-tools component new`).
 //
-// This slice only covers the preamble + the core-module section
-// — the two pieces every component starts with. Type / import /
-// export / instance / canon / alias sections come later as the
-// production world (lang.wit, http.wit) shapes need them.
+// Surface area shipped so far (each composer was verified against
+// `wasm-tools parse` output for a hand-rolled WAT shape; many are
+// also exercised end-to-end via `wasm-tools validate` + `wasmtime
+// run --invoke` in the e2e suite):
 //
-// Layout of the bytes inspected here:
+//   Preamble:
+//     put_component_header
+//
+//   Sections (one composer per shipped section ID, plus
+//   multi-entry variants where useful):
+//     1  core-module:    put_core_module_section
+//     2  core-instance:  put_core_instance_section_instantiate,
+//                        ..._instantiate_with_one_instance_arg,
+//                        ..._instantiate_with_instance_args,
+//                        ..._from_one_func_export,
+//                        ..._from_func_exports
+//     6  alias:          put_alias_section_core_export_func,
+//                        put_alias_section_core_exports
+//     7  type:           put_type_section_one_func,
+//                        put_type_section_one_func_no_param,
+//                        put_type_section_one_func_no_result,
+//                        put_type_section_funcs (multi-functype),
+//                        plus one composer per defvaltype form:
+//                        _resource, _list, _option, _tuple,
+//                        _result_ok_err, _enum, _flags, _record,
+//                        _variant, _own, _borrow
+//     8  canon:          put_canon_section_lift_no_opts,
+//                        ..._lifts_no_opts (multi),
+//                        ..._lift_mem_realloc,
+//                        ..._lift_mem_realloc_post_return,
+//                        ..._lift_mem_realloc_encoding,
+//                        ..._lower_no_opts, ..._lowers_no_opts,
+//                        ..._lower_mem_realloc,
+//                        ..._resource_{new,drop,rep},
+//                        ..._resource_{news,drops,reps} (multi)
+//     9  start:          put_start_section_no_args_no_results
+//    10  import:         put_import_section_one_func,
+//                        put_import_section_funcs
+//    11  export:         put_export_section_one_func,
+//                        put_export_section_funcs
+//     0  custom:         put_component_type_section
+//                        (writes the `component-type` payload
+//                        wasm-tools embeds for a WIT world)
+//
+//   High-level helpers — collapse a recipe of section composers
+//   into one call:
+//     build_lifted_export_component (no-param shape)
+//     build_lifted_export_component_with_params
+//
+//   Supporting byte-constant exports:
+//     section_*        — component section IDs (1..11)
+//     core_sort_*      — core-sortidx bytes (func/table/memory/...)
+//     cvaltype_*       — component primitive valtype bytes (bool,
+//                        s8..s64, u8..u64, f32/f64, char, string)
+//     canonopt_*       — canon-opt discriminator bytes (string
+//                        encodings + memory/realloc/post-return)
+//
+// What's NOT covered yet (gaps for actual WIT-world wrapping):
+//   - Interface-form imports (importname kind 0x01,
+//     `wasi:cli/exit@0.2.0`-style)
+//   - Instance types (externdesc kind 0x04) — needed for the
+//     interface-form import shape
+//   - Multi-sort component-level aliases (the existing alias
+//     composer covers only core-sort exports)
+//   - core-type section (id 3) — for declaring core wasm types
+//     inline in a component
+//   - Multi-entry type sections that mix functype + defvaltype
+//     forms in a single vec (currently each composer emits its
+//     own type section)
+//
+// Layout of the preamble:
 //
 //   Component preamble (8 bytes):
 //     00 61 73 6d   magic ("\0asm")
 //     0d 00         version 0x000d (component-model preview)
 //     01 00         layer 0x0001  (component, vs 0x0000 for core)
-//
-//   Core-module section:
-//     01            section id 1 = core-module
-//     <uleb size>   length of the embedded core module
-//     <bytes...>    a complete core wasm module (preamble + sections)
 
 import "std/wasm/leb128";
 import "std/wasm/encode";
