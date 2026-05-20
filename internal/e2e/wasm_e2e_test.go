@@ -10280,6 +10280,66 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentOptionOfU32 covers put_type_section_one_option:
+// declares `option<u32>` and verifies `wasm-tools print` surfaces
+// `(option u32)`. Options appear pervasively in WASI worlds —
+// `wasi:http/types` and `wasi:cli/environment` use them for
+// "may or may not be present" fields.
+func TestWASMComponentOptionOfU32(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_one_option(comp, component.cvaltype_u32());
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "(option u32)") {
+		t.Errorf("expected (option u32) in printed component, got:\n%s", watStr)
+	}
+}
+
 // TestWASMComponentListOfU8 covers put_type_section_one_list:
 // declares `list<u8>` as the sole component-level type and verifies
 // `wasm-tools print` surfaces `(list u8)`. Lists are heavily used
