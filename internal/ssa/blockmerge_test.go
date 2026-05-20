@@ -64,9 +64,12 @@ func TestMergeTrivialBlocksSkipsEntry(t *testing.T) {
 	}
 }
 
-// TestMergeTrivialBlocksSkipsMultiPred — if B has multiple
-// preds, don't merge (we'd need to handle phi-fold).
-func TestMergeTrivialBlocksSkipsMultiPred(t *testing.T) {
+// TestMergeTrivialBlocksMultiPred — multi-pred forwarder block
+// is now handled: B's preds are rerouted to X. End state has
+// entry brif directly into X for the true branch and elseB →
+// X for the false. thenB + B both become orphans (single-pred
+// cases get spliced first, then B gets spliced).
+func TestMergeTrivialBlocksMultiPred(t *testing.T) {
 	f := NewFunc("f")
 	cond := f.AddParam()
 	entry := f.NewBlock()
@@ -82,9 +85,56 @@ func TestMergeTrivialBlocksSkipsMultiPred(t *testing.T) {
 
 	MergeTrivialBlocks(f)
 
-	// B should still be reached from both branches.
-	if len(b.Preds) != 2 {
-		t.Errorf("B.Preds = %d, want 2 (unchanged)", len(b.Preds))
+	// B's preds are now empty (all rerouted away).
+	if len(b.Preds) != 0 {
+		t.Errorf("B.Preds = %d, want 0 (orphaned)", len(b.Preds))
+	}
+	// X now has 2 preds — the chain collapsed.
+	if len(x.Preds) != 2 {
+		t.Errorf("X.Preds = %d, want 2", len(x.Preds))
+	}
+	// Entry's brif true target now skips thenB AND b.
+	if entry.Term.True != x {
+		t.Errorf("entry.Term.True = %v, want X (chain collapsed)", entry.Term.True)
+	}
+}
+
+// TestMergeTrivialBlocksMultiPredReplicatesPhiArg — when a
+// multi-pred forwarder B is spliced out, every phi at X gets
+// its B-slot Arg duplicated for each new pred-slot. All those
+// new slots see the same Value flowing in (B was empty, so
+// every pred contributed the identical Value).
+func TestMergeTrivialBlocksMultiPredReplicatesPhiArg(t *testing.T) {
+	f := NewFunc("f")
+	cond := f.AddParam()
+	prior := f.AddParam() // value flowing into X's phi from B's side
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	b := f.NewBlock()
+	x := f.NewBlock()
+	f.SetBrIf(entry, cond, thenB, elseB)
+	f.SetBr(thenB, b)
+	f.SetBr(elseB, b)
+	f.SetBr(b, x)
+	// Phi at X: one arg per pred. Currently X.Preds = [b].
+	phi := f.AddPhi(x, prior)
+	f.SetRet(x, phi)
+
+	MergeTrivialBlocks(f)
+
+	// After merge: X.Preds = [thenB, elseB] (B's preds inserted
+	// at the slot B held). Phi.Args = [prior, prior] (the B-slot
+	// Value replicated).
+	if len(x.Preds) != 2 {
+		t.Fatalf("X.Preds = %d, want 2", len(x.Preds))
+	}
+	phiOp := x.Ops[0]
+	if phiOp.Kind != OpPhi {
+		t.Fatalf("first op should be phi, got %v", phiOp.Kind)
+	}
+	if len(phiOp.Args) != 2 || phiOp.Args[0] != prior || phiOp.Args[1] != prior {
+		t.Errorf("phi.Args = %v, want [prior, prior]", phiOp.Args)
 	}
 }
 
