@@ -2374,20 +2374,20 @@ func (g *generator) emitDataSections() {
 		if g.usesArrEmpty {
 			// Empty u8[] sentinel — __alloc_u8(0) returns this
 			// address instead of allocating a fresh header-only
-			// buffer. 8-byte header matches the new RC layout:
+			// buffer. 16-byte header matches the new Phase
+			// 2-prep layout:
+			//   [data - 16] = pad
+			//   [data - 12] = capacity (= 0)
 			//   [data - 8] = rc slot, set to 0x80000000 — the
 			//                "static, never touch" sentinel that
 			//                __lang_rc_inc / __lang_rc_dec branch
-			//                on (high bit set ⇒ no-op). Any rc
-			//                value with bit 31 set is treated as
-			//                static, so the helpers don't need to
-			//                special-case this exact address.
+			//                on (high bit set ⇒ no-op).
 			//   [data - 4] = length (= 0)
 			//   [.LArr_Empty] = data (a single byte for safety)
-			// Kept distinct from .LStr_Empty so the array seam
-			// can evolve independently of the string seam. See
-			// docs/RC-PERCEUS-PLAN.md.
-			g.line(".align 8")
+			// See docs/RC-PERCEUS-PLAN.md.
+			g.line(".align 16")
+			g.line("\t.4byte 0")          // pad
+			g.line("\t.4byte 0")          // cap = 0
 			g.line("\t.4byte 0x80000000") // rc = SENTINEL_STATIC
 			g.line("\t.4byte 0")          // length = 0
 			g.label(".LArr_Empty")
@@ -3434,13 +3434,15 @@ func (g *generator) emitArgsRuntime() {
 	// argc / argv from globals captured by _start.
 	g.emit("mov rbx, [rip + __lang_argc]")
 	g.emit("mov r12, [rip + __lang_argv]")
-	// alloc(argc * 8 + 8) — 8-byte header keeps element 0
-	// at an 8-aligned offset; length prefix lives at
-	// data-4, refcount slot at data-8 (phase 1 of RC rollout).
-	g.emit("lea rdi, [rbx * 8 + 8]")
+	// alloc(argc * 8 + 16) — 16-byte header (pad / cap / rc /
+	// len, 4 bytes each) keeps element 0 at a 16-aligned
+	// offset; canonical cap / rc / len at data-12 / -8 / -4
+	// (Phase 2-prep layout).
+	g.emit("lea rdi, [rbx * 8 + 16]")
 	g.emit("call __lang_alloc")
-	g.emit("lea r14, [rax + 8]")  // r14 = data ptr (8-aligned)
-	g.emit("mov dword ptr [r14 - 8], 1") // rc = 1
+	g.emit("lea r14, [rax + 16]")  // r14 = data ptr (16-aligned)
+	g.emit("mov dword ptr [r14 - 12], ebx") // cap = argc (Phase 2-prep)
+	g.emit("mov dword ptr [r14 - 8], 1")    // rc = 1
 	// Outer string[] container length via the array seam (the
 	// per-element string stores in the loop below use
 	// emitStrLenStore).
@@ -3677,10 +3679,11 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("lea rax, [rip + .LArr_Empty]")
 	g.emit("jmp .Lallocu8_ret")
 	g.label(".Lallocu8_alloc")
-	g.emit("lea edi, [rbx + 8]")
+	g.emit("lea edi, [rbx + 16]")
 	g.emit("call __lang_alloc")
-	g.emit("lea rax, [rax + 8]") // rax = data ptr (past 8-byte header)
-	g.emit("mov dword ptr [rax - 8], 1") // rc = 1 (phase 1 of RC rollout)
+	g.emit("lea rax, [rax + 16]") // rax = data ptr (past 16-byte header)
+	g.emit("mov dword ptr [rax - 12], ebx") // cap = n (Phase 2-prep)
+	g.emit("mov dword ptr [rax - 8], 1")    // rc = 1 (phase 1 of RC rollout)
 	g.emitArrayLenStore("ebx", "rax")
 	g.label(".Lallocu8_ret")
 	g.emit("add rsp, 8")
