@@ -268,20 +268,59 @@ pub function put_core_instance_section_from_one_func_export(buf: u8[], export_na
 //   <arg_name>          // uleb-prefixed UTF-8
 //   12                  // core-sort = instance
 //   <instance-idx>      // uleb
-pub function put_core_instance_section_instantiate_with_one_instance_arg(buf: u8[], module_idx: u32, arg_name: string, instance_idx: u32): u8[] {
+// put_core_instance_section_instantiate_with_instance_args — emit
+// a core-instance section containing one "instantiate" entry that
+// instantiates a core module passing N instance-typed arguments.
+// Each arg has its own (name, instance_idx); the two parallel
+// arrays must have equal length.
+//
+// This is the form needed when the core module imports from
+// multiple distinct host instances — e.g. a future WASI world
+// component that pulls "wasi" + "user-host" or similar. Single-arg
+// case (the common WASI shape) is handled by the
+// `_with_one_instance_arg` convenience wrapper below.
+//
+// Spec:
+//   core-instance ::= 0x00 m:module-idx args:vec(core-instantiation-arg)
+//   core-instantiation-arg ::= n:<name> i:<core-sortidx>
+//
+// Encoded body for "instantiate module M with N instance args":
+//
+//   01                  // vec(1) instance entries
+//   00                  // form: instantiate
+//   <module-idx>        // uleb
+//   <N:uleb>            // args vec count = N
+//   (<name> 12 <instance-idx>)*   // N (name, core-sort=instance, idx)
+pub function put_core_instance_section_instantiate_with_instance_args(buf: u8[], module_idx: u32, arg_names: string[], instance_idxs: u32[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) instances
     body = body.push(0u8);                       // form: instantiate
     body = leb128.uleb_u32(body, module_idx);
-    body = leb128.uleb_u32(body, 1u32);          // args vec count = 1
-    body = encode.put_name(body, arg_name);
-    body = body.push(core_sort_instance());
-    body = leb128.uleb_u32(body, instance_idx);
+    var n: i32 = arg_names.len();
+    body = leb128.uleb_u32(body, n as u32);      // args vec count = N
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, arg_names[i]);
+        body = body.push(core_sort_instance());
+        body = leb128.uleb_u32(body, instance_idxs[i]);
+        i = i + 1;
+    }
 
     var out: u8[] = buf;
     out = out.push(section_core_instance());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
+}
+
+// put_core_instance_section_instantiate_with_one_instance_arg —
+// convenience wrapper over
+// put_core_instance_section_instantiate_with_instance_args for the
+// single-arg case. Existing call sites in the e2e tests use this;
+// new multi-arg code should reach for the args variant directly.
+pub function put_core_instance_section_instantiate_with_one_instance_arg(buf: u8[], module_idx: u32, arg_name: string, instance_idx: u32): u8[] {
+    var names: string[] = [arg_name];
+    var idxs: u32[] = [instance_idx];
+    return put_core_instance_section_instantiate_with_instance_args(buf, module_idx, names, idxs);
 }
 
 // Component primitive valtype bytes. Distinct numbering from the
