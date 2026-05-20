@@ -9246,6 +9246,60 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithRandomInt drives a Lang program
+// that calls the stdlib `random_int(lo, hi)` helper (from
+// std/math) through `-component-wrap-cli`. random_int internally
+// calls `random_bytes(3)`, so this test validates that the
+// random_bytes preview-2 migration cascades through to user code
+// that consumes the stdlib helper — the actual "why does this
+// matter" assertion behind that migration.
+//
+// The program picks a random int in [0, 100) and exits 0 iff it
+// falls in range. The probability of a false negative is 0
+// (any well-formed implementation returns a value in [0, 100)).
+func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "randint.lang")
+	src := []byte(`function main(): i32 {
+    var r: i32 = random_int(0, 100);
+    if (r >= 0 && r < 100) { return 0; }
+    return 1;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "randint.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap-cli (random_int) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:random/random@0.2.0", "wasi:cli/run@0.2.0"} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
+	}
+}
+
 // TestCmdLangComponentWrapCliWithRandomBytes drives a Lang
 // program that calls random_bytes(n) through `-component-wrap-cli`.
 // With the preview-2 migration of __lang_random_bytes (loop of
