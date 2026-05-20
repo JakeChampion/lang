@@ -1,0 +1,40 @@
+name: Lint
+
+# Three independent fast jobs that catch the most common breakages
+# before any heavy test workflow even finishes setup:
+#
+#   vet        — `go vet ./...` against the whole module.
+#   build      — `go build ./...` so a compile-only failure
+#                surfaces here, not buried under a test failure.
+#   fmt-check  — `make fmt-check` (== `lang -fmt -d` on every
+#                examples/*.lang).
+#
+# All three are cheap (sub-30s on warm cache) so they run on x86
+# only — covering both arches would double minutes for ~0 extra
+# signal since vet/build/fmt are arch-agnostic.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  vet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+      - run: go vet ./...
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+      - run: go build ./...
+
+  fmt-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+      - run: make fmt-check

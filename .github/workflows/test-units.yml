@@ -1,0 +1,64 @@
+name: Test units
+
+# Fast unit tests — everything under internal/ except the two
+# big-iron packages that get their own workflows:
+#
+#   internal/e2e       — split into test-e2e-* (arm64 / x86_64 /
+#                        wasm / selfhost / other) so the 5-minute
+#                        sequential block fans out.
+#   internal/langsmith — its own workflow (fuzz corpus + generator
+#                        machinery; ~60s).
+#
+# Matrix per host arch so backend-tagged unit tests (e.g.
+# internal/codegen/wasmbin, internal/ir invariants) get exercised
+# under both ABIs. Sub-60s on warm cache.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    name: test-units-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+        with:
+          gotestsum: "true"
+      - name: go test (units)
+        # Explicitly list packages instead of `./...` minus excludes —
+        # `go test` has no built-in negation and a comm-style filter
+        # makes the command harder to read than the enumerated set.
+        # Add new packages here when they appear; the test-units
+        # check failing on an unlisted new package is the
+        # forcing function that keeps this list current.
+        run: |
+          gotestsum --format pkgname-and-test-fails -- \
+            ./internal/ast/... \
+            ./internal/checker/... \
+            ./internal/closureconv/... \
+            ./internal/codegen/... \
+            ./internal/constfold/... \
+            ./internal/diag/... \
+            ./internal/interp/... \
+            ./internal/ir/... \
+            ./internal/langstring/... \
+            ./internal/lexer/... \
+            ./internal/lsp/... \
+            ./internal/modload/... \
+            ./internal/monomorph/... \
+            ./internal/parser/... \
+            ./internal/platforms/... \
+            ./internal/printer/... \
+            ./internal/shadowrename/... \
+            ./internal/ssa/... \
+            ./internal/stdlib/... \
+            ./internal/treeshake/... \
+            ./internal/wasm/...

@@ -1,0 +1,32 @@
+name: Fuzz differential execution
+
+# Pairs the langsmith generator with the diff oracle. Each emitted
+# program is run through the interp + every backend available on
+# the runner; we assert byte-for-byte output agreement. Caught a
+# checker bug in #601 and the monomorph walker gaps that landed in
+# #614 / #618.
+#
+# Needs wasmtime because the diff oracle considers the wasm
+# backend as one of the comparison targets. 60-second budget per
+# arch.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    name: fuzz-diff-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+        with:
+          wasmtime: "true"
+      - run: go test -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -run=^$ ./internal/e2e
