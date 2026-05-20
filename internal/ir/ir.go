@@ -5621,14 +5621,28 @@ func (b *builder) assign(n *ast.Assign) error {
 		}
 		// Phase 1d: same alias-bump as the Var-binding path —
 		// `y = x;` shares an existing array reference, so the
-		// new binding needs its own rc. The matching dec on
-		// the old value-of-y arrives in a later slice (the
-		// parser.lang `nfuncs = into.funcs; nfuncs = nfuncs
-		// .push(...);` loop currently relies on the inc but
-		// orphans the previous nfuncs allocation; bump
-		// allocator absorbs the leak until Phase 3).
+		// new binding needs its own rc.
 		if needsRcIncOnAlias(n.Value, b) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+		}
+		// Phase 1d-vi: dec the old value of `y` before
+		// overwriting it. `y` previously held some array
+		// reference (whose rc was bumped by the var-binding
+		// site that filled it); the reassignment ends that
+		// binding's ownership, so the dec balances the prior
+		// inc. Without this, every `y = x;` orphans the
+		// previous allocation — Phase 1's bump allocator
+		// absorbs the leak, but Phase 2's mutate-or-copy
+		// rc check needs accurate counts.
+		//
+		// Gating on `*ast.ArrayType` matches the inc side
+		// (`needsRcIncOnAlias`). Phase 1e widens to strings
+		// / structs / enums / closures together with their
+		// matching inc sites.
+		if isArrayTypeOfLocal(t.Name, b) {
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
 		}
 		// Tee semantics: leave a copy on the stack for callers that
 		// use the assignment as an expression. Plain ExprStmts drop it
@@ -5804,6 +5818,31 @@ func (b *builder) assign(n *ast.Assign) error {
 // Calls, literals, push results, slice / map operations etc.
 // all yield fresh values with rc=1 already initialised by their
 // allocator path, so they're explicitly excluded.
+// isArrayTypeOfLocal reports whether the local named `name`
+// in the current function has an array type. Used by the
+// Phase 1d-vi dec-on-overwrite emission in `b.assign`. Looks
+// in the function's parameter list first (params share the
+// slot map with declared locals), then the declared locals.
+// Returns false on misses so callers stay conservative — a
+// missing slot means no inc was emitted to balance, and a
+// missing dec is preferable to a spurious one on a non-
+// pointer slot.
+func isArrayTypeOfLocal(name string, b *builder) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			_, isArr := p.Type.(ast.ArrayType)
+			return isArr
+		}
+	}
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			_, isArr := v.Type.(ast.ArrayType)
+			return isArr
+		}
+	}
+	return false
+}
+
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	switch e.(type) {
 	case *ast.Ident, *ast.FieldAccess, *ast.Index:

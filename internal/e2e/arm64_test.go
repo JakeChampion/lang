@@ -12658,6 +12658,29 @@ function main(): i32 {
 	}
 }
 
+// Phase 1d-vi: reassigning an existing array variable dec's
+// the OLD value it held before the new value lands. Three
+// fresh arrays + two reassignments to the same slot let us
+// observe the sequence:
+//   arr1 = arr2 → arr2's rc 1→2; original arr1's rc 1→0
+//   arr1 = arr3 → arr3's rc 1→2; arr2 (= old arr1) rc 2→1
+// Mid-function read of arr2 sees rc=1 (post-overwrite dec);
+// read of arr3 sees rc=2 (post-inc). Sum = 3 = 1 + 2.
+func TestArm64RcDecOnOverwrite(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var arr1: u8[] = __alloc_u8(8);
+    var arr2: u8[] = __alloc_u8(8);
+    var arr3: u8[] = __alloc_u8(8);
+    arr1 = arr2;
+    arr1 = arr3;
+    return __rc_get(arr2) + __rc_get(arr3) - 3;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (arr2 rc=1 post-overwrite, arr3 rc=2 post-inc, sum=3)", code)
+	}
+}
+
 // Phase 1d-v: every array local + param is dec'd at
 // function exit. Helper `peek(arr)` returns the live rc of
 // its param mid-body — the param was inc'd by the call site
