@@ -431,6 +431,65 @@ pub function put_type_section_one_func_no_param(buf: u8[], result_valtype: u8): 
     return put_type_section_one_func(buf, no_names, no_valtypes, result_valtype);
 }
 
+// put_type_section_one_resource — emit a component-level type
+// section that defines a single resource type with the given
+// representation valtype and no destructor. Resources are the
+// component-model handle type used pervasively in the HTTP world
+// (incoming-request, outgoing-response, fields, …); the rep
+// valtype is the core wasm representation (typically i32 for
+// pointer-shaped handles).
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x3f rep:<valtype> dtor?:<funcidx>
+//                  -- resource (rep + optional destructor)
+//
+// Encoded body for one no-dtor resource:
+//
+//   01           // vec(1) defvaltype entries
+//   3f           // resource form
+//   <rep>        // core valtype byte (e.g. 0x7f for i32)
+//   00           // dtor: absent (0x01 + uleb funcidx if present)
+pub function put_type_section_one_resource(buf: u8[], rep_valtype: u8): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(63u8);                       // resource form (0x3f)
+    body = body.push(rep_valtype);
+    body = body.push(0u8);                        // no destructor
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
+// put_canon_section_resource_drop — emit a canon section
+// containing a single `canon resource.drop` entry. The dropped
+// resource type is given by typeidx. resource.drop is one of
+// three resource operations the canon section supports
+// (resource.new, resource.drop, resource.rep); drop is the one
+// every consumer of a host-supplied resource needs, since failing
+// to drop a resource leaks its host-side state.
+//
+// Spec (Binary.md):
+//   canon ::= ... | 0x03 rt:<typeidx>   -- resource.drop
+//
+// Encoded body:
+//
+//   01           // vec(1) canon entries
+//   03           // canon resource.drop tag
+//   <typeidx>    // uleb
+pub function put_canon_section_resource_drop(buf: u8[], resource_typeidx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(3u8);                        // canon resource.drop
+    body = leb128.uleb_u32(body, resource_typeidx);
+
+    var out: u8[] = buf;
+    out = out.push(section_canon());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_alias_section_core_export_func — emit an alias section
 // containing one entry that surfaces a core function export of a
 // core instance as a top-level core-sort func. After this alias
