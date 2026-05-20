@@ -278,6 +278,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
+	if g.usesRcInc {
+		g.emitRcIncRuntime()
+	}
+	if g.usesRcDec {
+		g.emitRcDecRuntime()
+	}
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
@@ -439,17 +445,21 @@ func (g *generator) emitDataSections() {
 		// Empty u8[] sentinel — __alloc_u8(0) returns this
 		// address instead of allocating a fresh header-only
 		// buffer. 8-byte header matches the new RC layout:
-		//   [data - 8] = rc slot (0; phase 1 will use a static-
-		//                sentinel value to make inc/dec no-op
-		//                on this constant)
+		//   [data - 8] = rc slot, set to 0x80000000 — the
+		//                "static, never touch" sentinel that
+		//                __lang_rc_inc / __lang_rc_dec branch
+		//                on (high bit set ⇒ no-op). Any rc
+		//                value with bit 31 set is treated as
+		//                static, so the helpers don't need to
+		//                special-case this exact address.
 		//   [data - 4] = length (= 0)
 		//   [.LArr_Empty] = data (a single byte for safety)
 		// Kept distinct from .LStr_Empty so the array seam can
 		// evolve independently of the string seam. See
 		// docs/RC-PERCEUS-PLAN.md.
 		g.line(`.align 3`)
-		g.line(`	.4byte 0`) // rc slot (unused in phase 0)
-		g.line(`	.4byte 0`) // length = 0
+		g.line(`	.4byte 0x80000000`) // rc = SENTINEL_STATIC
+		g.line(`	.4byte 0`)          // length = 0
 		g.label(".LArr_Empty")
 		g.line(`	.byte 0`)
 	}
@@ -690,6 +700,54 @@ func (g *generator) emitMemcpyRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__lang_memcpy")
 	g.line(".ltorg")
+}
+
+// emitRcIncRuntime emits `__lang_rc_inc(ptr)` — increment the
+// refcount at `[ptr - 8]`. NULL-safe and sentinel-aware: if
+// the rc word's high bit is set (0x80000000 = "static, never
+// touch"), the helper returns without modifying anything. The
+// only static sentinel today is the shared empty-array
+// (.LArr_Empty); string-literal heads will pick up the same
+// treatment when Phase 1e widens the rc layout to strings.
+// See docs/RC-PERCEUS-PLAN.md "Core operations".
+func (g *generator) emitRcIncRuntime() {
+	g.line("")
+	g.line(".global __lang_rc_inc")
+	g.typeDirective("__lang_rc_inc")
+	g.label("__lang_rc_inc")
+	g.emit("cbz x0, .Lrcinc_ret")
+	g.emit("ldur w1, [x0, #-8]")
+	g.emit("tbnz w1, #31, .Lrcinc_ret")
+	g.emit("add w1, w1, #1")
+	g.emit("stur w1, [x0, #-8]")
+	g.label(".Lrcinc_ret")
+	g.emit("ret")
+	g.sizeDirective("__lang_rc_inc")
+}
+
+// emitRcDecRuntime emits `__lang_rc_dec(ptr)` — decrement the
+// refcount at `[ptr - 8]`. NULL-safe and sentinel-aware (see
+// emitRcIncRuntime). Phase-1 simplification: on rc == 1 the
+// helper still decrements to 0 instead of calling a
+// type-specific drop handler + freelist push. The bump
+// allocator leaks; Phase 3 introduces the real freelist and
+// Phase 1e introduces the drop handlers. Until then, "freeing"
+// just leaves the slot at rc = 0 so accidental re-inc /
+// re-dec stays observable for the leak detector that phase 1
+// testing will rely on.
+func (g *generator) emitRcDecRuntime() {
+	g.line("")
+	g.line(".global __lang_rc_dec")
+	g.typeDirective("__lang_rc_dec")
+	g.label("__lang_rc_dec")
+	g.emit("cbz x0, .Lrcdec_ret")
+	g.emit("ldur w1, [x0, #-8]")
+	g.emit("tbnz w1, #31, .Lrcdec_ret")
+	g.emit("sub w1, w1, #1")
+	g.emit("stur w1, [x0, #-8]")
+	g.label(".Lrcdec_ret")
+	g.emit("ret")
+	g.sizeDirective("__lang_rc_dec")
 }
 
 // emitSliceMakeRuntime emits `__lang_slice_make(data, len)`:
@@ -4052,6 +4110,16 @@ type generator struct {
 	// usesMemset gates emission of the byte-grain
 	// __memset(dst, byte, n) helper the Map clear path uses.
 	usesMemset bool
+	// usesRcInc / usesRcDec gate the refcount inc/dec runtime
+	// helpers. Set when an OpCallDirect with target
+	// "__lang_rc_inc" / "__lang_rc_dec" is reached. The IR
+	// hasn't started emitting them yet (Phase 1c) but the
+	// helpers + sentinel value (`.LArr_Empty`'s rc word =
+	// 0x80000000) are in place so subsequent phases can wire
+	// them in without touching the asm seam again. See
+	// docs/RC-PERCEUS-PLAN.md.
+	usesRcInc bool
+	usesRcDec bool
 	// usesPuts / usesWrite / usesPutchar pull in the stdout
 	// builtins:
 	//   print(s)   → __lang_puts    (string + newline, two write()s)
@@ -6005,6 +6073,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__memcpy":
 			target = "__lang_memcpy"
 			g.usesMemcpy = true
+		case "__lang_rc_inc":
+			g.usesRcInc = true
+		case "__lang_rc_dec":
+			g.usesRcDec = true
 		case "__lang_strcat":
 			g.usesStrcat = true
 			g.usesAlloc = true
