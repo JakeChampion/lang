@@ -426,10 +426,15 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		}
 		// Pre-wrap mode forces the memory section so the WASI
 		// preview-1 adapter's env::memory import is satisfied
-		// during `wasm-tools component new`.
+		// during `wasm-tools component new`. Component-wrap mode
+		// instead opts in to the preview-2 import migration so
+		// the Go-side wrapper can route those imports through
+		// `wasi:cli/exit@0.2.0` etc. without involving the
+		// preview-1 adapter.
 		bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 			ForceMemorySection: wasiAdapter != "",
 			SynthStart:         wasiAdapter != "",
+			Preview2WASI:       componentWrap,
 		})
 		if err != nil {
 			return 1, err
@@ -439,13 +444,25 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				// Wrap the core module as a preview-2 component via
 				// the Go-side encoder — no wasm-tools shell-out, no
 				// adapter. Lifts `main` as a component-level u32-
-				// returning function. Only valid for Lang programs
-				// whose wasmbin output has zero imports (typically
-				// "just returns a value", no I/O).
-				if has, names := coreModuleHasImports(bin); has {
-					return 1, fmt.Errorf("-component-wrap can't wrap a core module with imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter PATH to wrap through wasm-tools.", len(names), strings.Join(names, ", "))
+				// returning function.
+				//
+				// Three branches:
+				//
+				//   - No imports → BuildLiftedExportComponent (simplest).
+				//   - Only preview-2 imports we know how to route →
+				//     WrapWasiImportedWithExport.
+				//   - Anything else (preview-1 imports we haven't
+				//     migrated yet) → error pointing at -wasi-adapter.
+				wasiImports, unknown := classifyPreview2Imports(bin)
+				if len(unknown) > 0 {
+					return 1, fmt.Errorf("-component-wrap can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter PATH to wrap through wasm-tools.", len(unknown), strings.Join(unknown, ", "))
 				}
-				comp := component.BuildLiftedExportComponent(bin, "main", "main", nil, nil, component.CValtypeU32)
+				var comp []byte
+				if len(wasiImports) == 0 {
+					comp = component.BuildLiftedExportComponent(bin, "main", "main", nil, nil, component.CValtypeU32)
+				} else {
+					comp = component.WrapWasiImportedWithExport(bin, wasiImports, "main", "main", nil, nil, component.CValtypeU32)
+				}
 				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 					return 1, err
 				}
@@ -712,6 +729,136 @@ func execUnderQemu(qemu, binPath string, progArgs []string) (int, error) {
 		return cmd.ProcessState.ExitCode(), nil
 	}
 	return 1, err
+}
+
+// preview2ImportSpec describes one preview-2 WASI import the
+// driver knows how to route through `WrapWasiImportedWithExport`.
+// Keyed by (core-module, core-name) the core wasm module declared
+// — i.e. the import-name pair wasmbin emitted under
+// `EmitOptions.Preview2WASI`.
+type preview2ImportSpec struct {
+	interfaceName    string
+	paramNames       []string
+	paramValtypes    []byte
+	coreImportModule string
+}
+
+// knownPreview2Imports is the registry of (core-module, core-name)
+// pairs the driver can map to component-level
+// `component.WasiImport` records. Grows as more preview-2 imports
+// land in wasmbin (see docs/TOOLCHAIN-SELF-HOSTING.md).
+var knownPreview2Imports = map[[2]string]preview2ImportSpec{
+	{"wasi:cli/exit@0.2.0", "exit"}: {
+		interfaceName:    "wasi:cli/exit@0.2.0",
+		paramNames:       []string{"code"},
+		paramValtypes:    []byte{component.CValtypeU32},
+		coreImportModule: "wasi:cli/exit@0.2.0",
+	},
+}
+
+// classifyPreview2Imports walks the core module's import section
+// and bucketises each import:
+//
+//   - wasi: returned as a `component.WasiImport` ready to feed
+//     `WrapWasiImportedWithExport`.
+//   - unknown: the "module.name" string returned so the driver
+//     can surface a useful error pointing at -wasi-adapter.
+func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
+	pairs := coreModuleImportPairs(bin)
+	var wasi []component.WasiImport
+	var unknown []string
+	for _, p := range pairs {
+		spec, ok := knownPreview2Imports[[2]string{p.module, p.name}]
+		if !ok {
+			unknown = append(unknown, p.module+"."+p.name)
+			continue
+		}
+		wasi = append(wasi, component.WasiImport{
+			InterfaceName:    spec.interfaceName,
+			FuncName:         p.name,
+			ParamNames:       spec.paramNames,
+			ParamValtypes:    spec.paramValtypes,
+			CoreImportModule: spec.coreImportModule,
+		})
+	}
+	return wasi, unknown
+}
+
+// coreModuleImport is one (module, name) pair from the import
+// section.
+type coreModuleImport struct{ module, name string }
+
+// coreModuleImportPairs walks a core wasm module's import section
+// and returns each (module, name) pair in declaration order. Bails
+// out silently on malformed input or no import section.
+func coreModuleImportPairs(bin []byte) []coreModuleImport {
+	const preambleLen = 8
+	if len(bin) < preambleLen {
+		return nil
+	}
+	off := preambleLen
+	for off < len(bin) {
+		id := bin[off]
+		off++
+		size, n := readULEB(bin[off:])
+		if n == 0 {
+			return nil
+		}
+		off += n
+		if off+int(size) > len(bin) {
+			return nil
+		}
+		body := bin[off : off+int(size)]
+		off += int(size)
+		if id != 2 {
+			continue
+		}
+		count, m := readULEB(body)
+		if m == 0 {
+			return nil
+		}
+		body = body[m:]
+		var pairs []coreModuleImport
+		for i := uint64(0); i < count && len(body) > 0; i++ {
+			mod, body2 := readName(body)
+			fld, body3 := readName(body2)
+			if len(body3) < 1 {
+				break
+			}
+			kind := body3[0]
+			body3 = body3[1:]
+			switch kind {
+			case 0: // func: typeidx uleb
+				_, ks := readULEB(body3)
+				body3 = body3[ks:]
+			case 1: // table: reftype byte + limits
+				if len(body3) >= 2 {
+					body3 = body3[2:]
+					_, ks := readULEB(body3)
+					body3 = body3[ks:]
+				}
+			case 2: // memory: limits
+				if len(body3) >= 1 {
+					flag := body3[0]
+					body3 = body3[1:]
+					_, ks := readULEB(body3)
+					body3 = body3[ks:]
+					if flag == 1 {
+						_, ks2 := readULEB(body3)
+						body3 = body3[ks2:]
+					}
+				}
+			case 3: // global: valtype byte + mut byte
+				if len(body3) >= 2 {
+					body3 = body3[2:]
+				}
+			}
+			body = body3
+			pairs = append(pairs, coreModuleImport{module: mod, name: fld})
+		}
+		return pairs
+	}
+	return nil
 }
 
 // coreModuleHasImports peeks at a core wasm module's import

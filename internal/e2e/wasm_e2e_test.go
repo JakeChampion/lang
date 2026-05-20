@@ -8944,9 +8944,11 @@ function main(): i32 {
 
 // TestCmdLangComponentWrapRejectsImports confirms `-component-wrap`
 // gives a clear error (instead of silently producing an invalid
-// component) when the source's wasmbin output has WASI imports.
-// `print()` pulls in `wasi_snapshot_preview1.fd_write`, so a
-// program that prints anything triggers this.
+// component) when the source's wasmbin output has WASI imports the
+// driver doesn't know how to route into a preview-2 component yet.
+// `print()` pulls in `wasi_snapshot_preview1.fd_write`, which the
+// preview-2 migration hasn't covered, so the program hits the
+// "unrecognised imports" branch.
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "prints.lang")
@@ -8965,10 +8967,63 @@ func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	cmd.Dir = projectRoot(t)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("expected `lang -component-wrap` to fail on a program with imports, but it succeeded.\noutput:\n%s", out)
+		t.Fatalf("expected `lang -component-wrap` to fail on a program with unrecognised imports, but it succeeded.\noutput:\n%s", out)
 	}
-	if !strings.Contains(string(out), "can't wrap a core module with imports") {
-		t.Errorf("expected import-rejection error message in output, got:\n%s", out)
+	if !strings.Contains(string(out), "unrecognised imports") {
+		t.Errorf("expected unrecognised-imports error message in output, got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "fd_write") {
+		t.Errorf("expected the offending import name (fd_write) in the error, got:\n%s", out)
+	}
+}
+
+// TestCmdLangComponentWrapWrapsExit drives a Lang program that
+// calls exit() through `-component-wrap`. With the proc_exit
+// preview-2 migration shipped, the driver should detect the
+// `wasi:cli/exit@0.2.0::exit` import in the core module and wrap
+// it via `WrapWasiImportedWithExport` instead of erroring out.
+//
+// End-to-end execution under wasmtime is intentionally NOT
+// exercised here — the canonical-ABI signature of
+// `wasi:cli/exit::exit` is `(param result<_, _>)`, not `(param
+// u32)`, so the host linker rejects our current u32 declaration.
+// Result-type encoding is a later slice; for now this test pins
+// the driver routing + structural correctness (wasm-tools
+// validate + the import name appearing in the printed component).
+func TestCmdLangComponentWrapWrapsExit(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "exits.lang")
+	src := []byte(`function main(): i32 {
+    exit(0);
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "exits.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap (exit) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	if !strings.Contains(string(printOut), "wasi:cli/exit@0.2.0") {
+		t.Errorf("expected wasi:cli/exit@0.2.0 import in component, got:\n%s", printOut)
+	}
+	if !strings.Contains(string(printOut), "export \"main\"") {
+		t.Errorf("expected main export in component, got:\n%s", printOut)
 	}
 }
 
