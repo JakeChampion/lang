@@ -47,6 +47,10 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		OpAnd, OpOr, OpXor,
 		OpShl, OpShr,
 		OpEq, OpNe, OpLt, OpLe, OpGt, OpGe:
+	case OpFAdd, OpFSub, OpFMul, OpFDiv,
+		OpFEq, OpFNe, OpFLt, OpFLe, OpFGt, OpFGe:
+		tryFoldFloat(op, defs)
+		return
 	case OpNeg:
 		if len(op.Args) != 1 {
 			return
@@ -56,6 +60,16 @@ func tryFold(op *Op, defs map[int32]*Op) {
 			return
 		}
 		rewriteInt(op, -v)
+		return
+	case OpFNeg:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constFloat(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteFloat(op, -v)
 		return
 	case OpNot:
 		if len(op.Args) != 1 {
@@ -156,6 +170,67 @@ func constBool(v Value, defs map[int32]*Op) (bool, bool) {
 		return false, false
 	}
 	return def.Imm != 0, true
+}
+
+// constFloat is the float analogue of constInt — returns the
+// def's F64 if `v` is defined by an OpConstFloat, else false.
+func constFloat(v Value, defs map[int32]*Op) (float64, bool) {
+	if !v.IsValid() {
+		return 0, false
+	}
+	def, ok := defs[v.ID]
+	if !ok {
+		return 0, false
+	}
+	if def.Kind != OpConstFloat {
+		return 0, false
+	}
+	return def.F64, true
+}
+
+// tryFoldFloat handles the binary float ops. Unlike integer
+// fold, no need to gate on rhs == 0 for FDiv — IEEE-754
+// division by zero is well-defined (produces ±Inf or NaN)
+// so the runtime trap question doesn't apply.
+func tryFoldFloat(op *Op, defs map[int32]*Op) {
+	if len(op.Args) != 2 {
+		return
+	}
+	lhs, lok := constFloat(op.Args[0], defs)
+	rhs, rok := constFloat(op.Args[1], defs)
+	if !lok || !rok {
+		return
+	}
+	switch op.Kind {
+	case OpFAdd:
+		rewriteFloat(op, lhs+rhs)
+	case OpFSub:
+		rewriteFloat(op, lhs-rhs)
+	case OpFMul:
+		rewriteFloat(op, lhs*rhs)
+	case OpFDiv:
+		rewriteFloat(op, lhs/rhs)
+	case OpFEq:
+		rewriteBool(op, lhs == rhs)
+	case OpFNe:
+		rewriteBool(op, lhs != rhs)
+	case OpFLt:
+		rewriteBool(op, lhs < rhs)
+	case OpFLe:
+		rewriteBool(op, lhs <= rhs)
+	case OpFGt:
+		rewriteBool(op, lhs > rhs)
+	case OpFGe:
+		rewriteBool(op, lhs >= rhs)
+	}
+}
+
+func rewriteFloat(op *Op, v float64) {
+	op.Kind = OpConstFloat
+	op.F64 = v
+	op.Args = nil
+	op.Imm = 0
+	op.Str = ""
 }
 
 func rewriteInt(op *Op, v int64) {

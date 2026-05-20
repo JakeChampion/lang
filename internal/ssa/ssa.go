@@ -96,6 +96,23 @@ const (
 	// lower to csel (arm64), cmov (x86), or select (wasm).
 	OpSelect
 
+	// Float arithmetic — IEEE-754 double (f64). The integer
+	// op set covers i32/i64 via Width metadata; floats get
+	// their own kinds because the operand type is encoded in
+	// the kind rather than in a width sidecar (matches the
+	// wasm + arm64 backends' actual instruction shape).
+	OpFAdd
+	OpFSub
+	OpFMul
+	OpFDiv
+	OpFNeg
+	OpFEq
+	OpFNe
+	OpFLt
+	OpFLe
+	OpFGt
+	OpFGe
+
 	// Comparison — produces a boolean Value.
 	OpEq
 	OpNe
@@ -108,6 +125,7 @@ const (
 	OpConstInt    // Imm carries the value
 	OpConstBool   // Imm == 0 or 1
 	OpConstString // Str carries the value
+	OpConstFloat  // F64 carries the value
 
 	// Function call. `Args[0]` is the callee (a Value of
 	// function type once we grow types; for Phase 1 the
@@ -158,6 +176,30 @@ func (k OpKind) String() string {
 		return "not"
 	case OpSelect:
 		return "select"
+	case OpFAdd:
+		return "fadd"
+	case OpFSub:
+		return "fsub"
+	case OpFMul:
+		return "fmul"
+	case OpFDiv:
+		return "fdiv"
+	case OpFNeg:
+		return "fneg"
+	case OpFEq:
+		return "feq"
+	case OpFNe:
+		return "fne"
+	case OpFLt:
+		return "flt"
+	case OpFLe:
+		return "fle"
+	case OpFGt:
+		return "fgt"
+	case OpFGe:
+		return "fge"
+	case OpConstFloat:
+		return "const_float"
 	case OpEq:
 		return "eq"
 	case OpNe:
@@ -201,8 +243,9 @@ type Op struct {
 
 	// Op-kind-specific immediate fields. Mutually exclusive
 	// in practice — each kind uses at most one.
-	Imm int64  // OpConstInt / OpConstBool
-	Str string // OpConstString / OpCall (callee name)
+	Imm int64   // OpConstInt / OpConstBool
+	F64 float64 // OpConstFloat
+	Str string  // OpConstString / OpCall (callee name)
 }
 
 // TermKind enumerates terminator shapes. Every Block ends
