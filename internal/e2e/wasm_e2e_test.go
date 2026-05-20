@@ -8915,6 +8915,92 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentImportSectionTwoFuncs covers
+// put_import_section_funcs in its multi-entry shape: a single
+// import section with two label-form function imports, each
+// pointing at a different functype in the type section. Confirms
+// imports can be enumerated in a single section the way real WASI
+// worlds need.
+func TestWASMComponentImportSectionTwoFuncs(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    // Two functypes:
+    //   0: () -> u32
+    //   1: (n: u32) -> string
+    var names0: string[] = [];
+    var valtypes0: u8[] = [];
+    var names1: string[] = ["n"];
+    var valtypes1: u8[] = [component.cvaltype_u32()];
+    var names_per: string[][] = [names0, names1];
+    var valtypes_per: u8[][] = [valtypes0, valtypes1];
+    var results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
+
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_funcs(comp, names_per, valtypes_per, results_per);
+
+    // Two imports, one of each type.
+    var imp_names: string[] = ["h0", "h1"];
+    var imp_types: u32[] = [0u32, 1u32];
+    comp = component.put_import_section_funcs(comp, imp_names, imp_types);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"\"h0\"",
+		"\"h1\"",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+	// Both import declarations should appear.
+	if strings.Count(watStr, "(import ") < 2 {
+		t.Errorf("expected at least 2 (import) declarations, got:\n%s", watStr)
+	}
+}
+
 // TestWASMComponentCanonLower covers put_canon_section_lower_no_opts:
 // imports a component-level function and lowers it back to a core-
 // level function. The mirror of canon-lift exercised by

@@ -423,18 +423,59 @@ pub function put_canon_section_lift_no_opts(buf: u8[], core_func_idx: u32, typei
 // `wasi:cli/exit@0.2.0` — use the kind-0x01 "interface name" form
 // and externdesc kind 0x04 (instance type); those land in a later
 // slice once instance-type section support exists.
-pub function put_import_section_one_func(buf: u8[], name: string, typeidx: u32): u8[] {
+// put_import_section_funcs — emit a component-level import section
+// containing N function-typed import entries, all of the label-form
+// importname kind (0x00). Each entry has its own name + typeidx;
+// the two parallel arrays must have equal length.
+//
+// For WASI-style interface imports — the kind 0x01 form, e.g.
+// `wasi:cli/exit@0.2.0` — see the future interface-import slice
+// once instance-type section support exists.
+//
+// Spec (Binary.md):
+//   import     ::= n:<importname> ed:<externdesc>
+//   importname ::= 0x00 <name>   -- label form
+//                | 0x01 <name>   -- interface name form
+//   externdesc ::= 0x00 0x11 i:<u32>  -- core-module type
+//                | 0x01 i:<u32>       -- func type
+//                | 0x02 b:<typebound>  -- type
+//                | 0x03 i:<u32>       -- component type
+//                | 0x04 i:<u32>       -- instance type
+//                | 0x05 i:<u32>       -- value type
+//
+// Encoded body for N label-form func imports:
+//
+//   <N:uleb>            // vec(N) imports
+//   (00 <name> 01 <typeidx>)*  // N entries, each: kind label +
+//                              //   uleb-prefixed name + externdesc
+//                              //   func + typeidx uleb
+pub function put_import_section_funcs(buf: u8[], names: string[], typeidxs: u32[]): u8[] {
     var body: u8[] = [];
-    body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(0u8);                       // importname kind = label
-    body = encode.put_name(body, name);
-    body = body.push(1u8);                       // externdesc: func type
-    body = leb128.uleb_u32(body, typeidx);
+    var n: i32 = names.len();
+    body = leb128.uleb_u32(body, n as u32);      // vec(N) imports
+    var i: i32 = 0;
+    while (i < n) {
+        body = body.push(0u8);                   // importname kind = label
+        body = encode.put_name(body, names[i]);
+        body = body.push(1u8);                   // externdesc kind = func type
+        body = leb128.uleb_u32(body, typeidxs[i]);
+        i = i + 1;
+    }
 
     var out: u8[] = buf;
     out = out.push(section_import());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
+}
+
+// put_import_section_one_func — convenience wrapper over
+// put_import_section_funcs for the single-import case. Existing
+// call sites in the e2e tests use this; new multi-import code
+// should reach for put_import_section_funcs directly.
+pub function put_import_section_one_func(buf: u8[], name: string, typeidx: u32): u8[] {
+    var names: string[] = [name];
+    var typeidxs: u32[] = [typeidx];
+    return put_import_section_funcs(buf, names, typeidxs);
 }
 
 // put_canon_section_lower_no_opts — emit a canon section containing
