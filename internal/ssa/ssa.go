@@ -64,12 +64,15 @@ type OpKind int
 const (
 	OpInvalid OpKind = iota
 
-	// Arithmetic — integer.
+	// Arithmetic — integer. Signed-by-default; the U variants
+	// (DivU, RemU) interpret operands as unsigned int64.
 	OpAdd
 	OpSub
 	OpMul
 	OpDiv
+	OpDivU
 	OpRem
+	OpRemU
 
 	// Bitwise — integer (i32 / i64).
 	OpAnd
@@ -77,11 +80,13 @@ const (
 	OpXor
 
 	// Shift — integer. Shl is logical left; Shr is arithmetic
-	// (sign-preserving) right. Shift count comes from Args[1];
-	// out-of-range counts (rhs < 0 or rhs >= 64) are left
-	// unfolded — the runtime owns that case.
+	// (sign-preserving) right; ShrU is logical right (fills
+	// with zero). Shift count comes from Args[1]; out-of-range
+	// counts (rhs < 0 or rhs >= 64) are left unfolded — the
+	// runtime owns that case.
 	OpShl
 	OpShr
+	OpShrU
 
 	// Unary arithmetic — integer negation.
 	OpNeg
@@ -113,13 +118,18 @@ const (
 	OpFGt
 	OpFGe
 
-	// Comparison — produces a boolean Value.
+	// Comparison — produces a boolean Value. The U variants
+	// interpret operands as unsigned int64.
 	OpEq
 	OpNe
 	OpLt
+	OpLtU
 	OpLe
+	OpLeU
 	OpGt
+	OpGtU
 	OpGe
+	OpGeU
 
 	// Constants.
 	OpConstInt    // Imm carries the value
@@ -158,8 +168,12 @@ func (k OpKind) String() string {
 		return "mul"
 	case OpDiv:
 		return "div"
+	case OpDivU:
+		return "div_u"
 	case OpRem:
 		return "rem"
+	case OpRemU:
+		return "rem_u"
 	case OpAnd:
 		return "and"
 	case OpOr:
@@ -170,6 +184,8 @@ func (k OpKind) String() string {
 		return "shl"
 	case OpShr:
 		return "shr"
+	case OpShrU:
+		return "shr_u"
 	case OpNeg:
 		return "neg"
 	case OpNot:
@@ -206,12 +222,20 @@ func (k OpKind) String() string {
 		return "ne"
 	case OpLt:
 		return "lt"
+	case OpLtU:
+		return "lt_u"
 	case OpLe:
 		return "le"
+	case OpLeU:
+		return "le_u"
 	case OpGt:
 		return "gt"
+	case OpGtU:
+		return "gt_u"
 	case OpGe:
 		return "ge"
+	case OpGeU:
+		return "ge_u"
 	case OpConstInt:
 		return "const_int"
 	case OpConstBool:

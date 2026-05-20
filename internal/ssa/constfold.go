@@ -43,10 +43,12 @@ func Fold(f *Func) {
 
 func tryFold(op *Op, defs map[int32]*Op) {
 	switch op.Kind {
-	case OpAdd, OpSub, OpMul, OpDiv, OpRem,
+	case OpAdd, OpSub, OpMul, OpDiv, OpDivU, OpRem, OpRemU,
 		OpAnd, OpOr, OpXor,
-		OpShl, OpShr,
-		OpEq, OpNe, OpLt, OpLe, OpGt, OpGe:
+		OpShl, OpShr, OpShrU,
+		OpEq, OpNe,
+		OpLt, OpLtU, OpLe, OpLeU,
+		OpGt, OpGtU, OpGe, OpGeU:
 	case OpFAdd, OpFSub, OpFMul, OpFDiv,
 		OpFEq, OpFNe, OpFLt, OpFLe, OpFGt, OpFGe:
 		tryFoldFloat(op, defs)
@@ -105,11 +107,21 @@ func tryFold(op *Op, defs map[int32]*Op) {
 			return
 		}
 		rewriteInt(op, lhs/rhs)
+	case OpDivU:
+		if rhs == 0 {
+			return
+		}
+		rewriteInt(op, int64(uint64(lhs)/uint64(rhs)))
 	case OpRem:
 		if rhs == 0 {
 			return
 		}
 		rewriteInt(op, lhs%rhs)
+	case OpRemU:
+		if rhs == 0 {
+			return
+		}
+		rewriteInt(op, int64(uint64(lhs)%uint64(rhs)))
 	case OpAnd:
 		rewriteInt(op, lhs&rhs)
 	case OpOr:
@@ -126,18 +138,31 @@ func tryFold(op *Op, defs map[int32]*Op) {
 			return
 		}
 		rewriteInt(op, lhs>>uint(rhs))
+	case OpShrU:
+		if rhs < 0 || rhs >= 64 {
+			return
+		}
+		rewriteInt(op, int64(uint64(lhs)>>uint(rhs)))
 	case OpEq:
 		rewriteBool(op, lhs == rhs)
 	case OpNe:
 		rewriteBool(op, lhs != rhs)
 	case OpLt:
 		rewriteBool(op, lhs < rhs)
+	case OpLtU:
+		rewriteBool(op, uint64(lhs) < uint64(rhs))
 	case OpLe:
 		rewriteBool(op, lhs <= rhs)
+	case OpLeU:
+		rewriteBool(op, uint64(lhs) <= uint64(rhs))
 	case OpGt:
 		rewriteBool(op, lhs > rhs)
+	case OpGtU:
+		rewriteBool(op, uint64(lhs) > uint64(rhs))
 	case OpGe:
 		rewriteBool(op, lhs >= rhs)
+	case OpGeU:
+		rewriteBool(op, uint64(lhs) >= uint64(rhs))
 	}
 }
 
