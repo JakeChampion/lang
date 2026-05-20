@@ -167,6 +167,10 @@ import (
 //     Args = the N captures (per op.I32).
 //   - OpMakeEnv → ssa.OpMakeEnv with Args = the N captures.
 //
+//   Phase 20:
+//   - OpReturnPair → SSA TermRetPair. Pops (tag, payload),
+//     terminates the active block with the pair return.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -788,6 +792,16 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.cur = nil
 	case ir.OpReturnVoid:
 		l.out.SetRet(l.cur, Value{})
+		l.cur = nil
+	case ir.OpReturnPair:
+		// IR stack at the OpReturnPair site: [..., tag, payload].
+		if len(l.stack) < 2 {
+			return fmt.Errorf("ssa.LiftFromIR: OpReturnPair at op[%d] needs (tag, payload)", i)
+		}
+		payload := l.stack[len(l.stack)-1]
+		tag := l.stack[len(l.stack)-2]
+		l.stack = l.stack[:len(l.stack)-2]
+		l.out.SetRetPair(l.cur, tag, payload)
 		l.cur = nil
 	default:
 		return fmt.Errorf("ssa.LiftFromIR: unsupported op %v at index %d", op.Kind, i)

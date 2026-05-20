@@ -376,17 +376,19 @@ const (
 	TermBr               // unconditional branch to one block
 	TermBrIf             // conditional branch — Cond → True or False
 	TermRet              // return; optional Value
+	TermRetPair          // return a (tag, payload) pair — Value + Value2
 )
 
 // Terminator ends a Block. Succs are populated from `Target`
-// (Br), `True` + `False` (BrIf), or empty (Ret).
+// (Br), `True` + `False` (BrIf), or empty (Ret / RetPair).
 type Terminator struct {
 	Kind   TermKind
-	Cond   Value   // BrIf only
-	Target *Block  // Br only
-	True   *Block  // BrIf only
-	False  *Block  // BrIf only
-	Value  Value   // Ret only; zero sentinel for void returns
+	Cond   Value  // BrIf only
+	Target *Block // Br only
+	True   *Block // BrIf only
+	False  *Block // BrIf only
+	Value  Value  // Ret only; zero sentinel for void returns. Also the tag half of RetPair.
+	Value2 Value  // RetPair only — the payload half.
 }
 
 // Block is a basic block — a straight-line sequence of Ops
@@ -546,6 +548,16 @@ func (f *Func) SetBrIf(b *Block, cond Value, tBlock, fBlock *Block) {
 // Value sentinel for void returns.
 func (f *Func) SetRet(b *Block, v Value) {
 	b.Term = Terminator{Kind: TermRet, Value: v}
+}
+
+// SetRetPair sets `b`'s terminator to a pair-return — the
+// (tag, payload) calling convention used for Option/Result
+// returns lowered via OpReturnPair in the legacy IR. Both
+// Values flow out together; backends emit a multi-value
+// return (wasm `(result tag_t payload_t)`, x86-64 SysV
+// rax+rdx, AArch64 x0+x1).
+func (f *Func) SetRetPair(b *Block, tag, payload Value) {
+	b.Term = Terminator{Kind: TermRetPair, Value: tag, Value2: payload}
 }
 
 // appendUnique appends `x` to `s` if it's not already

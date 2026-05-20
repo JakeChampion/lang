@@ -49,6 +49,13 @@ func BuildUses(f *Func) *Uses {
 			if b.Term.Value.IsValid() {
 				u.of[b.Term.Value.ID] = append(u.of[b.Term.Value.ID], UseSite{Block: b})
 			}
+		case TermRetPair:
+			if b.Term.Value.IsValid() {
+				u.of[b.Term.Value.ID] = append(u.of[b.Term.Value.ID], UseSite{Block: b})
+			}
+			if b.Term.Value2.IsValid() {
+				u.of[b.Term.Value2.ID] = append(u.of[b.Term.Value2.ID], UseSite{Block: b})
+			}
 		}
 	}
 	return u

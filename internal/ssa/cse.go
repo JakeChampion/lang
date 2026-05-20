@@ -149,5 +149,6 @@ func applySubstitutions(f *Func, sub map[int32]Value) {
 		}
 		b.Term.Cond = resolveValue(b.Term.Cond, sub)
 		b.Term.Value = resolveValue(b.Term.Value, sub)
+		b.Term.Value2 = resolveValue(b.Term.Value2, sub)
 	}
 }

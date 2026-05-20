@@ -1597,15 +1597,17 @@ func TestLiftCallStackUnderflow(t *testing.T) {
 	}
 }
 
-// TestLiftRejectsUnsupportedOp — OpReturnPair isn't in the
+// TestLiftRejectsUnsupportedOp — OpCallDirectPair isn't in the
 // current subset; lift surfaces a clear error.
 func TestLiftRejectsUnsupportedOp(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
-			{Kind: ir.OpConstI32, I32: 0},
 			{Kind: ir.OpConstI32, I32: 42},
-			{Kind: ir.OpReturnPair}, // not yet supported
+			{Kind: ir.OpCallDirectPair, Str: "foo", I32: 1}, // not yet supported
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpReturnVoid},
 		},
 	}
 
