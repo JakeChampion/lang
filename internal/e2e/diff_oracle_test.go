@@ -62,8 +62,18 @@ const diffOracleSeedCount = 2048
 // agrees across all available backends. Per-seed parent test
 // gathers the interp baseline; per-backend child tests skip when
 // the relevant toolchain is missing.
+//
+// Shard the 2048-seed sweep across N parallel CI jobs by setting
+// `DIFF_ORACLE_SHARD=I/N` (e.g. "2/4" = the third of four shards;
+// 0-indexed). Each shard claims `seed % N == I`. Unset → run
+// every seed, preserving local `go test ./internal/e2e/` behaviour
+// and the pre-shard CI semantics.
 func TestDifferential_LangsmithMain(t *testing.T) {
+	shardIdx, shardCount := diffOracleShard(t)
 	for seed := uint64(0); seed < diffOracleSeedCount; seed++ {
+		if seed%shardCount != shardIdx {
+			continue
+		}
 		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			src := langsmith.GenMain(seed)
@@ -98,6 +108,36 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 			})
 		})
 	}
+}
+
+// diffOracleShard reads the optional `DIFF_ORACLE_SHARD` env var,
+// expected as "I/N" with 0 <= I < N (e.g. "0/4", "3/4"). Returns
+// (I, N) on success and (0, 1) — the full-sweep identity — when
+// the var is unset. Malformed values t.Fatal so a CI misconfig
+// surfaces immediately rather than silently running one shard's
+// worth of seeds across every job.
+func diffOracleShard(t *testing.T) (uint64, uint64) {
+	t.Helper()
+	raw := os.Getenv("DIFF_ORACLE_SHARD")
+	if raw == "" {
+		return 0, 1
+	}
+	parts := strings.SplitN(raw, "/", 2)
+	if len(parts) != 2 {
+		t.Fatalf("DIFF_ORACLE_SHARD=%q: want I/N (e.g. 0/4)", raw)
+	}
+	idx, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		t.Fatalf("DIFF_ORACLE_SHARD=%q: index parse: %v", raw, err)
+	}
+	count, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil {
+		t.Fatalf("DIFF_ORACLE_SHARD=%q: count parse: %v", raw, err)
+	}
+	if count == 0 || idx >= count {
+		t.Fatalf("DIFF_ORACLE_SHARD=%q: require 0 <= I < N and N > 0", raw)
+	}
+	return idx, count
 }
 
 // compileAndRunWasmbinMain runs the in-process parse → check →

@@ -5,10 +5,12 @@ name: Test e2e differential
 # one, compares the interpreter's result against arm64, x86_64,
 # and wasmbin backends. Asserts byte-for-byte agreement.
 #
-# This is the heaviest single e2e test on the suite — ~250s
-# locally, dominant chunk of the legacy `go test ./...` lane.
-# Splitting it out means the other e2e workflows finish in
-# <60s while this one runs in parallel on its own runner.
+# This is the heaviest single e2e test on the suite (~5+ min for
+# the full 2048-seed sweep). Sharded four ways via the
+# `DIFF_ORACLE_SHARD=I/N` env var the test honours: each shard
+# claims `seed % N == I`, so the 2048 seeds split as 512 per
+# shard. Crossed with the per-arch matrix that gives 8 parallel
+# jobs, each finishing in ~90s — vs the previous single 5m+ job.
 #
 # Needs wasmtime because the wasmbin sub-test invokes
 # `wasmtime run --invoke main`. arm64 sub-tests skip on x86 (no
@@ -26,16 +28,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { runner: ubuntu-latest,    host: x86_64  }
-          - { runner: ubuntu-24.04-arm, host: aarch64 }
-    name: test-e2e-differential-${{ matrix.host }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+        host:
+          - { runner: ubuntu-latest,    name: x86_64  }
+          - { runner: ubuntu-24.04-arm, name: aarch64 }
+        # Four shards = 512 seeds each; if the corpus grows past
+        # ~4k seeds, bump this to keep per-shard wall-clock under
+        # the slowest other workflow (currently fuzz-diff at ~95s).
+        shard: [0, 1, 2, 3]
+    name: test-e2e-differential-${{ matrix.host.name }}-shard${{ matrix.shard }}
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-lang
         with:
           wasmtime: "true"
           gotestsum: "true"
-      - run: gotestsum --format pkgname-and-test-fails -- -run '^TestDifferential' ./internal/e2e/
+      - name: go test (differential shard ${{ matrix.shard }}/4)
+        env:
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
+        run: gotestsum --format pkgname-and-test-fails -- -run '^TestDifferential' ./internal/e2e/
