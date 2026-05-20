@@ -109,6 +109,13 @@ import (
 //     postB. TrivialPhis later prunes any phi whose Args reduce
 //     to a single distinct Value.
 //
+//   Phase 12:
+//   - OpLoad / OpStore memory access. The IR's bit-width metadata
+//     is dropped on the lift (SSA OpLoad/OpStore are width-
+//     agnostic for now). OpLoad pushes the result Value; OpStore
+//     emits a side-effect-only Op with no Result. DCE keeps both
+//     since they're impure.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -339,6 +346,22 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			return fmt.Errorf("ssa.LiftFromIR: OpDrop at op[%d] needs 1 operand", i)
 		}
 		l.stack = l.stack[:len(l.stack)-1]
+	case ir.OpLoad:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpLoad at op[%d] needs addr operand", i)
+		}
+		addr := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		v := l.out.AddOp(l.cur, OpLoad, addr)
+		l.stack = append(l.stack, v)
+	case ir.OpStore:
+		if len(l.stack) < 2 {
+			return fmt.Errorf("ssa.LiftFromIR: OpStore at op[%d] needs (addr, value) operands", i)
+		}
+		val := l.stack[len(l.stack)-1]
+		addr := l.stack[len(l.stack)-2]
+		l.stack = l.stack[:len(l.stack)-2]
+		l.out.AddOpNoResult(l.cur, OpStore, addr, val)
 	case ir.OpCallDirect:
 		argc := int(op.I32)
 		if len(l.stack) < argc {
