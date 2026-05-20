@@ -216,3 +216,79 @@ func PutCoreInstanceSectionInstantiateWithInstanceArgs(buf []byte, moduleIdx uin
 	}
 	return wrapSection(buf, SectionCoreInstance, body)
 }
+
+// PutCoreInstanceSectionInstantiate emits a core-instance section
+// with one "instantiate" entry, no args. The simplest core-instance
+// shape — for self-contained core modules with no imports. Mirrors
+// `put_core_instance_section_instantiate`.
+func PutCoreInstanceSectionInstantiate(buf []byte, moduleIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) instances
+	body = append(body, 0x00)      // form: instantiate
+	body = leb128.UlebU64(body, uint64(moduleIdx))
+	body = leb128.UlebU64(body, 0) // no args
+	return wrapSection(buf, SectionCoreInstance, body)
+}
+
+// PutAliasSectionCoreExportFunc emits an alias section that
+// surfaces a core function exported by a core instance as a
+// top-level core-sort func. Mirrors
+// `put_alias_section_core_export_func`.
+func PutAliasSectionCoreExportFunc(buf []byte, coreInstanceIdx uint32, name string) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // sort = core
+	body = append(body, 0x00)      // core-sort = func
+	body = append(body, 0x01)      // target: from-core-instance-export
+	body = leb128.UlebU64(body, uint64(coreInstanceIdx))
+	body = putName(body, name)
+	return wrapSection(buf, SectionAlias, body)
+}
+
+// PutTypeSectionOneFunc emits a component-level type section
+// containing one functype with N params + a single anonymous
+// result. Mirrors `put_type_section_one_func`.
+func PutTypeSectionOneFunc(buf []byte, paramNames []string, paramValtypes []byte, resultValtype byte) []byte {
+	if len(paramNames) != len(paramValtypes) {
+		panic("component: paramNames and paramValtypes must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) types
+	body = append(body, 0x40)      // functype form
+	body = leb128.UlebU64(body, uint64(len(paramNames)))
+	for i := range paramNames {
+		body = putName(body, paramNames[i])
+		body = append(body, paramValtypes[i])
+	}
+	body = append(body, 0x00) // resultlist: single anonymous
+	body = append(body, resultValtype)
+	return wrapSection(buf, SectionType, body)
+}
+
+// PutCanonSectionLiftNoOpts emits a canon section with one
+// canon-lift entry (no opts). Mirrors
+// `put_canon_section_lift_no_opts`.
+func PutCanonSectionLiftNoOpts(buf []byte, coreFuncIdx uint32, typeidx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // canon-lift
+	body = append(body, 0x00)      // function-lift sub-tag
+	body = leb128.UlebU64(body, uint64(coreFuncIdx))
+	body = leb128.UlebU64(body, 0) // no opts
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutExportSectionOneFunc emits a component-level export section
+// with one entry that exposes a component-level function under the
+// given name. Mirrors `put_export_section_one_func`.
+func PutExportSectionOneFunc(buf []byte, name string, funcIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // exportname kind = label
+	body = putName(body, name)
+	body = append(body, 0x01) // sort = func
+	body = leb128.UlebU64(body, uint64(funcIdx))
+	body = append(body, 0x00) // no externdesc
+	return wrapSection(buf, SectionExport, body)
+}
