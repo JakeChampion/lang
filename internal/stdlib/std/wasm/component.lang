@@ -493,6 +493,35 @@ pub function put_type_section_one_list(buf: u8[], elem_valtype: u8): u8[] {
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_option — emit a component-level type
+// section that defines a single `option<inner>` type. Options
+// appear pervasively in WASI worlds — e.g. an HTTP request's
+// `pathname` field, `wasi:cli/environment::get-arguments()`'s
+// implicit absence, any "may or may not be present" return.
+//
+// `inner_valtype` is either a primitive cvaltype byte or a uleb-
+// encoded typeidx (same rules as `put_type_section_one_list`).
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x6b t:<valtype>          -- option
+//
+// Encoded body:
+//
+//   01           // vec(1) defvaltype entries
+//   6b           // option form (0x6b)
+//   <inner>      // valtype byte
+pub function put_type_section_one_option(buf: u8[], inner_valtype: u8): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(107u8);                      // option form (0x6b)
+    body = body.push(inner_valtype);
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
