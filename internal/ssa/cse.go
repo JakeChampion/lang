@@ -77,18 +77,15 @@ func cseEligible(op *Op) bool {
 	if op == nil || !op.Result.IsValid() {
 		return false
 	}
-	switch op.Kind {
-	case OpCall, OpCallIndirect, OpCallPair,
-		OpLoad, OpStore,
-		OpLoad8S, OpLoad8U, OpLoad16S, OpLoad16U,
-		OpStore8, OpStore16,
-		OpLoadF, OpStoreF,
-		OpAlloc,
-		OpPhi, OpInvalid,
-		OpMakeClosure, OpMakeEnv:
+	// Phi + Invalid are pure-ish (no memory effect) but can't be
+	// CSE'd: a phi's meaning depends on the (block + Preds)
+	// context, and Invalid is a sentinel that should never
+	// appear in well-formed SSA.
+	if op.Kind == OpPhi || op.Kind == OpInvalid {
 		return false
 	}
-	return true
+	// Everything else: eligibility tracks purity.
+	return IsPure(op.Kind)
 }
 
 func resolveArgs(args []Value, sub map[int32]Value) []Value {
