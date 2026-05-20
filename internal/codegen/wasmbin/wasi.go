@@ -75,6 +75,17 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_monotonic_now_p2": {
+		// Preview-2: wasi:clocks/monotonic-clock@0.2.0::now()
+		// → instant (u64, lowers to i64 at core wasm). Returns
+		// nanoseconds since some fixed reference, monotonically
+		// non-decreasing. Replaces wasi_clock_time_get for the
+		// __lang_monotonic_ns helper under EmitOptions.Preview2WASI.
+		module:  "wasi:clocks/monotonic-clock@0.2.0",
+		name:    "now",
+		params:  nil,
+		results: []byte{encode.ValtypeI64},
+	},
 	"wasi_environ_sizes_get": {
 		// (envc_ptr i32, env_buf_size_ptr i32) → errno.
 		// Writes the environment-variable count + the total
@@ -528,7 +539,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_clock_time_get")
 	}
 	if helpers.set["__lang_monotonic_ns"] {
-		in.add("wasi_clock_time_get")
+		if opts.Preview2WASI {
+			in.add("wasi_monotonic_now_p2")
+		} else {
+			in.add("wasi_clock_time_get")
+		}
 	}
 	if helpers.set["__lang_env_count"] {
 		in.add("wasi_environ_sizes_get")
@@ -896,7 +911,23 @@ func buildRandomI32Body(idxs map[string]uint32) []byte {
 // body. Each override has the same (params, results) signature as
 // the helper's runtimeHelperSpec — only the bytecode differs.
 var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
-	"__lang_random_i32": buildRandomI32BodyP2,
+	"__lang_random_i32":   buildRandomI32BodyP2,
+	"__lang_monotonic_ns": buildMonotonicNsBodyP2,
+}
+
+// buildMonotonicNsBodyP2 is the preview-2 variant of
+// buildMonotonicNsBody.
+//
+// Signature: () → i64
+//
+// Body just calls `wasi:clocks/monotonic-clock@0.2.0::now()` which
+// returns an `instant` (u64, lowered to i64 at core wasm). No
+// scratch alloc, no clockID arg, no errno.
+func buildMonotonicNsBodyP2(idxs map[string]uint32) []byte {
+	monoNow := idxs["wasi_monotonic_now_p2"]
+	var body []byte
+	body = inst.InstCall(body, monoNow)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
 // buildRandomI32BodyP2 is the preview-2 variant of buildRandomI32Body.
