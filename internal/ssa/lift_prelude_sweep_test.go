@@ -80,6 +80,46 @@ func TestOptimizeAllPreludeFunctions(t *testing.T) {
 	}
 }
 
+// TestOptimizeNonPessimizingOnPrelude — Optimize must never
+// INCREASE the op count of any prelude function. Reducing
+// (or preserving) is the contract; growing it would mean a
+// pass is generating more code than it removes, defeating
+// the optimizer's purpose.
+func TestOptimizeNonPessimizingOnPrelude(t *testing.T) {
+	src := `function main(): i32 { return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	irProg, err := ir.LowerWith(prog, info, 8)
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+
+	for _, fn := range irProg.Funcs {
+		t.Run(fn.Name, func(t *testing.T) {
+			f, err := ssa.LiftFromIR(fn)
+			if err != nil {
+				t.Errorf("LiftFromIR: %v", err)
+				return
+			}
+			before := f.Stats()
+			ssa.Optimize(f)
+			after := f.Stats()
+			if after.Ops > before.Ops {
+				t.Errorf("Optimize INCREASED op count: before=%d after=%d", before.Ops, after.Ops)
+			}
+			if after.Blocks > before.Blocks {
+				t.Errorf("Optimize INCREASED block count: before=%d after=%d", before.Blocks, after.Blocks)
+			}
+		})
+	}
+}
+
 // TestOptimizeIdempotentOnPrelude — Optimize must converge to a
 // fixed point. After one Optimize pass, the function's String()
 // form should be stable across additional Optimize calls. A
