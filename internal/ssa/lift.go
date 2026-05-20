@@ -145,6 +145,16 @@ import (
 //     IR convention: the callee idx is the top of stack at
 //     the OpCallIndirect site (pushed after the args).
 //
+//   Phase 17:
+//   - Option / Result constructors (i32 payload variants):
+//       OpMakeSomeI32 → pop payload; push (const_int 0, payload)
+//       OpMakeNoneI32 → push (const_int 1, const_int 0)
+//       OpMakeOkI32   → pop payload; push (const_int 0, payload)
+//       OpMakeErrI32  → pop payload; push (const_int 1, payload)
+//     These leave 2 values on the operand stack (tag, payload).
+//     OpReturnPair / OpCallDirectPair / OpMatchTag consumers
+//     for the pair shape land in a follow-up.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -477,6 +487,33 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		v := l.out.AddOp(l.cur, OpConstInt)
 		l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
 		l.stack = append(l.stack, v)
+	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
+		// (payload) → (tag=0, payload)
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs payload operand", op.Kind, i)
+		}
+		payload := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		tag := l.out.AddOp(l.cur, OpConstInt)
+		l.cur.Ops[len(l.cur.Ops)-1].Imm = 0
+		l.stack = append(l.stack, tag, payload)
+	case ir.OpMakeErrI32:
+		// (payload) → (tag=1, payload)
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpMakeErrI32 at op[%d] needs payload operand", i)
+		}
+		payload := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		tag := l.out.AddOp(l.cur, OpConstInt)
+		l.cur.Ops[len(l.cur.Ops)-1].Imm = 1
+		l.stack = append(l.stack, tag, payload)
+	case ir.OpMakeNoneI32:
+		// () → (tag=1, payload=0)
+		tag := l.out.AddOp(l.cur, OpConstInt)
+		l.cur.Ops[len(l.cur.Ops)-1].Imm = 1
+		payload := l.out.AddOp(l.cur, OpConstInt)
+		l.cur.Ops[len(l.cur.Ops)-1].Imm = 0
+		l.stack = append(l.stack, tag, payload)
 	case ir.OpIf:
 		switch op.I32 {
 		case ir.BlockTypeVoid,
