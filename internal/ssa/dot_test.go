@@ -103,6 +103,40 @@ func TestDotEmptyName(t *testing.T) {
 	}
 }
 
+// TestDotMarksUnreachable — a block disconnected from Entry
+// gets the red/mistyrose styling. The entry block stays
+// lightblue.
+func TestDotMarksUnreachable(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()  // ID 1 — reachable
+	orphan := f.NewBlock() // ID 2 — never linked
+	f.SetRet(entry, Value{})
+	f.SetRet(orphan, Value{})
+
+	dot := f.ToDot()
+	if !strings.Contains(dot, "block_2 [style=\"filled,dashed\", fillcolor=mistyrose, color=red]") {
+		t.Errorf("DOT missing unreachable styling for orphan; got:\n%s", dot)
+	}
+	if strings.Contains(dot, "block_1 [style=\"filled,dashed\"") {
+		t.Errorf("DOT incorrectly marked entry as unreachable; got:\n%s", dot)
+	}
+}
+
+// TestDotAllReachableNoMistyrose — a healthy function with no
+// orphans renders without any mistyrose styling.
+func TestDotAllReachableNoMistyrose(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	body := f.NewBlock()
+	f.SetBr(entry, body)
+	f.SetRet(body, Value{})
+
+	dot := f.ToDot()
+	if strings.Contains(dot, "mistyrose") {
+		t.Errorf("DOT mistakenly marked a healthy block as unreachable; got:\n%s", dot)
+	}
+}
+
 // TestDotLoopHasBackEdge — loop with header+body emits a
 // back-edge.
 func TestDotLoopHasBackEdge(t *testing.T) {

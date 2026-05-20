@@ -10,6 +10,14 @@ import (
 // edges are labelled with the branch condition where one
 // exists (`true` / `false` for BrIf, blank for Br).
 //
+// Styling:
+//   - Entry block: lightblue (fillcolor).
+//   - Unreachable blocks (not reachable from Entry via the
+//     CFG, e.g. orphans left after FoldBranches before
+//     PruneUnreachable runs): mistyrose (fillcolor) + red
+//     border. Makes the cleanup-needed state visually obvious
+//     in CFG snapshots taken mid-optimisation.
+//
 // Use:
 //
 //	dot -Tsvg f.dot -o f.svg
@@ -32,8 +40,12 @@ func (f *Func) ToDot() string {
 		fmt.Fprintf(&b, "  block_%d [style=filled, fillcolor=lightblue];\n", f.Entry.ID)
 	}
 
+	reach := Reachable(f)
 	for _, blk := range f.Blocks {
 		fmt.Fprintf(&b, "  block_%d [label=%q];\n", blk.ID, dotBlockLabel(blk))
+		if !reach[blk] {
+			fmt.Fprintf(&b, "  block_%d [style=\"filled,dashed\", fillcolor=mistyrose, color=red];\n", blk.ID)
+		}
 	}
 	for _, blk := range f.Blocks {
 		switch blk.Term.Kind {
