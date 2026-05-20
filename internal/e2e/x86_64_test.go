@@ -2900,3 +2900,61 @@ func TestX86_64ArrayPushAliasedCopies(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (aliased push must copy)", code)
 	}
 }
+
+// Mirror of TestArm64ArrayIndexSetInPlaceFastPath. Phase 2b
+// arr[i]=v lowers to __lang_arr_cow_inplace; rc==1 returns
+// arr unchanged.
+func TestX86_64ArrayIndexSetInPlaceFastPath(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var addr_before: usize = xs as usize;
+    xs[1] = 999;
+    var addr_after: usize = xs as usize;
+    if (addr_before != addr_after) { return 1; }
+    if (xs[1] != 999) { return 2; }
+    if (xs[0] != 10) { return 3; }
+    if (xs[2] != 30) { return 4; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (arr[i]=v in-place when rc==1)", code)
+	}
+}
+
+// Mirror of TestArm64ArrayIndexSetAliasedCopies.
+func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var ys = xs;
+    ys[0] = 999;
+    if (xs[0] != 10) { return 1; }
+    if (xs[1] != 20) { return 2; }
+    if (xs[2] != 30) { return 3; }
+    if (ys[0] != 999) { return 4; }
+    if (ys[1] != 20) { return 5; }
+    if (ys[2] != 30) { return 6; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased arr[i]=v must copy)", code)
+	}
+}
+
+// Mirror of TestArm64ArrayIndexSetU8Stride. The int_to_string
+// scratch[i] = digit pattern hit the wasm raw-_start path's
+// __lang_rc_dec low-address guard before the helper internalised
+// rc bookkeeping; covers the u8 stride here on x86-64 for
+// regression parity.
+func TestX86_64ArrayIndexSetU8Stride(t *testing.T) {
+	src := `function main(): i32 {
+    var buf: u8[] = __alloc_u8(4);
+    buf[0] = 65 as u8;
+    buf[1] = 66 as u8;
+    buf[2] = 67 as u8;
+    buf[3] = 68 as u8;
+    return (buf[0] as i32) + (buf[1] as i32) + (buf[2] as i32) + (buf[3] as i32) - 266;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (u8 arr[i]=v preserves all writes)", code)
+	}
+}
