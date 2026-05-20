@@ -1296,6 +1296,8 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("add x0, x19, #8")
 	g.emit("bl __lang_alloc")
 	g.emit("add x0, x0, #8")  // x0 = data ptr (past 8-byte header)
+	g.emit("mov w1, #1")
+	g.emit("stur w1, [x0, #-8]") // rc = 1 (phase 1 of RC rollout)
 	g.emitArrayLenStore("w19", "x0")
 	g.label(".Lallocu8_ret")
 	g.emit("ldr x19, [sp, #16]")
@@ -2327,6 +2329,8 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("add x0, x0, #8")
 	g.emit("bl __lang_alloc")
 	g.emit("add x21, x0, #8")     // x21 = result data pointer (8-aligned)
+	g.emit("mov w9, #1")
+	g.emit("stur w9, [x21, #-8]") // rc = 1 (phase 1 of RC rollout)
 	g.emit("stur w19, [x21, #-4]") // length prefix = argc
 	// for (i = 0; i < argc; i++)
 	g.emit("mov x22, #0") // x22 = i
@@ -2416,6 +2420,8 @@ func (g *generator) emitArgsRuntime2W() {
 	g.emit("add x0, x0, #16")  // + header
 	g.emit("bl __lang_alloc")
 	g.emit("add x21, x0, #16") // x21 = data pointer (past header)
+	g.emit("mov w9, #1")
+	g.emit("stur w9, [x21, #-8]") // rc = 1 (phase 1 of RC rollout)
 	g.emit("stur w19, [x21, #-4]") // length prefix = argc
 	g.emit("mov x22, #0")      // loop counter i
 	g.label(".Largs2w_loop")

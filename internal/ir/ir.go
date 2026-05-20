@@ -3634,6 +3634,18 @@ func (b *builder) expr(e ast.Expr) error {
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__arr_lit_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+		// Refcount slot at base + headerBytes - 8 (so callers
+		// can reach it via `data - 8`). Initialise to 1 — this
+		// array is uniquely owned by whoever's catching the
+		// result. Phase 1b will introduce the inc/dec helpers
+		// that actually read this slot.
+		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		if headerBytes != 8 {
+			b.emit(Op{Kind: OpConstI32, I32: headerBytes - 8})
+			b.emit(Op{Kind: OpAdd})
+		}
+		b.emit(Op{Kind: OpConstI32, I32: 1})
+		b.emit(Op{Kind: OpStore})
 		// Length prefix at base + headerBytes - 4 (so callers
 		// can always reach it via `data - 4`).
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
@@ -6348,6 +6360,17 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	hdrSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_hdr_%d", hdrSlot)] = hdrSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: hdrSlot})
+
+	// *(hdr + headerBytes - 8) = 1 — refcount slot. New array
+	// is uniquely owned by the catching variable. See phase 1
+	// of docs/RC-PERCEUS-PLAN.md.
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	if headerBytes != 8 {
+		b.emit(Op{Kind: OpConstI32, I32: headerBytes - 8})
+		b.emit(Op{Kind: OpAdd})
+	}
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
 
 	// *(hdr + headerBytes - 4) = oldLen + 1 — length prefix
 	// always lives at `data - 4` regardless of padding.

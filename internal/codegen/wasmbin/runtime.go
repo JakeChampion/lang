@@ -1494,10 +1494,11 @@ func buildAliasAllocBody(helperIdxs map[string]uint32) []byte {
 
 // buildAllocU8Body — (n) → i32. Allocates a length-prefixed
 // u8[] of length n. Layout: 8-byte header — refcount slot at
-// `data_ptr - 8` (reserved for phase 1, uninitialised today),
-// length at `data_ptr - 4`, n bytes of payload at data_ptr.
+// `data_ptr - 8`, length at `data_ptr - 4`, n bytes of payload
+// at data_ptr.
 //
 //	base = __lang_alloc(n + 8) + 8
+//	mem[base - 8] = 1   // rc
 //	mem[base - 4] = n
 //	return base
 //
@@ -1517,7 +1518,13 @@ func buildAllocU8Body(helperIdxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalTee(body, 1) // $base
+	// mem[$base - 8] = 1  (rc = 1, phase 1 of RC rollout)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
 	// mem[$base - 4] = n  (length prefix)
+	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Sub(body)
 	body = inst.InstLocalGet(body, 0)

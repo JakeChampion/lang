@@ -3332,10 +3332,11 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("mov r12, [rip + __lang_argv]")
 	// alloc(argc * 8 + 8) — 8-byte header keeps element 0
 	// at an 8-aligned offset; length prefix lives at
-	// data-4, padding fills data-8..data-4.
+	// data-4, refcount slot at data-8 (phase 1 of RC rollout).
 	g.emit("lea rdi, [rbx * 8 + 8]")
 	g.emit("call __lang_alloc")
 	g.emit("lea r14, [rax + 8]")  // r14 = data ptr (8-aligned)
+	g.emit("mov dword ptr [r14 - 8], 1") // rc = 1
 	// Outer string[] container length via the array seam (the
 	// per-element string stores in the loop below use
 	// emitStrLenStore).
@@ -3575,6 +3576,7 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("lea edi, [rbx + 8]")
 	g.emit("call __lang_alloc")
 	g.emit("lea rax, [rax + 8]") // rax = data ptr (past 8-byte header)
+	g.emit("mov dword ptr [rax - 8], 1") // rc = 1 (phase 1 of RC rollout)
 	g.emitArrayLenStore("ebx", "rax")
 	g.label(".Lallocu8_ret")
 	g.emit("add rsp, 8")
