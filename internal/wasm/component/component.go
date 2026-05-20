@@ -335,25 +335,25 @@ func PutExportSectionOneFunc(buf []byte, name string, funcIdx uint32) []byte {
 // PutTypeSectionResultEmptyAndUnitFuncReturningResult emits a type
 // section with two consecutive types:
 //
-//   - type 0: result<_, _> (no payloads on either arm)
-//   - type 1: func() -> result<typeidx 0>
+//   - global typeidx `resultTypeidx`:        result<_, _> (no payloads)
+//   - global typeidx `resultTypeidx + 1`:    func() -> result<resultTypeidx>
 //
-// This is the type-section shape `wasi:cli/run::run` (and any
-// "no-arg returns result" component-level function) needs: the
-// result defvaltype first so the functype can reference it as
-// inner-typeidx 0. The functype's resultlist uses the
-// single-anonymous-result form (tag 0x00) with valtype byte 0x00
-// — read by the binary parser as "typeidx 0", pointing at the
-// result type declared one slot earlier.
-func PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf []byte) []byte {
+// `resultTypeidx` is the count of types declared in earlier type
+// sections — i.e. the global index the first of the two new types
+// lands at. The functype's single-anonymous resultlist uses an
+// uleb-encoded typeidx pointing at the result type.
+//
+// Pair with PutCanonSectionLiftNoOpts(coreFuncIdx, resultTypeidx+1)
+// to lift a core `() -> i32` to the wasi:cli/run::run shape.
+func PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf []byte, resultTypeidx uint32) []byte {
 	body := []byte{
 		0x02,             // vec(2) type entries
-		0x6a, 0x00, 0x00, // type 0: result<_, _>
-		0x40,             // type 1: functype form
+		0x6a, 0x00, 0x00, // first: result<_, _>
+		0x40,             // second: functype form
 		0x00,             // vec(0) params
 		0x00,             // resultlist: single anonymous
-		0x00,             // valtype = typeidx 0 (the result type)
 	}
+	body = leb128.UlebU64(body, uint64(resultTypeidx)) // valtype = typeidx of the result type
 	return wrapSection(buf, SectionType, body)
 }
 

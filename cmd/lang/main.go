@@ -476,12 +476,23 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			if componentWrapCli {
 				// Wrap as a wasi:cli/run-exporting component so the
 				// produced binary runs under plain `wasmtime run` (no
-				// --invoke). Currently no-imports only — the
-				// import-bearing variant is a future slice.
-				if has, names := coreModuleHasImports(bin); has {
-					return 1, fmt.Errorf("-component-wrap-cli doesn't support core modules with imports yet (saw %d: %s). Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(names), strings.Join(names, ", "))
+				// --invoke). Three branches:
+				//
+				//   - No imports → BuildWasiCliRunComponent.
+				//   - Only known preview-2 imports →
+				//     WrapWasiImportedAsCliRun.
+				//   - Anything else → error pointing at
+				//     -component-wrap / -wasi-adapter.
+				wasiImports, unknown := classifyPreview2Imports(bin)
+				if len(unknown) > 0 {
+					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
 				}
-				comp := component.BuildWasiCliRunComponent(bin, "main")
+				var comp []byte
+				if len(wasiImports) == 0 {
+					comp = component.BuildWasiCliRunComponent(bin, "main")
+				} else {
+					comp = component.WrapWasiImportedAsCliRun(bin, wasiImports, "main")
+				}
 				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 					return 1, err
 				}
