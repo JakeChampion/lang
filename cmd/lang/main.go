@@ -445,24 +445,45 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		return 0, nil
 	}
 
-	if target == "wasm" || target == "wasi-http" {
-		opts := wasm.EmitOptions{}
-		world := "lang"
-		if target == "wasi-http" {
-			opts.HttpHandler = true
-			world = "http"
+	if target == "wasm" {
+		// `wasm` (CLI component) routes through wasmbin — the
+		// WAT path's user-facing surface for this target is done.
+		// `wasi-http` stays on WAT for the moment (the wasmbin
+		// HttpHandler wrapper handles canonical-ABI marshalling
+		// but a runtime issue under wasmtime serve is still
+		// outstanding — see TestWasmPreview2HttpHandler).
+		if outPath == "" {
+			return 1, fmt.Errorf("-target wasm requires -o OUTPUT (the component is a binary)")
 		}
+		if wasiAdapter == "" {
+			return 1, fmt.Errorf("-target wasm requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)")
+		}
+		bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+			ForceMemorySection: true,
+			SynthStart:         true,
+		})
+		if err != nil {
+			return 1, err
+		}
+		if err := emitPreview2ComponentFromCoreBytes(bin, outPath, wasiAdapter, "lang"); err != nil {
+			return 1, err
+		}
+		return 0, nil
+	}
+
+	if target == "wasi-http" {
+		opts := wasm.EmitOptions{HttpHandler: true}
 		text, err := wasm.EmitWithOptions(prog, info, opts)
 		if err != nil {
 			return 1, err
 		}
 		if outPath == "" {
-			return 1, fmt.Errorf("-target %s requires -o OUTPUT (the component is a binary)", target)
+			return 1, fmt.Errorf("-target wasi-http requires -o OUTPUT (the component is a binary)")
 		}
 		if wasiAdapter == "" {
-			return 1, fmt.Errorf("-target %s requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)", target)
+			return 1, fmt.Errorf("-target wasi-http requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)")
 		}
-		if err := emitPreview2ComponentWorld(text, outPath, wasiAdapter, world); err != nil {
+		if err := emitPreview2ComponentWorld(text, outPath, wasiAdapter, "http"); err != nil {
 			return 1, err
 		}
 		return 0, nil
@@ -637,21 +658,15 @@ func link(asm, outPath, cc string) error {
 }
 
 // emitPreview2ComponentWorld wraps the WAT in a Component Model
-// component matching the named WIT world (currently `lang` for the
-// CLI target or `http` for the HTTP-handler target). Pipeline:
+// component matching the named WIT world (currently `http` for
+// the HTTP-handler target — the `wasm` CLI target moved to
+// wasmbin's binary path). Pipeline:
 //  1. write WAT to a temp file;
 //  2. `wasm-tools parse` lowers it to a binary core module;
 //  3. internal/wasm/componenttype.Embed appends the `component-type`
-//     custom section for the world — replacing the `wasm-tools
-//     component embed` shell-out. The payload bytes are precomputed
-//     per world (see internal/wasm/componenttype/doc.go) so we don't
-//     need to parse WIT at runtime.
+//     custom section for the world;
 //  4. `wasm-tools component new --adapt wasi_snapshot_preview1=ADAPTER`
-//     composes the module with the adapter; preview-1 imports
-//     (args/env/proc_exit) get translated to preview-2 by the
-//     adapter, native preview-2 imports flow through unchanged.
-//     The result satisfies any preview-2 host (`wasmtime run`,
-//     `wasmtime serve`, edge-function runtimes, etc.).
+//     composes the module with the adapter.
 func emitPreview2ComponentWorld(wat, outPath, adapterPath, world string) error {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		return fmt.Errorf("wasm-tools not found on PATH (install from https://github.com/bytecodealliance/wasm-tools): %w", err)
@@ -677,8 +692,7 @@ func emitPreview2ComponentWorld(wat, outPath, adapterPath, world string) error {
 	return emitPreview2ComponentFromCoreBytes(coreBytes, outPath, adapterPath, world)
 }
 
-// emitPreview2ComponentFromCoreBytes is the WAT-skipping sibling of
-// emitPreview2ComponentWorld: it takes already-binary core wasm
+// emitPreview2ComponentFromCoreBytes takes already-binary core wasm
 // bytes (e.g. from wasmbin.Build) and runs steps 3+4 of the
 // pipeline. wasm-tools parse is unnecessary because the input is
 // already binary. wasm-tools component new is still required for

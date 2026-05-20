@@ -153,17 +153,26 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		// __lang_arena_save / restore for per-request arena
 		// cleanup, __bytes_to_lang_string for the host-bytes →
 		// lang-string round-trip, and emitStrNormalize for the
-		// outgoing body SSO normalize. cabi_realloc is the
-		// canonical-ABI allocator the host calls back for
-		// list<u8> return-value materialisation.
+		// outgoing body SSO normalize.
 		helpers.add("__lang_alloc")
 		helpers.add("__lang_str_len")
 		helpers.add("__lang_str_byte")
 		helpers.add("__lang_arena_save")
 		helpers.add("__lang_arena_restore")
 		helpers.add("__bytes_to_lang_string")
-		helpers.add("cabi_realloc")
 		helpers.add("__http_entry")
+	}
+	// cabi_realloc is the canonical-ABI allocator the host
+	// calls back into for `list<u8>` / variable-size return
+	// materialisation. Preview-2 wrapping (signalled by
+	// ForceMemorySection) needs it unconditionally — every
+	// component that imports a variable-size canonical-ABI
+	// return (wasi:sockets/tcp.accept, wasi:io/streams
+	// blocking-read, wasi:http response bodies, etc.) has the
+	// host write through it. Mirrors the WAT path's
+	// always-export shape.
+	if opts.ForceMemorySection {
+		helpers.add("cabi_realloc")
 	}
 	importNeeds := scanImports(prog, helpers)
 
@@ -474,22 +483,22 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.CodeBodies = append(m.CodeBodies, spec.body(helperIdxs))
 	}
 
-	// HttpHandler-specific exports. Helpers are private by default
-	// (the loop above doesn't add export entries for them), but the
-	// wasi:http target needs `__http_entry` surfaced under the
-	// canonical component-model name + `cabi_realloc` as a top-
-	// level export so the host can call it for list<u8>
-	// realloc-style returns.
-	//
-	// The export name string is special-cased here rather than in
-	// runtimeHelperSpecs because that table doesn't carry export
-	// metadata; mirrors how SynthStart sets up `_start` below.
+	// HttpHandler-specific export: `__http_entry` surfaced under
+	// the canonical component-model name. Helpers are private by
+	// default (the loop above doesn't add export entries for them).
+	// Mirrors how SynthStart sets up `_start` below.
 	if opts.HttpHandler {
 		if idx, ok := funcIdx["__http_entry"]; ok {
 			m.ExportNames = append(m.ExportNames, "wasi:http/incoming-handler@0.2.0#handle")
 			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
 			m.ExportIdxs = append(m.ExportIdxs, idx)
 		}
+	}
+	// cabi_realloc as a top-level export — see the helpers.add
+	// note above. Any preview-2 component the host wraps wants
+	// to call back for variable-size return materialisation, so
+	// gate on ForceMemorySection just like the helper add does.
+	if opts.ForceMemorySection {
 		if idx, ok := funcIdx["cabi_realloc"]; ok {
 			m.ExportNames = append(m.ExportNames, "cabi_realloc")
 			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
@@ -617,6 +626,24 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		}
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, startTIdx)
 		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body))
+		m.ExportNames = append(m.ExportNames, "_start")
+		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+		m.ExportIdxs = append(m.ExportIdxs, startFuncIdx)
+	} else if opts.HttpHandler {
+		// Proxy components don't run a `main()` — `wasmtime
+		// serve` invokes the exported `wasi:http/incoming-
+		// handler.handle` per request — but the wasi-preview1-
+		// component-adapter (`command.wasm`) still wires its
+		// own `wasi:cli/run.run` to a `_start` core export, so
+		// we emit an empty stub. Switching to the dedicated
+		// `proxy.wasm` adapter would drop this requirement;
+		// the project doesn't ship that yet. Mirrors the WAT
+		// path's empty-stub branch (wasm_ir.go ~302).
+		startTIdx := addType(nil, nil) // () -> ()
+		startFuncIdx := nextFuncIdx
+		nextFuncIdx++
+		m.FunctionTypeidxs = append(m.FunctionTypeidxs, startTIdx)
+		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), nil))
 		m.ExportNames = append(m.ExportNames, "_start")
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
 		m.ExportIdxs = append(m.ExportIdxs, startFuncIdx)
