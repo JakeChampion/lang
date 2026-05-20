@@ -1401,6 +1401,98 @@ func TestLiftLoopRejectsNonVoid(t *testing.T) {
 	}
 }
 
+// TestLiftLoad — OpLoad pops addr and pushes the result.
+func TestLiftLoad(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "addr"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0}, // addr
+			{Kind: ir.OpLoad},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if op := out.Blocks[0].Ops[0]; op.Kind != OpLoad {
+		t.Errorf("Op = %v, want OpLoad", op.Kind)
+	}
+}
+
+// TestLiftStore — OpStore takes (addr, val), no result.
+func TestLiftStore(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "addr"}, {Name: "val"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0}, // addr
+			{Kind: ir.OpLoadLocal, I32: 1}, // val
+			{Kind: ir.OpStore},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if op := out.Blocks[0].Ops[0]; op.Kind != OpStore {
+		t.Errorf("Op = %v, want OpStore", op.Kind)
+	}
+	if out.Blocks[0].Ops[0].Result.IsValid() {
+		t.Errorf("OpStore should have no Result; got %v", out.Blocks[0].Ops[0].Result)
+	}
+}
+
+// TestLiftLoadStoreSurviveDCE — Load + Store should survive
+// DCE even though the load's result is unused (memory effects
+// matter).
+func TestLiftLoadStoreSurviveDCE(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "addr"}, {Name: "val"}},
+		Ops: []ir.Op{
+			// dead load
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoad},
+			{Kind: ir.OpDrop},
+			// store
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpStore},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	Optimize(out)
+	// Both Load and Store survive Optimize/DCE.
+	var loadCount, storeCount int
+	for _, op := range out.Blocks[0].Ops {
+		if op.Kind == OpLoad {
+			loadCount++
+		}
+		if op.Kind == OpStore {
+			storeCount++
+		}
+	}
+	if loadCount != 1 {
+		t.Errorf("Load count = %d, want 1", loadCount)
+	}
+	if storeCount != 1 {
+		t.Errorf("Store count = %d, want 1", storeCount)
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
