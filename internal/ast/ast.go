@@ -5,7 +5,10 @@
 // with a type switch but cannot add new variants.
 package ast
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 // Position is a 1-based line/column pair used for diagnostics.
 type Position struct {
@@ -371,9 +374,32 @@ func UseTwoWordStrings(ptrW int) bool {
 // TwoWordOverride opts a non-wasm target (ptrW != 4) into the
 // two-word string ABI. Used by the arm64 native flip during
 // the in-progress migration (`docs/SSO-NATIVE-FLIP-STATUS.md`).
-// Set to true before `ir.LowerWith` runs; reset after. Single-
-// threaded compiler — no race concern.
+// Set to true before `ir.LowerWith` runs; reset after.
+//
+// Concurrent codegen — e.g. `TestDifferential_LangsmithMain`'s
+// per-seed parallelism — must serialise its arm64 + x86_64
+// emit calls via `CodegenMu` below. Reads from this flag
+// during a backend's emit body are NOT lock-protected; the
+// design assumes only one toggling backend runs at a time,
+// which `CodegenMu` enforces.
 var TwoWordOverride bool
+
+// CodegenMu serialises native codegen calls that read or
+// write `TwoWordOverride`. arm64.Emit toggles the flag during
+// its Emit body; x86_64.Emit reads it via `ir.LowerWith`.
+// Before this mutex existed, parallel arm64 emits could
+// stack their toggles such that one goroutine's defer
+// restored the flag to `false` while another goroutine was
+// still mid-emit — producing single-word `string_from_bytes`
+// inside an arm64 program that otherwise expects two-word
+// strings. Symptom: SIGSEGV on the first f-string / string
+// concat that landed in the same diff-oracle batch as
+// another seed.
+//
+// wasmbin doesn't acquire this lock: it always passes ptrW=4
+// to `ir.LowerWith`, and `UseTwoWordStrings(4)` short-
+// circuits to `true` without reading `TwoWordOverride`.
+var CodegenMu sync.Mutex
 
 // IsPointerType reports whether values of `t` are represented
 // as heap pointers in the compiled code — so the slot holding
