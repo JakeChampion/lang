@@ -1,25 +1,24 @@
 package ssa
 
-// Optimize runs the Phase 2 peephole passes — Fold, Simplify,
-// FoldBranches, PruneUnreachable, TrivialPhis, CSE, DCE — in
-// that order, iterating until the function's printed form
-// stops changing. Returns the iteration count.
+// Optimize runs the Phase 2 peephole passes in order,
+// iterating until the function's printed form stops changing.
+// Returns the iteration count.
 //
 // The order matters:
 //  1. Fold collapses constant arithmetic + comparisons.
 //  2. Simplify rewrites operand positions through algebraic
 //     identities (`x + 0` → `x`).
-//  3. FoldBranches collapses BrIf-on-const into Br, dropping
+//  3. Canonicalize sorts commutative-op args so `a + b` and
+//     `b + a` look identical to CSE.
+//  4. FoldBranches collapses BrIf-on-const into Br, dropping
 //     phi args for un-taken edges.
-//  4. PruneUnreachable drops blocks that became unreachable
-//     after FoldBranches severed their inbound edges, and
-//     cleans up their dangling pred entries in live
-//     successors.
-//  5. TrivialPhis aliases now-redundant phis (single arg or
+//  5. PruneUnreachable drops blocks that became unreachable
+//     after FoldBranches severed their inbound edges.
+//  6. TrivialPhis aliases now-redundant phis (single arg or
 //     all args identical) to their surviving Value.
-//  6. CSE dedups pure expressions left over after Simplify +
-//     TrivialPhis unified equivalent arg lists.
-//  7. DCE reclaims everything orphaned by the previous passes.
+//  7. CSE dedups pure expressions left over after Simplify,
+//     Canonicalize, and TrivialPhis unified equivalent args.
+//  8. DCE reclaims everything orphaned by the previous passes.
 //
 // On a real program a single iteration usually does the job;
 // the loop guards against the rare cascade where pass N+1
@@ -38,6 +37,7 @@ func Optimize(f *Func) int {
 	for i := 1; i <= maxOptimizeIters; i++ {
 		Fold(f)
 		Simplify(f)
+		Canonicalize(f)
 		FoldBranches(f)
 		PruneUnreachable(f)
 		TrivialPhis(f)
