@@ -54,14 +54,21 @@ func IsConst(k OpKind) bool {
 }
 
 // IsComparison reports whether `k` is a binary predicate
-// producing a boolean Value (Eq / Ne / Lt / Le / Gt / Ge).
-// Used by CmpFlip to recognise the not(cmp) rewrite shape
-// and by the upcoming branch-on-comparison patterns.
+// producing a boolean Value (Eq / Ne / Lt / Le / Gt / Ge,
+// across signed, unsigned, and float variants). Used by
+// CmpFlip to recognise the not(cmp) rewrite shape and by the
+// upcoming branch-on-comparison patterns.
+//
+// To distinguish integer-only from float, callers can pair
+// with the per-kind class table — integer cmps fold to
+// const_bool under integer-self identities (`x == x → true`)
+// but float cmps don't (NaN ≠ NaN).
 func IsComparison(k OpKind) bool {
 	switch k {
 	case OpEq, OpNe,
 		OpLt, OpLtU, OpLe, OpLeU,
-		OpGt, OpGtU, OpGe, OpGeU:
+		OpGt, OpGtU, OpGe, OpGeU,
+		OpFEq, OpFNe, OpFLt, OpFLe, OpFGt, OpFGe:
 		return true
 	default:
 		return false

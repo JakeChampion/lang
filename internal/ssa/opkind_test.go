@@ -43,9 +43,9 @@ func TestIsPure(t *testing.T) {
 	}
 }
 
-// TestIsConst — only the three Const* kinds.
+// TestIsConst — the four Const* kinds.
 func TestIsConst(t *testing.T) {
-	consts := []OpKind{OpConstInt, OpConstBool, OpConstString}
+	consts := []OpKind{OpConstInt, OpConstBool, OpConstString, OpConstFloat}
 	for _, k := range consts {
 		if !IsConst(k) {
 			t.Errorf("IsConst(%v) = false, want true", k)
@@ -58,16 +58,23 @@ func TestIsConst(t *testing.T) {
 	}
 }
 
-// TestIsComparison — six predicates.
+// TestIsComparison — every comparison kind across the
+// signed/unsigned/float families. Negative cases keep generic
+// arithmetic + control-flow ops out.
 func TestIsComparison(t *testing.T) {
-	cmps := []OpKind{OpEq, OpNe, OpLt, OpLe, OpGt, OpGe}
+	cmps := []OpKind{
+		OpEq, OpNe,
+		OpLt, OpLtU, OpLe, OpLeU,
+		OpGt, OpGtU, OpGe, OpGeU,
+		OpFEq, OpFNe, OpFLt, OpFLe, OpFGt, OpFGe,
+	}
 	for _, k := range cmps {
 		if !IsComparison(k) {
 			t.Errorf("IsComparison(%v) = false, want true", k)
 		}
 	}
 	for _, k := range []OpKind{OpAdd, OpSub, OpNeg, OpNot, OpCall,
-		OpConstBool, OpPhi} {
+		OpConstBool, OpPhi, OpFAdd} {
 		if IsComparison(k) {
 			t.Errorf("IsComparison(%v) = true, want false", k)
 		}
