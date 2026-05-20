@@ -3726,19 +3726,23 @@ func (b *builder) expr(e ast.Expr) error {
 		// pointer layout) but drops to 1 / 2 for byte / halfword
 		// arrays per ast.ElemSizeBytes.
 		//
-		// Header layout: `[rc:4, len:4 | pad-to-stride]`.
-		//   data - 8: i32 refcount (reserved; phase 0 leaves it
-		//             uninitialised — phase 1 will start writing
-		//             rc=1 at alloc and inc/dec at reference moves)
+		// Header layout: `[pad:4, cap:4, rc:4, len:4 | pad-to-stride]`.
+		//   data - 12: i32 capacity (new in Phase 2-prep) — the
+		//              max number of elements the underlying
+		//              buffer holds. Initial value matches len;
+		//              future Phase 2 over-allocation will set
+		//              cap > len so `arr.push` can mutate the
+		//              tail in place when rc == 1.
+		//   data - 8: i32 refcount
 		//   data - 4: i32 length
-		// `len(arr)` keeps reading from `[data - 4]`; the rc slot
-		// is read by `__lang_rc_inc` / `__lang_rc_dec` once
-		// phase 1 wires them up. For stride > 8 we still need
-		// the FIRST element to be stride-aligned (Apple Silicon
-		// enforces 8-byte alignment for some LDR/STR sequences);
-		// pad the header up to `stride` so element 0 sits at a
-		// stride-aligned offset from base. For stride ≤ 8 the
-		// 8-byte header is already aligned.
+		// `len(arr)` keeps reading from `[data - 4]`; rc / cap
+		// readers know their fixed offsets. For stride > 16 we
+		// still need the FIRST element to be stride-aligned
+		// (Apple Silicon enforces 8-byte alignment for some
+		// LDR/STR sequences and 16-byte alignment for SIMD); pad
+		// the header up to `stride` so element 0 sits at a
+		// stride-aligned offset from base. For stride ≤ 16 the
+		// 16-byte header is already aligned.
 		//
 		// See `docs/RC-PERCEUS-PLAN.md` for the full phased rollout.
 		nElems := int32(len(n.Elems))
@@ -3746,8 +3750,8 @@ func (b *builder) expr(e ast.Expr) error {
 		if n.ElemType != nil {
 			stride = int32(ast.ElemSizeBytesFor(n.ElemType, b.ptrW))
 		}
-		headerBytes := int32(8)
-		if stride > 8 {
+		headerBytes := int32(16)
+		if stride > 16 {
 			headerBytes = stride
 		}
 		// Pick the element-store op via `arrayElemStoreOpFor`,
@@ -3761,11 +3765,21 @@ func (b *builder) expr(e ast.Expr) error {
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__arr_lit_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+		// Capacity slot at base + headerBytes - 12 (so callers
+		// can reach it via `data - 12`). Initialise to the
+		// literal element count — Phase 2's mutate-in-place
+		// fast path will need this on subsequent pushes.
+		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		if headerBytes != 12 {
+			b.emit(Op{Kind: OpConstI32, I32: headerBytes - 12})
+			b.emit(Op{Kind: OpAdd})
+		}
+		b.emit(Op{Kind: OpConstI32, I32: nElems})
+		b.emit(Op{Kind: OpStore})
 		// Refcount slot at base + headerBytes - 8 (so callers
 		// can reach it via `data - 8`). Initialise to 1 — this
 		// array is uniquely owned by whoever's catching the
-		// result. Phase 1b will introduce the inc/dec helpers
-		// that actually read this slot.
+		// result.
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		if headerBytes != 8 {
 			b.emit(Op{Kind: OpConstI32, I32: headerBytes - 8})
@@ -6599,12 +6613,12 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	}
 	// Same alignment rule as the array literal lowering:
 	// length prefix is always at `data - 4`, refcount slot at
-	// `data - 8` (reserved for phase 1 of the RC + Perceus
-	// rollout — `docs/RC-PERCEUS-PLAN.md`); the FIRST element
-	// must be stride-aligned when stride > 8 so Apple Silicon's
-	// strict 8-byte LDR/STR alignment is satisfied.
-	headerBytes := int32(8)
-	if stride > 8 {
+	// `data - 8`, capacity at `data - 12` (Phase 2-prep — see
+	// `docs/RC-PERCEUS-PLAN.md`); the FIRST element must be
+	// stride-aligned when stride > 16 so Apple Silicon's strict
+	// alignment for SIMD-shaped LDR/STR sequences is satisfied.
+	headerBytes := int32(16)
+	if stride > 16 {
 		headerBytes = stride
 	}
 
@@ -6650,6 +6664,19 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	hdrSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_hdr_%d", hdrSlot)] = hdrSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: hdrSlot})
+
+	// *(hdr + headerBytes - 12) = oldLen + 1 — capacity slot.
+	// Initial cap matches the final len. Phase 2's mutate-in-
+	// place fast path will need this on subsequent pushes.
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	if headerBytes != 12 {
+		b.emit(Op{Kind: OpConstI32, I32: headerBytes - 12})
+		b.emit(Op{Kind: OpAdd})
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStore})
 
 	// *(hdr + headerBytes - 8) = 1 — refcount slot. New array
 	// is uniquely owned by the catching variable. See phase 1

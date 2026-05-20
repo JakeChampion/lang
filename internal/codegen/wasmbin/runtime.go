@@ -1633,37 +1633,42 @@ func buildRcDecBody(_ map[string]uint32) []byte {
 }
 
 // buildAllocU8Body — (n) → i32. Allocates a length-prefixed
-// u8[] of length n. Layout: 8-byte header — refcount slot at
-// `data_ptr - 8`, length at `data_ptr - 4`, n bytes of payload
-// at data_ptr.
+// u8[] of length n. Layout: 16-byte header (Phase 2-prep) —
+// pad at data-16, capacity at data-12, refcount at data-8,
+// length at data-4, n bytes of payload at data.
 //
-//	base = __lang_alloc(n + 8) + 8
-//	mem[base - 8] = 1   // rc
+//	base = __lang_alloc(n + 16) + 16
+//	mem[base - 12] = n   // cap (Phase 2-prep)
+//	mem[base - 8] = 1    // rc
 //	mem[base - 4] = n
 //	return base
 //
 // Stdlib `arr.push` / `s[i]` / __arr_idx_* depend on the
-// length prefix being present at -4 for bounds checks. Calling
-// __lang_alloc directly (the previous behavior) would leave
-// random bytes there and trip the bounds check unpredictably.
+// length prefix being present at -4 for bounds checks.
 // See docs/RC-PERCEUS-PLAN.md for the phased rollout.
 func buildAllocU8Body(helperIdxs map[string]uint32) []byte {
 	alloc := helperIdxs["__lang_alloc"]
 	var body []byte
-	// base = __lang_alloc(n + 8) + 8
+	// base = __lang_alloc(n + 16) + 16
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 8)
+	body = inst.InstI32Const(body, 16)
 	body = numeric.InstI32Add(body)
 	body = inst.InstCall(body, alloc)
-	body = inst.InstI32Const(body, 8)
+	body = inst.InstI32Const(body, 16)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalTee(body, 1) // $base
-	// mem[$base - 8] = 1  (rc = 1, phase 1 of RC rollout)
+	// mem[$base - 12] = n  (cap = n, Phase 2-prep)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	// mem[$base - 8] = 1   (rc = 1)
+	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Sub(body)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
-	// mem[$base - 4] = n  (length prefix)
+	// mem[$base - 4] = n   (length prefix)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Sub(body)
