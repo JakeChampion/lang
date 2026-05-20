@@ -947,10 +947,27 @@ pub function put_canon_section_resource_drops(buf: u8[], resource_typeidxs: u32[
 //   02           // canon resource.new tag
 //   <typeidx>    // uleb
 pub function put_canon_section_resource_new(buf: u8[], resource_typeidx: u32): u8[] {
+    var idxs: u32[] = [resource_typeidx];
+    return put_canon_section_resource_news(buf, idxs);
+}
+
+// put_canon_section_resource_news — emit a canon section with N
+// `canon resource.new` entries. Multi-entry counterpart of
+// put_canon_section_resource_new — used by components that define
+// multiple resource types (e.g. an HTTP-server host needs to
+// `new` outgoing-response, fields, outgoing-body, etc.).
+//
+// Spec: each entry is `0x02 + typeidx:uleb`.
+pub function put_canon_section_resource_news(buf: u8[], resource_typeidxs: u32[]): u8[] {
     var body: u8[] = [];
-    body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(2u8);                        // canon resource.new
-    body = leb128.uleb_u32(body, resource_typeidx);
+    var n: i32 = resource_typeidxs.len();
+    body = leb128.uleb_u32(body, n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = body.push(2u8);                    // canon resource.new
+        body = leb128.uleb_u32(body, resource_typeidxs[i]);
+        i = i + 1;
+    }
 
     var out: u8[] = buf;
     out = out.push(section_canon());
@@ -974,10 +991,25 @@ pub function put_canon_section_resource_new(buf: u8[], resource_typeidx: u32): u
 //   04           // canon resource.rep tag
 //   <typeidx>    // uleb
 pub function put_canon_section_resource_rep(buf: u8[], resource_typeidx: u32): u8[] {
+    var idxs: u32[] = [resource_typeidx];
+    return put_canon_section_resource_reps(buf, idxs);
+}
+
+// put_canon_section_resource_reps — emit a canon section with N
+// `canon resource.rep` entries. Multi-entry counterpart of
+// put_canon_section_resource_rep.
+//
+// Spec: each entry is `0x04 + typeidx:uleb`.
+pub function put_canon_section_resource_reps(buf: u8[], resource_typeidxs: u32[]): u8[] {
     var body: u8[] = [];
-    body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(4u8);                        // canon resource.rep
-    body = leb128.uleb_u32(body, resource_typeidx);
+    var n: i32 = resource_typeidxs.len();
+    body = leb128.uleb_u32(body, n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = body.push(4u8);                    // canon resource.rep
+        body = leb128.uleb_u32(body, resource_typeidxs[i]);
+        i = i + 1;
+    }
 
     var out: u8[] = buf;
     out = out.push(section_canon());
