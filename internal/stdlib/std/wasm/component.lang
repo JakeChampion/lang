@@ -1594,13 +1594,29 @@ pub function put_export_section_one_func(buf: u8[], name: string, func_idx: u32)
 // Returns the complete component bytes ready to write to disk or
 // hand to `wasmtime run --invoke`.
 pub function build_lifted_export_component(core_bytes: u8[], core_export_name: string, export_name: string, result_valtype: u8): u8[] {
+    var no_names: string[] = [];
+    var no_valtypes: u8[] = [];
+    return build_lifted_export_component_with_params(core_bytes, core_export_name, export_name, no_names, no_valtypes, result_valtype);
+}
+
+// build_lifted_export_component_with_params — generalisation of
+// build_lifted_export_component that supports a non-empty
+// parameter list. The core function being aliased + lifted MUST
+// have a core signature compatible with the canonical-ABI lowering
+// of `(param_names, param_valtypes) -> result_valtype` — for
+// scalar valtypes that means a one-to-one mapping (i32/u32 → i32,
+// i64/u64 → i64, f32 → f32, f64 → f64).
+//
+// Skipped: imports, mem/realloc/post-return canon opts, multi-result
+// functions. Those shapes still go through the individual section
+// composers; this helper is for "one core function with scalar
+// params + scalar result" surfaced as a component-level export.
+pub function build_lifted_export_component_with_params(core_bytes: u8[], core_export_name: string, export_name: string, param_names: string[], param_valtypes: u8[], result_valtype: u8): u8[] {
     var comp: u8[] = put_component_header([]);
     comp = put_core_module_section(comp, core_bytes);
     comp = put_core_instance_section_instantiate(comp, 0u32);
     comp = put_alias_section_core_export_func(comp, 0u32, core_export_name);
-    var no_names: string[] = [];
-    var no_valtypes: u8[] = [];
-    comp = put_type_section_one_func(comp, no_names, no_valtypes, result_valtype);
+    comp = put_type_section_one_func(comp, param_names, param_valtypes, result_valtype);
     comp = put_canon_section_lift_no_opts(comp, 0u32, 0u32);
     comp = put_export_section_one_func(comp, export_name, 0u32);
     return comp;
