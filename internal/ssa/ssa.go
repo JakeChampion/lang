@@ -76,6 +76,16 @@ const (
 	OpOr
 	OpXor
 
+	// Shift — integer. Shl is logical left; Shr is arithmetic
+	// (sign-preserving) right. Shift count comes from Args[1];
+	// out-of-range counts (rhs < 0 or rhs >= 64) are left
+	// unfolded — the runtime owns that case.
+	OpShl
+	OpShr
+
+	// Unary arithmetic — integer negation.
+	OpNeg
+
 	// Comparison — produces a boolean Value.
 	OpEq
 	OpNe
@@ -128,6 +138,12 @@ func (k OpKind) String() string {
 		return "or"
 	case OpXor:
 		return "xor"
+	case OpShl:
+		return "shl"
+	case OpShr:
+		return "shr"
+	case OpNeg:
+		return "neg"
 	case OpEq:
 		return "eq"
 	case OpNe:
