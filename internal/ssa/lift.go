@@ -42,9 +42,15 @@ import (
 //   Phase 5:
 //   - OpConstStr → OpConstString with Str = string literal.
 //
+//   Phase 6:
+//   - OpConstF32 / OpConstF64 → OpConstFloat (F64 carries the value)
+//   - OpFAdd / OpFSub / OpFMul / OpFDiv → matching SSA float op
+//   - OpFNeg → OpFNeg
+//   - OpFEq / OpFNe / OpFLt / OpFLe / OpFGt / OpFGe → matching SSA fcmp
+//
 // Anything else returns an `unsupported op` error. Locals
 // beyond the param prefix, OpStoreLocal, branches, indirect
-// calls, and floats land in follow-up PRs.
+// calls, and the conversion ops land in follow-up PRs.
 //
 // The legacy IR is a stack-machine encoding: every Op consumes
 // its operand-stack inputs and pushes its result. The lift
@@ -84,6 +90,14 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 			v := out.AddOp(entry, OpConstString)
 			entry.Ops[len(entry.Ops)-1].Str = op.Str
 			stack = append(stack, v)
+		case ir.OpConstF32:
+			v := out.AddOp(entry, OpConstFloat)
+			entry.Ops[len(entry.Ops)-1].F64 = float64(op.F32)
+			stack = append(stack, v)
+		case ir.OpConstF64:
+			v := out.AddOp(entry, OpConstFloat)
+			entry.Ops[len(entry.Ops)-1].F64 = op.F64
+			stack = append(stack, v)
 		case ir.OpLoadLocal:
 			idx := int(op.I32)
 			if idx < 0 || idx >= len(slots) {
@@ -96,7 +110,9 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 			ir.OpAnd, ir.OpOr, ir.OpXor,
 			ir.OpShl, ir.OpShrS,
 			ir.OpEq, ir.OpNe,
-			ir.OpLtS, ir.OpLeS, ir.OpGtS, ir.OpGeS:
+			ir.OpLtS, ir.OpLeS, ir.OpGtS, ir.OpGeS,
+			ir.OpFAdd, ir.OpFSub, ir.OpFMul, ir.OpFDiv,
+			ir.OpFEq, ir.OpFNe, ir.OpFLt, ir.OpFLe, ir.OpFGt, ir.OpFGe:
 			if len(stack) < 2 {
 				return nil, fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs 2 operands, stack has %d",
 					op.Kind, i, len(stack))
@@ -114,6 +130,14 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 			arg := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			v := out.AddOp(entry, OpNot, arg)
+			stack = append(stack, v)
+		case ir.OpFNeg:
+			if len(stack) < 1 {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpFNeg at op[%d] needs 1 operand", i)
+			}
+			arg := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			v := out.AddOp(entry, OpFNeg, arg)
 			stack = append(stack, v)
 		case ir.OpCallDirect:
 			argc := int(op.I32)
@@ -181,6 +205,26 @@ func mapBinaryArith(k ir.OpKind) OpKind {
 		return OpGt
 	case ir.OpGeS:
 		return OpGe
+	case ir.OpFAdd:
+		return OpFAdd
+	case ir.OpFSub:
+		return OpFSub
+	case ir.OpFMul:
+		return OpFMul
+	case ir.OpFDiv:
+		return OpFDiv
+	case ir.OpFEq:
+		return OpFEq
+	case ir.OpFNe:
+		return OpFNe
+	case ir.OpFLt:
+		return OpFLt
+	case ir.OpFLe:
+		return OpFLe
+	case ir.OpFGt:
+		return OpFGt
+	case ir.OpFGe:
+		return OpFGe
 	}
 	return OpInvalid
 }

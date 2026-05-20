@@ -445,6 +445,113 @@ func TestLiftStringConcatCall(t *testing.T) {
 	}
 }
 
+// TestLiftConstF64 — `function f() { return 3.14; }` lifts
+// const_f64 to OpConstFloat.
+func TestLiftConstF64(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstF64, F64: 3.14},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	op := out.Blocks[0].Ops[0]
+	if op.Kind != OpConstFloat || op.F64 != 3.14 {
+		t.Errorf("Op = {%v %g}, want {OpConstFloat 3.14}", op.Kind, op.F64)
+	}
+}
+
+// TestLiftConstF32 — F32 widens to F64 in SSA.
+func TestLiftConstF32(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstF32, F32: 1.5},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if op := out.Blocks[0].Ops[0]; op.Kind != OpConstFloat || op.F64 != 1.5 {
+		t.Errorf("Op = {%v %g}, want {OpConstFloat 1.5}", op.Kind, op.F64)
+	}
+}
+
+// TestLiftFloatAdd — `1.0 + 2.0` lifts to OpFAdd, folds to
+// const_float 3.0 after Optimize.
+func TestLiftFloatAdd(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstF64, F64: 1.0},
+			{Kind: ir.OpConstF64, F64: 2.0},
+			{Kind: ir.OpFAdd},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	Optimize(out)
+	if len(out.Blocks[0].Ops) != 1 {
+		t.Fatalf("Ops = %d, want 1", len(out.Blocks[0].Ops))
+	}
+	if op := out.Blocks[0].Ops[0]; op.Kind != OpConstFloat || op.F64 != 3.0 {
+		t.Errorf("Op = {%v %g}, want {OpConstFloat 3}", op.Kind, op.F64)
+	}
+}
+
+// TestLiftFloatCmp — float comparison lifts cleanly.
+func TestLiftFloatCmp(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstF64, F64: 1.0},
+			{Kind: ir.OpConstF64, F64: 2.0},
+			{Kind: ir.OpFLt},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	Optimize(out)
+	if op := out.Blocks[0].Ops[0]; op.Kind != OpConstBool || op.Imm != 1 {
+		t.Errorf("Op = {%v %d}, want {OpConstBool 1}", op.Kind, op.Imm)
+	}
+}
+
+// TestLiftFloatNeg — unary FNeg.
+func TestLiftFloatNeg(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstF64, F64: 4.5},
+			{Kind: ir.OpFNeg},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	Optimize(out)
+	if op := out.Blocks[0].Ops[0]; op.Kind != OpConstFloat || op.F64 != -4.5 {
+		t.Errorf("Op = {%v %g}, want {OpConstFloat -4.5}", op.Kind, op.F64)
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
